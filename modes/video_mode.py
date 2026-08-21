@@ -95,10 +95,13 @@ FAST_DEFAULT_QUALITY_LEVEL = "medium"
 FAST_RESOLUTION_MULTIPLE = 32
 FAST_NATIVE_MAX_SHORT_EDGE = 768
 FAST_NATIVE_MAX_LONG_EDGE = 1344
-REF2V_FAST_FIXED_ASPECT_RATIO = "16:9"
-REF2V_FAST_FIXED_QUALITY_LEVEL = "native"
-REF2V_FAST_FIXED_WIDTH = 960
-REF2V_FAST_FIXED_HEIGHT = 544
+REF2V_DEFAULT_ASPECT_RATIO = "16:9"
+REF2V_DEFAULT_QUALITY_LEVEL = "native"
+REF2V_DEFAULT_WIDTH = 960
+REF2V_DEFAULT_HEIGHT = 544
+REF2V_DEFAULT_TARGET_MP = (
+    REF2V_DEFAULT_WIDTH * REF2V_DEFAULT_HEIGHT / 1_000_000
+)
 
 # 영상화 다운스케일 후 약한 Unsharp Mask pre-sharpen 옵션.
 # amount는 0~1.5 비율이며 PIL UnsharpMask의 percent(%)로는 amount×100으로 매핑한다.
@@ -848,11 +851,63 @@ def calculate_fast_dimensions(
         target_h = _snap_fast_dimension(ratio_h * native_scale)
         return target_w, target_h
 
+    return _calculate_target_mp_dimensions(aspect_ratio, target_mp)
+
+
+def _calculate_target_mp_dimensions(
+    aspect_ratio: str,
+    target_mp: float,
+) -> tuple[int, int]:
+    """목표 MP와 화면 비율을 32배수 실제 크기로 변환한다."""
+
+    if aspect_ratio not in FAST_ASPECT_RATIOS:
+        print(
+            "[VIDEO:RESOLUTION] MP 해상도 계산 비율 오류: "
+            f"aspect_ratio={aspect_ratio!r}, "
+            f"supported={tuple(FAST_ASPECT_RATIOS)!r}"
+        )
+        raise ValueError("지원하지 않는 영상 화면 비율입니다")
+    if not math.isfinite(target_mp) or target_mp <= 0:
+        print(
+            "[VIDEO:RESOLUTION] MP 해상도 계산 픽셀 예산 오류: "
+            f"aspect_ratio={aspect_ratio!r}, target_mp={target_mp!r}"
+        )
+        raise ValueError("영상 해상도 계산값이 올바르지 않습니다")
+
+    ratio_w, ratio_h = FAST_ASPECT_RATIOS[aspect_ratio]
     square_edge = _snap_fast_dimension(math.sqrt(target_mp * 1_000_000))
     ratio = ratio_w / ratio_h
     target_w = _snap_fast_dimension(square_edge * math.sqrt(ratio))
     target_h = _snap_fast_dimension(square_edge / math.sqrt(ratio))
     return target_w, target_h
+
+
+def calculate_ref2v_dimensions(
+    aspect_ratio: str,
+    quality_level: object,
+) -> tuple[int, int]:
+    """REF 기본 픽셀 예산 또는 실험 MP 단계의 32배수 크기를 계산한다."""
+
+    if aspect_ratio not in FAST_ASPECT_RATIOS:
+        print(
+            "[VIDEO:RESOLUTION] REF 해상도 계산 비율 오류: "
+            f"aspect_ratio={aspect_ratio!r}, "
+            f"supported={tuple(FAST_ASPECT_RATIOS)!r}"
+        )
+        raise ValueError("지원하지 않는 REF 영상 화면 비율입니다")
+    quality_key = normalize_fast_quality_level(
+        quality_level
+        if str(quality_level or "").strip()
+        else REF2V_DEFAULT_QUALITY_LEVEL
+    )
+    if quality_key != REF2V_DEFAULT_QUALITY_LEVEL:
+        return calculate_fast_dimensions(aspect_ratio, quality_key)
+    if aspect_ratio == REF2V_DEFAULT_ASPECT_RATIO:
+        return REF2V_DEFAULT_WIDTH, REF2V_DEFAULT_HEIGHT
+    return _calculate_target_mp_dimensions(
+        aspect_ratio,
+        REF2V_DEFAULT_TARGET_MP,
+    )
 
 
 def resolved_fast_target_mp(
@@ -895,6 +950,33 @@ def resolve_fast_resolution(
     return key, quality_key, target_w, target_h
 
 
+def resolve_ref2v_resolution(
+    aspect_ratio: object,
+    quality_level: object,
+    width: int,
+    height: int,
+) -> tuple[str, str, int, int]:
+    """REF 기본 또는 명시적인 실험 비율·MP 단계로 출력 크기를 정한다."""
+
+    key = str(aspect_ratio or REF2V_DEFAULT_ASPECT_RATIO).strip().lower()
+    if key == "auto":
+        # REF 이미지들은 독립 참조이므로 자동 비율은 첫 번째 REF를 기준으로 한다.
+        key = choose_fast_aspect_ratio(width, height)
+    if key not in FAST_ASPECT_RATIOS:
+        print(
+            f"[VIDEO:RESOLUTION] 지원하지 않는 REF 화면 비율: value={aspect_ratio!r}, "
+            f"supported={tuple(FAST_ASPECT_RATIOS)!r}"
+        )
+        raise ValueError("지원하지 않는 REF 영상 화면 비율입니다")
+    quality_key = normalize_fast_quality_level(
+        quality_level
+        if str(quality_level or "").strip()
+        else REF2V_DEFAULT_QUALITY_LEVEL
+    )
+    target_w, target_h = calculate_ref2v_dimensions(key, quality_key)
+    return key, quality_key, target_w, target_h
+
+
 def resolve_video_resolution(
     workflow_variant: object,
     aspect_ratio: object,
@@ -905,18 +987,18 @@ def resolve_video_resolution(
 ) -> tuple[str, str, int, int]:
     """일반 MP 단계 또는 모드별 고속 4-step 규칙으로 해상도를 결정한다.
 
-    고속 I2V/FLF2V는 768p 규칙을 사용한다. Ref2V는 Base+TeaCache 일반판과
-    전용 4-step 고속판 모두 검증된 960×544 한 가지 해상도만 지원한다.
+    고속 I2V/FLF2V는 768p 규칙을 사용한다. Ref2V는 일반판과 고속판 모두
+    16:9·960×544를 기본으로 사용하며, 다른 비율과 MP 단계도 실험적으로 허용한다.
     """
 
     variant = normalize_video_workflow_variant(workflow_variant)
     mode_key = str(mode or "i2v").strip().lower()
     if mode_key == "ref2v":
-        return (
-            REF2V_FAST_FIXED_ASPECT_RATIO,
-            REF2V_FAST_FIXED_QUALITY_LEVEL,
-            REF2V_FAST_FIXED_WIDTH,
-            REF2V_FAST_FIXED_HEIGHT,
+        return resolve_ref2v_resolution(
+            aspect_ratio,
+            quality_level,
+            width,
+            height,
         )
 
     if variant == "standard":
@@ -5269,13 +5351,21 @@ Render every requested direct manipulation as the same unambiguous physical oper
             )
 
         _source_prompt, source_info = self._source_context(source_ref)
+        default_aspect_ratio = (
+            REF2V_DEFAULT_ASPECT_RATIO if mode == "ref2v" else "auto"
+        )
+        default_quality_level = (
+            REF2V_DEFAULT_QUALITY_LEVEL
+            if mode == "ref2v"
+            else FAST_DEFAULT_QUALITY_LEVEL
+        )
         requested_aspect_ratio = (params or {}).get(
             "aspect_ratio",
-            (params or {}).get("preset", "auto"),
+            (params or {}).get("preset", default_aspect_ratio),
         )
         requested_quality_level = (params or {}).get(
             "quality_level",
-            FAST_DEFAULT_QUALITY_LEVEL,
+            default_quality_level,
         )
         sharpen_params = normalize_sharpen_params(params)
         sharpen_for_reference = sharpen_params if sharpen_params.get("enabled") else None

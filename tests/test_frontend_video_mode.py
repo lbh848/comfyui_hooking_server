@@ -102,8 +102,8 @@ def test_video_page_uses_modal_entry_with_six_workflow_cards() -> None:
     assert "고속 REF2V" in FRONTEND
     assert 'value="ref2v:standard" disabled aria-disabled="true"' not in FRONTEND
     assert 'value="ref2v:standard" onchange="selectVideoMode(\'ref2v\', \'standard\')"' in FRONTEND
-    assert "Base 20-step · TeaCache 0.10 · 960×544" in FRONTEND
-    assert "전용 4-step · 960×544 고정" in FRONTEND
+    assert "Base 20-step · TeaCache 0.10 · REF 기본 960×544" in FRONTEND
+    assert "전용 4-step · REF 기본 960×544" in FRONTEND
     # 첫·마지막 모드에서 마지막 프레임 미리보기가 존재해야 한다
     assert 'id="video-frame-last"' in FRONTEND
     assert 'id="video-generation-last-preview"' in FRONTEND
@@ -300,17 +300,28 @@ def test_video_page_separates_fast_aspect_ratio_and_mp_level() -> None:
     assert "저화질 · 0.2 MP (실험적)" in FRONTEND
     assert "기본 · 0.35 MP (실험적)" in FRONTEND
     assert "고화질 · 0.5 MP (실험적)" in FRONTEND
-    # 고속 REF2V는 공식 예제 하나만 지원하므로 두 셀렉트를 잠근다.
-    assert "VIDEO_REF_FAST_FIXED_ASPECT_RATIO = '16:9'" in FRONTEND
-    assert "VIDEO_REF_FAST_FIXED_WIDTH = 960" in FRONTEND
-    assert "VIDEO_REF_FAST_FIXED_HEIGHT = 544" in FRONTEND
-    assert "고속 REF 고정 · 960×544" in FRONTEND
-    assert "일반 REF 고정 · 960×544" in FRONTEND
-    assert "REF 20-step · TeaCache 0.10" in FRONTEND
-    assert "16:9 · 960×544 고정" in FRONTEND
-    assert "qualitySelect.disabled = true" in FRONTEND
-    assert "aspectSelect.disabled = true" in FRONTEND
-    assert "fast-ref-fixed-960x544" in FRONTEND
+    # 일반·고속 REF2V는 검증된 기본과 명시적으로 표시된 실험 옵션을 함께 제공한다.
+    assert "VIDEO_REF_DEFAULT_ASPECT_RATIO = '16:9'" in FRONTEND
+    assert "VIDEO_REF_DEFAULT_WIDTH = 960" in FRONTEND
+    assert "VIDEO_REF_DEFAULT_HEIGHT = 544" in FRONTEND
+    assert "VIDEO_REF_QUALITY_OPTIONS" in FRONTEND
+    assert "REF 기본 · 960×544" in FRONTEND
+    for label in (
+        "0.2 MP (실험)",
+        "0.3 MP (실험)",
+        "0.35 MP (실험)",
+        "0.4 MP (실험)",
+        "0.5 MP (실험)",
+    ):
+        assert label in FRONTEND
+    assert "REF 기본 · ${VIDEO_REF_DEFAULT_ASPECT_RATIO}" in FRONTEND
+    assert "자동 · REF 이미지 1 기준 (실험)" in FRONTEND
+    assert "${key} · ${resolution.width}×${resolution.height} (실험)" in FRONTEND
+    assert "calculateVideoRefResolution(aspectRatio, qualityLevel)" in FRONTEND
+    assert "ref-${workflowVariant}-experimental-options" in FRONTEND
+    assert "qualitySelect.disabled = false" in FRONTEND
+    assert "aspectSelect.disabled = false" in FRONTEND
+    assert "REF 기본 16:9 외 화면 비율은 검증되지 않은 실험 옵션입니다." in FRONTEND
     assert "onVideoQualityLevelChange()" in FRONTEND
     assert "qualitySelect.dataset.activeVariant" in FRONTEND
     assert "workflow_variant: selectedVideoWorkflowVariant()" in FRONTEND

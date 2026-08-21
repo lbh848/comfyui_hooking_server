@@ -95,7 +95,7 @@ def test_fast_video_defaults_keep_mp_choice_and_reject_ultrawide() -> None:
         server.normalize_video_generation_defaults(settings)
 
 
-def test_ref_defaults_preserve_standard_and_use_fixed_resolution() -> None:
+def test_ref_defaults_preserve_experimental_values_and_default_when_omitted() -> None:
     settings = copy.deepcopy(server.DEFAULT_VIDEO_GENERATION_DEFAULTS)
     settings.update(
         {
@@ -110,13 +110,20 @@ def test_ref_defaults_preserve_standard_and_use_fixed_resolution() -> None:
 
     assert normalized["mode"] == "ref2v"
     assert normalized["workflow_variant"] == "standard"
-    assert normalized["aspect_ratio"] == "16:9"
-    assert normalized["quality_level"] == "native"
+    assert normalized["aspect_ratio"] == "21:9"
+    assert normalized["quality_level"] == "low"
+
+    omitted = copy.deepcopy(settings)
+    omitted.pop("aspect_ratio")
+    omitted.pop("quality_level")
+    normalized_omitted = server.normalize_video_generation_defaults(omitted)
+    assert normalized_omitted["aspect_ratio"] == "16:9"
+    assert normalized_omitted["quality_level"] == "native"
     assert server.DEFAULT_CONFIG["video_workflow_source_paths"]["ref2v"] == ""
     assert server.DEFAULT_CONFIG["video_workflow_source_paths"]["ref2v_fast"] == ""
 
 
-def test_ref_request_canonicalizes_standard_and_fast_resolution() -> None:
+def test_ref_request_preserves_standard_and_fast_experimental_resolution() -> None:
     assert server.normalize_video_workflow_selection(
         {
             "mode": "ref2v",
@@ -125,7 +132,7 @@ def test_ref_request_canonicalizes_standard_and_fast_resolution() -> None:
             "quality_level": "high",
         },
         log_prefix="TEST:REF2V",
-    ) == ("standard", "16:9", "native")
+    ) == ("standard", "21:9", "high")
 
     assert server.normalize_video_workflow_selection(
         {
@@ -133,6 +140,14 @@ def test_ref_request_canonicalizes_standard_and_fast_resolution() -> None:
             "workflow_variant": "fast",
             "aspect_ratio": "21:9",
             "quality_level": "medium",
+        },
+        log_prefix="TEST:REF2V",
+    ) == ("fast", "21:9", "medium")
+
+    assert server.normalize_video_workflow_selection(
+        {
+            "mode": "ref2v",
+            "workflow_variant": "fast",
         },
         log_prefix="TEST:REF2V",
     ) == ("fast", "16:9", "native")

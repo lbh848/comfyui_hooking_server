@@ -100,8 +100,8 @@ from modes.video_mode import (
     FAST_ASPECT_RATIOS,
     FAST_DEFAULT_QUALITY_LEVEL,
     FAST_QUALITY_LEVELS,
-    REF2V_FAST_FIXED_ASPECT_RATIO,
-    REF2V_FAST_FIXED_QUALITY_LEVEL,
+    REF2V_DEFAULT_ASPECT_RATIO,
+    REF2V_DEFAULT_QUALITY_LEVEL,
     VIDEO_DEFAULT_DURATION_SECONDS,
     VIDEO_MODES,
     VIDEO_WORKFLOW_VARIANTS,
@@ -331,8 +331,12 @@ def normalize_video_generation_defaults(raw: object) -> dict:
             normalized["quality_level"] = "native"
 
     if normalized["mode"] == "ref2v":
-        normalized["aspect_ratio"] = REF2V_FAST_FIXED_ASPECT_RATIO
-        normalized["quality_level"] = REF2V_FAST_FIXED_QUALITY_LEVEL
+        # 기존 REF 동작과의 호환을 위해 필드가 생략된 경우에만 검증된
+        # 16:9·960×544를 기본으로 삼는다. 명시한 다른 값은 실험 선택으로 보존한다.
+        if "aspect_ratio" not in source:
+            normalized["aspect_ratio"] = REF2V_DEFAULT_ASPECT_RATIO
+        if "quality_level" not in source:
+            normalized["quality_level"] = REF2V_DEFAULT_QUALITY_LEVEL
 
     try:
         normalized["duration"] = int(
@@ -435,16 +439,17 @@ def normalize_video_workflow_selection(
         )
         raise ValueError("지원하지 않는 영상 워크플로우 변형입니다")
 
-    aspect_ratio = str(
-        raw.get("aspect_ratio", raw.get("preset", "auto")) or "auto"
-    ).strip().lower()
     mode = str(raw.get("mode") or "").strip().lower()
-    if mode == "ref2v":
-        return (
-            workflow_variant,
-            REF2V_FAST_FIXED_ASPECT_RATIO,
-            REF2V_FAST_FIXED_QUALITY_LEVEL,
+    default_aspect_ratio = (
+        REF2V_DEFAULT_ASPECT_RATIO if mode == "ref2v" else "auto"
+    )
+    aspect_ratio = str(
+        raw.get(
+            "aspect_ratio",
+            raw.get("preset", default_aspect_ratio),
         )
+        or default_aspect_ratio
+    ).strip().lower()
     supported_ratios = (
         FAST_768_ASPECT_RATIOS
         if workflow_variant == "fast" and mode != "ref2v"
@@ -458,7 +463,10 @@ def normalize_video_workflow_selection(
         )
         raise ValueError("지원하지 않는 영상 화면 비율입니다")
 
-    if workflow_variant == "fast":
+    if mode == "ref2v":
+        # REF 기본은 960×544(native)이며, 명시적인 MP 단계는 실험 선택이다.
+        default_quality = REF2V_DEFAULT_QUALITY_LEVEL
+    elif workflow_variant == "fast":
         # 고속은 화질을 생략하면 768p(native)를 기본으로 유지한다. 명시적 MP
         # 단계(low/medium/high)는 실험적 선택으로 그대로 허용한다.
         default_quality = "native"

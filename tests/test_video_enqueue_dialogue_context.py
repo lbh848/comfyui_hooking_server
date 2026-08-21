@@ -128,8 +128,8 @@ async def test_ref_video_enqueue_preserves_ordered_reference_list(monkeypatch) -
     assert response.status == 200
     assert captured["item_type"] == "video_prompt_build"
     assert captured["params"]["reference_refs"] == [source, second]
-    assert captured["params"]["aspect_ratio"] == "16:9"
-    assert captured["params"]["quality_level"] == "native"
+    assert captured["params"]["aspect_ratio"] == "21:9"
+    assert captured["params"]["quality_level"] == "medium"
     assert "고속 REF2V" in captured["label"]
 
 

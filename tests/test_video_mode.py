@@ -479,23 +479,42 @@ def test_video_workflow_config_key_separates_variant_from_prompt_mode() -> None:
     assert video_workflow_config_key("ref2v", "fast") == "ref2v_fast"
 
 
-def test_ref_resolution_supports_standard_and_fast_fixed_960x544() -> None:
+def test_ref_resolution_keeps_default_and_allows_experimental_combinations() -> None:
     assert resolve_video_resolution(
         "fast", "16:9", "native", 1920, 1080, "ref2v"
     ) == ("16:9", "native", 960, 544)
+    # 생략값과 자동 비율은 각각 REF 기본과 첫 번째 REF 이미지 비율을 사용한다.
     assert resolve_video_resolution(
-        "fast", "auto", None, 1920, 1080, "ref2v"
-    ) == ("16:9", "native", 960, 544)
-    # 숨은 클라이언트가 다른 값을 보내도 공개 예제의 한 해상도로 고정한다.
-    assert resolve_video_resolution(
-        "fast", "21:9", "native", 2100, 900, "ref2v"
+        "standard", None, None, 800, 600, "ref2v"
     ) == ("16:9", "native", 960, 544)
     assert resolve_video_resolution(
-        "fast", "16:9", "medium", 1920, 1080, "ref2v"
-    ) == ("16:9", "native", 960, 544)
+        "standard", "auto", "native", 1000, 1000, "ref2v"
+    ) == ("1:1", "native", 736, 736)
+    # 일반·고속 모두 REF 기본과 비슷한 픽셀 예산의 타 비율 및 MP 단계를 허용한다.
     assert resolve_video_resolution(
-        "standard", "16:9", "high", 1920, 1080, "ref2v"
-    ) == ("16:9", "native", 960, 544)
+        "standard", "21:9", "native", 2100, 900, "ref2v"
+    ) == ("21:9", "native", 1120, 480)
+    assert resolve_video_resolution(
+        "fast", "21:9", "medium", 2100, 900, "ref2v"
+    ) == ("21:9", "medium", 864, 384)
+    assert resolve_video_resolution(
+        "fast", "16:9", "high", 1920, 1080, "ref2v"
+    ) == ("16:9", "high", 928, 544)
+
+    for variant in ("standard", "fast"):
+        for aspect_ratio in FAST_ASPECT_RATIOS:
+            for quality_level in FAST_QUALITY_LEVELS:
+                resolved = resolve_video_resolution(
+                    variant,
+                    aspect_ratio,
+                    quality_level,
+                    1600,
+                    900,
+                    "ref2v",
+                )
+                assert resolved[:2] == (aspect_ratio, quality_level)
+                assert resolved[2] > 0 and resolved[2] % 32 == 0
+                assert resolved[3] > 0 and resolved[3] % 32 == 0
 
 
 def test_ref_prompt_uses_six_section_body_without_keyframe_alignment() -> None:
@@ -1728,7 +1747,7 @@ async def test_render_spools_video_postprocess_before_cleaning_comfy_mp4(
 
 
 @pytest.mark.asyncio
-async def test_fast_ref_render_stages_three_originals_and_patches_fixed_workflow(
+async def test_fast_ref_render_stages_originals_and_patches_experimental_resolution(
     tmp_path: Path,
 ) -> None:
     backup_dir = tmp_path / "backups"
@@ -1766,8 +1785,8 @@ async def test_fast_ref_render_stages_three_originals_and_patches_fixed_workflow
             with Image.open(staged) as image:
                 assert image.size == sizes[name]
         assert workflow["1"]["inputs"]["value"] == _valid_ref_body()
-        assert workflow["2"]["inputs"]["width"] == 960
-        assert workflow["2"]["inputs"]["height"] == 544
+        assert workflow["2"]["inputs"]["width"] == 864
+        assert workflow["2"]["inputs"]["height"] == 384
         assert "ref_images.ref_image_3" not in workflow["2"]["inputs"]
         for index, node_id in enumerate(("6", "7", "8"), start=1):
             assert workflow[node_id]["inputs"]["image"].endswith(f"/[{index}].png")
@@ -1810,10 +1829,10 @@ async def test_fast_ref_render_stages_three_originals_and_patches_fixed_workflow
         queue_item_id="ref-gpu",
     )
 
-    assert result["width"] == 960
-    assert result["height"] == 544
-    assert result["aspect_ratio"] == "16:9"
-    assert result["quality_level"] == "native"
+    assert result["width"] == 864
+    assert result["height"] == 384
+    assert result["aspect_ratio"] == "21:9"
+    assert result["quality_level"] == "medium"
     assert result["workflow_variant"] == "fast"
     assert not submitted["staged_root"].exists()
     manifest = json.loads(
