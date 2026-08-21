@@ -2391,6 +2391,13 @@ def routing_primary_service(task_key: str) -> str:
     return _current_config["llm_service"]
 
 
+def routing_primary_slot(task_key: str) -> str:
+    """Return the configured primary slot without applying retries or fallback."""
+
+    primary, _fallback = _routing_for(task_key)
+    return primary
+
+
 def routing_primary_model(task_key: str) -> str:
     """task_key 의 primary LLM 모델명 반환(스트림 통계/로그 표시용).
     각 primary 의 전용 모델(llm_model{N})이 비어 있으면 LLM1 모델로 폴백."""

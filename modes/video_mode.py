@@ -56,6 +56,7 @@ VIDEO_FPS = 24
 VIDEO_MODES = frozenset({"i2v", "first_last", "ref2v"})
 VIDEO_WORKFLOW_VARIANTS = frozenset({"standard", "fast"})
 REF2V_MAX_REFERENCE_IMAGES = 3
+H3_PROMPT_CANDIDATE_COUNT = 3
 I2V_WORKFLOW_INPUT_PATH = "soya_video"
 I2V_WORKFLOW_PROMPT_TITLE = "긍정프롬프트"
 REF2V_WORKFLOW_PROMPT_TITLE = "Input Text (Prompt)"
@@ -222,13 +223,14 @@ Include only the dimensions that are relevant, but describe those dimensions dec
 Before enriching the description, interpret the user's direction as an ordered state-and-action model. Preserve these semantic distinctions exactly:
 - Preserve temporal aspect and the distinction between an already-established or maintained condition and a newly requested action onset. A subject described as already holding, wearing, facing, remaining, open, spread, connected, or otherwise "in a state while doing X" — including equivalent resultative or maintained-state constructions in any language — begins the requested action in that state. Do not turn that state into a new action, repeat its onset, or reverse and re-establish it unless the user explicitly requests that transition.
 - Preserve every user-supplied temporal, intensity, amplitude, frequency, and completion modifier. Do not make an action sudden, gradual, prolonged, repeated, faster, slower, stronger, weaker, wider, narrower, complete, or interrupted unless that quality is stated or physically necessary. When connective timing is unspecified, use neutral timing that does not change the action's meaning.
+- Keep distributed quantities arithmetically consistent. State a body part, controller, object, or repetition count either per participant or as one collective total; never combine a collective total with "each" or "every" in a way that multiplies it, and make the visible allocation add up to the stated total.
 - Preserve every user-supplied spatial constraint together with the thing that constraint applies to. This includes orientation, screen-space direction, facing, axis, relative position, attachment or contact point, endpoint relationship, movement path, formation path, effect propagation, and camera-relative movement. Do not preserve only the directional value while reassigning it to a different entity, body part, effect, motion, or spatial property.
 - Distinguish static or instantaneous spatial state from spatial change. An entity's orientation is not its motion trajectory; a motion trajectory is not an effect's propagation direction; a formation direction is not necessarily the resulting entity's orientation; an attachment point is not a movement endpoint. Preserve these distinctions instead of paraphrasing one into another.
 - When the user specifies an explicit camera-frame or screen-space relationship, preserve that relationship as visible frame geometry. When necessary for clarity, describe concrete observable landmarks, endpoints, relative positions, or axes that make the requested relationship visually unambiguous without adding new creative constraints.
 - Do not replace an explicit user-supplied spatial or directional relationship with one inferred from the reference image, anatomy, pose, hand or limb alignment, physical convention, or what would normally seem natural. Such inference may fill genuinely unspecified connective mechanics, but it must not override or reinterpret an explicit user constraint.
 - Preserve the acting subject, the exact effector or body part, the manipulated target, the kind and strength of manipulation, and any supporting contact named for each action. A secure grip, hold, press, pull, support, insertion, or other direct manipulation is not interchangeable with a light touch, nearby motion, indirect movement of a different participant or object, or motion by the target itself. When an effector changes jobs, show its release, travel, re-contact, and secure regrip in physical order; during a handoff, state what continues to support, stabilize, or control each affected participant or object. If the aligned keyframe shows the effector touching something other than the user's next target, move the effector from the old contact to the named target before performing the target-specific operation; do not perform that operation through the old contact.
-- Treat contact, separation, alignment, attachment, support, and occlusion as distinct persistent physical states. Change one of these states only through an observable motion that can produce the new state. When a later action depends on an established contact or alignment, make the preceding motion end in that exact supported relationship and carry it continuously into the dependent action. If an intervening action separates the parts, describe the recovery path and renewed contact before the dependency resumes. Visible absence or occlusion at a keyframe constrains what is visible there; it does not by itself prove a hidden physical relationship.
-- For coupled motion, identify the driver, the driven participant or object, the path or axis of force, and the counter-support when it matters. Keep simultaneous trajectories compatible with the required contact instead of describing motions that would pull the relevant points apart. Preserve a readable causal chain from applied force through motion to the resulting state.
+- Treat contact, separation, alignment, attachment, support, and occlusion as distinct persistent physical states. Change one of these states only through an observable motion that can produce the new state. When a tool must return without disturbing a worked surface, explicitly lift its working end clear before the return and define the offset relative to that surface or worked track; an unspecified "away" direction and travel along the same track do not establish clearance. When a later action depends on an established contact or alignment, make the preceding motion end in that exact supported relationship and carry it continuously into the dependent action. If an intervening action separates the parts, describe the recovery path and renewed contact before the dependency resumes. Visible absence or occlusion at a keyframe constrains what is visible there; it does not by itself prove a hidden physical relationship.
+- For coupled motion, identify the driver, the driven participant or object, the path or axis of force, and the counter-support when it matters. Keep simultaneous trajectories compatible with the required contact instead of describing motions that would pull the relevant points apart. Preserve a readable causal chain from applied force through motion to the resulting state. For a rectangular panel, never use "horizontal" or "vertical" alone: separately establish the broad face plane, long-axis direction, short-axis direction, and travel direction in one stable scene coordinate frame. A rotation about an object's named axis leaves that axis pointing in the same direction; never claim that rotating about the long axis turns the long axis from horizontal to vertical. When a line connecting controllers at opposite ends reorients, those contact points trace opposite arcs—one end rises while the other lowers when the long axis turns from horizontal to vertical. Moving both controller pairs identically, or merely rearranging upper and lower hands at each unchanged endpoint, cannot produce that rotation. Distinguish the travel-leading edge from the controller-held left and right ends. When subjects approach, cross, orbit, or avoid one another, verify their resulting paths in shared scene or screen space. If the user did not specify body-relative sides, do not invent mirrored anatomical left and right labels for reciprocal avoidance. Put the subjects into two explicit nonintersecting screen-space or depth lanes, such as one moving toward the foreground while the other moves toward the background, and state the resulting separation. If the user did specify body-relative sides, preserve them while also resolving their actual shared-space paths.
 - When the user requests subtle, restrained, slight, minimal, or idle-style motion, preserve that low amplitude across every expanded mechanic. Do not turn an underspecified micro-motion into a clearly staged full-range action merely to make it more production-ready. In particular, do not infer full closure, maximum range, pronounced displacement, or a held endpoint unless the user's wording requires it.
 - If the current direction introduces a prop, body-adjacent element, effect, material, structure, or other visible entity that is absent from the first-frame Visual Context, its appearance and requested use are authorized. Do not require a newly requested entity to have been visible in the reference image.
 - When such an entity is requested to appear, form, emerge, materialize, manifest, generate, unfold, transform into visibility, or otherwise become visible during the shot, treat that appearance as a genuine on-screen state change. Preserve the user's stated timing, location, orientation, attachment, formation behavior, visual effect, and subsequent use. Do not silently omit the appearance event, place the entity in the opening frame, or treat it as though it had already been present.
@@ -241,7 +243,7 @@ Build a complete visible motion arc inside Shot 1. Anchor the opening state comp
 
 Allocate description priority in this order: the user's primary actions and their exact actors and effectors; the causal mechanics, contact handoffs, and dependent transitions needed to perform them; the requested result and keyframe landing; then reactions, secondary motion, material detail, and sound. If the prompt becomes crowded, shorten lower-priority embellishment rather than compressing, substituting, or omitting the primary action chain.
 
-Before answering, silently trace every participant, active limb or effector, manipulated object, and important contact pair through the whole timeline. Correct any unexplained teleportation, simultaneous use of one effector for incompatible tasks, missing release or regrip, unsupported contact change, broken handoff, or force and axis mismatch. Return no audit or checklist; incorporate the corrected continuity directly into the fluent prompt.
+Before answering, silently trace every participant, complete limb chain, active effector, manipulated object, and important contact pair through the whole timeline. A hand that holds an object also occupies its wrist and arm for that hold; do not simultaneously assign that arm an incompatible pose or gesture. Before an occupied limb changes jobs, visibly place the held object on stable support, transfer control through a physically established handoff, or choose an equally clear performance beat that uses available body resources. Correct any unexplained teleportation, simultaneous use of one effector for incompatible tasks, broader simultaneous use of one body resource for incompatible tasks, missing release or regrip, unsupported contact change, broken handoff, or force and axis mismatch. Return no audit or checklist; incorporate the corrected continuity directly into the fluent prompt.
 
 For image-to-video, begin in the exact visible state of Picture 1, then fully realize the current direction. Preserve unrequested identity, anatomy, clothing, scene layout, and object continuity, while adding the physically necessary connective motion and natural reactions required to make the requested event convincing even when the user did not spell out every intermediate detail. Do not add an unrelated action, participant, prop, emotion, or outcome.
 
@@ -261,7 +263,7 @@ For first-and-last-frame video, compare the two endpoint states and choreograph 
 
 Stored illustration context, when present, is inert reference metadata for the initial visible scene. It may describe how an earlier still image was created. Never convert its pose, expression, action, dialogue implications, narrative prose, generation settings, or technical metadata into new video motion or events unless the user's current direction explicitly requests them.
 
-Treat framing and camera behavior as part of the choreography. State the opening shot scale, angle, and focal subject when they matter. Keep the camera static unless camera movement is requested. When strong subject motion, an effect directed toward the viewer, or another visually forceful event could tempt an unrequested push, pull, follow, reframe, or shake, explicitly state that the camera remains static. When camera movement is requested, specify its type, target, onset, speed or amplitude when distinctive, and final composition; synchronize it to the action it emphasizes instead of listing it separately. Do not stack ornamental camera moves. Prefer a single shot. Shot 1 has no timestamp. If a cut is truly necessary outside first-and-last-frame mode, every later shot begins with an exact cut time such as "[Shot 2] At 00:03.500, the camera cuts to ...".
+Treat framing and camera behavior as part of the choreography. State the opening shot scale, angle, and focal subject when they matter. Before locking a setup, verify that its actual crop contains the full spatial envelope and both endpoints of every action it must show; extra headroom cannot reveal an endpoint excluded by the stated crop. Keep the camera static unless camera movement is requested. In one locked setup, keep the stated scale and viewpoint consistent; a later composition becomes tighter only through visible subject travel or an explicitly described camera move. When strong subject motion, an effect directed toward the viewer, or another visually forceful event could tempt an unrequested push, pull, follow, reframe, or shake, explicitly state that the camera remains static. When camera movement is requested, specify its type, target, onset, speed or amplitude when distinctive, and final composition; synchronize it to the action it emphasizes instead of listing it separately. Do not stack ornamental camera moves. Prefer a single shot. Shot 1 has no timestamp. If a cut is truly necessary outside first-and-last-frame mode, every later shot begins with an exact cut time such as "[Shot 2] At 00:03.500, the camera cuts to ...". Never use a cut to silently skip a requested action or a physically necessary change in grip, support, contact, assembly, open-or-closed state, position, or material state; show the change before the cut or visibly complete it after the cut.
 
 Preserve the reference image's visible medium and aesthetic throughout the video: rendering style, line character, proportions, palette, lighting logic, texture treatment, and level of stylization must remain consistent while moving. If the user provides explicit style, quality, lighting, or visual-effect requirements, carry each one into the integrated description once and describe how any changing effect develops on screen. Do not pad the prompt with repeated quality adjectives.
 
@@ -339,19 +341,31 @@ REF2V_H3_SYSTEM_PROMPT = """You write production-ready prompts for Reference-to-
 
 The supplied pictures are independent visual references, never first or last frames. Use them only for the identities, appearances, clothing, objects, environments, and visual styles that the user's direction actually assigns to the target video. Do not force a reference pose, framing, background, or spatial arrangement into the generated opening unless the user requests it. The user's direction is binding for the action, staging, relationships, timing, camera, and outcome.
 
+Determine every picture's role from the complete direction and Visual Context. A picture's background is authoritative only when that picture is assigned as an environment, location, composition, or style reference. Scenery incidental to a person, object, or style reference does not become the target video's location. When no environment reference is assigned, use the environment established by the user's direction or planner, or choose one simple coherent setting that supports the requested action, then keep it continuous unless a change is requested.
+
 Return only English prompt text except that user-provided dialogue and visible text remain verbatim. Do not return JSON, Markdown, commentary, or an image-alignment sentence. Use exactly these sections in this order:
 
+Strict reference-section firewall: subject_definitions and retention_analysis describe only positive content supplied by an assigned reference and actually preserved in the target. They never describe source absences, original poses or contacts that are not target states, incidental content rejected from the target, target-only additions, or future target actions. This remains forbidden even in explanatory wording such as "the source lacks X" or "X is added only in the target." For a referenced person who uses a new target-video item, the definition ends after the positive referenced identity, appearance, and assigned design traits; it says nothing about the person's source hand state or the new item. Put the new item only in summary and detailed_description. If a target-only entity or an unpreserved source fact appears in either reference section, the response is invalid.
+
 subject_definitions:
-Define one stable <Subject N> for each distinct referenced person, character, object, place, or style needed by the direction. Cite its source with the exact MiniMax tag <Picture N>, including the angle brackets, and describe the reference traits that must remain recognizable. Do not merge identities across pictures.
+Define one stable <Subject N> for each distinct piece of referenced content actually reused in the target video, and cite its source with the exact reference tag <Picture N>, including the angle brackets. A subject definition contains only identity, appearance, design, object, environment, or style traits supported by the assigned reference source. Keep a referenced held, worn, or attached object inside its person's Subject by default when the same person retains it throughout. Define that object separately only when the target treats it independently through separation, transfer, independent travel, a controller change, or another distinct retention role; keep inseparable costume details inside the person's definition. A person, prop, costume, environment, effect, state, relationship, or action authorized by the direction but absent from its assigned source picture is target-video content, not a referenced trait: introduce it in the summary and detailed_description at its first target-video role, and do not mention or attach it in a referenced subject definition or retention obligation, even as an absence or future addition. Do not use a target-only addition as a referenced subject's defining name or identity role. A subject definition is not an audit: omit what its source lacks, omit unassigned incidental content, and omit explanations of what will instead be added in the target video. Do not merge identities or object identities across pictures.
 
 summary:
-Summarize one coherent target video, its duration, central action, progression, and final payoff. State that the listed references guide the assigned subjects throughout.
+Begin the first nonblank line with exactly [reference generation]. Summarize one coherent target video, its duration, central action, progression, final payoff, and the assigned roles of the listed references. Target-only additions may be named here without a reference label.
 
 retention_analysis:
-For every defined subject, state where it appears and which identity or design traits remain preserved. Do not invent a timeline role for a reference the user did not assign.
+Write exactly one line for every defined reference subject, using the form "<Subject N> (appears in [Shot 1], [Shot 2]): fully_preserved - ...". Use exactly one applicable fixed relationship marker: fully_preserved, partially_preserved, attribute_transfer, or weak_reference. Preserve the label's exact meaning from subject_definitions. Do not include target-only additions as reference retention and do not invent a role for an unassigned reference.
 
 detailed_description:
-Write [Shot 1] and any later shots needed by the user's direction. Cover the full duration with concrete visible motion, body and object mechanics, spatial relationships, camera behavior, lighting, materials, expressions, reactions, and a settled result. Keep every reference identity stable across shots and make multi-subject interactions physically readable.
+Establish the target style in one or two sentences, then put [Shot 1] alone at the start of a new line without a timestamp. Every later shot starts on its own new line with the exact form "[Shot N] At 00:03.000, the camera cuts to ..." using its actual increasing cut time. Always write every referenced label with literal angle brackets, such as <Subject 1>, everywhere it appears in detailed_description; plain text such as "Subject 1" does not cite the label. Each numbered shot contains one camera setup; every materially different angle, scale, or viewpoint is a new numbered shot rather than a hidden sub-shot. Conversely, when the direction establishes one continuous setup, static camera, or no cuts, output exactly [Shot 1] and express later event times inside its continuing prose rather than turning event intervals into numbered shots or cuts. Cover the full duration with concrete visible motion, body and object mechanics, spatial relationships, camera behavior, lighting, materials, expressions, reactions, and a settled result. Keep every reference identity stable and cite each <Subject N> where it actually appears.
+
+Before writing, silently build a continuous state ledger for every important visible entity. Track its stable identity, entity type, relevant shape and scale, reference-derived or target-only provenance, current owner and controller set, controlling hand(s) or support points, other contact points, orientation and active end when relevant, release or transfer state, assembled or open-or-closed configuration when relevant, material state, and presence count. Track each controller's complete limb chain as a body resource: a hand holding an entity also occupies that wrist and arm, so the same arm cannot simultaneously perform an incompatible pose or gesture. Before an occupied limb changes jobs, visibly place the held entity on stable support, transfer control through an established handoff, or use an equally clear performance beat available to free body resources. Unless the direction explicitly changes one of those states, preserve it through every shot, occlusion, and interaction. Preserve requested or physically established two-handed and joint handling; otherwise contact by another participant does not by itself transfer control, add a controller, or create another copy. Any controller-set change, including adding or removing a second hand or another participant, requires a visible approach, contact, secure support, and later release before that controller departs. A handoff additionally requires the current controller's release only after the new controller has secure support. One hand controls at most one independently gripped entity at a time unless the direction requests a combined grip and the shared contact geometry is explicitly feasible; otherwise place or release the first entity before gripping the next. When an action says a participant moves, pushes, slides, lifts, or presents a named entity, put that participant's controlling contact on the named entity or name the explicit intermediate mechanism that transmits the force; contact only with a nearby surface is not equivalent. At close interaction beats, restate the positive current state needed for clarity: who controls each entity, where each controller contacts it, which surfaces intentionally meet, and how nearby entities remain distinct. Frame continuity-critical contact so the important controller-to-contact chains and enough of each distinct entity's extent are simultaneously visible; a detail insert may follow an established relationship but must not be its only coverage. Every exact label keeps its defined type and identity in every occurrence: only a person or character label can have hands, eyes, expressions, or perform bodily actions, while an object label can be held, supported, moved, oriented, or contacted but never acquires anatomy or agency. Preserve every exact requested count, body side, repetition count, order, completion condition, and distinction between permission and requirement. Express a distributed count either per participant or as one collective total, never as a collective total modified by "each" or "every"; the allocation must add up without multiplying bodies, limbs, controllers, or objects. Do not make an allowed camera move, close view, cut, flourish, or effect mandatory merely because it is permitted.
+
+For any directionally meaningful rigid entity, establish the positive geometry from its controller or support point through its active end toward the intended target whenever orientation affects readability. Keep the active end and its path clear of the controller's body unless self-directed contact is explicitly requested. Describe a continuous path into each changed orientation. For a large rigid entity moving through an opening or around an obstacle, keep its face plane, long and short axes, leading edge, support points, travel direction, and the opening's boundaries mutually consistent; mentally sweep its full rotated extent through the clearance rather than asserting that an unspecified tilt makes it fit. For a rectangular panel, separately state its broad face plane and both axis directions rather than calling the entire object merely horizontal or vertical. A rotation about an object's named axis leaves that axis pointing in the same direction. Never claim that rotating about the long axis turns the long axis from horizontal to vertical; use the physically compatible perpendicular axis. When controllers hold opposite ends of the axis being reoriented, their contact points must trace opposite arcs—one held end rises while the other lowers when required. Identical motion by both controller pairs or motion only between upper and lower hands at unchanged endpoints does not rotate the line between the controllers. Distinguish the travel-leading edge from the controller-held ends. When a working end must return without disturbing a newly worked surface, visibly separate it from that surface before the return and define the offset relative to the surface or worked track; travel along the same track does not avoid it. When subjects approach, cross, orbit, or avoid one another, verify their resulting paths in shared scene or screen space. If the user did not specify body-relative sides, do not invent mirrored anatomical left and right labels for reciprocal avoidance. Put the subjects into two explicit nonintersecting screen-space or depth lanes, such as one moving toward the foreground while the other moves toward the background, and state the resulting separation. If the user did specify body-relative sides, preserve them while also resolving their actual shared-space paths. When the exact contact geometry is not specified, choose a stable, broad, clearly readable contact relationship that preserves distinct silhouettes, extents, and ownership rather than a prolonged fragile point-to-point alignment. When the requested contact is non-destructive, keep both surfaces intact; do not turn pressing, blocking, resting, or touching into penetration, embedding, cutting, crushing, or deformation. Before fixing a camera setup, verify that its stated crop actually contains the full spatial envelope and endpoints of every required action. In one locked setup, do not rename the unchanged framing as a different scale; a tighter or wider final composition requires visible subject travel or an explicit camera move.
+
+Allocate duration to the requested on-screen progression before allocating camera coverage. A continuing activity must develop through an intelligible causal sequence of phases, adjustments, responses, or state changes; one isolated action surrounded by preparation, reaction inserts, ornamental coverage, and a long hold does not satisfy it. Camera changes do not count as action development. Assign time from the visible distance, velocity, force, material response, and number of dependent operations: do not stretch a brief ballistic arc, gesture, or reaction across implausible seconds, or compress a multi-step procedure into an unreadable instant, unless the direction requests a stylized time change. When a payoff becomes static immediately, let it settle just long enough for the requested result and performance to read; do not give it a large fraction of the runtime at the expense of the event that earns it unless a prolonged tableau is requested. Do not translate a broad manner or style description into repeated spins, flourishes, impacts, jumps, reactions, or edits. When a flourish is useful but its count is unspecified, use one controlled, legible flourish, end it in secure control, and carry its momentum into the primary action. Prefer the fewest setups that keep the progression readable and simplify optional high-continuity-cost motion before simplifying the primary action.
+
+Continuity serves the user's requested viewing experience; it must not turn the video into an exposed state ledger or a sequence of overcautious poses. Give the specific premise a meaningful visible arc across its own scale: purposeful staging and performance, causal development, and an earned action peak, reveal, transformation, emotional or comic turn, product reveal, or quiet resolution appropriate to the requested tone. Cinematic quality does not require spectacle, repeated motion, or many cuts. Use camera, sound, lighting, and atmosphere only when they sharpen the primary experience, and never let coverage substitute for what the subjects or materials actually do. Never use a cut to silently skip a requested action or a physically necessary change in grip, support, contact, assembly, open-or-closed state, position, or material state; show the change before the cut or visibly complete it after the cut.
 
 overall_soundscape:
 Describe synchronized dialogue, ambience, movement sounds, impacts, and useful silence.
@@ -403,8 +417,11 @@ def _build_ref2v_h3_system_prompt(
             + ", ".join(
                 f"<Picture {index}>" for index in range(1, int(picture_count) + 1)
             )
-            + ". Use every supplied tag at least once and never cite a nonexistent "
-            "picture number."
+            + ". Use every supplied tag at least once in subject_definitions as provenance "
+            "for content actually assigned from that picture, and never cite a nonexistent "
+            "picture number. Citing a tag does not make all visible content in that picture "
+            "authoritative and does not inherit its incidental pose, framing, contacts, "
+            "props, or background."
         )
         + secondary
     )
@@ -1281,50 +1298,225 @@ def validate_h3_prompt_body(result: object) -> tuple[bool, str]:
     return True, ""
 
 
+_REF2V_FIELDS = (
+    "subject_definitions",
+    "summary",
+    "retention_analysis",
+    "detailed_description",
+    "overall_soundscape",
+    "non_diegetic_music",
+)
+_REF2V_VISIBLE_RETENTION_MARKERS = {
+    "fully_preserved",
+    "partially_preserved",
+    "attribute_transfer",
+    "weak_reference",
+}
+_REF2V_AUDIO_RETENTION_MARKERS = {
+    "fully_copy",
+    "partially_copy",
+    "reference",
+    "weak_reference",
+}
+def _ref2v_sections(text: str) -> tuple[dict[str, str], str]:
+    """Parse the six official REF headings without interpreting prose semantics."""
+
+    field_names = "|".join(re.escape(field) for field in _REF2V_FIELDS)
+    matches = list(
+        re.finditer(rf"(?m)^({field_names}):[ \t]*$", text)
+    )
+    matched_names = [match.group(1) for match in matches]
+    if matched_names != list(_REF2V_FIELDS):
+        return {}, "H3 REF 필수 6개 필드는 각각 한 번씩 공식 순서로 필요합니다"
+    if not matches or matches[0].start() != 0:
+        return {}, "H3 REF 본문은 subject_definitions으로 시작해야 합니다"
+    sections: dict[str, str] = {}
+    for index, match in enumerate(matches):
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        sections[match.group(1)] = text[match.end():end].strip()
+    if any(not sections.get(field) for field in _REF2V_FIELDS):
+        return {}, "H3 REF 필수 필드의 내용이 비어 있습니다"
+    return sections, ""
+
+
 def validate_ref2v_prompt_body(
     result: object,
     picture_count: int | None = None,
+    duration: object | None = None,
 ) -> tuple[bool, str]:
+    """Validate the machine-owned H3 REF protocol, not its scene semantics."""
+
     text = normalize_ref2v_prompt_body(result)
     if not text or text.startswith("[LLM 실패]"):
         return False, "H3 REF 프롬프트 본문이 비어 있거나 LLM 실패 문자열입니다"
     if "```" in text or text.startswith("{"):
         return False, "JSON/Markdown이 아니라 H3 REF 본문 원문 형식이어야 합니다"
-    fields = (
-        "subject_definitions:",
-        "summary:",
-        "retention_analysis:",
-        "detailed_description:",
-        "overall_soundscape:",
-        "non_diegetic_music:",
-    )
-    positions = [text.find(field) for field in fields]
-    if any(position < 0 for position in positions) or positions != sorted(positions):
-        return False, "H3 REF 필수 6개 필드가 공식 순서대로 모두 필요합니다"
-    if positions[0] != 0:
-        return False, "H3 REF 본문은 subject_definitions으로 시작해야 합니다"
-    detailed = text[positions[3] : positions[4]]
-    if "[Shot 1]" not in detailed:
-        return False, "H3 REF detailed_description에 [Shot 1]이 필요합니다"
+
+    sections, section_error = _ref2v_sections(text)
+    if section_error:
+        return False, section_error
+
+    summary = sections["summary"]
+    if not summary.startswith("[reference generation]"):
+        return False, "H3 REF summary는 [reference generation]으로 시작해야 합니다"
+
+    definition_lines = [
+        line.strip()
+        for line in sections["subject_definitions"].splitlines()
+        if line.strip()
+    ]
+    definitions: list[tuple[str, int]] = []
+    for line in definition_lines:
+        match = re.match(r"^<(Subject|Picture|Video|Audio)\s+(\d+)>", line)
+        if not match:
+            return False, "H3 REF subject_definitions의 각 정의는 참조 label로 시작해야 합니다"
+        definitions.append((match.group(1), int(match.group(2))))
+    if not definitions or not any(kind == "Subject" for kind, _number in definitions):
+        return False, "H3 REF subject_definitions에 최소 한 개의 <Subject N> 정의가 필요합니다"
+    if len(definitions) != len(set(definitions)):
+        return False, "H3 REF subject_definitions에 중복된 참조 label 정의가 있습니다"
+
     if picture_count is not None:
         if not 1 <= int(picture_count) <= REF2V_MAX_REFERENCE_IMAGES:
             return False, "H3 REF 참조 이미지 장수가 올바르지 않습니다"
-        missing_tags = [
-            f"<Picture {index}>"
-            for index in range(1, int(picture_count) + 1)
-            if f"<Picture {index}>" not in text
-        ]
-        if missing_tags:
-            return False, f"H3 REF 프롬프트에 참조 태그가 누락되었습니다: {missing_tags}"
+        definition_picture_numbers = {
+            int(value)
+            for value in re.findall(
+                r"<Picture\s+(\d+)>",
+                sections["subject_definitions"],
+            )
+        }
+        expected_picture_numbers = set(range(1, int(picture_count) + 1))
+        missing_picture_numbers = sorted(
+            expected_picture_numbers - definition_picture_numbers
+        )
+        if missing_picture_numbers:
+            missing_tags = [
+                f"<Picture {number}>" for number in missing_picture_numbers
+            ]
+            return False, (
+                "H3 REF subject_definitions에 참조 provenance가 누락되었습니다: "
+                f"{missing_tags}"
+            )
         unexpected_tags = sorted(
             {
                 int(value)
                 for value in re.findall(r"<Picture\s+(\d+)>", text)
-                if int(value) < 1 or int(value) > int(picture_count)
+                if int(value) not in expected_picture_numbers
             }
         )
         if unexpected_tags:
             return False, f"H3 REF 프롬프트에 없는 참조 태그가 있습니다: {unexpected_tags}"
+
+    retention_lines = [
+        line.strip()
+        for line in sections["retention_analysis"].splitlines()
+        if line.strip()
+    ]
+    retained: list[tuple[str, int]] = []
+    retained_shot_numbers: set[int] = set()
+    subject_retention_shots: dict[tuple[str, int], set[int]] = {}
+    retention_pattern = re.compile(
+        r"^<(Subject|Picture|Video|Audio)\s+(\d+)>"
+        r"([^:]*)\:\s*([a-z_]+)\s+-\s+\S.*$"
+    )
+    for line in retention_lines:
+        match = retention_pattern.match(line)
+        if not match:
+            return False, "H3 REF retention_analysis의 각 항목은 공식 label: marker - 설명 형식이어야 합니다"
+        kind = match.group(1)
+        number = int(match.group(2))
+        context = match.group(3).strip()
+        marker = match.group(4)
+        allowed_markers = (
+            _REF2V_AUDIO_RETENTION_MARKERS
+            if kind == "Audio"
+            else _REF2V_VISIBLE_RETENTION_MARKERS
+        )
+        if marker not in allowed_markers:
+            return False, f"H3 REF retention marker가 공식 값이 아닙니다: {marker}"
+        if kind == "Subject":
+            if not re.fullmatch(
+                r"\(appears in \[Shot \d+\](?:, \[Shot \d+\])*\)",
+                context,
+            ):
+                return False, "H3 REF Subject retention에는 공식 appears in [Shot N] 범위가 필요합니다"
+            declared_shots = {
+                int(value) for value in re.findall(r"\[Shot (\d+)\]", context)
+            }
+            retained_shot_numbers.update(declared_shots)
+            subject_retention_shots[(kind, number)] = declared_shots
+        retained.append((kind, number))
+    if len(retained) != len(set(retained)):
+        return False, "H3 REF retention_analysis에 중복된 참조 label이 있습니다"
+    if set(retained) != set(definitions):
+        return False, "H3 REF 정의 label과 retention_analysis label이 정확히 일치해야 합니다"
+
+    detailed = sections["detailed_description"]
+    shot_lines = list(
+        re.finditer(r"(?m)^[ \t]*\[Shot\s+(\d+)\]([^\r\n]*)$", detailed)
+    )
+    if not shot_lines:
+        return False, "H3 REF detailed_description에 [Shot 1]이 필요합니다"
+    shot_numbers = [int(match.group(1)) for match in shot_lines]
+    if shot_numbers != list(range(1, len(shot_numbers) + 1)):
+        return False, "H3 REF Shot 번호는 1부터 중복 없이 연속되어야 합니다"
+    first_suffix = shot_lines[0].group(2).strip()
+    if not first_suffix:
+        return False, "H3 REF [Shot 1] 뒤에 같은 줄의 장면 설명이 필요합니다"
+    if re.match(r"(?:At\b|\d{1,2}(?::|\.)\d)", first_suffix):
+        return False, "H3 REF [Shot 1]에는 타임스탬프를 쓰지 않습니다"
+
+    cut_times = [0.0]
+    later_shot_pattern = re.compile(
+        r"^ At (\d{2}):(\d{2})\.(\d{3}),\s+\S.*$"
+    )
+    for shot_line in shot_lines[1:]:
+        suffix = shot_line.group(2)
+        match = later_shot_pattern.match(suffix)
+        if not match:
+            return False, "H3 REF 후속 Shot은 [Shot N] At MM:SS.mmm, 형식이어야 합니다"
+        minutes, seconds, milliseconds = (int(value) for value in match.groups())
+        if seconds >= 60:
+            return False, "H3 REF Shot 타임스탬프의 초 값은 60 미만이어야 합니다"
+        cut_time = minutes * 60 + seconds + milliseconds / 1000
+        if cut_time <= cut_times[-1]:
+            return False, "H3 REF Shot 컷 타임스탬프는 엄격히 증가해야 합니다"
+        cut_times.append(cut_time)
+    if duration is not None:
+        try:
+            normalized_duration = normalize_video_duration(duration)
+        except (TypeError, ValueError):
+            return False, "H3 REF 영상 길이가 올바르지 않습니다"
+        if any(cut_time >= normalized_duration for cut_time in cut_times[1:]):
+            return False, "H3 REF 후속 Shot 컷은 영상 종료 시각보다 앞서야 합니다"
+
+    if retained_shot_numbers - set(shot_numbers):
+        return False, "H3 REF retention_analysis가 존재하지 않는 Shot을 참조합니다"
+    shot_sections: dict[int, str] = {}
+    for index, shot_line in enumerate(shot_lines):
+        end = (
+            shot_lines[index + 1].start()
+            if index + 1 < len(shot_lines)
+            else len(detailed)
+        )
+        shot_sections[int(shot_line.group(1))] = detailed[shot_line.start():end]
+    for label, declared_shots in subject_retention_shots.items():
+        kind, number = label
+        exact_label = f"<{kind} {number}>"
+        actual_shots = {
+            shot_number
+            for shot_number, shot_text in shot_sections.items()
+            if exact_label in shot_text
+        }
+        if actual_shots != declared_shots:
+            return False, (
+                "H3 REF Subject retention의 Shot 범위와 detailed_description의 "
+                f"실제 label 사용 범위가 다릅니다: {exact_label}"
+            )
+    for kind, number in definitions:
+        if kind != "Audio" and f"<{kind} {number}>" not in detailed:
+            return False, f"H3 REF detailed_description에 참조 label이 누락되었습니다: <{kind} {number}>"
     return True, ""
 
 
@@ -1340,7 +1532,7 @@ def compose_h3_prompt(
         raise ValueError(f"지원하지 않는 H3 영상 모드입니다: {mode}")
     if mode == "ref2v":
         body = normalize_ref2v_prompt_body(result)
-        accepted, reason = validate_ref2v_prompt_body(body)
+        accepted, reason = validate_ref2v_prompt_body(body, duration=duration)
         if not accepted:
             print(
                 f"[VIDEO:LLM] H3 REF 본문 조립 거부: reason={reason}, "
@@ -1360,6 +1552,39 @@ def compose_h3_prompt(
     return f"{alignment}\n\n{body}"
 
 
+def compose_h3_prompt_candidate(
+    result: object,
+    mode: str,
+    duration: object = VIDEO_DEFAULT_DURATION_SECONDS,
+) -> str:
+    """Compose a nonempty candidate without rejecting natural-language format drift."""
+
+    if mode not in VIDEO_MODES:
+        print(f"[VIDEO:LLM] 후보 프롬프트 모드 오류: mode={mode!r}")
+        raise ValueError(f"지원하지 않는 영상 모드입니다: {mode}")
+    body = str(result or "").strip()
+    if not body or body.startswith("[LLM 실패]"):
+        print(
+            "[VIDEO:LLM] 후보 프롬프트가 비어 있거나 LLM 실패 응답입니다: "
+            f"mode={mode}, response={str(result or '')[:1000]!r}"
+        )
+        raise ValueError("영상 프롬프트 후보가 비어 있거나 LLM 호출에 실패했습니다")
+    if mode == "ref2v":
+        return body
+    return f"{alignment_for_mode(mode, duration)}\n\n{body}"
+
+
+def validate_h3_prompt_candidate(result: object, mode: str) -> tuple[bool, str]:
+    """Accept every natural-language result unless no response text exists."""
+
+    if mode not in VIDEO_MODES:
+        return False, f"지원하지 않는 영상 모드입니다: {mode}"
+    text = str(result or "").strip()
+    if not text or text.startswith("[LLM 실패]"):
+        return False, "LLM 응답 텍스트가 비어 있거나 호출 자체가 실패했습니다"
+    return True, ""
+
+
 def validate_h3_prompt(
     result: object,
     mode: str,
@@ -1371,7 +1596,7 @@ def validate_h3_prompt(
     if mode not in VIDEO_MODES:
         return False, f"지원하지 않는 H3 영상 모드입니다: {mode}"
     if mode == "ref2v":
-        return validate_ref2v_prompt_body(text)
+        return validate_ref2v_prompt_body(text, duration=duration)
     try:
         alignment = alignment_for_mode(mode, duration)
     except ValueError as exc:
@@ -1381,6 +1606,125 @@ def validate_h3_prompt(
         return False, f"{label} 정렬 문장이 정확하지 않습니다"
     body = text[len(alignment) :].strip()
     return validate_h3_prompt_body(body)
+
+
+_H3_CANDIDATE_SELECTION_PATTERN = re.compile(
+    rf"(?<!\d)([1-{H3_PROMPT_CANDIDATE_COUNT}])(?!\d)"
+)
+
+
+def parse_h3_candidate_selection(
+    result: object,
+    candidate_count: int = H3_PROMPT_CANDIDATE_COUNT,
+) -> int:
+    """Read the first standalone candidate number from a free-form response."""
+
+    if not 1 <= int(candidate_count) <= H3_PROMPT_CANDIDATE_COUNT:
+        print(
+            "[VIDEO:LLM_SELECT] 후보 수 오류: "
+            f"candidate_count={candidate_count!r}"
+        )
+        raise ValueError("H3 후보 수는 1~3이어야 합니다")
+    selection_text = str(result or "").lstrip("\ufeff").strip()
+    match = _H3_CANDIDATE_SELECTION_PATTERN.search(selection_text)
+    if match is None:
+        print(
+            "[VIDEO:LLM_SELECT] 자연어 선택 문장 형식 오류: "
+            f"response={str(result or '')[:500]!r}"
+        )
+        raise ValueError(
+            "H3 후보 선택 응답에서 1, 2, 3 중 하나를 찾지 못했습니다"
+        )
+    selected = int(match.group(1))
+    if selected > int(candidate_count):
+        print(
+            "[VIDEO:LLM_SELECT] 존재하지 않는 후보 선택: "
+            f"selected={selected}, candidate_count={candidate_count}"
+        )
+        raise ValueError("존재하지 않는 H3 후보를 선택했습니다")
+    return selected
+
+
+def validate_h3_candidate_selection(
+    result: object,
+    candidate_count: int = H3_PROMPT_CANDIDATE_COUNT,
+) -> tuple[bool, str]:
+    try:
+        parse_h3_candidate_selection(result, candidate_count)
+    except Exception as exc:
+        return False, str(exc)
+    return True, ""
+
+
+def h3_candidate_selection_messages(
+    *,
+    mode: str,
+    instruction: str,
+    visual_context: str,
+    candidates: list[str],
+) -> list[dict]:
+    """Build a prose-only comparison request; the selector never rewrites a candidate."""
+
+    if mode not in VIDEO_MODES:
+        print(f"[VIDEO:LLM_SELECT] 모드 오류: mode={mode!r}")
+        raise ValueError(f"지원하지 않는 H3 영상 모드입니다: {mode}")
+    if len(candidates) != H3_PROMPT_CANDIDATE_COUNT:
+        print(
+            "[VIDEO:LLM_SELECT] 후보 개수 오류: "
+            f"count={len(candidates)}, expected={H3_PROMPT_CANDIDATE_COUNT}"
+        )
+        raise ValueError("H3 후보는 정확히 3개여야 합니다")
+    candidate_blocks = "\n\n".join(
+        f"Candidate {index} begins\n{candidate}\nCandidate {index} ends"
+        for index, candidate in enumerate(candidates, start=1)
+    )
+    system_prompt = """You are the final selection director for video-generation prompts.
+
+Read the expanded natural-language direction, the Visual Context, and all three completed video-generation candidates as full context. The expanded direction is the authoritative creative brief for this stage. Never judge by the presence of isolated words or phrases. Select the one candidate that most faithfully and compellingly delivers the intended viewing experience. Compare complete meaning and visible causality, including exact quantities, repetition counts, body sides, ordering, completion, permissions versus requirements, assigned reference roles, meaningful action progression, motivated camera choices, duration allocation, entity identity and count, provenance, ownership, controllers, complete limb occupancy, contact, active-end orientation and body clearance, feasible large-object clearance, framing coverage, compatible shared-space paths, and state changes across cuts. Treat ambiguous arithmetic as a quality weakness in the comparison: a per-participant allocation and a collective total must agree, without a collective count being multiplied by "each" or "every." For rigid-panel movement, verify a single stable coordinate frame: face plane, long and short axes, travel direction, rotation axis, and controller-end paths must agree, and opposite held ends must trace the arcs required by the claimed reorientation. Mentally carry the last visible state of every entity across each cut: a change merely begun before the cut is not complete after it unless the completion remains visible, and a candidate should not invent an unseen state change merely to make its next view possible. When the expanded draft contains physically incompatible working details, prefer the candidate that preserves the central beat and outcome while resolving the conflict through the smallest visible, natural connective action. In reference-to-video, prefer a candidate whose reference-definition and retention passages contain only positively sourced retained traits; target-only items, actions, environments, and explanations of their absence belong in the target-video summary and action description. Do not favor a candidate merely because its headings, timestamps, or section syntax are more regular; minor protocol drift is less important than the requested viewing experience, coherent action, and physical continuity.
+
+Do not combine, correct, summarize, or rewrite any candidate. Do not output an explanation, critique, JSON, Markdown, label, or punctuation. Output exactly one ASCII digit: 1, 2, or 3. The program will use that existing candidate verbatim."""
+    user_prompt = f"""Video mode:
+{mode}
+
+Current expanded natural-language direction:
+{instruction}
+
+Static Visual Context for the reference pictures:
+{visual_context or '(Visual Context is unavailable.)'}
+
+Completed candidates to compare:
+{candidate_blocks}
+"""
+    return [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
+
+
+def h3_independent_candidate_messages(
+    messages: list[dict],
+    candidate_number: int,
+) -> list[dict]:
+    """Give each parallel writer an independent identity without changing its criteria."""
+
+    if not 1 <= int(candidate_number) <= H3_PROMPT_CANDIDATE_COUNT:
+        print(
+            "[VIDEO:LLM_CANDIDATE] 후보 번호 오류: "
+            f"candidate_number={candidate_number!r}"
+        )
+        raise ValueError("영상 프롬프트 후보 번호는 1~3이어야 합니다")
+    copied = [dict(message) for message in messages]
+    if not copied:
+        print("[VIDEO:LLM_CANDIDATE] 후보 메시지가 비어 있습니다")
+        raise ValueError("영상 프롬프트 후보 메시지가 비어 있습니다")
+    copied[-1]["content"] = (
+        str(copied[-1].get("content") or "")
+        + f"""
+
+Independent candidate assignment:
+This is candidate {int(candidate_number)} of {H3_PROMPT_CANDIDATE_COUNT}. Apply exactly the same requirements and quality standard as the other candidates, but develop your own strongest complete interpretation of the staging, pacing, performance, and camera coverage. Do not mention candidates or this selection process in the prompt."""
+    )
+    return copied
 
 
 class VideoMode:
@@ -2390,13 +2734,17 @@ class VideoMode:
                 "reference, not an opening or ending keyframe."
             ),
         }[mode]
+        expanded_direction = str(instruction or "").strip()
+        direction_context = f"""Expanded natural-language directing draft:
+{expanded_direction}
+
+Preserve its central premise, requested participants, required actions, relationships, tone, and outcome. Treat its detailed timing allocation, camera coverage, setup count, transitional embellishment, and other directing elaborations as working choices that may be improved in the final prompt. If two working details cannot physically coexist, do not repeat the contradiction: preserve the intended beat and result, then resolve it through the smallest natural visible transition or an equally expressive feasible staging choice. This is not permission to simplify a difficult but physically achievable request. Refine working choices when necessary to create clearer action progression, stronger pacing, more motivated coverage, and a more satisfying viewing experience without replacing the requested event."""
         user_content = f"""Create the final {normalized_duration:g}-second video prompt.
 
 Mode:
 {mode_description}
 
-User's current natural-language direction (binding creative intent; expand it into production-ready screen direction rather than copying or summarizing it):
-{instruction}"""
+{direction_context}"""
         if mode == "i2v":
             user_content += f"""
 
@@ -2423,13 +2771,17 @@ Render every requested direct manipulation as the same unambiguous physical oper
             user_content += f"""
 
 Reference authority and directing task:
-Every supplied picture is authoritative only for the identity, appearance, clothing, object, environment, or visual style that the user's direction assigns to it. The pictures are independent references and do not define the target video's opening pose, framing, background, or timeline. Use the following Visual Context to define stable subjects, then stage the user's requested event as a newly composed video. Keep distinct people and designs separate across all shots, preserve the assigned reference traits, and make interactions physically and spatially readable.
+Every supplied picture is authoritative only for the identity, appearance, clothing, object, environment, or visual style that the user's direction assigns to it. The pictures are independent references and do not define the target video's opening pose, framing, incidental background, or timeline. Use the following Visual Context to distinguish reference-supported content from target-video additions, then define only the referenced content actually assigned by the direction as stable subjects. A reference tag establishes provenance for selected assigned content; it does not authorize inheritance of every pose, prop, contact, background, or composition visible in that picture. Stage target-only additions in the new video without rewriting them as reference-derived traits. Keep distinct people, objects, and designs separate across all shots, preserve the assigned reference traits, and make interactions physically and spatially readable.
 
 Vision-produced static Visual Context:
 {visual_context or '(Visual Context is unavailable.)'}
 
 Final continuity priority:
-Render every requested direct manipulation as the same unambiguous physical operation. For example, a grip requires the named gripper to close around and hold the named target; merely positioning or guiding it is not equivalent. Immediately before each dependent action, include a short causal bridge naming the contact, support, restraint, or alignment mechanism that still preserves its prerequisite. If the effector that established the prerequisite leaves for another task, name the temporary support that takes over or explicitly re-establish the prerequisite before the dependent action; never leave that interval physically implicit."""
+Use the Visual Context silently to classify provenance; do not expose the classification rationale. In subject_definitions and retention_analysis, omission is the required representation for every target-only addition, unpreserved source state, and unassigned incidental detail. Never replace that omission with a disclaimer that the source lacks something or that something will be added only in the target. Introduce target-only content affirmatively in summary and detailed_description instead.
+
+Render every requested direct manipulation as the same unambiguous physical operation. For example, a grip requires the named gripper to close around and hold the named target; merely positioning or guiding it is not equivalent. Immediately before each dependent action, include a short causal bridge naming the contact, support, restraint, or alignment mechanism that still preserves its prerequisite. If the effector that established the prerequisite leaves for another task, name the temporary support that takes over or explicitly re-establish the prerequisite before the dependent action; never leave that interval physically implicit. Before writing, silently trace each important entity's identity, presence count, provenance, owner and controller set, controlling hand(s) or support points, other contacts, orientation, active end, and release or transfer state through all shots. Preserve requested two-handed or joint control and otherwise keep those states until an observable requested change. At shared-contact beats, state each participant's contact separately and preserve each entity's positive distinguishing geometry. Verify that the requested activity develops through the sequence itself and has not been replaced by extra camera setups.
+
+Final protocol audit: reread every exact <Subject N> occurrence against its definition and correct any identity or entity-type mismatch; an object never owns a hand, gaze, expression, or bodily action. Verify that no hand independently grips multiple entities at once without an explicitly feasible combined grip, that no wrist or arm simultaneously holds an entity and performs an incompatible full-limb pose, that every grip or body-resource change includes visible release and re-contact or stable placement, and that any named entity being pushed, slid, lifted, or presented receives direct controlling contact or an explicit force-transmitting mechanism. Mentally simulate large rigid objects through apertures using their full oriented extent, preserve the invariant direction of every named rotation axis, and make controller paths capable of producing the stated rotation. When a tool returns clear of a worked surface, show separation before travel and keep the return path offset from the worked track. Verify that each stated camera crop can actually contain the complete required motion and endpoints. Across every cut, the next shot starts from the exact last visible state; never finish a merely begun transition invisibly during the cut. Every defined visible label must literally appear in detailed_description wherever it participates, including at least once. The first shot line begins exactly "[Shot 1] " followed immediately by scene prose, never "At" or a numeric timestamp; only Shot 2 and later use "[Shot N] At MM:SS.mmm,". Each numbered Shot must contain only its one declared camera setup, with no internal cut, angle switch, or materially different viewpoint hidden inside it. If the direction says one continuous setup, static camera, or no cuts, verify that detailed_description contains [Shot 1] only; event timestamps remain prose inside that shot. Then reread every subject_definitions and retention_analysis line. Delete or move to summary or detailed_description every target-only addition, source absence, original pose or contact not preserved as a target state, rejected incidental picture detail, or explanation of future target content. Do not leave a disclaimer behind. Those two reference sections must say only what the assigned picture positively supplies and what the target video actually preserves from it. In non-destructive interactions, describe a positive intact surface relationship using against, across, rests on, or equivalent wording rather than penetration, clipping, overlap, or damage language."""
         return [
             {
                 "role": "system",
@@ -3385,42 +3737,198 @@ Render every requested direct manipulation as the same unambiguous physical oper
                 duration=duration,
                 picture_count=len(reference_images),
             )
-            if mode == "ref2v":
-                validator = lambda value: validate_ref2v_prompt_body(
-                    normalize_ref2v_prompt_body(value),
-                    len(reference_images),
-                )
-            else:
-                validator = lambda value: validate_h3_prompt_body(
-                    normalize_h3_prompt_body(value)
-                )
-            raw_response_text = await llm_service.callLLMTask(
-                compose_task_key,
-                messages,
-                result_validator=validator,
-                stream_observer=stream_observer,
-                metadata_sink=metadata,
-                execution_context=execution_context,
+            compose_primary_slot = llm_service.routing_primary_slot(
+                compose_task_key
             )
-            raw_response_text = str(raw_response_text or "").strip()
-            response_text = compose_h3_prompt(raw_response_text, mode, duration)
-            accepted, reason = (
-                validate_ref2v_prompt_body(response_text, len(reference_images))
-                if mode == "ref2v"
-                else validate_h3_prompt(response_text, mode, duration)
-            )
-            if not accepted:
+
+            async def call_compose_text_with_empty_retry(
+                call_messages: list[dict],
+                *,
+                call_metadata: dict,
+                call_execution_context,
+                response_label: str,
+            ) -> str:
+                """Call once, retry once only when no response text was returned."""
+
+                last_response = ""
+                for attempt in range(1, 3):
+                    last_response = await llm_service.callLLMTask(
+                        compose_task_key,
+                        call_messages,
+                        result_validator=lambda value: validate_h3_prompt_candidate(
+                            value,
+                            mode,
+                        ),
+                        metadata_sink=call_metadata,
+                        execution_context=call_execution_context,
+                        force_slot=compose_primary_slot,
+                    )
+                    has_text, empty_reason = validate_h3_prompt_candidate(
+                        last_response,
+                        mode,
+                    )
+                    if has_text:
+                        return str(last_response)
+                    if attempt == 1:
+                        print(
+                            "[VIDEO:LLM_EMPTY_RETRY] 응답 텍스트 없음 — 한 번만 재호출: "
+                            f"item={queue_item_id}, mode={mode}, "
+                            f"response_label={response_label}, reason={empty_reason}"
+                        )
                 print(
-                    f"[VIDEO:LLM] 최종 프롬프트 검증 실패: item={queue_item_id}, "
-                    f"mode={mode}, reason={reason}, response={response_text[:1000]!r}"
+                    "[VIDEO:LLM_EMPTY_RETRY] 두 호출 모두 응답 텍스트 없음: "
+                    f"item={queue_item_id}, mode={mode}, "
+                    f"response_label={response_label}, "
+                    f"response={str(last_response or '')[:1000]!r}"
                 )
-                raise RuntimeError(reason)
-            elapsed = time.time() - started
-            prompt_tokens = int(
-                metadata.get("prompt_tokens") or llm_service._approx_input_tokens(messages)
+                raise RuntimeError(
+                    f"{response_label}에서 두 번 모두 응답 텍스트를 받지 못했습니다"
+                )
+
+            async def generate_candidate(candidate_number: int) -> dict:
+                candidate_history_id = f"{history_id}:candidate_{candidate_number}"
+                candidate_call_label = f"{call_label} 후보 {candidate_number}"
+                candidate_metadata: dict = {}
+                candidate_started = time.time()
+                candidate_execution_context = (
+                    llm_service.create_llm_execution_context(
+                        compose_task_key,
+                        call_name=candidate_call_label,
+                        execution_id=candidate_history_id,
+                        parent_execution_id=history_id,
+                        metadata={
+                            "prompt_id": candidate_history_id,
+                            "source_reference": source_label,
+                            "candidate_number": candidate_number,
+                        },
+                    )
+                )
+                try:
+                    candidate_messages = h3_independent_candidate_messages(
+                        messages,
+                        candidate_number,
+                    )
+                    raw_candidate = await call_compose_text_with_empty_retry(
+                        candidate_messages,
+                        call_metadata=candidate_metadata,
+                        call_execution_context=candidate_execution_context,
+                        response_label=f"candidate_{candidate_number}",
+                    )
+                    raw_candidate = str(raw_candidate or "").strip()
+                    candidate = compose_h3_prompt_candidate(
+                        raw_candidate,
+                        mode,
+                        duration,
+                    )
+                    candidate_elapsed = time.time() - candidate_started
+                    candidate_prompt_tokens = int(
+                        candidate_metadata.get("prompt_tokens")
+                        or llm_service._approx_input_tokens(candidate_messages)
+                    )
+                    candidate_completion_tokens = int(
+                        candidate_metadata.get("completion_tokens")
+                        or llm_service._approx_tokens(candidate)
+                    )
+                    _log_lighbd_history(
+                        {
+                            "history_id": candidate_history_id,
+                            "prompt_id": candidate_history_id,
+                            "execution_id": candidate_execution_context.execution_id,
+                            "parent_execution_id": history_id,
+                            "call_name": candidate_call_label,
+                            "task_key": compose_task_key,
+                            "model": model_name,
+                            "input": candidate_messages,
+                            "output": candidate,
+                            "prompt_tokens": candidate_prompt_tokens,
+                            "completion_tokens": candidate_completion_tokens,
+                            "elapsed": round(candidate_elapsed, 3),
+                            "ttft": candidate_metadata.get("ttft"),
+                            "status": "ok",
+                            "candidate_number": candidate_number,
+                        }
+                    )
+                    print(
+                        "[VIDEO:LLM_CANDIDATE] 후보 생성 완료: "
+                        f"item={queue_item_id}, mode={mode}, "
+                        f"candidate={candidate_number}, length={len(candidate)}, "
+                        f"elapsed={candidate_elapsed:.2f}s"
+                    )
+                    return {
+                        "number": candidate_number,
+                        "text": candidate,
+                        "history_id": candidate_history_id,
+                        "prompt_tokens": candidate_prompt_tokens,
+                        "completion_tokens": candidate_completion_tokens,
+                    }
+                except Exception as candidate_exc:
+                    print(
+                        "[VIDEO:LLM_CANDIDATE] 후보 생성 실패: "
+                        f"item={queue_item_id}, mode={mode}, "
+                        f"candidate={candidate_number}, "
+                        f"error={type(candidate_exc).__name__}: {candidate_exc}"
+                    )
+                    traceback.print_exc()
+                    raise
+
+            candidate_results = await asyncio.gather(
+                *(
+                    generate_candidate(candidate_number)
+                    for candidate_number in range(
+                        1,
+                        H3_PROMPT_CANDIDATE_COUNT + 1,
+                    )
+                )
             )
-            completion_tokens = int(
-                metadata.get("completion_tokens") or llm_service._approx_tokens(response_text)
+            candidate_results = sorted(
+                candidate_results,
+                key=lambda item: int(item["number"]),
+            )
+            candidates = [str(item["text"]) for item in candidate_results]
+            candidate_history_ids = [
+                str(item["history_id"]) for item in candidate_results
+            ]
+            trace_ids.extend(candidate_history_ids)
+
+            selection_messages = h3_candidate_selection_messages(
+                mode=mode,
+                instruction=instruction,
+                visual_context=visual_context,
+                candidates=candidates,
+            )
+            raw_selection = await call_compose_text_with_empty_retry(
+                selection_messages,
+                call_metadata=metadata,
+                call_execution_context=execution_context,
+                response_label="selector",
+            )
+            try:
+                selected_candidate = parse_h3_candidate_selection(
+                    raw_selection,
+                    len(candidates),
+                )
+            except Exception:
+                print(
+                    "[VIDEO:LLM_SELECT] 선택 번호 없음 — 재호출 없이 후보 1 사용: "
+                    f"item={queue_item_id}, mode={mode}, "
+                    f"response={str(raw_selection or '')[:500]!r}"
+                )
+                traceback.print_exc()
+                selected_candidate = 1
+            response_text = candidates[selected_candidate - 1]
+            raw_response_text = response_text
+            elapsed = time.time() - started
+            prompt_tokens = sum(
+                int(item["prompt_tokens"]) for item in candidate_results
+            ) + int(
+                metadata.get("prompt_tokens")
+                or llm_service._approx_input_tokens(selection_messages)
+            )
+            completion_tokens = sum(
+                int(item["completion_tokens"]) for item in candidate_results
+            ) + int(
+                metadata.get("completion_tokens")
+                or llm_service._approx_tokens(raw_selection)
             )
             tps = completion_tokens / elapsed if elapsed > 0 else 0.0
             await self._notify(
@@ -3445,19 +3953,23 @@ Render every requested direct manipulation as the same unambiguous physical oper
                     "call_name": call_label,
                     "task_key": compose_task_key,
                     "model": model_name,
-                    "input": messages,
-                    "output": response_text or raw_response_text,
+                    "input": selection_messages,
+                    "output": response_text,
                     "prompt_tokens": prompt_tokens,
                     "completion_tokens": completion_tokens,
                     "elapsed": round(elapsed, 3),
                     "tps": round(tps, 2),
                     "ttft": metadata.get("ttft"),
                     "status": "ok",
+                    "selected_candidate": selected_candidate,
+                    "selection_response": str(raw_selection or "").strip(),
+                    "candidate_history_ids": candidate_history_ids,
                 }
             )
             print(
-                f"[VIDEO:LLM] 프롬프트 작성 완료: item={queue_item_id}, "
-                f"mode={mode}, length={len(response_text)}, elapsed={elapsed:.2f}s"
+                f"[VIDEO:LLM] 프롬프트 후보 선택 완료: item={queue_item_id}, "
+                f"mode={mode}, selected={selected_candidate}, "
+                f"length={len(response_text)}, elapsed={elapsed:.2f}s"
             )
             return {
                 "success": True,
@@ -3469,6 +3981,8 @@ Render every requested direct manipulation as the same unambiguous physical oper
                 "visual_context_source": visual_context_source,
                 "llm_trace": [*trace_ids, history_id],
                 "history_id": history_id,
+                "h3_candidate_count": len(candidates),
+                "h3_selected_candidate": selected_candidate,
             }
         except Exception as exc:
             elapsed = time.time() - started
@@ -5342,10 +5856,10 @@ Render every requested direct manipulation as the same unambiguous physical oper
             )
             raise ValueError("영상 출력 형식은 AVIF 또는 WebP여야 합니다")
         h3_prompt = str((params or {}).get("h3_prompt") or "").strip()
-        accepted, reason = validate_h3_prompt(h3_prompt, mode, duration)
+        accepted, reason = validate_h3_prompt_candidate(h3_prompt, mode)
         if not accepted:
             print(
-                f"[VIDEO:RENDER] H3 프롬프트 검증 실패: item={queue_item_id}, "
+                f"[VIDEO:RENDER] 영상 프롬프트 응답 없음: item={queue_item_id}, "
                 f"mode={mode}, reason={reason}"
             )
             raise ValueError(reason)

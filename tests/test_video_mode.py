@@ -193,14 +193,119 @@ def _valid_body(prefix: str = "") -> str:
 def _valid_ref_body() -> str:
     return (
         "subject_definitions:\n"
-        "<Picture 1> defines the hero. <Picture 2> defines the companion.\n\n"
-        "summary:\nThe two subjects cross a quiet room together.\n\n"
-        "retention_analysis:\nRetain both subjects' visible identity and clothing.\n\n"
+        "<Subject 1> is the hero sourced from <Picture 1>, preserving her visible identity and clothing.\n"
+        "<Subject 2> is the companion sourced from <Picture 2>, preserving his visible identity and clothing.\n\n"
+        "summary:\n[reference generation] The two subjects cross a quiet room together.\n\n"
+        "retention_analysis:\n"
+        "<Subject 1> (appears in [Shot 1]): fully_preserved - Preserve her identity and clothing.\n"
+        "<Subject 2> (appears in [Shot 1]): fully_preserved - Preserve his identity and clothing.\n\n"
         "detailed_description:\n"
-        "[Shot 1] The hero and companion walk forward in one continuous shot.\n\n"
+        "Natural cinematic realism with stable proportions and soft indoor light.\n"
+        "[Shot 1] <Subject 1> and <Subject 2> walk forward in one continuous shot.\n\n"
         "overall_soundscape:\nSoft footsteps and room ambience.\n\n"
         "non_diegetic_music:\nNo music."
     )
+
+
+def test_h3_candidate_selection_uses_one_ascii_digit() -> None:
+    assert video_module.parse_h3_candidate_selection("2") == 2
+    assert video_module.parse_h3_candidate_selection("Candidate 3 is strongest.") == 3
+    assert video_module.parse_h3_candidate_selection("I choose 1.") == 1
+    assert video_module.validate_h3_candidate_selection(
+        "1"
+    ) == (True, "")
+
+
+def test_h3_candidate_validator_accepts_any_nonempty_natural_language() -> None:
+    free_form = (
+        "A complete video idea written as ordinary prose without protocol headings, "
+        "shot markers, timestamps, or machine-readable fields."
+    )
+
+    assert video_module.validate_h3_prompt_candidate(
+        free_form,
+        "ref2v",
+    ) == (True, "")
+    assert video_module.validate_h3_prompt_candidate("", "ref2v")[0] is False
+    assert video_module.validate_h3_prompt_candidate(
+        "[LLM 실패] upstream call returned no text",
+        "ref2v",
+    )[0] is False
+
+
+def test_candidate_composition_preserves_nonempty_writer_text_verbatim() -> None:
+    free_form = (
+        "A useful introductory sentence that does not follow the requested protocol.\n\n"
+        "subject_definitions:\nA free-form continuation."
+    )
+
+    assert video_module.compose_h3_prompt_candidate(
+        free_form,
+        "ref2v",
+    ) == free_form
+    assert video_module.compose_h3_prompt_candidate(
+        free_form,
+        "i2v",
+    ) == f"{I2V_ALIGNMENT}\n\n{free_form}"
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "0",
+        "4",
+        "No candidate was selected.",
+        "Candidate 12",
+    ],
+)
+def test_h3_candidate_selection_rejects_non_protocol_text(value: str) -> None:
+    accepted, reason = video_module.validate_h3_candidate_selection(value)
+
+    assert accepted is False
+    assert reason
+
+
+def test_h3_candidate_selector_receives_prose_and_never_requests_rewrite() -> None:
+    candidates = [
+        _valid_body().replace("A subject", f"Candidate {index} subject")
+        for index in range(1, 4)
+    ]
+
+    messages = video_module.h3_candidate_selection_messages(
+        mode="i2v",
+        instruction="보충된 자연어 연출안",
+        visual_context="Picture 1의 정적 사실",
+        candidates=candidates,
+    )
+    combined = "\n".join(str(message["content"]) for message in messages)
+
+    assert "보충된 자연어 연출안" in combined
+    assert "Picture 1의 정적 사실" in combined
+    assert all(candidate in combined for candidate in candidates)
+    assert "Do not combine, correct, summarize, or rewrite any candidate" in combined
+    assert "JSON" in combined
+
+
+def test_parallel_writers_share_criteria_but_receive_independent_assignments() -> None:
+    base = VideoMode._prompt_messages(
+        "ref2v",
+        "An expanded directing draft for a quiet scene.",
+        visual_context="visual_context:\nPicture 1: One adult stands by a window.",
+    )
+
+    variants = [
+        video_module.h3_independent_candidate_messages(base, number)
+        for number in range(1, 4)
+    ]
+
+    assert "Independent candidate assignment" not in str(base[-1]["content"])
+    for number, variant in enumerate(variants, start=1):
+        combined = "\n".join(str(message["content"]) for message in variant)
+        assert f"candidate {number} of 3" in combined
+        assert "Apply exactly the same requirements and quality standard" in combined
+        assert "Do not mention candidates or this selection process" in combined
+        assert "MiniMax" not in combined
+        assert "H3" not in combined
 
 
 def test_video_llm_trace_normalization_preserves_order_and_deduplicates() -> None:
@@ -360,8 +465,8 @@ def test_i2v_prompt_messages_exclude_stored_generation_metadata() -> None:
     assert "secret/path.safetensors" not in combined
     assert I2V_ALIGNMENT not in combined
     assert "Picture 1 itself is the ultimate authority" in combined
-    assert "binding creative intent" in combined
-    assert "expand it into production-ready screen direction" in combined
+    assert "Expanded natural-language directing draft" in combined
+    assert "directing elaborations as working choices" in combined
     assert "restrained, low-amplitude secondary character motion" in combined
     assert "impact-synchronized camera micro-impulse" in combined
     assert "never from keyword matching" in combined
@@ -413,7 +518,7 @@ def test_final_prompt_writer_requires_dense_motion_directing_not_paraphrase() ->
     assert "end on a clear result" in system_content
     assert "exact action beat that produces it" in system_content
     assert "Do not pad the prompt with repeated quality adjectives" in system_content
-    assert "rather than copying or summarizing it" in user_content
+    assert "more satisfying viewing experience" in user_content
     assert "specific mechanics, chronological action beats" in user_content
     assert "a clearly visible result" in user_content
     assert "introduce only the motion or events explicitly requested" not in user_content
@@ -527,6 +632,130 @@ def test_ref_prompt_uses_six_section_body_without_keyframe_alignment() -> None:
     assert compose_h3_prompt(body, "ref2v") == body
     assert validate_h3_prompt(body, "ref2v") == (True, "")
     assert "aligns with" not in compose_h3_prompt(body, "ref2v")
+
+
+def test_ref_prompt_accepts_official_multishot_timing_and_duration() -> None:
+    body = (
+        "subject_definitions:\n"
+        "<Subject 1> is the courier sourced from <Picture 1>.\n\n"
+        "summary:\n[reference generation] A courier crosses a lobby in eight seconds.\n\n"
+        "retention_analysis:\n"
+        "<Subject 1> (appears in [Shot 1], [Shot 2], [Shot 3]): fully_preserved - Preserve identity and clothing.\n\n"
+        "detailed_description:\n"
+        "Grounded live-action realism with continuous spatial direction.\n"
+        "[Shot 1] <Subject 1> enters the lobby and approaches the desk.\n"
+        "[Shot 2] At 00:02.500, the camera cuts to <Subject 1> signing the delivery sheet.\n"
+        "[Shot 3] At 00:06.250, the camera cuts to <Subject 1> leaving through the far door.\n\n"
+        "overall_soundscape:\nFootsteps, pen scratches, and quiet lobby ambience.\n\n"
+        "non_diegetic_music:\nN/A"
+    )
+
+    assert validate_ref2v_prompt_body(body, 1, 8) == (True, "")
+    assert compose_h3_prompt(body, "ref2v", 8) == body
+
+
+@pytest.mark.parametrize(
+    ("mutation", "reason_fragment"),
+    [
+        (lambda body: body.replace("[reference generation] ", "", 1), "summary"),
+        (lambda body: body.replace("fully_preserved", "retained", 1), "marker"),
+        (
+            lambda body: body.replace(
+                "[Shot 1] <Subject 1>",
+                "[Shot 1] At 00:00.000, <Subject 1>",
+                1,
+            ),
+            "Shot 1",
+        ),
+    ],
+)
+def test_ref_prompt_rejects_nonofficial_summary_retention_and_shot1(
+    mutation,
+    reason_fragment: str,
+) -> None:
+    accepted, reason = validate_ref2v_prompt_body(mutation(_valid_ref_body()), 2, 6)
+
+    assert accepted is False
+    assert reason_fragment in reason
+
+
+def test_ref_prompt_requires_picture_provenance_in_subject_definitions() -> None:
+    body = _valid_ref_body().replace(" sourced from <Picture 2>", "", 1).replace(
+        "Soft footsteps and room ambience.",
+        "Soft footsteps and room ambience from <Picture 2>.",
+        1,
+    )
+
+    accepted, reason = validate_ref2v_prompt_body(body, 2, 6)
+
+    assert accepted is False
+    assert "provenance" in reason
+
+
+@pytest.mark.parametrize(
+    "shot_lines",
+    [
+        "[Shot 1] <Subject 1> enters.\n[Shot 2] <Subject 1> exits.",
+        "[Shot 1] <Subject 1> enters.\n[Shot 3] At 00:03.000, <Subject 1> exits.",
+        (
+            "[Shot 1] <Subject 1> enters.\n"
+            "[Shot 2] At 00:04.000, <Subject 1> pauses.\n"
+            "[Shot 3] At 00:03.000, <Subject 1> exits."
+        ),
+    ],
+)
+def test_ref_prompt_rejects_invalid_followup_shot_protocol(shot_lines: str) -> None:
+    body = (
+        "subject_definitions:\n"
+        "<Subject 1> is sourced from <Picture 1>.\n\n"
+        "summary:\n[reference generation] A short action.\n\n"
+        "retention_analysis:\n"
+        "<Subject 1> (appears in [Shot 1]): fully_preserved - Preserve identity.\n\n"
+        "detailed_description:\nA coherent visual style.\n"
+        f"{shot_lines}\n\n"
+        "overall_soundscape:\nQuiet ambience.\n\n"
+        "non_diegetic_music:\nN/A"
+    )
+
+    assert validate_ref2v_prompt_body(body, 1, 8)[0] is False
+
+
+def test_ref_prompt_rejects_cut_at_or_after_duration() -> None:
+    body = (
+        "subject_definitions:\n"
+        "<Subject 1> is sourced from <Picture 1>.\n\n"
+        "summary:\n[reference generation] A short action.\n\n"
+        "retention_analysis:\n"
+        "<Subject 1> (appears in [Shot 1], [Shot 2]): fully_preserved - Preserve identity.\n\n"
+        "detailed_description:\nA coherent visual style.\n"
+        "[Shot 1] <Subject 1> enters.\n"
+        "[Shot 2] At 00:08.000, the camera cuts to <Subject 1> exiting.\n\n"
+        "overall_soundscape:\nQuiet ambience.\n\n"
+        "non_diegetic_music:\nN/A"
+    )
+
+    accepted, reason = validate_ref2v_prompt_body(body, 1, 8)
+
+    assert accepted is False
+    assert "종료 시각" in reason
+
+
+def test_ref_prompt_requires_retention_shots_to_match_label_usage() -> None:
+    body = _valid_ref_body().replace(
+        "<Subject 2> (appears in [Shot 1])",
+        "<Subject 2> (appears in [Shot 1], [Shot 2])",
+        1,
+    ).replace(
+        "[Shot 1] <Subject 1> and <Subject 2> walk forward in one continuous shot.",
+        "[Shot 1] <Subject 1> and <Subject 2> walk forward.\n"
+        "[Shot 2] At 00:03.000, the camera cuts to <Subject 1> alone.",
+        1,
+    )
+
+    accepted, reason = validate_ref2v_prompt_body(body, 2, 6)
+
+    assert accepted is False
+    assert "label 사용 범위" in reason
 
 
 def test_ref_reference_list_is_ordered_limited_and_unique() -> None:
@@ -1330,8 +1559,15 @@ async def test_i2v_build_uses_picture_only_and_program_adds_alignment(
         ),
         encoding="utf-8",
     )
-    body = _valid_body()
+    candidate_bodies = [
+        _valid_body().replace("A subject", f"Candidate {index} subject")
+        for index in range(1, 4)
+    ]
+    candidate_bodies[0] = (
+        "Free-form candidate one without section headings, Shot syntax, or timestamps."
+    )
     calls = []
+    candidate_attempts = {1: 0, 2: 0, 3: 0}
     visual_context = (
         "visual_context:\nPicture 1: One anime character is centered in a static "
         "upper-body composition, holding a book at chest height."
@@ -1350,16 +1586,38 @@ async def test_i2v_build_uses_picture_only_and_program_adds_alignment(
         return visual_context
 
     async def fake_text_call(task_key, messages, **kwargs):
-        calls.append("text")
         combined = "\n".join(str(message["content"]) for message in messages)
         assert task_key == "video_prompt_i2v_compose"
+        if "final selection director" in combined:
+            calls.append("selector")
+            assert all(
+                f"{I2V_ALIGNMENT}\n\n{body}" in combined
+                for body in candidate_bodies
+            )
+            selection = "2"
+            assert kwargs["result_validator"](selection) == (True, "")
+            return selection
+        candidate_number = next(
+            number
+            for number in range(1, 4)
+            if f"candidate {number} of 3" in combined
+        )
+        candidate_attempts[candidate_number] += 1
+        if candidate_number == 1 and candidate_attempts[candidate_number] == 1:
+            calls.append("candidate_1_empty")
+            assert kwargs["result_validator"]("")[0] is False
+            assert kwargs["force_slot"]
+            return ""
+        calls.append(f"candidate_{candidate_number}")
         assert "lowering book" not in combined
         assert "secret/path.safetensors" not in combined
         assert "머리카락과 옷이 약한 바람에 흔들린다" in combined
         assert "restrained, low-amplitude secondary character motion" not in combined
         assert visual_context in combined
         assert "images" not in kwargs
+        body = candidate_bodies[candidate_number - 1]
         assert kwargs["result_validator"](body) == (True, "")
+        assert kwargs["force_slot"]
         return body
 
     monkeypatch.setattr(
@@ -1393,16 +1651,31 @@ async def test_i2v_build_uses_picture_only_and_program_adds_alignment(
         queue_item_id="queue-i2v",
     )
 
-    assert calls == ["vision", "text"]
+    assert calls == [
+        "vision",
+        "candidate_1_empty",
+        "candidate_1",
+        "candidate_2",
+        "candidate_3",
+        "selector",
+    ]
+    assert candidate_attempts == {1: 2, 2: 1, 3: 1}
     assert result["success"] is True
-    assert result["h3_prompt"] == f"{I2V_ALIGNMENT}\n\n{body}"
+    assert result["h3_prompt"] == (
+        f"{I2V_ALIGNMENT}\n\n{candidate_bodies[1]}"
+    )
     assert result["instruction"] == "머리카락과 옷이 약한 바람에 흔들린다"
     assert result["instruction_source"] == "user"
     assert result["visual_context"] == visual_context
     assert result["llm_trace"] == [
         "video_prompt:i2v:queue-i2v:visual_context",
+        "video_prompt:i2v:queue-i2v:candidate_1",
+        "video_prompt:i2v:queue-i2v:candidate_2",
+        "video_prompt:i2v:queue-i2v:candidate_3",
         "video_prompt:i2v:queue-i2v",
     ]
+    assert result["h3_candidate_count"] == 3
+    assert result["h3_selected_candidate"] == 2
 
 
 @pytest.mark.asyncio
@@ -1434,7 +1707,10 @@ async def test_i2v_build_can_create_visual_context_from_core_positive_prompt(
         "visual_context:\nPicture 1: A silver-haired girl sits by a window "
         "holding a closed book."
     )
-    body = _valid_body()
+    candidate_bodies = [
+        _valid_body().replace("A subject", f"Candidate {index} subject")
+        for index in range(1, 4)
+    ]
     text_calls = []
 
     async def reject_vision(*_args, **_kwargs):
@@ -1452,8 +1728,19 @@ async def test_i2v_build_can_create_visual_context_from_core_positive_prompt(
             assert kwargs["result_validator"](visual_context) == (True, "")
             return visual_context
         assert task_key == "video_prompt_i2v_compose"
+        if "final selection director" in combined:
+            assert all(
+                f"{I2V_ALIGNMENT}\n\n{body}" in combined
+                for body in candidate_bodies
+            )
+            selection = "3"
+            assert kwargs["result_validator"](selection) == (True, "")
+            return selection
         assert visual_context in combined
         assert "머리카락이 약한 바람에 흔들린다" in combined
+        candidate_number = len(text_calls) - 1
+        body = candidate_bodies[candidate_number - 1]
+        assert kwargs["result_validator"](body) == (True, "")
         return body
 
     monkeypatch.setattr(video_module.llm_service, "callLLMVisionTask", reject_vision)
@@ -1480,8 +1767,11 @@ async def test_i2v_build_can_create_visual_context_from_core_positive_prompt(
         queue_item_id="queue-prompt-context",
     )
 
-    assert len(text_calls) == 2
+    assert len(text_calls) == 5
     assert result["success"] is True
+    assert result["h3_prompt"] == (
+        f"{I2V_ALIGNMENT}\n\n{candidate_bodies[2]}"
+    )
     assert result["instruction_original"] == "바람에 머리카락 흔들리게"
     assert result["instruction_source"] == "llm"
     assert result["visual_context"] == visual_context
@@ -1489,8 +1779,13 @@ async def test_i2v_build_can_create_visual_context_from_core_positive_prompt(
     assert result["llm_trace"] == [
         "video_instruction_refine:i2v:refine-1",
         "video_prompt:i2v:queue-prompt-context:prompt_visual_context",
+        "video_prompt:i2v:queue-prompt-context:candidate_1",
+        "video_prompt:i2v:queue-prompt-context:candidate_2",
+        "video_prompt:i2v:queue-prompt-context:candidate_3",
         "video_prompt:i2v:queue-prompt-context",
     ]
+    assert result["h3_candidate_count"] == 3
+    assert result["h3_selected_candidate"] == 3
 
 
 @pytest.mark.asyncio
@@ -1783,6 +2078,10 @@ async def test_fast_ref_render_stages_originals_and_patches_experimental_resolut
         encoding="utf-8",
     )
     submitted: dict = {}
+    loose_natural_prompt = (
+        "A complete reference-video direction written as ordinary natural-language "
+        "prose without required section headings or Shot syntax."
+    )
 
     async def convert(workflow, *, task_key):
         assert task_key == "video_generation"
@@ -1798,7 +2097,7 @@ async def test_fast_ref_render_stages_originals_and_patches_experimental_resolut
             assert staged.is_file()
             with Image.open(staged) as image:
                 assert image.size == sizes[name]
-        assert workflow["1"]["inputs"]["value"] == _valid_ref_body()
+        assert workflow["1"]["inputs"]["value"] == loose_natural_prompt
         assert workflow["2"]["inputs"]["width"] == 864
         assert workflow["2"]["inputs"]["height"] == 384
         assert "ref_images.ref_image_3" not in workflow["2"]["inputs"]
@@ -1838,7 +2137,7 @@ async def test_fast_ref_render_stages_originals_and_patches_experimental_resolut
             "aspect_ratio": "21:9",
             "quality_level": "medium",
             "duration": 5,
-            "h3_prompt": _valid_ref_body(),
+            "h3_prompt": loose_natural_prompt,
         },
         queue_item_id="ref-gpu",
     )
