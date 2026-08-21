@@ -812,9 +812,23 @@ def test_instruction_direct_prompt_uses_active_prompt_and_supplied_duration() ->
     assert "Treat contact and support as continuing states" in system_message
     assert "priority over invented reactions" in system_message
     assert "without returning an audit" in system_message
+    assert "An event beat and a camera setup are separate concepts" in system_message
+    assert "Treat permission as permission, not as a requirement" in system_message
+    assert "this is a soft upper guide, not a quota or minimum" in system_message
+    assert "do not hide extra setups as sub-shots" in system_message
+    assert "Do not multiply the user's requested content" in system_message
+    assert "A composition change is optional" in system_message
+    assert "One setup may span several intervals" in system_message
+    assert "rather than inventing edits to fill the section" in system_message
+    assert "Do not invent a new sound event or change merely to differentiate intervals" in system_message
+    assert "beats of about 1.5–2.0 seconds" not in system_message
+    assert "gives each beat a distinct shot scale" not in system_message
+    assert "Give each reveal, reaction, escalation, and payoff a visibly different composition" not in system_message
     assert user_direction in task_message
     assert f"{duration:g}-second" in task_message
     assert "12-second" not in task_message
+    assert "optional rather than expected" in task_message
+    assert "A static camera or continuous setup is valid" in task_message
 
 
 def test_instruction_direct_prompt_passes_first_last_mode_contracts() -> None:
