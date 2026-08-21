@@ -380,6 +380,7 @@ def test_video_modal_can_persist_non_content_defaults() -> None:
         "loop",
         "visual_context_source",
         "instruction_language",
+        "refine_version",
         "include_dialogue_context",
         "allow_camera_motion",
         "allow_background_change",

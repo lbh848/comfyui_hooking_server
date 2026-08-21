@@ -254,6 +254,8 @@ DEFAULT_VIDEO_GENERATION_DEFAULTS = {
     "include_dialogue_context": True,
     "allow_camera_motion": True,
     "allow_background_change": False,
+    # 입력 다듬기 방식: v1(일반 확장) / v2(시네마틱 제작 계획). 영구 저장된 기본값.
+    "refine_version": "v1",
     "upscale_model": DEFAULT_VIDEO_POSTPROCESS_CONFIG["model"],
     "upscale_scale": DEFAULT_VIDEO_POSTPROCESS_CONFIG["scale"],
     "output_format": "avif",
@@ -297,6 +299,7 @@ def normalize_video_generation_defaults(raw: object) -> dict:
         "quality_level": set(FAST_QUALITY_LEVELS),
         "visual_context_source": {"image", "prompt"},
         "instruction_language": {"ko", "en"},
+        "refine_version": {"v1", "v2"},
         "upscale_model": {"none", *VIDEO_UPSCALE_MODELS},
         "output_format": set(VIDEO_OUTPUT_FORMATS),
     }

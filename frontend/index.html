@@ -30421,7 +30421,6 @@
             }
             if (refineVersion) {
                 refineVersion.disabled = false;
-                refineVersion.value = 'v1';
             }
             clearVideoInstructionRefineUndo();
         }
@@ -30830,6 +30829,13 @@
             onVideoLoopChange();
 
             setVideoVisualContextFromImage(settings.visual_context_source !== 'prompt');
+            const refineVersionSelect = document.getElementById('video-generation-refine-version');
+            if (refineVersionSelect) {
+                const refineVersionValue = String(settings.refine_version || 'v1').trim().toLowerCase();
+                if (refineVersionValue === 'v1' || refineVersionValue === 'v2') {
+                    refineVersionSelect.value = refineVersionValue;
+                }
+            }
             language.value = settings.instruction_language;
             setVideoDialogueContextEnabled(settings.include_dialogue_context === true);
             cameraMotion.checked = settings.allow_camera_motion === true;
@@ -30899,6 +30905,7 @@
                     loop: isVideoLoopEnabled(),
                     visual_context_source: selectedVideoVisualContextSource(),
                     instruction_language: selectedVideoInstructionLanguage(),
+                    refine_version: selectedVideoInstructionRefineVersion(),
                     include_dialogue_context: isVideoDialogueContextEnabled(),
                     allow_camera_motion: isVideoCameraMotionAllowed(),
                     allow_background_change: isVideoBackgroundChangeAllowed(),
