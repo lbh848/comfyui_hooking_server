@@ -107,7 +107,7 @@ def create_workflow_pack(
             r"v[1-9][0-9]*", release_version.strip()
         ):
             raise WorkflowPackError(
-                "워크플로우 배포 버전은 v1, v2 형식이어야 합니다: "
+                "워크플로우 배포 버전 형식이 잘못되었습니다: "
                 f"{release_version!r}"
             )
         release_version = release_version.strip()
@@ -401,7 +401,7 @@ def extract_workflow_pack(
                 r"v[1-9][0-9]*", release_version
             ):
                 raise WorkflowPackError(
-                    "워크플로우 팩 배포 버전이 v1, v2 형식이 아닙니다: "
+                    "워크플로우 팩 배포 버전 형식이 잘못되었습니다: "
                     f"{release_version!r}"
                 )
             raw_items = inner_manifest.get("workflow_items")

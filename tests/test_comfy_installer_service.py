@@ -1083,12 +1083,24 @@ def test_manifest_has_fully_pinned_windows_runtime_and_assets() -> None:
         for node in manifest.custom_nodes
         if node["name"] in tracking_main_names
     )
-    assert manifest.latest_workflow_release == "v2"
+    assert manifest.latest_workflow_release == "v3"
     latest_release = manifest.workflows["release_dependencies"][
         manifest.latest_workflow_release
     ]
     assert manifest.latest_workflow_count == len(latest_release)
     assert len({item["id"] for item in latest_release}) == len(latest_release)
+    latest_by_id = {item["id"]: item for item in latest_release}
+    assert latest_by_id["comfy_workflow_source_path"]["bindings"] == [
+        "comfy_workflow_source_path",
+        "illustration_workflow_source_paths.v3",
+    ]
+    assert latest_by_id["illustration_workflow_source_paths.v3_anima"][
+        "bindings"
+    ] == ["illustration_workflow_source_paths.v3_anima"]
+    assert {
+        "video_workflow_source_paths.ref2v",
+        "video_workflow_source_paths.ref2v_fast",
+    }.issubset(latest_by_id)
     latest_bindings = {
         binding
         for item in latest_release
@@ -1132,7 +1144,9 @@ def test_manifest_allows_release_content_to_change_without_python_constants(
 ) -> None:
     current = load_install_manifest()
     data = json.loads(json.dumps(current.data, ensure_ascii=False))
-    latest_entries = data["workflows"]["release_dependencies"]["v2"]
+    latest_entries = data["workflows"]["release_dependencies"][
+        current.latest_workflow_release
+    ]
     data["workflows"]["release_dependencies"] = {
         "v7": latest_entries,
         "v10": latest_entries,

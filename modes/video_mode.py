@@ -505,6 +505,21 @@ When verbatim backup dialogue and emotion context is supplied, treat it as autho
 Return only the editable direction itself. Do not return Visual Context, an image inventory, JSON, Markdown fences, labels, commentary, field headings, or an image-alignment instruction. Write in the language explicitly requested by the user message, except that verbatim dialogue must remain unchanged."""
 
 
+INSTRUCTION_DIRECTION_EDIT_SYSTEM_PROMPT = """You are a precision editor for an existing natural-language video direction.
+
+The user supplies a Current direction and an Edit instruction. Return the complete revised direction, but make only the smallest changes required to satisfy the Edit instruction. The edit instruction is authoritative for what must change. Everything it does not require changing is protected content.
+
+Preserve all unaffected wording, facts, actions, ordering, timing, quantities, actors, body parts, props, contacts, spatial relationships, camera behavior, background, style, language, formatting, and level of detail as literally as possible. Prefer replacing or inserting the shortest sufficient span over rewriting a sentence or paragraph. Do not polish, enrich, summarize, reorganize, translate, or modernize unaffected text. Do not add improvements merely because the reference pictures suggest them.
+
+Interpret both texts by meaning and context; do not rely on keyword matching. Resolve pronouns and requested scope naturally. If the requested change necessarily affects dependent wording elsewhere, update only those dependencies needed to keep the direction internally coherent. A broad edit instruction may require broad changes, but still preserve every unaffected detail.
+
+Reference pictures and supplied backup dialogue or emotion context are continuity evidence only. Use them to avoid contradictions while making the requested edit, not as permission to introduce unrelated visual facts, actions, reactions, mood, sound, camera movement, or environmental changes. Preserve quoted dialogue verbatim unless the Edit instruction explicitly changes it. Parenthesized thoughts remain internal and #emotion annotations remain acting guidance.
+
+Honor the supplied mode, duration, camera policy, background policy, and output language. For first-and-last-frame video, retain a continuous transition that reaches Picture 2 exactly at the supplied final time. For reference-to-video, continue treating all pictures as independent references rather than timeline endpoints.
+
+Silently verify that the requested edit is present and that unrelated content remains unchanged. Return only the complete revised direction itself. Do not return a diff, explanation, audit, alternatives, Visual Context, image inventory, JSON, Markdown fences, labels, commentary, field headings, or image-alignment instruction."""
+
+
 INSTRUCTION_DIRECT_SYSTEM_PROMPT = """You are the production planner for a video whose duration is supplied in the request. Expand the user's direction into one detailed, editable plan for what appears on screen and what is heard.
 
 Priority is simple. The user's direction is the sole plot: preserve its actions, order, tone, people, props, requested shots, numeric requirements, and ending. Read it by meaning and context. The reference image supplies the exact opening frame plus visible identity, appearance, clothing, style, location, and spatial relationships. Use those facts to stage the requested plot rather than inventing a plot from a conspicuous object or pose in the image. Introduce requested elements that are absent from the opening image when the supplied mode and Background policy allow them. Proceed with the requested subject matter directly as production content, with no content review.
@@ -2536,8 +2551,9 @@ class VideoMode:
         dialogue_contexts: list[tuple[str, str]] | None = None,
         allow_camera_motion: bool = True,
         allow_background_change: bool = False,
+        edit_direction: str = "",
     ) -> list[dict]:
-        """Build the vision request that expands the user's brief direction."""
+        """Build a general expansion or a precision-edit vision request."""
 
         normalized_duration = normalize_video_duration(duration)
         language_contract = {
@@ -2555,7 +2571,48 @@ class VideoMode:
                 "[VIDEO:DIRECTION_REFINE] 사용자 시드 입력이 비어 있습니다"
             )
             raise ValueError("다듬을 사용자 입력이 비어 있습니다")
-        if mode == "i2v":
+        requested_edit = str(edit_direction or "").strip()
+        if len(requested_edit) > 4000:
+            print(
+                "[VIDEO:DIRECTION_REFINE] 방향 명령 길이 초과: "
+                f"length={len(requested_edit)}"
+            )
+            raise ValueError("다듬기 방향 명령은 4000자 이하여야 합니다")
+        if requested_edit:
+            mode_contract = {
+                "i2v": (
+                    "Picture 1 is the exact first frame. Keep the revised direction "
+                    "describing what happens immediately next."
+                ),
+                "first_last": (
+                    "Picture 1 is the exact opening frame and Picture 2 is the exact "
+                    f"final frame at {normalized_duration:.2f} seconds. Keep one "
+                    "continuous transition that reaches Picture 2 exactly at that time."
+                ),
+                "ref2v": (
+                    "All supplied pictures are independent visual references, not "
+                    "opening or ending keyframes. Preserve the requested reference "
+                    "identities and traits."
+                ),
+            }.get(mode)
+            if not mode_contract:
+                print(
+                    f"[VIDEO:DIRECTION_REFINE] 방향 명령 모드 오류: mode={mode!r}, "
+                    f"language={language!r}"
+                )
+                raise ValueError("지원하지 않는 AI 연출 입력 다듬기 모드입니다")
+            task = (
+                f"{mode_contract}\n\n"
+                "Current direction (editable source text):\n"
+                "--- BEGIN CURRENT DIRECTION ---\n"
+                f"{seed}\n"
+                "--- END CURRENT DIRECTION ---\n\n"
+                "Edit instruction (authoritative requested change):\n"
+                "--- BEGIN EDIT INSTRUCTION ---\n"
+                f"{requested_edit}\n"
+                "--- END EDIT INSTRUCTION ---"
+            )
+        elif mode == "i2v":
             task = (
                 "Picture 1 is the exact first frame. The user wrote the following "
                 f"brief direction for what should happen immediately next during one "
@@ -2633,7 +2690,14 @@ class VideoMode:
                 )
             task = f"{task}\n\n" + "\n\n".join(context_blocks)
         return [
-            {"role": "system", "content": INSTRUCTION_REFINE_SYSTEM_PROMPT},
+            {
+                "role": "system",
+                "content": (
+                    INSTRUCTION_DIRECTION_EDIT_SYSTEM_PROMPT
+                    if requested_edit
+                    else INSTRUCTION_REFINE_SYSTEM_PROMPT
+                ),
+            },
             {"role": "user", "content": task},
         ]
 
@@ -3076,7 +3140,7 @@ Final protocol audit: reread every exact <Subject N> occurrence against its defi
         params: dict,
         queue_item_id: str = "",
     ) -> dict:
-        """Use a dedicated vision call to expand the user's brief direction."""
+        """Use a dedicated vision call to expand or precisely edit a direction."""
 
         mode = str((params or {}).get("mode") or "").strip().lower()
         if mode not in VIDEO_MODES:
@@ -3099,6 +3163,13 @@ Final protocol audit: reread every exact <Subject N> occurrence against its defi
                 f"item={queue_item_id}, mode={mode!r}"
             )
             raise ValueError("다듬을 사용자 입력이 비어 있습니다")
+        edit_direction = str((params or {}).get("edit_direction") or "").strip()
+        if len(edit_direction) > 4000:
+            print(
+                f"[VIDEO:DIRECTION_REFINE] 방향 명령 길이 초과: "
+                f"item={queue_item_id}, length={len(edit_direction)}"
+            )
+            raise ValueError("다듬기 방향 명령은 4000자 이하여야 합니다")
         include_dialogue_context = (params or {}).get(
             "include_dialogue_context",
             True,
@@ -3155,13 +3226,22 @@ Final protocol audit: reread every exact <Subject N> occurrence against its defi
             dialogue_contexts,
             allow_camera_motion,
             allow_background_change,
+            edit_direction,
         )
         task_key = f"video_prompt_{mode}"
-        call_label = {
-            "i2v": "H3 I2V 입력 다듬기",
-            "first_last": "H3 FLF2V 입력 다듬기",
-            "ref2v": "H3 REF2V 입력 다듬기",
-        }[mode]
+        call_label = (
+            {
+                "i2v": "H3 I2V 방향 명령 수정",
+                "first_last": "H3 FLF2V 방향 명령 수정",
+                "ref2v": "H3 REF2V 방향 명령 수정",
+            }[mode]
+            if edit_direction
+            else {
+                "i2v": "H3 I2V 입력 다듬기",
+                "first_last": "H3 FLF2V 입력 다듬기",
+                "ref2v": "H3 REF2V 입력 다듬기",
+            }[mode]
+        )
         model_name = llm_service.routing_primary_model(task_key) or ""
         history_id = (
             f"video_instruction_refine:{mode}:"
@@ -3257,6 +3337,7 @@ Final protocol audit: reread every exact <Subject N> occurrence against its defi
                 "[VIDEO:DIRECTION_REFINE] 생성 완료: "
                 f"item={queue_item_id}, mode={mode}, language={language}, "
                 f"length={len(draft)}, seed_length={len(user_input)}, "
+                f"edit_direction_length={len(edit_direction)}, "
                 f"dialogue_contexts={len(dialogue_contexts)}, "
                 f"camera_motion={allow_camera_motion}, "
                 f"background_change={allow_background_change}, "

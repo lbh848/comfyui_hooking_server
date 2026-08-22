@@ -1836,6 +1836,219 @@
             transition: color .16s ease;
         }
         .video-refine-undo-btn:hover { color: #5b9bd5; }
+        .video-direction-edit-button {
+            flex: 0 0 auto;
+            padding: 7px 11px;
+            border: 1px solid color-mix(in srgb, #d68a4a 60%, var(--border));
+            border-radius: 999px;
+            color: var(--text2);
+            background: color-mix(in srgb, #d68a4a 9%, var(--surface2));
+            font-size: .78rem;
+            font-weight: 700;
+            cursor: pointer;
+            transition: border-color .16s ease, background .16s ease, color .16s ease;
+        }
+        .video-direction-edit-button:hover:not(:disabled) {
+            border-color: #e5a263;
+            color: #fff;
+            background: color-mix(in srgb, #c8732f 70%, var(--surface2));
+        }
+        .video-direction-edit-button:disabled { opacity: .58; cursor: wait; }
+        #video-direction-edit-modal {
+            z-index: 1700;
+            background: rgba(4, 7, 12, .9);
+            backdrop-filter: blur(8px);
+        }
+        #video-direction-edit-modal .video-direction-edit-content {
+            width: min(980px, calc(100vw - 32px));
+            max-width: 980px;
+            overflow: hidden;
+            border-color: color-mix(in srgb, #d68a4a 38%, var(--border));
+            box-shadow: 0 24px 80px rgba(0, 0, 0, .5);
+        }
+        .video-direction-edit-heading {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            min-width: 0;
+        }
+        .video-direction-edit-icon {
+            display: inline-grid;
+            place-items: center;
+            width: 32px;
+            height: 32px;
+            flex: 0 0 32px;
+            border-radius: 10px;
+            color: #ffd6ad;
+            background: color-mix(in srgb, #d68a4a 22%, var(--surface2));
+            border: 1px solid color-mix(in srgb, #d68a4a 38%, var(--border));
+        }
+        .video-direction-edit-heading h3 { margin: 0; font-size: 1rem; }
+        .video-direction-edit-heading small {
+            display: block;
+            margin-top: 2px;
+            color: var(--text2);
+            font-size: .7rem;
+            font-weight: 500;
+        }
+        .video-direction-edit-body {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            max-height: 74vh;
+            overflow-y: auto;
+            padding: 16px 18px;
+        }
+        .video-direction-edit-guide {
+            display: flex;
+            align-items: flex-start;
+            gap: 9px;
+            padding: 10px 12px;
+            border: 1px solid color-mix(in srgb, #d68a4a 30%, var(--border));
+            border-radius: 10px;
+            color: var(--text2);
+            background: color-mix(in srgb, #d68a4a 6%, var(--surface2));
+            font-size: .78rem;
+            line-height: 1.5;
+        }
+        .video-direction-edit-grid {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+            gap: 12px;
+            align-items: stretch;
+        }
+        .video-direction-edit-card {
+            display: flex;
+            flex-direction: column;
+            min-width: 0;
+            padding: 12px;
+            border: 1px solid var(--border);
+            border-radius: 11px;
+            background: var(--surface1);
+        }
+        .video-direction-edit-card.command {
+            border-color: color-mix(in srgb, #d68a4a 38%, var(--border));
+            background: color-mix(in srgb, #d68a4a 4%, var(--surface1));
+        }
+        .video-direction-edit-label-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+        .video-direction-edit-label-row label,
+        .video-direction-edit-label-row span:first-child {
+            color: var(--text);
+            font-size: .8rem;
+            font-weight: 800;
+        }
+        .video-direction-edit-label-row small { color: var(--text2); font-size: .68rem; }
+        .video-direction-edit-source,
+        .video-direction-edit-input {
+            width: 100%;
+            flex: 1 1 auto;
+            min-height: 150px;
+            box-sizing: border-box;
+            resize: vertical;
+            padding: 11px 12px;
+            border: 1px solid var(--border);
+            border-radius: 9px;
+            color: var(--text);
+            background: var(--surface2);
+            font: inherit;
+            font-size: .82rem;
+            line-height: 1.55;
+        }
+        .video-direction-edit-source { color: var(--text2); cursor: default; }
+        .video-direction-edit-input:focus {
+            outline: none;
+            border-color: #d68a4a;
+            box-shadow: 0 0 0 3px color-mix(in srgb, #d68a4a 16%, transparent);
+        }
+        .video-direction-edit-status {
+            min-height: 1.4em;
+            color: var(--text2);
+            font-size: .75rem;
+            line-height: 1.4;
+        }
+        .video-direction-edit-status[data-state="busy"] { color: #e5a263; }
+        .video-direction-edit-status[data-state="error"] { color: var(--error); }
+        .video-direction-edit-status[data-state="ready"] { color: #62c991; }
+        .video-direction-edit-review {
+            border: 1px solid color-mix(in srgb, #62c991 34%, var(--border));
+            border-radius: 11px;
+            overflow: hidden;
+            background: var(--surface1);
+        }
+        .video-direction-edit-review-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            padding: 10px 12px;
+            border-bottom: 1px solid var(--border);
+            background: color-mix(in srgb, #62c991 5%, var(--surface2));
+        }
+        .video-direction-edit-review-title { color: var(--text); font-size: .8rem; font-weight: 800; }
+        .video-direction-edit-legend { display: flex; gap: 8px; color: var(--text2); font-size: .68rem; }
+        .video-direction-edit-legend span::before {
+            content: '';
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            margin-right: 4px;
+            border-radius: 2px;
+        }
+        .video-direction-edit-legend .removed::before { background: rgba(233, 91, 91, .72); }
+        .video-direction-edit-legend .added::before { background: rgba(74, 190, 126, .76); }
+        .video-direction-edit-diff {
+            max-height: 330px;
+            overflow: auto;
+            padding: 14px;
+            color: var(--text);
+            background: var(--surface2);
+            font-size: .83rem;
+            line-height: 1.7;
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+        }
+        .video-direction-diff-add {
+            padding: 1px 2px;
+            border-radius: 3px;
+            color: color-mix(in srgb, #9ef0bd 88%, var(--text));
+            background: rgba(40, 160, 96, .24);
+            text-decoration: none;
+        }
+        .video-direction-diff-remove {
+            padding: 1px 2px;
+            border-radius: 3px;
+            color: color-mix(in srgb, #ffaaaa 88%, var(--text));
+            background: rgba(205, 60, 60, .24);
+            text-decoration: line-through;
+            text-decoration-thickness: 1px;
+        }
+        .video-direction-edit-round {
+            padding: 3px 8px;
+            border-radius: 999px;
+            color: #9ef0bd;
+            background: rgba(40, 160, 96, .14);
+            font-size: .68rem;
+            font-weight: 800;
+        }
+        #video-direction-edit-modal .modal-footer { flex-wrap: wrap; }
+        #video-direction-edit-cancel { margin-right: auto; }
+        #video-direction-edit-run {
+            background: #c8732f;
+            border-color: #d68a4a;
+        }
+        #video-direction-edit-run:hover:not(:disabled) { background: #df8840; }
+        #video-direction-edit-accept {
+            background: #278a56;
+            border-color: #45ad76;
+        }
+        #video-direction-edit-accept:hover:not(:disabled) { background: #32a668; }
+        #video-direction-edit-more { border-color: color-mix(in srgb, #d68a4a 55%, var(--border)); }
         .video-draft-note {
             margin-top: 7px;
             min-height: 1.3em;
@@ -1924,6 +2137,10 @@
             .video-ref-slot,
             .video-inline-fields,
             .video-draft-option-grid { grid-template-columns: 1fr; }
+            #video-direction-edit-modal .video-direction-edit-content { width: min(640px, calc(100vw - 20px)); }
+            .video-direction-edit-grid { grid-template-columns: 1fr; }
+            .video-direction-edit-source,
+            .video-direction-edit-input { min-height: 120px; }
             .video-source-preview-wrap { min-height: 180px; }
             .video-summary-bar { align-items: flex-start; flex-direction: column; }
         }
@@ -15385,6 +15602,7 @@
                         <div class="video-draft-actions">
                             <button type="button" id="video-generation-draft-button" class="video-draft-button" onclick="requestVideoInstructionDraft()">✨ 초안 만들기</button>
                             <button type="button" id="video-generation-refine-button" class="video-refine-button" onclick="requestSelectedVideoInstructionRefine()">✍️ 입력 다듬기</button>
+                            <button type="button" id="video-generation-direction-edit-button" class="video-direction-edit-button" onclick="openVideoDirectionEditModal()">🎯 다듬기 방향 명령하기</button>
                         </div>
                     </div>
                     <textarea id="video-generation-instruction" class="video-instruction" rows="5" maxlength="12000" placeholder="예: 인물이 천천히 고개를 들어 카메라를 바라보고, 머리카락과 옷자락이 약한 바람에 자연스럽게 흔들린다. 카메라는 아주 조금 천천히 밀고 들어간다."></textarea>
@@ -15552,6 +15770,65 @@
             <div class="modal-footer">
                 <button type="button" id="video-generation-save-settings" class="cancel" onclick="saveVideoGenerationDefaults()">💾 설정 저장</button>
                 <button type="button" id="video-generation-submit" class="confirm" onclick="submitVideoGeneration()" style="background:#9b59b6; color:#fff; border-color:#b876d2;">🎬 큐에 등록</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 영상 지시 최소 수정 + diff 검토 모달 -->
+    <div class="modal" id="video-direction-edit-modal" role="dialog" aria-modal="true" aria-labelledby="video-direction-edit-title">
+        <div class="modal-content video-direction-edit-content">
+            <div class="modal-header">
+                <div class="video-direction-edit-heading">
+                    <span class="video-direction-edit-icon" aria-hidden="true">🎯</span>
+                    <div>
+                        <h3 id="video-direction-edit-title">다듬기 방향 명령창</h3>
+                        <small>원문은 그대로 두고 수정안을 먼저 검토합니다.</small>
+                    </div>
+                </div>
+                <button type="button" class="modal-close" onclick="closeVideoDirectionEditModal()" aria-label="닫기">&times;</button>
+            </div>
+            <div class="video-direction-edit-body">
+                <div class="video-direction-edit-guide">
+                    <span aria-hidden="true">💡</span>
+                    <span>바꾸고 싶은 부분과 원하는 결과만 말해 주세요. AI는 명령을 충족하는 범위만 최소 수정하며, 적용 전 변경점을 색으로 보여줍니다.</span>
+                </div>
+                <div class="video-direction-edit-grid">
+                    <section class="video-direction-edit-card">
+                        <div class="video-direction-edit-label-row">
+                            <span>최초 원문</span>
+                            <small>적용 전까지 안전하게 보존</small>
+                        </div>
+                        <textarea id="video-direction-edit-source" class="video-direction-edit-source" readonly aria-label="최초 영상 지시 원문"></textarea>
+                    </section>
+                    <section class="video-direction-edit-card command">
+                        <div class="video-direction-edit-label-row">
+                            <label id="video-direction-edit-command-label" for="video-direction-edit-command">원하는 수정 방향</label>
+                            <small>최대 4,000자</small>
+                        </div>
+                        <textarea id="video-direction-edit-command" class="video-direction-edit-input" rows="6" maxlength="4000" placeholder="예: 카메라 움직임은 그대로 두고, 인물이 고개를 드는 속도만 더 느리게 바꿔줘."></textarea>
+                    </section>
+                </div>
+                <div id="video-direction-edit-status" class="video-direction-edit-status" role="status" aria-live="polite"></div>
+                <section id="video-direction-edit-review" class="video-direction-edit-review" hidden>
+                    <div class="video-direction-edit-review-header">
+                        <div style="display:flex; align-items:center; gap:8px; min-width:0;">
+                            <span class="video-direction-edit-review-title">원문 대비 변경점</span>
+                            <span id="video-direction-edit-round" class="video-direction-edit-round">수정안 1</span>
+                        </div>
+                        <div class="video-direction-edit-legend" aria-label="변경 색상 안내">
+                            <span class="removed">삭제</span>
+                            <span class="added">추가</span>
+                        </div>
+                    </div>
+                    <div id="video-direction-edit-diff" class="video-direction-edit-diff" aria-label="영상 지시 변경 비교"></div>
+                </section>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="cancel" id="video-direction-edit-cancel" onclick="closeVideoDirectionEditModal()">취소</button>
+                <button type="button" class="cancel" id="video-direction-edit-revert" onclick="revertVideoDirectionEditPreview()" hidden>↩ 되돌리기</button>
+                <button type="button" class="cancel" id="video-direction-edit-more" onclick="requestMoreVideoDirectionEdit()" hidden>더 바꾸기</button>
+                <button type="button" class="confirm" id="video-direction-edit-run" onclick="requestVideoDirectionEdit()">수정안 만들기</button>
+                <button type="button" class="confirm" id="video-direction-edit-accept" onclick="acceptVideoDirectionEdit()" hidden>✓ 적용</button>
             </div>
         </div>
     </div>
@@ -29233,6 +29510,16 @@
         let videoInstructionRefineBusy = false;
         let videoInstructionDirectRequestId = 0;
         let videoInstructionDirectBusy = false;
+        let videoDirectionEditRequestId = 0;
+        let videoDirectionEditBusy = false;
+        const videoDirectionEditState = {
+            baseInstruction: '',
+            candidateInstruction: '',
+            baseSnapshot: null,
+            llmTrace: [],
+            selectionKey: '',
+            round: 0,
+        };
         let videoInstructionRefineUndoSnapshot = null;
         let videoInstructionOriginalInput = '';
         let videoInstructionLlmTrace = [];
@@ -30336,7 +30623,7 @@
         }
 
         async function requestVideoInstructionDraft() {
-            if (videoInstructionDraftBusy || videoInstructionRefineBusy || videoInstructionDirectBusy) return;
+            if (videoInstructionDraftBusy || videoInstructionRefineBusy || videoInstructionDirectBusy || videoDirectionEditBusy) return;
             const sourceKey = document.getElementById('video-generation-source')?.value || '';
             const sourceRef = getVideoReferenceByKey(sourceKey)?.reference || null;
             const mode = document.getElementById('video-generation-mode')?.value || 'i2v';
@@ -30355,10 +30642,12 @@
             const selectionKey = videoInstructionDraftSelectionKey();
             const refineButton = document.getElementById('video-generation-refine-button');
             const refineVersion = document.getElementById('video-generation-refine-version');
+            const directionEditButton = document.getElementById('video-generation-direction-edit-button');
             const button = document.getElementById('video-generation-draft-button');
             videoInstructionDraftBusy = true;
             if (refineButton) refineButton.disabled = true;
             if (refineVersion) refineVersion.disabled = true;
+            if (directionEditButton) directionEditButton.disabled = true;
             if (button) {
                 button.disabled = true;
                 button.innerHTML = '<span class="spinner"></span> 초안 생성 중';
@@ -30422,6 +30711,7 @@
                     videoInstructionDraftBusy = false;
                     if (refineButton) refineButton.disabled = false;
                     if (refineVersion) refineVersion.disabled = false;
+                    if (directionEditButton) directionEditButton.disabled = false;
                     if (button) {
                         button.disabled = false;
                         button.innerHTML = '✨ 초안 만들기';
@@ -30554,7 +30844,7 @@
         }
 
         async function requestVideoInstructionRefine() {
-            if (videoInstructionDraftBusy || videoInstructionRefineBusy || videoInstructionDirectBusy) return;
+            if (videoInstructionDraftBusy || videoInstructionRefineBusy || videoInstructionDirectBusy || videoDirectionEditBusy) return;
             const instructionInput = document.getElementById('video-generation-instruction');
             const instruction = (instructionInput?.value || '').trim();
             if (!instruction) {
@@ -30581,9 +30871,11 @@
             const draftButton = document.getElementById('video-generation-draft-button');
             const refineVersion = document.getElementById('video-generation-refine-version');
             const button = document.getElementById('video-generation-refine-button');
+            const directionEditButton = document.getElementById('video-generation-direction-edit-button');
             videoInstructionRefineBusy = true;
             if (draftButton) draftButton.disabled = true;
             if (refineVersion) refineVersion.disabled = true;
+            if (directionEditButton) directionEditButton.disabled = true;
             if (button) {
                 button.disabled = true;
                 button.innerHTML = '<span class="spinner"></span> 다듬는 중';
@@ -30650,6 +30942,7 @@
                     videoInstructionRefineBusy = false;
                     if (draftButton) draftButton.disabled = false;
                     if (refineVersion) refineVersion.disabled = false;
+                    if (directionEditButton) directionEditButton.disabled = false;
                     if (button) {
                         button.disabled = false;
                         button.innerHTML = '✍️ 입력 다듬기';
@@ -30664,7 +30957,7 @@
         }
 
         async function requestVideoInstructionDirect() {
-            if (videoInstructionDraftBusy || videoInstructionRefineBusy || videoInstructionDirectBusy) return;
+            if (videoInstructionDraftBusy || videoInstructionRefineBusy || videoInstructionDirectBusy || videoDirectionEditBusy) return;
             const instructionInput = document.getElementById('video-generation-instruction');
             const instruction = (instructionInput?.value || '').trim();
             if (!instruction) {
@@ -30691,9 +30984,11 @@
             const draftButton = document.getElementById('video-generation-draft-button');
             const refineVersion = document.getElementById('video-generation-refine-version');
             const button = document.getElementById('video-generation-refine-button');
+            const directionEditButton = document.getElementById('video-generation-direction-edit-button');
             videoInstructionDirectBusy = true;
             if (draftButton) draftButton.disabled = true;
             if (refineVersion) refineVersion.disabled = true;
+            if (directionEditButton) directionEditButton.disabled = true;
             if (button) {
                 button.disabled = true;
                 button.innerHTML = '<span class="spinner"></span> 다듬는 중';
@@ -30760,12 +31055,527 @@
                     videoInstructionDirectBusy = false;
                     if (draftButton) draftButton.disabled = false;
                     if (refineVersion) refineVersion.disabled = false;
+                    if (directionEditButton) directionEditButton.disabled = false;
                     if (button) {
                         button.disabled = false;
                         button.innerHTML = '✍️ 입력 다듬기';
                     }
                 }
             }
+        }
+
+        function setVideoDirectionEditStatus(message = '', state = '') {
+            const status = document.getElementById('video-direction-edit-status');
+            if (!status) {
+                console.error('[VIDEO_UI] 다듬기 방향 명령 상태 요소를 찾지 못했습니다:', {message, state});
+                return;
+            }
+            status.textContent = String(message || '');
+            if (state) status.dataset.state = state;
+            else delete status.dataset.state;
+        }
+
+        function setVideoDirectionEditBusy(busy) {
+            videoDirectionEditBusy = busy === true;
+            const command = document.getElementById('video-direction-edit-command');
+            const run = document.getElementById('video-direction-edit-run');
+            const more = document.getElementById('video-direction-edit-more');
+            const revert = document.getElementById('video-direction-edit-revert');
+            const accept = document.getElementById('video-direction-edit-accept');
+            const draft = document.getElementById('video-generation-draft-button');
+            const refine = document.getElementById('video-generation-refine-button');
+            const refineVersion = document.getElementById('video-generation-refine-version');
+            const editor = document.getElementById('video-generation-direction-edit-button');
+            if (command) command.disabled = videoDirectionEditBusy;
+            if (run) {
+                run.disabled = videoDirectionEditBusy;
+                run.innerHTML = videoDirectionEditBusy
+                    ? '<span class="spinner"></span> 최소 수정 중'
+                    : '수정안 만들기';
+            }
+            if (more) {
+                more.disabled = videoDirectionEditBusy;
+                more.innerHTML = videoDirectionEditBusy
+                    ? '<span class="spinner"></span> 추가 수정 중'
+                    : '더 바꾸기';
+            }
+            if (revert) revert.disabled = videoDirectionEditBusy;
+            if (accept) accept.disabled = videoDirectionEditBusy;
+            if (draft) draft.disabled = videoDirectionEditBusy;
+            if (refine) refine.disabled = videoDirectionEditBusy;
+            if (refineVersion) refineVersion.disabled = videoDirectionEditBusy;
+            if (editor) editor.disabled = videoDirectionEditBusy;
+        }
+
+        function resetVideoDirectionEditState(closeModal = true) {
+            videoDirectionEditRequestId += 1;
+            setVideoDirectionEditBusy(false);
+            videoDirectionEditState.baseInstruction = '';
+            videoDirectionEditState.candidateInstruction = '';
+            videoDirectionEditState.baseSnapshot = null;
+            videoDirectionEditState.llmTrace = [];
+            videoDirectionEditState.selectionKey = '';
+            videoDirectionEditState.round = 0;
+
+            const source = document.getElementById('video-direction-edit-source');
+            const command = document.getElementById('video-direction-edit-command');
+            const commandLabel = document.getElementById('video-direction-edit-command-label');
+            const review = document.getElementById('video-direction-edit-review');
+            const diff = document.getElementById('video-direction-edit-diff');
+            const run = document.getElementById('video-direction-edit-run');
+            const more = document.getElementById('video-direction-edit-more');
+            const revert = document.getElementById('video-direction-edit-revert');
+            const accept = document.getElementById('video-direction-edit-accept');
+            if (source) source.value = '';
+            if (command) {
+                command.value = '';
+                command.placeholder = '예: 카메라 움직임은 그대로 두고, 인물이 고개를 드는 속도만 더 느리게 바꿔줘.';
+            }
+            if (commandLabel) commandLabel.textContent = '원하는 수정 방향';
+            if (review) review.hidden = true;
+            if (diff) diff.textContent = '';
+            if (run) run.hidden = false;
+            if (more) more.hidden = true;
+            if (revert) revert.hidden = true;
+            if (accept) {
+                accept.hidden = true;
+                accept.disabled = false;
+            }
+            setVideoDirectionEditStatus();
+            if (closeModal) {
+                document.getElementById('video-direction-edit-modal')?.classList.remove('visible');
+            }
+        }
+
+        function openVideoDirectionEditModal() {
+            if (videoInstructionDraftBusy || videoInstructionRefineBusy || videoInstructionDirectBusy || videoDirectionEditBusy) {
+                console.error('[VIDEO_UI] 다른 영상 지시 LLM 요청 처리 중이라 방향 명령창을 열지 않았습니다.');
+                showToast('진행 중인 영상 지시 작업이 끝난 뒤 다시 시도하세요.', 'warning');
+                return;
+            }
+            const instructionInput = document.getElementById('video-generation-instruction');
+            const instruction = String(instructionInput?.value || '').trim();
+            if (!instruction) {
+                console.error('[VIDEO_UI] 다듬기 방향 명령창 열기 실패: 영상 지시 원문이 비어 있습니다.');
+                showToast('먼저 영상에서 일어날 일을 입력해 주세요.', 'warning');
+                instructionInput?.focus();
+                return;
+            }
+            const modal = document.getElementById('video-direction-edit-modal');
+            const source = document.getElementById('video-direction-edit-source');
+            const command = document.getElementById('video-direction-edit-command');
+            if (!modal || !source || !command) {
+                console.error('[VIDEO_UI] 다듬기 방향 명령 모달 요소가 누락되었습니다.', {
+                    modal: !!modal,
+                    source: !!source,
+                    command: !!command,
+                });
+                showToast('다듬기 방향 명령창을 열 수 없습니다.', 'error');
+                return;
+            }
+            resetVideoDirectionEditState(false);
+            videoDirectionEditState.baseInstruction = instruction;
+            videoDirectionEditState.baseSnapshot = snapshotVideoInstructionProvenance(instruction);
+            videoDirectionEditState.selectionKey = videoInstructionDraftSelectionKey();
+            source.value = instruction;
+            setVideoDirectionEditStatus('수정 방향을 입력하면 원문을 건드리지 않고 검토용 수정안을 만듭니다.');
+            modal.classList.add('visible');
+            command.focus();
+        }
+
+        function closeVideoDirectionEditModal() {
+            if (videoDirectionEditBusy) {
+                console.error('[VIDEO_UI] 처리 중인 다듬기 방향 명령 응답을 취소하고 무시합니다.', {
+                    requestId: videoDirectionEditRequestId,
+                });
+            }
+            resetVideoDirectionEditState(true);
+        }
+
+        function videoDirectionDiffTokens(text) {
+            return String(text || '').match(/[\p{L}\p{N}_]+|[^\p{L}\p{N}_\s]+|\s+/gu) || [];
+        }
+
+        function videoDirectionDiffLines(text) {
+            return String(text || '').match(/[^\n]*\n|[^\n]+$/g) || [];
+        }
+
+        function mergeVideoDirectionDiffOperations(operations) {
+            const merged = [];
+            for (const operation of operations) {
+                if (!operation?.text) continue;
+                const previous = merged[merged.length - 1];
+                if (previous?.type === operation.type) previous.text += operation.text;
+                else merged.push({type: operation.type, text: operation.text});
+            }
+            return merged;
+        }
+
+        function fallbackVideoDirectionDiff(original, revised) {
+            let prefixLength = 0;
+            const sharedLength = Math.min(original.length, revised.length);
+            while (prefixLength < sharedLength && original[prefixLength] === revised[prefixLength]) {
+                prefixLength += 1;
+            }
+            let suffixLength = 0;
+            while (
+                suffixLength < original.length - prefixLength
+                && suffixLength < revised.length - prefixLength
+                && original[original.length - 1 - suffixLength] === revised[revised.length - 1 - suffixLength]
+            ) {
+                suffixLength += 1;
+            }
+            const originalEnd = suffixLength ? original.length - suffixLength : original.length;
+            const revisedEnd = suffixLength ? revised.length - suffixLength : revised.length;
+            return mergeVideoDirectionDiffOperations([
+                {type: 'equal', text: original.slice(0, prefixLength)},
+                {type: 'remove', text: original.slice(prefixLength, originalEnd)},
+                {type: 'add', text: revised.slice(prefixLength, revisedEnd)},
+                {type: 'equal', text: suffixLength ? original.slice(originalEnd) : ''},
+            ]);
+        }
+
+        function computeVideoDirectionSequenceDiff(before, after, maxCells) {
+            if (before.length * after.length > maxCells) return null;
+            const rows = Array.from(
+                {length: before.length + 1},
+                () => new Uint16Array(after.length + 1),
+            );
+            for (let i = 1; i <= before.length; i += 1) {
+                for (let j = 1; j <= after.length; j += 1) {
+                    rows[i][j] = before[i - 1] === after[j - 1]
+                        ? rows[i - 1][j - 1] + 1
+                        : Math.max(rows[i - 1][j], rows[i][j - 1]);
+                }
+            }
+            const operations = [];
+            let i = before.length;
+            let j = after.length;
+            while (i > 0 || j > 0) {
+                if (i > 0 && j > 0 && before[i - 1] === after[j - 1]) {
+                    operations.push({type: 'equal', text: before[i - 1]});
+                    i -= 1;
+                    j -= 1;
+                } else if (j > 0 && (i === 0 || rows[i][j - 1] >= rows[i - 1][j])) {
+                    operations.push({type: 'add', text: after[j - 1]});
+                    j -= 1;
+                } else {
+                    operations.push({type: 'remove', text: before[i - 1]});
+                    i -= 1;
+                }
+            }
+            operations.reverse();
+            return mergeVideoDirectionDiffOperations(operations);
+        }
+
+        function computeVideoDirectionTokenDiff(original, revised) {
+            const before = videoDirectionDiffTokens(original);
+            const after = videoDirectionDiffTokens(revised);
+            const operations = computeVideoDirectionSequenceDiff(before, after, 800000);
+            if (operations) return operations;
+            console.error('[VIDEO_UI] 방향 명령의 변경 줄이 커서 해당 줄에 안전한 단순 비교를 사용합니다.', {
+                beforeTokens: before.length,
+                afterTokens: after.length,
+            });
+            return fallbackVideoDirectionDiff(original, revised);
+        }
+
+        function computeVideoDirectionHierarchicalDiff(original, revised) {
+            const beforeLines = videoDirectionDiffLines(original);
+            const afterLines = videoDirectionDiffLines(revised);
+            const lineOperations = computeVideoDirectionSequenceDiff(beforeLines, afterLines, 500000);
+            if (!lineOperations) {
+                console.error('[VIDEO_UI] 방향 명령 줄 수가 너무 많아 문서 전체 단순 비교를 사용합니다.', {
+                    beforeLines: beforeLines.length,
+                    afterLines: afterLines.length,
+                });
+                return fallbackVideoDirectionDiff(original, revised);
+            }
+
+            const refined = [];
+            for (let index = 0; index < lineOperations.length;) {
+                const operation = lineOperations[index];
+                if (operation.type === 'equal') {
+                    refined.push(operation);
+                    index += 1;
+                    continue;
+                }
+
+                let removed = '';
+                let added = '';
+                while (index < lineOperations.length && lineOperations[index].type !== 'equal') {
+                    const changed = lineOperations[index];
+                    if (changed.type === 'remove') removed += changed.text;
+                    else if (changed.type === 'add') added += changed.text;
+                    index += 1;
+                }
+                if (removed && added) {
+                    refined.push(...computeVideoDirectionTokenDiff(removed, added));
+                } else if (removed) {
+                    refined.push({type: 'remove', text: removed});
+                } else if (added) {
+                    refined.push({type: 'add', text: added});
+                }
+            }
+            return mergeVideoDirectionDiffOperations(refined);
+        }
+
+        function computeVideoDirectionDiff(originalValue, revisedValue) {
+            const original = String(originalValue || '');
+            const revised = String(revisedValue || '');
+            if (original === revised) return [{type: 'equal', text: original}];
+            if (original.includes('\n') || revised.includes('\n')) {
+                return computeVideoDirectionHierarchicalDiff(original, revised);
+            }
+            return computeVideoDirectionTokenDiff(original, revised);
+        }
+
+        function renderVideoDirectionEditDiff(original, revised) {
+            const diff = document.getElementById('video-direction-edit-diff');
+            if (!diff) {
+                console.error('[VIDEO_UI] 다듬기 방향 명령 diff 표시 요소를 찾지 못했습니다.');
+                return {added: 0, removed: 0};
+            }
+            const operations = computeVideoDirectionDiff(original, revised);
+            let added = 0;
+            let removed = 0;
+            diff.innerHTML = operations.map(operation => {
+                const safeText = escapeHtml(operation.text);
+                if (operation.type === 'add') {
+                    added += operation.text.length;
+                    return `<ins class="video-direction-diff-add">${safeText}</ins>`;
+                }
+                if (operation.type === 'remove') {
+                    removed += operation.text.length;
+                    return `<del class="video-direction-diff-remove">${safeText}</del>`;
+                }
+                return safeText;
+            }).join('');
+            return {added, removed};
+        }
+
+        function showVideoDirectionEditReview() {
+            const review = document.getElementById('video-direction-edit-review');
+            const round = document.getElementById('video-direction-edit-round');
+            const command = document.getElementById('video-direction-edit-command');
+            const commandLabel = document.getElementById('video-direction-edit-command-label');
+            const run = document.getElementById('video-direction-edit-run');
+            const more = document.getElementById('video-direction-edit-more');
+            const revert = document.getElementById('video-direction-edit-revert');
+            const accept = document.getElementById('video-direction-edit-accept');
+            if (!review || !round || !command || !run || !more || !revert || !accept) {
+                console.error('[VIDEO_UI] 다듬기 방향 명령 검토 UI 요소가 누락되었습니다.');
+                return;
+            }
+            const counts = renderVideoDirectionEditDiff(
+                videoDirectionEditState.baseInstruction,
+                videoDirectionEditState.candidateInstruction,
+            );
+            review.hidden = false;
+            round.textContent = `수정안 ${videoDirectionEditState.round}`;
+            command.value = '';
+            command.placeholder = '추가로 바꿀 내용을 입력한 뒤 “더 바꾸기”를 누르세요.';
+            if (commandLabel) commandLabel.textContent = '추가 수정 방향';
+            run.hidden = true;
+            more.hidden = false;
+            revert.hidden = false;
+            accept.hidden = false;
+            accept.disabled = videoDirectionEditState.candidateInstruction === videoDirectionEditState.baseInstruction;
+            const summary = counts.added || counts.removed
+                ? `수정안 ${videoDirectionEditState.round} 준비 완료 · 원문 대비 추가 ${counts.added}자, 삭제 ${counts.removed}자`
+                : `수정안 ${videoDirectionEditState.round}에 원문과 다른 내용이 없습니다.`;
+            setVideoDirectionEditStatus(summary, 'ready');
+        }
+
+        async function requestVideoDirectionEdit() {
+            if (videoInstructionDraftBusy || videoInstructionRefineBusy || videoInstructionDirectBusy || videoDirectionEditBusy) return;
+            const commandInput = document.getElementById('video-direction-edit-command');
+            const editDirection = String(commandInput?.value || '').trim();
+            if (!editDirection) {
+                console.error('[VIDEO_UI] 다듬기 방향 명령 요청 실패: 수정 방향이 비어 있습니다.');
+                showToast('원하는 수정 방향을 입력해 주세요.', 'warning');
+                commandInput?.focus();
+                return;
+            }
+            const instruction = videoDirectionEditState.candidateInstruction
+                || videoDirectionEditState.baseInstruction;
+            if (!instruction) {
+                console.error('[VIDEO_UI] 다듬기 방향 명령 요청 실패: 수정 기준 문장이 비어 있습니다.');
+                showToast('수정할 영상 지시 원문이 없습니다.', 'error');
+                return;
+            }
+            const sourceKey = document.getElementById('video-generation-source')?.value || '';
+            const sourceRef = getVideoReferenceByKey(sourceKey)?.reference || null;
+            const mode = document.getElementById('video-generation-mode')?.value || 'i2v';
+            const lastRef = getEffectiveLastVideoReference();
+            if (!sourceRef) {
+                console.error('[VIDEO_UI] 다듬기 방향 명령 요청 실패: 원본 참조 없음', {sourceKey});
+                showToast('수정을 위한 원본 이미지 정보가 없습니다.', 'error');
+                return;
+            }
+            if (mode === 'first_last' && !lastRef) {
+                console.error('[VIDEO_UI] 다듬기 방향 명령 요청 실패: 마지막 프레임 없음');
+                showToast('수정을 위한 마지막 프레임을 선택하세요.', 'warning');
+                return;
+            }
+            const requestId = ++videoDirectionEditRequestId;
+            const selectionKey = videoDirectionEditState.selectionKey;
+            setVideoDirectionEditBusy(true);
+            setVideoDirectionEditStatus('원문을 보존하며 명령한 부분만 최소 수정하는 중...', 'busy');
+            try {
+                const data = await fetchJSON('/api/video/instruction-refine', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        mode,
+                        workflow_variant: selectedVideoWorkflowVariant(),
+                        instruction,
+                        edit_direction: editDirection,
+                        source_ref: sourceRef,
+                        last_ref: lastRef,
+                        reference_refs: getSelectedVideoReferenceRefs(),
+                        source_backup: sourceRef.kind === 'backup' ? sourceRef.name : '',
+                        last_backup: lastRef?.kind === 'backup' ? lastRef.name : '',
+                        loop: isVideoLoopEnabled(),
+                        aspect_ratio: document.getElementById('video-generation-aspect-ratio')?.value || 'auto',
+                        quality_level: document.getElementById('video-generation-quality-level')?.value || 'medium',
+                        duration: normalizedVideoDuration(),
+                        language: selectedVideoInstructionLanguage(),
+                        include_dialogue_context: isVideoDialogueContextEnabled(),
+                        allow_camera_motion: isVideoCameraMotionAllowed(),
+                        allow_background_change: isVideoBackgroundChangeAllowed(),
+                    }),
+                });
+                if (requestId !== videoDirectionEditRequestId) {
+                    console.error('[VIDEO_UI] 닫히거나 교체된 다듬기 방향 명령 응답 무시:', data);
+                    return;
+                }
+                if (!data.success || !String(data.draft || '').trim()) {
+                    throw new Error(data.error || '다듬기 방향 명령 처리 실패');
+                }
+                if (selectionKey !== videoInstructionDraftSelectionKey()) {
+                    console.error('[VIDEO_UI] 원본 선택 변경 후 도착한 다듬기 방향 명령 결과 미적용:', data);
+                    setVideoDirectionEditStatus('영상화 선택값이 바뀌어 수정안을 적용하지 않았습니다. 창을 닫고 다시 시도해 주세요.', 'error');
+                    showToast('영상화 선택값이 바뀌어 수정안을 적용하지 않았습니다.', 'warning');
+                    return;
+                }
+                videoDirectionEditState.candidateInstruction = String(data.draft).trim();
+                videoDirectionEditState.llmTrace = normalizeVideoInstructionLlmTrace([
+                    ...videoDirectionEditState.llmTrace,
+                    ...normalizeVideoInstructionLlmTrace(data.llm_trace),
+                ]);
+                videoDirectionEditState.round += 1;
+                showVideoDirectionEditReview();
+            } catch (error) {
+                if (requestId !== videoDirectionEditRequestId) return;
+                console.error('[VIDEO_UI] 다듬기 방향 명령 처리 실패:', error, {
+                    mode,
+                    instruction,
+                    editDirection,
+                    sourceRef,
+                    lastRef,
+                });
+                setVideoDirectionEditStatus(`수정안 생성 실패: ${error.message || error}`, 'error');
+                showToast('수정안 생성 실패: ' + (error.message || error), 'error');
+            } finally {
+                if (requestId === videoDirectionEditRequestId) {
+                    setVideoDirectionEditBusy(false);
+                    const accept = document.getElementById('video-direction-edit-accept');
+                    if (accept && !accept.hidden) {
+                        accept.disabled = videoDirectionEditState.candidateInstruction === videoDirectionEditState.baseInstruction;
+                    }
+                }
+            }
+        }
+
+        function requestMoreVideoDirectionEdit() {
+            const command = document.getElementById('video-direction-edit-command');
+            if (!String(command?.value || '').trim()) {
+                console.error('[VIDEO_UI] 추가 다듬기 방향 명령 요청 실패: 추가 수정 방향이 비어 있습니다.');
+                showToast('추가로 바꿀 내용을 입력해 주세요.', 'warning');
+                command?.focus();
+                return;
+            }
+            return requestVideoDirectionEdit();
+        }
+
+        function revertVideoDirectionEditPreview() {
+            if (videoDirectionEditBusy) {
+                console.error('[VIDEO_UI] 처리 중에는 다듬기 방향 수정안을 되돌릴 수 없습니다.');
+                return;
+            }
+            videoDirectionEditState.candidateInstruction = '';
+            videoDirectionEditState.llmTrace = [];
+            videoDirectionEditState.round = 0;
+            const review = document.getElementById('video-direction-edit-review');
+            const diff = document.getElementById('video-direction-edit-diff');
+            const command = document.getElementById('video-direction-edit-command');
+            const commandLabel = document.getElementById('video-direction-edit-command-label');
+            const run = document.getElementById('video-direction-edit-run');
+            const more = document.getElementById('video-direction-edit-more');
+            const revert = document.getElementById('video-direction-edit-revert');
+            const accept = document.getElementById('video-direction-edit-accept');
+            if (review) review.hidden = true;
+            if (diff) diff.textContent = '';
+            if (command) {
+                command.value = '';
+                command.placeholder = '예: 카메라 움직임은 그대로 두고, 인물이 고개를 드는 속도만 더 느리게 바꿔줘.';
+                command.focus();
+            }
+            if (commandLabel) commandLabel.textContent = '원하는 수정 방향';
+            if (run) run.hidden = false;
+            if (more) more.hidden = true;
+            if (revert) revert.hidden = true;
+            if (accept) accept.hidden = true;
+            setVideoDirectionEditStatus('검토 중이던 수정안을 버리고 최초 원문으로 되돌렸습니다.');
+            showToast('수정안을 버리고 최초 원문으로 되돌렸습니다.', 'info');
+        }
+
+        function acceptVideoDirectionEdit() {
+            const candidate = String(videoDirectionEditState.candidateInstruction || '').trim();
+            const baseInstruction = String(videoDirectionEditState.baseInstruction || '').trim();
+            const baseSnapshot = videoDirectionEditState.baseSnapshot;
+            if (!candidate || !baseInstruction || !baseSnapshot) {
+                console.error('[VIDEO_UI] 다듬기 방향 수정안 적용 상태가 올바르지 않습니다.', {
+                    candidateLength: candidate.length,
+                    baseLength: baseInstruction.length,
+                    hasSnapshot: !!baseSnapshot,
+                });
+                showToast('적용할 수정안이 없습니다.', 'error');
+                return;
+            }
+            if (candidate === baseInstruction) {
+                console.error('[VIDEO_UI] 원문과 같은 다듬기 방향 수정안은 적용하지 않습니다.');
+                showToast('원문과 달라진 내용이 없습니다.', 'info');
+                return;
+            }
+            const target = document.getElementById('video-generation-instruction');
+            if (!target) {
+                console.error('[VIDEO_UI] 다듬기 방향 수정안을 적용할 영상 지시 입력란을 찾지 못했습니다.');
+                showToast('영상 지시 입력란을 찾지 못했습니다.', 'error');
+                return;
+            }
+            if (String(target.value || '').trim() !== baseInstruction) {
+                console.error('[VIDEO_UI] 검토 중 원문이 변경되어 다듬기 방향 수정안을 적용하지 않았습니다.', {
+                    expected: baseInstruction,
+                    actual: target.value,
+                });
+                showToast('검토 중 원문이 바뀌었습니다. 창을 닫고 다시 시도해 주세요.', 'warning');
+                return;
+            }
+            videoInstructionRefineUndoSnapshot = baseSnapshot;
+            videoInstructionOriginalInput = String(baseSnapshot.originalInput || '');
+            videoInstructionLlmTrace = normalizeVideoInstructionLlmTrace(baseSnapshot.llmTrace);
+            appendVideoInstructionProvenance(baseInstruction, videoDirectionEditState.llmTrace);
+            target.value = candidate;
+            showVideoInstructionRefineUndo();
+            const appliedRound = videoDirectionEditState.round;
+            closeVideoDirectionEditModal();
+            target.focus();
+            updateVideoInstructionDraftPresentation(
+                `방향 명령 수정안 ${appliedRound} 적용 완료 · ↩ 원문으로 되돌리기로 복구 가능.`
+            );
+            showToast('검토한 수정안을 영상 지시에 적용했습니다.', 'success');
         }
 
         function selectVideoUpscaleScale(value, userInitiated = false) {
@@ -31590,6 +32400,7 @@
             resetVideoInstructionDraftRequest();
             resetVideoInstructionRefineRequest();
             resetVideoInstructionDirectRequest();
+            resetVideoDirectionEditState();
             ensureVideoInstructionRefineUndoListener();
             const badge = document.querySelector('#video-modal .video-source-badge');
             if (badge) badge.textContent = reference.kind === 'asset' ? '현재 에셋' : '현재 카드';
@@ -31634,6 +32445,7 @@
             resetVideoInstructionDraftRequest();
             resetVideoInstructionRefineRequest();
             resetVideoInstructionDirectRequest();
+            resetVideoDirectionEditState();
         }
 
         async function submitVideoGeneration() {

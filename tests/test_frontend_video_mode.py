@@ -471,6 +471,72 @@ def test_video_refine_uses_one_button_and_ai_context_version_dropdown() -> None:
     assert "button.innerHTML = '✍️ 입력 다듬기'" in v2_request
 
 
+def test_video_direction_edit_modal_reviews_diff_before_accepting() -> None:
+    modal = FRONTEND.split('id="video-direction-edit-modal"', 1)[1].split(
+        '<!-- 영상 참조 공용 탐색 모달', 1
+    )[0]
+
+    assert 'id="video-generation-direction-edit-button"' in FRONTEND
+    assert "openVideoDirectionEditModal()" in FRONTEND
+    assert "다듬기 방향 명령창" in modal
+    assert 'id="video-direction-edit-source"' in modal
+    assert 'id="video-direction-edit-command"' in modal
+    assert 'maxlength="4000"' in modal
+    assert 'id="video-direction-edit-diff"' in modal
+    assert 'id="video-direction-edit-accept"' in modal
+    assert 'id="video-direction-edit-more"' in modal
+    assert 'id="video-direction-edit-revert"' in modal
+
+    request = FRONTEND.split(
+        "async function requestVideoDirectionEdit()", 1
+    )[1].split("function requestMoreVideoDirectionEdit()", 1)[0]
+    assert "/api/video/instruction-refine" in request
+    assert "edit_direction: editDirection" in request
+    assert "videoDirectionEditState.candidateInstruction" in request
+    assert "showVideoDirectionEditReview()" in request
+
+    review = FRONTEND.split(
+        "function showVideoDirectionEditReview()", 1
+    )[1].split("async function requestVideoDirectionEdit()", 1)[0]
+    assert "videoDirectionEditState.baseInstruction" in review
+    assert "videoDirectionEditState.candidateInstruction" in review
+    assert "renderVideoDirectionEditDiff" in review
+
+    diff = FRONTEND.split(
+        "function videoDirectionDiffTokens", 1
+    )[1].split("function renderVideoDirectionEditDiff", 1)[0]
+    assert "function videoDirectionDiffLines" in diff
+    assert "function computeVideoDirectionHierarchicalDiff" in diff
+    assert "computeVideoDirectionSequenceDiff(beforeLines, afterLines" in diff
+    assert "refined.push(...computeVideoDirectionTokenDiff(removed, added))" in diff
+    assert "return computeVideoDirectionHierarchicalDiff(original, revised)" in diff
+    assert "문서 전체 단순 비교" in diff
+
+    accept = FRONTEND.split(
+        "function acceptVideoDirectionEdit()", 1
+    )[1].split("function selectVideoUpscaleScale", 1)[0]
+    assert "videoInstructionRefineUndoSnapshot = baseSnapshot" in accept
+    assert "appendVideoInstructionProvenance" in accept
+    assert "target.value = candidate" in accept
+
+
+def test_video_direction_edit_api_uses_separate_prompt_without_new_endpoint() -> None:
+    root = Path(__file__).resolve().parents[1]
+    server = (root / "server.py").read_text(encoding="utf-8")
+    video_mode = (root / "modes" / "video_mode.py").read_text(encoding="utf-8")
+
+    handler = server.split(
+        "async def handle_api_video_instruction_refine", 1
+    )[1].split("async def handle_api_video_instruction_direct", 1)[0]
+    assert 'edit_direction = str(body.get("edit_direction")' in handler
+    assert '"edit_direction": edit_direction' in handler
+    assert "다듬기 방향 명령은 4000자 이하여야 합니다" in handler
+    assert "/api/video/instruction-direction-edit" not in server
+
+    assert "INSTRUCTION_DIRECTION_EDIT_SYSTEM_PROMPT" in video_mode
+    assert "INSTRUCTION_DIRECTION_EDIT_SYSTEM_PROMPT\n                    if requested_edit" in video_mode
+
+
 def test_secondary_animation_is_inside_ai_direction_context_panel() -> None:
     modal = FRONTEND.split('id="video-modal"', 1)[1].split(
         '<!-- 기존 animated AVIF/WebP 재후처리 모달 -->', 1

@@ -11302,6 +11302,16 @@ async def handle_api_video_instruction_refine(request: web.Request) -> web.Respo
                 {"success": False, "error": "입력이 너무 깁니다(12000자 이내)"},
                 status=400,
             )
+        edit_direction = str(body.get("edit_direction") or "").strip()
+        if len(edit_direction) > 4000:
+            print(
+                "[VIDEO:REFINE:API] 다듬기 방향 명령 길이 초과: "
+                f"length={len(edit_direction)}, mode={mode!r}"
+            )
+            return web.json_response(
+                {"success": False, "error": "다듬기 방향 명령은 4000자 이하여야 합니다"},
+                status=400,
+            )
         boolean_options = {
             "include_dialogue_context": body.get("include_dialogue_context", True),
             "allow_camera_motion": body.get("allow_camera_motion", True),
@@ -11405,6 +11415,7 @@ async def handle_api_video_instruction_refine(request: web.Request) -> web.Respo
             "mode": mode,
             "workflow_variant": workflow_variant,
             "instruction": instruction,
+            "edit_direction": edit_direction,
             "source_ref": source_ref,
             "last_ref": last_ref or {},
             "reference_refs": reference_refs,
@@ -11431,6 +11442,8 @@ async def handle_api_video_instruction_refine(request: web.Request) -> web.Respo
             "first_last": "H3 FLF2V 입력 다듬기",
             "ref2v": "H3 REF2V 입력 다듬기",
         }[mode]
+        if edit_direction:
+            label = label.replace("입력 다듬기", "방향 명령 수정")
         if workflow_variant == "fast":
             label = label.replace("H3 ", "H3 고속 ", 1)
         item = await queue_manager.add_item(
@@ -11443,6 +11456,7 @@ async def handle_api_video_instruction_refine(request: web.Request) -> web.Respo
             f"item={item.id}, mode={mode}, variant={workflow_variant}, "
             f"language={language}, "
             f"seed_length={len(instruction)}, "
+            f"edit_direction_length={len(edit_direction)}, "
             f"dialogue={boolean_options['include_dialogue_context']}, "
             f"camera_motion={boolean_options['allow_camera_motion']}, "
             f"background_change={boolean_options['allow_background_change']}"

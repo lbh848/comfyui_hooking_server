@@ -62,16 +62,17 @@ def test_workflow_pack_round_trip_preserves_bindings_and_hashes(tmp_path):
     assert len(extracted.workflow_items) == 2
 
 
-def test_workflow_pack_records_release_version(tmp_path):
+@pytest.mark.parametrize("release_version", ["v2", "v3", "v10"])
+def test_workflow_pack_records_release_version(tmp_path, release_version):
     workflow = tmp_path / "workflow.json"
     _write_workflow(workflow, "1")
-    pack = tmp_path / "workflows-v2.soyawfp"
+    pack = tmp_path / f"workflows-{release_version}.soyawfp"
 
     created = create_workflow_pack(
         {"comfy_workflow_source_path": workflow},
         pack,
         "right",
-        release_version="v2",
+        release_version=release_version,
         workflow_items=[
             {
                 "id": "comfy_workflow_source_path",
@@ -82,10 +83,12 @@ def test_workflow_pack_records_release_version(tmp_path):
             }
         ],
     )
-    extracted = extract_workflow_pack(pack, tmp_path / "restored-v2", "right")
+    extracted = extract_workflow_pack(
+        pack, tmp_path / f"restored-{release_version}", "right"
+    )
 
-    assert created["release_version"] == "v2"
-    assert extracted.release_version == "v2"
+    assert created["release_version"] == release_version
+    assert extracted.release_version == release_version
     assert extracted.workflow_items[0]["model_ids"] == [
         "fixed-model-a",
         "fixed-model-b",

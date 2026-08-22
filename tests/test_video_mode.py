@@ -1019,6 +1019,45 @@ def test_instruction_refine_prompt_expands_into_mechanics_and_result() -> None:
     assert "인물이 컵을 내려놓고 카메라를 바라본다" in combined
 
 
+def test_instruction_direction_edit_uses_dedicated_minimal_change_prompt() -> None:
+    current_direction = (
+        "인물이 천천히 고개를 들고 카메라를 바라본다. "
+        "카메라는 그대로 고정되어 있다."
+    )
+    edit_direction = "카메라는 그대로 두고 고개를 드는 속도만 더 느리게 바꿔줘"
+    messages = VideoMode._instruction_refine_messages(
+        "i2v",
+        "ko",
+        duration=7,
+        user_input=current_direction,
+        allow_camera_motion=True,
+        allow_background_change=False,
+        edit_direction=edit_direction,
+    )
+
+    assert [message["role"] for message in messages] == ["system", "user"]
+    assert messages[0]["content"] == video_module.INSTRUCTION_DIRECTION_EDIT_SYSTEM_PROMPT
+    assert messages[0]["content"] != video_module.INSTRUCTION_REFINE_SYSTEM_PROMPT
+    assert "make only the smallest changes required" in messages[0]["content"]
+    assert "Everything it does not require changing is protected content" in messages[0]["content"]
+    assert "Do not return a diff" in messages[0]["content"]
+    assert "--- BEGIN CURRENT DIRECTION ---" in messages[1]["content"]
+    assert current_direction in messages[1]["content"]
+    assert "--- BEGIN EDIT INSTRUCTION ---" in messages[1]["content"]
+    assert edit_direction in messages[1]["content"]
+    assert "natural Korean" in messages[1]["content"]
+
+
+def test_instruction_direction_edit_rejects_oversized_command() -> None:
+    with pytest.raises(ValueError, match="4000자"):
+        VideoMode._instruction_refine_messages(
+            "i2v",
+            "ko",
+            user_input="인물이 손을 흔든다",
+            edit_direction="가" * 4001,
+        )
+
+
 def test_instruction_direct_prompt_uses_active_prompt_and_supplied_duration() -> None:
     duration = 7
     user_direction = "free-form direction supplied by the user"
