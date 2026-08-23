@@ -14129,11 +14129,14 @@
         .pmi-item-nav-head { display: grid; gap: 8px; padding: 11px; border-bottom: 1px solid var(--border); }
         .pmi-filter-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; }
         .pmi-filter-count { display: inline-grid; min-width: 18px; height: 18px; margin-left: 3px; padding: 0 4px; place-items: center; border-radius: 999px; background: color-mix(in srgb, var(--surface2) 78%, var(--bg)); color: var(--text2); font-size: .58rem; }
+        .pmi-selected-only { display: flex; align-items: center; gap: 7px; padding: 7px 8px; border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border)); border-radius: 7px; background: color-mix(in srgb, var(--accent) 6%, transparent); color: var(--text2); font-size: .66rem; cursor: pointer; }
+        .pmi-selected-only input { margin: 0; accent-color: var(--accent); }
         .pmi-item-list { flex: 1; min-height: 0; overflow-y: auto; padding: 7px; display: grid; align-content: start; gap: 5px; }
         .pmi-item-button { width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 8px; padding: 9px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--text); cursor: pointer; text-align: left; }
         .pmi-item-button:hover { background: var(--surface2); }
         .pmi-item-button.active { border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); background: color-mix(in srgb, var(--accent) 12%, var(--surface)); }
-        .pmi-item-button.unselected { opacity: .58; }
+        .pmi-item-button.unselected { opacity: .32; filter: saturate(.2); background: repeating-linear-gradient(-45deg, transparent 0 8px, color-mix(in srgb, var(--surface2) 28%, transparent) 8px 16px); }
+        .pmi-item-button.unselected:hover { opacity: .58; filter: saturate(.45); }
         .pmi-item-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.72rem; font-weight: 650; }
         .pmi-item-sub { grid-column: 1 / -1; color: var(--text2); font-size: 0.62rem; }
         .pmi-badge { display: inline-flex; align-items: center; width: fit-content; padding: 2px 6px; border: 1px solid var(--border); border-radius: 999px; color: var(--text2); font-size: 0.58rem; font-weight: 700; white-space: nowrap; }
@@ -19146,6 +19149,63 @@
                         <div>프롬프트를 수정하여 새 이미지를 생성합니다.</div>
                     </div>
                 </div>
+                <details id="modal-camera-panel" style="display:none; margin-bottom:10px; padding:0; border:1px solid color-mix(in srgb, var(--accent) 42%, var(--border)); border-radius:8px; background:color-mix(in srgb, var(--accent) 5%, var(--surface1));">
+                    <summary style="padding:10px 12px; cursor:pointer; color:var(--accent); font-size:0.84rem; font-weight:700;">🧭 Anima 구도 조정</summary>
+                    <div style="padding:0 12px 12px; display:flex; flex-direction:column; gap:9px;">
+                        <div style="font-size:0.72rem; line-height:1.45; color:var(--text-secondary);">
+                            선택한 차원의 기존 구도 표현을 LLM이 문맥적으로 정리한 뒤 Anima 태그를 확정 적용합니다. 다른 장면 내용과 SDXL 프롬프트는 유지합니다.
+                        </div>
+                        <div style="display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px;">
+                            <label style="display:flex; flex-direction:column; gap:4px; font-size:0.72rem; color:var(--text-secondary);">방향
+                                <select id="modal-camera-direction" onchange="onIllustrationCameraControlChange()">
+                                    <option value="keep">기존 방향 유지</option>
+                                    <option value="front">정면</option>
+                                    <option value="left">왼쪽에서</option>
+                                    <option value="right">오른쪽에서</option>
+                                    <option value="behind">뒤에서</option>
+                                </select>
+                            </label>
+                            <label style="display:flex; flex-direction:column; gap:4px; font-size:0.72rem; color:var(--text-secondary);">높이
+                                <select id="modal-camera-elevation" onchange="onIllustrationCameraControlChange()">
+                                    <option value="keep">기존 높이 유지</option>
+                                    <option value="overhead">수직 탑뷰</option>
+                                    <option value="high">하이 앵글</option>
+                                    <option value="eye">눈높이</option>
+                                    <option value="low">로우 앵글</option>
+                                    <option value="ground">바닥 시점</option>
+                                </select>
+                            </label>
+                            <label style="display:flex; flex-direction:column; gap:4px; font-size:0.72rem; color:var(--text-secondary);">거리
+                                <select id="modal-camera-distance" onchange="onIllustrationCameraControlChange()">
+                                    <option value="keep">기존 거리 유지</option>
+                                    <option value="extreme_close">극근접</option>
+                                    <option value="close">근접</option>
+                                    <option value="medium">중경</option>
+                                    <option value="full">전신</option>
+                                    <option value="wide">원경</option>
+                                </select>
+                            </label>
+                            <label style="display:flex; flex-direction:column; gap:4px; font-size:0.72rem; color:var(--text-secondary);">기울기
+                                <select id="modal-camera-roll" onchange="onIllustrationCameraControlChange()">
+                                    <option value="keep">기존 기울기 유지</option>
+                                    <option value="level">수평</option>
+                                    <option value="dutch">더치 앵글</option>
+                                </select>
+                            </label>
+                        </div>
+                        <label style="display:grid; grid-template-columns:auto minmax(120px,1fr) 42px; align-items:center; gap:8px; font-size:0.72rem; color:var(--text-secondary);">
+                            태그 강도
+                            <input id="modal-camera-weight" type="range" min="1" max="5" step="0.1" value="3" oninput="onIllustrationCameraControlChange()">
+                            <output id="modal-camera-weight-value" for="modal-camera-weight" style="text-align:right; color:var(--text);">3.0</output>
+                        </label>
+                        <div id="modal-camera-selection" style="padding:7px 9px; border:1px solid var(--border); border-radius:6px; background:var(--surface2); color:var(--text-secondary); font-size:0.72rem; line-height:1.4;">변경할 구도 차원을 선택하세요.</div>
+                        <div id="modal-camera-prompt-preview" style="display:none; padding:7px 9px; border:1px dashed var(--border); border-radius:6px; color:var(--text); font-family:ui-monospace,Menlo,monospace; font-size:0.69rem; line-height:1.45; overflow-wrap:anywhere;"></div>
+                        <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                            <button type="button" id="modal-camera-apply-btn" onclick="applyIllustrationCameraAdjustment()" style="padding:7px 11px; border:1px solid var(--accent); border-radius:6px; background:var(--surface2); color:var(--accent); font-weight:700; cursor:pointer;">LLM으로 구도 반영</button>
+                            <span id="modal-camera-status" style="font-size:0.7rem; color:var(--text-secondary);"></span>
+                        </div>
+                    </div>
+                </details>
                 <div id="modal-llm-plan" style="display:none; margin-bottom:8px; padding:8px 10px; border:1px solid var(--accent); border-radius:6px; background:var(--surface1); position:relative;">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
                         <span style="font-weight:700; font-size:0.8rem; color:var(--accent);">편하게 수정 결과</span>
@@ -19155,7 +19215,7 @@
                 </div>
                 <div class="form-group" style="position:relative;">
                     <label>긍정 프롬프트 (Positive)</label>
-                    <textarea id="modal-positive" placeholder="긍정 프롬프트를 입력하세요..."></textarea>
+                    <textarea id="modal-positive" placeholder="긍정 프롬프트를 입력하세요..." oninput="onIllustrationPromptManualEdit()"></textarea>
                     <div class="tag-autocomplete-dropdown" id="ac-modal-positive"></div>
                 </div>
                 <div class="form-group" style="position:relative;">
@@ -19631,6 +19691,7 @@
                                                 <div class="pmi-item-nav-head">
                                                     <input class="pm-input" id="pmi-item-search" type="search" placeholder="항목 이름 검색" oninput="pmiRenderItemList()">
                                                     <div class="pmi-filter-row" id="pmi-item-filters"><button class="pm-filter-btn active" data-filter="modified" onclick="pmiSetItemFilter('modified')">변경됨 <span class="pmi-filter-count">0</span></button><button class="pm-filter-btn" data-filter="unassigned" onclick="pmiSetItemFilter('unassigned')">미분류 <span class="pmi-filter-count">0</span></button><button class="pm-filter-btn" data-filter="all" onclick="pmiSetItemFilter('all')">전체 <span class="pmi-filter-count">0</span></button></div>
+                                                    <label class="pmi-selected-only" title="오른쪽 상단의 가져오기 체크가 켜진 항목만 목록에 표시합니다."><input id="pmi-selected-only" type="checkbox" checked onchange="pmiSetSelectedOnly(this.checked)"> 가져오기 체크 항목만 보기</label>
                                                 </div>
                                                 <div class="pmi-item-list" id="pmi-item-list"></div>
                                             </aside>
@@ -33325,6 +33386,221 @@
         let llmEditInFlight = false;
         let currentModalIdentityEdit = null;
         let llmEditModalState = null;
+        let currentModalCameraSupported = false;
+        let currentModalCameraAppliedControl = null;
+        let currentModalCameraDirty = false;
+        let currentModalCameraPrompt = '';
+
+        const ILLUSTRATION_CAMERA_LABELS = {
+            direction: {
+                keep: '기존 방향 유지', front: '정면', left: '왼쪽에서',
+                right: '오른쪽에서', behind: '뒤에서',
+            },
+            elevation: {
+                keep: '기존 높이 유지', overhead: '수직 탑뷰', high: '하이 앵글',
+                eye: '눈높이', low: '로우 앵글', ground: '바닥 시점',
+            },
+            distance: {
+                keep: '기존 거리 유지', extreme_close: '극근접', close: '근접',
+                medium: '중경', full: '전신', wide: '원경',
+            },
+            roll: {
+                keep: '기존 기울기 유지', level: '수평', dutch: '더치 앵글',
+            },
+        };
+
+        function normalizeIllustrationCameraControlForUi(raw) {
+            const source = raw && typeof raw === 'object' ? raw : {};
+            const normalized = { version: 1 };
+            for (const dimension of ['direction', 'elevation', 'distance', 'roll']) {
+                const choices = ILLUSTRATION_CAMERA_LABELS[dimension];
+                const value = String(source[dimension] || 'keep');
+                normalized[dimension] = Object.prototype.hasOwnProperty.call(choices, value)
+                    ? value : 'keep';
+            }
+            const parsedWeight = Number(source.weight);
+            normalized.weight = Number.isFinite(parsedWeight)
+                ? Math.max(1, Math.min(5, Math.round(parsedWeight * 10) / 10))
+                : 3;
+            return normalized;
+        }
+
+        function readIllustrationCameraControl() {
+            return normalizeIllustrationCameraControlForUi({
+                direction: document.getElementById('modal-camera-direction')?.value,
+                elevation: document.getElementById('modal-camera-elevation')?.value,
+                distance: document.getElementById('modal-camera-distance')?.value,
+                roll: document.getElementById('modal-camera-roll')?.value,
+                weight: document.getElementById('modal-camera-weight')?.value,
+            });
+        }
+
+        function illustrationCameraHasAdjustment(control) {
+            return ['direction', 'elevation', 'distance', 'roll']
+                .some(dimension => control?.[dimension] && control[dimension] !== 'keep');
+        }
+
+        function illustrationCameraControlsEqual(left, right) {
+            if (!left || !right) return left === right;
+            return ['direction', 'elevation', 'distance', 'roll', 'weight']
+                .every(key => left[key] === right[key]);
+        }
+
+        function illustrationCameraSummary(control) {
+            if (!control) return '';
+            const parts = [];
+            for (const dimension of ['direction', 'elevation', 'distance', 'roll']) {
+                const value = control[dimension] || 'keep';
+                if (value !== 'keep') parts.push(ILLUSTRATION_CAMERA_LABELS[dimension][value] || value);
+            }
+            return parts.join(' · ');
+        }
+
+        function setIllustrationCameraForm(control) {
+            const normalized = normalizeIllustrationCameraControlForUi(control);
+            for (const dimension of ['direction', 'elevation', 'distance', 'roll']) {
+                const el = document.getElementById(`modal-camera-${dimension}`);
+                if (el) el.value = normalized[dimension];
+            }
+            const weight = document.getElementById('modal-camera-weight');
+            if (weight) weight.value = String(normalized.weight);
+            const weightValue = document.getElementById('modal-camera-weight-value');
+            if (weightValue) weightValue.textContent = normalized.weight.toFixed(1);
+        }
+
+        function renderIllustrationCameraState(statusOverride = '') {
+            const control = readIllustrationCameraControl();
+            const selection = document.getElementById('modal-camera-selection');
+            const status = document.getElementById('modal-camera-status');
+            const preview = document.getElementById('modal-camera-prompt-preview');
+            const summary = illustrationCameraSummary(control);
+            if (selection) {
+                selection.textContent = summary
+                    ? `${summary} · 강도 ${control.weight.toFixed(1)}`
+                    : '변경할 구도 차원을 선택하세요.';
+            }
+            if (preview) {
+                preview.style.display = currentModalCameraPrompt ? 'block' : 'none';
+                preview.textContent = currentModalCameraPrompt
+                    ? `현재 확정 태그: ${currentModalCameraPrompt}` : '';
+            }
+            if (status) {
+                if (statusOverride) status.textContent = statusOverride;
+                else if (currentModalCameraDirty) status.textContent = '선택 또는 프롬프트 변경됨 · LLM 반영 필요';
+                else if (currentModalCameraAppliedControl) status.textContent = '이 백업에 반영된 구도 설정';
+                else status.textContent = '아직 프로그램 구도 조정을 적용하지 않았습니다.';
+            }
+        }
+
+        function onIllustrationCameraControlChange() {
+            if (!currentModalCameraSupported) return;
+            const control = readIllustrationCameraControl();
+            const weightValue = document.getElementById('modal-camera-weight-value');
+            if (weightValue) weightValue.textContent = control.weight.toFixed(1);
+            currentModalCameraDirty = illustrationCameraHasAdjustment(control)
+                && !illustrationCameraControlsEqual(control, currentModalCameraAppliedControl);
+            renderIllustrationCameraState();
+        }
+
+        function onIllustrationPromptManualEdit() {
+            if (!currentModalCameraSupported || !currentModalCameraAppliedControl) return;
+            currentModalCameraDirty = true;
+            renderIllustrationCameraState('프롬프트가 변경됨 · 충돌 방지를 위해 LLM 구도 반영을 다시 실행하세요.');
+        }
+
+        function initializeIllustrationCameraPanel(promptData, format, promptProvider) {
+            const panel = document.getElementById('modal-camera-panel');
+            currentModalCameraSupported = format === 'v3' && promptProvider === 'comfy';
+            currentModalCameraDirty = false;
+            currentModalCameraAppliedControl = null;
+            currentModalCameraPrompt = '';
+            if (!panel) {
+                console.error('[ILLUST_CAMERA] 구도 조정 패널을 찾지 못했습니다.');
+                return;
+            }
+            panel.style.display = currentModalCameraSupported ? 'block' : 'none';
+            panel.open = false;
+            if (!currentModalCameraSupported) {
+                setIllustrationCameraForm(null);
+                return;
+            }
+            const generationParams = promptData?.conversion_info?.generation_params;
+            const storedControl = generationParams?.illustration_camera_control;
+            if (storedControl && typeof storedControl === 'object') {
+                const normalized = normalizeIllustrationCameraControlForUi(storedControl);
+                if (illustrationCameraHasAdjustment(normalized)) {
+                    currentModalCameraAppliedControl = normalized;
+                    currentModalCameraPrompt = String(
+                        generationParams?.illustration_camera_prompt || ''
+                    ).trim();
+                }
+            }
+            setIllustrationCameraForm(currentModalCameraAppliedControl);
+            renderIllustrationCameraState();
+        }
+
+        async function applyIllustrationCameraAdjustment() {
+            if (!currentModalBackupName || !currentModalCameraSupported || llmEditInFlight) return;
+            const cameraControl = readIllustrationCameraControl();
+            if (!illustrationCameraHasAdjustment(cameraControl)) {
+                alert('방향·높이·거리·기울기 중 하나 이상을 선택해주세요.');
+                return;
+            }
+
+            const positive = document.getElementById('modal-positive').value;
+            const negative = document.getElementById('modal-negative').value;
+            const button = document.getElementById('modal-camera-apply-btn');
+            const originalText = button.textContent;
+            llmEditInFlight = true;
+            button.disabled = true;
+            button.textContent = 'LLM 구도 정리 중...';
+            renderIllustrationCameraState('기존 구도를 의미적으로 정리하는 중...');
+
+            try {
+                const data = await fetchJSON('/api/llm_edit_prompt', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        name: currentModalBackupName,
+                        positive,
+                        negative,
+                        camera_control: cameraControl,
+                    }),
+                });
+                if (data.error) throw new Error(data.error);
+                if (data.parse_failed) {
+                    throw new Error('LLM 응답을 파싱하지 못해 구도를 반영하지 않았습니다.');
+                }
+                if (!data.positive || !data.camera_control) {
+                    throw new Error('서버가 구도 조정 결과를 완전하게 반환하지 않았습니다.');
+                }
+
+                document.getElementById('modal-positive').value = data.positive;
+                if (typeof data.negative === 'string') {
+                    document.getElementById('modal-negative').value = data.negative;
+                }
+                currentModalCameraAppliedControl = normalizeIllustrationCameraControlForUi(
+                    data.camera_control
+                );
+                currentModalCameraPrompt = String(data.camera_prompt || '').trim();
+                currentModalCameraDirty = false;
+                setIllustrationCameraForm(currentModalCameraAppliedControl);
+                if (data.plan) {
+                    document.getElementById('modal-llm-plan-text').textContent = data.plan;
+                    document.getElementById('modal-llm-plan').style.display = 'block';
+                }
+                renderIllustrationCameraState('LLM 구도 정리와 Anima 태그 반영 완료');
+                showToast('Anima 구도 조정을 프롬프트에 반영했습니다.', 'success');
+            } catch (error) {
+                console.error('[ILLUST_CAMERA] LLM 구도 조정 실패:', error);
+                renderIllustrationCameraState(`구도 조정 실패: ${error.message}`);
+                alert('Anima 구도 조정 실패: ' + error.message);
+            } finally {
+                llmEditInFlight = false;
+                button.disabled = false;
+                button.textContent = originalText;
+            }
+        }
 
         // 챈섭은 키워드가 없는 평탄 프롬프트이므로 백업 provider 메타데이터로 감지한다.
         function detectPromptFormat(positive, provider = '') {
@@ -33368,6 +33644,7 @@
             const supported = !!fmt;
             llmBtn.disabled = !supported;
             llmBtn.title = supported ? '' : '삽화 V3, V1 또는 챈섭 Comfy 프롬프트에서만 동작합니다.';
+            initializeIllustrationCameraPanel(promptData, fmt, provider);
             // 계획 영역 초기화
             document.getElementById('modal-llm-plan').style.display = 'none';
             document.getElementById('modal-llm-plan-text').textContent = '';
@@ -33384,6 +33661,10 @@
             llmEditInFlight = false;
             currentModalIdentityEdit = null;
             llmEditModalState = null;
+            currentModalCameraSupported = false;
+            currentModalCameraAppliedControl = null;
+            currentModalCameraDirty = false;
+            currentModalCameraPrompt = '';
         }
 
         function updateLlmEditCharacterSelection() {
@@ -33618,6 +33899,12 @@
                 if (typeof data.negative === 'string') {
                     document.getElementById('modal-negative').value = data.negative;
                 }
+                if (currentModalCameraAppliedControl) {
+                    currentModalCameraDirty = true;
+                    renderIllustrationCameraState(
+                        '편하게 수정 결과가 반영됨 · 충돌 방지를 위해 LLM 구도 반영을 다시 실행하세요.'
+                    );
+                }
                 if (data.plan) {
                     document.getElementById('modal-llm-plan-text').textContent = data.plan;
                     document.getElementById('modal-llm-plan').style.display = 'block';
@@ -33822,6 +34109,11 @@
         async function submitModifiedPrompt() {
             if (!currentModalBackupName) return;
 
+            if (currentModalCameraSupported && currentModalCameraDirty) {
+                alert('구도 선택 또는 프롬프트가 변경되었습니다. 먼저 “LLM으로 구도 반영”을 실행해주세요.');
+                return;
+            }
+
             const positive = document.getElementById('modal-positive').value.trim();
             const negative = document.getElementById('modal-negative').value.trim();
 
@@ -33837,15 +34129,19 @@
             showTopProgress();
 
             try {
+                const requestBody = {
+                    name: currentModalBackupName,
+                    positive: positive,
+                    negative: negative,
+                    identity_edit: currentModalIdentityEdit,
+                };
+                if (currentModalCameraAppliedControl) {
+                    requestBody.camera_control = currentModalCameraAppliedControl;
+                }
                 const data = await fetchJSON('/api/reschedule_with_modified_prompt', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        name: currentModalBackupName,
-                        positive: positive,
-                        negative: negative,
-                        identity_edit: currentModalIdentityEdit
-                    })
+                    body: JSON.stringify(requestBody)
                 });
 
                 if (data.error) {
@@ -94350,6 +94646,7 @@
         let pmImportStep = 1;
         let pmImportSelectedItemId = '';
         let pmImportItemFilter = 'modified';
+        let pmImportSelectedOnly = true;
         let pmImportValidation = null;
         let pmImportBusy = false;
         let pmImportCommitted = false;
@@ -95524,6 +95821,7 @@
                 pmImportBaseline = pmiClone(analysis);
                 pmImportValidation = null;
                 pmImportCommitted = false;
+                pmImportSelectedOnly = true;
                 pmImportFragmentSelections = new Map();
                 pmImportBulkCategory = '';
                 pmImportBulkUndo = null;
@@ -95852,20 +96150,35 @@
             pmiRenderItemList();
         }
 
+        function pmiSetSelectedOnly(checked) {
+            pmImportSelectedOnly = !!checked;
+            const current = pmImportAnalysis && pmImportAnalysis.items.find(item => item.id === pmImportSelectedItemId);
+            if (pmImportSelectedOnly && current && !current.selected) {
+                pmImportSelectedItemId = (pmImportAnalysis.items.find(item => item.selected) || {}).id || '';
+            }
+            pmiRenderItemList();
+            pmiRenderItemEditor();
+        }
+
         function pmiRenderItemList() {
             if (!pmImportAnalysis) return;
+            const scopedItems = pmImportSelectedOnly
+                ? pmImportAnalysis.items.filter(item => item.selected)
+                : pmImportAnalysis.items;
             const counts = {
-                modified: pmImportAnalysis.items.filter(item => pmiItemModified(item)).length,
-                unassigned: pmImportAnalysis.items.filter(item => pmiItemHasUnassigned(item)).length,
-                all: pmImportAnalysis.items.length,
+                modified: scopedItems.filter(item => pmiItemModified(item)).length,
+                unassigned: scopedItems.filter(item => pmiItemHasUnassigned(item)).length,
+                all: scopedItems.length,
             };
+            const selectedOnly = document.getElementById('pmi-selected-only');
+            if (selectedOnly) selectedOnly.checked = pmImportSelectedOnly;
             document.querySelectorAll('#pmi-item-filters .pm-filter-btn').forEach(button => {
                 button.classList.toggle('active', button.dataset.filter === pmImportItemFilter);
                 const count = button.querySelector('.pmi-filter-count');
                 if (count) count.textContent = String(counts[button.dataset.filter] || 0);
             });
             const query = (document.getElementById('pmi-item-search').value || '').trim().toLocaleLowerCase();
-            const items = pmImportAnalysis.items.filter(item => {
+            const items = scopedItems.filter(item => {
                 if (query && !`${item.target_name} ${item.source_name}`.toLocaleLowerCase().includes(query)) return false;
                 if (pmImportItemFilter === 'unassigned') return pmiItemHasUnassigned(item);
                 if (pmImportItemFilter === 'modified') return pmiItemModified(item);
@@ -95877,7 +96190,7 @@
                 const badge = unassigned ? `<span class="pmi-badge error">미분류 ${unassigned}</span>` : (pmiItemModified(item) ? '<span class="pmi-badge user">변경됨</span>' : '<span class="pmi-badge">원본</span>');
                 const sourceLabel = item.source_kind === 'scene' ? '씬' : (item.source_kind === 'workflow_shared' ? '워크플로 공유 설정' : '생성 프리셋');
                 return `<button class="pmi-item-button ${item.id === pmImportSelectedItemId ? 'active' : ''} ${item.selected ? '' : 'unselected'}" onclick="pmiSelectEditorItem(${itemIndex})"><span class="pmi-item-name">${pmEscapeHtml(item.target_name)}</span>${badge}<span class="pmi-item-sub">${sourceLabel} · ${item.fragments.length}개 태그${item.selected ? '' : ' · 가져오기 제외'}</span></button>`;
-            }).join('') : '<div class="pm-empty">조건에 맞는 항목이 없습니다.</div>';
+            }).join('') : `<div class="pm-empty">${pmImportSelectedOnly ? '현재 조건에 맞는 가져오기 체크 항목이 없습니다.' : '조건에 맞는 항목이 없습니다.'}</div>`;
         }
 
         function pmiSelectEditorItem(itemIndex) {
@@ -95904,12 +96217,15 @@
             const editor = document.getElementById('pmi-item-editor');
             if (!pmImportAnalysis) return;
             let item = pmImportAnalysis.items.find(candidate => candidate.id === pmImportSelectedItemId);
+            if (pmImportSelectedOnly && item && !item.selected) item = null;
             if (!item) {
-                item = pmImportAnalysis.items.find(candidate => candidate.selected) || pmImportAnalysis.items[0];
+                item = pmImportSelectedOnly
+                    ? pmImportAnalysis.items.find(candidate => candidate.selected)
+                    : (pmImportAnalysis.items.find(candidate => candidate.selected) || pmImportAnalysis.items[0]);
                 pmImportSelectedItemId = item ? item.id : '';
             }
             if (!item) {
-                editor.innerHTML = '<div class="pm-empty">편집할 항목이 없습니다.</div>';
+                editor.innerHTML = `<div class="pm-empty">${pmImportSelectedOnly ? '가져오기로 체크한 항목이 없습니다. 왼쪽 옵션을 해제하면 제외 항목도 확인할 수 있습니다.' : '편집할 항목이 없습니다.'}</div>`;
                 return;
             }
             const itemIndex = pmImportAnalysis.items.indexOf(item);
@@ -96092,10 +96408,16 @@
 
         function pmiToggleEditorItem(itemIndex, checked) {
             const item = pmImportAnalysis && pmImportAnalysis.items[itemIndex];
-            if (!item) return;
+            if (!item) {
+                console.error('[PM_IMPORT] 가져오기 상태를 변경할 항목을 찾지 못함:', { itemIndex });
+                return;
+            }
             item.selected = !!checked;
             if (!item.selected) item.llm_selected = false;
             else if (item.llm_selected == null) item.llm_selected = item.fragments.some(fragment => fragment.llm_eligible);
+            if (pmImportSelectedOnly && !item.selected) {
+                pmImportSelectedItemId = (pmImportAnalysis.items.find(candidate => candidate.selected) || {}).id || '';
+            }
             pmiInvalidateValidation();
             pmiRenderItemList();
             pmiRenderItemEditor();
@@ -96355,6 +96677,7 @@
             pmImportValidation = null;
             pmImportSelectedItemId = '';
             pmImportItemFilter = 'modified';
+            pmImportSelectedOnly = true;
             pmImportCommitted = false;
             pmImportFragmentSelections = new Map();
             pmImportBulkCategory = '';

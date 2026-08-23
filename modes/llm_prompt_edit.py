@@ -724,6 +724,7 @@ def build_llm_messages(
     scene_sdxl: str,
     multi_char_payload: dict = None,
     identity_contract: str = "",
+    additional_contract: str = "",
 ) -> list:
     """LLM(비전) 호출용 messages 빌드 (V3 빌드본).
 
@@ -742,6 +743,8 @@ def build_llm_messages(
     user += _multi_char_edit_contract(multi_char_payload)
     if identity_contract:
         user += str(identity_contract)
+    if additional_contract:
+        user += str(additional_contract)
 
     return [
         {"role": "system", "content": system},

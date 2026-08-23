@@ -92,6 +92,7 @@ logging.getLogger("aiohttp.access").setLevel(logging.WARNING)
 from modes import llm_service
 from modes import lighbd_service
 from modes import llm_prompt_edit
+from modes import illustration_camera
 from modes import autocomplete_service
 from modes import asset_tool_mode
 from modes.qwen_edit_mode import QwenEditMode
@@ -13331,6 +13332,8 @@ async def handle_api_reschedule_with_modified_prompt(
         modified_positive = body.get("positive", "")
         modified_negative = body.get("negative", "")
         identity_edit = body.get("identity_edit")
+        camera_control_requested = "camera_control" in body
+        requested_camera_control = body.get("camera_control")
 
         if ".." in backup_name or "/" in backup_name or "\\" in backup_name:
             return web.json_response({"error": "Invalid name"}, status=400)
@@ -13361,6 +13364,41 @@ async def handle_api_reschedule_with_modified_prompt(
             backup_name,
             src_provider,
         )
+        if camera_control_requested:
+            try:
+                normalized_camera_control = illustration_camera.normalize_camera_control(
+                    requested_camera_control
+                )
+                if src_provider != "comfy" or src_prompt_provider != "comfy":
+                    raise ValueError(
+                        "Anima 구도 조정은 V3 Comfy/Modal 백업에서만 지원합니다"
+                    )
+                if llm_prompt_edit.detect_format(
+                    effective_positive,
+                    provider=src_prompt_provider,
+                ) != "v3":
+                    raise ValueError(
+                        "Anima 구도 조정 메타데이터를 저장할 V3 프롬프트가 아닙니다"
+                    )
+                src_generation_params = copy.deepcopy(src_generation_params)
+                src_generation_params["illustration_camera_control"] = (
+                    normalized_camera_control
+                )
+                src_generation_params["illustration_camera_prompt"] = (
+                    illustration_camera.compile_camera_prompt(normalized_camera_control)
+                )
+                print(
+                    f"[RESCHEDULE_MOD:CAMERA] 구도 메타데이터 계승: "
+                    f"backup={backup_name}, "
+                    f"summary={illustration_camera.camera_selection_summary(normalized_camera_control)!r}"
+                )
+            except Exception as exc:
+                print(
+                    f"[RESCHEDULE_MOD:CAMERA] 구도 메타데이터 검증 실패: "
+                    f"backup={backup_name}, error={exc}"
+                )
+                traceback.print_exc()
+                return web.json_response({"error": str(exc)}, status=400)
         try:
             src_multi_char = _read_backup_multi_char_context(
                 backup_name,
@@ -13501,6 +13539,33 @@ async def handle_api_llm_edit_prompt(
         negative = body.get("negative", "")
         direction = (body.get("direction", "") or "").strip()
         requested_characters = body.get("characters") if "characters" in body else None
+        camera_control_requested = "camera_control" in body
+        camera_control = None
+        camera_contract = ""
+
+        if camera_control_requested:
+            try:
+                camera_control = illustration_camera.normalize_camera_control(
+                    body.get("camera_control")
+                )
+                direction = illustration_camera.build_camera_edit_direction(camera_control)
+                camera_contract = illustration_camera.build_camera_edit_contract(camera_control)
+            except Exception as exc:
+                print(
+                    f"[LLM_EDIT:CAMERA] 카메라 입력 검증 실패: "
+                    f"name={backup_name!r}, error={exc}"
+                )
+                traceback.print_exc()
+                return web.json_response({"error": str(exc)}, status=400)
+            if requested_characters is not None:
+                print(
+                    f"[LLM_EDIT:CAMERA] 캐릭터 교체와 동시 요청 거부: "
+                    f"name={backup_name!r}"
+                )
+                return web.json_response(
+                    {"error": "구도 조정과 캐릭터 교체는 한 번에 실행할 수 없습니다"},
+                    status=400,
+                )
 
         # 경로 조작 가드 (기존 reschedule 핸들러와 동일)
         if ".." in backup_name or "/" in backup_name or "\\" in backup_name:
@@ -13533,6 +13598,21 @@ async def handle_api_llm_edit_prompt(
                          "편하게 수정은 삽화 빌드본(V3: ANIMA_CONTENT/SDXL 등) 또는 "
                          "V1(ILXL/UPSCALE) 또는 챈섭 Comfy 프롬프트에서만 동작합니다."
             }, status=400)
+
+        if camera_control is not None and (
+            fmt != "v3"
+            or backup_provider != "comfy"
+            or backup_prompt_provider != "comfy"
+        ):
+            print(
+                f"[LLM_EDIT:CAMERA] 지원하지 않는 백업 거부: "
+                f"name={backup_name}, format={fmt}, provider={backup_provider}, "
+                f"prompt_provider={backup_prompt_provider}"
+            )
+            return web.json_response(
+                {"error": "Anima 구도 조정은 V3 Comfy/Modal 백업에서만 지원합니다"},
+                status=400,
+            )
 
         print(
             f"[LLM_EDIT] 감지된 포맷: {fmt} name={backup_name} "
@@ -13792,6 +13872,7 @@ async def handle_api_llm_edit_prompt(
                 scene_sdxl,
                 multi_char_payload=multi_char_edit_payload,
                 identity_contract=identity_contract,
+                additional_contract=camera_contract,
             )
         # 우하단 LIGHBD LLM 위젯 활성화 — 다른 LLM 서비스(bot_mode 등)와 동일 패턴.
         # raw 전체를 위젯에 띄워 파싱 실패 원인을 즉시 확인 가능하게 한다.
@@ -13802,7 +13883,11 @@ async def handle_api_llm_edit_prompt(
         # 호출 종류 라벨은 카드 타이틀(call_name)로 옮긴다.
         _edit_model_name = (
             llm_service.routing_primary_model("edit_illustration_prompt") or "")
-        _edit_call_label = f"삽화 프롬프트 편집 ({'비전' if image_b64 else '텍스트'})"
+        _edit_call_label = (
+            f"Anima 구도 정리 ({'비전' if image_b64 else '텍스트'})"
+            if camera_control is not None
+            else f"삽화 프롬프트 편집 ({'비전' if image_b64 else '텍스트'})"
+        )
         try:
             await notify_frontend("lighbd_llm_stream", {
                 "type": "start",
@@ -14036,7 +14121,26 @@ async def handle_api_llm_edit_prompt(
                     )
                     traceback.print_exc()
                     return web.json_response({"error": str(exc)}, status=400)
+            if camera_control is not None:
+                try:
+                    reassembled, camera_prompt = illustration_camera.finalize_camera_edit(
+                        positive,
+                        reassembled,
+                        camera_control,
+                    )
+                except Exception as exc:
+                    print(
+                        f"[LLM_EDIT:CAMERA] Anima 구도 최종 반영 실패: "
+                        f"backup={backup_name}, error={exc}"
+                    )
+                    traceback.print_exc()
+                    return web.json_response({"error": str(exc)}, status=400)
         plan_text = (scene.get("plan", "") or "장면 태그를 수정했습니다.") + fallback_note
+        if camera_control is not None:
+            plan_text = (
+                f"구도 조정: {illustration_camera.camera_selection_summary(camera_control)}\n"
+                + plan_text
+            )
 
         print(f"[LLM_EDIT] 완료 name={backup_name} plan={plan_text!r}")
         response_payload = {
@@ -14049,6 +14153,9 @@ async def handle_api_llm_edit_prompt(
                 "bot_name": identity_bot_name,
                 "character_names": identity_names,
             }
+        if camera_control is not None:
+            response_payload["camera_control"] = camera_control
+            response_payload["camera_prompt"] = camera_prompt
         return web.json_response(response_payload)
 
     except Exception as e:

@@ -281,3 +281,14 @@ def test_frontend_preset_import_supports_current_and_selected_fragment_bulk_clas
     assert "현재 프리셋 전체 적용" in source
     assert "fragment.excluded" in source
     assert "pmImportItemFilter = firstUnassigned ? 'unassigned' : 'all';" in source
+
+
+def test_frontend_preset_import_can_show_only_items_checked_for_import():
+    source = FRONTEND_HTML.read_text(encoding="utf-8")
+
+    assert 'id="pmi-selected-only"' in source
+    assert "가져오기 체크 항목만 보기" in source
+    assert "let pmImportSelectedOnly = true;" in source
+    assert "function pmiSetSelectedOnly" in source
+    assert "pmImportAnalysis.items.filter(item => item.selected)" in source
+    assert ".pmi-item-button.unselected { opacity: .32;" in source
