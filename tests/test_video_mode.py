@@ -93,7 +93,62 @@ def test_ref2v_standard_workflow_uses_base_20_step_teacache() -> None:
     assert (unet_id, teacache_id) in model_links
     assert (teacache_id, scheduler_id) in model_links
     assert (teacache_id, guider_id) in model_links
-    assert sum(node["type"] == "LoadImage" for node in nodes) == 3
+    assert sum(node["type"] == "LoadImage" for node in nodes) == 0
+    assert sum(node["type"] == "LoadImagesFromPath_mdsoya" for node in nodes) == 1
+    optional_refs = [
+        node for node in nodes if node["type"] == "SoyaOptionalImageByName_mdsoya"
+    ]
+    assert sorted(node["widgets_values"][0] for node in optional_refs) == [
+        "[1]",
+        "[2]",
+        "[3]",
+    ]
+
+
+@pytest.mark.parametrize(
+    "filename",
+    [
+        "배포_영상_H3_REF2V_v1.json",
+        "배포_영상_H3_REF2V_고속_v1.json",
+    ],
+)
+def test_ref2v_workflows_parse_the_shared_transport_block(filename: str) -> None:
+    workflow_path = (
+        ROOT
+        / "comfy"
+        / "user"
+        / "default"
+        / "workflows"
+        / "SOYA_USER"
+        / filename
+    )
+    workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
+    nodes = workflow["nodes"]
+    node_by_id = {node["id"]: node for node in nodes}
+    positive_nodes = [
+        node
+        for node in nodes
+        if node["type"] == "PrimitiveStringMultiline"
+        and node.get("title") == "긍정프롬프트"
+    ]
+    assert len(positive_nodes) == 1
+    transport = positive_nodes[0]["widgets_values"][0]
+    assert transport.startswith("[PATH]\nsoya_video\n[PROMPT]\n")
+    assert "\n[W]\n" in transport
+    assert "\n[H]\n" in transport
+    assert "\n[DURATION]\n" in transport
+    assert "\n[SEED]\n" in transport
+    assert transport.endswith("\n[END]")
+
+    h3 = next(node for node in nodes if node["type"] == "MiniMaxH3ReferenceToVideo")
+    links = {link[0]: link for link in workflow["links"]}
+    for index in range(3):
+        input_name = f"ref_images.ref_image_{index}"
+        h3_input = next(item for item in h3["inputs"] if item["name"] == input_name)
+        source_id = links[h3_input["link"]][1]
+        source = node_by_id[source_id]
+        assert source["type"] == "SoyaOptionalImageByName_mdsoya"
+        assert source["widgets_values"] == [f"[{index + 1}]"]
 
 
 @pytest.mark.parametrize(
@@ -1253,7 +1308,7 @@ def _synthetic_ref2v_api_workflow() -> dict:
         "1": {
             "class_type": "PrimitiveStringMultiline",
             "inputs": {"value": "old ref prompt"},
-            "_meta": {"title": "Input Text (Prompt)"},
+            "_meta": {"title": "긍정프롬프트"},
         },
         "2": {
             "class_type": "MiniMaxH3ReferenceToVideo",
@@ -1398,48 +1453,41 @@ def test_i2v_transport_block_and_api_patch_drive_the_real_connected_inputs() -> 
     assert patched["92"]["inputs"]["filename_prefix"] == "video/soya_h3/job-1"
 
 
-def test_ref2v_api_patch_sets_requested_refs_and_removes_unused_sample_slots() -> None:
-    prompt = _valid_ref_body()
-    patched = VideoMode._patch_ref2v_api_workflow(
-        _synthetic_ref2v_api_workflow(),
-        prompt,
+def test_ref2v_transport_injection_only_updates_the_positive_prompt() -> None:
+    workflow = _synthetic_ref2v_api_workflow()
+    transport = build_i2v_workflow_block(
+        _valid_ref_body(),
         960,
         544,
         7,
         987,
-        "ref-job",
         "soya_video/ref-job",
-        3,
     )
 
-    assert patched["1"]["inputs"]["value"] == prompt
-    assert patched["2"]["inputs"]["width"] == 960
-    assert patched["2"]["inputs"]["height"] == 544
-    assert patched["3"]["inputs"]["value"] == 7.0
-    assert patched["4"]["inputs"]["noise_seed"] == 987
-    assert patched["5"]["inputs"]["filename_prefix"] == "video/soya_h3/ref-job"
-    assert patched["6"]["inputs"]["image"] == "soya_video/ref-job/[1].png"
-    assert patched["7"]["inputs"]["image"] == "soya_video/ref-job/[2].png"
-    assert patched["8"]["inputs"]["image"] == "soya_video/ref-job/[3].png"
-    assert "ref_images.ref_image_3" not in patched["2"]["inputs"]
+    patched = VideoMode._inject_ref2v_transport_block(
+        workflow,
+        transport,
+        "ref-job",
+    )
+
+    assert patched["1"]["inputs"]["value"] == transport
+    assert patched["2"] == workflow["2"]
+    assert patched["3"] == workflow["3"]
+    assert patched["4"] == workflow["4"]
+    assert patched["5"] == workflow["5"]
+    for node_id in ("6", "7", "8", "9"):
+        assert patched[node_id] == workflow[node_id]
 
 
-def test_ref2v_api_patch_rejects_more_refs_than_the_workflow_exposes() -> None:
+def test_ref2v_transport_injection_requires_the_named_positive_prompt() -> None:
     workflow = _synthetic_ref2v_api_workflow()
-    workflow["2"]["inputs"].pop("ref_images.ref_image_2")
-    workflow["2"]["inputs"].pop("ref_images.ref_image_3")
+    workflow["1"]["_meta"]["title"] = "wrong title"
 
-    with pytest.raises(RuntimeError, match="슬롯이 부족"):
-        VideoMode._patch_ref2v_api_workflow(
+    with pytest.raises(RuntimeError, match="v4.*긍정프롬프트"):
+        VideoMode._inject_ref2v_transport_block(
             workflow,
-            _valid_ref_body(),
-            960,
-            544,
-            5,
-            123,
+            build_i2v_workflow_block(_valid_ref_body(), 960, 544, 5, 123),
             "ref-job",
-            "soya_video/ref-job",
-            3,
         )
 
 
@@ -2349,7 +2397,7 @@ async def test_render_spools_video_postprocess_before_cleaning_comfy_mp4(
 
 
 @pytest.mark.asyncio
-async def test_fast_ref_render_stages_originals_and_patches_experimental_resolution(
+async def test_fast_ref_render_stages_originals_and_sends_transport_resolution(
     tmp_path: Path,
 ) -> None:
     backup_dir = tmp_path / "backups"
@@ -2390,12 +2438,19 @@ async def test_fast_ref_render_stages_originals_and_patches_experimental_resolut
             assert staged.is_file()
             with Image.open(staged) as image:
                 assert image.size == sizes[name]
-        assert workflow["1"]["inputs"]["value"] == loose_natural_prompt
-        assert workflow["2"]["inputs"]["width"] == 864
-        assert workflow["2"]["inputs"]["height"] == 384
-        assert "ref_images.ref_image_3" not in workflow["2"]["inputs"]
-        for index, node_id in enumerate(("6", "7", "8"), start=1):
-            assert workflow[node_id]["inputs"]["image"].endswith(f"/[{index}].png")
+        transport = workflow["1"]["inputs"]["value"]
+        assert transport.startswith(
+            f"[PATH]\nsoya_video/{staged_root.name}\n[PROMPT]\n"
+            f"{loose_natural_prompt}\n[W]\n864\n[H]\n384\n"
+            "[DURATION]\n5.0\n[SEED]\n"
+        )
+        assert transport.endswith("\n[END]")
+        assert workflow["2"]["inputs"]["width"] == 960
+        assert workflow["2"]["inputs"]["height"] == 544
+        assert "ref_images.ref_image_3" in workflow["2"]["inputs"]
+        for node_id in ("6", "7", "8", "9"):
+            assert workflow[node_id]["inputs"]["image"] == f"sample-{node_id}.png"
+        assert workflow["5"]["inputs"]["filename_prefix"] == "video/sample"
         return b"ref-mp4", {
             "filename": "ref.mp4",
             "subfolder": "video/soya_h3",

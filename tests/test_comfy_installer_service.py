@@ -1037,7 +1037,7 @@ def test_manifest_has_fully_pinned_windows_runtime_and_assets() -> None:
         len(profile["sageattention"]["sha256"]) == 64
         for profile in nvidia.values()
     )
-    assert len(manifest.custom_nodes) == 16
+    assert len(manifest.custom_nodes) == 18
     assert all(
         node["name"] != "ComfyUI-Manager"
         for node in manifest.custom_nodes
@@ -1068,6 +1068,22 @@ def test_manifest_has_fully_pinned_windows_runtime_and_assets() -> None:
         "https://github.com/Icyoung/ComfyUI-MiniMaxH3-TeaCache.git"
     )
     assert teacache["ref"] == "4cbb50d69c73a19a5d6ec42c5aec1989d5a04b6f"
+    anima_loader = next(
+        node
+        for node in manifest.custom_nodes
+        if node["name"] == "ComfyUI-Anima-2.9B"
+    )
+    assert anima_loader["ref"] == (
+        "26ad9eb0e165b2bf7fd1a7a0ed267b732eca223c"
+    )
+    anima_lora_remap = next(
+        node
+        for node in manifest.custom_nodes
+        if node["name"] == "ComfyUI-Anima-28to40-Lora-Stack"
+    )
+    assert anima_lora_remap["ref"] == (
+        "3eab7e594a87e195e471e381ebd8939a163056ce"
+    )
     tracking_main_names = {
         node["name"]
         for node in manifest.custom_nodes
@@ -1083,7 +1099,26 @@ def test_manifest_has_fully_pinned_windows_runtime_and_assets() -> None:
         for node in manifest.custom_nodes
         if node["name"] in tracking_main_names
     )
-    assert manifest.latest_workflow_release == "v3"
+    assert manifest.latest_workflow_release == "v4"
+    v3_dependencies = {
+        item["id"]: item
+        for item in manifest.workflows["release_dependencies"]["v3"]
+    }
+    anima_29_workflow_ids = {
+        "comfy_workflow_source_path",
+        "illustration_workflow_source_paths.v3_anima",
+        "anima_asset_workflow_source_path",
+        "anima_only_asset_workflow_source_path",
+    }
+    for item in manifest.workflows["release_dependencies"]["v4"]:
+        previous_model_ids = set(v3_dependencies[item["id"]]["model_ids"])
+        current_model_ids = set(item["model_ids"])
+        expected_added_ids = (
+            {"anima-2.9b-preview-v1"}
+            if item["id"] in anima_29_workflow_ids
+            else set()
+        )
+        assert current_model_ids == previous_model_ids | expected_added_ids
     latest_release = manifest.workflows["release_dependencies"][
         manifest.latest_workflow_release
     ]

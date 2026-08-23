@@ -239,11 +239,12 @@
             display: none !important;
         }
 
-        /* 헤더 시스템 모니터 스트립 — 작게 참고용 4줄 (CPU/RAM/GPU/VRAM) */
+        /* 헤더 시스템 모니터 스트립 — CPU/RAM과 GPU/VRAM을 좌우 열로 분리 */
         .sysmon-strip {
-            display: inline-flex;
-            flex-direction: column;
-            gap: 1px;
+            display: inline-grid;
+            grid-template-columns: auto auto;
+            align-items: start;
+            column-gap: 10px;
             flex: 0 0 auto;
             padding: 3px 8px;
             border: 1px solid rgba(174, 204, 194, 0.18);
@@ -281,9 +282,11 @@
             color: var(--error);
         }
 
-        /* GPU/VRAM 동적 줄 컨테이너 — 자식 row가 strip의 flex item이 되도록 contents */
+        .sysmon-host-rows,
         .sysmon-gpu-rows {
-            display: contents;
+            display: flex;
+            flex-direction: column;
+            gap: 1px;
         }
 
         header.app-header .controls {
@@ -1860,12 +1863,16 @@
             backdrop-filter: blur(8px);
         }
         #video-direction-edit-modal .video-direction-edit-content {
-            width: min(980px, calc(100vw - 32px));
-            max-width: 980px;
+            width: min(1180px, calc(100vw - 32px));
+            max-width: 1180px;
+            height: min(920px, calc(100vh - 32px));
+            max-height: calc(100vh - 32px);
             overflow: hidden;
             border-color: color-mix(in srgb, #d68a4a 38%, var(--border));
             box-shadow: 0 24px 80px rgba(0, 0, 0, .5);
         }
+        #video-direction-edit-modal .modal-header,
+        #video-direction-edit-modal .modal-footer { flex: 0 0 auto; }
         .video-direction-edit-heading {
             display: flex;
             align-items: center;
@@ -1892,12 +1899,23 @@
             font-weight: 500;
         }
         .video-direction-edit-body {
-            display: flex;
-            flex-direction: column;
+            --video-direction-edit-top-height: minmax(160px, .55fr);
+            display: grid;
+            grid-template-rows: auto minmax(160px, 1fr) auto;
             gap: 12px;
-            max-height: 74vh;
-            overflow-y: auto;
+            flex: 1 1 auto;
+            min-height: 0;
+            max-height: none;
+            overflow: hidden;
             padding: 16px 18px;
+        }
+        .video-direction-edit-body.has-review {
+            grid-template-rows:
+                auto
+                var(--video-direction-edit-top-height)
+                auto
+                12px
+                minmax(240px, 1.45fr);
         }
         .video-direction-edit-guide {
             display: flex;
@@ -1916,11 +1934,13 @@
             grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
             gap: 12px;
             align-items: stretch;
+            min-height: 0;
         }
         .video-direction-edit-card {
             display: flex;
             flex-direction: column;
             min-width: 0;
+            min-height: 0;
             padding: 12px;
             border: 1px solid var(--border);
             border-radius: 11px;
@@ -1948,9 +1968,9 @@
         .video-direction-edit-input {
             width: 100%;
             flex: 1 1 auto;
-            min-height: 150px;
+            min-height: 0;
             box-sizing: border-box;
-            resize: vertical;
+            resize: none;
             padding: 11px 12px;
             border: 1px solid var(--border);
             border-radius: 9px;
@@ -1975,12 +1995,53 @@
         .video-direction-edit-status[data-state="busy"] { color: #e5a263; }
         .video-direction-edit-status[data-state="error"] { color: var(--error); }
         .video-direction-edit-status[data-state="ready"] { color: #62c991; }
+        .video-direction-edit-resizer {
+            position: relative;
+            display: grid;
+            place-items: center;
+            min-height: 12px;
+            border-radius: 999px;
+            cursor: row-resize;
+            touch-action: none;
+            outline: none;
+        }
+        .video-direction-edit-resizer[hidden] { display: none; }
+        .video-direction-edit-resizer::before {
+            content: '';
+            position: absolute;
+            left: 0;
+            right: 0;
+            height: 1px;
+            background: color-mix(in srgb, var(--border) 82%, transparent);
+            transition: height .14s ease, background .14s ease;
+        }
+        .video-direction-edit-resizer span {
+            position: relative;
+            width: 48px;
+            height: 5px;
+            border: 1px solid color-mix(in srgb, #62c991 42%, var(--border));
+            border-radius: 999px;
+            background: var(--surface2);
+            box-shadow: 0 0 0 4px var(--surface);
+        }
+        .video-direction-edit-resizer:hover::before,
+        .video-direction-edit-resizer:focus-visible::before {
+            height: 3px;
+            background: color-mix(in srgb, #62c991 60%, var(--border));
+        }
+        .video-direction-edit-resizer:focus-visible span {
+            box-shadow: 0 0 0 4px color-mix(in srgb, #62c991 20%, var(--surface));
+        }
         .video-direction-edit-review {
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
             border: 1px solid color-mix(in srgb, #62c991 34%, var(--border));
             border-radius: 11px;
             overflow: hidden;
             background: var(--surface1);
         }
+        .video-direction-edit-review[hidden] { display: none; }
         .video-direction-edit-review-header {
             display: flex;
             align-items: center;
@@ -2003,8 +2064,11 @@
         .video-direction-edit-legend .removed::before { background: rgba(233, 91, 91, .72); }
         .video-direction-edit-legend .added::before { background: rgba(74, 190, 126, .76); }
         .video-direction-edit-diff {
-            max-height: 330px;
+            flex: 1 1 auto;
+            min-height: 0;
+            max-height: none;
             overflow: auto;
+            overscroll-behavior: contain;
             padding: 14px;
             color: var(--text);
             background: var(--surface2);
@@ -2137,12 +2201,43 @@
             .video-ref-slot,
             .video-inline-fields,
             .video-draft-option-grid { grid-template-columns: 1fr; }
-            #video-direction-edit-modal .video-direction-edit-content { width: min(640px, calc(100vw - 20px)); }
+            #video-direction-edit-modal .video-direction-edit-content {
+                width: min(640px, calc(100vw - 20px));
+                height: calc(100vh - 20px);
+                max-height: calc(100vh - 20px);
+            }
+            .video-direction-edit-body {
+                --video-direction-edit-top-height: minmax(320px, .9fr);
+                overflow-y: auto;
+                padding: 12px;
+            }
+            .video-direction-edit-body.has-review {
+                grid-template-rows:
+                    auto
+                    var(--video-direction-edit-top-height, minmax(320px, .9fr))
+                    auto
+                    12px
+                    minmax(240px, 1.1fr);
+            }
             .video-direction-edit-grid { grid-template-columns: 1fr; }
             .video-direction-edit-source,
-            .video-direction-edit-input { min-height: 120px; }
+            .video-direction-edit-input { min-height: 110px; }
             .video-source-preview-wrap { min-height: 180px; }
             .video-summary-bar { align-items: flex-start; flex-direction: column; }
+        }
+        @media (max-height: 720px) and (min-width: 781px) {
+            .video-direction-edit-body {
+                --video-direction-edit-top-height: minmax(150px, .55fr);
+                overflow-y: auto;
+            }
+            .video-direction-edit-body.has-review {
+                grid-template-rows:
+                    auto
+                    var(--video-direction-edit-top-height, minmax(150px, .55fr))
+                    auto
+                    10px
+                    minmax(210px, 1.45fr);
+            }
         }
 
         .form-group textarea {
@@ -15203,8 +15298,10 @@
                         <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 15 6-6 6 6"></path></svg>
                     </button>
                     <div id="sysmon-strip" class="sysmon-strip" title="시스템 리소스 사용량 (참고용)">
-                        <span class="sysmon-row"><span class="sysmon-label">CPU</span><span class="sysmon-value" id="sysmon-cpu">—</span></span>
-                        <span class="sysmon-row"><span class="sysmon-label">RAM</span><span class="sysmon-value" id="sysmon-ram">—</span></span>
+                        <div class="sysmon-host-rows">
+                            <span class="sysmon-row"><span class="sysmon-label">CPU</span><span class="sysmon-value" id="sysmon-cpu">—</span></span>
+                            <span class="sysmon-row"><span class="sysmon-label">RAM</span><span class="sysmon-value" id="sysmon-ram">—</span></span>
+                        </div>
                         <div id="sysmon-gpu-rows" class="sysmon-gpu-rows"></div>
                     </div>
                 </div>
@@ -15792,7 +15889,7 @@
                     <span aria-hidden="true">💡</span>
                     <span>바꾸고 싶은 부분과 원하는 결과만 말해 주세요. AI는 명령을 충족하는 범위만 최소 수정하며, 적용 전 변경점을 색으로 보여줍니다.</span>
                 </div>
-                <div class="video-direction-edit-grid">
+                <div id="video-direction-edit-grid" class="video-direction-edit-grid">
                     <section class="video-direction-edit-card">
                         <div class="video-direction-edit-label-row">
                             <span>최초 원문</span>
@@ -15809,6 +15906,16 @@
                     </section>
                 </div>
                 <div id="video-direction-edit-status" class="video-direction-edit-status" role="status" aria-live="polite"></div>
+                <div id="video-direction-edit-resizer" class="video-direction-edit-resizer" role="separator"
+                     aria-label="원문 입력 영역과 변경점 영역 높이 조절" aria-orientation="horizontal"
+                     aria-controls="video-direction-edit-grid video-direction-edit-review" aria-valuemin="0"
+                     aria-valuemax="0" aria-valuenow="0" tabindex="0" hidden
+                     onpointerdown="startVideoDirectionEditResize(event)"
+                     onkeydown="resizeVideoDirectionEditWithKeyboard(event)"
+                     ondblclick="resetVideoDirectionEditResize()"
+                     title="드래그하거나 방향키로 영역 높이를 조절합니다. 두 번 누르면 초기화됩니다.">
+                    <span aria-hidden="true"></span>
+                </div>
                 <section id="video-direction-edit-review" class="video-direction-edit-review" hidden>
                     <div class="video-direction-edit-review-header">
                         <div style="display:flex; align-items:center; gap:8px; min-width:0;">
@@ -29512,6 +29619,7 @@
         let videoInstructionDirectBusy = false;
         let videoDirectionEditRequestId = 0;
         let videoDirectionEditBusy = false;
+        let videoDirectionEditResizeSession = null;
         const videoDirectionEditState = {
             baseInstruction: '',
             candidateInstruction: '',
@@ -31075,6 +31183,214 @@
             else delete status.dataset.state;
         }
 
+        function getVideoDirectionEditResizeMetrics() {
+            const body = document.querySelector('#video-direction-edit-modal .video-direction-edit-body');
+            const grid = document.getElementById('video-direction-edit-grid');
+            const guide = body?.querySelector('.video-direction-edit-guide');
+            const status = document.getElementById('video-direction-edit-status');
+            const review = document.getElementById('video-direction-edit-review');
+            const resizer = document.getElementById('video-direction-edit-resizer');
+            if (!body || !grid || !guide || !status || !review || !resizer) {
+                console.error('[VIDEO_UI] 다듬기 방향 영역 크기 조절 요소가 누락되었습니다.', {
+                    body: !!body,
+                    grid: !!grid,
+                    guide: !!guide,
+                    status: !!status,
+                    review: !!review,
+                    resizer: !!resizer,
+                });
+                return null;
+            }
+            const topHeight = grid.getBoundingClientRect().height;
+            const bodyStyle = getComputedStyle(body);
+            const bodyPadding = (Number.parseFloat(bodyStyle.paddingTop) || 0)
+                + (Number.parseFloat(bodyStyle.paddingBottom) || 0);
+            const rowGap = Number.parseFloat(bodyStyle.rowGap) || 0;
+            const fixedHeight = guide.getBoundingClientRect().height
+                + status.getBoundingClientRect().height
+                + resizer.getBoundingClientRect().height
+                + (rowGap * 4);
+            const combinedHeight = body.clientHeight - bodyPadding - fixedHeight;
+            if (!Number.isFinite(combinedHeight) || combinedHeight <= 0) {
+                console.error('[VIDEO_UI] 다듬기 방향 영역 크기 계산 실패:', {
+                    topHeight,
+                    bodyClientHeight: body.clientHeight,
+                    bodyPadding,
+                    fixedHeight,
+                    combinedHeight,
+                });
+                return null;
+            }
+            const compactWidth = window.innerWidth <= 780;
+            const compactHeight = window.innerHeight <= 720;
+            const preferredMinTop = compactWidth ? 220 : (compactHeight ? 140 : 150);
+            const preferredMinReview = compactWidth ? 220 : (compactHeight ? 210 : 280);
+            const minTop = Math.min(preferredMinTop, combinedHeight * .42);
+            const minReview = Math.min(preferredMinReview, combinedHeight * .55);
+            const maxTop = Math.max(minTop, combinedHeight - minReview);
+            return {body, grid, review, resizer, topHeight, combinedHeight, minTop, maxTop};
+        }
+
+        function updateVideoDirectionEditResizeA11y(metrics, topHeight) {
+            if (!metrics?.resizer) {
+                console.error('[VIDEO_UI] 다듬기 방향 크기 조절 접근성 상태를 갱신할 수 없습니다.', {
+                    hasMetrics: !!metrics,
+                });
+                return;
+            }
+            const roundedTop = Math.round(topHeight);
+            const roundedReview = Math.max(
+                0,
+                Math.round(metrics.review.getBoundingClientRect().height),
+            );
+            metrics.resizer.setAttribute('aria-valuemin', String(Math.round(metrics.minTop)));
+            metrics.resizer.setAttribute('aria-valuemax', String(Math.round(metrics.maxTop)));
+            metrics.resizer.setAttribute('aria-valuenow', String(roundedTop));
+            metrics.resizer.setAttribute(
+                'aria-valuetext',
+                `상단 원문·명령 영역 ${roundedTop}px, 변경점 영역 약 ${roundedReview}px`,
+            );
+        }
+
+        function setVideoDirectionEditTopHeight(requestedHeight) {
+            const metrics = getVideoDirectionEditResizeMetrics();
+            const numericHeight = Number(requestedHeight);
+            if (!metrics || !Number.isFinite(numericHeight)) {
+                console.error('[VIDEO_UI] 다듬기 방향 상단 영역 높이를 적용하지 못했습니다.', {
+                    requestedHeight,
+                    hasMetrics: !!metrics,
+                });
+                return null;
+            }
+            const nextHeight = Math.min(metrics.maxTop, Math.max(metrics.minTop, numericHeight));
+            metrics.body.style.setProperty('--video-direction-edit-top-height', `${Math.round(nextHeight)}px`);
+            updateVideoDirectionEditResizeA11y(metrics, nextHeight);
+            return nextHeight;
+        }
+
+        function syncVideoDirectionEditResizeA11y() {
+            const metrics = getVideoDirectionEditResizeMetrics();
+            if (!metrics) return;
+            const inlineHeight = Number.parseFloat(
+                metrics.body.style.getPropertyValue('--video-direction-edit-top-height'),
+            );
+            if (Number.isFinite(inlineHeight)) {
+                setVideoDirectionEditTopHeight(inlineHeight);
+                return;
+            }
+            updateVideoDirectionEditResizeA11y(metrics, metrics.topHeight);
+        }
+
+        function setVideoDirectionEditReviewLayout(visible) {
+            const body = document.querySelector('#video-direction-edit-modal .video-direction-edit-body');
+            const resizer = document.getElementById('video-direction-edit-resizer');
+            if (!body || !resizer) {
+                console.error('[VIDEO_UI] 다듬기 방향 검토 레이아웃을 전환할 수 없습니다.', {
+                    visible,
+                    body: !!body,
+                    resizer: !!resizer,
+                });
+                return;
+            }
+            if (visible) {
+                body.classList.add('has-review');
+                resizer.hidden = false;
+                requestAnimationFrame(syncVideoDirectionEditResizeA11y);
+                return;
+            }
+            finishVideoDirectionEditResize();
+            body.classList.remove('has-review');
+            body.style.removeProperty('--video-direction-edit-top-height');
+            resizer.hidden = true;
+            resizer.setAttribute('aria-valuemin', '0');
+            resizer.setAttribute('aria-valuemax', '0');
+            resizer.setAttribute('aria-valuenow', '0');
+            resizer.removeAttribute('aria-valuetext');
+        }
+
+        function startVideoDirectionEditResize(event) {
+            if (event.button !== 0) return;
+            const metrics = getVideoDirectionEditResizeMetrics();
+            if (!metrics) return;
+            finishVideoDirectionEditResize();
+            videoDirectionEditResizeSession = {
+                pointerId: event.pointerId,
+                startY: event.clientY,
+                startTopHeight: metrics.topHeight,
+                originalUserSelect: document.body.style.userSelect,
+            };
+            document.body.style.userSelect = 'none';
+            try {
+                metrics.resizer.setPointerCapture(event.pointerId);
+            } catch (error) {
+                console.error('[VIDEO_UI] 다듬기 방향 크기 조절 포인터 캡처 실패:', error, {
+                    pointerId: event.pointerId,
+                });
+            }
+            event.preventDefault();
+        }
+
+        function moveVideoDirectionEditResize(event) {
+            const session = videoDirectionEditResizeSession;
+            if (!session || event.pointerId !== session.pointerId) return;
+            setVideoDirectionEditTopHeight(
+                session.startTopHeight + (event.clientY - session.startY),
+            );
+            event.preventDefault();
+        }
+
+        function finishVideoDirectionEditResize(event = null) {
+            const session = videoDirectionEditResizeSession;
+            if (!session || (event && event.pointerId !== session.pointerId)) return;
+            const resizer = document.getElementById('video-direction-edit-resizer');
+            if (resizer?.hasPointerCapture?.(session.pointerId)) {
+                try {
+                    resizer.releasePointerCapture(session.pointerId);
+                } catch (error) {
+                    console.error('[VIDEO_UI] 다듬기 방향 크기 조절 포인터 해제 실패:', error, {
+                        pointerId: session.pointerId,
+                    });
+                }
+            }
+            document.body.style.userSelect = session.originalUserSelect;
+            videoDirectionEditResizeSession = null;
+        }
+
+        function resizeVideoDirectionEditWithKeyboard(event) {
+            const metrics = getVideoDirectionEditResizeMetrics();
+            if (!metrics) return;
+            let nextHeight = metrics.topHeight;
+            if (event.key === 'ArrowUp') nextHeight -= 24;
+            else if (event.key === 'ArrowDown') nextHeight += 24;
+            else if (event.key === 'PageUp') nextHeight -= 72;
+            else if (event.key === 'PageDown') nextHeight += 72;
+            else if (event.key === 'Home') nextHeight = metrics.minTop;
+            else if (event.key === 'End') nextHeight = metrics.maxTop;
+            else return;
+            setVideoDirectionEditTopHeight(nextHeight);
+            event.preventDefault();
+        }
+
+        function resetVideoDirectionEditResize() {
+            const body = document.querySelector('#video-direction-edit-modal .video-direction-edit-body');
+            if (!body) {
+                console.error('[VIDEO_UI] 다듬기 방향 크기 조절값을 초기화할 본문이 없습니다.');
+                return;
+            }
+            body.style.removeProperty('--video-direction-edit-top-height');
+            requestAnimationFrame(syncVideoDirectionEditResizeA11y);
+        }
+
+        window.addEventListener('pointermove', moveVideoDirectionEditResize, {passive: false});
+        window.addEventListener('pointerup', finishVideoDirectionEditResize);
+        window.addEventListener('pointercancel', finishVideoDirectionEditResize);
+        window.addEventListener('resize', () => {
+            const body = document.querySelector('#video-direction-edit-modal .video-direction-edit-body');
+            if (body?.classList.contains('has-review')) {
+                requestAnimationFrame(syncVideoDirectionEditResizeA11y);
+            }
+        }, {passive: true});
+
         function setVideoDirectionEditBusy(busy) {
             videoDirectionEditBusy = busy === true;
             const command = document.getElementById('video-direction-edit-command');
@@ -31133,6 +31449,7 @@
             }
             if (commandLabel) commandLabel.textContent = '원하는 수정 방향';
             if (review) review.hidden = true;
+            setVideoDirectionEditReviewLayout(false);
             if (diff) diff.textContent = '';
             if (run) run.hidden = false;
             if (more) more.hidden = true;
@@ -31372,6 +31689,7 @@
                 videoDirectionEditState.candidateInstruction,
             );
             review.hidden = false;
+            setVideoDirectionEditReviewLayout(true);
             round.textContent = `수정안 ${videoDirectionEditState.round}`;
             command.value = '';
             command.placeholder = '추가로 바꿀 내용을 입력한 뒤 “더 바꾸기”를 누르세요.';
@@ -31516,6 +31834,7 @@
             const revert = document.getElementById('video-direction-edit-revert');
             const accept = document.getElementById('video-direction-edit-accept');
             if (review) review.hidden = true;
+            setVideoDirectionEditReviewLayout(false);
             if (diff) diff.textContent = '';
             if (command) {
                 command.value = '';

@@ -61,7 +61,7 @@ REF2V_MAX_REFERENCE_IMAGES = 3
 H3_PROMPT_CANDIDATE_COUNT = 3
 I2V_WORKFLOW_INPUT_PATH = "soya_video"
 I2V_WORKFLOW_PROMPT_TITLE = "긍정프롬프트"
-REF2V_WORKFLOW_PROMPT_TITLE = "Input Text (Prompt)"
+REF2V_WORKFLOW_PROMPT_TITLE = "긍정프롬프트"
 
 # H3 FAST 화면 비율과 픽셀 예산은 서로 독립적으로 관리한다. 최종 해상도는
 # 아래 비율과 MP 단계만으로 계산하며, 모든 변은 워크플로우 요구에 맞춰 32배수다.
@@ -1138,7 +1138,7 @@ def build_i2v_workflow_block(
     seed: int,
     input_path: str = I2V_WORKFLOW_INPUT_PATH,
 ) -> str:
-    """Build the text transport consumed by the distributed H3 I2V workflow."""
+    """Build the text transport consumed by the distributed H3 video workflows."""
 
     prompt = str(h3_prompt or "").strip()
     if not prompt:
@@ -4557,186 +4557,60 @@ Final protocol audit: reread every exact <Subject N> occurrence against its defi
         return patched
 
     @staticmethod
-    def _patch_ref2v_api_workflow(
+    def _inject_ref2v_transport_block(
         workflow: dict,
-        h3_prompt: str,
-        width: int,
-        height: int,
-        duration: object,
-        seed: int,
+        transport_block: str,
         job_id: str,
-        workflow_input_path: str,
-        reference_count: int,
     ) -> dict:
-        """Patch an official Ref2VA workflow after UI-to-API conversion.
+        """Inject the shared video transport block into the REF prompt input."""
 
-        The official workflow exposes optional reference inputs as flattened
-        ``ref_images.ref_image_N`` keys. Only the requested slots remain
-        connected, which prevents sample images embedded in a workflow from
-        leaking into a generation.
-        """
-
-        normalized_duration = normalize_video_duration(duration)
         if not isinstance(workflow, dict) or not workflow:
             print(
                 "[VIDEO:WORKFLOW] REF API 워크플로우 형식 오류: "
                 f"type={type(workflow).__name__}, empty={not bool(workflow)}"
             )
             raise ValueError("H3 REF API 워크플로우가 올바르지 않습니다")
-        if not 1 <= int(reference_count) <= REF2V_MAX_REFERENCE_IMAGES:
+        if not str(transport_block or "").strip():
             print(
-                "[VIDEO:WORKFLOW] REF API 이미지 장수 오류: "
-                f"count={reference_count}, max={REF2V_MAX_REFERENCE_IMAGES}"
+                "[VIDEO:WORKFLOW] REF 전송 블록이 비어 있음: "
+                f"job={job_id!r}"
             )
-            raise ValueError("H3 REF 이미지 장수가 올바르지 않습니다")
+            raise ValueError("H3 REF 전송 블록이 비어 있습니다")
 
         patched = copy.deepcopy(workflow)
-
-        def nodes_with(class_type: str) -> list[tuple[str, dict]]:
-            return [
-                (str(node_id), node)
-                for node_id, node in patched.items()
-                if isinstance(node, dict)
-                and str(node.get("class_type") or "") == class_type
-            ]
-
         prompt_nodes = [
-            item
-            for item in nodes_with("PrimitiveStringMultiline")
-            if str(item[1].get("_meta", {}).get("title") or "")
+            (str(node_id), node)
+            for node_id, node in patched.items()
+            if isinstance(node, dict)
+            and str(node.get("class_type") or "") == "PrimitiveStringMultiline"
+            and str(node.get("_meta", {}).get("title") or "")
             == REF2V_WORKFLOW_PROMPT_TITLE
         ]
-        if not prompt_nodes:
-            prompt_nodes = nodes_with("PrimitiveStringMultiline")
-        duration_nodes = [
-            item
-            for item in nodes_with("PrimitiveFloat")
-            if str(item[1].get("_meta", {}).get("title") or "").strip().lower()
-            == "float (duration)"
-        ]
-        if not duration_nodes:
-            duration_nodes = nodes_with("PrimitiveFloat")
-        h3_nodes = nodes_with("MiniMaxH3ReferenceToVideo")
-        noise_nodes = nodes_with("RandomNoise")
-        save_nodes = nodes_with("SaveVideo")
-        counts = {
-            "positive": len(prompt_nodes),
-            "h3_ref": len(h3_nodes),
-            "duration": len(duration_nodes),
-            "noise": len(noise_nodes),
-            "save": len(save_nodes),
-        }
-        if any(value != 1 for value in counts.values()):
-            print(f"[VIDEO:WORKFLOW] REF API 핵심 노드 탐색 실패: {counts}")
-            raise RuntimeError("H3 REF 워크플로우 핵심 노드를 정확히 찾지 못했습니다")
+        if len(prompt_nodes) != 1:
+            print(
+                "[VIDEO:WORKFLOW] REF 긍정프롬프트 탐색 실패: "
+                f"count={len(prompt_nodes)}, title={REF2V_WORKFLOW_PROMPT_TITLE!r}, "
+                f"job={job_id!r}"
+            )
+            raise RuntimeError(
+                "H3 REF v4 워크플로우가 필요합니다: "
+                "긍정프롬프트 입력을 정확히 찾지 못했습니다"
+            )
 
         prompt_id, prompt_node = prompt_nodes[0]
-        h3_id, h3_node = h3_nodes[0]
-        duration_id, duration_node = duration_nodes[0]
-        noise_id, noise_node = noise_nodes[0]
-        save_id, save_node = save_nodes[0]
         prompt_inputs = prompt_node.get("inputs")
-        h3_inputs = h3_node.get("inputs")
-        duration_inputs = duration_node.get("inputs")
-        noise_inputs = noise_node.get("inputs")
-        save_inputs = save_node.get("inputs")
-        if not all(
-            isinstance(item, dict)
-            for item in (
-                prompt_inputs,
-                h3_inputs,
-                duration_inputs,
-                noise_inputs,
-                save_inputs,
-            )
-        ):
+        if not isinstance(prompt_inputs, dict) or "value" not in prompt_inputs:
             print(
-                "[VIDEO:WORKFLOW] REF API 노드 inputs 형식 오류: "
-                f"prompt={type(prompt_inputs).__name__}, "
-                f"h3={type(h3_inputs).__name__}, "
-                f"duration={type(duration_inputs).__name__}, "
-                f"noise={type(noise_inputs).__name__}, "
-                f"save={type(save_inputs).__name__}"
+                "[VIDEO:WORKFLOW] REF 긍정프롬프트 value 입력 누락: "
+                f"node={prompt_id}, job={job_id!r}"
             )
-            raise RuntimeError("H3 REF 워크플로우 노드 입력이 올바르지 않습니다")
-        if "value" not in prompt_inputs or "value" not in duration_inputs:
-            print(
-                "[VIDEO:WORKFLOW] REF prompt/duration value 누락: "
-                f"prompt_node={prompt_id}, duration_node={duration_id}"
-            )
-            raise RuntimeError("H3 REF 프롬프트 또는 영상 길이 입력을 찾지 못했습니다")
-        if "noise_seed" not in noise_inputs:
-            print(f"[VIDEO:WORKFLOW] REF seed 입력 누락: noise_node={noise_id}")
-            raise RuntimeError("H3 REF seed 입력을 찾지 못했습니다")
-        if "width" not in h3_inputs or "height" not in h3_inputs:
-            print(f"[VIDEO:WORKFLOW] REF 해상도 입력 누락: h3_node={h3_id}")
-            raise RuntimeError("H3 REF 해상도 입력을 찾지 못했습니다")
+            raise RuntimeError("H3 REF 긍정프롬프트 입력이 올바르지 않습니다")
 
-        def linked_node_id(value: object) -> str:
-            if not isinstance(value, list) or len(value) < 2:
-                return ""
-            candidate = str(value[0])
-            return candidate if candidate in patched else ""
-
-        reference_inputs: list[tuple[int, str, str, dict]] = []
-        for input_name, value in list(h3_inputs.items()):
-            match = re.fullmatch(r"ref_images\.ref_image_(\d+)", str(input_name))
-            if not match:
-                continue
-            load_id = linked_node_id(value)
-            load_node = patched.get(load_id)
-            load_inputs = load_node.get("inputs") if isinstance(load_node, dict) else None
-            if (
-                not load_id
-                or not isinstance(load_node, dict)
-                or str(load_node.get("class_type") or "") != "LoadImage"
-                or not isinstance(load_inputs, dict)
-                or "image" not in load_inputs
-            ):
-                print(
-                    "[VIDEO:WORKFLOW] REF LoadImage 연결 오류: "
-                    f"input={input_name!r}, load_node={load_id!r}"
-                )
-                raise RuntimeError("H3 REF 참조 이미지 연결이 올바르지 않습니다")
-            reference_inputs.append(
-                (int(match.group(1)), str(input_name), load_id, load_inputs)
-            )
-        reference_inputs.sort(key=lambda item: item[0])
-        if len(reference_inputs) < reference_count:
-            print(
-                "[VIDEO:WORKFLOW] REF 이미지 슬롯 부족: "
-                f"requested={reference_count}, found={len(reference_inputs)}, "
-                f"h3_node={h3_id}"
-            )
-            raise RuntimeError("H3 REF 워크플로우의 참조 이미지 슬롯이 부족합니다")
-
-        normalized_input_path = str(workflow_input_path or "").strip("/\\")
-        if not normalized_input_path:
-            print("[VIDEO:WORKFLOW] REF 스테이징 상대 경로가 비어 있음")
-            raise ValueError("H3 REF 이미지 스테이징 경로가 없습니다")
-        for position, (_slot, input_name, _load_id, load_inputs) in enumerate(
-            reference_inputs,
-            start=1,
-        ):
-            if position <= reference_count:
-                load_inputs["image"] = (
-                    f"{normalized_input_path.replace(os.sep, '/')}/[{position}].png"
-                )
-            else:
-                h3_inputs.pop(input_name, None)
-
-        prompt_inputs["value"] = h3_prompt
-        duration_inputs["value"] = normalized_duration
-        noise_inputs["noise_seed"] = int(seed)
-        h3_inputs["width"] = int(width)
-        h3_inputs["height"] = int(height)
-        save_inputs["filename_prefix"] = f"video/soya_h3/{job_id}"
+        prompt_inputs["value"] = transport_block
         print(
-            "[VIDEO:WORKFLOW] REF API 주입 완료: "
-            f"prompt_node={prompt_id}, h3_node={h3_id}, "
-            f"duration_node={duration_id}, noise_node={noise_id}, "
-            f"save_node={save_id}, refs={reference_count}, "
-            f"size={width}x{height}, job={job_id}"
+            "[VIDEO:WORKFLOW] REF 전송 블록 주입 완료: "
+            f"prompt_node={prompt_id}, size_block={len(transport_block)}, "
+            f"job={job_id}"
         )
         return patched
 
@@ -6479,19 +6353,17 @@ Final protocol audit: reread every exact <Subject N> occurrence against its defi
                 raise RuntimeError("H3 워크플로우 변환 함수가 연결되지 않았습니다")
 
             workflow_for_conversion = ui_workflow
-            i2v_transport_block = ""
             video_seed = (
                 int.from_bytes(os.urandom(7), "big") % 1_000_000_000_000_000
             )
-            if mode in ("i2v", "first_last"):
-                i2v_transport_block = build_i2v_workflow_block(
-                    h3_prompt,
-                    target_w,
-                    target_h,
-                    duration,
-                    video_seed,
-                    workflow_input_path,
-                )
+            video_transport_block = build_i2v_workflow_block(
+                h3_prompt,
+                target_w,
+                target_h,
+                duration,
+                video_seed,
+                workflow_input_path,
+            )
             api_workflow, convert_error = await self.convert_workflow_func(
                 workflow_for_conversion,
                 task_key="video_generation",
@@ -6505,21 +6377,15 @@ Final protocol audit: reread every exact <Subject N> occurrence against its defi
             if mode in ("i2v", "first_last"):
                 api_workflow = self._patch_i2v_api_workflow(
                     api_workflow,
-                    i2v_transport_block,
+                    video_transport_block,
                     job_id,
                     mode,
                 )
             elif mode == "ref2v":
-                api_workflow = self._patch_ref2v_api_workflow(
+                api_workflow = self._inject_ref2v_transport_block(
                     api_workflow,
-                    h3_prompt,
-                    target_w,
-                    target_h,
-                    duration,
-                    video_seed,
+                    video_transport_block,
                     job_id,
-                    workflow_input_path,
-                    len(reference_refs),
                 )
             if not callable(self.submit_workflow_func):
                 print("[VIDEO:WORKFLOW] 영상 제출 콜백 없음")

@@ -483,6 +483,9 @@ def test_video_direction_edit_modal_reviews_diff_before_accepting() -> None:
     assert 'id="video-direction-edit-command"' in modal
     assert 'maxlength="4000"' in modal
     assert 'id="video-direction-edit-diff"' in modal
+    assert 'id="video-direction-edit-resizer"' in modal
+    assert 'role="separator"' in modal
+    assert 'aria-orientation="horizontal"' in modal
     assert 'id="video-direction-edit-accept"' in modal
     assert 'id="video-direction-edit-more"' in modal
     assert 'id="video-direction-edit-revert"' in modal
@@ -501,6 +504,20 @@ def test_video_direction_edit_modal_reviews_diff_before_accepting() -> None:
     assert "videoDirectionEditState.baseInstruction" in review
     assert "videoDirectionEditState.candidateInstruction" in review
     assert "renderVideoDirectionEditDiff" in review
+    assert "setVideoDirectionEditReviewLayout(true)" in review
+
+    layout_css = FRONTEND.split(
+        ".video-direction-edit-body {", 1
+    )[1].split(".video-draft-note {", 1)[0]
+    assert ".video-direction-edit-body.has-review" in layout_css
+    assert "minmax(240px, 1.45fr)" in layout_css
+    assert ".video-direction-edit-resizer" in layout_css
+    assert "max-height: 330px" not in layout_css
+    assert "max-height: none" in layout_css
+
+    assert "function startVideoDirectionEditResize(event)" in FRONTEND
+    assert "function resizeVideoDirectionEditWithKeyboard(event)" in FRONTEND
+    assert "--video-direction-edit-top-height" in FRONTEND
 
     diff = FRONTEND.split(
         "function videoDirectionDiffTokens", 1
