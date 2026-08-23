@@ -16,6 +16,8 @@ def test_character_cards_are_switched_inline_and_limited_to_ten():
 def test_card_metadata_and_outfit_entry_are_on_the_character_card():
     assert "자연어 선택 기준" in FRONTEND
     assert "작중 별칭" in FRONTEND
+    card_metadata = FRONTEND[FRONTEND.index('<div class="card-section" style="display:grid;grid-template-columns'):]
+    assert card_metadata.index("작중 별칭") < card_metadata.index("자연어 선택 기준")
     assert "lb-xnai.lb.extra 설정" in FRONTEND
     assert "lb-xnai.lb.extra 복장 설정" not in FRONTEND
     assert 'id="visual-card-appearance"' in FRONTEND
