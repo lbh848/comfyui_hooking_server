@@ -154,7 +154,6 @@ def normalize_outfit(raw: dict, *, field: str = "outfit") -> dict:
         "id": outfit_id,
         "label": _clean_text(raw.get("label")) or outfit_id,
         "selection_guide": _clean_text(raw.get("selection_guide")),
-        "aliases": _normalize_aliases(raw.get("aliases"), field=f"{field}.aliases"),
         "tags": normalize_tag_entries(raw.get("tags"), field=f"{field}.tags"),
     }
 
@@ -265,7 +264,6 @@ def legacy_visual_card(
             "id": LEGACY_OUTFIT_ID,
             "label": "기본 복장",
             "selection_guide": "다른 등록 복장이 명시되지 않았을 때의 기본 복장.",
-            "aliases": [],
             "tags": normalize_tag_entries(extra.get("outfit"), field="legacy.outfit"),
         }],
     }
@@ -534,10 +532,9 @@ def build_natural_profile_catalog(effective_profiles: dict[str, dict]) -> str:
             lines.append(f"  이 카드의 평소 복장 ID는 `{profile.get('default_outfit_id')}`이다.")
             for outfit in profile.get("outfits") or []:
                 outfit_guide = _clean_text(outfit.get("selection_guide")) or "별도 선택 설명 없음."
-                outfit_aliases = ", ".join(outfit.get("aliases") or []) or "없음"
                 lines.append(
-                    f"  - 복장 `{outfit.get('id')}` ({outfit.get('label')}): "
-                    f"{outfit_guide} 작중 호칭/별칭: {outfit_aliases}"
+                    f"  - 복장 `{outfit.get('id')}` (작중 별칭: {outfit.get('label')}): "
+                    f"{outfit_guide}"
                 )
         sections.append("\n".join(lines))
     return "\n\n".join(sections)

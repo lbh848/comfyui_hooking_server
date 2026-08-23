@@ -21,6 +21,9 @@ def test_card_metadata_and_outfit_entry_are_on_the_character_card():
     assert 'id="visual-card-appearance"' in FRONTEND
     assert "target.appearance = JSON.parse" in FRONTEND
     assert "openVisualOutfitEditor" in FRONTEND
+    assert 'id="visual-outfit-label"' in FRONTEND
+    assert 'id="visual-outfit-aliases"' not in FRONTEND
+    assert "복장 이름" not in FRONTEND
 
 
 def test_removed_profile_modal_and_raw_json_editor_do_not_return():

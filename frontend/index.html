@@ -63965,7 +63965,7 @@
                     data: {
                         name: charName,
                         default_visual_profile_id: 'card_1',
-                        profiles: [{id:'card_1', label:'카드 1', selection_guide:'', aliases:[], appearance:[], default_outfit_id:'default', outfits:[{id:'default', label:'기본 복장', selection_guide:'', aliases:[], tags:[]}], render_overrides:{}}]
+                        profiles: [{id:'card_1', label:'카드 1', selection_guide:'', aliases:[], appearance:[], default_outfit_id:'default', outfits:[{id:'default', label:'기본 복장', selection_guide:'', tags:[]}], render_overrides:{}}]
                     }
                 };
                 console.error('[VISUAL_CARD] 임시 기본 카드 사용', root.name);
@@ -64157,7 +64157,6 @@
             }
             outfit.label = (root.querySelector('#visual-outfit-label')?.value || '').trim() || outfit.label;
             outfit.selection_guide = (root.querySelector('#visual-outfit-guide')?.value || '').trim();
-            outfit.aliases = [...new Set((root.querySelector('#visual-outfit-aliases')?.value || '').split(',').map(v => v.trim()).filter(Boolean))];
             outfit.tags = _vpTags(root.querySelector('#visual-outfit-tags')?.value || '', outfit.tags);
             const selectedDefault = root.querySelector('#visual-outfit-default')?.value;
             if (selectedDefault) _visualOutfitEditor.profile.default_outfit_id = selectedDefault;
@@ -64176,9 +64175,8 @@
                 <main style="padding:18px;overflow:auto;flex:1">
                     <label style="display:block;margin-bottom:18px;padding-bottom:18px;border-bottom:1px solid var(--border)"><b style="display:block;font-size:.78rem;color:var(--text2);margin-bottom:5px">고정 외형 태그 (Appearance)</b><textarea id="visual-card-appearance" rows="5" style="${input};resize:vertical">${escHtml(_vpTagText(state.profile.appearance || []))}</textarea><small style="display:block;color:var(--text2);margin-top:4px">현재 카드가 선택되었을 때 사용하는 머리, 눈, 신체 등 기본 외형입니다.</small></label>
                     <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px"><b style="font-size:1rem">${escHtml(outfit?.label || '')}</b><label style="margin-left:auto;font-size:.78rem">기본 복장 <select id="visual-outfit-default" style="padding:6px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:5px">${defaults}</select></label>${(state.profile.outfits || []).length > 1 ? '<button onclick="deleteVisualOutfit()" style="color:#ef4444;background:transparent;border:1px solid #ef444477;border-radius:5px;padding:5px 9px;cursor:pointer">현재 복장 삭제</button>' : ''}</div>
-                    <label style="display:block;margin-bottom:13px"><b style="display:block;font-size:.78rem;color:var(--text2);margin-bottom:5px">복장 이름</b><input id="visual-outfit-label" value="${escAttr(outfit?.label || '')}" style="${input}"></label>
+                    <label style="display:block;margin-bottom:13px"><b style="display:block;font-size:.78rem;color:var(--text2);margin-bottom:5px">작중 별칭</b><input id="visual-outfit-label" value="${escAttr(outfit?.label || '')}" style="${input}"><small style="display:block;color:var(--text2);margin-top:4px">작중에서 이 복장을 부르는 이름을 입력합니다.</small></label>
                     <label style="display:block;margin-bottom:13px"><b style="display:block;font-size:.78rem;color:var(--text2);margin-bottom:5px">자연어 선택 기준</b><textarea id="visual-outfit-guide" rows="3" style="${input};resize:vertical">${escHtml(outfit?.selection_guide || '')}</textarea><small style="display:block;color:var(--text2);margin-top:4px">이야기에서 언제 이 복장을 선택해야 하는지 자연어로 적습니다.</small></label>
-                    <label style="display:block;margin-bottom:13px"><b style="display:block;font-size:.78rem;color:var(--text2);margin-bottom:5px">작중 별칭</b><input id="visual-outfit-aliases" value="${escAttr((outfit?.aliases || []).join(', '))}" placeholder="쉼표로 구분" style="${input}"></label>
                     <label style="display:block;margin-bottom:13px"><b style="display:block;font-size:.78rem;color:var(--text2);margin-bottom:5px">복장 태그</b><textarea id="visual-outfit-tags" rows="5" style="${input};resize:vertical">${escHtml(_vpTagText(outfit?.tags || []))}</textarea></label>
                 </main>
                 <footer style="padding:12px 18px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px"><button onclick="closeVisualOutfitEditor()">취소</button><button onclick="saveVisualOutfits()" style="background:var(--accent);color:#fff;border:0;border-radius:6px;padding:8px 16px;cursor:pointer">lb.extra 설정 저장</button></footer>
@@ -64205,7 +64203,7 @@
         function addVisualOutfit() {
             _commitVisualOutfitForm();
             const profile = _visualOutfitEditor.profile, id = _newVisualOutfitId(profile);
-            profile.outfits.push({id, label:`복장 ${profile.outfits.length + 1}`, selection_guide:'', aliases:[], tags:[]});
+            profile.outfits.push({id, label:`복장 ${profile.outfits.length + 1}`, selection_guide:'', tags:[]});
             _visualOutfitEditor.outfitId = id;
             _renderVisualOutfitEditor();
         }

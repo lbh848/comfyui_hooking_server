@@ -45,13 +45,11 @@ def _cards():
             "id": "casual",
             "label": "사복",
             "selection_guide": "평상시 외출복을 입은 경우.",
-            "aliases": ["평상복"],
             "tags": ["hoodie", "jeans"],
         }, {
             "id": "uniform",
             "label": "제복",
             "selection_guide": "학교 제복을 입고 있다고 서술된 경우.",
-            "aliases": [],
             "tags": ["school uniform"],
         }],
         "gender_tag": "1girl",
@@ -71,7 +69,6 @@ def _cards():
             "id": "armor",
             "label": "변신 갑주",
             "selection_guide": "변신과 함께 나타나는 기본 갑주.",
-            "aliases": [],
             "tags": ["black armor"],
         }],
         "gender_tag": "1girl",
@@ -187,6 +184,7 @@ def test_natural_catalog_keeps_prose_and_internal_route_ids():
     assert "서사가 확정한 다른 카드 상태도 없을 때만 폴백" in catalog
     assert "몸 자체가 변형된 상태" in catalog
     assert "`despair`" in catalog
+    assert "작중 별칭: 사복" in catalog
     assert "white hair" not in catalog
 
 
