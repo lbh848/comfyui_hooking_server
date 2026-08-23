@@ -64298,7 +64298,7 @@
                             <span class="patch-label">확인중</span>
                         </span>
                     </div>
-                    <div class="card-section" style="display:grid;grid-template-columns:minmax(260px,1.5fr) minmax(220px,1fr);gap:12px">
+                    <div class="card-section" style="display:grid;grid-template-columns:minmax(180px,.65fr) minmax(320px,1.35fr);gap:12px">
                         <label style="display:block"><span class="card-section-title" style="display:block;margin-bottom:5px">작중 별칭</span><input value="${escAttr((activeProfile?.aliases || []).join(', '))}" onchange="updateVisualCardAliases('${escAttr(char.name)}',this.value)" placeholder="쉼표로 구분" style="width:100%;box-sizing:border-box;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--text)"></label>
                         <label style="display:block"><span class="card-section-title" style="display:block;margin-bottom:5px">자연어 선택 기준</span><textarea rows="2" onchange="updateVisualCardGuide('${escAttr(char.name)}',this.value)" placeholder="이 카드의 모습이 언제 성립하고 유지되는지 자연어로 입력" style="width:100%;box-sizing:border-box;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--text);resize:vertical">${escHtml(activeProfile?.selection_guide || '')}</textarea></label>
                     </div>
