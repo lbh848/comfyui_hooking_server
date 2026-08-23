@@ -9017,7 +9017,7 @@ async def build_from_context(
             )
         elif str(visual_profile_catalog or "").strip():
             call1_system += (
-                "\n\n# REGISTERED VISUAL PROFILES\n"
+                "\n\n# REGISTERED CHARACTER CARDS\n"
                 + str(visual_profile_catalog).strip()
             )
         call1_system = call1_system.replace("{character_names}", str(backtranslate_names or extra_names or ""))

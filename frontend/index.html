@@ -64149,8 +64149,12 @@
         }
 
         function _commitVisualOutfitForm() {
-            const root = _visualOutfitModal(), outfit = _visualOutfitCurrent();
-            if (!outfit || root.style.display === 'none') return;
+            const root = _visualOutfitModal(), state = _visualOutfitEditor, outfit = _visualOutfitCurrent();
+            if (!state || !outfit || root.style.display === 'none') return;
+            const appearanceInput = root.querySelector('#visual-card-appearance');
+            if (appearanceInput) {
+                state.profile.appearance = _vpTags(appearanceInput.value || '', state.profile.appearance);
+            }
             outfit.label = (root.querySelector('#visual-outfit-label')?.value || '').trim() || outfit.label;
             outfit.selection_guide = (root.querySelector('#visual-outfit-guide')?.value || '').trim();
             outfit.aliases = [...new Set((root.querySelector('#visual-outfit-aliases')?.value || '').split(',').map(v => v.trim()).filter(Boolean))];
@@ -64167,16 +64171,17 @@
             const tabs = (state.profile.outfits || []).map((item, index) => `<button onclick="selectVisualOutfit('${escAttr(item.id)}')" style="padding:7px 11px;border:1px solid ${item.id === state.outfitId ? 'var(--accent)' : 'var(--border)'};border-radius:6px;background:${item.id === state.outfitId ? 'var(--accent)' : 'var(--surface2)'};color:${item.id === state.outfitId ? '#fff' : 'var(--text)'};cursor:pointer">${escHtml(item.label || `복장 ${index + 1}`)}</button>`).join('');
             const defaults = (state.profile.outfits || []).map(item => `<option value="${escAttr(item.id)}" ${item.id === state.profile.default_outfit_id ? 'selected' : ''}>${escHtml(item.label || item.id)}</option>`).join('');
             root.innerHTML = `<div style="width:min(820px,94vw);height:min(720px,90vh);background:var(--surface);border:1px solid var(--border);border-radius:12px;display:flex;flex-direction:column;overflow:hidden">
-                <header style="padding:14px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center"><div><h2 style="margin:0">${escHtml(state.charName)} [${state.slot + 1}]</h2><small style="color:var(--text2)">lb-xnai.lb.extra 복장 설정</small></div><button onclick="closeVisualOutfitEditor()" style="margin-left:auto;font-size:1.4rem;background:transparent;border:0;color:var(--text);cursor:pointer">×</button></header>
+                <header style="padding:14px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center"><div><h2 style="margin:0">${escHtml(state.charName)} [${state.slot + 1}]</h2><small style="color:var(--text2)">lb-xnai.lb.extra 설정</small></div><button onclick="closeVisualOutfitEditor()" style="margin-left:auto;font-size:1.4rem;background:transparent;border:0;color:var(--text);cursor:pointer">×</button></header>
                 <div style="padding:13px 18px;border-bottom:1px solid var(--border);display:flex;gap:7px;align-items:center;flex-wrap:wrap">${tabs}<button onclick="addVisualOutfit()" style="padding:7px 11px;border:1px dashed var(--accent);border-radius:6px;background:transparent;color:var(--accent);cursor:pointer">＋ 복장 추가</button></div>
                 <main style="padding:18px;overflow:auto;flex:1">
+                    <label style="display:block;margin-bottom:18px;padding-bottom:18px;border-bottom:1px solid var(--border)"><b style="display:block;font-size:.78rem;color:var(--text2);margin-bottom:5px">고정 외형 태그 (Appearance)</b><textarea id="visual-card-appearance" rows="5" style="${input};resize:vertical">${escHtml(_vpTagText(state.profile.appearance || []))}</textarea><small style="display:block;color:var(--text2);margin-top:4px">현재 카드가 선택되었을 때 사용하는 머리, 눈, 신체 등 기본 외형입니다.</small></label>
                     <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px"><b style="font-size:1rem">${escHtml(outfit?.label || '')}</b><label style="margin-left:auto;font-size:.78rem">기본 복장 <select id="visual-outfit-default" style="padding:6px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:5px">${defaults}</select></label>${(state.profile.outfits || []).length > 1 ? '<button onclick="deleteVisualOutfit()" style="color:#ef4444;background:transparent;border:1px solid #ef444477;border-radius:5px;padding:5px 9px;cursor:pointer">현재 복장 삭제</button>' : ''}</div>
                     <label style="display:block;margin-bottom:13px"><b style="display:block;font-size:.78rem;color:var(--text2);margin-bottom:5px">복장 이름</b><input id="visual-outfit-label" value="${escAttr(outfit?.label || '')}" style="${input}"></label>
                     <label style="display:block;margin-bottom:13px"><b style="display:block;font-size:.78rem;color:var(--text2);margin-bottom:5px">자연어 선택 기준</b><textarea id="visual-outfit-guide" rows="3" style="${input};resize:vertical">${escHtml(outfit?.selection_guide || '')}</textarea><small style="display:block;color:var(--text2);margin-top:4px">이야기에서 언제 이 복장을 선택해야 하는지 자연어로 적습니다.</small></label>
                     <label style="display:block;margin-bottom:13px"><b style="display:block;font-size:.78rem;color:var(--text2);margin-bottom:5px">작중 별칭</b><input id="visual-outfit-aliases" value="${escAttr((outfit?.aliases || []).join(', '))}" placeholder="쉼표로 구분" style="${input}"></label>
                     <label style="display:block;margin-bottom:13px"><b style="display:block;font-size:.78rem;color:var(--text2);margin-bottom:5px">복장 태그</b><textarea id="visual-outfit-tags" rows="5" style="${input};resize:vertical">${escHtml(_vpTagText(outfit?.tags || []))}</textarea></label>
                 </main>
-                <footer style="padding:12px 18px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px"><button onclick="closeVisualOutfitEditor()">취소</button><button onclick="saveVisualOutfits()" style="background:var(--accent);color:#fff;border:0;border-radius:6px;padding:8px 16px;cursor:pointer">복장 설정 저장</button></footer>
+                <footer style="padding:12px 18px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px"><button onclick="closeVisualOutfitEditor()">취소</button><button onclick="saveVisualOutfits()" style="background:var(--accent);color:#fff;border:0;border-radius:6px;padding:8px 16px;cursor:pointer">lb.extra 설정 저장</button></footer>
             </div>`;
             root.style.display = 'flex';
         }
@@ -64221,12 +64226,13 @@
                 console.error('[VISUAL_OUTFIT] 저장 대상 카드 없음', state);
                 return showToast('저장할 캐릭터 카드를 찾지 못했습니다.', 'error');
             }
+            target.appearance = JSON.parse(JSON.stringify(state.profile.appearance || []));
             target.default_outfit_id = state.profile.default_outfit_id;
             target.outfits = JSON.parse(JSON.stringify(state.profile.outfits));
             try {
                 await _saveVisualCardState(state.charName);
                 closeVisualOutfitEditor();
-                showToast('lb-xnai.lb.extra 복장 설정 저장 완료', 'success');
+                showToast('lb-xnai.lb.extra 설정 저장 완료', 'success');
             } catch (_) {}
         }
 
@@ -64279,7 +64285,7 @@
                             onclick="event.stopPropagation(); autoGroupPrompt('${escAttr(char.name)}')"
                             style="background:rgba(34,197,94,0.12); color:var(--text); border:1px solid rgba(34,197,94,0.3); padding:8px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600; white-space:nowrap;">캐릭터 얼굴 / 눈 / 절대태그 설정</button>
                         <button onclick="event.stopPropagation(); openVisualOutfitEditor('${escAttr(char.name)}')"
-                            style="background:rgba(168,85,247,0.12); color:var(--text); border:1px solid rgba(168,85,247,0.35); padding:8px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600; white-space:nowrap;">lb-xnai.lb.extra 복장 설정</button>
+                            style="background:rgba(168,85,247,0.12); color:var(--text); border:1px solid rgba(168,85,247,0.35); padding:8px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600; white-space:nowrap;">lb-xnai.lb.extra 설정</button>
                         <select onchange="saveCharGenderTag('${escAttr(char.name)}', this.value)"
                             style="padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface2); color:var(--text); font-size:0.8rem; cursor:pointer;">
                             ${['1girl','1boy','1male'].map(g =>

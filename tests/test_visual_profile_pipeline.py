@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 from modes.illust_prompt_builder import IllustPromptBuilder
 from modes import illustration_context_pipeline as pipeline
@@ -59,6 +60,17 @@ def _event():
         "evidence": "her whole body changed into her despair form",
         "confidence": 0.96,
     }
+
+
+def test_call1_prompt_dynamically_selects_cards_from_narrative_state():
+    prompt = (
+        Path(__file__).parents[1] / "prompts" / "lighbd" / "enhance.txt"
+    ).read_text(encoding="utf-8")
+
+    assert "Registered character cards" in prompt
+    assert "including on first appearance" in prompt
+    assert "Use the registered default only when the narrative does not establish another card/outfit" in prompt
+    assert "never choose by a fixed keyword list" in prompt
 
 
 def test_call1_visual_event_requires_literal_evidence_and_registered_ids():

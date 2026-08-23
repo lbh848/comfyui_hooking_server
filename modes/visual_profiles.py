@@ -521,7 +521,8 @@ def build_natural_profile_catalog(effective_profiles: dict[str, dict]) -> str:
             continue
         lines = [
             f"### {character_name}",
-            f"평소 유지되는 카드의 내부 ID는 `{character.get('default_visual_profile_id')}`이다.",
+            f"기본 카드의 내부 ID는 `{character.get('default_visual_profile_id')}`이다. "
+            "이전 추적 상태도 서사가 확정한 다른 카드 상태도 없을 때만 폴백으로 사용한다.",
         ]
         for index, profile in enumerate(profiles):
             guide = _clean_text(profile.get("selection_guide")) or "별도 선택 설명 없음."

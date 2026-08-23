@@ -184,6 +184,7 @@ def test_natural_catalog_keeps_prose_and_internal_route_ids():
 
     assert "카드 [1]" in catalog
     assert "카드 [2]" in catalog
+    assert "서사가 확정한 다른 카드 상태도 없을 때만 폴백" in catalog
     assert "몸 자체가 변형된 상태" in catalog
     assert "`despair`" in catalog
     assert "white hair" not in catalog

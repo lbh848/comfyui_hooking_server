@@ -11,10 +11,10 @@ Previously tracked character state:
 Known character appearance and default outfit:
 {lb_extra_costume}
 
-Registered visual profiles and their base outfits:
+Registered character cards and their lb-xnai.lb.extra base data:
 {visual_profile_catalog}
 
-Treat an external visual profile as the character's persistent body/identity form: for example, an untransformed form versus a transformed form whose hair, eyes, body, species, or identity-conditioning assets may be completely different. Read each profile's natural-language selection guide and the story as a whole. Never choose by a fixed keyword list. A registered outfit is the complete base outfit nested under one visual profile; ordinary one-off clothing changes remain wardrobe events.
+Treat a registered character card as the character's persistent body/identity state: for example, an untransformed form versus a transformed form whose hair, eyes, body, species, or identity-conditioning assets may be completely different. Read each card's natural-language selection guide, aliases, prior tracked state, and the story as a whole. Select the card whose state is actually established by the narrative; never choose by a fixed keyword list. A registered outfit is the complete base outfit nested under one character card; ordinary one-off clothing changes remain wardrobe events.
 
 Your single wardrobe responsibility is to read the story and preserve, in ordinary natural language, what semantic wardrobe, coverage, or exposure change happened to each character. You do not resolve wardrobe tags. A downstream stage (CALL2) later translates your semantic change into the actual image-generation prompt against the authoritative default/current outfit. `wardrobe_change` is the primary meaning-bearing handoff; `operation` and `state_after` are only coarse compatibility hints and must never simplify or contradict it.
 
@@ -35,7 +35,7 @@ Required JSON shape (all seven arrays must exist; keep them empty when there is 
       "character": "canonical name",
       "target_visual_profile_id": "exact registered profile ID",
       "target_outfit_id": "exact outfit ID registered inside that profile",
-      "visual_change": "short natural-language description of the form/base transition established by this segment",
+      "visual_change": "short natural-language description of the form/base state or transition established by this segment",
       "evidence": "exact short excerpt copied from that CURRENT segment"
     }
   ],
@@ -73,12 +73,12 @@ Rules:
 - current_characters are every character present, acting, speaking, being addressed, or clearly participating in CURRENT CONTEXT. Include implicit participants when discourse establishes them.
 - Use plain canonical-name strings in history_characters and current_characters. Do not wrap a certain name in an object. Only use {"name": ..., "confidence": ...} when confidence is below 1.0 and materially useful.
 - Appearing in CURRENT does not authorize a wardrobe change. Existing wardrobe is carried forward by default.
-- `visual_base_events` is a sparse transition history. Emit one only when CURRENT establishes that the character changes to a different registered visual profile or registered base outfit. First appearance, repeated description, or merely remaining transformed is not an event; carry the previous tracked profile/outfit, or the character's registered default when no state exists.
+- `visual_base_events` is a sparse card-state history. When a previous card/outfit state is tracked, emit one only when CURRENT establishes a transition to a different registered card or registered base outfit; repeated description or merely remaining in the same state is not an event. When no prior card state exists, reason from the full narrative and emit an event if CURRENT establishes that a non-default registered card or non-default registered outfit is already active, including on first appearance. Use the registered default only when the narrative does not establish another card/outfit.
 - Choose profile and outfit by the meaning of the full narrative, prior tracked state, and the natural-language selection guides. Never use keyword matching, substring rules, a transformation-word list, or filename conventions.
 - Copy target IDs exactly from the registered catalog. Never invent, translate, slugify, combine, or partially match an ID. `target_outfit_id` must belong to `target_visual_profile_id`.
-- `visual_change` is the natural-language semantic handoff and must explain the actual form/base transition. The IDs are routing handles, not a replacement for reasoning.
-- Every visual-base transition needs literal evidence from its numbered CURRENT segment. Do not use PAST HISTORY as evidence for a new event. If the profile merely persists from history, emit no event.
-- When a visual profile changes, its registered target outfit becomes the new complete wardrobe base. If the same passage then establishes a further one-off clothing change, emit the visual-base event first and a separate wardrobe event against that new base.
+- `visual_change` is the natural-language semantic handoff and must explain the actual form/base state or transition established by CURRENT. The IDs are routing handles, not a replacement for reasoning.
+- Every emitted visual-base event needs literal evidence from its numbered CURRENT segment. Do not use PAST HISTORY as evidence for a new event. If the card merely persists from history, emit no event.
+- When a character card changes, its registered target outfit becomes the new complete wardrobe base. If the same passage then establishes a further one-off clothing change, emit the visual-base event first and a separate wardrobe event against that new base.
 - A temporary hairstyle arrangement, expression, pose, damage, dirt, lighting, camera effect, or one-off garment adjustment is not a visual profile change. Use hairstyle_events or wardrobe_events where applicable, otherwise leave it to the scene builder.
 - `wardrobe_events` is a sparse, evidence-bearing change history, not a sequence of complete outfit snapshots. Each event reports only what CURRENT establishes as changed. Downstream resolves the resulting wardrobe according to the operation.
 - Emit only actual wardrobe changes established by CURRENT. A sentence that merely describes a character wearing their known/default outfit, including a first appearance, is not a change. Never emit keep events or restate carried-forward/default outfits. Copy exact evidence from the numbered segment. Evidence may span adjacent lines inside that segment; preserve their wording and order instead of joining, paraphrasing, or cleaning them.

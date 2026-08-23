@@ -16,7 +16,10 @@ def test_character_cards_are_switched_inline_and_limited_to_ten():
 def test_card_metadata_and_outfit_entry_are_on_the_character_card():
     assert "자연어 선택 기준" in FRONTEND
     assert "작중 별칭" in FRONTEND
-    assert "lb-xnai.lb.extra 복장 설정" in FRONTEND
+    assert "lb-xnai.lb.extra 설정" in FRONTEND
+    assert "lb-xnai.lb.extra 복장 설정" not in FRONTEND
+    assert 'id="visual-card-appearance"' in FRONTEND
+    assert "target.appearance = JSON.parse" in FRONTEND
     assert "openVisualOutfitEditor" in FRONTEND
 
 
@@ -33,4 +36,3 @@ def test_outfit_editor_does_not_close_on_backdrop_click():
     modal_source = FRONTEND[modal_start:modal_end]
     assert "root.onclick" not in modal_source
     assert "closeVisualOutfitEditor()" not in modal_source
-
