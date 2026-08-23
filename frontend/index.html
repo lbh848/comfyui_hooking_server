@@ -63892,7 +63892,17 @@
             showBotView('bots');
         }
 
-        let _visualProfileEditor = null;
+        const VISUAL_CARD_LIMIT = 10;
+        const VISUAL_CARD_RENDER_FIELDS = [
+            'absolute_tags', 'character_negative', 'eye_prompt', 'eye_tags',
+            'face_loras', 'face_tags', 'gender_tag', 'image_name_tag',
+            'loras', 'loras_group', 'loras_solo', 'rep_images', 'style_loras',
+            'use_image_name_tag'
+        ];
+        let _visualCardBotName = '';
+        let _visualCardStates = {};
+        let _visualCardSlots = {};
+        let _visualOutfitEditor = null;
 
         function _vpTagText(values) {
             return (Array.isArray(values) ? values : []).map(v => typeof v === 'string' ? v : (v?.tag || '')).filter(Boolean).join(', ');
@@ -63912,176 +63922,312 @@
             return result;
         }
 
-        function _vpModal() {
-            let el = document.getElementById('visual-profile-overlay');
-            if (!el) {
-                el = document.createElement('div');
-                el.id = 'visual-profile-overlay';
-                el.style.cssText = 'display:none;position:fixed;inset:0;z-index:10080;background:rgba(0,0,0,.72);align-items:center;justify-content:center;padding:22px';
-                document.body.appendChild(el);
-            }
-            return el;
+        function _visualCardState(charName) {
+            return _visualCardStates[String(charName || '').toLowerCase()] || null;
         }
 
-        function _vpProfile() {
-            return (_visualProfileEditor?.data?.profiles || []).find(p => p.id === _visualProfileEditor.selectedProfileId);
+        function _visualCardProfile(charName) {
+            const state = _visualCardState(charName);
+            if (!state) return null;
+            const profiles = state.data.profiles || [];
+            const wanted = Math.max(0, Math.min(_visualCardSlots[charName] || 0, profiles.length - 1));
+            _visualCardSlots[charName] = wanted;
+            return profiles[wanted] || null;
         }
 
-        function _vpStyle() {
-            return 'width:100%;box-sizing:border-box;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--text);font:inherit';
+        function _visualCardRoot(charName) {
+            const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
+            return bot ? (bot.characters || []).find(c => c.name === charName) : null;
         }
 
-        function _vpField(label, html, help = '') {
-            return `<label style="display:block;margin-bottom:11px"><b style="display:block;font-size:.76rem;color:var(--text2);margin-bottom:4px">${label}</b>${html}${help ? `<small style="display:block;color:var(--text2);margin-top:4px;line-height:1.4">${help}</small>` : ''}</label>`;
+        function _visualCardResolved(charOrName) {
+            const root = typeof charOrName === 'string' ? _visualCardRoot(charOrName) : charOrName;
+            if (!root) return null;
+            const profile = _visualCardProfile(root.name);
+            return {...root, ...JSON.parse(JSON.stringify(profile?.render_overrides || {})), name: root.name};
         }
 
-        function _vpCommit(showError = true) {
-            const profile = _vpProfile(), root = _vpModal();
-            if (!profile || root.style.display === 'none') return true;
-            const get = id => root.querySelector('#' + id)?.value ?? '';
-            profile.label = get('vp-label').trim() || profile.id;
-            profile.selection_guide = get('vp-guide').trim();
-            profile.aliases = get('vp-aliases').split(',').map(v => v.trim()).filter(Boolean);
-            profile.appearance = _vpTags(get('vp-appearance'), profile.appearance);
-            profile.default_outfit_id = get('vp-default-outfit');
-            profile.outfits.forEach((outfit, i) => {
-                outfit.label = get('vp-outfit-label-' + i).trim() || outfit.id;
-                outfit.selection_guide = get('vp-outfit-guide-' + i).trim();
-                outfit.aliases = get('vp-outfit-aliases-' + i).split(',').map(v => v.trim()).filter(Boolean);
-                outfit.tags = _vpTags(get('vp-outfit-tags-' + i), outfit.tags);
-            });
+        async function _loadVisualCardState(charName) {
             try {
-                const raw = get('vp-render').trim();
-                const parsed = raw ? JSON.parse(raw) : {};
-                if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') throw new Error('object가 아닙니다');
-                profile.render_overrides = parsed;
+                const response = await fetch(`/api/bot_mode/character_cards?bot_name=${encodeURIComponent(botCurrentBot)}&character=${encodeURIComponent(charName)}`);
+                const result = await response.json();
+                if (!response.ok || !result.character) throw new Error(result.error || '로드 실패');
+                const data = JSON.parse(JSON.stringify(result.character));
+                const defaultIndex = Math.max(0, (data.profiles || []).findIndex(p => p.id === data.default_visual_profile_id));
+                if (defaultIndex > 0) data.profiles.unshift(data.profiles.splice(defaultIndex, 1)[0]);
+                _visualCardStates[charName.toLowerCase()] = {source: result.source || 'legacy', data};
+                if (!Number.isInteger(_visualCardSlots[charName])) _visualCardSlots[charName] = 0;
             } catch (error) {
-                console.error('[VISUAL_PROFILE] 렌더 오버라이드 파싱 실패', error);
-                if (showError) showToast('고급 렌더 오버라이드 JSON을 확인하세요: ' + error.message, 'error');
-                return false;
+                console.error(`[VISUAL_CARD] ${charName} 카드 로드 실패`, error);
+                const root = _visualCardRoot(charName) || {name: charName};
+                _visualCardStates[charName.toLowerCase()] = {
+                    source: 'fallback',
+                    data: {
+                        name: charName,
+                        default_visual_profile_id: 'card_1',
+                        profiles: [{id:'card_1', label:'카드 1', selection_guide:'', aliases:[], appearance:[], default_outfit_id:'default', outfits:[{id:'default', label:'기본 복장', selection_guide:'', aliases:[], tags:[]}], render_overrides:{}}]
+                    }
+                };
+                console.error('[VISUAL_CARD] 임시 기본 카드 사용', root.name);
             }
-            return true;
         }
 
-        function _vpRender() {
-            const root = _vpModal(), state = _visualProfileEditor;
-            if (!state) {
-                root.style.display = 'none';
-                root.innerHTML = '';
+        async function _ensureVisualCardStates(bot) {
+            if (_visualCardBotName !== botCurrentBot) {
+                _visualCardBotName = botCurrentBot;
+                _visualCardStates = {};
+                _visualCardSlots = {};
+            }
+            await Promise.all((bot.characters || []).map(char => {
+                return _visualCardState(char.name) ? Promise.resolve() : _loadVisualCardState(char.name);
+            }));
+        }
+
+        async function _saveVisualCardState(charName, {quiet = false} = {}) {
+            const state = _visualCardState(charName);
+            if (!state) throw new Error(`저장할 캐릭터 카드가 없습니다: ${charName}`);
+            try {
+                const response = await fetch('/api/bot_mode/character_cards', {
+                    method: 'POST',
+                    headers: {'Content-Type':'application/json'},
+                    body: JSON.stringify({bot_name:botCurrentBot, character:charName, data:state.data})
+                });
+                const result = await response.json();
+                if (!response.ok || !result.saved || !result.character) throw new Error(result.error || '저장 실패');
+                state.source = result.source || 'cards';
+                state.data = result.character;
+                if (result.bots) botData.bots = result.bots;
+                return result.character;
+            } catch (error) {
+                console.error(`[VISUAL_CARD] ${charName} 카드 저장 실패`, error);
+                if (!quiet) showToast('캐릭터 카드 저장 실패: ' + error.message, 'error');
+                throw error;
+            }
+        }
+
+        function _visualCardSlotHtml(charName) {
+            const state = _visualCardState(charName);
+            const profiles = state?.data?.profiles || [];
+            const active = _visualCardSlots[charName] || 0;
+            const slots = profiles.map((_, index) => `<button onclick="event.stopPropagation(); switchVisualCard('${escAttr(charName)}',${index})" title="캐릭터 카드 ${index + 1}" style="min-width:32px;height:30px;padding:0 8px;border:1px solid ${index === active ? 'var(--accent)' : 'var(--border)'};border-radius:6px;background:${index === active ? 'var(--accent)' : 'var(--surface2)'};color:${index === active ? '#fff' : 'var(--text)'};cursor:pointer;font-weight:700">[${index + 1}]</button>`).join('');
+            const add = profiles.length < VISUAL_CARD_LIMIT
+                ? `<button onclick="event.stopPropagation(); addVisualCard('${escAttr(charName)}')" title="현재 카드를 복제해 새 카드 추가" style="height:30px;padding:0 10px;border:1px dashed var(--accent);border-radius:6px;background:transparent;color:var(--accent);cursor:pointer;font-weight:700">＋</button>`
+                : '';
+            const remove = active > 0
+                ? `<button onclick="event.stopPropagation(); removeVisualCard('${escAttr(charName)}')" title="현재 카드 삭제" style="height:30px;padding:0 9px;border:1px solid #ef444477;border-radius:6px;background:transparent;color:#ef4444;cursor:pointer">삭제</button>`
+                : '<span style="font-size:.7rem;color:var(--text2);padding:0 3px">기본 카드</span>';
+            return `<div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap">${slots}${add}${remove}<span style="font-size:.68rem;color:var(--text2);margin-left:3px">최대 ${VISUAL_CARD_LIMIT}장</span></div>`;
+        }
+
+        function switchVisualCard(charName, index) {
+            const profiles = _visualCardState(charName)?.data?.profiles || [];
+            if (index < 0 || index >= profiles.length) {
+                console.error('[VISUAL_CARD] 존재하지 않는 카드 슬롯', {charName, index, count: profiles.length});
+                showToast('존재하지 않는 캐릭터 카드입니다.', 'error');
                 return;
             }
-            const profiles = state.data.profiles || [];
-            if (!profiles.some(p => p.id === state.selectedProfileId)) state.selectedProfileId = profiles[0]?.id || '';
-            const profile = _vpProfile(), input = _vpStyle();
-            const profileList = profiles.map(p => `<button onclick="_vpSelect('${escAttr(p.id)}')" style="width:100%;text-align:left;padding:9px;margin-bottom:6px;border:1px solid ${p.id === state.selectedProfileId ? 'var(--accent)' : 'var(--border)'};border-radius:6px;background:var(--surface2);color:var(--text);cursor:pointer"><b>${escHtml(p.label || p.id)}</b><br><code>${escHtml(p.id)}</code></button>`).join('');
-            const defaultProfiles = profiles.map(p => `<option value="${escAttr(p.id)}" ${p.id === state.data.default_visual_profile_id ? 'selected' : ''}>${escHtml(p.label || p.id)}</option>`).join('');
-            const defaultOutfits = (profile?.outfits || []).map(o => `<option value="${escAttr(o.id)}" ${o.id === profile.default_outfit_id ? 'selected' : ''}>${escHtml(o.label || o.id)} (${escHtml(o.id)})</option>`).join('');
-            const outfits = (profile?.outfits || []).map((o, i) => `
-                <section style="border:1px solid var(--border);border-radius:8px;padding:11px;margin-bottom:9px">
-                    <div style="display:flex;gap:8px;align-items:center;margin-bottom:9px"><b>복장 ${i + 1}</b><code style="color:var(--accent)">${escHtml(o.id)}</code><button onclick="_vpDeleteOutfit('${escAttr(o.id)}')" style="margin-left:auto;color:#ef4444;background:transparent;border:1px solid #ef444477;border-radius:5px;cursor:pointer">삭제</button></div>
-                    ${_vpField('표시 이름', `<input id="vp-outfit-label-${i}" value="${escAttr(o.label || '')}" style="${input}">`)}
-                    ${_vpField('자연어 선택 기준', `<textarea id="vp-outfit-guide-${i}" rows="2" style="${input};resize:vertical">${escHtml(o.selection_guide || '')}</textarea>`, '이야기에서 언제 이 복장을 선택해야 하는지 문장으로 씁니다.')}
-                    ${_vpField('작중 별칭', `<input id="vp-outfit-aliases-${i}" value="${escAttr((o.aliases || []).join(', '))}" style="${input}">`)}
-                    ${_vpField('기본 복장 태그', `<textarea id="vp-outfit-tags-${i}" rows="2" style="${input};resize:vertical">${escHtml(_vpTagText(o.tags))}</textarea>`)}
-                </section>`).join('');
-            const source = state.source === 'legacy'
-                ? '<span style="color:#f59e0b">가상 default 카드 · 저장 전까지 기존 데이터 변경 없음</span>'
-                : '<span style="color:#22c55e">명시적 멀티 프로필 카드</span>';
-            const editor = profile ? `
-                <div style="display:flex;align-items:center;gap:9px;margin-bottom:12px"><h3 style="margin:0">${escHtml(profile.label || profile.id)}</h3><code style="color:var(--accent)">${escHtml(profile.id)}</code>
-                    <label style="margin-left:auto;font-size:.75rem">캐릭터 기본 프로필 <select onchange="_vpDefaultProfile(this.value)" style="padding:5px;background:var(--surface2);color:var(--text)">${defaultProfiles}</select></label>
-                    <button onclick="_vpDeleteProfile('${escAttr(profile.id)}')" style="color:#ef4444;background:transparent;border:1px solid #ef444477;border-radius:5px;cursor:pointer">프로필 삭제</button>
-                </div>
-                ${_vpField('표시 이름', `<input id="vp-label" value="${escAttr(profile.label || '')}" style="${input}">`)}
-                ${_vpField('자연어 선택 기준', `<textarea id="vp-guide" rows="3" style="${input};resize:vertical">${escHtml(profile.selection_guide || '')}</textarea>`, '변신 시작·해제처럼 이 형태가 성립하고 유지되는 조건을 자연어로 적습니다. 키워드 규칙으로 판정하지 않습니다.')}
-                ${_vpField('작중 별칭', `<input id="vp-aliases" value="${escAttr((profile.aliases || []).join(', '))}" style="${input}">`)}
-                ${_vpField('고정 외모 태그', `<textarea id="vp-appearance" rows="3" style="${input};resize:vertical">${escHtml(_vpTagText(profile.appearance))}</textarea>`)}
-                <div style="display:flex;align-items:center;gap:8px;margin:16px 0 9px"><b>등록 복장</b><button onclick="_vpAddOutfit()" style="cursor:pointer">+ 복장 추가</button><label style="margin-left:auto;font-size:.75rem">기본 복장 <select id="vp-default-outfit" style="padding:5px;background:var(--surface2);color:var(--text)">${defaultOutfits}</select></label></div>
-                ${outfits}
-                <details style="border:1px solid var(--border);border-radius:8px;padding:10px"><summary style="cursor:pointer;font-weight:700">고급 렌더 오버라이드</summary>
-                    <p style="font-size:.7rem;color:var(--text2)">비어 있는 설정은 루트 카드를 상속합니다. face_tags, eye_tags, absolute_tags, character_negative, gender_tag, image_name_tag, use_image_name_tag, rep_images, loras, loras_solo, loras_group, face_loras, style_loras, use_profile_embedding을 지원합니다. rep_images에는 기존 캐릭터 폴더의 이미지 파일명을 넣습니다. use_profile_embedding=true이면 데이터 패치가 _visual_profiles/{profile_id}/ 아래로 복사하고 해당 폴더의 cache.pt/cache.ipadpt를 사용합니다.</p>
-                    <textarea id="vp-render" rows="11" style="${input};resize:vertical;font-family:monospace">${escHtml(JSON.stringify(profile.render_overrides || {}, null, 2))}</textarea>
-                </details>` : '';
-            root.innerHTML = `<div style="width:min(1160px,96vw);height:min(880px,92vh);background:var(--surface);border:1px solid var(--border);border-radius:12px;display:flex;flex-direction:column;overflow:hidden">
-                <header style="padding:13px 17px;border-bottom:1px solid var(--border);display:flex;align-items:center"><div><h2 style="margin:0">${escHtml(state.charName)} · 외형 프로필</h2><small>${source}</small></div><button onclick="closeVisualProfileEditor()" style="margin-left:auto;font-size:1.4rem;background:transparent;border:0;color:var(--text);cursor:pointer">×</button></header>
-                <div style="display:grid;grid-template-columns:230px 1fr;min-height:0;flex:1"><aside style="padding:13px;border-right:1px solid var(--border);overflow:auto">${profileList}<button onclick="_vpAddProfile()" style="width:100%;padding:8px;cursor:pointer">+ 외형 프로필 추가</button></aside><main style="padding:17px;overflow:auto">${editor}</main></div>
-                <footer style="padding:11px 17px;border-top:1px solid var(--border);display:flex;gap:8px;justify-content:flex-end"><button onclick="_vpResetLegacy()" style="margin-right:auto;cursor:pointer">구형 default로 초기화</button><button onclick="closeVisualProfileEditor()">취소</button><button onclick="_vpSave()" style="background:var(--accent);color:#fff;border:0;border-radius:6px;padding:8px 14px;cursor:pointer">멀티 프로필 저장</button></footer>
+            _visualCardSlots[charName] = index;
+            renderBotCharacters();
+        }
+
+        function _newVisualCardId(state) {
+            const used = new Set((state.data.profiles || []).map(p => p.id));
+            let id = `card_${Date.now().toString(36)}`;
+            let suffix = 2;
+            while (used.has(id)) id = `card_${Date.now().toString(36)}_${suffix++}`;
+            return id;
+        }
+
+        async function addVisualCard(charName) {
+            const state = _visualCardState(charName), current = _visualCardProfile(charName);
+            if (!state || !current) {
+                console.error('[VISUAL_CARD] 복제할 카드 없음', charName);
+                showToast('복제할 캐릭터 카드를 찾지 못했습니다.', 'error');
+                return;
+            }
+            if ((state.data.profiles || []).length >= VISUAL_CARD_LIMIT) {
+                showToast(`캐릭터 카드는 최대 ${VISUAL_CARD_LIMIT}장까지 등록할 수 있습니다.`, 'error');
+                return;
+            }
+            const resolved = _visualCardResolved(charName) || {};
+            const renderOverrides = {};
+            VISUAL_CARD_RENDER_FIELDS.forEach(key => {
+                if (Object.prototype.hasOwnProperty.call(resolved, key)) renderOverrides[key] = JSON.parse(JSON.stringify(resolved[key]));
+            });
+            renderOverrides.use_profile_embedding = true;
+            const index = state.data.profiles.length;
+            const id = _newVisualCardId(state);
+            state.data.profiles.push({
+                id,
+                label: `카드 ${index + 1}`,
+                selection_guide: '',
+                aliases: [],
+                appearance: JSON.parse(JSON.stringify(current.appearance || [])),
+                default_outfit_id: current.default_outfit_id,
+                outfits: JSON.parse(JSON.stringify(current.outfits || [])),
+                render_overrides: renderOverrides
+            });
+            _visualCardSlots[charName] = index;
+            try {
+                await _saveVisualCardState(charName);
+                showToast(`캐릭터 카드 [${index + 1}] 추가 완료`, 'success');
+                renderBotCharacters();
+            } catch (_) {
+                state.data.profiles.splice(index, 1);
+                _visualCardSlots[charName] = Math.max(0, index - 1);
+            }
+        }
+
+        async function removeVisualCard(charName) {
+            const state = _visualCardState(charName);
+            const index = _visualCardSlots[charName] || 0;
+            if (!state || index <= 0) return showToast('[1] 기본 카드는 삭제할 수 없습니다.', 'error');
+            if (!confirm(`캐릭터 카드 [${index + 1}]을 삭제할까요?`)) return;
+            const removed = state.data.profiles.splice(index, 1)[0];
+            _visualCardSlots[charName] = Math.max(0, index - 1);
+            try {
+                await _saveVisualCardState(charName);
+                showToast(`캐릭터 카드 [${index + 1}] 삭제 완료`, 'success');
+                renderBotCharacters();
+            } catch (_) {
+                state.data.profiles.splice(index, 0, removed);
+                _visualCardSlots[charName] = index;
+            }
+        }
+
+        async function updateVisualCardGuide(charName, value) {
+            const profile = _visualCardProfile(charName);
+            if (!profile) return;
+            profile.selection_guide = String(value || '').trim();
+            try { await _saveVisualCardState(charName, {quiet:true}); }
+            catch (error) { showToast('자연어 선택 기준 저장 실패: ' + error.message, 'error'); }
+        }
+
+        async function updateVisualCardAliases(charName, value) {
+            const profile = _visualCardProfile(charName);
+            if (!profile) return;
+            profile.aliases = [...new Set(String(value || '').split(',').map(v => v.trim()).filter(Boolean))];
+            try { await _saveVisualCardState(charName, {quiet:true}); }
+            catch (error) { showToast('작중 별칭 저장 실패: ' + error.message, 'error'); }
+        }
+
+        async function _setVisualCardRenderField(charName, key, value) {
+            const profile = _visualCardProfile(charName);
+            if (!profile || !VISUAL_CARD_RENDER_FIELDS.includes(key)) {
+                console.error('[VISUAL_CARD] 렌더 필드 저장 대상 오류', {charName, key});
+                throw new Error('저장할 카드 설정을 찾지 못했습니다.');
+            }
+            profile.render_overrides = profile.render_overrides || {};
+            profile.render_overrides[key] = JSON.parse(JSON.stringify(value));
+            return _saveVisualCardState(charName);
+        }
+
+        function _visualCardMutableArray(charName, key, fallbackKey = key) {
+            const profile = _visualCardProfile(charName), resolved = _visualCardResolved(charName);
+            if (!profile || !resolved) return null;
+            profile.render_overrides = profile.render_overrides || {};
+            if (!Array.isArray(profile.render_overrides[key])) {
+                profile.render_overrides[key] = JSON.parse(JSON.stringify(resolved[fallbackKey] || []));
+            }
+            return profile.render_overrides[key];
+        }
+
+        function _visualOutfitModal() {
+            let root = document.getElementById('visual-outfit-overlay');
+            if (!root) {
+                root = document.createElement('div');
+                root.id = 'visual-outfit-overlay';
+                root.style.cssText = 'display:none;position:fixed;inset:0;z-index:10080;background:rgba(0,0,0,.72);align-items:center;justify-content:center;padding:22px';
+                document.body.appendChild(root);
+            }
+            return root;
+        }
+
+        function _visualOutfitCurrent() {
+            const state = _visualOutfitEditor;
+            return state ? (state.profile.outfits || []).find(o => o.id === state.outfitId) : null;
+        }
+
+        function _commitVisualOutfitForm() {
+            const root = _visualOutfitModal(), outfit = _visualOutfitCurrent();
+            if (!outfit || root.style.display === 'none') return;
+            outfit.label = (root.querySelector('#visual-outfit-label')?.value || '').trim() || outfit.label;
+            outfit.selection_guide = (root.querySelector('#visual-outfit-guide')?.value || '').trim();
+            outfit.aliases = [...new Set((root.querySelector('#visual-outfit-aliases')?.value || '').split(',').map(v => v.trim()).filter(Boolean))];
+            outfit.tags = _vpTags(root.querySelector('#visual-outfit-tags')?.value || '', outfit.tags);
+            const selectedDefault = root.querySelector('#visual-outfit-default')?.value;
+            if (selectedDefault) _visualOutfitEditor.profile.default_outfit_id = selectedDefault;
+        }
+
+        function _renderVisualOutfitEditor() {
+            const root = _visualOutfitModal(), state = _visualOutfitEditor;
+            if (!state) { root.style.display = 'none'; root.innerHTML = ''; return; }
+            const outfit = _visualOutfitCurrent();
+            const input = 'width:100%;box-sizing:border-box;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--text);font:inherit';
+            const tabs = (state.profile.outfits || []).map((item, index) => `<button onclick="selectVisualOutfit('${escAttr(item.id)}')" style="padding:7px 11px;border:1px solid ${item.id === state.outfitId ? 'var(--accent)' : 'var(--border)'};border-radius:6px;background:${item.id === state.outfitId ? 'var(--accent)' : 'var(--surface2)'};color:${item.id === state.outfitId ? '#fff' : 'var(--text)'};cursor:pointer">${escHtml(item.label || `복장 ${index + 1}`)}</button>`).join('');
+            const defaults = (state.profile.outfits || []).map(item => `<option value="${escAttr(item.id)}" ${item.id === state.profile.default_outfit_id ? 'selected' : ''}>${escHtml(item.label || item.id)}</option>`).join('');
+            root.innerHTML = `<div style="width:min(820px,94vw);height:min(720px,90vh);background:var(--surface);border:1px solid var(--border);border-radius:12px;display:flex;flex-direction:column;overflow:hidden">
+                <header style="padding:14px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center"><div><h2 style="margin:0">${escHtml(state.charName)} [${state.slot + 1}]</h2><small style="color:var(--text2)">lb-xnai.lb.extra 복장 설정</small></div><button onclick="closeVisualOutfitEditor()" style="margin-left:auto;font-size:1.4rem;background:transparent;border:0;color:var(--text);cursor:pointer">×</button></header>
+                <div style="padding:13px 18px;border-bottom:1px solid var(--border);display:flex;gap:7px;align-items:center;flex-wrap:wrap">${tabs}<button onclick="addVisualOutfit()" style="padding:7px 11px;border:1px dashed var(--accent);border-radius:6px;background:transparent;color:var(--accent);cursor:pointer">＋ 복장 추가</button></div>
+                <main style="padding:18px;overflow:auto;flex:1">
+                    <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px"><b style="font-size:1rem">${escHtml(outfit?.label || '')}</b><label style="margin-left:auto;font-size:.78rem">기본 복장 <select id="visual-outfit-default" style="padding:6px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:5px">${defaults}</select></label>${(state.profile.outfits || []).length > 1 ? '<button onclick="deleteVisualOutfit()" style="color:#ef4444;background:transparent;border:1px solid #ef444477;border-radius:5px;padding:5px 9px;cursor:pointer">현재 복장 삭제</button>' : ''}</div>
+                    <label style="display:block;margin-bottom:13px"><b style="display:block;font-size:.78rem;color:var(--text2);margin-bottom:5px">복장 이름</b><input id="visual-outfit-label" value="${escAttr(outfit?.label || '')}" style="${input}"></label>
+                    <label style="display:block;margin-bottom:13px"><b style="display:block;font-size:.78rem;color:var(--text2);margin-bottom:5px">자연어 선택 기준</b><textarea id="visual-outfit-guide" rows="3" style="${input};resize:vertical">${escHtml(outfit?.selection_guide || '')}</textarea><small style="display:block;color:var(--text2);margin-top:4px">이야기에서 언제 이 복장을 선택해야 하는지 자연어로 적습니다.</small></label>
+                    <label style="display:block;margin-bottom:13px"><b style="display:block;font-size:.78rem;color:var(--text2);margin-bottom:5px">작중 별칭</b><input id="visual-outfit-aliases" value="${escAttr((outfit?.aliases || []).join(', '))}" placeholder="쉼표로 구분" style="${input}"></label>
+                    <label style="display:block;margin-bottom:13px"><b style="display:block;font-size:.78rem;color:var(--text2);margin-bottom:5px">복장 태그</b><textarea id="visual-outfit-tags" rows="5" style="${input};resize:vertical">${escHtml(_vpTagText(outfit?.tags || []))}</textarea></label>
+                </main>
+                <footer style="padding:12px 18px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px"><button onclick="closeVisualOutfitEditor()">취소</button><button onclick="saveVisualOutfits()" style="background:var(--accent);color:#fff;border:0;border-radius:6px;padding:8px 16px;cursor:pointer">복장 설정 저장</button></footer>
             </div>`;
             root.style.display = 'flex';
         }
 
-        async function openVisualProfileEditor(charName) {
-            try {
-                const response = await fetch(`/api/bot_mode/visual_profiles?bot_name=${encodeURIComponent(botCurrentBot)}&character=${encodeURIComponent(charName)}`);
-                const result = await response.json();
-                if (!response.ok || !result.character) throw new Error(result.error || '로드 실패');
-                _visualProfileEditor = {charName, source: result.source || 'legacy', data: JSON.parse(JSON.stringify(result.character)), selectedProfileId: result.character.default_visual_profile_id};
-                _vpRender();
-            } catch (error) {
-                console.error('[VISUAL_PROFILE] 로드 실패', error);
-                showToast('외형 프로필 로드 실패: ' + error.message, 'error');
-            }
+        function openVisualOutfitEditor(charName) {
+            const profile = _visualCardProfile(charName);
+            if (!profile) return showToast('복장을 설정할 캐릭터 카드를 찾지 못했습니다.', 'error');
+            const copy = JSON.parse(JSON.stringify(profile));
+            _visualOutfitEditor = {charName, slot:_visualCardSlots[charName] || 0, profile:copy, outfitId:copy.default_outfit_id || copy.outfits?.[0]?.id};
+            _renderVisualOutfitEditor();
         }
 
-        function closeVisualProfileEditor() { _visualProfileEditor = null; _vpRender(); }
-        function _vpSelect(id) { if (_vpCommit()) { _visualProfileEditor.selectedProfileId = id; _vpRender(); } }
-        function _vpDefaultProfile(id) { if (_vpCommit()) { _visualProfileEditor.data.default_visual_profile_id = id; _vpRender(); } }
-        function _vpId(label) {
-            const raw = prompt(label + '의 고정 ID를 입력하세요.\\n영문/숫자로 시작하고 영문, 숫자, _, -만 사용합니다.');
-            const id = raw === null ? '' : raw.trim();
-            if (id && !/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(id)) { showToast('ID 형식이 올바르지 않습니다.', 'error'); return ''; }
+        function closeVisualOutfitEditor() { _visualOutfitEditor = null; _renderVisualOutfitEditor(); }
+        function selectVisualOutfit(id) { _commitVisualOutfitForm(); _visualOutfitEditor.outfitId = id; _renderVisualOutfitEditor(); }
+        function _newVisualOutfitId(profile) {
+            const used = new Set((profile.outfits || []).map(o => o.id));
+            let id = `outfit_${Date.now().toString(36)}`, suffix = 2;
+            while (used.has(id)) id = `outfit_${Date.now().toString(36)}_${suffix++}`;
             return id;
         }
-        function _vpAddProfile() {
-            if (!_vpCommit()) return;
-            const id = _vpId('외형 프로필');
-            if (!id) return;
-            if (_visualProfileEditor.data.profiles.some(p => p.id === id)) return showToast('중복 프로필 ID입니다.', 'error');
-            _visualProfileEditor.data.profiles.push({id, label:id, selection_guide:'', aliases:[], appearance:[], default_outfit_id:'default', outfits:[{id:'default', label:'기본 복장', selection_guide:'', aliases:[], tags:[]}], render_overrides:{}});
-            _visualProfileEditor.selectedProfileId = id; _vpRender();
+        function addVisualOutfit() {
+            _commitVisualOutfitForm();
+            const profile = _visualOutfitEditor.profile, id = _newVisualOutfitId(profile);
+            profile.outfits.push({id, label:`복장 ${profile.outfits.length + 1}`, selection_guide:'', aliases:[], tags:[]});
+            _visualOutfitEditor.outfitId = id;
+            _renderVisualOutfitEditor();
         }
-        function _vpDeleteProfile(id) {
-            if (_visualProfileEditor.data.profiles.length <= 1) return showToast('프로필은 최소 1개 필요합니다.', 'error');
-            if (!confirm(`외형 프로필 '${id}'을 삭제할까요?`)) return;
-            _visualProfileEditor.data.profiles = _visualProfileEditor.data.profiles.filter(p => p.id !== id);
-            if (_visualProfileEditor.data.default_visual_profile_id === id) _visualProfileEditor.data.default_visual_profile_id = _visualProfileEditor.data.profiles[0].id;
-            _visualProfileEditor.selectedProfileId = _visualProfileEditor.data.default_visual_profile_id; _vpRender();
+        function deleteVisualOutfit() {
+            _commitVisualOutfitForm();
+            const state = _visualOutfitEditor, profile = state.profile;
+            if ((profile.outfits || []).length <= 1) return showToast('복장은 최소 1개 필요합니다.', 'error');
+            if (!confirm('현재 복장을 삭제할까요?')) return;
+            profile.outfits = profile.outfits.filter(o => o.id !== state.outfitId);
+            if (profile.default_outfit_id === state.outfitId) profile.default_outfit_id = profile.outfits[0].id;
+            state.outfitId = profile.default_outfit_id;
+            _renderVisualOutfitEditor();
         }
-        function _vpAddOutfit() {
-            if (!_vpCommit()) return;
-            const p = _vpProfile(), id = _vpId('복장');
-            if (!id) return;
-            if (p.outfits.some(o => o.id === id)) return showToast('중복 복장 ID입니다.', 'error');
-            p.outfits.push({id, label:id, selection_guide:'', aliases:[], tags:[]}); _vpRender();
-        }
-        function _vpDeleteOutfit(id) {
-            if (!_vpCommit()) return;
-            const p = _vpProfile();
-            if (p.outfits.length <= 1) return showToast('복장은 최소 1개 필요합니다.', 'error');
-            if (!confirm(`복장 '${id}'을 삭제할까요?`)) return;
-            p.outfits = p.outfits.filter(o => o.id !== id);
-            if (p.default_outfit_id === id) p.default_outfit_id = p.outfits[0].id;
-            _vpRender();
-        }
-        async function _vpSave() {
-            if (!_vpCommit()) return;
+        async function saveVisualOutfits() {
+            _commitVisualOutfitForm();
+            const state = _visualOutfitEditor, target = _visualCardState(state.charName)?.data?.profiles?.[state.slot];
+            if (!target) {
+                console.error('[VISUAL_OUTFIT] 저장 대상 카드 없음', state);
+                return showToast('저장할 캐릭터 카드를 찾지 못했습니다.', 'error');
+            }
+            target.default_outfit_id = state.profile.default_outfit_id;
+            target.outfits = JSON.parse(JSON.stringify(state.profile.outfits));
             try {
-                const response = await fetch('/api/bot_mode/visual_profiles', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({bot_name:botCurrentBot, character:_visualProfileEditor.charName, data:_visualProfileEditor.data})});
-                const result = await response.json();
-                if (!response.ok || !result.saved) throw new Error(result.error || '저장 실패');
-                _visualProfileEditor.source = 'explicit'; _visualProfileEditor.data = result.character; _visualProfileEditor.selectedProfileId = result.character.default_visual_profile_id;
-                _vpRender(); showToast('외형 프로필 저장 완료', 'success');
-            } catch (error) { console.error('[VISUAL_PROFILE] 저장 실패', error); showToast('외형 프로필 저장 실패: ' + error.message, 'error'); }
-        }
-        async function _vpResetLegacy() {
-            if (!confirm('명시적 멀티 프로필을 제거하고 기존 Appearance/default_outfit 카드로 되돌릴까요?')) return;
-            try {
-                const charName = _visualProfileEditor.charName;
-                const response = await fetch('/api/bot_mode/visual_profiles', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({bot_name:botCurrentBot, character:charName, reset_to_legacy:true})});
-                const result = await response.json();
-                if (!response.ok || !result.saved) throw new Error(result.error || '초기화 실패');
-                showToast('구형 default 카드로 초기화했습니다.', 'success'); await openVisualProfileEditor(charName);
-            } catch (error) { console.error('[VISUAL_PROFILE] 초기화 실패', error); showToast('초기화 실패: ' + error.message, 'error'); }
+                await _saveVisualCardState(state.charName);
+                closeVisualOutfitEditor();
+                showToast('lb-xnai.lb.extra 복장 설정 저장 완료', 'success');
+            } catch (_) {}
         }
 
         async function renderBotCharacters() {
@@ -64104,9 +64250,12 @@
             if (countEl) countEl.textContent = `(${bot.characters.length}개)`;
             updateBotBreadcrumb();
             updateBotCharSelect();
+            await _ensureVisualCardStates(bot);
 
             for (let charIdx = 0; charIdx < bot.characters.length; charIdx++) {
-                const char = bot.characters[charIdx];
+                const rootChar = bot.characters[charIdx];
+                const char = _visualCardResolved(rootChar) || rootChar;
+                const activeProfile = _visualCardProfile(char.name);
                 const repCount = (char.rep_images || []).length;
                 const card = document.createElement('div');
                 card.className = 'bot-char-card';
@@ -64116,6 +64265,10 @@
                     : `<span class="rep-badge unset">대표 미설정</span>`;
 
                 card.innerHTML = `
+                    <div class="card-section" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+                        <span class="card-section-title" style="margin:0">캐릭터 카드</span>
+                        ${_visualCardSlotHtml(char.name)}
+                    </div>
                     <div class="card-top-row">
                         <span style="font-size:1.2rem;">👤</span>
                         <span style="font-weight:600; font-size:0.95rem;">${escHtml(char.name)}</span>
@@ -64125,8 +64278,8 @@
                         <button class="btn-auto-group" data-char-name="${escAttr(char.name)}"
                             onclick="event.stopPropagation(); autoGroupPrompt('${escAttr(char.name)}')"
                             style="background:rgba(34,197,94,0.12); color:var(--text); border:1px solid rgba(34,197,94,0.3); padding:8px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600; white-space:nowrap;">캐릭터 얼굴 / 눈 / 절대태그 설정</button>
-                        <button onclick="event.stopPropagation(); openVisualProfileEditor('${escAttr(char.name)}')"
-                            style="background:rgba(168,85,247,0.12); color:var(--text); border:1px solid rgba(168,85,247,0.35); padding:8px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600; white-space:nowrap;">외형 프로필</button>
+                        <button onclick="event.stopPropagation(); openVisualOutfitEditor('${escAttr(char.name)}')"
+                            style="background:rgba(168,85,247,0.12); color:var(--text); border:1px solid rgba(168,85,247,0.35); padding:8px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600; white-space:nowrap;">lb-xnai.lb.extra 복장 설정</button>
                         <select onchange="saveCharGenderTag('${escAttr(char.name)}', this.value)"
                             style="padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface2); color:var(--text); font-size:0.8rem; cursor:pointer;">
                             ${['1girl','1boy','1male'].map(g =>
@@ -64140,6 +64293,10 @@
                             <span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:gray;"></span>
                             <span class="patch-label">확인중</span>
                         </span>
+                    </div>
+                    <div class="card-section" style="display:grid;grid-template-columns:minmax(260px,1.5fr) minmax(220px,1fr);gap:12px">
+                        <label style="display:block"><span class="card-section-title" style="display:block;margin-bottom:5px">자연어 선택 기준</span><textarea rows="2" onchange="updateVisualCardGuide('${escAttr(char.name)}',this.value)" placeholder="이 카드의 모습이 언제 성립하고 유지되는지 자연어로 입력" style="width:100%;box-sizing:border-box;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--text);resize:vertical">${escHtml(activeProfile?.selection_guide || '')}</textarea></label>
+                        <label style="display:block"><span class="card-section-title" style="display:block;margin-bottom:5px">작중 별칭</span><input value="${escAttr((activeProfile?.aliases || []).join(', '))}" onchange="updateVisualCardAliases('${escAttr(char.name)}',this.value)" placeholder="쉼표로 구분" style="width:100%;box-sizing:border-box;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--text)"></label>
                     </div>
                     <div class="card-section" id="char-data-section-${charIdx}">
                         <div class="card-section-title">캐릭터 데이터</div>
@@ -64201,7 +64358,7 @@
                         }
                         const btn = cardEl.querySelector('.btn-view-all');
                         if (btn) btn.innerHTML = `전체 이미지 보기 <span style="opacity:0.7; font-weight:400;">+${data.images.length}</span>`;
-                        const ch = bot.characters.find(c => c.name === charName);
+                        const ch = _visualCardResolved(charName);
                         const repImages = (ch && ch.rep_images) ? ch.rep_images : [];
                         if (repImages.length === 0) return;
                         // 대표 이미지만, 순서대로
@@ -64209,7 +64366,9 @@
                         const faceCol = cardEl.querySelector(`#char-face-${charIdx}`) || cardEl.querySelector('.face-col');
                         const repCol = cardEl.querySelector(`#char-reps-${charIdx}`) || cardEl.querySelector('.rep-col');
                         // 얼굴 결과 이미지 (좌측 컬럼)
-                        const utilImg = data.images.find(i => i.filename === '_face_image.webp');
+                        const utilImg = (_visualCardSlots[charName] || 0) === 0
+                            ? data.images.find(i => i.filename === '_face_image.webp')
+                            : null;
                         if (utilImg) {
                             const utilUrl = `${utilImg.url}?t=${Date.now()}`;
                             const utilWrap = document.createElement('div');
@@ -64432,7 +64591,8 @@
             _charLoraProfiles[charIdx] = profile;
             const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
             if (!bot) return;
-            const char = bot.characters[charIdx];
+            const rootChar = bot.characters[charIdx];
+            const char = rootChar ? _visualCardResolved(rootChar) : null;
             if (!char) return;
             const key = profile === 'group' ? 'loras_group' : 'loras_solo';
             const loras = char[key] || char.loras || [];
@@ -64458,7 +64618,8 @@
             const targetProfile = profile === 'solo' ? 'group' : 'solo';
             const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
             if (!bot) return;
-            const char = bot.characters[charIdx];
+            const rootChar = bot.characters[charIdx];
+            const char = rootChar ? _visualCardResolved(rootChar) : null;
             if (!char) return;
             const srcKey = profile === 'group' ? 'loras_group' : 'loras_solo';
             const srcLoras = JSON.parse(JSON.stringify(char[srcKey] || char.loras || []));
@@ -64470,39 +64631,30 @@
         }
 
         function getBotCharLoras(charName, profile) {
-            const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
-            if (!bot) return [];
-            const char = (bot.characters || []).find(c => c.name === charName);
-            if (!char) return [];
+            const card = _visualCardProfile(charName), char = _visualCardResolved(charName);
+            if (!card || !char) return [];
             const key = profile === 'group' ? 'loras_group' : 'loras_solo';
-            return char[key] || char.loras || [];
+            card.render_overrides = card.render_overrides || {};
+            if (!Array.isArray(card.render_overrides[key])) {
+                card.render_overrides[key] = JSON.parse(JSON.stringify(char[key] || char.loras || []));
+            }
+            return card.render_overrides[key];
         }
 
         function setBotCharLoras(charName, loras, profile) {
-            const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
-            if (!bot) return;
-            const char = (bot.characters || []).find(c => c.name === charName);
-            if (!char) return;
+            const card = _visualCardProfile(charName);
+            if (!card) return;
             const key = profile === 'group' ? 'loras_group' : 'loras_solo';
-            char[key] = loras;
+            card.render_overrides = card.render_overrides || {};
+            card.render_overrides[key] = loras;
         }
 
         async function saveBotCharLoras(charName, profile) {
-            const loras = getBotCharLoras(charName, profile);
             try {
-                const resp = await fetch('/api/bot_mode/action', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ action: 'update_char_loras', bot_name: botCurrentBot, char_name: charName, loras, profile: profile || 'solo' })
-                });
-                const result = await resp.json();
-                if (result.success) {
-                    botData.bots = result.bots;
-                } else {
-                    console.error('[BOT] LoRA 저장 실패:', result.error);
-                }
+                await _saveVisualCardState(charName, {quiet:true});
             } catch (e) {
                 console.error('[BOT] LoRA 저장 실패:', e);
+                showToast('LoRA 저장 실패: ' + e.message, 'error');
             }
         }
 
@@ -64527,54 +64679,37 @@
 
         // ─── 얼굴 LoRA getter/setter/save ─────────────────────────
         function getBotCharFaceLoras(charName) {
-            const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
-            if (!bot) return [];
-            const char = (bot.characters || []).find(c => c.name === charName);
-            return char ? (char.face_loras || []) : [];
+            const card = _visualCardProfile(charName), char = _visualCardResolved(charName);
+            if (!card || !char) return [];
+            card.render_overrides = card.render_overrides || {};
+            if (!Array.isArray(card.render_overrides.face_loras)) {
+                card.render_overrides.face_loras = JSON.parse(JSON.stringify(char.face_loras || []));
+            }
+            return card.render_overrides.face_loras;
         }
 
         function setBotCharFaceLoras(charName, faceLoras) {
-            const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
-            if (!bot) return;
-            const char = (bot.characters || []).find(c => c.name === charName);
-            if (!char) return;
-            char.face_loras = faceLoras;
+            const card = _visualCardProfile(charName);
+            if (!card) return;
+            card.render_overrides = card.render_overrides || {};
+            card.render_overrides.face_loras = faceLoras;
         }
 
         async function saveBotCharFaceLoras(charName) {
-            const faceLoras = getBotCharFaceLoras(charName);
             try {
-                const resp = await fetch('/api/bot_mode/action', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ action: 'update_char_face_loras', bot_name: botCurrentBot, char_name: charName, face_loras: faceLoras })
-                });
-                const result = await resp.json();
-                if (result.success) {
-                    botData.bots = result.bots;
-                } else {
-                    console.error('[BOT] 얼굴 LoRA 저장 실패:', result.error);
-                }
+                await _saveVisualCardState(charName, {quiet:true});
             } catch (e) {
                 console.error('[BOT] 얼굴 LoRA 저장 실패:', e);
+                showToast('얼굴 LoRA 저장 실패: ' + e.message, 'error');
             }
         }
 
         async function saveCharGenderTag(charName, value) {
             try {
-                const resp = await fetch('/api/bot_mode/action', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ action: 'update_char_gender_tag', bot_name: botCurrentBot, char_name: charName, gender_tag: value })
-                });
-                const result = await resp.json();
-                if (result.bots) {
-                    botData.bots = result.bots;
-                } else {
-                    showToast('성별 태그 저장 실패: ' + (result.error || resp.statusText), 'error');
-                }
+                await _setVisualCardRenderField(charName, 'gender_tag', value);
             } catch (e) {
                 console.error('[BOT] 성별 태그 저장 실패:', e);
+                showToast('성별 태그 저장 실패: ' + e.message, 'error');
             }
         }
 
@@ -64597,35 +64732,25 @@
 
         // ─── 스타일(그림체) LoRA getter/setter/save ───────────────
         function getBotCharStyleLoras(charName) {
-            const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
-            if (!bot) return [];
-            const char = (bot.characters || []).find(c => c.name === charName);
-            return char ? (char.style_loras || []) : [];
+            const card = _visualCardProfile(charName), char = _visualCardResolved(charName);
+            if (!card || !char) return [];
+            card.render_overrides = card.render_overrides || {};
+            if (!Array.isArray(card.render_overrides.style_loras)) {
+                card.render_overrides.style_loras = JSON.parse(JSON.stringify(char.style_loras || []));
+            }
+            return card.render_overrides.style_loras;
         }
 
         function setBotCharStyleLoras(charName, styleLoras) {
-            const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
-            if (!bot) return;
-            const char = (bot.characters || []).find(c => c.name === charName);
-            if (!char) return;
-            char.style_loras = styleLoras;
+            const card = _visualCardProfile(charName);
+            if (!card) return;
+            card.render_overrides = card.render_overrides || {};
+            card.render_overrides.style_loras = styleLoras;
         }
 
         async function saveBotCharStyleLoras(charName) {
-            const styleLoras = getBotCharStyleLoras(charName);
             try {
-                const resp = await fetch('/api/bot_mode/action', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ action: 'update_char_style_loras', bot_name: botCurrentBot, char_name: charName, style_loras: styleLoras })
-                });
-                const result = await resp.json();
-                if (result.error) {
-                    console.error('[BOT] 스타일 LoRA 저장 실패:', result.error);
-                    showToast('스타일 LoRA 저장 실패: ' + result.error, 'error');
-                } else {
-                    if (result.bots) botData.bots = result.bots;
-                }
+                await _saveVisualCardState(charName, {quiet:true});
             } catch (e) {
                 console.error('[BOT] 스타일 LoRA 저장 실패:', e);
                 showToast('스타일 LoRA 저장 실패: ' + e.message, 'error');
@@ -66755,7 +66880,7 @@
         async function autoGroupPrompt(charName) {
             const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
             if (!bot) { showToast('봇을 찾을 수 없습니다', 'error'); return; }
-            const char = (bot.characters || []).find(c => c.name === charName);
+            const char = _visualCardResolved(charName);
             if (!char) { showToast('캐릭터를 찾을 수 없습니다', 'error'); return; }
             const repImages = char.rep_images || [];
             if (repImages.length === 0) { showToast('대표 이미지가 없습니다', 'error'); return; }
@@ -66889,7 +67014,7 @@
 
             // 캐릭터에서 기존 face_tags/eye_tags/gender_tag 로드
             const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
-            const char = bot ? (bot.characters || []).find(c => c.name === charName) : null;
+            const char = bot ? _visualCardResolved(charName) : null;
             _autoGroupGenderTag = (char && char.gender_tag) || '1girl';
             const existingFaceTags = (char && char.face_tags) || '';
             const existingEyeTags = (char && char.eye_tags) || '';
@@ -66992,9 +67117,10 @@
                 const resp = await fetch(`/api/bot_mode/images?bot=${encodeURIComponent(botCurrentBot)}&character=${encodeURIComponent(charName)}`);
                 const data = await resp.json();
                 const images = data.images || [];
-                const face = images.find(i => i.filename === '_face_image.webp');
-                const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
-                const char = bot ? (bot.characters || []).find(c => c.name === charName) : null;
+                const face = (_visualCardSlots[charName] || 0) === 0
+                    ? images.find(i => i.filename === '_face_image.webp')
+                    : null;
+                const char = _visualCardResolved(charName);
                 const repImages = (char && char.rep_images) || [];
                 const fallback = repImages.map(fn => images.find(i => i.filename === fn)).find(Boolean);
                 const chosen = face || fallback;
@@ -67016,7 +67142,7 @@
 
             const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
             if (!bot) return;
-            const char = (bot.characters || []).find(c => c.name === charName);
+            const char = _visualCardResolved(charName);
             if (!char) return;
             const repImages = char.rep_images || [];
             if (repImages.length === 0) return;
@@ -67223,8 +67349,8 @@
         async function _saveCharFaceTags() {
             const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
             if (!bot) { showToast('봇을 찾을 수 없습니다', 'error'); return; }
-            const char = (bot.characters || []).find(c => c.name === _autoGroupCharName);
-            if (!char) { showToast('캐릭터를 찾을 수 없습니다', 'error'); return; }
+            const profile = _visualCardProfile(_autoGroupCharName);
+            if (!profile) { showToast('캐릭터 카드를 찾을 수 없습니다', 'error'); return; }
 
             let faceTags = '';
             let eyeTags = '';
@@ -67243,23 +67369,19 @@
             }
 
             try {
-                const resp = await fetch('/api/bot_mode/action', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        action: 'update_char_face_tags',
-                        bot_name: botCurrentBot,
-                        char_name: _autoGroupCharName,
-                        face_tags: faceTags,
-                        eye_tags: eyeTags,
-                        absolute_tags: absoluteTags,
-                        use_image_name_tag: _autoGroupUseImageNameTag,
-                        image_name_tag: _autoGroupImageNameTag
-                    })
+                profile.render_overrides = profile.render_overrides || {};
+                Object.assign(profile.render_overrides, {
+                    face_tags: faceTags,
+                    eye_tags: eyeTags,
+                    absolute_tags: absoluteTags,
+                    use_image_name_tag: _autoGroupUseImageNameTag,
+                    image_name_tag: _autoGroupImageNameTag
                 });
-                const data = await resp.json();
-                if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
-                if (data.bots) botData.bots = data.bots;
+                profile.appearance = _vpTags(
+                    [_autoGroupGenderTag, faceTags, eyeTags, absoluteTags].filter(Boolean).join(', '),
+                    profile.appearance || []
+                );
+                await _saveVisualCardState(_autoGroupCharName, {quiet:true});
                 showToast('캐릭터 태그 설정 저장 완료', 'success');
             } catch (e) {
                 console.error('[AUTO_GROUP] 얼굴 태그 저장 실패:', e);
@@ -70418,7 +70540,10 @@
                     if (!dot) { console.log(`[CHECK_PATCH] dot 요소 없음: patch-status-${idx}`); return; }
                     const dotCircle = dot.querySelector('span:first-child');
                     const dotLabel = dot.querySelector('.patch-label');
-                    const info = result[char.name];
+                    const rootInfo = result[char.name];
+                    const slot = _visualCardSlots[char.name] || 0;
+                    const profile = _visualCardProfile(char.name);
+                    const info = slot > 0 && profile ? rootInfo?.cards?.[profile.id] : rootInfo;
                     if (info && info.ipadpt && info.pt) {
                         if (dotCircle) dotCircle.style.background = '#22c55e';
                         if (dotLabel) dotLabel.textContent = '패치됨';
@@ -70431,7 +70556,7 @@
                         if (!info || !info.pt) missing.push('pt');
                         if (dotLabel) dotLabel.textContent = `패치 안됨 (${missing.join(', ')})`;
                     }
-                    console.log(`[CHECK_PATCH] ${char.name}: ipadpt=${info?.ipadpt}, pt=${info?.pt}`);
+                    console.log(`[CHECK_PATCH] ${char.name} [${slot + 1}]: ipadpt=${info?.ipadpt}, pt=${info?.pt}`);
                 });
             } catch (e) {
                 console.error('[BOT] 패치 파일 확인 실패:', e);
@@ -70628,8 +70753,7 @@
                     grid.innerHTML = '<div style="color:var(--text2); font-size:0.8rem; padding:20px;">이미지 없음</div>';
                     return;
                 }
-                const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
-                const ch = bot ? bot.characters.find(c => c.name === charName) : null;
+                const ch = _visualCardResolved(charName);
                 const repImages = (ch && ch.rep_images) ? ch.rep_images : [];
                 _botCharDetailCache = { mode: 'root', charName, images: data.images || [], repImages, faceCropFolder };
                 if (searchInput && preserveSearch) {
@@ -71541,14 +71665,13 @@
         async function moveRepImage(charName, filename, direction) {
             if (!botCurrentBot || !charName || !filename) return;
             try {
-                const resp = await fetch('/api/bot_mode/action', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({action: 'reorder_rep_images', bot_name: botCurrentBot, char_name: charName, filename: filename, direction: direction})
-                });
-                const data = await resp.json();
-                if (data.error) { showToast(data.error, 'error'); return; }
-                botData.bots = data.bots;
+                const reps = _visualCardMutableArray(charName, 'rep_images');
+                if (!reps || !reps.includes(filename)) throw new Error(`대표 이미지가 아닙니다: ${filename}`);
+                const index = reps.indexOf(filename);
+                const target = direction === 'up' ? index - 1 : index + 1;
+                if (target < 0 || target >= reps.length) throw new Error('이동할 수 없는 위치입니다.');
+                [reps[index], reps[target]] = [reps[target], reps[index]];
+                await _saveVisualCardState(charName, {quiet:true});
                 await loadBotCharDetailImages(charName, true);
                 renderFloatingDock(charName, true);
             } catch (e) {
@@ -71560,14 +71683,13 @@
         async function lv1MoveRep(charName, filename, direction) {
             if (!botCurrentBot || !charName || !filename) return;
             try {
-                const resp = await fetch('/api/bot_mode/action', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({action: 'reorder_rep_images', bot_name: botCurrentBot, char_name: charName, filename: filename, direction: direction})
-                });
-                const data = await resp.json();
-                if (data.error) { showToast(data.error, 'error'); return; }
-                botData.bots = data.bots;
+                const reps = _visualCardMutableArray(charName, 'rep_images');
+                if (!reps || !reps.includes(filename)) throw new Error(`대표 이미지가 아닙니다: ${filename}`);
+                const index = reps.indexOf(filename);
+                const target = direction === 'up' ? index - 1 : index + 1;
+                if (target < 0 || target >= reps.length) throw new Error('이동할 수 없는 위치입니다.');
+                [reps[index], reps[target]] = [reps[target], reps[index]];
+                await _saveVisualCardState(charName, {quiet:true});
                 renderBotCharacters();
             } catch (e) {
                 console.error('[BOT] LV1 대표 이미지 순서 변경 실패:', e);
@@ -71578,23 +71700,18 @@
         async function toggleRepImage(charName, filename) {
             if (!botCurrentBot || !charName || !filename) return;
             try {
-                const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
-                if (bot) {
-                    const char = bot.characters.find(c => c.name === charName);
-                    const reps = (char && char.rep_images) || [];
-                    if (!reps.includes(filename) && reps.length >= 3) {
+                const reps = _visualCardMutableArray(charName, 'rep_images');
+                if (!reps) throw new Error('캐릭터 카드 대표 이미지 목록이 없습니다.');
+                const index = reps.indexOf(filename);
+                if (index >= 0) reps.splice(index, 1);
+                else {
+                    if (reps.length >= 3) {
                         showToast('대표 이미지는 최대 3개까지 지정할 수 있습니다.', 'error');
                         return;
                     }
+                    reps.push(filename);
                 }
-                const resp = await fetch('/api/bot_mode/action', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({action: 'toggle_rep_image', bot_name: botCurrentBot, char_name: charName, filename: filename})
-                });
-                const data = await resp.json();
-                if (data.error) { showToast(data.error, 'error'); return; }
-                botData.bots = data.bots;
+                await _saveVisualCardState(charName, {quiet:true});
                 await loadBotCharDetailImages(charName, true);
                 renderFloatingDock(charName, true);
             } catch (e) {
@@ -71951,8 +72068,7 @@
             const grid = document.getElementById('bot-char-detail-grid');
             if (!grid) return;
             grid.querySelectorAll('.rep-first').forEach(c => c.classList.remove('rep-first'));
-            const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
-            const ch = bot ? bot.characters.find(c => c.name === charName) : null;
+            const ch = _visualCardResolved(charName);
             if (ch && ch.rep_images && ch.rep_images.length > 0) {
                 const firstCard = grid.querySelector(`.asset-gallery-card[data-filename="${CSS.escape(ch.rep_images[0])}"]`);
                 if (firstCard) firstCard.classList.add('rep-first');
@@ -71962,8 +72078,7 @@
         function renderFloatingDock(charName, preservePosition) {
             const dock = document.getElementById('bot-rep-dock');
             if (!dock || !botCurrentBot || !charName) { if (dock) dock.style.display = 'none'; return; }
-            const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
-            const ch = bot ? bot.characters.find(c => c.name === charName) : null;
+            const ch = _visualCardResolved(charName);
             const repImages = (ch && ch.rep_images) ? ch.rep_images : [];
             if (repImages.length === 0) { dock.style.display = 'none'; return; }
 
@@ -77528,6 +77643,8 @@
 
         // ─── 패치 프롬프트 미리보기 모달 ──────────────────────────────
         function togglePromptPreviewModal(charName, btnEl) {
+            const activeCard = _visualCardProfile(charName);
+            const activeSlot = _visualCardSlots[charName] || 0;
             const existing = document.getElementById(`utility-modal-${charName}`);
             if (existing) {
                 existing.remove();
@@ -77540,7 +77657,7 @@
             modal.style.cssText = 'position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); z-index:10000; background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:20px; min-width:420px; max-width:520px; box-shadow:0 8px 32px rgba(0,0,0,0.4);';
             modal.innerHTML = `
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
-                    <div style="font-weight:700; font-size:1rem;">패치 프롬프트 미리보기 - ${escHtml(charName)}</div>
+                    <div style="font-weight:700; font-size:1rem;">패치 프롬프트 미리보기 - ${escHtml(charName)} [${activeSlot + 1}]</div>
                     <button onclick="document.getElementById('utility-modal-${escAttr(charName)}').remove()"
                         style="background:none; border:none; color:var(--text2); font-size:1.2rem; cursor:pointer;">✕</button>
                 </div>
@@ -77566,7 +77683,10 @@
                     const utilData = await utilResp.json();
                     // 봇별 설정으로 프롬프트 생성
                     const embValue = (settings.emb_target === '둘다') ? 'representation,sub' : 'representation';
-                    const prompt = `[PATH]\nsoya_bot/${botCurrentBot}/${charName}\n[FACE_CROP_TOP]\n${settings.face_crop_top ?? 1.0}\n[FACE_CROP_BOTTOM]\n${settings.face_crop_bottom ?? 1.0}\n[EMB_TARGET]\n${embValue}\n[END]`;
+                    const cardPath = activeSlot > 0 && activeCard
+                        ? `soya_bot/${botCurrentBot}/${charName}/_visual_profiles/${activeCard.id}`
+                        : `soya_bot/${botCurrentBot}/${charName}`;
+                    const prompt = `[PATH]\n${cardPath}\n[FACE_CROP_TOP]\n${settings.face_crop_top ?? 1.0}\n[FACE_CROP_BOTTOM]\n${settings.face_crop_bottom ?? 1.0}\n[EMB_TARGET]\n${embValue}\n[END]`;
                     document.getElementById(`util-prompt-preview-${charName}`).textContent = prompt;
                 } catch (e) {
                     console.error('프롬프트 미리보기 로드 실패:', e);
@@ -78203,14 +78323,11 @@
         async function removeFromDock(charName, filename) {
             if (!botCurrentBot || !charName || !filename) return;
             try {
-                const resp = await fetch('/api/bot_mode/action', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({action: 'toggle_rep_image', bot_name: botCurrentBot, char_name: charName, filename: filename})
-                });
-                const data = await resp.json();
-                if (data.error) { showToast(data.error, 'error'); return; }
-                botData.bots = data.bots;
+                const reps = _visualCardMutableArray(charName, 'rep_images');
+                if (!reps) throw new Error('캐릭터 카드 대표 이미지 목록이 없습니다.');
+                const index = reps.indexOf(filename);
+                if (index >= 0) reps.splice(index, 1);
+                await _saveVisualCardState(charName, {quiet:true});
 
                 // 카드 상태 업데이트
                 const card = document.querySelector(`#bot-char-detail-grid .asset-gallery-card[data-filename="${CSS.escape(filename)}"]`);

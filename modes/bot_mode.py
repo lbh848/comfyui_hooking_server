@@ -21,13 +21,14 @@ from urllib.parse import quote
 from aiohttp import web
 
 from modes.visual_profiles import (
-    VISUAL_PROFILES_VERSION,
+    MAX_VISUAL_CARDS,
     VisualProfileValidationError,
+    cards_to_character_profiles,
+    character_profiles_to_cards,
     effective_bot_profiles,
     effective_character_profiles,
-    load_document as load_visual_profiles_document,
-    normalize_character_profiles,
-    save_document as save_visual_profiles_document,
+    store_visual_cards,
+    sync_root_fields_to_primary_card,
 )
 
 
@@ -139,20 +140,25 @@ def _migrate_solo_group(data: dict):
             bot["illust_settings_group"] = dict(DEFAULT_ILLUST_SETTINGS)
             changed = True
         for char in bot.get("characters", []):
+            changed_card_fields = set()
             # loras → loras_solo
             if "loras" in char and "loras_solo" not in char:
                 char["loras_solo"] = char["loras"]
+                changed_card_fields.add("loras_solo")
                 changed = True
                 print(f"[BOT_MODE] 마이그레이션: loras → loras_solo ({bot['name']}/{char['name']})")
             if "loras_group" not in char:
                 char["loras_group"] = []
+                changed_card_fields.add("loras_group")
                 changed = True
             # gender_tag 기본값 보정 — 드롭박스 표시 기본값(1girl)과 일치. 비어 있으면 1girl 로 채운다.
             gt = (char.get("gender_tag") or "").strip()
             if gt not in ("1girl", "1boy", "1male"):
                 char["gender_tag"] = "1girl"
+                changed_card_fields.add("gender_tag")
                 changed = True
                 print(f"[BOT_MODE] 마이그레이션: gender_tag 기본값(1girl) 적용 ({bot['name']}/{char['name']})")
+            sync_root_fields_to_primary_card(char, changed_card_fields)
     if changed:
         _save_bot_data(data)
 
@@ -325,7 +331,7 @@ def _save_bot_data(data: dict):
     try:
         os.makedirs(ASSET_DATA_DIR, exist_ok=True)
         if os.path.isfile(BOT_DATA_FILE):
-            backup_dir = os.path.join(BASE_DIR, "요구사항")
+            backup_dir = os.path.join(ASSET_DATA_DIR, "backups")
             os.makedirs(backup_dir, exist_ok=True)
             stamp = time.strftime("%Y%m%d_%H%M%S")
             backup_name = f"bot.json.bak_{stamp}_{uuid.uuid4().hex[:8]}"
@@ -536,6 +542,7 @@ class BotMode:
         if not char:
             return _json_error(f"캐릭터를 찾을 수 없음: {char_name}")
         char["eye_prompt"] = eye_prompt
+        sync_root_fields_to_primary_card(char, {"eye_prompt"})
         _save_bot_data(data)
         print(f"[BOT_MODE] 눈 프롬프트 업데이트: {bot_name}/{char_name}")
         return _json_ok({"bots": data["bots"]})
@@ -553,6 +560,7 @@ class BotMode:
         if not char:
             return _json_error(f"캐릭터를 찾을 수 없음: {char_name}")
         char["character_negative"] = character_negative
+        sync_root_fields_to_primary_card(char, {"character_negative"})
         _save_bot_data(data)
         print(f"[BOT_MODE] 캐릭터 부정 프롬프트 업데이트: {bot_name}/{char_name}")
         return _json_ok({"bots": data["bots"]})
@@ -592,6 +600,12 @@ class BotMode:
             char["use_image_name_tag"] = body["use_image_name_tag"]
         if "image_name_tag" in body:
             char["image_name_tag"] = body["image_name_tag"].strip()
+        changed_fields = {"face_tags", "eye_tags", "absolute_tags"}
+        if "use_image_name_tag" in body:
+            changed_fields.add("use_image_name_tag")
+        if "image_name_tag" in body:
+            changed_fields.add("image_name_tag")
+        sync_root_fields_to_primary_card(char, changed_fields)
         _save_bot_data(data)
         print(
             f"[BOT_MODE] 캐릭터 태그 설정 업데이트: {bot_name}/{char_name}, "
@@ -616,6 +630,7 @@ class BotMode:
             return _json_error(f"캐릭터를 찾을 수 없음: {char_name}")
         key = f"loras_{profile}"
         char[key] = loras
+        sync_root_fields_to_primary_card(char, {key})
         _save_bot_data(data)
         print(f"[BOT_MODE] 캐릭터 LoRA 업데이트: {bot_name}/{char_name} [{profile}] ({len(loras)}개)")
         return _json_ok({"bots": data["bots"]})
@@ -633,6 +648,7 @@ class BotMode:
         if not char:
             return _json_error(f"캐릭터를 찾을 수 없음: {char_name}")
         char["face_loras"] = face_loras
+        sync_root_fields_to_primary_card(char, {"face_loras"})
         _save_bot_data(data)
         print(f"[BOT_MODE] 캐릭터 얼굴 LoRA 업데이트: {bot_name}/{char_name} ({len(face_loras)}개)")
         return _json_ok({"bots": data["bots"]})
@@ -650,6 +666,7 @@ class BotMode:
         if not char:
             return _json_error(f"캐릭터를 찾을 수 없음: {char_name}")
         char["style_loras"] = style_loras
+        sync_root_fields_to_primary_card(char, {"style_loras"})
         _save_bot_data(data)
         print(f"[BOT_MODE] 캐릭터 스타일(그림체) LoRA 업데이트: {bot_name}/{char_name} ({len(style_loras)}개)")
         return _json_ok({"bots": data["bots"]})
@@ -669,6 +686,7 @@ class BotMode:
         if not char:
             return _json_error(f"캐릭터를 찾을 수 없음: {char_name}")
         char["gender_tag"] = gender_tag
+        sync_root_fields_to_primary_card(char, {"gender_tag"})
         _save_bot_data(data)
         print(f"[BOT_MODE] 캐릭터 성별 태그 업데이트: {bot_name}/{char_name} → {gender_tag}")
         return _json_ok({"bots": data["bots"]})
@@ -700,6 +718,7 @@ class BotMode:
             char["rep_images"] = rep_images
         else:
             char.pop("rep_images", None)
+        sync_root_fields_to_primary_card(char, {"rep_images"})
         _save_bot_data(data)
         return _json_ok({"bots": data["bots"]})
 
@@ -725,6 +744,7 @@ class BotMode:
             return _json_error("이동할 수 없는 위치입니다.")
         rep_images[idx], rep_images[new_idx] = rep_images[new_idx], rep_images[idx]
         char["rep_images"] = rep_images
+        sync_root_fields_to_primary_card(char, {"rep_images"})
         _save_bot_data(data)
         print(f"[BOT_MODE] 대표 이미지 순서 변경: {bot_name}/{char_name}/{filename} {direction}")
         return _json_ok({"bots": data["bots"]})
@@ -769,6 +789,7 @@ class BotMode:
             new_reps = [filename] + [f for f in rep_images if f != filename]
             new_reps = new_reps[:3]
             char["rep_images"] = new_reps
+            sync_root_fields_to_primary_card(char, {"rep_images"})
             updated.append({"char_name": char_name, "filename": filename})
             print(f"[BOT_MODE] 일괄 메인 대표 지정({mode}): {bot_name}/{char_name}/{filename}")
 
@@ -2141,14 +2162,14 @@ class BotMode:
             traceback.print_exc()
             return _json_error(str(e))
 
-    async def handle_get_visual_profiles(self, request):
-        """GET effective profiles for one logical character, including legacy fallback."""
+    async def handle_get_character_cards(self, request):
+        """GET card data converted to the illustration pipeline's internal shape."""
         try:
             bot_name = request.query.get("bot_name", "").strip()
             char_name = request.query.get("character", "").strip()
             if not bot_name or not char_name:
                 print(
-                    f"[VISUAL_PROFILE:API] 조회 입력 누락: "
+                    f"[CHARACTER_CARD:API] 조회 입력 누락: "
                     f"bot={bot_name!r}, character={char_name!r}"
                 )
                 return _json_error("봇 이름과 캐릭터 이름이 필요합니다.")
@@ -2159,7 +2180,7 @@ class BotMode:
                 None,
             )
             if bot is None:
-                print(f"[VISUAL_PROFILE:API] 조회할 봇 없음: bot={bot_name!r}")
+                print(f"[CHARACTER_CARD:API] 조회할 봇 없음: bot={bot_name!r}")
                 return _json_error(f"봇을 찾을 수 없습니다: {bot_name}", 404)
             root_character = next(
                 (
@@ -2170,7 +2191,7 @@ class BotMode:
             )
             if root_character is None:
                 print(
-                    f"[VISUAL_PROFILE:API] 조회할 캐릭터 없음: "
+                    f"[CHARACTER_CARD:API] 조회할 캐릭터 없음: "
                     f"bot={bot_name!r}, character={char_name!r}"
                 )
                 return _json_error(f"캐릭터를 찾을 수 없습니다: {char_name}", 404)
@@ -2186,134 +2207,95 @@ class BotMode:
                 ),
                 None,
             )
-            document = load_visual_profiles_document(BOT_DIR, bot_name)
             character, source = effective_character_profiles(
                 str(root_character.get("name") or char_name),
                 root_character,
                 extra_character,
-                document,
             )
             return _json_ok({
                 "character": character,
                 "source": source,
-                "storage_version": VISUAL_PROFILES_VERSION,
+                "max_cards": MAX_VISUAL_CARDS,
             })
         except Exception as e:
-            print(f"[VISUAL_PROFILE:API] 조회 실패: error={e}")
+            print(f"[CHARACTER_CARD:API] 조회 실패: error={e}")
             traceback.print_exc()
             return _json_error(str(e), 500)
 
-    async def handle_save_visual_profiles(self, request):
-        """POST one character's explicit profile card or reset it to legacy fallback."""
+    async def handle_save_character_cards(self, request):
+        """POST complete character cards into bot.json on the logical character."""
         try:
             body = await request.json()
             bot_name = str(body.get("bot_name") or "").strip()
             char_name = str(body.get("character") or "").strip()
-            reset_to_legacy = body.get("reset_to_legacy", False)
             if not bot_name or not char_name:
                 print(
-                    f"[VISUAL_PROFILE:API] 저장 입력 누락: "
+                    f"[CHARACTER_CARD:API] 저장 입력 누락: "
                     f"bot={bot_name!r}, character={char_name!r}"
                 )
                 return _json_error("봇 이름과 캐릭터 이름이 필요합니다.")
-            if not isinstance(reset_to_legacy, bool):
-                print(
-                    f"[VISUAL_PROFILE:API] reset_to_legacy 타입 오류: "
-                    f"value={reset_to_legacy!r}"
-                )
-                return _json_error("reset_to_legacy는 bool이어야 합니다.")
-
-            data = _load_bot_data()
-            bot = next(
-                (item for item in data.get("bots", []) if item.get("name") == bot_name),
-                None,
-            )
-            if bot is None:
-                print(f"[VISUAL_PROFILE:API] 저장할 봇 없음: bot={bot_name!r}")
-                return _json_error(f"봇을 찾을 수 없습니다: {bot_name}", 404)
-            canonical_name = next(
-                (
-                    str(item.get("name") or "") for item in bot.get("characters", [])
-                    if str(item.get("name") or "").casefold() == char_name.casefold()
-                ),
-                "",
-            )
-            if not canonical_name:
-                print(
-                    f"[VISUAL_PROFILE:API] 저장할 캐릭터 없음: "
-                    f"bot={bot_name!r}, character={char_name!r}"
-                )
-                return _json_error(f"캐릭터를 찾을 수 없습니다: {char_name}", 404)
 
             async with self._lock:
-                document = load_visual_profiles_document(BOT_DIR, bot_name)
-                remaining = [
-                    item for item in document.get("characters", [])
-                    if str(item.get("name") or "").casefold() != canonical_name.casefold()
-                ]
-                if reset_to_legacy:
-                    if len(remaining) == len(document.get("characters", [])):
-                        print(
-                            f"[VISUAL_PROFILE:API] 명시 프로필이 없어 초기화 저장 생략: "
-                            f"bot={bot_name!r}, character={canonical_name!r}"
-                        )
-                        return _json_ok({"saved": True, "source": "legacy"})
-                    normalized = save_visual_profiles_document(
-                        BOT_DIR,
-                        bot_name,
-                        {"version": VISUAL_PROFILES_VERSION, "characters": remaining},
-                    )
+                data = _load_bot_data()
+                bot = next(
+                    (item for item in data.get("bots", []) if item.get("name") == bot_name),
+                    None,
+                )
+                if bot is None:
+                    print(f"[CHARACTER_CARD:API] 저장할 봇 없음: bot={bot_name!r}")
+                    return _json_error(f"봇을 찾을 수 없습니다: {bot_name}", 404)
+                root_character = next(
+                    (
+                        item for item in bot.get("characters", [])
+                        if str(item.get("name") or "").casefold() == char_name.casefold()
+                    ),
+                    None,
+                )
+                if root_character is None:
                     print(
-                        f"[VISUAL_PROFILE:API] 레거시 기본 카드로 초기화: "
-                        f"bot={bot_name!r}, character={canonical_name!r}"
+                        f"[CHARACTER_CARD:API] 저장할 캐릭터 없음: "
+                        f"bot={bot_name!r}, character={char_name!r}"
                     )
-                    return _json_ok({
-                        "saved": True,
-                        "source": "legacy",
-                        "storage_version": normalized["version"],
-                    })
-
+                    return _json_error(f"캐릭터를 찾을 수 없습니다: {char_name}", 404)
+                canonical_name = str(root_character.get("name") or char_name)
                 raw_character = body.get("data")
                 if not isinstance(raw_character, dict):
                     print(
-                        f"[VISUAL_PROFILE:API] 저장 데이터 없음/형식 오류: "
+                        f"[CHARACTER_CARD:API] 저장 데이터 없음/형식 오류: "
                         f"bot={bot_name!r}, character={canonical_name!r}, "
                         f"value={raw_character!r}"
                     )
-                    return _json_error("저장할 외형 프로필 데이터가 필요합니다.")
-                raw_character = dict(raw_character)
+                    return _json_error("저장할 캐릭터 카드 데이터가 필요합니다.")
                 supplied_name = str(raw_character.get("name") or "").strip()
                 if supplied_name and supplied_name.casefold() != canonical_name.casefold():
                     print(
-                        f"[VISUAL_PROFILE:API] 캐릭터 이름 불일치: "
+                        f"[CHARACTER_CARD:API] 캐릭터 이름 불일치: "
                         f"route={canonical_name!r}, data={supplied_name!r}"
                     )
                     return _json_error("경로와 데이터의 캐릭터 이름이 일치하지 않습니다.")
-                raw_character["name"] = canonical_name
-                normalized_character = normalize_character_profiles(raw_character)
-                normalized = save_visual_profiles_document(
-                    BOT_DIR,
-                    bot_name,
-                    {
-                        "version": VISUAL_PROFILES_VERSION,
-                        "characters": [*remaining, normalized_character],
-                    },
+                cards = character_profiles_to_cards(raw_character)
+                stored_cards = store_visual_cards(root_character, cards)
+                _save_bot_data(data)
+                saved_character = cards_to_character_profiles(
+                    canonical_name,
+                    stored_cards,
                 )
-                saved_character = next(
-                    item for item in normalized["characters"]
-                    if item["name"].casefold() == canonical_name.casefold()
+                print(
+                    f"[CHARACTER_CARD:API] 카드 저장 완료: bot={bot_name!r}, "
+                    f"character={canonical_name!r}, cards={len(stored_cards)}"
                 )
                 return _json_ok({
                     "saved": True,
-                    "source": "explicit",
+                    "source": "cards",
                     "character": saved_character,
-                    "storage_version": normalized["version"],
+                    "max_cards": MAX_VISUAL_CARDS,
+                    "bots": data["bots"],
                 })
         except VisualProfileValidationError as e:
-            print(f"[VISUAL_PROFILE:API] 저장 검증 실패: error={e}")
+            print(f"[CHARACTER_CARD:API] 저장 검증 실패: error={e}")
             return _json_error(str(e))
         except Exception as e:
-            print(f"[VISUAL_PROFILE:API] 저장 실패: error={e}")
+            print(f"[CHARACTER_CARD:API] 저장 실패: error={e}")
             traceback.print_exc()
             return _json_error(str(e), 500)
 
@@ -3712,12 +3694,7 @@ class BotDataPatcher:
             lb_extra = _load_lb_extra(bot_name) or []
             if isinstance(lb_extra, dict) and "edited" in lb_extra:
                 lb_extra = lb_extra.get("edited") or []
-            visual_document = load_visual_profiles_document(BOT_DIR, bot_name)
-            effective_visual_profiles = effective_bot_profiles(
-                bot,
-                lb_extra,
-                visual_document,
-            )
+            effective_visual_profiles = effective_bot_profiles(bot, lb_extra)
 
             bot_dst_root = os.path.join(comfy_input_dir, "soya_bot", bot_name)
             # 요청된 캐릭터명 목록: char_names(다중) 우선, 없으면 단일 char_name
@@ -3973,7 +3950,27 @@ class BotDataPatcher:
                             has_ipadpt = True
                         if f.endswith(".pt"):
                             has_pt = True
-                results[char_name] = {"ipadpt": has_ipadpt, "pt": has_pt}
+                card_results = {}
+                for card in char.get("visual_cards") or []:
+                    card_id = str(card.get("id") or "").strip()
+                    if not card_id or not card.get("use_profile_embedding"):
+                        continue
+                    card_dir = os.path.join(char_dir, "_visual_profiles", card_id)
+                    card_files = os.listdir(card_dir) if os.path.isdir(card_dir) else []
+                    card_results[card_id] = {
+                        "ipadpt": any(name.endswith(".ipadpt") for name in card_files),
+                        "pt": any(name.endswith(".pt") for name in card_files),
+                    }
+                    print(
+                        f"[CHECK_PATCH] {char_name}/{card_id}: "
+                        f"ipadpt={card_results[card_id]['ipadpt']}, "
+                        f"pt={card_results[card_id]['pt']}"
+                    )
+                results[char_name] = {
+                    "ipadpt": has_ipadpt,
+                    "pt": has_pt,
+                    "cards": card_results,
+                }
                 print(f"[CHECK_PATCH] {char_name}: ipadpt={has_ipadpt}, pt={has_pt}")
             return _json_ok(results)
         except Exception as e:
@@ -4697,6 +4694,12 @@ def save_char_face_tags(
                 print(f"[BOT_MODE] save_char_face_tags 검증 실패: {error}")
                 return {"success": False, "error": error}
             char["image_name_tag"] = image_name_tag.strip()
+        changed_fields = {"face_tags", "eye_tags", "absolute_tags"}
+        if use_image_name_tag is not None:
+            changed_fields.add("use_image_name_tag")
+        if image_name_tag is not None:
+            changed_fields.add("image_name_tag")
+        sync_root_fields_to_primary_card(char, changed_fields)
         _save_bot_data(data)
         print(f"[BOT_MODE] 캐릭터 태그 설정 업데이트: {bot_name}/{char_name}")
         return {"success": True}

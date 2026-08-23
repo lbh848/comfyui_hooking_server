@@ -2,17 +2,13 @@ import json
 
 from modes.illust_prompt_builder import IllustPromptBuilder
 from modes import illustration_context_pipeline as pipeline
-from modes.visual_profiles import normalize_document
+from modes.visual_profiles import cards_to_character_profiles
 
 
 def _profiles():
-    document = normalize_document({
-        "characters": [{
-            "name": "Adachi",
-            "default_visual_profile_id": "civilian",
-            "profiles": [{
+    character = cards_to_character_profiles("Adachi", [{
                 "id": "civilian",
-                "label": "평상체",
+                "label": "카드 1",
                 "selection_guide": "변신 전의 인간 모습.",
                 "appearance": ["brown hair", "brown eyes"],
                 "default_outfit_id": "casual",
@@ -24,7 +20,7 @@ def _profiles():
                 }],
             }, {
                 "id": "despair",
-                "label": "절망체",
+                "label": "카드 2",
                 "selection_guide": "몸 자체가 절망 형태로 변한 뒤의 모습.",
                 "appearance": ["white hair", "red eyes", "black horns"],
                 "default_outfit_id": "armor",
@@ -34,14 +30,10 @@ def _profiles():
                     "selection_guide": "변신과 함께 생기는 갑주.",
                     "tags": ["black armor"],
                 }],
-                "render_overrides": {
-                    "face_tags": "white hair, red eyes",
-                    "use_profile_embedding": True,
-                },
-            }],
-        }],
-    })
-    return {"Adachi": document["characters"][0]}
+                "face_tags": "white hair, red eyes",
+                "use_profile_embedding": True,
+            }])
+    return {"Adachi": character}
 
 
 def _segments():
@@ -237,4 +229,3 @@ def test_profile_embedding_paths_keep_logical_character_name():
         "soya_bot/demo/Adachi/_visual_profiles/despair/cache.ipadpt"
     )
     assert face["list"][0]["CHAR"] == "Adachi"
-

@@ -4886,12 +4886,10 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
             # 1. 원본 섹션은 로그용으로 보존한다. 캐릭터 1인 전용 규칙은
             # 규칙 적용 전의 구조화된 NAME을 우선 사용해 정확한 인원수를 정한다.
             parsed_raw_sections = builder.parse_sections(raw_positive)
-            from modes.bot_mode import BOT_DIR as _bot_dir_local
             from modes.bot_mode import _load_lb_extra as _load_lb_extra_local
             from modes.bot_mode import _load_bot_data as _load_bot_data_local
             from modes.visual_profiles import (
                 effective_bot_profiles as _effective_bot_profiles,
-                load_document as _load_visual_profiles_document,
                 resolve_render_character as _resolve_render_character,
             )
             lb_extra_data = _load_lb_extra_local(bot_name) or []
@@ -4908,15 +4906,7 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                 )
                 requested_visual_states = {}
             if bot:
-                visual_document = _load_visual_profiles_document(
-                    _bot_dir_local,
-                    bot_name,
-                )
-                effective_profiles = _effective_bot_profiles(
-                    bot,
-                    lb_extra_data,
-                    visual_document,
-                )
+                effective_profiles = _effective_bot_profiles(bot, lb_extra_data)
                 resolved_bot = copy.deepcopy(bot)
                 resolved_characters = []
                 applied_visual_states = {}
@@ -5670,7 +5660,6 @@ def _collect_lb_extra(bot_name: str) -> dict | None:
         return None
     try:
         from modes.bot_mode import (
-            BOT_DIR,
             _load_bot_data,
             _load_builtin_presets,
             _load_lb_extra,
@@ -5678,7 +5667,6 @@ def _collect_lb_extra(bot_name: str) -> dict | None:
         from modes.visual_profiles import (
             build_natural_profile_catalog,
             effective_bot_profiles,
-            load_document as load_visual_profiles_document,
             resolve_visual_base,
         )
         data = _load_bot_data()
@@ -5703,8 +5691,7 @@ def _collect_lb_extra(bot_name: str) -> dict | None:
             for item in extra
             if isinstance(item, dict) and str(item.get("name") or "").strip()
         }
-        visual_document = load_visual_profiles_document(BOT_DIR, bot_name)
-        visual_profiles = effective_bot_profiles(bot, extra, visual_document)
+        visual_profiles = effective_bot_profiles(bot, extra)
         characters = []
         for char in bot.get("characters", []):
             if not isinstance(char, dict):
@@ -5726,7 +5713,7 @@ def _collect_lb_extra(bot_name: str) -> dict | None:
                 outfit = _tag_text(visual_base.get("outfit"))
             else:
                 print(
-                    f"[ILLUST_CONTEXT] 유효 외형 프로필을 찾지 못해 lb.extra 기본값 사용: "
+                    f"[ILLUST_CONTEXT] 유효 캐릭터 카드를 찾지 못해 lb.extra 기본값 사용: "
                     f"bot={bot_name!r}, character={name!r}"
                 )
                 appearance = _tag_text(item.get("appearance"))
@@ -5823,7 +5810,7 @@ def build_bot_character_names(bot_name: str) -> str:
 
 
 def build_visual_profile_catalog(bot_name: str) -> str:
-    """CALL1이 의미로 판단할 자연어 외형 프로필·등록 복장 카탈로그."""
+    """CALL1이 의미로 판단할 자연어 캐릭터 카드·등록 복장 카탈로그."""
     collected = _collect_lb_extra(bot_name)
     if not collected:
         return ""
@@ -22623,8 +22610,8 @@ app.router.add_get("/api/bot_mode/word_replacements", bot_mode.handle_get_word_r
 app.router.add_post("/api/bot_mode/word_replacements", bot_mode.handle_save_word_replacements)
 app.router.add_get("/api/bot_mode/lb_extra", bot_mode.handle_get_lb_extra)
 app.router.add_post("/api/bot_mode/lb_extra", bot_mode.handle_save_lb_extra)
-app.router.add_get("/api/bot_mode/visual_profiles", bot_mode.handle_get_visual_profiles)
-app.router.add_post("/api/bot_mode/visual_profiles", bot_mode.handle_save_visual_profiles)
+app.router.add_get("/api/bot_mode/character_cards", bot_mode.handle_get_character_cards)
+app.router.add_post("/api/bot_mode/character_cards", bot_mode.handle_save_character_cards)
 app.router.add_get("/api/bot_mode/system_prompt", bot_mode.handle_get_system_prompt)
 app.router.add_post("/api/bot_mode/system_prompt", bot_mode.handle_save_system_prompt)
 app.router.add_get("/api/bot_mode/system_prompt_presets", bot_mode.handle_get_system_prompt_presets)
