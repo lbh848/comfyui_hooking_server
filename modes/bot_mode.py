@@ -26,6 +26,7 @@ from modes.visual_profiles import (
     cards_to_character_profiles,
     character_profiles_to_cards,
     effective_bot_profiles,
+    effective_character_cards,
     effective_character_profiles,
     store_visual_cards,
     sync_root_fields_to_primary_card,
@@ -4723,7 +4724,14 @@ async def handle_auto_classify_face_tags(request):
         return web.json_response({"success": False, "error": str(e)})
 
 
-async def run_lb_extra_refine(bot_name: str, char_name: str, appearance_tags: list, outfit_tags: list, etc_tags: list) -> dict:
+async def run_lb_extra_refine(
+    bot_name: str,
+    char_name: str,
+    appearance_tags: list,
+    outfit_tags: list,
+    etc_tags: list,
+    visual_card_id: str = "",
+) -> dict:
     """LLM 비전 기반 Appearance/default_outfit 정제 (HTTP 래퍼 없는 core).
 
     대표 이미지(rep_images[0]) 1장 + 원본 3풀(appearance/outfit/etc)을 LLM에 전달하여
@@ -4762,10 +4770,45 @@ async def run_lb_extra_refine(bot_name: str, char_name: str, appearance_tags: li
         if not char:
             return {"success": False, "error": f"캐릭터를 찾을 수 없습니다: {char_name}"}
 
-        rep_images = char.get("rep_images", [])
+        selected_card_id = str(visual_card_id or "").strip()
+        if selected_card_id:
+            cards, _source = effective_character_cards(char, None)
+            selected_card = next(
+                (card for card in cards if str(card.get("id") or "") == selected_card_id),
+                None,
+            )
+            if selected_card is None:
+                print(
+                    f"[BOT_MODE] lb_extra_refine 카드 없음: bot={bot_name!r}, "
+                    f"character={char_name!r}, card={selected_card_id!r}"
+                )
+                return {
+                    "success": False,
+                    "error": f"캐릭터 카드를 찾을 수 없습니다: {selected_card_id}",
+                }
+            rep_images = selected_card.get("rep_images", [])
+        else:
+            rep_images = char.get("rep_images", [])
         if not rep_images:
+            print(
+                f"[BOT_MODE] lb_extra_refine 대표 이미지 없음: bot={bot_name!r}, "
+                f"character={char_name!r}, card={selected_card_id!r}"
+            )
             return {"success": False, "error": "대표 이미지(rep_images)가 없습니다."}
         rep0 = rep_images[0]
+        if (
+            not isinstance(rep0, str)
+            or rep0 != os.path.basename(rep0)
+            or "/" in rep0
+            or "\\" in rep0
+            or rep0 in {".", ".."}
+        ):
+            print(
+                f"[BOT_MODE] lb_extra_refine 대표 이미지 경로 거부: "
+                f"bot={bot_name!r}, character={char_name!r}, card={selected_card_id!r}, "
+                f"image={rep0!r}"
+            )
+            return {"success": False, "error": "대표 이미지 파일명이 올바르지 않습니다."}
         img_path = os.path.join(char_dir, rep0)
         if not os.path.isfile(img_path):
             print(f"[BOT_MODE] 대표 이미지 파일 없음: {img_path}")
@@ -4813,8 +4856,10 @@ async def run_lb_extra_refine(bot_name: str, char_name: str, appearance_tags: li
             {"role": "user", "content": rendered},
         ]
 
-        print(f"[BOT_MODE] lb_extra_refine 호출: bot={bot_name} char={char_name} service={service} "
-              f"appearance={len(appearance_tags or [])} outfit={len(outfit_tags or [])} etc={len(etc_tags or [])} use_custom={use_custom}")
+        print(f"[BOT_MODE] lb_extra_refine 호출: bot={bot_name} char={char_name} "
+              f"card={selected_card_id or '(root)'} image={rep0} service={service} "
+              f"appearance={len(appearance_tags or [])} outfit={len(outfit_tags or [])} "
+              f"etc={len(etc_tags or [])} use_custom={use_custom}")
 
         use_model = cfg.get("llm_model", "")
         await _notify_llm_widget("start", {"model": use_model, "prompt_id": f"lb_extra_refine:{char_name}"})
@@ -4937,9 +4982,25 @@ async def handle_lb_extra_refine(request):
         appearance_tags = body.get("appearance") or []
         outfit_tags = body.get("outfit") or []
         etc_tags = body.get("etc") or []
+        visual_card_id = body.get("visual_card_id") or ""
         if not isinstance(appearance_tags, list) or not isinstance(outfit_tags, list) or not isinstance(etc_tags, list):
+            print(
+                f"[BOT_MODE] lb_extra_refine 태그 타입 오류: "
+                f"appearance={type(appearance_tags).__name__}, "
+                f"outfit={type(outfit_tags).__name__}, etc={type(etc_tags).__name__}"
+            )
             return web.json_response({"success": False, "error": "appearance/outfit/etc 는 list 여야 합니다."})
-        result = await run_lb_extra_refine(bot_name, char_name, appearance_tags, outfit_tags, etc_tags)
+        if not isinstance(visual_card_id, str):
+            print(f"[BOT_MODE] lb_extra_refine visual_card_id 타입 오류: {visual_card_id!r}")
+            return web.json_response({"success": False, "error": "visual_card_id는 문자열이어야 합니다."})
+        result = await run_lb_extra_refine(
+            bot_name,
+            char_name,
+            appearance_tags,
+            outfit_tags,
+            etc_tags,
+            visual_card_id.strip(),
+        )
         return web.json_response(result)
     except Exception as e:
         print(f"[BOT_MODE] handle_lb_extra_refine 예외: {e}")

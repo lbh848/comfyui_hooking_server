@@ -20,12 +20,13 @@ def test_card_metadata_and_outfit_entry_are_on_the_character_card():
     assert card_metadata.index("작중 별칭") < card_metadata.index("자연어 선택 기준")
     assert "lb-xnai.lb.extra 설정" in FRONTEND
     assert "lb-xnai.lb.extra 복장 설정" not in FRONTEND
-    assert 'id="visual-card-appearance"' in FRONTEND
-    assert "target.appearance = JSON.parse" in FRONTEND
-    assert "openVisualOutfitEditor" in FRONTEND
-    assert 'id="visual-outfit-label"' in FRONTEND
-    assert 'id="visual-outfit-aliases"' not in FRONTEND
-    assert "복장 이름" not in FRONTEND
+    assert "openVisualCardLbExtraEditor" in FRONTEND
+    assert "_openFocusEditModal(0)" in FRONTEND
+    assert 'id="fe-card-controls"' in FRONTEND
+    assert "saveVisualCardFocusEdit" in FRONTEND
+    assert "visual_card_id: _visualCardFocusSession?.profileId" in FRONTEND
+    assert "openVisualOutfitEditor" not in FRONTEND
+    assert "visual-outfit-overlay" not in FRONTEND
 
 
 def test_removed_profile_modal_and_raw_json_editor_do_not_return():
@@ -35,9 +36,9 @@ def test_removed_profile_modal_and_raw_json_editor_do_not_return():
     assert "visual-profile-overlay" not in FRONTEND
 
 
-def test_outfit_editor_does_not_close_on_backdrop_click():
-    modal_start = FRONTEND.index("function _visualOutfitModal()")
-    modal_end = FRONTEND.index("function _visualOutfitCurrent()", modal_start)
+def test_shared_focus_editor_does_not_close_on_backdrop_click():
+    modal_start = FRONTEND.index("function _openFocusEditModal(ci)")
+    modal_end = FRONTEND.index("function _closeFocusEditModal()", modal_start)
     modal_source = FRONTEND[modal_start:modal_end]
-    assert "root.onclick" not in modal_source
-    assert "closeVisualOutfitEditor()" not in modal_source
+    assert "overlay.onclick" not in modal_source
+    assert "overlay.addEventListener('click'" not in modal_source

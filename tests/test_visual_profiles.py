@@ -1,3 +1,4 @@
+import base64
 from copy import deepcopy
 import importlib
 import json
@@ -213,3 +214,60 @@ async def test_character_card_api_saves_cards_on_bot_character(monkeypatch):
     assert len(character["visual_cards"]) == 2
     assert character["visual_cards"][1]["face_tags"] == "white hair, red eyes"
     assert character["face_tags"] == "short brown hair, brown eyes"
+
+
+@pytest.mark.asyncio
+async def test_lb_extra_refine_uses_the_selected_cards_representative_image(
+    tmp_path,
+    monkeypatch,
+):
+    bot_mode_module = importlib.import_module("modes.bot_mode")
+    llm_service = importlib.import_module("modes.llm_service")
+    lighbd_service = importlib.import_module("modes.lighbd_service")
+    server_module = importlib.import_module("server")
+
+    root = _root_character()
+    root["rep_images"] = ["root.webp"]
+    root["visual_cards"] = deepcopy(_cards())
+    data = {"bots": [{"name": "demo", "characters": [root]}]}
+    char_dir = tmp_path / "demo" / "Adachi"
+    char_dir.mkdir(parents=True)
+    (char_dir / "root.webp").write_bytes(b"root-image")
+    (char_dir / "despair.webp").write_bytes(b"card-image")
+
+    captured = {}
+
+    async def fake_vision_call(task_name, messages, **kwargs):
+        captured["task_name"] = task_name
+        captured["image"] = base64.b64decode(kwargs["image_b64"])
+        return '{"appearance":["white hair"],"outfit":["black armor"]}'
+
+    async def fake_notify(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(bot_mode_module, "BOT_DIR", str(tmp_path))
+    monkeypatch.setattr(bot_mode_module, "_load_bot_data", lambda: data)
+    monkeypatch.setattr(bot_mode_module, "_load_lb_extra_refine_custom", lambda: ("", False))
+    monkeypatch.setattr(
+        bot_mode_module,
+        "_load_lb_extra_refine_builtin",
+        lambda: "Appearance={Appearance}\noutfit={outfit}\netc={etc}",
+    )
+    monkeypatch.setattr(llm_service, "routing_primary_service", lambda _task: "test")
+    monkeypatch.setattr(llm_service, "supports_vision", lambda _service: True)
+    monkeypatch.setattr(llm_service, "get_config", lambda: {"llm_model": "test-model"})
+    monkeypatch.setattr(llm_service, "callLLMVisionTask", fake_vision_call)
+    monkeypatch.setattr(lighbd_service, "_log_lighbd_history", lambda _entry: None)
+    monkeypatch.setattr(server_module, "notify_frontend", fake_notify)
+
+    result = await bot_mode_module.run_lb_extra_refine(
+        "demo",
+        "Adachi",
+        ["white hair"],
+        ["black armor"],
+        [],
+        "despair",
+    )
+
+    assert result["success"] is True
+    assert captured == {"task_name": "refine_lb_extra", "image": b"card-image"}

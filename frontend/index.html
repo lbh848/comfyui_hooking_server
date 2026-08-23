@@ -63902,7 +63902,8 @@
         let _visualCardBotName = '';
         let _visualCardStates = {};
         let _visualCardSlots = {};
-        let _visualOutfitEditor = null;
+        let _visualCardFocusSession = null;
+        let _visualCardFocusLoading = false;
 
         function _vpTagText(values) {
             return (Array.isArray(values) ? values : []).map(v => typeof v === 'string' ? v : (v?.tag || '')).filter(Boolean).join(', ');
@@ -64132,106 +64133,108 @@
             return profile.render_overrides[key];
         }
 
-        function _visualOutfitModal() {
-            let root = document.getElementById('visual-outfit-overlay');
-            if (!root) {
-                root = document.createElement('div');
-                root.id = 'visual-outfit-overlay';
-                root.style.cssText = 'display:none;position:fixed;inset:0;z-index:10080;background:rgba(0,0,0,.72);align-items:center;justify-content:center;padding:22px';
-                document.body.appendChild(root);
-            }
-            return root;
-        }
-
-        function _visualOutfitCurrent() {
-            const state = _visualOutfitEditor;
-            return state ? (state.profile.outfits || []).find(o => o.id === state.outfitId) : null;
-        }
-
-        function _commitVisualOutfitForm() {
-            const root = _visualOutfitModal(), state = _visualOutfitEditor, outfit = _visualOutfitCurrent();
-            if (!state || !outfit || root.style.display === 'none') return;
-            const appearanceInput = root.querySelector('#visual-card-appearance');
-            if (appearanceInput) {
-                state.profile.appearance = _vpTags(appearanceInput.value || '', state.profile.appearance);
-            }
-            outfit.label = (root.querySelector('#visual-outfit-label')?.value || '').trim() || outfit.label;
-            outfit.selection_guide = (root.querySelector('#visual-outfit-guide')?.value || '').trim();
-            outfit.tags = _vpTags(root.querySelector('#visual-outfit-tags')?.value || '', outfit.tags);
-            const selectedDefault = root.querySelector('#visual-outfit-default')?.value;
-            if (selectedDefault) _visualOutfitEditor.profile.default_outfit_id = selectedDefault;
-        }
-
-        function _renderVisualOutfitEditor() {
-            const root = _visualOutfitModal(), state = _visualOutfitEditor;
-            if (!state) { root.style.display = 'none'; root.innerHTML = ''; return; }
-            const outfit = _visualOutfitCurrent();
-            const input = 'width:100%;box-sizing:border-box;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--text);font:inherit';
-            const tabs = (state.profile.outfits || []).map((item, index) => `<button onclick="selectVisualOutfit('${escAttr(item.id)}')" style="padding:7px 11px;border:1px solid ${item.id === state.outfitId ? 'var(--accent)' : 'var(--border)'};border-radius:6px;background:${item.id === state.outfitId ? 'var(--accent)' : 'var(--surface2)'};color:${item.id === state.outfitId ? '#fff' : 'var(--text)'};cursor:pointer">${escHtml(item.label || `복장 ${index + 1}`)}</button>`).join('');
-            const defaults = (state.profile.outfits || []).map(item => `<option value="${escAttr(item.id)}" ${item.id === state.profile.default_outfit_id ? 'selected' : ''}>${escHtml(item.label || item.id)}</option>`).join('');
-            root.innerHTML = `<div style="width:min(820px,94vw);height:min(720px,90vh);background:var(--surface);border:1px solid var(--border);border-radius:12px;display:flex;flex-direction:column;overflow:hidden">
-                <header style="padding:14px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center"><div><h2 style="margin:0">${escHtml(state.charName)} [${state.slot + 1}]</h2><small style="color:var(--text2)">lb-xnai.lb.extra 설정</small></div><button onclick="closeVisualOutfitEditor()" style="margin-left:auto;font-size:1.4rem;background:transparent;border:0;color:var(--text);cursor:pointer">×</button></header>
-                <div style="padding:13px 18px;border-bottom:1px solid var(--border);display:flex;gap:7px;align-items:center;flex-wrap:wrap">${tabs}<button onclick="addVisualOutfit()" style="padding:7px 11px;border:1px dashed var(--accent);border-radius:6px;background:transparent;color:var(--accent);cursor:pointer">＋ 복장 추가</button></div>
-                <main style="padding:18px;overflow:auto;flex:1">
-                    <label style="display:block;margin-bottom:18px;padding-bottom:18px;border-bottom:1px solid var(--border)"><b style="display:block;font-size:.78rem;color:var(--text2);margin-bottom:5px">고정 외형 태그 (Appearance)</b><textarea id="visual-card-appearance" rows="5" style="${input};resize:vertical">${escHtml(_vpTagText(state.profile.appearance || []))}</textarea><small style="display:block;color:var(--text2);margin-top:4px">현재 카드가 선택되었을 때 사용하는 머리, 눈, 신체 등 기본 외형입니다.</small></label>
-                    <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px"><b style="font-size:1rem">${escHtml(outfit?.label || '')}</b><label style="margin-left:auto;font-size:.78rem">기본 복장 <select id="visual-outfit-default" style="padding:6px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:5px">${defaults}</select></label>${(state.profile.outfits || []).length > 1 ? '<button onclick="deleteVisualOutfit()" style="color:#ef4444;background:transparent;border:1px solid #ef444477;border-radius:5px;padding:5px 9px;cursor:pointer">현재 복장 삭제</button>' : ''}</div>
-                    <label style="display:block;margin-bottom:13px"><b style="display:block;font-size:.78rem;color:var(--text2);margin-bottom:5px">작중 별칭</b><input id="visual-outfit-label" value="${escAttr(outfit?.label || '')}" style="${input}"><small style="display:block;color:var(--text2);margin-top:4px">작중에서 이 복장을 부르는 이름을 입력합니다.</small></label>
-                    <label style="display:block;margin-bottom:13px"><b style="display:block;font-size:.78rem;color:var(--text2);margin-bottom:5px">자연어 선택 기준</b><textarea id="visual-outfit-guide" rows="3" style="${input};resize:vertical">${escHtml(outfit?.selection_guide || '')}</textarea><small style="display:block;color:var(--text2);margin-top:4px">이야기에서 언제 이 복장을 선택해야 하는지 자연어로 적습니다.</small></label>
-                    <label style="display:block;margin-bottom:13px"><b style="display:block;font-size:.78rem;color:var(--text2);margin-bottom:5px">복장 태그</b><textarea id="visual-outfit-tags" rows="5" style="${input};resize:vertical">${escHtml(_vpTagText(outfit?.tags || []))}</textarea></label>
-                </main>
-                <footer style="padding:12px 18px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px"><button onclick="closeVisualOutfitEditor()">취소</button><button onclick="saveVisualOutfits()" style="background:var(--accent);color:#fff;border:0;border-radius:6px;padding:8px 16px;cursor:pointer">lb.extra 설정 저장</button></footer>
-            </div>`;
-            root.style.display = 'flex';
-        }
-
-        function openVisualOutfitEditor(charName) {
-            const profile = _visualCardProfile(charName);
-            if (!profile) return showToast('복장을 설정할 캐릭터 카드를 찾지 못했습니다.', 'error');
-            const copy = JSON.parse(JSON.stringify(profile));
-            _visualOutfitEditor = {charName, slot:_visualCardSlots[charName] || 0, profile:copy, outfitId:copy.default_outfit_id || copy.outfits?.[0]?.id};
-            _renderVisualOutfitEditor();
-        }
-
-        function closeVisualOutfitEditor() { _visualOutfitEditor = null; _renderVisualOutfitEditor(); }
-        function selectVisualOutfit(id) { _commitVisualOutfitForm(); _visualOutfitEditor.outfitId = id; _renderVisualOutfitEditor(); }
         function _newVisualOutfitId(profile) {
             const used = new Set((profile.outfits || []).map(o => o.id));
             let id = `outfit_${Date.now().toString(36)}`, suffix = 2;
             while (used.has(id)) id = `outfit_${Date.now().toString(36)}_${suffix++}`;
             return id;
         }
-        function addVisualOutfit() {
-            _commitVisualOutfitForm();
-            const profile = _visualOutfitEditor.profile, id = _newVisualOutfitId(profile);
-            profile.outfits.push({id, label:`복장 ${profile.outfits.length + 1}`, selection_guide:'', tags:[]});
-            _visualOutfitEditor.outfitId = id;
-            _renderVisualOutfitEditor();
-        }
-        function deleteVisualOutfit() {
-            _commitVisualOutfitForm();
-            const state = _visualOutfitEditor, profile = state.profile;
-            if ((profile.outfits || []).length <= 1) return showToast('복장은 최소 1개 필요합니다.', 'error');
-            if (!confirm('현재 복장을 삭제할까요?')) return;
-            profile.outfits = profile.outfits.filter(o => o.id !== state.outfitId);
-            if (profile.default_outfit_id === state.outfitId) profile.default_outfit_id = profile.outfits[0].id;
-            state.outfitId = profile.default_outfit_id;
-            _renderVisualOutfitEditor();
-        }
-        async function saveVisualOutfits() {
-            _commitVisualOutfitForm();
-            const state = _visualOutfitEditor, target = _visualCardState(state.charName)?.data?.profiles?.[state.slot];
-            if (!target) {
-                console.error('[VISUAL_OUTFIT] 저장 대상 카드 없음', state);
-                return showToast('저장할 캐릭터 카드를 찾지 못했습니다.', 'error');
+
+        async function _loadVisualCardFocusOriginal(charName, profile, outfit, repImages) {
+            const fallback = {
+                name: charName,
+                appearance: JSON.parse(JSON.stringify(profile.appearance || [])),
+                outfit: JSON.parse(JSON.stringify(outfit?.tags || [])),
+                uncategorized: [],
+                promptMissing: true,
+            };
+            if (!repImages.length) {
+                console.error('[VISUAL_CARD_FOCUS] 원본 분류에 사용할 대표 이미지 없음', {charName, profileId:profile.id});
+                return fallback;
             }
-            target.appearance = JSON.parse(JSON.stringify(state.profile.appearance || []));
-            target.default_outfit_id = state.profile.default_outfit_id;
-            target.outfits = JSON.parse(JSON.stringify(state.profile.outfits));
             try {
-                await _saveVisualCardState(state.charName);
-                closeVisualOutfitEditor();
-                showToast('lb-xnai.lb.extra 설정 저장 완료', 'success');
-            } catch (_) {}
+                const imageResponse = await fetch(`/api/bot_mode/images?bot=${encodeURIComponent(botCurrentBot)}&character=${encodeURIComponent(charName)}`);
+                const imageData = await imageResponse.json();
+                const first = (imageData.images || []).find(item => item.filename === repImages[0]);
+                const prompt = String(first?.prompt || '').trim();
+                if (!prompt) {
+                    console.error('[VISUAL_CARD_FOCUS] 대표 이미지 프롬프트 없음', {charName, profileId:profile.id, image:repImages[0]});
+                    return fallback;
+                }
+                const groupResponse = await fetch('/api/bot_mode/auto_group_prompt', {
+                    method: 'POST',
+                    headers: {'Content-Type':'application/json'},
+                    body: JSON.stringify({prompt}),
+                });
+                const grouped = await groupResponse.json();
+                if (!groupResponse.ok || !grouped.success || !grouped.data?.groups) {
+                    throw new Error(grouped.error || '대표 이미지 태그 분류 실패');
+                }
+                const groups = grouped.data.groups;
+                const gender = String(profile.render_overrides?.gender_tag || _getCharGenderTag(charName) || '').toLowerCase();
+                const withoutGender = values => (values || []).filter(item => String(item?.tag || '').toLowerCase() !== gender);
+                return {
+                    name: charName,
+                    appearance: withoutGender(groups['외모/신체']),
+                    outfit: groups['복장'] || [],
+                    uncategorized: groups['미분류'] || [],
+                    promptMissing: false,
+                };
+            } catch (error) {
+                console.error('[VISUAL_CARD_FOCUS] 대표 이미지 원본 분류 실패', error);
+                showToast('대표 이미지 자동 분류 실패 — 저장된 카드 태그를 원본으로 사용합니다.', 'error');
+                return fallback;
+            }
+        }
+
+        async function openVisualCardLbExtraEditor(charName) {
+            if (_visualCardFocusLoading || _visualCardFocusSession) {
+                return showToast('이미 lb-xnai.lb.extra 설정을 준비하거나 편집 중입니다.', 'info');
+            }
+            _visualCardFocusLoading = true;
+            try {
+                const profile = _visualCardProfile(charName);
+                const resolved = _visualCardResolved(charName);
+                if (!profile || !resolved) {
+                    console.error('[VISUAL_CARD_FOCUS] 집중 편집 대상 카드 없음', charName);
+                    return showToast('설정할 캐릭터 카드를 찾지 못했습니다.', 'error');
+                }
+                const draft = JSON.parse(JSON.stringify(profile));
+                const outfitId = draft.default_outfit_id || draft.outfits?.[0]?.id;
+                const outfit = (draft.outfits || []).find(item => item.id === outfitId);
+                if (!outfit) {
+                    console.error('[VISUAL_CARD_FOCUS] 카드 기본 복장 없음', {charName, profileId:profile.id});
+                    return showToast('카드에 편집할 복장이 없습니다.', 'error');
+                }
+                const repImages = JSON.parse(JSON.stringify(resolved.rep_images || []));
+                const original = await _loadVisualCardFocusOriginal(charName, draft, outfit, repImages);
+                const gender = String(draft.render_overrides?.gender_tag || _getCharGenderTag(charName) || '').toLowerCase();
+                const appearance = (draft.appearance || []).filter(item => String(item?.tag || '').toLowerCase() !== gender);
+
+                _visualCardFocusSession = {
+                    charName,
+                    slot: _visualCardSlots[charName] || 0,
+                    profileId: draft.id,
+                    profile: draft,
+                    outfitId,
+                    repImages,
+                    previousOriginal: _lbExtraOriginal,
+                    previousEdited: _lbExtraEdited,
+                };
+                _lbExtraOriginal = [original];
+                _lbExtraEdited = [{
+                    name: charName,
+                    appearance: JSON.parse(JSON.stringify(appearance)),
+                    outfit: JSON.parse(JSON.stringify(outfit.tags || [])),
+                    uncategorized: [],
+                }];
+                _openFocusEditModal(0);
+            } catch (error) {
+                console.error('[VISUAL_CARD_FOCUS] 집중 편집 준비 실패', error);
+                showToast('lb-xnai.lb.extra 집중 편집 준비 실패: ' + error.message, 'error');
+            } finally {
+                _visualCardFocusLoading = false;
+            }
         }
 
         async function renderBotCharacters() {
@@ -64282,7 +64285,7 @@
                         <button class="btn-auto-group" data-char-name="${escAttr(char.name)}"
                             onclick="event.stopPropagation(); autoGroupPrompt('${escAttr(char.name)}')"
                             style="background:rgba(34,197,94,0.12); color:var(--text); border:1px solid rgba(34,197,94,0.3); padding:8px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600; white-space:nowrap;">캐릭터 얼굴 / 눈 / 절대태그 설정</button>
-                        <button onclick="event.stopPropagation(); openVisualOutfitEditor('${escAttr(char.name)}')"
+                        <button onclick="event.stopPropagation(); openVisualCardLbExtraEditor('${escAttr(char.name)}')"
                             style="background:rgba(168,85,247,0.12); color:var(--text); border:1px solid rgba(168,85,247,0.35); padding:8px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600; white-space:nowrap;">lb-xnai.lb.extra 설정</button>
                         <select onchange="saveCharGenderTag('${escAttr(char.name)}', this.value)"
                             style="padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface2); color:var(--text); font-size:0.8rem; cursor:pointer;">
@@ -65883,6 +65886,130 @@
         }
 
         // ─── 집중 편집 모달 ─────────────────────────────────
+        function _visualCardFocusOutfit() {
+            const session = _visualCardFocusSession;
+            return session ? (session.profile.outfits || []).find(item => item.id === session.outfitId) : null;
+        }
+
+        function _commitVisualCardFocusEditor() {
+            const session = _visualCardFocusSession;
+            const edited = _lbExtraEdited[0];
+            const outfit = _visualCardFocusOutfit();
+            if (!session || !edited || !outfit) return;
+            session.profile.appearance = JSON.parse(JSON.stringify(edited.appearance || []));
+            outfit.tags = JSON.parse(JSON.stringify(edited.outfit || []));
+            const labelInput = document.getElementById('fe-card-outfit-label');
+            const guideInput = document.getElementById('fe-card-outfit-guide');
+            const defaultInput = document.getElementById('fe-card-default-outfit');
+            if (labelInput) outfit.label = labelInput.value.trim() || outfit.label;
+            if (guideInput) outfit.selection_guide = guideInput.value.trim();
+            if (defaultInput?.value) session.profile.default_outfit_id = defaultInput.value;
+        }
+
+        function _renderVisualCardFocusControls() {
+            const container = document.getElementById('fe-card-controls');
+            const session = _visualCardFocusSession;
+            if (!container || !session) return;
+            const outfit = _visualCardFocusOutfit();
+            const inputStyle = 'box-sizing:border-box;padding:6px 8px;border:1px solid var(--border);border-radius:5px;background:var(--surface2);color:var(--text);font:inherit';
+            const tabs = (session.profile.outfits || []).map((item, index) => `<button onclick="selectVisualCardFocusOutfit('${escAttr(item.id)}')" style="padding:6px 10px;border:1px solid ${item.id === session.outfitId ? 'var(--accent)' : 'var(--border)'};border-radius:5px;background:${item.id === session.outfitId ? 'var(--accent)' : 'var(--surface2)'};color:${item.id === session.outfitId ? '#fff' : 'var(--text)'};cursor:pointer;font-size:.76rem">${escHtml(item.label || `복장 ${index + 1}`)}</button>`).join('');
+            const defaults = (session.profile.outfits || []).map(item => `<option value="${escAttr(item.id)}" ${item.id === session.profile.default_outfit_id ? 'selected' : ''}>${escHtml(item.label || item.id)}</option>`).join('');
+            container.innerHTML = `
+                <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:9px">
+                    <span style="font-size:.72rem;color:var(--text2);font-weight:700;margin-right:3px">등록 복장</span>${tabs}
+                    <button onclick="addVisualCardFocusOutfit()" style="padding:6px 10px;border:1px dashed var(--accent);border-radius:5px;background:transparent;color:var(--accent);cursor:pointer;font-size:.76rem">＋ 추가</button>
+                    ${(session.profile.outfits || []).length > 1 ? '<button onclick="deleteVisualCardFocusOutfit()" style="padding:6px 9px;border:1px solid #ef444477;border-radius:5px;background:transparent;color:#ef4444;cursor:pointer;font-size:.74rem">현재 복장 삭제</button>' : ''}
+                    ${_lbExtraOriginal[0]?.promptMissing ? '<span style="font-size:.7rem;color:#b45309;margin-left:auto">⚠ 대표 이미지 프롬프트 없음 · 저장된 태그를 원본으로 표시</span>' : ''}
+                </div>
+                <div style="display:grid;grid-template-columns:minmax(160px,.55fr) minmax(300px,1.45fr) auto;gap:10px;align-items:end">
+                    <label style="font-size:.72rem;color:var(--text2)">작중 별칭<input id="fe-card-outfit-label" value="${escAttr(outfit?.label || '')}" style="${inputStyle};display:block;width:100%;margin-top:4px"></label>
+                    <label style="font-size:.72rem;color:var(--text2)">자연어 선택 기준<input id="fe-card-outfit-guide" value="${escAttr(outfit?.selection_guide || '')}" style="${inputStyle};display:block;width:100%;margin-top:4px"></label>
+                    <label style="font-size:.72rem;color:var(--text2)">기본 복장<select id="fe-card-default-outfit" style="${inputStyle};display:block;min-width:130px;margin-top:4px">${defaults}</select></label>
+                </div>`;
+        }
+
+        function selectVisualCardFocusOutfit(outfitId) {
+            const session = _visualCardFocusSession;
+            if (!session || !(session.profile.outfits || []).some(item => item.id === outfitId)) {
+                console.error('[VISUAL_CARD_FOCUS] 전환할 복장 없음', {outfitId});
+                return showToast('전환할 복장을 찾지 못했습니다.', 'error');
+            }
+            _commitVisualCardFocusEditor();
+            session.outfitId = outfitId;
+            const outfit = _visualCardFocusOutfit();
+            _lbExtraEdited[0].outfit = JSON.parse(JSON.stringify(outfit.tags || []));
+            _renderVisualCardFocusControls();
+            _renderFocusEditContent();
+        }
+
+        function addVisualCardFocusOutfit() {
+            const session = _visualCardFocusSession;
+            if (!session) return;
+            _commitVisualCardFocusEditor();
+            const id = _newVisualOutfitId(session.profile);
+            const outfit = {id, label:`복장 ${session.profile.outfits.length + 1}`, selection_guide:'', tags:[]};
+            session.profile.outfits.push(outfit);
+            session.outfitId = id;
+            _lbExtraEdited[0].outfit = [];
+            _renderVisualCardFocusControls();
+            _renderFocusEditContent();
+        }
+
+        function deleteVisualCardFocusOutfit() {
+            const session = _visualCardFocusSession;
+            if (!session || (session.profile.outfits || []).length <= 1) {
+                return showToast('복장은 최소 1개 필요합니다.', 'error');
+            }
+            if (!confirm('현재 복장을 삭제할까요?')) return;
+            _commitVisualCardFocusEditor();
+            session.profile.outfits = session.profile.outfits.filter(item => item.id !== session.outfitId);
+            if (session.profile.default_outfit_id === session.outfitId) {
+                session.profile.default_outfit_id = session.profile.outfits[0].id;
+            }
+            session.outfitId = session.profile.default_outfit_id;
+            _lbExtraEdited[0].outfit = JSON.parse(JSON.stringify(_visualCardFocusOutfit()?.tags || []));
+            _renderVisualCardFocusControls();
+            _renderFocusEditContent();
+        }
+
+        function _restoreVisualCardFocusSession() {
+            const session = _visualCardFocusSession;
+            if (!session) return false;
+            _lbExtraOriginal = session.previousOriginal;
+            _lbExtraEdited = session.previousEdited;
+            _visualCardFocusSession = null;
+            return true;
+        }
+
+        async function saveVisualCardFocusEdit() {
+            const session = _visualCardFocusSession;
+            if (!session) return;
+            _commitVisualCardFocusEditor();
+            const cardState = _visualCardState(session.charName);
+            const profileIndex = (cardState?.data?.profiles || []).findIndex(item => item.id === session.profileId);
+            if (!cardState || profileIndex < 0) {
+                console.error('[VISUAL_CARD_FOCUS] 저장 대상 카드 없음', session);
+                return showToast('저장할 캐릭터 카드를 찾지 못했습니다.', 'error');
+            }
+            const previous = JSON.parse(JSON.stringify(cardState.data.profiles[profileIndex]));
+            cardState.data.profiles[profileIndex].appearance = JSON.parse(JSON.stringify(session.profile.appearance || []));
+            cardState.data.profiles[profileIndex].default_outfit_id = session.profile.default_outfit_id;
+            cardState.data.profiles[profileIndex].outfits = JSON.parse(JSON.stringify(session.profile.outfits || []));
+            const button = document.getElementById('fe-card-save');
+            if (button) { button.disabled = true; button.textContent = '저장 중…'; }
+            try {
+                await _saveVisualCardState(session.charName, {quiet:true});
+                _closeFocusEditModal();
+                showToast('lb-xnai.lb.extra 설정 저장 완료', 'success');
+                await renderBotCharacters();
+            } catch (error) {
+                cardState.data.profiles[profileIndex] = previous;
+                console.error('[VISUAL_CARD_FOCUS] 카드 저장 실패', error);
+                showToast('lb-xnai.lb.extra 설정 저장 실패: ' + error.message, 'error');
+                if (button) { button.disabled = false; button.textContent = '카드에 저장'; }
+            }
+        }
+
         function _openFocusEditModal(ci) {
             if (ci < 0 || !_lbExtraOriginal[ci]) {
                 showToast('잘못된 캐릭터 인덱스입니다', 'error');
@@ -65893,6 +66020,13 @@
 
             _focusEditCharIdx = ci;
             _focusEditPhotoIdx = 0;
+            const cardSession = _visualCardFocusSession;
+            const cardActions = cardSession
+                ? '<button onclick="saveVisualCardFocusEdit()" id="fe-card-save" style="background:#1565C0;color:#fff;border:none;padding:5px 12px;border-radius:6px;cursor:pointer;font-size:.8rem;font-weight:600">카드에 저장</button><button onclick="_closeFocusEditModal()" style="background:var(--surface2);color:var(--text);border:1px solid var(--border);padding:5px 12px;border-radius:6px;cursor:pointer;font-size:.8rem">취소</button>'
+                : '';
+            const cardControls = cardSession
+                ? '<div id="fe-card-controls" style="padding:10px 16px;border-bottom:1px solid var(--border);flex-shrink:0;background:color-mix(in srgb,var(--accent) 4%,var(--surface))"></div>'
+                : '';
 
             const overlay = document.createElement('div');
             overlay.id = 'focus-edit-overlay';
@@ -65912,8 +66046,10 @@
                         <div style="flex:1;"></div>
                         <button onclick="_focusEditLlmRefine(_focusEditCharIdx)" id="fe-btn-llm-refine" style="background:#7C3AED; color:#fff; border:none; padding:5px 12px; border-radius:6px; cursor:pointer; font-size:0.8rem; font-weight:600;">LLM 정제</button>
                         <button onclick="_openLbExtraRefinePromptEditor()" style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:5px 12px; border-radius:6px; cursor:pointer; font-size:0.8rem; font-weight:600;">LLM 프롬프트</button>
+                        ${cardActions}
                         <button onclick="_closeFocusEditModal()" style="background:none; border:none; color:var(--text2); font-size:1.2rem; cursor:pointer;">✕</button>
                     </div>
+                    ${cardControls}
                     <div style="flex:1; display:flex; overflow:hidden;">
                         <div style="flex:1; display:flex; flex-direction:column; border-right:1px solid var(--border); padding:16px; overflow:hidden;">
                             <div id="fe-photo-container" style="flex:1; display:flex; align-items:center; justify-content:center; overflow:hidden; background:var(--surface2); border-radius:6px;"></div>
@@ -65958,6 +66094,7 @@
                 _renderFocusEditContent();
             });
 
+            if (cardSession) _renderVisualCardFocusControls();
             _renderFocusEditContent();
         }
 
@@ -65966,6 +66103,7 @@
             if (overlay) overlay.remove();
             _focusEditCharIdx = -1;
             _focusEditPhotoIdx = 0;
+            _restoreVisualCardFocusSession();
             if (document.getElementById('lb-extra-overlay')) {
                 _renderLbExtraContent();
             }
@@ -65977,9 +66115,12 @@
             if (!botCurrentBot) { showToast('봇 정보가 없습니다', 'error'); return; }
 
             const orig = _lbExtraOriginal[ci];
+            const targetDescription = _visualCardFocusSession
+                ? `활성 카드 [${_visualCardFocusSession.slot + 1}]의 첫 대표 이미지`
+                : '대표 이미지(rep_images[0])';
             if (!confirm(
                 `LLM 비전 정제를 실행합니다.\n` +
-                `- 대표 이미지(rep_images[0])와 원본 분류(전체)를 보고 Appearance/default_outfit을 재구성합니다.\n` +
+                `- ${targetDescription}와 원본 분류(전체)를 보고 Appearance/default_outfit을 재구성합니다.\n` +
                 `- 자세/표정은 제외되고, 잘못 잡힌 WD 태그는 필터링됩니다.\n` +
                 `- 편집본의 Appearance / default_outfit을 결과로 완전히 덮어씁니다.\n\n계속하시겠습니까?`
             )) return;
@@ -66002,6 +66143,7 @@
                         appearance: appearanceTags,
                         outfit: outfitTags,
                         etc: etcTags,
+                        visual_card_id: _visualCardFocusSession?.profileId || '',
                     }),
                 });
                 const text = await resp.text();
@@ -66426,7 +66568,11 @@
             if (ci < 0 || !_lbExtraOriginal[ci]) return;
 
             const nameEl = document.getElementById('fe-char-name');
-            if (nameEl) nameEl.textContent = _lbExtraOriginal[ci].name;
+            if (nameEl) {
+                nameEl.textContent = _visualCardFocusSession
+                    ? `${_visualCardFocusSession.charName} [${_visualCardFocusSession.slot + 1}]`
+                    : _lbExtraOriginal[ci].name;
+            }
 
             _renderFocusEditPhoto();
 
@@ -66574,12 +66720,18 @@
             _renderFocusEditContent();
         }
 
+        function _focusEditRepImages(ci) {
+            if (_visualCardFocusSession) return _visualCardFocusSession.repImages || [];
+            if (ci < 0 || !_lbExtraOriginal[ci]) return [];
+            const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
+            const char = bot ? (bot.characters || []).find(c => c.name === _lbExtraOriginal[ci].name) : null;
+            return (char && char.rep_images) || [];
+        }
+
         function _focusEditPrevPhoto() {
             const ci = _focusEditCharIdx;
             if (ci < 0 || !_lbExtraOriginal[ci]) return;
-            const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
-            const char = bot ? (bot.characters || []).find(c => c.name === _lbExtraOriginal[ci].name) : null;
-            const images = (char && char.rep_images) || [];
+            const images = _focusEditRepImages(ci);
             if (images.length === 0) return;
             _focusEditPhotoIdx = (_focusEditPhotoIdx - 1 + images.length) % images.length;
             _renderFocusEditPhoto();
@@ -66588,9 +66740,7 @@
         function _focusEditNextPhoto() {
             const ci = _focusEditCharIdx;
             if (ci < 0 || !_lbExtraOriginal[ci]) return;
-            const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
-            const char = bot ? (bot.characters || []).find(c => c.name === _lbExtraOriginal[ci].name) : null;
-            const images = (char && char.rep_images) || [];
+            const images = _focusEditRepImages(ci);
             if (images.length === 0) return;
             _focusEditPhotoIdx = (_focusEditPhotoIdx + 1) % images.length;
             _renderFocusEditPhoto();
@@ -66604,9 +66754,7 @@
             const nextBtn = document.getElementById('fe-photo-next');
             if (!container || ci < 0 || !_lbExtraOriginal[ci]) return;
 
-            const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
-            const char = bot ? (bot.characters || []).find(c => c.name === _lbExtraOriginal[ci].name) : null;
-            const images = (char && char.rep_images) || [];
+            const images = _focusEditRepImages(ci);
 
             if (images.length === 0) {
                 container.innerHTML = '<div style="color:var(--text2); font-size:0.9rem;">대표 이미지가 없습니다</div>';
@@ -66747,6 +66895,10 @@
 
         // 캐릭터 gender_tag (1girl/1boy/1male) 조회 - lb extra appearance 맨 앞 고정
         function _getCharGenderTag(name) {
+            if (_visualCardFocusSession && _visualCardFocusSession.charName === name) {
+                const cardGender = _visualCardFocusSession.profile?.render_overrides?.gender_tag;
+                if (cardGender) return cardGender;
+            }
             const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
             const char = bot ? (bot.characters || []).find(c => c.name === name) : null;
             return (char && char.gender_tag) || '1girl';
