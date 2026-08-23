@@ -13387,6 +13387,9 @@ async def handle_api_reschedule_with_modified_prompt(
                 src_generation_params["illustration_camera_prompt"] = (
                     illustration_camera.compile_camera_prompt(normalized_camera_control)
                 )
+                src_generation_params["illustration_camera_lora"] = (
+                    illustration_camera.camera_lora_metadata(normalized_camera_control)
+                )
                 print(
                     f"[RESCHEDULE_MOD:CAMERA] 구도 메타데이터 계승: "
                     f"backup={backup_name}, "
@@ -14156,6 +14159,9 @@ async def handle_api_llm_edit_prompt(
         if camera_control is not None:
             response_payload["camera_control"] = camera_control
             response_payload["camera_prompt"] = camera_prompt
+            response_payload["camera_lora"] = illustration_camera.camera_lora_metadata(
+                camera_control
+            )
         return web.json_response(response_payload)
 
     except Exception as e:

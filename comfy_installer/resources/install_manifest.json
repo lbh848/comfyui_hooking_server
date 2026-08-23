@@ -300,6 +300,14 @@
       "sha256": "1b55e40bdb1d0e5a78cb498f245fccfdaae97823265db957d2aabdcf4cd3caf1"
     },
     {
+      "id": "bsk-anima-camera-control-v1.0",
+      "url": "https://civitai.com/api/download/models/3174431?fileId=3054946",
+      "auth": "civitai",
+      "relative_path": "models/loras/SOYA_CHAR_LORA/SOYA_INSTANCE_LORA/anima/bsk-anima-camera-control/civitai-3174431/anima_bsk_camera_control_v1.0.safetensors",
+      "size": 284900204,
+      "sha256": "6d1f0c002abf3f7108d53fddba75bfb1f4936b948a300f667afa455ea8aefd81"
+    },
+    {
       "id": "anima-quality-slider",
       "url": "https://civitai.com/api/download/models/2945328",
       "auth": "civitai",

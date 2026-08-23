@@ -1211,6 +1211,20 @@
             justify-content: flex-end;
         }
 
+        #prompt-modal .modal-footer {
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        #prompt-modal .modal-content {
+            max-width: 840px;
+        }
+
+        #prompt-modal .modal-footer > button {
+            flex: 0 0 auto;
+            white-space: nowrap;
+        }
+
         .form-group {
             margin-bottom: 16px;
         }
@@ -19149,63 +19163,6 @@
                         <div>프롬프트를 수정하여 새 이미지를 생성합니다.</div>
                     </div>
                 </div>
-                <details id="modal-camera-panel" style="display:none; margin-bottom:10px; padding:0; border:1px solid color-mix(in srgb, var(--accent) 42%, var(--border)); border-radius:8px; background:color-mix(in srgb, var(--accent) 5%, var(--surface1));">
-                    <summary style="padding:10px 12px; cursor:pointer; color:var(--accent); font-size:0.84rem; font-weight:700;">🧭 Anima 구도 조정</summary>
-                    <div style="padding:0 12px 12px; display:flex; flex-direction:column; gap:9px;">
-                        <div style="font-size:0.72rem; line-height:1.45; color:var(--text-secondary);">
-                            선택한 차원의 기존 구도 표현을 LLM이 문맥적으로 정리한 뒤 Anima 태그를 확정 적용합니다. 다른 장면 내용과 SDXL 프롬프트는 유지합니다.
-                        </div>
-                        <div style="display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px;">
-                            <label style="display:flex; flex-direction:column; gap:4px; font-size:0.72rem; color:var(--text-secondary);">방향
-                                <select id="modal-camera-direction" onchange="onIllustrationCameraControlChange()">
-                                    <option value="keep">기존 방향 유지</option>
-                                    <option value="front">정면</option>
-                                    <option value="left">왼쪽에서</option>
-                                    <option value="right">오른쪽에서</option>
-                                    <option value="behind">뒤에서</option>
-                                </select>
-                            </label>
-                            <label style="display:flex; flex-direction:column; gap:4px; font-size:0.72rem; color:var(--text-secondary);">높이
-                                <select id="modal-camera-elevation" onchange="onIllustrationCameraControlChange()">
-                                    <option value="keep">기존 높이 유지</option>
-                                    <option value="overhead">수직 탑뷰</option>
-                                    <option value="high">하이 앵글</option>
-                                    <option value="eye">눈높이</option>
-                                    <option value="low">로우 앵글</option>
-                                    <option value="ground">바닥 시점</option>
-                                </select>
-                            </label>
-                            <label style="display:flex; flex-direction:column; gap:4px; font-size:0.72rem; color:var(--text-secondary);">거리
-                                <select id="modal-camera-distance" onchange="onIllustrationCameraControlChange()">
-                                    <option value="keep">기존 거리 유지</option>
-                                    <option value="extreme_close">극근접</option>
-                                    <option value="close">근접</option>
-                                    <option value="medium">중경</option>
-                                    <option value="full">전신</option>
-                                    <option value="wide">원경</option>
-                                </select>
-                            </label>
-                            <label style="display:flex; flex-direction:column; gap:4px; font-size:0.72rem; color:var(--text-secondary);">기울기
-                                <select id="modal-camera-roll" onchange="onIllustrationCameraControlChange()">
-                                    <option value="keep">기존 기울기 유지</option>
-                                    <option value="level">수평</option>
-                                    <option value="dutch">더치 앵글</option>
-                                </select>
-                            </label>
-                        </div>
-                        <label style="display:grid; grid-template-columns:auto minmax(120px,1fr) 42px; align-items:center; gap:8px; font-size:0.72rem; color:var(--text-secondary);">
-                            태그 강도
-                            <input id="modal-camera-weight" type="range" min="1" max="5" step="0.1" value="3" oninput="onIllustrationCameraControlChange()">
-                            <output id="modal-camera-weight-value" for="modal-camera-weight" style="text-align:right; color:var(--text);">3.0</output>
-                        </label>
-                        <div id="modal-camera-selection" style="padding:7px 9px; border:1px solid var(--border); border-radius:6px; background:var(--surface2); color:var(--text-secondary); font-size:0.72rem; line-height:1.4;">변경할 구도 차원을 선택하세요.</div>
-                        <div id="modal-camera-prompt-preview" style="display:none; padding:7px 9px; border:1px dashed var(--border); border-radius:6px; color:var(--text); font-family:ui-monospace,Menlo,monospace; font-size:0.69rem; line-height:1.45; overflow-wrap:anywhere;"></div>
-                        <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-                            <button type="button" id="modal-camera-apply-btn" onclick="applyIllustrationCameraAdjustment()" style="padding:7px 11px; border:1px solid var(--accent); border-radius:6px; background:var(--surface2); color:var(--accent); font-weight:700; cursor:pointer;">LLM으로 구도 반영</button>
-                            <span id="modal-camera-status" style="font-size:0.7rem; color:var(--text-secondary);"></span>
-                        </div>
-                    </div>
-                </details>
                 <div id="modal-llm-plan" style="display:none; margin-bottom:8px; padding:8px 10px; border:1px solid var(--accent); border-radius:6px; background:var(--surface1); position:relative;">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
                         <span style="font-weight:700; font-size:0.8rem; color:var(--accent);">편하게 수정 결과</span>
@@ -19229,12 +19186,65 @@
                 <button id="modal-llm-edit-btn" onclick="openLlmEditModal()" style="padding:8px 14px; border:1px solid var(--accent); border-radius:6px; background:var(--surface2); color:var(--accent); font-weight:600; cursor:pointer;">
                     <span id="modal-llm-edit-text">✨ 편하게 수정</span>
                 </button>
+                <button id="modal-camera-open-btn" onclick="openIllustrationCameraModal()" style="padding:8px 14px; border:1px solid #e58b4b; border-radius:6px; background:var(--surface2); color:#e58b4b; font-weight:700; cursor:pointer;">
+                    🧭 구도 조정
+                </button>
                 <button id="modal-llm-template-btn" onclick="openLlmEditTemplateOverlay()" title="LLM에 보낼 보조 프롬프트 편집" style="padding:8px 12px; border:1px solid var(--border); border-radius:6px; background:var(--surface2); color:var(--text); font-weight:600; cursor:pointer;">
                     🛠 보조 프롬프트
                 </button>
                 <button class="confirm" id="modal-submit-btn" onclick="submitModifiedPrompt()">
                     <span id="modal-submit-text">프롬프트 수정 후 재생성</span>
                 </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 삽화 백업 Anima 카메라 구도 조정 모달 -->
+    <div class="modal" id="illustration-camera-modal" style="z-index:10001;" onclick="if (event.target === this) closeIllustrationCameraModal()">
+        <div class="modal-content" style="width:min(900px,94vw); max-width:900px; max-height:92vh; display:flex; flex-direction:column;">
+            <div class="modal-header">
+                <div>
+                    <h2 style="margin:0;">🧭 Anima 구도 조정</h2>
+                    <div style="margin-top:3px; color:var(--text-secondary); font-size:0.72rem;">카메라를 직접 움직인 뒤 LLM이 기존 구도를 정리합니다.</div>
+                </div>
+                <button class="modal-close" onclick="closeIllustrationCameraModal()">&times;</button>
+            </div>
+            <div class="modal-body" style="overflow-y:auto; display:flex; flex-direction:column; gap:10px;">
+                <div style="display:flex; gap:6px; flex-wrap:wrap;">
+                    <button type="button" onclick="setIllustrationCameraPreset(0,0,0,0)">초기화</button>
+                    <button type="button" onclick="setIllustrationCameraPreset(0,0,0,0)">정면</button>
+                    <button type="button" onclick="setIllustrationCameraPreset(-0.5,0,0,0)">왼쪽</button>
+                    <button type="button" onclick="setIllustrationCameraPreset(0.5,0,0,0)">오른쪽</button>
+                    <button type="button" onclick="setIllustrationCameraPreset(1,0,0,0)">후면</button>
+                    <button type="button" onclick="randomizeIllustrationCamera()">랜덤</button>
+                </div>
+                <div style="display:grid; grid-template-columns:minmax(0,1fr) minmax(150px,190px); gap:10px; align-items:stretch;">
+                    <div style="position:relative; min-width:0;">
+                        <canvas id="illustration-camera-canvas" width="640" height="390" style="display:block; width:100%; height:auto; aspect-ratio:64/39; background:#151a20; border:1px solid var(--border); border-radius:9px; cursor:crosshair; touch-action:none; user-select:none;"></canvas>
+                        <div style="position:absolute; inset:8px 10px auto; display:flex; justify-content:space-between; gap:12px; color:#abb5c0; font-size:0.68rem; pointer-events:none; white-space:pre-line;">
+                            <span>드래그: 궤도 공전·고도<br>휠: 궤도 반지름 · Shift+휠: 롤</span>
+                            <span id="illustration-camera-canvas-status" style="color:#ffad72; text-align:right; font-family:ui-monospace,Menlo,monospace;"></span>
+                        </div>
+                    </div>
+                    <div style="display:flex; flex-direction:column; gap:7px; min-width:0;">
+                        <img id="illustration-camera-source-image" src="" alt="구도를 수정할 삽화" style="width:100%; min-height:0; flex:1; object-fit:contain; border:1px solid var(--border); border-radius:8px; background:var(--surface2);">
+                        <div id="illustration-camera-backup-name" style="color:var(--text-secondary); font-size:0.68rem; word-break:break-all;"></div>
+                    </div>
+                </div>
+                <div style="display:grid; grid-template-columns:72px minmax(120px,1fr) 54px; gap:7px; align-items:center; font-size:0.72rem;">
+                    <label for="illustration-camera-pos-x">좌우 X</label><input id="illustration-camera-pos-x" type="range" min="-1" max="1" step="0.01" oninput="onIllustrationCameraAxisInput('pos_x',this.value)"><output id="illustration-camera-pos-x-value">0.00</output>
+                    <label for="illustration-camera-pos-y">상하 Y</label><input id="illustration-camera-pos-y" type="range" min="-1" max="1" step="0.01" oninput="onIllustrationCameraAxisInput('pos_y',this.value)"><output id="illustration-camera-pos-y-value">0.00</output>
+                    <label for="illustration-camera-pos-z">거리 Z</label><input id="illustration-camera-pos-z" type="range" min="-1" max="1" step="0.01" oninput="onIllustrationCameraAxisInput('pos_z',this.value)"><output id="illustration-camera-pos-z-value">0.00</output>
+                    <label for="illustration-camera-roll">롤 R</label><input id="illustration-camera-roll" type="range" min="-1" max="1" step="0.01" oninput="onIllustrationCameraAxisInput('roll',this.value)"><output id="illustration-camera-roll-value">0.00</output>
+                    <label for="illustration-camera-weight">강도</label><input id="illustration-camera-weight" type="range" min="1" max="5" step="0.1" oninput="onIllustrationCameraAxisInput('weight',this.value)"><output id="illustration-camera-weight-value">3.0</output>
+                </div>
+                <div id="illustration-camera-selection" style="padding:8px 10px; border:1px solid var(--border); border-radius:7px; background:var(--surface2); color:var(--text-secondary); font-size:0.74rem;"></div>
+                <div id="illustration-camera-prompt-preview" style="display:none; padding:8px 10px; border:1px dashed var(--border); border-radius:7px; color:var(--text); font-family:ui-monospace,Menlo,monospace; font-size:0.7rem; line-height:1.45; overflow-wrap:anywhere;"></div>
+                <div id="illustration-camera-status" style="min-height:1.2em; color:var(--text-secondary); font-size:0.72rem;"></div>
+            </div>
+            <div class="modal-footer">
+                <button class="cancel" onclick="closeIllustrationCameraModal()">취소</button>
+                <button class="confirm" id="illustration-camera-apply-btn" onclick="applyIllustrationCameraAdjustment()">LLM으로 구도 반영</button>
             </div>
         </div>
     </div>
@@ -33391,170 +33401,587 @@
         let currentModalCameraDirty = false;
         let currentModalCameraPrompt = '';
 
-        const ILLUSTRATION_CAMERA_LABELS = {
-            direction: {
-                keep: '기존 방향 유지', front: '정면', left: '왼쪽에서',
-                right: '오른쪽에서', behind: '뒤에서',
-            },
-            elevation: {
-                keep: '기존 높이 유지', overhead: '수직 탑뷰', high: '하이 앵글',
-                eye: '눈높이', low: '로우 앵글', ground: '바닥 시점',
-            },
-            distance: {
-                keep: '기존 거리 유지', extreme_close: '극근접', close: '근접',
-                medium: '중경', full: '전신', wide: '원경',
-            },
-            roll: {
-                keep: '기존 기울기 유지', level: '수평', dutch: '더치 앵글',
-            },
-        };
+        let illustrationCameraDraft = null;
+        let illustrationCameraDraftDirty = false;
+        let illustrationCameraCanvasBound = false;
+        let illustrationCameraDrag = null;
+
+        function clampIllustrationCamera(value, min = -1, max = 1) {
+            return Math.max(min, Math.min(max, Number(value) || 0));
+        }
 
         function normalizeIllustrationCameraControlForUi(raw) {
             const source = raw && typeof raw === 'object' ? raw : {};
-            const normalized = { version: 1 };
-            for (const dimension of ['direction', 'elevation', 'distance', 'roll']) {
-                const choices = ILLUSTRATION_CAMERA_LABELS[dimension];
-                const value = String(source[dimension] || 'keep');
-                normalized[dimension] = Object.prototype.hasOwnProperty.call(choices, value)
-                    ? value : 'keep';
+            let axes = source;
+            if (!['pos_x', 'pos_y', 'pos_z', 'roll'].every(key => key in source)) {
+                const direction = { keep: 0, front: 0, left: -0.5, right: 0.5, behind: 1 };
+                const elevation = { keep: 0, overhead: 0.9, high: 0.5, eye: 0, low: -0.5, ground: -0.9 };
+                const distance = { keep: 0, extreme_close: 0.85, close: 0.45, medium: 0, full: -0.45, wide: -0.85 };
+                const roll = { keep: 0, level: 0, dutch: 0.6 };
+                axes = {
+                    pos_x: direction[String(source.direction || 'keep')] ?? 0,
+                    pos_y: elevation[String(source.elevation || 'keep')] ?? 0,
+                    pos_z: distance[String(source.distance || 'keep')] ?? 0,
+                    roll: roll[String(source.roll || 'keep')] ?? 0,
+                    weight: source.weight,
+                };
             }
-            const parsedWeight = Number(source.weight);
-            normalized.weight = Number.isFinite(parsedWeight)
-                ? Math.max(1, Math.min(5, Math.round(parsedWeight * 10) / 10))
-                : 3;
-            return normalized;
+            const parsedWeight = Number(axes.weight);
+            return {
+                version: 3,
+                pos_x: Math.round(clampIllustrationCamera(axes.pos_x) * 10000) / 10000,
+                pos_y: Math.round(clampIllustrationCamera(axes.pos_y) * 10000) / 10000,
+                pos_z: Math.round(clampIllustrationCamera(axes.pos_z) * 10000) / 10000,
+                roll: Math.round(clampIllustrationCamera(axes.roll) * 10000) / 10000,
+                weight: Number.isFinite(parsedWeight)
+                    ? Math.max(1, Math.min(5, Math.round(parsedWeight * 10) / 10)) : 3,
+            };
         }
 
-        function readIllustrationCameraControl() {
+        function defaultIllustrationCameraControl() {
             return normalizeIllustrationCameraControlForUi({
-                direction: document.getElementById('modal-camera-direction')?.value,
-                elevation: document.getElementById('modal-camera-elevation')?.value,
-                distance: document.getElementById('modal-camera-distance')?.value,
-                roll: document.getElementById('modal-camera-roll')?.value,
-                weight: document.getElementById('modal-camera-weight')?.value,
+                pos_x: 0, pos_y: 0, pos_z: 0, roll: 0, weight: 3,
             });
         }
 
-        function illustrationCameraHasAdjustment(control) {
-            return ['direction', 'elevation', 'distance', 'roll']
-                .some(dimension => control?.[dimension] && control[dimension] !== 'keep');
-        }
-
-        function illustrationCameraControlsEqual(left, right) {
-            if (!left || !right) return left === right;
-            return ['direction', 'elevation', 'distance', 'roll', 'weight']
-                .every(key => left[key] === right[key]);
-        }
-
         function illustrationCameraSummary(control) {
-            if (!control) return '';
+            const value = normalizeIllustrationCameraControlForUi(control);
+            const degrees = Math.round(Math.abs(value.pos_x) * 180);
+            const direction = Math.abs(value.pos_x) >= 0.95
+                ? '후면'
+                : (value.pos_x > 0.05 ? `오른쪽 ${degrees}°`
+                    : (value.pos_x < -0.05 ? `왼쪽 ${degrees}°` : '정면'));
+            const elevation = value.pos_y > 0.7 ? '수직 탑뷰'
+                : (value.pos_y > 0.2 ? '하이 앵글'
+                    : (value.pos_y >= -0.2 ? '눈높이'
+                        : (value.pos_y >= -0.7 ? '로우 앵글' : '바닥 시점')));
+            const distance = value.pos_z > 0.7 ? '극근접'
+                : (value.pos_z > 0.2 ? '근접'
+                    : (value.pos_z >= -0.2 ? '중경'
+                        : (value.pos_z >= -0.7 ? '전신' : '원경')));
+            return `${direction} · ${elevation} · ${distance} · 롤 ${Math.round(value.roll * 45)}°`;
+        }
+
+        function compileIllustrationCameraPreview(control) {
+            const value = normalizeIllustrationCameraControlForUi(control);
             const parts = [];
-            for (const dimension of ['direction', 'elevation', 'distance', 'roll']) {
-                const value = control[dimension] || 'keep';
-                if (value !== 'keep') parts.push(ILLUSTRATION_CAMERA_LABELS[dimension][value] || value);
+            const seen = new Set();
+            const weighted = (tag, weight) => {
+                if (!tag || seen.has(tag)) return;
+                seen.add(tag);
+                parts.push(`(${tag}:${Math.max(0.1, Math.min(10, weight)).toFixed(2)})`);
+            };
+            const distributeAxisBudget = (tags, budget) => {
+                if (!tags.length || budget <= 0) return;
+                const ranks = tags.map((_tag, index) => 1 / (index + 1));
+                const rankTotal = ranks.reduce((sum, rank) => sum + rank, 0);
+                tags.forEach((tag, index) => {
+                    const amount = budget * ranks[index] / rankTotal;
+                    if (amount >= 0.1) weighted(tag, amount);
+                });
+            };
+            const axisBudget = 1 + (value.weight - 1) * 0.5;
+            const angle = value.pos_x * Math.PI;
+            const directions = [
+                ['from front', Math.max(0, Math.cos(angle))],
+                ['from behind', Math.max(0, -Math.cos(angle))],
+                ['from right', Math.max(0, Math.sin(angle))],
+                ['from left', Math.max(0, -Math.sin(angle))],
+            ];
+            const total = directions.reduce((sum, item) => sum + item[1], 0);
+            const poleGate = clampIllustrationCamera((1 - Math.abs(value.pos_y)) / 0.1, 0, 1);
+            for (const [tag, rawRatio] of directions) {
+                const amount = total > 0 ? rawRatio / total * axisBudget * poleGate : 0;
+                if (amount >= 0.2) weighted(tag, amount);
             }
-            return parts.join(' · ');
+            const elevationBudget = Math.abs(value.pos_y) * axisBudget;
+            let elevationTags = [];
+            if (value.pos_y > 0.7) elevationTags = ['directly above', 'from above', 'aerial view'];
+            else if (value.pos_y > 0.2) elevationTags = ['high angle', 'from above'];
+            else if (value.pos_y < -0.7) elevationTags = ['directly below'];
+            else if (value.pos_y < -0.2) elevationTags = ['low angle', 'from below'];
+            else if (Math.abs(value.pos_y) >= 0.05) elevationTags = ['eye-level'];
+            if (elevationBudget >= 0.2) {
+                distributeAxisBudget(elevationTags, elevationBudget);
+            }
+            const distanceTag = value.pos_z > 0.7 ? 'extreme close-up'
+                : (value.pos_z > 0.2 ? 'close-up'
+                    : (value.pos_z >= -0.2 ? 'medium shot'
+                        : (value.pos_z >= -0.7 ? 'full body' : 'wide shot')));
+            weighted(distanceTag, 1);
+            if (Math.abs(value.roll) >= 0.15) {
+                weighted('dutch angle', 1);
+            }
+            return parts.join(', ');
         }
 
-        function setIllustrationCameraForm(control) {
-            const normalized = normalizeIllustrationCameraControlForUi(control);
-            for (const dimension of ['direction', 'elevation', 'distance', 'roll']) {
-                const el = document.getElementById(`modal-camera-${dimension}`);
-                if (el) el.value = normalized[dimension];
+        function updateIllustrationCameraOpenButton() {
+            const button = document.getElementById('modal-camera-open-btn');
+            if (!button) {
+                console.error('[ILLUST_CAMERA] 구도 조정 버튼을 찾지 못했습니다.');
+                return;
             }
-            const weight = document.getElementById('modal-camera-weight');
-            if (weight) weight.value = String(normalized.weight);
-            const weightValue = document.getElementById('modal-camera-weight-value');
-            if (weightValue) weightValue.textContent = normalized.weight.toFixed(1);
-        }
-
-        function renderIllustrationCameraState(statusOverride = '') {
-            const control = readIllustrationCameraControl();
-            const selection = document.getElementById('modal-camera-selection');
-            const status = document.getElementById('modal-camera-status');
-            const preview = document.getElementById('modal-camera-prompt-preview');
-            const summary = illustrationCameraSummary(control);
-            if (selection) {
-                selection.textContent = summary
-                    ? `${summary} · 강도 ${control.weight.toFixed(1)}`
-                    : '변경할 구도 차원을 선택하세요.';
-            }
-            if (preview) {
-                preview.style.display = currentModalCameraPrompt ? 'block' : 'none';
-                preview.textContent = currentModalCameraPrompt
-                    ? `현재 확정 태그: ${currentModalCameraPrompt}` : '';
-            }
-            if (status) {
-                if (statusOverride) status.textContent = statusOverride;
-                else if (currentModalCameraDirty) status.textContent = '선택 또는 프롬프트 변경됨 · LLM 반영 필요';
-                else if (currentModalCameraAppliedControl) status.textContent = '이 백업에 반영된 구도 설정';
-                else status.textContent = '아직 프로그램 구도 조정을 적용하지 않았습니다.';
-            }
-        }
-
-        function onIllustrationCameraControlChange() {
-            if (!currentModalCameraSupported) return;
-            const control = readIllustrationCameraControl();
-            const weightValue = document.getElementById('modal-camera-weight-value');
-            if (weightValue) weightValue.textContent = control.weight.toFixed(1);
-            currentModalCameraDirty = illustrationCameraHasAdjustment(control)
-                && !illustrationCameraControlsEqual(control, currentModalCameraAppliedControl);
-            renderIllustrationCameraState();
+            button.disabled = !currentModalCameraSupported;
+            button.style.opacity = currentModalCameraSupported ? '1' : '0.45';
+            button.style.cursor = currentModalCameraSupported ? 'pointer' : 'not-allowed';
+            button.textContent = currentModalCameraDirty
+                ? '🧭 구도 조정 · 재반영 필요'
+                : (currentModalCameraAppliedControl ? '🧭 구도 조정 · 적용됨' : '🧭 구도 조정');
+            button.title = currentModalCameraSupported
+                ? (currentModalCameraDirty
+                    ? '프롬프트 변경 후 구도 정리가 필요합니다.'
+                    : '카메라를 움직여 Anima 구도를 조정합니다.')
+                : 'V3 Comfy/Modal Anima 백업에서만 사용할 수 있습니다.';
         }
 
         function onIllustrationPromptManualEdit() {
             if (!currentModalCameraSupported || !currentModalCameraAppliedControl) return;
             currentModalCameraDirty = true;
-            renderIllustrationCameraState('프롬프트가 변경됨 · 충돌 방지를 위해 LLM 구도 반영을 다시 실행하세요.');
+            updateIllustrationCameraOpenButton();
         }
 
         function initializeIllustrationCameraPanel(promptData, format, promptProvider) {
-            const panel = document.getElementById('modal-camera-panel');
             currentModalCameraSupported = format === 'v3' && promptProvider === 'comfy';
             currentModalCameraDirty = false;
             currentModalCameraAppliedControl = null;
             currentModalCameraPrompt = '';
-            if (!panel) {
-                console.error('[ILLUST_CAMERA] 구도 조정 패널을 찾지 못했습니다.');
-                return;
-            }
-            panel.style.display = currentModalCameraSupported ? 'block' : 'none';
-            panel.open = false;
-            if (!currentModalCameraSupported) {
-                setIllustrationCameraForm(null);
-                return;
-            }
+            illustrationCameraDraft = null;
             const generationParams = promptData?.conversion_info?.generation_params;
             const storedControl = generationParams?.illustration_camera_control;
-            if (storedControl && typeof storedControl === 'object') {
-                const normalized = normalizeIllustrationCameraControlForUi(storedControl);
-                if (illustrationCameraHasAdjustment(normalized)) {
-                    currentModalCameraAppliedControl = normalized;
-                    currentModalCameraPrompt = String(
-                        generationParams?.illustration_camera_prompt || ''
-                    ).trim();
-                }
+            if (currentModalCameraSupported && storedControl && typeof storedControl === 'object') {
+                currentModalCameraAppliedControl = normalizeIllustrationCameraControlForUi(storedControl);
+                currentModalCameraPrompt = String(
+                    generationParams?.illustration_camera_prompt || ''
+                ).trim();
             }
-            setIllustrationCameraForm(currentModalCameraAppliedControl);
-            renderIllustrationCameraState();
+            updateIllustrationCameraOpenButton();
+        }
+
+        function setIllustrationCameraDraft(control) {
+            illustrationCameraDraft = normalizeIllustrationCameraControlForUi(control);
+            for (const key of ['pos_x', 'pos_y', 'pos_z', 'roll', 'weight']) {
+                const input = document.getElementById(`illustration-camera-${key.replace('_', '-')}`);
+                const output = document.getElementById(`illustration-camera-${key.replace('_', '-')}-value`);
+                if (input) input.value = String(illustrationCameraDraft[key]);
+                if (output) output.textContent = key === 'weight'
+                    ? illustrationCameraDraft[key].toFixed(1)
+                    : illustrationCameraDraft[key].toFixed(2);
+            }
+            drawIllustrationCamera();
+            renderIllustrationCameraDraft();
+        }
+
+        function renderIllustrationCameraDraft(statusOverride = '') {
+            if (!illustrationCameraDraft) return;
+            const selection = document.getElementById('illustration-camera-selection');
+            const preview = document.getElementById('illustration-camera-prompt-preview');
+            const status = document.getElementById('illustration-camera-status');
+            const prompt = compileIllustrationCameraPreview(illustrationCameraDraft);
+            if (selection) {
+                selection.textContent = `${illustrationCameraSummary(illustrationCameraDraft)} · 강도 ${illustrationCameraDraft.weight.toFixed(1)}`;
+            }
+            if (preview) {
+                preview.style.display = prompt ? 'block' : 'none';
+                preview.textContent = prompt ? `예상 Anima 태그: ${prompt}` : '';
+            }
+            if (status) {
+                status.textContent = statusOverride || (
+                    illustrationCameraDraftDirty
+                        ? '카메라 위치 변경됨 · 적용하면 LLM이 기존 구도를 다시 정리합니다.'
+                        : (currentModalCameraAppliedControl
+                            ? '이 백업에 저장된 카메라 위치를 불러왔습니다.'
+                            : '카메라를 드래그하거나 휠로 움직이세요.')
+                );
+            }
+        }
+
+        function openIllustrationCameraModal() {
+            if (!currentModalBackupName || !currentModalCameraSupported) {
+                showToast('구도 조정은 V3 Comfy/Modal Anima 백업에서만 사용할 수 있습니다.', 'warning');
+                return;
+            }
+            illustrationCameraDraftDirty = false;
+            setIllustrationCameraDraft(
+                currentModalCameraAppliedControl || defaultIllustrationCameraControl()
+            );
+            const sourceImage = document.getElementById('illustration-camera-source-image');
+            if (sourceImage) sourceImage.src = document.getElementById('modal-preview-img').src || '';
+            const backupName = document.getElementById('illustration-camera-backup-name');
+            if (backupName) backupName.textContent = currentModalBackupName;
+            bindIllustrationCameraCanvas();
+            document.getElementById('illustration-camera-modal').classList.add('visible');
+            requestAnimationFrame(drawIllustrationCamera);
+        }
+
+        function closeIllustrationCameraModal(force = false) {
+            if (llmEditInFlight && !force) return;
+            const modal = document.getElementById('illustration-camera-modal');
+            if (modal) modal.classList.remove('visible');
+            illustrationCameraDrag = null;
+        }
+
+        function onIllustrationCameraAxisInput(key, rawValue) {
+            if (!illustrationCameraDraft) illustrationCameraDraft = defaultIllustrationCameraControl();
+            const max = key === 'weight' ? 5 : 1;
+            const min = key === 'weight' ? 1 : -1;
+            const digits = key === 'weight' ? 1 : 4;
+            illustrationCameraDraft[key] = Number(clampIllustrationCamera(rawValue, min, max).toFixed(digits));
+            illustrationCameraDraftDirty = true;
+            setIllustrationCameraDraft(illustrationCameraDraft);
+        }
+
+        function setIllustrationCameraPreset(posX, posY, posZ, roll) {
+            const weight = illustrationCameraDraft?.weight || 3;
+            illustrationCameraDraftDirty = true;
+            setIllustrationCameraDraft({ pos_x: posX, pos_y: posY, pos_z: posZ, roll, weight });
+        }
+
+        function randomizeIllustrationCamera() {
+            const weight = illustrationCameraDraft?.weight || 3;
+            illustrationCameraDraftDirty = true;
+            setIllustrationCameraDraft({
+                pos_x: Math.round((Math.random() * 2 - 1) * 100) / 100,
+                pos_y: Math.round((Math.random() * 2 - 1) * 100) / 100,
+                pos_z: Math.round((Math.random() * 2 - 1) * 100) / 100,
+                roll: Math.round((Math.random() * 1.2 - 0.6) * 100) / 100,
+                weight,
+            });
+        }
+
+        function bindIllustrationCameraCanvas() {
+            if (illustrationCameraCanvasBound) return;
+            const canvas = document.getElementById('illustration-camera-canvas');
+            if (!canvas) {
+                console.error('[ILLUST_CAMERA] 카메라 캔버스를 찾지 못했습니다.');
+                return;
+            }
+            illustrationCameraCanvasBound = true;
+            const point = event => {
+                const rect = canvas.getBoundingClientRect();
+                return {
+                    x: (event.clientX - rect.left) * canvas.width / rect.width,
+                    y: (event.clientY - rect.top) * canvas.height / rect.height,
+                };
+            };
+            canvas.addEventListener('pointerdown', event => {
+                if (!illustrationCameraDraft) return;
+                const start = point(event);
+                illustrationCameraDrag = {
+                    pointerId: event.pointerId,
+                    x: start.x,
+                    y: start.y,
+                    posX: illustrationCameraDraft.pos_x,
+                    posY: illustrationCameraDraft.pos_y,
+                };
+                canvas.setPointerCapture(event.pointerId);
+                canvas.style.cursor = 'grabbing';
+                event.preventDefault();
+            });
+            canvas.addEventListener('pointermove', event => {
+                if (!illustrationCameraDrag || illustrationCameraDrag.pointerId !== event.pointerId) return;
+                const current = point(event);
+                let posX = illustrationCameraDrag.posX
+                    + (current.x - illustrationCameraDrag.x) / (canvas.width / 2);
+                while (posX > 1) posX -= 2;
+                while (posX < -1) posX += 2;
+                illustrationCameraDraft.pos_x = Number(posX.toFixed(4));
+                illustrationCameraDraft.pos_y = Number(clampIllustrationCamera(
+                    illustrationCameraDrag.posY - (current.y - illustrationCameraDrag.y) / (canvas.height / 2)
+                ).toFixed(4));
+                illustrationCameraDraftDirty = true;
+                setIllustrationCameraDraft(illustrationCameraDraft);
+                event.preventDefault();
+            });
+            const stop = event => {
+                if (!illustrationCameraDrag || illustrationCameraDrag.pointerId !== event.pointerId) return;
+                illustrationCameraDrag = null;
+                canvas.style.cursor = 'crosshair';
+            };
+            canvas.addEventListener('pointerup', stop);
+            canvas.addEventListener('pointercancel', stop);
+            canvas.addEventListener('contextmenu', event => event.preventDefault());
+            canvas.addEventListener('wheel', event => {
+                if (!illustrationCameraDraft) return;
+                const amount = event.deltaY * 0.001;
+                if (event.shiftKey) {
+                    illustrationCameraDraft.roll = Number(clampIllustrationCamera(
+                        illustrationCameraDraft.roll - amount
+                    ).toFixed(4));
+                } else {
+                    illustrationCameraDraft.pos_z = Number(clampIllustrationCamera(
+                        illustrationCameraDraft.pos_z - amount
+                    ).toFixed(4));
+                }
+                illustrationCameraDraftDirty = true;
+                setIllustrationCameraDraft(illustrationCameraDraft);
+                event.preventDefault();
+            }, { passive: false });
+            canvas.addEventListener('dblclick', event => {
+                if (!illustrationCameraDraft) return;
+                illustrationCameraDraft.pos_x = 0;
+                illustrationCameraDraft.pos_y = 0;
+                illustrationCameraDraftDirty = true;
+                setIllustrationCameraDraft(illustrationCameraDraft);
+                event.preventDefault();
+            });
+        }
+
+        function drawIllustrationCamera() {
+            const canvas = document.getElementById('illustration-camera-canvas');
+            if (!canvas || !illustrationCameraDraft) return;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) {
+                console.error('[ILLUST_CAMERA] 카메라 캔버스 2D 컨텍스트를 만들지 못했습니다.');
+                return;
+            }
+            const width = canvas.width;
+            const height = canvas.height;
+            const centerX = width / 2;
+            const centerY = height / 2 + 5;
+            const gradient = ctx.createLinearGradient(0, 0, 0, height);
+            gradient.addColorStop(0, '#101820');
+            gradient.addColorStop(0.58, '#18232d');
+            gradient.addColorStop(1, '#27333e');
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, width, height);
+
+            // 같은 좌표로 다시 그릴 때 별이 흔들리지 않도록 고정된 심도를 사용한다.
+            for (let index = 0; index < 46; index++) {
+                const x = (index * 97 + 31) % width;
+                const y = (index * 53 + 19) % height;
+                const alpha = 0.10 + (index % 5) * 0.035;
+                ctx.fillStyle = `rgba(187,224,238,${alpha.toFixed(3)})`;
+                ctx.fillRect(x, y, index % 7 === 0 ? 2 : 1, index % 7 === 0 ? 2 : 1);
+            }
+
+            const radius = 1.72 - illustrationCameraDraft.pos_z * 0.68;
+            const angle = illustrationCameraDraft.pos_x * Math.PI;
+            const elevation = illustrationCameraDraft.pos_y * Math.PI / 2;
+            const viewYaw = -0.56;
+            const viewPitch = 0.47;
+            const scale = 68;
+            const projectOrbitPoint = (x, y, z) => {
+                const yawCos = Math.cos(viewYaw);
+                const yawSin = Math.sin(viewYaw);
+                const horizontal = x * yawCos + z * yawSin;
+                const yawDepth = -x * yawSin + z * yawCos;
+                const pitchCos = Math.cos(viewPitch);
+                const pitchSin = Math.sin(viewPitch);
+                const vertical = y * pitchCos - yawDepth * pitchSin;
+                const depth = y * pitchSin + yawDepth * pitchCos;
+                return {
+                    x: centerX + horizontal * scale,
+                    y: centerY - vertical * scale,
+                    depth,
+                };
+            };
+            const orbitPoints = (steps, pointAt) => Array.from(
+                { length: steps + 1 },
+                (_unused, index) => pointAt(index / steps)
+            );
+            const strokeProjectedOrbit = (points, backColor, frontColor, lineWidth, dash = []) => {
+                ctx.lineWidth = lineWidth;
+                ctx.setLineDash(dash);
+                for (let index = 1; index < points.length; index++) {
+                    const start = points[index - 1];
+                    const end = points[index];
+                    ctx.strokeStyle = (start.depth + end.depth) / 2 >= 0
+                        ? frontColor : backColor;
+                    ctx.beginPath();
+                    ctx.moveTo(start.x, start.y);
+                    ctx.lineTo(end.x, end.y);
+                    ctx.stroke();
+                }
+                ctx.setLineDash([]);
+            };
+
+            const equatorOrbit = orbitPoints(120, ratio => {
+                const orbitAngle = ratio * Math.PI * 2;
+                return projectOrbitPoint(
+                    radius * Math.sin(orbitAngle),
+                    0,
+                    radius * Math.cos(orbitAngle)
+                );
+            });
+            strokeProjectedOrbit(
+                equatorOrbit,
+                'rgba(80,187,209,.10)',
+                'rgba(100,211,229,.34)',
+                1.25,
+                [4, 7]
+            );
+
+            const meridianOrbit = orbitPoints(120, ratio => {
+                const orbitAngle = ratio * Math.PI * 2 - Math.PI;
+                const horizontal = radius * Math.cos(orbitAngle);
+                return projectOrbitPoint(
+                    horizontal * Math.sin(angle),
+                    radius * Math.sin(orbitAngle),
+                    horizontal * Math.cos(angle)
+                );
+            });
+            strokeProjectedOrbit(
+                meridianOrbit,
+                'rgba(91,181,210,.15)',
+                'rgba(118,216,236,.52)',
+                1.75,
+                [3, 7]
+            );
+
+            const latitudeRadius = radius * Math.cos(elevation);
+            const latitudeHeight = radius * Math.sin(elevation);
+            const activeOrbit = orbitPoints(144, ratio => {
+                const orbitAngle = ratio * Math.PI * 2;
+                return projectOrbitPoint(
+                    latitudeRadius * Math.sin(orbitAngle),
+                    latitudeHeight,
+                    latitudeRadius * Math.cos(orbitAngle)
+                );
+            });
+            strokeProjectedOrbit(
+                activeOrbit,
+                'rgba(255,140,73,.18)',
+                'rgba(255,166,89,.78)',
+                2.35
+            );
+
+            // 정면 기준점부터 현재 카메라까지 진행한 공전 구간을 밝게 표시한다.
+            if (Math.abs(angle) > 0.008) {
+                const activeTrail = orbitPoints(48, ratio => {
+                    const orbitAngle = angle * ratio;
+                    return projectOrbitPoint(
+                        latitudeRadius * Math.sin(orbitAngle),
+                        latitudeHeight,
+                        latitudeRadius * Math.cos(orbitAngle)
+                    );
+                });
+                strokeProjectedOrbit(
+                    activeTrail,
+                    'rgba(255,184,102,.38)',
+                    'rgba(255,205,117,.96)',
+                    3.5
+                );
+            }
+
+            const axisPoints = [
+                ['F', projectOrbitPoint(0, 0, radius)],
+                ['B', projectOrbitPoint(0, 0, -radius)],
+                ['L', projectOrbitPoint(-radius, 0, 0)],
+                ['R', projectOrbitPoint(radius, 0, 0)],
+            ];
+            ctx.font = '700 14px ui-monospace, Menlo, monospace';
+            ctx.textAlign = 'center';
+            for (const [label, point] of axisPoints) {
+                ctx.fillStyle = point.depth >= 0 ? '#7fdceb' : 'rgba(127,220,235,.42)';
+                ctx.beginPath();
+                ctx.arc(point.x, point.y, 4.5, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = point.depth >= 0 ? '#eef8ff' : 'rgba(238,248,255,.5)';
+                ctx.fillText(label, point.x, point.y - 10);
+            }
+
+            const targetPoint = projectOrbitPoint(0, 0, 0);
+            const cameraPoint = projectOrbitPoint(
+                latitudeRadius * Math.sin(angle),
+                latitudeHeight,
+                latitudeRadius * Math.cos(angle)
+            );
+            ctx.strokeStyle = 'rgba(255,216,126,.72)';
+            ctx.lineWidth = 1.5;
+            ctx.setLineDash([5, 6]);
+            ctx.beginPath();
+            ctx.moveTo(targetPoint.x, targetPoint.y);
+            ctx.lineTo(cameraPoint.x, cameraPoint.y);
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            const targetGlow = ctx.createRadialGradient(
+                targetPoint.x - 6,
+                targetPoint.y - 7,
+                2,
+                targetPoint.x,
+                targetPoint.y,
+                25
+            );
+            targetGlow.addColorStop(0, '#e5ffff');
+            targetGlow.addColorStop(0.42, '#58aeb9');
+            targetGlow.addColorStop(1, '#24535e');
+            ctx.fillStyle = targetGlow;
+            ctx.beginPath();
+            ctx.arc(targetPoint.x, targetPoint.y, 23, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = 'rgba(180,244,250,.38)';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.ellipse(targetPoint.x, targetPoint.y, 23, 8, -0.18, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.fillStyle = 'rgba(229,249,251,.72)';
+            ctx.font = '600 10px ui-monospace, Menlo, monospace';
+            ctx.fillText('SUBJECT', targetPoint.x, targetPoint.y + 40);
+
+            ctx.save();
+            ctx.translate(cameraPoint.x, cameraPoint.y);
+            ctx.rotate(
+                Math.atan2(targetPoint.y - cameraPoint.y, targetPoint.x - cameraPoint.x)
+                + illustrationCameraDraft.roll * Math.PI / 4
+            );
+            ctx.shadowColor = 'rgba(255,153,78,.72)';
+            ctx.shadowBlur = 12;
+            ctx.fillStyle = '#74cddd';
+            ctx.fillRect(-29, -5, 11, 10);
+            ctx.fillRect(18, -5, 11, 10);
+            ctx.fillStyle = '#ff9857';
+            ctx.fillRect(-17, -10, 34, 20);
+            ctx.shadowBlur = 0;
+            ctx.fillStyle = '#111820';
+            ctx.beginPath();
+            ctx.arc(8, 0, 6.5, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = '#ffd29a';
+            ctx.lineWidth = 1.5;
+            ctx.strokeRect(-17, -10, 34, 20);
+            ctx.restore();
+
+            ctx.fillStyle = '#ffb375';
+            ctx.font = '700 10px ui-monospace, Menlo, monospace';
+            ctx.fillText('ORBIT CAM', cameraPoint.x, cameraPoint.y - 18);
+
+            ctx.textAlign = 'left';
+            ctx.strokeStyle = '#ffa659';
+            ctx.lineWidth = 2.5;
+            ctx.beginPath();
+            ctx.moveTo(16, height - 18);
+            ctx.lineTo(48, height - 18);
+            ctx.stroke();
+            ctx.fillStyle = 'rgba(232,242,247,.72)';
+            ctx.font = '600 10px ui-monospace, Menlo, monospace';
+            ctx.fillText('AZIMUTH ORBIT', 56, height - 14);
+            ctx.strokeStyle = '#76d8ec';
+            ctx.beginPath();
+            ctx.moveTo(158, height - 18);
+            ctx.lineTo(190, height - 18);
+            ctx.stroke();
+            ctx.fillText('ELEVATION ORBIT', 198, height - 14);
+
+            const status = document.getElementById('illustration-camera-canvas-status');
+            if (status) status.textContent = `${illustrationCameraSummary(illustrationCameraDraft)}\nX ${illustrationCameraDraft.pos_x.toFixed(2)} · Y ${illustrationCameraDraft.pos_y.toFixed(2)} · Z ${illustrationCameraDraft.pos_z.toFixed(2)}`;
         }
 
         async function applyIllustrationCameraAdjustment() {
             if (!currentModalBackupName || !currentModalCameraSupported || llmEditInFlight) return;
-            const cameraControl = readIllustrationCameraControl();
-            if (!illustrationCameraHasAdjustment(cameraControl)) {
-                alert('방향·높이·거리·기울기 중 하나 이상을 선택해주세요.');
+            if (!illustrationCameraDraft) {
+                console.error('[ILLUST_CAMERA] 적용할 카메라 좌표가 없습니다.');
+                alert('적용할 카메라 위치가 없습니다.');
                 return;
             }
-
             const positive = document.getElementById('modal-positive').value;
             const negative = document.getElementById('modal-negative').value;
-            const button = document.getElementById('modal-camera-apply-btn');
+            const button = document.getElementById('illustration-camera-apply-btn');
             const originalText = button.textContent;
             llmEditInFlight = true;
             button.disabled = true;
             button.textContent = 'LLM 구도 정리 중...';
-            renderIllustrationCameraState('기존 구도를 의미적으로 정리하는 중...');
+            renderIllustrationCameraDraft('기존 카메라 구도를 의미적으로 정리하는 중...');
 
             try {
                 const data = await fetchJSON('/api/llm_edit_prompt', {
@@ -33564,7 +33991,7 @@
                         name: currentModalBackupName,
                         positive,
                         negative,
-                        camera_control: cameraControl,
+                        camera_control: illustrationCameraDraft,
                     }),
                 });
                 if (data.error) throw new Error(data.error);
@@ -33574,26 +34001,24 @@
                 if (!data.positive || !data.camera_control) {
                     throw new Error('서버가 구도 조정 결과를 완전하게 반환하지 않았습니다.');
                 }
-
                 document.getElementById('modal-positive').value = data.positive;
                 if (typeof data.negative === 'string') {
                     document.getElementById('modal-negative').value = data.negative;
                 }
-                currentModalCameraAppliedControl = normalizeIllustrationCameraControlForUi(
-                    data.camera_control
-                );
+                currentModalCameraAppliedControl = normalizeIllustrationCameraControlForUi(data.camera_control);
                 currentModalCameraPrompt = String(data.camera_prompt || '').trim();
                 currentModalCameraDirty = false;
-                setIllustrationCameraForm(currentModalCameraAppliedControl);
+                illustrationCameraDraftDirty = false;
                 if (data.plan) {
                     document.getElementById('modal-llm-plan-text').textContent = data.plan;
                     document.getElementById('modal-llm-plan').style.display = 'block';
                 }
-                renderIllustrationCameraState('LLM 구도 정리와 Anima 태그 반영 완료');
+                updateIllustrationCameraOpenButton();
+                closeIllustrationCameraModal(true);
                 showToast('Anima 구도 조정을 프롬프트에 반영했습니다.', 'success');
             } catch (error) {
                 console.error('[ILLUST_CAMERA] LLM 구도 조정 실패:', error);
-                renderIllustrationCameraState(`구도 조정 실패: ${error.message}`);
+                renderIllustrationCameraDraft(`구도 조정 실패: ${error.message}`);
                 alert('Anima 구도 조정 실패: ' + error.message);
             } finally {
                 llmEditInFlight = false;
@@ -33655,6 +34080,7 @@
 
         function closePromptModal() {
             document.getElementById('prompt-modal').classList.remove('visible');
+            document.getElementById('illustration-camera-modal')?.classList.remove('visible');
             // 방향 입력 모달도 함께 닫기
             closeLlmEditModal();
             currentModalBackupName = null;
@@ -33665,6 +34091,9 @@
             currentModalCameraAppliedControl = null;
             currentModalCameraDirty = false;
             currentModalCameraPrompt = '';
+            illustrationCameraDraft = null;
+            illustrationCameraDraftDirty = false;
+            illustrationCameraDrag = null;
         }
 
         function updateLlmEditCharacterSelection() {
@@ -33901,9 +34330,7 @@
                 }
                 if (currentModalCameraAppliedControl) {
                     currentModalCameraDirty = true;
-                    renderIllustrationCameraState(
-                        '편하게 수정 결과가 반영됨 · 충돌 방지를 위해 LLM 구도 반영을 다시 실행하세요.'
-                    );
+                    updateIllustrationCameraOpenButton();
                 }
                 if (data.plan) {
                     document.getElementById('modal-llm-plan-text').textContent = data.plan;
