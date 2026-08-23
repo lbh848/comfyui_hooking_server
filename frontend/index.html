@@ -14128,6 +14128,7 @@
         .pmi-item-nav { display: flex; flex-direction: column; }
         .pmi-item-nav-head { display: grid; gap: 8px; padding: 11px; border-bottom: 1px solid var(--border); }
         .pmi-filter-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; }
+        .pmi-filter-count { display: inline-grid; min-width: 18px; height: 18px; margin-left: 3px; padding: 0 4px; place-items: center; border-radius: 999px; background: color-mix(in srgb, var(--surface2) 78%, var(--bg)); color: var(--text2); font-size: .58rem; }
         .pmi-item-list { flex: 1; min-height: 0; overflow-y: auto; padding: 7px; display: grid; align-content: start; gap: 5px; }
         .pmi-item-button { width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 8px; padding: 9px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--text); cursor: pointer; text-align: left; }
         .pmi-item-button:hover { background: var(--surface2); }
@@ -14143,10 +14144,18 @@
         .pmi-editor { overflow-y: auto; padding: 13px; }
         .pmi-editor-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
         .pmi-source { max-height: 116px; overflow-y: auto; margin: 7px 0 12px; padding: 9px; border: 1px dashed var(--border); border-radius: 8px; background: color-mix(in srgb, var(--bg) 76%, transparent); color: var(--text2); font: 0.68rem/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+        .pmi-bulk-toolbar { position: sticky; top: -1px; z-index: 2; display: grid; gap: 8px; margin: 9px 0 11px; padding: 10px; border: 1px solid color-mix(in srgb, var(--accent) 38%, var(--border)); border-radius: 9px; background: color-mix(in srgb, var(--surface) 94%, var(--bg)); box-shadow: 0 5px 16px color-mix(in srgb, var(--bg) 28%, transparent); }
+        .pmi-bulk-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--text2); font-size: .66rem; }
+        .pmi-bulk-head strong { color: var(--text); font-size: .74rem; }
+        .pmi-bulk-controls { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+        .pmi-bulk-controls select { min-width: 132px; flex: 1 1 150px; }
+        .pmi-bulk-selection { min-width: 62px; color: var(--text2); font-size: .65rem; text-align: center; white-space: nowrap; }
         .pmi-fragments { display: grid; gap: 7px; }
-        .pmi-fragment { display: grid; grid-template-columns: auto minmax(180px, 1fr) minmax(145px, .38fr) auto; align-items: center; gap: 7px; padding: 8px; border: 1px solid var(--border); border-radius: 8px; background: color-mix(in srgb, var(--surface2) 54%, transparent); }
+        .pmi-fragment { display: grid; grid-template-columns: auto auto minmax(180px, 1fr) minmax(145px, .38fr) auto; align-items: center; gap: 7px; padding: 8px; border: 1px solid var(--border); border-radius: 8px; background: color-mix(in srgb, var(--surface2) 54%, transparent); }
         .pmi-fragment.excluded { opacity: .52; border-style: dashed; }
         .pmi-fragment input, .pmi-fragment select { width: 100%; min-width: 0; }
+        .pmi-fragment .pmi-fragment-check { width: auto; min-width: auto; margin: 0; accent-color: var(--accent); cursor: pointer; }
+        .pmi-fragment .pmi-fragment-check:disabled { cursor: not-allowed; }
         .pmi-fragment-copy { min-width: 0; display: grid; gap: 4px; }
         .pmi-fragment-source { color: var(--text2); font: 0.6rem/1.35 ui-monospace, SFMono-Regular, Consolas, monospace; overflow-wrap: anywhere; }
         .pmi-fragment-controls { display: flex; gap: 4px; }
@@ -14164,8 +14173,8 @@
             .pm-sidebar-label { display: none; }
             .pm-editor-grid { grid-template-columns: 1fr; }
             .pmi-step-note { display: none; }
-            .pmi-fragment { grid-template-columns: auto minmax(170px, 1fr) minmax(130px, .45fr); }
-            .pmi-fragment-controls { grid-column: 2 / -1; justify-content: flex-end; }
+            .pmi-fragment { grid-template-columns: auto auto minmax(170px, 1fr) minmax(130px, .45fr); }
+            .pmi-fragment-controls { grid-column: 3 / -1; justify-content: flex-end; }
         }
         @media (max-width: 780px) {
             .pm-container { min-height: 560px; }
@@ -19621,7 +19630,7 @@
                                             <aside class="pmi-item-nav">
                                                 <div class="pmi-item-nav-head">
                                                     <input class="pm-input" id="pmi-item-search" type="search" placeholder="항목 이름 검색" oninput="pmiRenderItemList()">
-                                                    <div class="pmi-filter-row" id="pmi-item-filters"><button class="pm-filter-btn active" data-filter="modified" onclick="pmiSetItemFilter('modified')">변경됨</button><button class="pm-filter-btn" data-filter="unassigned" onclick="pmiSetItemFilter('unassigned')">미분류</button><button class="pm-filter-btn" data-filter="all" onclick="pmiSetItemFilter('all')">전체</button></div>
+                                                    <div class="pmi-filter-row" id="pmi-item-filters"><button class="pm-filter-btn active" data-filter="modified" onclick="pmiSetItemFilter('modified')">변경됨 <span class="pmi-filter-count">0</span></button><button class="pm-filter-btn" data-filter="unassigned" onclick="pmiSetItemFilter('unassigned')">미분류 <span class="pmi-filter-count">0</span></button><button class="pm-filter-btn" data-filter="all" onclick="pmiSetItemFilter('all')">전체 <span class="pmi-filter-count">0</span></button></div>
                                                 </div>
                                                 <div class="pmi-item-list" id="pmi-item-list"></div>
                                             </aside>
@@ -94344,6 +94353,9 @@
         let pmImportValidation = null;
         let pmImportBusy = false;
         let pmImportCommitted = false;
+        let pmImportFragmentSelections = new Map();
+        let pmImportBulkCategory = '';
+        let pmImportBulkUndo = null;
 
         const PM_CATEGORIES = {
             appearances: '외모',
@@ -95512,6 +95524,9 @@
                 pmImportBaseline = pmiClone(analysis);
                 pmImportValidation = null;
                 pmImportCommitted = false;
+                pmImportFragmentSelections = new Map();
+                pmImportBulkCategory = '';
+                pmImportBulkUndo = null;
                 pmImportSelectedItemId = (analysis.items.find(item => item.selected) || analysis.items[0] || {}).id || '';
                 pmiRenderAnalysisResult();
                 pmiShowStep(2);
@@ -95726,6 +95741,7 @@
             ));
             if (hasPriorEdits && !confirm('기존 LLM 또는 수동 카테고리 선택을 새 분석 결과로 바꿀까요? 태그 원문은 바뀌지 않습니다.')) return;
 
+            pmImportBulkUndo = null;
             pmImportBusy = true;
             const button = document.getElementById('pmi-llm-btn');
             button.disabled = true;
@@ -95799,6 +95815,9 @@
                 pmiShowStep(2);
                 return;
             }
+            const firstUnassigned = pmiSelectedItems().find(item => pmiItemHasUnassigned(item));
+            pmImportItemFilter = firstUnassigned ? 'unassigned' : 'all';
+            pmImportSelectedItemId = (firstUnassigned || pmiSelectedItems()[0]).id;
             pmiShowStep(4);
         }
 
@@ -95835,7 +95854,16 @@
 
         function pmiRenderItemList() {
             if (!pmImportAnalysis) return;
-            document.querySelectorAll('#pmi-item-filters .pm-filter-btn').forEach(button => button.classList.toggle('active', button.dataset.filter === pmImportItemFilter));
+            const counts = {
+                modified: pmImportAnalysis.items.filter(item => pmiItemModified(item)).length,
+                unassigned: pmImportAnalysis.items.filter(item => pmiItemHasUnassigned(item)).length,
+                all: pmImportAnalysis.items.length,
+            };
+            document.querySelectorAll('#pmi-item-filters .pm-filter-btn').forEach(button => {
+                button.classList.toggle('active', button.dataset.filter === pmImportItemFilter);
+                const count = button.querySelector('.pmi-filter-count');
+                if (count) count.textContent = String(counts[button.dataset.filter] || 0);
+            });
             const query = (document.getElementById('pmi-item-search').value || '').trim().toLocaleLowerCase();
             const items = pmImportAnalysis.items.filter(item => {
                 if (query && !`${item.target_name} ${item.source_name}`.toLocaleLowerCase().includes(query)) return false;
@@ -95886,6 +95914,14 @@
             }
             const itemIndex = pmImportAnalysis.items.indexOf(item);
             const categoryOptions = Object.entries(PM_IMPORT_CATEGORIES).map(([key, label]) => ({ key, label }));
+            const bulkCategoryOptions = categoryOptions
+                .filter(option => option.key !== 'unassigned')
+                .map(option => `<option value="${option.key}" ${option.key === pmImportBulkCategory ? 'selected' : ''}>${option.label}</option>`)
+                .join('');
+            const selection = pmiFragmentSelection(item);
+            const activeFragments = item.fragments.filter(fragment => !fragment.excluded);
+            const selectedFragments = activeFragments.filter(fragment => selection.has(fragment.id));
+            const canUndo = !!pmImportBulkUndo && pmImportBulkUndo.item_id === item.id;
             const fragments = item.fragments.map((fragment, index) => {
                 const options = categoryOptions.map(option => `<option value="${option.key}" ${option.key === fragment.category ? 'selected' : ''}>${option.label}</option>`).join('');
                 const removeTitle = fragment.origin === 'user' ? '추가한 태그 삭제' : (fragment.excluded ? '원본 태그 복원' : '원본 태그 제외');
@@ -95896,6 +95932,7 @@
                     ? `<div class="pmi-fragment-source">NAI ${pmEscapeHtml(fragment.original_text)} → ANIMA ${pmEscapeHtml(fragment.import_text || fragment.text)} · canonical ${pmEscapeHtml(rawWeight)} → 출력 ${pmEscapeHtml(outputWeight)}${normalization.clamped ? ' · clamp' : ''}</div>`
                     : '';
                 return `<div class="pmi-fragment ${fragment.excluded ? 'excluded' : ''}">
+                    <input class="pmi-fragment-check" type="checkbox" aria-label="${pmEscapeHtml(fragment.text || `태그 ${index + 1}`)} 선택" ${selection.has(fragment.id) && !fragment.excluded ? 'checked' : ''} ${fragment.excluded ? 'disabled' : ''} onchange="pmiToggleFragmentSelection(${index}, this.checked)">
                     ${pmiFragmentBadge(fragment)}
                     <div class="pmi-fragment-copy"><input class="pm-input" type="text" value="${pmEscapeHtml(fragment.text)}" ${fragment.excluded ? 'disabled' : ''} oninput="pmiUpdateFragmentText(${index}, this.value)" title="NAI 원문: ${pmEscapeHtml(fragment.original_text || '사용자 추가')}">${sourceNote}</div>
                     <select class="pm-input" ${fragment.excluded ? 'disabled' : ''} onchange="pmiUpdateFragmentCategory(${index}, this.value)">${options}</select>
@@ -95908,11 +95945,142 @@
                 <label style="font-size:.72rem;font-weight:650;">ANIMA 변환 전체 프롬프트 · weight 최대 ±1.5 · 소수 첫째 자리 반올림</label><div class="pmi-source">${pmEscapeHtml(item.target_prompt || '(비어 있음)')}</div>
                 ${item.warnings && item.warnings.length ? `<div class="pmi-warning-box" style="margin-bottom:10px;">${item.warnings.map(warning => pmEscapeHtml(warning.message)).join('<br>')}</div>` : ''}
                 <div class="pm-section-head"><div><div class="pm-section-title">태그 조각</div><div class="pm-section-note">LLM 배지는 제안 그대로, USER 배지는 직접 변경되었음을 뜻합니다.</div></div><button class="pm-btn" onclick="pmiAddFragment()">＋ 태그 추가</button></div>
+                <div class="pmi-bulk-toolbar">
+                    <div class="pmi-bulk-head"><strong>태그 일괄 분류</strong><span>제외된 태그는 적용하지 않습니다.</span></div>
+                    <div class="pmi-bulk-controls">
+                        <button class="pm-btn pm-btn-quiet" onclick="pmiSetFragmentSelection('all')" ${activeFragments.length ? '' : 'disabled'}>전체 선택</button>
+                        <button class="pm-btn pm-btn-quiet" onclick="pmiSetFragmentSelection('unassigned')" ${activeFragments.some(fragment => fragment.category === 'unassigned') ? '' : 'disabled'}>미분류만</button>
+                        <button class="pm-btn pm-btn-quiet" onclick="pmiSetFragmentSelection('none')" ${selectedFragments.length ? '' : 'disabled'}>선택 해제</button>
+                        <span class="pmi-bulk-selection">${selectedFragments.length}/${activeFragments.length}개 선택</span>
+                        <select class="pm-input" id="pmi-bulk-category" onchange="pmiSetBulkCategory(this.value)"><option value="">카테고리 선택</option>${bulkCategoryOptions}</select>
+                        <button class="pm-btn pm-btn-primary" onclick="pmiApplyBulkCategory('selected')" ${selectedFragments.length ? '' : 'disabled'}>선택 태그에 적용</button>
+                        <button class="pm-btn" onclick="pmiApplyBulkCategory('all')" ${activeFragments.length ? '' : 'disabled'}>현재 프리셋 전체 적용</button>
+                        <button class="pm-btn pm-btn-quiet" onclick="pmiUndoBulkCategory()" ${canUndo ? '' : 'disabled'}>되돌리기${canUndo ? ` (${pmImportBulkUndo.changes.length})` : ''}</button>
+                    </div>
+                </div>
                 <div class="pmi-fragments">${fragments}</div>`;
         }
 
         function pmiCurrentItem() {
             return pmImportAnalysis && pmImportAnalysis.items.find(item => item.id === pmImportSelectedItemId);
+        }
+
+        function pmiFragmentSelection(item, create = true) {
+            if (!item) return new Set();
+            let selection = pmImportFragmentSelections.get(item.id);
+            if (!selection && create) {
+                selection = new Set();
+                pmImportFragmentSelections.set(item.id, selection);
+            }
+            if (!selection) return new Set();
+            const available = new Set(item.fragments.filter(fragment => !fragment.excluded).map(fragment => fragment.id));
+            for (const fragmentId of selection) {
+                if (!available.has(fragmentId)) selection.delete(fragmentId);
+            }
+            return selection;
+        }
+
+        function pmiToggleFragmentSelection(index, checked) {
+            const item = pmiCurrentItem();
+            const fragment = item && item.fragments[index];
+            if (!fragment || fragment.excluded) {
+                console.error('[PM_IMPORT] 선택할 수 없는 태그 조각:', { itemId: item && item.id, index, fragment });
+                return;
+            }
+            const selection = pmiFragmentSelection(item);
+            if (checked) selection.add(fragment.id);
+            else selection.delete(fragment.id);
+            pmiRenderItemEditor();
+        }
+
+        function pmiSetFragmentSelection(mode) {
+            const item = pmiCurrentItem();
+            if (!item || !['all', 'unassigned', 'none'].includes(mode)) {
+                console.error('[PM_IMPORT] 일괄 선택 범위가 올바르지 않음:', { mode, itemId: item && item.id });
+                return;
+            }
+            const selection = pmiFragmentSelection(item);
+            selection.clear();
+            if (mode !== 'none') {
+                item.fragments.forEach(fragment => {
+                    if (fragment.excluded) return;
+                    if (mode === 'all' || fragment.category === 'unassigned') selection.add(fragment.id);
+                });
+            }
+            pmiRenderItemEditor();
+        }
+
+        function pmiSetBulkCategory(category) {
+            if (category && !Object.prototype.hasOwnProperty.call(PM_IMPORT_CATEGORIES, category)) {
+                console.error('[PM_IMPORT] 일괄 분류 카테고리가 올바르지 않음:', category);
+                pmImportBulkCategory = '';
+                return;
+            }
+            pmImportBulkCategory = category === 'unassigned' ? '' : category;
+        }
+
+        function pmiApplyBulkCategory(scope) {
+            const item = pmiCurrentItem();
+            if (!item || !['selected', 'all'].includes(scope)) {
+                console.error('[PM_IMPORT] 일괄 분류 범위가 올바르지 않음:', { scope, itemId: item && item.id });
+                return;
+            }
+            if (!pmImportBulkCategory || pmImportBulkCategory === 'unassigned' || !Object.prototype.hasOwnProperty.call(PM_IMPORT_CATEGORIES, pmImportBulkCategory)) {
+                console.warn('[PM_IMPORT] 일괄 분류 카테고리를 선택하지 않음:', { itemId: item.id, scope });
+                showToast('먼저 적용할 카테고리를 선택해주세요.', 'warning');
+                return;
+            }
+            const selection = pmiFragmentSelection(item);
+            const targets = item.fragments.filter(fragment => !fragment.excluded && (scope === 'all' || selection.has(fragment.id)));
+            if (!targets.length) {
+                console.warn('[PM_IMPORT] 일괄 분류 대상 태그가 없음:', { itemId: item.id, scope });
+                showToast('일괄 분류할 태그를 선택해주세요.', 'warning');
+                return;
+            }
+            const changes = targets
+                .filter(fragment => fragment.category !== pmImportBulkCategory)
+                .map(fragment => ({ fragment_id: fragment.id, previous_category: fragment.category }));
+            if (!changes.length) {
+                console.info('[PM_IMPORT] 일괄 분류 생략: 모든 대상이 이미 같은 카테고리임', { itemId: item.id, scope, category: pmImportBulkCategory });
+                showToast('선택한 태그가 이미 해당 카테고리로 분류되어 있습니다.', 'info');
+                return;
+            }
+            const targetIds = new Set(changes.map(change => change.fragment_id));
+            item.fragments.forEach(fragment => {
+                if (targetIds.has(fragment.id)) fragment.category = pmImportBulkCategory;
+            });
+            pmImportBulkUndo = {
+                item_id: item.id,
+                target_category: pmImportBulkCategory,
+                changes,
+            };
+            pmiInvalidateValidation();
+            pmiRenderItemList();
+            pmiRenderItemEditor();
+            const label = PM_IMPORT_CATEGORIES[pmImportBulkCategory] || pmImportBulkCategory;
+            showToast(`${changes.length}개 태그를 '${label}' 카테고리로 분류했습니다.`, 'success');
+        }
+
+        function pmiUndoBulkCategory() {
+            const undo = pmImportBulkUndo;
+            const item = undo && pmImportAnalysis && pmImportAnalysis.items.find(candidate => candidate.id === undo.item_id);
+            if (!undo || !item) {
+                console.error('[PM_IMPORT] 되돌릴 일괄 분류 기록을 찾지 못함:', { undo, selectedItemId: pmImportSelectedItemId });
+                showToast('되돌릴 일괄 분류 작업이 없습니다.', 'warning');
+                return;
+            }
+            const previousById = new Map(undo.changes.map(change => [change.fragment_id, change.previous_category]));
+            let restored = 0;
+            item.fragments.forEach(fragment => {
+                if (!previousById.has(fragment.id)) return;
+                fragment.category = previousById.get(fragment.id);
+                restored++;
+            });
+            pmImportBulkUndo = null;
+            pmiInvalidateValidation();
+            pmiRenderItemList();
+            pmiRenderItemEditor();
+            showToast(`${restored}개 태그의 이전 분류를 복원했습니다.`, 'success');
         }
 
         function pmiInvalidateValidation() {
@@ -95951,8 +96119,12 @@
 
         function pmiUpdateFragmentCategory(index, category) {
             const item = pmiCurrentItem();
-            if (!item || !item.fragments[index] || !Object.prototype.hasOwnProperty.call(PM_IMPORT_CATEGORIES, category)) return;
+            if (!item || !item.fragments[index] || !Object.prototype.hasOwnProperty.call(PM_IMPORT_CATEGORIES, category)) {
+                console.error('[PM_IMPORT] 태그 카테고리를 변경할 수 없음:', { itemId: item && item.id, index, category });
+                return;
+            }
             item.fragments[index].category = category;
+            pmImportBulkUndo = null;
             pmiInvalidateValidation();
             pmiRenderItemList();
             pmiRenderItemEditor();
@@ -95975,6 +96147,8 @@
             if (!fragment) return;
             if (fragment.origin === 'user') item.fragments.splice(index, 1);
             else fragment.excluded = !fragment.excluded;
+            pmiFragmentSelection(item).delete(fragment.id);
+            pmImportBulkUndo = null;
             pmiInvalidateValidation();
             pmiRenderItemList();
             pmiRenderItemEditor();
@@ -96016,6 +96190,8 @@
             replacement.llm_selected = selected && !!llmSelected;
             const index = pmImportAnalysis.items.indexOf(item);
             pmImportAnalysis.items[index] = replacement;
+            pmImportFragmentSelections.delete(item.id);
+            pmImportBulkUndo = null;
             pmiInvalidateValidation();
             pmiRenderItemList();
             pmiRenderItemEditor();
@@ -96180,6 +96356,9 @@
             pmImportSelectedItemId = '';
             pmImportItemFilter = 'modified';
             pmImportCommitted = false;
+            pmImportFragmentSelections = new Map();
+            pmImportBulkCategory = '';
+            pmImportBulkUndo = null;
             const input = document.getElementById('pmi-file-input');
             if (input) input.value = '';
             document.getElementById('pmi-file-name').textContent = '선택한 파일 없음';

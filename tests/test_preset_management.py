@@ -268,3 +268,16 @@ def test_frontend_has_stagewise_hybrid_import_and_manual_fragment_editor():
     assert "ANIMA 변환 전체 프롬프트" in source
     assert "소수 첫째 자리 반올림" in source
     assert "LLM 로그 자세히 열기" in source
+
+
+def test_frontend_preset_import_supports_current_and_selected_fragment_bulk_classification():
+    source = FRONTEND_HTML.read_text(encoding="utf-8")
+
+    assert "function pmiToggleFragmentSelection" in source
+    assert "function pmiSetFragmentSelection" in source
+    assert "function pmiApplyBulkCategory" in source
+    assert "function pmiUndoBulkCategory" in source
+    assert "선택 태그에 적용" in source
+    assert "현재 프리셋 전체 적용" in source
+    assert "fragment.excluded" in source
+    assert "pmImportItemFilter = firstUnassigned ? 'unassigned' : 'all';" in source
