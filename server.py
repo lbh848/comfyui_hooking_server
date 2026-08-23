@@ -4151,10 +4151,6 @@ async def _run_data_patch_utility(
     visual_card_index = target["visual_card_index"]
     artifact_dir = bot_visual_artifact_dir(bot_name, char_name, visual_card_id)
     result_path = os.path.join(artifact_dir, "_face_image.webp")
-    old_paths = [
-        os.path.join(artifact_dir, "_face_image.webp"),
-        os.path.join(artifact_dir, "_face_image_prompt.json"),
-    ]
 
     wf_api, wf_err = await data_patcher._load_utility_workflow()
     if wf_err:
@@ -4236,7 +4232,8 @@ async def _run_data_patch_utility(
         raise RuntimeError(f"{char_name}: {submit_err or '이미지 없음'}")
 
     # 새 결과를 같은 폴더의 임시 파일로 먼저 완성한 뒤 원자적으로 교체한다.
-    # 생성/임시 저장/백업 중 하나라도 실패하면 사용 중이던 FACE는 그대로 남는다.
+    # 교체 직전 기존 FACE를 임시 백업해 두고, 성공하면 백업을 지우고
+    # 실패하면 백업에서 되돌린다. 백업은 영구 남지 않는 임시 롤백용이다.
     os.makedirs(os.path.dirname(result_path), exist_ok=True)
     temp_result_path = f"{result_path}.tmp_{uuid.uuid4().hex}"
     try:
@@ -4250,39 +4247,28 @@ async def _run_data_patch_utility(
         traceback.print_exc()
         raise
 
-    existing_paths = [path for path in old_paths if os.path.isfile(path)]
-    if existing_paths:
-        safe_bot_name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", bot_name).strip(". ") or "_"
-        safe_char_name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", char_name).strip(". ") or "_"
-        backup_dir = os.path.join(
-            BASE_DIR,
-            "backups",
-            "data_patch",
-            f"{time.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}",
-            safe_bot_name,
-            safe_char_name,
+    backup_paths = [
+        (os.path.join(artifact_dir, "_face_image.webp"), "_face_image.webp"),
+        (os.path.join(artifact_dir, "_face_image_prompt.json"), "_face_image_prompt.json"),
+    ]
+    backup_dir = os.path.join(artifact_dir, f"_face_backup_{uuid.uuid4().hex}")
+    backed_up = []
+    try:
+        for src_path, name in backup_paths:
+            if not os.path.isfile(src_path):
+                continue
+            if not backed_up:
+                os.makedirs(backup_dir, exist_ok=False)
+            shutil.copy2(src_path, os.path.join(backup_dir, name))
+            backed_up.append((src_path, name))
+    except Exception as exc:
+        print(
+            "[DATA_PATCH_UTILITY] 기존 FACE 임시 백업 실패(되돌림 불가 상태로 진행): "
+            f"bot={bot_name!r}, char={char_name!r}, backup={backup_dir!r}, error={exc}"
         )
-        if not target["is_primary"]:
-            backup_dir = os.path.join(
-                backup_dir,
-                re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", visual_card_id).strip(". ") or "card_1",
-            )
-        try:
-            os.makedirs(backup_dir, exist_ok=False)
-            for old_path in existing_paths:
-                shutil.copy2(old_path, os.path.join(backup_dir, os.path.basename(old_path)))
-            print(f"[DATA_PATCH_UTILITY] 기존 FACE 백업 완료: {backup_dir}")
-        except Exception as exc:
-            print(
-                "[DATA_PATCH_UTILITY] 기존 FACE 백업 실패: "
-                f"bot={bot_name!r}, char={char_name!r}, backup={backup_dir!r}, error={exc}"
-            )
-            traceback.print_exc()
-            try:
-                os.remove(temp_result_path)
-            except OSError as cleanup_exc:
-                print(f"[DATA_PATCH_UTILITY] 실패한 임시 FACE 정리 실패: {temp_result_path} - {cleanup_exc}")
-            raise RuntimeError("기존 FACE 백업에 실패하여 데이터 패치를 중단했습니다.") from exc
+        traceback.print_exc()
+        shutil.rmtree(backup_dir, ignore_errors=True)
+        backed_up = []
 
     try:
         os.replace(temp_result_path, result_path)
@@ -4295,12 +4281,22 @@ async def _run_data_patch_utility(
             f"bot={bot_name!r}, char={char_name!r}, path={result_path!r}, error={exc}"
         )
         traceback.print_exc()
+        for src_path, name in backed_up:
+            try:
+                shutil.copy2(os.path.join(backup_dir, name), src_path)
+            except OSError as restore_exc:
+                print(
+                    f"[DATA_PATCH_UTILITY] FACE 되돌리기 실패: {src_path!r} - {restore_exc}"
+                )
         try:
             if os.path.isfile(temp_result_path):
                 os.remove(temp_result_path)
         except OSError as cleanup_exc:
             print(f"[DATA_PATCH_UTILITY] 교체 실패 임시 FACE 정리 실패: {temp_result_path} - {cleanup_exc}")
+        shutil.rmtree(backup_dir, ignore_errors=True)
         raise
+
+    shutil.rmtree(backup_dir, ignore_errors=True)
     print(
         f"[DATA_PATCH_UTILITY] {char_name}[{visual_card_index}] 결과 저장: "
         f"{len(img_bytes):,} bytes"
