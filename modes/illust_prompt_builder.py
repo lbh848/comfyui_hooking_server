@@ -992,7 +992,11 @@ class IllustPromptBuilder:
         positive += "\n" + ",".join(detected_chars)
 
         # CACHE_PATH
-        cache_data = self.build_cache_path(registered_detected_chars, bot_name)
+        cache_data = self.build_cache_path(
+            registered_detected_chars,
+            bot_name,
+            characters,
+        )
         positive += "\n[CACHE_PATH]"
         positive += "\n" + json.dumps(cache_data, ensure_ascii=False)
 
@@ -1004,7 +1008,12 @@ class IllustPromptBuilder:
         positive += f"\n[FACE_ID_STR]"
         positive += f"\n{face_id_str}"
 
-        face_id_data = self.build_face_id_dir(registered_detected_chars, bot_name, settings)
+        face_id_data = self.build_face_id_dir(
+            registered_detected_chars,
+            bot_name,
+            settings,
+            characters,
+        )
         positive += "\n[FACE_ID_DIR]"
         positive += "\n" + json.dumps(face_id_data, ensure_ascii=False)
 
@@ -1247,15 +1256,35 @@ class IllustPromptBuilder:
         return negative
 
     @staticmethod
-    def build_cache_path(detected_chars: list, bot_name: str) -> dict:
+    def build_cache_path(
+        detected_chars: list,
+        bot_name: str,
+        characters: list[dict] | None = None,
+    ) -> dict:
         """감지된 캐릭터의 캐시 경로 JSON 빌드.
 
         soya_bot/{bot_name}/{char_name}/cache.pt 형식
         """
         items = []
         for char_name in detected_chars:
+            char_data = next((
+                character for character in (characters or [])
+                if str(character.get("name") or "") == str(char_name)
+            ), {})
+            profile_id = str(char_data.get("_visual_profile_id") or "").strip()
+            use_profile_embedding = bool(
+                char_data.get("_use_profile_embedding")
+                and profile_id
+            )
+            if use_profile_embedding:
+                emb_path = (
+                    f"soya_bot/{bot_name}/{char_name}/"
+                    f"_visual_profiles/{profile_id}/cache.pt"
+                )
+            else:
+                emb_path = f"soya_bot/{bot_name}/{char_name}/cache.pt"
             items.append({
-                "emb_path": f"soya_bot/{bot_name}/{char_name}/cache.pt",
+                "emb_path": emb_path,
                 "CHAR": char_name
             })
         return {"list": items}
@@ -1381,7 +1410,12 @@ class IllustPromptBuilder:
         return {"list": items}
 
     @staticmethod
-    def build_face_id_dir(detected_chars: list, bot_name: str, settings: dict) -> dict:
+    def build_face_id_dir(
+        detected_chars: list,
+        bot_name: str,
+        settings: dict,
+        characters: list[dict] | None = None,
+    ) -> dict:
         """감지된 캐릭터의 Face ID 디렉토리 JSON 빌드.
 
         soya_bot/{bot_name}/{char_name}/cache.ipadpt 형식
@@ -1389,8 +1423,24 @@ class IllustPromptBuilder:
         face_id_str = settings.get("face_id_str", 0.55)
         items = []
         for char_name in detected_chars:
+            char_data = next((
+                character for character in (characters or [])
+                if str(character.get("name") or "") == str(char_name)
+            ), {})
+            profile_id = str(char_data.get("_visual_profile_id") or "").strip()
+            use_profile_embedding = bool(
+                char_data.get("_use_profile_embedding")
+                and profile_id
+            )
+            if use_profile_embedding:
+                ipa_path = (
+                    f"soya_bot/{bot_name}/{char_name}/"
+                    f"_visual_profiles/{profile_id}/cache.ipadpt"
+                )
+            else:
+                ipa_path = f"soya_bot/{bot_name}/{char_name}/cache.ipadpt"
             items.append({
-                "ipa_path": f"soya_bot/{bot_name}/{char_name}/cache.ipadpt",
+                "ipa_path": ipa_path,
                 "str": face_id_str,
                 "CHAR": char_name
             })

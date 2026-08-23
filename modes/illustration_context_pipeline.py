@@ -24,6 +24,12 @@ from urllib.parse import quote
 import yaml
 
 from modes import lighbd_service, llm_service, multi_char_mask, postprocess
+from modes.visual_profiles import (
+    outfit_by_id,
+    profile_by_id,
+    resolve_visual_base,
+    tag_values as visual_tag_values,
+)
 
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -1884,6 +1890,7 @@ def parse_call1_analysis(
     segments: dict[str, dict],
     character_names: str,
     history_context: str = "",
+    visual_profiles: dict[str, dict] | None = None,
 ) -> dict | None:
     """Validate CALL1's compact entity/coreference/wardrobe analysis."""
     raw = _json_object_from_text(text)
@@ -2042,6 +2049,79 @@ def parse_call1_analysis(
             "confidence": confidence,
         })
 
+    visual_base_events = []
+    for index, item in enumerate(raw.get("visual_base_events") or [], start=1):
+        if not isinstance(item, dict):
+            warnings.append(f"외형 기반 사건 형식 오류로 폐기: index={index}")
+            continue
+        segment_id = str(item.get("segment_id") or "").strip()
+        name = normalize_name(item.get("character") or item.get("name"))
+        profile_id = str(
+            item.get("target_visual_profile_id")
+            or item.get("visual_profile_id")
+            or ""
+        ).strip()
+        outfit_id = str(
+            item.get("target_outfit_id") or item.get("outfit_id") or ""
+        ).strip()
+        visual_change = str(item.get("visual_change") or "").strip()
+        evidence = str(item.get("evidence") or "").strip()
+        try:
+            confidence = max(
+                0.0, min(1.0, float(item.get("confidence", 1.0)))
+            )
+        except Exception:
+            confidence = 0.0
+        character_profiles = _authority_values_for_name(visual_profiles or {}, name)
+        if not name or not isinstance(character_profiles, dict):
+            warnings.append(
+                f"외형 기반 사건 캐릭터/카탈로그 없음으로 폐기: "
+                f"index={index}, character={name!r}"
+            )
+            continue
+        profile = profile_by_id(character_profiles, profile_id)
+        if profile is None:
+            warnings.append(
+                f"등록되지 않은 외형 프로필 ID로 폐기: "
+                f"character={name}, profile={profile_id!r}"
+            )
+            continue
+        if not outfit_id:
+            outfit_id = str(profile.get("default_outfit_id") or "").strip()
+        if outfit_by_id(profile, outfit_id) is None:
+            warnings.append(
+                f"선택 프로필에 없는 복장 ID로 폐기: "
+                f"character={name}, profile={profile_id!r}, outfit={outfit_id!r}"
+            )
+            continue
+        segment_text = str((segments.get(segment_id) or {}).get("text") or "")
+        if (
+            not segment_id
+            or not visual_change
+            or not evidence
+            or not _analysis_evidence_matches_segment(evidence, segment_text)
+        ):
+            warnings.append(
+                f"외형 기반 변경 근거 불일치로 폐기: character={name}, "
+                f"profile={profile_id!r}, segment={segment_id!r}"
+            )
+            continue
+        if confidence < 0.70:
+            warnings.append(
+                f"외형 기반 사건 신뢰도 낮아 폐기: "
+                f"{name}/{profile_id}/{outfit_id}={confidence:.2f}"
+            )
+            continue
+        visual_base_events.append({
+            "segment_id": segment_id,
+            "character": name,
+            "target_visual_profile_id": profile_id,
+            "target_outfit_id": outfit_id,
+            "visual_change": visual_change,
+            "evidence": evidence,
+            "confidence": confidence,
+        })
+
     # hairstyle_events: hairstyle "arrangement" 전환만 추적(ponytail/twintails/braid/
     # hair bun/hair down/two side up/side ponytail 등). 색/길이/앞머리/눈/신체/종족/스킨/
     # 흉터/포즈/의상/헤어 액세서리는 fixed appearance 또는 wardrobe 영역이므로 여기서 다루지
@@ -2110,6 +2190,7 @@ def parse_call1_analysis(
         "history_characters": history_characters,
         "current_characters": current_characters,
         "wardrobe_events": wardrobe_events,
+        "visual_base_events": visual_base_events,
         "hairstyle_events": hairstyle_events,
         "unresolved_references": unresolved,
         "validation_warnings": warnings,
@@ -2658,6 +2739,173 @@ def _scene_wardrobe_continuity_note(
     )
 
 
+def _visual_profiles_for_name(
+    visual_profiles: dict[str, dict] | None,
+    name: str,
+) -> dict | None:
+    value = _authority_values_for_name(visual_profiles or {}, name)
+    return value if isinstance(value, dict) else None
+
+
+def _visual_state_key(states: dict, name: str) -> str:
+    folded = str(name or "").strip().casefold()
+    existing = next((
+        key for key, value in (states or {}).items()
+        if isinstance(value, dict)
+        and str(value.get("canonical_name") or key).strip().casefold() == folded
+    ), None)
+    if existing is not None:
+        return existing
+    return re.sub(r"[^a-z0-9]+", "_", folded).strip("_") or uuid.uuid4().hex[:12]
+
+
+def apply_visual_base_events(
+    states: dict,
+    current_characters: list[dict],
+    visual_base_events: list[dict],
+    current_message_id: str,
+    visual_profiles: dict[str, dict] | None,
+) -> dict:
+    """Apply exact server-validated profile/outfit routes without semantic matching."""
+    result = deepcopy(states or {})
+    names: list[str] = []
+    for item in current_characters or []:
+        name = str(item.get("name") if isinstance(item, dict) else item or "").strip()
+        if name and name.casefold() not in {value.casefold() for value in names}:
+            names.append(name)
+    for event in visual_base_events or []:
+        name = str(event.get("character") or "").strip()
+        if name and name.casefold() not in {value.casefold() for value in names}:
+            names.append(name)
+
+    for name in names:
+        character_profiles = _visual_profiles_for_name(visual_profiles, name)
+        if character_profiles is None:
+            print(
+                f"[ILLUST_CONTEXT:VISUAL_BASE] 캐릭터 프로필 카탈로그 없음: "
+                f"character={name!r}"
+            )
+            continue
+        key = _visual_state_key(result, name)
+        state = result.setdefault(key, {})
+        state.setdefault("canonical_name", name)
+        state.setdefault("visual_base_timeline", [])
+        requested_profile = str(state.get("active_visual_profile_id") or "").strip()
+        requested_outfit = str(state.get("active_outfit_id") or "").strip()
+        base = resolve_visual_base(
+            character_profiles,
+            requested_profile,
+            requested_outfit,
+        )
+        state["active_visual_profile_id"] = base["visual_profile_id"]
+        state["active_outfit_id"] = base["outfit_id"]
+        current_wardrobe = _normalize_outfit_state(state.get("current_wardrobe"))
+        if not _outfit_state_is_known(current_wardrobe):
+            worn = visual_tag_values(base.get("outfit") or [])
+            state["current_wardrobe"] = {
+                "body_state": "clothed" if worn else "unknown",
+                "worn": worn,
+                "removed": [],
+            }
+
+    for event in visual_base_events or []:
+        name = str(event.get("character") or "").strip()
+        character_profiles = _visual_profiles_for_name(visual_profiles, name)
+        if not name or character_profiles is None:
+            print(
+                f"[ILLUST_CONTEXT:VISUAL_BASE] 적용할 캐릭터 프로필 없음: event={event!r}"
+            )
+            continue
+        try:
+            base = resolve_visual_base(
+                character_profiles,
+                str(event.get("target_visual_profile_id") or ""),
+                str(event.get("target_outfit_id") or ""),
+            )
+        except Exception as exc:
+            print(
+                f"[ILLUST_CONTEXT:VISUAL_BASE] 검증 후 외형 기반 해석 실패, 사건 스킵: "
+                f"event={event!r}, error={exc}"
+            )
+            traceback.print_exc()
+            continue
+        key = _visual_state_key(result, name)
+        state = result.setdefault(key, {
+            "canonical_name": name,
+            "visual_base_timeline": [],
+        })
+        changed = (
+            str(state.get("active_visual_profile_id") or "") != base["visual_profile_id"]
+            or str(state.get("active_outfit_id") or "") != base["outfit_id"]
+        )
+        state["active_visual_profile_id"] = base["visual_profile_id"]
+        state["active_outfit_id"] = base["outfit_id"]
+        worn = visual_tag_values(base.get("outfit") or [])
+        state["current_wardrobe"] = {
+            "body_state": "clothed" if worn else "unknown",
+            "worn": worn,
+            "removed": [],
+        }
+        timeline = state.setdefault("visual_base_timeline", [])
+        timeline.append({
+            **deepcopy(event),
+            "message_id": str(current_message_id or ""),
+            "applied_change": changed,
+        })
+        state["last_seen_message_id"] = str(current_message_id or "")
+        print(
+            f"[ILLUST_CONTEXT:VISUAL_BASE] 외형 기반 사건 적용: "
+            f"character={name}, profile={base['visual_profile_id']}, "
+            f"outfit={base['outfit_id']}, changed={changed}"
+        )
+    return result
+
+
+def visual_base_snapshot(
+    states: dict,
+    character_names: list[str],
+    visual_profiles: dict[str, dict] | None,
+) -> dict[str, dict]:
+    result: dict[str, dict] = {}
+    for name in character_names or []:
+        character_profiles = _visual_profiles_for_name(visual_profiles, name)
+        if character_profiles is None:
+            print(
+                f"[ILLUST_CONTEXT:VISUAL_BASE] 스냅샷 프로필 없음: character={name!r}"
+            )
+            continue
+        tracked = _character_state(states, name)
+        base = resolve_visual_base(
+            character_profiles,
+            str((tracked or {}).get("active_visual_profile_id") or ""),
+            str((tracked or {}).get("active_outfit_id") or ""),
+        )
+        result[name] = base
+    return result
+
+
+def _visual_base_authority_note(snapshot: dict[str, dict]) -> str:
+    statements: list[str] = []
+    for name, base in (snapshot or {}).items():
+        appearance = ", ".join(visual_tag_values(base.get("appearance") or [])) or "(none)"
+        outfit = ", ".join(visual_tag_values(base.get("outfit") or [])) or "(none)"
+        statements.append(
+            f"{name} is in visual profile `{base.get('visual_profile_id')}` "
+            f"({base.get('visual_profile_label')}) with registered base outfit "
+            f"`{base.get('outfit_id')}` ({base.get('outfit_label')}). "
+            f"Its complete fixed appearance is: {appearance}. "
+            f"Its complete registered base outfit is: {outfit}."
+        )
+    if not statements:
+        return ""
+    return (
+        "For this exact scene, these server-selected visual bases override any default "
+        "appearance or outfit for the same logical character. Do not choose another profile. "
+        "Apply later natural-language wardrobe continuity as a delta against this base.\n"
+        + "\n".join(statements)
+    )
+
+
 def bind_scene_plan_wardrobes(
     scene_plan: list[dict],
     segment_order: list[str],
@@ -2667,6 +2915,8 @@ def bind_scene_plan_wardrobes(
     current_message_id: str,
     selected_reference: str = "",
     default_outfits: dict[str, list[str]] | None = None,
+    visual_profiles: dict[str, dict] | None = None,
+    visual_base_events: list[dict] | None = None,
 ) -> list[dict]:
     """Bind a base snapshot and literal story continuity to each planned scene."""
     rank = {str(segment_id): index for index, segment_id in enumerate(segment_order)}
@@ -2698,6 +2948,19 @@ def bind_scene_plan_wardrobes(
             if rank[event_segment] <= rank[anchor_segment]:
                 applicable_events.append(event)
 
+        applicable_visual_events = []
+        for event in visual_base_events or []:
+            event_segment = str(event.get("segment_id") or "").strip()
+            if event_segment not in rank:
+                print(
+                    f"[ILLUST_CONTEXT:VISUAL_BASE] 외형 기반 이벤트 segment를 찾지 못해 "
+                    f"장면 스냅샷에서 제외: anchor={anchor_segment}, "
+                    f"event_segment={event_segment!r}, event={event!r}"
+                )
+                continue
+            if rank[event_segment] <= rank[anchor_segment]:
+                applicable_visual_events.append(event)
+
         plan_names = [str(name or "").strip() for name in plan.get("characters") or []]
         plan_names = [name for name in plan_names if name]
         continuity_note, continuity_characters = _scene_wardrobe_continuity_note(
@@ -2708,13 +2971,28 @@ def bind_scene_plan_wardrobes(
             {"name": name, "confidence": 1.0}
             for name in plan_names
         ]
-        states_at_scene = apply_wardrobe_events(
+        visual_states_at_scene = apply_visual_base_events(
             state_before,
+            all_current,
+            applicable_visual_events,
+            current_message_id,
+            visual_profiles,
+        )
+        scene_visual_bases = visual_base_snapshot(
+            visual_states_at_scene,
+            plan_names,
+            visual_profiles,
+        )
+        scene_default_outfits = deepcopy(default_outfits or {})
+        for name, base in scene_visual_bases.items():
+            scene_default_outfits[name] = visual_tag_values(base.get("outfit") or [])
+        states_at_scene = apply_wardrobe_events(
+            visual_states_at_scene,
             all_current,
             applicable_events,
             current_message_id,
             selected_reference=selected_reference,
-            default_outfits=default_outfits,
+            default_outfits=scene_default_outfits,
         )
         planned_outfits = plan.get("planned_outfits") or {}
         wardrobe_snapshot = {}
@@ -2754,6 +3032,10 @@ def bind_scene_plan_wardrobes(
 
         plan["wardrobe_snapshot"] = wardrobe_snapshot
         plan["wardrobe_sources"] = wardrobe_sources
+        plan["visual_base_snapshot"] = scene_visual_bases
+        authority_note = _visual_base_authority_note(scene_visual_bases)
+        if authority_note:
+            plan["visual_base_authority"] = authority_note
         if continuity_note:
             plan["continuity_note"] = continuity_note
             # Internal parser guidance only. It is deliberately omitted from the
@@ -2782,6 +3064,9 @@ def _public_call2_scene_plan(plan: dict) -> dict:
     continuity_note = str(plan.get("continuity_note") or "").strip()
     if continuity_note:
         public["continuity_note"] = continuity_note
+    visual_base_authority = str(plan.get("visual_base_authority") or "").strip()
+    if visual_base_authority:
+        public["visual_base_authority"] = visual_base_authority
     return public
 
 
@@ -2806,6 +3091,26 @@ def _last_visual_by_character(descriptors: list[dict]) -> dict:
                 "source_slot": descriptor.get("slot"),
                 "positive_tags": str(character.get("positive") or ""),
                 "outfit_state": outfit_state,
+                "visual_profile_id": str(
+                    (
+                        _authority_values_for_name(
+                            descriptor.get("visual_base_snapshot") or {},
+                            name,
+                        )
+                        or {}
+                    ).get("visual_profile_id")
+                    or ""
+                ),
+                "visual_outfit_id": str(
+                    (
+                        _authority_values_for_name(
+                            descriptor.get("visual_base_snapshot") or {},
+                            name,
+                        )
+                        or {}
+                    ).get("outfit_id")
+                    or ""
+                ),
             }
     return result
 
@@ -4393,6 +4698,9 @@ def _parse_call2_detail_output(
         item["continuity_note"] = str(
             assigned_scene_context.get("continuity_note") or ""
         ).strip()
+        item["visual_base_snapshot"] = deepcopy(
+            assigned_scene_context.get("visual_base_snapshot") or {}
+        )
         semantic_continuity_names = {
             str(name or "").strip().casefold()
             for name in assigned_scene_context.get("continuity_characters") or []
@@ -4555,6 +4863,9 @@ def _parse_call2_detail_partial(
         item["continuity_note"] = str(
             assigned_scene_context.get("continuity_note") or ""
         ).strip()
+        item["visual_base_snapshot"] = deepcopy(
+            assigned_scene_context.get("visual_base_snapshot") or {}
+        )
         semantic_continuity_names = {
             str(name or "").strip().casefold()
             for name in assigned_scene_context.get("continuity_characters") or []
@@ -4684,6 +4995,41 @@ def _authority_values_for_name(values: dict, name: str):
     return None
 
 
+def _descriptor_authority_tags(
+    descriptor: dict,
+    name: str,
+    fixed_appearance: dict[str, str],
+    default_outfits: dict[str, list[str]],
+) -> tuple[list[str], list[str]]:
+    base = _authority_values_for_name(
+        descriptor.get("visual_base_snapshot") or {},
+        name,
+    )
+    if isinstance(base, dict):
+        fixed_tags = [
+            _authority_output_tag(tag)
+            for tag in visual_tag_values(base.get("appearance") or [])
+            if _authority_output_tag(tag)
+        ]
+        default_tags = [
+            str(tag).strip()
+            for tag in visual_tag_values(base.get("outfit") or [])
+            if str(tag).strip()
+        ]
+        return fixed_tags, default_tags
+    fixed_raw = _authority_values_for_name(fixed_appearance, name)
+    default_raw = _authority_values_for_name(default_outfits, name)
+    fixed_tags = [
+        _authority_output_tag(tag)
+        for tag in _split_top_level_authority_tags(str(fixed_raw or ""))
+        if _authority_output_tag(tag)
+    ]
+    default_tags = [
+        str(tag).strip() for tag in (default_raw or []) if str(tag).strip()
+    ]
+    return fixed_tags, default_tags
+
+
 def _call2_authority_audit_entries(
     descriptors: list[dict],
     fixed_appearance: dict[str, str],
@@ -4709,16 +5055,12 @@ def _call2_authority_audit_entries(
             name = str(character.get("name") or "").strip()
             if not name:
                 continue
-            fixed_raw = _authority_values_for_name(fixed_appearance, name)
-            default_raw = _authority_values_for_name(default_outfits, name)
-            fixed_tags = [
-                _authority_output_tag(tag)
-                for tag in _split_top_level_authority_tags(str(fixed_raw or ""))
-                if _authority_output_tag(tag)
-            ]
-            default_tags = [
-                str(tag).strip() for tag in (default_raw or []) if str(tag).strip()
-            ]
+            fixed_tags, default_tags = _descriptor_authority_tags(
+                descriptor,
+                name,
+                fixed_appearance,
+                default_outfits,
+            )
             generated_outfit_state = _normalize_outfit_state(
                 character.get("outfit_state")
             )
@@ -5084,18 +5426,12 @@ def apply_call2_authority_base(
                 )
                 continue
 
-            fixed_raw = _authority_values_for_name(fixed_appearance, name)
-            default_raw = _authority_values_for_name(default_outfits, name)
-            fixed_tags = [
-                _authority_output_tag(tag)
-                for tag in _split_top_level_authority_tags(str(fixed_raw or ""))
-                if _authority_output_tag(tag)
-            ]
-            default_tags = [
-                str(tag).strip()
-                for tag in (default_raw or [])
-                if str(tag).strip()
-            ]
+            fixed_tags, default_tags = _descriptor_authority_tags(
+                descriptor,
+                name,
+                fixed_appearance,
+                default_outfits,
+            )
             if not fixed_tags and not default_tags:
                 print(
                     f"[ILLUST_CONTEXT:CALL2_AUTHORITY] 캐릭터 권위 기준 없음: "
@@ -5530,6 +5866,9 @@ async def _run_parallel_call2_details(
                 "scene_brief": str(item.get("scene_brief") or "").strip(),
                 "continuity_note": str(item.get("continuity_note") or "").strip(),
                 "continuity_characters": list(item.get("_continuity_characters") or []),
+                "visual_base_snapshot": deepcopy(
+                    item.get("visual_base_snapshot") or {}
+                ),
             }
             for item in plans
         }
@@ -7375,6 +7714,7 @@ def _merge_call1_shard_values(
         "history_characters": [],
         "current_characters": [],
         "wardrobe_events": [],
+        "visual_base_events": [],
         "hairstyle_events": [],
         "unresolved_references": [],
     }
@@ -7384,6 +7724,7 @@ def _merge_call1_shard_values(
     current_by_name: dict[str, dict] = {}
     assignment_by_key: dict[tuple, dict] = {}
     wardrobe_seen = set()
+    visual_base_seen = set()
     hairstyle_seen = set()
     unresolved_seen = set()
     segment_rank = {segment_id: index for index, segment_id in enumerate(segment_order)}
@@ -7454,6 +7795,22 @@ def _merge_call1_shard_values(
                 wardrobe_seen.add(key)
                 merged["wardrobe_events"].append(deepcopy(item))
 
+        for item in raw.get("visual_base_events") or []:
+            if not isinstance(item, dict):
+                warnings.append(f"CALL1 shard {shard_index} 외형 기반 이벤트 형식 오류로 폐기")
+                continue
+            segment_id = str(item.get("segment_id") or "").strip()
+            if segment_id and segment_id not in assigned_ids:
+                warnings.append(
+                    f"CALL1 shard {shard_index} 담당 밖 외형 기반 이벤트 폐기: "
+                    f"segment={segment_id!r}"
+                )
+                continue
+            key = json.dumps(item, ensure_ascii=False, sort_keys=True)
+            if key not in visual_base_seen:
+                visual_base_seen.add(key)
+                merged["visual_base_events"].append(deepcopy(item))
+
         for item in raw.get("hairstyle_events") or []:
             if not isinstance(item, dict):
                 warnings.append(f"CALL1 shard {shard_index} 헤어스타일 이벤트 형식 오류로 폐기")
@@ -7493,6 +7850,12 @@ def _merge_call1_shard_values(
         ),
     )
     merged["wardrobe_events"].sort(
+        key=lambda item: segment_rank.get(
+            str(item.get("segment_id") or ""),
+            len(segment_rank),
+        )
+    )
+    merged["visual_base_events"].sort(
         key=lambda item: segment_rank.get(
             str(item.get("segment_id") or ""),
             len(segment_rank),
@@ -7557,7 +7920,8 @@ async def _run_parallel_call1_analysis(
         shard_instruction = (
             "\n\n# Parallel shard contract\n"
             f"This is shard {index}/{total}. Read the full context for discourse understanding, "
-            "but emit reference_assignments, wardrobe_events, and unresolved_references only "
+            "but emit reference_assignments, visual_base_events, wardrobe_events, "
+            "hairstyle_events, and unresolved_references only "
             f"for these assigned segment IDs: {json.dumps(assigned, ensure_ascii=False)}.\n"
             "Emit history_characters and current_characters only for characters relevant to those "
             "assigned segments; the server unions all shard lists. Do not repeat the global roster in "
@@ -7588,6 +7952,8 @@ async def _run_parallel_call1_analysis(
                 "history_characters",
                 "current_characters",
                 "wardrobe_events",
+                "visual_base_events",
+                "hairstyle_events",
                 "unresolved_references",
             ):
                 if not isinstance(raw.get(key, []), list):
@@ -8537,6 +8903,8 @@ async def build_from_context(
     backtranslate_names: str = "",
     enable_multi_char_layout: bool = False,
     history_plan: dict | None = None,
+    visual_profile_catalog: str = "",
+    visual_profiles: dict[str, dict] | None = None,
 ) -> dict:
     toggles = merged_toggles(toggles)
     prompts = load_prompt_files()
@@ -8618,6 +8986,7 @@ async def build_from_context(
     call1_output = ""
     call1_result: dict = {}
     wardrobe_events: list[dict] = []
+    visual_base_events: list[dict] = []
     hairstyle_events: list[dict] = []
     reference_variables: dict[str, str] = {}
     balanced_fallback = False
@@ -8641,6 +9010,16 @@ async def build_from_context(
             call1_system = call1_system.replace("{lb_extra_costume}", costume)
         elif costume:
             call1_system = call1_system + "\n\n" + costume
+        if "{visual_profile_catalog}" in call1_system:
+            call1_system = call1_system.replace(
+                "{visual_profile_catalog}",
+                str(visual_profile_catalog or "").strip() or "(none)",
+            )
+        elif str(visual_profile_catalog or "").strip():
+            call1_system += (
+                "\n\n# REGISTERED VISUAL PROFILES\n"
+                + str(visual_profile_catalog).strip()
+            )
         call1_system = call1_system.replace("{character_names}", str(backtranslate_names or extra_names or ""))
         call1_system = call1_system.replace(
             "{character_state}",
@@ -8714,6 +9093,7 @@ async def build_from_context(
                 current_segments,
                 str(backtranslate_names or extra_names or ""),
                 history_context=history_text,
+                visual_profiles=visual_profiles,
             )
             if parsed_call1 is None:
                 balanced_fallback = True
@@ -8742,6 +9122,9 @@ async def build_from_context(
                         f"errors={parallel_merge_fallback_errors}"
                     )
                 wardrobe_events = list(parsed_call1.get("wardrobe_events") or [])
+                visual_base_events = list(
+                    parsed_call1.get("visual_base_events") or []
+                )
                 hairstyle_events = list(parsed_call1.get("hairstyle_events") or [])
                 resolved_current, assignment_errors, reference_variables = apply_reference_assignments(
                     enhanced,
@@ -8873,6 +9256,14 @@ async def build_from_context(
 
     fixed_appearance = extract_authoritative_fixed_appearance(call2_reference)
     default_outfits = extract_authoritative_default_outfits(call2_reference)
+    if visual_profiles and current_character_names:
+        selected_states = apply_visual_base_events(
+            selected_states,
+            call1_result.get("current_characters") or [],
+            [],
+            str((persistent_history or {}).get("current_message_id") or ""),
+            visual_profiles,
+        )
     if persistent_history and selected_states:
         selected_states = apply_wardrobe_events(
             selected_states,
@@ -9068,6 +9459,29 @@ async def build_from_context(
                 "role": "assistant" if item["role"] == "char" else "user",
                 "content": _strip_nodes(item["data"]),
             })
+    keyvis_visual_states = apply_visual_base_events(
+        selected_states,
+        call1_result.get("current_characters") or [],
+        visual_base_events,
+        str((persistent_history or {}).get("current_message_id") or ""),
+        visual_profiles,
+    )
+    keyvis_visual_snapshot = visual_base_snapshot(
+        keyvis_visual_states,
+        current_character_names,
+        visual_profiles,
+    )
+    keyvis_visual_authority = _visual_base_authority_note(
+        keyvis_visual_snapshot
+    )
+    if keyvis_visual_authority:
+        append_call2_context({
+            "role": "user",
+            "content": (
+                "# CURRENT KEY VISUAL BASE AUTHORITY\n\n"
+                + keyvis_visual_authority
+            ),
+        }, include_plan=False, include_detail=False, include_keyvis=True)
     append_call2_context({
         "role": "user",
         "content": "[Last log entry]\n" + slotted,
@@ -9359,6 +9773,8 @@ async def build_from_context(
                     str((persistent_history or {}).get("current_message_id") or ""),
                     selected_reference=call2_reference,
                     default_outfits=default_outfits,
+                    visual_profiles=visual_profiles,
+                    visual_base_events=visual_base_events,
                 )
                 call2_fallback_expected_slots = [
                     int(item["slot"]) for item in parsed_plan["scene_plan"]
@@ -9754,6 +10170,59 @@ async def build_from_context(
             print("[ILLUST_CONTEXT:CALL2] 슬롯 보정 후 생성할 descriptor가 없음")
             raise RuntimeError("CALL2 결과에 유효한 장면 슬롯이 없습니다")
 
+    plan_visual_by_slot = {
+        int(plan.get("slot") or 0): deepcopy(plan.get("visual_base_snapshot") or {})
+        for plan in call2_fallback_scene_plan
+        if int(plan.get("slot") or 0) > 0
+    }
+    fallback_visual_states = apply_visual_base_events(
+        selected_states,
+        call1_result.get("current_characters") or [],
+        visual_base_events,
+        str((persistent_history or {}).get("current_message_id") or ""),
+        visual_profiles,
+    )
+    for descriptor in descriptors:
+        descriptor_names = [
+            str(character.get("name") or "").strip()
+            for character in descriptor.get("characters") or []
+            if str(character.get("name") or "").strip()
+        ]
+        if str(descriptor.get("kind") or "") == "keyvis":
+            candidate_snapshot = keyvis_visual_snapshot
+        else:
+            candidate_snapshot = plan_visual_by_slot.get(
+                int(descriptor.get("slot") or 0),
+                {},
+            )
+        if not candidate_snapshot and descriptor_names:
+            candidate_snapshot = visual_base_snapshot(
+                fallback_visual_states,
+                descriptor_names,
+                visual_profiles,
+            )
+        filtered_snapshot = {
+            name: deepcopy(base)
+            for name, base in (candidate_snapshot or {}).items()
+            if str(name).casefold() in {
+                value.casefold() for value in descriptor_names
+            }
+        }
+        descriptor["visual_base_snapshot"] = filtered_snapshot
+        missing_visual_names = [
+            name for name in descriptor_names
+            if not isinstance(
+                _authority_values_for_name(filtered_snapshot, name),
+                dict,
+            )
+        ]
+        if missing_visual_names:
+            print(
+                f"[ILLUST_CONTEXT:VISUAL_BASE] descriptor 결속 누락: "
+                f"kind={descriptor.get('kind')}, slot={descriptor.get('slot')}, "
+                f"characters={missing_visual_names}"
+            )
+
     if progress:
         await progress(49, "call2_authority_audit", "CALL2 외형·복장 권위 감사")
     # AUDIT에 hairstyle history(누적 timeline + 이번 턴 events)를 전달한다. 서버는
@@ -9818,13 +10287,28 @@ async def build_from_context(
                 value.casefold() for value in state_character_names
             }:
                 state_character_names.append(str(name).strip())
+        character_states_after = apply_visual_base_events(
+            character_states_after,
+            [{"name": name, "confidence": 1.0} for name in state_character_names],
+            visual_base_events,
+            str(persistent_history.get("current_message_id") or ""),
+            visual_profiles,
+        )
+        final_visual_bases = visual_base_snapshot(
+            character_states_after,
+            state_character_names,
+            visual_profiles,
+        )
+        final_default_outfits = deepcopy(default_outfits)
+        for name, base in final_visual_bases.items():
+            final_default_outfits[name] = visual_tag_values(base.get("outfit") or [])
         character_states_after = apply_wardrobe_events(
             character_states_after,
             [{"name": name, "confidence": 1.0} for name in state_character_names],
             wardrobe_events,
             str(persistent_history.get("current_message_id") or ""),
             selected_reference=call2_reference,
-            default_outfits=default_outfits,
+            default_outfits=final_default_outfits,
             hairstyle_events=hairstyle_events,
         )
         character_states_after = merge_last_visual_into_states(
@@ -10014,6 +10498,7 @@ async def build_from_context(
         "reference_provenance": reference_provenance,
         "last_visual_reference_classification": last_visual_reference_classification,
         "reference_variables": reference_variables,
+        "visual_base_events": visual_base_events,
         "wardrobe_events": wardrobe_events,
         "hairstyle_events": hairstyle_events,
         "balanced_fallback_used": balanced_fallback,

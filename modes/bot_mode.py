@@ -20,6 +20,16 @@ from typing import Optional
 from urllib.parse import quote
 from aiohttp import web
 
+from modes.visual_profiles import (
+    VISUAL_PROFILES_VERSION,
+    VisualProfileValidationError,
+    effective_bot_profiles,
+    effective_character_profiles,
+    load_document as load_visual_profiles_document,
+    normalize_character_profiles,
+    save_document as save_visual_profiles_document,
+)
+
 
 # ─── 상수 ───────────────────────────────────────────────
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -2099,7 +2109,6 @@ class BotMode:
             bot = next((b for b in data["bots"] if b["name"] == bot_name), None)
             if not bot:
                 return _json_error(f"봇을 찾을 수 없습니다: {bot_name}")
-
             current_names = {c["name"] for c in bot.get("characters", [])}
             filtered = [e for e in saved if e.get("name") in current_names]
 
@@ -2131,6 +2140,182 @@ class BotMode:
             print(f"[LB_EXTRA] 저장 실패: {e}")
             traceback.print_exc()
             return _json_error(str(e))
+
+    async def handle_get_visual_profiles(self, request):
+        """GET effective profiles for one logical character, including legacy fallback."""
+        try:
+            bot_name = request.query.get("bot_name", "").strip()
+            char_name = request.query.get("character", "").strip()
+            if not bot_name or not char_name:
+                print(
+                    f"[VISUAL_PROFILE:API] 조회 입력 누락: "
+                    f"bot={bot_name!r}, character={char_name!r}"
+                )
+                return _json_error("봇 이름과 캐릭터 이름이 필요합니다.")
+
+            data = _load_bot_data()
+            bot = next(
+                (item for item in data.get("bots", []) if item.get("name") == bot_name),
+                None,
+            )
+            if bot is None:
+                print(f"[VISUAL_PROFILE:API] 조회할 봇 없음: bot={bot_name!r}")
+                return _json_error(f"봇을 찾을 수 없습니다: {bot_name}", 404)
+            root_character = next(
+                (
+                    item for item in bot.get("characters", [])
+                    if str(item.get("name") or "").casefold() == char_name.casefold()
+                ),
+                None,
+            )
+            if root_character is None:
+                print(
+                    f"[VISUAL_PROFILE:API] 조회할 캐릭터 없음: "
+                    f"bot={bot_name!r}, character={char_name!r}"
+                )
+                return _json_error(f"캐릭터를 찾을 수 없습니다: {char_name}", 404)
+
+            lb_extra = _load_lb_extra(bot_name) or []
+            if isinstance(lb_extra, dict) and "edited" in lb_extra:
+                lb_extra = lb_extra.get("edited") or []
+            extra_character = next(
+                (
+                    item for item in lb_extra
+                    if isinstance(item, dict)
+                    and str(item.get("name") or "").casefold() == char_name.casefold()
+                ),
+                None,
+            )
+            document = load_visual_profiles_document(BOT_DIR, bot_name)
+            character, source = effective_character_profiles(
+                str(root_character.get("name") or char_name),
+                root_character,
+                extra_character,
+                document,
+            )
+            return _json_ok({
+                "character": character,
+                "source": source,
+                "storage_version": VISUAL_PROFILES_VERSION,
+            })
+        except Exception as e:
+            print(f"[VISUAL_PROFILE:API] 조회 실패: error={e}")
+            traceback.print_exc()
+            return _json_error(str(e), 500)
+
+    async def handle_save_visual_profiles(self, request):
+        """POST one character's explicit profile card or reset it to legacy fallback."""
+        try:
+            body = await request.json()
+            bot_name = str(body.get("bot_name") or "").strip()
+            char_name = str(body.get("character") or "").strip()
+            reset_to_legacy = body.get("reset_to_legacy", False)
+            if not bot_name or not char_name:
+                print(
+                    f"[VISUAL_PROFILE:API] 저장 입력 누락: "
+                    f"bot={bot_name!r}, character={char_name!r}"
+                )
+                return _json_error("봇 이름과 캐릭터 이름이 필요합니다.")
+            if not isinstance(reset_to_legacy, bool):
+                print(
+                    f"[VISUAL_PROFILE:API] reset_to_legacy 타입 오류: "
+                    f"value={reset_to_legacy!r}"
+                )
+                return _json_error("reset_to_legacy는 bool이어야 합니다.")
+
+            data = _load_bot_data()
+            bot = next(
+                (item for item in data.get("bots", []) if item.get("name") == bot_name),
+                None,
+            )
+            if bot is None:
+                print(f"[VISUAL_PROFILE:API] 저장할 봇 없음: bot={bot_name!r}")
+                return _json_error(f"봇을 찾을 수 없습니다: {bot_name}", 404)
+            canonical_name = next(
+                (
+                    str(item.get("name") or "") for item in bot.get("characters", [])
+                    if str(item.get("name") or "").casefold() == char_name.casefold()
+                ),
+                "",
+            )
+            if not canonical_name:
+                print(
+                    f"[VISUAL_PROFILE:API] 저장할 캐릭터 없음: "
+                    f"bot={bot_name!r}, character={char_name!r}"
+                )
+                return _json_error(f"캐릭터를 찾을 수 없습니다: {char_name}", 404)
+
+            async with self._lock:
+                document = load_visual_profiles_document(BOT_DIR, bot_name)
+                remaining = [
+                    item for item in document.get("characters", [])
+                    if str(item.get("name") or "").casefold() != canonical_name.casefold()
+                ]
+                if reset_to_legacy:
+                    if len(remaining) == len(document.get("characters", [])):
+                        print(
+                            f"[VISUAL_PROFILE:API] 명시 프로필이 없어 초기화 저장 생략: "
+                            f"bot={bot_name!r}, character={canonical_name!r}"
+                        )
+                        return _json_ok({"saved": True, "source": "legacy"})
+                    normalized = save_visual_profiles_document(
+                        BOT_DIR,
+                        bot_name,
+                        {"version": VISUAL_PROFILES_VERSION, "characters": remaining},
+                    )
+                    print(
+                        f"[VISUAL_PROFILE:API] 레거시 기본 카드로 초기화: "
+                        f"bot={bot_name!r}, character={canonical_name!r}"
+                    )
+                    return _json_ok({
+                        "saved": True,
+                        "source": "legacy",
+                        "storage_version": normalized["version"],
+                    })
+
+                raw_character = body.get("data")
+                if not isinstance(raw_character, dict):
+                    print(
+                        f"[VISUAL_PROFILE:API] 저장 데이터 없음/형식 오류: "
+                        f"bot={bot_name!r}, character={canonical_name!r}, "
+                        f"value={raw_character!r}"
+                    )
+                    return _json_error("저장할 외형 프로필 데이터가 필요합니다.")
+                raw_character = dict(raw_character)
+                supplied_name = str(raw_character.get("name") or "").strip()
+                if supplied_name and supplied_name.casefold() != canonical_name.casefold():
+                    print(
+                        f"[VISUAL_PROFILE:API] 캐릭터 이름 불일치: "
+                        f"route={canonical_name!r}, data={supplied_name!r}"
+                    )
+                    return _json_error("경로와 데이터의 캐릭터 이름이 일치하지 않습니다.")
+                raw_character["name"] = canonical_name
+                normalized_character = normalize_character_profiles(raw_character)
+                normalized = save_visual_profiles_document(
+                    BOT_DIR,
+                    bot_name,
+                    {
+                        "version": VISUAL_PROFILES_VERSION,
+                        "characters": [*remaining, normalized_character],
+                    },
+                )
+                saved_character = next(
+                    item for item in normalized["characters"]
+                    if item["name"].casefold() == canonical_name.casefold()
+                )
+                return _json_ok({
+                    "saved": True,
+                    "source": "explicit",
+                    "character": saved_character,
+                    "storage_version": normalized["version"],
+                })
+        except VisualProfileValidationError as e:
+            print(f"[VISUAL_PROFILE:API] 저장 검증 실패: error={e}")
+            return _json_error(str(e))
+        except Exception as e:
+            print(f"[VISUAL_PROFILE:API] 저장 실패: error={e}")
+            traceback.print_exc()
+            return _json_error(str(e), 500)
 
     # ─── 시스템 프롬프트 ────────────────────────────────────
     async def handle_get_system_prompt(self, request):
@@ -3524,6 +3709,15 @@ class BotDataPatcher:
             bot = next((b for b in data["bots"] if b["name"] == bot_name), None)
             if not bot:
                 return _json_error(f"봇을 찾을 수 없습니다: {bot_name}")
+            lb_extra = _load_lb_extra(bot_name) or []
+            if isinstance(lb_extra, dict) and "edited" in lb_extra:
+                lb_extra = lb_extra.get("edited") or []
+            visual_document = load_visual_profiles_document(BOT_DIR, bot_name)
+            effective_visual_profiles = effective_bot_profiles(
+                bot,
+                lb_extra,
+                visual_document,
+            )
 
             bot_dst_root = os.path.join(comfy_input_dir, "soya_bot", bot_name)
             # 요청된 캐릭터명 목록: char_names(다중) 우선, 없으면 단일 char_name
@@ -3589,6 +3783,71 @@ class BotDataPatcher:
                     shutil.copy2(src_file, dst_file)
                     copied_files.append(f"{char_name}/{dst_name}")
                     print(f"[DATA_PATCH] 복사: {img_name} -> {dst_name}")
+
+                character_profiles = next((
+                    value for name, value in effective_visual_profiles.items()
+                    if str(name).casefold() == str(char_name).casefold()
+                ), {})
+                for profile in character_profiles.get("profiles") or []:
+                    overrides = profile.get("render_overrides") or {}
+                    if not overrides.get("use_profile_embedding"):
+                        continue
+                    profile_id = str(profile.get("id") or "").strip()
+                    profile_rep_images = overrides.get("rep_images") or []
+                    if not profile_rep_images:
+                        skipped_files.append(
+                            f"{char_name}/_visual_profiles/{profile_id}:rep_images 없음"
+                        )
+                        print(
+                            f"[DATA_PATCH] 프로필 임베딩용 대표 이미지 없음: "
+                            f"bot={bot_name!r}, character={char_name!r}, "
+                            f"profile={profile_id!r}"
+                        )
+                        continue
+                    profile_dst_dir = os.path.join(
+                        dst_dir,
+                        "_visual_profiles",
+                        profile_id,
+                    )
+                    os.makedirs(profile_dst_dir, exist_ok=True)
+                    created_dirs.append(
+                        f"soya_bot/{bot_name}/{char_name}/"
+                        f"_visual_profiles/{profile_id}"
+                    )
+                    for index, image_name in enumerate(profile_rep_images):
+                        source_file = os.path.join(
+                            BOT_DIR,
+                            bot_name,
+                            char_name,
+                            str(image_name),
+                        )
+                        if not os.path.isfile(source_file):
+                            skipped_files.append(
+                                f"{char_name}/_visual_profiles/{profile_id}/"
+                                f"{image_name}"
+                            )
+                            print(
+                                f"[DATA_PATCH] 프로필 대표 이미지 소스 없음: "
+                                f"path={source_file!r}"
+                            )
+                            continue
+                        extension = os.path.splitext(str(image_name))[1]
+                        target_name = (
+                            f"representation{extension}"
+                            if index == 0
+                            else f"sub_{index}{extension}"
+                        )
+                        target_file = os.path.join(profile_dst_dir, target_name)
+                        shutil.copy2(source_file, target_file)
+                        relative = (
+                            f"{char_name}/_visual_profiles/{profile_id}/"
+                            f"{target_name}"
+                        )
+                        copied_files.append(relative)
+                        print(
+                            f"[DATA_PATCH] 프로필 대표 이미지 복사: "
+                            f"{image_name} -> {relative}"
+                        )
 
             msg = f"폴더 {len(created_dirs)}개 생성, 이미지 {len(copied_files)}개 복사"
             if skipped_files:

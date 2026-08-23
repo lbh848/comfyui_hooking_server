@@ -4886,11 +4886,88 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
             # 1. 원본 섹션은 로그용으로 보존한다. 캐릭터 1인 전용 규칙은
             # 규칙 적용 전의 구조화된 NAME을 우선 사용해 정확한 인원수를 정한다.
             parsed_raw_sections = builder.parse_sections(raw_positive)
+            from modes.bot_mode import BOT_DIR as _bot_dir_local
             from modes.bot_mode import _load_lb_extra as _load_lb_extra_local
             from modes.bot_mode import _load_bot_data as _load_bot_data_local
+            from modes.visual_profiles import (
+                effective_bot_profiles as _effective_bot_profiles,
+                load_document as _load_visual_profiles_document,
+                resolve_render_character as _resolve_render_character,
+            )
             lb_extra_data = _load_lb_extra_local(bot_name) or []
+            if isinstance(lb_extra_data, dict) and "edited" in lb_extra_data:
+                lb_extra_data = lb_extra_data.get("edited") or []
             bot_data = _load_bot_data_local()
             bot = next((b for b in bot_data["bots"] if b["name"] == bot_name), None)
+            requested_visual_states = raw_body.get("illustration_visual_states") or {}
+            if not isinstance(requested_visual_states, dict):
+                print(
+                    f"[VISUAL_PROFILE:RENDER] illustration_visual_states 형식 오류로 "
+                    f"프로필 기본값 사용: type={type(requested_visual_states).__name__}, "
+                    f"value={requested_visual_states!r}"
+                )
+                requested_visual_states = {}
+            if bot:
+                visual_document = _load_visual_profiles_document(
+                    _bot_dir_local,
+                    bot_name,
+                )
+                effective_profiles = _effective_bot_profiles(
+                    bot,
+                    lb_extra_data,
+                    visual_document,
+                )
+                resolved_bot = copy.deepcopy(bot)
+                resolved_characters = []
+                applied_visual_states = {}
+                for root_character in bot.get("characters", []):
+                    char_name = str(root_character.get("name") or "").strip()
+                    character_profiles = next((
+                        value for name, value in effective_profiles.items()
+                        if str(name).casefold() == char_name.casefold()
+                    ), None)
+                    requested_state = next((
+                        value for name, value in requested_visual_states.items()
+                        if str(name).casefold() == char_name.casefold()
+                        and isinstance(value, dict)
+                    ), {})
+                    if not character_profiles:
+                        print(
+                            f"[VISUAL_PROFILE:RENDER] 유효 프로필 없음, 루트 카드 유지: "
+                            f"bot={bot_name!r}, character={char_name!r}"
+                        )
+                        resolved_characters.append(copy.deepcopy(root_character))
+                        continue
+                    try:
+                        resolved_character, resolved_base = _resolve_render_character(
+                            root_character,
+                            character_profiles,
+                            str(requested_state.get("visual_profile_id") or ""),
+                            str(requested_state.get("outfit_id") or ""),
+                        )
+                    except Exception as e:
+                        print(
+                            f"[VISUAL_PROFILE:RENDER] 프로필 렌더 카드 해석 실패, "
+                            f"루트 카드 유지: bot={bot_name!r}, character={char_name!r}, "
+                            f"requested={requested_state!r}, error={e}"
+                        )
+                        traceback.print_exc()
+                        resolved_characters.append(copy.deepcopy(root_character))
+                        continue
+                    resolved_characters.append(resolved_character)
+                    applied_visual_states[char_name] = {
+                        "visual_profile_id": resolved_base["visual_profile_id"],
+                        "outfit_id": resolved_base["outfit_id"],
+                        "profile_embedding": bool(
+                            resolved_character.get("_use_profile_embedding")
+                        ),
+                    }
+                resolved_bot["characters"] = resolved_characters
+                bot = resolved_bot
+                print(
+                    f"[VISUAL_PROFILE:RENDER] 렌더 카드 결속 완료: "
+                    f"bot={bot_name!r}, states={applied_visual_states}"
+                )
             characters_for_parse = (bot.get("characters", []) if bot else [])
             char_names = [c["name"] for c in characters_for_parse]
             character_aliases = _build_character_alias_map(
@@ -5551,7 +5628,35 @@ def _build_llm_final_result(descriptor: dict | None) -> dict | None:
     return {
         "raw_positive": raw_positive,
         "character_names": names,
+        "visual_states": _descriptor_visual_states(descriptor),
     }
+
+
+def _descriptor_visual_states(descriptor: dict | None) -> dict:
+    if not isinstance(descriptor, dict):
+        return {}
+    result = {}
+    for character in descriptor.get("characters") or []:
+        if not isinstance(character, dict):
+            continue
+        name = str(character.get("name") or "").strip()
+        base = next((
+            value
+            for base_name, value in (
+                descriptor.get("visual_base_snapshot") or {}
+            ).items()
+            if str(base_name).casefold() == name.casefold()
+            and isinstance(value, dict)
+        ), {})
+        profile_id = str(base.get("visual_profile_id") or "").strip()
+        outfit_id = str(base.get("outfit_id") or "").strip()
+        if not name or not profile_id:
+            continue
+        result[name] = {
+            "visual_profile_id": profile_id,
+            "outfit_id": outfit_id,
+        }
+    return result
 
 
 def _collect_lb_extra(bot_name: str) -> dict | None:
@@ -5564,7 +5669,18 @@ def _collect_lb_extra(bot_name: str) -> dict | None:
         print("[ILLUST_CONTEXT] 활성 봇이 없어 lb-xnai.lb.extra를 비움")
         return None
     try:
-        from modes.bot_mode import _load_bot_data, _load_builtin_presets, _load_lb_extra
+        from modes.bot_mode import (
+            BOT_DIR,
+            _load_bot_data,
+            _load_builtin_presets,
+            _load_lb_extra,
+        )
+        from modes.visual_profiles import (
+            build_natural_profile_catalog,
+            effective_bot_profiles,
+            load_document as load_visual_profiles_document,
+            resolve_visual_base,
+        )
         data = _load_bot_data()
         bot = next((b for b in data.get("bots", []) if b.get("name") == bot_name), None)
         if not bot:
@@ -5580,18 +5696,41 @@ def _collect_lb_extra(bot_name: str) -> dict | None:
             system_prompt = str(bot.get("system_prompt") or "")
 
         extra = _load_lb_extra(bot_name) or []
-        chars_by_name = {str(c.get("name")): c for c in bot.get("characters", []) if isinstance(c, dict)}
+        if isinstance(extra, dict) and "edited" in extra:
+            extra = extra.get("edited") or []
+        extra_by_name = {
+            str(item.get("name") or "").strip().casefold(): item
+            for item in extra
+            if isinstance(item, dict) and str(item.get("name") or "").strip()
+        }
+        visual_document = load_visual_profiles_document(BOT_DIR, bot_name)
+        visual_profiles = effective_bot_profiles(bot, extra, visual_document)
         characters = []
-        for item in extra:
-            if not isinstance(item, dict):
+        for char in bot.get("characters", []):
+            if not isinstance(char, dict):
+                print(f"[ILLUST_CONTEXT] object가 아닌 봇 캐릭터 스킵: {char!r}")
                 continue
-            name = str(item.get("name") or "").strip()
+            name = str(char.get("name") or "").strip()
             if not name:
+                print(f"[ILLUST_CONTEXT] 이름 없는 봇 캐릭터 스킵: {char!r}")
                 continue
-            char = chars_by_name.get(name, {})
+            item = extra_by_name.get(name.casefold(), {})
             gender_tag = str(item.get("gender_tag") or char.get("gender_tag") or "").strip()
-            appearance = _tag_text(item.get("appearance"))
-            outfit = _tag_text(item.get("outfit"))
+            character_profiles = next((
+                value for profile_name, value in visual_profiles.items()
+                if str(profile_name).casefold() == name.casefold()
+            ), None)
+            if character_profiles:
+                visual_base = resolve_visual_base(character_profiles)
+                appearance = _tag_text(visual_base.get("appearance"))
+                outfit = _tag_text(visual_base.get("outfit"))
+            else:
+                print(
+                    f"[ILLUST_CONTEXT] 유효 외형 프로필을 찾지 못해 lb.extra 기본값 사용: "
+                    f"bot={bot_name!r}, character={name!r}"
+                )
+                appearance = _tag_text(item.get("appearance"))
+                outfit = _tag_text(item.get("outfit"))
             appearance = ", ".join(x for x in (gender_tag, appearance) if x)
             characters.append({"name": name, "appearance": appearance, "outfit": outfit})
         bot_character_names = [
@@ -5603,6 +5742,8 @@ def _collect_lb_extra(bot_name: str) -> dict | None:
             "system_prompt": system_prompt.strip(),
             "characters": characters,
             "bot_character_names": bot_character_names,
+            "visual_profiles": visual_profiles,
+            "visual_profile_catalog": build_natural_profile_catalog(visual_profiles),
         }
     except Exception as e:
         print(f"[ILLUST_CONTEXT] 활성 lb.extra 수집 실패: bot={bot_name}, error={e}")
@@ -5679,6 +5820,22 @@ def build_bot_character_names(bot_name: str) -> str:
         print(f"[ILLUST_CONTEXT:BACKTRANSLATE] 봇 캐릭터 목록이 비어 있음: bot={bot_name!r}")
         return ""
     return ", ".join(str(name) for name in names)
+
+
+def build_visual_profile_catalog(bot_name: str) -> str:
+    """CALL1이 의미로 판단할 자연어 외형 프로필·등록 복장 카탈로그."""
+    collected = _collect_lb_extra(bot_name)
+    if not collected:
+        return ""
+    return str(collected.get("visual_profile_catalog") or "")
+
+
+def build_effective_visual_profiles(bot_name: str) -> dict:
+    """파이프라인/렌더러가 exact ID로 조회할 서버 소유 유효 프로필 맵."""
+    collected = _collect_lb_extra(bot_name)
+    if not collected:
+        return {}
+    return copy.deepcopy(collected.get("visual_profiles") or {})
 
 
 async def process_illustration_context_queue_item(item) -> dict:
@@ -5878,6 +6035,7 @@ async def process_illustration_context_queue_item(item) -> dict:
             "illustration_prompt_format": child_prompt_format,
             "illustration_provider": child_provider,
             "illustration_defer_postprocess": bool(defer_postprocess),
+            "illustration_visual_states": _descriptor_visual_states(descriptor),
         }
         multi_char_context = _multi_char_queue_context(descriptor, child_prompt_format)
         if multi_char_context:
@@ -6037,6 +6195,8 @@ async def process_illustration_context_queue_item(item) -> dict:
             extra_character_cards = extra_costume
             extra_names = build_lb_extra_names(active_bot)
             backtranslate_names = build_bot_character_names(active_bot)
+            visual_profile_catalog = build_visual_profile_catalog(active_bot)
+            effective_visual_profiles = build_effective_visual_profiles(active_bot)
             # 후처리 모드(bubble→manga / vn→speak)가 CALL3 대사 프롬프트를 자동 결정한다.
             # call3_prompt_mode는 봇별 후처리 모드를 진실 소스로 삼아 덮어쓴다(전역 토글은 UI 힌트용).
             try:
@@ -6095,6 +6255,8 @@ async def process_illustration_context_queue_item(item) -> dict:
                 backtranslate_names=backtranslate_names,
                 history_plan=history_plan,
                 enable_multi_char_layout=multi_char_mask_active,
+                visual_profile_catalog=visual_profile_catalog,
+                visual_profiles=effective_visual_profiles,
             )
             # 이 삽화 생성에서 거친 LLM 흐름(MULTI-CHAR-MASK~CALL3)의 history_id 목록.
             # build_from_context 완료 시점에 한 번 캡처해 모든 자식 백업에 동일 주입.
@@ -8336,6 +8498,7 @@ async def _enqueue_illustration_session_slot(
         "extra_data": body.get("extra_data", {}),
         "illustration_regenerate_session_id": session_id,
         "illustration_regenerate_slot": slot,
+        "illustration_visual_states": _descriptor_visual_states(descriptor),
     }
     if attach_context:
         session = illustration_context_pipeline.get_session(session_id) or {}
@@ -8492,6 +8655,7 @@ async def handle_prompt(request: web.Request) -> web.Response:
                 "illustration_context": session.get("context", ""),
                 "illustration_regenerate_session_id": session_id,
                 "illustration_regenerate_slot": slot,
+                "illustration_visual_states": _descriptor_visual_states(descriptor),
             }
             backup_name = str(descriptor.get("backup_name") or "").strip()
             if backup_name and _backup_uses_hybrid_regeneration(backup_name):
@@ -22459,6 +22623,8 @@ app.router.add_get("/api/bot_mode/word_replacements", bot_mode.handle_get_word_r
 app.router.add_post("/api/bot_mode/word_replacements", bot_mode.handle_save_word_replacements)
 app.router.add_get("/api/bot_mode/lb_extra", bot_mode.handle_get_lb_extra)
 app.router.add_post("/api/bot_mode/lb_extra", bot_mode.handle_save_lb_extra)
+app.router.add_get("/api/bot_mode/visual_profiles", bot_mode.handle_get_visual_profiles)
+app.router.add_post("/api/bot_mode/visual_profiles", bot_mode.handle_save_visual_profiles)
 app.router.add_get("/api/bot_mode/system_prompt", bot_mode.handle_get_system_prompt)
 app.router.add_post("/api/bot_mode/system_prompt", bot_mode.handle_save_system_prompt)
 app.router.add_get("/api/bot_mode/system_prompt_presets", bot_mode.handle_get_system_prompt_presets)

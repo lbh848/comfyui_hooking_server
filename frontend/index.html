@@ -63892,6 +63892,199 @@
             showBotView('bots');
         }
 
+        let _visualProfileEditor = null;
+
+        function _vpTagText(values) {
+            return (Array.isArray(values) ? values : []).map(v => typeof v === 'string' ? v : (v?.tag || '')).filter(Boolean).join(', ');
+        }
+
+        function _vpTags(text, previous = []) {
+            const desc = new Map(previous.filter(v => v && typeof v === 'object' && v.tag).map(v => [String(v.tag).toLowerCase(), v.desc || '']));
+            const result = [], seen = new Set();
+            String(text || '').split(',').forEach(raw => {
+                const tag = raw.trim(), key = tag.toLowerCase();
+                if (!tag || seen.has(key)) return;
+                seen.add(key);
+                const item = {tag};
+                if (desc.get(key)) item.desc = desc.get(key);
+                result.push(item);
+            });
+            return result;
+        }
+
+        function _vpModal() {
+            let el = document.getElementById('visual-profile-overlay');
+            if (!el) {
+                el = document.createElement('div');
+                el.id = 'visual-profile-overlay';
+                el.style.cssText = 'display:none;position:fixed;inset:0;z-index:10080;background:rgba(0,0,0,.72);align-items:center;justify-content:center;padding:22px';
+                el.onclick = event => { if (event.target === el) closeVisualProfileEditor(); };
+                document.body.appendChild(el);
+            }
+            return el;
+        }
+
+        function _vpProfile() {
+            return (_visualProfileEditor?.data?.profiles || []).find(p => p.id === _visualProfileEditor.selectedProfileId);
+        }
+
+        function _vpStyle() {
+            return 'width:100%;box-sizing:border-box;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--text);font:inherit';
+        }
+
+        function _vpField(label, html, help = '') {
+            return `<label style="display:block;margin-bottom:11px"><b style="display:block;font-size:.76rem;color:var(--text2);margin-bottom:4px">${label}</b>${html}${help ? `<small style="display:block;color:var(--text2);margin-top:4px;line-height:1.4">${help}</small>` : ''}</label>`;
+        }
+
+        function _vpCommit(showError = true) {
+            const profile = _vpProfile(), root = _vpModal();
+            if (!profile || root.style.display === 'none') return true;
+            const get = id => root.querySelector('#' + id)?.value ?? '';
+            profile.label = get('vp-label').trim() || profile.id;
+            profile.selection_guide = get('vp-guide').trim();
+            profile.aliases = get('vp-aliases').split(',').map(v => v.trim()).filter(Boolean);
+            profile.appearance = _vpTags(get('vp-appearance'), profile.appearance);
+            profile.default_outfit_id = get('vp-default-outfit');
+            profile.outfits.forEach((outfit, i) => {
+                outfit.label = get('vp-outfit-label-' + i).trim() || outfit.id;
+                outfit.selection_guide = get('vp-outfit-guide-' + i).trim();
+                outfit.aliases = get('vp-outfit-aliases-' + i).split(',').map(v => v.trim()).filter(Boolean);
+                outfit.tags = _vpTags(get('vp-outfit-tags-' + i), outfit.tags);
+            });
+            try {
+                const raw = get('vp-render').trim();
+                const parsed = raw ? JSON.parse(raw) : {};
+                if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') throw new Error('object가 아닙니다');
+                profile.render_overrides = parsed;
+            } catch (error) {
+                console.error('[VISUAL_PROFILE] 렌더 오버라이드 파싱 실패', error);
+                if (showError) showToast('고급 렌더 오버라이드 JSON을 확인하세요: ' + error.message, 'error');
+                return false;
+            }
+            return true;
+        }
+
+        function _vpRender() {
+            const root = _vpModal(), state = _visualProfileEditor;
+            if (!state) {
+                root.style.display = 'none';
+                root.innerHTML = '';
+                return;
+            }
+            const profiles = state.data.profiles || [];
+            if (!profiles.some(p => p.id === state.selectedProfileId)) state.selectedProfileId = profiles[0]?.id || '';
+            const profile = _vpProfile(), input = _vpStyle();
+            const profileList = profiles.map(p => `<button onclick="_vpSelect('${escAttr(p.id)}')" style="width:100%;text-align:left;padding:9px;margin-bottom:6px;border:1px solid ${p.id === state.selectedProfileId ? 'var(--accent)' : 'var(--border)'};border-radius:6px;background:var(--surface2);color:var(--text);cursor:pointer"><b>${escHtml(p.label || p.id)}</b><br><code>${escHtml(p.id)}</code></button>`).join('');
+            const defaultProfiles = profiles.map(p => `<option value="${escAttr(p.id)}" ${p.id === state.data.default_visual_profile_id ? 'selected' : ''}>${escHtml(p.label || p.id)}</option>`).join('');
+            const defaultOutfits = (profile?.outfits || []).map(o => `<option value="${escAttr(o.id)}" ${o.id === profile.default_outfit_id ? 'selected' : ''}>${escHtml(o.label || o.id)} (${escHtml(o.id)})</option>`).join('');
+            const outfits = (profile?.outfits || []).map((o, i) => `
+                <section style="border:1px solid var(--border);border-radius:8px;padding:11px;margin-bottom:9px">
+                    <div style="display:flex;gap:8px;align-items:center;margin-bottom:9px"><b>복장 ${i + 1}</b><code style="color:var(--accent)">${escHtml(o.id)}</code><button onclick="_vpDeleteOutfit('${escAttr(o.id)}')" style="margin-left:auto;color:#ef4444;background:transparent;border:1px solid #ef444477;border-radius:5px;cursor:pointer">삭제</button></div>
+                    ${_vpField('표시 이름', `<input id="vp-outfit-label-${i}" value="${escAttr(o.label || '')}" style="${input}">`)}
+                    ${_vpField('자연어 선택 기준', `<textarea id="vp-outfit-guide-${i}" rows="2" style="${input};resize:vertical">${escHtml(o.selection_guide || '')}</textarea>`, '이야기에서 언제 이 복장을 선택해야 하는지 문장으로 씁니다.')}
+                    ${_vpField('작중 별칭', `<input id="vp-outfit-aliases-${i}" value="${escAttr((o.aliases || []).join(', '))}" style="${input}">`)}
+                    ${_vpField('기본 복장 태그', `<textarea id="vp-outfit-tags-${i}" rows="2" style="${input};resize:vertical">${escHtml(_vpTagText(o.tags))}</textarea>`)}
+                </section>`).join('');
+            const source = state.source === 'legacy'
+                ? '<span style="color:#f59e0b">가상 default 카드 · 저장 전까지 기존 데이터 변경 없음</span>'
+                : '<span style="color:#22c55e">명시적 멀티 프로필 카드</span>';
+            const editor = profile ? `
+                <div style="display:flex;align-items:center;gap:9px;margin-bottom:12px"><h3 style="margin:0">${escHtml(profile.label || profile.id)}</h3><code style="color:var(--accent)">${escHtml(profile.id)}</code>
+                    <label style="margin-left:auto;font-size:.75rem">캐릭터 기본 프로필 <select onchange="_vpDefaultProfile(this.value)" style="padding:5px;background:var(--surface2);color:var(--text)">${defaultProfiles}</select></label>
+                    <button onclick="_vpDeleteProfile('${escAttr(profile.id)}')" style="color:#ef4444;background:transparent;border:1px solid #ef444477;border-radius:5px;cursor:pointer">프로필 삭제</button>
+                </div>
+                ${_vpField('표시 이름', `<input id="vp-label" value="${escAttr(profile.label || '')}" style="${input}">`)}
+                ${_vpField('자연어 선택 기준', `<textarea id="vp-guide" rows="3" style="${input};resize:vertical">${escHtml(profile.selection_guide || '')}</textarea>`, '변신 시작·해제처럼 이 형태가 성립하고 유지되는 조건을 자연어로 적습니다. 키워드 규칙으로 판정하지 않습니다.')}
+                ${_vpField('작중 별칭', `<input id="vp-aliases" value="${escAttr((profile.aliases || []).join(', '))}" style="${input}">`)}
+                ${_vpField('고정 외모 태그', `<textarea id="vp-appearance" rows="3" style="${input};resize:vertical">${escHtml(_vpTagText(profile.appearance))}</textarea>`)}
+                <div style="display:flex;align-items:center;gap:8px;margin:16px 0 9px"><b>등록 복장</b><button onclick="_vpAddOutfit()" style="cursor:pointer">+ 복장 추가</button><label style="margin-left:auto;font-size:.75rem">기본 복장 <select id="vp-default-outfit" style="padding:5px;background:var(--surface2);color:var(--text)">${defaultOutfits}</select></label></div>
+                ${outfits}
+                <details style="border:1px solid var(--border);border-radius:8px;padding:10px"><summary style="cursor:pointer;font-weight:700">고급 렌더 오버라이드</summary>
+                    <p style="font-size:.7rem;color:var(--text2)">비어 있는 설정은 루트 카드를 상속합니다. face_tags, eye_tags, absolute_tags, character_negative, gender_tag, image_name_tag, use_image_name_tag, rep_images, loras, loras_solo, loras_group, face_loras, style_loras, use_profile_embedding을 지원합니다. rep_images에는 기존 캐릭터 폴더의 이미지 파일명을 넣습니다. use_profile_embedding=true이면 데이터 패치가 _visual_profiles/{profile_id}/ 아래로 복사하고 해당 폴더의 cache.pt/cache.ipadpt를 사용합니다.</p>
+                    <textarea id="vp-render" rows="11" style="${input};resize:vertical;font-family:monospace">${escHtml(JSON.stringify(profile.render_overrides || {}, null, 2))}</textarea>
+                </details>` : '';
+            root.innerHTML = `<div style="width:min(1160px,96vw);height:min(880px,92vh);background:var(--surface);border:1px solid var(--border);border-radius:12px;display:flex;flex-direction:column;overflow:hidden">
+                <header style="padding:13px 17px;border-bottom:1px solid var(--border);display:flex;align-items:center"><div><h2 style="margin:0">${escHtml(state.charName)} · 외형 프로필</h2><small>${source}</small></div><button onclick="closeVisualProfileEditor()" style="margin-left:auto;font-size:1.4rem;background:transparent;border:0;color:var(--text);cursor:pointer">×</button></header>
+                <div style="display:grid;grid-template-columns:230px 1fr;min-height:0;flex:1"><aside style="padding:13px;border-right:1px solid var(--border);overflow:auto">${profileList}<button onclick="_vpAddProfile()" style="width:100%;padding:8px;cursor:pointer">+ 외형 프로필 추가</button></aside><main style="padding:17px;overflow:auto">${editor}</main></div>
+                <footer style="padding:11px 17px;border-top:1px solid var(--border);display:flex;gap:8px;justify-content:flex-end"><button onclick="_vpResetLegacy()" style="margin-right:auto;cursor:pointer">구형 default로 초기화</button><button onclick="closeVisualProfileEditor()">취소</button><button onclick="_vpSave()" style="background:var(--accent);color:#fff;border:0;border-radius:6px;padding:8px 14px;cursor:pointer">멀티 프로필 저장</button></footer>
+            </div>`;
+            root.style.display = 'flex';
+        }
+
+        async function openVisualProfileEditor(charName) {
+            try {
+                const response = await fetch(`/api/bot_mode/visual_profiles?bot_name=${encodeURIComponent(botCurrentBot)}&character=${encodeURIComponent(charName)}`);
+                const result = await response.json();
+                if (!response.ok || !result.character) throw new Error(result.error || '로드 실패');
+                _visualProfileEditor = {charName, source: result.source || 'legacy', data: JSON.parse(JSON.stringify(result.character)), selectedProfileId: result.character.default_visual_profile_id};
+                _vpRender();
+            } catch (error) {
+                console.error('[VISUAL_PROFILE] 로드 실패', error);
+                showToast('외형 프로필 로드 실패: ' + error.message, 'error');
+            }
+        }
+
+        function closeVisualProfileEditor() { _visualProfileEditor = null; _vpRender(); }
+        function _vpSelect(id) { if (_vpCommit()) { _visualProfileEditor.selectedProfileId = id; _vpRender(); } }
+        function _vpDefaultProfile(id) { if (_vpCommit()) { _visualProfileEditor.data.default_visual_profile_id = id; _vpRender(); } }
+        function _vpId(label) {
+            const raw = prompt(label + '의 고정 ID를 입력하세요.\\n영문/숫자로 시작하고 영문, 숫자, _, -만 사용합니다.');
+            const id = raw === null ? '' : raw.trim();
+            if (id && !/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(id)) { showToast('ID 형식이 올바르지 않습니다.', 'error'); return ''; }
+            return id;
+        }
+        function _vpAddProfile() {
+            if (!_vpCommit()) return;
+            const id = _vpId('외형 프로필');
+            if (!id) return;
+            if (_visualProfileEditor.data.profiles.some(p => p.id === id)) return showToast('중복 프로필 ID입니다.', 'error');
+            _visualProfileEditor.data.profiles.push({id, label:id, selection_guide:'', aliases:[], appearance:[], default_outfit_id:'default', outfits:[{id:'default', label:'기본 복장', selection_guide:'', aliases:[], tags:[]}], render_overrides:{}});
+            _visualProfileEditor.selectedProfileId = id; _vpRender();
+        }
+        function _vpDeleteProfile(id) {
+            if (_visualProfileEditor.data.profiles.length <= 1) return showToast('프로필은 최소 1개 필요합니다.', 'error');
+            if (!confirm(`외형 프로필 '${id}'을 삭제할까요?`)) return;
+            _visualProfileEditor.data.profiles = _visualProfileEditor.data.profiles.filter(p => p.id !== id);
+            if (_visualProfileEditor.data.default_visual_profile_id === id) _visualProfileEditor.data.default_visual_profile_id = _visualProfileEditor.data.profiles[0].id;
+            _visualProfileEditor.selectedProfileId = _visualProfileEditor.data.default_visual_profile_id; _vpRender();
+        }
+        function _vpAddOutfit() {
+            if (!_vpCommit()) return;
+            const p = _vpProfile(), id = _vpId('복장');
+            if (!id) return;
+            if (p.outfits.some(o => o.id === id)) return showToast('중복 복장 ID입니다.', 'error');
+            p.outfits.push({id, label:id, selection_guide:'', aliases:[], tags:[]}); _vpRender();
+        }
+        function _vpDeleteOutfit(id) {
+            if (!_vpCommit()) return;
+            const p = _vpProfile();
+            if (p.outfits.length <= 1) return showToast('복장은 최소 1개 필요합니다.', 'error');
+            if (!confirm(`복장 '${id}'을 삭제할까요?`)) return;
+            p.outfits = p.outfits.filter(o => o.id !== id);
+            if (p.default_outfit_id === id) p.default_outfit_id = p.outfits[0].id;
+            _vpRender();
+        }
+        async function _vpSave() {
+            if (!_vpCommit()) return;
+            try {
+                const response = await fetch('/api/bot_mode/visual_profiles', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({bot_name:botCurrentBot, character:_visualProfileEditor.charName, data:_visualProfileEditor.data})});
+                const result = await response.json();
+                if (!response.ok || !result.saved) throw new Error(result.error || '저장 실패');
+                _visualProfileEditor.source = 'explicit'; _visualProfileEditor.data = result.character; _visualProfileEditor.selectedProfileId = result.character.default_visual_profile_id;
+                _vpRender(); showToast('외형 프로필 저장 완료', 'success');
+            } catch (error) { console.error('[VISUAL_PROFILE] 저장 실패', error); showToast('외형 프로필 저장 실패: ' + error.message, 'error'); }
+        }
+        async function _vpResetLegacy() {
+            if (!confirm('명시적 멀티 프로필을 제거하고 기존 Appearance/default_outfit 카드로 되돌릴까요?')) return;
+            try {
+                const charName = _visualProfileEditor.charName;
+                const response = await fetch('/api/bot_mode/visual_profiles', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({bot_name:botCurrentBot, character:charName, reset_to_legacy:true})});
+                const result = await response.json();
+                if (!response.ok || !result.saved) throw new Error(result.error || '초기화 실패');
+                showToast('구형 default 카드로 초기화했습니다.', 'success'); await openVisualProfileEditor(charName);
+            } catch (error) { console.error('[VISUAL_PROFILE] 초기화 실패', error); showToast('초기화 실패: ' + error.message, 'error'); }
+        }
+
         async function renderBotCharacters() {
             const grid = document.getElementById('bot-character-grid');
             grid.innerHTML = '';
@@ -63933,6 +64126,8 @@
                         <button class="btn-auto-group" data-char-name="${escAttr(char.name)}"
                             onclick="event.stopPropagation(); autoGroupPrompt('${escAttr(char.name)}')"
                             style="background:rgba(34,197,94,0.12); color:var(--text); border:1px solid rgba(34,197,94,0.3); padding:8px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600; white-space:nowrap;">캐릭터 얼굴 / 눈 / 절대태그 설정</button>
+                        <button onclick="event.stopPropagation(); openVisualProfileEditor('${escAttr(char.name)}')"
+                            style="background:rgba(168,85,247,0.12); color:var(--text); border:1px solid rgba(168,85,247,0.35); padding:8px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600; white-space:nowrap;">외형 프로필</button>
                         <select onchange="saveCharGenderTag('${escAttr(char.name)}', this.value)"
                             style="padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface2); color:var(--text); font-size:0.8rem; cursor:pointer;">
                             ${['1girl','1boy','1male'].map(g =>
