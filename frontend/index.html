@@ -63918,7 +63918,6 @@
                 el = document.createElement('div');
                 el.id = 'visual-profile-overlay';
                 el.style.cssText = 'display:none;position:fixed;inset:0;z-index:10080;background:rgba(0,0,0,.72);align-items:center;justify-content:center;padding:22px';
-                el.onclick = event => { if (event.target === el) closeVisualProfileEditor(); };
                 document.body.appendChild(el);
             }
             return el;
