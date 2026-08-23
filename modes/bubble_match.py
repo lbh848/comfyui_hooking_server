@@ -406,6 +406,7 @@ def match_speakers_to_faces(segments, faces, bot_name,
             extract_face_crop,
             get_char_appearance,
             get_char_embedding,
+            get_char_profile_prototypes,
         )
     except Exception as e:
         print(f"[BUBBLE_MATCH] 의존 모듈 로드 실패: {e}")
@@ -426,6 +427,7 @@ def match_speakers_to_faces(segments, faces, bot_name,
     # ── 각 NAME 의 캐릭터 임베딩 ──
     name_embs = {}
     name_appearances = {}
+    name_prototypes = {}
     missing_project_names = set()
     project_names = _project_character_name_map(bot_name)
     for n in names:
@@ -450,14 +452,39 @@ def match_speakers_to_faces(segments, faces, bot_name,
                 device=onnx_device,
                 cpu_threads=cpu_threads,
             )
-        if emb is None:
+        if onnx_device in (None, "auto") and int(cpu_threads or 0) == 0:
+            profile_prototypes = get_char_profile_prototypes(
+                bot_name, canonical_name
+            )
+        else:
+            profile_prototypes = get_char_profile_prototypes(
+                bot_name,
+                canonical_name,
+                device=onnx_device,
+                cpu_threads=cpu_threads,
+            )
+        prototypes = []
+        if emb is not None:
+            prototypes.append({
+                "visual_card_id": "",
+                "visual_card_index": 1,
+                "embedding": emb,
+                "appearance": get_char_appearance(bot_name, canonical_name),
+            })
+        prototypes.extend(profile_prototypes)
+        if not prototypes:
             print(
                 f"[BUBBLE_MATCH] 등록 캐릭터 임베딩 없음/실패: "
                 f"{bot_name}/{canonical_name} → 기존 미배정 유지"
             )
         else:
-            name_embs[n] = emb
-            name_appearances[n] = get_char_appearance(bot_name, canonical_name)
+            name_prototypes[n] = prototypes
+            name_embs[n] = prototypes[0]["embedding"]
+            name_appearances[n] = prototypes[0].get("appearance")
+            print(
+                f"[BUBBLE_MATCH] 캐릭터 FACE 프로토타입 로드: "
+                f"{bot_name}/{canonical_name} {len(prototypes)}개"
+            )
 
     # 얼굴이 없더라도 프로젝트에 없는 발화자는 무꼬리 폴백으로 전달해야 한다.
     if not faces:
@@ -535,17 +562,37 @@ def match_speakers_to_faces(segments, faces, bot_name,
         row = []
         rank_row = []
         for fi, fe in enumerate(face_embs):
-            sim = _cosine(name_embs[n], fe) if fe is not None else None
-            row.append(sim)
-            app_sim = appearance_similarity(
-                name_appearances.get(n), face_appearances[fi]
+            best = None
+            for prototype in name_prototypes.get(n, []):
+                prototype_sim = (
+                    _cosine(prototype["embedding"], fe)
+                    if fe is not None else None
+                )
+                prototype_app_sim = appearance_similarity(
+                    prototype.get("appearance"), face_appearances[fi]
+                )
+                if prototype_sim is None:
+                    prototype_combined = None
+                elif prototype_app_sim is None or appearance_weight <= 0.0:
+                    prototype_combined = prototype_sim
+                else:
+                    prototype_combined = (
+                        prototype_sim + appearance_weight * prototype_app_sim
+                    ) / (1.0 + appearance_weight)
+                if (
+                    prototype_combined is not None
+                    and (best is None or prototype_combined > best[0])
+                ):
+                    best = (
+                        prototype_combined,
+                        prototype_sim,
+                        prototype_app_sim,
+                        prototype,
+                    )
+            combined, sim, app_sim, matched_prototype = (
+                best if best is not None else (None, None, None, {})
             )
-            if sim is None:
-                combined = None
-            elif app_sim is None or appearance_weight <= 0.0:
-                combined = sim
-            else:
-                combined = (sim + appearance_weight * app_sim) / (1.0 + appearance_weight)
+            row.append(sim)
             face_conf = faces[fi].get("conf")
             confidence = max(0.0, float(face_conf or 0.0))
             ranking_score = (
@@ -564,6 +611,7 @@ def match_speakers_to_faces(segments, faces, bot_name,
                 f"[BUBBLE_MATCH] 유사도: {n} ↔ 얼굴{fi} "
                 f"(clip={sim_text}, appearance={app_text}, combined={combined_text}, "
                 f"rank={rank_text}, "
+                f"card={matched_prototype.get('visual_card_index', '-')}, "
                 f"yolo_conf={conf_text}, box={faces[fi]['box']})"
             )
         similarities.append(row)

@@ -5668,6 +5668,8 @@ class QueueManager:
         params = item.params
         bot_name = params.get("bot_name", "")
         char_name = params.get("char_name", "")
+        visual_card_id = params.get("visual_card_id", "")
+        visual_card_index = params.get("visual_card_index", 1)
         patch_settings = params.get("patch_settings")
         event_type = "data_patch_progress"
 
@@ -5682,26 +5684,52 @@ class QueueManager:
 
         await self._notify_progress(item, {"percentage": 0, "phase": "running"})
         if self.notify_frontend:
-            await self.notify_frontend(event_type, {"phase": "running", "bot_name": bot_name, "char_name": char_name})
+            await self.notify_frontend(event_type, {
+                "phase": "running",
+                "bot_name": bot_name,
+                "char_name": char_name,
+                "visual_card_id": visual_card_id,
+                "visual_card_index": visual_card_index,
+            })
 
         try:
-            result = await self.run_data_patch_utility(
-                bot_name,
-                char_name,
-                patch_settings=patch_settings,
-            )
+            if visual_card_id:
+                result = await self.run_data_patch_utility(
+                    bot_name,
+                    char_name,
+                    visual_card_id=visual_card_id,
+                    patch_settings=patch_settings,
+                )
+            else:
+                # 레거시 실행기/테스트 더블은 카드 인자를 받지 않는다.
+                result = await self.run_data_patch_utility(
+                    bot_name,
+                    char_name,
+                    patch_settings=patch_settings,
+                )
             await self._notify_progress(item, {"percentage": 100, "phase": "completed"})
             if self.notify_frontend:
                 await self.notify_frontend(event_type, {
-                    "phase": "completed", "bot_name": bot_name, "char_name": char_name, "result": result
+                    "phase": "completed", "bot_name": bot_name, "char_name": char_name,
+                    "visual_card_id": visual_card_id,
+                    "visual_card_index": visual_card_index,
+                    "result": result,
                 })
-            return {"success": True, "char_name": char_name}
+            return {
+                "success": True,
+                "char_name": char_name,
+                "visual_card_id": visual_card_id,
+                "visual_card_index": visual_card_index,
+            }
         except Exception as e:
             print(f"[QUEUE:DATA_PATCH] {char_name} 실패: {e}")
             traceback.print_exc()
             if self.notify_frontend:
                 await self.notify_frontend(event_type, {
-                    "phase": "failed", "bot_name": bot_name, "char_name": char_name, "error": str(e)
+                    "phase": "failed", "bot_name": bot_name, "char_name": char_name,
+                    "visual_card_id": visual_card_id,
+                    "visual_card_index": visual_card_index,
+                    "error": str(e),
                 })
             raise
 
@@ -5711,6 +5739,8 @@ class QueueManager:
         params = item.params
         bot_name = params.get("bot_name", "")
         char_name = params.get("char_name", "")
+        visual_card_id = params.get("visual_card_id", "")
+        visual_card_index = params.get("visual_card_index", 1)
         event_type = "bot_llm_face_tag_progress"
 
         if not bot_name or not char_name:
@@ -5718,15 +5748,24 @@ class QueueManager:
 
         await self._notify_progress(item, {"percentage": 0, "phase": "running"})
         if self.notify_frontend:
-            await self.notify_frontend(event_type, {"phase": "running", "bot_name": bot_name, "char_name": char_name})
+            await self.notify_frontend(event_type, {
+                "phase": "running", "bot_name": bot_name, "char_name": char_name,
+                "visual_card_id": visual_card_id,
+                "visual_card_index": visual_card_index,
+            })
 
         try:
-            result = await run_auto_classify_face_tags(bot_name, char_name)
+            result = await run_auto_classify_face_tags(
+                bot_name, char_name, visual_card_id
+            )
             if not result.get("success"):
                 err = result.get("error", "알 수 없는 오류")
                 if self.notify_frontend:
                     await self.notify_frontend(event_type, {
-                        "phase": "failed", "bot_name": bot_name, "char_name": char_name, "error": err
+                        "phase": "failed", "bot_name": bot_name, "char_name": char_name,
+                        "visual_card_id": visual_card_id,
+                        "visual_card_index": visual_card_index,
+                        "error": err,
                     })
                 raise RuntimeError(err)
 
@@ -5737,19 +5776,34 @@ class QueueManager:
             data = _load_bot_data()
             bot = next((b for b in data.get("bots", []) if b["name"] == bot_name), None)
             char = next((c for c in (bot.get("characters", []) if bot else []) if c["name"] == char_name), None)
-            absolute_tags = (char and char.get("absolute_tags")) or ""
+            absolute_tags = ""
+            if char:
+                from modes.visual_profiles import effective_character_cards
+                cards, _source = effective_character_cards(char, None)
+                selected_card = next(
+                    (
+                        card for card in cards
+                        if card.get("id") == visual_card_id
+                    ),
+                    cards[0] if cards and not visual_card_id else None,
+                )
+                absolute_tags = (selected_card and selected_card.get("absolute_tags")) or ""
 
             save_result = save_char_face_tags(
                 bot_name, char_name,
                 face_tags=", ".join(face_tags),
                 eye_tags=", ".join(eye_tags),
                 absolute_tags=absolute_tags,
+                visual_card_id=visual_card_id,
             )
             if not save_result.get("success"):
                 err = save_result.get("error", "태그 저장 실패")
                 if self.notify_frontend:
                     await self.notify_frontend(event_type, {
-                        "phase": "failed", "bot_name": bot_name, "char_name": char_name, "error": err
+                        "phase": "failed", "bot_name": bot_name, "char_name": char_name,
+                        "visual_card_id": visual_card_id,
+                        "visual_card_index": visual_card_index,
+                        "error": err,
                     })
                 raise RuntimeError(err)
 
@@ -5757,15 +5811,25 @@ class QueueManager:
             if self.notify_frontend:
                 await self.notify_frontend(event_type, {
                     "phase": "completed", "bot_name": bot_name, "char_name": char_name,
+                    "visual_card_id": visual_card_id,
+                    "visual_card_index": visual_card_index,
                     "face_count": len(face_tags), "eye_count": len(eye_tags),
                 })
-            return {"success": True, "char_name": char_name, "face_count": len(face_tags), "eye_count": len(eye_tags)}
+            return {
+                "success": True, "char_name": char_name,
+                "visual_card_id": visual_card_id,
+                "visual_card_index": visual_card_index,
+                "face_count": len(face_tags), "eye_count": len(eye_tags),
+            }
         except Exception as e:
             print(f"[QUEUE:BOT_LLM_FACE_TAG] {char_name} 실패: {e}")
             traceback.print_exc()
             if self.notify_frontend:
                 await self.notify_frontend(event_type, {
-                    "phase": "failed", "bot_name": bot_name, "char_name": char_name, "error": str(e)
+                    "phase": "failed", "bot_name": bot_name, "char_name": char_name,
+                    "visual_card_id": visual_card_id,
+                    "visual_card_index": visual_card_index,
+                    "error": str(e),
                 })
             raise
 
@@ -6566,11 +6630,24 @@ class QueueManager:
         bot = img.get("bot", "")
         character = img.get("character", "")
         filename = img.get("filename", "")
-        if not bot or not character or not filename:
+        filepath = img.get("filepath", "")
+        if not bot or not character or not filename or not filepath:
+            print(
+                f"[QUEUE:TAG_ANALYSIS] 봇 프롬프트 저장 입력 부족: "
+                f"bot={bot!r}, character={character!r}, filename={filename!r}, "
+                f"filepath={filepath!r}"
+            )
             return
         base = os.path.splitext(filename)[0]
-        char_dir = os.path.join(BOT_DIR, bot, character)
-        prompt_path = os.path.join(char_dir, f"{base}_prompt.json")
+        char_dir = os.path.abspath(os.path.join(BOT_DIR, bot, character))
+        image_dir = os.path.abspath(os.path.dirname(filepath))
+        if os.path.commonpath([char_dir, image_dir]) != char_dir:
+            print(
+                f"[QUEUE:TAG_ANALYSIS] 봇 프롬프트 저장 경로 이탈 차단: "
+                f"character_dir={char_dir!r}, image_dir={image_dir!r}"
+            )
+            return
+        prompt_path = os.path.join(image_dir, f"{base}_prompt.json")
         existing = {}
         if os.path.isfile(prompt_path):
             try:
@@ -6594,39 +6671,14 @@ class QueueManager:
     @staticmethod
     def _get_bot_rep_paths(bot_name: str, char_name: str) -> list[dict]:
         """봇 대표이미지 경로 목록 반환."""
-        from modes.bot_mode import BOT_DIR, _load_bot_data
-        data = _load_bot_data()
-        bot = next((b for b in data.get("bots", []) if b["name"] == bot_name), None)
-        if not bot:
-            return []
-        if char_name:
-            chars = [c for c in bot.get("characters", []) if c["name"] == char_name]
-        else:
-            chars = bot.get("characters", [])
-        results = []
-        for ch in chars:
-            for fn in ch.get("rep_images", []):
-                fp = os.path.join(BOT_DIR, bot_name, ch["name"], fn)
-                if os.path.isfile(fp):
-                    results.append({"character": ch["name"], "filename": fn, "filepath": fp, "bot": bot_name})
-        return results
+        from modes.bot_mode import get_bot_visual_rep_paths
+        return get_bot_visual_rep_paths(bot_name, char_name)
 
     @staticmethod
     def _get_bot_utility_paths(bot_name: str, char_name: str = "") -> list[dict]:
         """봇 유틸리티 이미지 경로 목록 반환."""
-        from modes.bot_mode import BOT_DIR, _load_bot_data
-        results = []
-        if char_name:
-            chars = [char_name]
-        else:
-            data = _load_bot_data()
-            bot = next((b for b in data.get("bots", []) if b["name"] == bot_name), None)
-            chars = [c["name"] for c in (bot.get("characters", []) if bot else [])]
-        for cn in chars:
-            fp = os.path.join(BOT_DIR, bot_name, cn, "_face_image.webp")
-            if os.path.isfile(fp):
-                results.append({"character": cn, "filename": "_face_image.webp", "filepath": fp, "bot": bot_name})
-        return results
+        from modes.bot_mode import get_bot_visual_utility_paths
+        return get_bot_visual_utility_paths(bot_name, char_name)
 
 
 def _load_presets(asset_mode_obj, presets: dict):

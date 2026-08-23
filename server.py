@@ -4127,17 +4127,33 @@ def init_queue_manager():
 async def _run_data_patch_utility(
     bot_name: str,
     char_name: str,
+    visual_card_id: str = "",
     patch_settings: dict | None = None,
 ) -> dict:
     """큐에서 호출하는 데이터 패치 유틸리티 실행."""
-    from modes.bot_mode import _load_bot_data, _load_patch_settings, build_utility_prompt, BOT_DIR
+    from modes.bot_mode import (
+        _load_bot_data,
+        _load_patch_settings,
+        bot_visual_artifact_dir,
+        build_utility_prompt,
+        resolve_bot_visual_target,
+        BOT_DIR,
+    )
     import copy
 
     char_dir = os.path.join(BOT_DIR, bot_name, char_name)
-    result_path = os.path.join(char_dir, "_face_image.webp")
+    target = resolve_bot_visual_target(bot_name, char_name, visual_card_id)
+    if target is None:
+        raise RuntimeError(
+            f"캐릭터 카드를 찾을 수 없습니다: {bot_name}/{char_name}/{visual_card_id}"
+        )
+    visual_card_id = target["visual_card_id"]
+    visual_card_index = target["visual_card_index"]
+    artifact_dir = bot_visual_artifact_dir(bot_name, char_name, visual_card_id)
+    result_path = os.path.join(artifact_dir, "_face_image.webp")
     old_paths = [
-        os.path.join(char_dir, "_face_image.webp"),
-        os.path.join(char_dir, "_face_image_prompt.json"),
+        os.path.join(artifact_dir, "_face_image.webp"),
+        os.path.join(artifact_dir, "_face_image_prompt.json"),
     ]
 
     wf_api, wf_err = await data_patcher._load_utility_workflow()
@@ -4151,8 +4167,8 @@ async def _run_data_patch_utility(
     char = next((c for c in bot.get("characters", []) if c["name"] == char_name), None)
     if not char:
         raise RuntimeError(f"캐릭터를 찾을 수 없습니다: {char_name}")
-    if not char.get("rep_images"):
-        raise RuntimeError(f"대표 이미지가 없습니다: {char_name}")
+    if not target["rep_images"]:
+        raise RuntimeError(f"대표 이미지가 없습니다: {char_name}[{visual_card_index}]")
 
     settings = dict(_load_patch_settings(bot_name))
     if patch_settings is not None:
@@ -4194,8 +4210,15 @@ async def _run_data_patch_utility(
             "[DATA_PATCH_UTILITY] 저장하지 않는 임시 패치 설정 적용: "
             f"bot={bot_name}, char={char_name}, settings={settings}"
         )
-    prompt_text = build_utility_prompt(bot_name, char_name, settings)
-    print(f"[DATA_PATCH_UTILITY] 실행: {char_name} | 프롬프트: {prompt_text}")
+    prompt_text = (
+        build_utility_prompt(bot_name, char_name, settings)
+        if target["is_primary"]
+        else build_utility_prompt(bot_name, char_name, settings, visual_card_id)
+    )
+    print(
+        f"[DATA_PATCH_UTILITY] 실행: {char_name}[{visual_card_index}] "
+        f"| 프롬프트: {prompt_text}"
+    )
 
     wf = copy.deepcopy(wf_api)
     for nid, ninfo in wf.items():
@@ -4233,11 +4256,17 @@ async def _run_data_patch_utility(
         safe_char_name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", char_name).strip(". ") or "_"
         backup_dir = os.path.join(
             BASE_DIR,
-            "요구사항",
-            f"data_patch_backup_{time.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}",
+            "backups",
+            "data_patch",
+            f"{time.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}",
             safe_bot_name,
             safe_char_name,
         )
+        if not target["is_primary"]:
+            backup_dir = os.path.join(
+                backup_dir,
+                re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", visual_card_id).strip(". ") or "card_1",
+            )
         try:
             os.makedirs(backup_dir, exist_ok=False)
             for old_path in existing_paths:
@@ -4257,7 +4286,7 @@ async def _run_data_patch_utility(
 
     try:
         os.replace(temp_result_path, result_path)
-        old_prompt_path = os.path.join(char_dir, "_face_image_prompt.json")
+        old_prompt_path = os.path.join(artifact_dir, "_face_image_prompt.json")
         if os.path.isfile(old_prompt_path):
             os.remove(old_prompt_path)
     except Exception as exc:
@@ -4272,8 +4301,16 @@ async def _run_data_patch_utility(
         except OSError as cleanup_exc:
             print(f"[DATA_PATCH_UTILITY] 교체 실패 임시 FACE 정리 실패: {temp_result_path} - {cleanup_exc}")
         raise
-    print(f"[DATA_PATCH_UTILITY] {char_name} 결과 저장: {len(img_bytes):,} bytes")
-    return {"character": char_name, "message": f"{char_name} 완료"}
+    print(
+        f"[DATA_PATCH_UTILITY] {char_name}[{visual_card_index}] 결과 저장: "
+        f"{len(img_bytes):,} bytes"
+    )
+    return {
+        "character": char_name,
+        "visual_card_id": visual_card_id,
+        "visual_card_index": visual_card_index,
+        "message": f"{char_name}[{visual_card_index}] 완료",
+    }
 
 outfit_mode.notify_frontend_func = notify_frontend
 enhance_mode.notify_frontend_func = notify_frontend

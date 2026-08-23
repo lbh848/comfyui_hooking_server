@@ -304,9 +304,23 @@ def _sha256_file(path):
     return h.hexdigest()
 
 
-def _char_face_image_path(bot_name, char_name):
+def _char_face_image_path(bot_name, char_name, visual_card_id=""):
     """사용자가 확정한 캐릭터 FACE 경로. 대표이미지를 직접 임베딩하지 않는다."""
-    char_dir = os.path.join(BOT_DIR, bot_name, char_name)
+    if visual_card_id:
+        try:
+            from modes.bot_mode import bot_visual_artifact_dir
+            char_dir = bot_visual_artifact_dir(
+                bot_name, char_name, visual_card_id
+            )
+        except Exception as e:
+            print(
+                f"[FACE_EMBEDDER] 카드 FACE 경로 해석 실패: "
+                f"{bot_name}/{char_name}/{visual_card_id} - {e}"
+            )
+            traceback.print_exc()
+            return None, False
+    else:
+        char_dir = os.path.join(BOT_DIR, bot_name, char_name)
     face = os.path.join(char_dir, "_face_image.webp")
     if os.path.isfile(face):
         return face, True
@@ -364,7 +378,13 @@ def write_embedding_cache(cache_path, emb, source_hash, backup_dir=None):
         return None
 
 
-def get_char_embedding(bot_name, char_name, device="auto", cpu_threads=0):
+def get_char_embedding(
+    bot_name,
+    char_name,
+    device="auto",
+    cpu_threads=0,
+    visual_card_id="",
+):
     """캐릭터 얼굴 임베딩 (lazy + SHA-256 캐시).
 
     bot/<봇>/<캐릭>/_face_image.l14.npz 에 {emb, sha256} 저장.
@@ -375,9 +395,12 @@ def get_char_embedding(bot_name, char_name, device="auto", cpu_threads=0):
 
     Returns: 1차원 np.ndarray 또는 None (FACE 이미지 없음/임베딩 실패).
     """
-    src_path, _ = _char_face_image_path(bot_name, char_name)
+    src_path, _ = _char_face_image_path(bot_name, char_name, visual_card_id)
     if not src_path:
-        print(f"[FACE_EMBEDDER] 캐릭터 얼굴 이미지 없음: {bot_name}/{char_name}")
+        print(
+            f"[FACE_EMBEDDER] 캐릭터 얼굴 이미지 없음: "
+            f"{bot_name}/{char_name}/{visual_card_id or 'card_1'}"
+        )
         return None
 
     char_dir = os.path.dirname(src_path)
@@ -433,9 +456,9 @@ def get_char_embedding(bot_name, char_name, device="auto", cpu_threads=0):
         return None
 
 
-def get_char_appearance(bot_name, char_name):
+def get_char_appearance(bot_name, char_name, visual_card_id=""):
     """사용자가 확정한 캐릭터 FACE의 외형 descriptor를 반환한다."""
-    src_path, _ = _char_face_image_path(bot_name, char_name)
+    src_path, _ = _char_face_image_path(bot_name, char_name, visual_card_id)
     if not src_path:
         print(f"[FACE_EMBEDDER] 외형 기준 FACE 이미지 없음: {bot_name}/{char_name}")
         return None
@@ -446,3 +469,41 @@ def get_char_appearance(bot_name, char_name):
         print(f"[FACE_EMBEDDER] 외형 기준 로드 실패({bot_name}/{char_name}): {e}")
         traceback.print_exc()
         return None
+
+
+def get_char_profile_prototypes(
+    bot_name,
+    char_name,
+    device="auto",
+    cpu_threads=0,
+):
+    """Return usable secondary visual-card FACE prototypes for matching."""
+    try:
+        from modes.bot_mode import get_bot_visual_targets
+        targets = get_bot_visual_targets(bot_name, char_name)
+    except Exception as e:
+        print(
+            f"[FACE_EMBEDDER] 카드 목록 로드 실패: {bot_name}/{char_name} - {e}"
+        )
+        traceback.print_exc()
+        return []
+
+    prototypes = []
+    for target in targets[1:]:
+        card_id = target["visual_card_id"]
+        emb = get_char_embedding(
+            bot_name,
+            char_name,
+            device=device,
+            cpu_threads=cpu_threads,
+            visual_card_id=card_id,
+        )
+        if emb is None:
+            continue
+        prototypes.append({
+            "visual_card_id": card_id,
+            "visual_card_index": target["visual_card_index"],
+            "embedding": emb,
+            "appearance": get_char_appearance(bot_name, char_name, card_id),
+        })
+    return prototypes

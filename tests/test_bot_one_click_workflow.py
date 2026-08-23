@@ -441,7 +441,7 @@ async def test_data_patch_utility_uses_transient_crop_and_backs_up_existing_face
     }
     assert face_path.read_bytes() == b"new-face"
     assert not prompt_path.exists()
-    backups = list((tmp_path / "요구사항").glob("data_patch_backup_*"))
+    backups = list((tmp_path / "backups" / "data_patch").glob("*"))
     assert len(backups) == 1
     backup_char = backups[0] / "sample-bot" / "alice"
     assert (backup_char / "_face_image.webp").read_bytes() == b"old-face"

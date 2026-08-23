@@ -22,6 +22,7 @@ from aiohttp import web
 
 from modes.visual_profiles import (
     MAX_VISUAL_CARDS,
+    PROFILE_ASSET_FOLDER,
     VisualProfileValidationError,
     cards_to_character_profiles,
     character_profiles_to_cards,
@@ -75,6 +76,173 @@ RECOMMENDED_POSITIVE_RULES = {
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 FACE_CROP_FOLDER_NAME = "FACE CROP"
+
+
+def get_bot_visual_targets(
+    bot_name: str,
+    char_name: str = "",
+    *,
+    require_rep_images: bool = False,
+) -> list[dict]:
+    """Return the effective [character, visual-card] work targets for a bot."""
+    data = _load_bot_data()
+    bot = next((item for item in data.get("bots", []) if item.get("name") == bot_name), None)
+    if not bot:
+        print(f"[BOT_VISUAL_TARGET] 봇을 찾을 수 없음: bot={bot_name!r}")
+        return []
+
+    characters = bot.get("characters", [])
+    if char_name:
+        characters = [item for item in characters if item.get("name") == char_name]
+        if not characters:
+            print(
+                f"[BOT_VISUAL_TARGET] 캐릭터를 찾을 수 없음: "
+                f"bot={bot_name!r}, character={char_name!r}"
+            )
+            return []
+
+    targets = []
+    for character in characters:
+        character_name = str(character.get("name") or "").strip()
+        if not character_name:
+            print(f"[BOT_VISUAL_TARGET] 이름 없는 캐릭터 스킵: bot={bot_name!r}")
+            continue
+        try:
+            cards, _source = effective_character_cards(character, None)
+        except Exception as exc:
+            print(
+                f"[BOT_VISUAL_TARGET] 카드 해석 실패: bot={bot_name!r}, "
+                f"character={character_name!r}, error={exc}"
+            )
+            traceback.print_exc()
+            continue
+        for index, card in enumerate(cards):
+            rep_images = [
+                str(value).strip()
+                for value in (card.get("rep_images") or [])
+                if str(value).strip()
+            ]
+            if require_rep_images and not rep_images:
+                print(
+                    f"[BOT_VISUAL_TARGET] 대표 이미지 없는 카드 스킵: "
+                    f"bot={bot_name!r}, character={character_name!r}, "
+                    f"card={card.get('id')!r}"
+                )
+                continue
+            targets.append({
+                "character": character_name,
+                "visual_card_id": str(card.get("id") or "").strip(),
+                "visual_card_label": str(card.get("label") or f"카드 {index + 1}").strip(),
+                "visual_card_index": index + 1,
+                "is_primary": index == 0,
+                "rep_images": rep_images,
+            })
+    return targets
+
+
+def resolve_bot_visual_target(
+    bot_name: str,
+    char_name: str,
+    visual_card_id: str = "",
+) -> dict | None:
+    requested_id = str(visual_card_id or "").strip()
+    targets = get_bot_visual_targets(bot_name, char_name)
+    if not targets:
+        return None
+    if not requested_id:
+        return targets[0]
+    target = next(
+        (item for item in targets if item.get("visual_card_id") == requested_id),
+        None,
+    )
+    if target is None:
+        print(
+            f"[BOT_VISUAL_TARGET] 카드를 찾을 수 없음: bot={bot_name!r}, "
+            f"character={char_name!r}, card={requested_id!r}"
+        )
+    return target
+
+
+def bot_visual_artifact_dir(
+    bot_name: str,
+    char_name: str,
+    visual_card_id: str = "",
+) -> str:
+    target = resolve_bot_visual_target(bot_name, char_name, visual_card_id)
+    if target is None:
+        raise ValueError(
+            f"캐릭터 카드를 찾을 수 없습니다: {bot_name}/{char_name}/{visual_card_id}"
+        )
+    char_dir = os.path.join(BOT_DIR, bot_name, char_name)
+    if target["is_primary"]:
+        return char_dir
+    return os.path.join(char_dir, PROFILE_ASSET_FOLDER, target["visual_card_id"])
+
+
+def bot_visual_comfy_relative_path(
+    bot_name: str,
+    char_name: str,
+    visual_card_id: str = "",
+) -> str:
+    target = resolve_bot_visual_target(bot_name, char_name, visual_card_id)
+    if target is None:
+        raise ValueError(
+            f"캐릭터 카드를 찾을 수 없습니다: {bot_name}/{char_name}/{visual_card_id}"
+        )
+    base = f"soya_bot/{bot_name}/{char_name}"
+    if target["is_primary"]:
+        return base
+    return f"{base}/{PROFILE_ASSET_FOLDER}/{target['visual_card_id']}"
+
+
+def get_bot_visual_rep_paths(bot_name: str, char_name: str = "") -> list[dict]:
+    """Return representative files for every effective visual card."""
+    results = []
+    for target in get_bot_visual_targets(bot_name, char_name, require_rep_images=True):
+        char_dir = os.path.join(BOT_DIR, bot_name, target["character"])
+        for filename in target["rep_images"]:
+            if filename != os.path.basename(filename) or filename in {".", ".."}:
+                print(
+                    f"[BOT_VISUAL_TARGET] 잘못된 대표 이미지 파일명 스킵: "
+                    f"bot={bot_name!r}, character={target['character']!r}, "
+                    f"card={target['visual_card_id']!r}, filename={filename!r}"
+                )
+                continue
+            filepath = os.path.join(char_dir, filename)
+            if not os.path.isfile(filepath):
+                print(f"[BOT_MODE] 대표이미지 파일 없음: {filepath}")
+                continue
+            results.append({
+                **target,
+                "bot": bot_name,
+                "filename": filename,
+                "filepath": filepath,
+            })
+    return results
+
+
+def get_bot_visual_utility_paths(bot_name: str, char_name: str = "") -> list[dict]:
+    """Return card-specific utility FACE files that currently exist."""
+    results = []
+    for target in get_bot_visual_targets(bot_name, char_name):
+        artifact_dir = bot_visual_artifact_dir(
+            bot_name, target["character"], target["visual_card_id"]
+        )
+        filepath = os.path.join(artifact_dir, "_face_image.webp")
+        if not os.path.isfile(filepath):
+            print(
+                f"[BOT_VISUAL_TARGET] FACE 이미지 없는 카드 스킵: "
+                f"bot={bot_name!r}, character={target['character']!r}, "
+                f"card={target['visual_card_id']!r}, path={filepath!r}"
+            )
+            continue
+        results.append({
+            **target,
+            "bot": bot_name,
+            "filename": "_face_image.webp",
+            "filepath": filepath,
+        })
+    return results
 
 
 def dialogue_face_crop_filename(source_filename: str) -> str:
@@ -909,15 +1077,34 @@ class BotMode:
         bot_name = request.match_info.get("bot", "")
         char_name = request.match_info.get("character", "")
         filename = request.match_info.get("filename", "")
+        visual_card_id = request.query.get("visual_card_id", "").strip()
         if not bot_name or not char_name or not filename:
             return _json_error("경로가 올바르지 않습니다.")
 
-        filepath = os.path.join(BOT_DIR, bot_name, char_name, filename)
-        filepath = os.path.normpath(filepath)
-        # 경로 조작 방지
-        if not filepath.startswith(os.path.normpath(BOT_DIR)):
-            print(f"[BOT_MODE] 잘못된 경로 접근: {filepath}")
-            return _json_error("잘못된 경로입니다.")
+        try:
+            image_dir = (
+                bot_visual_artifact_dir(bot_name, char_name, visual_card_id)
+                if visual_card_id else os.path.join(BOT_DIR, bot_name, char_name)
+            )
+            filepath = os.path.abspath(os.path.join(image_dir, filename))
+            allowed_dir = os.path.abspath(image_dir)
+            if (
+                filename != os.path.basename(filename)
+                or os.path.commonpath([allowed_dir, filepath]) != allowed_dir
+            ):
+                print(
+                    f"[BOT_MODE] 잘못된 이미지 경로 접근: bot={bot_name!r}, "
+                    f"character={char_name!r}, card={visual_card_id!r}, "
+                    f"filename={filename!r}, path={filepath!r}"
+                )
+                return _json_error("잘못된 경로입니다.")
+        except Exception as e:
+            print(
+                f"[BOT_MODE] 이미지 경로 해석 실패: bot={bot_name!r}, "
+                f"character={char_name!r}, card={visual_card_id!r}, error={e}"
+            )
+            traceback.print_exc()
+            return _json_error(str(e))
 
         if not os.path.isfile(filepath):
             print(f"[BOT_MODE] 이미지 파일 없음: {filepath}")
@@ -1289,39 +1476,11 @@ class BotMode:
 
     def _get_rep_image_paths(self, bot_name: str, char_name: str) -> list[dict]:
         """대표이미지 파일 경로 목록 반환."""
-        data = _load_bot_data()
-        bot = next((b for b in data.get("bots", []) if b["name"] == bot_name), None)
-        if not bot:
-            return []
-        ch = next((c for c in bot.get("characters", []) if c["name"] == char_name), None)
-        if not ch:
-            return []
-        rep_images = ch.get("rep_images", [])
-        char_dir = os.path.join(BOT_DIR, bot_name, char_name)
-        results = []
-        for fn in rep_images:
-            fp = os.path.join(char_dir, fn)
-            if os.path.isfile(fp):
-                results.append({"character": char_name, "filename": fn, "filepath": fp})
-            else:
-                print(f"[BOT_MODE] 대표이미지 파일 없음: {fp}")
-        return results
+        return get_bot_visual_rep_paths(bot_name, char_name)
 
     def _get_utility_image_paths(self, bot_name: str, char_name: str = "") -> list[dict]:
         """유틸리티 결과 이미지(_face_image.webp) 경로 목록 반환."""
-        results = []
-        if char_name:
-            chars = [char_name]
-        else:
-            data = _load_bot_data()
-            bot = next((b for b in data.get("bots", []) if b["name"] == bot_name), None)
-            chars = [c["name"] for c in (bot.get("characters", []) if bot else [])] if bot else []
-
-        for cn in chars:
-            fp = os.path.join(BOT_DIR, bot_name, cn, "_face_image.webp")
-            if os.path.isfile(fp):
-                results.append({"character": cn, "filename": "_face_image.webp", "filepath": fp})
-        return results
+        return get_bot_visual_utility_paths(bot_name, char_name)
 
     async def handle_get_utility_preview(self, request):
         """GET /api/bot_mode/utility_preview?bot=X&character=Y"""
@@ -1335,8 +1494,9 @@ class BotMode:
             results = []
             for rep in reps:
                 base = os.path.splitext(rep["filename"])[0]
-                char_dir = os.path.join(BOT_DIR, bot_name, rep["character"])
-                prompt_path = os.path.join(char_dir, f"{base}_prompt.json")
+                prompt_path = os.path.join(
+                    os.path.dirname(rep["filepath"]), f"{base}_prompt.json"
+                )
                 prompt = ""
                 negative = ""
                 if os.path.isfile(prompt_path):
@@ -1345,14 +1505,26 @@ class BotMode:
                             pdata = json.load(pf)
                             prompt = pdata.get("prompt", "")
                             negative = pdata.get("negative", "")
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        print(f"[BOT_MODE] FACE 프롬프트 로드 실패: {prompt_path} - {e}")
+                        traceback.print_exc()
+                card_query = (
+                    f"?visual_card_id={quote(rep['visual_card_id'], safe='')}"
+                    if not rep["is_primary"] else ""
+                )
                 results.append({
                     "character": rep["character"],
+                    "visual_card_id": rep["visual_card_id"],
+                    "visual_card_label": rep["visual_card_label"],
+                    "visual_card_index": rep["visual_card_index"],
+                    "is_primary": rep["is_primary"],
                     "filename": rep["filename"],
                     "prompt": prompt,
                     "negative": negative,
-                    "url": f"/api/bot_mode/image/{bot_name}/{rep['character']}/{rep['filename']}",
+                    "url": (
+                        f"/api/bot_mode/image/{quote(bot_name, safe='')}/"
+                        f"{quote(rep['character'], safe='')}/{rep['filename']}{card_query}"
+                    ),
                 })
             return _json_ok({"images": results})
         except Exception as e:
@@ -1525,16 +1697,7 @@ class BotMode:
                 reps = self._get_rep_image_paths(bot_name, char_name)
             else:
                 reps = []
-                data = _load_bot_data()
-                bot = next((b for b in data.get("bots", []) if b["name"] == bot_name), None)
-                if bot:
-                    chars_with_rep = [ch["name"] for ch in bot.get("characters", []) if ch.get("rep_images")]
-                    print(f"[BOT_MODE] rep_preview: 봇 '{bot_name}' 캐릭터 수={len(bot.get('characters', []))}, 대표이미지 있는 캐릭터={chars_with_rep}")
-                    for ch in bot.get("characters", []):
-                        if ch.get("rep_images"):
-                            reps.extend(self._get_rep_image_paths(bot_name, ch["name"]))
-                else:
-                    print(f"[BOT_MODE] rep_preview: 봇 '{bot_name}'을(를) 찾을 수 없음")
+                reps = get_bot_visual_rep_paths(bot_name)
 
             print(f"[BOT_MODE] rep_preview: 총 대표이미지 {len(reps)}장")
             results = []
@@ -1554,6 +1717,10 @@ class BotMode:
                         pass
                 results.append({
                     "character": rep["character"],
+                    "visual_card_id": rep["visual_card_id"],
+                    "visual_card_label": rep["visual_card_label"],
+                    "visual_card_index": rep["visual_card_index"],
+                    "is_primary": rep["is_primary"],
                     "filename": rep["filename"],
                     "prompt": prompt,
                     "negative": negative,
@@ -1585,10 +1752,34 @@ class BotMode:
             if filenames:
                 _fnset = set(filenames)
                 reps = [r for r in reps if r["filename"] in _fnset]
+            visual_targets = body.get("visual_targets") or []
+            if visual_targets:
+                _target_set = {
+                    (
+                        str(item.get("character") or "").strip(),
+                        str(item.get("visual_card_id") or "").strip(),
+                        str(item.get("filename") or "").strip(),
+                    )
+                    for item in visual_targets if isinstance(item, dict)
+                }
+                reps = [
+                    rep for rep in reps
+                    if (
+                        rep["character"], rep["visual_card_id"], rep["filename"]
+                    ) in _target_set
+                ]
             batch_label = f"태그 분석 (봇 대표: {bot_name}/{char_name or '전체'}, {len(reps)}장)"
             items_spec = []
             for r in reps:
-                img = {"filepath": r["filepath"], "filename": r["filename"], "character": r["character"], "bot": bot_name}
+                img = {
+                    "filepath": r["filepath"],
+                    "filename": r["filename"],
+                    "character": r["character"],
+                    "bot": bot_name,
+                    "visual_card_id": r["visual_card_id"],
+                    "visual_card_label": r["visual_card_label"],
+                    "visual_card_index": r["visual_card_index"],
+                }
                 params = {"source": "bot_rep", "image": img}
                 if one_click_run_id:
                     params["one_click_run_id"] = one_click_run_id
@@ -1724,13 +1915,7 @@ class BotMode:
             if char_name:
                 reps = self._get_rep_image_paths(bot_name, char_name)
             else:
-                reps = []
-                data = _load_bot_data()
-                bot = next((b for b in data.get("bots", []) if b["name"] == bot_name), None)
-                if bot:
-                    for ch in bot.get("characters", []):
-                        if (ch.get("rep_images") or []):
-                            reps.extend(self._get_rep_image_paths(bot_name, ch["name"]))
+                reps = get_bot_visual_rep_paths(bot_name)
             if not reps:
                 return _json_ok({"total": 0, "success_count": 0, "fail_count": 0})
 
@@ -1738,6 +1923,22 @@ class BotMode:
             only_filenames = body.get("filenames", [])
             if only_filenames:
                 reps = [r for r in reps if r["filename"] in only_filenames]
+            visual_targets = body.get("visual_targets") or []
+            if visual_targets:
+                _target_set = {
+                    (
+                        str(item.get("character") or "").strip(),
+                        str(item.get("visual_card_id") or "").strip(),
+                        str(item.get("filename") or "").strip(),
+                    )
+                    for item in visual_targets if isinstance(item, dict)
+                }
+                reps = [
+                    rep for rep in reps
+                    if (
+                        rep["character"], rep["visual_card_id"], rep["filename"]
+                    ) in _target_set
+                ]
             if not reps:
                 return _json_ok({"total": 0, "success_count": 0, "fail_count": 0})
 
@@ -1746,8 +1947,12 @@ class BotMode:
             for rep in reps:
                 try:
                     base = os.path.splitext(rep["filename"])[0]
-                    char_dir = os.path.join(BOT_DIR, bot_name, rep["character"])
-                    prompt_path = os.path.join(char_dir, f"{base}_prompt.json")
+                    rep_dir = os.path.dirname(rep.get("filepath") or "")
+                    if not rep_dir:
+                        rep_dir = os.path.join(BOT_DIR, bot_name, rep["character"])
+                    prompt_path = os.path.join(
+                        rep_dir, f"{base}_prompt.json"
+                    )
                     existing = {}
                     if os.path.isfile(prompt_path):
                         try:
@@ -1801,11 +2006,32 @@ class BotMode:
             if characters:
                 _cset = set(str(c).strip() for c in characters if str(c).strip())
                 reps = [r for r in reps if r["character"] in _cset]
+            visual_targets = body.get("visual_targets") or []
+            if visual_targets:
+                _target_set = {
+                    (
+                        str(item.get("character") or "").strip(),
+                        str(item.get("visual_card_id") or "").strip(),
+                    )
+                    for item in visual_targets if isinstance(item, dict)
+                }
+                reps = [
+                    rep for rep in reps
+                    if (rep["character"], rep["visual_card_id"]) in _target_set
+                ]
             # (레거시) filenames 만 온 경우에도 filename은 캐릭터를 구분하지 못하므로 무시.
             batch_label = f"태그 분석 (봇 유틸: {bot_name}, {len(reps)}장)"
             items_spec = []
             for r in reps:
-                img = {"filepath": r["filepath"], "filename": r["filename"], "character": r["character"], "bot": bot_name}
+                img = {
+                    "filepath": r["filepath"],
+                    "filename": r["filename"],
+                    "character": r["character"],
+                    "bot": bot_name,
+                    "visual_card_id": r["visual_card_id"],
+                    "visual_card_label": r["visual_card_label"],
+                    "visual_card_index": r["visual_card_index"],
+                }
                 params = {"source": "bot_utility", "image": img}
                 if one_click_run_id:
                     params["one_click_run_id"] = one_click_run_id
@@ -1840,6 +2066,19 @@ class BotMode:
             if characters:
                 _cset = set(str(c).strip() for c in characters if str(c).strip())
                 reps = [r for r in reps if r["character"] in _cset]
+            visual_targets = body.get("visual_targets") or []
+            if visual_targets:
+                _target_set = {
+                    (
+                        str(item.get("character") or "").strip(),
+                        str(item.get("visual_card_id") or "").strip(),
+                    )
+                    for item in visual_targets if isinstance(item, dict)
+                }
+                reps = [
+                    rep for rep in reps
+                    if (rep["character"], rep["visual_card_id"]) in _target_set
+                ]
             # (레거시) filenames 만 온 경우에도 filename은 캐릭터를 구분하지 못하므로 무시.
             if not reps:
                 print(
@@ -1859,8 +2098,12 @@ class BotMode:
             for rep in reps:
                 try:
                     base = os.path.splitext(rep["filename"])[0]
-                    char_dir = os.path.join(BOT_DIR, bot_name, rep["character"])
-                    prompt_path = os.path.join(char_dir, f"{base}_prompt.json")
+                    rep_dir = os.path.dirname(rep.get("filepath") or "")
+                    if not rep_dir:
+                        rep_dir = os.path.join(BOT_DIR, bot_name, rep["character"])
+                    prompt_path = os.path.join(
+                        rep_dir, f"{base}_prompt.json"
+                    )
                     existing = {}
                     if os.path.isfile(prompt_path):
                         try:
@@ -1885,6 +2128,7 @@ class BotMode:
                     fail_count += 1
                     failed.append({
                         "char_name": rep["character"],
+                        "visual_card_id": rep.get("visual_card_id", ""),
                         "filename": rep["filename"],
                         "error": str(e),
                     })
@@ -2634,13 +2878,14 @@ def _patch_settings_path(bot_name: str) -> str:
 
 
 def _backup_data_file_before_overwrite(path: str, label: str) -> str:
-    """기존 데이터 파일을 요구사항/에 백업하고 백업 경로를 반환한다."""
+    """기존 데이터 파일을 배포 환경의 backups/에 백업한다."""
     if not os.path.isfile(path):
         return ""
     backup_dir = os.path.join(
         BASE_DIR,
-        "요구사항",
-        f"illustration_data_backup_{time.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}",
+        "backups",
+        "illustration_data",
+        f"{time.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}",
     )
     try:
         os.makedirs(backup_dir, exist_ok=False)
@@ -2946,11 +3191,17 @@ def _migrate_postprocess_vn(data: dict):
 
 
 
-def build_utility_prompt(bot_name: str, char_name: str, settings: dict) -> str:
+def build_utility_prompt(
+    bot_name: str,
+    char_name: str,
+    settings: dict,
+    visual_card_id: str = "",
+) -> str:
     """캐릭터의 유틸리티 프롬프트 문자열을 생성한다."""
     emb_value = "representation" if settings.get("emb_target") == "대표만" else "representation,sub"
+    comfy_path = bot_visual_comfy_relative_path(bot_name, char_name, visual_card_id)
     return (
-        f"[PATH]\nsoya_bot/{bot_name}/{char_name}\n"
+        f"[PATH]\n{comfy_path}\n"
         f"[FACE_CROP_TOP]\n{settings.get('face_crop_top', 1.0)}\n"
         f"[FACE_CROP_BOTTOM]\n{settings.get('face_crop_bottom', 1.0)}\n"
         f"[EMB_TARGET]\n{emb_value}\n"
@@ -3130,6 +3381,18 @@ class BotDataPatcher:
         if missing:
             print(f"[PROGRAM_EMBEDDING] 존재하지 않는 캐릭터: {missing}")
             raise ValueError(f"캐릭터를 찾을 수 없습니다: {', '.join(missing)}")
+        selected_names = set(char_names)
+        visual_targets = [
+            target
+            for target in get_bot_visual_targets(bot_name, require_rep_images=True)
+            if target["character"] in selected_names
+        ]
+        if not visual_targets:
+            print(
+                f"[PROGRAM_EMBEDDING] 대표 이미지 있는 카드가 없음: "
+                f"bot={bot_name!r}, characters={char_names!r}"
+            )
+            raise ValueError("선택 캐릭터에 대표 이미지가 있는 카드가 없습니다.")
 
         preview_id = uuid.uuid4().hex
         session_dir = os.path.join(self._program_embedding_preview_root, preview_id)
@@ -3141,17 +3404,24 @@ class BotDataPatcher:
             from PIL import Image
             from modes import face_detector
 
-            for index, char_name in enumerate(char_names):
-                char = char_by_name[char_name]
+            for index, target in enumerate(visual_targets):
+                char_name = target["character"]
                 char_dir = os.path.join(BOT_DIR, bot_name, char_name)
-                face_path = os.path.join(char_dir, "_face_image.webp")
+                artifact_dir = bot_visual_artifact_dir(
+                    bot_name, char_name, target["visual_card_id"]
+                )
+                face_path = os.path.join(artifact_dir, "_face_image.webp")
                 existing_face = os.path.isfile(face_path)
+                card_query = (
+                    f"?visual_card_id={quote(target['visual_card_id'], safe='')}"
+                    if not target["is_primary"] else ""
+                )
                 face_url = (
                     f"/api/bot_mode/image/{quote(bot_name, safe='')}/"
-                    f"{quote(char_name, safe='')}/_face_image.webp"
+                    f"{quote(char_name, safe='')}/_face_image.webp{card_query}"
                     if existing_face else ""
                 )
-                rep_images = char.get("rep_images") or []
+                rep_images = target["rep_images"]
                 rep_name = str(rep_images[0]) if rep_images else ""
                 rep_path = os.path.join(char_dir, rep_name) if rep_name else ""
                 rep_exists = bool(rep_path and os.path.isfile(rep_path))
@@ -3163,6 +3433,10 @@ class BotDataPatcher:
 
                 item = {
                     "char_name": char_name,
+                    "visual_card_id": target["visual_card_id"],
+                    "visual_card_label": target["visual_card_label"],
+                    "visual_card_index": target["visual_card_index"],
+                    "is_primary": target["is_primary"],
                     "face_path": None,
                     "confirmed_sha256": "",
                     "save_new_face": False,
@@ -3170,6 +3444,10 @@ class BotDataPatcher:
                 }
                 response = {
                     "char_name": char_name,
+                    "visual_card_id": target["visual_card_id"],
+                    "visual_card_label": target["visual_card_label"],
+                    "visual_card_index": target["visual_card_index"],
+                    "display_name": f"{char_name} [{target['visual_card_index']}]",
                     "status": "failed",
                     "source_label": "추출 실패",
                     "display_url": rep_url,
@@ -3193,12 +3471,15 @@ class BotDataPatcher:
                         "can_continue": True,
                         "message": "기존 FACE를 유지하고 임베딩합니다.",
                     })
-                    print(f"[PROGRAM_EMBEDDING] 기존 FACE 우선 사용: {bot_name}/{char_name}")
+                    print(
+                        f"[PROGRAM_EMBEDDING] 기존 FACE 우선 사용: "
+                        f"{bot_name}/{char_name}[{target['visual_card_index']}]"
+                    )
                 elif not rep_exists:
                     response["message"] = "대표 이미지 파일이 없어 ONNX 얼굴 추출을 할 수 없습니다."
                     print(
                         f"[PROGRAM_EMBEDDING] 대표 이미지 없음: {bot_name}/{char_name}, "
-                        f"rep={rep_name!r}"
+                        f"card={target['visual_card_id']!r}, rep={rep_name!r}"
                     )
                 else:
                     try:
@@ -3234,6 +3515,7 @@ class BotDataPatcher:
                                 response["message"] = "설정 임계치에서 얼굴을 찾지 못했습니다."
                             print(
                                 f"[PROGRAM_EMBEDDING] 얼굴 추출 실패: {bot_name}/{char_name}, "
+                                f"card={target['visual_card_id']!r}, "
                                 f"confidence={confidence}, 최고={detected_confidence}"
                             )
                         else:
@@ -3258,10 +3540,14 @@ class BotDataPatcher:
                             })
                             print(
                                 f"[PROGRAM_EMBEDDING] ONNX 미리보기 생성: "
-                                f"{bot_name}/{char_name}, conf={detected_confidence}"
+                                f"{bot_name}/{char_name}[{target['visual_card_index']}], "
+                                f"conf={detected_confidence}"
                             )
                     except Exception as e:
-                        print(f"[PROGRAM_EMBEDDING] ONNX 추출 예외({bot_name}/{char_name}): {e}")
+                        print(
+                            f"[PROGRAM_EMBEDDING] ONNX 추출 예외("
+                            f"{bot_name}/{char_name}[{target['visual_card_index']}]): {e}"
+                        )
                         traceback.print_exc()
                         if existing_face:
                             source_hash = self._program_embedding_hash(face_path)
@@ -3333,8 +3619,9 @@ class BotDataPatcher:
         bot_name = session["bot_name"]
         backup_root = os.path.join(
             BASE_DIR,
-            "요구사항",
-            f"program_embedding_backup_{time.strftime('%Y%m%d_%H%M%S')}_{preview_id[:8]}",
+            "backups",
+            "program_embedding",
+            f"{time.strftime('%Y%m%d_%H%M%S')}_{preview_id[:8]}",
         )
         results = []
         success_count = 0
@@ -3346,26 +3633,40 @@ class BotDataPatcher:
 
             for item in session["items"]:
                 char_name = item["char_name"]
+                visual_card_id = item.get("visual_card_id", "")
+                visual_card_index = item.get("visual_card_index", 1)
                 source_path = item.get("face_path") or ""
                 if not source_path:
-                    print(f"[PROGRAM_EMBEDDING] 확정 스킵(FACE 없음): {bot_name}/{char_name}")
+                    print(
+                        f"[PROGRAM_EMBEDDING] 확정 스킵(FACE 없음): "
+                        f"{bot_name}/{char_name}[{visual_card_index}]"
+                    )
                     results.append({
                         "char_name": char_name,
+                        "visual_card_id": visual_card_id,
+                        "visual_card_index": visual_card_index,
                         "success": False,
                         "message": "확정 가능한 FACE가 없습니다.",
                     })
                     failed_count += 1
                     continue
 
-                char_dir = os.path.join(BOT_DIR, bot_name, char_name)
-                face_path = os.path.join(char_dir, "_face_image.webp")
-                prompt_path = os.path.join(char_dir, "_face_image_prompt.json")
-                cache_path = os.path.join(char_dir, "_face_image.l14.npz")
+                artifact_dir = bot_visual_artifact_dir(
+                    bot_name, char_name, visual_card_id
+                )
+                face_path = os.path.join(artifact_dir, "_face_image.webp")
+                prompt_path = os.path.join(artifact_dir, "_face_image_prompt.json")
+                cache_path = os.path.join(artifact_dir, "_face_image.l14.npz")
                 backup_char_dir = os.path.join(
                     backup_root,
                     self._program_embedding_safe_component(bot_name),
                     self._program_embedding_safe_component(char_name),
                 )
+                if not item.get("is_primary", True):
+                    backup_char_dir = os.path.join(
+                        backup_char_dir,
+                        self._program_embedding_safe_component(visual_card_id),
+                    )
                 save_new_face = bool(item.get("save_new_face"))
                 face_existed = os.path.isfile(face_path)
                 prompt_existed = os.path.isfile(prompt_path)
@@ -3387,7 +3688,7 @@ class BotDataPatcher:
                     if save_new_face:
                         face_backup = self._program_embedding_backup_file(face_path, backup_char_dir)
                         prompt_backup = self._program_embedding_backup_file(prompt_path, backup_char_dir)
-                        os.makedirs(char_dir, exist_ok=True)
+                        os.makedirs(artifact_dir, exist_ok=True)
                         shutil.copy2(source_path, tmp_face_path)
                         os.replace(tmp_face_path, face_path)
                         if prompt_existed:
@@ -3409,6 +3710,8 @@ class BotDataPatcher:
                         face_saved_count += 1
                     results.append({
                         "char_name": char_name,
+                        "visual_card_id": visual_card_id,
+                        "visual_card_index": visual_card_index,
                         "success": True,
                         "face_saved": save_new_face,
                         "message": (
@@ -3417,11 +3720,15 @@ class BotDataPatcher:
                         ),
                     })
                     print(
-                        f"[PROGRAM_EMBEDDING] 확정 완료: {bot_name}/{char_name}, "
+                        f"[PROGRAM_EMBEDDING] 확정 완료: "
+                        f"{bot_name}/{char_name}[{visual_card_index}], "
                         f"face_saved={save_new_face}"
                     )
                 except Exception as e:
-                    print(f"[PROGRAM_EMBEDDING] 확정 실패({bot_name}/{char_name}): {e}")
+                    print(
+                        f"[PROGRAM_EMBEDDING] 확정 실패("
+                        f"{bot_name}/{char_name}[{visual_card_index}]): {e}"
+                    )
                     traceback.print_exc()
                     if os.path.isfile(tmp_face_path):
                         try:
@@ -3460,6 +3767,8 @@ class BotDataPatcher:
                         traceback.print_exc()
                     results.append({
                         "char_name": char_name,
+                        "visual_card_id": visual_card_id,
+                        "visual_card_index": visual_card_index,
                         "success": False,
                         "message": str(e),
                     })
@@ -3692,11 +4001,6 @@ class BotDataPatcher:
             bot = next((b for b in data["bots"] if b["name"] == bot_name), None)
             if not bot:
                 return _json_error(f"봇을 찾을 수 없습니다: {bot_name}")
-            lb_extra = _load_lb_extra(bot_name) or []
-            if isinstance(lb_extra, dict) and "edited" in lb_extra:
-                lb_extra = lb_extra.get("edited") or []
-            effective_visual_profiles = effective_bot_profiles(bot, lb_extra)
-
             bot_dst_root = os.path.join(comfy_input_dir, "soya_bot", bot_name)
             # 요청된 캐릭터명 목록: char_names(다중) 우선, 없으면 단일 char_name
             requested_names = char_names if char_names else ([char_name] if char_name else [])
@@ -3762,16 +4066,10 @@ class BotDataPatcher:
                     copied_files.append(f"{char_name}/{dst_name}")
                     print(f"[DATA_PATCH] 복사: {img_name} -> {dst_name}")
 
-                character_profiles = next((
-                    value for name, value in effective_visual_profiles.items()
-                    if str(name).casefold() == str(char_name).casefold()
-                ), {})
-                for profile in character_profiles.get("profiles") or []:
-                    overrides = profile.get("render_overrides") or {}
-                    if not overrides.get("use_profile_embedding"):
-                        continue
+                visual_cards, _source = effective_character_cards(char, None)
+                for profile in visual_cards[1:]:
                     profile_id = str(profile.get("id") or "").strip()
-                    profile_rep_images = overrides.get("rep_images") or []
+                    profile_rep_images = profile.get("rep_images") or []
                     if not profile_rep_images:
                         skipped_files.append(
                             f"{char_name}/_visual_profiles/{profile_id}:rep_images 없음"
@@ -3835,7 +4133,12 @@ class BotDataPatcher:
                 "message": msg,
                 "created_dirs": created_dirs,
                 "copied_files": copied_files,
-                "skipped_files": skipped_files
+                "skipped_files": skipped_files,
+                "visual_targets": [
+                    target
+                    for target in get_bot_visual_targets(bot_name, require_rep_images=True)
+                    if not selected_only or target["character"] in requested_names
+                ],
             })
         except Exception as e:
             print(f"[DATA_PATCH] 데이터 패치 실패: {e}")
@@ -4476,7 +4779,11 @@ async def handle_set_auto_face_tag_prompt(request):
         return web.json_response({"success": False, "error": str(e)})
 
 
-async def run_auto_classify_face_tags(bot_name: str, char_name: str) -> dict:
+async def run_auto_classify_face_tags(
+    bot_name: str,
+    char_name: str,
+    visual_card_id: str = "",
+) -> dict:
     """LLM 비전 기반 얼굴/눈 태그 자동 분류 (HTTP 래퍼 없는 core).
     반환: {"success": True, "data": {"face": [...], "eye": [...]}} 또는 {"success": False, "error": "..."}
     """
@@ -4498,11 +4805,17 @@ async def run_auto_classify_face_tags(bot_name: str, char_name: str) -> dict:
         if not bot_name or not char_name:
             return {"success": False, "error": "bot, character 필드가 필요합니다."}
 
+        target = resolve_bot_visual_target(bot_name, char_name, visual_card_id)
+        if target is None:
+            return {"success": False, "error": "캐릭터 카드를 찾을 수 없습니다."}
         char_dir = os.path.join(BOT_DIR, bot_name, char_name)
-        face_path = os.path.join(char_dir, "_face_image.webp")
+        artifact_dir = bot_visual_artifact_dir(
+            bot_name, char_name, target["visual_card_id"]
+        )
+        face_path = os.path.join(artifact_dir, "_face_image.webp")
         if not os.path.isfile(face_path):
             print(f"[BOT_MODE] _face_image.webp 없음: {face_path}")
-            return {"success": False, "error": f"_face_image.webp이 없습니다. 먼저 얼굴 이미지를 생성하세요. (경로: {char_dir})"}
+            return {"success": False, "error": f"_face_image.webp이 없습니다. 먼저 얼굴 이미지를 생성하세요. (경로: {artifact_dir})"}
 
         # 대표 프롬프트 로드 (rep_images[0])
         data = _load_bot_data()
@@ -4513,7 +4826,7 @@ async def run_auto_classify_face_tags(bot_name: str, char_name: str) -> dict:
         if not char:
             return {"success": False, "error": f"캐릭터를 찾을 수 없습니다: {char_name}"}
 
-        rep_images = char.get("rep_images", [])
+        rep_images = target["rep_images"]
         if not rep_images:
             return {"success": False, "error": "대표 이미지(rep_images)가 없습니다."}
 
@@ -4577,10 +4890,11 @@ async def run_auto_classify_face_tags(bot_name: str, char_name: str) -> dict:
             {"role": "user", "content": rendered},
         ]
 
-        print(f"[BOT_MODE] auto_classify_face_tags 호출: bot={bot_name} char={char_name} service={service} appearance={len(groups.get('외모/신체', []))} attire={len(groups.get('복장', []))} etc={len(groups.get('미분류', []))} use_custom={use_custom}")
+        prompt_id = f"auto_face_tag:{char_name}:{target['visual_card_id']}"
+        print(f"[BOT_MODE] auto_classify_face_tags 호출: bot={bot_name} char={char_name} card={target['visual_card_id']} service={service} appearance={len(groups.get('외모/신체', []))} attire={len(groups.get('복장', []))} etc={len(groups.get('미분류', []))} use_custom={use_custom}")
 
         use_model = cfg.get("llm_model", "")
-        await _notify_llm_widget("start", {"model": use_model, "prompt_id": f"auto_face_tag:{char_name}"})
+        await _notify_llm_widget("start", {"model": use_model, "prompt_id": prompt_id})
 
         raw = None
         last_err = None
@@ -4616,7 +4930,7 @@ async def run_auto_classify_face_tags(bot_name: str, char_name: str) -> dict:
                 await _notify_llm_widget("done", done_data)
                 _log_lighbd_history({
                     "ts": datetime.datetime.now().isoformat(timespec="seconds"),
-                    "prompt_id": f"auto_face_tag:{char_name}",
+                    "prompt_id": prompt_id,
                     "input": messages,
                     "output": raw,
                     "completion_tokens": done_data["completion_tokens"],
@@ -4635,7 +4949,7 @@ async def run_auto_classify_face_tags(bot_name: str, char_name: str) -> dict:
         await _notify_llm_widget("error", {"error": last_err or "알 수 없는 오류", "elapsed": round(total_elapsed, 3)})
         _log_lighbd_history({
             "ts": datetime.datetime.now().isoformat(timespec="seconds"),
-            "prompt_id": f"auto_face_tag:{char_name}",
+            "prompt_id": prompt_id,
             "input": messages,
             "output": "",
             "elapsed": round(total_elapsed, 3),
@@ -4649,7 +4963,10 @@ async def run_auto_classify_face_tags(bot_name: str, char_name: str) -> dict:
         await _notify_llm_widget("error", {"error": f"{type(e).__name__}: {e}"})
         _log_lighbd_history({
             "ts": datetime.datetime.now().isoformat(timespec="seconds"),
-            "prompt_id": f"auto_face_tag:{char_name}",
+            "prompt_id": (
+                prompt_id if "prompt_id" in locals()
+                else f"auto_face_tag:{char_name}:{visual_card_id}"
+            ),
             "input": messages if "messages" in locals() else [],
             "output": "",
             "status": "error",
@@ -4666,6 +4983,7 @@ def save_char_face_tags(
     absolute_tags: str,
     use_image_name_tag: bool | None = None,
     image_name_tag: str | None = None,
+    visual_card_id: str = "",
 ) -> dict:
     """캐릭터 태그 설정 저장 (bot.json 갱신).
 
@@ -4680,29 +4998,51 @@ def save_char_face_tags(
         char = next((c for c in bot.get("characters", []) if c["name"] == char_name), None)
         if not char:
             return {"success": False, "error": f"캐릭터를 찾을 수 없음: {char_name}"}
-        char["face_tags"] = face_tags
-        char["eye_tags"] = eye_tags
-        char["absolute_tags"] = absolute_tags
+        had_visual_cards = isinstance(char.get("visual_cards"), list) and bool(char["visual_cards"])
+        cards, _source = effective_character_cards(char, None)
+        requested_id = str(visual_card_id or "").strip()
+        card_index = 0 if not requested_id else next(
+            (
+                index for index, card in enumerate(cards)
+                if card.get("id") == requested_id
+            ),
+            -1,
+        )
+        if card_index < 0:
+            error = f"캐릭터 카드를 찾을 수 없음: {char_name}/{requested_id}"
+            print(f"[BOT_MODE] save_char_face_tags 실패: {error}")
+            return {"success": False, "error": error}
+        target_card = cards[card_index]
+        target_card["face_tags"] = face_tags
+        target_card["eye_tags"] = eye_tags
+        target_card["absolute_tags"] = absolute_tags
         if use_image_name_tag is not None:
             if not isinstance(use_image_name_tag, bool):
                 error = f"이미지 이름 태그 사용 값은 bool이어야 합니다: {use_image_name_tag!r}"
                 print(f"[BOT_MODE] save_char_face_tags 검증 실패: {error}")
                 return {"success": False, "error": error}
-            char["use_image_name_tag"] = use_image_name_tag
+            target_card["use_image_name_tag"] = use_image_name_tag
         if image_name_tag is not None:
             if not isinstance(image_name_tag, str):
                 error = f"이미지 이름 태그는 문자열이어야 합니다: {image_name_tag!r}"
                 print(f"[BOT_MODE] save_char_face_tags 검증 실패: {error}")
                 return {"success": False, "error": error}
-            char["image_name_tag"] = image_name_tag.strip()
-        changed_fields = {"face_tags", "eye_tags", "absolute_tags"}
-        if use_image_name_tag is not None:
-            changed_fields.add("use_image_name_tag")
-        if image_name_tag is not None:
-            changed_fields.add("image_name_tag")
-        sync_root_fields_to_primary_card(char, changed_fields)
+            target_card["image_name_tag"] = image_name_tag.strip()
+        if had_visual_cards:
+            store_visual_cards(char, cards)
+        else:
+            char["face_tags"] = target_card["face_tags"]
+            char["eye_tags"] = target_card["eye_tags"]
+            char["absolute_tags"] = target_card["absolute_tags"]
+            if use_image_name_tag is not None:
+                char["use_image_name_tag"] = target_card["use_image_name_tag"]
+            if image_name_tag is not None:
+                char["image_name_tag"] = target_card["image_name_tag"]
         _save_bot_data(data)
-        print(f"[BOT_MODE] 캐릭터 태그 설정 업데이트: {bot_name}/{char_name}")
+        print(
+            f"[BOT_MODE] 캐릭터 태그 설정 업데이트: {bot_name}/{char_name}"
+            f"[{card_index + 1}]"
+        )
         return {"success": True}
     except Exception as e:
         print(f"[BOT_MODE] save_char_face_tags 예외: {e}")
@@ -4716,7 +5056,10 @@ async def handle_auto_classify_face_tags(request):
         body = await request.json()
         bot_name = (body.get("bot") or "").strip()
         char_name = (body.get("character") or "").strip()
-        result = await run_auto_classify_face_tags(bot_name, char_name)
+        visual_card_id = (body.get("visual_card_id") or "").strip()
+        result = await run_auto_classify_face_tags(
+            bot_name, char_name, visual_card_id
+        )
         return web.json_response(result)
     except Exception as e:
         print(f"[BOT_MODE] handle_auto_classify_face_tags 예외: {e}")
@@ -5029,23 +5372,73 @@ async def handle_llm_batch_enqueue(request):
             traceback.print_exc()
             return web.json_response({"success": False, "error": f"큐 매니저 접근 실패: {e}"})
 
+        selected_names = {
+            str(char_name).strip() for char_name in characters if str(char_name).strip()
+        }
+        requested_targets = body.get("visual_targets") or []
+        requested_keys = None
+        if requested_targets:
+            if not isinstance(requested_targets, list):
+                print(
+                    f"[BOT_MODE] llm_batch_enqueue visual_targets 형식 오류: "
+                    f"{type(requested_targets).__name__}"
+                )
+                return web.json_response({
+                    "success": False,
+                    "error": "visual_targets는 배열이어야 합니다.",
+                })
+            requested_keys = {
+                (
+                    str(target.get("character") or target.get("char_name") or "").strip(),
+                    str(target.get("visual_card_id") or "").strip(),
+                )
+                for target in requested_targets
+                if isinstance(target, dict)
+            }
+        visual_targets = [
+            target
+            for target in get_bot_visual_targets(bot_name, require_rep_images=True)
+            if target["character"] in selected_names
+            and (
+                requested_keys is None
+                or (target["character"], target["visual_card_id"]) in requested_keys
+            )
+        ]
         added = []
-        for char_name in characters:
-            cn = (str(char_name) or "").strip()
-            if not cn:
-                continue
-            params = {"bot_name": bot_name, "char_name": cn}
+        for target in visual_targets:
+            cn = target["character"]
+            params = {
+                "bot_name": bot_name,
+                "char_name": cn,
+                "visual_card_id": target["visual_card_id"],
+                "visual_card_label": target["visual_card_label"],
+                "visual_card_index": target["visual_card_index"],
+            }
             if one_click_run_id:
                 params["one_click_run_id"] = one_click_run_id
             item = await qm.add_item(
                 item_type="bot_llm_face_tag_analysis",
-                label=f"LLM 얼굴/눈 태그: {bot_name}/{cn}",
+                label=(
+                    f"LLM 얼굴/눈 태그: {bot_name}/{cn}"
+                    f"[{target['visual_card_index']}]"
+                ),
                 params=params,
                 priority=10,
             )
-            added.append({"char_name": cn, "id": item.id})
+            added.append({
+                "char_name": cn,
+                "visual_card_id": target["visual_card_id"],
+                "visual_card_index": target["visual_card_index"],
+                "id": item.id,
+            })
 
-        print(f"[BOT_MODE] LLM 일괄 분석 큐 추가: bot={bot_name} {len(added)}건")
+        if not added:
+            print(
+                f"[BOT_MODE] LLM 일괄 분석 대상 없음: "
+                f"bot={bot_name!r}, characters={sorted(selected_names)!r}"
+            )
+
+        print(f"[BOT_MODE] LLM 카드별 일괄 분석 큐 추가: bot={bot_name} {len(added)}건")
         return web.json_response({"success": True, "data": {"added": added, "count": len(added)}})
     except Exception as e:
         print(f"[BOT_MODE] llm_batch_enqueue 예외: {e}")

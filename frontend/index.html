@@ -10105,6 +10105,34 @@
             padding-bottom: 8px;
             border-bottom: 1px solid var(--border);
         }
+        #illust-prompt-settings-block .illust-prompt-settings-header {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            min-width: 0;
+        }
+        #illust-prompt-settings-block .illust-prompt-settings-title-row,
+        #illust-prompt-settings-block .illust-prompt-settings-profile-row {
+            display: flex;
+            align-items: center;
+            min-width: 0;
+        }
+        #illust-prompt-settings-block .illust-prompt-settings-title-row {
+            justify-content: space-between;
+            gap: 10px;
+        }
+        #illust-prompt-settings-block .illust-prompt-settings-title-row .section-title {
+            min-width: 0;
+            margin-bottom: 0;
+        }
+        #illust-prompt-settings-block .illust-prompt-settings-profile-row {
+            gap: 8px;
+        }
+        #illust-prompt-settings-block .illust-prompt-settings-profile-tabs,
+        #illust-prompt-settings-block .illust-prompt-settings-title-row > button,
+        #illust-prompt-settings-block .illust-prompt-settings-profile-row > button {
+            flex: 0 0 auto;
+        }
         .asset-sidebar .inline-add {
             display: flex;
             gap: 6px;
@@ -16249,19 +16277,21 @@
                             <div id="positive-rules-count" style="font-size:0.7rem; color:var(--text2); margin-top:4px;"></div>
                         </div>
                         <div id="illust-prompt-settings-block" style="background:rgba(156,39,176,0.08); border-radius:8px; padding:10px; margin-top:8px;">
-                            <div style="display:flex; align-items:center; justify-content:space-between;">
-                                <div style="display:flex; align-items:center; gap:8px;">
-                                    <div class="section-title" style="margin-bottom:0;">삽화 프롬프트 설정</div>
-                                    <div style="display:inline-flex; gap:0; border:1px solid var(--border); border-radius:4px; overflow:hidden;">
+                            <div class="illust-prompt-settings-header">
+                                <div class="illust-prompt-settings-title-row">
+                                    <div class="section-title">삽화 프롬프트 설정</div>
+                                    <button onclick="openIllustTagEditorModal()" style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:3px 10px; border-radius:4px; cursor:pointer; font-size:0.7rem;">태그 편집</button>
+                                </div>
+                                <div class="illust-prompt-settings-profile-row">
+                                    <div class="illust-prompt-settings-profile-tabs" style="display:inline-flex; gap:0; border:1px solid var(--border); border-radius:4px; overflow:hidden;">
                                         <button id="illust-profile-tab-solo" onclick="switchIllustSettingsProfile('solo')"
                                             style="padding:2px 8px; border:none; background:var(--accent); color:#fff; cursor:pointer; font-size:0.7rem; font-weight:600;">1인</button>
                                         <button id="illust-profile-tab-group" onclick="switchIllustSettingsProfile('group')"
                                             style="padding:2px 8px; border:none; background:transparent; color:var(--text2); cursor:pointer; font-size:0.7rem; font-weight:600;">다인</button>
                                     </div>
                                     <button id="illust-profile-copy-btn" onclick="copyIllustSettingsToOtherProfile()"
-                                        style="font-size:0.65rem; padding:2px 6px; border:1px solid var(--border); background:var(--surface2); border-radius:4px; cursor:pointer; color:var(--text2); margin-left:4px;">다인으로 복사</button>
+                                        style="font-size:0.65rem; padding:2px 6px; border:1px solid var(--border); background:var(--surface2); border-radius:4px; cursor:pointer; color:var(--text2);">다인으로 복사</button>
                                 </div>
-                                <button onclick="openIllustTagEditorModal()" style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:3px 10px; border-radius:4px; cursor:pointer; font-size:0.7rem;">태그 편집</button>
                             </div>
                             <div class="illust-workflow-option" data-chansub-workflow="sdxl" style="margin-top:6px;">
                                 <div style="font-size:0.7rem; color:var(--text2); margin-bottom:2px;">ILXL 아티스트 프리셋</div>
@@ -72369,11 +72399,11 @@
                 const hasP = img.prompt ? 'has-prompt' : '';
                 return `<label style="display:flex; align-items:center; gap:10px; padding:8px; border-radius:6px; cursor:pointer; border:1px solid var(--border); background:var(--surface2);"
                     class="analyze-item ${hasP}" data-idx="${i}">
-                    <input type="checkbox" checked class="analyze-check" data-filename="${escAttr(img.filename)}" data-character="${escAttr(img.character)}"
+                    <input type="checkbox" checked class="analyze-check" data-filename="${escAttr(img.filename)}" data-character="${escAttr(img.character)}" data-visual-card-id="${escAttr(img.visual_card_id || '')}"
                         style="width:18px; height:18px; cursor:pointer;">
                     <img src="${img.url}" loading="lazy" style="width:60px; height:60px; object-fit:cover; border-radius:4px; flex-shrink:0;">
                     <div style="flex:1; min-width:0;">
-                        <div style="font-size:0.8rem; font-weight:600;">${escHtml(img.character)} / ${escHtml(img.filename)}</div>
+                        <div style="font-size:0.8rem; font-weight:600;">${escHtml(_botVisualTargetLabel(img))} / ${escHtml(img.filename)}</div>
                         <div style="font-size:0.7rem; color:var(--text2); margin-top:2px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${preview}</div>
                     </div>
                 </label>`;
@@ -72404,6 +72434,11 @@
             const checks = document.querySelectorAll('.analyze-check:checked');
             if (checks.length === 0) { showToast('선택된 이미지가 없습니다', 'error'); return; }
             const filenames = [...checks].map(c => c.dataset.filename);
+            const visualTargets = [...checks].map(c => ({
+                character: c.dataset.character,
+                visual_card_id: c.dataset.visualCardId,
+                filename: c.dataset.filename,
+            }));
             document.getElementById('bot-analyze-modal').style.display = 'none';
             const btn = document.getElementById('bot-analyze-confirm-btn');
             const status = document.getElementById('bot-analyze-status');
@@ -72414,7 +72449,7 @@
                 const data = await fetchJSON('/api/bot_mode/batch_analyze_rep', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({bot: botCurrentBot, character: charName, filenames})
+                    body: JSON.stringify({bot: botCurrentBot, character: charName, filenames, visual_targets: visualTargets})
                 });
                 if (data.error) { showToast(data.error, 'error'); if (btn) { btn.disabled = false; btn.textContent = '선택 분석 실행'; } return; }
                 status.textContent = `큐에 추가됨 (${filenames.length}장) - 대기 중...`;
@@ -75688,6 +75723,44 @@
         let _botOneClickDataPatchWait = null;
         let _botOneClickLlmWait = null;
 
+        function _botVisualCards(character) {
+            const rawCards = Array.isArray(character?.visual_cards) && character.visual_cards.length
+                ? character.visual_cards
+                : [{id: 'card_1', label: '카드 1', rep_images: character?.rep_images || []}];
+            return rawCards.map((card, index) => ({
+                ...card,
+                id: String(card?.id || `card_${index + 1}`),
+                label: String(card?.label || `카드 ${index + 1}`),
+                index: index + 1,
+                rep_images: Array.isArray(card?.rep_images) ? card.rep_images.filter(Boolean) : [],
+            }));
+        }
+
+        function _botVisualTargets(bot, selectedNames = null) {
+            const selected = selectedNames ? new Set(selectedNames) : null;
+            return (bot?.characters || []).flatMap(character => {
+                if (selected && !selected.has(character.name)) return [];
+                return _botVisualCards(character).map(card => ({
+                    character: character.name,
+                    visual_card_id: card.id,
+                    visual_card_label: card.label,
+                    visual_card_index: card.index,
+                    rep_images: card.rep_images,
+                    is_primary: card.index === 1,
+                }));
+            });
+        }
+
+        function _botVisualTargetKey(target) {
+            return `${String(target?.character || target?.char_name || '')}::${String(target?.visual_card_id || 'card_1')}`;
+        }
+
+        function _botVisualTargetLabel(target) {
+            const name = String(target?.character || target?.char_name || '').trim();
+            const index = Number(target?.visual_card_index || 1);
+            return `${name} [${index}]`;
+        }
+
         function _botOneClickIsStopping(run = _botOneClickRun) {
             return Boolean(run?.running && run?.stopRequested);
         }
@@ -75781,17 +75854,22 @@
             }
             if (!document.body.contains(modal)) return;
 
-            const eligibleCount = characters.filter(char => (char.rep_images || []).length > 0).length;
+            const eligibleCount = characters.filter(char =>
+                _botVisualCards(char).some(card => card.rep_images.length > 0)
+            ).length;
             const presetNames = Object.keys(presets);
             const firstPreset = presetNames[0] || '';
             const presetOptions = presetNames.map(name =>
                 `<option value="${escAttr(name)}">${escHtml(name)} (${(presets[name] || []).length}개)</option>`
             ).join('');
             const rows = characters.map(char => {
-                const reps = char.rep_images || [];
-                const enabled = reps.length > 0;
+                const cards = _botVisualCards(char);
+                const eligibleCards = cards.filter(card => card.rep_images.length > 0);
+                const reps = eligibleCards.flatMap(card => card.rep_images);
+                const enabled = eligibleCards.length > 0;
+                const firstCard = eligibleCards[0];
                 const imageUrl = enabled
-                    ? `/api/bot_mode/image/${encodeURIComponent(botName)}/${encodeURIComponent(char.name)}/${encodeURIComponent(reps[0])}`
+                    ? `/api/bot_mode/image/${encodeURIComponent(botName)}/${encodeURIComponent(char.name)}/${encodeURIComponent(firstCard.rep_images[0])}`
                     : '';
                 return `<label class="bot-one-click-char-card" data-name="${escAttr(char.name)}" data-enabled="${enabled ? '1' : '0'}"
                     style="display:flex; align-items:center; gap:9px; padding:8px 9px; border:1px solid ${enabled ? 'rgba(56,189,248,0.45)' : 'var(--border)'}; border-radius:7px; background:${enabled ? 'rgba(14,165,233,0.08)' : 'var(--surface2)'}; cursor:${enabled ? 'pointer' : 'not-allowed'}; opacity:${enabled ? 1 : 0.5};">
@@ -75801,7 +75879,7 @@
                     </div>
                     <div style="min-width:0; flex:1;">
                         <div style="font-size:0.81rem; font-weight:650; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escHtml(char.name)}</div>
-                        <div style="font-size:0.67rem; color:var(--text2); margin-top:2px;">대표 이미지 ${reps.length}장${enabled ? '' : ' · 실행 불가'}</div>
+                        <div style="font-size:0.67rem; color:var(--text2); margin-top:2px;">프로필 ${eligibleCards.length}/${cards.length}개 · 대표 이미지 ${reps.length}장${enabled ? '' : ' · 실행 불가'}</div>
                     </div>
                 </label>`;
             }).join('');
@@ -76419,7 +76497,7 @@
                     ? (warnings ? `경고 ${warnings}단계 · 완료 ${completed}단계 · 건너뜀 ${skipped}단계` : `완료 ${completed}단계 · 건너뜀 ${skipped}단계`)
                     : (_botOneClickIsStopping(run) ? '현재 처리 중인 작업을 마친 뒤 중단합니다.' : '창을 닫아도 작업은 백그라운드에서 계속됩니다.'));
             modal.innerHTML = `<div style="width:min(680px,94vw); max-height:90vh; display:flex; flex-direction:column; overflow:hidden; border:1px solid var(--border); border-radius:13px; background:var(--surface); box-shadow:0 18px 60px rgba(0,0,0,0.55);">
-                <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px; padding:16px 18px; border-bottom:1px solid var(--border); background:linear-gradient(90deg,rgba(2,132,199,0.11),rgba(124,58,237,0.10));"><div><div style="font-size:1rem; font-weight:750;">${title}</div><div style="font-size:0.7rem; color:var(--text2); margin-top:3px;">${escHtml(run.botName)} · ${run.charNames.length}명</div></div><button onclick="closeBotOneClickModal()" style="background:none; border:none; color:var(--text2); font-size:1.3rem; cursor:pointer;">&times;</button></div>
+                <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px; padding:16px 18px; border-bottom:1px solid var(--border); background:linear-gradient(90deg,rgba(2,132,199,0.11),rgba(124,58,237,0.10));"><div><div style="font-size:1rem; font-weight:750;">${title}</div><div style="font-size:0.7rem; color:var(--text2); margin-top:3px;">${escHtml(run.botName)} · ${run.charNames.length}명 · 프로필 ${run.visualTargets?.length || 0}개</div></div><button onclick="closeBotOneClickModal()" style="background:none; border:none; color:var(--text2); font-size:1.3rem; cursor:pointer;">&times;</button></div>
                 <div style="padding:14px 18px; overflow-y:auto; display:flex; flex-direction:column; gap:7px;">${rows}</div>
                 <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; padding:12px 18px; border-top:1px solid var(--border);"><div style="font-size:0.68rem; color:var(--text2);">${footerSummary}</div><div style="display:flex; gap:7px;">${!finished ? `<button id="bot-one-click-stop-btn" onclick="requestBotOneClickStop()" ${run.stopRequested ? 'disabled' : ''} style="padding:7px 14px; border:1px solid rgba(239,68,68,0.7); border-radius:6px; background:${run.stopRequested ? 'var(--surface2)' : 'rgba(239,68,68,0.16)'}; color:${run.stopRequested ? 'var(--text2)' : '#F87171'}; cursor:${run.stopRequested ? 'not-allowed' : 'pointer'}; font-weight:700;">${run.stopRequested ? '중단 처리 중...' : '안전 중단'}</button>` : ''}${finished ? '<button onclick="openNewBotOneClickSettings()" style="padding:7px 14px; border:1px solid var(--border); border-radius:6px; background:var(--surface2); color:var(--text); cursor:pointer; font-weight:650;">새 원클릭 설정</button>' : ''}<button onclick="closeBotOneClickModal()" style="padding:7px 16px; border:none; border-radius:6px; background:${finished ? '#00796B' : 'var(--surface2)'}; color:var(--text); cursor:pointer; font-weight:650;">${finished ? '확인' : '백그라운드로'}</button></div></div>
             </div>`;
@@ -76445,12 +76523,17 @@
             const cropBottom = Number(document.getElementById('bot-one-click-crop-bottom')?.value);
             const confidence = Number(document.getElementById('bot-one-click-confidence')?.value);
             const overwrite = !!document.getElementById('bot-one-click-overwrite')?.checked;
+            const selectedBotName = _botOneClickWizard?.botName || botCurrentBot;
+            const selectedBot = (botData?.bots || []).find(item => item.name === selectedBotName);
+            const visualTargets = _botVisualTargets(selectedBot, charNames)
+                .filter(target => target.rep_images.length > 0);
 
             const modal = document.getElementById('bot-one-click-modal');
             _botOneClickRun = {
                 running: true,
-                botName: _botOneClickWizard?.botName || botCurrentBot,
+                botName: selectedBotName,
                 charNames,
+                visualTargets,
                 enabledStages,
                 negativeTags,
                 cropTop,
@@ -76708,9 +76791,13 @@
         function _handleBotOneClickDataPatchProgress(data) {
             const waiter = _botOneClickDataPatchWait;
             if (!waiter || data?.bot_name !== waiter.botName || !['completed', 'failed'].includes(data?.phase)) return;
-            waiter.mark(data.char_name, data.phase === 'completed', data.error);
+            const targetKey = _botVisualTargetKey({
+                character: data.char_name,
+                visual_card_id: data.visual_card_id,
+            });
+            waiter.mark(targetKey, data.phase === 'completed', data.error);
             const done = waiter.success.length + waiter.failed.length + waiter.cancelled.length;
-            _botOneClickUpdateStage('data_patch', 'running', `${done}/${done + waiter.pending.size}명 완료${waiter.failed.length ? ` · 실패 ${waiter.failed.length}명` : ''}`);
+            _botOneClickUpdateStage('data_patch', 'running', `${done}/${done + waiter.pending.size}개 프로필 완료${waiter.failed.length ? ` · 실패 ${waiter.failed.length}개` : ''}`);
         }
 
         async function _runBotOneClickDataPatch(run) {
@@ -76724,28 +76811,37 @@
                     detail: `${patchResult.message || '파일 패치 완료'} · FACE 큐 등록 전 안전 중단됨`,
                 };
             }
-            const waiter = _botOneClickCreateNamedWait('data_patch', run.botName, run.charNames);
+            const targets = (patchResult.visual_targets || run.visualTargets || [])
+                .filter(target => run.charNames.includes(target.character));
+            const targetByKey = new Map(targets.map(target => [_botVisualTargetKey(target), target]));
+            const waiter = _botOneClickCreateNamedWait(
+                'data_patch', run.botName, [...targetByKey.keys()]
+            );
             _botOneClickDataPatchWait = waiter;
-            for (const charName of run.charNames) {
+            for (const [targetKey, target] of targetByKey) {
                 if (run.stopRequested) break;
+                const targetLabel = _botVisualTargetLabel(target);
                 try {
                     const queued = await _botOneClickJson('/api/queue/add', {
                         method: 'POST', headers: {'Content-Type': 'application/json'},
                         body: JSON.stringify({
                             type: 'data_patch_utility',
-                            label: `원클릭 데이터 패치 (${charName})`,
+                            label: `원클릭 데이터 패치 (${targetLabel})`,
                             params: {
                                 bot_name: run.botName,
-                                char_name: charName,
+                                char_name: target.character,
+                                visual_card_id: target.visual_card_id,
+                                visual_card_label: target.visual_card_label,
+                                visual_card_index: target.visual_card_index,
                                 one_click_run_id: run.runId,
                                 patch_settings: {face_crop_top: run.cropTop, face_crop_bottom: run.cropBottom, emb_target: run.embTarget},
                             },
                         }),
                     });
-                    _botOneClickRegisterQueueItem(run, 'data_patch', charName, queued.item_id);
+                    _botOneClickRegisterQueueItem(run, 'data_patch', targetKey, queued.item_id);
                 } catch (e) {
-                    console.error('[BOT_ONE_CLICK] 데이터 패치 큐 추가 실패:', charName, e);
-                    waiter.mark(charName, false, `큐 추가 실패: ${e.message || e}`);
+                    console.error('[BOT_ONE_CLICK] 데이터 패치 큐 추가 실패:', targetLabel, e);
+                    waiter.mark(targetKey, false, `큐 추가 실패: ${e.message || e}`);
                 }
             }
             if (run.stopRequested) {
@@ -76755,13 +76851,16 @@
                     waiter.cancel(name, '안전 중단으로 큐에 등록하지 않음')
                 );
             }
-            _botOneClickUpdateStage('data_patch', 'running', `${run.charNames.length}명 FACE 생성 대기 중...`);
+            _botOneClickUpdateStage('data_patch', 'running', `${targetByKey.size}개 프로필 FACE 생성 대기 중...`);
             const result = await waiter.promise;
-            const issues = result.failed.map(item => _botOneClickIssue(item.name, item.error || 'FACE 생성 실패'));
+            const issues = result.failed.map(item => _botOneClickIssue(
+                _botVisualTargetLabel(targetByKey.get(item.name) || {character: item.name}),
+                item.error || 'FACE 생성 실패'
+            ));
             return {
                 cancelled: run.stopRequested || result.cancelled.length > 0,
                 warning: issues.length > 0,
-                detail: `${patchResult.message || '파일 패치 완료'} · FACE 성공 ${result.success.length}명${result.failed.length ? ` · 실패 ${result.failed.length}명` : ''}${result.cancelled.length ? ` · 대기 취소 ${result.cancelled.length}명` : ''}${run.stopRequested ? '\n안전 중단됨' : ''}`,
+                detail: `${patchResult.message || '파일 패치 완료'} · FACE 성공 ${result.success.length}개${result.failed.length ? ` · 실패 ${result.failed.length}개` : ''}${result.cancelled.length ? ` · 대기 취소 ${result.cancelled.length}개` : ''}${run.stopRequested ? '\n안전 중단됨' : ''}`,
                 issues,
             };
         }
@@ -76782,7 +76881,7 @@
                     previewId = '';
                     return {cancelled: true, detail: 'FACE 미리보기 정리 후 안전 중단됨'};
                 }
-                _botOneClickUpdateStage('embedding', 'running', `확정 가능 ${Number(preview.ready_count || 0)}명 · 임베딩 생성 중...`);
+                _botOneClickUpdateStage('embedding', 'running', `확정 가능 ${Number(preview.ready_count || 0)}개 프로필 · 임베딩 생성 중...`);
                 const result = await _botOneClickJson('/api/bot_mode/program_embedding/commit', {
                     method: 'POST', headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({preview_id: previewId}),
@@ -76791,10 +76890,13 @@
                 const failed = Number(result.failed_count || 0);
                 const issues = (result.results || [])
                     .filter(item => item && item.success === false)
-                    .map(item => _botOneClickIssue(item.char_name, item.message || 'embedding 생성 실패'));
+                    .map(item => _botOneClickIssue(
+                        _botVisualTargetLabel(item),
+                        item.message || 'embedding 생성 실패'
+                    ));
                 return {
                     warning: failed > 0 || !result.success,
-                    detail: `${result.message || 'embedding 완료'}${failed ? ` · 실패 ${failed}명` : ''}`,
+                    detail: `${result.message || 'embedding 완료'}${failed ? ` · 실패 ${failed}개 프로필` : ''}`,
                     issues,
                 };
             } catch (e) {
@@ -76949,9 +77051,12 @@
         function _handleBotOneClickLlmProgress(data) {
             const waiter = _botOneClickLlmWait;
             if (!waiter || data?.bot_name !== waiter.botName || !['completed', 'failed'].includes(data?.phase)) return;
-            waiter.mark(data.char_name, data.phase === 'completed', data.error);
+            waiter.mark(_botVisualTargetKey({
+                character: data.char_name,
+                visual_card_id: data.visual_card_id,
+            }), data.phase === 'completed', data.error);
             const done = waiter.success.length + waiter.failed.length + waiter.cancelled.length;
-            _botOneClickUpdateStage('llm_refine', 'running', `${done}/${done + waiter.pending.size}명 완료${waiter.failed.length ? ` · 실패 ${waiter.failed.length}명` : ''}`);
+            _botOneClickUpdateStage('llm_refine', 'running', `${done}/${done + waiter.pending.size}개 프로필 완료${waiter.failed.length ? ` · 실패 ${waiter.failed.length}개` : ''}`);
         }
 
         async function _runBotOneClickLlmRefine(run) {
@@ -76960,27 +77065,46 @@
                 return {cancelled: true, detail: 'LLM 정제 대상 확인 후 안전 중단됨'};
             }
             const selected = new Set(run.charNames);
-            const faceNames = [...new Set((utility.images || []).map(image => image.character).filter(name => selected.has(name)))];
-            const missingNames = run.charNames.filter(name => !faceNames.includes(name));
-            const missingIssues = missingNames.map(name => _botOneClickIssue(name, 'LLM 정제에 사용할 FACE 이미지가 없습니다.'));
-            if (!faceNames.length) {
+            const faceTargets = (utility.images || []).filter(image => selected.has(image.character));
+            const faceTargetByKey = new Map(faceTargets.map(target => [_botVisualTargetKey(target), target]));
+            const expectedByKey = new Map((run.visualTargets || []).map(target => [_botVisualTargetKey(target), target]));
+            const missingKeys = [...expectedByKey.keys()].filter(key => !faceTargetByKey.has(key));
+            const missingIssues = missingKeys.map(key => _botOneClickIssue(
+                _botVisualTargetLabel(expectedByKey.get(key)),
+                'LLM 정제에 사용할 FACE 이미지가 없습니다.'
+            ));
+            if (!faceTargetByKey.size) {
                 return {warning: true, detail: 'LLM 정제 대상 FACE 이미지가 없습니다.', issues: missingIssues};
             }
-            const waiter = _botOneClickCreateNamedWait('llm', run.botName, faceNames);
+            const waiter = _botOneClickCreateNamedWait('llm', run.botName, [...faceTargetByKey.keys()]);
             _botOneClickLlmWait = waiter;
             try {
                 const enqueue = await _botOneClickJson('/api/bot_mode/llm_batch_enqueue', {
                     method: 'POST', headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({bot: run.botName, characters: faceNames, one_click_run_id: run.runId}),
+                    body: JSON.stringify({
+                        bot: run.botName,
+                        characters: [...new Set(faceTargets.map(target => target.character))],
+                        visual_targets: faceTargets.map(target => ({
+                            character: target.character,
+                            visual_card_id: target.visual_card_id,
+                        })),
+                        one_click_run_id: run.runId,
+                    }),
                 });
                 const addedItems = enqueue.data?.added || [];
-                const addedNames = new Set(addedItems.map(item => item.char_name));
-                addedItems.forEach(item => _botOneClickRegisterQueueItem(run, 'llm', item.char_name, item.id));
-                faceNames.filter(name => !addedNames.has(name)).forEach(name =>
-                    run.stopRequested ? waiter.cancel(name, '안전 중단으로 큐에 등록하지 않음') : waiter.mark(name, false, '큐에 추가되지 않음')
+                const addedKeys = new Set(addedItems.map(item => _botVisualTargetKey({
+                    character: item.char_name,
+                    visual_card_id: item.visual_card_id,
+                })));
+                addedItems.forEach(item => {
+                    const key = _botVisualTargetKey({character: item.char_name, visual_card_id: item.visual_card_id});
+                    _botOneClickRegisterQueueItem(run, 'llm', key, item.id);
+                });
+                [...faceTargetByKey.keys()].filter(key => !addedKeys.has(key)).forEach(key =>
+                    run.stopRequested ? waiter.cancel(key, '안전 중단으로 큐에 등록하지 않음') : waiter.mark(key, false, '큐에 추가되지 않음')
                 );
                 if (run.stopRequested) await _botOneClickCancelPendingWork(run);
-                _botOneClickUpdateStage('llm_refine', 'running', `${addedNames.size}명 LLM 큐 처리 중...`);
+                _botOneClickUpdateStage('llm_refine', 'running', `${addedKeys.size}개 프로필 LLM 큐 처리 중...`);
             } catch (e) {
                 console.error('[BOT_ONE_CLICK] LLM 정제 큐 추가 실패:', e);
                 [...waiter.pending].forEach(name => waiter.mark(name, false, `큐 추가 실패: ${e.message || e}`));
@@ -76988,12 +77112,15 @@
             const result = await waiter.promise;
             const issues = [
                 ...missingIssues,
-                ...result.failed.map(item => _botOneClickIssue(item.name, item.error || 'LLM 정제 실패')),
+                ...result.failed.map(item => _botOneClickIssue(
+                    _botVisualTargetLabel(faceTargetByKey.get(item.name) || {character: item.name}),
+                    item.error || 'LLM 정제 실패'
+                )),
             ];
             return {
                 cancelled: run.stopRequested || result.cancelled.length > 0,
                 warning: issues.length > 0,
-                detail: `LLM 정제 성공 ${result.success.length}명${result.failed.length ? ` · 실패 ${result.failed.length}명` : ''}${result.cancelled.length ? ` · 대기 취소 ${result.cancelled.length}명` : ''}${missingNames.length ? ` · FACE 없음 ${missingNames.length}명` : ''}${run.stopRequested ? '\n안전 중단됨' : ''}`,
+                detail: `LLM 정제 성공 ${result.success.length}개${result.failed.length ? ` · 실패 ${result.failed.length}개` : ''}${result.cancelled.length ? ` · 대기 취소 ${result.cancelled.length}개` : ''}${missingKeys.length ? ` · FACE 없음 ${missingKeys.length}개` : ''}${run.stopRequested ? '\n안전 중단됨' : ''}`,
                 issues,
             };
         }
@@ -77245,15 +77372,18 @@
             };
             const selected = new Set(state.selected || []);
             const rowsHtml = chars.map(char => {
-                const repCount = (char.rep_images || []).length;
-                return `<label style="display:flex; align-items:center; gap:10px; padding:7px 9px; border:1px solid var(--border); border-radius:6px; background:var(--surface2); cursor:pointer;">
-                    <input type="checkbox" class="program-embedding-char-check" data-name="${escAttr(char.name)}" ${selected.has(char.name) ? 'checked' : ''}
-                        style="width:17px; height:17px; cursor:pointer;">
+                const cards = _botVisualCards(char);
+                const eligibleCards = cards.filter(card => card.rep_images.length > 0);
+                const repCount = eligibleCards.reduce((sum, card) => sum + card.rep_images.length, 0);
+                const enabled = eligibleCards.length > 0;
+                return `<label style="display:flex; align-items:center; gap:10px; padding:7px 9px; border:1px solid var(--border); border-radius:6px; background:var(--surface2); cursor:${enabled ? 'pointer' : 'not-allowed'}; opacity:${enabled ? 1 : 0.5};">
+                    <input type="checkbox" class="program-embedding-char-check" data-name="${escAttr(char.name)}" ${selected.has(char.name) && enabled ? 'checked' : ''} ${enabled ? '' : 'disabled'}
+                        style="width:17px; height:17px; cursor:${enabled ? 'pointer' : 'not-allowed'};">
                     <div class="program-embedding-select-thumb" data-name="${escAttr(char.name)}"
                         style="width:52px; height:52px; border-radius:5px; border:1px solid var(--border); display:flex; align-items:center; justify-content:center; flex-shrink:0; overflow:hidden; color:var(--text2); font-size:0.65rem;">로딩</div>
                     <div style="min-width:0;">
                         <div style="font-size:0.83rem; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escHtml(char.name)}</div>
-                        <div style="font-size:0.68rem; color:var(--text2); margin-top:2px;">대표 이미지 ${repCount}장</div>
+                        <div style="font-size:0.68rem; color:var(--text2); margin-top:2px;">프로필 ${eligibleCards.length}/${cards.length}개 · 대표 이미지 ${repCount}장</div>
                     </div>
                 </label>`;
             }).join('');
@@ -77315,7 +77445,7 @@
                     const data = await fetchJSON(`/api/bot_mode/images?bot=${encodeURIComponent(botCurrentBot)}&character=${encodeURIComponent(char.name)}`);
                     const images = data.images || [];
                     const face = images.find(img => img.filename === '_face_image.webp');
-                    const repName = (char.rep_images || [])[0];
+                    const repName = _botVisualCards(char).find(card => card.rep_images.length)?.rep_images?.[0];
                     const representative = images.find(img => img.filename === repName) || images.find(img => !img.filename.startsWith('_'));
                     const selected = face || representative;
                     const thumb = document.querySelector(`.program-embedding-select-thumb[data-name="${CSS.escape(char.name)}"]`);
@@ -77324,7 +77454,7 @@
                         thumb.textContent = '이미지 없음';
                         continue;
                     }
-                    thumb.innerHTML = `<img src="${escAttr(selected.url)}?t=${Date.now()}" loading="lazy" style="width:100%; height:100%; object-fit:cover;">`;
+                    thumb.innerHTML = `<img src="${escAttr(selected.url)}${selected.url.includes('?') ? '&' : '?'}t=${Date.now()}" loading="lazy" style="width:100%; height:100%; object-fit:cover;">`;
                     thumb.title = face ? '기존 FACE' : '대표 이미지';
                 } catch (e) {
                     console.error('[PROGRAM_EMBEDDING] 선택 썸네일 로드 실패:', char.name, e);
@@ -77354,7 +77484,9 @@
             btn.disabled = true;
             btn.textContent = 'ONNX 추출 중…';
             status.style.display = 'block';
-            status.textContent = `선택 캐릭터 ${charNames.length}명의 FACE를 확인 중입니다…`;
+            const selectedBot = (botData?.bots || []).find(item => item.name === botCurrentBot);
+            const targetCount = _botVisualTargets(selectedBot, charNames).filter(target => target.rep_images.length).length;
+            status.textContent = `선택 캐릭터 ${charNames.length}명 · 프로필 ${targetCount}개의 FACE를 확인 중입니다…`;
             try {
                 const data = await fetchJSON('/api/bot_mode/program_embedding/preview', {
                     method: 'POST',
@@ -77389,12 +77521,12 @@
                     : item.status === 'existing' ? '#1976D2'
                     : item.status === 'failed_existing' ? '#EF6C00' : '#C62828';
                 const image = item.display_url
-                    ? `<img src="${escAttr(item.display_url)}?t=${Date.now()}" onclick="openLightbox(this.src)" style="width:100%; aspect-ratio:1; object-fit:cover; cursor:zoom-in; display:block;">`
+                    ? `<img src="${escAttr(item.display_url)}${item.display_url.includes('?') ? '&' : '?'}t=${Date.now()}" onclick="openLightbox(this.src)" style="width:100%; aspect-ratio:1; object-fit:cover; cursor:zoom-in; display:block;">`
                     : '<div style="width:100%; aspect-ratio:1; display:flex; align-items:center; justify-content:center; color:var(--text2); background:var(--surface2);">이미지 없음</div>';
                 return `<div style="border:2px solid ${borderColor}; border-radius:8px; overflow:hidden; background:var(--surface2);">
                     ${image}
                     <div style="padding:8px 9px;">
-                        <div style="font-size:0.8rem; font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escHtml(item.char_name)}</div>
+                        <div style="font-size:0.8rem; font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escHtml(item.display_name || _botVisualTargetLabel(item))}</div>
                         <div style="font-size:0.69rem; color:${borderColor}; font-weight:600; margin-top:3px;">${escHtml(item.source_label)}</div>
                         ${confidence}
                         <div style="font-size:0.66rem; color:var(--text2); line-height:1.35; margin-top:4px;">${escHtml(item.message)}</div>
@@ -77707,10 +77839,9 @@
                     return;
                 }
 
-                const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
-                let chars = (bot?.characters || []).filter(c => (c.rep_images || []).length > 0);
-                if (isSel) chars = chars.filter(c => selTargetNames.includes(c.name));
-                if (chars.length === 0) {
+                let visualTargets = patchResult.visual_targets || [];
+                if (isSel) visualTargets = visualTargets.filter(target => selTargetNames.includes(target.character));
+                if (visualTargets.length === 0) {
                     statusDiv.textContent = `완료: ${patchResult.message} (얼굴 대상 없음)`;
                     showToast(patchResult.message, 'success');
                     renderBotCharacters();
@@ -77719,27 +77850,42 @@
                     return;
                 }
 
-                // 캐릭터당 개별 큐 아이템으로 유틸리티 실행
-                statusDiv.textContent = `큐에 ${chars.length}개 유틸리티 추가 중…`;
-                _dataPatchQueueTotal = chars.length;
+                // 캐릭터 카드마다 개별 큐 아이템으로 유틸리티 실행
+                statusDiv.textContent = `큐에 ${visualTargets.length}개 프로필 유틸리티 추가 중…`;
+                _dataPatchQueueTotal = 0;
                 _dataPatchQueueDone = 0;
-                for (const char of chars) {
+                for (const target of visualTargets) {
+                    const targetLabel = _botVisualTargetLabel(target);
                     try {
                         await fetchJSON('/api/queue/add', {
                             method: 'POST',
                             headers: {'Content-Type': 'application/json'},
                             body: JSON.stringify({
                                 type: 'data_patch_utility',
-                                label: `데이터 패치 (${char.name})`,
-                                params: { bot_name: botCurrentBot, char_name: char.name }
+                                label: `데이터 패치 (${targetLabel})`,
+                                params: {
+                                    bot_name: botCurrentBot,
+                                    char_name: target.character,
+                                    visual_card_id: target.visual_card_id,
+                                    visual_card_label: target.visual_card_label,
+                                    visual_card_index: target.visual_card_index,
+                                }
                             })
                         });
+                        _dataPatchQueueTotal++;
                     } catch (e) {
-                        console.error('[DATA_PATCH] 큐 추가 오류:', char.name, e);
+                        console.error('[DATA_PATCH] 큐 추가 오류:', targetLabel, e);
                     }
                 }
-                statusDiv.textContent = `${patchResult.message} / 큐에 ${chars.length}개 추가됨`;
-                showToast(`큐에 ${chars.length}개 유틸리티 추가됨`, 'info');
+                if (_dataPatchQueueTotal === 0) {
+                    statusDiv.textContent = `${patchResult.message} / 프로필 FACE 큐 등록 실패`;
+                    btn.disabled = false;
+                    btn.textContent = btnLabel;
+                    showToast('프로필 FACE 작업을 큐에 추가하지 못했습니다.', 'error');
+                    return;
+                }
+                statusDiv.textContent = `${patchResult.message} / 큐에 ${_dataPatchQueueTotal}개 프로필 추가됨`;
+                showToast(`큐에 ${_dataPatchQueueTotal}개 프로필 유틸리티 추가됨`, 'info');
             } catch (e) {
                 statusDiv.textContent = '요청 실패: ' + e.message;
                 showToast('데이터 패치 요청 실패: ' + e.message, 'error');
@@ -77767,7 +77913,7 @@
             if (phase === 'completed') {
                 _dataPatchQueueDone++;
                 if (statusDiv) {
-                    statusDiv.textContent = `얼굴 완료: ${_dataPatchQueueDone}/${_dataPatchQueueTotal} - ${data.char_name || ''}`;
+                    statusDiv.textContent = `얼굴 완료: ${_dataPatchQueueDone}/${_dataPatchQueueTotal} - ${_botVisualTargetLabel({character:data.char_name, visual_card_index:data.visual_card_index})}`;
                 }
                 if (typeof renderBotCharacters === 'function') renderBotCharacters();
 
@@ -77783,9 +77929,9 @@
             } else if (phase === 'failed') {
                 _dataPatchQueueDone++;
                 if (statusDiv) {
-                    statusDiv.textContent = `실패: ${data.char_name || ''} - ${data.error || ''}`;
+                    statusDiv.textContent = `실패: ${_botVisualTargetLabel({character:data.char_name, visual_card_index:data.visual_card_index})} - ${data.error || ''}`;
                 }
-                showToast(`${data.char_name || ''} 실패: ${data.error || ''}`, 'error');
+                showToast(`${_botVisualTargetLabel({character:data.char_name, visual_card_index:data.visual_card_index})} 실패: ${data.error || ''}`, 'error');
 
                 if (_dataPatchQueueDone >= _dataPatchQueueTotal) {
                     const btn = document.getElementById(_dataPatchActiveBtnId);
@@ -77879,11 +78025,11 @@
                 const hasP = img.prompt ? 'util-has-prompt' : '';
                 return `<label style="display:flex; align-items:center; gap:10px; padding:8px; border-radius:6px; cursor:pointer; border:1px solid var(--border); background:var(--surface2);"
                     class="util-analyze-item ${hasP}" data-idx="${i}">
-                    <input type="checkbox" checked class="util-analyze-check" data-filename="${escAttr(img.filename)}" data-character="${escAttr(img.character)}"
+                    <input type="checkbox" checked class="util-analyze-check" data-filename="${escAttr(img.filename)}" data-character="${escAttr(img.character)}" data-visual-card-id="${escAttr(img.visual_card_id || '')}"
                         style="width:18px; height:18px; cursor:pointer;">
                     <img src="${img.url}" loading="lazy" style="width:60px; height:60px; object-fit:cover; border-radius:4px; flex-shrink:0;">
                     <div style="flex:1; min-width:0;">
-                        <div style="font-size:0.8rem; font-weight:600;">${escHtml(img.character)}</div>
+                        <div style="font-size:0.8rem; font-weight:600;">${escHtml(_botVisualTargetLabel(img))}</div>
                         <div style="font-size:0.7rem; color:var(--text2); margin-top:2px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${preview}</div>
                     </div>
                 </label>`;
@@ -77914,6 +78060,10 @@
             // 주의: 모든 캐릭터의 얼굴 이미지 파일명이 "_face_image.webp"로 동일하므로
             // filename이 아니라 character 이름으로 선택 여부를 전달해야 함.
             const characters = [...checks].map(c => c.dataset.character).filter(Boolean);
+            const visualTargets = [...checks].map(c => ({
+                character: c.dataset.character,
+                visual_card_id: c.dataset.visualCardId,
+            }));
             if (characters.length === 0) { showToast('선택된 캐릭터가 없습니다', 'error'); return; }
             document.getElementById('bot-util-analyze-modal').style.display = 'none';
             const btn = document.getElementById('btn-bot-util-analyze');
@@ -77926,7 +78076,7 @@
                 const data = await fetchJSON('/api/bot_mode/batch_analyze_utility', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({bot: botCurrentBot, characters})
+                    body: JSON.stringify({bot: botCurrentBot, characters, visual_targets: visualTargets})
                 });
                 if (data.error) { showToast(data.error, 'error'); btn.disabled = false; btn.textContent = '얼굴 태그 일괄 분석'; return; }
                 statusDiv.textContent = `큐에 추가됨 (${characters.length}장) - 대기 중...`;
@@ -77952,25 +78102,36 @@
             statusDiv.textContent = '얼굴 이미지 보유 캐릭터 조회 중...';
 
             // utility_preview 에서 _face_image.webp 보유 캐릭터 목록 추출
-            let faceCharNames = new Set();
+            let faceTargetsByChar = new Map();
             try {
                 const prevResp = await fetch(`/api/bot_mode/utility_preview?bot=${encodeURIComponent(botCurrentBot)}&character=`);
                 const prevData = await prevResp.json();
                 if (prevData.error) { showToast(prevData.error, 'error'); statusDiv.style.display = 'none'; return; }
-                (prevData.images || []).forEach(i => faceCharNames.add(i.character));
+                (prevData.images || []).forEach(image => {
+                    if (!faceTargetsByChar.has(image.character)) faceTargetsByChar.set(image.character, []);
+                    faceTargetsByChar.get(image.character).push(image);
+                });
             } catch (e) {
                 showToast(`얼굴 이미지 목록 로드 실패: ${e.message}`, 'error');
                 statusDiv.style.display = 'none';
                 return;
             }
 
-            const chars = bot.characters.map(c => ({
-                name: c.name,
-                has_face: faceCharNames.has(c.name),
-                rep_count: (c.rep_images || []).length,
-                gender: c.gender_tag || '1girl',
-            }));
-            const analyzable = chars.filter(c => c.has_face && c.rep_count > 0);
+            const chars = bot.characters.map(c => {
+                const cards = _botVisualCards(c);
+                const availableFaces = faceTargetsByChar.get(c.name) || [];
+                const availableIds = new Set(availableFaces.map(item => item.visual_card_id));
+                const targetCards = cards.filter(card => card.rep_images.length && availableIds.has(card.id));
+                return {
+                    name: c.name,
+                    has_face: availableFaces.length > 0,
+                    rep_count: cards.reduce((sum, card) => sum + card.rep_images.length, 0),
+                    target_count: targetCards.length,
+                    visual_card_ids: targetCards.map(card => card.id),
+                    gender: c.gender_tag || '1girl',
+                };
+            });
+            const analyzable = chars.filter(c => c.target_count > 0);
             if (analyzable.length === 0) {
                 showToast('분석 가능한 캐릭터가 없습니다 (_face_image.webp + rep_images 필요)', 'error');
                 statusDiv.style.display = 'none';
@@ -77984,14 +78145,14 @@
             let modal = document.getElementById('bot-llm-batch-modal');
             if (!modal) { modal = document.createElement('div'); modal.id = 'bot-llm-batch-modal'; document.body.appendChild(modal); }
             const listHtml = chars.map((c, i) => {
-                const ok = c.has_face && c.rep_count > 0;
+                const ok = c.target_count > 0;
                 const disabled = ok ? '' : 'disabled';
                 const checked = ok ? 'checked' : '';
                 const badge = ok
-                    ? `<span style="color:#16A34A; font-size:0.68rem;">✓ 분석 가능</span>`
+                    ? `<span style="color:#16A34A; font-size:0.68rem;">✓ 프로필 ${c.target_count}개 분석 가능</span>`
                     : `<span style="color:var(--text2); font-size:0.68rem;">${c.has_face ? '' : '얼굴 이미지 없음 '}${c.rep_count === 0 ? 'rep_images 없음' : ''}</span>`;
                 return `<label style="display:flex; align-items:center; gap:10px; padding:8px; border-radius:6px; cursor:${ok ? 'pointer' : 'not-allowed'}; border:1px solid var(--border); background:var(--surface2); opacity:${ok ? 1 : 0.55};">
-                    <input type="checkbox" ${checked} ${disabled} class="llm-batch-check" data-character="${escAttr(c.name)}" data-gender="${escAttr(c.gender)}" style="width:18px; height:18px; cursor:${ok ? 'pointer' : 'not-allowed'};">
+                    <input type="checkbox" ${checked} ${disabled} class="llm-batch-check" data-character="${escAttr(c.name)}" data-visual-card-ids="${escAttr(c.visual_card_ids.join(','))}" data-gender="${escAttr(c.gender)}" style="width:18px; height:18px; cursor:${ok ? 'pointer' : 'not-allowed'};">
                     <div style="flex:1; min-width:0;">
                         <div style="font-size:0.8rem; font-weight:600;">${escHtml(c.name)}</div>
                         <div style="font-size:0.7rem; margin-top:2px;">${badge} · gender: ${escHtml(c.gender)}</div>
@@ -78005,7 +78166,7 @@
                     <button onclick="document.getElementById('bot-llm-batch-modal').remove()" style="background:none; border:none; color:var(--text); font-size:1.2rem; cursor:pointer;">&times;</button>
                 </div>
                 <div style="padding:8px 20px; font-size:0.75rem; color:var(--text2); display:flex; gap:12px; align-items:center; border-bottom:1px solid var(--border); flex-wrap:wrap;">
-                    <span>분석 가능 ${chars.filter(c => c.has_face && c.rep_count > 0).length} / 전체 ${chars.length}</span>
+                    <span>분석 가능 ${chars.reduce((sum, c) => sum + c.target_count, 0)}개 프로필 / 전체 ${chars.length}명</span>
                     <button onclick="document.querySelectorAll('.llm-batch-check:not([disabled])').forEach(c=>c.checked=true)" style="background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:2px 8px; border-radius:4px; cursor:pointer; font-size:0.7rem;">전체 선택</button>
                     <button onclick="document.querySelectorAll('.llm-batch-check:not([disabled])').forEach(c=>c.checked=false)" style="background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:2px 8px; border-radius:4px; cursor:pointer; font-size:0.7rem;">전체 해제</button>
                     <span style="color:var(--error);">주의: face/eye 태그를 완전히 덮어씁니다. gender_tag/절대 태그는 보존.</span>
@@ -78022,10 +78183,16 @@
             const checks = document.querySelectorAll('.llm-batch-check:checked');
             if (checks.length === 0) { showToast('선택된 캐릭터가 없습니다', 'error'); return; }
             const targets = [...checks].map(c => c.dataset.character);
+            const visualTargets = [...checks].flatMap(check =>
+                (check.dataset.visualCardIds || '').split(',').filter(Boolean).map(visualCardId => ({
+                    character: check.dataset.character,
+                    visual_card_id: visualCardId,
+                }))
+            );
 
             // 덮어쓰기 경고
             const ok = confirm(
-                `선택한 ${targets.length}명 캐릭터의 face/eye 태그를 LLM 분석 결과로 완전히 덮어씁니다.\n` +
+                `선택한 ${targets.length}명 · 프로필 ${visualTargets.length}개의 face/eye 태그를 LLM 분석 결과로 완전히 덮어씁니다.\n` +
                 `- gender_tag / 절대 태그는 보존됩니다.\n` +
                 `- 큐에 추가되어 순차 처리됩니다 (우선순위 제일 낮음).\n` +
                 `\n계속하시겠습니까?`
@@ -78044,7 +78211,7 @@
                 const resp = await fetch('/api/bot_mode/llm_batch_enqueue', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ bot: botCurrentBot, characters: targets }),
+                    body: JSON.stringify({ bot: botCurrentBot, characters: targets, visual_targets: visualTargets }),
                 });
                 const text = await resp.text();
                 let data;
@@ -78082,7 +78249,7 @@
             if (remaining === 0) {
                 const failN = _botLlmBatchFailed.length;
                 if (failN === 0) {
-                    statusDiv.textContent = `완료: ${_botLlmBatchDone}명 처리 (전체 성공)`;
+                    statusDiv.textContent = `완료: ${_botLlmBatchDone}개 프로필 처리 (전체 성공)`;
                     statusDiv.style.color = '#16A34A';
                 } else {
                     const failNames = _botLlmBatchFailed.map(f => f.name).join(', ');
@@ -78096,7 +78263,7 @@
                 return;
             }
             statusDiv.style.color = 'var(--text2)';
-            statusDiv.textContent = `큐 대기/처리 중: ${remaining}명 남음 (완료 ${_botLlmBatchDone}/${_botLlmBatchTotal})`;
+            statusDiv.textContent = `큐 대기/처리 중: ${remaining}개 프로필 남음 (완료 ${_botLlmBatchDone}/${_botLlmBatchTotal})`;
         }
 
         function _handleBotLlmFaceTagProgress(data) {
@@ -78108,7 +78275,7 @@
                 if (_botLlmBatchTotal <= 0) return;
                 _botLlmBatchDone++;
                 if (data.phase === 'failed') {
-                    _botLlmBatchFailed.push({ name: data.char_name, error: data.error || '' });
+                    _botLlmBatchFailed.push({ name: _botVisualTargetLabel({character:data.char_name, visual_card_index:data.visual_card_index}), error: data.error || '' });
                 }
                 _updateBotLlmBatchStatus();
             }
@@ -78174,11 +78341,11 @@
                 const hasNegClass = img.negative ? 'util-has-neg' : '';
                 return `<label style="display:flex; align-items:center; gap:10px; padding:8px; border-radius:6px; cursor:pointer; border:1px solid var(--border); background:var(--surface2);"
                     class="util-neg-item ${hasNegClass}" data-idx="${i}">
-                    <input type="checkbox" checked class="util-neg-check" data-filename="${escAttr(img.filename)}" data-character="${escAttr(img.character)}"
+                    <input type="checkbox" checked class="util-neg-check" data-filename="${escAttr(img.filename)}" data-character="${escAttr(img.character)}" data-visual-card-id="${escAttr(img.visual_card_id || '')}"
                         style="width:18px; height:18px; cursor:pointer;">
                     <img src="${img.url}" loading="lazy" style="width:60px; height:60px; object-fit:cover; border-radius:4px; flex-shrink:0;">
                     <div style="flex:1; min-width:0;">
-                        <div style="font-size:0.8rem; font-weight:600;">${escHtml(img.character)}</div>
+                        <div style="font-size:0.8rem; font-weight:600;">${escHtml(_botVisualTargetLabel(img))}</div>
                         <div style="font-size:0.7rem; color:var(--text2); margin-top:2px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">부정: ${negPreview}</div>
                     </div>
                 </label>`;
@@ -78223,6 +78390,10 @@
             // 주의: 모든 캐릭터의 얼굴 이미지 파일명이 "_face_image.webp"로 동일하므로
             // filename이 아니라 character 이름으로 선택 여부를 전달해야 함.
             const characters = [...checks].map(c => c.dataset.character).filter(Boolean);
+            const visualTargets = [...checks].map(c => ({
+                character: c.dataset.character,
+                visual_card_id: c.dataset.visualCardId,
+            }));
             if (characters.length === 0) { showToast('선택된 캐릭터가 없습니다', 'error'); return; }
             const presetSel = document.getElementById('util-neg-modal-preset');
             const presetName = presetSel.value;
@@ -78239,7 +78410,7 @@
                 const resp = await fetch('/api/bot_mode/batch_set_negative_utility', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({bot: botCurrentBot, negative_tags: negativeTags, characters})
+                    body: JSON.stringify({bot: botCurrentBot, negative_tags: negativeTags, characters, visual_targets: visualTargets})
                 });
                 const data = await resp.json();
                 if (data.error) { showToast(data.error, 'error'); return; }
@@ -78288,11 +78459,11 @@
                     const hasNegClass = img.negative ? 'has-negative' : '';
                     return `<label style="display:flex; align-items:center; gap:10px; padding:8px; border-radius:6px; cursor:pointer; border:1px solid var(--border); background:var(--surface2);"
                         class="neg-item ${hasNegClass}" data-idx="${i}">
-                        <input type="checkbox" checked class="neg-check" data-filename="${escAttr(img.filename)}" data-character="${escAttr(img.character)}"
+                        <input type="checkbox" checked class="neg-check" data-filename="${escAttr(img.filename)}" data-character="${escAttr(img.character)}" data-visual-card-id="${escAttr(img.visual_card_id || '')}"
                             style="width:18px; height:18px; cursor:pointer;">
                         <img src="${img.url}" loading="lazy" style="width:60px; height:60px; object-fit:cover; border-radius:4px; flex-shrink:0;">
                         <div style="flex:1; min-width:0;">
-                            <div style="font-size:0.8rem; font-weight:600;">${escHtml(img.character)} / ${escHtml(img.filename)}</div>
+                            <div style="font-size:0.8rem; font-weight:600;">${escHtml(_botVisualTargetLabel(img))} / ${escHtml(img.filename)}</div>
                             <div style="font-size:0.7rem; color:var(--text2); margin-top:2px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">부정: ${negPreview}</div>
                         </div>
                     </label>`;
@@ -78350,6 +78521,11 @@
             if (!presetTags || presetTags.length === 0) { showToast('프리셋에 태그가 없습니다', 'error'); return; }
             const negativeTags = presetTags.join(', ');
             const filenames = [...checks].map(c => c.dataset.filename);
+            const visualTargets = [...checks].map(c => ({
+                character: c.dataset.character,
+                visual_card_id: c.dataset.visualCardId,
+                filename: c.dataset.filename,
+            }));
             document.getElementById('bot-negative-modal').style.display = 'none';
             const btn = charName
                 ? document.getElementById('btn-bot-batch-negative')
@@ -78360,7 +78536,7 @@
                 const resp = await fetch('/api/bot_mode/batch_set_negative', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({bot: botCurrentBot, character: charName, negative_tags: negativeTags, filenames})
+                    body: JSON.stringify({bot: botCurrentBot, character: charName, negative_tags: negativeTags, filenames, visual_targets: visualTargets})
                 });
                 const data = await resp.json();
                 if (data.error) { showToast(data.error, 'error'); return; }

@@ -167,6 +167,73 @@ class ProgramEmbeddingTest(unittest.TestCase):
         self.assertFalse(os.path.exists(os.path.join(char_dir, "_face_image.webp")))
         self.assertFalse(os.path.exists(os.path.join(char_dir, "_face_image.l14.npz")))
 
+    def test_visual_cards_create_separate_face_and_embedding_artifacts(self):
+        char_dir = self._add_character("alice", "gray")
+        alternate_name = "alice_alternate.webp"
+        Image.new("RGB", (96, 128), "purple").save(
+            os.path.join(char_dir, alternate_name), "WEBP", lossless=True
+        )
+        character = self.data["bots"][0]["characters"][0]
+        character["visual_cards"] = [{
+            "id": "primary",
+            "label": "카드 1",
+            "selection_guide": "기본 모습",
+            "aliases": [],
+            "appearance": [],
+            "default_outfit_id": "default",
+            "outfits": [{
+                "id": "default", "label": "기본 복장",
+                "selection_guide": "기본 복장", "tags": [],
+            }],
+            "rep_images": ["alice_rep.webp"],
+            "use_profile_embedding": False,
+        }, {
+            "id": "alternate",
+            "label": "카드 2",
+            "selection_guide": "다른 모습",
+            "aliases": [],
+            "appearance": [],
+            "default_outfit_id": "default",
+            "outfits": [{
+                "id": "default", "label": "기본 복장",
+                "selection_guide": "기본 복장", "tags": [],
+            }],
+            "rep_images": [alternate_name],
+            "use_profile_embedding": True,
+        }]
+
+        with patch("modes.face_detector.crop_face") as crop_face:
+            crop_face.side_effect = [
+                (Image.new("RGB", (512, 512), "green"), 0.91),
+                (Image.new("RGB", (512, 512), "yellow"), 0.92),
+            ]
+            preview = self.patcher._create_program_embedding_preview({
+                "bot_name": "test-bot",
+                "char_names": ["alice"],
+                "crop_top": 1.0,
+                "crop_bottom": 1.0,
+                "confidence": 0.3,
+                "overwrite": True,
+            })
+
+        self.assertEqual(len(preview["items"]), 2)
+        self.assertEqual(
+            [item["display_name"] for item in preview["items"]],
+            ["alice [1]", "alice [2]"],
+        )
+        with patch.object(
+            face_embedder, "build_embedding_from_path", side_effect=self._fake_embedding
+        ):
+            committed = self.patcher._commit_program_embedding_preview(
+                preview["preview_id"]
+            )
+
+        profile_dir = os.path.join(char_dir, "_visual_profiles", "alternate")
+        self.assertEqual(committed["success_count"], 2)
+        self.assertTrue(os.path.isfile(os.path.join(char_dir, "_face_image.webp")))
+        self.assertTrue(os.path.isfile(os.path.join(profile_dir, "_face_image.webp")))
+        self.assertTrue(os.path.isfile(os.path.join(profile_dir, "_face_image.l14.npz")))
+
     def test_face_embedder_does_not_fallback_to_representative_image(self):
         self._add_character("rep-only", "orange")
         path, is_face = face_embedder._char_face_image_path("test-bot", "rep-only")
