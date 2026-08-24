@@ -12,7 +12,7 @@ import pytest
 import comfy_installer.service as service_module
 from comfy_installer.e2e import ComfyE2EError
 from comfy_installer.crypto import ExtractedWorkflowPack
-from comfy_installer.manifest import load_install_manifest
+from comfy_installer.manifest import ManifestError, load_install_manifest
 from comfy_installer.operations import uv_python_path
 from comfy_installer.service import (
     ComfyInstallerService,
@@ -1053,6 +1053,12 @@ def test_manifest_has_fully_pinned_windows_runtime_and_assets() -> None:
     assert lora_manager["ref"] == (
         "0d8805cdee93d1a7347a813f4ec271ba6bcb55f5"
     )
+    assert lora_manager["existing_policy"] == "reuse_if_same_origin"
+    assert [
+        node["name"]
+        for node in manifest.custom_nodes
+        if node.get("existing_policy") == "reuse_if_same_origin"
+    ] == ["comfyui-lora-manager"]
     spectrum = next(
         node
         for node in manifest.custom_nodes
@@ -1210,3 +1216,22 @@ def test_manifest_allows_release_content_to_change_without_python_constants(
     assert loaded.latest_workflow_release == "v10"
     assert loaded.latest_workflow_count == len(latest_entries)
     assert loaded.validation_profiles["minimax_h3"]["defaults"] == h3["defaults"]
+
+
+def test_manifest_rejects_unknown_git_existing_policy(tmp_path: Path) -> None:
+    current = load_install_manifest()
+    data = json.loads(json.dumps(current.data, ensure_ascii=False))
+    lora_manager = next(
+        node
+        for node in data["custom_nodes"]
+        if node["name"] == "comfyui-lora-manager"
+    )
+    lora_manager["existing_policy"] = "reuse_anything"
+    path = tmp_path / "install-manifest.json"
+    path.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ManifestError, match="existing_policy"):
+        load_install_manifest(path)

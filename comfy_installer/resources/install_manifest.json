@@ -149,7 +149,8 @@
       "name": "comfyui-lora-manager",
       "source_type": "git",
       "repository": "https://github.com/willmiao/ComfyUI-Lora-Manager.git",
-      "ref": "0d8805cdee93d1a7347a813f4ec271ba6bcb55f5"
+      "ref": "0d8805cdee93d1a7347a813f4ec271ba6bcb55f5",
+      "existing_policy": "reuse_if_same_origin"
     },
     {
       "name": "comfyui-post-processing-nodes",

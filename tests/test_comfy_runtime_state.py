@@ -194,6 +194,51 @@ def test_tracking_main_change_requires_runtime_e2e(tmp_path: Path) -> None:
     ]
 
 
+def test_same_origin_existing_policy_allows_pinned_head_drift(
+    tmp_path: Path,
+) -> None:
+    comfy, _remote, _node, manifest = _prepare_runtime(tmp_path)
+    fixed_remote = tmp_path / "fixed-remote"
+    expected_ref = _init_repo(fixed_remote)
+    actual_ref = _commit(fixed_remote, "tracked.txt", "second\n")
+    fixed_node = comfy / "custom_nodes" / "fixed-node"
+    _git(fixed_node.parent, "clone", str(fixed_remote), str(fixed_node))
+    manifest.data["custom_nodes"].append(
+        {
+            "name": "fixed-node",
+            "source_type": "git",
+            "repository": str(fixed_remote),
+            "ref": expected_ref,
+            "existing_policy": "reuse_if_same_origin",
+        }
+    )
+    assert _git(fixed_node, "rev-parse", "HEAD").lower() == actual_ref
+    write_runtime_receipt(
+        comfy_root=comfy,
+        manifest=manifest,
+        profile_id="nvidia-cu130",
+        install_mode="standard",
+        workflow_bindings={},
+        selected_workflow_ids=[],
+        release_version="v1",
+    )
+
+    inventory = inspect_runtime(
+        comfy_root=comfy,
+        manifest=manifest,
+        profile_id="nvidia-cu130",
+        install_mode="standard",
+    )
+
+    assert "custom_node_ref:fixed-node" not in inventory[
+        "runtime_change_reasons"
+    ]
+    assert "custom_node_repository:fixed-node" not in inventory[
+        "runtime_change_reasons"
+    ]
+    assert inventory["runtime_changed"] is False
+
+
 def test_manager_version_drift_requires_runtime_update(tmp_path: Path) -> None:
     comfy, _remote, _node, manifest = _prepare_runtime(tmp_path)
     write_runtime_receipt(

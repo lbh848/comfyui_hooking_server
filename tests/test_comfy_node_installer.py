@@ -141,6 +141,172 @@ def test_archive_node_refuses_unmanaged_existing_directory(tmp_path):
     assert (existing / "user.py").read_text(encoding="utf-8") == "mine"
 
 
+def test_pinned_git_node_reuses_mismatched_head_with_same_origin_policy(
+    tmp_path, monkeypatch, capsys
+):
+    expected_head = "1" * 40
+    actual_head = "2" * 40
+    repository = "https://example.test/owned-node.git"
+    custom_root = tmp_path / "comfy" / "custom_nodes"
+    destination = custom_root / "owned-node"
+    (destination / ".git").mkdir(parents=True)
+    logs = []
+
+    monkeypatch.setattr(
+        node_installer_module,
+        "_git_origin",
+        lambda _path: repository.removesuffix(".git") + "/",
+    )
+    monkeypatch.setattr(
+        node_installer_module,
+        "_git_head",
+        lambda _path: actual_head,
+    )
+
+    installed = install_git_node(
+        node={
+            "name": "owned-node",
+            "source_type": "git",
+            "repository": repository,
+            "ref": expected_head,
+            "existing_policy": "reuse_if_same_origin",
+        },
+        custom_root=custom_root,
+        cancel_event=Event(),
+        log=logs.append,
+    )
+
+    assert installed == destination
+    assert logs == [
+        f"[노드] 기존 Git 설치 정책 재사용: owned-node {actual_head[:12]}"
+    ]
+    output = capsys.readouterr().out
+    assert f"expected={expected_head}" in output
+    assert f"actual={actual_head}" in output
+    assert f"origin={repository.removesuffix('.git')}/" in output
+
+
+def test_pinned_git_node_without_policy_still_rejects_mismatched_head(
+    tmp_path, monkeypatch
+):
+    expected_head = "1" * 40
+    actual_head = "2" * 40
+    repository = "https://example.test/owned-node.git"
+    custom_root = tmp_path / "comfy" / "custom_nodes"
+    destination = custom_root / "owned-node"
+    (destination / ".git").mkdir(parents=True)
+
+    monkeypatch.setattr(
+        node_installer_module,
+        "_git_origin",
+        lambda _path: repository,
+    )
+    monkeypatch.setattr(
+        node_installer_module,
+        "_git_head",
+        lambda _path: actual_head,
+    )
+
+    with pytest.raises(NodeInstallError, match="고정점과 달라"):
+        install_git_node(
+            node={
+                "name": "owned-node",
+                "source_type": "git",
+                "repository": repository,
+                "ref": expected_head,
+            },
+            custom_root=custom_root,
+            cancel_event=Event(),
+            log=None,
+        )
+
+
+def test_pinned_git_node_policy_still_rejects_different_origin(
+    tmp_path, monkeypatch
+):
+    expected_head = "1" * 40
+    repository = "https://example.test/owned-node.git"
+    custom_root = tmp_path / "comfy" / "custom_nodes"
+    destination = custom_root / "owned-node"
+    (destination / ".git").mkdir(parents=True)
+
+    monkeypatch.setattr(
+        node_installer_module,
+        "_git_origin",
+        lambda _path: "https://example.test/different-node.git",
+    )
+    monkeypatch.setattr(
+        node_installer_module,
+        "_git_head",
+        lambda _path: "2" * 40,
+    )
+
+    with pytest.raises(NodeInstallError, match="원격 저장소가 다릅니다"):
+        install_git_node(
+            node={
+                "name": "owned-node",
+                "source_type": "git",
+                "repository": repository,
+                "ref": expected_head,
+                "existing_policy": "reuse_if_same_origin",
+            },
+            custom_root=custom_root,
+            cancel_event=Event(),
+            log=None,
+        )
+
+
+def test_update_git_node_policy_reuses_without_status_or_fetch(
+    tmp_path, monkeypatch, capsys
+):
+    expected_head = "1" * 40
+    actual_head = "2" * 40
+    repository = "https://example.test/owned-node.git"
+    comfy_root = tmp_path / "comfy"
+    destination = comfy_root / "custom_nodes" / "owned-node"
+    (destination / ".git").mkdir(parents=True)
+    logs = []
+    changed_nodes = []
+
+    monkeypatch.setattr(
+        node_installer_module,
+        "_git_origin",
+        lambda _path: repository,
+    )
+    monkeypatch.setattr(
+        node_installer_module,
+        "_git_head",
+        lambda _path: actual_head,
+    )
+
+    def unexpected_run(command, **_kwargs):
+        raise AssertionError(f"정책 재사용 뒤 명령이 실행됐습니다: {command}")
+
+    monkeypatch.setattr(node_installer_module, "run_command", unexpected_run)
+
+    updated = update_git_node(
+        node={
+            "name": "owned-node",
+            "source_type": "git",
+            "repository": repository,
+            "ref": expected_head,
+            "existing_policy": "reuse_if_same_origin",
+        },
+        comfy_root=comfy_root,
+        cancel_event=Event(),
+        log=logs.append,
+        changed_nodes=changed_nodes,
+    )
+
+    assert updated == destination
+    assert changed_nodes == []
+    assert logs == [
+        "[노드 업데이트] 기존 Git 설치 정책 재사용: "
+        f"owned-node {actual_head[:12]}"
+    ]
+    assert "기존 Git 설치 정책 재사용" in capsys.readouterr().out
+
+
 def test_tracking_git_node_fetches_main_and_checks_out_latest(
     tmp_path, monkeypatch
 ):

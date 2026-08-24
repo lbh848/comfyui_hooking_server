@@ -13,6 +13,7 @@ from typing import Any
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _GIT_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 _GIT_BRANCH_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]*$")
+_GIT_EXISTING_POLICIES = {"reuse_if_same_origin"}
 
 
 class ManifestError(RuntimeError):
@@ -224,6 +225,20 @@ def _validate_manifest(data: dict[str, Any]) -> None:
                     raise ManifestError(
                         f"{context}.ref 형식이 유효하지 않습니다: {pinned_ref!r}"
                     )
+            existing_policy = node.get("existing_policy")
+            if existing_policy is not None and (
+                not isinstance(existing_policy, str)
+                or existing_policy not in _GIT_EXISTING_POLICIES
+            ):
+                raise ManifestError(
+                    f"{context}.existing_policy 값이 유효하지 않습니다: "
+                    f"{existing_policy!r}"
+                )
+            if existing_policy is not None and tracking_branch is not None:
+                raise ManifestError(
+                    f"{context}.existing_policy는 ref 고정 Git 노드에만 "
+                    "사용할 수 있습니다."
+                )
         elif source_type == "archive":
             _require_string(node, "url", context)
             sha256 = _require_string(node, "sha256", context).lower()

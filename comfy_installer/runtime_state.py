@@ -36,6 +36,7 @@ _INSTANT_LORA_RUNTIME = Path("src") / "runtime.py"
 _INSTANT_LORA_PATCH_MARKER = (
     "# comfy-installer: use the project-managed Python 3.12 runtime"
 )
+_REUSE_IF_SAME_ORIGIN = "reuse_if_same_origin"
 
 
 def _now_iso() -> str:
@@ -205,6 +206,10 @@ def git_head(path: str | os.PathLike[str]) -> str | None:
     return _git_value(root, "rev-parse", "HEAD").lower()
 
 
+def _normalize_git_repository(repository: str) -> str:
+    return repository.rstrip("/").removesuffix(".git").casefold()
+
+
 def _capture_managed_comfy_patch(path: Path) -> str | None:
     status = _git_value(path, "status", "--porcelain", "--untracked-files=no")
     if not status:
@@ -368,6 +373,14 @@ def collect_custom_node_state(
             state["tracking_branch"] = node.get("tracking_branch")
             state["expected_ref"] = node.get("ref")
             state["repository"] = node.get("repository")
+            state["existing_policy"] = node.get("existing_policy")
+            if node.get("existing_policy") == _REUSE_IF_SAME_ORIGIN:
+                state["actual_repository"] = _git_value(
+                    destination,
+                    "remote",
+                    "get-url",
+                    "origin",
+                )
         elif source_type == "archive" and destination.is_dir():
             marker_path = destination / ".comfy-installer-source.json"
             marker = None
@@ -476,9 +489,30 @@ def inspect_runtime(
         if not state.get("exists"):
             reasons.append(f"custom_node_missing:{name}")
             continue
+        same_origin_policy = False
+        if (
+            state.get("source_type") == "git"
+            and state.get("existing_policy") == _REUSE_IF_SAME_ORIGIN
+        ):
+            expected_repository = str(state.get("repository") or "")
+            actual_repository = str(state.get("actual_repository") or "")
+            same_origin_policy = _normalize_git_repository(
+                actual_repository
+            ) == _normalize_git_repository(expected_repository)
+            if not same_origin_policy:
+                reasons.append(f"custom_node_repository:{name}")
         if state.get("source_type") == "git" and state.get("expected_ref"):
             if state.get("head") != str(state["expected_ref"]).lower():
-                reasons.append(f"custom_node_ref:{name}")
+                if same_origin_policy:
+                    print(
+                        "[COMFY_INSTALL][RUNTIME_STATE] 기존 Git 설치 정책으로 "
+                        f"고정점 차이를 허용합니다: name={name}, "
+                        f"expected={state['expected_ref']}, "
+                        f"actual={state.get('head')}, "
+                        f"origin={state.get('actual_repository')}"
+                    )
+                else:
+                    reasons.append(f"custom_node_ref:{name}")
         if state.get("source_type") == "git" and state.get("tracking_branch"):
             repository = str(state.get("repository") or "")
             branch = str(state.get("tracking_branch") or "")

@@ -33,6 +33,7 @@ class NodeInstallError(RuntimeError):
 LogCallback = Callable[[str], None]
 ProgressCallback = Callable[[dict], None]
 _SAFE_NODE_NAME = re.compile(r"^[A-Za-z0-9._-]+$")
+_REUSE_IF_SAME_ORIGIN = "reuse_if_same_origin"
 
 
 def _assert_direct_child(path: Path, parent: Path, label: str) -> None:
@@ -289,6 +290,28 @@ def _git_source_target(node: dict) -> tuple[str, bool]:
     return str(node["ref"]).lower(), False
 
 
+def _normalize_git_repository(repository: str) -> str:
+    return repository.rstrip("/").removesuffix(".git").casefold()
+
+
+def _log_existing_git_policy_reuse(
+    *,
+    name: str,
+    target: str,
+    head: str,
+    origin: str,
+    operation: str,
+    log: LogCallback | None,
+) -> None:
+    detail = (
+        f"{operation} 기존 Git 설치 정책 재사용: name={name}, "
+        f"expected={target}, actual={head}, origin={origin}"
+    )
+    print(f"[COMFY_INSTALL][NODE] {detail}")
+    if log:
+        log(f"[{operation}] 기존 Git 설치 정책 재사용: {name} {head[:12]}")
+
+
 def _fetch_git_target(
     *,
     path: Path,
@@ -348,15 +371,25 @@ def install_git_node(
             raise NodeInstallError(
                 f"기존 커스텀 노드 Git 상태를 확인하지 못했습니다: {destination}"
             ) from exc
-        origin_matches = origin.rstrip("/").removesuffix(".git").casefold() == (
-            repository.rstrip("/").removesuffix(".git").casefold()
-        )
+        normalized_origin = _normalize_git_repository(origin)
+        normalized_expected = _normalize_git_repository(repository)
+        origin_matches = normalized_origin == normalized_expected
         if not origin_matches:
             raise NodeInstallError(
                 "기존 Git 커스텀 노드의 원격 저장소가 다릅니다: "
                 f"name={name}, expected={repository}, actual={origin}"
             )
         if not tracks_branch:
+            if node.get("existing_policy") == _REUSE_IF_SAME_ORIGIN:
+                _log_existing_git_policy_reuse(
+                    name=name,
+                    target=target,
+                    head=head,
+                    origin=origin,
+                    operation="노드",
+                    log=log,
+                )
+                return destination
             if head == target.lower():
                 if log:
                     log(f"[노드] 기존 Git 설치 재사용: {name} {target[:12]}")
@@ -625,12 +658,23 @@ def update_git_node(
         )
     try:
         origin = _git_origin(destination)
-        normalized_origin = origin.rstrip("/").removesuffix(".git").casefold()
-        normalized_expected = repository.rstrip("/").removesuffix(".git").casefold()
+        normalized_origin = _normalize_git_repository(origin)
+        normalized_expected = _normalize_git_repository(repository)
         if normalized_origin != normalized_expected:
             raise NodeInstallError(
                 f"노드 원격 저장소 불일치: {name}, actual={origin}"
             )
+        head = _git_head(destination).lower()
+        if node.get("existing_policy") == _REUSE_IF_SAME_ORIGIN:
+            _log_existing_git_policy_reuse(
+                name=name,
+                target=target,
+                head=head,
+                origin=origin,
+                operation="노드 업데이트",
+                log=log,
+            )
+            return destination
         status = run_command(
             ["git", "status", "--porcelain", "--untracked-files=no"],
             cwd=destination,
@@ -640,7 +684,6 @@ def update_git_node(
                 f"노드에 로컬 변경이 있어 업데이트하지 않습니다: {name}: "
                 + ", ".join(status[:10])
             )
-        head = _git_head(destination).lower()
         if not tracks_branch and head == target.lower():
             if log:
                 log(f"[노드 업데이트] 이미 최신: {name} {head[:12]}")
