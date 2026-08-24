@@ -259,11 +259,15 @@ def test_frontend_one_click_and_manual_actions_use_visual_card_targets():
 
 
 @pytest.mark.asyncio
-async def test_bulk_main_rep_updates_only_the_requested_visual_card(
+async def test_bulk_main_rep_replaces_all_representative_candidates_only_on_requested_card(
     visual_bot, monkeypatch
 ):
     _tmp_path, _bot_root, char_dir, data = visual_bot
     (char_dir / "replacement.webp").write_bytes(b"replacement")
+    data["bots"][0]["characters"][0]["visual_cards"][1]["rep_images"] = [
+        "alternate.webp",
+        "alternate-candidate.webp",
+    ]
     saved = []
     monkeypatch.setattr(bot_mode, "_save_bot_data", lambda value: saved.append(value))
 
@@ -286,10 +290,7 @@ async def test_bulk_main_rep_updates_only_the_requested_visual_card(
         "created_profile": False,
     }]
     assert character["visual_cards"][0]["rep_images"] == ["primary.webp"]
-    assert character["visual_cards"][1]["rep_images"] == [
-        "replacement.webp",
-        "alternate.webp",
-    ]
+    assert character["visual_cards"][1]["rep_images"] == ["replacement.webp"]
     assert character["rep_images"] == ["primary.webp"]
     assert len(saved) == 1
 
@@ -395,8 +396,7 @@ async def test_bulk_main_rep_protect_mode_allows_explicit_manual_override(
         "created_profile": False,
     }]
     assert data["bots"][0]["characters"][0]["visual_cards"][1]["rep_images"] == [
-        "replacement.webp",
-        "alternate.webp",
+        "replacement.webp"
     ]
     assert len(saved) == 1
 
@@ -553,6 +553,9 @@ def test_representative_batch_frontend_supports_profile_drafts():
     assert "카드 빼기" in source
     assert "빼기 취소" in source
     assert "[1] 기본 카드는 뺄 수 없습니다." in source
+    assert "대체: 기존 대표도 교체" in source
+    assert "밀어내기: 기존도 교체" not in source
+    assert "기존 대표와 후보는 제거" in source
 
 
 def test_bubble_matching_uses_best_face_across_character_cards():

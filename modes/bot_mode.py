@@ -1249,6 +1249,7 @@ class BotMode:
         ``create_profile=true``와 ``source_visual_card_id``를 함께 보낸다. 저장된
         보조 카드 삭제는 ``remove_profile=true``로 요청하며 기본 카드는 보호한다.
         보호 모드에서도 사용자가 직접 고른 항목은 ``manual_override=true``로 교체한다.
+        대표를 지정한 카드에는 선택한 파일 하나만 남기고 기존 대표/후보는 제거한다.
         """
         bot_name = body.get("bot_name", "").strip()
         items = body.get("items", []) or []
@@ -1362,7 +1363,7 @@ class BotMode:
                     "profile_label": str(removed_card.get("label") or ""),
                 })
                 print(
-                    f"[BOT_MODE] 일괄 캐릭터 카드 삭제 예정 반영: "
+                    f"[BOT_MODE] 일괄 캐릭터 카드 삭제 반영: "
                     f"{bot_name}/{char_name}/{requested_card_id}"
                 )
                 continue
@@ -1434,10 +1435,8 @@ class BotMode:
             if mode == "protect" and rep_images and rep_images[0] and not manual_override:
                 skip_item(char_name, requested_card_id, "이미 대표 있음")
                 continue
-            # filename 제거 후 맨 앞 삽입, 최대 3개 유지
-            new_reps = [filename] + [f for f in rep_images if f != filename]
-            new_reps = new_reps[:3]
-            target_card["rep_images"] = new_reps
+            # 일괄 설정은 빠른 대표 지정용이므로 기존 대표/후보를 보존하지 않는다.
+            target_card["rep_images"] = [filename]
             state["dirty"] = True
             updated.append({
                 "char_name": char_name,
