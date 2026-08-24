@@ -72145,13 +72145,23 @@
             }
         }
 
+        let _botCharacterListScroll = null;
+
         async function openCharacterDetail(charName) {
+            const main = document.getElementById('bot-main');
+            const sidebar = document.getElementById('bot-sidebar');
+            if (!main) console.error('[BOT] 캐릭터 목록 스크롤 저장 실패: bot-main 요소가 없습니다.');
+            if (!sidebar) console.error('[BOT] 캐릭터 목록 스크롤 저장 실패: bot-sidebar 요소가 없습니다.');
+            _botCharacterListScroll = {
+                main: main ? main.scrollTop : 0,
+                sidebar: sidebar ? sidebar.scrollTop : 0,
+            };
+
             botCurrentChar = charName;
             _botFaceCropFolderOpen = false;
             updateBotBreadcrumb();
 
             // 사이드바를 캐릭터 상세 액션으로 교체
-            const sidebar = document.getElementById('bot-sidebar');
             const botSection = document.getElementById('bot-char-section');
             const charDetailSidebar = document.getElementById('bot-char-detail-sidebar');
 
@@ -72184,6 +72194,7 @@
             } else {
                 charDetailSidebar.style.display = '';
             }
+            if (sidebar) sidebar.scrollTop = 0;
             document.getElementById('bot-detail-title').textContent = charName;
             const detailActionButtons = document.getElementById('bot-detail-action-buttons');
             if (detailActionButtons) detailActionButtons.style.display = 'flex';
@@ -72198,10 +72209,18 @@
             // 이미지 로드
             await loadBotCharDetailImages(charName);
             showBotView('detail');
+            if (main) main.scrollTop = 0;
+            requestAnimationFrame(() => {
+                if (botCurrentChar === charName) {
+                    if (main) main.scrollTop = 0;
+                    if (sidebar) sidebar.scrollTop = 0;
+                }
+            });
             renderFloatingDock(charName);
         }
 
-        function closeCharacterDetail() {
+        async function closeCharacterDetail() {
+            const savedScroll = _botCharacterListScroll;
             _botFaceCropFolderOpen = false;
             botCurrentChar = '';
 
@@ -72215,7 +72234,19 @@
             if (botSelectSection) botSelectSection.style.display = 'block';
 
             updateBotBreadcrumb();
-            renderBotCharacters();
+            await renderBotCharacters();
+
+            const main = document.getElementById('bot-main');
+            if (!main) console.error('[BOT] 캐릭터 목록 스크롤 복원 실패: bot-main 요소가 없습니다.');
+            if (!sidebar) console.error('[BOT] 캐릭터 목록 스크롤 복원 실패: bot-sidebar 요소가 없습니다.');
+            const restoreScroll = () => {
+                if (!savedScroll) return;
+                if (main) main.scrollTop = savedScroll.main;
+                if (sidebar) sidebar.scrollTop = savedScroll.sidebar;
+            };
+            restoreScroll();
+            requestAnimationFrame(restoreScroll);
+            _botCharacterListScroll = null;
         }
 
         let _botCharDetailCache = null; // { mode, charName, images, repImages, faceCropFolder }
@@ -72484,7 +72515,15 @@
             bc.innerHTML = html;
         }
 
-        function navToBotChars() {
+        async function navToBotChars() {
+            if (botCurrentChar) {
+                const btnList = document.getElementById('bot-btn-group-list');
+                const btnSelected = document.getElementById('bot-btn-group-selected');
+                if (btnList) btnList.style.display = 'none';
+                if (btnSelected) btnSelected.style.display = 'flex';
+                await closeCharacterDetail();
+                return;
+            }
             _botFaceCropFolderOpen = false;
             botCurrentChar = '';
             const charDetailSidebar = document.getElementById('bot-char-detail-sidebar');
@@ -73197,7 +73236,7 @@
                 if (data.error) { alert(data.error); return; }
                 botData.bots = data.bots;
                 if (botCurrentChar === charName) {
-                    closeCharacterDetail();
+                    await closeCharacterDetail();
                 } else {
                     renderBotCharacters();
                 }

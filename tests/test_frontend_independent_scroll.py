@@ -76,3 +76,31 @@ def test_asset_upload_restores_lv1_main_scroll_container():
     assert "main.scrollTop = savedScroll;" in breadcrumb
     assert "window.scrollY" not in navigate
     assert "window.scrollTo" not in breadcrumb
+
+
+def test_bot_character_detail_restores_main_and_sidebar_scroll():
+    open_detail = _function_source(
+        "async function openCharacterDetail(charName)",
+        "async function closeCharacterDetail()",
+    )
+    close_detail = _function_source(
+        "async function closeCharacterDetail()",
+        "let _botCharDetailCache = null;",
+    )
+    breadcrumb_back = _function_source(
+        "async function navToBotChars()",
+        "function botNavBack()",
+    )
+
+    assert "document.getElementById('bot-main')" in open_detail
+    assert "document.getElementById('bot-sidebar')" in open_detail
+    assert "main: main ? main.scrollTop : 0" in open_detail
+    assert "sidebar: sidebar ? sidebar.scrollTop : 0" in open_detail
+    assert "main.scrollTop = 0;" in open_detail
+    assert "sidebar.scrollTop = 0;" in open_detail
+
+    assert "await renderBotCharacters();" in close_detail
+    assert "main.scrollTop = savedScroll.main;" in close_detail
+    assert "sidebar.scrollTop = savedScroll.sidebar;" in close_detail
+    assert "requestAnimationFrame(restoreScroll);" in close_detail
+    assert "await closeCharacterDetail();" in breadcrumb_back
