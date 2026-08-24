@@ -1,0 +1,101 @@
+{
+  "1": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "minimax_h3_ref2va_pruned_int8_convrot.safetensors",
+      "weight_dtype": "default"
+    }
+  },
+  "2": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+      "type": "minimax",
+      "device": "default"
+    }
+  },
+  "3": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "minimax_h3_t1_image_vae_step1597.safetensors"
+    }
+  },
+  "4": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "comfy-installer-e2e-face.png"
+    }
+  },
+  "5": {
+    "class_type": "SoyaMiniMaxH3ReferenceToImage_mdsoya",
+    "inputs": {
+      "clip": ["2", 0],
+      "vae": ["3", 0],
+      "prompt": "Create a new polished still image using <Picture 1> as the character identity reference. Preserve the face, hair, and defining features while changing the composition to a waist-up portrait with natural lighting and a clean background.",
+      "width": 768,
+      "height": 768,
+      "ref_image_size": "match",
+      "ref_image_1": ["4", 0]
+    }
+  },
+  "6": {
+    "class_type": "MiniMaxH3SigmaShift",
+    "inputs": {
+      "model": ["1", 0],
+      "shift_video": 12.0,
+      "shift_audio": 3.0
+    }
+  },
+  "7": {
+    "class_type": "BasicGuider",
+    "inputs": {
+      "model": ["6", 0],
+      "conditioning": ["5", 0]
+    }
+  },
+  "8": {
+    "class_type": "RandomNoise",
+    "inputs": {
+      "noise_seed": 42
+    }
+  },
+  "9": {
+    "class_type": "KSamplerSelect",
+    "inputs": {
+      "sampler_name": "res_multistep"
+    }
+  },
+  "10": {
+    "class_type": "BasicScheduler",
+    "inputs": {
+      "model": ["6", 0],
+      "scheduler": "simple",
+      "steps": 20,
+      "denoise": 1.0
+    }
+  },
+  "11": {
+    "class_type": "SamplerCustomAdvanced",
+    "inputs": {
+      "noise": ["8", 0],
+      "guider": ["7", 0],
+      "sampler": ["9", 0],
+      "sigmas": ["10", 0],
+      "latent_image": ["5", 1]
+    }
+  },
+  "12": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": ["11", 0],
+      "vae": ["3", 0]
+    }
+  },
+  "13": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": ["12", 0],
+      "filename_prefix": "h3_ref2image_probe"
+    }
+  }
+}
