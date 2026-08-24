@@ -210,6 +210,7 @@ LLM_TYPES = frozenset({
     "instance_lora_prompt_refine",  # 태그 정제 / test_setup (instance·style·bot·asset 전부 LLM 호출)
     "lora_prompt_review",           # 1차 정제 + 설정된 route의 선택적 2차 비전 검수
     "bot_llm_face_tag_analysis",    # 비전 LLM 기반 얼굴/눈 태그 자동 분류
+    "visual_profile_guide",         # 이미지 출력 지침 기반 캐릭터 카드 선택 기준 작성
     "character_maker",              # 캐릭터 메이커 draft/feedback LLM 수정 (revise)
     "qwen_edit_translate",          # Qwen Edit 지시문 영어 번역
     "video_instruction_draft",      # H3 I2V/FLF2V/REF2V 편집용 AI 연출 초안
@@ -2651,6 +2652,7 @@ class QueueManager:
             "restore_manual": self._handle_restore_manual,
             "regenerate": self._handle_regenerate,
             "bot_llm_face_tag_analysis": self._handle_bot_llm_face_tag_analysis,
+            "visual_profile_guide": self._handle_runtime_llm_task,
             "instance_lora_prompt_refine": self._handle_instance_lora_prompt_refine,
             "lora_prompt_review": self._handle_instance_lora_prompt_refine,
             "character_maker": self._handle_character_maker,
@@ -2664,13 +2666,17 @@ class QueueManager:
 
     async def _handle_llm_test(self, item: QueueItem) -> dict:
         """설정 화면의 일회성 LLM 테스트를 LLM 워커에서 실행한다."""
+        return await self._handle_runtime_llm_task(item)
+
+    async def _handle_runtime_llm_task(self, item: QueueItem) -> dict:
+        """현재 프로세스의 요청 핸들러가 등록한 일회성 LLM 작업을 실행한다."""
         handler = getattr(item, "_runtime_handler", None)
         if not callable(handler):
             print(
-                f"[QUEUE:LLM_TEST] 실행 실패: 런타임 핸들러 없음 "
-                f"item={item.id}, params={item.params!r}"
+                f"[QUEUE:RUNTIME_LLM] 실행 실패: 런타임 핸들러 없음 "
+                f"type={item.type}, item={item.id}, params={item.params!r}"
             )
-            raise RuntimeError("LLM 테스트 런타임 핸들러가 없습니다")
+            raise RuntimeError(f"{item.type} 런타임 LLM 핸들러가 없습니다")
         return await handler(item)
 
     async def _handle_character_maker(self, item: QueueItem) -> dict:

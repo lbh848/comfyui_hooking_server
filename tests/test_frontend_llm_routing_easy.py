@@ -33,9 +33,9 @@ def test_every_llm_route_has_an_explicit_text_or_vision_modality() -> None:
     frontend = _frontend()
     entries = _routing_task_entries(frontend)
 
-    assert len(entries) == 28
+    assert len(entries) == 29
     assert all("modality: 'text'" in entry or "modality: 'vision'" in entry for entry in entries)
-    assert sum("modality: 'text'" in entry for entry in entries) == 19
+    assert sum("modality: 'text'" in entry for entry in entries) == 20
     assert sum("modality: 'vision'" in entry for entry in entries) == 9
 
     vision_keys = {
@@ -73,6 +73,7 @@ def test_easy_routing_bulk_applies_json_on_or_off_only_to_json_tasks() -> None:
         "asset_name_mapping_auto_fix",
         "asset_name_mapping_full",
         "preset_import_classify",
+        "visual_profile_guide",
         "edit_illustration_prompt",
         "character_maker_draft",
         "character_maker_feedback",

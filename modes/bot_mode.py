@@ -524,6 +524,8 @@ def copy_default() -> dict:
 
 VISUAL_GUIDE_LLM_BATCH_SIZE = 20
 VISUAL_GUIDE_MAX_TARGETS = 120
+VISUAL_GUIDE_TASK_KEY = "visual_profile_guide"
+VISUAL_GUIDE_QUEUE_TYPE = "visual_profile_guide"
 
 
 def _selected_bot_system_prompt(data: dict, bot: dict) -> tuple[str, str, str]:
@@ -720,15 +722,111 @@ def _normalize_visual_guide_llm_result(
     return [normalized_by_key[str(target["target_key"])] for target in targets], ""
 
 
+def _visual_guide_slot_identity(llm_service_module, slot: str) -> tuple[str, str]:
+    """Resolve the actual provider/model used by an LLM slot for LB detail records."""
+    config = llm_service_module.get_config()
+    normalized = str(slot or "llm1").strip().lower()
+    suffix = "" if normalized == "llm1" else normalized.removeprefix("llm")
+    service = str(
+        config.get(f"llm_service{suffix}")
+        or config.get("llm_service")
+        or ""
+    )
+    model = str(
+        config.get(f"llm_model{suffix}")
+        or config.get("llm_model")
+        or ""
+    )
+    return service, model
+
+
+def _log_visual_guide_llm_history(
+    *,
+    llm_service_module,
+    bot_name: str,
+    messages: list[dict],
+    output,
+    status: str,
+    error: str = "",
+    usage: dict | None = None,
+    elapsed: float = 0.0,
+    phase: str = "",
+    llm_slot: str = "",
+    history_id: str = "",
+    execution_id: str = "",
+    parent_execution_id: str = "",
+    queue_item_id: str = "",
+    batch_index: int = 0,
+    batch_count: int = 0,
+    target_count: int = 0,
+    attempt: int | None = None,
+    total_attempts: int | None = None,
+) -> None:
+    """Persist one visual-guide LLM result or failed attempt in LB details."""
+    try:
+        from modes.lighbd_service import _log_lighbd_history
+
+        slot = str(llm_slot or "llm1")
+        service, model = _visual_guide_slot_identity(llm_service_module, slot)
+        token_usage = dict(usage or {})
+        record = {
+            "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "prompt_id": f"visual_profile_guide:{bot_name}:{batch_index}",
+            "task_key": VISUAL_GUIDE_TASK_KEY,
+            "call_name": (
+                f"프로필 선택 기준 자동 작성 · {batch_index}/{batch_count}"
+                if batch_count
+                else "프로필 선택 기준 자동 작성"
+            ),
+            "history_id": history_id or execution_id or uuid.uuid4().hex,
+            "execution_id": execution_id or history_id,
+            "parent_execution_id": parent_execution_id,
+            "llm_slot": slot,
+            "phase": str(phase or "primary"),
+            "service": service,
+            "model": model,
+            "input": messages,
+            "output": output if isinstance(output, str) else str(output or ""),
+            "completion_tokens": int(token_usage.get("completion_tokens") or 0),
+            "prompt_tokens": int(token_usage.get("prompt_tokens") or 0),
+            "elapsed": round(max(0.0, float(elapsed or 0.0)), 3),
+            "tps": round(float(token_usage.get("tps") or 0.0), 1),
+            "status": status,
+            "bot_name": bot_name,
+            "queue_item_id": queue_item_id,
+            "batch_index": batch_index,
+            "batch_count": batch_count,
+            "target_count": target_count,
+        }
+        if attempt is not None:
+            record["attempt"] = attempt
+        if total_attempts is not None:
+            record["total_attempts"] = total_attempts
+        if error:
+            record["error"] = str(error)
+        _log_lighbd_history(record)
+    except Exception as exc:
+        print(
+            f"[VISUAL_GUIDE:DETAIL] LB 자세히 기록 실패: bot={bot_name!r}, "
+            f"batch={batch_index}/{batch_count}, status={status!r}, "
+            f"error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+
+
 class BotMode:
     """삽화 설정 모드 매니저"""
 
     def __init__(self):
         self._lock = asyncio.Lock()
         self._asset_tool = None
+        self._queue_manager = None
 
     def set_asset_tool(self, tool):
         self._asset_tool = tool
+
+    def set_queue_manager(self, manager):
+        self._queue_manager = manager
 
     # ─── 봇 데이터 조회 ──────────────────────────────────
     async def handle_get_bots(self, request):
@@ -3159,62 +3257,284 @@ class BotMode:
             from modes import llm_prompt_edit
             from modes import llm_service
 
-            suggestions = []
             batch_count = math.ceil(
                 len(resolved_targets) / VISUAL_GUIDE_LLM_BATCH_SIZE
             )
-            for batch_index, start in enumerate(
-                range(0, len(resolved_targets), VISUAL_GUIDE_LLM_BATCH_SIZE),
-                start=1,
-            ):
-                batch = resolved_targets[start:start + VISUAL_GUIDE_LLM_BATCH_SIZE]
-                messages = _build_visual_guide_messages(system_prompt, batch)
-                accepted = {}
-
-                def result_validator(raw_result):
-                    parsed = llm_prompt_edit.parse_llm_json(raw_result)
-                    normalized, reason = _normalize_visual_guide_llm_result(
-                        parsed,
-                        batch,
-                    )
-                    if normalized is None:
-                        return False, reason
-                    accepted["suggestions"] = normalized
-                    return True, ""
-
+            if self._queue_manager is None:
                 print(
-                    f"[VISUAL_GUIDE:API] LLM 생성 시작: bot={bot_name!r}, "
-                    f"preset={preset!r}, scope={scope!r}, "
-                    f"batch={batch_index}/{batch_count}, targets={len(batch)}"
+                    f"[VISUAL_GUIDE:QUEUE] 큐 등록 실패: queue_manager 미주입, "
+                    f"bot={bot_name!r}, targets={len(resolved_targets)}"
                 )
-                raw = await llm_service.callLLMTask(
-                    "visual_profile_guide",
-                    messages,
-                    json_mode=True,
-                    result_validator=result_validator,
-                )
-                batch_suggestions = accepted.get("suggestions")
-                if batch_suggestions is None:
-                    parsed = llm_prompt_edit.parse_llm_json(raw)
-                    _normalized, reason = _normalize_visual_guide_llm_result(
-                        parsed,
-                        batch,
+                return _json_error("LLM 통합 큐가 준비되지 않았습니다.", 503)
+
+            async def run_visual_guide_queue(queue_item):
+                suggestions = []
+                for batch_index, start in enumerate(
+                    range(0, len(resolved_targets), VISUAL_GUIDE_LLM_BATCH_SIZE),
+                    start=1,
+                ):
+                    batch = resolved_targets[start:start + VISUAL_GUIDE_LLM_BATCH_SIZE]
+                    messages = _build_visual_guide_messages(system_prompt, batch)
+                    accepted = {}
+                    usage = {}
+                    last_raw_result = ""
+                    last_failure_reason = ""
+                    execution_complete = {}
+                    call_started = time.perf_counter()
+                    call_name = (
+                        f"프로필 선택 기준 자동 작성 · {batch_index}/{batch_count}"
                     )
-                    error = reason or "LLM 응답이 검증을 통과하지 못했습니다."
+                    execution_context = llm_service.create_llm_execution_context(
+                        VISUAL_GUIDE_TASK_KEY,
+                        call_name=call_name,
+                        json_mode=True,
+                        metadata={
+                            "prompt_id": (
+                                f"visual_profile_guide:{bot_name}:{batch_index}"
+                            ),
+                            "queue_item_id": queue_item.id,
+                            "bot_name": bot_name,
+                            "batch_index": batch_index,
+                            "batch_count": batch_count,
+                        },
+                    )
+
+                    def result_validator(raw_result):
+                        parsed = llm_prompt_edit.parse_llm_json(raw_result)
+                        normalized, reason = _normalize_visual_guide_llm_result(
+                            parsed,
+                            batch,
+                        )
+                        if normalized is None:
+                            return False, reason
+                        accepted["suggestions"] = normalized
+                        return True, ""
+
+                    def on_attempt_failure(info):
+                        nonlocal last_raw_result, last_failure_reason
+                        attempt_raw = info.get("result")
+                        if attempt_raw is not None:
+                            last_raw_result = str(attempt_raw)
+                        attempt_slot = str(info.get("slot") or "llm1")
+                        attempt_phase = str(info.get("phase") or "primary")
+                        attempt_number = int(info.get("attempt") or 0)
+                        total_attempts = int(info.get("total_attempts") or 0)
+                        attempt_reason = str(
+                            info.get("reason") or "LLM 응답 검증 실패"
+                        )
+                        last_failure_reason = attempt_reason
+                        _log_visual_guide_llm_history(
+                            llm_service_module=llm_service,
+                            bot_name=bot_name,
+                            messages=messages,
+                            output=str(attempt_raw or ""),
+                            status="error",
+                            error=(
+                                f"[재시도 {attempt_phase} {attempt_slot} "
+                                f"{attempt_number}/{total_attempts}] {attempt_reason}"
+                            ),
+                            usage=dict(usage),
+                            elapsed=float(info.get("elapsed") or 0.0),
+                            phase=attempt_phase,
+                            llm_slot=attempt_slot,
+                            history_id=str(info.get("attempt_id") or ""),
+                            execution_id=str(info.get("attempt_id") or ""),
+                            parent_execution_id=execution_context.execution_id,
+                            queue_item_id=queue_item.id,
+                            batch_index=batch_index,
+                            batch_count=batch_count,
+                            target_count=len(batch),
+                            attempt=attempt_number,
+                            total_attempts=total_attempts,
+                        )
+
+                    def observe_execution(event):
+                        if str(event.get("type") or "") == "execution_complete":
+                            execution_complete.update(event)
+
                     print(
-                        f"[VISUAL_GUIDE:API] LLM 생성 실패: bot={bot_name!r}, "
-                        f"batch={batch_index}/{batch_count}, error={error}, "
-                        f"raw_preview={str(raw)[:500]!r}"
+                        f"[VISUAL_GUIDE:API] LLM 생성 시작: bot={bot_name!r}, "
+                        f"preset={preset!r}, scope={scope!r}, "
+                        f"batch={batch_index}/{batch_count}, targets={len(batch)}, "
+                        f"queue_item={queue_item.id}"
                     )
-                    return _json_error(
-                        f"선택 기준 생성 {batch_index}/{batch_count} 배치 실패: {error}",
-                        422,
+                    try:
+                        raw = await llm_service.callLLMTask(
+                            VISUAL_GUIDE_TASK_KEY,
+                            messages,
+                            json_mode=True,
+                            result_validator=result_validator,
+                            metadata_sink=usage,
+                            on_attempt_failure=on_attempt_failure,
+                            execution_context=execution_context,
+                            execution_observer=observe_execution,
+                        )
+                    except Exception as exc:
+                        elapsed = time.perf_counter() - call_started
+                        slot = str(
+                            execution_complete.get("llm_slot")
+                            or llm_service.routing_primary_slot(VISUAL_GUIDE_TASK_KEY)
+                        )
+                        phase = str(execution_complete.get("phase") or "primary")
+                        print(
+                            f"[VISUAL_GUIDE:API] LLM 호출 예외: bot={bot_name!r}, "
+                            f"batch={batch_index}/{batch_count}, "
+                            f"error={type(exc).__name__}: {exc}"
+                        )
+                        traceback.print_exc()
+                        _log_visual_guide_llm_history(
+                            llm_service_module=llm_service,
+                            bot_name=bot_name,
+                            messages=messages,
+                            output=last_raw_result,
+                            status="error",
+                            error=f"{type(exc).__name__}: {exc}",
+                            usage=usage,
+                            elapsed=elapsed,
+                            phase=phase,
+                            llm_slot=slot,
+                            history_id=execution_context.execution_id,
+                            execution_id=execution_context.execution_id,
+                            parent_execution_id=execution_context.parent_execution_id,
+                            queue_item_id=queue_item.id,
+                            batch_index=batch_index,
+                            batch_count=batch_count,
+                            target_count=len(batch),
+                        )
+                        raise
+
+                    elapsed = time.perf_counter() - call_started
+                    slot = str(
+                        execution_complete.get("llm_slot")
+                        or llm_service.routing_primary_slot(VISUAL_GUIDE_TASK_KEY)
                     )
-                suggestions.extend(batch_suggestions)
-                print(
-                    f"[VISUAL_GUIDE:API] LLM 생성 완료: bot={bot_name!r}, "
-                    f"batch={batch_index}/{batch_count}, suggestions={len(batch_suggestions)}"
+                    phase = str(execution_complete.get("phase") or "primary")
+                    batch_suggestions = accepted.get("suggestions")
+                    if batch_suggestions is None:
+                        parsed = llm_prompt_edit.parse_llm_json(raw)
+                        _normalized, reason = _normalize_visual_guide_llm_result(
+                            parsed,
+                            batch,
+                        )
+                        error = (
+                            last_failure_reason
+                            or reason
+                            or "LLM 응답이 검증을 통과하지 못했습니다."
+                        )
+                        raw_for_detail = last_raw_result or str(raw or "")
+                        print(
+                            f"[VISUAL_GUIDE:API] LLM 생성 실패: bot={bot_name!r}, "
+                            f"batch={batch_index}/{batch_count}, error={error}, "
+                            f"raw_preview={raw_for_detail[:500]!r}"
+                        )
+                        _log_visual_guide_llm_history(
+                            llm_service_module=llm_service,
+                            bot_name=bot_name,
+                            messages=messages,
+                            output=raw_for_detail,
+                            status="error",
+                            error=error,
+                            usage=usage,
+                            elapsed=elapsed,
+                            phase=phase,
+                            llm_slot=slot,
+                            history_id=execution_context.execution_id,
+                            execution_id=execution_context.execution_id,
+                            parent_execution_id=execution_context.parent_execution_id,
+                            queue_item_id=queue_item.id,
+                            batch_index=batch_index,
+                            batch_count=batch_count,
+                            target_count=len(batch),
+                        )
+                        raise RuntimeError(
+                            f"선택 기준 생성 {batch_index}/{batch_count} 배치 실패: "
+                            f"{error}"
+                        )
+
+                    _log_visual_guide_llm_history(
+                        llm_service_module=llm_service,
+                        bot_name=bot_name,
+                        messages=messages,
+                        output=raw,
+                        status="ok",
+                        usage=usage,
+                        elapsed=elapsed,
+                        phase=phase,
+                        llm_slot=slot,
+                        history_id=execution_context.execution_id,
+                        execution_id=execution_context.execution_id,
+                        parent_execution_id=execution_context.parent_execution_id,
+                        queue_item_id=queue_item.id,
+                        batch_index=batch_index,
+                        batch_count=batch_count,
+                        target_count=len(batch),
+                    )
+                    suggestions.extend(batch_suggestions)
+                    print(
+                        f"[VISUAL_GUIDE:API] LLM 생성 완료: bot={bot_name!r}, "
+                        f"batch={batch_index}/{batch_count}, "
+                        f"suggestions={len(batch_suggestions)}, queue_item={queue_item.id}"
+                    )
+                return {
+                    "suggestions": suggestions,
+                    "target_count": len(resolved_targets),
+                    "batch_count": batch_count,
+                }
+
+            try:
+                queue_item = await self._queue_manager.add_item(
+                    VISUAL_GUIDE_QUEUE_TYPE,
+                    (
+                        f"프로필 선택 기준 자동 작성 · {bot_name} · "
+                        f"{len(resolved_targets)}개 카드"
+                    ),
+                    {
+                        "bot_name": bot_name,
+                        "target_count": len(resolved_targets),
+                        "batch_count": batch_count,
+                        "source_preset": preset,
+                        "source_scope": scope,
+                    },
+                    priority=10,
+                    runtime_handler=run_visual_guide_queue,
                 )
+            except Exception as exc:
+                print(
+                    f"[VISUAL_GUIDE:QUEUE] 큐 등록 실패: bot={bot_name!r}, "
+                    f"targets={len(resolved_targets)}, "
+                    f"error={type(exc).__name__}: {exc}"
+                )
+                traceback.print_exc()
+                return _json_error(f"LLM 통합 큐 등록 실패: {exc}", 500)
+
+            print(
+                f"[VISUAL_GUIDE:QUEUE] 큐 등록 완료: bot={bot_name!r}, "
+                f"item={queue_item.id}, targets={len(resolved_targets)}, "
+                f"batches={batch_count}"
+            )
+            try:
+                queue_result = await queue_item.completion_future
+            except Exception as exc:
+                print(
+                    f"[VISUAL_GUIDE:QUEUE] 큐 처리 실패: bot={bot_name!r}, "
+                    f"item={queue_item.id}, error={type(exc).__name__}: {exc}"
+                )
+                traceback.print_exc()
+                return _json_error(str(exc), 422)
+
+            if not isinstance(queue_result, dict):
+                print(
+                    f"[VISUAL_GUIDE:QUEUE] 큐 결과 형식 오류: bot={bot_name!r}, "
+                    f"item={queue_item.id}, value={queue_result!r}"
+                )
+                return _json_error("LLM 통합 큐 결과 형식이 올바르지 않습니다.", 500)
+            suggestions = queue_result.get("suggestions")
+            if not isinstance(suggestions, list):
+                print(
+                    f"[VISUAL_GUIDE:QUEUE] 큐 제안 결과 누락: bot={bot_name!r}, "
+                    f"item={queue_item.id}, value={queue_result!r}"
+                )
+                return _json_error("LLM 통합 큐 결과에 제안 목록이 없습니다.", 500)
 
             return _json_ok({
                 "success": True,

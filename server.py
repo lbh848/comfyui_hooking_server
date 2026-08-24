@@ -677,6 +677,7 @@ DEFAULT_CONFIG = {
         "preset_import_classify": _llm_route_defaults(
             max_retries=1, fallback_max_retries=1, json_mode=True
         ),
+        "visual_profile_guide": _llm_route_defaults(json_mode=True),
         "character_maker_draft": _llm_route_defaults(
             max_retries=1, fallback_max_retries=1, json_mode=True
         ),
@@ -1272,6 +1273,7 @@ print(
 # 캐릭터 메이커 LLM 호출을 통합 작업큐(character_maker 타입)에서 실행하도록 주입.
 # _handle_character_maker 가 self.character_maker.revise(...) 를 호출한다.
 queue_manager.character_maker = character_maker
+bot_mode.set_queue_manager(queue_manager)
 
 # ─── 에셋툴 모드 초기화 ───
 asset_tool = asset_tool_mode.AssetToolMode()

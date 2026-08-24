@@ -1,6 +1,8 @@
+import asyncio
 import importlib
 import json
 from copy import deepcopy
+from types import SimpleNamespace
 
 import pytest
 
@@ -54,13 +56,51 @@ class _JsonRequest:
         return deepcopy(self._body)
 
 
+class _InlineLlmQueue:
+    def __init__(self):
+        self.added = []
+
+    async def add_item(
+        self,
+        item_type,
+        label,
+        params,
+        priority=10,
+        runtime_handler=None,
+        **_kwargs,
+    ):
+        item = SimpleNamespace(
+            id="visual-guide-queue",
+            type=item_type,
+            label=label,
+            params=deepcopy(params),
+            completion_future=asyncio.get_running_loop().create_future(),
+        )
+        self.added.append({
+            "item_type": item_type,
+            "label": label,
+            "params": deepcopy(params),
+            "priority": priority,
+        })
+        try:
+            result = await runtime_handler(item)
+        except Exception as exc:
+            item.completion_future.set_exception(exc)
+        else:
+            item.completion_future.set_result(result)
+        return item
+
+
 @pytest.mark.asyncio
 async def test_suggest_metadata_reads_the_whole_selected_prompt_and_does_not_save(monkeypatch):
     bot_mode = importlib.import_module("modes.bot_mode")
     llm_service = importlib.import_module("modes.llm_service")
+    lighbd_service = importlib.import_module("modes.lighbd_service")
     cards = [_card("card_1", "카드 1", "Riko_magical_overcome_smile.webp")]
     data = _bot_data(cards)
     captured = {}
+    detail_records = []
+    queue = _InlineLlmQueue()
 
     async def fake_call(task_key, messages, **kwargs):
         captured["task_key"] = task_key
@@ -84,6 +124,18 @@ async def test_suggest_metadata_reads_the_whole_selected_prompt_and_does_not_sav
         )
         valid, reason = kwargs["result_validator"](raw)
         assert valid, reason
+        kwargs["metadata_sink"].update({
+            "prompt_tokens": 120,
+            "completion_tokens": 40,
+            "tps": 20.0,
+        })
+        context = kwargs["execution_context"]
+        kwargs["execution_observer"]({
+            "type": "execution_complete",
+            "llm_slot": "llm2",
+            "phase": "primary",
+            "execution_id": context.execution_id,
+        })
         return raw
 
     monkeypatch.setattr(bot_mode, "_load_bot_data", lambda: data)
@@ -94,8 +146,12 @@ async def test_suggest_metadata_reads_the_whole_selected_prompt_and_does_not_sav
         lambda _value: pytest.fail("suggestion preview must not save bot.json"),
     )
     monkeypatch.setattr(llm_service, "callLLMTask", fake_call)
+    monkeypatch.setattr(lighbd_service, "_log_lighbd_history", detail_records.append)
 
-    response = await bot_mode.BotMode().handle_suggest_character_card_metadata(
+    manager = bot_mode.BotMode()
+    manager.set_queue_manager(queue)
+
+    response = await manager.handle_suggest_character_card_metadata(
         _JsonRequest(
             {
                 "bot_name": "demo",
@@ -112,6 +168,15 @@ async def test_suggest_metadata_reads_the_whole_selected_prompt_and_does_not_sav
         "Prism Heart",
     ]
     assert captured["task_key"] == "visual_profile_guide"
+    assert queue.added[0]["item_type"] == "visual_profile_guide"
+    assert queue.added[0]["params"]["target_count"] == 1
+    assert len(detail_records) == 1
+    assert detail_records[0]["task_key"] == "visual_profile_guide"
+    assert detail_records[0]["status"] == "ok"
+    assert detail_records[0]["llm_slot"] == "llm2"
+    assert detail_records[0]["prompt_tokens"] == 120
+    assert detail_records[0]["completion_tokens"] == 40
+    assert detail_records[0]["queue_item_id"] == "visual-guide-queue"
     prompt_text = "\n".join(str(message["content"]) for message in captured["messages"])
     assert "Arbitrary Picture Grammar" in prompt_text
     assert "fixed Image Command heading" in prompt_text
@@ -123,9 +188,11 @@ async def test_suggest_metadata_reads_the_whole_selected_prompt_and_does_not_sav
 async def test_suggest_metadata_accepts_unsaved_modal_source_text(monkeypatch):
     bot_mode = importlib.import_module("modes.bot_mode")
     llm_service = importlib.import_module("modes.llm_service")
+    lighbd_service = importlib.import_module("modes.lighbd_service")
     cards = [_card("card_1", "카드 1", "Riko_modal_source.webp")]
     data = _bot_data(cards)
     captured = {}
+    queue = _InlineLlmQueue()
 
     async def fake_call(_task_key, messages, **kwargs):
         captured["prompt"] = "\n".join(str(item["content"]) for item in messages)
@@ -150,8 +217,12 @@ async def test_suggest_metadata_accepts_unsaved_modal_source_text(monkeypatch):
     monkeypatch.setattr(bot_mode, "_load_bot_data", lambda: data)
     monkeypatch.setattr(bot_mode, "_load_lb_extra", lambda _bot_name: [])
     monkeypatch.setattr(llm_service, "callLLMTask", fake_call)
+    monkeypatch.setattr(lighbd_service, "_log_lighbd_history", lambda _record: None)
 
-    response = await bot_mode.BotMode().handle_suggest_character_card_metadata(
+    manager = bot_mode.BotMode()
+    manager.set_queue_manager(queue)
+
+    response = await manager.handle_suggest_character_card_metadata(
         _JsonRequest(
             {
                 "bot_name": "demo",
@@ -166,6 +237,103 @@ async def test_suggest_metadata_accepts_unsaved_modal_source_text(monkeypatch):
     assert payload["source"] == {"preset": "팝업 임시 원문", "scope": "modal"}
     assert "Completely different modal-only image grammar" in captured["prompt"]
     assert "Arbitrary Picture Grammar" not in captured["prompt"]
+
+
+@pytest.mark.asyncio
+async def test_visual_guide_queue_failure_records_attempt_and_final_detail(monkeypatch):
+    bot_mode = importlib.import_module("modes.bot_mode")
+    llm_service = importlib.import_module("modes.llm_service")
+    lighbd_service = importlib.import_module("modes.lighbd_service")
+    cards = [_card("card_1", "카드 1", "Riko_invalid.webp")]
+    data = _bot_data(cards)
+    queue = _InlineLlmQueue()
+    detail_records = []
+    invalid_raw = '{"suggestions":[]}'
+
+    async def fake_call(_task_key, _messages, **kwargs):
+        valid, reason = kwargs["result_validator"](invalid_raw)
+        assert valid is False
+        kwargs["metadata_sink"].update({
+            "prompt_tokens": 70,
+            "completion_tokens": 5,
+        })
+        context = kwargs["execution_context"]
+        kwargs["on_attempt_failure"]({
+            "result": invalid_raw,
+            "reason": reason,
+            "phase": "primary",
+            "slot": "llm3",
+            "attempt": 1,
+            "total_attempts": 1,
+            "attempt_id": "visual-attempt-1",
+            "elapsed": 0.25,
+        })
+        kwargs["execution_observer"]({
+            "type": "execution_complete",
+            "llm_slot": "llm3",
+            "phase": "primary",
+            "execution_id": context.execution_id,
+        })
+        return "[LLM 실패] visual_profile_guide primary 재시도 소진"
+
+    monkeypatch.setattr(bot_mode, "_load_bot_data", lambda: data)
+    monkeypatch.setattr(bot_mode, "_load_lb_extra", lambda _bot_name: [])
+    monkeypatch.setattr(llm_service, "callLLMTask", fake_call)
+    monkeypatch.setattr(lighbd_service, "_log_lighbd_history", detail_records.append)
+
+    manager = bot_mode.BotMode()
+    manager.set_queue_manager(queue)
+    response = await manager.handle_suggest_character_card_metadata(
+        _JsonRequest({
+            "bot_name": "demo",
+            "targets": [{"character": "Riko", "profile_id": "card_1"}],
+        })
+    )
+    payload = json.loads(response.text)
+
+    assert response.status == 422
+    assert "배치 실패" in payload["error"]
+    assert len(detail_records) == 2
+    assert detail_records[0]["history_id"] == "visual-attempt-1"
+    assert detail_records[0]["attempt"] == 1
+    assert detail_records[0]["status"] == "error"
+    assert detail_records[0]["output"] == invalid_raw
+    assert detail_records[1]["status"] == "error"
+    assert detail_records[1]["output"] == invalid_raw
+    assert detail_records[1]["llm_slot"] == "llm3"
+    assert "target_key" in detail_records[1]["error"]
+
+
+@pytest.mark.asyncio
+async def test_queue_manager_dispatches_visual_guide_runtime_handler():
+    queue_manager = importlib.import_module("queue_manager")
+    manager = queue_manager.QueueManager()
+    item = SimpleNamespace(
+        id="visual-runtime-item",
+        type="visual_profile_guide",
+        params={"bot_name": "demo"},
+    )
+
+    async def runtime_handler(received):
+        assert received is item
+        return {"success": True}
+
+    item._runtime_handler = runtime_handler
+    result = await manager._execute_item(item)
+
+    assert result == {"success": True}
+
+
+def test_visual_profile_guide_is_registered_in_routing_queue_and_frontend():
+    root = importlib.import_module("pathlib").Path(__file__).resolve().parents[1]
+    server_source = (root / "server.py").read_text(encoding="utf-8")
+    frontend = (root / "frontend" / "index.html").read_text(encoding="utf-8")
+    queue_manager = importlib.import_module("queue_manager")
+
+    assert '"visual_profile_guide": _llm_route_defaults(json_mode=True)' in server_source
+    assert "{ key: 'visual_profile_guide'" in frontend
+    assert "visual_profile_guide" in queue_manager.LLM_TYPES
+    assert 'visual_profile_guide: \'프로필 선택 기준\'' in frontend
 
 
 @pytest.mark.asyncio
