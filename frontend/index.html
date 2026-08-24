@@ -71927,9 +71927,25 @@
                     sourceProfileId: '',
                     useOwnSearch: false,
                     ownSearch: '',
+                    manualTarget: '',
                     _target: ''
                 };
             });
+        }
+
+        // 이름을 색상 선택에만 사용하는 고정 해시. 실제 난수를 쓰지 않아 다시 열어도 같은 색이다.
+        function _repBatchCharacterPalette(charName) {
+            let hash = 2166136261;
+            for (const char of String(charName || '').normalize('NFKC')) {
+                hash ^= char.codePointAt(0);
+                hash = Math.imul(hash, 16777619);
+            }
+            const hue = (hash >>> 0) % 360;
+            return {
+                background: `hsla(${hue},65%,70%,0.06)`,
+                header: `hsla(${hue},65%,65%,0.12)`,
+                border: `hsla(${hue},55%,60%,0.22)`
+            };
         }
 
         async function openRepBatchModal() {
@@ -72014,7 +72030,7 @@
                         '<button onclick="closeRepBatchModal()" style="background:none; border:none; color:var(--text); font-size:1.3rem; cursor:pointer; padding:2px 8px; line-height:1;" title="닫기">✕</button>' +
                     '</div>' +
                     '<div style="font-size:0.7rem; color:var(--text2); margin-bottom:8px;">캐릭터별 모든 프로필의 메인 대표를 지정합니다. <b>＋ 프로필 추가</b>는 원본 프로필 설정을 복제하되 대표 이미지는 새 후보로 시작하며, 적용 전에는 저장되지 않습니다. 공통 검색 대신 프로필별 개별 검색도 사용할 수 있습니다. <b>보호 모드</b>는 이미 대표가 있는 프로필을 건너뜁니다.</div>' +
-                    '<div id="rep-batch-body" style="overflow-y:auto; flex:1; display:flex; flex-direction:column; gap:10px; padding-right:4px;"></div>' +
+                    '<div id="rep-batch-body" style="overflow-y:auto; flex:1; display:flex; flex-direction:column; gap:16px; padding:4px 8px 8px 4px;"></div>' +
                 '</div>';
             window._repBatchPrevOverflow = document.body.style.overflow;
             document.body.style.overflow = 'hidden';
@@ -72038,25 +72054,26 @@
         function _repBatchRenderRow(i) {
             const row = _repBatchRowData[i];
             if (!row) return;
+            const palette = _repBatchCharacterPalette(row.charName);
             const body = document.getElementById('rep-batch-body');
             if (!body) return;
             let rowEl = body.querySelector('[data-row-idx="' + i + '"]');
             if (!rowEl) {
                 rowEl = document.createElement('div');
                 rowEl.dataset.rowIdx = i;
-                rowEl.style.cssText = 'background:var(--surface2); border-radius:8px; padding:8px;';
+                rowEl.style.cssText = `background:${palette.background};border:1px solid ${palette.border};border-radius:10px;padding:8px;`;
                 body.appendChild(rowEl);
             }
             if (!row.loaded) {
-                rowEl.innerHTML = '<div style="font-size:0.8rem; color:var(--text2); padding:4px 2px;">⏳ ' + escHtml(row.charName) + ' 로드 중…</div>';
+                rowEl.innerHTML = '<div style="font-size:0.8rem;color:var(--text2);padding:6px;">⏳ ' + escHtml(row.charName) + ' 로드 중…</div>';
                 return;
             }
             if (row.error) {
-                rowEl.innerHTML = '<div style="font-size:0.8rem; color:var(--error); padding:4px 2px;"><span style="color:var(--text); font-weight:600;">' + escHtml(row.charName) + '</span> — 로드 실패: ' + escHtml(row.error) + '</div>';
+                rowEl.innerHTML = '<div style="font-size:0.8rem;color:var(--error);padding:6px;"><span style="color:var(--text);font-weight:700;">' + escHtml(row.charName) + '</span> — 로드 실패: ' + escHtml(row.error) + '</div>';
                 return;
             }
             if (!row.baseOrder || row.baseOrder.length === 0) {
-                rowEl.innerHTML = '<div style="font-size:0.8rem; color:var(--text2); padding:4px 2px;"><span style="color:var(--text); font-weight:600;">' + escHtml(row.charName) + '</span> — 이미지 없음</div>';
+                rowEl.innerHTML = '<div style="font-size:0.8rem;color:var(--text2);padding:6px;"><span style="color:var(--text);font-weight:700;">' + escHtml(row.charName) + '</span> — 이미지 없음</div>';
                 return;
             }
             const searchEl = document.getElementById('rep-batch-search');
@@ -72071,7 +72088,7 @@
                 const display = _repBatchComputeDisplay(row, profile, search);
                 const matchedCount = search
                     ? row.baseOrder.filter(im => (im.filename || '').toLowerCase().includes(search)).length : 0;
-                profile._target = _repBatchTarget(row, search);
+                profile._target = _repBatchResolvedTarget(row, profile, search);
                 const profileProtected = !profile.isNew && mode === 'protect' && !!profile.rep0;
                 const badge = profile.isNew
                     ? '<span style="font-size:0.6rem;color:#a855f7;border:1px solid rgba(168,85,247,.45);border-radius:999px;padding:1px 6px;">추가 예정</span>'
@@ -72082,7 +72099,7 @@
                     ? '<span style="font-size:0.6rem;color:var(--text2);border:1px dashed var(--border);border-radius:999px;padding:1px 6px;">보호(건너뜀)</span>' : '';
                 const targetHint = (!profileProtected && profile._target && profile._target !== profile.rep0)
                     ? '<span style="font-size:0.6rem;color:#3b82f6;border:1px solid color-mix(in srgb,#3b82f6 45%,transparent);border-radius:999px;padding:1px 6px;">' +
-                        (search ? (matchedCount > 0 ? '매칭 지정 예정' : '첫 이미지 지정 예정') : '첫 이미지 지정 예정') + '</span>' : '';
+                        (profile.manualTarget ? '수동 지정 예정' : (search ? (matchedCount > 0 ? '매칭 지정 예정' : '첫 이미지 지정 예정') : '첫 이미지 지정 예정')) + '</span>' : '';
                 const matchInfo = search
                     ? '파일명 일치 ' + matchedCount + '건 / 전체 ' + row.baseOrder.length + '장'
                     : display.length + '장 표시' + (row.baseOrder.length > 10 ? ' (전체 ' + row.baseOrder.length + '장)' : '');
@@ -72105,6 +72122,7 @@
                 const thumbs = display.map(img => {
                     const isRep0 = img.filename === profile.rep0;
                     const isCandidate = profile._target && img.filename === profile._target && !isRep0 && !profileProtected;
+                    const isManualTarget = profile.manualTarget === img.filename;
                     const borderStyle = isRep0
                         ? 'border:3px solid #22c55e;box-shadow:0 0 0 1px rgba(34,197,94,.25);'
                         : (isCandidate
@@ -72112,11 +72130,21 @@
                             : 'border:1px solid var(--border);');
                     const candidateBadge = isCandidate
                         ? '<div style="position:absolute;top:3px;left:3px;background:#3b82f6;color:#fff;font-size:0.55rem;font-weight:700;padding:1px 5px;border-radius:4px;">설정 예정</div>' : '';
-                    return '<div style="flex:0 0 auto;width:70px;position:relative;cursor:zoom-in;" onclick="openLightbox(\'' + escAttr(img.url) + '\')">' +
-                        '<img src="' + escAttr(img.url) + '" loading="lazy" style="width:100%;aspect-ratio:700/1024;object-fit:contain;display:block;border-radius:6px;background:var(--surface);' + borderStyle + '" onerror="this.style.opacity=0.2">' +
-                        (isRep0 ? '<div style="position:absolute;top:3px;left:3px;background:#22c55e;color:#000;font-size:0.55rem;font-weight:700;padding:1px 5px;border-radius:4px;">대표</div>' : '') +
-                        candidateBadge +
-                        '<div style="font-size:0.52rem;color:var(--text3);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="' + escAttr(img.filename) + '">' + escHtml(img.filename) + '</div></div>';
+                    const buttonLabel = isManualTarget ? '✓ 지정 예정' : '대표로 지정';
+                    const buttonStyle = profileProtected
+                        ? 'border:1px solid var(--border);background:var(--surface2);color:var(--text3);cursor:not-allowed;opacity:.5;'
+                        : (isManualTarget
+                            ? 'border:1px solid #3b82f6;background:#3b82f6;color:#fff;cursor:default;'
+                            : 'border:1px solid #3b82f6;background:var(--surface2);color:#3b82f6;cursor:pointer;');
+                    return '<div style="flex:0 0 auto;width:70px;">' +
+                        '<div style="position:relative;cursor:zoom-in;" onclick="openLightbox(\'' + escAttr(img.url) + '\')">' +
+                            '<img src="' + escAttr(img.url) + '" loading="lazy" style="width:100%;aspect-ratio:700/1024;object-fit:contain;display:block;border-radius:6px;background:var(--surface);' + borderStyle + '" onerror="this.style.opacity=0.2">' +
+                            (isRep0 ? '<div style="position:absolute;top:3px;left:3px;background:#22c55e;color:#000;font-size:0.55rem;font-weight:700;padding:1px 5px;border-radius:4px;">대표</div>' : '') +
+                            candidateBadge +
+                        '</div>' +
+                        '<div style="font-size:0.52rem;color:var(--text3);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="' + escAttr(img.filename) + '">' + escHtml(img.filename) + '</div>' +
+                        '<button data-role="rep-batch-manual" data-selected="' + (isManualTarget ? 'true' : 'false') + '" aria-pressed="' + (isManualTarget ? 'true' : 'false') + '" ' + (profileProtected ? 'disabled ' : '') + 'onclick="_repBatchSelectManualTarget(' + i + ',' + profileIndex + ',\'' + escAttr(img.filename) + '\')" title="' + (profileProtected ? '보호 모드에서는 기존 대표를 변경하지 않습니다.' : '이 이미지를 대표 후보로 선택') + '" style="width:100%;margin-top:3px;padding:3px 1px;border-radius:4px;font-size:0.57rem;font-weight:700;' + buttonStyle + '">' + buttonLabel + '</button>' +
+                    '</div>';
                 }).join('');
                 return '<div data-profile-idx="' + profileIndex + '" style="border:1px solid var(--border);border-radius:7px;padding:7px;background:var(--surface);">' +
                     '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:6px;">' + profileTitle + badge + protectNote + targetHint + sourceSelect + ownSearchControl + removeDraft +
@@ -72124,8 +72152,8 @@
                     '<div style="display:flex;gap:6px;overflow-x:auto;padding-bottom:4px;">' + thumbs + '</div></div>';
             }).join('');
             rowEl.innerHTML =
-                '<div style="display:flex;align-items:center;gap:7px;margin-bottom:7px;">' +
-                    '<span style="font-weight:700;font-size:0.9rem;">' + escHtml(row.charName) + '</span>' +
+                '<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;margin:-8px -8px 10px;background:' + palette.header + ';border-bottom:1px solid ' + palette.border + ';border-radius:8px 8px 0 0;">' +
+                    '<span style="font-weight:800;font-size:1.02rem;letter-spacing:.01em;">' + escHtml(row.charName) + '</span>' +
                     '<span style="font-size:0.64rem;color:var(--text2);">프로필 ' + row.profiles.length + '/' + VISUAL_CARD_LIMIT + '</span>' +
                     '<button onclick="_repBatchAddDraftProfile(' + i + ')" ' + (canAdd ? '' : 'disabled') + ' style="border:1px dashed var(--accent);border-radius:5px;background:transparent;color:var(--accent);padding:3px 8px;cursor:' + (canAdd ? 'pointer' : 'not-allowed') + ';font-size:0.68rem;opacity:' + (canAdd ? '1' : '.45') + ';">＋ 프로필 추가</button>' +
                     (canDeleteCharacter ? '<button onclick="deleteRepBatchChar(\'' + escAttr(row.charName) + '\')" title="이 캐릭터 삭제" style="margin-left:auto;background:var(--error);color:#fff;border:none;padding:2px 8px;border-radius:999px;cursor:pointer;font-size:0.62rem;">🗑 캐릭터 삭제</button>' : '') +
@@ -72166,12 +72194,12 @@
 
         // 최대 10개. rep0이 컷에서 빠지면 강제로 맨 앞 삽입 (맨 앞 대표 보장).
         function _repBatchCapTen(arr, row, profile) {
-            const capped = arr.slice(0, 10);
-            if (profile.rep0 && !capped.find(im => im.filename === profile.rep0)) {
-                const rep0Obj = row.baseOrder.find(im => im.filename === profile.rep0);
-                if (rep0Obj) return [rep0Obj].concat(capped.slice(0, 9));
-            }
-            return capped;
+            const forcedNames = [profile.rep0, profile.manualTarget].filter(Boolean);
+            const forced = forcedNames
+                .map(filename => row.baseOrder.find(im => im.filename === filename))
+                .filter((image, index, values) => image && values.findIndex(item => item?.filename === image.filename) === index);
+            const forcedSet = new Set(forced.map(image => image.filename));
+            return forced.concat(arr.filter(image => !forcedSet.has(image.filename))).slice(0, 10);
         }
 
         function _repBatchAddDraftProfile(rowIndex) {
@@ -72196,6 +72224,7 @@
                 sourceProfileId: source.profileId,
                 useOwnSearch: false,
                 ownSearch: '',
+                manualTarget: '',
                 _target: ''
             });
             _repBatchRenderRow(rowIndex);
@@ -72235,6 +72264,24 @@
             _repBatchRenderRow(rowIndex);
         }
 
+        function _repBatchSelectManualTarget(rowIndex, profileIndex, filename) {
+            const row = _repBatchRowData[rowIndex];
+            const profile = row?.profiles?.[profileIndex];
+            const normalized = String(filename || '');
+            if (!row || !profile || !row.baseOrder.some(image => image.filename === normalized)) {
+                console.error('[BOT] 대표 일괄 수동 후보 선택 실패:', {rowIndex, profileIndex, filename});
+                showToast('선택한 대표 이미지를 찾지 못했습니다.', 'error');
+                return;
+            }
+            if (!profile.isNew && _repBatchMode() === 'protect' && profile.rep0) {
+                console.error('[BOT] 보호 모드 프로필 수동 후보 선택 거부:', {character:row.charName, profile:profile.profileId});
+                showToast('기존 대표를 바꾸려면 밀어내기 모드를 선택하세요.', 'info');
+                return;
+            }
+            profile.manualTarget = normalized;
+            _repBatchRenderRow(rowIndex);
+        }
+
         function filterRepBatchByName(query) {
             if (!_repBatchModalOpen) return;
             _repBatchRowData.forEach((_, i) => _repBatchRenderRow(i));
@@ -72257,6 +72304,13 @@
                 if (m) return m.filename;
             }
             return (row.baseOrder[0] && row.baseOrder[0].filename) || '';
+        }
+
+        // 사용자가 썸네일 버튼으로 고른 후보가 있으면 검색 기반 자동 후보보다 우선한다.
+        function _repBatchResolvedTarget(row, profile, search) {
+            const manual = String(profile?.manualTarget || '');
+            if (manual && row?.baseOrder?.some(image => image.filename === manual)) return manual;
+            return _repBatchTarget(row, search);
         }
 
         // 적용 버튼 활성화: 한 개 이상의 '적용 대상' 프로필이 있을 때.
@@ -72296,7 +72350,7 @@
                     }
                     const search = profile.useOwnSearch
                         ? String(profile.ownSearch || '').trim().toLowerCase() : commonSearch;
-                    const target = _repBatchTarget(row, search);
+                    const target = _repBatchResolvedTarget(row, profile, search);
                     if (!target) {
                         skipNoImage.push(`${row.charName}/${profile.profileLabel}`);
                         return;

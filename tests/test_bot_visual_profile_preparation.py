@@ -316,6 +316,14 @@ def test_representative_batch_frontend_supports_profile_drafts():
     source = Path("frontend/index.html").read_text(encoding="utf-8")
 
     assert "function _repBatchAddDraftProfile(" in source
+    assert "function _repBatchCharacterPalette(" in source
+    assert "const hue = (hash >>> 0) % 360" in source
+    assert "function _repBatchSelectManualTarget(" in source
+    assert "function _repBatchResolvedTarget(" in source
+    assert 'data-role="rep-batch-manual"' in source
+    assert 'aria-pressed="' in source
+    assert "대표로 지정" in source
+    assert "manualTarget" in source
     assert "create_profile = true" in source
     assert "source_visual_card_id" in source
     assert "visual_card_id: profile.profileId" in source
