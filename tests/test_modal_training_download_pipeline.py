@@ -367,6 +367,70 @@ async def test_exact_lora_delete_outbox_uses_file_action(
     assert service._load_delete_outbox() == []
 
 
+def test_client_treats_invalid_delete_as_complete_when_target_is_absent(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    remote_prefix = "SOYA_CHAR_LORA/SOYA_BOT_LORA/project/Lora/anima-v10"
+
+    class FakeVolume:
+        def remove_file(self, path: str, *, recursive: bool) -> None:
+            assert path == f"/{remote_prefix}"
+            assert recursive is True
+            raise client_cli.modal.exception.InvalidError(
+                "No such file or directory."
+            )
+
+        def listdir(self, path: str, *, recursive: bool):
+            assert path == "/"
+            assert recursive is True
+            return [
+                SimpleNamespace(
+                    path="/SOYA_CHAR_LORA/SOYA_BOT_LORA/another-project/model.safetensors"
+                )
+            ]
+
+        def read_file(self, path: str):
+            assert path == client_cli.LORA_SYNC_MANIFEST_PATH
+            raise FileNotFoundError(path)
+
+    result = client_cli._delete_lora_paths(
+        FakeVolume(),
+        [remote_prefix],
+        recursive=True,
+    )
+
+    assert result == {"deleted": [], "deleted_count": 0}
+    assert "대상이 이미 없는 것을 확인" in capsys.readouterr().err
+
+
+def test_client_keeps_invalid_delete_failure_when_target_still_exists(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    remote_prefix = "SOYA_CHAR_LORA/SOYA_BOT_LORA/project/Lora/anima-v10"
+
+    class FakeVolume:
+        def remove_file(self, path: str, *, recursive: bool) -> None:
+            assert path == f"/{remote_prefix}"
+            assert recursive is True
+            raise client_cli.modal.exception.InvalidError("permission denied")
+
+        def listdir(self, path: str, *, recursive: bool):
+            assert path == "/"
+            assert recursive is True
+            return [
+                SimpleNamespace(path=f"/{remote_prefix}/model.safetensors")
+            ]
+
+    with pytest.raises(client_cli.modal.exception.InvalidError, match="permission denied"):
+        client_cli._delete_lora_paths(
+            FakeVolume(),
+            [remote_prefix],
+            recursive=True,
+        )
+
+    assert "오류 후에도 대상이 남아 있음" in capsys.readouterr().err
+
+
 def test_client_skips_delete_when_remote_lora_changed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

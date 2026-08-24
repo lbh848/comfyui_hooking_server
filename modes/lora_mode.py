@@ -11,6 +11,7 @@ import traceback
 from PIL import Image
 from modes.asset_mode import ASSET_DIR, TAGS_FILE, AssetMode
 from modes.lora_export_utils import format_lora_export_filename
+from modes.lora_name_validation import validate_lora_project_name
 
 LORA_EXTENSIONS = {".safetensors", ".pt", ".ckpt", ".bin"}
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
@@ -280,6 +281,10 @@ DEFAULT_BLOCK_TAG_RULES: tuple[str, ...] = (
 
 def _safe_dirname(name: str) -> str:
     return AssetMode._safe_dirname(name)
+
+
+def validate_lora_entry_name(name: str) -> str:
+    return validate_lora_project_name(name)
 
 
 def _lora_dir(character: str) -> str:
@@ -1436,6 +1441,10 @@ def add_lora_entry(name: str, character: str, trigger: str, description: str) ->
         return {"success": False, "error": "캐릭터를 선택하세요"}
 
     name = name.strip()
+    name_error = validate_lora_entry_name(name)
+    if name_error:
+        print(f"[LORA_MANAGE] 잘못된 LoRA 프로젝트명: name={name!r}, error={name_error}")
+        return {"success": False, "error": name_error}
     data = _load_lora_manage()
 
     if _get_entry(data, character, name):
@@ -1474,6 +1483,10 @@ def duplicate_lora_entry(
         return {"success": False, "error": "대상 캐릭터를 선택하세요"}
 
     target_entry = target_entry.strip()
+    name_error = validate_lora_entry_name(target_entry)
+    if name_error:
+        print(f"[LORA_MANAGE] 복제: 잘못된 LoRA 프로젝트명 - name={target_entry!r}, error={name_error}")
+        return {"success": False, "error": name_error}
     data = _load_lora_manage()
 
     # 2) 소스 엔트리 존재 확인

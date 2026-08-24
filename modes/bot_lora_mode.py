@@ -12,6 +12,7 @@ import shutil
 import traceback
 from PIL import Image
 from modes.lora_export_utils import format_lora_export_filename
+from modes.lora_name_validation import validate_lora_project_name
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BOT_DIR = os.path.join(BASE_DIR, "bot")
@@ -461,6 +462,10 @@ def add_project(bot_name: str, project_name: str, selected_chars: list | None = 
         return {"success": False, "error": "프로젝트 이름을 입력하세요"}
 
     project_name = project_name.strip()
+    name_error = validate_lora_project_name(project_name)
+    if name_error:
+        print(f"[BOT_LORA] 잘못된 프로젝트명: name={project_name!r}, error={name_error}")
+        return {"success": False, "error": name_error}
     data = _load_bot_lora_manage()
 
     bot_projects = data.setdefault("bot_loras", {}).setdefault(bot_name, {})
@@ -521,6 +526,10 @@ def duplicate_project(bot_name: str, src_project_name: str, dst_project_name: st
     dst_project_name = dst_project_name.strip()
     if not dst_project_name:
         return {"success": False, "error": "프로젝트 이름을 입력하세요"}
+    name_error = validate_lora_project_name(dst_project_name)
+    if name_error:
+        print(f"[BOT_LORA] 복제: 잘못된 프로젝트명 - name={dst_project_name!r}, error={name_error}")
+        return {"success": False, "error": name_error}
 
     data = _load_bot_lora_manage()
     bot_projects = data.setdefault("bot_loras", {}).setdefault(bot_name, {})

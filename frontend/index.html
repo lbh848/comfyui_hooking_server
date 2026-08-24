@@ -19792,6 +19792,40 @@
         </div>
     </div>
 
+    <!-- 에셋 LoRA 프로젝트 추가 모달 -->
+    <div class="modal" id="lora-entry-add-modal" onclick="if (event.target === this) closeLoraEntryAddModal()">
+        <div class="modal-content" style="max-width:520px;" onkeydown="if (event.key === 'Enter' && event.target.tagName !== 'TEXTAREA') { event.preventDefault(); confirmLoraEntryAdd(); }">
+            <div class="modal-header">
+                <h2>LoRA 프로젝트 추가</h2>
+                <button class="modal-close" onclick="closeLoraEntryAddModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div style="margin-bottom:12px; padding:10px; background:var(--surface1); border-radius:8px; font-size:0.85rem;">
+                    <div style="font-weight:600; margin-bottom:4px;">대상 캐릭터</div>
+                    <span id="lora-entry-add-character">-</span>
+                </div>
+                <div style="margin-bottom:12px;">
+                    <label style="font-size:0.85rem; font-weight:600; display:block; margin-bottom:4px;">프로젝트 이름 <span style="color:var(--error);">*</span></label>
+                    <input id="lora-entry-add-name" type="text" placeholder="예: anima-v1.0_1" oninput="validateLoraEntryAddName()" style="width:100%; padding:8px; border-radius:6px; border:1px solid var(--border); background:var(--surface1); color:var(--text); font-size:0.9rem; box-sizing:border-box;">
+                    <div style="font-size:0.7rem; color:var(--text-secondary); margin-top:4px;">허용 문자: 한글/영문/숫자, 공백, _, -, .</div>
+                </div>
+                <div style="margin-bottom:12px;">
+                    <label style="font-size:0.85rem; font-weight:600; display:block; margin-bottom:4px;">트리거 키워드 <span style="color:var(--error);">*</span></label>
+                    <input id="lora-entry-add-trigger" type="text" placeholder="예: Guild Receptionist_1" style="width:100%; padding:8px; border-radius:6px; border:1px solid var(--border); background:var(--surface1); color:var(--text); font-size:0.9rem; box-sizing:border-box;">
+                </div>
+                <div style="margin-bottom:4px;">
+                    <label style="font-size:0.85rem; font-weight:600; display:block; margin-bottom:4px;">설명</label>
+                    <textarea id="lora-entry-add-description" rows="3" placeholder="선택 입력" style="width:100%; padding:8px; border-radius:6px; border:1px solid var(--border); background:var(--surface1); color:var(--text); font-size:0.9rem; resize:vertical; box-sizing:border-box;"></textarea>
+                </div>
+                <div id="lora-entry-add-error" style="display:none; margin-top:10px; padding:8px 10px; border-radius:6px; background:rgba(220,60,60,0.12); color:var(--error); font-size:0.8rem;"></div>
+            </div>
+            <div class="modal-footer">
+                <button onclick="closeLoraEntryAddModal()" style="padding:8px 16px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:6px; cursor:pointer;">취소</button>
+                <button id="lora-entry-add-confirm" onclick="confirmLoraEntryAdd()" style="padding:8px 20px; background:var(--accent); color:#fff; border:none; border-radius:6px; cursor:pointer; font-weight:600;">추가</button>
+            </div>
+        </div>
+    </div>
+
     <!-- LoRA 항목 복제 모달 -->
     <div class="modal" id="lora-duplicate-modal" onclick="if (event.target === this) closeLoraDuplicateModal()">
         <div class="modal-content" style="max-width:560px;">
@@ -19813,7 +19847,8 @@
                 <!-- 새 항목명 -->
                 <div style="margin-bottom:10px;">
                     <label style="font-size:0.85rem; font-weight:600; display:block; margin-bottom:4px;">새 항목명 <span style="color:var(--error);">*</span></label>
-                    <input id="dup-target-entry" type="text" placeholder="예: anima-v11" style="width:100%; padding:8px; border-radius:6px; border:1px solid var(--border); background:var(--surface1); color:var(--text); font-size:0.9rem;">
+                    <input id="dup-target-entry" type="text" placeholder="예: anima-v11" oninput="this.style.borderColor=validateLoraProjectName(this.value)?'var(--error)':'var(--border)'" style="width:100%; padding:8px; border-radius:6px; border:1px solid var(--border); background:var(--surface1); color:var(--text); font-size:0.9rem;">
+                    <div style="font-size:0.7rem; color:var(--text-secondary); margin-top:4px;">허용 문자: 한글/영문/숫자, 공백, _, -, .</div>
                 </div>
                 <!-- 트리거 키워드 -->
                 <div style="margin-bottom:10px;">
@@ -19859,7 +19894,8 @@
                 <!-- 새 프로젝트명 -->
                 <div style="margin-bottom:10px;">
                     <label style="font-size:0.85rem; font-weight:600; display:block; margin-bottom:4px;">새 프로젝트 이름 <span style="color:var(--error);">*</span></label>
-                    <input id="bot-dup-project-name" type="text" placeholder="예: anima-v11-v2" style="width:100%; padding:8px; border-radius:6px; border:1px solid var(--border); background:var(--surface1); color:var(--text); font-size:0.9rem;">
+                    <input id="bot-dup-project-name" type="text" placeholder="예: anima-v11-v2" oninput="this.style.borderColor=validateLoraProjectName(this.value)?'var(--error)':'var(--border)'" style="width:100%; padding:8px; border-radius:6px; border:1px solid var(--border); background:var(--surface1); color:var(--text); font-size:0.9rem;">
+                    <div style="font-size:0.7rem; color:var(--text-secondary); margin-top:4px;">허용 문자: 한글/영문/숫자, 공백, _, -, .</div>
                 </div>
             </div>
             <div class="modal-footer">
@@ -19879,7 +19915,8 @@
             <div class="modal-body">
                 <div style="margin-bottom:12px;">
                     <label style="font-size:0.85rem; font-weight:600; display:block; margin-bottom:4px;">프로젝트 이름 <span style="color:var(--error);">*</span></label>
-                    <input id="bot-lora-project-add-name" type="text" placeholder="예: anima-v11" style="width:100%; padding:8px; border-radius:6px; border:1px solid var(--border); background:var(--surface1); color:var(--text); font-size:0.9rem;">
+                    <input id="bot-lora-project-add-name" type="text" placeholder="예: anima-v11" oninput="this.style.borderColor=validateLoraProjectName(this.value)?'var(--error)':'var(--border)'" style="width:100%; padding:8px; border-radius:6px; border:1px solid var(--border); background:var(--surface1); color:var(--text); font-size:0.9rem;">
+                    <div style="font-size:0.7rem; color:var(--text-secondary); margin-top:4px;">허용 문자: 한글/영문/숫자, 공백, _, -, .</div>
                 </div>
                 <div style="font-size:0.85rem; font-weight:600; margin-bottom:6px;">포함할 캐릭터</div>
                 <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center; margin-bottom:8px; padding:6px 8px; background:var(--surface1); border:1px solid var(--border); border-radius:6px;">
@@ -19896,6 +19933,36 @@
             <div class="modal-footer">
                 <button onclick="closeBotLoraProjectAddModal()" style="padding:8px 16px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:6px; cursor:pointer;">취소</button>
                 <button onclick="confirmBotLoraProjectAdd()" style="padding:8px 20px; background:var(--accent); color:#fff; border:none; border-radius:6px; cursor:pointer; font-weight:600;">추가</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 그림체 LoRA 프로젝트 추가 모달 -->
+    <div class="modal" id="style-lora-project-add-modal" onclick="if (event.target === this) closeStyleLoraProjectAddModal()">
+        <div class="modal-content" style="max-width:520px;" onkeydown="if (event.key === 'Enter' && event.target.tagName !== 'TEXTAREA') { event.preventDefault(); confirmStyleLoraCreateProject(); }">
+            <div class="modal-header">
+                <h2>그림체 프로젝트 추가</h2>
+                <button class="modal-close" onclick="closeStyleLoraProjectAddModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div style="margin-bottom:12px;">
+                    <label style="font-size:0.85rem; font-weight:600; display:block; margin-bottom:4px;">프로젝트 이름 <span style="color:var(--error);">*</span></label>
+                    <input id="style-lora-project-add-name" type="text" placeholder="예: soft-anime-v1" oninput="validateStyleLoraProjectName()" style="width:100%; padding:8px; border-radius:6px; border:1px solid var(--border); background:var(--surface1); color:var(--text); font-size:0.9rem; box-sizing:border-box;">
+                    <div style="font-size:0.7rem; color:var(--text-secondary); margin-top:4px;">허용 문자: 한글/영문/숫자, 공백, _, -, .</div>
+                </div>
+                <div style="margin-bottom:12px;">
+                    <label style="font-size:0.85rem; font-weight:600; display:block; margin-bottom:4px;">트리거 워드</label>
+                    <input id="style-lora-project-add-trigger" type="text" placeholder="비워두면 프로젝트 이름 사용" style="width:100%; padding:8px; border-radius:6px; border:1px solid var(--border); background:var(--surface1); color:var(--text); font-size:0.9rem; box-sizing:border-box;">
+                </div>
+                <div>
+                    <label style="font-size:0.85rem; font-weight:600; display:block; margin-bottom:4px;">설명</label>
+                    <textarea id="style-lora-project-add-description" rows="3" placeholder="선택 입력" style="width:100%; padding:8px; border-radius:6px; border:1px solid var(--border); background:var(--surface1); color:var(--text); font-size:0.9rem; resize:vertical; box-sizing:border-box;"></textarea>
+                </div>
+                <div id="style-lora-project-add-error" style="display:none; margin-top:10px; padding:8px 10px; border-radius:6px; background:rgba(220,60,60,0.12); color:var(--error); font-size:0.8rem;"></div>
+            </div>
+            <div class="modal-footer">
+                <button onclick="closeStyleLoraProjectAddModal()" style="padding:8px 16px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:6px; cursor:pointer;">취소</button>
+                <button id="style-lora-project-add-confirm" onclick="confirmStyleLoraCreateProject()" style="padding:8px 20px; background:var(--accent); color:#fff; border:none; border-radius:6px; cursor:pointer; font-weight:600;">추가</button>
             </div>
         </div>
     </div>
@@ -51375,25 +51442,93 @@
             }
         }
 
+        function validateLoraProjectName(name) {
+            const trimmed = String(name || '').trim();
+            if (!trimmed) return 'LoRA 프로젝트명을 입력하세요';
+            const invalid = [...new Set([...trimmed].filter(char => !/[\p{L}\p{N} _\-.]/u.test(char)))];
+            if (invalid.length > 0) {
+                return `LoRA 프로젝트명에 사용할 수 없는 문자: ${invalid.join(' ')}. 허용 문자: 한글/영문/숫자, 공백, _, -, .`;
+            }
+            if (trimmed === '.' || trimmed === '..') return "LoRA 프로젝트명으로 '.' 또는 '..'을 사용할 수 없습니다";
+            return '';
+        }
+
+        function setLoraEntryAddError(message) {
+            const errorEl = document.getElementById('lora-entry-add-error');
+            errorEl.textContent = message || '';
+            errorEl.style.display = message ? 'block' : 'none';
+        }
+
+        function validateLoraEntryAddName() {
+            const input = document.getElementById('lora-entry-add-name');
+            const message = input.value ? validateLoraProjectName(input.value) : '';
+            setLoraEntryAddError(message);
+            input.style.borderColor = message ? 'var(--error)' : 'var(--border)';
+            return !message;
+        }
+
         async function addLoraEntry() {
             if (!loraCurrentCharacter) { showToast('먼저 캐릭터를 선택하세요', 'error'); return; }
-            const name = prompt('베이스 모델명을 입력하세요');
-            if (!name || !name.trim()) return;
-            const trigger = prompt('트리거 키워드를 입력하세요');
-            if (!trigger || !trigger.trim()) { showToast('트리거 키워드는 필수입니다', 'error'); return; }
-            const description = prompt('설명을 입력하세요 (생략 가능)') || '';
+            document.getElementById('lora-entry-add-character').textContent = loraCurrentCharacter;
+            document.getElementById('lora-entry-add-name').value = '';
+            document.getElementById('lora-entry-add-trigger').value = '';
+            document.getElementById('lora-entry-add-description').value = '';
+            document.getElementById('lora-entry-add-name').style.borderColor = 'var(--border)';
+            setLoraEntryAddError('');
+            document.getElementById('lora-entry-add-modal').style.display = 'flex';
+            setTimeout(() => document.getElementById('lora-entry-add-name').focus(), 0);
+        }
+
+        function closeLoraEntryAddModal() {
+            document.getElementById('lora-entry-add-modal').style.display = 'none';
+        }
+
+        async function confirmLoraEntryAdd() {
+            if (!loraCurrentCharacter) {
+                console.error('[LORA_MANAGE] 프로젝트 추가 실패: 선택된 캐릭터 없음');
+                setLoraEntryAddError('먼저 캐릭터를 선택하세요');
+                return;
+            }
+            const nameInput = document.getElementById('lora-entry-add-name');
+            const triggerInput = document.getElementById('lora-entry-add-trigger');
+            const name = nameInput.value.trim();
+            const trigger = triggerInput.value.trim();
+            const description = document.getElementById('lora-entry-add-description').value.trim();
+            const nameError = validateLoraProjectName(name);
+            if (nameError) {
+                setLoraEntryAddError(nameError);
+                nameInput.style.borderColor = 'var(--error)';
+                nameInput.focus();
+                return;
+            }
+            if (!trigger) {
+                setLoraEntryAddError('트리거 키워드는 필수입니다');
+                triggerInput.focus();
+                return;
+            }
+            setLoraEntryAddError('');
+            const confirmButton = document.getElementById('lora-entry-add-confirm');
+            confirmButton.disabled = true;
             try {
                 const resp = await fetchJSON('/api/lora/manage/add', {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ name: name.trim(), character: loraCurrentCharacter, trigger: trigger.trim(), description: description.trim() })
+                    body: JSON.stringify({ name, character: loraCurrentCharacter, trigger, description })
                 });
                 if (resp.success) {
                     showToast('LoRA 항목 추가 완료', 'success');
+                    closeLoraEntryAddModal();
                     await enterLoraCharacter(loraCurrentCharacter);
                 } else {
-                    showToast(resp.error || '추가 실패', 'error');
+                    const message = resp.error || '추가 실패';
+                    console.error('[LORA_MANAGE] 프로젝트 추가 거부:', message);
+                    setLoraEntryAddError(message);
                 }
-            } catch (e) { console.error('[LORA_MANAGE] 추가 실패:', e); showToast('추가 실패', 'error'); }
+            } catch (e) {
+                console.error('[LORA_MANAGE] 추가 실패:', e);
+                setLoraEntryAddError(`추가 실패: ${e.message || e}`);
+            } finally {
+                confirmButton.disabled = false;
+            }
         }
 
         async function removeLoraEntry() {
@@ -51515,6 +51650,8 @@
             const description = document.getElementById('dup-description').value.trim();
 
             if (!targetEntry) { showToast('대상 항목명을 입력하세요', 'error'); return; }
+            const nameError = validateLoraProjectName(targetEntry);
+            if (nameError) { showToast(nameError, 'error'); return; }
             if (!trigger) { showToast('트리거 키워드를 입력하세요', 'error'); return; }
 
             let trainingConfig = null;
@@ -57772,18 +57909,69 @@
             }).join('');
         }
 
+        function setStyleLoraProjectAddError(message) {
+            const errorEl = document.getElementById('style-lora-project-add-error');
+            errorEl.textContent = message || '';
+            errorEl.style.display = message ? 'block' : 'none';
+        }
+
+        function validateStyleLoraProjectName() {
+            const input = document.getElementById('style-lora-project-add-name');
+            const message = input.value ? validateLoraProjectName(input.value) : '';
+            setStyleLoraProjectAddError(message);
+            input.style.borderColor = message ? 'var(--error)' : 'var(--border)';
+            return !message;
+        }
+
         async function styleLoraCreateProject() {
-            const name = prompt('새 프로젝트(그림체 로라) 이름:');
-            if (!name || !name.trim()) return;
-            const trigger = prompt('트리거 워드 (없으면 프로젝트 이름 사용):', name.trim()) || name.trim();
+            document.getElementById('style-lora-project-add-name').value = '';
+            document.getElementById('style-lora-project-add-trigger').value = '';
+            document.getElementById('style-lora-project-add-description').value = '';
+            document.getElementById('style-lora-project-add-name').style.borderColor = 'var(--border)';
+            setStyleLoraProjectAddError('');
+            document.getElementById('style-lora-project-add-modal').style.display = 'flex';
+            setTimeout(() => document.getElementById('style-lora-project-add-name').focus(), 0);
+        }
+
+        function closeStyleLoraProjectAddModal() {
+            document.getElementById('style-lora-project-add-modal').style.display = 'none';
+        }
+
+        async function confirmStyleLoraCreateProject() {
+            const nameInput = document.getElementById('style-lora-project-add-name');
+            const name = nameInput.value.trim();
+            const trigger = document.getElementById('style-lora-project-add-trigger').value.trim() || name;
+            const description = document.getElementById('style-lora-project-add-description').value.trim();
+            const nameError = validateLoraProjectName(name);
+            if (nameError) {
+                setStyleLoraProjectAddError(nameError);
+                nameInput.style.borderColor = 'var(--error)';
+                nameInput.focus();
+                return;
+            }
+            setStyleLoraProjectAddError('');
+            const confirmButton = document.getElementById('style-lora-project-add-confirm');
+            confirmButton.disabled = true;
             try {
                 const resp = await fetchJSON('/api/style_lora/projects', {
                     method: 'POST', headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({name: name.trim(), trigger})
+                    body: JSON.stringify({name, trigger, description})
                 });
-                if (resp.success) { showToast('프로젝트 생성됨', 'success'); await loadStyleProjects(); }
-                else showToast(resp.error || '생성 실패', 'error');
-            } catch (e) { showToast(`생성 실패: ${e.message || e}`, 'error'); }
+                if (resp.success) {
+                    showToast('프로젝트 생성됨', 'success');
+                    closeStyleLoraProjectAddModal();
+                    await loadStyleProjects();
+                } else {
+                    const message = resp.error || '생성 실패';
+                    console.error('[STYLE_LORA] 프로젝트 생성 거부:', message);
+                    setStyleLoraProjectAddError(message);
+                }
+            } catch (e) {
+                console.error('[STYLE_LORA] 프로젝트 생성 실패:', e);
+                setStyleLoraProjectAddError(`생성 실패: ${e.message || e}`);
+            } finally {
+                confirmButton.disabled = false;
+            }
         }
 
         async function styleLoraDeleteProjectDropdown() {
@@ -59765,7 +59953,9 @@
 
         async function openBotLoraProjectAddModal() {
             if (!botLoraCurrentBot) return;
-            document.getElementById('bot-lora-project-add-name').value = '';
+            const nameInput = document.getElementById('bot-lora-project-add-name');
+            nameInput.value = '';
+            nameInput.style.borderColor = 'var(--border)';
             const charsEl = document.getElementById('bot-lora-project-add-chars');
             charsEl.innerHTML = '<div style="text-align:center; padding:24px; color:var(--text-secondary);">로딩 중...</div>';
             document.getElementById('bot-lora-project-add-modal').style.display = 'flex';
@@ -59793,6 +59983,8 @@
             if (!botLoraCurrentBot) return;
             const name = document.getElementById('bot-lora-project-add-name').value.trim();
             if (!name) { showToast('프로젝트 이름을 입력하세요', 'error'); return; }
+            const nameError = validateLoraProjectName(name);
+            if (nameError) { showToast(nameError, 'error'); return; }
             const selected = [...document.querySelectorAll('.bot-lora-project-add-char-check:checked')].map(el => el.value);
             const faceChars = [...document.querySelectorAll('.bot-lora-project-add-face-check:checked')].map(el => el.value);
             if (selected.length === 0 && faceChars.length === 0) { showToast('캐릭터 또는 얼굴을 최소 1개 선택하세요', 'error'); return; }
@@ -59815,7 +60007,9 @@
         async function openBotLoraDuplicateModal() {
             if (!botLoraCurrentBot || !botLoraCurrentProject) return;
             document.getElementById('bot-dup-source-info').textContent = `${botLoraCurrentBot} / ${botLoraCurrentProject}`;
-            document.getElementById('bot-dup-project-name').value = '';
+            const nameInput = document.getElementById('bot-dup-project-name');
+            nameInput.value = '';
+            nameInput.style.borderColor = 'var(--border)';
             document.getElementById('bot-lora-duplicate-modal').style.display = 'flex';
         }
 
@@ -59826,6 +60020,8 @@
         async function confirmBotLoraDuplicate() {
             const dstName = document.getElementById('bot-dup-project-name').value.trim();
             if (!dstName) { showToast('새 프로젝트 이름을 입력하세요', 'error'); return; }
+            const nameError = validateLoraProjectName(dstName);
+            if (nameError) { showToast(nameError, 'error'); return; }
             try {
                 const resp = await fetchJSON('/api/bot_lora/project/duplicate', {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },

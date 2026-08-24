@@ -19,6 +19,7 @@ import shutil
 import time
 import traceback
 from aiohttp import web
+from modes.lora_name_validation import validate_lora_project_name
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STYLE_LORA_DIR = os.path.join(BASE_DIR, "style_lora_data")
@@ -182,7 +183,12 @@ def list_projects() -> list:
 def create_project(name: str, trigger: str = "", description: str = "") -> dict:
     name = (name or "").strip()
     if not name:
+        print("[STYLE_LORA] 프로젝트 생성 실패: 이름 누락")
         return {"success": False, "error": "프로젝트 이름이 필요합니다"}
+    name_error = validate_lora_project_name(name)
+    if name_error:
+        print(f"[STYLE_LORA] 잘못된 프로젝트명: name={name!r}, error={name_error}")
+        return {"success": False, "error": name_error}
     data = _load_data()
     project_id = _gen_id(name)
     projects = data.setdefault("projects", {})

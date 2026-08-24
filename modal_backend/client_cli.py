@@ -780,6 +780,39 @@ def _path_in_scopes(path: str, scopes: list[str]) -> bool:
     return any(path == scope or path.startswith(scope + "/") for scope in scopes)
 
 
+def _lora_delete_target_exists(
+    volume: modal.Volume,
+    path: str,
+    *,
+    recursive: bool,
+) -> bool:
+    """삭제 오류 뒤 Volume을 조회해 대상 또는 하위 항목이 남았는지 확인한다."""
+    try:
+        entries = volume.listdir("/", recursive=True)
+    except Exception as exc:
+        print(
+            "[MODAL_CLIENT] 원격 LoRA 삭제 대상 재확인 실패: "
+            f"path={path}, recursive={recursive}, "
+            f"error={type(exc).__name__}: {exc}",
+            file=sys.stderr,
+        )
+        traceback.print_exc(file=sys.stderr)
+        raise
+
+    for entry in entries:
+        remote_path = (
+            str(getattr(entry, "path", "") or "")
+            .replace("\\", "/")
+            .lstrip("/")
+            .rstrip("/")
+        )
+        if remote_path == path or (
+            recursive and remote_path.startswith(path + "/")
+        ):
+            return True
+    return False
+
+
 def _delete_lora_paths(
     volume: modal.Volume,
     paths: list[str],
@@ -794,6 +827,27 @@ def _delete_lora_paths(
             deleted.append(path)
         except (FileNotFoundError, modal.exception.NotFoundError):
             print(f"[MODAL_CLIENT] 원격 LoRA 삭제 대상 없음: {path}", file=sys.stderr)
+        except modal.exception.InvalidError as exc:
+            if not _lora_delete_target_exists(
+                volume,
+                path,
+                recursive=recursive,
+            ):
+                print(
+                    "[MODAL_CLIENT] 원격 LoRA 삭제 오류 후 대상이 이미 없는 것을 확인: "
+                    f"path={path}, recursive={recursive}, "
+                    f"error={type(exc).__name__}: {exc}",
+                    file=sys.stderr,
+                )
+                continue
+            print(
+                "[MODAL_CLIENT] 원격 LoRA 삭제 오류 후에도 대상이 남아 있음: "
+                f"path={path}, recursive={recursive}, "
+                f"error={type(exc).__name__}: {exc}",
+                file=sys.stderr,
+            )
+            traceback.print_exc(file=sys.stderr)
+            raise
         except Exception as exc:
             print(
                 f"[MODAL_CLIENT] 원격 LoRA 삭제 실패: path={path}, "
