@@ -16359,16 +16359,16 @@
                             <button onclick="openBotBatchAddModal()" style="width:100%; margin-top:4px; background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">일괄추가</button>
                             <button onclick="openBotAssetCharImportModal()" disabled style="width:100%; margin-top:4px; background:var(--surface2); color:var(--text2); border:1px solid var(--border); padding:4px 8px; border-radius:4px; cursor:not-allowed; font-size:0.75rem; opacity:0.5;">에셋에서 캐릭터 가져오기</button>
                         </div>
+                        <div style="background:color-mix(in srgb, var(--accent) 12%, transparent); border-radius:8px; padding:10px; margin-top:8px;">
+                            <div class="section-title">대표 이미지 일괄 설정</div>
+                            <div style="font-size:0.67rem; color:var(--text2); line-height:1.35; margin-bottom:6px;">파일명 검색으로 각 캐릭터의 메인 대표 이미지를 한 번에 지정합니다.</div>
+                            <button onclick="openRepBatchModal()" style="width:100%; background:var(--accent2); color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">대표 이미지 일괄 설정</button>
+                        </div>
                         <div style="background:rgba(124,58,237,0.08); border:1px solid rgba(139,92,246,0.28); border-radius:8px; padding:10px; margin-top:8px;">
                             <div class="section-title">캐릭터 카드 선택 기준</div>
                             <div style="font-size:0.67rem; color:var(--text2); line-height:1.35; margin-bottom:6px;">이미지 출력 지침을 읽어 현재 봇의 모든 카드에 별칭과 선택 기준을 제안합니다.</div>
                             <button id="btn-visual-guide-generator" type="button" onclick="openVisualGuideGeneratorModal()" title="현재 시스템 프롬프트의 이미지 출력 지침을 읽어 모든 카드의 별칭과 선택 기준을 제안합니다."
                                 style="width:100%; padding:6px 8px; border:1px solid rgba(139,92,246,.45); border-radius:6px; background:rgba(124,58,237,.16); color:var(--text); cursor:pointer; font-size:.75rem; font-weight:700;">✨ 이미지 지침으로 자동 작성</button>
-                        </div>
-                        <div style="background:color-mix(in srgb, var(--accent) 12%, transparent); border-radius:8px; padding:10px; margin-top:8px;">
-                            <div class="section-title">대표 이미지 일괄 설정</div>
-                            <div style="font-size:0.67rem; color:var(--text2); line-height:1.35; margin-bottom:6px;">파일명 검색으로 각 캐릭터의 메인 대표 이미지를 한 번에 지정합니다.</div>
-                            <button onclick="openRepBatchModal()" style="width:100%; background:var(--accent2); color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">대표 이미지 일괄 설정</button>
                         </div>
                         <div id="bot-one-click-workflow-group" style="background:linear-gradient(145deg, rgba(14,165,233,0.10), rgba(124,58,237,0.08)); border:1px solid color-mix(in srgb, var(--accent) 35%, var(--border)); border-radius:10px; padding:10px; margin-top:8px;">
                             <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:7px;">
@@ -73324,6 +73324,7 @@
                     useOwnSearch: false,
                     ownSearch: '',
                     manualTarget: '',
+                    removePending: false,
                     _target: ''
                 };
             });
@@ -73425,7 +73426,7 @@
                         '<button id="rep-batch-apply" onclick="applyRepBatchSet()" disabled style="background:var(--accent2); color:#fff; border:none; padding:6px 12px; border-radius:6px; cursor:not-allowed; font-size:0.78rem; font-weight:600; opacity:0.5;">일괄 설정 적용</button>' +
                         '<button onclick="closeRepBatchModal()" style="background:none; border:none; color:var(--text); font-size:1.3rem; cursor:pointer; padding:2px 8px; line-height:1;" title="닫기">✕</button>' +
                     '</div>' +
-                    '<div style="font-size:0.7rem; color:var(--text2); margin-bottom:8px;">캐릭터별 모든 프로필의 메인 대표를 지정합니다. <b>＋ 프로필 추가</b>는 원본 프로필 설정을 복제하되 대표 이미지는 새 후보로 시작하며, 적용 전에는 저장되지 않습니다. 공통 검색 대신 프로필별 개별 검색도 사용할 수 있습니다. <b>보호 모드</b>는 기존 대표의 자동 교체만 건너뛰며, 썸네일에서 직접 선택한 프로필은 변경합니다.</div>' +
+                    '<div style="font-size:0.7rem; color:var(--text2); margin-bottom:8px;">캐릭터별 모든 프로필의 메인 대표를 지정합니다. <b>＋ 프로필 추가</b>는 원본 프로필 설정을 복제하되 대표 이미지는 새 후보로 시작합니다. 저장된 보조 카드는 <b>카드 빼기</b>로 삭제 예정 상태에 둘 수 있습니다. 추가와 삭제는 모두 적용 전에는 저장되지 않습니다. 공통 검색 대신 프로필별 개별 검색도 사용할 수 있습니다. <b>보호 모드</b>는 기존 대표의 자동 교체만 건너뛰며, 썸네일에서 직접 선택한 프로필은 변경합니다.</div>' +
                     '<div id="rep-batch-body" style="overflow-y:auto; flex:1; display:flex; flex-direction:column; gap:16px; padding:4px 8px 8px 4px;"></div>' +
                 '</div>';
             window._repBatchPrevOverflow = document.body.style.overflow;
@@ -73468,38 +73469,42 @@
                 rowEl.innerHTML = '<div style="font-size:0.8rem;color:var(--error);padding:6px;"><span style="color:var(--text);font-weight:700;">' + escHtml(row.charName) + '</span> — 로드 실패: ' + escHtml(row.error) + '</div>';
                 return;
             }
-            if (!row.baseOrder || row.baseOrder.length === 0) {
-                rowEl.innerHTML = '<div style="font-size:0.8rem;color:var(--text2);padding:6px;"><span style="color:var(--text);font-weight:700;">' + escHtml(row.charName) + '</span> — 이미지 없음</div>';
-                return;
-            }
+            const hasImages = Array.isArray(row.baseOrder) && row.baseOrder.length > 0;
             const searchEl = document.getElementById('rep-batch-search');
             const commonSearch = (searchEl ? searchEl.value : '').trim().toLowerCase();
             const mode = _repBatchMode();
-            const existingProfiles = row.profiles.filter(profile => !profile.isNew);
-            const canAdd = row.profiles.length < VISUAL_CARD_LIMIT;
+            const existingProfiles = row.profiles.filter(profile => !profile.isNew && !profile.removePending);
+            const removePendingCount = row.profiles.filter(profile => profile.removePending).length;
+            const activeProfileCount = row.profiles.length - removePendingCount;
+            const canAdd = activeProfileCount < VISUAL_CARD_LIMIT;
             const canDeleteCharacter = row.profiles.length > 0 && row.profiles.every(profile => !profile.rep0 && !profile.isNew);
             const profilesHtml = row.profiles.map((profile, profileIndex) => {
+                const profileRemoved = !profile.isNew && !!profile.removePending;
                 const search = profile.useOwnSearch
                     ? String(profile.ownSearch || '').trim().toLowerCase() : commonSearch;
-                const display = _repBatchComputeDisplay(row, profile, search);
+                const display = hasImages ? _repBatchComputeDisplay(row, profile, search) : [];
                 const matchedCount = search
                     ? row.baseOrder.filter(im => (im.filename || '').toLowerCase().includes(search)).length : 0;
-                profile._target = _repBatchResolvedTarget(row, profile, search);
+                profile._target = profileRemoved ? '' : _repBatchResolvedTarget(row, profile, search);
                 // 보호 모드는 자동 후보만 건너뛴다. 사용자가 직접 고른 후보는 명시적 변경으로 허용한다.
-                const profileProtected = !profile.isNew && mode === 'protect' && !!profile.rep0 && !profile.manualTarget;
-                const badge = profile.isNew
+                const profileProtected = !profileRemoved && !profile.isNew && mode === 'protect' && !!profile.rep0 && !profile.manualTarget;
+                const badge = profileRemoved
+                    ? '<span style="font-size:0.6rem;color:#ef4444;border:1px solid rgba(239,68,68,.45);border-radius:999px;padding:1px 6px;">삭제 예정</span>'
+                    : (profile.isNew
                     ? '<span style="font-size:0.6rem;color:#a855f7;border:1px solid rgba(168,85,247,.45);border-radius:999px;padding:1px 6px;">추가 예정</span>'
                     : (profile.rep0
                         ? '<span style="font-size:0.6rem;color:var(--accent);border:1px solid color-mix(in srgb,var(--accent) 45%,transparent);border-radius:999px;padding:1px 6px;">대표 설정됨</span>'
-                        : '<span style="font-size:0.6rem;color:var(--text2);border:1px solid var(--border);border-radius:999px;padding:1px 6px;">대표 미설정</span>');
+                        : '<span style="font-size:0.6rem;color:var(--text2);border:1px solid var(--border);border-radius:999px;padding:1px 6px;">대표 미설정</span>'));
                 const protectNote = profileProtected
                     ? '<span style="font-size:0.6rem;color:var(--text2);border:1px dashed var(--border);border-radius:999px;padding:1px 6px;">보호(건너뜀)</span>' : '';
                 const targetHint = (!profileProtected && profile._target && profile._target !== profile.rep0)
                     ? '<span style="font-size:0.6rem;color:#3b82f6;border:1px solid color-mix(in srgb,#3b82f6 45%,transparent);border-radius:999px;padding:1px 6px;">' +
                         (profile.manualTarget ? '수동 지정 예정' : (search ? (matchedCount > 0 ? '매칭 지정 예정' : '첫 이미지 지정 예정') : '첫 이미지 지정 예정')) + '</span>' : '';
-                const matchInfo = search
+                const matchInfo = !hasImages
+                    ? '이미지 없음'
+                    : (search
                     ? '파일명 일치 ' + matchedCount + '건 / 전체 ' + row.baseOrder.length + '장'
-                    : display.length + '장 표시' + (row.baseOrder.length > 10 ? ' (전체 ' + row.baseOrder.length + '장)' : '');
+                    : display.length + '장 표시' + (row.baseOrder.length > 10 ? ' (전체 ' + row.baseOrder.length + '장)' : ''));
                 const sourceSelect = profile.isNew
                     ? '<label style="display:flex;align-items:center;gap:4px;font-size:0.66rem;color:var(--text2);">복제 원본 ' +
                         '<select onchange="_repBatchSetDraftSource(' + i + ',' + profileIndex + ',this.value)" style="padding:3px 5px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);font-size:0.68rem;">' +
@@ -73508,14 +73513,17 @@
                 const profileTitle = profile.isNew
                     ? '<input value="' + escAttr(profile.profileLabel) + '" maxlength="80" onchange="_repBatchSetDraftLabel(' + i + ',' + profileIndex + ',this.value)" style="min-width:130px;padding:4px 6px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);font-size:0.76rem;font-weight:600;" aria-label="새 프로필 이름">'
                     : '<span style="font-weight:600;font-size:0.78rem;">[' + (profileIndex + 1) + '] ' + escHtml(profile.profileLabel) + '</span>';
-                const ownSearchControl =
+                const ownSearchControl = profileRemoved ? '' :
                     '<label style="display:flex;align-items:center;gap:3px;font-size:0.66rem;color:var(--text2);cursor:pointer;">' +
                         '<input type="checkbox" ' + (profile.useOwnSearch ? 'checked' : '') + ' onchange="_repBatchToggleProfileSearch(' + i + ',' + profileIndex + ',this.checked)">개별 검색</label>' +
                     (profile.useOwnSearch
                         ? '<input value="' + escAttr(profile.ownSearch) + '" placeholder="비우면 첫 이미지" onchange="_repBatchSetProfileSearch(' + i + ',' + profileIndex + ',this.value)" onkeydown="if(event.key===\'Enter\')this.blur()" style="width:150px;padding:3px 6px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);font-size:0.68rem;">'
                         : '');
-                const removeDraft = profile.isNew
-                    ? '<button onclick="_repBatchRemoveDraftProfile(' + i + ',' + profileIndex + ')" style="border:1px solid rgba(239,68,68,.45);border-radius:5px;background:transparent;color:#ef4444;padding:3px 7px;cursor:pointer;font-size:0.65rem;">초안 삭제</button>' : '';
+                const removeControl = profile.isNew
+                    ? '<button onclick="_repBatchRemoveDraftProfile(' + i + ',' + profileIndex + ')" style="border:1px solid rgba(239,68,68,.45);border-radius:5px;background:transparent;color:#ef4444;padding:3px 7px;cursor:pointer;font-size:0.65rem;">초안 삭제</button>'
+                    : (profileIndex > 0
+                        ? '<button onclick="_repBatchToggleRemoveProfile(' + i + ',' + profileIndex + ')" style="border:1px solid rgba(239,68,68,.45);border-radius:5px;background:' + (profileRemoved ? 'rgba(239,68,68,.12)' : 'transparent') + ';color:#ef4444;padding:3px 7px;cursor:pointer;font-size:0.65rem;">' + (profileRemoved ? '빼기 취소' : '카드 빼기') + '</button>'
+                        : '<span style="font-size:0.62rem;color:var(--text2);">기본 카드</span>');
                 const thumbs = display.map(img => {
                     const isRep0 = img.filename === profile.rep0;
                     const isCandidate = profile._target && img.filename === profile._target && !isRep0 && !profileProtected;
@@ -73531,6 +73539,8 @@
                     const buttonStyle = isManualTarget
                         ? 'border:1px solid #3b82f6;background:#3b82f6;color:#fff;cursor:default;'
                         : 'border:1px solid #3b82f6;background:var(--surface2);color:#3b82f6;cursor:pointer;';
+                    const manualButton = profileRemoved ? '' :
+                        '<button data-role="rep-batch-manual" data-selected="' + (isManualTarget ? 'true' : 'false') + '" aria-pressed="' + (isManualTarget ? 'true' : 'false') + '" onclick="_repBatchSelectManualTarget(' + i + ',' + profileIndex + ',\'' + escAttr(img.filename) + '\')" title="이 이미지를 대표 후보로 직접 선택" style="width:100%;margin-top:3px;padding:3px 1px;border-radius:4px;font-size:0.57rem;font-weight:700;' + buttonStyle + '">' + buttonLabel + '</button>';
                     return '<div style="flex:0 0 auto;width:70px;">' +
                         '<div style="position:relative;cursor:zoom-in;" onclick="openLightbox(\'' + escAttr(img.url) + '\')">' +
                             '<img src="' + escAttr(img.url) + '" loading="lazy" style="width:100%;aspect-ratio:700/1024;object-fit:contain;display:block;border-radius:6px;background:var(--surface);' + borderStyle + '" onerror="this.style.opacity=0.2">' +
@@ -73538,18 +73548,19 @@
                             candidateBadge +
                         '</div>' +
                         '<div style="font-size:0.52rem;color:var(--text3);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="' + escAttr(img.filename) + '">' + escHtml(img.filename) + '</div>' +
-                        '<button data-role="rep-batch-manual" data-selected="' + (isManualTarget ? 'true' : 'false') + '" aria-pressed="' + (isManualTarget ? 'true' : 'false') + '" onclick="_repBatchSelectManualTarget(' + i + ',' + profileIndex + ',\'' + escAttr(img.filename) + '\')" title="이 이미지를 대표 후보로 직접 선택" style="width:100%;margin-top:3px;padding:3px 1px;border-radius:4px;font-size:0.57rem;font-weight:700;' + buttonStyle + '">' + buttonLabel + '</button>' +
+                        manualButton +
                     '</div>';
                 }).join('');
-                return '<div data-profile-idx="' + profileIndex + '" style="border:1px solid var(--border);border-radius:7px;padding:7px;background:var(--surface);">' +
-                    '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:6px;">' + profileTitle + badge + protectNote + targetHint + sourceSelect + ownSearchControl + removeDraft +
+                const thumbsContent = thumbs || '<span style="font-size:0.68rem;color:var(--text2);padding:8px 2px;">대표로 지정할 이미지가 없습니다.</span>';
+                return '<div data-profile-idx="' + profileIndex + '" data-remove-pending="' + (profileRemoved ? 'true' : 'false') + '" style="border:1px solid ' + (profileRemoved ? 'rgba(239,68,68,.4)' : 'var(--border)') + ';border-radius:7px;padding:7px;background:var(--surface);opacity:' + (profileRemoved ? '.62' : '1') + ';">' +
+                    '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:6px;">' + profileTitle + badge + protectNote + targetHint + sourceSelect + ownSearchControl + removeControl +
                         '<span style="margin-left:auto;font-size:0.64rem;color:var(--text2);">' + matchInfo + '</span></div>' +
-                    '<div style="display:flex;gap:6px;overflow-x:auto;padding-bottom:4px;">' + thumbs + '</div></div>';
+                    '<div style="display:flex;gap:6px;overflow-x:auto;padding-bottom:4px;">' + thumbsContent + '</div></div>';
             }).join('');
             rowEl.innerHTML =
                 '<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;margin:-8px -8px 10px;background:' + palette.header + ';border-bottom:1px solid ' + palette.border + ';border-radius:8px 8px 0 0;">' +
                     '<span style="font-weight:800;font-size:1.02rem;letter-spacing:.01em;">' + escHtml(row.charName) + '</span>' +
-                    '<span style="font-size:0.64rem;color:var(--text2);">프로필 ' + row.profiles.length + '/' + VISUAL_CARD_LIMIT + '</span>' +
+                    '<span style="font-size:0.64rem;color:var(--text2);">프로필 ' + activeProfileCount + '/' + VISUAL_CARD_LIMIT + (removePendingCount ? ' · 삭제 예정 ' + removePendingCount : '') + '</span>' +
                     '<button onclick="_repBatchAddDraftProfile(' + i + ')" ' + (canAdd ? '' : 'disabled') + ' style="border:1px dashed var(--accent);border-radius:5px;background:transparent;color:var(--accent);padding:3px 8px;cursor:' + (canAdd ? 'pointer' : 'not-allowed') + ';font-size:0.68rem;opacity:' + (canAdd ? '1' : '.45') + ';">＋ 프로필 추가</button>' +
                     (canDeleteCharacter ? '<button onclick="deleteRepBatchChar(\'' + escAttr(row.charName) + '\')" title="이 캐릭터 삭제" style="margin-left:auto;background:var(--error);color:#fff;border:none;padding:2px 8px;border-radius:999px;cursor:pointer;font-size:0.62rem;">🗑 캐릭터 삭제</button>' : '') +
                 '</div>' +
@@ -73600,11 +73611,12 @@
         function _repBatchAddDraftProfile(rowIndex) {
             const row = _repBatchRowData[rowIndex];
             if (!row) return;
-            if (row.profiles.length >= VISUAL_CARD_LIMIT) {
+            const activeCount = row.profiles.filter(profile => !profile.removePending).length;
+            if (activeCount >= VISUAL_CARD_LIMIT) {
                 showToast(`캐릭터 프로필은 최대 ${VISUAL_CARD_LIMIT}개까지 추가할 수 있습니다.`, 'error');
                 return;
             }
-            const source = row.profiles.find(profile => !profile.isNew);
+            const source = row.profiles.find(profile => !profile.isNew && !profile.removePending);
             if (!source) {
                 console.error('[BOT] 대표 일괄 설정 새 프로필 원본 없음:', row.charName);
                 showToast('복제할 원본 프로필을 찾지 못했습니다.', 'error');
@@ -73620,6 +73632,7 @@
                 useOwnSearch: false,
                 ownSearch: '',
                 manualTarget: '',
+                removePending: false,
                 _target: ''
             });
             _repBatchRenderRow(rowIndex);
@@ -73630,6 +73643,32 @@
             const profile = row?.profiles?.[profileIndex];
             if (!profile?.isNew) return;
             row.profiles.splice(profileIndex, 1);
+            _repBatchRenderRow(rowIndex);
+        }
+
+        function _repBatchToggleRemoveProfile(rowIndex, profileIndex) {
+            const row = _repBatchRowData[rowIndex];
+            const profile = row?.profiles?.[profileIndex];
+            if (!row || !profile || profile.isNew) return;
+            if (profileIndex <= 0) {
+                console.error('[BOT] 대표 일괄 기본 카드 삭제 시도 차단:', {
+                    character: row.charName,
+                    visualCardId: profile.profileId
+                });
+                showToast('[1] 기본 카드는 뺄 수 없습니다.', 'error');
+                return;
+            }
+            profile.removePending = !profile.removePending;
+            if (profile.removePending) {
+                const fallbackSource = row.profiles.find(candidate =>
+                    !candidate.isNew && !candidate.removePending && candidate.profileId !== profile.profileId
+                );
+                row.profiles.forEach(candidate => {
+                    if (candidate.isNew && candidate.sourceProfileId === profile.profileId) {
+                        candidate.sourceProfileId = fallbackSource?.profileId || '';
+                    }
+                });
+            }
             _repBatchRenderRow(rowIndex);
         }
 
@@ -73711,9 +73750,11 @@
             if (!btn) return;
             const mode = _repBatchMode();
             const hasTarget = _repBatchRowData.some(row =>
-                row.loaded && !row.error && row.baseOrder && row.baseOrder.length > 0 &&
-                row.profiles.some(profile =>
-                    profile.isNew || profile.manualTarget || !(mode === 'protect' && profile.rep0)
+                row.loaded && !row.error && row.profiles.some(profile =>
+                    profile.removePending || (
+                        row.baseOrder && row.baseOrder.length > 0 &&
+                        (profile.isNew || profile.manualTarget || !(mode === 'protect' && profile.rep0))
+                    )
                 )
             );
             btn.disabled = !hasTarget;
@@ -73731,11 +73772,23 @@
             const skipProtected = [];
             const skipNoImage = [];
             _repBatchRowData.forEach(row => {
-                if (!row.loaded || row.error || !row.baseOrder || row.baseOrder.length === 0) {
+                if (!row.loaded || row.error) {
                     (row.profiles || []).forEach(profile => skipNoImage.push(`${row.charName}/${profile.profileLabel}`));
                     return;
                 }
                 row.profiles.forEach(profile => {
+                    if (profile.removePending) {
+                        items.push({
+                            char_name: row.charName,
+                            visual_card_id: profile.profileId,
+                            remove_profile: true
+                        });
+                        return;
+                    }
+                    if (!row.baseOrder || row.baseOrder.length === 0) {
+                        skipNoImage.push(`${row.charName}/${profile.profileLabel}`);
+                        return;
+                    }
                     if (!profile.isNew && mode === 'protect' && profile.rep0 && !profile.manualTarget) {
                         skipProtected.push(`${row.charName}/${profile.profileLabel}`);
                         return;
@@ -73761,7 +73814,7 @@
                     items.push(item);
                 });
             });
-            if (items.length === 0) { showToast('적용할 프로필(이미지)이 없습니다', 'error'); return; }
+            if (items.length === 0) { showToast('적용할 프로필 변경이 없습니다', 'error'); return; }
             const btn = document.getElementById('rep-batch-apply');
             if (btn) { btn.disabled = true; btn.textContent = '적용 중…'; }
             try {
@@ -73774,7 +73827,8 @@
                 if (data.error) { showToast('일괄 설정 실패: ' + data.error, 'error'); return; }
                 botData.bots = data.bots;
                 const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
-                const updatedCharNames = [...new Set((data.updated || []).map(item => item.char_name).filter(Boolean))];
+                const changedItems = (data.updated || []).concat(data.removed || []);
+                const updatedCharNames = [...new Set(changedItems.map(item => item.char_name).filter(Boolean))];
                 await Promise.all(updatedCharNames.map(charName => _loadVisualCardState(charName)));
                 _repBatchRowData.forEach(row => {
                     row.profiles = _repBatchProfilesFromState(row.charName);
@@ -73786,9 +73840,13 @@
                 const skippedProtectedN = ((data.skipped || []).filter(s => s.reason === '이미 대표 있음')).length;
                 const skippedNoImageN = skipNoImage.length;
                 const createdN = ((data.updated || []).filter(item => item.created_profile)).length;
+                const removedN = (data.removed || []).length;
                 const skippedOtherN = Math.max(0, (data.skipped || []).length - skippedProtectedN);
-                let msg = '프로필 대표 ' + updated + '건 지정 완료';
-                if (createdN > 0) msg += ' / 새 프로필 ' + createdN + '개 추가';
+                const completedParts = [];
+                if (updated > 0) completedParts.push('프로필 대표 ' + updated + '건 지정');
+                if (createdN > 0) completedParts.push('새 프로필 ' + createdN + '개 추가');
+                if (removedN > 0) completedParts.push('카드 ' + removedN + '개 삭제');
+                let msg = completedParts.length > 0 ? completedParts.join(' / ') + ' 완료' : '적용된 변경 없음';
                 const parts = [];
                 if (skippedProtectedN > 0) parts.push('이미 대표 있음 ' + skippedProtectedN + '건');
                 if (skippedNoImageN > 0) parts.push('이미지 없음 ' + skippedNoImageN + '건');
@@ -73796,7 +73854,7 @@
                 if (parts.length > 0) msg += ' (' + parts.join(', ') + ' 건너뜀)';
                 showToast(msg, 'success');
                 console.log('[BOT] 프로필 대표 일괄 설정 완료:', {
-                    mode, commonSearch: commonSearch || '(없음)', updated, created: createdN,
+                    mode, commonSearch: commonSearch || '(없음)', updated, created: createdN, removed: removedN,
                     skippedProtected: skippedProtectedN, skippedNoImage: skipNoImage, skippedServer: data.skipped || []
                 });
             } catch (e) {

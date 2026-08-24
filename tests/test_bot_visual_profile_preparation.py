@@ -435,6 +435,71 @@ async def test_bulk_main_rep_rejects_profile_creation_at_card_limit(
 
 
 @pytest.mark.asyncio
+async def test_bulk_main_rep_removes_requested_non_primary_card_on_apply(
+    visual_bot, monkeypatch
+):
+    _tmp_path, _bot_root, _char_dir, data = visual_bot
+    saved = []
+    monkeypatch.setattr(bot_mode, "_save_bot_data", lambda value: saved.append(value))
+
+    response = await bot_mode.BotMode()._bulk_set_main_rep(data, {
+        "bot_name": "sample-bot",
+        "mode": "protect",
+        "items": [{
+            "char_name": "alice",
+            "visual_card_id": "alternate",
+            "remove_profile": True,
+        }],
+    })
+    payload = json.loads(response.text)
+    character = data["bots"][0]["characters"][0]
+
+    assert payload["updated"] == []
+    assert payload["removed"] == [{
+        "char_name": "alice",
+        "visual_card_id": "alternate",
+        "profile_label": "카드 2",
+    }]
+    assert payload["skipped"] == []
+    assert [card["id"] for card in character["visual_cards"]] == ["primary"]
+    assert character["rep_images"] == ["primary.webp"]
+    assert len(saved) == 1
+
+
+@pytest.mark.asyncio
+async def test_bulk_main_rep_refuses_to_remove_primary_card(
+    visual_bot, monkeypatch
+):
+    _tmp_path, _bot_root, _char_dir, data = visual_bot
+    saved = []
+    monkeypatch.setattr(bot_mode, "_save_bot_data", lambda value: saved.append(value))
+
+    response = await bot_mode.BotMode()._bulk_set_main_rep(data, {
+        "bot_name": "sample-bot",
+        "mode": "protect",
+        "items": [{
+            "char_name": "alice",
+            "visual_card_id": "primary",
+            "remove_profile": True,
+        }],
+    })
+    payload = json.loads(response.text)
+
+    assert payload["updated"] == []
+    assert payload["removed"] == []
+    assert payload["skipped"] == [{
+        "char_name": "alice",
+        "visual_card_id": "primary",
+        "reason": "기본 프로필은 삭제할 수 없음",
+    }]
+    assert [
+        card["id"]
+        for card in data["bots"][0]["characters"][0]["visual_cards"]
+    ] == ["primary", "alternate"]
+    assert saved == []
+
+
+@pytest.mark.asyncio
 async def test_legacy_bulk_main_rep_payload_does_not_force_card_migration(
     tmp_path, monkeypatch
 ):
@@ -482,6 +547,12 @@ def test_representative_batch_frontend_supports_profile_drafts():
     assert "source_visual_card_id" in source
     assert "visual_card_id: profile.profileId" in source
     assert "＋ 프로필 추가" in source
+    assert "function _repBatchToggleRemoveProfile(" in source
+    assert "profile.removePending" in source
+    assert "remove_profile: true" in source
+    assert "카드 빼기" in source
+    assert "빼기 취소" in source
+    assert "[1] 기본 카드는 뺄 수 없습니다." in source
 
 
 def test_bubble_matching_uses_best_face_across_character_cards():

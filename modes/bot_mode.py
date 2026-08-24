@@ -1246,7 +1246,8 @@ class BotMode:
 
         기존 호출의 ``items:[{char_name, filename}]`` 형식은 첫 번째 카드 대상으로
         계속 지원한다. 다중 카드 호출은 ``visual_card_id``를 보내며, 새 카드는
-        ``create_profile=true``와 ``source_visual_card_id``를 함께 보낸다.
+        ``create_profile=true``와 ``source_visual_card_id``를 함께 보낸다. 저장된
+        보조 카드 삭제는 ``remove_profile=true``로 요청하며 기본 카드는 보호한다.
         보호 모드에서도 사용자가 직접 고른 항목은 ``manual_override=true``로 교체한다.
         """
         bot_name = body.get("bot_name", "").strip()
@@ -1267,6 +1268,7 @@ class BotMode:
             return _json_error(f"봇을 찾을 수 없음: {bot_name}")
 
         updated = []
+        removed = []
         skipped = []
         character_states = {}
 
@@ -1310,20 +1312,59 @@ class BotMode:
             char_name = (it.get("char_name", "") or "").strip()
             filename = (it.get("filename", "") or "").strip()
             requested_card_id = (it.get("visual_card_id", "") or "").strip()
+            if "remove_profile" in it and not isinstance(it.get("remove_profile"), bool):
+                skip_item(char_name, requested_card_id, "remove_profile은 bool이어야 함")
+                continue
+            remove_profile = it.get("remove_profile") is True
             if "create_profile" in it and not isinstance(it.get("create_profile"), bool):
                 skip_item(char_name, requested_card_id, "create_profile은 bool이어야 함")
                 continue
             create_profile = it.get("create_profile") is True
+            if remove_profile and create_profile:
+                skip_item(char_name, requested_card_id, "삭제와 새 프로필 생성을 동시에 요청할 수 없음")
+                continue
             if "manual_override" in it and not isinstance(it.get("manual_override"), bool):
                 skip_item(char_name, requested_card_id, "manual_override는 bool이어야 함")
                 continue
             manual_override = it.get("manual_override") is True
-            if not char_name or not filename:
+            if not char_name or (not remove_profile and not filename):
                 skip_item(char_name, requested_card_id, "값이 비어있음")
                 continue
             char = next((c for c in bot.get("characters", []) if c["name"] == char_name), None)
             if not char:
                 skip_item(char_name, requested_card_id, "캐릭터를 찾을 수 없음")
+                continue
+
+            state = character_state(char)
+            cards = state["cards"]
+            if remove_profile:
+                if not requested_card_id:
+                    skip_item(char_name, requested_card_id, "삭제할 프로필 ID가 비어있음")
+                    continue
+                target_index = next(
+                    (
+                        index for index, card in enumerate(cards)
+                        if str(card.get("id") or "") == requested_card_id
+                    ),
+                    -1,
+                )
+                if target_index < 0:
+                    skip_item(char_name, requested_card_id, "삭제할 프로필을 찾을 수 없음")
+                    continue
+                if target_index == 0:
+                    skip_item(char_name, requested_card_id, "기본 프로필은 삭제할 수 없음")
+                    continue
+                removed_card = cards.pop(target_index)
+                state["dirty"] = True
+                removed.append({
+                    "char_name": char_name,
+                    "visual_card_id": requested_card_id,
+                    "profile_label": str(removed_card.get("label") or ""),
+                })
+                print(
+                    f"[BOT_MODE] 일괄 캐릭터 카드 삭제 예정 반영: "
+                    f"{bot_name}/{char_name}/{requested_card_id}"
+                )
                 continue
 
             char_dir = os.path.abspath(os.path.join(BOT_DIR, bot_name, char_name))
@@ -1346,8 +1387,6 @@ class BotMode:
                 skip_item(char_name, requested_card_id, "캐릭터 폴더의 이미지 파일이 아님")
                 continue
 
-            state = character_state(char)
-            cards = state["cards"]
             target_card = None
 
             if create_profile:
@@ -1412,7 +1451,7 @@ class BotMode:
                 f"created_profile={create_profile}, manual_override={manual_override}"
             )
 
-        if updated:
+        if updated or removed:
             for state in character_states.values():
                 if not state["dirty"]:
                     continue
@@ -1429,7 +1468,12 @@ class BotMode:
                 else:
                     store_visual_cards(char, cards)
             _save_bot_data(data)
-        return _json_ok({"bots": data["bots"], "updated": updated, "skipped": skipped})
+        return _json_ok({
+            "bots": data["bots"],
+            "updated": updated,
+            "removed": removed,
+            "skipped": skipped,
+        })
 
     # ─── 이미지 목록 ─────────────────────────────────────
     async def handle_get_images(self, request):
