@@ -6,6 +6,7 @@ BotMode - 삽화 설정 모드
 """
 
 import asyncio
+from copy import deepcopy
 import hashlib
 import json
 import math
@@ -919,50 +920,187 @@ class BotMode:
         return _json_ok({"bots": data["bots"]})
 
     async def _bulk_set_main_rep(self, data, body):
-        """일괄 메인 대표 지정: items:[{char_name, filename}] 각각을 rep_images[0]로.
-        mode="protect"(기본) → 이미 메인 대표(rep_images[0])가 있으면 건너뜀.
-        mode="push"          → 기존 대표도 filename 제거 후 뒤로 밀고 최대 3개 유지(초과 시 맨 끝 제거)."""
+        """캐릭터 카드별 메인 대표 지정과 새 카드 생성을 한 번에 저장한다.
+
+        기존 호출의 ``items:[{char_name, filename}]`` 형식은 첫 번째 카드 대상으로
+        계속 지원한다. 다중 카드 호출은 ``visual_card_id``를 보내며, 새 카드는
+        ``create_profile=true``와 ``source_visual_card_id``를 함께 보낸다.
+        """
         bot_name = body.get("bot_name", "").strip()
         items = body.get("items", []) or []
         mode = (body.get("mode", "") or "").strip()
         if mode not in ("protect", "push"):
+            print(f"[BOT_MODE] 일괄 대표 모드가 잘못되어 protect 사용: mode={mode!r}")
             mode = "protect"
         if not bot_name:
+            print("[BOT_MODE] 일괄 대표 지정 실패: 봇 이름이 비어있음")
             return _json_error("봇 이름이 비어있습니다.")
         if not isinstance(items, list) or len(items) == 0:
+            print(f"[BOT_MODE] 일괄 대표 지정 실패: items 형식 오류, value={items!r}")
             return _json_error("적용할 항목(items)이 비어있습니다.")
         bot = next((b for b in data["bots"] if b["name"] == bot_name), None)
         if not bot:
+            print(f"[BOT_MODE] 일괄 대표 지정 실패: 봇을 찾을 수 없음, bot={bot_name!r}")
             return _json_error(f"봇을 찾을 수 없음: {bot_name}")
 
         updated = []
         skipped = []
+        character_states = {}
+
+        def skip_item(char_name, visual_card_id, reason):
+            skipped.append({
+                "char_name": char_name,
+                "visual_card_id": visual_card_id,
+                "reason": reason,
+            })
+            print(
+                f"[BOT_MODE] 일괄 대표 지정 스킵: bot={bot_name!r}, "
+                f"character={char_name!r}, card={visual_card_id!r}, reason={reason}"
+            )
+
+        def character_state(char):
+            char_name = str(char.get("name") or "")
+            state = character_states.get(char_name)
+            if state is not None:
+                return state
+            cards, source = effective_character_cards(char, None)
+            state = {
+                "character": char,
+                "cards": cards,
+                "source": source,
+                "dirty": False,
+            }
+            character_states[char_name] = state
+            return state
+
+        def new_card_id(cards):
+            used = {str(card.get("id") or "") for card in cards}
+            while True:
+                candidate = f"card_{uuid.uuid4().hex[:12]}"
+                if candidate not in used:
+                    return candidate
+
         for it in items:
             if not isinstance(it, dict):
+                skip_item("", "", f"항목이 object가 아님: {it!r}")
                 continue
             char_name = (it.get("char_name", "") or "").strip()
             filename = (it.get("filename", "") or "").strip()
+            requested_card_id = (it.get("visual_card_id", "") or "").strip()
+            if "create_profile" in it and not isinstance(it.get("create_profile"), bool):
+                skip_item(char_name, requested_card_id, "create_profile은 bool이어야 함")
+                continue
+            create_profile = it.get("create_profile") is True
             if not char_name or not filename:
-                skipped.append({"char_name": char_name, "reason": "값이 비어있음"})
+                skip_item(char_name, requested_card_id, "값이 비어있음")
                 continue
             char = next((c for c in bot.get("characters", []) if c["name"] == char_name), None)
             if not char:
-                skipped.append({"char_name": char_name, "reason": "캐릭터를 찾을 수 없음"})
+                skip_item(char_name, requested_card_id, "캐릭터를 찾을 수 없음")
                 continue
-            rep_images = char.get("rep_images", []) or []
+
+            char_dir = os.path.abspath(os.path.join(BOT_DIR, bot_name, char_name))
+            image_path = os.path.abspath(os.path.join(char_dir, filename))
+            try:
+                inside_character = os.path.commonpath([char_dir, image_path]) == char_dir
+            except ValueError as exc:
+                print(
+                    f"[BOT_MODE] 일괄 대표 이미지 경로 비교 실패: "
+                    f"character={char_name!r}, filename={filename!r}, error={exc}"
+                )
+                traceback.print_exc()
+                inside_character = False
+            if (
+                not inside_character
+                or filename != os.path.basename(filename)
+                or os.path.splitext(filename)[1].lower() not in IMAGE_EXTENSIONS
+                or not os.path.isfile(image_path)
+            ):
+                skip_item(char_name, requested_card_id, "캐릭터 폴더의 이미지 파일이 아님")
+                continue
+
+            state = character_state(char)
+            cards = state["cards"]
+            target_card = None
+
+            if create_profile:
+                if len(cards) >= MAX_VISUAL_CARDS:
+                    skip_item(char_name, "", f"프로필 최대 {MAX_VISUAL_CARDS}개 초과")
+                    continue
+                source_card_id = (it.get("source_visual_card_id", "") or "").strip()
+                source_card = next(
+                    (card for card in cards if str(card.get("id") or "") == source_card_id),
+                    cards[0] if not source_card_id and cards else None,
+                )
+                if source_card is None:
+                    skip_item(char_name, source_card_id, "복제 원본 프로필을 찾을 수 없음")
+                    continue
+                target_card = deepcopy(source_card)
+                target_card["id"] = new_card_id(cards)
+                target_card["label"] = (
+                    str(it.get("profile_label") or "").strip()
+                    or f"카드 {len(cards) + 1}"
+                )
+                target_card["selection_guide"] = ""
+                target_card["aliases"] = []
+                target_card["rep_images"] = []
+                target_card["use_profile_embedding"] = True
+                cards.append(target_card)
+                requested_card_id = target_card["id"]
+            else:
+                if requested_card_id:
+                    target_card = next(
+                        (
+                            card for card in cards
+                            if str(card.get("id") or "") == requested_card_id
+                        ),
+                        None,
+                    )
+                elif cards:
+                    target_card = cards[0]
+                    requested_card_id = str(target_card.get("id") or "")
+                if target_card is None:
+                    skip_item(char_name, requested_card_id, "프로필을 찾을 수 없음")
+                    continue
+
+            rep_images = target_card.get("rep_images", []) or []
             # 보호 모드: 이미 메인 대표가 있으면 밀어내지 않고 건너뜀
             if mode == "protect" and rep_images and rep_images[0]:
-                skipped.append({"char_name": char_name, "reason": "이미 대표 있음"})
+                skip_item(char_name, requested_card_id, "이미 대표 있음")
                 continue
             # filename 제거 후 맨 앞 삽입, 최대 3개 유지
             new_reps = [filename] + [f for f in rep_images if f != filename]
             new_reps = new_reps[:3]
-            char["rep_images"] = new_reps
-            sync_root_fields_to_primary_card(char, {"rep_images"})
-            updated.append({"char_name": char_name, "filename": filename})
-            print(f"[BOT_MODE] 일괄 메인 대표 지정({mode}): {bot_name}/{char_name}/{filename}")
+            target_card["rep_images"] = new_reps
+            state["dirty"] = True
+            updated.append({
+                "char_name": char_name,
+                "visual_card_id": requested_card_id,
+                "filename": filename,
+                "created_profile": create_profile,
+            })
+            print(
+                f"[BOT_MODE] 일괄 메인 대표 지정({mode}): "
+                f"{bot_name}/{char_name}/{requested_card_id}/{filename}, "
+                f"created_profile={create_profile}"
+            )
 
         if updated:
+            for state in character_states.values():
+                if not state["dirty"]:
+                    continue
+                char = state["character"]
+                cards = state["cards"]
+                # 기존 단일 카드 데이터는 불필요하게 visual_cards로 마이그레이션하지 않는다.
+                # 새 프로필이 생겼거나 이미 카드 저장 형식이면 전체 카드를 검증해 저장한다.
+                if state["source"] == "legacy" and len(cards) == 1:
+                    primary_reps = deepcopy(cards[0].get("rep_images") or [])
+                    if primary_reps:
+                        char["rep_images"] = primary_reps
+                    else:
+                        char.pop("rep_images", None)
+                else:
+                    store_visual_cards(char, cards)
             _save_bot_data(data)
         return _json_ok({"bots": data["bots"], "updated": updated, "skipped": skipped})
 

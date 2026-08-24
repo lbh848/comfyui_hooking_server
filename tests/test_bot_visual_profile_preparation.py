@@ -1,6 +1,7 @@
 import importlib
 import json
 import os
+from copy import deepcopy
 from pathlib import Path
 
 import pytest
@@ -141,6 +142,184 @@ def test_frontend_one_click_and_manual_actions_use_visual_card_targets():
     assert "visual_targets: faceTargets.map" in source
     assert "data-visual-card-id" in source
     assert "프로필 ${run.visualTargets?.length || 0}개" in source
+
+
+@pytest.mark.asyncio
+async def test_bulk_main_rep_updates_only_the_requested_visual_card(
+    visual_bot, monkeypatch
+):
+    _tmp_path, _bot_root, char_dir, data = visual_bot
+    (char_dir / "replacement.webp").write_bytes(b"replacement")
+    saved = []
+    monkeypatch.setattr(bot_mode, "_save_bot_data", lambda value: saved.append(value))
+
+    response = await bot_mode.BotMode()._bulk_set_main_rep(data, {
+        "bot_name": "sample-bot",
+        "mode": "push",
+        "items": [{
+            "char_name": "alice",
+            "visual_card_id": "alternate",
+            "filename": "replacement.webp",
+        }],
+    })
+    payload = json.loads(response.text)
+    character = data["bots"][0]["characters"][0]
+
+    assert payload["updated"] == [{
+        "char_name": "alice",
+        "visual_card_id": "alternate",
+        "filename": "replacement.webp",
+        "created_profile": False,
+    }]
+    assert character["visual_cards"][0]["rep_images"] == ["primary.webp"]
+    assert character["visual_cards"][1]["rep_images"] == [
+        "replacement.webp",
+        "alternate.webp",
+    ]
+    assert character["rep_images"] == ["primary.webp"]
+    assert len(saved) == 1
+
+
+@pytest.mark.asyncio
+async def test_bulk_main_rep_creates_profile_from_selected_source_on_apply(
+    visual_bot, monkeypatch
+):
+    _tmp_path, _bot_root, char_dir, data = visual_bot
+    (char_dir / "transformed.webp").write_bytes(b"transformed")
+    source_before = deepcopy(data["bots"][0]["characters"][0]["visual_cards"][1])
+    saved = []
+    monkeypatch.setattr(bot_mode, "_save_bot_data", lambda value: saved.append(value))
+
+    response = await bot_mode.BotMode()._bulk_set_main_rep(data, {
+        "bot_name": "sample-bot",
+        "mode": "protect",
+        "items": [{
+            "char_name": "alice",
+            "filename": "transformed.webp",
+            "create_profile": True,
+            "source_visual_card_id": "alternate",
+            "profile_label": "변신 상태",
+        }],
+    })
+    payload = json.loads(response.text)
+    character = data["bots"][0]["characters"][0]
+    created = character["visual_cards"][2]
+
+    assert len(character["visual_cards"]) == 3
+    assert created["id"].startswith("card_")
+    assert created["label"] == "변신 상태"
+    assert created["rep_images"] == ["transformed.webp"]
+    assert created["face_tags"] == source_before["face_tags"]
+    assert created["outfits"] == source_before["outfits"]
+    assert created["selection_guide"] == ""
+    assert created["aliases"] == []
+    assert created["use_profile_embedding"] is True
+    assert character["rep_images"] == ["primary.webp"]
+    assert payload["updated"][0]["visual_card_id"] == created["id"]
+    assert payload["updated"][0]["created_profile"] is True
+    assert len(saved) == 1
+
+
+@pytest.mark.asyncio
+async def test_bulk_main_rep_protects_each_profile_independently(
+    visual_bot, monkeypatch
+):
+    _tmp_path, _bot_root, char_dir, data = visual_bot
+    (char_dir / "replacement.webp").write_bytes(b"replacement")
+    saved = []
+    monkeypatch.setattr(bot_mode, "_save_bot_data", lambda value: saved.append(value))
+
+    response = await bot_mode.BotMode()._bulk_set_main_rep(data, {
+        "bot_name": "sample-bot",
+        "mode": "protect",
+        "items": [{
+            "char_name": "alice",
+            "visual_card_id": "alternate",
+            "filename": "replacement.webp",
+        }],
+    })
+    payload = json.loads(response.text)
+
+    assert payload["updated"] == []
+    assert payload["skipped"] == [{
+        "char_name": "alice",
+        "visual_card_id": "alternate",
+        "reason": "이미 대표 있음",
+    }]
+    assert data["bots"][0]["characters"][0]["visual_cards"][1]["rep_images"] == [
+        "alternate.webp"
+    ]
+    assert saved == []
+
+
+@pytest.mark.asyncio
+async def test_bulk_main_rep_rejects_profile_creation_at_card_limit(
+    visual_bot, monkeypatch
+):
+    _tmp_path, _bot_root, _char_dir, data = visual_bot
+    character = data["bots"][0]["characters"][0]
+    source = character["visual_cards"][0]
+    for index in range(3, bot_mode.MAX_VISUAL_CARDS + 1):
+        extra = deepcopy(source)
+        extra["id"] = f"extra_{index}"
+        extra["label"] = f"카드 {index}"
+        character["visual_cards"].append(extra)
+    saved = []
+    monkeypatch.setattr(bot_mode, "_save_bot_data", lambda value: saved.append(value))
+
+    response = await bot_mode.BotMode()._bulk_set_main_rep(data, {
+        "bot_name": "sample-bot",
+        "mode": "protect",
+        "items": [{
+            "char_name": "alice",
+            "filename": "primary.webp",
+            "create_profile": True,
+            "source_visual_card_id": "primary",
+        }],
+    })
+    payload = json.loads(response.text)
+
+    assert payload["updated"] == []
+    assert payload["skipped"][0]["reason"] == "프로필 최대 10개 초과"
+    assert len(character["visual_cards"]) == bot_mode.MAX_VISUAL_CARDS
+    assert saved == []
+
+
+@pytest.mark.asyncio
+async def test_legacy_bulk_main_rep_payload_does_not_force_card_migration(
+    tmp_path, monkeypatch
+):
+    bot_root = tmp_path / "bot"
+    char_dir = bot_root / "legacy-bot" / "alice"
+    char_dir.mkdir(parents=True)
+    (char_dir / "alice.webp").write_bytes(b"alice")
+    character = {"name": "alice"}
+    data = {"bots": [{"name": "legacy-bot", "characters": [character]}]}
+    saved = []
+    monkeypatch.setattr(bot_mode, "BOT_DIR", str(bot_root))
+    monkeypatch.setattr(bot_mode, "_save_bot_data", lambda value: saved.append(value))
+
+    response = await bot_mode.BotMode()._bulk_set_main_rep(data, {
+        "bot_name": "legacy-bot",
+        "mode": "protect",
+        "items": [{"char_name": "alice", "filename": "alice.webp"}],
+    })
+    payload = json.loads(response.text)
+
+    assert payload["updated"][0]["visual_card_id"] == "card_1"
+    assert character["rep_images"] == ["alice.webp"]
+    assert "visual_cards" not in character
+    assert len(saved) == 1
+
+
+def test_representative_batch_frontend_supports_profile_drafts():
+    source = Path("frontend/index.html").read_text(encoding="utf-8")
+
+    assert "function _repBatchAddDraftProfile(" in source
+    assert "create_profile = true" in source
+    assert "source_visual_card_id" in source
+    assert "visual_card_id: profile.profileId" in source
+    assert "＋ 프로필 추가" in source
 
 
 def test_bubble_matching_uses_best_face_across_character_cards():
