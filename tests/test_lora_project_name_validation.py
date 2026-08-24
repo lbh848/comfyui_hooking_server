@@ -145,6 +145,11 @@ def test_frontend_validates_new_and_duplicated_lora_project_names() -> None:
     assert "function validateLoraProjectName(name)" in source
     assert 'id="lora-entry-add-modal"' in source
     assert 'id="style-lora-project-add-modal"' in source
+    assert 'id="dup-target-entry-error"' in source
+    assert 'id="bot-lora-project-add-name-error"' in source
+    assert 'id="bot-dup-project-name-error"' in source
+    assert "function setLoraProjectNameFieldError(inputId, errorId, message)" in source
+    assert "function validateLoraProjectNameField(inputId, errorId)" in source
     assert "async function confirmLoraEntryAdd()" in source
     assert "async function confirmStyleLoraCreateProject()" in source
     assert "const nameError = validateLoraProjectName(name);" in source

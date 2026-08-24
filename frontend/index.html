@@ -19847,8 +19847,9 @@
                 <!-- 새 항목명 -->
                 <div style="margin-bottom:10px;">
                     <label style="font-size:0.85rem; font-weight:600; display:block; margin-bottom:4px;">새 항목명 <span style="color:var(--error);">*</span></label>
-                    <input id="dup-target-entry" type="text" placeholder="예: anima-v11" oninput="this.style.borderColor=validateLoraProjectName(this.value)?'var(--error)':'var(--border)'" style="width:100%; padding:8px; border-radius:6px; border:1px solid var(--border); background:var(--surface1); color:var(--text); font-size:0.9rem;">
+                    <input id="dup-target-entry" type="text" placeholder="예: anima-v11" oninput="validateLoraProjectNameField('dup-target-entry','dup-target-entry-error')" style="width:100%; padding:8px; border-radius:6px; border:1px solid var(--border); background:var(--surface1); color:var(--text); font-size:0.9rem;">
                     <div style="font-size:0.7rem; color:var(--text-secondary); margin-top:4px;">허용 문자: 한글/영문/숫자, 공백, _, -, .</div>
+                    <div id="dup-target-entry-error" aria-live="polite" style="display:none; margin-top:6px; padding:8px 10px; border-radius:6px; background:rgba(220,60,60,0.12); color:var(--error); font-size:0.8rem;"></div>
                 </div>
                 <!-- 트리거 키워드 -->
                 <div style="margin-bottom:10px;">
@@ -19894,8 +19895,9 @@
                 <!-- 새 프로젝트명 -->
                 <div style="margin-bottom:10px;">
                     <label style="font-size:0.85rem; font-weight:600; display:block; margin-bottom:4px;">새 프로젝트 이름 <span style="color:var(--error);">*</span></label>
-                    <input id="bot-dup-project-name" type="text" placeholder="예: anima-v11-v2" oninput="this.style.borderColor=validateLoraProjectName(this.value)?'var(--error)':'var(--border)'" style="width:100%; padding:8px; border-radius:6px; border:1px solid var(--border); background:var(--surface1); color:var(--text); font-size:0.9rem;">
+                    <input id="bot-dup-project-name" type="text" placeholder="예: anima-v11-v2" oninput="validateLoraProjectNameField('bot-dup-project-name','bot-dup-project-name-error')" style="width:100%; padding:8px; border-radius:6px; border:1px solid var(--border); background:var(--surface1); color:var(--text); font-size:0.9rem;">
                     <div style="font-size:0.7rem; color:var(--text-secondary); margin-top:4px;">허용 문자: 한글/영문/숫자, 공백, _, -, .</div>
+                    <div id="bot-dup-project-name-error" aria-live="polite" style="display:none; margin-top:6px; padding:8px 10px; border-radius:6px; background:rgba(220,60,60,0.12); color:var(--error); font-size:0.8rem;"></div>
                 </div>
             </div>
             <div class="modal-footer">
@@ -19915,8 +19917,9 @@
             <div class="modal-body">
                 <div style="margin-bottom:12px;">
                     <label style="font-size:0.85rem; font-weight:600; display:block; margin-bottom:4px;">프로젝트 이름 <span style="color:var(--error);">*</span></label>
-                    <input id="bot-lora-project-add-name" type="text" placeholder="예: anima-v11" oninput="this.style.borderColor=validateLoraProjectName(this.value)?'var(--error)':'var(--border)'" style="width:100%; padding:8px; border-radius:6px; border:1px solid var(--border); background:var(--surface1); color:var(--text); font-size:0.9rem;">
+                    <input id="bot-lora-project-add-name" type="text" placeholder="예: anima-v11" oninput="validateLoraProjectNameField('bot-lora-project-add-name','bot-lora-project-add-name-error')" style="width:100%; padding:8px; border-radius:6px; border:1px solid var(--border); background:var(--surface1); color:var(--text); font-size:0.9rem;">
                     <div style="font-size:0.7rem; color:var(--text-secondary); margin-top:4px;">허용 문자: 한글/영문/숫자, 공백, _, -, .</div>
+                    <div id="bot-lora-project-add-name-error" aria-live="polite" style="display:none; margin-top:6px; padding:8px 10px; border-radius:6px; background:rgba(220,60,60,0.12); color:var(--error); font-size:0.8rem;"></div>
                 </div>
                 <div style="font-size:0.85rem; font-weight:600; margin-bottom:6px;">포함할 캐릭터</div>
                 <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center; margin-bottom:8px; padding:6px 8px; background:var(--surface1); border:1px solid var(--border); border-radius:6px;">
@@ -51453,6 +51456,27 @@
             return '';
         }
 
+        function setLoraProjectNameFieldError(inputId, errorId, message) {
+            const input = document.getElementById(inputId);
+            const errorEl = document.getElementById(errorId);
+            if (input) input.style.borderColor = message ? 'var(--error)' : 'var(--border)';
+            if (errorEl) {
+                errorEl.textContent = message || '';
+                errorEl.style.display = message ? 'block' : 'none';
+            }
+        }
+
+        function validateLoraProjectNameField(inputId, errorId) {
+            const input = document.getElementById(inputId);
+            if (!input) {
+                console.error('[LORA_NAME] 프로젝트명 입력 필드를 찾을 수 없음:', inputId);
+                return false;
+            }
+            const message = input.value ? validateLoraProjectName(input.value) : '';
+            setLoraProjectNameFieldError(inputId, errorId, message);
+            return !message;
+        }
+
         function setLoraEntryAddError(message) {
             const errorEl = document.getElementById('lora-entry-add-error');
             errorEl.textContent = message || '';
@@ -51557,6 +51581,7 @@
 
             // 대상 항목명 초기화
             document.getElementById('dup-target-entry').value = '';
+            setLoraProjectNameFieldError('dup-target-entry', 'dup-target-entry-error', '');
             document.getElementById('dup-description').value = '';
             document.getElementById('dup-training-config').value = '';
 
@@ -51604,7 +51629,10 @@
                 } catch {}
             };
             document.getElementById('dup-target-character').onchange = updateDupSavePath;
-            document.getElementById('dup-target-entry').oninput = updateDupSavePath;
+            document.getElementById('dup-target-entry').oninput = () => {
+                updateDupSavePath();
+                validateLoraProjectNameField('dup-target-entry', 'dup-target-entry-error');
+            };
 
             document.getElementById('lora-duplicate-modal').style.display = 'flex';
         }
@@ -51644,14 +51672,24 @@
         }
 
         async function confirmLoraDuplicate() {
-            const targetEntry = document.getElementById('dup-target-entry').value.trim();
+            const targetEntryInput = document.getElementById('dup-target-entry');
+            const targetEntry = targetEntryInput.value.trim();
             const targetCharacter = document.getElementById('dup-target-character').value;
             const trigger = document.getElementById('dup-trigger').value.trim();
             const description = document.getElementById('dup-description').value.trim();
 
-            if (!targetEntry) { showToast('대상 항목명을 입력하세요', 'error'); return; }
+            if (!targetEntry) {
+                setLoraProjectNameFieldError('dup-target-entry', 'dup-target-entry-error', 'LoRA 프로젝트명을 입력하세요');
+                targetEntryInput.focus();
+                return;
+            }
             const nameError = validateLoraProjectName(targetEntry);
-            if (nameError) { showToast(nameError, 'error'); return; }
+            if (nameError) {
+                setLoraProjectNameFieldError('dup-target-entry', 'dup-target-entry-error', nameError);
+                targetEntryInput.focus();
+                return;
+            }
+            setLoraProjectNameFieldError('dup-target-entry', 'dup-target-entry-error', '');
             if (!trigger) { showToast('트리거 키워드를 입력하세요', 'error'); return; }
 
             let trainingConfig = null;
@@ -51686,11 +51724,13 @@
                         await enterLoraCharacter(loraCurrentCharacter);
                     }
                 } else {
-                    showToast(resp.error || '복제 실패', 'error');
+                    const message = resp.error || '복제 실패';
+                    console.error('[LORA_MANAGE] 프로젝트 복제 거부:', message);
+                    setLoraProjectNameFieldError('dup-target-entry', 'dup-target-entry-error', message);
                 }
             } catch (e) {
                 console.error('[LORA_MANAGE] 복제 실패:', e);
-                showToast('복제 실패', 'error');
+                setLoraProjectNameFieldError('dup-target-entry', 'dup-target-entry-error', '복제 요청에 실패했습니다');
             }
         }
 
@@ -59955,7 +59995,7 @@
             if (!botLoraCurrentBot) return;
             const nameInput = document.getElementById('bot-lora-project-add-name');
             nameInput.value = '';
-            nameInput.style.borderColor = 'var(--border)';
+            setLoraProjectNameFieldError('bot-lora-project-add-name', 'bot-lora-project-add-name-error', '');
             const charsEl = document.getElementById('bot-lora-project-add-chars');
             charsEl.innerHTML = '<div style="text-align:center; padding:24px; color:var(--text-secondary);">로딩 중...</div>';
             document.getElementById('bot-lora-project-add-modal').style.display = 'flex';
@@ -59981,10 +60021,20 @@
 
         async function confirmBotLoraProjectAdd() {
             if (!botLoraCurrentBot) return;
-            const name = document.getElementById('bot-lora-project-add-name').value.trim();
-            if (!name) { showToast('프로젝트 이름을 입력하세요', 'error'); return; }
+            const nameInput = document.getElementById('bot-lora-project-add-name');
+            const name = nameInput.value.trim();
+            if (!name) {
+                setLoraProjectNameFieldError('bot-lora-project-add-name', 'bot-lora-project-add-name-error', 'LoRA 프로젝트명을 입력하세요');
+                nameInput.focus();
+                return;
+            }
             const nameError = validateLoraProjectName(name);
-            if (nameError) { showToast(nameError, 'error'); return; }
+            if (nameError) {
+                setLoraProjectNameFieldError('bot-lora-project-add-name', 'bot-lora-project-add-name-error', nameError);
+                nameInput.focus();
+                return;
+            }
+            setLoraProjectNameFieldError('bot-lora-project-add-name', 'bot-lora-project-add-name-error', '');
             const selected = [...document.querySelectorAll('.bot-lora-project-add-char-check:checked')].map(el => el.value);
             const faceChars = [...document.querySelectorAll('.bot-lora-project-add-face-check:checked')].map(el => el.value);
             if (selected.length === 0 && faceChars.length === 0) { showToast('캐릭터 또는 얼굴을 최소 1개 선택하세요', 'error'); return; }
@@ -59999,9 +60049,14 @@
                     closeBotLoraProjectAddModal();
                     await loadBotLoraProjectGrid();
                 } else {
-                    showToast(resp.error || '추가 실패', 'error');
+                    const message = resp.error || '추가 실패';
+                    console.error('[BOT_LORA] 프로젝트 추가 거부:', message);
+                    setLoraProjectNameFieldError('bot-lora-project-add-name', 'bot-lora-project-add-name-error', message);
                 }
-            } catch (e) { console.error('[BOT_LORA] 프로젝트 추가 실패:', e); showToast('추가 실패', 'error'); }
+            } catch (e) {
+                console.error('[BOT_LORA] 프로젝트 추가 실패:', e);
+                setLoraProjectNameFieldError('bot-lora-project-add-name', 'bot-lora-project-add-name-error', '추가 요청에 실패했습니다');
+            }
         }
 
         async function openBotLoraDuplicateModal() {
@@ -60009,7 +60064,7 @@
             document.getElementById('bot-dup-source-info').textContent = `${botLoraCurrentBot} / ${botLoraCurrentProject}`;
             const nameInput = document.getElementById('bot-dup-project-name');
             nameInput.value = '';
-            nameInput.style.borderColor = 'var(--border)';
+            setLoraProjectNameFieldError('bot-dup-project-name', 'bot-dup-project-name-error', '');
             document.getElementById('bot-lora-duplicate-modal').style.display = 'flex';
         }
 
@@ -60018,10 +60073,20 @@
         }
 
         async function confirmBotLoraDuplicate() {
-            const dstName = document.getElementById('bot-dup-project-name').value.trim();
-            if (!dstName) { showToast('새 프로젝트 이름을 입력하세요', 'error'); return; }
+            const nameInput = document.getElementById('bot-dup-project-name');
+            const dstName = nameInput.value.trim();
+            if (!dstName) {
+                setLoraProjectNameFieldError('bot-dup-project-name', 'bot-dup-project-name-error', 'LoRA 프로젝트명을 입력하세요');
+                nameInput.focus();
+                return;
+            }
             const nameError = validateLoraProjectName(dstName);
-            if (nameError) { showToast(nameError, 'error'); return; }
+            if (nameError) {
+                setLoraProjectNameFieldError('bot-dup-project-name', 'bot-dup-project-name-error', nameError);
+                nameInput.focus();
+                return;
+            }
+            setLoraProjectNameFieldError('bot-dup-project-name', 'bot-dup-project-name-error', '');
             try {
                 const resp = await fetchJSON('/api/bot_lora/project/duplicate', {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -60033,9 +60098,14 @@
                     await loadBotLoraProjectGrid();
                     enterBotLoraBot(botLoraCurrentBot);
                 } else {
-                    showToast(resp.error || '복제 실패', 'error');
+                    const message = resp.error || '복제 실패';
+                    console.error('[BOT_LORA] 프로젝트 복제 거부:', message);
+                    setLoraProjectNameFieldError('bot-dup-project-name', 'bot-dup-project-name-error', message);
                 }
-            } catch (e) { console.error('[BOT_LORA] 프로젝트 복제 실패:', e); showToast('복제 실패', 'error'); }
+            } catch (e) {
+                console.error('[BOT_LORA] 프로젝트 복제 실패:', e);
+                setLoraProjectNameFieldError('bot-dup-project-name', 'bot-dup-project-name-error', '복제 요청에 실패했습니다');
+            }
         }
 
         async function openBotLoraCharImportModal() {
