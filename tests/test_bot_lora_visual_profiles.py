@@ -89,10 +89,12 @@ def test_new_project_keeps_training_files_and_config_separate_per_card(profile_b
     )
 
     assert result["success"] is True
-    profiles = manage["bot_loras"]["sample"]["cards"]["characters"]["Alice"]["profiles"]
+    char_cfg = manage["bot_loras"]["sample"]["cards"]["characters"]["Alice"]
+    profiles = char_cfg["profiles"]
     assert set(profiles) == {"primary", "alternate"}
-    assert profiles["primary"]["trigger"] == "Alice"
-    assert profiles["alternate"]["trigger"] == "Alice_alternate"
+    assert char_cfg["trigger"] == "Alice"
+    assert "trigger" not in profiles["primary"]
+    assert "trigger" not in profiles["alternate"]
 
     project_char = tmp_path / "bot" / "sample" / "Lora" / "cards" / "Alice"
     assert (project_char / "_visual_profiles" / "primary" / "primary.webp").read_bytes() == b"primary"
@@ -140,7 +142,48 @@ def test_project_detail_flattens_card_units_without_mixing_images(profile_bot):
         "only-alternate.webp"
     ]
     assert units["primary"]["trigger"] == "alice_normal"
-    assert units["alternate"]["trigger"] == "alice_alt"
+    assert units["alternate"]["trigger"] == "alice_normal"
+
+
+def test_trigger_update_is_shared_by_all_visual_cards(profile_bot):
+    _tmp_path, _data, manage = profile_bot
+    manage["bot_loras"] = {
+        "sample": {
+            "cards": {
+                "training_config": {},
+                "characters": {
+                    "Alice": {
+                        "profiles": {
+                            "primary": {
+                                "trigger": "alice_normal",
+                                "visual_card_index": 1,
+                            },
+                            "alternate": {
+                                "trigger": "alice_alt",
+                                "visual_card_index": 2,
+                            },
+                        },
+                    },
+                },
+            },
+        },
+    }
+
+    result = bot_lora_mode.update_char_trigger(
+        "sample", "cards", "Alice", "Adachi", "alternate"
+    )
+    detail = bot_lora_mode.get_project_data("sample", "cards")
+
+    assert result["success"] is True
+    char_cfg = manage["bot_loras"]["sample"]["cards"]["characters"]["Alice"]
+    assert char_cfg["trigger"] == "Adachi"
+    assert {unit["trigger"] for unit in detail["characters"]} == {"Adachi"}
+
+    reset = bot_lora_mode.update_char_trigger(
+        "sample", "cards", "Alice", "", "primary"
+    )
+    assert reset["success"] is True
+    assert char_cfg["trigger"] == "Alice"
 
 
 def test_picker_emits_profile_identity_and_nested_lora_path(profile_bot):
@@ -152,6 +195,7 @@ def test_picker_emits_profile_identity_and_nested_lora_path(profile_bot):
                 "training_config": {"profile": "anima"},
                 "characters": {
                     "Alice": {
+                        "trigger": "Alice",
                         "profiles": {
                             "alternate": {
                                 "label": "변신",
@@ -177,7 +221,7 @@ def test_picker_emits_profile_identity_and_nested_lora_path(profile_bot):
     assert entry["char_name"] == "Alice"
     assert entry["visual_card_id"] == "alternate"
     assert entry["visual_card_label"] == "변신"
-    assert entry["trigger"] == "alice_alt"
+    assert entry["trigger"] == "Alice"
     assert "_visual_profiles" in entry["lora_path"]
     assert "alternate" in entry["lora_path"]
 
@@ -279,7 +323,8 @@ def test_legacy_cross_project_import_coexists_with_card_units(profile_bot):
     assert imported["success"] is True
     profiles = manage["bot_loras"]["sample"]["cards"]["characters"]["Alice"]["profiles"]
     assert set(profiles) == {"", "alternate"}
-    assert profiles[""]["trigger"] == "old_alice"
+    assert manage["bot_loras"]["sample"]["cards"]["characters"]["Alice"]["trigger"] == "alice_alt"
+    assert "trigger" not in profiles[""]
     assert (alternate_dir / "alternate.webp").read_bytes() == b"alternate"
 
     removed = bot_lora_mode.remove_character_from_project(
@@ -302,3 +347,13 @@ def test_frontend_routes_bot_lora_actions_by_visual_card():
     assert "visual_card_id: botTrainingPickerTargetCard" in source
     assert "_botTrainedModalVisualCardId" in source
     assert "ch.visual_card_id === activeCardId" in source
+    assert 'placeholder="캐릭터 공용 트리거"' in source
+    assert "const charGroups = [];" in source
+    assert '<details class="bot-lora-character-group"' in source
+    assert 'data-key="bot-lora-group-${groupNameEncoded}"' in source
+    assert 'data-bot-lora-character-group=' in source
+    assert 'open style="margin-bottom:18px;' in source
+    assert "group.cards.length" in source
+    assert "updateBotLoraTrigger('${groupNameEncoded}', '', this.value)" in source
+    assert "if (key) states[key] = d.open;" in source
+    assert "d.open = !!states[key];" in source

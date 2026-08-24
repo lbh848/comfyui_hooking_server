@@ -10497,6 +10497,158 @@
             border: 2px solid var(--border); background: var(--surface2);
         }
 
+        /* ─── 이미지 지침 기반 프로필 선택 기준 자동 작성 ─── */
+        .visual-guide-overlay {
+            position: fixed;
+            inset: 0;
+            z-index: 22000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 18px;
+            background: rgba(3, 7, 18, 0.82);
+            backdrop-filter: blur(7px);
+        }
+        .visual-guide-modal {
+            width: min(1500px, 94vw);
+            height: min(940px, 92vh);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            color: var(--text);
+            background: var(--surface);
+            border: 1px solid color-mix(in srgb, #8b5cf6 45%, var(--border));
+            border-radius: 14px;
+            box-shadow: 0 28px 90px rgba(0, 0, 0, 0.58);
+        }
+        .visual-guide-header,
+        .visual-guide-footer {
+            flex: 0 0 auto;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 12px 16px;
+            border-color: var(--border);
+            background: color-mix(in srgb, #8b5cf6 5%, var(--surface));
+        }
+        .visual-guide-header { border-bottom: 1px solid var(--border); }
+        .visual-guide-footer { border-top: 1px solid var(--border); }
+        .visual-guide-toolbar {
+            flex: 0 0 auto;
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            flex-wrap: wrap;
+            padding: 9px 16px;
+            border-bottom: 1px solid var(--border);
+            background: var(--surface2);
+        }
+        .visual-guide-source {
+            flex: 0 0 auto;
+            margin: 9px 16px 0;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: color-mix(in srgb, var(--surface2) 88%, transparent);
+        }
+        .visual-guide-source summary {
+            cursor: pointer;
+            padding: 8px 10px;
+            font-size: 0.73rem;
+            color: var(--text2);
+            user-select: none;
+        }
+        .visual-guide-source textarea {
+            display: block;
+            width: calc(100% - 20px);
+            height: 150px;
+            margin: 0 10px 10px;
+            box-sizing: border-box;
+            resize: vertical;
+            padding: 9px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text2);
+            background: var(--surface);
+            font-family: monospace;
+            font-size: 0.72rem;
+            line-height: 1.45;
+        }
+        .visual-guide-list {
+            flex: 1 1 auto;
+            min-height: 0;
+            overflow-y: auto;
+            padding: 12px 16px 20px;
+        }
+        .visual-guide-row {
+            display: grid;
+            grid-template-columns: 28px 128px minmax(180px, 0.75fr) minmax(360px, 1.75fr);
+            gap: 12px;
+            align-items: start;
+            margin-bottom: 10px;
+            padding: 12px;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            background: var(--surface2);
+        }
+        .visual-guide-row.is-focused {
+            border-color: #a78bfa;
+            box-shadow: 0 0 0 1px rgba(167, 139, 250, 0.24) inset;
+        }
+        .visual-guide-thumb {
+            width: 128px;
+            height: 176px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+            padding: 0;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text2);
+            background: var(--surface);
+            cursor: pointer;
+        }
+        .visual-guide-thumb img { width: 100%; height: 100%; object-fit: contain; }
+        .visual-guide-field {
+            width: 100%;
+            box-sizing: border-box;
+            padding: 7px 8px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text);
+            background: var(--surface);
+            font-size: 0.78rem;
+        }
+        textarea.visual-guide-field { min-height: 76px; resize: vertical; line-height: 1.45; }
+        .visual-guide-current {
+            margin-top: 8px;
+            padding: 7px;
+            border-radius: 6px;
+            color: var(--text2);
+            background: color-mix(in srgb, var(--surface) 78%, transparent);
+            font-size: 0.69rem;
+            line-height: 1.45;
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+        }
+        .visual-guide-confidence {
+            display: inline-flex;
+            padding: 2px 7px;
+            border-radius: 999px;
+            font-size: 0.65rem;
+            font-weight: 700;
+        }
+        .visual-guide-confidence.high { color: #86efac; background: rgba(34, 197, 94, 0.14); }
+        .visual-guide-confidence.medium { color: #fde68a; background: rgba(245, 158, 11, 0.14); }
+        .visual-guide-confidence.low { color: #fca5a5; background: rgba(239, 68, 68, 0.14); }
+        @media (max-width: 980px) {
+            .visual-guide-row {
+                grid-template-columns: 28px 108px minmax(0, 1fr);
+            }
+            .visual-guide-thumb { width: 108px; height: 150px; }
+            .visual-guide-suggestion { grid-column: 2 / -1; }
+        }
+
         /* ─── 이미지 카드 오버레이 버튼 ─── */
         .bot-img-rep-btn {
             position: absolute;
@@ -16206,6 +16358,12 @@
                             </div>
                             <button onclick="openBotBatchAddModal()" style="width:100%; margin-top:4px; background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">일괄추가</button>
                             <button onclick="openBotAssetCharImportModal()" disabled style="width:100%; margin-top:4px; background:var(--surface2); color:var(--text2); border:1px solid var(--border); padding:4px 8px; border-radius:4px; cursor:not-allowed; font-size:0.75rem; opacity:0.5;">에셋에서 캐릭터 가져오기</button>
+                        </div>
+                        <div style="background:rgba(124,58,237,0.08); border:1px solid rgba(139,92,246,0.28); border-radius:8px; padding:10px; margin-top:8px;">
+                            <div class="section-title">캐릭터 카드 선택 기준</div>
+                            <div style="font-size:0.67rem; color:var(--text2); line-height:1.35; margin-bottom:6px;">이미지 출력 지침을 읽어 현재 봇의 모든 카드에 별칭과 선택 기준을 제안합니다.</div>
+                            <button id="btn-visual-guide-generator" type="button" onclick="openVisualGuideGeneratorModal()" title="현재 시스템 프롬프트의 이미지 출력 지침을 읽어 모든 카드의 별칭과 선택 기준을 제안합니다."
+                                style="width:100%; padding:6px 8px; border:1px solid rgba(139,92,246,.45); border-radius:6px; background:rgba(124,58,237,.16); color:var(--text); cursor:pointer; font-size:.75rem; font-weight:700;">✨ 이미지 지침으로 자동 작성</button>
                         </div>
                         <div style="background:color-mix(in srgb, var(--accent) 12%, transparent); border-radius:8px; padding:10px; margin-top:8px;">
                             <div class="section-title">대표 이미지 일괄 설정</div>
@@ -59598,12 +59756,12 @@
 
         function _saveBotLoraDetailsState() {
             const states = {};
-            document.querySelectorAll('#bot-lora-characters details[open]').forEach(d => {
+            document.querySelectorAll('#bot-lora-characters details').forEach(d => {
                 const key = d.getAttribute('data-key');
-                if (key) states[key] = true;
+                if (key) states[key] = d.open;
             });
             const testPromptDetails = document.getElementById('bot-lora-test-prompt-details');
-            if (testPromptDetails && testPromptDetails.open) states['__test_prompt'] = true;
+            if (testPromptDetails) states['__test_prompt'] = testPromptDetails.open;
             return states;
         }
 
@@ -59611,11 +59769,13 @@
             if (!states) return;
             document.querySelectorAll('#bot-lora-characters details').forEach(d => {
                 const key = d.getAttribute('data-key');
-                if (key && states[key]) d.open = true;
+                if (key && Object.prototype.hasOwnProperty.call(states, key)) {
+                    d.open = !!states[key];
+                }
             });
-            if (states['__test_prompt']) {
+            if (Object.prototype.hasOwnProperty.call(states, '__test_prompt')) {
                 const testPromptDetails = document.getElementById('bot-lora-test-prompt-details');
-                if (testPromptDetails) testPromptDetails.open = true;
+                if (testPromptDetails) testPromptDetails.open = !!states['__test_prompt'];
             }
         }
 
@@ -59640,7 +59800,22 @@
                 container.innerHTML = '<div style="text-align:center; padding:48px; color:var(--text-secondary);">캐릭터가 없습니다.</div>';
                 return;
             }
-            container.innerHTML = chars.map((ch, idx) => {
+            const charGroups = [];
+            const charGroupMap = new Map();
+            chars.forEach(ch => {
+                let group = charGroupMap.get(ch.name);
+                if (!group) {
+                    group = { name: ch.name, cards: [] };
+                    charGroupMap.set(ch.name, group);
+                    charGroups.push(group);
+                }
+                group.cards.push(ch);
+            });
+
+            container.innerHTML = charGroups.map(group => {
+                const leadCard = group.cards[0];
+                const groupNameEncoded = encodeURIComponent(group.name);
+                const cardsHtml = group.cards.map((ch, idx) => {
                 const enc = encodeURIComponent;
                 const cardId = ch.visual_card_id || '';
                 const cardLabel = ch.visual_card_label || cardId || '기본 카드';
@@ -59735,10 +59910,7 @@
                     <div>
                     <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
                         <div style="display:flex; align-items:center; gap:10px;">
-                            <span style="font-weight:700; font-size:1rem;">${escapeHtml(ch.name)}</span>
                             <span style="font-size:0.72rem; padding:2px 7px; border-radius:999px; background:var(--surface2); color:var(--accent);">[${ch.visual_card_index || 1}] ${escapeHtml(cardLabel)}</span>
-                            <input type="text" value="${escapeHtml(ch.trigger || '')}" placeholder="카드별 트리거 워드" onchange="updateBotLoraTrigger('${enc(ch.name)}', '${enc(cardId)}', this.value)"
-                                style="padding:3px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface1); color:var(--text); font-size:0.8rem; width:200px;">
                             <label class="toggle-switch sm" style="position:relative;z-index:2;${isSkipped ? 'pointer-events:auto;' : ''}" title="순차 학습 시 이 캐릭터 건너뛰기">
                                 <input type="checkbox" ${isSkipped ? 'checked' : ''} onchange="updateBotLoraSkipTraining('${enc(ch.name)}', '${enc(cardId)}', this.checked)">
                                 <span class="toggle-slider"></span>
@@ -59845,6 +60017,20 @@
                     </details>
                     </div>
                 </div>`;
+                }).join('');
+
+                return `<details class="bot-lora-character-group" data-key="bot-lora-group-${groupNameEncoded}" data-bot-lora-character-group="${escapeHtml(group.name)}" open style="margin-bottom:18px; padding:14px; background:color-mix(in srgb, var(--accent) 7%, var(--surface2)); border-radius:12px;">
+                    <summary style="cursor:pointer; font-weight:800; font-size:1.05rem; user-select:none; padding:2px 2px 10px;">
+                        <span style="font-weight:800; font-size:1.05rem;">${escapeHtml(group.name)}</span>
+                        <span style="font-size:0.7rem; padding:2px 7px; border-radius:999px; background:var(--surface); color:var(--text-secondary);">카드 ${group.cards.length}개</span>
+                    </summary>
+                    <div style="display:flex; align-items:center; justify-content:flex-end; gap:10px; margin-bottom:12px; padding:10px 2px; border-top:1px solid color-mix(in srgb, var(--accent) 24%, transparent); border-bottom:1px solid color-mix(in srgb, var(--accent) 24%, transparent);">
+                        <span style="margin-left:auto; font-size:0.72rem; color:var(--text-secondary);">공용 트리거</span>
+                        <input type="text" value="${escapeHtml(leadCard.trigger || group.name)}" placeholder="캐릭터 공용 트리거" title="같은 캐릭터의 모든 비주얼 카드에 공통 적용됩니다" onchange="updateBotLoraTrigger('${groupNameEncoded}', '', this.value)"
+                            style="padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); font-size:0.8rem; width:200px;">
+                    </div>
+                    <div>${cardsHtml}</div>
+                </details>`;
             }).join('');
 
             // 테스트 이미지
@@ -60405,6 +60591,7 @@
                     body: JSON.stringify({ bot: botLoraCurrentBot, project: botLoraCurrentProject, character: charName, visual_card_id: visualCardId, trigger })
                 });
                 if (!resp.success) showToast(resp.error || 'trigger 저장 실패', 'error');
+                else await loadBotLoraProject();
             } catch (e) { console.error('[BOT_LORA] trigger 업데이트 실패:', e); showToast('trigger 저장 실패', 'error'); }
         }
 
@@ -64249,6 +64436,7 @@
         let _visualCardSlots = {};
         let _visualCardFocusSession = null;
         let _visualCardFocusLoading = false;
+        let _visualGuideModalState = null;
 
         function _vpTagText(values) {
             return (Array.isArray(values) ? values : []).map(v => typeof v === 'string' ? v : (v?.tag || '')).filter(Boolean).join(', ');
@@ -64455,6 +64643,500 @@
             profile.aliases = [...new Set(String(value || '').split(',').map(v => v.trim()).filter(Boolean))];
             try { await _saveVisualCardState(charName, {quiet:true}); }
             catch (error) { showToast('작중 별칭 저장 실패: ' + error.message, 'error'); }
+        }
+
+        function _visualGuideTargetIdentity(character, profileId) {
+            return `${String(character || '').toLocaleLowerCase()}\u0000${String(profileId || '')}`;
+        }
+
+        function _collectVisualGuideTargets(focusCharacter = '', focusProfileId = '') {
+            const bot = (botData.bots || []).find(item => item.name === botCurrentBot);
+            if (!bot) {
+                console.error('[VISUAL_GUIDE] 대상 수집 실패: 현재 봇을 찾을 수 없습니다', {botCurrentBot});
+                return [];
+            }
+            const focusIdentity = _visualGuideTargetIdentity(focusCharacter, focusProfileId);
+            const targets = [];
+            (bot.characters || []).forEach(rootCharacter => {
+                const state = _visualCardState(rootCharacter.name);
+                if (!state) {
+                    console.error('[VISUAL_GUIDE] 대상 수집 중 카드 상태 누락', {
+                        bot: botCurrentBot,
+                        character: rootCharacter.name,
+                    });
+                    return;
+                }
+                (state.data.profiles || []).forEach((profile, profileIndex) => {
+                    const overrides = profile.render_overrides || {};
+                    const repImages = Array.isArray(overrides.rep_images)
+                        ? overrides.rep_images.map(value => String(value || '').trim()).filter(Boolean)
+                        : [];
+                    const repFilename = repImages[0] || '';
+                    const identity = _visualGuideTargetIdentity(rootCharacter.name, profile.id);
+                    const aliases = Array.isArray(profile.aliases) ? [...profile.aliases] : [];
+                    const currentGuide = String(profile.selection_guide || '').trim();
+                    targets.push({
+                        identity,
+                        character: rootCharacter.name,
+                        profileId: String(profile.id || ''),
+                        profileLabel: String(profile.label || profile.id || `카드 ${profileIndex + 1}`),
+                        profileIndex,
+                        repFilename,
+                        imageUrl: repFilename
+                            ? `/api/bot_mode/image/${encodeURIComponent(botCurrentBot)}/${encodeURIComponent(rootCharacter.name)}/${encodeURIComponent(repFilename)}`
+                            : '',
+                        currentAliases: aliases,
+                        currentGuide,
+                        selected: !aliases.length || !currentGuide || identity === focusIdentity,
+                        focused: identity === focusIdentity,
+                        suggestion: null,
+                    });
+                });
+            });
+            return targets;
+        }
+
+        async function openVisualGuideGeneratorModal(focusCharacter = '', focusProfileId = '') {
+            if (_visualGuideModalState) {
+                console.error('[VISUAL_GUIDE] 자동 작성 팝업이 이미 열려 있습니다', {
+                    bot: botCurrentBot,
+                    focusCharacter,
+                    focusProfileId,
+                });
+                showToast('선택 기준 자동 작성 팝업이 이미 열려 있습니다.', 'info');
+                return;
+            }
+            const bot = (botData.bots || []).find(item => item.name === botCurrentBot);
+            if (!bot) {
+                console.error('[VISUAL_GUIDE] 팝업 열기 실패: 선택된 봇 없음', {botCurrentBot});
+                showToast('먼저 봇을 선택하세요.', 'error');
+                return;
+            }
+            try {
+                await _ensureVisualCardStates(bot);
+                const response = await fetch(`/api/bot_mode/system_prompt?bot_name=${encodeURIComponent(botCurrentBot)}`);
+                const source = await response.json();
+                if (!response.ok) throw new Error(source.error || '시스템 프롬프트 로드 실패');
+                const targets = _collectVisualGuideTargets(focusCharacter, focusProfileId);
+                if (!targets.length) {
+                    console.error('[VISUAL_GUIDE] 팝업에 표시할 카드 없음', {bot: botCurrentBot});
+                    showToast('자동 작성할 캐릭터 카드가 없습니다.', 'error');
+                    return;
+                }
+
+                _visualGuideModalState = {
+                    botName: botCurrentBot,
+                    targets,
+                    sourceText: String(source.text || ''),
+                    sourcePreset: String(source.preset || ''),
+                    sourceScope: String(source.scope || ''),
+                    search: '',
+                    busy: false,
+                };
+                const overlay = document.createElement('div');
+                overlay.id = 'visual-guide-generator-overlay';
+                overlay.className = 'visual-guide-overlay';
+                overlay.innerHTML = `
+                    <div class="visual-guide-modal" role="dialog" aria-modal="true" aria-labelledby="visual-guide-title">
+                        <div class="visual-guide-header">
+                            <div style="min-width:0">
+                                <div id="visual-guide-title" style="font-weight:800;font-size:1.02rem">프로필 선택 기준 자동 작성</div>
+                                <div id="visual-guide-source-label" style="margin-top:2px;font-size:.7rem;color:var(--text2)"></div>
+                            </div>
+                            <div style="flex:1"></div>
+                            <button id="visual-guide-close" type="button" onclick="closeVisualGuideGeneratorModal()" style="border:none;background:transparent;color:var(--text2);font-size:1.35rem;cursor:pointer">✕</button>
+                        </div>
+                        <details class="visual-guide-source">
+                            <summary>LLM이 해석할 이미지 출력 지침 원문 확인·임시 편집</summary>
+                            <textarea id="visual-guide-source-text" maxlength="1000000" placeholder="현재 시스템 프롬프트가 비어 있으면 Image Command Instructions 같은 이미지 출력 지침을 여기에 붙여 넣으세요. 이 임시 원문은 시스템 프롬프트에 저장되지 않습니다."></textarea>
+                        </details>
+                        <div class="visual-guide-toolbar">
+                            <input id="visual-guide-search" type="search" placeholder="캐릭터·카드·파일명 검색" style="min-width:220px;flex:1;max-width:420px;padding:6px 9px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text)">
+                            <button type="button" onclick="_visualGuideSetSelection('missing')" style="padding:5px 9px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);cursor:pointer">미작성 선택</button>
+                            <button type="button" onclick="_visualGuideSetSelection('all')" style="padding:5px 9px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);cursor:pointer">전체 선택</button>
+                            <button type="button" onclick="_visualGuideSetSelection('none')" style="padding:5px 9px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);cursor:pointer">전체 해제</button>
+                            <span id="visual-guide-count" style="font-size:.72rem;color:var(--text2)"></span>
+                            <button id="visual-guide-generate" type="button" onclick="generateVisualGuideSuggestions()" style="margin-left:auto;padding:7px 13px;border:none;border-radius:7px;background:#7C3AED;color:#fff;cursor:pointer;font-weight:700">선택 항목 생성/재생성</button>
+                        </div>
+                        <div id="visual-guide-list" class="visual-guide-list"></div>
+                        <div class="visual-guide-footer">
+                            <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;font-size:.75rem;color:var(--text2)">
+                                <b style="color:var(--text)">적용 방식</b>
+                                <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="radio" name="visual-guide-apply-mode" value="preserve" checked> 비어 있는 값만 채우기</label>
+                                <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="radio" name="visual-guide-apply-mode" value="overwrite"> 기존 값도 교체</label>
+                            </div>
+                            <div style="flex:1"></div>
+                            <span id="visual-guide-footer-status" style="font-size:.7rem;color:var(--text2)"></span>
+                            <button type="button" onclick="closeVisualGuideGeneratorModal()" style="padding:7px 13px;border:1px solid var(--border);border-radius:7px;background:var(--surface2);color:var(--text);cursor:pointer">취소</button>
+                            <button id="visual-guide-apply" type="button" onclick="applyVisualGuideSuggestions()" style="padding:7px 15px;border:none;border-radius:7px;background:#1565C0;color:#fff;cursor:pointer;font-weight:700">선택 제안 적용</button>
+                        </div>
+                    </div>`;
+                document.body.appendChild(overlay);
+                const sourceEditor = document.getElementById('visual-guide-source-text');
+                sourceEditor.value = _visualGuideModalState.sourceText;
+                sourceEditor.addEventListener('input', event => {
+                    if (!_visualGuideModalState) return;
+                    _visualGuideModalState.sourceText = event.currentTarget.value || '';
+                });
+                if (!_visualGuideModalState.sourceText.trim()) {
+                    const sourceDetails = overlay.querySelector('.visual-guide-source');
+                    if (sourceDetails) sourceDetails.open = true;
+                }
+                document.getElementById('visual-guide-source-label').textContent =
+                    `${_visualGuideModalState.sourceScope || 'unknown'} · ${_visualGuideModalState.sourcePreset || '프리셋 이름 없음'} · 카드 ${targets.length}개`;
+                document.getElementById('visual-guide-search').addEventListener('input', event => {
+                    if (!_visualGuideModalState) return;
+                    _visualGuideModalState.search = event.target.value || '';
+                    _renderVisualGuideRows();
+                });
+                _renderVisualGuideRows();
+                requestAnimationFrame(() => {
+                    const focused = overlay.querySelector('.visual-guide-row.is-focused');
+                    if (focused) focused.scrollIntoView({block:'center'});
+                });
+            } catch (error) {
+                console.error('[VISUAL_GUIDE] 팝업 준비 실패', error, {
+                    bot: botCurrentBot,
+                    focusCharacter,
+                    focusProfileId,
+                });
+                _visualGuideModalState = null;
+                document.getElementById('visual-guide-generator-overlay')?.remove();
+                showToast('선택 기준 자동 작성 준비 실패: ' + error.message, 'error');
+            }
+        }
+
+        function closeVisualGuideGeneratorModal(force = false) {
+            if (_visualGuideModalState?.busy && !force) {
+                console.error('[VISUAL_GUIDE] 처리 중 팝업 닫기 거부', {
+                    bot: _visualGuideModalState.botName,
+                });
+                showToast('생성 또는 적용이 끝난 뒤 닫을 수 있습니다.', 'info');
+                return;
+            }
+            const overlay = document.getElementById('visual-guide-generator-overlay');
+            if (!overlay) {
+                console.error('[VISUAL_GUIDE] 닫을 팝업 요소를 찾을 수 없습니다');
+            } else {
+                overlay.remove();
+            }
+            _visualGuideModalState = null;
+        }
+
+        function _visualGuideVisibleTargets() {
+            if (!_visualGuideModalState) return [];
+            const query = String(_visualGuideModalState.search || '').trim().toLocaleLowerCase();
+            if (!query) return _visualGuideModalState.targets;
+            return _visualGuideModalState.targets.filter(target => {
+                const haystack = [
+                    target.character,
+                    target.profileLabel,
+                    target.profileId,
+                    target.repFilename,
+                    ...target.currentAliases,
+                ].join(' ').toLocaleLowerCase();
+                return haystack.includes(query);
+            });
+        }
+
+        function _visualGuideUpdateControls() {
+            const state = _visualGuideModalState;
+            if (!state) return;
+            const selectedCount = state.targets.filter(target => target.selected).length;
+            const readyCount = state.targets.filter(target => target.selected && target.suggestion).length;
+            const count = document.getElementById('visual-guide-count');
+            if (count) count.textContent = `전체 ${state.targets.length} · 선택 ${selectedCount} · 적용 가능 ${readyCount}`;
+            const footerStatus = document.getElementById('visual-guide-footer-status');
+            if (footerStatus) footerStatus.textContent = state.busy ? '처리 중…' : `검토 후 선택한 ${readyCount}개 제안을 적용합니다.`;
+            const generate = document.getElementById('visual-guide-generate');
+            if (generate) {
+                generate.disabled = state.busy || selectedCount === 0;
+                generate.style.opacity = generate.disabled ? '.55' : '1';
+                generate.style.cursor = state.busy ? 'wait' : (selectedCount ? 'pointer' : 'not-allowed');
+                generate.textContent = state.busy ? 'LLM 처리 중…' : '선택 항목 생성/재생성';
+            }
+            const apply = document.getElementById('visual-guide-apply');
+            if (apply) {
+                apply.disabled = state.busy || readyCount === 0;
+                apply.style.opacity = apply.disabled ? '.55' : '1';
+                apply.style.cursor = state.busy ? 'wait' : (readyCount ? 'pointer' : 'not-allowed');
+            }
+            const close = document.getElementById('visual-guide-close');
+            if (close) close.disabled = state.busy;
+        }
+
+        function _renderVisualGuideRows() {
+            const state = _visualGuideModalState;
+            const list = document.getElementById('visual-guide-list');
+            if (!state || !list) {
+                console.error('[VISUAL_GUIDE] 목록 렌더 대상 누락', {
+                    hasState: !!state,
+                    hasList: !!list,
+                });
+                return;
+            }
+            const visible = _visualGuideVisibleTargets();
+            if (!visible.length) {
+                list.innerHTML = '<div style="padding:42px;text-align:center;color:var(--text2)">검색 조건에 맞는 캐릭터 카드가 없습니다.</div>';
+                _visualGuideUpdateControls();
+                return;
+            }
+            const confidenceLabel = {high:'높음', medium:'보통', low:'낮음'};
+            list.innerHTML = visible.map(target => {
+                const index = state.targets.indexOf(target);
+                const suggestion = target.suggestion;
+                const currentAliases = target.currentAliases.length ? target.currentAliases.join(', ') : '(비어 있음)';
+                const currentGuide = target.currentGuide || '(비어 있음)';
+                const thumb = target.imageUrl
+                    ? `<button type="button" class="visual-guide-thumb" data-vg-thumb="${index}" title="썸네일 확대"><img src="${escAttr(target.imageUrl)}" alt="${escAttr(target.character + ' ' + target.profileLabel)} 썸네일"></button>`
+                    : '<div class="visual-guide-thumb" style="cursor:default;font-size:.7rem">대표 이미지 없음</div>';
+                const suggestionHtml = suggestion ? `
+                    <div style="display:flex;align-items:center;gap:7px;margin-bottom:6px">
+                        <b style="font-size:.75rem">LLM 제안</b>
+                        <span class="visual-guide-confidence ${escAttr(suggestion.confidence)}">신뢰도 ${confidenceLabel[suggestion.confidence] || '낮음'}</span>
+                    </div>
+                    <label style="display:block;font-size:.69rem;color:var(--text2);margin-bottom:8px">작중 별칭
+                        <input class="visual-guide-field" data-vg-aliases="${index}" value="${escAttr((suggestion.aliases || []).join(', '))}" placeholder="쉼표로 구분" ${state.busy ? 'disabled' : ''} style="display:block;margin-top:4px">
+                    </label>
+                    <label style="display:block;font-size:.69rem;color:var(--text2)">자연어 선택 기준
+                        <textarea class="visual-guide-field" data-vg-guide="${index}" ${state.busy ? 'disabled' : ''} style="display:block;margin-top:4px">${escHtml(suggestion.selection_guide || '')}</textarea>
+                    </label>
+                    <div style="margin-top:7px;font-size:.68rem;line-height:1.45;color:var(--text2)"><b style="color:var(--text)">판단 근거</b> · ${escHtml(suggestion.evidence || '근거 설명 없음')}</div>`
+                    : '<div style="height:100%;min-height:150px;display:flex;align-items:center;justify-content:center;border:1px dashed var(--border);border-radius:8px;color:var(--text2);font-size:.75rem">선택 후 LLM 생성을 실행하세요.</div>';
+                return `
+                    <article class="visual-guide-row${target.focused ? ' is-focused' : ''}" data-vg-row="${index}">
+                        <input type="checkbox" data-vg-select="${index}" ${target.selected ? 'checked' : ''} ${state.busy ? 'disabled' : ''} aria-label="${escAttr(target.character + ' ' + target.profileLabel)} 선택" style="margin-top:6px;width:17px;height:17px;cursor:pointer">
+                        ${thumb}
+                        <div>
+                            <div style="font-weight:800;font-size:.86rem">${escHtml(target.character)}</div>
+                            <div style="margin-top:3px;font-size:.76rem;color:var(--accent)">[${target.profileIndex + 1}] ${escHtml(target.profileLabel)}</div>
+                            <div style="margin-top:5px;font-size:.66rem;color:var(--text2);overflow-wrap:anywhere">ID · ${escHtml(target.profileId)}</div>
+                            <div style="margin-top:3px;font-size:.66rem;color:var(--text2);overflow-wrap:anywhere">파일 · ${escHtml(target.repFilename || '대표 이미지 없음')}</div>
+                            <div class="visual-guide-current"><b>현재 별칭</b> · ${escHtml(currentAliases)}\n<b>현재 기준</b> · ${escHtml(currentGuide)}</div>
+                        </div>
+                        <div class="visual-guide-suggestion">${suggestionHtml}</div>
+                    </article>`;
+            }).join('');
+
+            list.querySelectorAll('[data-vg-select]').forEach(input => {
+                input.addEventListener('change', event => {
+                    const target = state.targets[Number(event.currentTarget.dataset.vgSelect)];
+                    if (!target) {
+                        console.error('[VISUAL_GUIDE] 체크박스 대상 누락', {index:event.currentTarget.dataset.vgSelect});
+                        return;
+                    }
+                    target.selected = event.currentTarget.checked;
+                    _visualGuideUpdateControls();
+                });
+            });
+            list.querySelectorAll('[data-vg-aliases]').forEach(input => {
+                input.addEventListener('input', event => {
+                    const target = state.targets[Number(event.currentTarget.dataset.vgAliases)];
+                    if (!target?.suggestion) {
+                        console.error('[VISUAL_GUIDE] 별칭 편집 대상 누락', {index:event.currentTarget.dataset.vgAliases});
+                        return;
+                    }
+                    target.suggestion.aliases = [...new Set(String(event.currentTarget.value || '').split(',').map(value => value.trim()).filter(Boolean))];
+                });
+            });
+            list.querySelectorAll('[data-vg-guide]').forEach(input => {
+                input.addEventListener('input', event => {
+                    const target = state.targets[Number(event.currentTarget.dataset.vgGuide)];
+                    if (!target?.suggestion) {
+                        console.error('[VISUAL_GUIDE] 선택 기준 편집 대상 누락', {index:event.currentTarget.dataset.vgGuide});
+                        return;
+                    }
+                    target.suggestion.selection_guide = event.currentTarget.value;
+                });
+            });
+            list.querySelectorAll('[data-vg-thumb]').forEach(button => {
+                button.addEventListener('click', event => {
+                    const target = state.targets[Number(event.currentTarget.dataset.vgThumb)];
+                    if (!target?.imageUrl) {
+                        console.error('[VISUAL_GUIDE] 확대할 썸네일 URL 누락', {index:event.currentTarget.dataset.vgThumb});
+                        return;
+                    }
+                    openLightbox(target.imageUrl);
+                });
+                const image = button.querySelector('img');
+                if (image) image.addEventListener('error', () => {
+                    const target = state.targets[Number(button.dataset.vgThumb)];
+                    console.error('[VISUAL_GUIDE] 썸네일 로드 실패', {
+                        character: target?.character,
+                        profileId: target?.profileId,
+                        url: target?.imageUrl,
+                    });
+                    button.disabled = true;
+                    button.style.cursor = 'default';
+                    button.textContent = '썸네일 로드 실패';
+                });
+            });
+            _visualGuideUpdateControls();
+        }
+
+        function _visualGuideSetSelection(mode) {
+            const state = _visualGuideModalState;
+            if (!state || state.busy) {
+                console.error('[VISUAL_GUIDE] 선택 상태 변경 불가', {mode, hasState:!!state, busy:state?.busy});
+                return;
+            }
+            const visibleSet = new Set(_visualGuideVisibleTargets().map(target => target.identity));
+            state.targets.forEach(target => {
+                if (!visibleSet.has(target.identity)) return;
+                if (mode === 'all') target.selected = true;
+                else if (mode === 'none') target.selected = false;
+                else if (mode === 'missing') target.selected = !target.currentAliases.length || !target.currentGuide;
+                else console.error('[VISUAL_GUIDE] 알 수 없는 선택 모드', {mode});
+            });
+            _renderVisualGuideRows();
+        }
+
+        async function generateVisualGuideSuggestions() {
+            const state = _visualGuideModalState;
+            if (!state || state.busy) {
+                console.error('[VISUAL_GUIDE] 생성 시작 불가', {hasState:!!state, busy:state?.busy});
+                return;
+            }
+            const selected = state.targets.filter(target => target.selected);
+            if (!selected.length) {
+                console.error('[VISUAL_GUIDE] 생성할 카드가 선택되지 않았습니다');
+                showToast('자동 작성할 캐릭터 카드를 선택하세요.', 'error');
+                return;
+            }
+            if (selected.length > 120) {
+                console.error('[VISUAL_GUIDE] 한 번에 생성할 카드 수 초과', {count:selected.length, max:120});
+                showToast('한 번에 최대 120개 카드까지 생성할 수 있습니다.', 'error');
+                return;
+            }
+            if (!String(state.sourceText || '').trim()) {
+                console.error('[VISUAL_GUIDE] 생성에 사용할 이미지 출력 지침 원문이 비어 있습니다', {
+                    bot: state.botName,
+                });
+                const sourceDetails = document.querySelector('#visual-guide-generator-overlay .visual-guide-source');
+                if (sourceDetails) sourceDetails.open = true;
+                showToast('이미지 출력 지침 원문을 입력하세요.', 'error');
+                return;
+            }
+            state.busy = true;
+            _renderVisualGuideRows();
+            try {
+                const response = await fetch('/api/bot_mode/character_cards/suggest_metadata', {
+                    method: 'POST',
+                    headers: {'Content-Type':'application/json'},
+                    body: JSON.stringify({
+                        bot_name: state.botName,
+                        source_text: state.sourceText,
+                        targets: selected.map(target => ({
+                            character: target.character,
+                            profile_id: target.profileId,
+                        })),
+                    }),
+                });
+                const result = await response.json();
+                if (!response.ok || !result.success || !Array.isArray(result.suggestions)) {
+                    throw new Error(result.error || 'LLM 제안 생성 실패');
+                }
+                const suggestionByTarget = new Map(result.suggestions.map(suggestion => [
+                    _visualGuideTargetIdentity(suggestion.character, suggestion.profile_id),
+                    suggestion,
+                ]));
+                let applied = 0;
+                selected.forEach(target => {
+                    const suggestion = suggestionByTarget.get(target.identity);
+                    if (!suggestion) {
+                        console.error('[VISUAL_GUIDE] 서버 응답에서 대상 제안 누락', {
+                            character: target.character,
+                            profileId: target.profileId,
+                        });
+                        return;
+                    }
+                    target.suggestion = {
+                        aliases: Array.isArray(suggestion.aliases) ? [...suggestion.aliases] : [],
+                        selection_guide: String(suggestion.selection_guide || ''),
+                        evidence: String(suggestion.evidence || ''),
+                        confidence: ['high','medium','low'].includes(suggestion.confidence) ? suggestion.confidence : 'low',
+                    };
+                    if (target.suggestion.confidence === 'low') target.selected = false;
+                    applied += 1;
+                });
+                if (!applied) {
+                    console.error('[VISUAL_GUIDE] 적용 가능한 LLM 제안이 없습니다', {result});
+                    throw new Error('응답에 현재 카드와 연결되는 제안이 없습니다.');
+                }
+                showToast(`선택 기준 ${applied}개 생성 완료${selected.length !== applied ? ` · 누락 ${selected.length - applied}개` : ''}`, 'success');
+            } catch (error) {
+                console.error('[VISUAL_GUIDE] LLM 제안 생성 실패', error, {
+                    bot: state.botName,
+                    selected: selected.map(target => `${target.character}/${target.profileId}`),
+                });
+                showToast('선택 기준 생성 실패: ' + error.message, 'error');
+            } finally {
+                if (_visualGuideModalState === state) {
+                    state.busy = false;
+                    _renderVisualGuideRows();
+                }
+            }
+        }
+
+        async function applyVisualGuideSuggestions() {
+            const state = _visualGuideModalState;
+            if (!state || state.busy) {
+                console.error('[VISUAL_GUIDE] 적용 시작 불가', {hasState:!!state, busy:state?.busy});
+                return;
+            }
+            const selected = state.targets.filter(target => target.selected && target.suggestion);
+            if (!selected.length) {
+                console.error('[VISUAL_GUIDE] 적용할 생성 제안이 선택되지 않았습니다');
+                showToast('적용할 생성 제안을 선택하세요.', 'error');
+                return;
+            }
+            const emptyGuide = selected.find(target => !String(target.suggestion.selection_guide || '').trim());
+            if (emptyGuide) {
+                console.error('[VISUAL_GUIDE] 비어 있는 선택 기준 적용 거부', {
+                    character: emptyGuide.character,
+                    profileId: emptyGuide.profileId,
+                });
+                showToast(`${emptyGuide.character} [${emptyGuide.profileIndex + 1}]의 선택 기준이 비어 있습니다.`, 'error');
+                return;
+            }
+            const overwrite = document.querySelector('input[name="visual-guide-apply-mode"]:checked')?.value === 'overwrite';
+            state.busy = true;
+            _renderVisualGuideRows();
+            try {
+                const response = await fetch('/api/bot_mode/character_cards/apply_metadata', {
+                    method: 'POST',
+                    headers: {'Content-Type':'application/json'},
+                    body: JSON.stringify({
+                        bot_name: state.botName,
+                        overwrite,
+                        items: selected.map(target => ({
+                            character: target.character,
+                            profile_id: target.profileId,
+                            aliases: target.suggestion.aliases || [],
+                            selection_guide: String(target.suggestion.selection_guide || '').trim(),
+                        })),
+                    }),
+                });
+                const result = await response.json();
+                if (!response.ok || !result.success) throw new Error(result.error || '선택 기준 적용 실패');
+                if (Array.isArray(result.bots)) botData.bots = result.bots;
+                _visualCardStates = {};
+                closeVisualGuideGeneratorModal(true);
+                await renderBotCharacters();
+                showToast(`선택 기준 적용 완료 · 변경 ${result.applied || 0}개 · 유지 ${result.skipped || 0}개`, 'success');
+            } catch (error) {
+                console.error('[VISUAL_GUIDE] 선택 기준 일괄 적용 실패', error, {
+                    bot: state.botName,
+                    overwrite,
+                    targets: selected.map(target => `${target.character}/${target.profileId}`),
+                });
+                showToast('선택 기준 적용 실패: ' + error.message, 'error');
+            } finally {
+                if (_visualGuideModalState === state) {
+                    state.busy = false;
+                    _renderVisualGuideRows();
+                }
+            }
         }
 
         async function _setVisualCardRenderField(charName, key, value) {
@@ -64699,9 +65381,12 @@
                 grid.appendChild(card);
 
                 // 비동기로 대표 이미지+프롬프트 로드
-                (async (cardEl, charName) => {
+                (async (cardEl, charName, activeVisualCardId) => {
                     try {
-                        const resp = await fetch(`/api/bot_mode/images?bot=${encodeURIComponent(botCurrentBot)}&character=${encodeURIComponent(charName)}`);
+                        const cardQuery = activeVisualCardId
+                            ? `&visual_card_id=${encodeURIComponent(activeVisualCardId)}`
+                            : '';
+                        const resp = await fetch(`/api/bot_mode/images?bot=${encodeURIComponent(botCurrentBot)}&character=${encodeURIComponent(charName)}${cardQuery}`);
                         const data = await resp.json();
                         if (!data.images || data.images.length === 0) {
                             const btn = cardEl.querySelector('.btn-view-all');
@@ -64718,11 +65403,9 @@
                         const faceCol = cardEl.querySelector(`#char-face-${charIdx}`) || cardEl.querySelector('.face-col');
                         const repCol = cardEl.querySelector(`#char-reps-${charIdx}`) || cardEl.querySelector('.rep-col');
                         // 얼굴 결과 이미지 (좌측 컬럼)
-                        const utilImg = (_visualCardSlots[charName] || 0) === 0
-                            ? data.images.find(i => i.filename === '_face_image.webp')
-                            : null;
+                        const utilImg = data.images.find(i => i.filename === '_face_image.webp');
                         if (utilImg) {
-                            const utilUrl = `${utilImg.url}?t=${Date.now()}`;
+                            const utilUrl = `${utilImg.url}${utilImg.url.includes('?') ? '&' : '?'}t=${Date.now()}`;
                             const utilWrap = document.createElement('div');
                             utilWrap.style.cssText = 'display:inline-flex; flex-direction:column; align-items:center;';
                             utilWrap.innerHTML = `
@@ -64730,7 +65413,7 @@
                                 <img src="${utilUrl}" loading="lazy" onerror="this.style.display='none'"
                                     onclick="event.stopPropagation(); openLightbox(this.src)"
                                     style="cursor:zoom-in; border:3px solid var(--accent); border-radius:6px;">
-                                <div class="lv1-prompt-box" data-filename="_face_image.webp" data-character="${escAttr(charName)}" data-negative="${escAttr(utilImg.negative || '')}"
+                                <div class="lv1-prompt-box" data-filename="_face_image.webp" data-character="${escAttr(charName)}" data-visual-card-id="${escAttr(activeVisualCardId)}" data-negative="${escAttr(utilImg.negative || '')}"
                                     style="width:240px; background:var(--surface2); border-radius:0 0 6px 6px;">
                                     <div class="lv1-prompt-text" style="padding:4px 6px; font-size:0.7rem; color:var(--text2); line-height:1.3; word-break:break-word;
                                         max-height:3.9em; overflow:hidden; cursor:pointer;"
@@ -64783,7 +65466,7 @@
                     } catch (e) {
                         console.error(`[BOT] 캐릭터 "${charName}" 이미지 로드 실패:`, e);
                     }
-                })(card, char.name);
+                })(card, char.name, activeProfile?.id || '');
 
                 // 기존 LoRA 목록 렌더링 (solo/group 프로필)
                 _charLoraProfiles[charIdx] = _charLoraProfiles[charIdx] || 'solo';
@@ -65170,6 +65853,10 @@
             btn.textContent = '불러오는 중…';
 
             try {
+                // 화면 트리는 bot.json의 캐릭터 카드(프로필/복장)를 기준으로 그린다.
+                // 다운로드용 평면 데이터는 아래의 기존 _lbExtraEdited 흐름을 그대로 유지한다.
+                await _ensureVisualCardStates(bot);
+
                 // 1) 원본: 항상 API에서 자동 분류
                 const origResults = [];
                 let promptMissingCount = 0;   // 대표 이미지 프롬프트 파일 누락 캐릭터 수
@@ -65267,9 +65954,9 @@
             overlay.innerHTML = `
                 <div style="background:var(--surface); border:1px solid var(--border); border-radius:12px; width:95vw; max-width:1400px; height:88vh; display:flex; flex-direction:column; overflow:hidden;">
                     <div style="display:flex; align-items:center; padding:12px 16px; border-bottom:1px solid var(--border); gap:12px; flex-shrink:0;">
-                        <span style="font-weight:700; font-size:1.05rem;">분류 데이터 편집</span>
+                        <span style="font-weight:700; font-size:1.05rem;">lb-xnai.lb.extra 구조</span>
                         <div style="display:flex; gap:4px; margin-left:8px;">
-                            <button id="lb-extra-tab-classification" onclick="_switchLbExtraTab('classification')" style="padding:3px 10px; border-radius:4px; border:1px solid var(--border); background:var(--accent); color:#fff; cursor:pointer; font-size:0.8rem; font-weight:600;">캐릭터 분류</button>
+                            <button id="lb-extra-tab-classification" onclick="_switchLbExtraTab('classification')" style="padding:3px 10px; border-radius:4px; border:1px solid var(--border); background:var(--accent); color:#fff; cursor:pointer; font-size:0.8rem; font-weight:600;">캐릭터 트리</button>
                             <button id="lb-extra-tab-systemPrompt" onclick="_switchLbExtraTab('systemPrompt')" style="padding:3px 10px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); cursor:pointer; font-size:0.8rem; font-weight:600;">시스템 프롬프트</button>
                         </div>
                         <label id="lb-extra-desc-label" style="display:flex; align-items:center; gap:4px; font-size:0.8rem; color:var(--text2); cursor:pointer; user-select:none;">
@@ -65283,15 +65970,16 @@
                             <input type="text" id="lb-extra-search" placeholder="캐릭터 검색..." style="padding:4px 8px; border:1px solid var(--border); border-radius:4px; font-size:0.8rem; background:var(--surface2); color:var(--text); width:180px;" autocomplete="off">
                         </div>
                         <div style="flex:1;"></div>
-                        <button id="btn-lb-extra-batch-refine" onclick="_lbExtraBatchRefine()" style="background:#7C3AED; color:#fff; border:none; padding:6px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">일괄 LLM 정제</button>
+                        <button id="btn-lb-extra-batch-refine" onclick="_lbExtraBatchRefine()" title="다운로드 호환용 평면 데이터의 Appearance/default_outfit을 일괄 정제합니다." style="background:#7C3AED; color:#fff; border:none; padding:6px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">이식용 데이터 일괄 정제</button>
                         <button onclick="_saveLbExtra()" style="background:#1565C0; color:#fff; border:none; padding:6px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">저장</button>
                         <button onclick="_downloadLbExtra()" style="background:#00695C; color:#fff; border:none; padding:6px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">다운로드</button>
                         <button onclick="document.getElementById('lb-extra-overlay').remove()" style="background:none; border:none; color:var(--text2); font-size:1.2rem; cursor:pointer;">✕</button>
                     </div>
-                    <div id="lb-extra-column-header" style="display:flex; flex-shrink:0; border-bottom:1px solid var(--border);">
-                        <div style="flex:1; padding:6px 12px; font-weight:600; font-size:0.85rem; color:var(--text2); text-align:center;">원본</div>
-                        <div style="width:1px; background:var(--border);"></div>
-                        <div style="flex:1; padding:6px 12px; font-weight:600; font-size:0.85rem; color:var(--text2); text-align:center;">편집본</div>
+                    <div id="lb-extra-column-header" style="display:flex; align-items:center; gap:8px; flex-shrink:0; padding:6px 16px; border-bottom:1px solid var(--border);">
+                        <div style="font-weight:600; font-size:0.82rem; color:var(--text2);">수평 계층도 · 캐릭터 → 프로필 → Appearance / 복장</div>
+                        <div style="flex:1;"></div>
+                        <button onclick="_setLbExtraTreeExpanded(true)" style="padding:3px 9px; border:1px solid var(--border); border-radius:4px; background:var(--surface2); color:var(--text2); cursor:pointer; font-size:0.72rem;">모두 펼치기</button>
+                        <button onclick="_setLbExtraTreeExpanded(false)" style="padding:3px 9px; border:1px solid var(--border); border-radius:4px; background:var(--surface2); color:var(--text2); cursor:pointer; font-size:0.72rem;">모두 접기</button>
                     </div>
                     <div id="lb-extra-content" style="flex:1; overflow-y:auto; padding:16px;"></div>
                 </div>`;
@@ -65699,6 +66387,100 @@
             }
         }
 
+        function _lbExtraTreeTagChips(values, tone = 'appearance') {
+            const tags = Array.isArray(values) ? values : [];
+            if (!tags.length) {
+                return '<span style="font-size:0.74rem; color:var(--text2); opacity:0.65;">등록된 태그 없음</span>';
+            }
+            const palette = tone === 'outfit'
+                ? { bg: 'rgba(244,114,182,0.13)', border: 'rgba(244,114,182,0.3)' }
+                : { bg: 'rgba(59,130,246,0.13)', border: 'rgba(59,130,246,0.3)' };
+            return tags.map(item => {
+                const tag = typeof item === 'string' ? item : (item?.tag || '');
+                const desc = typeof item === 'object' && item ? (item.desc || '') : '';
+                if (!tag) {
+                    console.error('[LB_EXTRA:TREE] 이름이 비어 있는 태그를 건너뜁니다', { item, tone });
+                    return '';
+                }
+                const description = _lbExtraShowDesc && desc
+                    ? `<span style="font-size:0.66rem; color:var(--text2);">— ${escHtml(desc)}</span>`
+                    : '';
+                return `<span title="${escAttr(desc)}" style="background:${palette.bg}; border:1px solid ${palette.border}; padding:2px 7px; border-radius:4px; font-size:0.74rem; display:inline-flex; align-items:center; gap:4px;">${escHtml(tag)}${description}</span>`;
+            }).join('');
+        }
+
+        function _lbExtraTreeBadge(text, tone = 'default') {
+            const palette = tone === 'count'
+                ? { bg: 'var(--surface2)', color: 'var(--text2)', border: 'var(--border)' }
+                : { bg: 'rgba(21,101,192,0.13)', color: 'var(--accent)', border: 'rgba(21,101,192,0.3)' };
+            return `<span style="padding:1px 6px; border-radius:999px; border:1px solid ${palette.border}; background:${palette.bg}; color:${palette.color}; font-size:0.65rem; font-weight:600;">${escHtml(text)}</span>`;
+        }
+
+        function _setLbExtraTreeExpanded(expanded) {
+            const container = document.getElementById('lb-extra-content');
+            if (!container) {
+                console.error('[LB_EXTRA:TREE] 펼침 상태를 바꿀 트리 컨테이너가 없습니다');
+                return;
+            }
+            container.querySelectorAll('details[data-lb-tree-key]:not([data-lb-tree-secondary])').forEach(node => {
+                node.open = !!expanded;
+            });
+        }
+
+        async function _openLbExtraTreeProfileEditor(charName, profileIndex) {
+            const state = _visualCardState(charName);
+            const profiles = state?.data?.profiles || [];
+            if (!Number.isInteger(profileIndex) || profileIndex < 0 || profileIndex >= profiles.length) {
+                console.error('[LB_EXTRA:TREE] 편집할 프로필을 찾지 못했습니다', {
+                    charName, profileIndex, profileCount: profiles.length
+                });
+                showToast('편집할 프로필을 찾지 못했습니다.', 'error');
+                return;
+            }
+            _visualCardSlots[charName] = profileIndex;
+            await openVisualCardLbExtraEditor(charName);
+        }
+
+        function _lbExtraTransferEditorHtml(char, ci) {
+            return `
+                ${char.promptMissing ? '<div style="background:rgba(245,158,11,0.12); border:1px solid rgba(245,158,11,0.35); border-radius:4px; padding:6px 10px; margin-bottom:8px; font-size:0.75rem; color:#B45309;">⚠ 대표 이미지의 프롬프트 파일이 없어 자동 분류를 하지 못했습니다. 편집본에 태그를 직접 입력하세요.</div>' : ''}
+                <div style="display:flex; align-items:center; gap:6px; margin-bottom:10px;">
+                    <span style="font-size:0.72rem; color:var(--text2);">다운로드 호환 형식은 기존과 동일하게 캐릭터당 Appearance/default_outfit 한 쌍만 사용합니다.</span>
+                    <div style="flex:1;"></div>
+                    <button onclick="event.stopPropagation(); _lbExtraShowRep('${escAttr(char.name)}')" style="background:var(--surface2); color:var(--text2); border:1px solid var(--border); padding:2px 8px; border-radius:4px; cursor:pointer; font-size:0.7rem;">사진보기</button>
+                    <button onclick="event.stopPropagation(); _openFocusEditModal(${ci})" style="background:var(--surface2); color:var(--text2); border:1px solid var(--border); padding:2px 8px; border-radius:4px; cursor:pointer; font-size:0.7rem;">이식용 집중편집</button>
+                </div>
+                <div style="display:flex; gap:0;">
+                    <div style="flex:1; padding-right:12px;">
+                        <div style="font-size:0.72rem; color:var(--text2); margin-bottom:6px; font-weight:700;">자동 분류 원본</div>
+                        <div style="font-size:0.75rem; color:var(--text2); margin-bottom:4px; font-weight:600;">-Appearance</div>
+                        <div class="lb-extra-orig-zone" data-oci="${ci}" data-ogrp="appearance" style="display:flex; flex-wrap:wrap; gap:4px; margin-bottom:8px;">${_buildOrigTags(ci, 'appearance')}</div>
+                        <div style="font-size:0.75rem; color:var(--text2); margin-bottom:4px; font-weight:600;">-default_outfit</div>
+                        <div class="lb-extra-orig-zone" data-oci="${ci}" data-ogrp="outfit" style="display:flex; flex-wrap:wrap; gap:4px; margin-bottom:8px;">${_buildOrigTags(ci, 'outfit')}</div>
+                        <div style="font-size:0.75rem; color:var(--text2); margin-bottom:4px; font-weight:600; opacity:0.6;">-미분류</div>
+                        <div class="lb-extra-orig-zone" data-oci="${ci}" data-ogrp="uncategorized" style="display:flex; flex-wrap:wrap; gap:4px;">${_buildUncategorizedTags(ci)}</div>
+                    </div>
+                    <div style="width:1px; background:var(--border); margin:0 12px;"></div>
+                    <div style="flex:1; padding-left:12px;">
+                        <div style="font-size:0.72rem; color:var(--text2); margin-bottom:6px; font-weight:700;">다운로드 편집본</div>
+                        <div style="font-size:0.75rem; color:var(--text2); margin-bottom:4px; font-weight:600;">-Appearance</div>
+                        <div style="position:relative; margin-bottom:4px;">
+                            <input type="text" id="lb-extra-add-app-${ci}" placeholder="태그 추가 (쉼표로 여러 개)..." style="width:calc(100% - 32px); padding:3px 8px; border:1px solid var(--border); border-radius:4px; font-size:0.75rem; background:var(--surface); color:var(--text);" onkeydown="if(event.key==='Enter'){event.preventDefault();_addLbExtraTagFromInput(${ci},'appearance',this);}">
+                            <button onclick="_addLbExtraTagFromInput(${ci},'appearance',document.getElementById('lb-extra-add-app-${ci}'))" style="margin-left:4px; padding:3px 8px; border-radius:4px; border:none; background:var(--accent); color:#fff; cursor:pointer; font-size:0.8rem; font-weight:600;">+</button>
+                            <div class="tag-autocomplete-dropdown" id="lb-extra-ac-app-${ci}"></div>
+                        </div>
+                        <div class="lb-extra-drop" data-dci="${ci}" data-dgrp="appearance" style="display:flex; flex-wrap:wrap; gap:4px; margin-bottom:8px; min-height:24px; border-radius:4px; padding:2px; transition:background 0.15s;">${_buildEditTags(ci, 'appearance')}</div>
+                        <div style="font-size:0.75rem; color:var(--text2); margin-bottom:4px; font-weight:600;">-default_outfit</div>
+                        <div style="position:relative; margin-bottom:4px;">
+                            <input type="text" id="lb-extra-add-out-${ci}" placeholder="태그 추가 (쉼표로 여러 개)..." style="width:calc(100% - 32px); padding:3px 8px; border:1px solid var(--border); border-radius:4px; font-size:0.75rem; background:var(--surface); color:var(--text);" onkeydown="if(event.key==='Enter'){event.preventDefault();_addLbExtraTagFromInput(${ci},'outfit',this);}">
+                            <button onclick="_addLbExtraTagFromInput(${ci},'outfit',document.getElementById('lb-extra-add-out-${ci}'))" style="margin-left:4px; padding:3px 8px; border-radius:4px; border:none; background:var(--accent); color:#fff; cursor:pointer; font-size:0.8rem; font-weight:600;">+</button>
+                            <div class="tag-autocomplete-dropdown" id="lb-extra-ac-out-${ci}"></div>
+                        </div>
+                        <div class="lb-extra-drop" data-dci="${ci}" data-dgrp="outfit" style="display:flex; flex-wrap:wrap; gap:4px; min-height:24px; border-radius:4px; padding:2px; transition:background 0.15s;">${_buildEditTags(ci, 'outfit')}</div>
+                    </div>
+                </div>`;
+        }
+
         function _renderLbExtraContent() {
             const el = document.getElementById('lb-extra-content');
             if (!el) return;
@@ -65708,52 +66490,148 @@
             }
             if (_lbExtraOriginal.length === 0) { el.innerHTML = '<div style="color:var(--text2); text-align:center; padding:20px;">데이터 없음</div>'; return; }
 
+            const previousNodes = [...el.querySelectorAll('details[data-lb-tree-key]')];
+            const hadPreviousTree = previousNodes.length > 0;
+            const openKeys = new Set(previousNodes.filter(node => node.open).map(node => node.dataset.lbTreeKey));
+            const openAttr = (key, defaultOpen = false) => (hadPreviousTree ? openKeys.has(key) : defaultOpen) ? ' open' : '';
+
             // 검색어(이름 부분 매칭, 대소문자 무시)로 캐릭터 필터링
             const q = (_lbExtraSearchQuery || '').trim().toLowerCase();
             let html = '';
             let matched = 0;
             _lbExtraOriginal.forEach((char, ci) => {
                 if (q && !(char.name || '').toLowerCase().includes(q)) return;
-                if (matched > 0) html += '<hr style="border:none; border-top:1px solid var(--border); margin:14px 0;">';
                 matched++;
+
+                const state = _visualCardState(char.name);
+                const characterData = state?.data || null;
+                const profiles = characterData?.profiles || [];
+                if (!characterData || !profiles.length) {
+                    console.error('[LB_EXTRA:TREE] 표시할 캐릭터 카드가 없습니다', {
+                        character: char.name, source: state?.source || 'missing'
+                    });
+                }
+                const defaultProfileId = characterData?.default_visual_profile_id || profiles[0]?.id || '';
+                const characterKey = `character:${char.name}`;
+
+                const profilesHtml = profiles.length ? `<div class="lb-extra-mindmap" style="min-width:980px; display:grid; grid-template-columns:minmax(150px,190px) 34px minmax(760px,1fr); align-items:center; padding:8px 4px 10px;">
+                    <div style="align-self:center; padding:12px 11px; border:2px solid var(--accent); border-radius:9px; background:color-mix(in srgb, var(--accent) 10%, var(--surface)); box-shadow:0 2px 8px rgba(0,0,0,0.08);">
+                        <div style="font-size:0.68rem; color:var(--text2); font-weight:700; margin-bottom:3px;">캐릭터</div>
+                        <div style="font-size:0.9rem; font-weight:750; overflow-wrap:anywhere;">${escHtml(char.name)}</div>
+                        <div style="margin-top:6px;">${_lbExtraTreeBadge(`프로필 ${profiles.length}`, 'count')}</div>
+                    </div>
+                    <div aria-hidden="true" style="height:0; border-top:2px solid color-mix(in srgb, var(--accent) 55%, var(--border));"></div>
+                    <div style="display:flex; flex-direction:column;">${profiles.map((profile, pi) => {
+                    const profileId = String(profile.id || '');
+                    const profileLabel = String(profile.label || profileId || `프로필 ${pi + 1}`);
+                    const isDefaultProfile = profileId === defaultProfileId || pi === 0;
+                    const profileKey = `${characterKey}:profile:${profileId || pi}`;
+                    const appearance = Array.isArray(profile.appearance) ? profile.appearance : [];
+                    const outfits = Array.isArray(profile.outfits) ? profile.outfits : [];
+                    const defaultOutfitId = String(profile.default_outfit_id || outfits[0]?.id || '');
+                    const genderTag = String(profile.render_overrides?.gender_tag || _getCharGenderTag(char.name) || '');
+                    const aliases = Array.isArray(profile.aliases) ? profile.aliases.filter(Boolean) : [];
+                    const guide = String(profile.selection_guide || '').trim();
+
+                    const childNodes = [{
+                        key: `${profileKey}:appearance`,
+                        kind: 'appearance',
+                        title: 'Appearance',
+                        id: '',
+                        isDefault: false,
+                        guide: '',
+                        tags: appearance,
+                    }];
+                    outfits.forEach((outfit, oi) => {
+                        const outfitId = String(outfit.id || '');
+                        const outfitLabel = String(outfit.label || outfitId || `복장 ${oi + 1}`);
+                        childNodes.push({
+                            key: `${profileKey}:outfit:${outfitId || oi}`,
+                            kind: 'outfit',
+                            title: `복장 ${oi + 1}. ${outfitLabel}`,
+                            id: outfitId,
+                            isDefault: outfitId === defaultOutfitId,
+                            guide: String(outfit.selection_guide || '').trim(),
+                            tags: Array.isArray(outfit.tags) ? outfit.tags : [],
+                        });
+                    });
+
+                    const childrenHtml = childNodes.map((node, ni) => {
+                        const isFirstChild = ni === 0;
+                        const isLastChild = ni === childNodes.length - 1;
+                        const nodeTone = node.kind === 'outfit' ? 'outfit' : 'appearance';
+                        const nodeBorder = node.kind === 'outfit'
+                            ? 'rgba(244,114,182,0.42)'
+                            : 'rgba(59,130,246,0.42)';
+                        return `
+                            <div class="lb-extra-mindmap-child-row" style="display:grid; grid-template-columns:24px minmax(280px,1fr); align-items:stretch;">
+                                <div aria-hidden="true" style="position:relative; min-height:44px;">
+                                    <span style="position:absolute; left:11px; top:${isFirstChild ? '50%' : '0'}; bottom:${isLastChild ? '50%' : '0'}; border-left:2px solid ${nodeBorder};"></span>
+                                    <span style="position:absolute; left:11px; right:0; top:50%; border-top:2px solid ${nodeBorder};"></span>
+                                </div>
+                                <details class="lb-extra-mindmap-leaf" data-lb-tree-key="${escAttr(node.key)}"${openAttr(node.key, false)} style="align-self:center; margin:4px 0; border:1px solid ${nodeBorder}; border-radius:7px; background:var(--surface); overflow:hidden;">
+                                    <summary style="cursor:pointer; padding:7px 9px; color:var(--text); font-size:0.76rem; background:color-mix(in srgb, ${nodeBorder} 10%, var(--surface));">
+                                        <span style="font-weight:700;">${escHtml(node.title)}</span>
+                                        ${node.id ? `<code style="font-size:0.64rem; color:var(--text2); margin-left:5px;">${escHtml(node.id)}</code>` : ''}
+                                        ${node.isDefault ? _lbExtraTreeBadge('기본 복장') : ''}
+                                        ${_lbExtraTreeBadge(`태그 ${node.tags.length}`, 'count')}
+                                    </summary>
+                                    <div style="padding:8px 9px 9px; border-top:1px solid ${nodeBorder};">
+                                        ${node.guide ? `<div style="font-size:0.71rem; color:var(--text2); line-height:1.45; margin-bottom:7px;"><b style="color:var(--text);">선택 기준</b> · ${escHtml(node.guide)}</div>` : ''}
+                                        <div style="display:flex; flex-wrap:wrap; gap:4px;">
+                                            ${node.kind === 'appearance' ? _buildGenderFixedChip(genderTag) : ''}${_lbExtraTreeTagChips(node.tags, nodeTone)}
+                                        </div>
+                                    </div>
+                                </details>
+                            </div>`;
+                    }).join('');
+
+                    const isFirstProfile = pi === 0;
+                    const isLastProfile = pi === profiles.length - 1;
+
+                    return `
+                        <div class="lb-extra-mindmap-profile-row" style="display:grid; grid-template-columns:24px minmax(220px,300px) 34px minmax(340px,1fr); align-items:stretch;">
+                            <div aria-hidden="true" style="position:relative; min-height:92px;">
+                                <span style="position:absolute; left:11px; top:${isFirstProfile ? '50%' : '0'}; bottom:${isLastProfile ? '50%' : '0'}; border-left:2px solid color-mix(in srgb, var(--accent) 55%, var(--border));"></span>
+                                <span style="position:absolute; left:11px; right:0; top:50%; border-top:2px solid color-mix(in srgb, var(--accent) 55%, var(--border));"></span>
+                            </div>
+                            <div class="lb-extra-mindmap-profile" style="align-self:center; margin:5px 0; padding:9px 10px; border:${isDefaultProfile ? '2px solid var(--accent)' : '1px solid var(--border)'}; border-radius:8px; background:${isDefaultProfile ? 'color-mix(in srgb, var(--accent) 8%, var(--surface))' : 'var(--surface2)'}; box-shadow:0 1px 5px rgba(0,0,0,0.07);">
+                                <div style="display:flex; align-items:center; gap:5px; flex-wrap:wrap;">
+                                    <span style="font-weight:750; font-size:0.8rem;">프로필 [${pi + 1}] ${escHtml(profileLabel)}</span>
+                                    ${isDefaultProfile ? _lbExtraTreeBadge('기본 프로필') : ''}
+                                </div>
+                                <code style="display:block; font-size:0.64rem; color:var(--text2); margin-top:3px;">${escHtml(profileId)}</code>
+                                ${guide ? `<div title="${escAttr(guide)}" style="font-size:0.69rem; color:var(--text2); line-height:1.35; margin-top:6px; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;">${escHtml(guide)}</div>` : ''}
+                                ${aliases.length ? `<div title="${escAttr(aliases.join(', '))}" style="font-size:0.67rem; color:var(--text2); margin-top:5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">별칭 · ${aliases.map(escHtml).join(', ')}</div>` : ''}
+                                <div style="display:flex; align-items:center; gap:4px; flex-wrap:wrap; margin-top:7px;">
+                                    ${_lbExtraTreeBadge(`외형 ${appearance.length}`, 'count')}
+                                    ${_lbExtraTreeBadge(`복장 ${outfits.length}`, 'count')}
+                                    <button onclick="event.stopPropagation(); _openLbExtraTreeProfileEditor('${escAttr(char.name)}', ${pi})" style="margin-left:auto; padding:3px 8px; border:1px solid var(--accent); border-radius:4px; background:transparent; color:var(--accent); cursor:pointer; font-size:0.68rem; font-weight:600;">설정</button>
+                                </div>
+                            </div>
+                            <div aria-hidden="true" style="align-self:center; height:0; border-top:2px solid color-mix(in srgb, var(--accent) 35%, var(--border));"></div>
+                            <div style="display:flex; flex-direction:column; justify-content:center;">${childrenHtml}</div>
+                        </div>`;
+                }).join('')}</div>
+                </div>` : '<div style="margin:8px 0 0 28px; color:var(--error); font-size:0.75rem;">프로필 데이터를 불러오지 못했습니다.</div>';
+
+                const transferKey = `${characterKey}:transfer`;
                 html += `
-                <div class="lb-extra-char" data-idx="${ci}" draggable="true" style="margin-bottom:0;">
-                    <div style="display:flex; align-items:center; gap:6px; margin-bottom:8px; cursor:grab;">
-                        <span style="font-size:0.9rem; color:var(--text2);">⠿</span>
-                        <span style="font-weight:700; font-size:0.95rem;">${escHtml(char.name)}</span>
-                        <button onclick="event.stopPropagation(); _lbExtraShowRep('${escAttr(char.name)}')" style="background:var(--surface2); color:var(--text2); border:1px solid var(--border); padding:2px 8px; border-radius:4px; cursor:pointer; font-size:0.7rem;">사진보기</button>
-                        <button onclick="event.stopPropagation(); _openFocusEditModal(${ci})" style="background:var(--surface2); color:var(--text2); border:1px solid var(--border); padding:2px 8px; border-radius:4px; cursor:pointer; font-size:0.7rem;">집중편집</button>
-                        ${char.promptMissing ? '<span style="background:rgba(245,158,11,0.15); color:#B45309; border:1px solid rgba(245,158,11,0.4); padding:2px 8px; border-radius:4px; font-size:0.7rem; font-weight:600;">⚠ 프롬프트 누락</span>' : ''}
-                    </div>
-                    ${char.promptMissing ? '<div style="background:rgba(245,158,11,0.12); border:1px solid rgba(245,158,11,0.35); border-radius:4px; padding:6px 10px; margin-bottom:8px; font-size:0.75rem; color:#B45309;">⚠ 프롬프트 누락 캐릭터 — 대표 이미지의 프롬프트 파일이 없어 자동 분류를 하지 못했습니다. 우측 편집칸에 태그를 직접 입력하세요.</div>' : ''}
-                    <div style="display:flex; gap:0;">
-                        <div style="flex:1; padding-right:12px;">
-                            <div style="font-size:0.75rem; color:var(--text2); margin-bottom:4px; font-weight:600;">-Appearance</div>
-                            <div class="lb-extra-orig-zone" data-oci="${ci}" data-ogrp="appearance" style="display:flex; flex-wrap:wrap; gap:4px; margin-bottom:8px;">${_buildOrigTags(ci, 'appearance')}</div>
-                            <div style="font-size:0.75rem; color:var(--text2); margin-bottom:4px; font-weight:600;">-default_outfit</div>
-                            <div class="lb-extra-orig-zone" data-oci="${ci}" data-ogrp="outfit" style="display:flex; flex-wrap:wrap; gap:4px; margin-bottom:8px;">${_buildOrigTags(ci, 'outfit')}</div>
-                            <div style="font-size:0.75rem; color:var(--text2); margin-bottom:4px; font-weight:600; opacity:0.6;">-미분류</div>
-                            <div class="lb-extra-orig-zone" data-oci="${ci}" data-ogrp="uncategorized" style="display:flex; flex-wrap:wrap; gap:4px;">${_buildUncategorizedTags(ci)}</div>
+                    <details class="lb-extra-char" data-idx="${ci}" data-lb-tree-key="${escAttr(characterKey)}"${openAttr(characterKey, true)} style="margin-bottom:10px; border:1px solid var(--border); border-radius:8px; background:var(--surface); overflow:hidden;">
+                        <summary style="cursor:pointer; display:flex; align-items:center; gap:7px; padding:9px 11px; background:color-mix(in srgb, var(--accent) 5%, var(--surface));">
+                            <span class="lb-extra-char-handle" draggable="true" title="이식용 다운로드 순서 변경" style="font-size:0.9rem; color:var(--text2); cursor:grab;">⠿</span>
+                            <span style="font-weight:750; font-size:0.9rem;">${escHtml(char.name)}</span>
+                            ${_lbExtraTreeBadge(`프로필 ${profiles.length}`, 'count')}
+                            ${char.promptMissing ? '<span style="background:rgba(245,158,11,0.15); color:#B45309; border:1px solid rgba(245,158,11,0.4); padding:1px 6px; border-radius:999px; font-size:0.66rem; font-weight:600;">⚠ 프롬프트 누락</span>' : ''}
+                        </summary>
+                        <div style="padding:7px 10px 10px;">
+                            <div style="overflow-x:auto; padding-bottom:4px;">${profilesHtml}</div>
+                            <details data-lb-tree-key="${escAttr(transferKey)}" data-lb-tree-secondary${openAttr(transferKey, false)} style="margin:8px 0 0 18px; border-left:2px dashed var(--border); padding-left:10px;">
+                                <summary style="cursor:pointer; padding:6px 8px; color:var(--text2); font-size:0.76rem; font-weight:650;">이식용 평면 데이터 (다운로드 형식 유지)</summary>
+                                <div style="margin-top:6px; padding:10px; border:1px dashed var(--border); border-radius:6px;">${_lbExtraTransferEditorHtml(char, ci)}</div>
+                            </details>
                         </div>
-                        <div style="width:1px; background:var(--border); margin:0 12px;"></div>
-                        <div style="flex:1; padding-left:12px;">
-                            <div style="font-size:0.75rem; color:var(--text2); margin-bottom:4px; font-weight:600;">-Appearance</div>
-                            <div style="position:relative; margin-bottom:4px;">
-                                <input type="text" id="lb-extra-add-app-${ci}" placeholder="태그 추가 (쉼표로 여러 개)..." style="width:calc(100% - 32px); padding:3px 8px; border:1px solid var(--border); border-radius:4px; font-size:0.75rem; background:var(--surface); color:var(--text);" onkeydown="if(event.key==='Enter'){event.preventDefault();_addLbExtraTagFromInput(${ci},'appearance',this);}">
-                                <button onclick="_addLbExtraTagFromInput(${ci},'appearance',document.getElementById('lb-extra-add-app-${ci}'))" style="margin-left:4px; padding:3px 8px; border-radius:4px; border:none; background:var(--accent); color:#fff; cursor:pointer; font-size:0.8rem; font-weight:600;">+</button>
-                                <div class="tag-autocomplete-dropdown" id="lb-extra-ac-app-${ci}"></div>
-                            </div>
-                            <div class="lb-extra-drop" data-dci="${ci}" data-dgrp="appearance" style="display:flex; flex-wrap:wrap; gap:4px; margin-bottom:8px; min-height:24px; border-radius:4px; padding:2px; transition:background 0.15s;">${_buildEditTags(ci, 'appearance')}</div>
-                            <div style="font-size:0.75rem; color:var(--text2); margin-bottom:4px; font-weight:600;">-default_outfit</div>
-                            <div style="position:relative; margin-bottom:4px;">
-                                <input type="text" id="lb-extra-add-out-${ci}" placeholder="태그 추가 (쉼표로 여러 개)..." style="width:calc(100% - 32px); padding:3px 8px; border:1px solid var(--border); border-radius:4px; font-size:0.75rem; background:var(--surface); color:var(--text);" onkeydown="if(event.key==='Enter'){event.preventDefault();_addLbExtraTagFromInput(${ci},'outfit',this);}">
-                                <button onclick="_addLbExtraTagFromInput(${ci},'outfit',document.getElementById('lb-extra-add-out-${ci}'))" style="margin-left:4px; padding:3px 8px; border-radius:4px; border:none; background:var(--accent); color:#fff; cursor:pointer; font-size:0.8rem; font-weight:600;">+</button>
-                                <div class="tag-autocomplete-dropdown" id="lb-extra-ac-out-${ci}"></div>
-                            </div>
-                            <div class="lb-extra-drop" data-dci="${ci}" data-dgrp="outfit" style="display:flex; flex-wrap:wrap; gap:4px; min-height:24px; border-radius:4px; padding:2px; transition:background 0.15s;">${_buildEditTags(ci, 'outfit')}</div>
-                        </div>
-                    </div>
-                </div>`;
+                    </details>`;
             });
             if (matched === 0) {
                 el.innerHTML = '<div style="color:var(--text2); text-align:center; padding:20px;">일치하는 캐릭터 없음</div>';
@@ -67622,18 +68500,20 @@
             const wrap = document.getElementById('auto-group-face-img-wrap');
             if (!wrap) return;
             try {
-                const resp = await fetch(`/api/bot_mode/images?bot=${encodeURIComponent(botCurrentBot)}&character=${encodeURIComponent(charName)}`);
+                const activeVisualCardId = _visualCardProfile(charName)?.id || '';
+                const cardQuery = activeVisualCardId
+                    ? `&visual_card_id=${encodeURIComponent(activeVisualCardId)}`
+                    : '';
+                const resp = await fetch(`/api/bot_mode/images?bot=${encodeURIComponent(botCurrentBot)}&character=${encodeURIComponent(charName)}${cardQuery}`);
                 const data = await resp.json();
                 const images = data.images || [];
-                const face = (_visualCardSlots[charName] || 0) === 0
-                    ? images.find(i => i.filename === '_face_image.webp')
-                    : null;
+                const face = images.find(i => i.filename === '_face_image.webp');
                 const char = _visualCardResolved(charName);
                 const repImages = (char && char.rep_images) || [];
                 const fallback = repImages.map(fn => images.find(i => i.filename === fn)).find(Boolean);
                 const chosen = face || fallback;
                 if (chosen && chosen.url) {
-                    const url = `${chosen.url}?t=${Date.now()}`;
+                    const url = `${chosen.url}${chosen.url.includes('?') ? '&' : '?'}t=${Date.now()}`;
                     wrap.innerHTML = `<img src="${escAttr(url)}" loading="lazy" onerror="this.parentElement.innerHTML='이미지 없음'" onclick="event.stopPropagation(); openLightbox(this.src)" style="cursor:zoom-in; width:100%; height:auto; max-height:60vh; object-fit:contain; border-radius:8px; display:block;">`;
                 } else {
                     wrap.textContent = '이미지 없음';
@@ -79256,6 +80136,7 @@
             const box = btn.closest('.lv1-prompt-box');
             const filename = box.dataset.filename;
             const character = box.dataset.character;
+            const visualCardId = box.dataset.visualCardId || '';
             const textEl = box.querySelector('.lv1-prompt-text');
             const currentPrompt = textEl.textContent === '<프롬프트 없음>' ? '' : textEl.textContent;
 
@@ -79291,7 +80172,13 @@
                     await fetch('/api/bot_mode/prompt', {
                         method: 'POST',
                         headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({bot: botCurrentBot, character, filename, prompt})
+                        body: JSON.stringify({
+                            bot: botCurrentBot,
+                            character,
+                            filename,
+                            visual_card_id: visualCardId,
+                            prompt,
+                        })
                     });
                     textEl.textContent = prompt || '<프롬프트 없음>';
                     modal.style.display = 'none';

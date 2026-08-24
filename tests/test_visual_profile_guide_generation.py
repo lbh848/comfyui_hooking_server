@@ -1,0 +1,309 @@
+import importlib
+import json
+from copy import deepcopy
+
+import pytest
+
+
+def _card(card_id, label, filename, *, aliases=None, guide=""):
+    return {
+        "id": card_id,
+        "label": label,
+        "selection_guide": guide,
+        "aliases": list(aliases or []),
+        "appearance": [{"tag": "blue hair"}],
+        "default_outfit_id": "default",
+        "outfits": [
+            {
+                "id": "default",
+                "label": "기본 복장",
+                "selection_guide": "",
+                "tags": [{"tag": "school uniform"}],
+            }
+        ],
+        "rep_images": [filename],
+        "use_profile_embedding": card_id != "card_1",
+    }
+
+
+def _bot_data(cards):
+    return {
+        "bots": [
+            {
+                "name": "demo",
+                "system_prompt_preset": "기본",
+                "preset_scope": "local",
+                "characters": [{"name": "Riko", "visual_cards": deepcopy(cards)}],
+            }
+        ],
+        "system_prompt_presets": {
+            "기본": (
+                "Arbitrary Picture Grammar\n"
+                "Riko uses command `portrait:Riko_Prism Heart` only after her first awakening.\n"
+                "The document deliberately does not use a fixed Image Command heading."
+            )
+        },
+    }
+
+
+class _JsonRequest:
+    def __init__(self, body):
+        self._body = body
+
+    async def json(self):
+        return deepcopy(self._body)
+
+
+@pytest.mark.asyncio
+async def test_suggest_metadata_reads_the_whole_selected_prompt_and_does_not_save(monkeypatch):
+    bot_mode = importlib.import_module("modes.bot_mode")
+    llm_service = importlib.import_module("modes.llm_service")
+    cards = [_card("card_1", "카드 1", "Riko_magical_overcome_smile.webp")]
+    data = _bot_data(cards)
+    captured = {}
+
+    async def fake_call(task_key, messages, **kwargs):
+        captured["task_key"] = task_key
+        captured["messages"] = messages
+        raw = json.dumps(
+            {
+                "suggestions": [
+                    {
+                        "target_key": "0",
+                        "aliases": ["Riko_Prism Heart", "Prism Heart"],
+                        "selection_guide": (
+                            "리코가 최초 각성을 마치고 Prism Heart 형태를 유지하는 동안 선택한다. "
+                            "각성 이전이나 다른 형태일 때는 선택하지 않는다."
+                        ),
+                        "evidence": "원문의 Riko_Prism Heart 명령과 대표 이미지의 overcome 형태가 대응한다.",
+                        "confidence": "high",
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        )
+        valid, reason = kwargs["result_validator"](raw)
+        assert valid, reason
+        return raw
+
+    monkeypatch.setattr(bot_mode, "_load_bot_data", lambda: data)
+    monkeypatch.setattr(bot_mode, "_load_lb_extra", lambda _bot_name: [])
+    monkeypatch.setattr(
+        bot_mode,
+        "_save_bot_data",
+        lambda _value: pytest.fail("suggestion preview must not save bot.json"),
+    )
+    monkeypatch.setattr(llm_service, "callLLMTask", fake_call)
+
+    response = await bot_mode.BotMode().handle_suggest_character_card_metadata(
+        _JsonRequest(
+            {
+                "bot_name": "demo",
+                "targets": [{"character": "Riko", "profile_id": "card_1"}],
+            }
+        )
+    )
+    payload = json.loads(response.text)
+
+    assert response.status == 200
+    assert payload["success"] is True
+    assert payload["suggestions"][0]["aliases"] == [
+        "Riko_Prism Heart",
+        "Prism Heart",
+    ]
+    assert captured["task_key"] == "visual_profile_guide"
+    prompt_text = "\n".join(str(message["content"]) for message in captured["messages"])
+    assert "Arbitrary Picture Grammar" in prompt_text
+    assert "fixed Image Command heading" in prompt_text
+    assert "Riko_magical_overcome_smile.webp" in prompt_text
+    assert "hardcoded keyword spotting" in prompt_text
+
+
+@pytest.mark.asyncio
+async def test_suggest_metadata_accepts_unsaved_modal_source_text(monkeypatch):
+    bot_mode = importlib.import_module("modes.bot_mode")
+    llm_service = importlib.import_module("modes.llm_service")
+    cards = [_card("card_1", "카드 1", "Riko_modal_source.webp")]
+    data = _bot_data(cards)
+    captured = {}
+
+    async def fake_call(_task_key, messages, **kwargs):
+        captured["prompt"] = "\n".join(str(item["content"]) for item in messages)
+        raw = json.dumps(
+            {
+                "suggestions": [
+                    {
+                        "target_key": "0",
+                        "aliases": ["modal-command"],
+                        "selection_guide": "팝업에 붙여 넣은 지침이 성립할 때 선택한다.",
+                        "evidence": "팝업 임시 원문",
+                        "confidence": "medium",
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        )
+        valid, reason = kwargs["result_validator"](raw)
+        assert valid, reason
+        return raw
+
+    monkeypatch.setattr(bot_mode, "_load_bot_data", lambda: data)
+    monkeypatch.setattr(bot_mode, "_load_lb_extra", lambda _bot_name: [])
+    monkeypatch.setattr(llm_service, "callLLMTask", fake_call)
+
+    response = await bot_mode.BotMode().handle_suggest_character_card_metadata(
+        _JsonRequest(
+            {
+                "bot_name": "demo",
+                "source_text": "Completely different modal-only image grammar: modal-command",
+                "targets": [{"character": "Riko", "profile_id": "card_1"}],
+            }
+        )
+    )
+    payload = json.loads(response.text)
+
+    assert response.status == 200
+    assert payload["source"] == {"preset": "팝업 임시 원문", "scope": "modal"}
+    assert "Completely different modal-only image grammar" in captured["prompt"]
+    assert "Arbitrary Picture Grammar" not in captured["prompt"]
+
+
+@pytest.mark.asyncio
+async def test_apply_metadata_preserves_existing_fields_and_saves_once(monkeypatch):
+    bot_mode = importlib.import_module("modes.bot_mode")
+    cards = [
+        _card(
+            "card_1",
+            "카드 1",
+            "Riko_normal.webp",
+            aliases=["manual alias"],
+            guide="사람이 직접 작성한 선택 기준",
+        ),
+        _card("card_2", "카드 2", "Riko_awakened.webp"),
+    ]
+    data = _bot_data(cards)
+    saved = []
+    monkeypatch.setattr(bot_mode, "_load_bot_data", lambda: data)
+    monkeypatch.setattr(bot_mode, "_load_lb_extra", lambda _bot_name: [])
+    monkeypatch.setattr(bot_mode, "_save_bot_data", lambda value: saved.append(deepcopy(value)))
+
+    response = await bot_mode.BotMode().handle_apply_character_card_metadata(
+        _JsonRequest(
+            {
+                "bot_name": "demo",
+                "overwrite": False,
+                "items": [
+                    {
+                        "character": "Riko",
+                        "profile_id": "card_1",
+                        "aliases": ["generated normal"],
+                        "selection_guide": "생성된 기본 기준",
+                    },
+                    {
+                        "character": "Riko",
+                        "profile_id": "card_2",
+                        "aliases": ["Riko_Prism Heart"],
+                        "selection_guide": "각성 형태가 유지되는 동안 선택한다.",
+                    },
+                ],
+            }
+        )
+    )
+    payload = json.loads(response.text)
+    stored_cards = saved[0]["bots"][0]["characters"][0]["visual_cards"]
+
+    assert response.status == 200
+    assert payload["applied"] == 1
+    assert payload["skipped"] == 1
+    assert len(saved) == 1
+    assert stored_cards[0]["aliases"] == ["manual alias"]
+    assert stored_cards[0]["selection_guide"] == "사람이 직접 작성한 선택 기준"
+    assert stored_cards[1]["aliases"] == ["Riko_Prism Heart"]
+    assert stored_cards[1]["selection_guide"] == "각성 형태가 유지되는 동안 선택한다."
+
+
+@pytest.mark.asyncio
+async def test_apply_metadata_can_replace_reviewed_existing_values(monkeypatch):
+    bot_mode = importlib.import_module("modes.bot_mode")
+    cards = [
+        _card(
+            "card_1",
+            "카드 1",
+            "Riko_normal.webp",
+            aliases=["old"],
+            guide="old guide",
+        )
+    ]
+    data = _bot_data(cards)
+    saved = []
+    monkeypatch.setattr(bot_mode, "_load_bot_data", lambda: data)
+    monkeypatch.setattr(bot_mode, "_load_lb_extra", lambda _bot_name: [])
+    monkeypatch.setattr(bot_mode, "_save_bot_data", lambda value: saved.append(deepcopy(value)))
+
+    response = await bot_mode.BotMode().handle_apply_character_card_metadata(
+        _JsonRequest(
+            {
+                "bot_name": "demo",
+                "overwrite": True,
+                "items": [
+                    {
+                        "character": "Riko",
+                        "profile_id": "card_1",
+                        "aliases": ["Riko_Normal"],
+                        "selection_guide": "리코의 일반 형태일 때 선택한다.",
+                    }
+                ],
+            }
+        )
+    )
+    payload = json.loads(response.text)
+    stored = saved[0]["bots"][0]["characters"][0]["visual_cards"][0]
+
+    assert response.status == 200
+    assert payload["applied"] == 1
+    assert stored["aliases"] == ["Riko_Normal"]
+    assert stored["selection_guide"] == "리코의 일반 형태일 때 선택한다."
+
+
+def test_frontend_has_thumbnail_review_modal_and_explicit_apply_modes():
+    frontend = (
+        importlib.import_module("pathlib").Path(__file__).resolve().parents[1]
+        / "frontend"
+        / "index.html"
+    ).read_text(encoding="utf-8")
+
+    assert "openVisualGuideGeneratorModal" in frontend
+    assert "overlay.id = 'visual-guide-generator-overlay'" in frontend
+    assert "visual-guide-thumb" in frontend
+    assert "LLM 제안" in frontend
+    assert "판단 근거" in frontend
+    assert "비어 있는 값만 채우기" in frontend
+    assert "기존 값도 교체" in frontend
+    assert "source_text: state.sourceText" in frontend
+    assert "이 임시 원문은 시스템 프롬프트에 저장되지 않습니다" in frontend
+    assert "/api/bot_mode/character_cards/suggest_metadata" in frontend
+    assert "/api/bot_mode/character_cards/apply_metadata" in frontend
+    assert "overlay.onclick" not in frontend[
+        frontend.index("async function openVisualGuideGeneratorModal"):
+        frontend.index("function closeVisualGuideGeneratorModal")
+    ]
+
+
+def test_visual_guide_generator_has_one_bot_sidebar_entry_point():
+    frontend = (
+        importlib.import_module("pathlib").Path(__file__).resolve().parents[1]
+        / "frontend"
+        / "index.html"
+    ).read_text(encoding="utf-8")
+
+    sidebar_start = frontend.index('<div id="bot-char-section"')
+    sidebar_end = frontend.index('<div id="bot-one-click-workflow-group"', sidebar_start)
+    sidebar = frontend[sidebar_start:sidebar_end]
+    character_cards_start = frontend.index("async function renderBotCharacters()")
+    character_cards_end = frontend.index("function renderBotCharLoraList", character_cards_start)
+    character_cards = frontend[character_cards_start:character_cards_end]
+
+    assert frontend.count("✨ 이미지 지침으로 자동 작성") == 1
+    assert 'id="btn-visual-guide-generator"' in sidebar
+    assert 'onclick="openVisualGuideGeneratorModal()"' in sidebar
+    assert "openVisualGuideGeneratorModal(" not in character_cards

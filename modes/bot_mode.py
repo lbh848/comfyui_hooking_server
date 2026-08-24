@@ -522,6 +522,204 @@ def copy_default() -> dict:
     return copy.deepcopy(DEFAULT_BOT_DATA)
 
 
+VISUAL_GUIDE_LLM_BATCH_SIZE = 20
+VISUAL_GUIDE_MAX_TARGETS = 120
+
+
+def _selected_bot_system_prompt(data: dict, bot: dict) -> tuple[str, str, str]:
+    """Return the selected prompt text and its preset identity without saving data."""
+    builtin = _load_builtin_presets() or {}
+    local = data.get("system_prompt_presets", {}) or {}
+    _ensure_bot_preset_scope(bot, set(builtin), set(local))
+
+    preset = str(bot.get("system_prompt_preset") or "").strip()
+    scope = str(bot.get("preset_scope") or "local").strip()
+    if scope == "builtin" and (not preset or preset not in builtin):
+        print(
+            f"[VISUAL_GUIDE] builtin 프롬프트 참조 보정: "
+            f"bot={bot.get('name')!r}, preset={preset!r}"
+        )
+        scope = "local"
+    if scope == "local" and (not preset or preset not in local):
+        fallback_preset = "기본" if "기본" in local else (next(iter(local), "") if local else "")
+        print(
+            f"[VISUAL_GUIDE] local 프롬프트 참조 보정: "
+            f"bot={bot.get('name')!r}, preset={preset!r}, fallback={fallback_preset!r}"
+        )
+        preset = fallback_preset
+
+    if scope == "builtin":
+        text = builtin.get(preset, "")
+    else:
+        text = local.get(preset, bot.get("system_prompt", "")) if preset else bot.get("system_prompt", "")
+        if not str(text or "").strip():
+            print(
+                f"[VISUAL_GUIDE] 선택 프롬프트 참조가 유효하지 않음: "
+                f"bot={bot.get('name')!r}, preset={preset!r}, scope={scope!r}"
+            )
+    return str(text or "").strip(), preset, scope
+
+
+def _visual_guide_tag_text(values) -> str:
+    tags = []
+    for value in values or []:
+        tag = str(value.get("tag") if isinstance(value, dict) else value or "").strip()
+        if tag:
+            tags.append(tag)
+    return ", ".join(tags) or "(none)"
+
+
+def _build_visual_guide_messages(system_prompt: str, targets: list[dict]) -> list[dict]:
+    """Build a prose-first prompt; JSON is used only for the machine-consumed reply."""
+    target_sections = []
+    for target in targets:
+        profile = target["profile"]
+        render_overrides = profile.get("render_overrides") or {}
+        rep_images = [
+            str(value).strip()
+            for value in render_overrides.get("rep_images", [])
+            if str(value).strip()
+        ]
+        outfits = []
+        for outfit in profile.get("outfits") or []:
+            outfits.append(
+                f"  - {outfit.get('label') or outfit.get('id')} "
+                f"(internal id: {outfit.get('id')}): "
+                f"guide={str(outfit.get('selection_guide') or '').strip() or '(none)'}; "
+                f"visual tags={_visual_guide_tag_text(outfit.get('tags'))}"
+            )
+        target_sections.append("\n".join([
+            f"### Target {target['target_key']}",
+            f"Character: {target['character']}",
+            f"Profile internal id: {profile.get('id')}",
+            f"Current profile label: {profile.get('label') or profile.get('id')}",
+            f"Representative image filenames: {', '.join(rep_images) or '(none)'}",
+            f"Current aliases: {', '.join(profile.get('aliases') or []) or '(none)'}",
+            f"Current selection guide: {str(profile.get('selection_guide') or '').strip() or '(none)'}",
+            f"Appearance evidence: {_visual_guide_tag_text(profile.get('appearance'))}",
+            "Registered outfits:",
+            *(outfits or ["  - (none)"]),
+        ]))
+
+    system_message = """You organize illustration character-card routing metadata.
+Read the supplied image-command document as a whole and reason about its own grammar, examples, exceptions, and narrative constraints. Do not classify by hardcoded keyword spotting. Different bots may use completely different command formats.
+
+For every target, infer which canonical character command, form, outfit, corruption/overcome state, or other profile identity it represents. Representative filenames and visual tags are supporting evidence, while the source document is authoritative.
+
+Write Korean natural-language selection guides that explain when the profile becomes true, when it remains true, and the important situations in which it must not be selected. Preserve distinctions such as normal/corrupted/overcome forms, outfit variants, and first-event-only special assets. Do not turn ordinary emotion or action suffixes into a persistent profile unless the target itself is demonstrably that profile.
+
+Aliases are short source-grounded names that identify this profile or form, including exact canonical command labels and confirmed in-story form/outfit titles. Do not add the character's ordinary base name as a profile alias, and do not invent unsupported nicknames or translations. If the match is unclear, use low confidence and explain why instead of fabricating certainty.
+
+Return strict JSON only:
+{"suggestions":[{"target_key":"0","aliases":["exact alias"],"selection_guide":"Korean prose","evidence":"brief source-grounded reason","confidence":"high|medium|low"}]}
+Return exactly one item for every target_key and no extra targets."""
+
+    user_message = (
+        "아래는 이 봇이 실제 대화에 사용하는 이미지 출력 지침을 포함한 시스템 "
+        "프롬프트 원문이다. 제목이나 필드명이 고정되어 있다고 가정하지 말고 전체 "
+        "문맥을 보존해서 해석하라.\n\n"
+        "===== SOURCE DOCUMENT START =====\n"
+        f"{system_prompt}\n"
+        "===== SOURCE DOCUMENT END =====\n\n"
+        "아래 대상은 프로그램에 실제 등록된 캐릭터 카드이다. 내부 ID는 결과를 다시 "
+        "연결하기 위한 기계 식별자일 뿐 의미를 추측하는 근거로 사용하지 마라.\n\n"
+        + "\n\n".join(target_sections)
+    )
+    return [
+        {"role": "system", "content": system_message},
+        {"role": "user", "content": user_message},
+    ]
+
+
+def _normalize_visual_guide_llm_result(
+    parsed,
+    targets: list[dict],
+) -> tuple[list[dict] | None, str]:
+    if not isinstance(parsed, dict) or not isinstance(parsed.get("suggestions"), list):
+        reason = "최상위 suggestions 배열이 없습니다."
+        print(f"[VISUAL_GUIDE] LLM 응답 구조 오류: {reason}, value={parsed!r}")
+        return None, reason
+
+    expected = {str(target["target_key"]): target for target in targets}
+    normalized_by_key: dict[str, dict] = {}
+    for index, raw in enumerate(parsed["suggestions"]):
+        if not isinstance(raw, dict):
+            reason = f"suggestions[{index}]가 object가 아닙니다."
+            print(f"[VISUAL_GUIDE] LLM 응답 구조 오류: {reason}, value={raw!r}")
+            return None, reason
+        target_key = str(raw.get("target_key") or "").strip()
+        if target_key not in expected:
+            reason = f"알 수 없는 target_key입니다: {target_key!r}"
+            print(f"[VISUAL_GUIDE] LLM 대상 오류: {reason}")
+            return None, reason
+        if target_key in normalized_by_key:
+            reason = f"target_key가 중복되었습니다: {target_key!r}"
+            print(f"[VISUAL_GUIDE] LLM 대상 오류: {reason}")
+            return None, reason
+
+        aliases = raw.get("aliases")
+        if not isinstance(aliases, list):
+            reason = f"target_key={target_key} aliases가 배열이 아닙니다."
+            print(f"[VISUAL_GUIDE] LLM 별칭 형식 오류: {reason}")
+            return None, reason
+        clean_aliases = []
+        seen_aliases = set()
+        for alias_index, value in enumerate(aliases):
+            if not isinstance(value, str):
+                reason = (
+                    f"target_key={target_key} aliases[{alias_index}]가 문자열이 아닙니다."
+                )
+                print(f"[VISUAL_GUIDE] LLM 별칭 형식 오류: {reason}")
+                return None, reason
+            alias = value.strip()
+            if len(alias) > 160:
+                reason = f"target_key={target_key} 별칭이 160자를 초과했습니다."
+                print(f"[VISUAL_GUIDE] LLM 별칭 길이 오류: {reason}")
+                return None, reason
+            if alias and alias.casefold() not in seen_aliases:
+                seen_aliases.add(alias.casefold())
+                clean_aliases.append(alias)
+        if len(clean_aliases) > 32:
+            reason = f"target_key={target_key} 별칭이 32개를 초과했습니다."
+            print(f"[VISUAL_GUIDE] LLM 별칭 개수 오류: {reason}")
+            return None, reason
+
+        selection_guide = str(raw.get("selection_guide") or "").strip()
+        if not selection_guide or len(selection_guide) > 4000:
+            reason = (
+                f"target_key={target_key} selection_guide가 비었거나 4000자를 초과했습니다."
+            )
+            print(f"[VISUAL_GUIDE] LLM 선택 기준 오류: {reason}")
+            return None, reason
+        evidence = str(raw.get("evidence") or "").strip()
+        if len(evidence) > 2000:
+            reason = f"target_key={target_key} evidence가 2000자를 초과했습니다."
+            print(f"[VISUAL_GUIDE] LLM 근거 길이 오류: {reason}")
+            return None, reason
+        confidence = str(raw.get("confidence") or "low").strip().lower()
+        if confidence not in {"high", "medium", "low"}:
+            reason = f"target_key={target_key} confidence 값이 잘못되었습니다: {confidence!r}"
+            print(f"[VISUAL_GUIDE] LLM 신뢰도 오류: {reason}")
+            return None, reason
+
+        target = expected[target_key]
+        normalized_by_key[target_key] = {
+            "character": target["character"],
+            "profile_id": str(target["profile"].get("id") or ""),
+            "aliases": clean_aliases,
+            "selection_guide": selection_guide,
+            "evidence": evidence,
+            "confidence": confidence,
+        }
+
+    missing = [key for key in expected if key not in normalized_by_key]
+    if missing:
+        reason = f"응답에서 target_key가 누락되었습니다: {missing}"
+        print(f"[VISUAL_GUIDE] LLM 대상 누락: {reason}")
+        return None, reason
+    return [normalized_by_key[str(target["target_key"])] for target in targets], ""
+
+
 class BotMode:
     """삽화 설정 모드 매니저"""
 
@@ -1111,64 +1309,149 @@ class BotMode:
 
     # ─── 이미지 목록 ─────────────────────────────────────
     async def handle_get_images(self, request):
-        """GET /api/bot_mode/images?bot=xxx&character=yyy"""
-        bot_name = request.query.get("bot", "").strip()
-        char_name = request.query.get("character", "").strip()
-        if not bot_name or not char_name:
-            return _json_error("봇과 캐릭터 이름이 필요합니다.")
-
-        char_dir = os.path.join(BOT_DIR, bot_name, char_name)
-        if not os.path.isdir(char_dir):
-            print(f"[BOT_MODE] 캐릭터 폴더 없음: {char_dir}")
-            return _json_ok({"images": [], "folders": []})
-
-        images = []
-        for fname in sorted(os.listdir(char_dir)):
-            ext = os.path.splitext(fname)[1].lower()
-            if ext not in IMAGE_EXTENSIONS:
-                continue
-            base = os.path.splitext(fname)[0]
-            prompt = ""
-            negative = ""
-            prompt_path = os.path.join(char_dir, f"{base}_prompt.json")
-            if os.path.isfile(prompt_path):
-                try:
-                    with open(prompt_path, "r", encoding="utf-8") as f:
-                        pd = json.load(f)
-                        prompt = pd.get("prompt", "")
-                        negative = pd.get("negative", "")
-                except Exception:
-                    pass
-            images.append({
-                "filename": fname,
-                "prompt": prompt,
-                "negative": negative,
-                "url": f"/api/bot_mode/image/{bot_name}/{char_name}/{fname}",
-            })
-
-        folders = []
-        face_crop_dir = dialogue_face_crop_dir(bot_name, char_name)
-        if os.path.isdir(face_crop_dir):
-            try:
-                face_crop_count = sum(
-                    1
-                    for fname in os.listdir(face_crop_dir)
-                    if os.path.isfile(os.path.join(face_crop_dir, fname))
-                    and os.path.splitext(fname)[1].lower() in IMAGE_EXTENSIONS
-                )
-                folders.append({
-                    "name": FACE_CROP_FOLDER_NAME,
-                    "count": face_crop_count,
-                    "kind": "face_crop",
-                })
-            except Exception as e:
+        """GET /api/bot_mode/images?bot=xxx&character=yyy&visual_card_id=zzz"""
+        try:
+            bot_name = request.query.get("bot", "").strip()
+            char_name = request.query.get("character", "").strip()
+            visual_card_id = request.query.get("visual_card_id", "").strip()
+            if not bot_name or not char_name:
                 print(
-                    f"[DIALOGUE_FACE_CROP] 폴더 정보 조회 실패: "
-                    f"bot={bot_name!r}, char={char_name!r}, path={face_crop_dir}, error={e}"
+                    f"[BOT_MODE] 이미지 목록 필수 값 누락: "
+                    f"bot={bot_name!r}, character={char_name!r}, "
+                    f"card={visual_card_id!r}"
                 )
-                traceback.print_exc()
+                return _json_error("봇과 캐릭터 이름이 필요합니다.")
 
-        return _json_ok({"images": images, "folders": folders})
+            char_dir = os.path.join(BOT_DIR, bot_name, char_name)
+            if not os.path.isdir(char_dir):
+                print(f"[BOT_MODE] 캐릭터 폴더 없음: {char_dir}")
+                return _json_ok({"images": [], "folders": []})
+
+            selected_target = None
+            if visual_card_id:
+                selected_target = resolve_bot_visual_target(
+                    bot_name,
+                    char_name,
+                    visual_card_id,
+                )
+                if selected_target is None:
+                    print(
+                        f"[BOT_MODE] 이미지 목록 카드 해석 실패: "
+                        f"bot={bot_name!r}, character={char_name!r}, "
+                        f"card={visual_card_id!r}"
+                    )
+                    return _json_error(
+                        f"캐릭터 카드를 찾을 수 없습니다: {visual_card_id}"
+                    )
+
+            profile_face_selected = bool(
+                selected_target and not selected_target["is_primary"]
+            )
+            images = []
+
+            def append_image(image_dir, fname, *, image_visual_card_id=""):
+                base = os.path.splitext(fname)[0]
+                prompt = ""
+                negative = ""
+                prompt_path = os.path.join(image_dir, f"{base}_prompt.json")
+                if os.path.isfile(prompt_path):
+                    try:
+                        with open(prompt_path, "r", encoding="utf-8") as f:
+                            prompt_data = json.load(f)
+                        prompt = prompt_data.get("prompt", "")
+                        negative = prompt_data.get("negative", "")
+                    except Exception as e:
+                        print(
+                            f"[BOT_MODE] 이미지 프롬프트 로드 실패: "
+                            f"path={prompt_path!r}, error={e}"
+                        )
+                        traceback.print_exc()
+                card_query = (
+                    f"?visual_card_id={quote(image_visual_card_id, safe='')}"
+                    if image_visual_card_id else ""
+                )
+                images.append({
+                    "filename": fname,
+                    "prompt": prompt,
+                    "negative": negative,
+                    "visual_card_id": image_visual_card_id,
+                    "url": (
+                        f"/api/bot_mode/image/{quote(bot_name, safe='')}/"
+                        f"{quote(char_name, safe='')}/{quote(fname, safe='')}"
+                        f"{card_query}"
+                    ),
+                })
+
+            for fname in sorted(os.listdir(char_dir)):
+                ext = os.path.splitext(fname)[1].lower()
+                if ext not in IMAGE_EXTENSIONS:
+                    continue
+                # 보조 프로필을 보고 있을 때는 기본 카드의 FACE를 섞지 않는다.
+                if profile_face_selected and fname == "_face_image.webp":
+                    continue
+                append_image(char_dir, fname)
+
+            if profile_face_selected:
+                profile_dir = bot_visual_artifact_dir(
+                    bot_name,
+                    char_name,
+                    selected_target["visual_card_id"],
+                )
+                profile_face_name = "_face_image.webp"
+                profile_face_path = os.path.join(profile_dir, profile_face_name)
+                if os.path.isfile(profile_face_path):
+                    append_image(
+                        profile_dir,
+                        profile_face_name,
+                        image_visual_card_id=selected_target["visual_card_id"],
+                    )
+                else:
+                    print(
+                        f"[BOT_MODE] 프로필 FACE 이미지 없음: "
+                        f"bot={bot_name!r}, character={char_name!r}, "
+                        f"card={selected_target['visual_card_id']!r}, "
+                        f"path={profile_face_path!r}"
+                    )
+
+            folders = []
+            face_crop_dir = dialogue_face_crop_dir(bot_name, char_name)
+            if os.path.isdir(face_crop_dir):
+                try:
+                    face_crop_count = sum(
+                        1
+                        for fname in os.listdir(face_crop_dir)
+                        if os.path.isfile(os.path.join(face_crop_dir, fname))
+                        and os.path.splitext(fname)[1].lower() in IMAGE_EXTENSIONS
+                    )
+                    folders.append({
+                        "name": FACE_CROP_FOLDER_NAME,
+                        "count": face_crop_count,
+                        "kind": "face_crop",
+                    })
+                except Exception as e:
+                    print(
+                        f"[DIALOGUE_FACE_CROP] 폴더 정보 조회 실패: "
+                        f"bot={bot_name!r}, char={char_name!r}, "
+                        f"path={face_crop_dir}, error={e}"
+                    )
+                    traceback.print_exc()
+
+            return _json_ok({
+                "images": images,
+                "folders": folders,
+                "visual_card_id": (
+                    selected_target["visual_card_id"] if selected_target else ""
+                ),
+            })
+        except Exception as e:
+            print(
+                f"[BOT_MODE] 이미지 목록 조회 실패: "
+                f"bot={locals().get('bot_name', '')!r}, "
+                f"character={locals().get('char_name', '')!r}, "
+                f"card={locals().get('visual_card_id', '')!r}, error={e}"
+            )
+            traceback.print_exc()
+            return _json_error(str(e))
 
     # ─── 이미지 파일 서빙 ────────────────────────────────
     def iter_character_image_filenames(self, bot_name: str, char_name: str):
@@ -1477,14 +1760,38 @@ class BotMode:
             bot_name = body.get("bot", "").strip()
             char_name = body.get("character", "").strip()
             filename = body.get("filename", "").strip()
+            visual_card_id = str(body.get("visual_card_id") or "").strip()
             prompt = body.get("prompt", "")
 
             if not bot_name or not char_name or not filename:
+                print(
+                    f"[BOT_MODE] 프롬프트 업데이트 필수 값 누락: "
+                    f"bot={bot_name!r}, character={char_name!r}, "
+                    f"card={visual_card_id!r}, filename={filename!r}"
+                )
                 return _json_error("필수 값이 누락되었습니다.")
+            if filename != os.path.basename(filename) or filename in {".", ".."}:
+                print(
+                    f"[BOT_MODE] 프롬프트 업데이트 잘못된 파일명: "
+                    f"bot={bot_name!r}, character={char_name!r}, "
+                    f"card={visual_card_id!r}, filename={filename!r}"
+                )
+                return _json_error("잘못된 파일명입니다.")
 
-            char_dir = os.path.join(BOT_DIR, bot_name, char_name)
+            image_dir = (
+                bot_visual_artifact_dir(bot_name, char_name, visual_card_id)
+                if visual_card_id
+                else os.path.join(BOT_DIR, bot_name, char_name)
+            )
+            if not os.path.isdir(image_dir):
+                print(
+                    f"[BOT_MODE] 프롬프트 업데이트 대상 폴더 없음: "
+                    f"bot={bot_name!r}, character={char_name!r}, "
+                    f"card={visual_card_id!r}, path={image_dir!r}"
+                )
+                return _json_error("이미지 폴더를 찾을 수 없습니다.")
             base = os.path.splitext(filename)[0]
-            prompt_path = os.path.join(char_dir, f"{base}_prompt.json")
+            prompt_path = os.path.join(image_dir, f"{base}_prompt.json")
 
             # 기존 데이터 유지하면서 prompt만 업데이트
             existing = {}
@@ -1492,14 +1799,26 @@ class BotMode:
                 try:
                     with open(prompt_path, "r", encoding="utf-8") as f:
                         existing = json.load(f)
-                except Exception:
-                    pass
+                except Exception as e:
+                    print(
+                        f"[BOT_MODE] 기존 프롬프트 로드 실패: "
+                        f"path={prompt_path!r}, error={e}"
+                    )
+                    traceback.print_exc()
 
             existing["prompt"] = prompt
             with open(prompt_path, "w", encoding="utf-8") as f:
                 json.dump(existing, f, ensure_ascii=False)
 
-            return _json_ok({"updated": True})
+            print(
+                f"[BOT_MODE] 프롬프트 업데이트 완료: "
+                f"bot={bot_name!r}, character={char_name!r}, "
+                f"card={visual_card_id!r}, filename={filename!r}"
+            )
+            return _json_ok({
+                "updated": True,
+                "visual_card_id": visual_card_id,
+            })
         except Exception as e:
             print(f"[BOT_MODE] 프롬프트 업데이트 실패: {e}")
             traceback.print_exc()
@@ -2684,6 +3003,454 @@ class BotMode:
             return _json_error(str(e))
         except Exception as e:
             print(f"[CHARACTER_CARD:API] 저장 실패: error={e}")
+            traceback.print_exc()
+            return _json_error(str(e), 500)
+
+    async def handle_suggest_character_card_metadata(self, request):
+        """Suggest aliases and natural selection guides without modifying bot.json."""
+        try:
+            body = await request.json()
+            bot_name = str(body.get("bot_name") or "").strip()
+            requested_targets = body.get("targets")
+            if not bot_name:
+                print("[VISUAL_GUIDE:API] 생성 요청 거부: bot_name이 비어 있음")
+                return _json_error("봇 이름이 필요합니다.")
+            if not isinstance(requested_targets, list) or not requested_targets:
+                print(
+                    f"[VISUAL_GUIDE:API] 생성 요청 대상 없음/형식 오류: "
+                    f"bot={bot_name!r}, value={requested_targets!r}"
+                )
+                return _json_error("자동 작성할 캐릭터 카드를 하나 이상 선택하세요.")
+            if len(requested_targets) > VISUAL_GUIDE_MAX_TARGETS:
+                print(
+                    f"[VISUAL_GUIDE:API] 생성 요청 대상 초과: bot={bot_name!r}, "
+                    f"count={len(requested_targets)}, max={VISUAL_GUIDE_MAX_TARGETS}"
+                )
+                return _json_error(
+                    f"한 번에 최대 {VISUAL_GUIDE_MAX_TARGETS}개 카드까지 생성할 수 있습니다."
+                )
+
+            data = _load_bot_data()
+            bot = next(
+                (item for item in data.get("bots", []) if item.get("name") == bot_name),
+                None,
+            )
+            if bot is None:
+                print(f"[VISUAL_GUIDE:API] 생성할 봇 없음: bot={bot_name!r}")
+                return _json_error(f"봇을 찾을 수 없습니다: {bot_name}", 404)
+            system_prompt, preset, scope = _selected_bot_system_prompt(data, bot)
+            source_override = body.get("source_text")
+            if source_override is not None and not isinstance(source_override, str):
+                print(
+                    f"[VISUAL_GUIDE:API] source_text 형식 오류: "
+                    f"bot={bot_name!r}, type={type(source_override).__name__}"
+                )
+                return _json_error("source_text는 문자열이어야 합니다.")
+            if isinstance(source_override, str):
+                if len(source_override) > 1_000_000:
+                    print(
+                        f"[VISUAL_GUIDE:API] source_text 길이 초과: "
+                        f"bot={bot_name!r}, length={len(source_override)}"
+                    )
+                    return _json_error("이미지 출력 지침은 1,000,000자를 넘을 수 없습니다.")
+                if source_override.strip():
+                    system_prompt = source_override.strip()
+                    preset = "팝업 임시 원문"
+                    scope = "modal"
+                    print(
+                        f"[VISUAL_GUIDE:API] 팝업 임시 원문 사용: "
+                        f"bot={bot_name!r}, length={len(system_prompt)}"
+                    )
+            if not system_prompt:
+                print(
+                    f"[VISUAL_GUIDE:API] 시스템 프롬프트 비어 있음: "
+                    f"bot={bot_name!r}, preset={preset!r}, scope={scope!r}"
+                )
+                return _json_error(
+                    "현재 봇의 시스템 프롬프트가 비어 있어 선택 기준을 만들 수 없습니다."
+                )
+
+            lb_extra = _load_lb_extra(bot_name) or []
+            if isinstance(lb_extra, dict) and "edited" in lb_extra:
+                lb_extra = lb_extra.get("edited") or []
+            root_by_name = {
+                str(item.get("name") or "").casefold(): item
+                for item in bot.get("characters", [])
+                if isinstance(item, dict) and str(item.get("name") or "").strip()
+            }
+            profiles_by_name = {}
+            resolved_targets = []
+            seen_targets = set()
+            for index, requested in enumerate(requested_targets):
+                if not isinstance(requested, dict):
+                    print(
+                        f"[VISUAL_GUIDE:API] target 형식 오류: index={index}, "
+                        f"value={requested!r}"
+                    )
+                    return _json_error(f"targets[{index}]는 object여야 합니다.")
+                character_name = str(requested.get("character") or "").strip()
+                profile_id = str(requested.get("profile_id") or "").strip()
+                if not character_name or not profile_id:
+                    print(
+                        f"[VISUAL_GUIDE:API] target 필수값 누락: index={index}, "
+                        f"character={character_name!r}, profile={profile_id!r}"
+                    )
+                    return _json_error(
+                        f"targets[{index}]의 character와 profile_id가 필요합니다."
+                    )
+                identity = (character_name.casefold(), profile_id)
+                if identity in seen_targets:
+                    print(
+                        f"[VISUAL_GUIDE:API] target 중복: character={character_name!r}, "
+                        f"profile={profile_id!r}"
+                    )
+                    return _json_error(
+                        f"같은 캐릭터 카드가 중복 선택되었습니다: {character_name}/{profile_id}"
+                    )
+                seen_targets.add(identity)
+                root_character = root_by_name.get(character_name.casefold())
+                if root_character is None:
+                    print(
+                        f"[VISUAL_GUIDE:API] target 캐릭터 없음: "
+                        f"character={character_name!r}, profile={profile_id!r}"
+                    )
+                    return _json_error(
+                        f"캐릭터를 찾을 수 없습니다: {character_name}", 404
+                    )
+                canonical_name = str(root_character.get("name") or character_name)
+                cache_key = canonical_name.casefold()
+                if cache_key not in profiles_by_name:
+                    extra_character = next(
+                        (
+                            item for item in lb_extra
+                            if isinstance(item, dict)
+                            and str(item.get("name") or "").casefold() == cache_key
+                        ),
+                        None,
+                    )
+                    profiles_by_name[cache_key] = effective_character_profiles(
+                        canonical_name,
+                        root_character,
+                        extra_character,
+                    )[0]
+                character_profiles = profiles_by_name[cache_key]
+                profile = next(
+                    (
+                        item for item in character_profiles.get("profiles", [])
+                        if str(item.get("id") or "") == profile_id
+                    ),
+                    None,
+                )
+                if profile is None:
+                    print(
+                        f"[VISUAL_GUIDE:API] target 카드 없음: "
+                        f"character={canonical_name!r}, profile={profile_id!r}"
+                    )
+                    return _json_error(
+                        f"캐릭터 카드를 찾을 수 없습니다: {canonical_name}/{profile_id}",
+                        404,
+                    )
+                resolved_targets.append({
+                    "target_key": str(index),
+                    "character": canonical_name,
+                    "profile": profile,
+                })
+
+            from modes import llm_prompt_edit
+            from modes import llm_service
+
+            suggestions = []
+            batch_count = math.ceil(
+                len(resolved_targets) / VISUAL_GUIDE_LLM_BATCH_SIZE
+            )
+            for batch_index, start in enumerate(
+                range(0, len(resolved_targets), VISUAL_GUIDE_LLM_BATCH_SIZE),
+                start=1,
+            ):
+                batch = resolved_targets[start:start + VISUAL_GUIDE_LLM_BATCH_SIZE]
+                messages = _build_visual_guide_messages(system_prompt, batch)
+                accepted = {}
+
+                def result_validator(raw_result):
+                    parsed = llm_prompt_edit.parse_llm_json(raw_result)
+                    normalized, reason = _normalize_visual_guide_llm_result(
+                        parsed,
+                        batch,
+                    )
+                    if normalized is None:
+                        return False, reason
+                    accepted["suggestions"] = normalized
+                    return True, ""
+
+                print(
+                    f"[VISUAL_GUIDE:API] LLM 생성 시작: bot={bot_name!r}, "
+                    f"preset={preset!r}, scope={scope!r}, "
+                    f"batch={batch_index}/{batch_count}, targets={len(batch)}"
+                )
+                raw = await llm_service.callLLMTask(
+                    "visual_profile_guide",
+                    messages,
+                    json_mode=True,
+                    result_validator=result_validator,
+                )
+                batch_suggestions = accepted.get("suggestions")
+                if batch_suggestions is None:
+                    parsed = llm_prompt_edit.parse_llm_json(raw)
+                    _normalized, reason = _normalize_visual_guide_llm_result(
+                        parsed,
+                        batch,
+                    )
+                    error = reason or "LLM 응답이 검증을 통과하지 못했습니다."
+                    print(
+                        f"[VISUAL_GUIDE:API] LLM 생성 실패: bot={bot_name!r}, "
+                        f"batch={batch_index}/{batch_count}, error={error}, "
+                        f"raw_preview={str(raw)[:500]!r}"
+                    )
+                    return _json_error(
+                        f"선택 기준 생성 {batch_index}/{batch_count} 배치 실패: {error}",
+                        422,
+                    )
+                suggestions.extend(batch_suggestions)
+                print(
+                    f"[VISUAL_GUIDE:API] LLM 생성 완료: bot={bot_name!r}, "
+                    f"batch={batch_index}/{batch_count}, suggestions={len(batch_suggestions)}"
+                )
+
+            return _json_ok({
+                "success": True,
+                "suggestions": suggestions,
+                "source": {"preset": preset, "scope": scope},
+                "target_count": len(resolved_targets),
+            })
+        except VisualProfileValidationError as e:
+            print(f"[VISUAL_GUIDE:API] 생성 대상 검증 실패: error={e}")
+            return _json_error(str(e))
+        except Exception as e:
+            print(f"[VISUAL_GUIDE:API] 생성 예외: {e}")
+            traceback.print_exc()
+            return _json_error(str(e), 500)
+
+    async def handle_apply_character_card_metadata(self, request):
+        """Atomically apply reviewed suggestions to bot.json."""
+        try:
+            body = await request.json()
+            bot_name = str(body.get("bot_name") or "").strip()
+            items = body.get("items")
+            overwrite = body.get("overwrite", False)
+            if not bot_name:
+                print("[VISUAL_GUIDE:APPLY] 적용 요청 거부: bot_name이 비어 있음")
+                return _json_error("봇 이름이 필요합니다.")
+            if not isinstance(items, list) or not items:
+                print(
+                    f"[VISUAL_GUIDE:APPLY] 적용 항목 없음/형식 오류: "
+                    f"bot={bot_name!r}, value={items!r}"
+                )
+                return _json_error("적용할 제안을 하나 이상 선택하세요.")
+            if len(items) > VISUAL_GUIDE_MAX_TARGETS:
+                print(
+                    f"[VISUAL_GUIDE:APPLY] 적용 항목 초과: bot={bot_name!r}, "
+                    f"count={len(items)}, max={VISUAL_GUIDE_MAX_TARGETS}"
+                )
+                return _json_error(
+                    f"한 번에 최대 {VISUAL_GUIDE_MAX_TARGETS}개 카드까지 적용할 수 있습니다."
+                )
+            if not isinstance(overwrite, bool):
+                print(
+                    f"[VISUAL_GUIDE:APPLY] overwrite 형식 오류: "
+                    f"bot={bot_name!r}, value={overwrite!r}"
+                )
+                return _json_error("overwrite는 boolean이어야 합니다.")
+
+            normalized_items = []
+            seen_targets = set()
+            for index, raw in enumerate(items):
+                if not isinstance(raw, dict):
+                    print(
+                        f"[VISUAL_GUIDE:APPLY] item 형식 오류: index={index}, value={raw!r}"
+                    )
+                    return _json_error(f"items[{index}]는 object여야 합니다.")
+                character = str(raw.get("character") or "").strip()
+                profile_id = str(raw.get("profile_id") or "").strip()
+                selection_guide = str(raw.get("selection_guide") or "").strip()
+                aliases = raw.get("aliases")
+                if not character or not profile_id or not selection_guide:
+                    print(
+                        f"[VISUAL_GUIDE:APPLY] item 필수값 누락: index={index}, "
+                        f"character={character!r}, profile={profile_id!r}, "
+                        f"guide_length={len(selection_guide)}"
+                    )
+                    return _json_error(
+                        f"items[{index}]의 character, profile_id, selection_guide가 필요합니다."
+                    )
+                if len(selection_guide) > 4000:
+                    print(
+                        f"[VISUAL_GUIDE:APPLY] 선택 기준 길이 초과: "
+                        f"character={character!r}, profile={profile_id!r}, "
+                        f"length={len(selection_guide)}"
+                    )
+                    return _json_error("자연어 선택 기준은 4000자를 넘을 수 없습니다.")
+                if not isinstance(aliases, list):
+                    print(
+                        f"[VISUAL_GUIDE:APPLY] aliases 형식 오류: index={index}, "
+                        f"value={aliases!r}"
+                    )
+                    return _json_error(f"items[{index}].aliases는 문자열 배열이어야 합니다.")
+                clean_aliases = []
+                seen_aliases = set()
+                for alias_index, value in enumerate(aliases):
+                    if not isinstance(value, str):
+                        print(
+                            f"[VISUAL_GUIDE:APPLY] alias 형식 오류: index={index}, "
+                            f"alias_index={alias_index}, value={value!r}"
+                        )
+                        return _json_error(
+                            f"items[{index}].aliases[{alias_index}]는 문자열이어야 합니다."
+                        )
+                    alias = value.strip()
+                    if len(alias) > 160:
+                        print(
+                            f"[VISUAL_GUIDE:APPLY] alias 길이 초과: "
+                            f"character={character!r}, profile={profile_id!r}, "
+                            f"alias_index={alias_index}, length={len(alias)}"
+                        )
+                        return _json_error("작중 별칭 하나는 160자를 넘을 수 없습니다.")
+                    if alias and alias.casefold() not in seen_aliases:
+                        seen_aliases.add(alias.casefold())
+                        clean_aliases.append(alias)
+                if len(clean_aliases) > 32:
+                    print(
+                        f"[VISUAL_GUIDE:APPLY] alias 개수 초과: "
+                        f"character={character!r}, profile={profile_id!r}, "
+                        f"count={len(clean_aliases)}"
+                    )
+                    return _json_error("카드 하나에 작중 별칭을 최대 32개까지 저장할 수 있습니다.")
+                identity = (character.casefold(), profile_id)
+                if identity in seen_targets:
+                    print(
+                        f"[VISUAL_GUIDE:APPLY] item 중복: "
+                        f"character={character!r}, profile={profile_id!r}"
+                    )
+                    return _json_error(
+                        f"같은 캐릭터 카드가 중복되었습니다: {character}/{profile_id}"
+                    )
+                seen_targets.add(identity)
+                normalized_items.append({
+                    "character": character,
+                    "profile_id": profile_id,
+                    "aliases": clean_aliases,
+                    "selection_guide": selection_guide,
+                })
+
+            async with self._lock:
+                data = _load_bot_data()
+                bot = next(
+                    (item for item in data.get("bots", []) if item.get("name") == bot_name),
+                    None,
+                )
+                if bot is None:
+                    print(f"[VISUAL_GUIDE:APPLY] 적용할 봇 없음: bot={bot_name!r}")
+                    return _json_error(f"봇을 찾을 수 없습니다: {bot_name}", 404)
+                lb_extra = _load_lb_extra(bot_name) or []
+                if isinstance(lb_extra, dict) and "edited" in lb_extra:
+                    lb_extra = lb_extra.get("edited") or []
+                root_by_name = {
+                    str(item.get("name") or "").casefold(): item
+                    for item in bot.get("characters", [])
+                    if isinstance(item, dict) and str(item.get("name") or "").strip()
+                }
+                prepared = {}
+                changed_targets = set()
+                for item in normalized_items:
+                    root_character = root_by_name.get(item["character"].casefold())
+                    if root_character is None:
+                        print(
+                            f"[VISUAL_GUIDE:APPLY] 캐릭터 없음: "
+                            f"character={item['character']!r}, profile={item['profile_id']!r}"
+                        )
+                        return _json_error(
+                            f"캐릭터를 찾을 수 없습니다: {item['character']}", 404
+                        )
+                    canonical_name = str(root_character.get("name") or item["character"])
+                    cache_key = canonical_name.casefold()
+                    if cache_key not in prepared:
+                        extra_character = next(
+                            (
+                                value for value in lb_extra
+                                if isinstance(value, dict)
+                                and str(value.get("name") or "").casefold() == cache_key
+                            ),
+                            None,
+                        )
+                        prepared[cache_key] = {
+                            "root": root_character,
+                            "profiles": effective_character_profiles(
+                                canonical_name,
+                                root_character,
+                                extra_character,
+                            )[0],
+                            "changed": False,
+                        }
+                    entry = prepared[cache_key]
+                    profile = next(
+                        (
+                            value for value in entry["profiles"].get("profiles", [])
+                            if str(value.get("id") or "") == item["profile_id"]
+                        ),
+                        None,
+                    )
+                    if profile is None:
+                        print(
+                            f"[VISUAL_GUIDE:APPLY] 카드 없음: "
+                            f"character={canonical_name!r}, profile={item['profile_id']!r}"
+                        )
+                        return _json_error(
+                            f"캐릭터 카드를 찾을 수 없습니다: "
+                            f"{canonical_name}/{item['profile_id']}",
+                            404,
+                        )
+
+                    target_changed = False
+                    if overwrite or not profile.get("aliases"):
+                        if profile.get("aliases") != item["aliases"]:
+                            profile["aliases"] = deepcopy(item["aliases"])
+                            target_changed = True
+                    if overwrite or not str(profile.get("selection_guide") or "").strip():
+                        if str(profile.get("selection_guide") or "").strip() != item["selection_guide"]:
+                            profile["selection_guide"] = item["selection_guide"]
+                            target_changed = True
+                    if target_changed:
+                        entry["changed"] = True
+                        changed_targets.add((cache_key, item["profile_id"]))
+
+                for entry in prepared.values():
+                    if entry["changed"]:
+                        cards = character_profiles_to_cards(entry["profiles"])
+                        store_visual_cards(entry["root"], cards)
+
+                if changed_targets:
+                    _save_bot_data(data)
+                    print(
+                        f"[VISUAL_GUIDE:APPLY] 일괄 적용 완료: bot={bot_name!r}, "
+                        f"overwrite={overwrite}, applied={len(changed_targets)}, "
+                        f"skipped={len(normalized_items) - len(changed_targets)}"
+                    )
+                else:
+                    print(
+                        f"[VISUAL_GUIDE:APPLY] 변경할 값 없음: bot={bot_name!r}, "
+                        f"overwrite={overwrite}, requested={len(normalized_items)}"
+                    )
+                return _json_ok({
+                    "success": True,
+                    "saved": bool(changed_targets),
+                    "applied": len(changed_targets),
+                    "skipped": len(normalized_items) - len(changed_targets),
+                    "bots": data["bots"],
+                })
+        except VisualProfileValidationError as e:
+            print(f"[VISUAL_GUIDE:APPLY] 카드 검증 실패: error={e}")
+            return _json_error(str(e))
+        except Exception as e:
+            print(f"[VISUAL_GUIDE:APPLY] 적용 예외: {e}")
             traceback.print_exc()
             return _json_error(str(e), 500)
 

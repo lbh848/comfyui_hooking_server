@@ -22645,6 +22645,14 @@ app.router.add_get("/api/bot_mode/lb_extra", bot_mode.handle_get_lb_extra)
 app.router.add_post("/api/bot_mode/lb_extra", bot_mode.handle_save_lb_extra)
 app.router.add_get("/api/bot_mode/character_cards", bot_mode.handle_get_character_cards)
 app.router.add_post("/api/bot_mode/character_cards", bot_mode.handle_save_character_cards)
+app.router.add_post(
+    "/api/bot_mode/character_cards/suggest_metadata",
+    bot_mode.handle_suggest_character_card_metadata,
+)
+app.router.add_post(
+    "/api/bot_mode/character_cards/apply_metadata",
+    bot_mode.handle_apply_character_card_metadata,
+)
 app.router.add_get("/api/bot_mode/system_prompt", bot_mode.handle_get_system_prompt)
 app.router.add_post("/api/bot_mode/system_prompt", bot_mode.handle_save_system_prompt)
 app.router.add_get("/api/bot_mode/system_prompt_presets", bot_mode.handle_get_system_prompt_presets)
@@ -24793,7 +24801,7 @@ async def _monitor_bot_lora_training(prompt_id, bot_name, project_name, current_
 
 
 async def _start_next_bot_char_training(bot_name, project_name, characters_to_train, next_idx, config, training_config, test_images):
-    from modes.bot_lora_mode import export_bot_training_images, _get_project_training_images, _load_bot_lora_manage, _get_char_config, list_bot_char_test_images
+    from modes.bot_lora_mode import export_bot_training_images, _effective_character_trigger, _get_project_training_images, _load_bot_lora_manage, _get_char_config, list_bot_char_test_images
     ch = characters_to_train[next_idx]
     cn = ch.get("name", "")
     visual_card_id = ch.get("visual_card_id", "")
@@ -24802,7 +24810,13 @@ async def _start_next_bot_char_training(bot_name, project_name, characters_to_tr
     char_cfg = _get_char_config(
         manage_data, bot_name, project_name, cn, visual_card_id
     ) or {}
-    trigger = char_cfg.get("trigger", "") or cn
+    project_cfg = manage_data.get("bot_loras", {}).get(bot_name, {}).get(project_name, {})
+    trigger = _effective_character_trigger(
+        project_cfg,
+        cn,
+        visual_card_id,
+        char_cfg,
+    )
     # 캐릭터별 테스트 이미지 우선, 없으면 공통 테스트 이미지 폴백
     char_test_images = list_bot_char_test_images(
         bot_name, project_name, cn, visual_card_id

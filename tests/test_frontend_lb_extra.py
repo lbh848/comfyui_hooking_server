@@ -207,3 +207,38 @@ const empty = _lbExtraResolveTagDrop(
         "after": {"index": 2, "after": True},
         "empty": {"index": 3, "after": False},
     }
+
+
+def test_lb_extra_screen_renders_character_profile_outfit_tree():
+    source = _frontend_source()
+    tree_renderer = _function_source(
+        source,
+        "_renderLbExtraContent()",
+        "_attachLbExtraChipTooltips()",
+    )
+
+    assert "characterData?.profiles" in tree_renderer
+    assert 'data-lb-tree-key=' in tree_renderer
+    assert "기본 프로필" in tree_renderer
+    assert "기본 복장" in tree_renderer
+    assert "_openLbExtraTreeProfileEditor" in tree_renderer
+    assert "이식용 평면 데이터 (다운로드 형식 유지)" in tree_renderer
+    assert 'class="lb-extra-mindmap"' in tree_renderer
+    assert 'class="lb-extra-mindmap-profile-row"' in tree_renderer
+    assert 'class="lb-extra-mindmap-leaf"' in tree_renderer
+    assert "grid-template-columns:minmax(150px,190px) 34px minmax(760px,1fr)" in tree_renderer
+
+
+def test_lb_extra_tree_keeps_legacy_download_serialization():
+    source = _frontend_source()
+    downloader = _function_source(
+        source,
+        "_downloadLbExtra()",
+        "autoGroupPrompt(charName)",
+    )
+
+    assert "for (const char of _lbExtraEdited)" in downloader
+    assert "`### ${char.name}\\n`" in downloader
+    assert "`-Appearance\\n${appearanceStr}\\n`" in downloader
+    assert "`-default_outfit\\n${char.outfit.map(t => t.tag).join(', ')}\\n\\n`" in downloader
+    assert "profiles" not in downloader

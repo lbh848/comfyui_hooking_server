@@ -74,6 +74,120 @@ def test_representative_and_face_paths_cover_every_visual_card(visual_bot):
 
 
 @pytest.mark.asyncio
+async def test_image_list_replaces_primary_face_with_requested_profile_face(
+    visual_bot,
+):
+    _tmp_path, _bot_root, char_dir, _data = visual_bot
+    (char_dir / "_face_image.webp").write_bytes(b"primary-face")
+    (char_dir / "_face_image_prompt.json").write_text(
+        json.dumps({"prompt": "primary prompt", "negative": "primary negative"}),
+        encoding="utf-8",
+    )
+    profile_dir = char_dir / "_visual_profiles" / "alternate"
+    profile_dir.mkdir(parents=True)
+    (profile_dir / "_face_image.webp").write_bytes(b"alternate-face")
+    (profile_dir / "_face_image_prompt.json").write_text(
+        json.dumps({"prompt": "alternate prompt", "negative": "alternate negative"}),
+        encoding="utf-8",
+    )
+
+    class Request:
+        query = {
+            "bot": "sample-bot",
+            "character": "alice",
+            "visual_card_id": "alternate",
+        }
+
+    response = await bot_mode.BotMode().handle_get_images(Request())
+    payload = json.loads(response.text)
+    faces = [
+        image for image in payload["images"]
+        if image["filename"] == "_face_image.webp"
+    ]
+
+    assert payload["visual_card_id"] == "alternate"
+    assert len(faces) == 1
+    assert faces[0]["prompt"] == "alternate prompt"
+    assert faces[0]["negative"] == "alternate negative"
+    assert faces[0]["visual_card_id"] == "alternate"
+    assert faces[0]["url"].endswith(
+        "/_face_image.webp?visual_card_id=alternate"
+    )
+    assert {image["filename"] for image in payload["images"]} >= {
+        "primary.webp",
+        "alternate.webp",
+    }
+
+
+@pytest.mark.asyncio
+async def test_image_list_without_profile_id_keeps_primary_face_compatibility(
+    visual_bot,
+):
+    _tmp_path, _bot_root, char_dir, _data = visual_bot
+    (char_dir / "_face_image.webp").write_bytes(b"primary-face")
+    (char_dir / "_face_image_prompt.json").write_text(
+        json.dumps({"prompt": "primary prompt"}),
+        encoding="utf-8",
+    )
+
+    class Request:
+        query = {"bot": "sample-bot", "character": "alice"}
+
+    response = await bot_mode.BotMode().handle_get_images(Request())
+    payload = json.loads(response.text)
+    face = next(
+        image for image in payload["images"]
+        if image["filename"] == "_face_image.webp"
+    )
+
+    assert payload["visual_card_id"] == ""
+    assert face["prompt"] == "primary prompt"
+    assert face["visual_card_id"] == ""
+    assert "visual_card_id=" not in face["url"]
+
+
+@pytest.mark.asyncio
+async def test_prompt_update_writes_only_requested_profile_prompt(visual_bot):
+    _tmp_path, _bot_root, char_dir, _data = visual_bot
+    root_prompt = char_dir / "_face_image_prompt.json"
+    root_prompt.write_text(
+        json.dumps({"prompt": "primary prompt", "negative": "keep root"}),
+        encoding="utf-8",
+    )
+    profile_dir = char_dir / "_visual_profiles" / "alternate"
+    profile_dir.mkdir(parents=True)
+    profile_prompt = profile_dir / "_face_image_prompt.json"
+    profile_prompt.write_text(
+        json.dumps({"prompt": "old alternate", "negative": "keep alternate"}),
+        encoding="utf-8",
+    )
+
+    class Request:
+        async def json(self):
+            return {
+                "bot": "sample-bot",
+                "character": "alice",
+                "visual_card_id": "alternate",
+                "filename": "_face_image.webp",
+                "prompt": "new alternate",
+            }
+
+    response = await bot_mode.BotMode().handle_update_prompt(Request())
+    payload = json.loads(response.text)
+
+    assert payload["updated"] is True
+    assert payload["visual_card_id"] == "alternate"
+    assert json.loads(root_prompt.read_text(encoding="utf-8")) == {
+        "prompt": "primary prompt",
+        "negative": "keep root",
+    }
+    assert json.loads(profile_prompt.read_text(encoding="utf-8")) == {
+        "prompt": "new alternate",
+        "negative": "keep alternate",
+    }
+
+
+@pytest.mark.asyncio
 async def test_data_patch_copies_every_card_even_without_profile_embedding_flag(
     visual_bot, monkeypatch
 ):

@@ -3804,7 +3804,7 @@ class QueueManager:
             raise ValueError("Comfy Input 폴더가 유효하지 않습니다")
 
         from modes.bot_lora_mode import (
-            _get_char_config, _load_bot_lora_manage,
+            _effective_character_trigger, _get_char_config, _load_bot_lora_manage,
             export_bot_training_images, _get_project_training_images,
             list_bot_test_images, list_bot_char_test_images,
         )
@@ -3815,7 +3815,12 @@ class QueueManager:
         char_cfg = _get_char_config(
             manage_data, bot_name, project_name, char_name, visual_card_id
         ) or {}
-        trigger = char_cfg.get("trigger", "") or char_name
+        trigger = _effective_character_trigger(
+            proj_cfg,
+            char_name,
+            visual_card_id,
+            char_cfg,
+        )
 
         char_test_images = list_bot_char_test_images(
             bot_name, project_name, char_name, visual_card_id

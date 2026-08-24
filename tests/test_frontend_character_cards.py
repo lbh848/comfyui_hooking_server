@@ -42,3 +42,16 @@ def test_shared_focus_editor_does_not_close_on_backdrop_click():
     modal_source = FRONTEND[modal_start:modal_end]
     assert "overlay.onclick" not in modal_source
     assert "overlay.addEventListener('click'" not in modal_source
+
+
+def test_active_character_card_face_preview_and_prompt_edit_keep_profile_id():
+    assert "&visual_card_id=${encodeURIComponent(activeVisualCardId)}" in FRONTEND
+    assert "const utilImg = data.images.find(i => i.filename === '_face_image.webp');" in FRONTEND
+    assert "(_visualCardSlots[charName] || 0) === 0" not in FRONTEND
+    assert 'data-visual-card-id="${escAttr(activeVisualCardId)}"' in FRONTEND
+
+    modal_start = FRONTEND.index("function lv1OpenEditModal(btn)")
+    modal_end = FRONTEND.index("function lv1TogglePrompt(textEl)", modal_start)
+    modal_source = FRONTEND[modal_start:modal_end]
+    assert "const visualCardId = box.dataset.visualCardId || '';" in modal_source
+    assert "visual_card_id: visualCardId" in modal_source

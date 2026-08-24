@@ -88,9 +88,8 @@ def _trained_lora_dir(
 
 
 def _profile_trigger(char_name: str, visual_card_id: str, *, is_primary: bool) -> str:
-    if is_primary:
-        return char_name
-    return f"{char_name}_{visual_card_id}"
+    """카드 종류와 무관한 캐릭터 공용 기본 트리거를 반환한다."""
+    return char_name
 
 
 def _bot_character(bot_data: dict, bot_name: str, char_name: str) -> dict | None:
@@ -202,6 +201,65 @@ def _iter_project_units(project: dict):
         yield char_name, "", char_cfg
 
 
+def _effective_character_trigger(
+    project: dict,
+    char_name: str,
+    visual_card_id: str = "",
+    profile_cfg: dict | None = None,
+) -> str:
+    """캐릭터의 공용 트리거를 반환한다.
+
+    새 카드별 스키마는 캐릭터 래퍼의 ``trigger``를 사용한다. 기존 데이터처럼
+    카드마다 trigger가 들어 있으면 기본 카드(visual_card_index=1)의 값을
+    캐릭터 공용값으로 간주하고, 기본 카드 표시가 없을 때만 첫 카드 값으로
+    폴백한다. 이 호환 조회는 파일 자체를 자동 마이그레이션하지 않는다.
+    """
+    char_cfg = (project.get("characters") or {}).get(char_name)
+    if not isinstance(char_cfg, dict):
+        print(f"[BOT_LORA_TRIGGER] 캐릭터 설정 없음: character={char_name!r}")
+        return char_name
+
+    profiles = char_cfg.get("profiles")
+    if not isinstance(profiles, dict):
+        return str(char_cfg.get("trigger") or char_name).strip() or char_name
+
+    shared_trigger = str(char_cfg.get("trigger") or "").strip()
+    if shared_trigger:
+        return shared_trigger
+
+    candidates = [
+        cfg for cfg in profiles.values()
+        if isinstance(cfg, dict)
+    ]
+    primary_cfg = next(
+        (cfg for cfg in candidates if cfg.get("visual_card_index", 0) == 1),
+        None,
+    )
+    if primary_cfg is None and isinstance(profiles.get(""), dict):
+        primary_cfg = profiles[""]
+    if primary_cfg is None and candidates:
+        primary_cfg = candidates[0]
+
+    legacy_trigger = str((primary_cfg or {}).get("trigger") or "").strip()
+    if legacy_trigger:
+        return legacy_trigger
+
+    # 잘못된/부분 데이터에서 대상 카드에만 값이 있다면 마지막 호환 폴백으로 쓴다.
+    target_cfg = profile_cfg or _project_profile_config(char_cfg, visual_card_id)
+    target_trigger = str((target_cfg or {}).get("trigger") or "").strip()
+    return target_trigger or char_name
+
+
+def _set_character_trigger(project: dict, char_name: str, trigger: str) -> bool:
+    """레거시/카드별 스키마 모두에서 캐릭터 공용 트리거를 설정한다."""
+    char_cfg = (project.get("characters") or {}).get(char_name)
+    if not isinstance(char_cfg, dict):
+        print(f"[BOT_LORA_TRIGGER] 업데이트 대상 캐릭터 없음: {char_name!r}")
+        return False
+    char_cfg["trigger"] = str(trigger or "").strip() or char_name
+    return True
+
+
 def _selection_keys(values, available_units: list[dict]) -> set[tuple[str, str]]:
     """API의 명시적 카드 선택과 레거시 캐릭터명 선택을 정규화한다."""
     result: set[tuple[str, str]] = set()
@@ -268,17 +326,31 @@ def _add_project_unit(project: dict, unit: dict) -> dict:
     if isinstance(char_cfg, dict) and not isinstance(char_cfg.get("profiles"), dict):
         # 기존 캐릭터 단위 설정과 새 카드 단위 설정이 공존할 때 레거시 설정을
         # 빈 카드 ID 프로필로 감싸 데이터 손실 없이 전환한다.
-        char_cfg = {"profiles": {"": char_cfg}}
+        legacy_cfg = char_cfg
+        char_cfg = {
+            "trigger": str(legacy_cfg.get("trigger") or char_name).strip() or char_name,
+            "profiles": {"": legacy_cfg},
+        }
         characters[char_name] = char_cfg
     elif not isinstance(char_cfg, dict):
-        char_cfg = {"profiles": {}}
+        char_cfg = {
+            "trigger": _profile_trigger(
+                char_name,
+                card_id,
+                is_primary=bool(unit["is_primary"]),
+            ),
+            "profiles": {},
+        }
         characters[char_name] = char_cfg
+    elif not str(char_cfg.get("trigger") or "").strip():
+        # 기존 카드별 trigger 데이터는 자동 삭제하지 않고 공용값만 승격한다.
+        char_cfg["trigger"] = _effective_character_trigger(
+            project,
+            char_name,
+            card_id,
+        )
     profiles = char_cfg.setdefault("profiles", {})
     profile_cfg = profiles.setdefault(card_id, {})
-    profile_cfg.setdefault(
-        "trigger",
-        _profile_trigger(char_name, card_id, is_primary=bool(unit["is_primary"])),
-    )
     profile_cfg["label"] = unit["visual_card_label"]
     profile_cfg["visual_card_index"] = unit["visual_card_index"]
     return profile_cfg
@@ -569,7 +641,7 @@ def list_project_importable_characters(src_bot: str, src_project: str, dst_bot: 
             "name": cn,
             "visual_card_id": card_id,
             "visual_card_label": ccfg.get("label") or card_id or "기본 카드",
-            "trigger": ccfg.get("trigger", cn),
+            "trigger": _effective_character_trigger(src_proj, cn, card_id, ccfg),
             "image_count": image_count,
         })
 
@@ -638,14 +710,23 @@ def import_characters_from_project(src_bot: str, src_project: str, dst_bot: str,
             print(f"[BOT_LORA_PROJ_IMPORT] 스킵(이미 존재): {cn}/{card_id}")
             continue
 
-        dst_cfg = _add_project_unit(dst_proj, {
+        dst_character_existed = isinstance(
+            (dst_proj.get("characters") or {}).get(cn),
+            dict,
+        )
+        _add_project_unit(dst_proj, {
             "name": cn,
             "visual_card_id": card_id,
             "visual_card_label": src_cfg.get("label") or card_id or "기본 카드",
             "visual_card_index": src_cfg.get("visual_card_index", 1),
             "is_primary": not card_id or src_cfg.get("visual_card_index", 1) == 1,
         })
-        dst_cfg["trigger"] = src_cfg.get("trigger", cn)
+        if not dst_character_existed:
+            _set_character_trigger(
+                dst_proj,
+                cn,
+                _effective_character_trigger(src_proj, cn, card_id, src_cfg),
+            )
 
         # 학습 이미지 폴더 통째 복사 (이미지 + *_prompt.json)
         src_dir = _bot_project_training_dir(src_bot, src_project, cn, card_id)
@@ -1034,7 +1115,12 @@ def get_project_data(bot_name: str, project_name: str, lora_load_path: str = "")
         training_images = _get_project_training_images(
             bot_name, project_name, char_name, visual_card_id
         )
-        trigger = char_cfg.get("trigger", "") or char_name
+        trigger = _effective_character_trigger(
+            proj_cfg,
+            char_name,
+            visual_card_id,
+            char_cfg,
+        )
         trained_sessions = (
             _list_bot_trained_sessions(
                 lora_load_path,
@@ -1556,20 +1642,31 @@ def update_char_trigger(
     visual_card_id: str = "",
 ) -> dict:
     if not bot_name or not project_name or not char_name:
+        print(
+            f"[BOT_LORA] trigger 업데이트 필수값 누락: "
+            f"bot={bot_name!r}, project={project_name!r}, character={char_name!r}"
+        )
         return {"success": False, "error": "봇/프로젝트/캐릭터 이름 누락"}
     data = _load_bot_lora_manage()
-    char_cfg = _get_char_config(
-        data, bot_name, project_name, char_name, visual_card_id
+    proj = _get_project_config(data, bot_name, project_name)
+    char_cfg = (
+        (proj.get("characters") or {}).get(char_name)
+        if isinstance(proj, dict)
+        else None
     )
-    if char_cfg is None:
+    if not isinstance(char_cfg, dict):
         print(
             f"[BOT_LORA] trigger 업데이트 대상 없음: "
             f"{bot_name}/{project_name}/{char_name}/{visual_card_id or 'legacy'}"
         )
-        return {"success": False, "error": "캐릭터 카드 설정을 찾을 수 없습니다"}
-    char_cfg["trigger"] = trigger.strip()
+        return {"success": False, "error": "캐릭터 설정을 찾을 수 없습니다"}
+    _set_character_trigger(proj, char_name, trigger)
     _save_bot_lora_manage(data)
-    print(f"[BOT_LORA] trigger 업데이트: {bot_name}/{project_name}/{char_name} -> {trigger.strip()}")
+    saved_trigger = str(char_cfg.get("trigger") or char_name).strip() or char_name
+    print(
+        f"[BOT_LORA] 캐릭터 공용 trigger 업데이트: "
+        f"{bot_name}/{project_name}/{char_name} -> {saved_trigger}"
+    )
     return {"success": True}
 
 
@@ -2802,7 +2899,12 @@ def list_bot_lora_for_picker(lora_load_path: str = "") -> list:
                     "visual_card_label": (
                         unit_cfg.get("label") or visual_card_id or "기본 카드"
                     ),
-                    "trigger": unit_cfg.get("trigger", char_name),
+                    "trigger": _effective_character_trigger(
+                        proj_data,
+                        char_name,
+                        visual_card_id,
+                        unit_cfg,
+                    ),
                     "lora_path": rep_path,
                     "preview_url": rep_preview,
                     "session": rep_session,
