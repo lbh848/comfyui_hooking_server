@@ -177,11 +177,127 @@ async def test_suggest_metadata_reads_the_whole_selected_prompt_and_does_not_sav
     assert detail_records[0]["prompt_tokens"] == 120
     assert detail_records[0]["completion_tokens"] == 40
     assert detail_records[0]["queue_item_id"] == "visual-guide-queue"
+    assert detail_records[0]["character"] == "Riko"
+    assert detail_records[0]["profile_id"] == "card_1"
+    assert detail_records[0]["profile_ids"] == ["card_1"]
+    assert detail_records[0]["profile_count"] == 1
+    assert detail_records[0]["character_index"] == 1
+    assert detail_records[0]["character_count"] == 1
     prompt_text = "\n".join(str(message["content"]) for message in captured["messages"])
     assert "Arbitrary Picture Grammar" in prompt_text
     assert "fixed Image Command heading" in prompt_text
     assert "Riko_magical_overcome_smile.webp" in prompt_text
     assert "hardcoded keyword spotting" in prompt_text
+
+
+@pytest.mark.asyncio
+async def test_suggest_metadata_calls_llm_once_per_character(monkeypatch):
+    bot_mode = importlib.import_module("modes.bot_mode")
+    llm_service = importlib.import_module("modes.llm_service")
+    lighbd_service = importlib.import_module("modes.lighbd_service")
+    riko_cards = [
+        _card("riko_1", "기본", "Riko_normal.webp"),
+        _card("riko_2", "각성", "Riko_awakened.webp"),
+    ]
+    mina_cards = [_card("mina_1", "기본", "Mina_normal.webp")]
+    data = _bot_data(riko_cards)
+    data["bots"][0]["characters"].append({
+        "name": "Mina",
+        "visual_cards": deepcopy(mina_cards),
+    })
+    queue = _InlineLlmQueue()
+    calls = []
+    detail_records = []
+
+    async def fake_call(task_key, messages, **kwargs):
+        context = kwargs["execution_context"]
+        metadata = context.metadata
+        prompt = "\n".join(str(item["content"]) for item in messages)
+        calls.append({
+            "task_key": task_key,
+            "metadata": deepcopy(metadata),
+            "prompt": prompt,
+        })
+        raw = json.dumps({
+            "suggestions": [
+                {
+                    "target_key": str(index),
+                    "aliases": [f"alias-{profile_id}"],
+                    "selection_guide": f"{profile_label} 프로필이 성립할 때 선택한다.",
+                    "evidence": f"{profile_id} 프로필 근거",
+                    "confidence": "high",
+                }
+                for index, (profile_id, profile_label) in enumerate(zip(
+                    metadata["profile_ids"],
+                    metadata["profile_labels"],
+                ))
+            ]
+        }, ensure_ascii=False)
+        valid, reason = kwargs["result_validator"](raw)
+        assert valid, reason
+        kwargs["execution_observer"]({
+            "type": "execution_complete",
+            "llm_slot": "llm1",
+            "phase": "primary",
+            "execution_id": context.execution_id,
+        })
+        return raw
+
+    monkeypatch.setattr(bot_mode, "_load_bot_data", lambda: data)
+    monkeypatch.setattr(bot_mode, "_load_lb_extra", lambda _bot_name: [])
+    monkeypatch.setattr(llm_service, "callLLMTask", fake_call)
+    monkeypatch.setattr(lighbd_service, "_log_lighbd_history", detail_records.append)
+
+    manager = bot_mode.BotMode()
+    manager.set_queue_manager(queue)
+    response = await manager.handle_suggest_character_card_metadata(
+        _JsonRequest({
+            "bot_name": "demo",
+            "targets": [
+                {"character": "Riko", "profile_id": "riko_1"},
+                {"character": "Mina", "profile_id": "mina_1"},
+                {"character": "Riko", "profile_id": "riko_2"},
+            ],
+        })
+    )
+    payload = json.loads(response.text)
+
+    assert response.status == 200
+    assert payload["success"] is True
+    assert [
+        (item["character"], item["profile_id"])
+        for item in payload["suggestions"]
+    ] == [
+        ("Riko", "riko_1"),
+        ("Riko", "riko_2"),
+        ("Mina", "mina_1"),
+    ]
+    assert len(calls) == 2
+    assert queue.added[0]["params"]["target_count"] == 3
+    assert queue.added[0]["params"]["character_call_count"] == 2
+    assert calls[0]["task_key"] == "visual_profile_guide"
+    assert calls[0]["metadata"]["character"] == "Riko"
+    assert calls[0]["metadata"]["profile_ids"] == ["riko_1", "riko_2"]
+    assert calls[0]["metadata"]["profile_count"] == 2
+    assert calls[0]["metadata"]["character_index"] == 1
+    assert calls[0]["metadata"]["character_count"] == 2
+    assert "Riko_normal.webp" in calls[0]["prompt"]
+    assert "Riko_awakened.webp" in calls[0]["prompt"]
+    assert "Mina_normal.webp" not in calls[0]["prompt"]
+    assert calls[1]["metadata"]["character"] == "Mina"
+    assert calls[1]["metadata"]["profile_ids"] == ["mina_1"]
+    assert calls[1]["metadata"]["profile_count"] == 1
+    assert calls[1]["metadata"]["character_index"] == 2
+    assert calls[1]["metadata"]["character_count"] == 2
+    assert "Mina_normal.webp" in calls[1]["prompt"]
+    assert "Riko_normal.webp" not in calls[1]["prompt"]
+    assert "Riko_awakened.webp" not in calls[1]["prompt"]
+    assert len(detail_records) == 2
+    assert [record["character"] for record in detail_records] == ["Riko", "Mina"]
+    assert detail_records[0]["profile_ids"] == ["riko_1", "riko_2"]
+    assert detail_records[0]["target_count"] == 2
+    assert detail_records[1]["profile_ids"] == ["mina_1"]
+    assert detail_records[1]["target_count"] == 1
 
 
 @pytest.mark.asyncio
@@ -292,7 +408,7 @@ async def test_visual_guide_queue_failure_records_attempt_and_final_detail(monke
     payload = json.loads(response.text)
 
     assert response.status == 422
-    assert "배치 실패" in payload["error"]
+    assert "캐릭터 호출 실패" in payload["error"]
     assert len(detail_records) == 2
     assert detail_records[0]["history_id"] == "visual-attempt-1"
     assert detail_records[0]["attempt"] == 1

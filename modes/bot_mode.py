@@ -522,7 +522,6 @@ def copy_default() -> dict:
     return copy.deepcopy(DEFAULT_BOT_DATA)
 
 
-VISUAL_GUIDE_LLM_BATCH_SIZE = 20
 VISUAL_GUIDE_MAX_TARGETS = 120
 VISUAL_GUIDE_TASK_KEY = "visual_profile_guide"
 VISUAL_GUIDE_QUEUE_TYPE = "visual_profile_guide"
@@ -740,6 +739,19 @@ def _visual_guide_slot_identity(llm_service_module, slot: str) -> tuple[str, str
     return service, model
 
 
+def _visual_guide_character_call_name(
+    *,
+    character: str,
+    character_index: int,
+    character_count: int,
+) -> str:
+    position = f"{character_index}/{character_count}" if character_count else ""
+    suffix = " · ".join(
+        value for value in (str(character).strip(), position) if value
+    )
+    return f"프로필 선택 기준 자동 작성{f' · {suffix}' if suffix else ''}"
+
+
 def _log_visual_guide_llm_history(
     *,
     llm_service_module,
@@ -756,9 +768,11 @@ def _log_visual_guide_llm_history(
     execution_id: str = "",
     parent_execution_id: str = "",
     queue_item_id: str = "",
-    batch_index: int = 0,
-    batch_count: int = 0,
-    target_count: int = 0,
+    character: str = "",
+    profile_ids: list[str] | None = None,
+    profile_labels: list[str] | None = None,
+    character_index: int = 0,
+    character_count: int = 0,
     attempt: int | None = None,
     total_attempts: int | None = None,
 ) -> None:
@@ -769,15 +783,18 @@ def _log_visual_guide_llm_history(
         slot = str(llm_slot or "llm1")
         service, model = _visual_guide_slot_identity(llm_service_module, slot)
         token_usage = dict(usage or {})
+        target_profile_ids = list(profile_ids or [])
+        target_profile_labels = list(profile_labels or [])
+        call_name = _visual_guide_character_call_name(
+            character=character,
+            character_index=character_index,
+            character_count=character_count,
+        )
         record = {
             "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
-            "prompt_id": f"visual_profile_guide:{bot_name}:{batch_index}",
+            "prompt_id": f"visual_profile_guide:{bot_name}:{character}",
             "task_key": VISUAL_GUIDE_TASK_KEY,
-            "call_name": (
-                f"프로필 선택 기준 자동 작성 · {batch_index}/{batch_count}"
-                if batch_count
-                else "프로필 선택 기준 자동 작성"
-            ),
+            "call_name": call_name,
             "history_id": history_id or execution_id or uuid.uuid4().hex,
             "execution_id": execution_id or history_id,
             "parent_execution_id": parent_execution_id,
@@ -794,9 +811,17 @@ def _log_visual_guide_llm_history(
             "status": status,
             "bot_name": bot_name,
             "queue_item_id": queue_item_id,
-            "batch_index": batch_index,
-            "batch_count": batch_count,
-            "target_count": target_count,
+            "character": character,
+            "profile_id": target_profile_ids[0] if len(target_profile_ids) == 1 else "",
+            "profile_ids": target_profile_ids,
+            "profile_label": (
+                target_profile_labels[0] if len(target_profile_labels) == 1 else ""
+            ),
+            "profile_labels": target_profile_labels,
+            "profile_count": len(target_profile_ids),
+            "character_index": character_index,
+            "character_count": character_count,
+            "target_count": len(target_profile_ids),
         }
         if attempt is not None:
             record["attempt"] = attempt
@@ -808,7 +833,8 @@ def _log_visual_guide_llm_history(
     except Exception as exc:
         print(
             f"[VISUAL_GUIDE:DETAIL] LB 자세히 기록 실패: bot={bot_name!r}, "
-            f"batch={batch_index}/{batch_count}, status={status!r}, "
+            f"character={character!r}, profiles={profile_ids!r}, "
+            f"call={character_index}/{character_count}, status={status!r}, "
             f"error={type(exc).__name__}: {exc}"
         )
         traceback.print_exc()
@@ -3257,9 +3283,20 @@ class BotMode:
             from modes import llm_prompt_edit
             from modes import llm_service
 
-            batch_count = math.ceil(
-                len(resolved_targets) / VISUAL_GUIDE_LLM_BATCH_SIZE
-            )
+            character_groups = []
+            group_by_character = {}
+            for target in resolved_targets:
+                character_key = str(target["character"]).casefold()
+                group = group_by_character.get(character_key)
+                if group is None:
+                    group = {
+                        "character": str(target["character"]),
+                        "targets": [],
+                    }
+                    group_by_character[character_key] = group
+                    character_groups.append(group)
+                group["targets"].append(target)
+            character_count = len(character_groups)
             if self._queue_manager is None:
                 print(
                     f"[VISUAL_GUIDE:QUEUE] 큐 등록 실패: queue_manager 미주입, "
@@ -3269,33 +3306,50 @@ class BotMode:
 
             async def run_visual_guide_queue(queue_item):
                 suggestions = []
-                for batch_index, start in enumerate(
-                    range(0, len(resolved_targets), VISUAL_GUIDE_LLM_BATCH_SIZE),
-                    start=1,
-                ):
-                    batch = resolved_targets[start:start + VISUAL_GUIDE_LLM_BATCH_SIZE]
-                    messages = _build_visual_guide_messages(system_prompt, batch)
+                for character_index, group in enumerate(character_groups, start=1):
+                    character = str(group["character"])
+                    call_targets = [
+                        {**target, "target_key": str(target_index)}
+                        for target_index, target in enumerate(group["targets"])
+                    ]
+                    profile_ids = [
+                        str(target["profile"].get("id") or "")
+                        for target in call_targets
+                    ]
+                    profile_labels = [
+                        str(
+                            target["profile"].get("label")
+                            or target["profile"].get("id")
+                            or ""
+                        )
+                        for target in call_targets
+                    ]
+                    messages = _build_visual_guide_messages(system_prompt, call_targets)
                     accepted = {}
                     usage = {}
                     last_raw_result = ""
                     last_failure_reason = ""
                     execution_complete = {}
                     call_started = time.perf_counter()
-                    call_name = (
-                        f"프로필 선택 기준 자동 작성 · {batch_index}/{batch_count}"
+                    call_name = _visual_guide_character_call_name(
+                        character=character,
+                        character_index=character_index,
+                        character_count=character_count,
                     )
                     execution_context = llm_service.create_llm_execution_context(
                         VISUAL_GUIDE_TASK_KEY,
                         call_name=call_name,
                         json_mode=True,
                         metadata={
-                            "prompt_id": (
-                                f"visual_profile_guide:{bot_name}:{batch_index}"
-                            ),
+                            "prompt_id": f"visual_profile_guide:{bot_name}:{character}",
                             "queue_item_id": queue_item.id,
                             "bot_name": bot_name,
-                            "batch_index": batch_index,
-                            "batch_count": batch_count,
+                            "character": character,
+                            "profile_ids": profile_ids,
+                            "profile_labels": profile_labels,
+                            "profile_count": len(call_targets),
+                            "character_index": character_index,
+                            "character_count": character_count,
                         },
                     )
 
@@ -3303,7 +3357,7 @@ class BotMode:
                         parsed = llm_prompt_edit.parse_llm_json(raw_result)
                         normalized, reason = _normalize_visual_guide_llm_result(
                             parsed,
-                            batch,
+                            call_targets,
                         )
                         if normalized is None:
                             return False, reason
@@ -3341,9 +3395,11 @@ class BotMode:
                             execution_id=str(info.get("attempt_id") or ""),
                             parent_execution_id=execution_context.execution_id,
                             queue_item_id=queue_item.id,
-                            batch_index=batch_index,
-                            batch_count=batch_count,
-                            target_count=len(batch),
+                            character=character,
+                            profile_ids=profile_ids,
+                            profile_labels=profile_labels,
+                            character_index=character_index,
+                            character_count=character_count,
                             attempt=attempt_number,
                             total_attempts=total_attempts,
                         )
@@ -3355,7 +3411,8 @@ class BotMode:
                     print(
                         f"[VISUAL_GUIDE:API] LLM 생성 시작: bot={bot_name!r}, "
                         f"preset={preset!r}, scope={scope!r}, "
-                        f"batch={batch_index}/{batch_count}, targets={len(batch)}, "
+                        f"character={character!r}, profiles={profile_ids!r}, "
+                        f"call={character_index}/{character_count}, "
                         f"queue_item={queue_item.id}"
                     )
                     try:
@@ -3378,7 +3435,8 @@ class BotMode:
                         phase = str(execution_complete.get("phase") or "primary")
                         print(
                             f"[VISUAL_GUIDE:API] LLM 호출 예외: bot={bot_name!r}, "
-                            f"batch={batch_index}/{batch_count}, "
+                            f"character={character!r}, profiles={profile_ids!r}, "
+                            f"call={character_index}/{character_count}, "
                             f"error={type(exc).__name__}: {exc}"
                         )
                         traceback.print_exc()
@@ -3397,9 +3455,11 @@ class BotMode:
                             execution_id=execution_context.execution_id,
                             parent_execution_id=execution_context.parent_execution_id,
                             queue_item_id=queue_item.id,
-                            batch_index=batch_index,
-                            batch_count=batch_count,
-                            target_count=len(batch),
+                            character=character,
+                            profile_ids=profile_ids,
+                            profile_labels=profile_labels,
+                            character_index=character_index,
+                            character_count=character_count,
                         )
                         raise
 
@@ -3409,12 +3469,12 @@ class BotMode:
                         or llm_service.routing_primary_slot(VISUAL_GUIDE_TASK_KEY)
                     )
                     phase = str(execution_complete.get("phase") or "primary")
-                    batch_suggestions = accepted.get("suggestions")
-                    if batch_suggestions is None:
+                    profile_suggestions = accepted.get("suggestions")
+                    if profile_suggestions is None:
                         parsed = llm_prompt_edit.parse_llm_json(raw)
                         _normalized, reason = _normalize_visual_guide_llm_result(
                             parsed,
-                            batch,
+                            call_targets,
                         )
                         error = (
                             last_failure_reason
@@ -3424,7 +3484,8 @@ class BotMode:
                         raw_for_detail = last_raw_result or str(raw or "")
                         print(
                             f"[VISUAL_GUIDE:API] LLM 생성 실패: bot={bot_name!r}, "
-                            f"batch={batch_index}/{batch_count}, error={error}, "
+                            f"character={character!r}, profiles={profile_ids!r}, "
+                            f"call={character_index}/{character_count}, error={error}, "
                             f"raw_preview={raw_for_detail[:500]!r}"
                         )
                         _log_visual_guide_llm_history(
@@ -3442,12 +3503,15 @@ class BotMode:
                             execution_id=execution_context.execution_id,
                             parent_execution_id=execution_context.parent_execution_id,
                             queue_item_id=queue_item.id,
-                            batch_index=batch_index,
-                            batch_count=batch_count,
-                            target_count=len(batch),
+                            character=character,
+                            profile_ids=profile_ids,
+                            profile_labels=profile_labels,
+                            character_index=character_index,
+                            character_count=character_count,
                         )
                         raise RuntimeError(
-                            f"선택 기준 생성 {batch_index}/{batch_count} 배치 실패: "
+                            f"선택 기준 생성 {character_index}/{character_count} "
+                            f"캐릭터 호출 실패 ({character}): "
                             f"{error}"
                         )
 
@@ -3465,20 +3529,23 @@ class BotMode:
                         execution_id=execution_context.execution_id,
                         parent_execution_id=execution_context.parent_execution_id,
                         queue_item_id=queue_item.id,
-                        batch_index=batch_index,
-                        batch_count=batch_count,
-                        target_count=len(batch),
+                        character=character,
+                        profile_ids=profile_ids,
+                        profile_labels=profile_labels,
+                        character_index=character_index,
+                        character_count=character_count,
                     )
-                    suggestions.extend(batch_suggestions)
+                    suggestions.extend(profile_suggestions)
                     print(
                         f"[VISUAL_GUIDE:API] LLM 생성 완료: bot={bot_name!r}, "
-                        f"batch={batch_index}/{batch_count}, "
-                        f"suggestions={len(batch_suggestions)}, queue_item={queue_item.id}"
+                        f"character={character!r}, profiles={profile_ids!r}, "
+                        f"call={character_index}/{character_count}, "
+                        f"suggestions={len(profile_suggestions)}, queue_item={queue_item.id}"
                     )
                 return {
                     "suggestions": suggestions,
                     "target_count": len(resolved_targets),
-                    "batch_count": batch_count,
+                    "character_call_count": character_count,
                 }
 
             try:
@@ -3491,7 +3558,7 @@ class BotMode:
                     {
                         "bot_name": bot_name,
                         "target_count": len(resolved_targets),
-                        "batch_count": batch_count,
+                        "character_call_count": character_count,
                         "source_preset": preset,
                         "source_scope": scope,
                     },
@@ -3510,7 +3577,7 @@ class BotMode:
             print(
                 f"[VISUAL_GUIDE:QUEUE] 큐 등록 완료: bot={bot_name!r}, "
                 f"item={queue_item.id}, targets={len(resolved_targets)}, "
-                f"batches={batch_count}"
+                f"character_calls={character_count}"
             )
             try:
                 queue_result = await queue_item.completion_future
