@@ -65447,6 +65447,7 @@
             updateBotBreadcrumb();
             updateBotCharSelect();
             await _ensureVisualCardStates(bot);
+            const cardHydrationTasks = [];
 
             for (let charIdx = 0; charIdx < bot.characters.length; charIdx++) {
                 const rootChar = bot.characters[charIdx];
@@ -65543,7 +65544,7 @@
                 grid.appendChild(card);
 
                 // 비동기로 대표 이미지+프롬프트 로드
-                (async (cardEl, charName, activeVisualCardId) => {
+                cardHydrationTasks.push((async (cardEl, charName, activeVisualCardId) => {
                     try {
                         const cardQuery = activeVisualCardId
                             ? `&visual_card_id=${encodeURIComponent(activeVisualCardId)}`
@@ -65628,7 +65629,7 @@
                     } catch (e) {
                         console.error(`[BOT] 캐릭터 "${charName}" 이미지 로드 실패:`, e);
                     }
-                })(card, char.name, activeProfile?.id || '');
+                })(card, char.name, activeProfile?.id || ''));
 
                 // 기존 LoRA 목록 렌더링 (solo/group 프로필)
                 _charLoraProfiles[charIdx] = _charLoraProfiles[charIdx] || 'solo';
@@ -65651,6 +65652,7 @@
             }
             showBotView('chars');
             checkPatchFiles();
+            await Promise.allSettled(cardHydrationTasks);
         }
 
         // ─── 캐릭터 LoRA 카드 렌더링 ─────────────────────────────

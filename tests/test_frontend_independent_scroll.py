@@ -79,6 +79,10 @@ def test_asset_upload_restores_lv1_main_scroll_container():
 
 
 def test_bot_character_detail_restores_main_and_sidebar_scroll():
+    render_characters = _function_source(
+        "async function renderBotCharacters()",
+        "// ─── 캐릭터 LoRA 카드 렌더링",
+    )
     open_detail = _function_source(
         "async function openCharacterDetail(charName)",
         "async function closeCharacterDetail()",
@@ -99,6 +103,8 @@ def test_bot_character_detail_restores_main_and_sidebar_scroll():
     assert "main.scrollTop = 0;" in open_detail
     assert "sidebar.scrollTop = 0;" in open_detail
 
+    assert "const cardHydrationTasks = [];" in render_characters
+    assert "await Promise.allSettled(cardHydrationTasks);" in render_characters
     assert "await renderBotCharacters();" in close_detail
     assert "main.scrollTop = savedScroll.main;" in close_detail
     assert "sidebar.scrollTop = savedScroll.sidebar;" in close_detail
