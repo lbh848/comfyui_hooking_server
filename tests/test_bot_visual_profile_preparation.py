@@ -363,6 +363,7 @@ def test_representative_batch_frontend_supports_profile_drafts():
     assert "profile.rep0 && !profile.manualTarget" in source
     assert "보호 모드 프로필 수동 후보 선택 거부" not in source
     assert "manual_override: !!profile.manualTarget" in source
+    assert "skippedNoImage: skipNoImage" in source
     assert "create_profile = true" in source
     assert "source_visual_card_id" in source
     assert "visual_card_id: profile.profileId" in source

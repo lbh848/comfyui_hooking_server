@@ -72401,7 +72401,7 @@
                 showToast(msg, 'success');
                 console.log('[BOT] 프로필 대표 일괄 설정 완료:', {
                     mode, commonSearch: commonSearch || '(없음)', updated, created: createdN,
-                    skippedProtected: skippedProtectedN, skippedNoImage, skippedServer: data.skipped || []
+                    skippedProtected: skippedProtectedN, skippedNoImage: skipNoImage, skippedServer: data.skipped || []
                 });
             } catch (e) {
                 console.error('[BOT] 대표 일괄 설정 실패:', e);
