@@ -925,6 +925,7 @@ class BotMode:
         기존 호출의 ``items:[{char_name, filename}]`` 형식은 첫 번째 카드 대상으로
         계속 지원한다. 다중 카드 호출은 ``visual_card_id``를 보내며, 새 카드는
         ``create_profile=true``와 ``source_visual_card_id``를 함께 보낸다.
+        보호 모드에서도 사용자가 직접 고른 항목은 ``manual_override=true``로 교체한다.
         """
         bot_name = body.get("bot_name", "").strip()
         items = body.get("items", []) or []
@@ -991,6 +992,10 @@ class BotMode:
                 skip_item(char_name, requested_card_id, "create_profile은 bool이어야 함")
                 continue
             create_profile = it.get("create_profile") is True
+            if "manual_override" in it and not isinstance(it.get("manual_override"), bool):
+                skip_item(char_name, requested_card_id, "manual_override는 bool이어야 함")
+                continue
+            manual_override = it.get("manual_override") is True
             if not char_name or not filename:
                 skip_item(char_name, requested_card_id, "값이 비어있음")
                 continue
@@ -1064,8 +1069,8 @@ class BotMode:
                     continue
 
             rep_images = target_card.get("rep_images", []) or []
-            # 보호 모드: 이미 메인 대표가 있으면 밀어내지 않고 건너뜀
-            if mode == "protect" and rep_images and rep_images[0]:
+            # 보호 모드의 자동 후보는 건너뛰되, 사용자가 직접 고른 항목은 교체한다.
+            if mode == "protect" and rep_images and rep_images[0] and not manual_override:
                 skip_item(char_name, requested_card_id, "이미 대표 있음")
                 continue
             # filename 제거 후 맨 앞 삽입, 최대 3개 유지
@@ -1082,7 +1087,7 @@ class BotMode:
             print(
                 f"[BOT_MODE] 일괄 메인 대표 지정({mode}): "
                 f"{bot_name}/{char_name}/{requested_card_id}/{filename}, "
-                f"created_profile={create_profile}"
+                f"created_profile={create_profile}, manual_override={manual_override}"
             )
 
         if updated:

@@ -253,6 +253,41 @@ async def test_bulk_main_rep_protects_each_profile_independently(
 
 
 @pytest.mark.asyncio
+async def test_bulk_main_rep_protect_mode_allows_explicit_manual_override(
+    visual_bot, monkeypatch
+):
+    _tmp_path, _bot_root, char_dir, data = visual_bot
+    (char_dir / "replacement.webp").write_bytes(b"replacement")
+    saved = []
+    monkeypatch.setattr(bot_mode, "_save_bot_data", lambda value: saved.append(value))
+
+    response = await bot_mode.BotMode()._bulk_set_main_rep(data, {
+        "bot_name": "sample-bot",
+        "mode": "protect",
+        "items": [{
+            "char_name": "alice",
+            "visual_card_id": "alternate",
+            "filename": "replacement.webp",
+            "manual_override": True,
+        }],
+    })
+    payload = json.loads(response.text)
+
+    assert payload["skipped"] == []
+    assert payload["updated"] == [{
+        "char_name": "alice",
+        "visual_card_id": "alternate",
+        "filename": "replacement.webp",
+        "created_profile": False,
+    }]
+    assert data["bots"][0]["characters"][0]["visual_cards"][1]["rep_images"] == [
+        "replacement.webp",
+        "alternate.webp",
+    ]
+    assert len(saved) == 1
+
+
+@pytest.mark.asyncio
 async def test_bulk_main_rep_rejects_profile_creation_at_card_limit(
     visual_bot, monkeypatch
 ):
@@ -324,6 +359,10 @@ def test_representative_batch_frontend_supports_profile_drafts():
     assert 'aria-pressed="' in source
     assert "대표로 지정" in source
     assert "manualTarget" in source
+    assert "profile.isNew || profile.manualTarget" in source
+    assert "profile.rep0 && !profile.manualTarget" in source
+    assert "보호 모드 프로필 수동 후보 선택 거부" not in source
+    assert "manual_override: !!profile.manualTarget" in source
     assert "create_profile = true" in source
     assert "source_visual_card_id" in source
     assert "visual_card_id: profile.profileId" in source
