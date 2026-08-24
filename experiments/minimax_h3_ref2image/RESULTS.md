@@ -9,12 +9,14 @@
 - Image VAE: `minimax_h3_t1_image_vae_step1597.safetensors`
   - Size: 5,207,808,784 bytes
   - SHA-256: `6c3d0bfa055986a803a566a862fcde283a1e63db62829e5ef4a2a5aebf50bb86`
-- Sampling: `res_multistep`, `simple`, H3 shifts 12/3, no cache, no LoRA
+- Sampling: `res_multistep`, `simple`; isolated probes use H3 shifts 12/3 with
+  no cache/LoRA, while the REF2V-derived canvas preserves TeaCache 0.10
 - Reference sizing: `match`
 
-The runs used an isolated Comfy server on port 8189 while the normal server was
-idle on 8188. Reported VRAM is the minimum free memory observed through Comfy's
-system statistics, so it is system-wide rather than process-exclusive.
+Runs 1 through 5 used an isolated Comfy server on port 8189 while the normal
+server was idle on 8188. Runs 6 through 8 used the normal server on port 8188.
+Reported VRAM is the minimum free memory observed through Comfy's system
+statistics, so it is system-wide rather than process-exclusive.
 
 ## Structural result
 
@@ -29,7 +31,7 @@ video [1,24,1,H/16,W/16] + audio [1,32,2,0]
   -> one IMAGE
 ```
 
-All four live runs completed without OOM, zero-length audio errors, latent shape
+All eight live runs completed without OOM, zero-length audio errors, latent shape
 errors, or decoder failures.
 
 ## Runs
@@ -40,7 +42,10 @@ errors, or decoder failures.
 | 2 | 1 ref | 768×768 | 20 | 84.62 s | 15.75 GiB used peak, 0.24 GiB minimum free | Strong identity/detail retention; no OOM |
 | 3 | 2 refs: character then crude pose | 512×512 | 12 | 91.00 s | 15.75 GiB used peak, 0.24 GiB minimum free | Crude pose reference dominated; character identity was lost |
 | 4 | Same two refs reversed | 512×512 | 12 | 97.12 s | 15.75 GiB used peak, 0.24 GiB minimum free | Nearly the same dominance failure; not a simple last-reference bias |
-| 5 | Canvas workflow, 1 ref | 512×512 | 12 | 124.36 s cold | not recorded | UI workflow converted by the live server and executed successfully |
+| 5 | Earlier manually assembled canvas, 1 ref | 512×512 | 12 | 124.36 s cold | not recorded | Historical validation only; this canvas was replaced |
+| 6 | REF2V-derived deployment canvas, 1 ref | 960×544 | 20 + TeaCache 0.10 | 104.41 s | not recorded | Initial derived canvas conversion and `soya_video/[1]` transport succeeded |
+| 7 | Final duration-compatible REF2V-derived canvas, same ref/seed | 960×544 | 20 + TeaCache 0.10 | 76.91 s warm | not recorded | Existing `[DURATION]` transport format parsed successfully; same deterministic output, with identity/outfit retained but two subject poses despite a one-image instruction |
+| 8 | Six-section Ref2VA still prompt, same ref/seed | 960×544 | 20 + TeaCache 0.10 | 112.39 s | not recorded | Prompt passed the project's Ref2VA validator and changed the pixels, but the model still placed two instances/poses of the same subject |
 
 The 768 run's node preparation took 31.89 seconds. Once model initialization
 finished, the actual 20 denoising iterations took about 9 seconds. Dynamic model
@@ -52,7 +57,10 @@ Generated files:
 - `comfy/output/h3_ref2image_probe_00002_.png` — 768 quality baseline
 - `comfy/output/h3_ref2image_probe_00003_.png` — two refs, character first
 - `comfy/output/h3_ref2image_probe_00004_.png` — two refs, character second
-- `comfy/output/h3_ref2image_canvas_00001_.png` — canvas workflow execution
+- `comfy/output/h3_ref2image_canvas_00001_.png` — earlier manual canvas (historical)
+- `comfy/output/h3_ref2image_00001_.png` — initial REF2V-derived canvas
+- `comfy/output/h3_ref2image_00002_.png` — final duration-compatible canvas
+- `comfy/output/h3_ref2image_00003_.png` — six-section structured still prompt
 
 ## Interpretation
 
@@ -65,6 +73,20 @@ role-separated compositor yet. Explicit natural-language instructions such as
 “Picture 1 only for identity” and “Picture 2 only for pose” did not prevent a
 visually dominant, crude full-scene reference from controlling both content and
 style. Reversing reference order did not fix it.
+
+The REF2V-derived canvas confirms that the application's existing transport can
+be reused without introducing a separate manual input graph. Its first output
+also shows a different stability issue: the subject's identity and outfit were
+recognizable, but a simple request for one finished still image produced two
+copies/poses of the subject. Prompt and conditioning behavior therefore still
+needs a repeatability matrix before manifest registration.
+
+Replacing the free-form default with the validated six-section Ref2VA protocol
+did not remove the duplicate-subject composition at the same 960×544 target and
+seed. The structured prompt remains the correct deployment baseline, but this
+result rules out prompt shape alone as the explanation. The next controlled
+comparison should change only the target aspect ratio to match the portrait
+reference before changing sampling or reference-conditioning code.
 
 This does not prove that normal pose maps, outfit photos, or two clean character
 references will fail. It does show that the workflow needs an input matrix and
