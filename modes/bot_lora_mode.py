@@ -13,6 +13,7 @@ import traceback
 from PIL import Image
 from modes.lora_export_utils import format_lora_export_filename
 from modes.lora_name_validation import validate_lora_project_name
+from modes.visual_profiles import effective_character_cards
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BOT_DIR = os.path.join(BASE_DIR, "bot")
@@ -48,34 +49,281 @@ def _bot_project_char_dir(bot_name: str, project_name: str, char_name: str) -> s
     return os.path.join(_bot_project_dir(bot_name, project_name), _safe_dirname(char_name))
 
 
-def _trained_lora_dir(lora_load_path: str, bot_name: str, project_name: str, char_name: str) -> str:
-    """학습된 LoRA 경로: <lora_load_path>/<봇>/Lora/<프로젝트>/<캐릭터>/"""
-    return os.path.join(lora_load_path, _safe_dirname(bot_name), "Lora", _safe_dirname(project_name), _safe_dirname(char_name))
+def _profile_child_dir(base_dir: str, visual_card_id: str = "") -> str:
+    """카드별 산출물을 캐릭터 루트와 충돌하지 않는 하위 폴더에 둔다."""
+    card_id = str(visual_card_id or "").strip()
+    if not card_id:
+        return base_dir
+    return os.path.join(base_dir, "_visual_profiles", _safe_dirname(card_id))
+
+
+def _bot_project_training_dir(
+    bot_name: str,
+    project_name: str,
+    char_name: str,
+    visual_card_id: str = "",
+) -> str:
+    return _profile_child_dir(
+        _bot_project_char_dir(bot_name, project_name, char_name),
+        visual_card_id,
+    )
+
+
+def _trained_lora_dir(
+    lora_load_path: str,
+    bot_name: str,
+    project_name: str,
+    char_name: str,
+    visual_card_id: str = "",
+) -> str:
+    """학습된 LoRA 경로. 새 카드 단위는 ``_visual_profiles/<ID>``에 격리한다."""
+    char_dir = os.path.join(
+        lora_load_path,
+        _safe_dirname(bot_name),
+        "Lora",
+        _safe_dirname(project_name),
+        _safe_dirname(char_name),
+    )
+    return _profile_child_dir(char_dir, visual_card_id)
+
+
+def _profile_trigger(char_name: str, visual_card_id: str, *, is_primary: bool) -> str:
+    if is_primary:
+        return char_name
+    return f"{char_name}_{visual_card_id}"
+
+
+def _bot_character(bot_data: dict, bot_name: str, char_name: str) -> dict | None:
+    for bot in bot_data.get("bots", []):
+        if bot.get("name") != bot_name:
+            continue
+        return next(
+            (char for char in bot.get("characters", []) if char.get("name") == char_name),
+            None,
+        )
+    return None
+
+
+def _bot_visual_units(bot_data: dict, bot_name: str) -> list[dict]:
+    """봇의 캐릭터 카드를 독립 LoRA 학습 단위로 펼친다."""
+    bot = next((item for item in bot_data.get("bots", []) if item.get("name") == bot_name), None)
+    if not bot:
+        print(f"[BOT_LORA_PROFILE] 봇을 찾을 수 없음: {bot_name!r}")
+        return []
+
+    units = []
+    for character in bot.get("characters", []):
+        char_name = str(character.get("name") or "").strip()
+        if not char_name:
+            print(f"[BOT_LORA_PROFILE] 이름 없는 캐릭터 스킵: bot={bot_name!r}")
+            continue
+        try:
+            cards, source = effective_character_cards(character, None)
+        except Exception as e:
+            print(
+                f"[BOT_LORA_PROFILE] 캐릭터 카드 해석 실패: "
+                f"bot={bot_name!r}, character={char_name!r}, error={e}"
+            )
+            traceback.print_exc()
+            continue
+        for index, card in enumerate(cards):
+            card_id = str(card.get("id") or "").strip()
+            if not card_id:
+                print(
+                    f"[BOT_LORA_PROFILE] ID 없는 카드 스킵: "
+                    f"bot={bot_name!r}, character={char_name!r}, index={index}"
+                )
+                continue
+            is_primary = index == 0
+            artifact_dir = (
+                _bot_char_dir(bot_name, char_name)
+                if is_primary
+                else os.path.join(
+                    _bot_char_dir(bot_name, char_name),
+                    "_visual_profiles",
+                    _safe_dirname(card_id),
+                )
+            )
+            units.append({
+                "name": char_name,
+                "visual_card_id": card_id,
+                "visual_card_label": str(card.get("label") or f"카드 {index + 1}"),
+                "visual_card_index": index + 1,
+                "is_primary": is_primary,
+                "source": source,
+                "rep_images": list(card.get("rep_images") or []),
+                "gender_tag": str(
+                    card.get("gender_tag") or character.get("gender_tag") or ""
+                ).strip(),
+                "has_face_image": os.path.isfile(
+                    os.path.join(artifact_dir, "_face_image.webp")
+                ),
+            })
+    return units
+
+
+def _project_profile_config(char_cfg: dict, visual_card_id: str = "") -> dict | None:
+    """새 프로필 설정을 반환하고, 기존 캐릭터 설정은 카드 미지정 호출로 유지한다."""
+    if not isinstance(char_cfg, dict):
+        return None
+    card_id = str(visual_card_id or "").strip()
+    profiles = char_cfg.get("profiles")
+    if isinstance(profiles, dict):
+        if not card_id and "" in profiles:
+            profile_cfg = profiles.get("")
+            return profile_cfg if isinstance(profile_cfg, dict) else None
+        if card_id:
+            profile_cfg = profiles.get(card_id)
+            return profile_cfg if isinstance(profile_cfg, dict) else None
+        if len(profiles) == 1:
+            only = next(iter(profiles.values()))
+            return only if isinstance(only, dict) else None
+        return None
+    return char_cfg if not card_id else None
+
+
+def _iter_project_units(project: dict):
+    """새 카드별 설정과 레거시 캐릭터 설정을 동일한 형태로 순회한다."""
+    for char_name, char_cfg in (project.get("characters") or {}).items():
+        if not isinstance(char_cfg, dict):
+            print(f"[BOT_LORA_PROFILE] 잘못된 캐릭터 설정 스킵: {char_name!r}")
+            continue
+        profiles = char_cfg.get("profiles")
+        if isinstance(profiles, dict):
+            for card_id, profile_cfg in profiles.items():
+                if isinstance(profile_cfg, dict):
+                    yield char_name, str(card_id), profile_cfg
+                else:
+                    print(
+                        f"[BOT_LORA_PROFILE] 잘못된 카드 설정 스킵: "
+                        f"character={char_name!r}, card={card_id!r}"
+                    )
+            continue
+        yield char_name, "", char_cfg
+
+
+def _selection_keys(values, available_units: list[dict]) -> set[tuple[str, str]]:
+    """API의 명시적 카드 선택과 레거시 캐릭터명 선택을 정규화한다."""
+    result: set[tuple[str, str]] = set()
+    by_character: dict[str, list[dict]] = {}
+    for unit in available_units:
+        by_character.setdefault(unit["name"], []).append(unit)
+    for value in values or []:
+        if isinstance(value, dict):
+            char_name = str(value.get("character") or value.get("name") or "").strip()
+            card_id = str(value.get("visual_card_id") or "").strip()
+            if char_name and card_id:
+                result.add((char_name, card_id))
+            else:
+                print(f"[BOT_LORA_PROFILE] 잘못된 카드 선택 스킵: {value!r}")
+            continue
+        char_name = str(value or "").strip()
+        if not char_name:
+            print(f"[BOT_LORA_PROFILE] 빈 캐릭터 선택 스킵: {value!r}")
+            continue
+        candidates = by_character.get(char_name) or []
+        if not candidates:
+            print(f"[BOT_LORA_PROFILE] 선택 캐릭터를 찾을 수 없음: {char_name!r}")
+            continue
+        # 레거시 호출은 기존 의미대로 캐릭터의 기본 카드 한 장만 선택한다.
+        primary = next((unit for unit in candidates if unit["is_primary"]), candidates[0])
+        result.add((char_name, primary["visual_card_id"]))
+    return result
+
+
+def _unit_key(unit: dict) -> tuple[str, str]:
+    return unit["name"], unit["visual_card_id"]
+
+
+def _project_has_unit(
+    project: dict,
+    char_name: str,
+    visual_card_id: str,
+    is_primary: bool = False,
+) -> bool:
+    char_cfg = (project.get("characters") or {}).get(char_name)
+    if not isinstance(char_cfg, dict):
+        return False
+    profiles = char_cfg.get("profiles")
+    if isinstance(profiles, dict):
+        if visual_card_id in profiles:
+            return True
+        if is_primary or not visual_card_id:
+            if "" in profiles:
+                return True
+            return any(
+                isinstance(cfg, dict) and cfg.get("visual_card_index", 1) == 1
+                for cfg in profiles.values()
+            )
+        return False
+    # 레거시 캐릭터 설정은 기본 카드 한 장으로 간주한다.
+    return not visual_card_id or is_primary or visual_card_id == "card_1"
+
+
+def _add_project_unit(project: dict, unit: dict) -> dict:
+    char_name = unit["name"]
+    card_id = unit["visual_card_id"]
+    characters = project.setdefault("characters", {})
+    char_cfg = characters.get(char_name)
+    if isinstance(char_cfg, dict) and not isinstance(char_cfg.get("profiles"), dict):
+        # 기존 캐릭터 단위 설정과 새 카드 단위 설정이 공존할 때 레거시 설정을
+        # 빈 카드 ID 프로필로 감싸 데이터 손실 없이 전환한다.
+        char_cfg = {"profiles": {"": char_cfg}}
+        characters[char_name] = char_cfg
+    elif not isinstance(char_cfg, dict):
+        char_cfg = {"profiles": {}}
+        characters[char_name] = char_cfg
+    profiles = char_cfg.setdefault("profiles", {})
+    profile_cfg = profiles.setdefault(card_id, {})
+    profile_cfg.setdefault(
+        "trigger",
+        _profile_trigger(char_name, card_id, is_primary=bool(unit["is_primary"])),
+    )
+    profile_cfg["label"] = unit["visual_card_label"]
+    profile_cfg["visual_card_index"] = unit["visual_card_index"]
+    return profile_cfg
 
 
 # ─── 학습 이미지 프로젝트 동기화 ───────────────────────────────
 
-def _sync_training_images_to_project(bot_name: str, project_name: str, char_name: str, rep_images: list, include_face: bool = True) -> dict:
-    """원본 캐릭터 폴더의 학습 이미지를 프로젝트 폴더로 복사 (기존 파일 유지)"""
-    src_dir = _bot_char_dir(bot_name, char_name)
-    dst_dir = _bot_project_char_dir(bot_name, project_name, char_name)
-    if not os.path.isdir(src_dir):
-        print(f"[BOT_LORA_SYNC] 원본 캐릭터 폴더 없음: {src_dir}")
+def _sync_training_images_to_project(
+    bot_name: str,
+    project_name: str,
+    char_name: str,
+    rep_images: list,
+    include_face: bool = True,
+    visual_card_id: str = "",
+    is_primary: bool = True,
+) -> dict:
+    """한 캐릭터 카드의 대표/FACE 이미지를 독립 학습 폴더로 복사한다."""
+    char_src_dir = _bot_char_dir(bot_name, char_name)
+    dst_dir = _bot_project_training_dir(
+        bot_name, project_name, char_name, visual_card_id
+    )
+    if not os.path.isdir(char_src_dir):
+        print(f"[BOT_LORA_SYNC] 원본 캐릭터 폴더 없음: {char_src_dir}")
         return {"synced": 0, "skipped": 0}
 
     os.makedirs(dst_dir, exist_ok=True)
 
-    # 복사할 파일 목록: rep_images + _face_image.webp
+    # 대표 이미지는 캐릭터 루트, FACE 이미지는 카드별 유틸리티 폴더에서 가져온다.
     files_to_copy = []
     for fname in rep_images:
-        files_to_copy.append(fname)
-    if include_face and os.path.isfile(os.path.join(src_dir, "_face_image.webp")):
-        files_to_copy.append("_face_image.webp")
+        files_to_copy.append((char_src_dir, fname))
+    face_src_dir = (
+        char_src_dir
+        if is_primary or not visual_card_id
+        else os.path.join(
+            char_src_dir, "_visual_profiles", _safe_dirname(visual_card_id)
+        )
+    )
+    if include_face and os.path.isfile(os.path.join(face_src_dir, "_face_image.webp")):
+        files_to_copy.append((face_src_dir, "_face_image.webp"))
 
     synced = 0
     skipped = 0
     prompts_synced = 0
-    for fname in files_to_copy:
+    for src_dir, fname in files_to_copy:
         src_path = os.path.join(src_dir, fname)
         if not os.path.isfile(src_path):
             print(f"[BOT_LORA_SYNC] 원본 파일 없음: {src_path}")
@@ -123,7 +371,11 @@ def _sync_training_images_to_project(bot_name: str, project_name: str, char_name
             except Exception as e:
                 print(f"[BOT_LORA_SYNC] 빈 프롬프트 생성 실패: {prompt_dst} - {e}")
 
-    print(f"[BOT_LORA_SYNC] 완료: {bot_name}/{project_name}/{char_name} - 이미지 복사:{synced}, 스킵:{skipped}, 프롬프트:{prompts_synced}")
+    print(
+        f"[BOT_LORA_SYNC] 완료: {bot_name}/{project_name}/{char_name}/"
+        f"{visual_card_id or 'legacy'} - 이미지 복사:{synced}, "
+        f"스킵:{skipped}, 프롬프트:{prompts_synced}"
+    )
     return {"synced": synced, "skipped": skipped, "prompts_synced": prompts_synced}
 
 
@@ -168,53 +420,60 @@ def _get_project_config(data: dict, bot_name: str, project_name: str) -> dict | 
     return data.get("bot_loras", {}).get(bot_name, {}).get(project_name)
 
 
-def _get_char_config(data: dict, bot_name: str, project_name: str, char_name: str) -> dict | None:
-    """프로젝트 내 캐릭터 설정 조회"""
+def _get_char_config(
+    data: dict,
+    bot_name: str,
+    project_name: str,
+    char_name: str,
+    visual_card_id: str = "",
+) -> dict | None:
+    """프로젝트 내 카드별 설정 조회. 카드 미지정은 레거시와 단일 카드만 허용한다."""
     proj = _get_project_config(data, bot_name, project_name)
     if not proj:
         return None
-    return proj.get("characters", {}).get(char_name)
+    return _project_profile_config(
+        proj.get("characters", {}).get(char_name),
+        visual_card_id,
+    )
 
 
 # ─── 캐릭터 임포트 ──────────────────────────────────────────
 
 def list_importable_characters(bot_name: str, project_name: str) -> dict:
-    """봇에는 있지만 프로젝트에는 없는 캐릭터 목록 반환"""
+    """봇에는 있지만 프로젝트에는 없는 캐릭터 카드 학습 단위 목록 반환."""
     if not bot_name or not project_name:
         print("[BOT_LORA_IMPORT] 봇/프로젝트 이름 누락")
         return {"success": False, "error": "봇/프로젝트 이름 필수"}
 
     bot_data = _load_bot_data()
-    bot_chars = []
-    for b in bot_data.get("bots", []):
-        if b.get("name") == bot_name:
-            for ch in b.get("characters", []):
-                cn = ch.get("name", "")
-                if cn:
-                    bot_chars.append({
-                        "name": cn,
-                        "rep_images": ch.get("rep_images", []),
-                        "has_face_image": os.path.isfile(
-                            os.path.join(BOT_DIR, bot_name, cn, "_face_image.webp")
-                        ),
-                    })
-            break
+    bot_units = _bot_visual_units(bot_data, bot_name)
 
     manage_data = _load_bot_lora_manage()
     proj = _get_project_config(manage_data, bot_name, project_name)
-    existing = set(proj.get("characters", {}).keys()) if proj else set()
-
-    importable = [ch for ch in bot_chars if ch["name"] not in existing]
-    print(f"[BOT_LORA_IMPORT] 임포트 가능 캐릭터: {len(importable)}명 (기존 {len(existing)}명)")
+    importable = [
+        unit for unit in bot_units
+        if not proj or not _project_has_unit(
+            proj, unit["name"], unit["visual_card_id"], unit["is_primary"]
+        )
+    ]
+    existing_count = len(bot_units) - len(importable)
+    print(
+        f"[BOT_LORA_IMPORT] 임포트 가능 캐릭터 카드: "
+        f"{len(importable)}장 (기존 {existing_count}장)"
+    )
     return {"success": True, "characters": importable}
 
 
-def import_characters(bot_name: str, project_name: str, char_names: list, face_chars: list | None = None) -> dict:
-    """선택한 캐릭터를 프로젝트에 추가
+def import_characters(
+    bot_name: str,
+    project_name: str,
+    char_names: list,
+    face_chars: list | None = None,
+) -> dict:
+    """선택한 캐릭터 카드를 프로젝트에 독립 학습 단위로 추가한다.
 
-    - char_names: rep 이미지를 포함할 캐릭터
-    - face_chars: 얼굴 이미지를 포함할 캐릭터
-    - face_chars에만 있고 char_names에 없는 캐릭터는 rep 없이 face만 추가됨(face-only)
+    새 호출은 ``{character, visual_card_id}`` 객체 배열을 사용한다. 문자열 배열은
+    레거시 호환을 위해 해당 캐릭터의 기본 카드로 해석한다.
     """
     if not bot_name or not project_name:
         print("[BOT_LORA_IMPORT] 봇/프로젝트 이름 누락")
@@ -225,40 +484,51 @@ def import_characters(bot_name: str, project_name: str, char_names: list, face_c
     if face_chars is None:
         face_chars = []
 
-    # rep 포함 캐릭터 ∪ face-only 캐릭터
-    add_set = set(char_names) | set(face_chars)
-    if not add_set:
-        print("[BOT_LORA_IMPORT] 선택된 캐릭터/얼굴 없음")
-        return {"success": False, "error": "임포트할 캐릭터 또는 얼굴을 선택하세요"}
-
     bot_data = _load_bot_data()
+    bot_units = _bot_visual_units(bot_data, bot_name)
+    rep_keys = _selection_keys(char_names, bot_units)
+    face_keys = _selection_keys(face_chars, bot_units)
+    add_keys = rep_keys | face_keys
+    if not add_keys:
+        print("[BOT_LORA_IMPORT] 선택된 캐릭터/얼굴 없음")
+        return {"success": False, "error": "임포트할 캐릭터 카드를 선택하세요"}
+
     manage_data = _load_bot_lora_manage()
     proj = _get_project_config(manage_data, bot_name, project_name)
     if not proj:
         print(f"[BOT_LORA_IMPORT] 프로젝트 없음: {bot_name}/{project_name}")
         return {"success": False, "error": "프로젝트를 찾을 수 없습니다"}
 
-    existing_chars = proj.setdefault("characters", {})
     added = []
-
-    for b in bot_data.get("bots", []):
-        if b.get("name") == bot_name:
-            for ch in b.get("characters", []):
-                cn = ch.get("name", "")
-                if cn in add_set and cn not in existing_chars:
-                    existing_chars[cn] = {"trigger": cn}
-                    include_face = cn in face_chars
-                    # face-only(char_names에 없음)면 rep_images 비움
-                    rep_imgs = ch.get("rep_images", []) if cn in char_names else []
-                    _sync_training_images_to_project(bot_name, project_name, cn, rep_imgs, include_face)
-                    if cn not in char_names:
-                        print(f"[BOT_LORA_IMPORT] face-only 임포트: {bot_name}/{project_name}/{cn}")
-                    added.append(cn)
-            break
+    for unit in bot_units:
+        key = _unit_key(unit)
+        if key not in add_keys or _project_has_unit(proj, *key, unit["is_primary"]):
+            continue
+        _add_project_unit(proj, unit)
+        include_face = key in face_keys
+        rep_imgs = unit["rep_images"] if key in rep_keys else []
+        _sync_training_images_to_project(
+            bot_name,
+            project_name,
+            unit["name"],
+            rep_imgs,
+            include_face,
+            unit["visual_card_id"],
+            unit["is_primary"],
+        )
+        if key not in rep_keys:
+            print(
+                f"[BOT_LORA_IMPORT] face-only 카드 임포트: "
+                f"{bot_name}/{project_name}/{unit['name']}/{unit['visual_card_id']}"
+            )
+        added.append({
+            "character": unit["name"],
+            "visual_card_id": unit["visual_card_id"],
+        })
 
     if added:
         _save_bot_lora_manage(manage_data)
-        print(f"[BOT_LORA_IMPORT] 캐릭터 임포트 완료: {added}")
+        print(f"[BOT_LORA_IMPORT] 캐릭터 카드 임포트 완료: {added}")
     else:
         print("[BOT_LORA_IMPORT] 임포트할 새 캐릭터가 없음")
 
@@ -280,21 +550,30 @@ def list_project_importable_characters(src_bot: str, src_project: str, dst_bot: 
         print(f"[BOT_LORA_PROJ_IMPORT] 소스 프로젝트 없음: {src_bot}/{src_project}")
         return {"success": False, "error": "소스 프로젝트를 찾을 수 없습니다"}
 
-    dst_proj = _get_project_config(manage_data, dst_bot, dst_project)
-    existing = set(dst_proj.get("characters", {}).keys()) if dst_proj else set()
-
     importable = []
-    for cn, ccfg in src_proj.get("characters", {}).items():
-        if not cn or cn in existing:
+    dst_proj = _get_project_config(manage_data, dst_bot, dst_project)
+    for cn, card_id, ccfg in _iter_project_units(src_proj):
+        if not cn or (
+            dst_proj and _project_has_unit(
+                dst_proj,
+                cn,
+                card_id,
+                ccfg.get("visual_card_index", 1) == 1,
+            )
+        ):
             continue
-        image_count = len(_get_project_training_images(src_bot, src_project, cn))
+        image_count = len(
+            _get_project_training_images(src_bot, src_project, cn, card_id)
+        )
         importable.append({
             "name": cn,
+            "visual_card_id": card_id,
+            "visual_card_label": ccfg.get("label") or card_id or "기본 카드",
             "trigger": ccfg.get("trigger", cn),
             "image_count": image_count,
         })
 
-    print(f"[BOT_LORA_PROJ_IMPORT] 임포트 가능 캐릭터: {len(importable)}명 (현재 프로젝트 기존 {len(existing)}명)")
+    print(f"[BOT_LORA_PROJ_IMPORT] 임포트 가능 캐릭터 카드: {len(importable)}장")
     return {"success": True, "characters": importable}
 
 
@@ -321,25 +600,56 @@ def import_characters_from_project(src_bot: str, src_project: str, dst_bot: str,
         print(f"[BOT_LORA_PROJ_IMPORT] 대상 프로젝트 없음: {dst_bot}/{dst_project}")
         return {"success": False, "error": "대상 프로젝트를 찾을 수 없습니다"}
 
-    src_chars = src_proj.get("characters", {})
-    dst_chars = dst_proj.setdefault("characters", {})
+    source_units = {
+        (char_name, card_id): cfg
+        for char_name, card_id, cfg in _iter_project_units(src_proj)
+    }
+    selected_keys = set()
+    for value in char_names:
+        if isinstance(value, dict):
+            char_name = str(value.get("character") or value.get("name") or "").strip()
+            card_id = str(value.get("visual_card_id") or "").strip()
+            if char_name:
+                selected_keys.add((char_name, card_id))
+            else:
+                print(f"[BOT_LORA_PROJ_IMPORT] 잘못된 선택 스킵: {value!r}")
+            continue
+        char_name = str(value or "").strip()
+        candidate = next(
+            (key for key in source_units if key[0] == char_name),
+            None,
+        )
+        if candidate:
+            selected_keys.add(candidate)
+
     added = []
 
-    for cn in char_names:
-        if not cn or cn in dst_chars:
-            print(f"[BOT_LORA_PROJ_IMPORT] 스킵(이미 존재): {cn}")
+    for cn, card_id in selected_keys:
+        src_cfg = source_units.get((cn, card_id))
+        if src_cfg is None:
+            print(f"[BOT_LORA_PROJ_IMPORT] 스킵(소스에 없음): {cn}/{card_id}")
             continue
-        if cn not in src_chars:
-            print(f"[BOT_LORA_PROJ_IMPORT] 스킵(소스에 없음): {cn}")
+        if _project_has_unit(
+            dst_proj,
+            cn,
+            card_id,
+            src_cfg.get("visual_card_index", 1) == 1,
+        ):
+            print(f"[BOT_LORA_PROJ_IMPORT] 스킵(이미 존재): {cn}/{card_id}")
             continue
 
-        src_cfg = src_chars[cn]
-        # trigger만 복사. session_representatives(학습된 LoRA 참조)는 버림.
-        dst_chars[cn] = {"trigger": src_cfg.get("trigger", cn)}
+        dst_cfg = _add_project_unit(dst_proj, {
+            "name": cn,
+            "visual_card_id": card_id,
+            "visual_card_label": src_cfg.get("label") or card_id or "기본 카드",
+            "visual_card_index": src_cfg.get("visual_card_index", 1),
+            "is_primary": not card_id or src_cfg.get("visual_card_index", 1) == 1,
+        })
+        dst_cfg["trigger"] = src_cfg.get("trigger", cn)
 
         # 학습 이미지 폴더 통째 복사 (이미지 + *_prompt.json)
-        src_dir = _bot_project_char_dir(src_bot, src_project, cn)
-        dst_dir = _bot_project_char_dir(dst_bot, dst_project, cn)
+        src_dir = _bot_project_training_dir(src_bot, src_project, cn, card_id)
+        dst_dir = _bot_project_training_dir(dst_bot, dst_project, cn, card_id)
         if os.path.isdir(src_dir):
             try:
                 os.makedirs(_bot_project_dir(dst_bot, dst_project), exist_ok=True)
@@ -349,12 +659,23 @@ def import_characters_from_project(src_bot: str, src_project: str, dst_bot: str,
                 else:
                     # 폴더가 이미 존재하면 개별 파일 단위 복사(덮어쓰지 않음)
                     copied = 0
-                    for fname in os.listdir(src_dir):
-                        s = os.path.join(src_dir, fname)
-                        d = os.path.join(dst_dir, fname)
-                        if os.path.isfile(s) and not os.path.exists(d):
-                            shutil.copy2(s, d)
-                            copied += 1
+                    for root, dirnames, filenames in os.walk(src_dir):
+                        # 레거시 카드 루트 아래의 다른 카드 산출물까지 함께 가져오지 않는다.
+                        dirnames[:] = [
+                            name for name in dirnames if name != "_visual_profiles"
+                        ]
+                        rel_dir = os.path.relpath(root, src_dir)
+                        out_dir = (
+                            dst_dir if rel_dir == "."
+                            else os.path.join(dst_dir, rel_dir)
+                        )
+                        os.makedirs(out_dir, exist_ok=True)
+                        for fname in filenames:
+                            s = os.path.join(root, fname)
+                            d = os.path.join(out_dir, fname)
+                            if not os.path.exists(d):
+                                shutil.copy2(s, d)
+                                copied += 1
                     print(f"[BOT_LORA_PROJ_IMPORT] 폴더 이미 존재, 파일 복사 {copied}건: {dst_dir}")
             except Exception as e:
                 print(f"[BOT_LORA_PROJ_IMPORT] 폴더 복사 실패: {src_dir} -> {dst_dir} - {e}")
@@ -362,7 +683,7 @@ def import_characters_from_project(src_bot: str, src_project: str, dst_bot: str,
         else:
             print(f"[BOT_LORA_PROJ_IMPORT] 소스 캐릭터 폴더 없음(설정만 추가): {src_dir}")
 
-        added.append(cn)
+        added.append({"character": cn, "visual_card_id": card_id})
 
     if added:
         _save_bot_lora_manage(manage_data)
@@ -373,8 +694,13 @@ def import_characters_from_project(src_bot: str, src_project: str, dst_bot: str,
     return {"success": True, "added": added, "count": len(added)}
 
 
-def remove_character_from_project(bot_name: str, project_name: str, char_name: str) -> dict:
-    """프로젝트에서 캐릭터 제거"""
+def remove_character_from_project(
+    bot_name: str,
+    project_name: str,
+    char_name: str,
+    visual_card_id: str = "",
+) -> dict:
+    """프로젝트에서 캐릭터 카드 학습 단위를 제거한다."""
     if not bot_name or not project_name or not char_name:
         print("[BOT_LORA_REMOVE] 필수 파라미터 누락")
         return {"success": False, "error": "봇/프로젝트/캐릭터 이름 필수"}
@@ -390,19 +716,52 @@ def remove_character_from_project(bot_name: str, project_name: str, char_name: s
         print(f"[BOT_LORA_REMOVE] 캐릭터 없음: {char_name}")
         return {"success": False, "error": f"캐릭터 '{char_name}'가 프로젝트에 없습니다"}
 
-    del characters[char_name]
+    char_cfg = characters[char_name]
+    profiles = char_cfg.get("profiles") if isinstance(char_cfg, dict) else None
+    preserve_nested_profiles = False
+    if isinstance(profiles, dict):
+        profile_key = visual_card_id
+        if profile_key not in profiles:
+            print(f"[BOT_LORA_REMOVE] 카드 없음: {char_name}/{profile_key or 'legacy'}")
+            return {"success": False, "error": "캐릭터 카드가 프로젝트에 없습니다"}
+        del profiles[profile_key]
+        if not profiles:
+            del characters[char_name]
+        elif not visual_card_id:
+            preserve_nested_profiles = True
+    elif visual_card_id:
+        print(f"[BOT_LORA_REMOVE] 레거시 캐릭터에 카드 ID 지정됨: {char_name}/{visual_card_id}")
+        return {"success": False, "error": "레거시 캐릭터에는 카드 ID를 지정할 수 없습니다"}
+    else:
+        del characters[char_name]
     _save_bot_lora_manage(manage_data)
 
     # 프로젝트 내 캐릭터 폴더 삭제 (학습 이미지, 캐릭터별 테스트 이미지)
-    char_dir = _bot_project_char_dir(bot_name, project_name, char_name)
+    char_dir = _bot_project_training_dir(
+        bot_name, project_name, char_name, visual_card_id
+    )
     if os.path.isdir(char_dir):
         try:
-            shutil.rmtree(char_dir)
-            print(f"[BOT_LORA_REMOVE] 캐릭터 폴더 삭제: {char_dir}")
+            if preserve_nested_profiles:
+                for name in os.listdir(char_dir):
+                    path = os.path.join(char_dir, name)
+                    if name == "_visual_profiles":
+                        continue
+                    if os.path.isfile(path) or os.path.islink(path):
+                        os.remove(path)
+                    elif name == TEST_DIR_NAME and os.path.isdir(path):
+                        shutil.rmtree(path)
+                print(f"[BOT_LORA_REMOVE] 레거시 카드 파일만 삭제: {char_dir}")
+            else:
+                shutil.rmtree(char_dir)
+                print(f"[BOT_LORA_REMOVE] 캐릭터 폴더 삭제: {char_dir}")
         except Exception as e:
             print(f"[BOT_LORA_REMOVE] 캐릭터 폴더 삭제 실패: {char_dir} - {e}")
 
-    print(f"[BOT_LORA_REMOVE] 캐릭터 제거 완료: {bot_name}/{project_name}/{char_name}")
+    print(
+        f"[BOT_LORA_REMOVE] 캐릭터 카드 제거 완료: "
+        f"{bot_name}/{project_name}/{char_name}/{visual_card_id or 'legacy'}"
+    )
     return {"success": True}
 
 
@@ -413,18 +772,19 @@ def list_bots() -> list:
     bot_data = _load_bot_data()
     result = []
     for bot in bot_data.get("bots", []):
-        chars = []
-        for ch in bot.get("characters", []):
-            chars.append({
-                "name": ch.get("name", ""),
-                "rep_images": ch.get("rep_images", []),
-                "has_face_image": os.path.isfile(
-                    os.path.join(BOT_DIR, bot["name"], ch.get("name", ""), "_face_image.webp")
-                ),
+        chars_by_name = {}
+        for unit in _bot_visual_units(bot_data, bot.get("name", "")):
+            entry = chars_by_name.setdefault(unit["name"], {
+                "name": unit["name"],
+                "profiles": [],
             })
+            entry["profiles"].append(unit)
         result.append({
             "name": bot.get("name", ""),
-            "characters": chars,
+            "characters": list(chars_by_name.values()),
+            "visual_profile_count": sum(
+                len(item["profiles"]) for item in chars_by_name.values()
+            ),
         })
     return result
 
@@ -440,21 +800,27 @@ def list_projects(bot_name: str) -> list:
         if not isinstance(pinfo, dict):
             continue
         char_count = len(pinfo.get("characters", {}))
+        profile_count = sum(1 for _ in _iter_project_units(pinfo))
         training_config = pinfo.get("training_config", {})
         projects.append({
             "name": pname,
             "character_count": char_count,
+            "profile_count": profile_count,
             "profile": training_config.get("profile", "anima"),
         })
     return projects
 
 
-def add_project(bot_name: str, project_name: str, selected_chars: list | None = None, face_chars: list | None = None) -> dict:
-    """새 학습 프로젝트 추가
+def add_project(
+    bot_name: str,
+    project_name: str,
+    selected_chars: list | None = None,
+    face_chars: list | None = None,
+) -> dict:
+    """새 카드별 독립 학습 프로젝트 추가.
 
-    - selected_chars: rep 이미지를 포함할 캐릭터
-    - face_chars: 얼굴 이미지를 포함할 캐릭터
-    - face_chars에만 있고 selected_chars에 없는 캐릭터는 rep 없이 face만 추가됨(face-only)
+    선택 배열은 ``{character, visual_card_id}`` 객체를 권장하며 문자열은 기본
+    카드 선택으로 호환한다.
     """
     if not bot_name:
         return {"success": False, "error": "봇 이름 누락"}
@@ -482,37 +848,47 @@ def add_project(bot_name: str, project_name: str, selected_chars: list | None = 
     if face_chars is None:
         face_chars = []
 
-    # 캐릭터별 기본 설정 생성: rep 포함 캐릭터 ∪ face-only 캐릭터
-    add_set = set(selected_chars) | set(face_chars)
     bot_data = _load_bot_data()
-    characters = {}
-    rep_images_map = {}
-    for b in bot_data.get("bots", []):
-        if b.get("name") == bot_name:
-            for ch in b.get("characters", []):
-                cn = ch.get("name", "")
-                if cn and cn in add_set:
-                    characters[cn] = {"trigger": cn}
-                    # face-only(selected_chars에 없음)면 rep_images 비움
-                    rep_images_map[cn] = ch.get("rep_images", []) if cn in selected_chars else []
-            break
+    bot_units = _bot_visual_units(bot_data, bot_name)
+    rep_keys = _selection_keys(selected_chars, bot_units)
+    face_keys = _selection_keys(face_chars, bot_units)
+    add_keys = rep_keys | face_keys
 
     bot_projects[project_name] = {
         "training_config": {},
-        "characters": characters,
+        "characters": {},
     }
+    project = bot_projects[project_name]
+    selected_units = []
+    for unit in bot_units:
+        if _unit_key(unit) not in add_keys:
+            continue
+        _add_project_unit(project, unit)
+        selected_units.append(unit)
     _save_bot_lora_manage(data)
 
     # 프로젝트 생성 시에만 학습 이미지 동기화
-    for ch_entry in characters:
-        include_face = ch_entry in face_chars
+    for unit in selected_units:
+        key = _unit_key(unit)
         _sync_training_images_to_project(
-            bot_name, project_name, ch_entry, rep_images_map.get(ch_entry, []), include_face
+            bot_name,
+            project_name,
+            unit["name"],
+            unit["rep_images"] if key in rep_keys else [],
+            key in face_keys,
+            unit["visual_card_id"],
+            unit["is_primary"],
         )
-        if ch_entry not in selected_chars:
-            print(f"[BOT_LORA] face-only 추가: {bot_name}/{project_name}/{ch_entry}")
+        if key not in rep_keys:
+            print(
+                f"[BOT_LORA] face-only 카드 추가: "
+                f"{bot_name}/{project_name}/{unit['name']}/{unit['visual_card_id']}"
+            )
 
-    print(f"[BOT_LORA] 프로젝트 추가: {bot_name}/{project_name} ({len(characters)}명)")
+    print(
+        f"[BOT_LORA] 프로젝트 추가: {bot_name}/{project_name} "
+        f"({len(selected_units)}개 캐릭터 카드)"
+    )
     return {"success": True, "name": project_name}
 
 
@@ -564,9 +940,9 @@ def duplicate_project(bot_name: str, src_project_name: str, dst_project_name: st
     dst_cfg = copy.deepcopy(src_cfg)
 
     # 학습된 LoRA 참조 제거
-    for char_name, char_data in dst_cfg.get("characters", {}).items():
-        if "session_representatives" in char_data:
-            del char_data["session_representatives"]
+    for _char_name, card_id, unit_cfg in _iter_project_units(dst_cfg):
+        unit_cfg.pop("session_representatives", None)
+        unit_cfg.pop("session_priority", None)
 
     # lora_save_path를 새 프로젝트 기준으로 재생성
     training_config = dst_cfg.get("training_config", {})
@@ -645,31 +1021,57 @@ def get_project_data(bot_name: str, project_name: str, lora_load_path: str = "")
         return {"success": False, "error": "프로젝트를 찾을 수 없습니다"}
 
     training_config = proj_cfg.get("training_config", {})
-    char_configs = proj_cfg.get("characters", {})
-
     characters = []
-    for char_name in char_configs:
+    bot_units = {
+        (unit["name"], unit["visual_card_id"]): unit
+        for unit in _bot_visual_units(bot_data, bot_name)
+    }
+    for char_name, visual_card_id, char_cfg in _iter_project_units(proj_cfg):
         if not char_name:
             continue
 
-        training_images = _get_project_training_images(bot_name, project_name, char_name)
-        char_cfg = char_configs.get(char_name, {})
+        unit = bot_units.get((char_name, visual_card_id)) or {}
+        training_images = _get_project_training_images(
+            bot_name, project_name, char_name, visual_card_id
+        )
         trigger = char_cfg.get("trigger", "") or char_name
-        trained_sessions = _list_bot_trained_sessions(lora_load_path, bot_name, project_name, char_name) if lora_load_path else []
+        trained_sessions = (
+            _list_bot_trained_sessions(
+                lora_load_path,
+                bot_name,
+                project_name,
+                char_name,
+                visual_card_id,
+            )
+            if lora_load_path else []
+        )
 
-        # 메인 bot.json 캐릭터의 gender_tag (프롬프트 미리보기/정제용). 서버 정제 로직과 동일 출처.
+        # 카드 render_overrides의 gender_tag를 우선하고 루트 값으로 폴백한다.
         bot_char = next((c for c in bot_info.get("characters", []) if c.get("name") == char_name), None)
-        gender_tag = (bot_char.get("gender_tag") or "") if bot_char else ""
+        gender_tag = unit.get("gender_tag") or (
+            (bot_char.get("gender_tag") or "") if bot_char else ""
+        )
 
         characters.append({
             "name": char_name,
+            "unit_key": f"{char_name}::{visual_card_id or 'legacy'}",
+            "visual_card_id": visual_card_id,
+            "visual_card_label": (
+                unit.get("visual_card_label")
+                or char_cfg.get("label")
+                or ("기본 카드" if not visual_card_id else visual_card_id)
+            ),
+            "visual_card_index": unit.get("visual_card_index", 1),
+            "is_primary": unit.get("is_primary", not visual_card_id),
             "trigger": trigger,
             "gender_tag": gender_tag,
             "skip_training": char_cfg.get("skip_training", False),
             "training_images": training_images,
             "trained_sessions": trained_sessions,
             "session_representatives": char_cfg.get("session_representatives", {}),
-            "char_test_images": list_bot_char_test_images(bot_name, project_name, char_name),
+            "char_test_images": list_bot_char_test_images(
+                bot_name, project_name, char_name, visual_card_id
+            ),
         })
 
     test_images = list_bot_test_images(bot_name, project_name)
@@ -712,9 +1114,16 @@ def _get_char_training_images(bot_name: str, char_name: str, rep_images: list) -
     return images
 
 
-def _get_project_training_images(bot_name: str, project_name: str, char_name: str) -> list:
+def _get_project_training_images(
+    bot_name: str,
+    project_name: str,
+    char_name: str,
+    visual_card_id: str = "",
+) -> list:
     """프로젝트 폴더에서 학습 이미지 목록 반환"""
-    proj_char_dir = _bot_project_char_dir(bot_name, project_name, char_name)
+    proj_char_dir = _bot_project_training_dir(
+        bot_name, project_name, char_name, visual_card_id
+    )
     if not os.path.isdir(proj_char_dir):
         print(f"[BOT_LORA] 프로젝트 캐릭터 폴더 없음: {proj_char_dir}")
         return []
@@ -782,14 +1191,31 @@ def _load_image_with_prompt(fpath: str, char_dir: str, fname: str) -> dict | Non
 
 # ─── 캐릭터별 테스트 이미지 ─────────────────────────────────
 
-def _bot_char_test_dir(bot_name: str, project_name: str, char_name: str) -> str:
+def _bot_char_test_dir(
+    bot_name: str,
+    project_name: str,
+    char_name: str,
+    visual_card_id: str = "",
+) -> str:
     """캐릭터별 테스트 이미지 폴더: bot/<봇>/Lora/<프로젝트>/<캐릭터>/_test/"""
-    return os.path.join(_bot_project_char_dir(bot_name, project_name, char_name), TEST_DIR_NAME)
+    return os.path.join(
+        _bot_project_training_dir(
+            bot_name, project_name, char_name, visual_card_id
+        ),
+        TEST_DIR_NAME,
+    )
 
 
-def list_bot_char_test_images(bot_name: str, project_name: str, char_name: str) -> list:
+def list_bot_char_test_images(
+    bot_name: str,
+    project_name: str,
+    char_name: str,
+    visual_card_id: str = "",
+) -> list:
     """캐릭터별 테스트 이미지 목록 반환"""
-    t_dir = _bot_char_test_dir(bot_name, project_name, char_name)
+    t_dir = _bot_char_test_dir(
+        bot_name, project_name, char_name, visual_card_id
+    )
     if not os.path.isdir(t_dir):
         return []
 
@@ -843,11 +1269,19 @@ def list_bot_char_test_images(bot_name: str, project_name: str, char_name: str) 
     return images
 
 
-def add_bot_char_test_images(bot_name: str, project_name: str, char_name: str, sources: list) -> dict:
+def add_bot_char_test_images(
+    bot_name: str,
+    project_name: str,
+    char_name: str,
+    sources: list,
+    visual_card_id: str = "",
+) -> dict:
     """에셋에서 캐릭터별 테스트 이미지 추가"""
     from modes.asset_mode import ASSET_DIR, AssetMode
 
-    t_dir = _bot_char_test_dir(bot_name, project_name, char_name)
+    t_dir = _bot_char_test_dir(
+        bot_name, project_name, char_name, visual_card_id
+    )
     os.makedirs(t_dir, exist_ok=True)
 
     added = []
@@ -907,10 +1341,18 @@ def add_bot_char_test_images(bot_name: str, project_name: str, char_name: str, s
     return {"success": True, "added": added, "skipped": skipped}
 
 
-def copy_project_test_to_char(bot_name: str, project_name: str, char_name: str, filenames: list = None) -> dict:
+def copy_project_test_to_char(
+    bot_name: str,
+    project_name: str,
+    char_name: str,
+    filenames: list = None,
+    visual_card_id: str = "",
+) -> dict:
     """프로젝트 공통 테스트 이미지를 캐릭터 _test/ 로 복제"""
     src_dir = _bot_test_dir(bot_name, project_name)
-    dst_dir = _bot_char_test_dir(bot_name, project_name, char_name)
+    dst_dir = _bot_char_test_dir(
+        bot_name, project_name, char_name, visual_card_id
+    )
 
     if not os.path.isdir(src_dir):
         print(f"[BOT_LORA] 공통 테스트 폴더 없음: {src_dir}")
@@ -959,11 +1401,19 @@ def copy_project_test_to_char(bot_name: str, project_name: str, char_name: str, 
     return {"success": True, "copied": copied, "skipped": skipped}
 
 
-def delete_bot_char_test_image(bot_name: str, project_name: str, char_name: str, filename: str) -> dict:
+def delete_bot_char_test_image(
+    bot_name: str,
+    project_name: str,
+    char_name: str,
+    filename: str,
+    visual_card_id: str = "",
+) -> dict:
     """캐릭터별 테스트 이미지 삭제"""
     if ".." in filename or os.path.sep in filename:
         return {"success": False, "error": "잘못된 파일명"}
-    t_dir = _bot_char_test_dir(bot_name, project_name, char_name)
+    t_dir = _bot_char_test_dir(
+        bot_name, project_name, char_name, visual_card_id
+    )
     fpath = os.path.join(t_dir, filename)
     if not os.path.isfile(fpath):
         print(f"[BOT_LORA] 캐릭터 테스트 이미지 없음: {fpath}")
@@ -990,11 +1440,21 @@ def delete_bot_char_test_image(bot_name: str, project_name: str, char_name: str,
         return {"success": False, "error": str(e)}
 
 
-def save_bot_char_test_prompt(bot_name: str, project_name: str, char_name: str, filename: str, positive: str, negative: str) -> dict:
+def save_bot_char_test_prompt(
+    bot_name: str,
+    project_name: str,
+    char_name: str,
+    filename: str,
+    positive: str,
+    negative: str,
+    visual_card_id: str = "",
+) -> dict:
     """캐릭터별 테스트 이미지 프롬프트 저장"""
     if ".." in filename or os.path.sep in filename:
         return {"success": False, "error": "잘못된 파일명"}
-    t_dir = _bot_char_test_dir(bot_name, project_name, char_name)
+    t_dir = _bot_char_test_dir(
+        bot_name, project_name, char_name, visual_card_id
+    )
     base = os.path.splitext(filename)[0]
     prompt_path = os.path.join(t_dir, f"{base}_prompt.json")
     try:
@@ -1017,11 +1477,20 @@ def save_bot_char_test_prompt(bot_name: str, project_name: str, char_name: str, 
         return {"success": False, "error": str(e)}
 
 
-def save_bot_char_test_prompt_positive_only(bot_name: str, project_name: str, char_name: str, filename: str, positive: str) -> dict:
+def save_bot_char_test_prompt_positive_only(
+    bot_name: str,
+    project_name: str,
+    char_name: str,
+    filename: str,
+    positive: str,
+    visual_card_id: str = "",
+) -> dict:
     """LLM '테스트 이미지 세팅' 결과로 positive만 교체. negative/original_*는 기존값을 유지한다."""
     if ".." in filename or os.path.sep in filename:
         return {"success": False, "error": "잘못된 파일명"}
-    t_dir = _bot_char_test_dir(bot_name, project_name, char_name)
+    t_dir = _bot_char_test_dir(
+        bot_name, project_name, char_name, visual_card_id
+    )
     base = os.path.splitext(filename)[0]
     prompt_path = os.path.join(t_dir, f"{base}_prompt.json")
     try:
@@ -1045,12 +1514,21 @@ def save_bot_char_test_prompt_positive_only(bot_name: str, project_name: str, ch
         return {"success": False, "error": str(e)}
 
 
-def get_bot_char_test_image_path(bot_name: str, project_name: str, char_name: str, filename: str) -> str | None:
+def get_bot_char_test_image_path(
+    bot_name: str,
+    project_name: str,
+    char_name: str,
+    filename: str,
+    visual_card_id: str = "",
+) -> str | None:
     """캐릭터별 테스트 이미지 파일 경로 반환"""
     if ".." in filename or os.path.sep in filename:
         print(f"[BOT_LORA] 잘못된 파일명: {filename}")
         return None
-    fpath = os.path.join(_bot_char_test_dir(bot_name, project_name, char_name), filename)
+    fpath = os.path.join(
+        _bot_char_test_dir(bot_name, project_name, char_name, visual_card_id),
+        filename,
+    )
     if os.path.isfile(fpath):
         return fpath
     print(f"[BOT_LORA] 캐릭터 테스트 이미지 없음: {fpath}")
@@ -1070,33 +1548,76 @@ def update_training_config(bot_name: str, project_name: str, config: dict) -> di
     return {"success": True}
 
 
-def update_char_trigger(bot_name: str, project_name: str, char_name: str, trigger: str) -> dict:
+def update_char_trigger(
+    bot_name: str,
+    project_name: str,
+    char_name: str,
+    trigger: str,
+    visual_card_id: str = "",
+) -> dict:
     if not bot_name or not project_name or not char_name:
         return {"success": False, "error": "봇/프로젝트/캐릭터 이름 누락"}
     data = _load_bot_lora_manage()
-    char_cfg = data.setdefault("bot_loras", {}).setdefault(bot_name, {}).setdefault(project_name, {}).setdefault("characters", {}).setdefault(char_name, {})
+    char_cfg = _get_char_config(
+        data, bot_name, project_name, char_name, visual_card_id
+    )
+    if char_cfg is None:
+        print(
+            f"[BOT_LORA] trigger 업데이트 대상 없음: "
+            f"{bot_name}/{project_name}/{char_name}/{visual_card_id or 'legacy'}"
+        )
+        return {"success": False, "error": "캐릭터 카드 설정을 찾을 수 없습니다"}
     char_cfg["trigger"] = trigger.strip()
     _save_bot_lora_manage(data)
     print(f"[BOT_LORA] trigger 업데이트: {bot_name}/{project_name}/{char_name} -> {trigger.strip()}")
     return {"success": True}
 
 
-def update_char_skip_training(bot_name: str, project_name: str, char_name: str, skip: bool) -> dict:
+def update_char_skip_training(
+    bot_name: str,
+    project_name: str,
+    char_name: str,
+    skip: bool,
+    visual_card_id: str = "",
+) -> dict:
     if not bot_name or not project_name or not char_name:
         return {"success": False, "error": "봇/프로젝트/캐릭터 이름 누락"}
     data = _load_bot_lora_manage()
-    char_cfg = data.setdefault("bot_loras", {}).setdefault(bot_name, {}).setdefault(project_name, {}).setdefault("characters", {}).setdefault(char_name, {})
+    char_cfg = _get_char_config(
+        data, bot_name, project_name, char_name, visual_card_id
+    )
+    if char_cfg is None:
+        print(
+            f"[BOT_LORA] skip_training 업데이트 대상 없음: "
+            f"{bot_name}/{project_name}/{char_name}/{visual_card_id or 'legacy'}"
+        )
+        return {"success": False, "error": "캐릭터 카드 설정을 찾을 수 없습니다"}
     char_cfg["skip_training"] = bool(skip)
     _save_bot_lora_manage(data)
     print(f"[BOT_LORA] skip_training 업데이트: {bot_name}/{project_name}/{char_name} -> {bool(skip)}")
     return {"success": True}
 
 
-def update_char_session_representative(bot_name: str, project_name: str, char_name: str, session_name: str, representative: str) -> dict:
+def update_char_session_representative(
+    bot_name: str,
+    project_name: str,
+    char_name: str,
+    session_name: str,
+    representative: str,
+    visual_card_id: str = "",
+) -> dict:
     if not bot_name or not project_name or not char_name:
         return {"success": False, "error": "봇/프로젝트/캐릭터 이름 누락"}
     data = _load_bot_lora_manage()
-    char_cfg = data.setdefault("bot_loras", {}).setdefault(bot_name, {}).setdefault(project_name, {}).setdefault("characters", {}).setdefault(char_name, {})
+    char_cfg = _get_char_config(
+        data, bot_name, project_name, char_name, visual_card_id
+    )
+    if char_cfg is None:
+        print(
+            f"[BOT_LORA] 세션 대표 업데이트 대상 없음: "
+            f"{bot_name}/{project_name}/{char_name}/{visual_card_id or 'legacy'}"
+        )
+        return {"success": False, "error": "캐릭터 카드 설정을 찾을 수 없습니다"}
     if "session_representatives" not in char_cfg:
         char_cfg["session_representatives"] = {}
     char_cfg["session_representatives"][session_name] = representative
@@ -1269,11 +1790,19 @@ def delete_bot_test_image(bot_name: str, project_name: str, filename: str) -> di
         return {"success": False, "error": str(e)}
 
 
-def delete_bot_training_image(bot_name: str, project_name: str, char_name: str, filename: str) -> dict:
+def delete_bot_training_image(
+    bot_name: str,
+    project_name: str,
+    char_name: str,
+    filename: str,
+    visual_card_id: str = "",
+) -> dict:
     """봇 LoRA 학습 이미지 + 프롬프트 JSON 삭제"""
     if ".." in filename or os.path.sep in filename:
         return {"success": False, "error": "잘못된 파일명"}
-    t_dir = _bot_project_char_dir(bot_name, project_name, char_name)
+    t_dir = _bot_project_training_dir(
+        bot_name, project_name, char_name, visual_card_id
+    )
     fpath = os.path.join(t_dir, filename)
     if not os.path.isfile(fpath):
         print(f"[BOT_LORA] 학습 이미지 없음: {fpath}")
@@ -1300,35 +1829,81 @@ def delete_bot_training_image(bot_name: str, project_name: str, char_name: str, 
         return {"success": False, "error": str(e)}
 
 
-def list_bot_char_available_images(bot_name: str, char_name: str) -> list:
+def list_bot_char_available_images(
+    bot_name: str,
+    char_name: str,
+    visual_card_id: str = "",
+) -> list:
     """봇 캐릭터 원본 폴더에서 사용 가능한 이미지 목록 반환"""
     char_dir = _bot_char_dir(bot_name, char_name)
     if not os.path.isdir(char_dir):
         print(f"[BOT_LORA] 봇 캐릭터 폴더 없음: {char_dir}")
         return []
 
+    profile_reps = set()
+    target_unit = None
+    if visual_card_id:
+        bot_data = _load_bot_data()
+        target_unit = next((
+            unit for unit in _bot_visual_units(bot_data, bot_name)
+            if unit["name"] == char_name
+            and unit["visual_card_id"] == visual_card_id
+        ), None)
+        profile_reps = set((target_unit or {}).get("rep_images") or [])
+
     images = []
     for fname in sorted(os.listdir(char_dir)):
+        if fname == "_face_image.webp":
+            continue
         ext = os.path.splitext(fname)[1].lower()
         if ext not in IMAGE_EXTENSIONS:
             continue
         fpath = os.path.join(char_dir, fname)
         img_data = _load_image_with_prompt(fpath, char_dir, fname)
         if img_data:
-            if fname == "_face_image.webp":
-                img_data["source"] = "face"
-            else:
-                img_data["source"] = "rep"
+            img_data["source"] = "rep"
+            img_data["is_profile_representative"] = fname in profile_reps
             images.append(img_data)
+
+    face_dir = char_dir
+    if visual_card_id and target_unit is None:
+        print(
+            f"[BOT_LORA] 카드별 얼굴 이미지 조회 대상 없음: "
+            f"{bot_name}/{char_name}/{visual_card_id}"
+        )
+        return images
+    if target_unit and not target_unit.get("is_primary"):
+        face_dir = os.path.join(
+            char_dir,
+            "_visual_profiles",
+            _safe_dirname(target_unit["visual_card_id"]),
+        )
+    face_path = os.path.join(face_dir, "_face_image.webp")
+    if os.path.isfile(face_path):
+        face_data = _load_image_with_prompt(
+            face_path, face_dir, "_face_image.webp"
+        )
+        if face_data:
+            face_data["source"] = "face"
+            face_data["is_profile_representative"] = False
+            images.append(face_data)
 
     return images
 
 
-def add_bot_training_images(bot_name: str, project_name: str, char_name: str, sources: list) -> dict:
+def add_bot_training_images(
+    bot_name: str,
+    project_name: str,
+    char_name: str,
+    sources: list,
+    visual_card_id: str = "",
+) -> dict:
     """에셋에서 봇 LoRA 학습 이미지 추가"""
     from modes.asset_mode import ASSET_DIR, AssetMode
 
-    t_dir = _bot_project_char_dir(bot_name, project_name, char_name)
+    t_dir = _bot_project_training_dir(
+        bot_name, project_name, char_name, visual_card_id
+    )
     os.makedirs(t_dir, exist_ok=True)
 
     added = []
@@ -1388,10 +1963,18 @@ def add_bot_training_images(bot_name: str, project_name: str, char_name: str, so
     return {"success": True, "added": added, "skipped": skipped}
 
 
-def add_bot_training_from_bot(bot_name: str, project_name: str, char_name: str, filenames: list) -> dict:
+def add_bot_training_from_bot(
+    bot_name: str,
+    project_name: str,
+    char_name: str,
+    filenames: list,
+    visual_card_id: str = "",
+) -> dict:
     """봇 캐릭터 원본 폴더에서 학습 이미지를 프로젝트로 복사"""
     src_dir = _bot_char_dir(bot_name, char_name)
-    dst_dir = _bot_project_char_dir(bot_name, project_name, char_name)
+    dst_dir = _bot_project_training_dir(
+        bot_name, project_name, char_name, visual_card_id
+    )
     if not os.path.isdir(src_dir):
         print(f"[BOT_LORA] 봇 캐릭터 폴더 없음: {src_dir}")
         return {"success": False, "error": "봇 캐릭터 폴더 없음"}
@@ -1404,7 +1987,28 @@ def add_bot_training_from_bot(bot_name: str, project_name: str, char_name: str, 
         if ".." in filename or os.path.sep in filename:
             skipped.append({"filename": filename, "reason": "잘못된 파일명"})
             continue
-        src_path = os.path.join(src_dir, filename)
+        file_src_dir = src_dir
+        if filename == "_face_image.webp" and visual_card_id:
+            bot_data = _load_bot_data()
+            target_unit = next((
+                unit for unit in _bot_visual_units(bot_data, bot_name)
+                if unit["name"] == char_name
+                and unit["visual_card_id"] == visual_card_id
+            ), None)
+            if target_unit is None:
+                print(
+                    f"[BOT_LORA] 카드별 얼굴 이미지 추가 대상 없음: "
+                    f"{bot_name}/{char_name}/{visual_card_id}"
+                )
+                skipped.append({"filename": filename, "reason": "캐릭터 카드 없음"})
+                continue
+            if target_unit and not target_unit.get("is_primary"):
+                file_src_dir = os.path.join(
+                    src_dir,
+                    "_visual_profiles",
+                    _safe_dirname(visual_card_id),
+                )
+        src_path = os.path.join(file_src_dir, filename)
         if not os.path.isfile(src_path):
             print(f"[BOT_LORA] 원본 이미지 없음: {src_path}")
             skipped.append({"filename": filename, "reason": "원본 파일 없음"})
@@ -1421,7 +2025,7 @@ def add_bot_training_from_bot(bot_name: str, project_name: str, char_name: str, 
         try:
             shutil.copy2(src_path, dest_path)
             base, ext = os.path.splitext(filename)
-            prompt_src = os.path.join(src_dir, f"{base}_prompt.json")
+            prompt_src = os.path.join(file_src_dir, f"{base}_prompt.json")
             prompt_dest = os.path.join(dst_dir, f"{os.path.splitext(dest_name)[0]}_prompt.json")
             pdata = None
             if os.path.isfile(prompt_src):
@@ -1481,11 +2085,21 @@ def save_bot_test_prompt(bot_name: str, project_name: str, filename: str, positi
 
 # ─── 학습 이미지 프롬프트 수정 ───────────────────────────────
 
-def save_bot_training_prompt(bot_name: str, project_name: str, char_name: str, filename: str, positive: str, negative: str) -> dict:
+def save_bot_training_prompt(
+    bot_name: str,
+    project_name: str,
+    char_name: str,
+    filename: str,
+    positive: str,
+    negative: str,
+    visual_card_id: str = "",
+) -> dict:
     """프로젝트 폴더의 _prompt.json 수정"""
     if ".." in filename or os.path.sep in filename:
         return {"success": False, "error": "잘못된 파일명"}
-    proj_char_dir = _bot_project_char_dir(bot_name, project_name, char_name)
+    proj_char_dir = _bot_project_training_dir(
+        bot_name, project_name, char_name, visual_card_id
+    )
     base = os.path.splitext(filename)[0]
     prompt_path = os.path.join(proj_char_dir, f"{base}_prompt.json")
     try:
@@ -1508,11 +2122,20 @@ def save_bot_training_prompt(bot_name: str, project_name: str, char_name: str, f
         return {"success": False, "error": str(e)}
 
 
-def save_bot_training_prompt_positive_only(bot_name: str, project_name: str, char_name: str, filename: str, positive: str) -> dict:
+def save_bot_training_prompt_positive_only(
+    bot_name: str,
+    project_name: str,
+    char_name: str,
+    filename: str,
+    positive: str,
+    visual_card_id: str = "",
+) -> dict:
     """LLM 정제 결과로 positive만 교체. negative/original_*는 기존값을 그대로 유지한다."""
     if ".." in filename or os.path.sep in filename:
         return {"success": False, "error": "잘못된 파일명"}
-    proj_char_dir = _bot_project_char_dir(bot_name, project_name, char_name)
+    proj_char_dir = _bot_project_training_dir(
+        bot_name, project_name, char_name, visual_card_id
+    )
     base = os.path.splitext(filename)[0]
     prompt_path = os.path.join(proj_char_dir, f"{base}_prompt.json")
     try:
@@ -1538,16 +2161,27 @@ def save_bot_training_prompt_positive_only(bot_name: str, project_name: str, cha
 
 # ─── 학습된 LoRA 관리 ────────────────────────────────────────
 
-def _list_bot_trained_sessions(lora_load_path: str, bot_name: str, project_name: str, char_name: str) -> list:
+def _list_bot_trained_sessions(
+    lora_load_path: str,
+    bot_name: str,
+    project_name: str,
+    char_name: str,
+    visual_card_id: str = "",
+) -> list:
     if not lora_load_path:
         print("[BOT_LORA_TRAINED] lora_load_path 미설정")
         return []
-    entry_dir = _trained_lora_dir(lora_load_path, bot_name, project_name, char_name)
+    entry_dir = _trained_lora_dir(
+        lora_load_path, bot_name, project_name, char_name, visual_card_id
+    )
     if not os.path.isdir(entry_dir):
+        print(f"[BOT_LORA_TRAINED] 캐릭터 카드 LoRA 폴더 없음: {entry_dir}")
         return []
 
     manage_data = _load_bot_lora_manage()
-    char_cfg = _get_char_config(manage_data, bot_name, project_name, char_name) or {}
+    char_cfg = _get_char_config(
+        manage_data, bot_name, project_name, char_name, visual_card_id
+    ) or {}
     session_reps = char_cfg.get("session_representatives", {})
     session_priority = _resolve_session_priority(char_cfg, entry_dir, session_reps)
 
@@ -1564,6 +2198,16 @@ def _list_bot_trained_sessions(lora_load_path: str, bot_name: str, project_name:
             try:
                 rep_data = json.loads(session_rep)
                 preview_url = rep_data.get("preview", "")
+                if (
+                    visual_card_id
+                    and "/api/bot_lora/trained/preview/" in preview_url
+                    and "visual_card_id=" not in preview_url
+                ):
+                    separator = "&" if "?" in preview_url else "?"
+                    from urllib.parse import quote
+                    preview_url += (
+                        f"{separator}visual_card_id={quote(visual_card_id, safe='')}"
+                    )
             except Exception:
                 pass
         try:
@@ -1611,39 +2255,83 @@ def _resolve_session_priority(char_cfg: dict, entry_dir: str, session_reps: dict
     return auto
 
 
-def get_char_session_priority(lora_load_path: str, bot_name: str, project_name: str, char_name: str) -> list:
+def get_char_session_priority(
+    lora_load_path: str,
+    bot_name: str,
+    project_name: str,
+    char_name: str,
+    visual_card_id: str = "",
+) -> list:
     """project API 등에서 우선순위만 조회. lora_load_path가 없으면 저장값만 반환."""
     manage_data = _load_bot_lora_manage()
-    char_cfg = _get_char_config(manage_data, bot_name, project_name, char_name) or {}
+    char_cfg = _get_char_config(
+        manage_data, bot_name, project_name, char_name, visual_card_id
+    ) or {}
     session_reps = char_cfg.get("session_representatives", {})
     if lora_load_path:
-        entry_dir = _trained_lora_dir(lora_load_path, bot_name, project_name, char_name)
+        entry_dir = _trained_lora_dir(
+            lora_load_path, bot_name, project_name, char_name, visual_card_id
+        )
         return _resolve_session_priority(char_cfg, entry_dir, session_reps)
     return list(char_cfg.get("session_priority", []) or [])
 
 
-def update_char_session_priority(bot_name: str, project_name: str, char_name: str, sessions_list: list) -> dict:
+def update_char_session_priority(
+    bot_name: str,
+    project_name: str,
+    char_name: str,
+    sessions_list: list,
+    visual_card_id: str = "",
+) -> dict:
     if not bot_name or not project_name or not char_name:
         return {"success": False, "error": "봇/프로젝트/캐릭터 이름 누락"}
     if not isinstance(sessions_list, list):
         return {"success": False, "error": "sessions는 배열이어야 합니다"}
     data = _load_bot_lora_manage()
-    char_cfg = data.setdefault("bot_loras", {}).setdefault(bot_name, {}).setdefault(project_name, {}).setdefault("characters", {}).setdefault(char_name, {})
+    char_cfg = _get_char_config(
+        data, bot_name, project_name, char_name, visual_card_id
+    )
+    if char_cfg is None:
+        print(
+            f"[BOT_LORA] session_priority 대상 없음: "
+            f"{bot_name}/{project_name}/{char_name}/{visual_card_id or 'legacy'}"
+        )
+        return {"success": False, "error": "캐릭터 카드 설정을 찾을 수 없습니다"}
     char_cfg["session_priority"] = sessions_list
     _save_bot_lora_manage(data)
     print(f"[BOT_LORA] session_priority 업데이트: {bot_name}/{project_name}/{char_name} -> {sessions_list}")
     return {"success": True}
 
 
-def list_bot_trained_sessions(lora_load_path: str, bot_name: str, project_name: str, char_name: str) -> list:
-    return _list_bot_trained_sessions(lora_load_path, bot_name, project_name, char_name)
+def list_bot_trained_sessions(
+    lora_load_path: str,
+    bot_name: str,
+    project_name: str,
+    char_name: str,
+    visual_card_id: str = "",
+) -> list:
+    return _list_bot_trained_sessions(
+        lora_load_path, bot_name, project_name, char_name, visual_card_id
+    )
 
 
-def list_bot_trained_steps(lora_load_path: str, bot_name: str, project_name: str, char_name: str, session: str) -> list:
+def list_bot_trained_steps(
+    lora_load_path: str,
+    bot_name: str,
+    project_name: str,
+    char_name: str,
+    session: str,
+    visual_card_id: str = "",
+) -> list:
     if not lora_load_path:
         print("[BOT_LORA_TRAINED] lora_load_path 미설정")
         return []
-    session_dir = os.path.join(_trained_lora_dir(lora_load_path, bot_name, project_name, char_name), session)
+    session_dir = os.path.join(
+        _trained_lora_dir(
+            lora_load_path, bot_name, project_name, char_name, visual_card_id
+        ),
+        session,
+    )
     if not os.path.isdir(session_dir):
         print(f"[BOT_LORA_TRAINED] 세션 폴더 없음: {session_dir}")
         return []
@@ -1672,7 +2360,13 @@ def list_bot_trained_steps(lora_load_path: str, bot_name: str, project_name: str
     return steps
 
 
-def cleanup_non_representative_loras(lora_load_path: str, bot_name: str, project_name: str, char_name: str) -> dict:
+def cleanup_non_representative_loras(
+    lora_load_path: str,
+    bot_name: str,
+    project_name: str,
+    char_name: str,
+    visual_card_id: str = "",
+) -> dict:
     """대표로 설정된 LoRA 외에 해당 캐릭터의 모든 LoRA를 정리.
     - 대표가 설정된 세션: 대표 step만 남기고 나머지 step 삭제
     - 대표가 없는 세션: 세션 전체 삭제
@@ -1681,13 +2375,17 @@ def cleanup_non_representative_loras(lora_load_path: str, bot_name: str, project
         print("[BOT_LORA_CLEANUP] lora_load_path 미설정")
         return {"success": False, "error": "lora_load_path 미설정"}
 
-    entry_dir = _trained_lora_dir(lora_load_path, bot_name, project_name, char_name)
+    entry_dir = _trained_lora_dir(
+        lora_load_path, bot_name, project_name, char_name, visual_card_id
+    )
     if not os.path.isdir(entry_dir):
         print(f"[BOT_LORA_CLEANUP] 캐릭터 LoRA 폴더 없음: {entry_dir}")
         return {"success": False, "error": "캐릭터 LoRA 폴더가 없습니다"}
 
     manage_data = _load_bot_lora_manage()
-    char_cfg = _get_char_config(manage_data, bot_name, project_name, char_name) or {}
+    char_cfg = _get_char_config(
+        manage_data, bot_name, project_name, char_name, visual_card_id
+    ) or {}
     session_reps = char_cfg.get("session_representatives", {})
 
     deleted_sessions = []
@@ -1793,10 +2491,24 @@ def cleanup_non_representative_loras(lora_load_path: str, bot_name: str, project
     return result
 
 
-def read_bot_toml_file(lora_load_path: str, bot_name: str, project_name: str, char_name: str, session: str, step_name: str) -> dict:
+def read_bot_toml_file(
+    lora_load_path: str,
+    bot_name: str,
+    project_name: str,
+    char_name: str,
+    session: str,
+    step_name: str,
+    visual_card_id: str = "",
+) -> dict:
     if not lora_load_path:
+        print("[BOT_LORA_TRAINED] TOML 조회 실패: lora_load_path 미설정")
         return {"success": False, "error": "lora_load_path 미설정"}
-    session_dir = os.path.join(_trained_lora_dir(lora_load_path, bot_name, project_name, char_name), session)
+    session_dir = os.path.join(
+        _trained_lora_dir(
+            lora_load_path, bot_name, project_name, char_name, visual_card_id
+        ),
+        session,
+    )
     toml_path = os.path.join(session_dir, step_name + ".toml")
     if not os.path.isfile(toml_path):
         print(f"[BOT_LORA_TRAINED] TOML 파일 없음: {toml_path}")
@@ -1811,19 +2523,37 @@ def read_bot_toml_file(lora_load_path: str, bot_name: str, project_name: str, ch
         return {"success": False, "error": str(e)}
 
 
-def delete_bot_trained_step(lora_load_path: str, bot_name: str, project_name: str, char_name: str, session: str, step_name: str) -> dict:
+def delete_bot_trained_step(
+    lora_load_path: str,
+    bot_name: str,
+    project_name: str,
+    char_name: str,
+    session: str,
+    step_name: str,
+    visual_card_id: str = "",
+) -> dict:
     if not lora_load_path:
+        print("[BOT_LORA_TRAINED] step 삭제 실패: lora_load_path 미설정")
         return {"success": False, "error": "lora_load_path 미설정"}
-    session_dir = os.path.join(_trained_lora_dir(lora_load_path, bot_name, project_name, char_name), session)
+    session_dir = os.path.join(
+        _trained_lora_dir(
+            lora_load_path, bot_name, project_name, char_name, visual_card_id
+        ),
+        session,
+    )
     if not os.path.isdir(session_dir):
+        print(f"[BOT_LORA_TRAINED] step 삭제 실패: 세션 폴더 없음: {session_dir}")
         return {"success": False, "error": "세션 폴더 없음"}
     json_path = os.path.join(session_dir, step_name + ".json")
     if not os.path.isfile(json_path):
+        print(f"[BOT_LORA_TRAINED] step 삭제 실패: JSON 파일 없음: {json_path}")
         return {"success": False, "error": "JSON 파일 없음"}
     try:
         with open(json_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
     except Exception as e:
+        print(f"[BOT_LORA_TRAINED] step JSON 읽기 실패: {json_path} - {e}")
+        traceback.print_exc()
         return {"success": False, "error": f"JSON 읽기 실패: {e}"}
     deleted = []
     errors = []
@@ -1848,18 +2578,34 @@ def delete_bot_trained_step(lora_load_path: str, bot_name: str, project_name: st
     return {"success": True, "deleted": deleted, "errors": errors}
 
 
-def delete_bot_trained_session(lora_load_path: str, bot_name: str, project_name: str, char_name: str, session: str) -> dict:
+def delete_bot_trained_session(
+    lora_load_path: str,
+    bot_name: str,
+    project_name: str,
+    char_name: str,
+    session: str,
+    visual_card_id: str = "",
+) -> dict:
     if not lora_load_path:
+        print("[BOT_LORA_TRAINED] 세션 삭제 실패: lora_load_path 미설정")
         return {"success": False, "error": "lora_load_path 미설정"}
-    session_dir = os.path.join(_trained_lora_dir(lora_load_path, bot_name, project_name, char_name), session)
+    session_dir = os.path.join(
+        _trained_lora_dir(
+            lora_load_path, bot_name, project_name, char_name, visual_card_id
+        ),
+        session,
+    )
     if not os.path.isdir(session_dir):
+        print(f"[BOT_LORA_TRAINED] 세션 삭제 실패: 세션 폴더 없음: {session_dir}")
         return {"success": False, "error": "세션 폴더 없음"}
     try:
         file_count = sum(1 for _ in os.listdir(session_dir))
         shutil.rmtree(session_dir)
         # 세션 대표 설정 및 우선순위에서도 해당 세션 제거
         manage_data = _load_bot_lora_manage()
-        char_cfg = _get_char_config(manage_data, bot_name, project_name, char_name) or {}
+        char_cfg = _get_char_config(
+            manage_data, bot_name, project_name, char_name, visual_card_id
+        ) or {}
         session_reps = char_cfg.get("session_representatives", {})
         session_prio = char_cfg.get("session_priority") or []
         changed = False
@@ -1880,20 +2626,45 @@ def delete_bot_trained_session(lora_load_path: str, bot_name: str, project_name:
         return {"success": False, "error": str(e)}
 
 
-def get_bot_trained_preview_path(lora_load_path: str, bot_name: str, project_name: str, char_name: str, session: str, filename: str) -> str:
+def get_bot_trained_preview_path(
+    lora_load_path: str,
+    bot_name: str,
+    project_name: str,
+    char_name: str,
+    session: str,
+    filename: str,
+    visual_card_id: str = "",
+) -> str:
     if not lora_load_path:
+        print("[BOT_LORA_TRAINED] 프리뷰 조회 실패: lora_load_path 미설정")
         return ""
-    path = os.path.join(_trained_lora_dir(lora_load_path, bot_name, project_name, char_name), session, filename)
+    path = os.path.join(
+        _trained_lora_dir(
+            lora_load_path, bot_name, project_name, char_name, visual_card_id
+        ),
+        session,
+        filename,
+    )
     if os.path.isfile(path):
         return path
+    print(f"[BOT_LORA_TRAINED] 프리뷰 파일 없음: {path}")
     return ""
 
 
 # ─── 학습 이미지 Export ──────────────────────────────────────
 
-def export_bot_training_images(bot_name: str, project_name: str, char_name: str, comfy_input_dir: str, folder_name: str = "soya_lora") -> dict:
+def export_bot_training_images(
+    bot_name: str,
+    project_name: str,
+    char_name: str,
+    comfy_input_dir: str,
+    folder_name: str = "soya_lora",
+    visual_card_id: str = "",
+) -> dict:
     """프로젝트 폴더의 학습 이미지를 Comfy Input 폴더로 복사"""
-    proj_char_dir = _bot_project_char_dir(bot_name, project_name, char_name)
+    proj_char_dir = _bot_project_training_dir(
+        bot_name, project_name, char_name, visual_card_id
+    )
     if not os.path.isdir(proj_char_dir):
         print(f"[BOT_LORA_EXPORT] 프로젝트 캐릭터 폴더 없음: {proj_char_dir}")
         return {"success": False, "error": f"프로젝트 학습 이미지 폴더 없음: {bot_name}/{project_name}/{char_name}"}
@@ -1940,12 +2711,23 @@ def export_bot_training_images(bot_name: str, project_name: str, char_name: str,
 
 # ─── 학습 이미지 파일 서빙 ──────────────────────────────────
 
-def get_bot_training_image_path(bot_name: str, project_name: str, char_name: str, filename: str) -> str | None:
+def get_bot_training_image_path(
+    bot_name: str,
+    project_name: str,
+    char_name: str,
+    filename: str,
+    visual_card_id: str = "",
+) -> str | None:
     """프로젝트 폴더에서 학습 이미지 경로 반환"""
     if ".." in filename or os.path.sep in filename:
         print(f"[BOT_LORA] 잘못된 파일명: {filename}")
         return None
-    fpath = os.path.join(_bot_project_char_dir(bot_name, project_name, char_name), filename)
+    fpath = os.path.join(
+        _bot_project_training_dir(
+            bot_name, project_name, char_name, visual_card_id
+        ),
+        filename,
+    )
     if os.path.isfile(fpath):
         return fpath
     print(f"[BOT_LORA] 학습 이미지 없음: {fpath}")
@@ -1973,10 +2755,10 @@ def list_bot_lora_for_picker(lora_load_path: str = "") -> list:
         for proj_name, proj_data in projects.items():
             proj_entry = {"project_name": proj_name, "characters": []}
             training_config = proj_data.get("training_config", {})
-            for char_name, char_cfg in proj_data.get("characters", {}).items():
-                if char_cfg.get("skip_training"):
+            for char_name, visual_card_id, unit_cfg in _iter_project_units(proj_data):
+                if unit_cfg.get("skip_training"):
                     continue
-                session_reps = char_cfg.get("session_representatives", {})
+                session_reps = unit_cfg.get("session_representatives", {})
                 if not session_reps:
                     continue
                 # 대표가 설정된 가장 최신 세션 찾기
@@ -1997,12 +2779,17 @@ def list_bot_lora_for_picker(lora_load_path: str = "") -> list:
                         continue
                     # 실제 파일 존재 확인
                     if lora_load_path:
-                        full_dir = _trained_lora_dir(lora_load_path, bot_name, proj_name, char_name)
+                        full_dir = _trained_lora_dir(
+                            lora_load_path,
+                            bot_name,
+                            proj_name,
+                            char_name,
+                            visual_card_id,
+                        )
                         if os.path.isfile(os.path.join(full_dir, sname, safetensors)):
-                            rep_path = os.path.join(
-                                _safe_dirname(bot_name), "Lora",
-                                _safe_dirname(proj_name), _safe_dirname(char_name),
-                                sname, safetensors
+                            rep_path = os.path.relpath(
+                                os.path.join(full_dir, sname, safetensors),
+                                lora_load_path,
                             )
                             rep_preview = preview
                             rep_session = sname
@@ -2011,7 +2798,11 @@ def list_bot_lora_for_picker(lora_load_path: str = "") -> list:
                     continue
                 proj_entry["characters"].append({
                     "char_name": char_name,
-                    "trigger": char_cfg.get("trigger", char_name),
+                    "visual_card_id": visual_card_id,
+                    "visual_card_label": (
+                        unit_cfg.get("label") or visual_card_id or "기본 카드"
+                    ),
+                    "trigger": unit_cfg.get("trigger", char_name),
                     "lora_path": rep_path,
                     "preview_url": rep_preview,
                     "session": rep_session,

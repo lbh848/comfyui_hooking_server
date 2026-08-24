@@ -364,6 +364,7 @@ async def run_auto_refine_lora_prompt(
     lora_id: str = "",
     template_set: str = "",
     style_ctx: dict = None,
+    visual_card_id: str = "",
 ) -> dict:
     """LLM 비전 기반 LoRA 프롬프트 정제 (core).
 
@@ -437,7 +438,22 @@ async def run_auto_refine_lora_prompt(
                 bot = next((b for b in data.get("bots", []) if b["name"] == bot_name), None)
                 char = next((c for c in (bot.get("characters", []) if bot else []) if c["name"] == char_name), None)
                 if char:
-                    gender_tag = (char.get("gender_tag") or "").strip()
+                    if visual_card_id:
+                        from modes.visual_profiles import effective_character_cards
+                        cards, _source = effective_character_cards(char, None)
+                        selected_card = next(
+                            (
+                                card for card in cards
+                                if card.get("id") == visual_card_id
+                            ),
+                            None,
+                        )
+                        if selected_card:
+                            gender_tag = (
+                                selected_card.get("gender_tag") or ""
+                            ).strip()
+                    if not gender_tag:
+                        gender_tag = (char.get("gender_tag") or "").strip()
             except Exception as e:
                 print(f"[INSTANCE_LORA] gender_tag 로드 실패: {e}")
                 traceback.print_exc()
@@ -466,7 +482,13 @@ async def run_auto_refine_lora_prompt(
                 return {"success": False, "error": f"원본 이미지를 찾을 수 없습니다: {filename} (bot={bot_name} character={char_name})"}
         elif source_type == "bot_lora_training":
             from modes.bot_lora_mode import get_bot_training_image_path
-            img_path = get_bot_training_image_path(bot_name, project_name, char_name, filename)
+            img_path = get_bot_training_image_path(
+                bot_name,
+                project_name,
+                char_name,
+                filename,
+                visual_card_id,
+            )
             if not img_path or not os.path.isfile(img_path):
                 print(f"[INSTANCE_LORA] 봇 LoRA 학습 이미지 없음: bot={bot_name} project={project_name} char={char_name} filename={filename}")
                 return {"success": False, "error": f"봇 LoRA 학습 이미지를 찾을 수 없습니다: {filename} (bot={bot_name} project={project_name} character={char_name})"}
@@ -669,6 +691,7 @@ def _resolve_test_setup_image_paths(
     entry: str,
     card_filename: str,
     test_filename: str,
+    visual_card_id: str = "",
 ) -> list[str]:
     """테스트 전환 검수의 [source/card, test/reference] 이미지 경로를 반환한다.
 
@@ -689,7 +712,7 @@ def _resolve_test_setup_image_paths(
 
             if not resolved_card_filename:
                 training_images = _get_project_training_images(
-                    bot_name, project_name, character
+                    bot_name, project_name, character, visual_card_id
                 )
                 if training_images:
                     resolved_card_filename = str(training_images[0].get("filename") or "").strip()
@@ -704,11 +727,19 @@ def _resolve_test_setup_image_paths(
                         f"source={source_type} bot={bot_name} project={project_name} character={character}"
                     )
             card_path = get_bot_training_image_path(
-                bot_name, project_name, character, resolved_card_filename
+                bot_name,
+                project_name,
+                character,
+                resolved_card_filename,
+                visual_card_id,
             ) if resolved_card_filename else None
             if source_type == "bot_lora_char_test_setup":
                 test_path = get_bot_char_test_image_path(
-                    bot_name, project_name, character, test_filename
+                    bot_name,
+                    project_name,
+                    character,
+                    test_filename,
+                    visual_card_id,
                 )
             else:
                 test_path = get_bot_test_image_path(
@@ -772,6 +803,7 @@ async def run_auto_refine_test_setup(
     source_type: str = "bot_lora_test_setup",
     entry: str = "",
     card_filename: str = "",
+    visual_card_id: str = "",
 ) -> dict:
     """봇/에셋 LoRA 테스트 프롬프트 1차 조합 + 2이미지 비전 검수.
 
@@ -899,6 +931,7 @@ async def run_auto_refine_test_setup(
                         entry=entry,
                         card_filename=card_filename,
                         test_filename=test_filename,
+                        visual_card_id=visual_card_id,
                     )
                     is_asset_test = source_type == "asset_test_setup"
                     review = await run_lora_prompt_review(
@@ -1086,6 +1119,7 @@ async def handle_auto_refine_enqueue(request):
         bot_name = (body.get("bot") or "").strip()
         project_name = (body.get("project") or "").strip()
         char_name = (body.get("character") or "").strip()
+        visual_card_id = (body.get("visual_card_id") or "").strip()
         filename = (body.get("filename") or "").strip()
         entry = (body.get("entry") or "").strip()
         positive = body.get("positive", "") or ""
@@ -1174,6 +1208,7 @@ async def handle_auto_refine_enqueue(request):
                     "bot_name": bot_name,
                     "project_name": project_name,
                     "char_name": char_name,
+                    "visual_card_id": visual_card_id,
                     "card_filename": card_filename,
                     "card_positive": card_positive,
                     "test_filename": test_filename,
@@ -1219,6 +1254,7 @@ async def handle_auto_refine_enqueue(request):
                     "bot_name": bot_name,
                     "project_name": project_name,
                     "char_name": char_name,
+                    "visual_card_id": visual_card_id,
                     "card_filename": card_filename,
                     "card_positive": card_positive,
                     "test_filename": test_filename,
@@ -1254,7 +1290,8 @@ async def handle_auto_refine_enqueue(request):
         if source_type == "bot":
             label = f"LoRA 프롬프트 정제: {bot_name}/{char_name}/{filename}"
         elif source_type == "bot_lora_training":
-            label = f"LoRA 프롬프트 정제: [bot_lora] {bot_name}/{project_name}/{char_name}/{filename}"
+            card_part = f"/{visual_card_id}" if visual_card_id else ""
+            label = f"LoRA 프롬프트 정제: [bot_lora] {bot_name}/{project_name}/{char_name}{card_part}/{filename}"
         else:
             label = f"LoRA 프롬프트 정제: [training] {char_name}/{entry}/{filename}"
 
@@ -1266,6 +1303,7 @@ async def handle_auto_refine_enqueue(request):
                 "bot_name": bot_name,
                 "project_name": project_name,
                 "char_name": char_name,
+                "visual_card_id": visual_card_id,
                 "filename": filename,
                 "entry": entry,
                 "positive": positive,

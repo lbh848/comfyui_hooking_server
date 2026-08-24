@@ -24135,10 +24135,13 @@ async def handle_api_bot_lora_character_remove(request):
         bot_name = body.get("bot", "")
         project_name = body.get("project", "")
         char_name = body.get("character", "")
+        visual_card_id = body.get("visual_card_id", "")
         if not bot_name or not project_name or not char_name:
             return web.json_response({"success": False, "error": "봇/프로젝트/캐릭터 필수"}, status=400)
         from modes.bot_lora_mode import remove_character_from_project
-        result = remove_character_from_project(bot_name, project_name, char_name)
+        result = remove_character_from_project(
+            bot_name, project_name, char_name, visual_card_id
+        )
         return web.json_response(result)
     except Exception as e:
         print(f"[BOT_LORA_API] 캐릭터 제거 실패: {e}")
@@ -24286,11 +24289,14 @@ async def handle_api_bot_lora_trigger(request):
         bot_name = body.get("bot", "")
         project_name = body.get("project", "")
         char_name = body.get("character", "")
+        visual_card_id = body.get("visual_card_id", "")
         trigger = body.get("trigger", "")
         if not bot_name or not project_name or not char_name:
             return web.json_response({"success": False, "error": "봇/프로젝트/캐릭터 필수"}, status=400)
         from modes.bot_lora_mode import update_char_trigger
-        result = update_char_trigger(bot_name, project_name, char_name, trigger)
+        result = update_char_trigger(
+            bot_name, project_name, char_name, trigger, visual_card_id
+        )
         return web.json_response(result)
     except Exception as e:
         print(f"[BOT_LORA_API] trigger 업데이트 실패: {e}")
@@ -24305,11 +24311,14 @@ async def handle_api_bot_lora_skip_training(request):
         bot_name = body.get("bot", "")
         project_name = body.get("project", "")
         char_name = body.get("character", "")
+        visual_card_id = body.get("visual_card_id", "")
         skip = body.get("skip", False)
         if not bot_name or not project_name or not char_name:
             return web.json_response({"success": False, "error": "봇/프로젝트/캐릭터 필수"}, status=400)
         from modes.bot_lora_mode import update_char_skip_training
-        result = update_char_skip_training(bot_name, project_name, char_name, skip)
+        result = update_char_skip_training(
+            bot_name, project_name, char_name, skip, visual_card_id
+        )
         return web.json_response(result)
     except Exception as e:
         print(f"[BOT_LORA_API] skip_training 업데이트 실패: {e}")
@@ -24398,10 +24407,13 @@ async def handle_api_bot_lora_char_test_image(request):
         project_name = request.match_info.get("project", "")
         char_name = request.match_info.get("character", "")
         filename = request.match_info.get("filename", "")
+        visual_card_id = request.query.get("visual_card_id", "")
         if not bot_name or not project_name or not char_name or not filename:
             return web.Response(status=400)
         from modes.bot_lora_mode import get_bot_char_test_image_path
-        fpath = get_bot_char_test_image_path(bot_name, project_name, char_name, filename)
+        fpath = get_bot_char_test_image_path(
+            bot_name, project_name, char_name, filename, visual_card_id
+        )
         if not fpath:
             return web.Response(status=404)
         return web.FileResponse(fpath)
@@ -24417,11 +24429,14 @@ async def handle_api_bot_lora_char_test_add(request):
         bot_name = body.get("bot", "")
         project_name = body.get("project", "")
         char_name = body.get("character", "")
+        visual_card_id = body.get("visual_card_id", "")
         sources = body.get("sources", [])
         if not bot_name or not project_name or not char_name:
             return web.json_response({"success": False, "error": "봇/프로젝트/캐릭터 필수"}, status=400)
         from modes.bot_lora_mode import add_bot_char_test_images
-        result = add_bot_char_test_images(bot_name, project_name, char_name, sources)
+        result = add_bot_char_test_images(
+            bot_name, project_name, char_name, sources, visual_card_id
+        )
         return web.json_response(result)
     except Exception as e:
         print(f"[BOT_LORA_API] 캐릭터 테스트 이미지 추가 실패: {e}")
@@ -24436,11 +24451,14 @@ async def handle_api_bot_lora_char_test_copy(request):
         bot_name = body.get("bot", "")
         project_name = body.get("project", "")
         char_name = body.get("character", "")
+        visual_card_id = body.get("visual_card_id", "")
         filenames = body.get("filenames", None)
         if not bot_name or not project_name or not char_name:
             return web.json_response({"success": False, "error": "봇/프로젝트/캐릭터 필수"}, status=400)
         from modes.bot_lora_mode import copy_project_test_to_char
-        result = copy_project_test_to_char(bot_name, project_name, char_name, filenames)
+        result = copy_project_test_to_char(
+            bot_name, project_name, char_name, filenames, visual_card_id
+        )
         return web.json_response(result)
     except Exception as e:
         print(f"[BOT_LORA_API] 공통→캐릭터 복제 실패: {e}")
@@ -24455,11 +24473,14 @@ async def handle_api_bot_lora_char_test_delete(request):
         bot_name = body.get("bot", "")
         project_name = body.get("project", "")
         char_name = body.get("character", "")
+        visual_card_id = body.get("visual_card_id", "")
         filename = body.get("filename", "")
         if not bot_name or not project_name or not char_name or not filename:
             return web.json_response({"success": False, "error": "봇/프로젝트/캐릭터/파일명 필수"}, status=400)
         from modes.bot_lora_mode import delete_bot_char_test_image
-        result = delete_bot_char_test_image(bot_name, project_name, char_name, filename)
+        result = delete_bot_char_test_image(
+            bot_name, project_name, char_name, filename, visual_card_id
+        )
         return web.json_response(result)
     except Exception as e:
         print(f"[BOT_LORA_API] 캐릭터 테스트 이미지 삭제 실패: {e}")
@@ -24474,11 +24495,14 @@ async def handle_api_bot_lora_training_delete(request):
         bot_name = body.get("bot", "")
         project_name = body.get("project", "")
         char_name = body.get("character", "")
+        visual_card_id = body.get("visual_card_id", "")
         filename = body.get("filename", "")
         if not bot_name or not project_name or not char_name or not filename:
             return web.json_response({"success": False, "error": "봇/프로젝트/캐릭터/파일명 필수"}, status=400)
         from modes.bot_lora_mode import delete_bot_training_image
-        result = delete_bot_training_image(bot_name, project_name, char_name, filename)
+        result = delete_bot_training_image(
+            bot_name, project_name, char_name, filename, visual_card_id
+        )
         return web.json_response(result)
     except Exception as e:
         print(f"[BOT_LORA_API] 학습 이미지 삭제 실패: {e}")
@@ -24493,11 +24517,14 @@ async def handle_api_bot_lora_training_add(request):
         bot_name = body.get("bot", "")
         project_name = body.get("project", "")
         char_name = body.get("character", "")
+        visual_card_id = body.get("visual_card_id", "")
         sources = body.get("sources", [])
         if not bot_name or not project_name or not char_name:
             return web.json_response({"success": False, "error": "봇/프로젝트/캐릭터 필수"}, status=400)
         from modes.bot_lora_mode import add_bot_training_images
-        result = add_bot_training_images(bot_name, project_name, char_name, sources)
+        result = add_bot_training_images(
+            bot_name, project_name, char_name, sources, visual_card_id
+        )
         return web.json_response(result)
     except Exception as e:
         print(f"[BOT_LORA_API] 학습 이미지 추가 실패: {e}")
@@ -24510,10 +24537,13 @@ async def handle_api_bot_lora_char_available_images(request):
     try:
         bot_name = request.match_info.get("bot", "")
         char_name = request.match_info.get("character", "")
+        visual_card_id = request.query.get("visual_card_id", "")
         if not bot_name or not char_name:
             return web.json_response({"success": False, "error": "봇/캐릭터 필수"}, status=400)
         from modes.bot_lora_mode import list_bot_char_available_images
-        images = list_bot_char_available_images(bot_name, char_name)
+        images = list_bot_char_available_images(
+            bot_name, char_name, visual_card_id
+        )
         return web.json_response({"success": True, "images": images})
     except Exception as e:
         print(f"[BOT_LORA_API] 캐릭터 이미지 목록 실패: {e}")
@@ -24528,13 +24558,16 @@ async def handle_api_bot_lora_training_add_from_bot(request):
         bot_name = body.get("bot", "")
         project_name = body.get("project", "")
         char_name = body.get("character", "")
+        visual_card_id = body.get("visual_card_id", "")
         filenames = body.get("filenames", [])
         if not bot_name or not project_name or not char_name:
             return web.json_response({"success": False, "error": "봇/프로젝트/캐릭터 필수"}, status=400)
         if not filenames:
             return web.json_response({"success": False, "error": "파일명 필수"}, status=400)
         from modes.bot_lora_mode import add_bot_training_from_bot
-        result = add_bot_training_from_bot(bot_name, project_name, char_name, filenames)
+        result = add_bot_training_from_bot(
+            bot_name, project_name, char_name, filenames, visual_card_id
+        )
         return web.json_response(result)
     except Exception as e:
         print(f"[BOT_LORA_API] 봇 학습 이미지 추가(원본에서) 실패: {e}")
@@ -24549,13 +24582,22 @@ async def handle_api_bot_lora_char_test_prompt(request):
         bot_name = body.get("bot", "")
         project_name = body.get("project", "")
         char_name = body.get("character", "")
+        visual_card_id = body.get("visual_card_id", "")
         filename = body.get("filename", "")
         positive = body.get("positive", "")
         negative = body.get("negative", "")
         if not bot_name or not project_name or not char_name or not filename:
             return web.json_response({"success": False, "error": "봇/프로젝트/캐릭터/파일명 필수"}, status=400)
         from modes.bot_lora_mode import save_bot_char_test_prompt
-        result = save_bot_char_test_prompt(bot_name, project_name, char_name, filename, positive, negative)
+        result = save_bot_char_test_prompt(
+            bot_name,
+            project_name,
+            char_name,
+            filename,
+            positive,
+            negative,
+            visual_card_id,
+        )
         return web.json_response(result)
     except Exception as e:
         print(f"[BOT_LORA_API] 캐릭터 테스트 프롬프트 저장 실패: {e}")
@@ -24588,10 +24630,13 @@ async def handle_api_bot_lora_training_image(request):
         project_name = request.match_info.get("project", "")
         char_name = request.match_info.get("character", "")
         filename = request.match_info.get("filename", "")
+        visual_card_id = request.query.get("visual_card_id", "")
         if not bot_name or not project_name or not char_name or not filename:
             return web.Response(status=400)
         from modes.bot_lora_mode import get_bot_training_image_path
-        fpath = get_bot_training_image_path(bot_name, project_name, char_name, filename)
+        fpath = get_bot_training_image_path(
+            bot_name, project_name, char_name, filename, visual_card_id
+        )
         if not fpath:
             return web.Response(status=404)
         return web.FileResponse(fpath)
@@ -24607,13 +24652,22 @@ async def handle_api_bot_lora_training_prompt(request):
         bot_name = body.get("bot", "")
         project_name = body.get("project", "")
         char_name = body.get("character", "")
+        visual_card_id = body.get("visual_card_id", "")
         filename = body.get("filename", "")
         positive = body.get("positive", "")
         negative = body.get("negative", "")
         if not bot_name or not project_name or not char_name or not filename:
             return web.json_response({"success": False, "error": "봇/프로젝트/캐릭터/파일명 필수"}, status=400)
         from modes.bot_lora_mode import save_bot_training_prompt
-        result = save_bot_training_prompt(bot_name, project_name, char_name, filename, positive, negative)
+        result = save_bot_training_prompt(
+            bot_name,
+            project_name,
+            char_name,
+            filename,
+            positive,
+            negative,
+            visual_card_id,
+        )
         return web.json_response(result)
     except Exception as e:
         print(f"[BOT_LORA_API] 학습 프롬프트 저장 실패: {e}")
@@ -24628,6 +24682,7 @@ async def handle_api_bot_lora_training_export(request):
         bot_name = body.get("bot", "")
         project_name = body.get("project", "")
         char_name = body.get("character", "")
+        visual_card_id = body.get("visual_card_id", "")
         if not bot_name or not project_name or not char_name:
             return web.json_response({"success": False, "error": "봇/프로젝트/캐릭터 필수"}, status=400)
         config = load_config()
@@ -24639,7 +24694,14 @@ async def handle_api_bot_lora_training_export(request):
         bot_cfg = manage_data.get("bot_loras", {}).get(bot_name, {}).get(project_name, {})
         training_config = bot_cfg.get("training_config", {})
         folder_name = training_config.get("multi_img_folder_name", "soya_lora")
-        result = export_bot_training_images(bot_name, project_name, char_name, comfy_input_dir, folder_name)
+        result = export_bot_training_images(
+            bot_name,
+            project_name,
+            char_name,
+            comfy_input_dir,
+            folder_name,
+            visual_card_id,
+        )
         return web.json_response(result)
     except Exception as e:
         print(f"[BOT_LORA_API] 이미지 전송 실패: {e}")
@@ -24658,12 +24720,16 @@ async def handle_api_bot_lora_training_start(request):
         bot_name = body.get("bot", "")
         project_name = body.get("project", "")
         char_name = body.get("character", "")
+        visual_card_id = body.get("visual_card_id", "")
+        visual_card_label = body.get("visual_card_label", "")
         if not bot_name or not project_name or not char_name:
             return web.json_response({"success": False, "error": "봇/프로젝트/캐릭터 필수"}, status=400)
 
-        label = f"[봇] {char_name}"
+        label = f"[봇] {char_name} / {visual_card_label or visual_card_id or '기본 카드'}"
         item = await queue_manager.add_item("bot_lora_training", label, {
             "bot": bot_name, "project": project_name, "character": char_name,
+            "visual_card_id": visual_card_id,
+            "visual_card_label": visual_card_label,
             "char_index": body.get("char_index", 0),
             "total_chars": body.get("total_chars", 0),
         })
@@ -24674,7 +24740,7 @@ async def handle_api_bot_lora_training_start(request):
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
 
-async def _monitor_bot_lora_training(prompt_id, bot_name, project_name, current_char, characters_to_train, current_idx, config, training_config, test_images):
+async def _monitor_bot_lora_training(prompt_id, bot_name, project_name, current_char, characters_to_train, current_idx, config, training_config, test_images, current_visual_card_id="", current_visual_card_label=""):
     bot_lora_port = resolve_comfy_port("bot_lora_training")
     ws_url = f"ws://{REAL_COMFY_HOST}:{bot_lora_port}/ws?clientId=bot_lora_{uuid.uuid4().hex[:8]}"
     print(f"[BOT_LORA_MONITOR] 시작: {bot_name}/{project_name}/{current_char} ({current_idx+1}/{len(characters_to_train)}), prompt_id={prompt_id}")
@@ -24691,7 +24757,7 @@ async def _monitor_bot_lora_training(prompt_id, bot_name, project_name, current_
                         if msg_type not in ("status",):
                             print(f"[BOT_LORA_MONITOR] 수신: type={msg_type}, data={json.dumps(msg_data, ensure_ascii=False)}")
                         if msg_type == "md_soya_progress":
-                            msg_data.update({"bot_name": bot_name, "project_name": project_name, "character": current_char, "char_index": current_idx, "total_chars": len(characters_to_train)})
+                            msg_data.update({"bot_name": bot_name, "project_name": project_name, "character": current_char, "visual_card_id": current_visual_card_id, "visual_card_label": current_visual_card_label, "char_index": current_idx, "total_chars": len(characters_to_train)})
                             await notify_frontend("bot_lora_training_progress", msg_data)
                             if msg_data.get("phase") == "all_complete":
                                 print(f"[BOT_LORA_MONITOR] {current_char} 학습 완료")
@@ -24705,7 +24771,7 @@ async def _monitor_bot_lora_training(prompt_id, bot_name, project_name, current_
                             exec_node = msg_data.get("node")
                             if exec_prompt == prompt_id and exec_node is None:
                                 print(f"[BOT_LORA_MONITOR] {current_char} 워크플로우 완료")
-                                await notify_frontend("bot_lora_training_progress", {"phase": "all_complete", "bot_name": bot_name, "project_name": project_name, "character": current_char, "char_index": current_idx, "total_chars": len(characters_to_train)})
+                                await notify_frontend("bot_lora_training_progress", {"phase": "all_complete", "bot_name": bot_name, "project_name": project_name, "character": current_char, "visual_card_id": current_visual_card_id, "visual_card_label": current_visual_card_label, "char_index": current_idx, "total_chars": len(characters_to_train)})
                                 if current_idx + 1 < len(characters_to_train):
                                     await _start_next_bot_char_training(bot_name, project_name, characters_to_train, current_idx + 1, config, training_config, test_images)
                                 else:
@@ -24716,26 +24782,31 @@ async def _monitor_bot_lora_training(prompt_id, bot_name, project_name, current_
                             if err_prompt == prompt_id:
                                 err_msg = msg_data.get("exception_message", "Unknown error")
                                 print(f"[BOT_LORA_MONITOR] {current_char} 에러: {err_msg}")
-                                await notify_frontend("bot_lora_training_progress", {"phase": "error", "bot_name": bot_name, "project_name": project_name, "character": current_char, "char_index": current_idx, "message": err_msg})
+                                await notify_frontend("bot_lora_training_progress", {"phase": "error", "bot_name": bot_name, "project_name": project_name, "character": current_char, "visual_card_id": current_visual_card_id, "visual_card_label": current_visual_card_label, "char_index": current_idx, "message": err_msg})
                                 return
                     elif msg.type in (aiohttp.WSMsgType.ERROR, aiohttp.WSMsgType.CLOSED):
                         break
     except Exception as e:
         print(f"[BOT_LORA_MONITOR] 예외: {e}")
         traceback.print_exc()
-        await notify_frontend("bot_lora_training_progress", {"phase": "error", "bot_name": bot_name, "project_name": project_name, "character": current_char, "message": str(e)})
+        await notify_frontend("bot_lora_training_progress", {"phase": "error", "bot_name": bot_name, "project_name": project_name, "character": current_char, "visual_card_id": current_visual_card_id, "visual_card_label": current_visual_card_label, "message": str(e)})
 
 
 async def _start_next_bot_char_training(bot_name, project_name, characters_to_train, next_idx, config, training_config, test_images):
-    from modes.bot_lora_mode import export_bot_training_images, _get_project_training_images, _load_bot_lora_manage, list_bot_char_test_images
+    from modes.bot_lora_mode import export_bot_training_images, _get_project_training_images, _load_bot_lora_manage, _get_char_config, list_bot_char_test_images
     ch = characters_to_train[next_idx]
     cn = ch.get("name", "")
+    visual_card_id = ch.get("visual_card_id", "")
+    visual_card_label = ch.get("visual_card_label", "")
     manage_data = _load_bot_lora_manage()
-    proj_cfg = manage_data.get("bot_loras", {}).get(bot_name, {}).get(project_name, {})
-    char_configs = proj_cfg.get("characters", {})
-    trigger = char_configs.get(cn, {}).get("trigger", "") or cn
+    char_cfg = _get_char_config(
+        manage_data, bot_name, project_name, cn, visual_card_id
+    ) or {}
+    trigger = char_cfg.get("trigger", "") or cn
     # 캐릭터별 테스트 이미지 우선, 없으면 공통 테스트 이미지 폴백
-    char_test_images = list_bot_char_test_images(bot_name, project_name, cn)
+    char_test_images = list_bot_char_test_images(
+        bot_name, project_name, cn, visual_card_id
+    )
     effective_test_images = char_test_images if char_test_images else test_images
     profile = training_config.get("profile", "anima")
     step = training_config.get("step_per_image", 50)
@@ -24755,16 +24826,26 @@ async def _start_next_bot_char_training(bot_name, project_name, characters_to_tr
     # lora_save_path가 프로젝트 레벨이면 캐릭터명을 자동 추가
     if not lora_save_path.rstrip("/").endswith(_safe_dirname_bot(cn)):
         lora_save_path = lora_save_path.rstrip("/") + "/" + _safe_dirname_bot(cn)
+    if visual_card_id:
+        lora_save_path = (
+            lora_save_path.rstrip("/")
+            + "/_visual_profiles/"
+            + _safe_dirname_bot(visual_card_id)
+        )
     comfy_input_dir = config.get("comfy_input_dir", "")
 
-    await notify_frontend("bot_lora_training_progress", {"phase": "starting_next", "bot_name": bot_name, "project_name": project_name, "character": cn, "char_index": next_idx, "total_chars": len(characters_to_train), "message": f"'{cn}' 학습 시작 ({next_idx+1}/{len(characters_to_train)})"})
+    await notify_frontend("bot_lora_training_progress", {"phase": "starting_next", "bot_name": bot_name, "project_name": project_name, "character": cn, "visual_card_id": visual_card_id, "visual_card_label": visual_card_label, "char_index": next_idx, "total_chars": len(characters_to_train), "message": f"'{cn}' 학습 시작 ({next_idx+1}/{len(characters_to_train)})"})
 
     try:
-        export_result = export_bot_training_images(bot_name, project_name, cn, comfy_input_dir, folder)
+        export_result = export_bot_training_images(
+            bot_name, project_name, cn, comfy_input_dir, folder, visual_card_id
+        )
         if not export_result.get("success"):
             await notify_frontend("bot_lora_training_progress", {"phase": "error", "bot_name": bot_name, "project_name": project_name, "character": cn, "message": f"이미지 전송 실패: {export_result.get('error')}"})
             return
-        images = _get_project_training_images(bot_name, project_name, cn)
+        images = _get_project_training_images(
+            bot_name, project_name, cn, visual_card_id
+        )
         if not images:
             await notify_frontend("bot_lora_training_progress", {"phase": "error", "bot_name": bot_name, "project_name": project_name, "character": cn, "message": f"{cn}: 학습 이미지 없음"})
             return
@@ -24806,7 +24887,7 @@ async def _start_next_bot_char_training(bot_name, project_name, characters_to_tr
             wf,
             task_key="bot_lora_training",
         )
-        asyncio.create_task(_monitor_bot_lora_training(prompt_id, bot_name, project_name, cn, characters_to_train, next_idx, config, training_config, test_images))
+        asyncio.create_task(_monitor_bot_lora_training(prompt_id, bot_name, project_name, cn, characters_to_train, next_idx, config, training_config, test_images, visual_card_id, visual_card_label))
     except Exception as e:
         print(f"[BOT_LORA_TRAIN] 다음 캐릭터 실패: {cn} - {e}")
         traceback.print_exc()
@@ -24818,6 +24899,7 @@ async def handle_api_bot_lora_trained_sessions(request):
         bot_name = request.query.get("bot", "")
         project_name = request.query.get("project", "")
         char_name = request.query.get("character", "")
+        visual_card_id = request.query.get("visual_card_id", "")
         if not bot_name or not project_name or not char_name:
             return web.json_response({"success": False, "error": "bot, project, character 필수"}, status=400)
         config = load_config()
@@ -24826,7 +24908,9 @@ async def handle_api_bot_lora_trained_sessions(request):
             return web.json_response({"success": False, "error": "lora_load_path 미설정"}, status=400)
         print(f"[BOT_LORA_TRAINED] 세션 조회: bot={bot_name}, project={project_name}, char={char_name}, lora_load_path={lora_load_path}")
         from modes.bot_lora_mode import list_bot_trained_sessions
-        sessions = list_bot_trained_sessions(lora_load_path, bot_name, project_name, char_name)
+        sessions = list_bot_trained_sessions(
+            lora_load_path, bot_name, project_name, char_name, visual_card_id
+        )
         return web.json_response({"success": True, "sessions": sessions})
     except Exception as e:
         print(f"[BOT_LORA_API] 세션 목록 실패: {e}")
@@ -24839,13 +24923,21 @@ async def handle_api_bot_lora_trained_steps(request):
         bot_name = request.query.get("bot", "")
         project_name = request.query.get("project", "")
         char_name = request.query.get("character", "")
+        visual_card_id = request.query.get("visual_card_id", "")
         session = request.query.get("session", "")
         if not bot_name or not project_name or not char_name or not session:
             return web.json_response({"success": False, "error": "bot, project, character, session 필수"}, status=400)
         config = load_config()
         lora_load_path = config.get("bot_lora_load_path", "") or os.path.join(config.get("lora_load_path", ""), "SOYA_BOT_LORA")
         from modes.bot_lora_mode import list_bot_trained_steps
-        steps = list_bot_trained_steps(lora_load_path, bot_name, project_name, char_name, session)
+        steps = list_bot_trained_steps(
+            lora_load_path,
+            bot_name,
+            project_name,
+            char_name,
+            session,
+            visual_card_id,
+        )
         return web.json_response({"success": True, "steps": steps})
     except Exception as e:
         print(f"[BOT_LORA_API] step 목록 실패: {e}")
@@ -24858,6 +24950,7 @@ async def handle_api_bot_lora_trained_toml(request):
         bot_name = request.query.get("bot", "")
         project_name = request.query.get("project", "")
         char_name = request.query.get("character", "")
+        visual_card_id = request.query.get("visual_card_id", "")
         session = request.query.get("session", "")
         step = request.query.get("step", "")
         if not bot_name or not project_name or not char_name or not session or not step:
@@ -24865,7 +24958,15 @@ async def handle_api_bot_lora_trained_toml(request):
         config = load_config()
         lora_load_path = config.get("bot_lora_load_path", "") or os.path.join(config.get("lora_load_path", ""), "SOYA_BOT_LORA")
         from modes.bot_lora_mode import read_bot_toml_file
-        result = read_bot_toml_file(lora_load_path, bot_name, project_name, char_name, session, step)
+        result = read_bot_toml_file(
+            lora_load_path,
+            bot_name,
+            project_name,
+            char_name,
+            session,
+            step,
+            visual_card_id,
+        )
         return web.json_response(result)
     except Exception as e:
         print(f"[BOT_LORA_API] TOML 읽기 실패: {e}")
@@ -24880,12 +24981,21 @@ async def handle_api_bot_lora_trained_preview(request):
         char_name = request.match_info.get("character", "")
         session = request.match_info.get("session", "")
         filename = request.match_info.get("filename", "")
+        visual_card_id = request.query.get("visual_card_id", "")
         if not bot_name or not project_name or not char_name or not session or not filename:
             return web.Response(status=400)
         config = load_config()
         lora_load_path = config.get("bot_lora_load_path", "") or os.path.join(config.get("lora_load_path", ""), "SOYA_BOT_LORA")
         from modes.bot_lora_mode import get_bot_trained_preview_path
-        fpath = get_bot_trained_preview_path(lora_load_path, bot_name, project_name, char_name, session, filename)
+        fpath = get_bot_trained_preview_path(
+            lora_load_path,
+            bot_name,
+            project_name,
+            char_name,
+            session,
+            filename,
+            visual_card_id,
+        )
         if not fpath:
             return web.Response(status=404)
         return web.FileResponse(fpath)
@@ -24900,6 +25010,7 @@ async def handle_api_bot_lora_trained_delete(request):
         bot_name = body.get("bot", "")
         project_name = body.get("project", "")
         char_name = body.get("character", "")
+        visual_card_id = body.get("visual_card_id", "")
         session = body.get("session", "")
         step = body.get("step", "")
         if not bot_name or not project_name or not char_name or not session or not step:
@@ -24907,7 +25018,15 @@ async def handle_api_bot_lora_trained_delete(request):
         config = load_config()
         lora_load_path = config.get("bot_lora_load_path", "") or os.path.join(config.get("lora_load_path", ""), "SOYA_BOT_LORA")
         from modes.bot_lora_mode import delete_bot_trained_step
-        result = delete_bot_trained_step(lora_load_path, bot_name, project_name, char_name, session, step)
+        result = delete_bot_trained_step(
+            lora_load_path,
+            bot_name,
+            project_name,
+            char_name,
+            session,
+            step,
+            visual_card_id,
+        )
         return web.json_response(result)
     except Exception as e:
         print(f"[BOT_LORA_API] step 삭제 실패: {e}")
@@ -24921,13 +25040,21 @@ async def handle_api_bot_lora_trained_delete_session(request):
         bot_name = body.get("bot", "")
         project_name = body.get("project", "")
         char_name = body.get("character", "")
+        visual_card_id = body.get("visual_card_id", "")
         session = body.get("session", "")
         if not bot_name or not project_name or not char_name or not session:
             return web.json_response({"success": False, "error": "bot, project, character, session 필수"}, status=400)
         config = load_config()
         lora_load_path = config.get("bot_lora_load_path", "") or os.path.join(config.get("lora_load_path", ""), "SOYA_BOT_LORA")
         from modes.bot_lora_mode import delete_bot_trained_session
-        result = delete_bot_trained_session(lora_load_path, bot_name, project_name, char_name, session)
+        result = delete_bot_trained_session(
+            lora_load_path,
+            bot_name,
+            project_name,
+            char_name,
+            session,
+            visual_card_id,
+        )
         return web.json_response(result)
     except Exception as e:
         print(f"[BOT_LORA_API] 세션 삭제 실패: {e}")
@@ -24941,12 +25068,20 @@ async def handle_api_bot_lora_session_representative(request):
         bot_name = body.get("bot", "")
         project_name = body.get("project", "")
         char_name = body.get("character", "")
+        visual_card_id = body.get("visual_card_id", "")
         session_name = body.get("session", "")
         representative = body.get("representative", "")
         if not bot_name or not project_name or not char_name or not session_name:
             return web.json_response({"success": False, "error": "bot, project, character, session 필수"}, status=400)
         from modes.bot_lora_mode import update_char_session_representative
-        result = update_char_session_representative(bot_name, project_name, char_name, session_name, representative)
+        result = update_char_session_representative(
+            bot_name,
+            project_name,
+            char_name,
+            session_name,
+            representative,
+            visual_card_id,
+        )
         return web.json_response(result)
     except Exception as e:
         print(f"[BOT_LORA_API] 세션 대표 설정 실패: {e}")
@@ -24960,11 +25095,14 @@ async def handle_api_bot_lora_session_priority(request):
         bot_name = body.get("bot", "")
         project_name = body.get("project", "")
         char_name = body.get("character", "")
+        visual_card_id = body.get("visual_card_id", "")
         sessions = body.get("sessions", [])
         if not bot_name or not project_name or not char_name:
             return web.json_response({"success": False, "error": "bot, project, character 필수"}, status=400)
         from modes.bot_lora_mode import update_char_session_priority
-        result = update_char_session_priority(bot_name, project_name, char_name, sessions)
+        result = update_char_session_priority(
+            bot_name, project_name, char_name, sessions, visual_card_id
+        )
         return web.json_response(result)
     except Exception as e:
         print(f"[BOT_LORA_API] 세션 우선순위 설정 실패: {e}")
@@ -24978,12 +25116,19 @@ async def handle_api_bot_lora_cleanup_non_representative(request):
         bot_name = body.get("bot", "")
         project_name = body.get("project", "")
         char_name = body.get("character", "")
+        visual_card_id = body.get("visual_card_id", "")
         if not bot_name or not project_name or not char_name:
             return web.json_response({"success": False, "error": "bot, project, character 필수"}, status=400)
         config = load_config()
         lora_load_path = config.get("bot_lora_load_path", "") or os.path.join(config.get("lora_load_path", ""), "SOYA_BOT_LORA")
         from modes.bot_lora_mode import cleanup_non_representative_loras
-        result = cleanup_non_representative_loras(lora_load_path, bot_name, project_name, char_name)
+        result = cleanup_non_representative_loras(
+            lora_load_path,
+            bot_name,
+            project_name,
+            char_name,
+            visual_card_id,
+        )
         return web.json_response(result)
     except Exception as e:
         print(f"[BOT_LORA_API] 대표외 LoRA 정리 실패: {e}")

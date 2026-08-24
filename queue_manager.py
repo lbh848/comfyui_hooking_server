@@ -3793,6 +3793,8 @@ class QueueManager:
         bot_name = params.get("bot", "")
         project_name = params.get("project", "")
         char_name = params.get("character", "")
+        visual_card_id = params.get("visual_card_id", "")
+        visual_card_label = params.get("visual_card_label", "")
         if not char_name:
             raise ValueError("캐릭터 이름이 필요합니다")
 
@@ -3802,7 +3804,7 @@ class QueueManager:
             raise ValueError("Comfy Input 폴더가 유효하지 않습니다")
 
         from modes.bot_lora_mode import (
-            _load_bot_lora_manage,
+            _get_char_config, _load_bot_lora_manage,
             export_bot_training_images, _get_project_training_images,
             list_bot_test_images, list_bot_char_test_images,
         )
@@ -3810,10 +3812,14 @@ class QueueManager:
         manage_data = _load_bot_lora_manage()
         proj_cfg = manage_data.get("bot_loras", {}).get(bot_name, {}).get(project_name, {})
         training_config = proj_cfg.get("training_config", {})
-        char_configs = proj_cfg.get("characters", {})
-        trigger = char_configs.get(char_name, {}).get("trigger", "") or char_name
+        char_cfg = _get_char_config(
+            manage_data, bot_name, project_name, char_name, visual_card_id
+        ) or {}
+        trigger = char_cfg.get("trigger", "") or char_name
 
-        char_test_images = list_bot_char_test_images(bot_name, project_name, char_name)
+        char_test_images = list_bot_char_test_images(
+            bot_name, project_name, char_name, visual_card_id
+        )
         test_images = list_bot_test_images(bot_name, project_name)
         effective_test_images = char_test_images if char_test_images else test_images
 
@@ -3842,12 +3848,27 @@ class QueueManager:
         lora_save_path = training_config.get("lora_save_path", default_save_path)
         if not lora_save_path.rstrip("/").endswith(_safe_dirname_bot(char_name)):
             lora_save_path = lora_save_path.rstrip("/") + "/" + _safe_dirname_bot(char_name)
+        if visual_card_id:
+            lora_save_path = (
+                lora_save_path.rstrip("/")
+                + "/_visual_profiles/"
+                + _safe_dirname_bot(visual_card_id)
+            )
 
-        export_result = export_bot_training_images(bot_name, project_name, char_name, comfy_input_dir, folder)
+        export_result = export_bot_training_images(
+            bot_name,
+            project_name,
+            char_name,
+            comfy_input_dir,
+            folder,
+            visual_card_id,
+        )
         if not export_result.get("success"):
             raise ValueError(f"{char_name} 이미지 전송 실패: {export_result.get('error', '')}")
 
-        images = _get_project_training_images(bot_name, project_name, char_name)
+        images = _get_project_training_images(
+            bot_name, project_name, char_name, visual_card_id
+        )
         if not images:
             raise ValueError(f"{char_name}: 학습 이미지가 없습니다")
 
@@ -3900,6 +3921,8 @@ class QueueManager:
                 "phase": "preparing",
                 "bot_name": bot_name, "project_name": project_name,
                 "character": char_name,
+                "visual_card_id": visual_card_id,
+                "visual_card_label": visual_card_label,
                 "char_index": params.get("char_index", 0),
                 "total_chars": params.get("total_chars", 0),
                 "message": f"'{char_name}' 학습 시작",
@@ -3911,6 +3934,8 @@ class QueueManager:
             event_type="bot_lora_training_progress",
             extra_data={
                 "bot_name": bot_name, "project_name": project_name, "character": char_name,
+                "visual_card_id": visual_card_id,
+                "visual_card_label": visual_card_label,
                 "char_index": params.get("char_index", 0),
                 "total_chars": params.get("total_chars", 0),
             },
@@ -5867,6 +5892,7 @@ class QueueManager:
         bot_name = params.get("bot_name", "")
         project_name = params.get("project_name", "")
         char_name = params.get("char_name", "")
+        visual_card_id = params.get("visual_card_id", "")
         filename = params.get("filename", "")
         entry = params.get("entry", "")
         positive = params.get("positive", "")
@@ -5891,6 +5917,7 @@ class QueueManager:
                 "bot_name": bot_name,
                 "project_name": project_name,
                 "char_name": char_name,
+                "visual_card_id": visual_card_id,
                 "filename": filename,
                 "entry": entry,
             })
@@ -5906,6 +5933,7 @@ class QueueManager:
                 entry=entry,
                 gender_override=gender,
                 is_asset=is_asset,
+                visual_card_id=visual_card_id,
             )
             if not result.get("success"):
                 err = result.get("error", "알 수 없는 오류")
@@ -5918,6 +5946,7 @@ class QueueManager:
                         "bot_name": bot_name,
                         "project_name": project_name,
                         "char_name": char_name,
+                        "visual_card_id": visual_card_id,
                         "filename": filename,
                         "entry": entry,
                         "error": err,
@@ -5929,7 +5958,15 @@ class QueueManager:
             # 서버 워커에서 직접 저장한다. negative는 LLM 정제가 관여하지 않으므로 건드리지 않는다.
             if refined_positive:
                 persist_err = self._persist_refined_positive(
-                    source_type, bot_name, project_name, char_name, entry, filename, refined_positive)
+                    source_type,
+                    bot_name,
+                    project_name,
+                    char_name,
+                    entry,
+                    filename,
+                    refined_positive,
+                    visual_card_id,
+                )
                 if persist_err:
                     print(f"[QUEUE:LORA_PROMPT_REFINE] 정제 positive 저장 실패: source={source_type} bot={bot_name} project={project_name} char={char_name} filename={filename} - {persist_err}")
             await self._notify_progress(item, {"percentage": 100, "phase": "completed"})
@@ -5940,6 +5977,7 @@ class QueueManager:
                     "bot_name": bot_name,
                     "project_name": project_name,
                     "char_name": char_name,
+                    "visual_card_id": visual_card_id,
                     "filename": filename,
                     "entry": entry,
                     "positive": refined_positive,
@@ -5956,6 +5994,7 @@ class QueueManager:
                     "bot_name": bot_name,
                     "project_name": project_name,
                     "char_name": char_name,
+                    "visual_card_id": visual_card_id,
                     "filename": filename,
                     "entry": entry,
                     "error": str(e),
@@ -6228,6 +6267,7 @@ class QueueManager:
         bot_name = params.get("bot_name", "")
         project_name = params.get("project_name", "")
         char_name = params.get("char_name", "")
+        visual_card_id = params.get("visual_card_id", "")
         card_filename = params.get("card_filename", "")
         card_positive = params.get("card_positive", "")
         test_filename = params.get("test_filename", "")
@@ -6247,6 +6287,7 @@ class QueueManager:
                 "bot_name": bot_name,
                 "project_name": project_name,
                 "char_name": char_name,
+                "visual_card_id": visual_card_id,
                 "test_filename": test_filename,
             })
 
@@ -6260,6 +6301,7 @@ class QueueManager:
                 project_name=project_name,
                 source_type="bot_lora_test_setup",
                 card_filename=card_filename,
+                visual_card_id=visual_card_id,
             )
             if not result.get("success"):
                 err = result.get("error", "알 수 없는 오류")
@@ -6271,6 +6313,7 @@ class QueueManager:
                         "bot_name": bot_name,
                         "project_name": project_name,
                         "char_name": char_name,
+                        "visual_card_id": visual_card_id,
                         "test_filename": test_filename,
                         "error": err,
                     })
@@ -6280,7 +6323,13 @@ class QueueManager:
 
             # 영속화: 공통 test → 캐릭터 char_test 복사 + 조합 결과 프롬프트 저장.
             persist_err = self._persist_bot_test_setup(
-                bot_name, project_name, char_name, test_filename, refined_positive)
+                bot_name,
+                project_name,
+                char_name,
+                test_filename,
+                refined_positive,
+                visual_card_id,
+            )
             if persist_err:
                 print(f"[QUEUE:BOT_LORA_TEST_SETUP] 영속화 실패: bot={bot_name} project={project_name} char={char_name} test={test_filename} - {persist_err}")
                 if self.notify_frontend:
@@ -6290,6 +6339,7 @@ class QueueManager:
                         "bot_name": bot_name,
                         "project_name": project_name,
                         "char_name": char_name,
+                        "visual_card_id": visual_card_id,
                         "test_filename": test_filename,
                         "error": persist_err,
                     })
@@ -6303,6 +6353,7 @@ class QueueManager:
                     "bot_name": bot_name,
                     "project_name": project_name,
                     "char_name": char_name,
+                    "visual_card_id": visual_card_id,
                     "test_filename": test_filename,
                     "positive": refined_positive,
                 })
@@ -6318,21 +6369,42 @@ class QueueManager:
                     "bot_name": bot_name,
                     "project_name": project_name,
                     "char_name": char_name,
+                    "visual_card_id": visual_card_id,
                     "test_filename": test_filename,
                     "error": str(e),
                 })
             raise
 
-    def _persist_bot_test_setup(self, bot_name: str, project_name: str, char_name: str,
-                                test_filename: str, positive: str) -> str | None:
+    def _persist_bot_test_setup(
+        self,
+        bot_name: str,
+        project_name: str,
+        char_name: str,
+        test_filename: str,
+        positive: str,
+        visual_card_id: str = "",
+    ) -> str | None:
         """공통 테스트 이미지를 캐릭터 char_test로 복사한 뒤, 조합 결과 positive를 저장.
         반환: 성공 → None, 실패 → 에러 문자열."""
         try:
             from modes.bot_lora_mode import copy_project_test_to_char, save_bot_char_test_prompt_positive_only
-            cp = copy_project_test_to_char(bot_name, project_name, char_name, [test_filename])
+            cp = copy_project_test_to_char(
+                bot_name,
+                project_name,
+                char_name,
+                [test_filename],
+                visual_card_id,
+            )
             if not cp.get("success"):
                 return cp.get("error", "공통 테스트 이미지 복사 실패")
-            sv = save_bot_char_test_prompt_positive_only(bot_name, project_name, char_name, test_filename, positive)
+            sv = save_bot_char_test_prompt_positive_only(
+                bot_name,
+                project_name,
+                char_name,
+                test_filename,
+                positive,
+                visual_card_id,
+            )
             if not sv.get("success"):
                 return sv.get("error", "테스트 프롬프트 저장 실패")
             return None
@@ -6349,6 +6421,7 @@ class QueueManager:
         bot_name = params.get("bot_name", "")
         project_name = params.get("project_name", "")
         char_name = params.get("char_name", "")
+        visual_card_id = params.get("visual_card_id", "")
         card_filename = params.get("card_filename", "")
         card_positive = params.get("card_positive", "")
         test_filename = params.get("test_filename", "")
@@ -6368,6 +6441,7 @@ class QueueManager:
                 "bot_name": bot_name,
                 "project_name": project_name,
                 "char_name": char_name,
+                "visual_card_id": visual_card_id,
                 "test_filename": test_filename,
             })
 
@@ -6381,6 +6455,7 @@ class QueueManager:
                 project_name=project_name,
                 source_type="bot_lora_char_test_setup",
                 card_filename=card_filename,
+                visual_card_id=visual_card_id,
             )
             if not result.get("success"):
                 err = result.get("error", "알 수 없는 오류")
@@ -6392,6 +6467,7 @@ class QueueManager:
                         "bot_name": bot_name,
                         "project_name": project_name,
                         "char_name": char_name,
+                        "visual_card_id": visual_card_id,
                         "test_filename": test_filename,
                         "error": err,
                     })
@@ -6402,7 +6478,14 @@ class QueueManager:
             # 영속화: 복사 없이 기존 char_test 이미지의 positive만 교체.
             try:
                 from modes.bot_lora_mode import save_bot_char_test_prompt_positive_only
-                sv = save_bot_char_test_prompt_positive_only(bot_name, project_name, char_name, test_filename, refined_positive)
+                sv = save_bot_char_test_prompt_positive_only(
+                    bot_name,
+                    project_name,
+                    char_name,
+                    test_filename,
+                    refined_positive,
+                    visual_card_id,
+                )
                 if not sv.get("success"):
                     persist_err = sv.get("error", "테스트 프롬프트 저장 실패")
                 else:
@@ -6421,6 +6504,7 @@ class QueueManager:
                         "bot_name": bot_name,
                         "project_name": project_name,
                         "char_name": char_name,
+                        "visual_card_id": visual_card_id,
                         "test_filename": test_filename,
                         "error": persist_err,
                     })
@@ -6434,6 +6518,7 @@ class QueueManager:
                     "bot_name": bot_name,
                     "project_name": project_name,
                     "char_name": char_name,
+                    "visual_card_id": visual_card_id,
                     "test_filename": test_filename,
                     "positive": refined_positive,
                 })
@@ -6449,6 +6534,7 @@ class QueueManager:
                     "bot_name": bot_name,
                     "project_name": project_name,
                     "char_name": char_name,
+                    "visual_card_id": visual_card_id,
                     "test_filename": test_filename,
                     "error": str(e),
                 })
@@ -6564,8 +6650,17 @@ class QueueManager:
             traceback.print_exc()
             return f"{type(e).__name__}: {e}"
 
-    def _persist_refined_positive(self, source_type: str, bot_name: str, project_name: str,
-                                  char_name: str, entry: str, filename: str, positive: str) -> str | None:
+    def _persist_refined_positive(
+        self,
+        source_type: str,
+        bot_name: str,
+        project_name: str,
+        char_name: str,
+        entry: str,
+        filename: str,
+        positive: str,
+        visual_card_id: str = "",
+    ) -> str | None:
         """LLM 정제 결과 positive만 영속화. negative는 절대 건드리지 않는다.
 
         반환: 성공/미지원 source → None, 실패 → 에러 문자열.
@@ -6575,7 +6670,14 @@ class QueueManager:
         try:
             if source_type == "bot_lora_training":
                 from modes.bot_lora_mode import save_bot_training_prompt_positive_only
-                sv = save_bot_training_prompt_positive_only(bot_name, project_name, char_name, filename, positive)
+                sv = save_bot_training_prompt_positive_only(
+                    bot_name,
+                    project_name,
+                    char_name,
+                    filename,
+                    positive,
+                    visual_card_id,
+                )
                 if not sv.get("success"):
                     return sv.get("error", "저장 실패")
                 return None
