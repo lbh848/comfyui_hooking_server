@@ -4909,7 +4909,7 @@ def test_lighbd_history_records_are_updated_by_history_id_with_backup(
         json.loads(line)
         for line in history_path.read_text(encoding="utf-8").splitlines()
     ]
-    backup_path = tmp_path / "요구사항" / "lighbd_history.jsonl.bak"
+    backup_path = history_path.parent / "backups" / "lighbd_history.jsonl.bak"
     assert updated == 2
     assert records[0]["status"] == "race_won"
     assert records[1]["status"] == "race_lost"

@@ -290,7 +290,7 @@ def _log_lighbd_history(record: dict) -> None:
     """lighbd 전용 히스토리 파일(logs/lighbd_history.jsonl)에 append.
     일반 호출 최근 100개와 다중 분리 호출 최근 100개를 별도로 유지한다.
 
-    CLAUDE.md 규칙: write 전 백업. 요구사항/ 폴더에 .bak 보관.
+    배포 환경에도 존재하는 logs/backups/ 폴더에 write 전 백업을 보관한다.
     """
     if _consume_manual_race_success_suppression(record):
         print(
@@ -301,7 +301,10 @@ def _log_lighbd_history(record: dict) -> None:
         return
     try:
         os.makedirs(LOG_DIR, exist_ok=True)
-        history_backup_dir = os.path.join(BASE_DIR, "요구사항")
+        history_backup_dir = os.path.join(
+            os.path.dirname(LIGHBD_HISTORY_PATH),
+            "backups",
+        )
         os.makedirs(history_backup_dir, exist_ok=True)
         backup_path = os.path.join(history_backup_dir, "lighbd_history.jsonl.bak")
 
@@ -529,7 +532,10 @@ def _update_lighbd_history_records(updates_by_id: dict[str, dict]) -> int:
         if not matched_ids:
             return 0
 
-        history_backup_dir = os.path.join(BASE_DIR, "요구사항")
+        history_backup_dir = os.path.join(
+            os.path.dirname(LIGHBD_HISTORY_PATH),
+            "backups",
+        )
         os.makedirs(history_backup_dir, exist_ok=True)
         backup_path = os.path.join(history_backup_dir, "lighbd_history.jsonl.bak")
         with open(backup_path, "w", encoding="utf-8") as backup_file:

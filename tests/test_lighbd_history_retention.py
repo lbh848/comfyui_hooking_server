@@ -62,7 +62,7 @@ def test_multi_char_history_has_independent_retention_budget(tmp_path, monkeypat
         "general-4",
         "multi-4",
     ]
-    assert (tmp_path / "요구사항" / "lighbd_history.jsonl.bak").is_file()
+    assert (tmp_path / "logs" / "backups" / "lighbd_history.jsonl.bak").is_file()
 
 
 @pytest.mark.asyncio
@@ -141,4 +141,4 @@ async def test_manual_parallel_race_records_winner_and_discarded_without_ok_dupl
     assert saved[2]["race_role"] == "parallel"
     assert saved[2]["winner_stream_id"] == "replacement-id"
     assert len({record["history_id"] for record in saved}) == 3
-    assert (tmp_path / "요구사항" / "lighbd_history.jsonl.bak").is_file()
+    assert (tmp_path / "logs" / "backups" / "lighbd_history.jsonl.bak").is_file()
