@@ -59,6 +59,24 @@ class _JsonRequest:
 class _InlineLlmQueue:
     def __init__(self):
         self.added = []
+        self.progress_events = []
+        self.items = []
+
+    async def _notify_progress(self, item, detail):
+        item.progress = float(detail.get("percentage") or 0)
+        item.progress_detail = deepcopy(detail)
+        self.progress_events.append({
+            "item_id": item.id,
+            "progress": item.progress,
+            "detail": deepcopy(detail),
+        })
+
+    async def cancel_item(self, item_id):
+        item = next((value for value in self.items if value.id == item_id), None)
+        if item is None or item.status != "pending":
+            return False
+        item.status = "cancelled"
+        return True
 
     async def add_item(
         self,
@@ -73,9 +91,13 @@ class _InlineLlmQueue:
             id="visual-guide-queue",
             type=item_type,
             label=label,
+            status="processing",
             params=deepcopy(params),
+            progress=0.0,
+            progress_detail={},
             completion_future=asyncio.get_running_loop().create_future(),
         )
+        self.items.append(item)
         self.added.append({
             "item_type": item_type,
             "label": label,
@@ -87,6 +109,11 @@ class _InlineLlmQueue:
         except Exception as exc:
             item.completion_future.set_exception(exc)
         else:
+            item.status = (
+                "cancelled"
+                if getattr(item, "_runtime_cancelled", False)
+                else "completed"
+            )
             item.completion_future.set_result(result)
         return item
 
@@ -298,6 +325,227 @@ async def test_suggest_metadata_calls_llm_once_per_character(monkeypatch):
     assert detail_records[0]["target_count"] == 2
     assert detail_records[1]["profile_ids"] == ["mina_1"]
     assert detail_records[1]["target_count"] == 1
+    assert [event["progress"] for event in queue.progress_events] == [
+        0.0,
+        50.0,
+        50.0,
+        100.0,
+    ]
+    assert [event["detail"]["stage"] for event in queue.progress_events] == [
+        "processing",
+        "completed",
+        "processing",
+        "completed",
+    ]
+    assert queue.progress_events[0]["detail"]["character"] == "Riko"
+    assert queue.progress_events[0]["detail"]["current"] == 1
+    assert queue.progress_events[0]["detail"]["total"] == 2
+    assert len(queue.progress_events[1]["detail"]["suggestions"]) == 2
+    assert queue.progress_events[2]["detail"]["character"] == "Mina"
+    assert len(queue.progress_events[3]["detail"]["suggestions"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_visual_guide_cancel_stops_active_stream_and_skips_remaining_characters(
+    monkeypatch,
+):
+    bot_mode = importlib.import_module("modes.bot_mode")
+    llm_service = importlib.import_module("modes.llm_service")
+    lighbd_service = importlib.import_module("modes.lighbd_service")
+    data = _bot_data([_card("riko_1", "기본", "Riko_normal.webp")])
+    data["bots"][0]["characters"].append({
+        "name": "Mina",
+        "visual_cards": [_card("mina_1", "기본", "Mina_normal.webp")],
+    })
+    queue = _InlineLlmQueue()
+    detail_records = []
+    calls = []
+    cancel_calls = []
+    stream_started = asyncio.Event()
+    stream_released = asyncio.Event()
+
+    async def fake_call(_task_key, _messages, **kwargs):
+        calls.append(kwargs["execution_context"].metadata["character"])
+        await kwargs["stream_observer"]({
+            "type": "request_mode",
+            "streaming": True,
+            "llm_slot": "llm1",
+        })
+        await kwargs["stream_observer"]({
+            "type": "stream_open",
+            "stream_id": "visual-stream-1",
+            "llm_slot": "llm1",
+        })
+        stream_started.set()
+        await stream_released.wait()
+        await kwargs["stream_observer"]({
+            "type": "cancelled",
+            "stream_id": "visual-stream-1",
+            "llm_slot": "llm1",
+        })
+        context = kwargs["execution_context"]
+        kwargs["execution_observer"]({
+            "type": "execution_complete",
+            "llm_slot": "llm1",
+            "phase": "primary",
+            "execution_id": context.execution_id,
+        })
+        return llm_service.ManualCancelledText("[LLM 실패] 사용자 중지")
+
+    def fake_stream_control(stream_id, action):
+        cancel_calls.append((stream_id, action))
+        stream_released.set()
+        return True, action
+
+    monkeypatch.setattr(bot_mode, "_load_bot_data", lambda: data)
+    monkeypatch.setattr(bot_mode, "_load_lb_extra", lambda _bot_name: [])
+    monkeypatch.setattr(llm_service, "callLLMTask", fake_call)
+    monkeypatch.setattr(llm_service, "request_stream_control", fake_stream_control)
+    monkeypatch.setattr(lighbd_service, "_log_lighbd_history", detail_records.append)
+
+    manager = bot_mode.BotMode()
+    manager.set_queue_manager(queue)
+    suggest_task = asyncio.create_task(
+        manager.handle_suggest_character_card_metadata(
+            _JsonRequest({
+                "bot_name": "demo",
+                "targets": [
+                    {"character": "Riko", "profile_id": "riko_1"},
+                    {"character": "Mina", "profile_id": "mina_1"},
+                ],
+            })
+        )
+    )
+    try:
+        await asyncio.wait_for(stream_started.wait(), timeout=2)
+        assert len(queue.items) == 1
+        cancel_response = await manager.handle_cancel_character_card_metadata_suggestion(
+            _JsonRequest({"item_id": queue.items[0].id})
+        )
+        cancel_payload = json.loads(cancel_response.text)
+        response = await asyncio.wait_for(suggest_task, timeout=2)
+    finally:
+        stream_released.set()
+
+    payload = json.loads(response.text)
+    assert cancel_response.status == 200
+    assert cancel_payload["success"] is True
+    assert cancel_payload["mode"] == "stream_cancel_requested"
+    assert cancel_payload["stream_cancelled"] == 1
+    assert cancel_calls == [("visual-stream-1", "cancel")]
+    assert calls == ["Riko"]
+    assert response.status == 200
+    assert payload["success"] is True
+    assert payload["cancelled"] is True
+    assert payload["completed_character_count"] == 0
+    assert payload["character_call_count"] == 2
+    assert payload["suggestions"] == []
+    assert queue.items[0].status == "cancelled"
+    assert [event["detail"]["stage"] for event in queue.progress_events] == [
+        "processing",
+        "cancelling",
+        "cancelled",
+    ]
+    assert len(detail_records) == 1
+    assert detail_records[0]["status"] == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_visual_guide_cancel_waits_for_non_streaming_call_and_keeps_its_result(
+    monkeypatch,
+):
+    bot_mode = importlib.import_module("modes.bot_mode")
+    llm_service = importlib.import_module("modes.llm_service")
+    lighbd_service = importlib.import_module("modes.lighbd_service")
+    data = _bot_data([_card("riko_1", "기본", "Riko_normal.webp")])
+    data["bots"][0]["characters"].append({
+        "name": "Mina",
+        "visual_cards": [_card("mina_1", "기본", "Mina_normal.webp")],
+    })
+    queue = _InlineLlmQueue()
+    detail_records = []
+    calls = []
+    call_started = asyncio.Event()
+    call_released = asyncio.Event()
+
+    async def fake_call(_task_key, _messages, **kwargs):
+        metadata = kwargs["execution_context"].metadata
+        calls.append(metadata["character"])
+        await kwargs["stream_observer"]({
+            "type": "request_mode",
+            "streaming": False,
+            "llm_slot": "llm1",
+        })
+        call_started.set()
+        await call_released.wait()
+        raw = json.dumps({
+            "suggestions": [{
+                "target_key": "0",
+                "aliases": ["Riko_Normal"],
+                "selection_guide": "리코의 기본 프로필이 성립할 때 선택한다.",
+                "evidence": "기본 형태 근거",
+                "confidence": "high",
+            }]
+        }, ensure_ascii=False)
+        valid, reason = kwargs["result_validator"](raw)
+        assert valid, reason
+        context = kwargs["execution_context"]
+        kwargs["execution_observer"]({
+            "type": "execution_complete",
+            "llm_slot": "llm1",
+            "phase": "primary",
+            "execution_id": context.execution_id,
+        })
+        return raw
+
+    monkeypatch.setattr(bot_mode, "_load_bot_data", lambda: data)
+    monkeypatch.setattr(bot_mode, "_load_lb_extra", lambda _bot_name: [])
+    monkeypatch.setattr(llm_service, "callLLMTask", fake_call)
+    monkeypatch.setattr(lighbd_service, "_log_lighbd_history", detail_records.append)
+
+    manager = bot_mode.BotMode()
+    manager.set_queue_manager(queue)
+    suggest_task = asyncio.create_task(
+        manager.handle_suggest_character_card_metadata(
+            _JsonRequest({
+                "bot_name": "demo",
+                "targets": [
+                    {"character": "Riko", "profile_id": "riko_1"},
+                    {"character": "Mina", "profile_id": "mina_1"},
+                ],
+            })
+        )
+    )
+    try:
+        await asyncio.wait_for(call_started.wait(), timeout=2)
+        cancel_response = await manager.handle_cancel_character_card_metadata_suggestion(
+            _JsonRequest({"item_id": queue.items[0].id})
+        )
+        cancel_payload = json.loads(cancel_response.text)
+        call_released.set()
+        response = await asyncio.wait_for(suggest_task, timeout=2)
+    finally:
+        call_released.set()
+
+    payload = json.loads(response.text)
+    assert cancel_response.status == 200
+    assert cancel_payload["mode"] == "after_current"
+    assert cancel_payload["stream_cancelled"] == 0
+    assert calls == ["Riko"]
+    assert response.status == 200
+    assert payload["cancelled"] is True
+    assert payload["completed_character_count"] == 1
+    assert payload["character_call_count"] == 2
+    assert [item["profile_id"] for item in payload["suggestions"]] == ["riko_1"]
+    assert queue.items[0].status == "cancelled"
+    assert [event["detail"]["stage"] for event in queue.progress_events] == [
+        "processing",
+        "cancelling",
+        "completed",
+        "cancelled",
+    ]
+    assert len(detail_records) == 1
+    assert detail_records[0]["status"] == "ok"
 
 
 @pytest.mark.asyncio
@@ -440,6 +688,42 @@ async def test_queue_manager_dispatches_visual_guide_runtime_handler():
     assert result == {"success": True}
 
 
+@pytest.mark.asyncio
+async def test_queue_manager_preserves_partial_result_for_runtime_cancellation():
+    queue_manager = importlib.import_module("queue_manager")
+    manager = queue_manager.QueueManager()
+    item = queue_manager.QueueItem(
+        id="visual-runtime-cancelled",
+        type="visual_profile_guide",
+        label="프로필 선택 기준 중단 테스트",
+    )
+    partial_result = {
+        "suggestions": [{"character": "Riko", "profile_id": "riko_1"}],
+        "cancelled": True,
+    }
+
+    async def runtime_handler(_item):
+        _item._runtime_cancelled = True
+        _item._runtime_cancel_reason = "사용자 중단"
+        _item._return_result_on_cancel = True
+        return partial_result
+
+    async def no_prune(_item):
+        return None
+
+    item._runtime_handler = runtime_handler
+    item.completion_future = asyncio.get_running_loop().create_future()
+    manager.items.append(item)
+    manager._deferred_prune = no_prune
+
+    await manager._run_item_pipeline(item, is_gpu=False)
+
+    assert item.status == "cancelled"
+    assert item.error == "사용자 중단"
+    assert item.progress == 0.0
+    assert await item.completion_future == partial_result
+
+
 def test_visual_profile_guide_is_registered_in_routing_queue_and_frontend():
     root = importlib.import_module("pathlib").Path(__file__).resolve().parents[1]
     server_source = (root / "server.py").read_text(encoding="utf-8")
@@ -450,6 +734,7 @@ def test_visual_profile_guide_is_registered_in_routing_queue_and_frontend():
     assert "{ key: 'visual_profile_guide'" in frontend
     assert "visual_profile_guide" in queue_manager.LLM_TYPES
     assert 'visual_profile_guide: \'프로필 선택 기준\'' in frontend
+    assert '"/api/bot_mode/character_cards/suggest_metadata/cancel"' in server_source
 
 
 @pytest.mark.asyncio
@@ -565,6 +850,14 @@ def test_frontend_has_thumbnail_review_modal_and_explicit_apply_modes():
     assert "기존 값도 교체" in frontend
     assert "source_text: state.sourceText" in frontend
     assert "이 임시 원문은 시스템 프롬프트에 저장되지 않습니다" in frontend
+    assert "_handleVisualGuideQueueProgress(data)" in frontend
+    assert "_visualGuideMergeSuggestions(liveSuggestions)" in frontend
+    assert "detail.phase !== 'visual_profile_guide'" in frontend
+    assert "LLM 처리 중 ${progressPosition}" in frontend
+    assert "d.phase === 'visual_profile_guide'" in frontend
+    assert 'id="visual-guide-stop"' in frontend
+    assert "stopVisualGuideGeneration()" in frontend
+    assert "/api/bot_mode/character_cards/suggest_metadata/cancel" in frontend
     assert "/api/bot_mode/character_cards/suggest_metadata" in frontend
     assert "/api/bot_mode/character_cards/apply_metadata" in frontend
     assert "overlay.onclick" not in frontend[

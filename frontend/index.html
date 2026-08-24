@@ -64739,6 +64739,9 @@
                     sourceScope: String(source.scope || ''),
                     search: '',
                     busy: false,
+                    progress: null,
+                    queueItemId: '',
+                    cancelRequested: false,
                 };
                 const overlay = document.createElement('div');
                 overlay.id = 'visual-guide-generator-overlay';
@@ -64764,6 +64767,7 @@
                             <button type="button" onclick="_visualGuideSetSelection('none')" style="padding:5px 9px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);cursor:pointer">전체 해제</button>
                             <span id="visual-guide-count" style="font-size:.72rem;color:var(--text2)"></span>
                             <button id="visual-guide-generate" type="button" onclick="generateVisualGuideSuggestions()" style="margin-left:auto;padding:7px 13px;border:none;border-radius:7px;background:#7C3AED;color:#fff;cursor:pointer;font-weight:700">선택 항목 생성/재생성</button>
+                            <button id="visual-guide-stop" type="button" onclick="stopVisualGuideGeneration()" style="display:none;padding:7px 13px;border:1px solid #ef4444;border-radius:7px;background:rgba(239,68,68,.16);color:#fca5a5;cursor:pointer;font-weight:800">중단</button>
                         </div>
                         <div id="visual-guide-list" class="visual-guide-list"></div>
                         <div class="visual-guide-footer">
@@ -64853,14 +64857,52 @@
             const readyCount = state.targets.filter(target => target.selected && target.suggestion).length;
             const count = document.getElementById('visual-guide-count');
             if (count) count.textContent = `전체 ${state.targets.length} · 선택 ${selectedCount} · 적용 가능 ${readyCount}`;
+            const progress = state.busy && state.progress ? state.progress : null;
+            const progressTotal = Math.max(0, Number(progress?.total || 0));
+            const progressCurrent = Math.max(0, Number(progress?.current || 0));
+            const progressCompleted = Math.max(0, Number(progress?.completed || 0));
+            const progressPosition = progressTotal > 0
+                ? `${progressCurrent}/${progressTotal}`
+                : '';
+            const progressCharacter = String(progress?.character || '').trim();
+            const progressProfiles = Math.max(0, Number(progress?.profile_count || 0));
             const footerStatus = document.getElementById('visual-guide-footer-status');
-            if (footerStatus) footerStatus.textContent = state.busy ? '처리 중…' : `검토 후 선택한 ${readyCount}개 제안을 적용합니다.`;
+            if (footerStatus) {
+                if (state.busy && progressTotal > 0) {
+                    const stageText = state.cancelRequested || progress?.stage === 'cancelling'
+                        ? `중단 요청 중 · 완료 ${progressCompleted}/${progressTotal}`
+                        : (progress?.stage === 'completed'
+                            ? `완료 ${progressCompleted}/${progressTotal}`
+                            : `처리 중 ${progressPosition}`);
+                    footerStatus.textContent = [
+                        stageText,
+                        progressCharacter,
+                        progressProfiles ? `프로필 ${progressProfiles}개` : '',
+                    ].filter(Boolean).join(' · ');
+                } else {
+                    footerStatus.textContent = state.busy
+                        ? '큐 대기 중…'
+                        : `검토 후 선택한 ${readyCount}개 제안을 적용합니다.`;
+                }
+            }
             const generate = document.getElementById('visual-guide-generate');
             if (generate) {
                 generate.disabled = state.busy || selectedCount === 0;
                 generate.style.opacity = generate.disabled ? '.55' : '1';
                 generate.style.cursor = state.busy ? 'wait' : (selectedCount ? 'pointer' : 'not-allowed');
-                generate.textContent = state.busy ? 'LLM 처리 중…' : '선택 항목 생성/재생성';
+                generate.textContent = state.busy
+                    ? (progressPosition ? `LLM 처리 중 ${progressPosition}` : 'LLM 큐 대기 중…')
+                    : '선택 항목 생성/재생성';
+            }
+            const stop = document.getElementById('visual-guide-stop');
+            if (stop) {
+                stop.style.display = state.busy ? '' : 'none';
+                stop.disabled = !state.busy || state.cancelRequested || !state.queueItemId;
+                stop.style.opacity = stop.disabled ? '.55' : '1';
+                stop.style.cursor = stop.disabled ? 'not-allowed' : 'pointer';
+                stop.textContent = state.cancelRequested
+                    ? '중단 요청 중…'
+                    : (state.queueItemId ? '중단' : '큐 등록 대기…');
             }
             const apply = document.getElementById('visual-guide-apply');
             if (apply) {
@@ -64998,6 +65040,116 @@
             _renderVisualGuideRows();
         }
 
+        function _visualGuideMergeSuggestions(suggestions) {
+            const state = _visualGuideModalState;
+            if (!state || !Array.isArray(suggestions)) {
+                console.error('[VISUAL_GUIDE] 실시간 제안 반영 대상 오류', {
+                    hasState: !!state,
+                    suggestions,
+                });
+                return 0;
+            }
+            const targetByIdentity = new Map(
+                state.targets.map(target => [target.identity, target])
+            );
+            let applied = 0;
+            suggestions.forEach(suggestion => {
+                const identity = _visualGuideTargetIdentity(
+                    suggestion?.character,
+                    suggestion?.profile_id,
+                );
+                const target = targetByIdentity.get(identity);
+                if (!target) {
+                    console.error('[VISUAL_GUIDE] 서버 제안에 해당하는 현재 카드 누락', {
+                        character: suggestion?.character,
+                        profileId: suggestion?.profile_id,
+                    });
+                    return;
+                }
+                target.suggestion = {
+                    aliases: Array.isArray(suggestion.aliases) ? [...suggestion.aliases] : [],
+                    selection_guide: String(suggestion.selection_guide || ''),
+                    evidence: String(suggestion.evidence || ''),
+                    confidence: ['high','medium','low'].includes(suggestion.confidence)
+                        ? suggestion.confidence
+                        : 'low',
+                };
+                if (target.suggestion.confidence === 'low') target.selected = false;
+                applied += 1;
+            });
+            return applied;
+        }
+
+        function _handleVisualGuideQueueProgress(data) {
+            const state = _visualGuideModalState;
+            const detail = data?.detail || {};
+            if (!state || !state.busy || data?.item_type !== 'visual_profile_guide') return;
+            if (detail.phase !== 'visual_profile_guide') return;
+            if (String(detail.bot_name || '') !== String(state.botName || '')) return;
+
+            state.queueItemId = String(data.item_id || state.queueItemId || '');
+            if (detail.cancel_requested || detail.stage === 'cancelling') {
+                state.cancelRequested = true;
+            }
+            state.progress = {
+                stage: String(detail.stage || 'processing'),
+                current: Number(detail.current || 0),
+                completed: Number(detail.completed || 0),
+                total: Number(detail.total || 0),
+                character: String(detail.character || ''),
+                profile_count: Number(detail.profile_count || 0),
+            };
+            const liveSuggestions = Array.isArray(detail.suggestions)
+                ? detail.suggestions
+                : [];
+            const applied = _visualGuideMergeSuggestions(liveSuggestions);
+            if (applied > 0) {
+                _renderVisualGuideRows();
+            } else {
+                _visualGuideUpdateControls();
+            }
+        }
+
+        async function stopVisualGuideGeneration() {
+            const state = _visualGuideModalState;
+            if (!state || !state.busy || state.cancelRequested) return;
+            if (!state.queueItemId) {
+                console.error('[VISUAL_GUIDE] 중단할 큐 항목 ID가 아직 없습니다', {
+                    bot: state.botName,
+                });
+                showToast('큐 등록이 완료된 뒤 중단할 수 있습니다.', 'info');
+                return;
+            }
+            state.cancelRequested = true;
+            _visualGuideUpdateControls();
+            try {
+                const response = await fetch(
+                    '/api/bot_mode/character_cards/suggest_metadata/cancel',
+                    {
+                        method: 'POST',
+                        headers: {'Content-Type':'application/json'},
+                        body: JSON.stringify({item_id: state.queueItemId}),
+                    },
+                );
+                const result = await response.json();
+                if (!response.ok || !result.success) {
+                    throw new Error(result.error || '중단 요청 실패');
+                }
+                const message = result.mode === 'stream_cancel_requested'
+                    ? '현재 LLM 스트림에 중단을 요청했습니다.'
+                    : '현재 호출 완료 후 중단합니다.';
+                showToast(message, 'info');
+            } catch (error) {
+                console.error('[VISUAL_GUIDE] 중단 요청 실패', error, {
+                    bot: state.botName,
+                    queueItemId: state.queueItemId,
+                });
+                state.cancelRequested = false;
+                _visualGuideUpdateControls();
+                showToast('중단 요청 실패: ' + error.message, 'error');
+            }
+        }
+
         async function generateVisualGuideSuggestions() {
             const state = _visualGuideModalState;
             if (!state || state.busy) {
@@ -65025,6 +65177,18 @@
                 return;
             }
             state.busy = true;
+            state.queueItemId = '';
+            state.cancelRequested = false;
+            state.progress = {
+                stage: 'queued',
+                current: 0,
+                completed: 0,
+                total: new Set(
+                    selected.map(target => String(target.character || '').toLocaleLowerCase())
+                ).size,
+                character: '',
+                profile_count: 0,
+            };
             _renderVisualGuideRows();
             try {
                 const response = await fetch('/api/bot_mode/character_cards/suggest_metadata', {
@@ -65043,29 +65207,17 @@
                 if (!response.ok || !result.success || !Array.isArray(result.suggestions)) {
                     throw new Error(result.error || 'LLM 제안 생성 실패');
                 }
-                const suggestionByTarget = new Map(result.suggestions.map(suggestion => [
-                    _visualGuideTargetIdentity(suggestion.character, suggestion.profile_id),
-                    suggestion,
-                ]));
-                let applied = 0;
-                selected.forEach(target => {
-                    const suggestion = suggestionByTarget.get(target.identity);
-                    if (!suggestion) {
-                        console.error('[VISUAL_GUIDE] 서버 응답에서 대상 제안 누락', {
-                            character: target.character,
-                            profileId: target.profileId,
-                        });
-                        return;
-                    }
-                    target.suggestion = {
-                        aliases: Array.isArray(suggestion.aliases) ? [...suggestion.aliases] : [],
-                        selection_guide: String(suggestion.selection_guide || ''),
-                        evidence: String(suggestion.evidence || ''),
-                        confidence: ['high','medium','low'].includes(suggestion.confidence) ? suggestion.confidence : 'low',
-                    };
-                    if (target.suggestion.confidence === 'low') target.selected = false;
-                    applied += 1;
-                });
+                const applied = _visualGuideMergeSuggestions(result.suggestions);
+                if (result.cancelled) {
+                    const completed = Math.max(0, Number(result.completed_character_count || 0));
+                    const total = Math.max(0, Number(result.character_call_count || 0));
+                    showToast(
+                        `선택 기준 생성 중단 · 캐릭터 ${completed}/${total}` +
+                        `${applied ? ` · 생성 결과 ${applied}개 유지` : ''}`,
+                        'info',
+                    );
+                    return;
+                }
                 if (!applied) {
                     console.error('[VISUAL_GUIDE] 적용 가능한 LLM 제안이 없습니다', {result});
                     throw new Error('응답에 현재 카드와 연결되는 제안이 없습니다.');
@@ -65080,6 +65232,9 @@
             } finally {
                 if (_visualGuideModalState === state) {
                     state.busy = false;
+                    state.progress = null;
+                    state.queueItemId = '';
+                    state.cancelRequested = false;
                     _renderVisualGuideRows();
                 }
             }
@@ -89904,6 +90059,15 @@
                                 phaseHint = '<span style="font-size:0.65rem;color:var(--text3);margin-left:2px;">' +
                                     comfyInstallerFormatBytes(done) + '/' + comfyInstallerFormatBytes(total) + '</span>';
                             }
+                        } else if (d.phase === 'visual_profile_guide') {
+                            const cur = Math.max(0, Number(d.current || 0));
+                            const tot = Math.max(0, Number(d.total || 0));
+                            statusText = tot > 0 ? cur + '/' + tot : Math.round(item.progress || 0) + '%';
+                            const character = String(d.character || '').trim();
+                            if (character) {
+                                phaseHint = '<span style="font-size:0.65rem;color:var(--text3);margin-left:2px;">' +
+                                    escapeHtml(character) + '</span>';
+                            }
                         } else if (d.step && d.total) {
                             statusText = d.step + '/' + d.total;
                         }
@@ -90780,6 +90944,15 @@
                     if (total > 0) {
                         progressLabel += ` <span style="font-size:0.65rem;color:var(--text3);">${current}/${total} 단계</span>`;
                     }
+                } else if (d.phase === 'visual_profile_guide') {
+                    const current = Math.max(0, Number(d.current || 0));
+                    const total = Math.max(0, Number(d.total || 0));
+                    const character = String(d.character || '').trim();
+                    progressLabel = `${pct}%`;
+                    if (total > 0) {
+                        progressLabel += ` <span style="font-size:0.65rem;color:var(--text3);">${current}/${total}` +
+                            `${character ? ' · ' + escapeHtml(character) : ''}</span>`;
+                    }
                 } else if (String(d.phase || '').startsWith('video_')) {
                     const phaseLabels = {
                         video_postprocess_preparing: '후처리 준비',
@@ -91178,6 +91351,7 @@
 
         function handleQueueProgress(data) {
             if (!data) { console.warn('[QUEUE] handleQueueProgress: 데이터 없음'); return; }
+            _handleVisualGuideQueueProgress(data);
             const item = assetQueue.find(q => q.id === data.item_id);
             if (item) {
                 item.progress = data.progress || 0;

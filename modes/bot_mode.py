@@ -3304,9 +3304,67 @@ class BotMode:
                 )
                 return _json_error("LLM 통합 큐가 준비되지 않았습니다.", 503)
 
+            async def notify_visual_guide_progress(
+                queue_item,
+                *,
+                stage: str,
+                character: str,
+                character_index: int,
+                profile_ids: list[str],
+                completed: int,
+                suggestions: list[dict] | None = None,
+                error: str = "",
+            ) -> None:
+                detail = {
+                    "phase": "visual_profile_guide",
+                    "stage": stage,
+                    "bot_name": bot_name,
+                    "character": character,
+                    "current": character_index,
+                    "completed": completed,
+                    "total": character_count,
+                    "profile_count": len(profile_ids),
+                    "profile_ids": list(profile_ids),
+                    "percentage": (
+                        (completed / character_count) * 100
+                        if character_count > 0
+                        else 0
+                    ),
+                }
+                if suggestions is not None:
+                    detail["suggestions"] = deepcopy(suggestions)
+                if error:
+                    detail["error"] = error
+                try:
+                    notify_progress = getattr(
+                        self._queue_manager,
+                        "_notify_progress",
+                        None,
+                    )
+                    if not callable(notify_progress):
+                        raise RuntimeError("큐 진행률 알림 함수가 없습니다")
+                    await notify_progress(queue_item, detail)
+                except Exception as exc:
+                    print(
+                        f"[VISUAL_GUIDE:PROGRESS] 진행률 알림 실패: "
+                        f"bot={bot_name!r}, character={character!r}, "
+                        f"call={character_index}/{character_count}, stage={stage!r}, "
+                        f"error={type(exc).__name__}: {exc}"
+                    )
+                    traceback.print_exc()
+
             async def run_visual_guide_queue(queue_item):
+                if not hasattr(queue_item, "_visual_guide_cancel_requested"):
+                    queue_item._visual_guide_cancel_requested = False
+                queue_item._visual_guide_active_stream_ids = set()
+                queue_item._visual_guide_streaming = False
                 suggestions = []
+                completed_character_count = 0
+                cancelled = False
                 for character_index, group in enumerate(character_groups, start=1):
+                    if bool(queue_item._visual_guide_cancel_requested):
+                        cancelled = completed_character_count < character_count
+                        break
                     character = str(group["character"])
                     call_targets = [
                         {**target, "target_key": str(target_index)}
@@ -3324,6 +3382,14 @@ class BotMode:
                         )
                         for target in call_targets
                     ]
+                    await notify_visual_guide_progress(
+                        queue_item,
+                        stage="processing",
+                        character=character,
+                        character_index=character_index,
+                        profile_ids=profile_ids,
+                        completed=character_index - 1,
+                    )
                     messages = _build_visual_guide_messages(system_prompt, call_targets)
                     accepted = {}
                     usage = {}
@@ -3408,6 +3474,33 @@ class BotMode:
                         if str(event.get("type") or "") == "execution_complete":
                             execution_complete.update(event)
 
+                    stream_state = {"cancelled": False}
+
+                    async def observe_stream(event):
+                        event_type = str(event.get("type") or "").strip().lower()
+                        stream_id = str(event.get("stream_id") or "").strip()
+                        if event_type == "request_mode":
+                            queue_item._visual_guide_streaming = bool(
+                                event.get("streaming", False)
+                            )
+                        if event_type == "stream_open" and stream_id:
+                            queue_item._visual_guide_active_stream_ids.add(stream_id)
+                            if bool(queue_item._visual_guide_cancel_requested):
+                                success, reason = llm_service.request_stream_control(
+                                    stream_id,
+                                    "cancel",
+                                )
+                                if not success:
+                                    print(
+                                        f"[VISUAL_GUIDE:CANCEL] 스트림 즉시 중단 실패: "
+                                        f"item={queue_item.id}, stream={stream_id}, "
+                                        f"reason={reason}"
+                                    )
+                        if event_type in {"done", "error", "cancelled"} and stream_id:
+                            queue_item._visual_guide_active_stream_ids.discard(stream_id)
+                        if event_type == "cancelled":
+                            stream_state["cancelled"] = True
+
                     print(
                         f"[VISUAL_GUIDE:API] LLM 생성 시작: bot={bot_name!r}, "
                         f"preset={preset!r}, scope={scope!r}, "
@@ -3421,6 +3514,7 @@ class BotMode:
                             messages,
                             json_mode=True,
                             result_validator=result_validator,
+                            stream_observer=observe_stream,
                             metadata_sink=usage,
                             on_attempt_failure=on_attempt_failure,
                             execution_context=execution_context,
@@ -3440,6 +3534,15 @@ class BotMode:
                             f"error={type(exc).__name__}: {exc}"
                         )
                         traceback.print_exc()
+                        await notify_visual_guide_progress(
+                            queue_item,
+                            stage="failed",
+                            character=character,
+                            character_index=character_index,
+                            profile_ids=profile_ids,
+                            completed=character_index - 1,
+                            error=f"{type(exc).__name__}: {exc}",
+                        )
                         _log_visual_guide_llm_history(
                             llm_service_module=llm_service,
                             bot_name=bot_name,
@@ -3469,6 +3572,60 @@ class BotMode:
                         or llm_service.routing_primary_slot(VISUAL_GUIDE_TASK_KEY)
                     )
                     phase = str(execution_complete.get("phase") or "primary")
+                    manual_cancel_type = getattr(
+                        llm_service,
+                        "ManualCancelledText",
+                        None,
+                    )
+                    if (
+                        bool(queue_item._visual_guide_cancel_requested)
+                        and (
+                            stream_state["cancelled"]
+                            or (
+                                manual_cancel_type is not None
+                                and isinstance(raw, manual_cancel_type)
+                            )
+                        )
+                    ):
+                        cancelled = True
+                        cancel_reason = "사용자가 현재 LLM 호출을 중단했습니다"
+                        await notify_visual_guide_progress(
+                            queue_item,
+                            stage="cancelled",
+                            character=character,
+                            character_index=character_index,
+                            profile_ids=profile_ids,
+                            completed=completed_character_count,
+                            error=cancel_reason,
+                        )
+                        _log_visual_guide_llm_history(
+                            llm_service_module=llm_service,
+                            bot_name=bot_name,
+                            messages=messages,
+                            output=raw,
+                            status="cancelled",
+                            error=cancel_reason,
+                            usage=usage,
+                            elapsed=elapsed,
+                            phase=phase,
+                            llm_slot=slot,
+                            history_id=execution_context.execution_id,
+                            execution_id=execution_context.execution_id,
+                            parent_execution_id=execution_context.parent_execution_id,
+                            queue_item_id=queue_item.id,
+                            character=character,
+                            profile_ids=profile_ids,
+                            profile_labels=profile_labels,
+                            character_index=character_index,
+                            character_count=character_count,
+                        )
+                        print(
+                            f"[VISUAL_GUIDE:CANCEL] 현재 스트림 중단 완료: "
+                            f"bot={bot_name!r}, character={character!r}, "
+                            f"call={character_index}/{character_count}, "
+                            f"completed={completed_character_count}"
+                        )
+                        break
                     profile_suggestions = accepted.get("suggestions")
                     if profile_suggestions is None:
                         parsed = llm_prompt_edit.parse_llm_json(raw)
@@ -3487,6 +3644,15 @@ class BotMode:
                             f"character={character!r}, profiles={profile_ids!r}, "
                             f"call={character_index}/{character_count}, error={error}, "
                             f"raw_preview={raw_for_detail[:500]!r}"
+                        )
+                        await notify_visual_guide_progress(
+                            queue_item,
+                            stage="failed",
+                            character=character,
+                            character_index=character_index,
+                            profile_ids=profile_ids,
+                            completed=character_index - 1,
+                            error=error,
                         )
                         _log_visual_guide_llm_history(
                             llm_service_module=llm_service,
@@ -3536,16 +3702,45 @@ class BotMode:
                         character_count=character_count,
                     )
                     suggestions.extend(profile_suggestions)
+                    completed_character_count = character_index
+                    await notify_visual_guide_progress(
+                        queue_item,
+                        stage="completed",
+                        character=character,
+                        character_index=character_index,
+                        profile_ids=profile_ids,
+                        completed=character_index,
+                        suggestions=profile_suggestions,
+                    )
                     print(
                         f"[VISUAL_GUIDE:API] LLM 생성 완료: bot={bot_name!r}, "
                         f"character={character!r}, profiles={profile_ids!r}, "
                         f"call={character_index}/{character_count}, "
                         f"suggestions={len(profile_suggestions)}, queue_item={queue_item.id}"
                     )
+                    if bool(queue_item._visual_guide_cancel_requested):
+                        cancelled = completed_character_count < character_count
+                        if cancelled:
+                            await notify_visual_guide_progress(
+                                queue_item,
+                                stage="cancelled",
+                                character=character,
+                                character_index=character_index,
+                                profile_ids=profile_ids,
+                                completed=completed_character_count,
+                                error="현재 캐릭터 완료 후 사용자 요청으로 중단",
+                            )
+                        break
+                if cancelled:
+                    queue_item._runtime_cancelled = True
+                    queue_item._runtime_cancel_reason = "프로필 선택 기준 자동 작성을 중단했습니다"
+                    queue_item._return_result_on_cancel = True
                 return {
                     "suggestions": suggestions,
                     "target_count": len(resolved_targets),
                     "character_call_count": character_count,
+                    "completed_character_count": completed_character_count,
+                    "cancelled": cancelled,
                 }
 
             try:
@@ -3608,6 +3803,13 @@ class BotMode:
                 "suggestions": suggestions,
                 "source": {"preset": preset, "scope": scope},
                 "target_count": len(resolved_targets),
+                "character_call_count": int(
+                    queue_result.get("character_call_count") or 0
+                ),
+                "completed_character_count": int(
+                    queue_result.get("completed_character_count") or 0
+                ),
+                "cancelled": bool(queue_result.get("cancelled", False)),
             })
         except VisualProfileValidationError as e:
             print(f"[VISUAL_GUIDE:API] 생성 대상 검증 실패: error={e}")
@@ -3616,6 +3818,134 @@ class BotMode:
             print(f"[VISUAL_GUIDE:API] 생성 예외: {e}")
             traceback.print_exc()
             return _json_error(str(e), 500)
+
+    async def handle_cancel_character_card_metadata_suggestion(self, request):
+        """Stop a running visual-guide job and cancel its active stream when possible."""
+        try:
+            body = await request.json()
+            item_id = str(body.get("item_id") or "").strip()
+            if not item_id:
+                print(
+                    f"[VISUAL_GUIDE:CANCEL] 중단 요청 거부: "
+                    f"item_id가 비어 있음, body={body!r}"
+                )
+                return _json_error("중단할 큐 항목 ID가 필요합니다.")
+            if self._queue_manager is None:
+                print(
+                    f"[VISUAL_GUIDE:CANCEL] 중단 요청 실패: "
+                    f"queue_manager 미주입, item={item_id}"
+                )
+                return _json_error("LLM 통합 큐가 준비되지 않았습니다.", 503)
+
+            queue_item = next(
+                (
+                    item
+                    for item in self._queue_manager.items
+                    if str(getattr(item, "id", "")) == item_id
+                ),
+                None,
+            )
+            if queue_item is None:
+                print(
+                    f"[VISUAL_GUIDE:CANCEL] 중단할 큐 항목 없음: "
+                    f"item={item_id}"
+                )
+                return _json_error("중단할 프로필 선택 기준 작업을 찾지 못했습니다.", 404)
+            if str(getattr(queue_item, "type", "")) != VISUAL_GUIDE_QUEUE_TYPE:
+                print(
+                    f"[VISUAL_GUIDE:CANCEL] 다른 큐 타입 중단 거부: "
+                    f"item={item_id}, type={getattr(queue_item, 'type', '')!r}"
+                )
+                return _json_error("프로필 선택 기준 작업만 중단할 수 있습니다.")
+
+            status = str(getattr(queue_item, "status", ""))
+            if status == "pending":
+                cancelled = await self._queue_manager.cancel_item(item_id)
+                if not cancelled:
+                    print(
+                        f"[VISUAL_GUIDE:CANCEL] pending 취소 실패: "
+                        f"item={item_id}, status={getattr(queue_item, 'status', '')!r}"
+                    )
+                    return _json_error("대기 작업을 취소하지 못했습니다.", 409)
+                return _json_ok({
+                    "success": True,
+                    "item_id": item_id,
+                    "mode": "pending_cancelled",
+                    "stream_cancelled": 0,
+                })
+            if status not in {"waiting", "processing"}:
+                print(
+                    f"[VISUAL_GUIDE:CANCEL] 종료된 작업 중단 거부: "
+                    f"item={item_id}, status={status!r}"
+                )
+                return _json_error("이미 종료된 작업입니다.", 409)
+
+            queue_item._visual_guide_cancel_requested = True
+            from modes import llm_service
+
+            active_stream_ids = list(
+                getattr(queue_item, "_visual_guide_active_stream_ids", set()) or []
+            )
+            stream_cancelled = 0
+            for stream_id in active_stream_ids:
+                success, reason = llm_service.request_stream_control(
+                    str(stream_id),
+                    "cancel",
+                )
+                if success:
+                    stream_cancelled += 1
+                else:
+                    print(
+                        f"[VISUAL_GUIDE:CANCEL] 활성 스트림 중단 실패: "
+                        f"item={item_id}, stream={stream_id}, reason={reason}"
+                    )
+
+            progress_detail = dict(
+                getattr(queue_item, "progress_detail", {}) or {}
+            )
+            progress_detail.update({
+                "phase": "visual_profile_guide",
+                "stage": "cancelling",
+                "cancel_requested": True,
+            })
+            try:
+                await self._queue_manager._notify_progress(
+                    queue_item,
+                    progress_detail,
+                )
+            except Exception as exc:
+                print(
+                    f"[VISUAL_GUIDE:CANCEL] 중단 상태 알림 실패: "
+                    f"item={item_id}, error={type(exc).__name__}: {exc}"
+                )
+                traceback.print_exc()
+
+            mode = "stream_cancel_requested" if active_stream_ids else "after_current"
+            print(
+                f"[VISUAL_GUIDE:CANCEL] 중단 요청 접수: item={item_id}, "
+                f"status={status}, mode={mode}, active_streams={len(active_stream_ids)}, "
+                f"stream_cancelled={stream_cancelled}"
+            )
+            return _json_ok({
+                "success": True,
+                "item_id": item_id,
+                "mode": mode,
+                "stream_cancelled": stream_cancelled,
+            })
+        except (json.JSONDecodeError, TypeError, ValueError) as exc:
+            print(
+                f"[VISUAL_GUIDE:CANCEL] 중단 요청 파싱 실패: "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            return _json_error(str(exc))
+        except Exception as exc:
+            print(
+                f"[VISUAL_GUIDE:CANCEL] 중단 요청 예외: "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            return _json_error(str(exc), 500)
 
     async def handle_apply_character_card_metadata(self, request):
         """Atomically apply reviewed suggestions to bot.json."""

@@ -22652,6 +22652,10 @@ app.router.add_post(
     bot_mode.handle_suggest_character_card_metadata,
 )
 app.router.add_post(
+    "/api/bot_mode/character_cards/suggest_metadata/cancel",
+    bot_mode.handle_cancel_character_card_metadata_suggestion,
+)
+app.router.add_post(
     "/api/bot_mode/character_cards/apply_metadata",
     bot_mode.handle_apply_character_card_metadata,
 )

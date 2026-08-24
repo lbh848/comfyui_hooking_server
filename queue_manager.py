@@ -405,7 +405,10 @@ class QueueManager:
         elif item.status == "failed":
             fut.set_exception(RuntimeError(item.error or "큐 처리 실패"))
         elif item.status == "cancelled":
-            fut.set_exception(RuntimeError("큐 항목이 취소되었습니다"))
+            if getattr(item, "_return_result_on_cancel", False):
+                fut.set_result(item.result)
+            else:
+                fut.set_exception(RuntimeError("큐 항목이 취소되었습니다"))
 
     @staticmethod
     def _mark_completion_future_observed(fut: asyncio.Future) -> None:
@@ -1570,10 +1573,21 @@ class QueueManager:
                 gate_cb_token = None
         try:
             result = await self._execute_item(item)
-            item.status = "completed"
             item.result = result
-            item.progress = 100.0
-            print(f"[QUEUE] 처리 완료: id={item.id}")
+            if getattr(item, "_runtime_cancelled", False):
+                item.status = "cancelled"
+                item.error = str(
+                    getattr(item, "_runtime_cancel_reason", "")
+                    or "사용자가 작업을 중단했습니다"
+                )
+                print(
+                    f"[QUEUE] 런타임 작업 중단: id={item.id}, "
+                    f"type={item.type}, reason={item.error}"
+                )
+            else:
+                item.status = "completed"
+                item.progress = 100.0
+                print(f"[QUEUE] 처리 완료: id={item.id}")
         except Exception as e:
             item.status = "failed"
             item.error = str(e)
