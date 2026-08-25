@@ -23,7 +23,13 @@ from urllib.parse import quote
 
 import yaml
 
-from modes import lighbd_service, llm_service, multi_char_mask, postprocess
+from modes import (
+    illustration_original_assets,
+    lighbd_service,
+    llm_service,
+    multi_char_mask,
+    postprocess,
+)
 from modes.visual_profiles import (
     profile_by_id,
     resolve_visual_base,
@@ -90,6 +96,10 @@ PROMPT_FILES = {
 }
 
 DEFAULT_TOGGLES = {
+    "illustration_enabled": True,
+    "original_asset_enabled": False,
+    "original_asset_count": 1,
+    "original_asset_instruction": "",
     "call1_backtranslate_enabled": False,
     "call1_backtranslate_max_concurrency": 4,
     "call1_backtranslate_slow_retry_enabled": False,
@@ -407,6 +417,10 @@ def merged_toggles(value: dict | None) -> dict:
         out["scene_mode"] = "auto" if str(out.get("scene_mode")) == "auto" else "manual"
         out["output_count_min"] = max(1, min(30, int(out["output_count_min"])))
         out["output_count_max"] = max(1, min(30, int(out["output_count_max"])))
+        out["original_asset_count"] = max(
+            1,
+            min(30, int(out["original_asset_count"])),
+        )
         if out["output_count_min"] > out["output_count_max"]:
             print(
                 f"[ILLUST_CONTEXT] output_count_min({out['output_count_min']}) > "
@@ -460,7 +474,19 @@ def merged_toggles(value: dict | None) -> dict:
             "scene_mode": DEFAULT_TOGGLES["scene_mode"],
             "output_count_min": DEFAULT_TOGGLES["output_count_min"],
             "output_count_max": DEFAULT_TOGGLES["output_count_max"],
+            "original_asset_count": DEFAULT_TOGGLES["original_asset_count"],
         })
+    instruction = str(out.get("original_asset_instruction") or "")
+    if len(instruction) > illustration_original_assets.MAX_ORIGINAL_ASSET_INSTRUCTION_CHARS:
+        print(
+            f"[ILLUST_ORIGINAL_ASSET] 설정 지시문 길이 제한 적용: "
+            f"chars={len(instruction)}, "
+            f"max={illustration_original_assets.MAX_ORIGINAL_ASSET_INSTRUCTION_CHARS}"
+        )
+        instruction = instruction[
+            :illustration_original_assets.MAX_ORIGINAL_ASSET_INSTRUCTION_CHARS
+        ]
+    out["original_asset_instruction"] = instruction
     # 예전 UI에서 저장한 고정 배치 크기는 더 이상 사용하지 않는다. CALL2-PLAN이
     # 선택한 전체 장면 수를 최대 동시 요청 수에 맞춰 자동 분배한다.
     out.pop("call2_parallel_batch_size", None)
@@ -1021,7 +1047,22 @@ def session_image(session_id: str, index: int) -> bytes | None:
     if index < 1 or index > len(images):
         print(f"[ILLUST_CONTEXT] 이미지 회수 범위 초과: session={session_id}, index={index}, count={len(images)}")
         return None
-    return images[index - 1]
+    image = images[index - 1]
+    if image is None and index - 1 < len(session.get("items") or []):
+        descriptor = session["items"][index - 1]
+        if str(descriptor.get("kind") or "") == "original_asset":
+            image = illustration_original_assets.load_original_asset_bytes(
+                os.path.join(BASE_DIR, "bot"),
+                descriptor,
+            )
+            if image:
+                images[index - 1] = image
+            else:
+                print(
+                    f"[ILLUST_CONTEXT] 원본 에셋 지연 회수 실패: "
+                    f"session={session_id}, index={index}"
+                )
+    return image
 
 
 def session_image_by_slot(session_id: str, slot: int) -> bytes | None:
@@ -1037,7 +1078,20 @@ def session_image_by_slot(session_id: str, slot: int) -> bytes | None:
         except Exception:
             continue
         if item_slot == int(slot) and index < len(images):
-            return images[index]
+            image = images[index]
+            if image is None and str(item.get("kind") or "") == "original_asset":
+                image = illustration_original_assets.load_original_asset_bytes(
+                    os.path.join(BASE_DIR, "bot"),
+                    item,
+                )
+                if image:
+                    images[index] = image
+                else:
+                    print(
+                        f"[ILLUST_CONTEXT] 원본 에셋 슬롯 지연 회수 실패: "
+                        f"session={session_id}, slot={slot}"
+                    )
+            return image
     print(f"[ILLUST_CONTEXT] 슬롯 이미지 없음: session={session_id}, slot={slot}")
     return None
 
@@ -6894,6 +6948,7 @@ def _build_character_history(extra_reference: str) -> str:
 # 삽화 CALL 이름 → 외부 LLM 분기 task_key. PLAN/DETAIL/KEYVIS는 사용자가 선택한
 # 하나의 illustration_call2 경로를 공유한다. 기본 primary=llm1(server.py 참고).
 _CALL_TASK_KEYS = {
+    "ORIGINAL-ASSET": "illustration_original_asset",
     "CALL1-BACKTRANSLATE": "illustration_call1_backtranslate",
     "CALL1": "illustration_call1",
     "CALL2": "illustration_call2",
@@ -6911,6 +6966,7 @@ _CALL_TASK_KEYS = {
 # 역번역(CALL1-BACKTRANSLATE)/다중캐릭터마스크(MULTI-CHAR-MASK)는 병렬 청크용 wrapper가
 # index/total을 직접 주입하므로 여기서 제외한다.
 _CALL_QUEUE_SUBTASK_GROUPS = {
+    "ORIGINAL-ASSET": ("original_asset", "원본 에셋 선택"),
     "CALL1": ("call1", "CALL1 컨텍스트 보강"),
     "CALL2": ("call2", "CALL2 장면/태그 빌드"),
     "CALL2-PLAN": ("call2_plan", "CALL2 장면 PLAN"),

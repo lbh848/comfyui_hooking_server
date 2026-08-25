@@ -149,6 +149,7 @@ from modes.word_rules import (
 from modes import chansub_service
 from modes import illustration_chat_history
 from modes import illustration_context_pipeline
+from modes import illustration_original_assets
 from modes import multi_char_mask
 from modes.character_maker_mode import (
     MAX_REFERENCE_BYTES,
@@ -593,6 +594,10 @@ DEFAULT_CONFIG = {
     "llm_reasoning_preset3": "auto",  # LLM3 전용 reasoning preset
     "llm_reasoning_effort3": "",      # LLM3 전용 reasoning effort
     "illustration_context_toggles": {
+        "illustration_enabled": True,
+        "original_asset_enabled": False,
+        "original_asset_count": 1,
+        "original_asset_instruction": "",
         "call1_backtranslate_enabled": False,
         "call1_backtranslate_max_concurrency": 4,
         "call1_backtranslate_slow_retry_enabled": False,
@@ -707,6 +712,7 @@ DEFAULT_CONFIG = {
         "illustration_call2":      _llm_route_defaults(),  # PLAN/DETAIL/KEYVIS 장면·태그 빌드 공유
         "illustration_call2_fix":  _llm_route_defaults(),  # CALL2 파싱 실패 시 TOON 교정(repair.txt)
         "illustration_call3":      _llm_route_defaults(),  # 대사 생성(speak/manga)
+        "illustration_original_asset": _llm_route_defaults(json_mode=True),  # 업로드 원본 에셋 단일 선택
         "illustration_multi_char_mask": _llm_route_defaults(json_mode=True),  # CALL3 뒤 캐릭터별 정규화 영역 계산
     },
     "llm_max_concurrency": 1,         # LLM1 실제 API 동시 요청 상한
@@ -5860,6 +5866,247 @@ def build_effective_visual_profiles(bot_name: str) -> dict:
     return copy.deepcopy(collected.get("visual_profiles") or {})
 
 
+def _original_asset_bot_character_names(bot_name: str) -> list[str]:
+    """Read the selected bot's declared character folders without modifying bot.json."""
+    if not bot_name:
+        print("[ILLUST_ORIGINAL_ASSET] 선택된 봇 이름이 비어 있음")
+        return []
+    root = _load_bot_data_readonly()
+    bot = next(
+        (
+            entry
+            for entry in (root.get("bots") or [])
+            if isinstance(entry, dict)
+            and str(entry.get("name") or "") == bot_name
+        ),
+        None,
+    )
+    if bot is None:
+        print(f"[ILLUST_ORIGINAL_ASSET] bot.json에서 선택 봇을 찾지 못함: bot={bot_name!r}")
+        return []
+    names = [
+        str(character.get("name") or "").strip()
+        for character in (bot.get("characters") or [])
+        if isinstance(character, dict) and str(character.get("name") or "").strip()
+    ]
+    if not names:
+        print(f"[ILLUST_ORIGINAL_ASSET] 선택 봇의 캐릭터 목록이 비어 있음: bot={bot_name!r}")
+    return names
+
+
+def _original_asset_context(payload: dict, context_turns: int) -> tuple[str, str]:
+    """Build prose context and the current slotted response for the one-step selector."""
+    chats = payload.get("chats") or []
+    if not isinstance(chats, list):
+        print(
+            f"[ILLUST_ORIGINAL_ASSET] CHAT이 배열이 아님: "
+            f"type={type(chats).__name__}"
+        )
+        return "", ""
+    target_index = next((
+        index
+        for index in range(len(chats) - 1, -1, -1)
+        if isinstance(chats[index], dict)
+        and chats[index].get("role") == "char"
+        and str(chats[index].get("data") or "").strip()
+    ), -1)
+    if target_index < 0:
+        print(
+            f"[ILLUST_ORIGINAL_ASSET] 현재 응답을 찾지 못함: chats={len(chats)}"
+        )
+        return "", ""
+    try:
+        context_turns = max(0, min(30, int(context_turns)))
+    except Exception as e:
+        print(
+            f"[ILLUST_ORIGINAL_ASSET] 컨텍스트 범위 파싱 실패: "
+            f"value={context_turns!r}, error={e}"
+        )
+        traceback.print_exc()
+        context_turns = 5
+    recent = chats[max(0, target_index - context_turns):target_index + 1]
+    context_parts = []
+    for message in recent:
+        if not isinstance(message, dict):
+            print(
+                f"[ILLUST_ORIGINAL_ASSET] CHAT 항목이 객체가 아니어서 제외: "
+                f"item={message!r}"
+            )
+            continue
+        role = str(message.get("role") or "unknown").upper()
+        data = str(message.get("data") or "").strip()
+        if not data:
+            print(
+                f"[ILLUST_ORIGINAL_ASSET] 빈 CHAT 항목 제외: "
+                f"role={role!r}, index={chats.index(message)}"
+            )
+            continue
+        context_parts.append(f"{role}:\n{data}")
+    target_slotted = str(payload.get("target_slotted") or "").strip()
+    if not target_slotted:
+        narrative = str(chats[target_index].get("data") or "")
+        target_slotted = illustration_context_pipeline.insert_slots(
+            illustration_context_pipeline._strip_nodes(narrative)
+        )
+    return "\n\n".join(context_parts), target_slotted
+
+
+async def _select_original_asset_outputs(
+    *,
+    payload: dict,
+    toggles: dict,
+    active_bot: str,
+    used_slots: set[int],
+    reserve_slot_count: int,
+    stream_notify,
+    llm_trace: list[str],
+) -> dict:
+    """Run the single selector call, validate exact IDs, and read source bytes."""
+    requested_count = int(toggles.get("original_asset_count") or 1)
+    result = {
+        "items": [],
+        "images": [],
+        "failures": [],
+        "requested_count": requested_count,
+        "target_slotted": "",
+    }
+    instruction = str(toggles.get("original_asset_instruction") or "").strip()
+    if not instruction:
+        print(
+            f"[ILLUST_ORIGINAL_ASSET] 선택 건너뜀 - 사용자 지시문이 비어 있음: "
+            f"bot={active_bot!r}, requested={requested_count}"
+        )
+        result["failures"] = [
+            {"slot": None, "error": "원본 에셋 선택 지시문이 비어 있습니다"}
+            for _ in range(requested_count)
+        ]
+        return result
+
+    conversation_context, target_slotted = _original_asset_context(
+        payload,
+        int(toggles.get("call2_context_turns") or 5),
+    )
+    result["target_slotted"] = target_slotted
+    candidate_slots = illustration_context_pipeline.candidate_slots(target_slotted)
+    allowed_slots = [slot for slot in candidate_slots if slot not in used_slots]
+    reserve_slot_count = max(0, int(reserve_slot_count))
+    selectable_capacity = max(0, len(allowed_slots) - reserve_slot_count)
+    effective_count = min(requested_count, selectable_capacity)
+    if effective_count < requested_count:
+        missing = requested_count - effective_count
+        print(
+            f"[ILLUST_ORIGINAL_ASSET] 사용 가능한 삽입 슬롯 부족: "
+            f"bot={active_bot!r}, requested={requested_count}, "
+            f"available={len(allowed_slots)}, reserved={reserve_slot_count}, "
+            f"used={sorted(used_slots)}"
+        )
+        result["failures"].extend(
+            {"slot": None, "error": "원본 에셋을 삽입할 빈 대화 슬롯이 부족합니다"}
+            for _ in range(missing)
+        )
+    if effective_count <= 0:
+        print(
+            f"[ILLUST_ORIGINAL_ASSET] 선택 건너뜀 - 빈 삽입 슬롯 없음: "
+            f"bot={active_bot!r}, requested={requested_count}"
+        )
+        return result
+
+    character_names = _original_asset_bot_character_names(active_bot)
+    asset_index = illustration_original_assets.build_original_asset_index(
+        os.path.join(BASE_DIR, "bot"),
+        active_bot,
+        character_names,
+    )
+    if not asset_index:
+        print(
+            f"[ILLUST_ORIGINAL_ASSET] 선택 건너뜀 - 검증 가능한 업로드 원본 없음: "
+            f"bot={active_bot!r}, requested={effective_count}"
+        )
+        result["failures"].extend(
+            {"slot": None, "error": "선택된 봇에 검증 가능한 원본 에셋이 없습니다"}
+            for _ in range(effective_count)
+        )
+        return result
+
+    async def call_selector(messages, validator):
+        return await illustration_context_pipeline._call_pipeline_llm(
+            "ORIGINAL-ASSET",
+            messages,
+            stream_notify=stream_notify,
+            result_validator=validator,
+            json_mode=True,
+            history_ids_sink=llm_trace,
+        )
+
+    selections = await illustration_original_assets.select_original_assets(
+        call_llm=call_selector,
+        instruction=instruction,
+        conversation_context=conversation_context,
+        target_slotted=target_slotted,
+        allowed_slots=allowed_slots,
+        requested_count=effective_count,
+        asset_index=asset_index,
+    )
+    anchors = illustration_context_pipeline.slot_context_anchors(target_slotted)
+    for selection in selections:
+        candidate = selection["candidate"]
+        slot = int(selection["slot"])
+        try:
+            with open(candidate.path, "rb") as source:
+                image_bytes = source.read()
+        except Exception as e:
+            print(
+                f"[ILLUST_ORIGINAL_ASSET] 선택 원본 읽기 실패: "
+                f"bot={active_bot!r}, src={selection['src']!r}, "
+                f"path={candidate.path!r}, error={e}"
+            )
+            traceback.print_exc()
+            result["failures"].append({
+                "slot": slot,
+                "error": f"선택 원본 파일 읽기 실패: {selection['src']}",
+            })
+            continue
+        if not image_bytes:
+            print(
+                f"[ILLUST_ORIGINAL_ASSET] 선택 원본 파일이 비어 있음: "
+                f"bot={active_bot!r}, src={selection['src']!r}, "
+                f"path={candidate.path!r}"
+            )
+            result["failures"].append({
+                "slot": slot,
+                "error": f"선택 원본 파일이 비어 있습니다: {selection['src']}",
+            })
+            continue
+        anchor = anchors.get(slot) or {}
+        descriptor = {
+            "kind": "original_asset",
+            "slot": slot,
+            "camera": "",
+            "scene": f"원본 에셋: {selection['src']}",
+            "supplement": "",
+            "speak": "",
+            "characters": [],
+            "anchor_before": str(anchor.get("anchor_before") or ""),
+            "anchor_after": str(anchor.get("anchor_after") or ""),
+            "anchor_version": 1,
+            "animated": _detect_illustration_bridge_image_animation(image_bytes),
+            "original_asset": {
+                "bot_name": candidate.bot_name,
+                "character": candidate.character,
+                "filename": candidate.filename,
+                "command": candidate.command,
+            },
+        }
+        result["items"].append(descriptor)
+        result["images"].append(image_bytes)
+        print(
+            f"[ILLUST_ORIGINAL_ASSET] 원본 에셋 선택 완료: "
+            f"bot={active_bot!r}, slot={slot}, src={candidate.command!r}, "
+            f"bytes={len(image_bytes)}"
+        )
+    return result
+
+
 async def process_illustration_context_queue_item(item) -> dict:
     """CALL2 뒤 이미지 큐와 CALL3를 병렬 실행하고 후처리 합류까지 기다린다."""
     params = item.params or {}
@@ -5874,13 +6121,22 @@ async def process_illustration_context_queue_item(item) -> dict:
     illustration_workflow_type_snapshot = workflow_profiles.normalize_illustration_workflow_type(
         runtime_snapshot.get("illustration_workflow_type")
     )
-    illust_toggles = copy.deepcopy(
-        runtime_snapshot.get("illustration_context_toggles") or {}
+    illust_toggles = illustration_context_pipeline.merged_toggles(
+        copy.deepcopy(runtime_snapshot.get("illustration_context_toggles") or {})
     )
+    illustration_enabled = bool(illust_toggles.get("illustration_enabled", True))
+    original_asset_enabled = bool(illust_toggles.get("original_asset_enabled", False))
+    invalid_output_configuration = not illustration_enabled and not original_asset_enabled
+    if invalid_output_configuration:
+        print(
+            f"[ILLUST_CONTEXT] 실행 가능한 출력 방식이 없음: "
+            f"session={session_id}, illustration_enabled={illustration_enabled}, "
+            f"original_asset_enabled={original_asset_enabled}"
+        )
     multi_char_mask_active = illustration_context_pipeline.should_enable_multi_char_layout(
         illust_toggles,
         illustration_provider_snapshot,
-    )
+    ) if illustration_enabled else False
     if not multi_char_mask_active:
         print(
             f"[ILLUST_CONTEXT:MULTI_CHAR] MULTI-CHAR-MASK 비활성: "
@@ -5894,6 +6150,12 @@ async def process_illustration_context_queue_item(item) -> dict:
     early_descriptor_slots = []
     early_dispatch = False
     raw_items = []
+    original_asset_result = {
+        "items": [],
+        "images": [],
+        "failures": [],
+        "requested_count": 0,
+    }
     history_plan = None
     history_finalize_attempted = False
     # build_from_context 완료 후 MULTI-CHAR-MASK~CALL3 의 LLM 호출 id 목록으로 채워진다.
@@ -5983,6 +6245,93 @@ async def process_illustration_context_queue_item(item) -> dict:
                 traceback.print_exc()
         data.update({"prompt_id": original_prompt_id, "session_id": session_id})
         await notify_frontend("lighbd_llm_stream", data)
+
+    async def _publish_session_results(
+        result_items: list[dict],
+        result_images: list[bytes],
+        requested_count: int,
+        failures: list[dict],
+    ) -> dict:
+        if not result_images:
+            print(
+                f"[ILLUST_CONTEXT] 게시 가능한 최종 이미지가 없음: "
+                f"session={session_id}, requested={requested_count}, failures={failures}"
+            )
+            raise RuntimeError("게시 가능한 삽화 또는 원본 에셋 결과가 없습니다")
+        if len(result_items) != len(result_images):
+            print(
+                f"[ILLUST_CONTEXT] 최종 descriptor/image 수 불일치: "
+                f"session={session_id}, items={len(result_items)}, "
+                f"images={len(result_images)}"
+            )
+            raise RuntimeError("최종 삽화 descriptor와 이미지 수가 다릅니다")
+        pairs = list(zip(result_items, result_images))
+        try:
+            pairs.sort(key=lambda pair: int(pair[0].get("slot")))
+        except Exception as e:
+            print(
+                f"[ILLUST_CONTEXT] 최종 결과 슬롯 정렬 실패: "
+                f"session={session_id}, error={e}, items={result_items!r}"
+            )
+            traceback.print_exc()
+            raise
+        sorted_slots = [int(pair[0].get("slot")) for pair in pairs]
+        if len(sorted_slots) != len(set(sorted_slots)):
+            print(
+                f"[ILLUST_CONTEXT] 최종 결과 slot 중복: "
+                f"session={session_id}, slots={sorted_slots}"
+            )
+            raise RuntimeError("최종 삽화와 원본 에셋의 삽입 슬롯이 중복됩니다")
+        sorted_items = [pair[0] for pair in pairs]
+        sorted_images = [pair[1] for pair in pairs]
+        failure_count = max(
+            len(failures),
+            max(0, int(requested_count) - len(sorted_images)),
+        )
+        illustration_context_pipeline.set_session_result(
+            session_id,
+            sorted_items,
+            sorted_images,
+            requested_count=requested_count,
+            failures=failures,
+        )
+        original = prompts[original_prompt_id]
+        original["image_bytes"] = sorted_images[0]
+        original["_serve_image_bytes_original"] = (
+            str(sorted_items[0].get("kind") or "") == "original_asset"
+        )
+        filename = f"ComfyUI_{original_prompt_id[:8]}.png"
+        await complete_prompt_from_reschedule(
+            original_prompt_id,
+            original.get("save_node_id") or find_save_image_node(prompt_data) or "9",
+            filename,
+        )
+        ready_phase = "ready_partial" if failure_count else "ready"
+        ready_label = (
+            f"성공 {len(sorted_images)}/{requested_count}장 반환 준비 완료 · "
+            f"최종 실패 {failure_count}장 제외"
+            if failure_count
+            else f"전체 {len(sorted_images)}장 반환 준비 완료"
+        )
+        await progress(
+            100,
+            ready_phase,
+            ready_label,
+            len(sorted_images),
+            requested_count,
+        )
+        print(
+            f"[ILLUST_CONTEXT] 세션 완료: session={session_id}, "
+            f"success={len(sorted_images)}/{requested_count}, failed={failure_count}, "
+            f"original_assets={sum(1 for item in sorted_items if item.get('kind') == 'original_asset')}"
+        )
+        return {
+            "success": True,
+            "session_id": session_id,
+            "count": len(sorted_images),
+            "requested_count": requested_count,
+            "failed_count": failure_count,
+        }
 
     # 단일 슬롯을 삽화 하위 큐에 등록. 조기 등록과 2차 재시도가 모두 이 함수를 경유한다.
     async def _enqueue_child(
@@ -6158,10 +6507,97 @@ async def process_illustration_context_queue_item(item) -> dict:
             return None, f"후처리 실패 - {e}", False
 
     try:
+        if invalid_output_configuration:
+            raise RuntimeError("일반 삽화 또는 원본 에셋 출력을 하나 이상 켜야 합니다")
         if not original_prompt_id or original_prompt_id not in prompts:
             print(f"[ILLUST_CONTEXT] 원본 prompt 엔트리 없음: {original_prompt_id!r}")
             raise RuntimeError("원본 prompt 엔트리를 찾지 못했습니다")
-        if payload.get("protocol") == "prompt_batch_v1":
+        pipeline_payload = payload
+        if original_asset_enabled:
+            reserve_slot_count = 0
+            preused_slots: set[int] = set()
+            if illustration_enabled and payload.get("protocol") != "prompt_batch_v1":
+                reserve_slot_count = (
+                    int(illust_toggles.get("output_count_min") or 1)
+                    if str(illust_toggles.get("scene_mode") or "manual") == "manual"
+                    else 1
+                )
+            elif illustration_enabled:
+                for descriptor in payload.get("items") or []:
+                    try:
+                        preused_slots.add(int(descriptor.get("slot")))
+                    except Exception as e:
+                        print(
+                            f"[ILLUST_ORIGINAL_ASSET] 확정 프롬프트 slot 파싱 실패: "
+                            f"session={session_id}, descriptor={descriptor!r}, error={e}"
+                        )
+                        traceback.print_exc()
+                        raise
+            await progress(
+                1,
+                "original_asset",
+                f"원본 에셋 {illust_toggles['original_asset_count']}장 선택",
+            )
+            try:
+                original_asset_result = await _select_original_asset_outputs(
+                    payload=payload,
+                    toggles=illust_toggles,
+                    active_bot=active_bot,
+                    used_slots=preused_slots,
+                    reserve_slot_count=reserve_slot_count,
+                    stream_notify=stream_notify,
+                    llm_trace=llm_trace,
+                )
+            except asyncio.CancelledError:
+                print(
+                    f"[ILLUST_ORIGINAL_ASSET] 선택 작업 취소: session={session_id}"
+                )
+                raise
+            except Exception as e:
+                print(
+                    f"[ILLUST_ORIGINAL_ASSET] 원본 에셋 선택 최종 실패: "
+                    f"session={session_id}, bot={active_bot!r}, error={e}"
+                )
+                traceback.print_exc()
+                original_asset_result = {
+                    "items": [],
+                    "images": [],
+                    "failures": [
+                        {"slot": None, "error": f"원본 에셋 선택 실패: {e}"}
+                        for _ in range(int(illust_toggles["original_asset_count"]))
+                    ],
+                    "requested_count": int(illust_toggles["original_asset_count"]),
+                    "target_slotted": str(payload.get("target_slotted") or ""),
+                }
+            reserved_slots = {
+                int(descriptor["slot"])
+                for descriptor in original_asset_result["items"]
+            }
+            if illustration_enabled and reserved_slots:
+                pipeline_payload = copy.deepcopy(payload)
+                original_slotted = str(
+                    original_asset_result.get("target_slotted")
+                    or payload.get("target_slotted")
+                    or ""
+                )
+                filtered_slotted = original_slotted
+                for slot in sorted(reserved_slots):
+                    filtered_slotted = re.sub(
+                        rf"\[Slot\s+{slot}\]",
+                        "",
+                        filtered_slotted,
+                    )
+                pipeline_payload["target_slotted"] = filtered_slotted
+                print(
+                    f"[ILLUST_ORIGINAL_ASSET] 일반 삽화에서 원본 선택 슬롯 예약: "
+                    f"session={session_id}, slots={sorted(reserved_slots)}, "
+                    f"remaining={len(illustration_context_pipeline.candidate_slots(filtered_slotted))}"
+                )
+        else:
+            print(
+                f"[ILLUST_ORIGINAL_ASSET] 토글로 비활성화됨: session={session_id}"
+            )
+        if payload.get("protocol") == "prompt_batch_v1" and illustration_enabled:
             raw_items = payload.get("items") or []
             if not raw_items:
                 print(f"[ILLUST_PROMPT_BATCH] 확정 프롬프트가 비어 있음: session={session_id}")
@@ -6183,6 +6619,17 @@ async def process_illustration_context_queue_item(item) -> dict:
                 f"session={session_id}, items={len(raw_items)}, "
                 f"slots={[entry.get('slot') for entry in raw_items]}"
             )
+        elif payload.get("protocol") == "prompt_batch_v1":
+            print(
+                f"[ILLUST_PROMPT_BATCH] 일반 삽화 출력 토글로 확정 프롬프트 생성 생략: "
+                f"session={session_id}, original_asset_enabled={original_asset_enabled}"
+            )
+            built = {
+                "items": [],
+                "context": "",
+                "prompt_format": "risu_module_prompt_batch_v1",
+            }
+            raw_items = []
         else:
             await progress(2, "context", "CHAT 컨텍스트 수신")
             history_chats = payload.get("chats") or []
@@ -6264,25 +6711,45 @@ async def process_illustration_context_queue_item(item) -> dict:
                             queue_priority=0,
                         ))
 
-            built = await illustration_context_pipeline.build_from_context(
-                payload,
-                illust_toggles,
-                extra_character_cards,
-                progress=progress,
-                stream_notify=stream_notify,
-                on_call2_ready=_on_call2_ready,
-                extra_instruction=extra_instruction,
-                extra_costume=extra_costume,
-                extra_names=extra_names,
-                backtranslate_names=backtranslate_names,
-                history_plan=history_plan,
-                enable_multi_char_layout=multi_char_mask_active,
-                visual_profile_catalog=visual_profile_catalog,
-                visual_profiles=effective_visual_profiles,
-            )
+            if illustration_enabled:
+                built = await illustration_context_pipeline.build_from_context(
+                    pipeline_payload,
+                    illust_toggles,
+                    extra_character_cards,
+                    progress=progress,
+                    stream_notify=stream_notify,
+                    on_call2_ready=_on_call2_ready,
+                    extra_instruction=extra_instruction,
+                    extra_costume=extra_costume,
+                    extra_names=extra_names,
+                    backtranslate_names=backtranslate_names,
+                    history_plan=history_plan,
+                    enable_multi_char_layout=multi_char_mask_active,
+                    visual_profile_catalog=visual_profile_catalog,
+                    visual_profiles=effective_visual_profiles,
+                )
+            else:
+                print(
+                    f"[ILLUST_CONTEXT] 일반 삽화 출력 토글로 CALL1/2/3·Comfy 생성 생략: "
+                    f"session={session_id}, original_asset_enabled={original_asset_enabled}"
+                )
+                await progress(20, "original_asset", "일반 삽화 생략 · 원본 에셋 준비")
+                built = {
+                    "session_id": session_id,
+                    "items": [],
+                    "context": "",
+                    "prompt_format": illust_toggles.get("prompt_format", "v3"),
+                    "character_states_after": copy.deepcopy(
+                        (history_plan or {}).get("state_before") or {}
+                    ),
+                    "llm_trace": [],
+                }
             # 이 삽화 생성에서 거친 LLM 흐름(MULTI-CHAR-MASK~CALL3)의 history_id 목록.
             # build_from_context 완료 시점에 한 번 캡처해 모든 자식 백업에 동일 주입.
-            llm_trace = list(built.get("llm_trace") or [])
+            llm_trace = list(dict.fromkeys([
+                *llm_trace,
+                *(built.get("llm_trace") or []),
+            ]))
             # 조기분산(early dispatch)으로 먼저 큐에 들어간 자식들에게 사후 주입.
             # 이 자식들은 단일 캐릭터(멀티캐릭터는 후순위 보류)라 MULTI-CHAR-MASK가
             # 없고, llm_trace(공통)에도 MULTI-CHAR-MASK가 빠져 있으므로 그대로 주입한다.
@@ -6296,7 +6763,7 @@ async def process_illustration_context_queue_item(item) -> dict:
                 history_finalize_attempted = True
                 illustration_chat_history.finalize_history(history_plan, built)
             raw_items = built.get("items") or []
-            if not raw_items:
+            if illustration_enabled and not raw_items:
                 print(f"[ILLUST_CONTEXT] 생성할 장면이 없음: session={session_id}")
                 raise RuntimeError("CALL 결과에 생성할 장면이 없습니다")
 
@@ -6351,6 +6818,20 @@ async def process_illustration_context_queue_item(item) -> dict:
                     queue_priority=1,
                     llm_trace=_child_llm_trace(llm_trace, descriptor),
                 )
+
+        if not raw_items:
+            if original_asset_result["images"]:
+                return await _publish_session_results(
+                    original_asset_result["items"],
+                    original_asset_result["images"],
+                    int(original_asset_result["requested_count"]),
+                    original_asset_result["failures"],
+                )
+            print(
+                f"[ILLUST_CONTEXT] 일반 삽화와 원본 에셋 결과가 모두 비어 있음: "
+                f"session={session_id}, original_failures={original_asset_result['failures']}"
+            )
+            raise RuntimeError("일반 삽화와 원본 에셋 결과가 모두 비어 있습니다")
 
         if not early_dispatch:
             await progress(70, "enqueue", f"이미지 {len(raw_items)}장 큐 등록", 0, len(raw_items))
@@ -6539,8 +7020,10 @@ async def process_illustration_context_queue_item(item) -> dict:
                 successful_items.append(successful_descriptor)
                 successful_images.append(image_bytes)
 
-        if not successful_images:
-            raise RuntimeError(f"이미지 {total}장이 재시도 후에도 모두 실패했습니다")
+        if not successful_images and not original_asset_result["images"]:
+            raise RuntimeError(
+                f"일반 이미지 {total}장과 원본 에셋이 모두 최종 실패했습니다"
+            )
 
         if failures:
             print(
@@ -6548,41 +7031,16 @@ async def process_illustration_context_queue_item(item) -> dict:
                 f"성공={len(successful_images)}/{total}, 실패={failures}"
             )
 
-        illustration_context_pipeline.set_session_result(
-            session_id,
+        successful_items.extend(original_asset_result["items"])
+        successful_images.extend(original_asset_result["images"])
+        failures.extend(original_asset_result["failures"])
+        requested_total = total + int(original_asset_result["requested_count"])
+        return await _publish_session_results(
             successful_items,
             successful_images,
-            requested_count=total,
-            failures=failures,
+            requested_total,
+            failures,
         )
-        first = successful_images[0]
-        original = prompts[original_prompt_id]
-        original["image_bytes"] = first
-        filename = f"ComfyUI_{original_prompt_id[:8]}.png"
-        await complete_prompt_from_reschedule(
-            original_prompt_id,
-            original.get("save_node_id") or find_save_image_node(prompt_data) or "9",
-            filename,
-        )
-        ready_phase = "ready_partial" if failures else "ready"
-        ready_label = (
-            f"성공 {len(successful_images)}/{total}장 반환 준비 완료 · "
-            f"최종 실패 {len(failures)}장 제외"
-            if failures
-            else f"전체 {len(successful_images)}장 반환 준비 완료"
-        )
-        await progress(100, ready_phase, ready_label, len(successful_images), total)
-        print(
-            f"[ILLUST_CONTEXT] 세션 완료: session={session_id}, "
-            f"success={len(successful_images)}/{total}, failed={len(failures)}"
-        )
-        return {
-            "success": True,
-            "session_id": session_id,
-            "count": len(successful_images),
-            "requested_count": total,
-            "failed_count": len(failures),
-        }
     except Exception as e:
         print(f"[ILLUST_CONTEXT] 세션 처리 실패: session={session_id}, error={e}")
         traceback.print_exc()
@@ -7102,6 +7560,16 @@ async def handle_api_illustration_context_toggles(request: web.Request) -> web.R
             print(f"[ILLUST_CONTEXT] toggle 저장 body가 잘못됨: {body!r}")
             return web.json_response({"error": "toggles must be object"}, status=400)
         toggles = illustration_context_pipeline.merged_toggles(raw)
+        if not toggles.get("illustration_enabled") and not toggles.get(
+            "original_asset_enabled"
+        ):
+            print(
+                "[ILLUST_CONTEXT] toggle 저장 거부: "
+                "일반 삽화와 원본 에셋 출력이 모두 꺼져 있음"
+            )
+            return web.json_response({
+                "error": "일반 삽화 또는 원본 에셋 출력을 하나 이상 켜야 합니다."
+            }, status=400)
         requested_prompt_format = toggles.get("prompt_format")
         toggles["prompt_format"] = workflow_profiles.illustration_prompt_format(
             app_config.get("illustration_workflow_type")
@@ -8938,6 +9406,20 @@ async def handle_view(request: web.Request) -> web.Response:
     filename = request.query.get("filename", "")
     for pid, entry in prompts.items():
         if entry.get("filename") == filename and entry.get("image_bytes"):
+            if entry.get("_serve_image_bytes_original"):
+                content_type = _detect_illustration_bridge_image_content_type(
+                    entry["image_bytes"]
+                )
+                if content_type:
+                    return web.Response(
+                        body=entry["image_bytes"],
+                        content_type=content_type,
+                    )
+                print(
+                    f"[ILLUST_ORIGINAL_ASSET] /view 원본 형식 판별 실패: "
+                    f"prompt_id={pid!r}, filename={filename!r}, "
+                    f"bytes={len(entry['image_bytes'])}"
+                )
             result_bytes, ct = convert_image_for_client(
                 entry["image_bytes"], entry.get("prompt", {})
             )
