@@ -594,8 +594,7 @@ DEFAULT_CONFIG = {
     "llm_reasoning_preset3": "auto",  # LLM3 전용 reasoning preset
     "llm_reasoning_effort3": "",      # LLM3 전용 reasoning effort
     "illustration_context_toggles": {
-        "illustration_enabled": True,
-        "original_asset_enabled": False,
+        "illustration_output_mode": "illustration",
         "original_asset_count": 1,
         "original_asset_instruction": "",
         "call1_backtranslate_enabled": False,
@@ -7560,16 +7559,6 @@ async def handle_api_illustration_context_toggles(request: web.Request) -> web.R
             print(f"[ILLUST_CONTEXT] toggle 저장 body가 잘못됨: {body!r}")
             return web.json_response({"error": "toggles must be object"}, status=400)
         toggles = illustration_context_pipeline.merged_toggles(raw)
-        if not toggles.get("illustration_enabled") and not toggles.get(
-            "original_asset_enabled"
-        ):
-            print(
-                "[ILLUST_CONTEXT] toggle 저장 거부: "
-                "일반 삽화와 원본 에셋 출력이 모두 꺼져 있음"
-            )
-            return web.json_response({
-                "error": "일반 삽화 또는 원본 에셋 출력을 하나 이상 켜야 합니다."
-            }, status=400)
         requested_prompt_format = toggles.get("prompt_format")
         toggles["prompt_format"] = workflow_profiles.illustration_prompt_format(
             app_config.get("illustration_workflow_type")

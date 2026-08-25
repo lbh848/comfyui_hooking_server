@@ -76388,7 +76388,7 @@
                 key: 'pipeline', title: '파이프라인',
                 description: '삽화 프롬프트 파이프라인에서 실행할 단계를 설정합니다. 각 Call의 세부 옵션은 해당 Call 탭에서 관리합니다.',
                 fields: [
-                    {key: 'illustration_enabled', label: '일반 삽화 출력', type: 'toggle', help: 'CALL1/2/3와 ComfyUI를 사용하는 일반 삽화 생성을 켭니다. 끄고 원본 에셋 출력을 켜면 업로드 원본 에셋만 반환합니다.'},
+                    {key: 'illustration_output_mode', label: '출력 모드', type: 'select', help: '일반 삽화(CALL1/2/3 + Comfy), 원본 에셋(업로드 원본 선택), 또는 둘 다를 반환합니다. 원본 에셋 장수·지침은 아래 원본 에셋 출력 섹션에서 설정합니다.', options: [{value: 'illustration', label: '일반 삽화'}, {value: 'original_asset', label: '원본 에셋'}, {value: 'both', label: '일반 삽화 + 원본 에셋'}], onchange: 'onIllustrationOutputModeChange(this)'},
                     {key: 'call1_backtranslate_enabled', label: 'CALL1 역번역', type: 'toggle', help: 'CALL1 컨텍스트 보강 전에 현재 응답을 영어로 역번역합니다.'},
                     {key: 'call1_enabled', label: 'CALL1 인물·복장 분석', type: 'toggle', help: '히스토리와 현재 context에서 캐릭터, 지칭 대상, 복장 변화 사건을 구조화합니다.'},
                     {key: 'call3_enabled', label: 'CALL3 대사 생성', type: 'toggle', help: 'CALL3 대사(speak/manga) 생성을 켭니다. CALL2 파싱 실패 시 CALL2-FIX 교정은 항상 동작합니다.'},
@@ -76407,9 +76407,8 @@
             {
                 key: 'original_asset',
                 title: '원본 에셋 출력',
-                description: '사용자가 입력한 명령 지침과 대화 문맥을 단일 LLM이 읽고, 선택된 봇에 실제 업로드된 원본 파일을 골라 변환 없이 그대로 출력합니다. 전체 파일 목록은 LLM에 전송하지 않습니다.',
+                description: '사용자가 입력한 명령 지침과 대화 문맥을 단일 LLM이 읽고, 선택된 봇에 실제 업로드된 원본 파일을 골라 변환 없이 그대로 출력합니다. 전체 파일 목록은 LLM에 전송하지 않습니다. 출력 모드가 원본 에셋 또는 둘 다일 때만 활성화됩니다.',
                 fields: [
-                    {key: 'original_asset_enabled', label: '원본 에셋 출력', type: 'toggle', help: '봇에 업로드된 원본 이미지를 문맥에 맞게 선택해 함께 출력합니다.'},
                     {key: 'original_asset_count', label: '출력 장수', type: 'number', min: 1, max: 30, help: '원본 에셋 선택 LLM이 이번 응답에서 고를 정확한 장수입니다.', dependsOn: ['original_asset_enabled']},
                     {key: 'original_asset_instruction', label: '에셋 선택 지침', type: 'textarea', rows: 24, maxLength: 120000, help: 'Image Command Instructions처럼 캐릭터·상태 명령과 적용 규칙을 자유형 텍스트 그대로 붙여 넣습니다.', placeholder: '### Image Command Instructions\n...', stacked: true, dependsOn: ['original_asset_enabled']},
                 ],
@@ -76634,7 +76633,8 @@
                 : '';
             let control = '';
             if (field.type === 'select') {
-                control = `<select id="${inputId}" data-illust-toggle="${field.key}" class="illust-setting-input">${_renderIllustrationContextOptions(field.options, value)}</select>`;
+                const onchangeAttr = field.onchange ? ` onchange="${field.onchange}"` : '';
+                control = `<select id="${inputId}" data-illust-toggle="${field.key}" class="illust-setting-input"${onchangeAttr}>${_renderIllustrationContextOptions(field.options, value)}</select>`;
             } else if (field.type === 'textarea') {
                 const rows = field.rows !== undefined ? ` rows="${field.rows}"` : '';
                 const maxLength = field.maxLength !== undefined ? ` maxlength="${field.maxLength}"` : '';
@@ -76856,6 +76856,16 @@
             updateIllustrationContextOptionLocks();
         }
 
+        // 출력 모드 드롭박스가 UI 원천. 모드를 파생 불린(illustration_enabled/
+        // original_asset_enabled)으로 전개해 종속 필드 잠금과 서버 저장값을 맞춘다.
+        function onIllustrationOutputModeChange(select) {
+            const mode = select?.value || 'illustration';
+            _illustrationContextToggles['illustration_output_mode'] = mode;
+            _illustrationContextToggles['illustration_enabled'] = (mode === 'illustration' || mode === 'both');
+            _illustrationContextToggles['original_asset_enabled'] = (mode === 'original_asset' || mode === 'both');
+            updateIllustrationContextOptionLocks();
+        }
+
         function updateIllustrationContextOptionLocks() {
             const body = document.getElementById('illust-tab-content-toggles');
             if (!body) {
@@ -76982,12 +76992,6 @@
                 body[field.key] = field.type === 'toggle'
                     ? el.checked
                     : (field.type === 'number' ? Number(el.value) : el.value);
-            }
-            if (!body.illustration_enabled && !body.original_asset_enabled) {
-                console.error('[ILLUST_CONTEXT] 일반 삽화와 원본 에셋 출력을 동시에 끌 수 없습니다.');
-                setIllustrationContextStatus('출력 방식이 하나 이상 필요합니다.', 'error');
-                showToast('일반 삽화 또는 원본 에셋 출력을 하나 이상 켜세요.', 'error');
-                return;
             }
             setIllustrationContextStatus('저장 중...');
             setIllustrationContextSaving(true);

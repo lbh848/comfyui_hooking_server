@@ -120,12 +120,12 @@ def test_original_asset_session_reloads_source_bytes_after_metadata_restore(
 
 def test_original_asset_settings_and_routing_are_registered() -> None:
     toggles = pipeline.merged_toggles({
-        "illustration_enabled": False,
-        "original_asset_enabled": True,
+        "illustration_output_mode": "original_asset",
         "original_asset_count": 99,
         "original_asset_instruction": "rules",
     })
 
+    assert toggles["illustration_output_mode"] == "original_asset"
     assert toggles["illustration_enabled"] is False
     assert toggles["original_asset_enabled"] is True
     assert toggles["original_asset_count"] == 30
@@ -137,6 +137,37 @@ def test_original_asset_settings_and_routing_are_registered() -> None:
     ] is True
 
 
+def test_illustration_output_mode_derives_booleans_and_legacy_fallback() -> None:
+    # 단일 모드가 두 불린으로 전개된다.
+    both = pipeline.merged_toggles({"illustration_output_mode": "both"})
+    assert both["illustration_enabled"] is True
+    assert both["original_asset_enabled"] is True
+    assert both["illustration_output_mode"] == "both"
+
+    illustration = pipeline.merged_toggles({"illustration_output_mode": "illustration"})
+    assert illustration["illustration_enabled"] is True
+    assert illustration["original_asset_enabled"] is False
+
+    # 구버전 저장값(두 불린, 모드 없음)은 조합에서 모드를 추론한다.
+    legacy_both = pipeline.merged_toggles({
+        "illustration_enabled": True,
+        "original_asset_enabled": True,
+    })
+    assert legacy_both["illustration_output_mode"] == "both"
+
+    legacy_asset_only = pipeline.merged_toggles({
+        "illustration_enabled": False,
+        "original_asset_enabled": True,
+    })
+    assert legacy_asset_only["illustration_output_mode"] == "original_asset"
+
+    # 빈 입력은 기본 일반 삽화.
+    defaults = pipeline.merged_toggles({})
+    assert defaults["illustration_output_mode"] == "illustration"
+    assert defaults["illustration_enabled"] is True
+    assert defaults["original_asset_enabled"] is False
+
+
 def test_frontend_places_original_asset_tab_after_output_count() -> None:
     frontend = (
         Path(__file__).resolve().parents[1] / "frontend" / "index.html"
@@ -146,7 +177,7 @@ def test_frontend_places_original_asset_tab_after_output_count() -> None:
     groups = frontend[groups_start:groups_end]
 
     assert groups.index("key: 'output_count'") < groups.index("key: 'original_asset'")
-    assert "key: 'illustration_enabled'" in groups
+    assert "key: 'illustration_output_mode'" in groups
     assert "key: 'original_asset_count'" in groups
     assert "key: 'original_asset_instruction'" in groups
     assert "key: 'illustration_original_asset'" in frontend
@@ -193,8 +224,7 @@ async def test_asset_only_queue_skips_regular_pipeline_and_comfy(
             "provider": "comfy",
             "illustration_workflow_type": "v3",
             "illustration_context_toggles": {
-                "illustration_enabled": False,
-                "original_asset_enabled": True,
+                "illustration_output_mode": "original_asset",
                 "original_asset_count": 1,
                 "original_asset_instruction": "Aoi: Aoi_School; happy",
             },
@@ -323,8 +353,7 @@ async def test_mixed_output_reserves_original_asset_slot_before_regular_build(
             "provider": "comfy",
             "illustration_workflow_type": "v3",
             "illustration_context_toggles": {
-                "illustration_enabled": True,
-                "original_asset_enabled": True,
+                "illustration_output_mode": "both",
                 "original_asset_count": 1,
                 "original_asset_instruction": "Aoi: Aoi_School; happy",
                 "scene_mode": "manual",

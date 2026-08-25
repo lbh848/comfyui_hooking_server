@@ -95,9 +95,40 @@ PROMPT_FILES = {
     "multi_char_mask": "multi_char_mask.txt",
 }
 
+# 삽화 출력 모드. UI의 단일 드롭박스 원천이며 merged_toggles가 아래 두 불린으로
+# 전개해 server.py 기존 분기 로직이 그대로 동작하게 한다.
+#   illustration    -> 일반 삽화(CALL1/2/3 + Comfy)만
+#   original_asset  -> 업로드 원본 에셋 선택만
+#   both            -> 일반 삽화 + 원본 에셋 병행
+ILLUSTRATION_OUTPUT_MODES = ("illustration", "original_asset", "both")
+_ILLUSTRATION_OUTPUT_MODE_SET = frozenset(ILLUSTRATION_OUTPUT_MODES)
+DEFAULT_ILLUSTRATION_OUTPUT_MODE = "illustration"
+
+
+def _normalize_illustration_output_mode(
+    value: object,
+    *,
+    legacy_booleans: tuple[bool, bool],
+) -> str:
+    """정규화된 출력 모드를 반환. 잘못된 값/과거 불륀 저장값은 안전하게 추론한다."""
+    raw = str(value or "").strip().lower()
+    if raw in _ILLUSTRATION_OUTPUT_MODE_SET:
+        return raw
+    if value not in (None, ""):
+        print(
+            f"[ILLUST_CONTEXT] 지원하지 않는 출력 모드 {raw!r}, "
+            f"기존 토글 상태에서 추론"
+        )
+    illustration_enabled, original_asset_enabled = legacy_booleans
+    if illustration_enabled and original_asset_enabled:
+        return "both"
+    if original_asset_enabled:
+        return "original_asset"
+    return "illustration"
+
+
 DEFAULT_TOGGLES = {
-    "illustration_enabled": True,
-    "original_asset_enabled": False,
+    "illustration_output_mode": DEFAULT_ILLUSTRATION_OUTPUT_MODE,
     "original_asset_count": 1,
     "original_asset_instruction": "",
     "call1_backtranslate_enabled": False,
@@ -476,6 +507,25 @@ def merged_toggles(value: dict | None) -> dict:
             "output_count_max": DEFAULT_TOGGLES["output_count_max"],
             "original_asset_count": DEFAULT_TOGGLES["original_asset_count"],
         })
+    # 출력 모드 단일 드롭박스 -> illustration_enabled/original_asset_enabled 전개.
+    # 입력에 모드가 없으면(구버전 저장값) 두 불린 조합에서 모드를 추론한다.
+    raw_output_mode = (
+        value.get("illustration_output_mode")
+        if isinstance(value, dict) else None
+    )
+    legacy_illust = bool(
+        value.get("illustration_enabled", True)
+    ) if isinstance(value, dict) else True
+    legacy_asset = bool(
+        value.get("original_asset_enabled", False)
+    ) if isinstance(value, dict) else False
+    output_mode = _normalize_illustration_output_mode(
+        raw_output_mode,
+        legacy_booleans=(legacy_illust, legacy_asset),
+    )
+    out["illustration_output_mode"] = output_mode
+    out["illustration_enabled"] = output_mode in ("illustration", "both")
+    out["original_asset_enabled"] = output_mode in ("original_asset", "both")
     instruction = str(out.get("original_asset_instruction") or "")
     if len(instruction) > illustration_original_assets.MAX_ORIGINAL_ASSET_INSTRUCTION_CHARS:
         print(
