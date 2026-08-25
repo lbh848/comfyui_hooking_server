@@ -2853,8 +2853,8 @@ def list_bot_lora_for_picker(lora_load_path: str = "") -> list:
             proj_entry = {"project_name": proj_name, "characters": []}
             training_config = proj_data.get("training_config", {})
             for char_name, visual_card_id, unit_cfg in _iter_project_units(proj_data):
-                if unit_cfg.get("skip_training"):
-                    continue
+                # skip_training은 순차 학습 큐에서만 제외하는 설정이다. 이미
+                # 선택된 대표 LoRA의 피커 노출과 원격 동기화에는 영향을 주지 않는다.
                 session_reps = unit_cfg.get("session_representatives", {})
                 if not session_reps:
                     continue

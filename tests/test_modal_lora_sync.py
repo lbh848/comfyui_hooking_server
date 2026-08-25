@@ -458,7 +458,7 @@ def test_frontend_has_lora_sync_button_modal_status_and_bot_unit_copy() -> None:
         'data-lora-category="asset"',
         'data-lora-category="instance"',
         'data-lora-category="style"',
-        "function modalOpenLoraSync()",
+        "function modalOpenLoraSync(target = 'modal')",
         "function modalLoraQueryStatus()",
         "function modalLoraRunAction(action, explicitKeys = null)",
         "new URLSearchParams({remote: '1'})",
@@ -471,7 +471,7 @@ def test_frontend_has_lora_sync_button_modal_status_and_bot_unit_copy() -> None:
     for text in required:
         assert text in FRONTEND
 
-    open_start = FRONTEND.index("async function modalOpenLoraSync()")
+    open_start = FRONTEND.index("async function modalOpenLoraSync(target = 'modal')")
     open_end = FRONTEND.index("function modalCloseLoraSync()", open_start)
     assert "modalLoraQueryStatus" not in FRONTEND[open_start:open_end]
     assert "void modalLoraQueryStatus" not in FRONTEND

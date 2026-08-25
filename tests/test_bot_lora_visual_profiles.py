@@ -7,6 +7,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from modes import bot_lora_mode
+from modal_backend.lora_inventory import build_local_lora_catalog
 
 
 def _card(card_id: str, label: str, rep: str) -> dict:
@@ -180,7 +181,10 @@ def test_trigger_update_is_shared_by_all_visual_cards(profile_bot):
     assert char_cfg["trigger"] == "Alice"
 
 
-def test_picker_emits_profile_identity_and_nested_lora_path(profile_bot):
+def test_picker_and_modal_catalog_keep_representative_when_training_is_skipped(
+    profile_bot,
+    monkeypatch,
+):
     tmp_path, _data, manage = profile_bot
     rep = json.dumps({"safetensors": "model.safetensors", "preview": "preview.jpg"})
     manage["bot_loras"] = {
@@ -194,6 +198,7 @@ def test_picker_emits_profile_identity_and_nested_lora_path(profile_bot):
                             "alternate": {
                                 "label": "변신",
                                 "trigger": "alice_alt",
+                                "skip_training": True,
                                 "session_representatives": {"session-1": rep},
                             },
                         },
@@ -218,6 +223,25 @@ def test_picker_emits_profile_identity_and_nested_lora_path(profile_bot):
     assert entry["trigger"] == "Alice"
     assert "_visual_profiles" in entry["lora_path"]
     assert "alternate" in entry["lora_path"]
+
+    monkeypatch.setattr("modes.lora_mode.list_lora_for_picker", lambda _root: [])
+    monkeypatch.setattr(
+        "modes.instance_lora_mode.list_instance_lora_for_picker", lambda _root: []
+    )
+    monkeypatch.setattr(
+        "modes.style_lora_mode.list_style_lora_for_picker", lambda _root: []
+    )
+    catalog = build_local_lora_catalog(
+        {"bot_lora_load_path": str(lora_root)},
+        include_hashes=False,
+    )
+
+    assert len(catalog["items"]) == 1
+    assert catalog["items"][0]["category"] == "bot"
+    assert catalog["items"][0]["file_count"] == 1
+    assert catalog["items"][0]["files"][0]["source_path"] == str(
+        (session_dir / "model.safetensors").resolve()
+    )
 
 
 def test_legacy_project_remains_a_single_unscoped_training_unit(profile_bot):
