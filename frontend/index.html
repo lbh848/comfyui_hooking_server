@@ -22306,6 +22306,16 @@
                                         <option value="RTX-PRO-6000" data-vram-gib="96" data-gpu-hour="3.0312">RTX PRO 6000 · 96GB · GPU $3.03/시간</option>
                                     </select>
                                 </label>
+                                <label class="comfy-runtime-option" title="작업 워커에는 다음 호출부터, 웹 서버에는 다음 시작부터 적용됩니다.">
+                                    <span><span class="comfy-runtime-option-label">VRAM 모드</span><span class="comfy-runtime-option-note">워커·웹 공통 · 기본 HIGH_VRAM</span></span>
+                                    <select id="modal-runtime-vram-mode" onchange="modalSyncRuntimeControls('runtime')">
+                                        <option value="highvram" selected>HIGH_VRAM · --highvram</option>
+                                        <option value="normalvram">NORMAL_VRAM · --normalvram</option>
+                                        <option value="lowvram">LOW_VRAM · --lowvram</option>
+                                        <option value="novram">NO_VRAM · --novram</option>
+                                        <option value="auto">AUTO · 모드 인자 없음</option>
+                                    </select>
+                                </label>
                                 <div class="comfy-runtime-option read-only-state">
                                     <span><span class="comfy-runtime-option-label">웹+워커 동시 실행 예상</span><span class="comfy-runtime-option-note">각 컨테이너 CPU 4코어·RAM 16GB 포함</span></span>
                                     <span id="modal-runtime-combined-cost" class="toggle-status on">계산 중</span>
@@ -23676,6 +23686,21 @@
                                 <button type="button" class="btn-small" onclick="saveVastKey()">저장</button>
                                 <button type="button" class="btn-small" onclick="deleteVastKey()">삭제</button>
                                 <span id="setting-vast-key-status" style="font-size:11px; color:var(--text-secondary,#aaa);">로드 전</span>
+                            </div>
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="title">VAST VRAM 모드</div>
+                                <div class="desc">새로 생성하는 VAST 인스턴스의 ComfyUI 실행 인자입니다. 기본값은 HIGH_VRAM입니다.</div>
+                            </div>
+                            <div class="setting-control">
+                                <select id="setting-vast-vram-mode">
+                                    <option value="highvram" selected>HIGH_VRAM · --highvram</option>
+                                    <option value="normalvram">NORMAL_VRAM · --normalvram</option>
+                                    <option value="lowvram">LOW_VRAM · --lowvram</option>
+                                    <option value="novram">NO_VRAM · --novram</option>
+                                    <option value="auto">AUTO · 모드 인자 없음</option>
+                                </select>
                             </div>
                         </div>
                         <div class="setting-row">
@@ -39235,6 +39260,10 @@
             if (modalRefreshEl) modalRefreshEl.value = currentConfig.modal_status_refresh_seconds ?? 5;
             const modalWebFastEl = document.getElementById('modal-runtime-web-fast');
             if (modalWebFastEl) modalWebFastEl.checked = currentConfig.modal_web_fast === true;
+            const modalVramModeEl = document.getElementById('modal-runtime-vram-mode');
+            if (modalVramModeEl) modalVramModeEl.value = currentConfig.modal_vram_mode || 'highvram';
+            const vastVramModeEl = document.getElementById('setting-vast-vram-mode');
+            if (vastVramModeEl) vastVramModeEl.value = currentConfig.vast_vram_mode || 'highvram';
             const modalCreditEl = document.getElementById('setting-modal-monthly-credit');
             if (modalCreditEl) modalCreditEl.value = currentConfig.modal_monthly_credit_usd ?? 30;
             modalSyncRuntimeControls('runtime');
@@ -40813,6 +40842,8 @@
             }
             const modalWorkerGpu = document.getElementById('modal-runtime-worker-gpu')?.value;
             const modalWebGpu = document.getElementById('modal-runtime-web-gpu')?.value;
+            const modalVramMode = document.getElementById('modal-runtime-vram-mode')?.value || 'highvram';
+            const vastVramMode = document.getElementById('setting-vast-vram-mode')?.value || 'highvram';
             if (!modalWorkerGpu || !modalWebGpu) {
                 console.error('[MODAL_RUNTIME] GPU 설정 저장 거부:', {
                     workerGpu: modalWorkerGpu,
@@ -40834,12 +40865,14 @@
                 comfy_task_vast_parallel: comfyVastParallelForSave(),
                 modal_enabled: !!document.getElementById('setting-modal-enabled')?.checked,
                 vast_enabled: !!document.getElementById('setting-vast-enabled')?.checked,
+                vast_vram_mode: vastVramMode,
                 modal_profile: document.getElementById('setting-modal-profile')?.value.trim() || 'soya-comfy',
                 modal_environment: document.getElementById('setting-modal-environment')?.value.trim() || 'main',
                 modal_deployment_name: document.getElementById('setting-modal-deployment-name')?.value.trim() || 'soya-comfy-worker',
                 modal_gpu: modalWorkerGpu,
                 modal_worker_gpu: modalWorkerGpu,
                 modal_web_gpu: modalWebGpu,
+                modal_vram_mode: modalVramMode,
                 modal_max_concurrency: parseInt(document.getElementById('modal-runtime-max-concurrency')?.value, 10) || 2,
                 modal_container_start_max_retries: modalStartRetries,
                 modal_monthly_credit_usd: parseFloat(document.getElementById('setting-modal-monthly-credit')?.value) || 30,

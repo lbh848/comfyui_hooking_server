@@ -330,6 +330,7 @@ class ModalService:
                 "SOYA_MODAL_WEB_APP_NAME": self._web_app_name(settings),
                 "SOYA_MODAL_WORKER_GPU": settings.worker_gpu,
                 "SOYA_MODAL_WEB_GPU": settings.web_gpu,
+                "SOYA_MODAL_VRAM_MODE": settings.vram_mode,
                 "SOYA_MODAL_MAX_CONTAINERS": str(settings.max_concurrency),
                 "SOYA_MODAL_SCALEDOWN_WINDOW": str(
                     settings.scaledown_window_seconds
@@ -1029,6 +1030,7 @@ class ModalService:
             # 배포 정의에는 GPU를 고정하지 않고 모든 작업 호출에서 이 값을
             # with_options(gpu=...)로 적용한다.
             "worker_gpu": settings.worker_gpu,
+            "vram_mode": settings.vram_mode,
             "container_start_max_retries": (
                 settings.container_start_max_retries
             ),
@@ -1097,6 +1099,7 @@ class ModalService:
                 "environment": settings.environment,
                 "app_name": settings.deployment_name,
                 "worker_gpu": settings.worker_gpu,
+                "vram_mode": settings.vram_mode,
                 "payload": payload,
             },
             ensure_ascii=False,
@@ -1296,6 +1299,7 @@ class ModalService:
             "gpu": settings.worker_gpu,
             "worker_gpu": settings.worker_gpu,
             "web_gpu": settings.web_gpu,
+            "vram_mode": settings.vram_mode,
             "refresh_seconds": settings.status_refresh_seconds,
             "checked_at": checked_at,
         }
@@ -4063,6 +4067,7 @@ class ModalService:
                 "app_name": settings.deployment_name,
                 "environment": settings.environment,
                 "worker_gpu": settings.worker_gpu,
+                "vram_mode": settings.vram_mode,
                 "workflow": workflow,
                 "input_files": input_files,
                 "artifact_prefixes": list(artifact_prefixes or []),

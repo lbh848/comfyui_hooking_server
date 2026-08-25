@@ -54,6 +54,10 @@ from .preflight import (
     informational_result,
 )
 from .settings import VastSettings, load_key_files
+from remote_comfy_vram import (
+    DEFAULT_REMOTE_COMFY_VRAM_MODE,
+    remote_comfy_vram_arguments,
+)
 from .ssh_tunnel import ComfySshTunnel
 
 COMFY_ROOT_REMOTE = "/root/ComfyUI"
@@ -2446,14 +2450,19 @@ class VastService:
         self._check_cancelled()
         self._set_step_unchecked(key, state, detail)
 
-    def _build_onstart(self) -> str:
+    def _build_onstart(
+        self,
+        vram_mode: str = DEFAULT_REMOTE_COMFY_VRAM_MODE,
+    ) -> str:
         """ComfyUI 시작 스크립트. 빌드 시간 제한은 없다(비용 상한은 서버 watchdog이 담당)."""
+        vram_arguments = remote_comfy_vram_arguments(vram_mode)
+        vram_suffix = f" {' '.join(vram_arguments)}" if vram_arguments else ""
         return (
             "#!/bin/bash\n"
             "echo '[onstart] 빌드 완료 신호 대기 중' >> /tmp/soya_onstart.log\n"
             f"while [ ! -f {READY_FLAG} ]; do sleep 2; done\n"
             f"cd {COMFY_ROOT_REMOTE}\n"
-            "exec python main.py --listen 0.0.0.0 --port 8188"
+            f"exec python main.py --listen 0.0.0.0 --port 8188{vram_suffix}"
         )
 
     async def start_launch(
@@ -2635,6 +2644,7 @@ class VastService:
         image: str,
         disk_gb: int,
         label: str,
+        vram_mode: str = DEFAULT_REMOTE_COMFY_VRAM_MODE,
     ) -> dict[str, Any]:
         """다이렉트 SSH(프록시 미경유) 생성을 시도하고 실패 시 프록시로 재시도한다.
 
@@ -2648,7 +2658,7 @@ class VastService:
                 ask_id=ask_id,
                 image=image,
                 disk_gb=disk_gb,
-                onstart_cmd=self._build_onstart(),
+                onstart_cmd=self._build_onstart(vram_mode),
                 label=label,
                 runtype="ssh_direct",
             )
@@ -2666,7 +2676,7 @@ class VastService:
                 ask_id=ask_id,
                 image=image,
                 disk_gb=disk_gb,
-                onstart_cmd=self._build_onstart(),
+                onstart_cmd=self._build_onstart(vram_mode),
                 label=label,
                 runtype="ssh_proxy",
             )
@@ -2740,6 +2750,7 @@ class VastService:
                 image=cfg.runtime_image,
                 disk_gb=disk_gb,
                 label=label,
+                vram_mode=cfg.vram_mode,
             )
             instance_id = int(created["new_contract"])
             self.launch["instance_id"] = instance_id

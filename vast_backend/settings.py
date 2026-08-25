@@ -5,6 +5,11 @@ import math
 from dataclasses import dataclass
 from typing import Any, Mapping
 
+from remote_comfy_vram import (
+    DEFAULT_REMOTE_COMFY_VRAM_MODE,
+    normalize_remote_comfy_vram_mode,
+)
+
 # Modal과 동일한 런타임 바이너리(CUDA 12.8 + PyTorch 2.11 + SageAttention
 # sm_80/86/89/120 커널 + ComfyUI)를 쓰기 위해 Docker Hub 공개 이미지를
 # digest로 고정한다. modal_app.py의 RUNTIME_IMAGE_REF와 같은 이미지다.
@@ -108,6 +113,7 @@ class VastSettings:
     api_key: str = ""
     civitai_api_key: str = ""
     runtime_image: str = DEFAULT_RUNTIME_IMAGE
+    vram_mode: str = DEFAULT_REMOTE_COMFY_VRAM_MODE
     # 안정 모드(verified + On-Demand) / 반값 모드(interruptible)
     verified_only: bool = True
     on_demand: bool = True
@@ -136,6 +142,10 @@ class VastSettings:
             runtime_image=str(
                 config.get("vast_runtime_image") or DEFAULT_RUNTIME_IMAGE
             ).strip(),
+            vram_mode=normalize_remote_comfy_vram_mode(
+                config.get("vast_vram_mode"),
+                "Vast VRAM 모드",
+            ),
             verified_only=_bool(
                 config, "vast_verified_only", True, "vast_verified_only"
             ),
@@ -176,6 +186,7 @@ class VastSettings:
             "has_api_key": bool(self.api_key),
             "has_civitai_api_key": bool(self.civitai_api_key),
             "runtime_image": self.runtime_image,
+            "vram_mode": self.vram_mode,
             "verified_only": self.verified_only,
             "on_demand": self.on_demand,
             "min_cpu_ram_gb": self.min_cpu_ram_gb,

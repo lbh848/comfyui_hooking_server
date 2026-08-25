@@ -174,6 +174,7 @@ from comfy_installer.patch_importer import register_patch_import_routes
 from comfy_installer.workflow_library import migrate_legacy_workflow_layout
 from modal_backend import register_modal_routes
 from modal_backend.settings import ModalSettings
+from vast_backend.settings import VastSettings
 from comfy_runtime import (
     COMFY_INSTANCE_IDS,
     DEFAULT_COMFY_LAUNCH_PROFILES,
@@ -513,6 +514,7 @@ DEFAULT_CONFIG = {
     "modal_gpu": "L4",
     "modal_worker_gpu": "L4",
     "modal_web_gpu": "L4",
+    "modal_vram_mode": "highvram",
     "modal_max_concurrency": 2,
     "modal_monthly_credit_usd": 30.0,
     "modal_scaledown_window_seconds": 15,
@@ -521,6 +523,7 @@ DEFAULT_CONFIG = {
     "modal_web_fast": False,
     # Vast.ai 클라우드 GPU 백엔드(vast_backend/). API 키는 key/vast_key.json.
     "vast_enabled": False,
+    "vast_vram_mode": "highvram",
     "workflow_base_dir": "",  # 공통 설정 UI의 워크플로우 베이스 폴더 절대 경로
     "comfy_workflow_source_path": "",
     "data_saving_mode": False,
@@ -15124,6 +15127,7 @@ async def handle_api_config(request: web.Request) -> web.Response:
                         f"'deployment': {body.get('modal_deployment_name')!r}, "
                         f"'worker_gpu': {body.get('modal_worker_gpu')!r}, "
                         f"'web_gpu': {body.get('modal_web_gpu')!r}, "
+                        f"'vram_mode': {body.get('modal_vram_mode')!r}, "
                         f"'max_concurrency': {body.get('modal_max_concurrency')!r}, "
                         f"'scaledown': {body.get('modal_scaledown_window_seconds')!r}, "
                         f"'refresh': {body.get('modal_status_refresh_seconds')!r}, "
@@ -15143,6 +15147,7 @@ async def handle_api_config(request: web.Request) -> web.Response:
                         "modal_gpu": normalized_modal.worker_gpu,
                         "modal_worker_gpu": normalized_modal.worker_gpu,
                         "modal_web_gpu": normalized_modal.web_gpu,
+                        "modal_vram_mode": normalized_modal.vram_mode,
                         "modal_max_concurrency": normalized_modal.max_concurrency,
                         "modal_monthly_credit_usd": normalized_modal.monthly_credit_usd,
                         "modal_scaledown_window_seconds": (
@@ -15168,6 +15173,32 @@ async def handle_api_config(request: web.Request) -> web.Response:
                         "modal_max_concurrency",
                         "modal_scaledown_window_seconds",
                     )
+                )
+
+            vast_settings_in_body = any(
+                str(key).startswith("vast_") for key in body
+            )
+            if vast_settings_in_body:
+                vast_candidate = copy.deepcopy(app_config)
+                for key, value in body.items():
+                    if key in DEFAULT_CONFIG:
+                        vast_candidate[key] = copy.deepcopy(value)
+                try:
+                    normalized_vast = VastSettings.from_mapping(vast_candidate)
+                except (TypeError, ValueError) as e:
+                    print(
+                        "[CONFIG] Vast 설정 저장 거부: "
+                        f"values={{'enabled': {body.get('vast_enabled')!r}, "
+                        f"'vram_mode': {body.get('vast_vram_mode')!r}}}, "
+                        f"error={e}"
+                    )
+                    traceback.print_exc()
+                    return web.json_response({"error": str(e)}, status=400)
+                body.update(
+                    {
+                        "vast_enabled": normalized_vast.enabled,
+                        "vast_vram_mode": normalized_vast.vram_mode,
+                    }
                 )
 
             if (

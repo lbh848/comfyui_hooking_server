@@ -23,6 +23,10 @@ from modal_backend.modal_app import (
     workflows_volume,
 )
 from modal_backend.settings import normalize_modal_gpu
+from remote_comfy_vram import (
+    normalize_remote_comfy_vram_mode,
+    remote_comfy_vram_arguments,
+)
 
 
 WORKER_APP_NAME = os.environ.get("SOYA_MODAL_APP_NAME", "soya-comfy-worker")
@@ -87,6 +91,19 @@ class ComfyWebServer:
         child_env = os.environ.copy()
         child_env["PYTHONUNBUFFERED"] = "1"
         web_fast = os.environ.get("SOYA_MODAL_WEB_FAST", "0") == "1"
+        try:
+            vram_mode = normalize_remote_comfy_vram_mode(
+                os.environ.get("SOYA_MODAL_VRAM_MODE"),
+                "SOYA_MODAL_VRAM_MODE",
+            )
+        except Exception as exc:
+            print(
+                "[MODAL_COMFY_WEB] VRAM 모드 적용 실패: "
+                f"value={os.environ.get('SOYA_MODAL_VRAM_MODE')!r}, "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            raise
         command = [
             "python",
             "-u",
@@ -98,6 +115,7 @@ class ComfyWebServer:
             "--enable-cors-header",
             "*",
         ]
+        command.extend(remote_comfy_vram_arguments(vram_mode))
         if web_fast:
             command.append("--fast")
         command.extend(
@@ -108,7 +126,7 @@ class ComfyWebServer:
         )
         print(
             f"[MODAL_COMFY_WEB] ComfyUI Server 실행: listen=0.0.0.0, "
-            f"cors=*, fast={web_fast}"
+            f"cors=*, fast={web_fast}, vram_mode={vram_mode}"
         )
         self.process = subprocess.Popen(
             command,

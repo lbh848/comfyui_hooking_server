@@ -100,6 +100,7 @@ def test_runtime_has_managed_modal_tab_lifecycle_sync_and_log_controls() -> None
         'id="modal-runtime-status-refresh"',
         'id="modal-runtime-worker-gpu"',
         'id="modal-runtime-web-gpu"',
+        'id="modal-runtime-vram-mode"',
         'id="modal-runtime-worker-gpu-cost"',
         'id="modal-runtime-web-gpu-cost"',
         'id="modal-runtime-combined-cost"',
@@ -151,6 +152,8 @@ def test_runtime_has_managed_modal_tab_lifecycle_sync_and_log_controls() -> None
     assert "modal_container_start_max_retries: modalStartRetries" in FRONTEND
     assert "modal_worker_gpu: modalWorkerGpu" in FRONTEND
     assert "modal_web_gpu: modalWebGpu" in FRONTEND
+    assert "modal_vram_mode: modalVramMode" in FRONTEND
+    assert "currentConfig.modal_vram_mode || 'highvram'" in FRONTEND
     assert "작업 워커 GPU는 설정 저장 후 다음 호출부터 재배포 없이 동적으로 적용됩니다." in FRONTEND
     assert "L4, A10, L40S, A100 40GB, RTX PRO 6000" in FRONTEND
     assert "CUDA 아키텍처 8.0, 8.6, 8.9, 12.0" in FRONTEND
@@ -211,6 +214,22 @@ def test_modal_gpu_selectors_are_independent_and_show_hourly_costs() -> None:
     assert "worker.gpuHour + web.gpuHour" in FRONTEND
     assert "Modal L4 실행 관리" not in FRONTEND
     assert "최대 병렬 L4" not in FRONTEND
+
+
+def test_remote_vram_mode_selectors_are_provider_specific_and_default_high() -> None:
+    modal_start = FRONTEND.index('id="modal-runtime-vram-mode"')
+    modal_end = FRONTEND.index("</select>", modal_start)
+    modal_select = FRONTEND[modal_start:modal_end]
+    vast_start = FRONTEND.index('id="setting-vast-vram-mode"')
+    vast_end = FRONTEND.index("</select>", vast_start)
+    vast_select = FRONTEND[vast_start:vast_end]
+
+    for select in (modal_select, vast_select):
+        assert '<option value="highvram" selected>' in select
+        for mode in ("normalvram", "lowvram", "novram", "auto"):
+            assert f'<option value="{mode}">' in select
+    assert "vast_vram_mode: vastVramMode" in FRONTEND
+    assert "currentConfig.vast_vram_mode || 'highvram'" in FRONTEND
 
 
 def test_modal_web_start_stays_locked_until_server_state_acknowledges_request() -> None:

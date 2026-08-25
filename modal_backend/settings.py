@@ -5,6 +5,11 @@ import re
 from dataclasses import dataclass
 from typing import Any, Mapping
 
+from remote_comfy_vram import (
+    DEFAULT_REMOTE_COMFY_VRAM_MODE,
+    normalize_remote_comfy_vram_mode,
+)
+
 
 _NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$")
 
@@ -68,6 +73,7 @@ class ModalSettings:
     deployment_name: str = "soya-comfy-worker"
     worker_gpu: str = "L4"
     web_gpu: str = "L4"
+    vram_mode: str = DEFAULT_REMOTE_COMFY_VRAM_MODE
     max_concurrency: int = 2
     monthly_credit_usd: float = 30.0
     scaledown_window_seconds: int = 15
@@ -97,6 +103,10 @@ class ModalSettings:
         web_gpu = normalize_modal_gpu(
             config.get("modal_web_gpu", legacy_gpu),
             "Modal 웹 GPU",
+        )
+        vram_mode = normalize_remote_comfy_vram_mode(
+            config.get("modal_vram_mode"),
+            "Modal VRAM 모드",
         )
         raw_concurrency = config.get("modal_max_concurrency", 2)
         if isinstance(raw_concurrency, bool):
@@ -139,6 +149,7 @@ class ModalSettings:
             ),
             worker_gpu=worker_gpu,
             web_gpu=web_gpu,
+            vram_mode=vram_mode,
             max_concurrency=concurrency,
             monthly_credit_usd=credit,
             scaledown_window_seconds=scaledown,
@@ -157,6 +168,7 @@ class ModalSettings:
             "gpu": self.worker_gpu,
             "worker_gpu": self.worker_gpu,
             "web_gpu": self.web_gpu,
+            "vram_mode": self.vram_mode,
             "gpu_profiles": [
                 {
                     "id": gpu_id,

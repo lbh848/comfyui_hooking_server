@@ -41,6 +41,7 @@ from vast_backend.service import (
     WATCHDOG_STATUS_MAX_AGE_SECONDS,
     VastService,
 )
+from vast_backend.settings import VastSettings
 from vast_backend.ssh_tunnel import DEFAULT_LOCAL_PORT, ComfySshTunnel
 
 
@@ -624,10 +625,12 @@ async def test_create_instance_direct_first_falls_back_to_proxy(
         image="example/image:latest",
         disk_gb=40,
         label="soya-vast-test",
+        vram_mode="lowvram",
     )
 
     assert created == {"new_contract": 777}
     assert [call["runtype"] for call in calls] == ["ssh_direct", "ssh_proxy"]
+    assert all(call["onstart_cmd"].endswith("--lowvram") for call in calls)
     steps = {step["key"]: step for step in service.launch["steps"]}
     assert steps["instance"]["state"] == "running"
     assert "프록시 SSH" in steps["instance"]["detail"]
@@ -1077,6 +1080,19 @@ def test_vast_onstart_has_no_self_destroy_and_waits_ready_flag(
     assert "--request DELETE" not in script
     assert "CONTAINER_API_KEY" not in script
     assert "CONTAINER_ID" not in script
+    assert script.endswith("--highvram")
+    assert service._build_onstart("normalvram").endswith("--normalvram")
+    assert service._build_onstart("auto").endswith("--port 8188")
+
+
+def test_vast_vram_mode_defaults_to_high_and_rejects_unknown_values() -> None:
+    settings = VastSettings.from_mapping({})
+
+    assert settings.vram_mode == "highvram"
+    assert settings.public_dict()["vram_mode"] == "highvram"
+    assert VastSettings.from_mapping({"vast_vram_mode": "lowvram"}).vram_mode == "lowvram"
+    with pytest.raises(ValueError, match="Vast VRAM 모드"):
+        VastSettings.from_mapping({"vast_vram_mode": "gpu-only"})
 
 
 def test_vast_cmd_events_redact_known_api_keys(tmp_path: Path) -> None:

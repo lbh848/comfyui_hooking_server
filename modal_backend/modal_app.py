@@ -15,6 +15,10 @@ import modal
 
 from modal_backend.comfy_http import raise_for_comfy_status
 from modal_backend.custom_nodes import LOCAL_COPY_IGNORE_PATTERNS
+from remote_comfy_vram import (
+    normalize_remote_comfy_vram_mode,
+    remote_comfy_vram_arguments,
+)
 
 APP_NAME = os.environ.get("SOYA_MODAL_APP_NAME", "soya-comfy-worker")
 MAX_CONTAINERS = int(os.environ.get("SOYA_MODAL_MAX_CONTAINERS", "2"))
@@ -33,6 +37,19 @@ RUNTIME_IMAGE_REF = (
     "sha256:2f63f258f60614cb15bad285e41bff11643fb46a88b19419b974931bc5e4b135"
 )
 FORCE_CUSTOM_NODE_BUILD = os.environ.get("SOYA_MODAL_FORCE_CUSTOM_NODE_BUILD", "0") == "1"
+try:
+    DEPLOY_VRAM_MODE = normalize_remote_comfy_vram_mode(
+        os.environ.get("SOYA_MODAL_VRAM_MODE"),
+        "SOYA_MODAL_VRAM_MODE",
+    )
+except Exception as exc:
+    print(
+        "[MODAL_COMFY] VRAM 모드 설정 오류: "
+        f"value={os.environ.get('SOYA_MODAL_VRAM_MODE')!r}, "
+        f"error={type(exc).__name__}: {exc}"
+    )
+    traceback.print_exc()
+    raise
 CALL_STARTED_LOG_PREFIX = "@@SOYA_MODAL_CALL_STARTED@@"
 WORKFLOW_PROGRESS_PREFIX = "@@SOYA_MODAL_WORKFLOW_PROGRESS@@"
 
@@ -323,6 +340,7 @@ runtime_image = (
     # 모든 사용자 Workspace는 공개 이미지를 digest로 고정해 같은 바이너리를 쓴다.
     modal.Image.from_registry(RUNTIME_IMAGE_REF)
     .entrypoint([])
+    .env({"SOYA_MODAL_VRAM_MODE": DEPLOY_VRAM_MODE})
     .add_local_file(MANIFEST_LOCAL, "/opt/soya/install_manifest.json", copy=True)
     .add_local_file(IMAGE_INSTALL_LOCAL, "/opt/soya/image_install.py", copy=True)
 )
@@ -604,17 +622,40 @@ class ComfyWorker:
         self.text_output_thread.start()
 
         extra_paths = _write_extra_model_paths()
-        self.process = subprocess.Popen(
+        try:
+            vram_mode = normalize_remote_comfy_vram_mode(
+                os.environ.get("SOYA_MODAL_VRAM_MODE"),
+                "SOYA_MODAL_VRAM_MODE",
+            )
+        except Exception as exc:
+            print(
+                "[MODAL_COMFY] 작업 워커 VRAM 모드 적용 실패: "
+                f"value={os.environ.get('SOYA_MODAL_VRAM_MODE')!r}, "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            raise
+        command = [
+            "python",
+            "/root/ComfyUI/main.py",
+            "--listen",
+            "127.0.0.1",
+            "--port",
+            "8188",
+        ]
+        command.extend(remote_comfy_vram_arguments(vram_mode))
+        command.extend(
             [
-                "python",
-                "/root/ComfyUI/main.py",
-                "--listen",
-                "127.0.0.1",
-                "--port",
-                "8188",
                 "--extra-model-paths-config",
                 str(extra_paths),
-            ],
+            ]
+        )
+        print(
+            f"[MODAL_COMFY] ComfyUI 실행: vram_mode={vram_mode}",
+            flush=True,
+        )
+        self.process = subprocess.Popen(
+            command,
             cwd="/root/ComfyUI",
         )
         deadline = time.monotonic() + 540

@@ -25,6 +25,7 @@ from modal.client import _Client
 from modal_proto import api_pb2
 
 from modal_backend.settings import normalize_modal_gpu
+from remote_comfy_vram import normalize_remote_comfy_vram_mode
 
 
 MODEL_SYNC_MANIFEST_PATH = "/.soya-local-model-sync-manifest.json"
@@ -306,18 +307,31 @@ def _worker_gpu(payload: dict) -> str:
     )
 
 
+def _worker_environment(payload: dict) -> dict[str, str]:
+    return {
+        "SOYA_MODAL_VRAM_MODE": normalize_remote_comfy_vram_mode(
+            payload.get("vram_mode"),
+            "Modal 동적 작업 워커 VRAM 모드",
+        )
+    }
+
+
 def _worker_cls(payload: dict) -> modal.Cls:
     worker_cls = modal.Cls.from_name(
         str(payload["app_name"]),
         "ComfyWorker",
         environment_name=str(payload["environment"]),
     )
-    return worker_cls.with_options(gpu=_worker_gpu(payload))
+    return worker_cls.with_options(
+        gpu=_worker_gpu(payload),
+        env=_worker_environment(payload),
+    )
 
 
 def _dynamic_worker_function(payload: dict, function_name: str) -> modal.Function:
     return _remote_function(payload, function_name).with_options(
-        gpu=_worker_gpu(payload)
+        gpu=_worker_gpu(payload),
+        env=_worker_environment(payload),
     )
 
 

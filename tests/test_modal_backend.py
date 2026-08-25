@@ -95,6 +95,7 @@ def test_modal_defaults_are_scale_to_zero_and_independently_gpu_budgeted() -> No
     assert settings.gpu == "L4"
     assert settings.worker_gpu == "L4"
     assert settings.web_gpu == "L4"
+    assert settings.vram_mode == "highvram"
     assert settings.max_concurrency == 2
     assert settings.scaledown_window_seconds == 15
     assert settings.status_refresh_seconds == 5
@@ -102,6 +103,7 @@ def test_modal_defaults_are_scale_to_zero_and_independently_gpu_budgeted() -> No
     assert settings.web_fast is False
     assert settings.public_dict()["container_start_max_retries"] == 2
     assert settings.public_dict()["web_fast"] is False
+    assert settings.public_dict()["vram_mode"] == "highvram"
     assert cost["assumptions"]["min_containers"] == 0
     assert cost["assumptions"]["scaledown_window_seconds"] == 15
     assert cost["worker"]["gpu_per_hour"] == pytest.approx(0.7992)
@@ -110,11 +112,16 @@ def test_modal_defaults_are_scale_to_zero_and_independently_gpu_budgeted() -> No
     assert cost["estimated_container_hours"] == pytest.approx(26.89)
 
     split = ModalSettings.from_mapping(
-        {"modal_worker_gpu": "L40S", "modal_web_gpu": "RTX-PRO-6000"}
+        {
+            "modal_worker_gpu": "L40S",
+            "modal_web_gpu": "RTX-PRO-6000",
+            "modal_vram_mode": "normalvram",
+        }
     )
     split_cost = cost_summary(split)
     assert split.worker_gpu == "L40S"
     assert split.web_gpu == "RTX-PRO-6000"
+    assert split.vram_mode == "normalvram"
     assert split_cost["worker"]["gpu_per_hour"] == pytest.approx(1.9512)
     assert split_cost["web"]["gpu_per_hour"] == pytest.approx(3.0312)
     assert {
@@ -142,6 +149,7 @@ def test_modal_defaults_are_scale_to_zero_and_independently_gpu_budgeted() -> No
         {"modal_container_start_max_retries": 11},
         {"modal_container_start_max_retries": True},
         {"modal_web_fast": "true"},
+        {"modal_vram_mode": "gpu-only"},
     ],
 )
 def test_modal_settings_reject_invalid_values(config: dict) -> None:
@@ -212,7 +220,10 @@ def test_modal_runtime_stats_uses_cls_method_handle(
         "app_name": "test-app",
         "class_name": "ComfyWorker",
         "environment_name": "main",
-        "dynamic_options": {"gpu": "L40S"},
+        "dynamic_options": {
+            "gpu": "L40S",
+            "env": {"SOYA_MODAL_VRAM_MODE": "highvram"},
+        },
     }
     assert result == {
         "backlog": 3,
@@ -252,6 +263,7 @@ def test_modal_dynamic_worker_function_applies_selected_gpu(
             "app_name": "test-app",
             "environment": "main",
             "worker_gpu": "RTX-PRO-6000",
+            "vram_mode": "lowvram",
         },
         "gpu_probe",
     )
@@ -261,7 +273,10 @@ def test_modal_dynamic_worker_function_applies_selected_gpu(
         "app_name": "test-app",
         "function_name": "gpu_probe",
         "environment_name": "main",
-        "dynamic_options": {"gpu": "RTX-PRO-6000"},
+        "dynamic_options": {
+            "gpu": "RTX-PRO-6000",
+            "env": {"SOYA_MODAL_VRAM_MODE": "lowvram"},
+        },
     }
 
 
@@ -338,9 +353,15 @@ def test_modal_update_autoscaler_uses_function_and_cls_instance(
     }
     assert observed == {
         "function_lookup": ("test-app", "gpu_probe", "main"),
-        "function_options": {"gpu": "L40S"},
+        "function_options": {
+            "gpu": "L40S",
+            "env": {"SOYA_MODAL_VRAM_MODE": "highvram"},
+        },
         "class_lookup": ("test-app", "ComfyWorker", "main"),
-        "class_options": {"gpu": "L40S"},
+        "class_options": {
+            "gpu": "L40S",
+            "env": {"SOYA_MODAL_VRAM_MODE": "highvram"},
+        },
         "autoscaler_updates": [
             ("gpu_probe", probe_autoscaler_options),
             ("ComfyWorker", worker_autoscaler_options),
@@ -2616,6 +2637,7 @@ async def test_modal_web_deploy_uses_package_module_mode(
             "modal_environment": "main",
             "modal_worker_gpu": "RTX-PRO-6000",
             "modal_web_gpu": "L40S",
+            "modal_vram_mode": "normalvram",
             "modal_web_fast": True,
         },
     )
@@ -2644,6 +2666,7 @@ async def test_modal_web_deploy_uses_package_module_mode(
     assert observed["kwargs"]["env"]["SOYA_MODAL_WEB_FAST"] == "1"
     assert observed["kwargs"]["env"]["SOYA_MODAL_WORKER_GPU"] == "RTX-PRO-6000"
     assert observed["kwargs"]["env"]["SOYA_MODAL_WEB_GPU"] == "L40S"
+    assert observed["kwargs"]["env"]["SOYA_MODAL_VRAM_MODE"] == "normalvram"
 
 
 @pytest.mark.asyncio
@@ -2974,9 +2997,8 @@ def test_modal_web_server_is_isolated_from_worker_app() -> None:
     assert "@modal.enter()" in web_source
     assert 'WEB_APP_NAME = os.environ.get("SOYA_MODAL_WEB_APP_NAME"' in web_source
     assert 'gpu=WORKER_GPU' not in worker_source
-    assert "worker_cls.with_options(gpu=_worker_gpu(payload))" in (
-        root / "client_cli.py"
-    ).read_text(encoding="utf-8")
+    client_source = (root / "client_cli.py").read_text(encoding="utf-8")
+    assert "env=_worker_environment(payload)" in client_source
     assert 'gpu=WEB_GPU' in web_source
     assert (
         'WEB_WORKFLOW_MOUNT_PATH = '
@@ -3000,6 +3022,8 @@ def test_modal_web_server_is_isolated_from_worker_app() -> None:
     assert 'WEB_FAST = os.environ.get("SOYA_MODAL_WEB_FAST", "0") == "1"' in web_source
     assert 'web_runtime_image = runtime_image.env(' in web_source
     assert 'if web_fast:\n            command.append("--fast")' in web_source
+    assert "command.extend(remote_comfy_vram_arguments(vram_mode))" in worker_source
+    assert "command.extend(remote_comfy_vram_arguments(vram_mode))" in web_source
     assert (
         "const showWebStopAction = webState === 'starting' || webRunning || "
         "webState === 'stopping';"
