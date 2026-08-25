@@ -2,6 +2,7 @@ from pathlib import Path
 
 
 FRONTEND = Path("frontend/index.html").read_text(encoding="utf-8")
+SERVER = Path("server.py").read_text(encoding="utf-8")
 
 
 def test_illustration_prompt_settings_header_uses_two_rows() -> None:
@@ -30,3 +31,10 @@ def test_illustration_prompt_settings_header_prevents_control_shrinking() -> Non
     controls_start = FRONTEND.index(controls_selector)
     controls_rule = FRONTEND[controls_start : FRONTEND.index("}", controls_start)]
     assert "flex: 0 0 auto;" in controls_rule
+
+
+def test_background_description_toggle_is_persistent_call2_setting() -> None:
+    assert "{key: 'minimal_background_description'" in FRONTEND
+    assert "label: '배경 묘사 최소화'" in FRONTEND
+    assert "'/api/illustration_context/toggles'" in FRONTEND
+    assert '"minimal_background_description": True' in SERVER

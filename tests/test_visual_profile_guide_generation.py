@@ -14,15 +14,7 @@ def _card(card_id, label, filename, *, aliases=None, guide=""):
         "selection_guide": guide,
         "aliases": list(aliases or []),
         "appearance": [{"tag": "blue hair"}],
-        "default_outfit_id": "default",
-        "outfits": [
-            {
-                "id": "default",
-                "label": "기본 복장",
-                "selection_guide": "",
-                "tags": [{"tag": "school uniform"}],
-            }
-        ],
+        "default_outfit": [{"tag": "school uniform"}],
         "rep_images": [filename],
         "use_profile_embedding": card_id != "card_1",
     }
@@ -214,6 +206,9 @@ async def test_suggest_metadata_reads_the_whole_selected_prompt_and_does_not_sav
     assert "Arbitrary Picture Grammar" in prompt_text
     assert "fixed Image Command heading" in prompt_text
     assert "Riko_magical_overcome_smile.webp" in prompt_text
+    assert "Default outfit evidence: school uniform" in prompt_text
+    assert "Registered outfits:" not in prompt_text
+    assert "fallback example, not a rule" in prompt_text
     assert "hardcoded keyword spotting" in prompt_text
 
 

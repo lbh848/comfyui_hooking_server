@@ -180,11 +180,7 @@ class ProgramEmbeddingTest(unittest.TestCase):
             "selection_guide": "기본 모습",
             "aliases": [],
             "appearance": [],
-            "default_outfit_id": "default",
-            "outfits": [{
-                "id": "default", "label": "기본 복장",
-                "selection_guide": "기본 복장", "tags": [],
-            }],
+            "default_outfit": [],
             "rep_images": ["alice_rep.webp"],
             "use_profile_embedding": False,
         }, {
@@ -193,11 +189,7 @@ class ProgramEmbeddingTest(unittest.TestCase):
             "selection_guide": "다른 모습",
             "aliases": [],
             "appearance": [],
-            "default_outfit_id": "default",
-            "outfits": [{
-                "id": "default", "label": "기본 복장",
-                "selection_guide": "기본 복장", "tags": [],
-            }],
+            "default_outfit": [],
             "rep_images": [alternate_name],
             "use_profile_embedding": True,
         }]

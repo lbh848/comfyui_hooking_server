@@ -7,12 +7,12 @@ from pathlib import Path
 import pytest
 
 from modes.visual_profiles import (
-    LEGACY_OUTFIT_ID,
     LEGACY_VISUAL_PROFILE_ID,
     MAX_VISUAL_CARDS,
     VisualProfileValidationError,
     build_natural_profile_catalog,
     cards_to_character_profiles,
+    character_profiles_to_cards,
     effective_bot_profiles,
     effective_character_cards,
     normalize_visual_cards,
@@ -41,18 +41,7 @@ def _cards():
         "selection_guide": "변신하지 않은 평상시 인간 모습일 때 유지한다.",
         "aliases": ["평상시 모습"],
         "appearance": ["short brown hair", "brown eyes"],
-        "default_outfit_id": "casual",
-        "outfits": [{
-            "id": "casual",
-            "label": "사복",
-            "selection_guide": "평상시 외출복을 입은 경우.",
-            "tags": ["hoodie", "jeans"],
-        }, {
-            "id": "uniform",
-            "label": "제복",
-            "selection_guide": "학교 제복을 입고 있다고 서술된 경우.",
-            "tags": ["school uniform"],
-        }],
+        "default_outfit": ["hoodie", "jeans"],
         "gender_tag": "1girl",
         "face_tags": "short brown hair, brown eyes",
         "eye_tags": "brown eyes",
@@ -65,13 +54,7 @@ def _cards():
         "selection_guide": "절망의 힘으로 몸 자체가 변형된 상태가 성립한 뒤 유지한다.",
         "aliases": ["절망체"],
         "appearance": ["white hair", "red eyes", "black horns"],
-        "default_outfit_id": "armor",
-        "outfits": [{
-            "id": "armor",
-            "label": "변신 갑주",
-            "selection_guide": "변신과 함께 나타나는 기본 갑주.",
-            "tags": ["black armor"],
-        }],
+        "default_outfit": ["black armor"],
         "gender_tag": "1girl",
         "face_tags": "white hair, red eyes",
         "eye_tags": "red eyes",
@@ -94,7 +77,9 @@ def test_existing_character_becomes_virtual_card_one():
 
     assert source == "legacy"
     assert cards[0]["id"] == LEGACY_VISUAL_PROFILE_ID
-    assert cards[0]["default_outfit_id"] == LEGACY_OUTFIT_ID
+    assert [item["tag"] for item in cards[0]["default_outfit"]] == ["hoodie", "jeans"]
+    assert "default_outfit_id" not in cards[0]
+    assert "outfits" not in cards[0]
     assert [item["tag"] for item in cards[0]["appearance"]] == [
         "short brown hair",
         "brown eyes",
@@ -137,15 +122,34 @@ def test_card_routing_reuses_profile_pipeline_shape():
     root["visual_cards"] = deepcopy(_cards())
     profiles = effective_bot_profiles({"characters": [root]}, [])["Adachi"]
 
-    resolved = resolve_visual_base(profiles, "civilian", "uniform")
-    rendered, base = resolve_render_character(root, profiles, "despair", "armor")
+    resolved = resolve_visual_base(profiles, "civilian")
+    rendered, base = resolve_render_character(root, profiles, "despair")
 
-    assert [item["tag"] for item in resolved["outfit"]] == ["school uniform"]
+    assert [item["tag"] for item in resolved["outfit"]] == ["hoodie", "jeans"]
     assert rendered["face_tags"] == "white hair, red eyes"
     assert rendered["character_negative"] == "brown hair"
     assert rendered["loras_solo"][0]["path"] == "despair.safetensors"
     assert rendered["_use_profile_embedding"] is True
     assert base["visual_profile_id"] == "despair"
+
+
+def test_secondary_card_does_not_inherit_primary_card_loras_when_fields_are_missing():
+    root = _root_character()
+    cards = _cards()
+    cards[0].update({
+        "loras_group": [{"path": "primary-group.safetensors"}],
+        "face_loras": [{"path": "primary-face.safetensors"}],
+        "style_loras": [{"path": "primary-style.safetensors"}],
+    })
+    for field in ("loras", "loras_group", "loras_solo", "face_loras", "style_loras"):
+        cards[1].pop(field, None)
+    store_visual_cards(root, cards)
+    profiles = effective_bot_profiles({"characters": [root]}, [])["Adachi"]
+
+    rendered, _base = resolve_render_character(root, profiles, "despair")
+
+    for field in ("loras", "loras_group", "loras_solo", "face_loras", "style_loras"):
+        assert field not in rendered
 
 
 def test_more_than_ten_cards_are_rejected():
@@ -185,8 +189,64 @@ def test_natural_catalog_keeps_prose_and_internal_route_ids():
     assert "서사가 확정한 다른 카드 상태도 없을 때만 폴백" in catalog
     assert "몸 자체가 변형된 상태" in catalog
     assert "`despair`" in catalog
-    assert "작중 별칭: 사복" in catalog
+    assert "별도 복장 선택 축이 없으며" in catalog
+    assert "default_outfit" in catalog
+    assert "참고하는 기본 복장" in catalog
+    assert "장면 맥락이 다른 복장을 요구하면 고정하지 않는다" in catalog
     assert "white hair" not in catalog
+
+
+def test_nested_outfits_are_migrated_to_the_selected_default_only():
+    legacy = _cards()[0]
+    legacy.pop("default_outfit")
+    legacy["default_outfit_id"] = "uniform"
+    legacy["outfits"] = [{
+        "id": "casual",
+        "label": "사복",
+        "selection_guide": "평상시 외출복",
+        "tags": ["hoodie", "jeans"],
+    }, {
+        "id": "uniform",
+        "label": "제복",
+        "selection_guide": "학교 제복",
+        "tags": ["school uniform"],
+    }]
+
+    migrated = normalize_visual_cards([legacy])[0]
+
+    assert [item["tag"] for item in migrated["default_outfit"]] == ["school uniform"]
+    assert "default_outfit_id" not in migrated
+    assert "outfits" not in migrated
+
+
+def test_legacy_nested_character_profile_api_input_keeps_selected_outfit_on_flatten():
+    legacy_card = deepcopy(_cards()[0])
+    legacy_card.pop("default_outfit")
+    legacy_card["default_outfit_id"] = "uniform"
+    legacy_card["outfits"] = [{
+        "id": "casual",
+        "label": "사복",
+        "tags": ["hoodie", "jeans"],
+    }, {
+        "id": "uniform",
+        "label": "제복",
+        "tags": ["school uniform"],
+    }]
+    profiles = {
+        "name": "Adachi",
+        "default_visual_profile_id": "civilian",
+        "profiles": [{
+            key: deepcopy(value)
+            for key, value in legacy_card.items()
+            if key not in {"gender_tag", "face_tags", "eye_tags", "character_negative", "loras_solo", "use_profile_embedding"}
+        }],
+    }
+
+    migrated = character_profiles_to_cards(profiles)[0]
+
+    assert [item["tag"] for item in migrated["default_outfit"]] == ["school uniform"]
+    assert "default_outfit_id" not in migrated
+    assert "outfits" not in migrated
 
 
 @pytest.mark.asyncio
@@ -236,10 +296,28 @@ async def test_lb_extra_refine_uses_the_selected_cards_representative_image(
     (char_dir / "despair.webp").write_bytes(b"card-image")
 
     captured = {}
+    history = []
 
     async def fake_vision_call(task_name, messages, **kwargs):
         captured["task_name"] = task_name
         captured["image"] = base64.b64decode(kwargs["image_b64"])
+        kwargs["on_attempt_failure"]({
+            "phase": "primary",
+            "slot": "llm1",
+            "attempt": 1,
+            "total_attempts": 2,
+            "attempt_id": "attempt-1",
+            "reason": "temporary parse failure",
+            "raw_response": "not-json",
+            "elapsed": 0.1,
+        })
+        kwargs["execution_observer"]({
+            "type": "execution_complete",
+            "execution_id": "execution-1",
+            "parent_execution_id": "",
+            "phase": "primary",
+            "llm_slot": "llm1",
+        })
         return '{"appearance":["white hair"],"outfit":["black armor"]}'
 
     async def fake_notify(*_args, **_kwargs):
@@ -257,7 +335,7 @@ async def test_lb_extra_refine_uses_the_selected_cards_representative_image(
     monkeypatch.setattr(llm_service, "supports_vision", lambda _service: True)
     monkeypatch.setattr(llm_service, "get_config", lambda: {"llm_model": "test-model"})
     monkeypatch.setattr(llm_service, "callLLMVisionTask", fake_vision_call)
-    monkeypatch.setattr(lighbd_service, "_log_lighbd_history", lambda _entry: None)
+    monkeypatch.setattr(lighbd_service, "_log_lighbd_history", history.append)
     monkeypatch.setattr(server_module, "notify_frontend", fake_notify)
 
     result = await bot_mode_module.run_lb_extra_refine(
@@ -271,3 +349,58 @@ async def test_lb_extra_refine_uses_the_selected_cards_representative_image(
 
     assert result["success"] is True
     assert captured == {"task_name": "refine_lb_extra", "image": b"card-image"}
+    assert [(entry["status"], entry["output"]) for entry in history] == [
+        ("error", "not-json"),
+        ("ok", '{"appearance":["white hair"],"outfit":["black armor"]}'),
+    ]
+    assert all(entry["task_key"] == "refine_lb_extra" for entry in history)
+    assert all(entry["call_name"] == "lb_extra_profile_refine" for entry in history)
+    assert history[0]["attempt_id"] == "attempt-1"
+    assert history[1]["execution_id"] == "execution-1"
+
+
+@pytest.mark.asyncio
+async def test_lb_extra_http_handler_enqueues_profile_refine_and_waits_for_result(monkeypatch):
+    bot_mode_module = importlib.import_module("modes.bot_mode")
+    server_module = importlib.import_module("server")
+    captured = {}
+
+    class Item:
+        id = "queued-refine"
+
+        def __init__(self):
+            import asyncio
+
+            self.completion_future = asyncio.get_running_loop().create_future()
+            self.completion_future.set_result({
+                "success": True,
+                "data": {"appearance": ["white hair"], "outfit": ["black armor"]},
+            })
+
+    class FakeQueueManager:
+        async def add_item(self, **kwargs):
+            captured.update(kwargs)
+            return Item()
+
+    class Request:
+        async def json(self):
+            return {
+                "bot": "demo",
+                "character": "Adachi",
+                "visual_card_id": "despair",
+                "visual_card_label": "카드 2",
+                "visual_card_index": 2,
+                "appearance": ["white hair"],
+                "outfit": ["black armor"],
+                "etc": [],
+            }
+
+    monkeypatch.setattr(server_module, "queue_manager", FakeQueueManager())
+
+    response = await bot_mode_module.handle_lb_extra_refine(Request())
+    payload = json.loads(response.text)
+
+    assert payload["success"] is True
+    assert captured["item_type"] == "bot_lb_extra_refine"
+    assert captured["params"]["visual_card_id"] == "despair"
+    assert captured["params"]["visual_card_index"] == 2

@@ -209,7 +209,7 @@ const empty = _lbExtraResolveTagDrop(
     }
 
 
-def test_lb_extra_screen_renders_character_profile_outfit_tree():
+def test_lb_extra_screen_renders_flat_character_profile_tree():
     source = _frontend_source()
     tree_renderer = _function_source(
         source,
@@ -220,7 +220,10 @@ def test_lb_extra_screen_renders_character_profile_outfit_tree():
     assert "characterData?.profiles" in tree_renderer
     assert 'data-lb-tree-key=' in tree_renderer
     assert "기본 프로필" in tree_renderer
-    assert "기본 복장" in tree_renderer
+    assert "default_outfit" in tree_renderer
+    assert "profile.default_outfit" in tree_renderer
+    assert "profile.outfits" not in tree_renderer
+    assert "default_outfit_id" not in tree_renderer
     assert "_openLbExtraTreeProfileEditor" in tree_renderer
     assert "이식용 평면 데이터 (다운로드 형식 유지)" in tree_renderer
     assert 'class="lb-extra-mindmap"' in tree_renderer
@@ -242,3 +245,63 @@ def test_lb_extra_tree_keeps_legacy_download_serialization():
     assert "`-Appearance\\n${appearanceStr}\\n`" in downloader
     assert "`-default_outfit\\n${char.outfit.map(t => t.tag).join(', ')}\\n\\n`" in downloader
     assert "profiles" not in downloader
+
+
+def test_lb_extra_batch_targets_expand_profiles_and_mark_only_default_card_portable():
+    source = _frontend_source()
+    helpers_start = source.index("function _lbExtraBatchTargetKey(charName, visualCardId)")
+    helpers_end = source.index("async function _lbExtraBatchRefine()", helpers_start)
+    helpers = source[helpers_start:helpers_end]
+    setup = """
+const _lbExtraOriginal = [{name: 'Laura'}];
+const _visualCardState = () => ({data: {
+    default_visual_profile_id: 'base',
+    profiles: [{
+        id: 'base', label: '카드 1', appearance: [{tag:'brown hair'}],
+        default_outfit: [{tag:'jacket'}]
+    }, {
+        id: 'awakened', label: '카드 2', appearance: [{tag:'white hair'}, {tag:'horns'}],
+        default_outfit: [{tag:'black armor'}]
+    }]
+}});
+const _visualCardResolvedById = (_name, profileId) => ({rep_images:[`${profileId}.webp`]});
+console.error = () => {};
+const result = _lbExtraProfileBatchTargets();
+"""
+
+    actual = _run_node(
+        f"{helpers}\n{setup}",
+        "result.map(item => ({id:item.visualCardId, outfitCount:item.outfitCount, "
+        "portable:item.isPortable, rep:item.rep, appearance:item.appearanceCount}))",
+    )
+
+    assert actual == [
+        {
+            "id": "base",
+            "outfitCount": 1,
+            "portable": True,
+            "rep": "base.webp",
+            "appearance": 1,
+        },
+        {
+            "id": "awakened",
+            "outfitCount": 1,
+            "portable": False,
+            "rep": "awakened.webp",
+            "appearance": 2,
+        },
+    ]
+
+
+def test_lb_extra_batch_uses_the_same_full_representative_prompt_source_as_focus_edit():
+    source = _frontend_source()
+    run_start = source.index("async function _lbExtraBatchRefineRun(targets)")
+    run_end = source.index("let _lbExtraBatchAbort = null", run_start)
+    run_source = source[run_start:run_end]
+
+    assert "await _loadVisualCardRefineOriginal(" in run_source
+    assert "resolved?.rep_images || []" in run_source
+    assert "(original.appearance || [])" in run_source
+    assert "(original.outfit || [])" in run_source
+    assert "(original.uncategorized || [])" in run_source
+    assert "etc: etcTags" in run_source

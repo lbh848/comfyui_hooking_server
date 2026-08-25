@@ -632,6 +632,7 @@ DEFAULT_CONFIG = {
         "nsfw": False,
         "supplement": True,
         "key_visual": True,
+        "minimal_background_description": True,
         "character_limit": 3,
         "scene_mode": "manual",
         "output_count_min": 15,
@@ -4968,7 +4969,6 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                             root_character,
                             character_profiles,
                             str(requested_state.get("visual_profile_id") or ""),
-                            str(requested_state.get("outfit_id") or ""),
                         )
                     except Exception as e:
                         print(
@@ -4982,7 +4982,6 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                     resolved_characters.append(resolved_character)
                     applied_visual_states[char_name] = {
                         "visual_profile_id": resolved_base["visual_profile_id"],
-                        "outfit_id": resolved_base["outfit_id"],
                         "profile_embedding": bool(
                             resolved_character.get("_use_profile_embedding")
                         ),
@@ -5674,12 +5673,10 @@ def _descriptor_visual_states(descriptor: dict | None) -> dict:
             and isinstance(value, dict)
         ), {})
         profile_id = str(base.get("visual_profile_id") or "").strip()
-        outfit_id = str(base.get("outfit_id") or "").strip()
         if not name or not profile_id:
             continue
         result[name] = {
             "visual_profile_id": profile_id,
-            "outfit_id": outfit_id,
         }
     return result
 

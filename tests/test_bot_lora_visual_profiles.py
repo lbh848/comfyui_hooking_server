@@ -16,13 +16,7 @@ def _card(card_id: str, label: str, rep: str) -> dict:
         "selection_guide": label,
         "aliases": [],
         "appearance": [],
-        "default_outfit_id": "default",
-        "outfits": [{
-            "id": "default",
-            "label": "기본 복장",
-            "selection_guide": "기본 복장",
-            "tags": [],
-        }],
+        "default_outfit": [],
         "rep_images": [rep],
     }
 
@@ -346,7 +340,8 @@ def test_frontend_routes_bot_lora_actions_by_visual_card():
     assert "visual_card_id: ch.visual_card_id || ''" in source
     assert "visual_card_id: botTrainingPickerTargetCard" in source
     assert "_botTrainedModalVisualCardId" in source
-    assert "ch.visual_card_id === activeCardId" in source
+    assert "ch?.visual_card_id === visualCardId" in source
+    assert "_findBestBotProjectCharacter(chars, cn, target.visualCardId)" in source
     assert 'placeholder="캐릭터 공용 트리거"' in source
     assert "const charGroups = [];" in source
     assert '<details class="bot-lora-character-group"' in source

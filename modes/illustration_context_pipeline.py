@@ -25,7 +25,6 @@ import yaml
 
 from modes import lighbd_service, llm_service, multi_char_mask, postprocess
 from modes.visual_profiles import (
-    outfit_by_id,
     profile_by_id,
     resolve_visual_base,
     tag_values as visual_tag_values,
@@ -133,6 +132,7 @@ DEFAULT_TOGGLES = {
     "nsfw": False,
     "supplement": True,
     "key_visual": True,
+    "minimal_background_description": True,
     "character_limit": 3,
     # scene_mode: "manual" = 서버가 최소/최대 강제, "auto" = lb-xnai(call2)에 완전 방임
     "scene_mode": "manual",
@@ -2061,9 +2061,6 @@ def parse_call1_analysis(
             or item.get("visual_profile_id")
             or ""
         ).strip()
-        outfit_id = str(
-            item.get("target_outfit_id") or item.get("outfit_id") or ""
-        ).strip()
         visual_change = str(item.get("visual_change") or "").strip()
         evidence = str(item.get("evidence") or "").strip()
         try:
@@ -2086,14 +2083,6 @@ def parse_call1_analysis(
                 f"character={name}, profile={profile_id!r}"
             )
             continue
-        if not outfit_id:
-            outfit_id = str(profile.get("default_outfit_id") or "").strip()
-        if outfit_by_id(profile, outfit_id) is None:
-            warnings.append(
-                f"선택 프로필에 없는 복장 ID로 폐기: "
-                f"character={name}, profile={profile_id!r}, outfit={outfit_id!r}"
-            )
-            continue
         segment_text = str((segments.get(segment_id) or {}).get("text") or "")
         if (
             not segment_id
@@ -2109,14 +2098,13 @@ def parse_call1_analysis(
         if confidence < 0.70:
             warnings.append(
                 f"외형 기반 사건 신뢰도 낮아 폐기: "
-                f"{name}/{profile_id}/{outfit_id}={confidence:.2f}"
+                f"{name}/{profile_id}={confidence:.2f}"
             )
             continue
         visual_base_events.append({
             "segment_id": segment_id,
             "character": name,
             "target_visual_profile_id": profile_id,
-            "target_outfit_id": outfit_id,
             "visual_change": visual_change,
             "evidence": evidence,
             "confidence": confidence,
@@ -2766,7 +2754,7 @@ def apply_visual_base_events(
     current_message_id: str,
     visual_profiles: dict[str, dict] | None,
 ) -> dict:
-    """Apply exact server-validated profile/outfit routes without semantic matching."""
+    """Apply exact server-validated flat profile routes without semantic matching."""
     result = deepcopy(states or {})
     names: list[str] = []
     for item in current_characters or []:
@@ -2791,14 +2779,9 @@ def apply_visual_base_events(
         state.setdefault("canonical_name", name)
         state.setdefault("visual_base_timeline", [])
         requested_profile = str(state.get("active_visual_profile_id") or "").strip()
-        requested_outfit = str(state.get("active_outfit_id") or "").strip()
-        base = resolve_visual_base(
-            character_profiles,
-            requested_profile,
-            requested_outfit,
-        )
+        base = resolve_visual_base(character_profiles, requested_profile)
         state["active_visual_profile_id"] = base["visual_profile_id"]
-        state["active_outfit_id"] = base["outfit_id"]
+        state.pop("active_outfit_id", None)
         current_wardrobe = _normalize_outfit_state(state.get("current_wardrobe"))
         if not _outfit_state_is_known(current_wardrobe):
             worn = visual_tag_values(base.get("outfit") or [])
@@ -2820,7 +2803,6 @@ def apply_visual_base_events(
             base = resolve_visual_base(
                 character_profiles,
                 str(event.get("target_visual_profile_id") or ""),
-                str(event.get("target_outfit_id") or ""),
             )
         except Exception as exc:
             print(
@@ -2834,12 +2816,9 @@ def apply_visual_base_events(
             "canonical_name": name,
             "visual_base_timeline": [],
         })
-        changed = (
-            str(state.get("active_visual_profile_id") or "") != base["visual_profile_id"]
-            or str(state.get("active_outfit_id") or "") != base["outfit_id"]
-        )
+        changed = str(state.get("active_visual_profile_id") or "") != base["visual_profile_id"]
         state["active_visual_profile_id"] = base["visual_profile_id"]
-        state["active_outfit_id"] = base["outfit_id"]
+        state.pop("active_outfit_id", None)
         worn = visual_tag_values(base.get("outfit") or [])
         state["current_wardrobe"] = {
             "body_state": "clothed" if worn else "unknown",
@@ -2855,8 +2834,7 @@ def apply_visual_base_events(
         state["last_seen_message_id"] = str(current_message_id or "")
         print(
             f"[ILLUST_CONTEXT:VISUAL_BASE] 외형 기반 사건 적용: "
-            f"character={name}, profile={base['visual_profile_id']}, "
-            f"outfit={base['outfit_id']}, changed={changed}"
+            f"character={name}, profile={base['visual_profile_id']}, changed={changed}"
         )
     return result
 
@@ -2878,7 +2856,6 @@ def visual_base_snapshot(
         base = resolve_visual_base(
             character_profiles,
             str((tracked or {}).get("active_visual_profile_id") or ""),
-            str((tracked or {}).get("active_outfit_id") or ""),
         )
         result[name] = base
     return result
@@ -2891,17 +2868,20 @@ def _visual_base_authority_note(snapshot: dict[str, dict]) -> str:
         outfit = ", ".join(visual_tag_values(base.get("outfit") or [])) or "(none)"
         statements.append(
             f"{name} is in visual profile `{base.get('visual_profile_id')}` "
-            f"({base.get('visual_profile_label')}) with registered base outfit "
-            f"`{base.get('outfit_id')}` ({base.get('outfit_label')}). "
+            f"({base.get('visual_profile_label')}). "
             f"Its complete fixed appearance is: {appearance}. "
-            f"Its complete registered base outfit is: {outfit}."
+            f"Its default-outfit reference is: {outfit}. This outfit is a fallback "
+            "reference, not fixed identity: preserve it when it fits, but design a "
+            "different coherent outfit when the full scene context calls for one."
         )
     if not statements:
         return ""
     return (
-        "For this exact scene, these server-selected visual bases override any default "
-        "appearance or outfit for the same logical character. Do not choose another profile. "
-        "Apply later natural-language wardrobe continuity as a delta against this base.\n"
+        "For this exact scene, these server-selected visual profiles override the default "
+        "appearance profile for the same logical character. Do not choose another profile. "
+        "Only fixed appearance is mandatory; each default outfit below is a reference fallback. "
+        "Apply later natural-language wardrobe continuity first, then use scene-appropriate "
+        "attire when the full context calls for it.\n"
         + "\n".join(statements)
     )
 
@@ -3099,16 +3079,6 @@ def _last_visual_by_character(descriptors: list[dict]) -> dict:
                         )
                         or {}
                     ).get("visual_profile_id")
-                    or ""
-                ),
-                "visual_outfit_id": str(
-                    (
-                        _authority_values_for_name(
-                            descriptor.get("visual_base_snapshot") or {},
-                            name,
-                        )
-                        or {}
-                    ).get("outfit_id")
                     or ""
                 ),
             }
@@ -3700,6 +3670,9 @@ def render_call2_prompt(
         "lb-xnai.nsfw": "1" if toggles.get("nsfw") else "0",
         "lb-xnai.supplement": "1" if toggles.get("supplement") else "0",
         "lb-xnai.kv.off": "0" if toggles.get("key_visual") else "1",
+        "lb-xnai.background.minimal": (
+            "1" if toggles.get("minimal_background_description", True) else "0"
+        ),
         "lb-xnai.compat.comfy": "1" if toggles.get("compat_comfy") else "0",
         "lb-xnai.compat.charPrompt": "1" if toggles.get("compat_character_prompt") == "separate" else "0",
         "lb-xnai.context": "1" if toggles.get("context_history") else "0",
@@ -4701,11 +4674,6 @@ def _parse_call2_detail_output(
         item["visual_base_snapshot"] = deepcopy(
             assigned_scene_context.get("visual_base_snapshot") or {}
         )
-        semantic_continuity_names = {
-            str(name or "").strip().casefold()
-            for name in assigned_scene_context.get("continuity_characters") or []
-            if str(name or "").strip()
-        }
         expected_wardrobes = (assigned_wardrobes_by_slot or {}).get(slot) or {}
         if expected_wardrobes:
             expected_by_name = {
@@ -4732,27 +4700,25 @@ def _parse_call2_detail_output(
                 conflict = _outfit_contract_conflict(expected_outfit, actual_outfit)
                 if conflict:
                     print(
-                        f"[ILLUST_CONTEXT:CALL2_DETAIL] 희소 DETAIL 복장 출력을 서버 기준으로 복구: "
-                        f"slot={slot}, character={expected_name}, expected={expected_outfit}, "
-                        f"actual={_normalize_outfit_state(actual_outfit)}, reason={conflict}"
+                        f"[ILLUST_CONTEXT:CALL2_DETAIL] 참고 복장과 다른 contextual 후보를 "
+                        f"권위 감사로 전달: slot={slot}, character={expected_name}, "
+                        f"reference={expected_outfit}, actual={_normalize_outfit_state(actual_outfit)}, "
+                        f"difference={conflict}"
                     )
                 normalized_actual = _normalize_outfit_state(actual_outfit)
                 if not _outfit_states_equal(normalized_actual, expected_outfit):
                     print(
-                        f"[ILLUST_CONTEXT:CALL2_DETAIL] DETAIL 추가 복장 항목을 "
-                        f"PLAN 스냅샷으로 정규화: slot={slot}, character={expected_name}, "
-                        f"expected={expected_outfit}, actual={normalized_actual}"
+                        f"[ILLUST_CONTEXT:CALL2_DETAIL] DETAIL contextual 복장 보존: "
+                        f"slot={slot}, character={expected_name}, "
+                        f"reference={expected_outfit}, actual={normalized_actual}"
                     )
-                # A literal CALL1 continuity note carries more semantic detail than
-                # the coarse snapshot enums. Preserve DETAIL's contextual resolution
-                # for the affected character so the existing semantic audit can
-                # validate/repair it instead of erasing it before the audit runs.
+                # default_outfit/추적 스냅샷은 참고·연속성 기준이다. DETAIL이 문맥에
+                # 맞는 다른 복장을 구성했다면 권위 감사가 의미를 검증할 수 있도록
+                # 알려진 실제 출력을 보존한다. 여기서 스냅샷으로 덮으면 감사 전에
+                # 새 복장 정보가 유실된다.
                 character["outfit_state"] = (
                     deepcopy(normalized_actual)
-                    if (
-                        expected_name.casefold() in semantic_continuity_names
-                        and _outfit_state_is_known(normalized_actual)
-                    ) or (
+                    if _outfit_state_is_known(normalized_actual) or (
                         expected_outfit["body_state"] == "unknown"
                         and not _outfit_state_is_known(expected_outfit)
                     )
@@ -4866,11 +4832,6 @@ def _parse_call2_detail_partial(
         item["visual_base_snapshot"] = deepcopy(
             assigned_scene_context.get("visual_base_snapshot") or {}
         )
-        semantic_continuity_names = {
-            str(name or "").strip().casefold()
-            for name in assigned_scene_context.get("continuity_characters") or []
-            if str(name or "").strip()
-        }
         expected_wardrobes = (assigned_wardrobes_by_slot or {}).get(slot) or {}
         if not expected_wardrobes:
             continue
@@ -4897,25 +4858,23 @@ def _parse_call2_detail_partial(
             conflict = _outfit_contract_conflict(expected_outfit, actual_outfit)
             if conflict:
                 print(
-                    f"[ILLUST_CONTEXT:CALL2_DETAIL_PARTIAL] 희소 DETAIL 복장 서버 기준 복구: "
-                    f"slot={slot}, character={expected_name}, expected={expected_outfit}, "
-                    f"actual={_normalize_outfit_state(actual_outfit)}, reason={conflict}"
+                    f"[ILLUST_CONTEXT:CALL2_DETAIL_PARTIAL] 참고 복장과 다른 contextual "
+                    f"후보를 권위 감사로 전달: slot={slot}, character={expected_name}, "
+                    f"reference={expected_outfit}, actual={_normalize_outfit_state(actual_outfit)}, "
+                    f"difference={conflict}"
                 )
             normalized_actual = _normalize_outfit_state(actual_outfit)
             if not _outfit_states_equal(normalized_actual, expected_outfit):
                 print(
-                    f"[ILLUST_CONTEXT:CALL2_DETAIL_PARTIAL] DETAIL 추가 복장 항목 PLAN 정규화: "
+                    f"[ILLUST_CONTEXT:CALL2_DETAIL_PARTIAL] DETAIL contextual 복장 보존: "
                     f"slot={slot}, character={expected_name}, "
-                    f"expected={expected_outfit}, actual={normalized_actual}"
+                    f"reference={expected_outfit}, actual={normalized_actual}"
                 )
-            # strict 경로와 동일하게 자연어 continuity가 있는 캐릭터의 contextual
-            # resolution은 audit 전까지 보존한다.
+            # strict 경로와 동일하게 알려진 contextual outfit resolution을 audit
+            # 전까지 보존한다. 기본 복장은 참고값이므로 여기서 강제 복원하지 않는다.
             character["outfit_state"] = (
                 deepcopy(normalized_actual)
-                if (
-                    expected_name.casefold() in semantic_continuity_names
-                    and _outfit_state_is_known(normalized_actual)
-                ) or (
+                if _outfit_state_is_known(normalized_actual) or (
                     expected_outfit["body_state"] == "unknown"
                     and not _outfit_state_is_known(expected_outfit)
                 )
@@ -5228,6 +5187,7 @@ async def _run_call2_authority_audit(
     current_context: str,
     stream_notify,
     hairstyle_history: dict[str, list[dict]] | None = None,
+    toggles: dict | None = None,
 ) -> tuple[dict[tuple[str, int, str], dict], str, str]:
     entries, entry_keys = _call2_authority_audit_entries(
         descriptors,
@@ -5242,20 +5202,47 @@ async def _run_call2_authority_audit(
         )
         return {}, "", "not_needed"
 
+    if (toggles or {}).get("minimal_background_description", True):
+        audit_background_instruction = (
+            "Environment is a last-priority completeness concern: keep an existing minimal "
+            "location cue or `simple background` as-is, never add a second background "
+            "description, and when no clear or story-important background exists add only "
+            "`simple background`. Never request decorative props, weather, time, or elaborate "
+            "lighting merely for background detail. "
+        )
+    else:
+        audit_background_instruction = (
+            "Environment is a normal visual-completeness concern: preserve and, when missing, "
+            "request enough concrete story-supported location, time, weather, lighting, scenery, "
+            "furniture, and prominent prop detail to make the setting readable. Multiple "
+            "complementary environment additions are allowed when they express distinct visible "
+            "facts. Never invent unsupported decoration, and request `simple background` only "
+            "when the narrative provides no meaningful environment. "
+        )
+
     system_prompt = (
         "You are CALL2-AUTHORITY-AUDIT. Perform the existing authority audit and a final visual-"
         "completeness repair in this same call. Read CURRENT CONTEXT and each entry's scene_context by "
-        "meaning and chronology; never use keyword matching. The complete fixed_appearance and "
-        "default_outfit are mandatory bases. A short historical description is not a complete "
-        "replacement outfit. For each id, return authority_exceptions only for exact supplied "
-        "base tags that the assigned scene explicitly and temporarily replaces or explicitly "
-        "removes. Do not grant an authority exception for an accessory merely because it is "
-        "physically associated with a removed garment; the scene must establish removal of that "
-        "accessory itself (e.g. removing a belt does not authorize removing `belt pouch` unless "
-        "the pouch is also established as removed). generated_outfit_state is an untrusted proposal and never proves an exception "
-        "by itself. Return forbidden_additions for exact generated_positive tags that invent a "
-        "persistent identity, body, hair, face, eye, skin, or wardrobe trait absent from the base "
-        "and unsupported by the assigned scene. An entry may include `hairstyle_history`: a "
+        "meaning and chronology; never use keyword matching. The complete fixed_appearance is a "
+        "mandatory identity base. default_outfit is only a fallback wardrobe reference, not fixed "
+        "identity and not a mandatory outfit. A short historical description is not automatically a "
+        "complete replacement outfit, but the full scene may make a different coherent outfit "
+        "appropriate even without an explicit sentence listing garments. Judge that from the whole "
+        "narrative, role, activity, occasion, setting, and continuity by meaning and common sense, never "
+        "by matching individual words. For each id, return authority_exceptions for exact supplied "
+        "fixed-appearance tags only when the assigned scene explicitly and temporarily replaces them. "
+        "For default-outfit tags, also return authority_exceptions when the tracked wardrobe or the "
+        "scene's coherent contextual outfit replaces the fallback as a set; explicit removal wording is "
+        "not required for such a contextual wardrobe replacement. When replacement is warranted, except "
+        "every default garment or accessory that should not carry into the new outfit, while preserving "
+        "an item only when it logically remains. Do not grant an authority exception for an accessory merely because it is "
+        "physically associated with one explicitly removed garment; unless the whole outfit is contextually "
+        "replaced, the scene must establish removal of that accessory itself. generated_outfit_state is an untrusted proposal, but it "
+        "is evidence to judge together with generated_positive and the full context rather than being "
+        "overwritten merely for differing from default_outfit. Return forbidden_additions for exact "
+        "generated_positive tags that invent a persistent identity, body, hair, face, eye, skin, or "
+        "species trait, or a wardrobe detail that is incoherent with the assigned scene. Do not flag a "
+        "coherent scene-appropriate garment merely because it is absent from default_outfit. An entry may include `hairstyle_history`: a "
         "chronological list of semantic hairstyle-arrangement transitions. An active transition in "
         "that history may temporarily authorize, for this scene only, replacement of the directly "
         "conflicting fixed hairstyle-arrangement tag — list the suppressed fixed arrangement tag "
@@ -5268,21 +5255,22 @@ async def _run_call2_authority_audit(
         "override ends at `reset_default` or a later conflicting hairstyle event. Do not classify pose, action, expression, gaze, "
         "or temporary scene state as a forbidden addition. Return conflicts even when every base "
         "tag is already present, but only for exact generated_positive tags that directly "
-        "contradict the base and are not supported by that assigned scene. Do not report camera "
+        "contradict fixed appearance and are not supported by that assigned scene. When a contextual "
+        "outfit replaces the fallback, also return as conflicts any exact generated default-outfit "
+        "tags that were mistakenly retained and do not belong with the resolved new outfit. Do not report camera "
         "invisibility, brevity, or ordinary scene/action/expression tags as authority conflicts. "
         "Then silently cross-check whether the generated camera, scene, supplement, character tags, "
         "scene_brief, and natural-language continuity_note form one physically possible image. For "
         "explicit content, judge the whole scene-specific visual bundle: participant roles and relative "
         "positions, exact action/contact and touched anatomy, visible exposure, displaced or removed "
         "clothing, pose, expression, and whether the camera actually includes story-essential evidence. "
-        "Do not invent a sexual act, body detail, intensity, garment change, or exposure unsupported by "
-        "the story. Do not euphemize or omit an explicit fact that the assigned image is meant to show. "
+        "Do not invent a sexual act, body detail, intensity, or exposure unsupported by the story. "
+        "Contextual wardrobe design is allowed as described above, but it must remain coherent with the "
+        "scene and must not rewrite identity. Do not euphemize or omit an explicit fact that the assigned image is meant to show. "
         "Put only missing character-level visible facts in required_additions, and only missing scene-level "
-        "facts such as overall interaction or `nsfw` in scene_additions. Environment is a last-priority "
-        "completeness concern: keep an existing minimal location cue or `simple background` as-is, never add "
-        "a second background description, and when no clear or story-important background exists add only "
-        "`simple background`. Never request decorative props, weather, time, or elaborate lighting merely for "
-        "background detail. Each list item is one "
+        "facts such as overall interaction or `nsfw` in scene_additions. "
+        + audit_background_instruction
+        + "Each list item is one "
         "concise tag or natural visual phrase; it need not be validated against an external tag dictionary. "
         "Use camera_replacement only when the present framing or perspective cannot show an essential fact; "
         "then return one complete coherent replacement camera string, otherwise return an empty string. "
@@ -5352,10 +5340,11 @@ def apply_call2_authority_base(
     semantic_decisions: dict[tuple[str, int, str], dict] | None = None,
     semantic_status: str = "not_run",
 ) -> list[dict]:
-    """Restore complete fixed/default bases before RAW/Call5/history consumers.
+    """Restore fixed appearance and validate the default-outfit fallback.
 
     Only the separate semantic audit may approve exact authority exceptions.
-    DETAIL/PLAN fields remain untrusted proposals. All other omissions are
+    DETAIL/PLAN fields remain untrusted proposals, but an audited contextual
+    outfit may replace the default reference as a set. Other omissions are
     deterministic server repairs. This function compares only server-provided
     tag-set membership; it does not classify narrative words.
     """
@@ -5700,10 +5689,12 @@ async def _run_call2_keyvis(
             "identity sources. Do not "
             "creatively fill missing identity traits from narrative prose. Narrative may control pose, "
             "action, expression, composition, and temporary visual state. "
-            "Rebuild each named character from the complete fixed appearance and complete default outfit. "
-            "The supplied wardrobe state and event timeline are sparse continuity history, not a short "
-            "replacement prompt; preserve every non-conflicting base tag. A separate server audit validates "
-            "exact base tags directly replaced or removed by the current context. Generated visual references "
+            "Rebuild each named character from the complete fixed appearance. Treat the supplied current "
+            "wardrobe as continuity and default_outfit as a fallback reference, not fixed identity. If the full "
+            "Key Visual concept calls for different attire, design one coherent context-appropriate outfit by "
+            "meaning and replace the fallback as a set; do not keyword-match or mix incompatible default garments "
+            "into it. A separate server audit validates the contextual replacement while keeping every fixed "
+            "appearance tag mandatory. Generated visual references "
             "are intentionally absent and must not be reconstructed as identity facts. "
             "Before returning, silently verify that the composition is one physically possible image and "
             "that its camera can actually show every story-essential action, contact, exposure, displaced "
@@ -5819,6 +5810,27 @@ async def _run_parallel_call2_details(
         detail_output_format,
     )
     detail_checklist = str(call2_thoughts or "").strip()
+    if toggles.get("minimal_background_description", True):
+        detail_background_instruction = (
+            "Prioritize each character's current clothing or exposure state, pose, action, "
+            "expression, gaze, and interaction before environment detail. Keep the environment "
+            "to the smallest story-supported cue, or use only `simple background` when no clear "
+            "or important background exists. Do not invent decorative props, weather, time, or "
+            "elaborate lighting. Make the camera, relative positions, actions, contact, visible "
+            "anatomy, garment displacement, expressions, and minimal background agree as one "
+            "physically possible image. "
+        )
+    else:
+        detail_background_instruction = (
+            "Prioritize each character's current clothing or exposure state, pose, action, "
+            "expression, gaze, and interaction, while also describing the story-supported "
+            "environment at a useful visual density. Include concrete location, time, weather, "
+            "lighting, scenery, furniture, and prominent props when established. Use multiple "
+            "complementary environment details when they express distinct visible facts; do not "
+            "invent unsupported decoration or collapse a specific setting into `simple background`. "
+            "Make the camera, relative positions, actions, contact, visible anatomy, garment "
+            "displacement, expressions, and environment agree as one physically possible image. "
+        )
     max_concurrency = int(toggles["call2_parallel_max_concurrency"])
     batches = _balanced_call2_scene_plan_batches(scene_plan, max_concurrency)
     jobs = [{"plans": batch, "weight": len(batch)} for batch in batches]
@@ -5913,23 +5925,21 @@ async def _run_parallel_call2_details(
                 "Expand each plan into a complete, coherent visual tag bundle with camera, scene, "
                 "character positives, outfit_state, and supplement. The structured wardrobe snapshot is "
                 "kept server-side for validation rather than used as an inter-LLM semantic handoff. Start "
-                "from the fixed/default/current bases in the supplied context. "
+                "from fixed appearance and resolve wardrobe from tracked continuity, the default-outfit "
+                "reference, and the full assigned scene. "
                 "When continuity_note is present, read that natural-language chronology by meaning and "
                 "treat it as authority for the affected character's current wardrobe, coverage, and "
                 "exposure; coarse operation/body-state hints or a stale snapshot must never simplify, "
-                "euphemize, or contradict it. Include every fixed-appearance and default-outfit tag, then "
-                "interpret sparse changes against the "
-                "assigned scene and current context. Never let a short CALL1 item list suppress an unmentioned "
-                "base feature. Only directly conflicting or explicitly removed exact base tags may be "
-                "omitted; a separate server audit validates those omissions, and every other base tag must "
-                "remain in positive and outfit_state. Never advance state beyond the assigned scene. Prioritize "
-                "each character's current clothing or exposure state, pose, action, expression, gaze, and "
-                "interaction before environment detail. Keep the environment to the smallest story-supported "
-                "cue, or use only `simple background` when no clear or important background exists. Do not invent "
-                "decorative props, weather, time, or elaborate lighting. Never repeat scene-wide environment, "
+                "euphemize, or contradict it. Include every fixed-appearance tag. Use the complete default outfit "
+                "only as fallback when the tracked wardrobe and full scene do not call for something different. "
+                "When different attire is contextually appropriate, design one coherent outfit by meaning and "
+                "replace the default as a set even if no sentence lists every garment; never keyword-match or "
+                "carry incompatible default pieces into it. A separate server audit validates the contextual "
+                "outfit and keeps fixed identity mandatory. Never advance state beyond the assigned scene. "
+                + detail_background_instruction
+                + "Never repeat scene-wide environment, "
                 "lighting, weather, time, character-count, or shared background-prop tags in characters[].positive. "
-                "Make the camera, relative positions, actions, contact, visible anatomy, garment displacement, "
-                "expressions, and minimal background agree as one physically possible image. Do not reduce a "
+                "Do not reduce a "
                 "story-essential explicit state to an ambiguous isolated tag or crop it out. "
                 "When a plan has characters: [], preserve characters: [] and express anonymous people "
                 "only through scene tags and supplement. "
@@ -9372,10 +9382,11 @@ async def build_from_context(
             append_call2_context({
                 "role": "user",
                 "content": (
-                    "# DEFAULT-BASED WARDROBE CONTINUITY BASE\n"
-                    "This is the complete default base plus previously tracked sparse deltas. "
-                    "Carry every non-conflicting base item forward. A short later event never turns "
-                    "this into a shorter replacement list, and camera absence never means removal.\n\n"
+                    "# TRACKED WARDROBE CONTINUITY AND DEFAULT REFERENCE\n"
+                    "This contains the current tracked wardrobe initialized from the default reference "
+                    "plus prior sparse deltas. Preserve real continuity, but do not treat default_outfit "
+                    "as fixed identity. When the assigned scene clearly calls for a different coherent "
+                    "outfit, replace the fallback as a set by meaning; camera absence alone never means removal.\n\n"
                     + json.dumps(projected_states, ensure_ascii=False, indent=2)
                 ),
             }, include_plan=False)
@@ -9388,9 +9399,9 @@ async def build_from_context(
                     "(a short natural-language description of what changed), and `state_after`; "
                     "`items` may be empty and that is expected. It is not a ready-made tag list and "
                     "does not contain a complete outfit. Map each `wardrobe_change` to the matching "
-                    "garment cluster of the current/default outfit: keep compatible default tags, "
-                    "remove/add/replace/restore the smallest garment set the evidence supports, and "
-                    "never discard an unmentioned default feature.\n\n"
+                    "garment cluster of the tracked outfit or default reference. Preserve compatible "
+                    "continuity, but allow the full scene context to establish a coherent replacement "
+                    "outfit even when it does not enumerate every garment.\n\n"
                     + json.dumps(wardrobe_events, ensure_ascii=False, indent=2)
                 ),
             }, include_plan=False)
@@ -10259,6 +10270,7 @@ async def build_from_context(
         slotted,
         stream_notify,
         hairstyle_history=audit_hairstyle_history,
+        toggles=toggles,
     )
     call2_authority_audit = apply_call2_authority_base(
         descriptors,

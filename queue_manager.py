@@ -210,6 +210,7 @@ LLM_TYPES = frozenset({
     "instance_lora_prompt_refine",  # 태그 정제 / test_setup (instance·style·bot·asset 전부 LLM 호출)
     "lora_prompt_review",           # 1차 정제 + 설정된 route의 선택적 2차 비전 검수
     "bot_llm_face_tag_analysis",    # 비전 LLM 기반 얼굴/눈 태그 자동 분류
+    "bot_lb_extra_refine",          # 비전 LLM 기반 프로필 카드 Appearance/기본 복장 정제
     "visual_profile_guide",         # 이미지 출력 지침 기반 캐릭터 카드 선택 기준 작성
     "character_maker",              # 캐릭터 메이커 draft/feedback LLM 수정 (revise)
     "qwen_edit_translate",          # Qwen Edit 지시문 영어 번역
@@ -2666,6 +2667,7 @@ class QueueManager:
             "restore_manual": self._handle_restore_manual,
             "regenerate": self._handle_regenerate,
             "bot_llm_face_tag_analysis": self._handle_bot_llm_face_tag_analysis,
+            "bot_lb_extra_refine": self._handle_bot_lb_extra_refine,
             "visual_profile_guide": self._handle_runtime_llm_task,
             "instance_lora_prompt_refine": self._handle_instance_lora_prompt_refine,
             "lora_prompt_review": self._handle_instance_lora_prompt_refine,
@@ -5881,6 +5883,108 @@ class QueueManager:
                     "visual_card_index": visual_card_index,
                     "error": str(e),
                 })
+            raise
+
+    async def _handle_bot_lb_extra_refine(self, item: QueueItem) -> dict:
+        """프로필 카드별 Appearance/default_outfit 비전 LLM 정제."""
+        from modes.bot_mode import run_lb_extra_refine
+
+        params = item.params or {}
+        bot_name = str(params.get("bot_name") or "").strip()
+        char_name = str(params.get("char_name") or "").strip()
+        visual_card_id = str(params.get("visual_card_id") or "").strip()
+        visual_card_label = str(params.get("visual_card_label") or "").strip()
+        try:
+            visual_card_index = int(params.get("visual_card_index") or 1)
+        except (TypeError, ValueError) as e:
+            print(
+                f"[QUEUE:LB_EXTRA_REFINE] 카드 순번 타입 오류: item={item.id}, "
+                f"value={params.get('visual_card_index')!r}, error={e}"
+            )
+            traceback.print_exc()
+            raise ValueError("visual_card_index는 정수여야 합니다") from e
+        appearance_tags = params.get("appearance_tags") or []
+        outfit_tags = params.get("outfit_tags") or []
+        etc_tags = params.get("etc_tags") or []
+        event_type = "bot_lb_extra_refine_progress"
+
+        if not bot_name or not char_name:
+            print(
+                f"[QUEUE:LB_EXTRA_REFINE] 필수 대상 누락: item={item.id}, "
+                f"bot={bot_name!r}, character={char_name!r}, card={visual_card_id!r}"
+            )
+            raise ValueError("bot_name, char_name이 필요합니다")
+        for field_name, value in (
+            ("appearance_tags", appearance_tags),
+            ("outfit_tags", outfit_tags),
+            ("etc_tags", etc_tags),
+        ):
+            if not isinstance(value, list):
+                print(
+                    f"[QUEUE:LB_EXTRA_REFINE] 태그 타입 오류: item={item.id}, "
+                    f"field={field_name}, type={type(value).__name__}, value={value!r}"
+                )
+                raise TypeError(f"{field_name}는 배열이어야 합니다")
+
+        progress_base = {
+            "bot_name": bot_name,
+            "char_name": char_name,
+            "visual_card_id": visual_card_id,
+            "visual_card_label": visual_card_label,
+            "visual_card_index": visual_card_index,
+        }
+        await self._notify_progress(item, {"percentage": 0, "phase": "running", **progress_base})
+        if self.notify_frontend:
+            await self.notify_frontend(event_type, {"phase": "running", **progress_base})
+
+        execution_context = llm_service.create_llm_execution_context(
+            "refine_lb_extra",
+            call_name="lb_extra_profile_refine",
+            metadata={
+                "queue_item_id": item.id,
+                "bot_name": bot_name,
+                "character": char_name,
+                "visual_card_id": visual_card_id,
+                "visual_card_label": visual_card_label,
+                "visual_card_index": visual_card_index,
+            },
+        )
+        try:
+            result = await run_lb_extra_refine(
+                bot_name,
+                char_name,
+                appearance_tags,
+                outfit_tags,
+                etc_tags,
+                visual_card_id,
+                execution_context=execution_context,
+                queue_item_id=item.id,
+            )
+            if not result.get("success"):
+                raise RuntimeError(result.get("error") or "lb.extra 프로필 정제 실패")
+
+            await self._notify_progress(
+                item,
+                {"percentage": 100, "phase": "completed", **progress_base},
+            )
+            if self.notify_frontend:
+                await self.notify_frontend(
+                    event_type,
+                    {"phase": "completed", "result": result, **progress_base},
+                )
+            return result
+        except Exception as e:
+            print(
+                f"[QUEUE:LB_EXTRA_REFINE] 실행 실패: item={item.id}, "
+                f"bot={bot_name!r}, character={char_name!r}, card={visual_card_id!r}, "
+                f"error={type(e).__name__}: {e}"
+            )
+            traceback.print_exc()
+            if self.notify_frontend:
+                await self.notify_frontend(
+                    event_type,
+                    {"phase": "failed", "error": str(e), **progress_base},
+                )
             raise
 
     async def _handle_instance_lora_prompt_refine(self, item: QueueItem) -> dict:

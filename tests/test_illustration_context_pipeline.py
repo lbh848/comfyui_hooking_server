@@ -742,7 +742,7 @@ def test_call2_detail_still_requires_characters_for_named_plan():
     assert "이름 있는 PLAN 캐릭터가 누락됨" in reason
 
 
-def test_call2_detail_repairs_sparse_wardrobe_from_plan_snapshot():
+def test_call2_detail_preserves_contextual_outfit_candidate_until_audit():
     descriptors, reason = pipeline._parse_call2_detail_output(
         _toon_for_slots([4]),
         pipeline.merged_toggles({"key_visual": False}),
@@ -763,12 +763,12 @@ def test_call2_detail_repairs_sparse_wardrobe_from_plan_snapshot():
     assert reason == ""
     assert descriptors[0]["characters"][0]["outfit_state"] == {
         "body_state": "clothed",
-        "worn": ["blue dress"],
+        "worn": ["school uniform"],
         "removed": [],
     }
 
 
-def test_call2_detail_accepts_superset_and_normalizes_to_plan_snapshot():
+def test_call2_detail_preserves_contextual_outfit_details_until_audit():
     detail_output = _toon_for_slots([4]).replace(
         "worn: [school uniform]",
         "worn: [school uniform, red scarf]",
@@ -793,7 +793,7 @@ def test_call2_detail_accepts_superset_and_normalizes_to_plan_snapshot():
     assert reason == ""
     assert descriptors[0]["characters"][0]["outfit_state"] == {
         "body_state": "clothed",
-        "worn": ["school uniform"],
+        "worn": ["school uniform", "red scarf"],
         "removed": [],
     }
 
@@ -907,7 +907,7 @@ def test_call2_detail_keeps_keyvis_character_mismatch_as_error():
 
 
 @pytest.mark.asyncio
-async def test_call2_detail_sparse_wardrobe_is_repaired_without_retry(monkeypatch, capsys):
+async def test_call2_detail_contextual_outfit_is_deferred_to_audit_without_retry(monkeypatch, capsys):
     call_names = []
     initial = _toon_for_slots([4])
     corrected = initial.replace("school uniform", "blue dress")
@@ -951,8 +951,8 @@ async def test_call2_detail_sparse_wardrobe_is_repaired_without_retry(monkeypatc
     assert len(call_names) == 1
     assert call_names[0].startswith("CALL2-DETAIL 1/1")
     assert len(raw_outputs) == 1
-    assert descriptors[0]["characters"][0]["outfit_state"]["worn"] == ["blue dress"]
-    assert "희소 DETAIL 복장" in capsys.readouterr().out
+    assert descriptors[0]["characters"][0]["outfit_state"]["worn"] == ["school uniform"]
+    assert "contextual 복장 보존" in capsys.readouterr().out
 
 
 @pytest.mark.asyncio
@@ -1559,7 +1559,7 @@ scenes: []
     assert "### Hana" in keyvis_request
     assert "### Bob" not in keyvis_request
     assert "# AUTHORITATIVE FIXED APPEARANCE" in keyvis_request
-    assert "# DEFAULT-BASED WARDROBE CONTINUITY BASE" in keyvis_request
+    assert "# TRACKED WARDROBE CONTINUITY AND DEFAULT REFERENCE" in keyvis_request
     assert "# SPARSE CURRENT WARDROBE CHANGE HISTORY" in keyvis_request
     assert "blue dress" in keyvis_request
     assert "timeline event marker" in keyvis_request
@@ -1584,7 +1584,7 @@ scenes: []
     assert "### Hana" in detail_request
     assert "### Bob" not in detail_request
     assert "# AUTHORITATIVE FIXED APPEARANCE" in detail_request
-    assert "# DEFAULT-BASED WARDROBE CONTINUITY BASE" in detail_request
+    assert "# TRACKED WARDROBE CONTINUITY AND DEFAULT REFERENCE" in detail_request
     assert "# SPARSE CURRENT WARDROBE CHANGE HISTORY" in detail_request
     assert "# CLASSIFIED LAST VISUAL REFERENCE" in detail_request
     assert "nested generated visual marker" not in detail_request
@@ -2731,6 +2731,180 @@ def test_call2_macro_render_has_no_risu_macros():
     assert "keep exactly one visible head and one visible face" in rendered
     assert "Choose exactly one head orientation and one eye direction" in rendered
     assert "positive: 1girl" not in rendered
+
+
+def test_call2_background_description_toggle_renders_both_modes():
+    prompts = pipeline.load_prompt_files()
+    minimal_toggles = pipeline.merged_toggles({
+        "minimal_background_description": True,
+    })
+    normal_toggles = pipeline.merged_toggles({
+        "minimal_background_description": False,
+    })
+    minimal = pipeline.render_call2_prompt(
+        prompts["call2_system"],
+        minimal_toggles,
+    )
+    normal = pipeline.render_call2_prompt(
+        prompts["call2_system"],
+        normal_toggles,
+    )
+    minimal_thoughts = pipeline.render_call2_prompt(
+        prompts["call2_thoughts"],
+        minimal_toggles,
+    )
+    normal_thoughts = pipeline.render_call2_prompt(
+        prompts["call2_thoughts"],
+        normal_toggles,
+    )
+
+    assert pipeline.merged_toggles({})["minimal_background_description"] is True
+    assert pipeline.merged_toggles({
+        "minimal_background_description": False,
+    })["minimal_background_description"] is False
+    assert "Environment is last priority" in minimal
+    assert "roughly 1-3 concise tags or phrases" in minimal
+    assert "Describe the environment at a useful visual density" not in minimal
+    assert "Describe the environment at a useful visual density" in normal
+    assert "Environment is last priority" not in normal
+    assert "roughly 1-3 concise tags or phrases" not in normal
+    assert "smallest story-supported environment cue" in minimal_thoughts
+    assert "story-supported setting at a useful visual density" not in minimal_thoughts
+    assert "story-supported setting at a useful visual density" in normal_thoughts
+    assert "smallest story-supported environment cue" not in normal_thoughts
+    assert "belong only in `scene`; never copy them" in minimal
+    assert "belong only in `scene`; never copy them" in normal
+    assert "{{" not in minimal
+    assert "{{" not in normal
+    assert "{{" not in minimal_thoughts
+    assert "{{" not in normal_thoughts
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("minimal", "expected", "unexpected"),
+    [
+        (
+            True,
+            "Keep the environment to the smallest story-supported cue",
+            "environment at a useful visual density",
+        ),
+        (
+            False,
+            "environment at a useful visual density",
+            "Keep the environment to the smallest story-supported cue",
+        ),
+    ],
+)
+async def test_call2_detail_background_toggle_reaches_worker_instruction(
+    monkeypatch,
+    minimal,
+    expected,
+    unexpected,
+):
+    requests = []
+
+    async def fake_pipeline_call(call_name, messages, *args, **kwargs):
+        requests.append("\n".join(str(item.get("content") or "") for item in messages))
+        return _toon_for_slots([4])
+
+    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
+    await pipeline._run_parallel_call2_details(
+        scene_plan=[{
+            "plan_id": "S001",
+            "slot": 4,
+            "anchor_segment": "C001",
+            "source_segments": ["C001"],
+            "characters": ["Hana"],
+            "scene_brief": "Hana waits in a rainy station concourse.",
+        }],
+        call2_context_messages=[{"role": "system", "content": "Build detail."}],
+        call2_format="Return TOON.",
+        toggles=pipeline.merged_toggles({
+            "minimal_background_description": minimal,
+            "key_visual": False,
+            "call2_parallel_max_concurrency": 1,
+            "call2_parallel_slow_retry_enabled": False,
+        }),
+        stream_notify=None,
+    )
+
+    combined = "\n".join(requests)
+    assert expected in combined
+    assert unexpected not in combined
+    assert "Never repeat scene-wide environment" in combined
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("minimal", "expected", "unexpected"),
+    [
+        (
+            True,
+            "Environment is a last-priority completeness concern",
+            "Environment is a normal visual-completeness concern",
+        ),
+        (
+            False,
+            "Environment is a normal visual-completeness concern",
+            "Environment is a last-priority completeness concern",
+        ),
+    ],
+)
+async def test_call2_authority_audit_background_toggle_reaches_system_instruction(
+    monkeypatch,
+    minimal,
+    expected,
+    unexpected,
+):
+    requests = []
+
+    async def fake_pipeline_call(call_name, messages, *args, **kwargs):
+        assert call_name == "CALL2-AUTHORITY-AUDIT"
+        requests.append("\n".join(str(item.get("content") or "") for item in messages))
+        return json.dumps({
+            "entries": [{
+                "id": 1,
+                "authority_exceptions": [],
+                "forbidden_additions": [],
+                "conflicts": [],
+                "required_additions": [],
+                "scene_additions": [],
+                "camera_replacement": "",
+            }],
+        })
+
+    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
+    _decisions, _raw, status = await pipeline._run_call2_authority_audit(
+        descriptors=[{
+            "kind": "scene",
+            "slot": 4,
+            "camera": "medium shot",
+            "scene": "rainy station concourse",
+            "supplement": "",
+            "characters": [{
+                "name": "Hana",
+                "positive": "girl, black hair, school uniform",
+                "outfit_state": {
+                    "body_state": "clothed",
+                    "worn": ["school uniform"],
+                    "removed": [],
+                },
+            }],
+        }],
+        fixed_appearance={"Hana": "girl, black hair"},
+        default_outfits={"Hana": ["school uniform"]},
+        current_context="Hana waits in a rainy station concourse.",
+        stream_notify=None,
+        toggles=pipeline.merged_toggles({
+            "minimal_background_description": minimal,
+        }),
+    )
+
+    combined = "\n".join(requests)
+    assert status == "ok"
+    assert expected in combined
+    assert unexpected not in combined
 
 
 def test_prompt_format_migrates_legacy_preset_and_rejects_unknown_value(capsys):
@@ -5997,6 +6171,54 @@ def test_call2_semantic_audit_drops_out_of_candidate_value_not_whole_response():
     assert "white royal dress" not in tags1
     assert "tsurime" not in tags2
     assert "straight hair" not in tags2
+
+
+def test_call2_audited_contextual_outfit_replaces_default_reference_as_a_set():
+    descriptors = [{
+        "kind": "scene",
+        "slot": 4,
+        "characters": [{
+            "name": "Elizabella",
+            "positive": "girl, blonde hair, black business suit, necktie",
+            "outfit_state": {
+                "body_state": "clothed",
+                "worn": ["black business suit", "necktie"],
+                "removed": [],
+            },
+        }],
+    }]
+
+    audits = pipeline.apply_call2_authority_base(
+        descriptors,
+        {"Elizabella": "1girl, blonde hair"},
+        {"Elizabella": ["white dress", "detached sleeves", "mini crown"]},
+        {("scene", 4, "elizabella"): {
+            "authority_exceptions": [
+                "white dress", "detached sleeves", "mini crown",
+            ],
+            "forbidden_additions": [],
+            "conflicts": [],
+        }},
+        "ok",
+    )
+
+    character = descriptors[0]["characters"][0]
+    tags = pipeline._split_top_level_authority_tags(character["positive"])
+    assert "blonde hair" in tags
+    assert "black business suit" in tags
+    assert "necktie" in tags
+    assert "white dress" not in tags
+    assert "detached sleeves" not in tags
+    assert "mini crown" not in tags
+    assert character["outfit_state"] == {
+        "body_state": "clothed",
+        "worn": ["black business suit", "necktie"],
+        "removed": [],
+    }
+    assert audits[0]["missing_wardrobe_added"] == []
+    assert audits[0]["authority_exceptions"] == [
+        "white dress", "detached sleeves", "mini crown",
+    ]
 
 
 def test_call2_untrusted_removed_or_nude_state_cannot_skip_default_restore():

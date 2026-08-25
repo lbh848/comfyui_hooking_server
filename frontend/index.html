@@ -9145,6 +9145,27 @@
         .asset-breadcrumb span { color: var(--text2); }
         .asset-breadcrumb .bc-sep { color: var(--border); }
         .asset-breadcrumb .bc-active { color: var(--accent); font-weight: 600; }
+        .breadcrumb-character-search {
+            width: min(260px, 32vw);
+            margin-left: auto;
+            padding: 6px 10px;
+            box-sizing: border-box;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            background: var(--surface2);
+            color: var(--text);
+            font-size: 0.78rem;
+        }
+        .breadcrumb-character-search:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+        .character-search-empty {
+            display: none;
+            padding: 48px 16px;
+            text-align: center;
+            color: var(--text-secondary);
+        }
 
         .asset-loading {
             display: flex;
@@ -43321,7 +43342,7 @@
                 lines.push('2. **CALL1** (enhance) — 엔티티 정체성·공참조(coreference)·복장 상태 분석. sparse event items(set/replace/복장 변화) 생성해 CALL2에 전달.');
                 lines.push('3. **CALL2-PLAN** — 전역 시각 비트 플래너. 어떤 장면(scene)/키비주얼(keyvis)을 그릴지 JSON scene_plan으로 결정.');
                 lines.push('4. **CALL2-KEYVIS / CALL2-DETAIL** — 릴레이 소설 로그에 Danbooru 태그를 붙여 `<lb-xnai>` TOON 구조(camera/scene/supplement/characters) 생성. KEYVIS=키비주얼, DETAIL=일반 장면. PLAN 없이 단독일 때 **CALL2-FALLBACK**.');
-                lines.push('5. **CALL2-AUTHORITY-AUDIT** — 외형·복장 권위 감사. 권위 베이스(고정 외형·기본 복장) 대비 후보밖 값은 그 값만 drop(한 값 실수가 전체 응답을 날리지 않게).');
+                lines.push('5. **CALL2-AUTHORITY-AUDIT** — 외형·복장 감사. 고정 외형은 강제하고, 기본 복장은 참고값으로 두되 장면 맥락에 맞게 LLM이 구성한 복장은 유지합니다. 맥락에 맞지 않는 후보만 개별 drop합니다.');
                 lines.push('6. **CALL2-FIX** — CALL2 출력이 malformed일 때 내용을 바꾸지 않고 구조만 교정(실패 시에만).');
                 lines.push('7. **CALL3** (speak/manga) — 선택된 일반 장면의 대사/생각 작성. speak=vn 대사창, manga=말풍선. 이미지 생성과 병렬 실행.');
                 lines.push('8. **MULTI-CHAR-MASK** (CALL5) — 2인 이상 장면의 캐릭터별 영역 공간 분해(마스크). CALL3 이후, 장면(slot)마다 별도 호출.');
@@ -56759,6 +56780,7 @@
         let botLoraCurrentBot = '';
         let botLoraCurrentProject = '';
         let botLoraProjectData = null;
+        let _botLoraCharacterSearchQuery = '';
 
         function switchLoraMode(mode) {
             const assetBtn = document.getElementById('lora-mode-asset-btn');
@@ -59646,13 +59668,48 @@
 
         function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 
+        function updateBotLoraBreadcrumb() {
+            const breadcrumb = document.getElementById('bot-lora-breadcrumb');
+            if (!breadcrumb) {
+                console.error('[BOT_LORA_SEARCH] breadcrumb 요소가 없습니다.');
+                return;
+            }
+            let html = '<span class="bc-active" style="cursor:pointer;" onclick="initBotLoraTab()">봇 로라매니징</span>';
+            if (botLoraCurrentBot) {
+                html += '<span class="bc-sep">›</span>';
+                html += `<span class="bc-active" style="cursor:pointer;" onclick="enterBotLoraBot('${escapeHtml(botLoraCurrentBot)}')">${escapeHtml(botLoraCurrentBot)}</span>`;
+            }
+            if (botLoraCurrentProject) {
+                html += '<span class="bc-sep">›</span>';
+                html += `<span class="bc-active">${escapeHtml(botLoraCurrentProject)}</span>`;
+                html += `<input id="bot-lora-character-search" class="breadcrumb-character-search" type="search" autocomplete="off" placeholder="캐릭터 검색" aria-label="봇 로라 캐릭터 검색" value="${escapeHtml(_botLoraCharacterSearchQuery)}" oninput="filterBotLoraCharacters(this.value)">`;
+            }
+            breadcrumb.innerHTML = html;
+        }
+
+        function filterBotLoraCharacters(query) {
+            _botLoraCharacterSearchQuery = String(query || '');
+            const normalizedQuery = _botLoraCharacterSearchQuery.trim().toLocaleLowerCase();
+            const groups = document.querySelectorAll('#bot-lora-characters > .bot-lora-character-group');
+            let visibleCount = 0;
+            groups.forEach(group => {
+                const characterName = String(group.dataset.botLoraCharacterGroup || '').toLocaleLowerCase();
+                const matches = !normalizedQuery || characterName.includes(normalizedQuery);
+                group.style.display = matches ? '' : 'none';
+                if (matches) visibleCount++;
+            });
+            const empty = document.getElementById('bot-lora-character-search-empty');
+            if (empty) empty.style.display = normalizedQuery && visibleCount === 0 ? 'block' : 'none';
+        }
+
         async function initBotLoraTab() {
             botLoraCurrentBot = '';
             botLoraCurrentProject = '';
             botLoraProjectData = null;
+            _botLoraCharacterSearchQuery = '';
             const _botLoraRefineStatusReset = document.getElementById('bot-lora-refine-batch-status');
             if (_botLoraRefineStatusReset) _botLoraRefineStatusReset.textContent = '';
-            document.getElementById('bot-lora-breadcrumb').innerHTML = '<span>봇 로라매니징</span>';
+            updateBotLoraBreadcrumb();
             document.getElementById('bot-lora-bots-section').style.display = '';
             document.getElementById('bot-lora-projects-section').style.display = 'none';
             document.getElementById('bot-lora-project').style.display = 'none';
@@ -59692,8 +59749,8 @@
         async function enterBotLoraBot(botName) {
             botLoraCurrentBot = botName;
             botLoraCurrentProject = '';
-            document.getElementById('bot-lora-breadcrumb').innerHTML =
-                `<span style="cursor:pointer;" onclick="initBotLoraTab()">봇 로라매니징</span> / <span>${escapeHtml(botName)}</span>`;
+            _botLoraCharacterSearchQuery = '';
+            updateBotLoraBreadcrumb();
             document.getElementById('bot-lora-bots-section').style.display = 'none';
             document.getElementById('bot-lora-projects-section').style.display = '';
             document.getElementById('bot-lora-project').style.display = 'none';
@@ -59735,8 +59792,8 @@
 
         async function enterBotLoraProject(projectName) {
             botLoraCurrentProject = projectName;
-            document.getElementById('bot-lora-breadcrumb').innerHTML =
-                `<span style="cursor:pointer;" onclick="initBotLoraTab()">봇 로라매니징</span> / <span style="cursor:pointer;" onclick="enterBotLoraBot('${escapeHtml(botLoraCurrentBot)}')">${escapeHtml(botLoraCurrentBot)}</span> / <span>${escapeHtml(projectName)}</span>`;
+            _botLoraCharacterSearchQuery = '';
+            updateBotLoraBreadcrumb();
             document.getElementById('bot-lora-projects-section').style.display = 'none';
             document.getElementById('bot-lora-project').style.display = '';
             document.getElementById('bot-lora-config-section').style.display = '';
@@ -60039,6 +60096,8 @@
                     <div>${cardsHtml}</div>
                 </details>`;
             }).join('');
+            container.insertAdjacentHTML('beforeend', '<div id="bot-lora-character-search-empty" class="character-search-empty">검색 결과가 없습니다.</div>');
+            filterBotLoraCharacters(_botLoraCharacterSearchQuery);
 
             // 테스트 이미지
             renderBotLoraTestImages(data.test_images || []);
@@ -62207,6 +62266,8 @@
         let botTabHydrationPromise = null;
         let botCurrentBot = '';
         let botCurrentChar = '';
+        let _botCurrentView = 'empty';
+        let _botCharacterSearchQuery = '';
 
         // 현재 선택된 삽화 워크플로우가 자동 결정한 프롬프트 형식 라벨.
         function _currentPromptFormatLabel() {
@@ -64294,7 +64355,9 @@
         // 외부(플러그인 또는 다른 화면)에서 활성봇이 바뀐 경우 동기화.
         // 사용자 조작이 아니므로 saveBotSelected() 역송을 하지 않는다(루프 방지).
         function applyExternalBotSelection(newBot) {
-            botCurrentBot = String(newBot || '');
+            const nextBot = String(newBot || '');
+            if (nextBot !== botCurrentBot) _botCharacterSearchQuery = '';
+            botCurrentBot = nextBot;
             const botSelect = document.getElementById('bot-select');
             if (botSelect) {
                 if (botData && Array.isArray(botData.bots)
@@ -64333,6 +64396,7 @@
                 return false;
             }
 
+            if (nextBot !== botCurrentBot) _botCharacterSearchQuery = '';
             botCurrentBot = nextBot;
             const botSelect = document.getElementById('bot-select');
             if (botSelect) {
@@ -64360,6 +64424,7 @@
         }
 
         function showBotView(view) {
+            _botCurrentView = view;
             document.getElementById('bot-loading').style.display = view === 'loading' ? 'flex' : 'none';
             document.getElementById('bot-empty-state').style.display = view === 'empty' ? 'block' : 'none';
             document.getElementById('bot-folder-grid').style.display = view === 'bots' ? 'grid' : 'none';
@@ -64368,6 +64433,7 @@
             document.getElementById('bot-rep-dock').style.display = 'none';
             const easterEgg = document.querySelector('.bot-easter-egg');
             if (easterEgg) easterEgg.style.display = view === 'bots' ? '' : 'none';
+            updateBotBreadcrumb();
         }
 
         function renderBotList() {
@@ -64438,6 +64504,9 @@
             'loras', 'loras_group', 'loras_solo', 'rep_images', 'style_loras',
             'use_image_name_tag'
         ];
+        const VISUAL_CARD_LOCAL_LORA_FIELDS = [
+            'face_loras', 'loras', 'loras_group', 'loras_solo', 'style_loras'
+        ];
         let _visualCardBotName = '';
         let _visualCardStates = {};
         let _visualCardSlots = {};
@@ -64476,16 +64545,42 @@
             return profiles[wanted] || null;
         }
 
+        function _visualCardProfileById(charName, profileId = '') {
+            if (!profileId) return _visualCardProfile(charName);
+            const profiles = _visualCardState(charName)?.data?.profiles || [];
+            const profile = profiles.find(item => item.id === profileId) || null;
+            if (!profile) {
+                console.error('[VISUAL_CARD] 프로필 ID에 해당하는 카드 없음', {charName, profileId});
+            }
+            return profile;
+        }
+
         function _visualCardRoot(charName) {
             const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
             return bot ? (bot.characters || []).find(c => c.name === charName) : null;
+        }
+
+        function _visualCardResolvedFromProfile(root, profile) {
+            const resolved = {...root};
+            VISUAL_CARD_LOCAL_LORA_FIELDS.forEach(field => delete resolved[field]);
+            Object.assign(resolved, JSON.parse(JSON.stringify(profile?.render_overrides || {})));
+            resolved.name = root.name;
+            return resolved;
         }
 
         function _visualCardResolved(charOrName) {
             const root = typeof charOrName === 'string' ? _visualCardRoot(charOrName) : charOrName;
             if (!root) return null;
             const profile = _visualCardProfile(root.name);
-            return {...root, ...JSON.parse(JSON.stringify(profile?.render_overrides || {})), name: root.name};
+            return _visualCardResolvedFromProfile(root, profile);
+        }
+
+        function _visualCardResolvedById(charOrName, profileId = '') {
+            const root = typeof charOrName === 'string' ? _visualCardRoot(charOrName) : charOrName;
+            if (!root) return null;
+            const profile = _visualCardProfileById(root.name, profileId);
+            if (!profile) return null;
+            return _visualCardResolvedFromProfile(root, profile);
         }
 
         async function _loadVisualCardState(charName) {
@@ -64506,7 +64601,7 @@
                     data: {
                         name: charName,
                         default_visual_profile_id: 'card_1',
-                        profiles: [{id:'card_1', label:'카드 1', selection_guide:'', aliases:[], appearance:[], default_outfit_id:'default', outfits:[{id:'default', label:'기본 복장', selection_guide:'', tags:[]}], render_overrides:{}}]
+                        profiles: [{id:'card_1', label:'카드 1', selection_guide:'', aliases:[], appearance:[], default_outfit:[], render_overrides:{}}]
                     }
                 };
                 console.error('[VISUAL_CARD] 임시 기본 카드 사용', root.name);
@@ -64604,8 +64699,7 @@
                 selection_guide: '',
                 aliases: [],
                 appearance: JSON.parse(JSON.stringify(current.appearance || [])),
-                default_outfit_id: current.default_outfit_id,
-                outfits: JSON.parse(JSON.stringify(current.outfits || [])),
+                default_outfit: JSON.parse(JSON.stringify(current.default_outfit || [])),
                 render_overrides: renderOverrides
             });
             _visualCardSlots[charName] = index;
@@ -65322,18 +65416,11 @@
             return profile.render_overrides[key];
         }
 
-        function _newVisualOutfitId(profile) {
-            const used = new Set((profile.outfits || []).map(o => o.id));
-            let id = `outfit_${Date.now().toString(36)}`, suffix = 2;
-            while (used.has(id)) id = `outfit_${Date.now().toString(36)}_${suffix++}`;
-            return id;
-        }
-
-        async function _loadVisualCardFocusOriginal(charName, profile, outfit, repImages) {
+        async function _loadVisualCardRefineOriginal(charName, profile, repImages) {
             const fallback = {
                 name: charName,
                 appearance: JSON.parse(JSON.stringify(profile.appearance || [])),
-                outfit: JSON.parse(JSON.stringify(outfit?.tags || [])),
+                outfit: JSON.parse(JSON.stringify(profile.default_outfit || [])),
                 uncategorized: [],
                 promptMissing: true,
             };
@@ -65389,14 +65476,8 @@
                     return showToast('설정할 캐릭터 카드를 찾지 못했습니다.', 'error');
                 }
                 const draft = JSON.parse(JSON.stringify(profile));
-                const outfitId = draft.default_outfit_id || draft.outfits?.[0]?.id;
-                const outfit = (draft.outfits || []).find(item => item.id === outfitId);
-                if (!outfit) {
-                    console.error('[VISUAL_CARD_FOCUS] 카드 기본 복장 없음', {charName, profileId:profile.id});
-                    return showToast('카드에 편집할 복장이 없습니다.', 'error');
-                }
                 const repImages = JSON.parse(JSON.stringify(resolved.rep_images || []));
-                const original = await _loadVisualCardFocusOriginal(charName, draft, outfit, repImages);
+                const original = await _loadVisualCardRefineOriginal(charName, draft, repImages);
                 const gender = String(draft.render_overrides?.gender_tag || _getCharGenderTag(charName) || '').toLowerCase();
                 const appearance = (draft.appearance || []).filter(item => String(item?.tag || '').toLowerCase() !== gender);
 
@@ -65405,7 +65486,6 @@
                     slot: _visualCardSlots[charName] || 0,
                     profileId: draft.id,
                     profile: draft,
-                    outfitId,
                     repImages,
                     previousOriginal: _lbExtraOriginal,
                     previousEdited: _lbExtraEdited,
@@ -65414,7 +65494,7 @@
                 _lbExtraEdited = [{
                     name: charName,
                     appearance: JSON.parse(JSON.stringify(appearance)),
-                    outfit: JSON.parse(JSON.stringify(outfit.tags || [])),
+                    outfit: JSON.parse(JSON.stringify(draft.default_outfit || [])),
                     uncategorized: [],
                 }];
                 _openFocusEditModal(0);
@@ -65456,6 +65536,7 @@
                 const repCount = (char.rep_images || []).length;
                 const card = document.createElement('div');
                 card.className = 'bot-char-card';
+                card.dataset.characterName = char.name;
 
                 let badgeHtml = repCount > 0
                     ? `<span class="rep-badge set">대표 (${repCount}/3)</span>`
@@ -65651,6 +65732,12 @@
                 }
             }
             showBotView('chars');
+            const searchEmpty = document.createElement('div');
+            searchEmpty.id = 'bot-character-search-empty';
+            searchEmpty.className = 'character-search-empty';
+            searchEmpty.textContent = '검색 결과가 없습니다.';
+            grid.appendChild(searchEmpty);
+            filterBotCharacters(_botCharacterSearchQuery);
             checkPatchFiles();
             await Promise.allSettled(cardHydrationTasks);
         }
@@ -65829,19 +65916,21 @@
             showToast(`${targetLabel}으로 LoRA 복사 완료`, 'success');
         }
 
-        function getBotCharLoras(charName, profile) {
-            const card = _visualCardProfile(charName), char = _visualCardResolved(charName);
-            if (!card || !char) return [];
+        function getBotCharLoras(charName, profile, visualCardId = '') {
+            const card = _visualCardProfileById(charName, visualCardId);
+            if (!card) return [];
             const key = profile === 'group' ? 'loras_group' : 'loras_solo';
             card.render_overrides = card.render_overrides || {};
             if (!Array.isArray(card.render_overrides[key])) {
-                card.render_overrides[key] = JSON.parse(JSON.stringify(char[key] || char.loras || []));
+                const cardLegacyLoras = Array.isArray(card.render_overrides.loras)
+                    ? card.render_overrides.loras : [];
+                card.render_overrides[key] = JSON.parse(JSON.stringify(cardLegacyLoras));
             }
             return card.render_overrides[key];
         }
 
-        function setBotCharLoras(charName, loras, profile) {
-            const card = _visualCardProfile(charName);
+        function setBotCharLoras(charName, loras, profile, visualCardId = '') {
+            const card = _visualCardProfileById(charName, visualCardId);
             if (!card) return;
             const key = profile === 'group' ? 'loras_group' : 'loras_solo';
             card.render_overrides = card.render_overrides || {};
@@ -65877,18 +65966,18 @@
         }
 
         // ─── 얼굴 LoRA getter/setter/save ─────────────────────────
-        function getBotCharFaceLoras(charName) {
-            const card = _visualCardProfile(charName), char = _visualCardResolved(charName);
-            if (!card || !char) return [];
+        function getBotCharFaceLoras(charName, visualCardId = '') {
+            const card = _visualCardProfileById(charName, visualCardId);
+            if (!card) return [];
             card.render_overrides = card.render_overrides || {};
             if (!Array.isArray(card.render_overrides.face_loras)) {
-                card.render_overrides.face_loras = JSON.parse(JSON.stringify(char.face_loras || []));
+                card.render_overrides.face_loras = [];
             }
             return card.render_overrides.face_loras;
         }
 
-        function setBotCharFaceLoras(charName, faceLoras) {
-            const card = _visualCardProfile(charName);
+        function setBotCharFaceLoras(charName, faceLoras, visualCardId = '') {
+            const card = _visualCardProfileById(charName, visualCardId);
             if (!card) return;
             card.render_overrides = card.render_overrides || {};
             card.render_overrides.face_loras = faceLoras;
@@ -65931,11 +66020,11 @@
 
         // ─── 스타일(그림체) LoRA getter/setter/save ───────────────
         function getBotCharStyleLoras(charName) {
-            const card = _visualCardProfile(charName), char = _visualCardResolved(charName);
-            if (!card || !char) return [];
+            const card = _visualCardProfile(charName);
+            if (!card) return [];
             card.render_overrides = card.render_overrides || {};
             if (!Array.isArray(card.render_overrides.style_loras)) {
-                card.render_overrides.style_loras = JSON.parse(JSON.stringify(char.style_loras || []));
+                card.render_overrides.style_loras = [];
             }
             return card.render_overrides.style_loras;
         }
@@ -66134,7 +66223,7 @@
                             <input type="text" id="lb-extra-search" placeholder="캐릭터 검색..." style="padding:4px 8px; border:1px solid var(--border); border-radius:4px; font-size:0.8rem; background:var(--surface2); color:var(--text); width:180px;" autocomplete="off">
                         </div>
                         <div style="flex:1;"></div>
-                        <button id="btn-lb-extra-batch-refine" onclick="_lbExtraBatchRefine()" title="다운로드 호환용 평면 데이터의 Appearance/default_outfit을 일괄 정제합니다." style="background:#7C3AED; color:#fff; border:none; padding:6px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">이식용 데이터 일괄 정제</button>
+                        <button id="btn-lb-extra-batch-refine" onclick="_lbExtraBatchRefine()" title="모든 프로필 카드의 Appearance/default_outfit을 일괄 정제합니다. 카드 1 결과는 이식용 데이터에도 반영됩니다." style="background:#7C3AED; color:#fff; border:none; padding:6px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">프로필 카드 일괄 정제</button>
                         <button onclick="_saveLbExtra()" style="background:#1565C0; color:#fff; border:none; padding:6px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">저장</button>
                         <button onclick="_downloadLbExtra()" style="background:#00695C; color:#fff; border:none; padding:6px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">다운로드</button>
                         <button onclick="document.getElementById('lb-extra-overlay').remove()" style="background:none; border:none; color:var(--text2); font-size:1.2rem; cursor:pointer;">✕</button>
@@ -66691,8 +66780,7 @@
                     const isDefaultProfile = profileId === defaultProfileId || pi === 0;
                     const profileKey = `${characterKey}:profile:${profileId || pi}`;
                     const appearance = Array.isArray(profile.appearance) ? profile.appearance : [];
-                    const outfits = Array.isArray(profile.outfits) ? profile.outfits : [];
-                    const defaultOutfitId = String(profile.default_outfit_id || outfits[0]?.id || '');
+                    const defaultOutfit = Array.isArray(profile.default_outfit) ? profile.default_outfit : [];
                     const genderTag = String(profile.render_overrides?.gender_tag || _getCharGenderTag(char.name) || '');
                     const aliases = Array.isArray(profile.aliases) ? profile.aliases.filter(Boolean) : [];
                     const guide = String(profile.selection_guide || '').trim();
@@ -66705,20 +66793,15 @@
                         isDefault: false,
                         guide: '',
                         tags: appearance,
+                    }, {
+                        key: `${profileKey}:default_outfit`,
+                        kind: 'outfit',
+                        title: 'default_outfit',
+                        id: '',
+                        isDefault: false,
+                        guide: '',
+                        tags: defaultOutfit,
                     }];
-                    outfits.forEach((outfit, oi) => {
-                        const outfitId = String(outfit.id || '');
-                        const outfitLabel = String(outfit.label || outfitId || `복장 ${oi + 1}`);
-                        childNodes.push({
-                            key: `${profileKey}:outfit:${outfitId || oi}`,
-                            kind: 'outfit',
-                            title: `복장 ${oi + 1}. ${outfitLabel}`,
-                            id: outfitId,
-                            isDefault: outfitId === defaultOutfitId,
-                            guide: String(outfit.selection_guide || '').trim(),
-                            tags: Array.isArray(outfit.tags) ? outfit.tags : [],
-                        });
-                    });
 
                     const childrenHtml = childNodes.map((node, ni) => {
                         const isFirstChild = ni === 0;
@@ -66736,12 +66819,9 @@
                                 <details class="lb-extra-mindmap-leaf" data-lb-tree-key="${escAttr(node.key)}"${openAttr(node.key, false)} style="align-self:center; margin:4px 0; border:1px solid ${nodeBorder}; border-radius:7px; background:var(--surface); overflow:hidden;">
                                     <summary style="cursor:pointer; padding:7px 9px; color:var(--text); font-size:0.76rem; background:color-mix(in srgb, ${nodeBorder} 10%, var(--surface));">
                                         <span style="font-weight:700;">${escHtml(node.title)}</span>
-                                        ${node.id ? `<code style="font-size:0.64rem; color:var(--text2); margin-left:5px;">${escHtml(node.id)}</code>` : ''}
-                                        ${node.isDefault ? _lbExtraTreeBadge('기본 복장') : ''}
                                         ${_lbExtraTreeBadge(`태그 ${node.tags.length}`, 'count')}
                                     </summary>
                                     <div style="padding:8px 9px 9px; border-top:1px solid ${nodeBorder};">
-                                        ${node.guide ? `<div style="font-size:0.71rem; color:var(--text2); line-height:1.45; margin-bottom:7px;"><b style="color:var(--text);">선택 기준</b> · ${escHtml(node.guide)}</div>` : ''}
                                         <div style="display:flex; flex-wrap:wrap; gap:4px;">
                                             ${node.kind === 'appearance' ? _buildGenderFixedChip(genderTag) : ''}${_lbExtraTreeTagChips(node.tags, nodeTone)}
                                         </div>
@@ -66769,7 +66849,7 @@
                                 ${aliases.length ? `<div title="${escAttr(aliases.join(', '))}" style="font-size:0.67rem; color:var(--text2); margin-top:5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">별칭 · ${aliases.map(escHtml).join(', ')}</div>` : ''}
                                 <div style="display:flex; align-items:center; gap:4px; flex-wrap:wrap; margin-top:7px;">
                                     ${_lbExtraTreeBadge(`외형 ${appearance.length}`, 'count')}
-                                    ${_lbExtraTreeBadge(`복장 ${outfits.length}`, 'count')}
+                                    ${_lbExtraTreeBadge(`기본 복장 ${defaultOutfit.length}`, 'count')}
                                     <button onclick="event.stopPropagation(); _openLbExtraTreeProfileEditor('${escAttr(char.name)}', ${pi})" style="margin-left:auto; padding:3px 8px; border:1px solid var(--accent); border-radius:4px; background:transparent; color:var(--accent); cursor:pointer; font-size:0.68rem; font-weight:600;">설정</button>
                                 </div>
                             </div>
@@ -67273,46 +67353,12 @@
         }
 
         // ─── 집중 편집 모달 ─────────────────────────────────
-        function _visualCardFocusOutfit() {
-            const session = _visualCardFocusSession;
-            return session ? (session.profile.outfits || []).find(item => item.id === session.outfitId) : null;
-        }
-
         function _commitVisualCardFocusEditor() {
             const session = _visualCardFocusSession;
             const edited = _lbExtraEdited[0];
-            const outfit = _visualCardFocusOutfit();
-            if (!session || !edited || !outfit) return;
+            if (!session || !edited) return;
             session.profile.appearance = JSON.parse(JSON.stringify(edited.appearance || []));
-            outfit.tags = JSON.parse(JSON.stringify(edited.outfit || []));
-            const labelInput = document.getElementById('fe-card-outfit-label');
-            const guideInput = document.getElementById('fe-card-outfit-guide');
-            const defaultInput = document.getElementById('fe-card-default-outfit');
-            if (labelInput) outfit.label = labelInput.value.trim() || outfit.label;
-            if (guideInput) outfit.selection_guide = guideInput.value.trim();
-            if (defaultInput?.value) session.profile.default_outfit_id = defaultInput.value;
-        }
-
-        function _renderVisualCardFocusControls() {
-            const container = document.getElementById('fe-card-controls');
-            const session = _visualCardFocusSession;
-            if (!container || !session) return;
-            const outfit = _visualCardFocusOutfit();
-            const inputStyle = 'box-sizing:border-box;padding:6px 8px;border:1px solid var(--border);border-radius:5px;background:var(--surface2);color:var(--text);font:inherit';
-            const tabs = (session.profile.outfits || []).map((item, index) => `<button onclick="selectVisualCardFocusOutfit('${escAttr(item.id)}')" style="padding:6px 10px;border:1px solid ${item.id === session.outfitId ? 'var(--accent)' : 'var(--border)'};border-radius:5px;background:${item.id === session.outfitId ? 'var(--accent)' : 'var(--surface2)'};color:${item.id === session.outfitId ? '#fff' : 'var(--text)'};cursor:pointer;font-size:.76rem">${escHtml(item.label || `복장 ${index + 1}`)}</button>`).join('');
-            const defaults = (session.profile.outfits || []).map(item => `<option value="${escAttr(item.id)}" ${item.id === session.profile.default_outfit_id ? 'selected' : ''}>${escHtml(item.label || item.id)}</option>`).join('');
-            container.innerHTML = `
-                <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:9px">
-                    <span style="font-size:.72rem;color:var(--text2);font-weight:700;margin-right:3px">등록 복장</span>${tabs}
-                    <button onclick="addVisualCardFocusOutfit()" style="padding:6px 10px;border:1px dashed var(--accent);border-radius:5px;background:transparent;color:var(--accent);cursor:pointer;font-size:.76rem">＋ 추가</button>
-                    ${(session.profile.outfits || []).length > 1 ? '<button onclick="deleteVisualCardFocusOutfit()" style="padding:6px 9px;border:1px solid #ef444477;border-radius:5px;background:transparent;color:#ef4444;cursor:pointer;font-size:.74rem">현재 복장 삭제</button>' : ''}
-                    ${_lbExtraOriginal[0]?.promptMissing ? '<span style="font-size:.7rem;color:#b45309;margin-left:auto">⚠ 대표 이미지 프롬프트 없음 · 저장된 태그를 원본으로 표시</span>' : ''}
-                </div>
-                <div style="display:grid;grid-template-columns:minmax(160px,.55fr) minmax(300px,1.45fr) auto;gap:10px;align-items:end">
-                    <label style="font-size:.72rem;color:var(--text2)">작중 별칭<input id="fe-card-outfit-label" value="${escAttr(outfit?.label || '')}" style="${inputStyle};display:block;width:100%;margin-top:4px"></label>
-                    <label style="font-size:.72rem;color:var(--text2)">자연어 선택 기준<input id="fe-card-outfit-guide" value="${escAttr(outfit?.selection_guide || '')}" style="${inputStyle};display:block;width:100%;margin-top:4px"></label>
-                    <label style="font-size:.72rem;color:var(--text2)">기본 복장<select id="fe-card-default-outfit" style="${inputStyle};display:block;min-width:130px;margin-top:4px">${defaults}</select></label>
-                </div>`;
+            session.profile.default_outfit = JSON.parse(JSON.stringify(edited.outfit || []));
         }
 
         function _botLoraCheckedUnits(selector) {
@@ -67320,50 +67366,6 @@
                 character: el.dataset.character || '',
                 visual_card_id: el.dataset.visualCardId || '',
             }));
-        }
-
-        function selectVisualCardFocusOutfit(outfitId) {
-            const session = _visualCardFocusSession;
-            if (!session || !(session.profile.outfits || []).some(item => item.id === outfitId)) {
-                console.error('[VISUAL_CARD_FOCUS] 전환할 복장 없음', {outfitId});
-                return showToast('전환할 복장을 찾지 못했습니다.', 'error');
-            }
-            _commitVisualCardFocusEditor();
-            session.outfitId = outfitId;
-            const outfit = _visualCardFocusOutfit();
-            _lbExtraEdited[0].outfit = JSON.parse(JSON.stringify(outfit.tags || []));
-            _renderVisualCardFocusControls();
-            _renderFocusEditContent();
-        }
-
-        function addVisualCardFocusOutfit() {
-            const session = _visualCardFocusSession;
-            if (!session) return;
-            _commitVisualCardFocusEditor();
-            const id = _newVisualOutfitId(session.profile);
-            const outfit = {id, label:`복장 ${session.profile.outfits.length + 1}`, selection_guide:'', tags:[]};
-            session.profile.outfits.push(outfit);
-            session.outfitId = id;
-            _lbExtraEdited[0].outfit = [];
-            _renderVisualCardFocusControls();
-            _renderFocusEditContent();
-        }
-
-        function deleteVisualCardFocusOutfit() {
-            const session = _visualCardFocusSession;
-            if (!session || (session.profile.outfits || []).length <= 1) {
-                return showToast('복장은 최소 1개 필요합니다.', 'error');
-            }
-            if (!confirm('현재 복장을 삭제할까요?')) return;
-            _commitVisualCardFocusEditor();
-            session.profile.outfits = session.profile.outfits.filter(item => item.id !== session.outfitId);
-            if (session.profile.default_outfit_id === session.outfitId) {
-                session.profile.default_outfit_id = session.profile.outfits[0].id;
-            }
-            session.outfitId = session.profile.default_outfit_id;
-            _lbExtraEdited[0].outfit = JSON.parse(JSON.stringify(_visualCardFocusOutfit()?.tags || []));
-            _renderVisualCardFocusControls();
-            _renderFocusEditContent();
         }
 
         function _restoreVisualCardFocusSession() {
@@ -67387,8 +67389,7 @@
             }
             const previous = JSON.parse(JSON.stringify(cardState.data.profiles[profileIndex]));
             cardState.data.profiles[profileIndex].appearance = JSON.parse(JSON.stringify(session.profile.appearance || []));
-            cardState.data.profiles[profileIndex].default_outfit_id = session.profile.default_outfit_id;
-            cardState.data.profiles[profileIndex].outfits = JSON.parse(JSON.stringify(session.profile.outfits || []));
+            cardState.data.profiles[profileIndex].default_outfit = JSON.parse(JSON.stringify(session.profile.default_outfit || []));
             const button = document.getElementById('fe-card-save');
             if (button) { button.disabled = true; button.textContent = '저장 중…'; }
             try {
@@ -67418,9 +67419,6 @@
             const cardActions = cardSession
                 ? '<button onclick="saveVisualCardFocusEdit()" id="fe-card-save" style="background:#1565C0;color:#fff;border:none;padding:5px 12px;border-radius:6px;cursor:pointer;font-size:.8rem;font-weight:600">카드에 저장</button><button onclick="_closeFocusEditModal()" style="background:var(--surface2);color:var(--text);border:1px solid var(--border);padding:5px 12px;border-radius:6px;cursor:pointer;font-size:.8rem">취소</button>'
                 : '';
-            const cardControls = cardSession
-                ? '<div id="fe-card-controls" style="padding:10px 16px;border-bottom:1px solid var(--border);flex-shrink:0;background:color-mix(in srgb,var(--accent) 4%,var(--surface))"></div>'
-                : '';
 
             const overlay = document.createElement('div');
             overlay.id = 'focus-edit-overlay';
@@ -67443,7 +67441,6 @@
                         ${cardActions}
                         <button onclick="_closeFocusEditModal()" style="background:none; border:none; color:var(--text2); font-size:1.2rem; cursor:pointer;">✕</button>
                     </div>
-                    ${cardControls}
                     <div style="flex:1; display:flex; overflow:hidden;">
                         <div style="flex:1; display:flex; flex-direction:column; border-right:1px solid var(--border); padding:16px; overflow:hidden;">
                             <div id="fe-photo-container" style="flex:1; display:flex; align-items:center; justify-content:center; overflow:hidden; background:var(--surface2); border-radius:6px;"></div>
@@ -67488,7 +67485,6 @@
                 _renderFocusEditContent();
             });
 
-            if (cardSession) _renderVisualCardFocusControls();
             _renderFocusEditContent();
         }
 
@@ -67538,6 +67534,8 @@
                         outfit: outfitTags,
                         etc: etcTags,
                         visual_card_id: _visualCardFocusSession?.profileId || '',
+                        visual_card_label: _visualCardFocusSession?.profile?.label || '',
+                        visual_card_index: (_visualCardFocusSession?.slot ?? 0) + 1,
                     }),
                 });
                 const text = await resp.text();
@@ -67549,13 +67547,9 @@
                     return;
                 }
 
-                const gt = _getCharGenderTag(_lbExtraEdited[ci].name).toLowerCase();
-                const toObjs = (arr) => (arr || [])
-                    .map(t => (typeof t === 'string' ? t.trim() : '').toLowerCase())
-                    .filter((t, i, a) => t && a.indexOf(t) === i && t !== gt)
-                    .map(t => ({ tag: t, desc: '' }));
-                _lbExtraEdited[ci].appearance = toObjs(data.data.appearance);
-                _lbExtraEdited[ci].outfit = toObjs(data.data.outfit);
+                const visualCardId = _visualCardFocusSession?.profileId || '';
+                _lbExtraEdited[ci].appearance = _lbExtraRefineResultToTags(ci, data.data.appearance, visualCardId);
+                _lbExtraEdited[ci].outfit = _lbExtraRefineResultToTags(ci, data.data.outfit, visualCardId);
 
                 showToast(`정제 완료 (appearance ${_lbExtraEdited[ci].appearance.length} / outfit ${_lbExtraEdited[ci].outfit.length})`, 'success');
                 _renderFocusEditContent();
@@ -67568,8 +67562,10 @@
         }
 
         // LLM 정제 결과(문자열 배열) → 편집본용 {tag,desc} 배열. gender_tag 제외, 소문자 정규화, 중복 제거.
-        function _lbExtraRefineResultToTags(ci, arr) {
-            const gt = _getCharGenderTag(_lbExtraEdited[ci].name).toLowerCase();
+        function _lbExtraRefineResultToTags(ci, arr, visualCardId = '') {
+            const charName = _lbExtraEdited[ci]?.name || _lbExtraOriginal[ci]?.name || '';
+            const resolved = visualCardId ? _visualCardResolvedById(charName, visualCardId) : null;
+            const gt = String(resolved?.gender_tag || _getCharGenderTag(charName) || '').toLowerCase();
             const seen = new Set();
             const out = [];
             for (const t of (arr || [])) {
@@ -67583,6 +67579,42 @@
 
         // ─── 분류 데이터 편집: 일괄 LLM 정제 (전용 진행도 오버레이) ──
         let _lbExtraBatchCancelled = false;
+        let _lbExtraBatchTargets = [];
+
+        function _lbExtraBatchTargetKey(charName, visualCardId) {
+            return `${charName || ''}::${visualCardId || 'legacy'}`;
+        }
+
+        function _lbExtraProfileBatchTargets() {
+            const targets = [];
+            _lbExtraOriginal.forEach((flat, ci) => {
+                const cardData = _visualCardState(flat.name)?.data || null;
+                const profiles = cardData?.profiles || [];
+                if (profiles.length === 0) {
+                    console.error('[LB_EXTRA_BATCH] 프로필 카드가 없어 일괄 정제 대상에서 제외', {character: flat.name});
+                    return;
+                }
+                const portableProfileId = String(cardData.default_visual_profile_id || profiles[0]?.id || '');
+                profiles.forEach((profile, profileIndex) => {
+                    const defaultOutfit = Array.isArray(profile.default_outfit) ? profile.default_outfit : [];
+                    const resolved = _visualCardResolvedById(flat.name, profile.id);
+                    const repImages = resolved?.rep_images || [];
+                    targets.push({
+                        key: _lbExtraBatchTargetKey(flat.name, profile.id),
+                        ci,
+                        character: flat.name,
+                        visualCardId: String(profile.id || ''),
+                        visualCardLabel: String(profile.label || profile.id || `카드 ${profileIndex + 1}`),
+                        visualCardIndex: profileIndex + 1,
+                        appearanceCount: Array.isArray(profile.appearance) ? profile.appearance.length : 0,
+                        outfitCount: defaultOutfit.length,
+                        rep: repImages[0] || '',
+                        isPortable: String(profile.id || '') === portableProfileId,
+                    });
+                });
+            });
+            return targets;
+        }
 
         async function _lbExtraBatchRefine() {
             if (!botCurrentBot) { showToast('봇 정보가 없습니다', 'error'); return; }
@@ -67594,21 +67626,27 @@
             const existing = document.getElementById('lb-extra-batch-select-overlay');
             if (existing) existing.remove();
 
-            const chars = _lbExtraOriginal.map((c, ci) => ({
-                ci,
-                name: c.name,
-                app: (c.appearance || []).length,
-                out: (c.outfit || []).length,
-                etc: (c.uncategorized || []).length,
-            }));
-            const listHtml = chars.map(c => `
-                <label style="display:flex; align-items:center; gap:10px; padding:8px; border-radius:6px; cursor:pointer; border:1px solid var(--border); background:var(--surface2);">
-                    <input type="checkbox" class="lb-batch-sel" data-ci="${c.ci}" checked style="width:18px; height:18px; cursor:pointer;">
+            const targets = _lbExtraProfileBatchTargets();
+            _lbExtraBatchTargets = targets;
+            if (targets.length === 0) {
+                console.error('[LB_EXTRA_BATCH] 일괄 정제 가능한 프로필 카드가 없습니다', {bot: botCurrentBot});
+                showToast('일괄 정제 가능한 프로필 카드가 없습니다', 'error');
+                return;
+            }
+            const availableCount = targets.filter(target => !!target.rep).length;
+            const listHtml = targets.map(target => {
+                const disabled = target.rep ? '' : 'disabled';
+                const checked = target.rep ? 'checked' : '';
+                const cursor = target.rep ? 'pointer' : 'not-allowed';
+                return `
+                <label style="display:flex; align-items:center; gap:10px; padding:8px; border-radius:6px; cursor:${cursor}; border:1px solid var(--border); background:var(--surface2); ${target.rep ? '' : 'opacity:0.55;'}">
+                    <input type="checkbox" class="lb-batch-sel" data-target-key="${escAttr(target.key)}" ${checked} ${disabled} style="width:18px; height:18px; cursor:${cursor};">
                     <div style="flex:1; min-width:0;">
-                        <div style="font-size:0.82rem; font-weight:600;">${escHtml(c.name)}</div>
-                        <div style="font-size:0.68rem; color:var(--text2); margin-top:2px;">외모 ${c.app} · 복장 ${c.out} · 미분류 ${c.etc}</div>
+                        <div style="font-size:0.82rem; font-weight:600;">${escHtml(target.character)} · [${target.visualCardIndex}] ${escHtml(target.visualCardLabel)}${target.isPortable ? ' <span style="color:var(--accent); font-size:0.66rem;">이식용 카드 1</span>' : ''}</div>
+                        <div style="font-size:0.68rem; color:var(--text2); margin-top:2px;">Appearance ${target.appearanceCount} · default_outfit ${target.outfitCount}${target.rep ? '' : ' · 대표 이미지 없음'}</div>
                     </div>
-                </label>`).join('');
+                </label>`;
+            }).join('');
 
             const overlay = document.createElement('div');
             overlay.id = 'lb-extra-batch-select-overlay';
@@ -67617,14 +67655,14 @@
             overlay.innerHTML = `
                 <div style="background:var(--surface); border:1px solid var(--border); border-radius:12px; width:90vw; max-width:560px; max-height:85vh; display:flex; flex-direction:column; overflow:hidden;">
                     <div style="padding:14px 18px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center;">
-                        <h3 style="margin:0; font-size:1.0rem;">일괄 LLM 정제 — 캐릭터 선택</h3>
+                        <h3 style="margin:0; font-size:1.0rem;">일괄 LLM 정제 — 프로필 카드 선택</h3>
                         <button onclick="document.getElementById('lb-extra-batch-select-overlay').remove()" style="background:none; border:none; color:var(--text2); font-size:1.2rem; cursor:pointer;">✕</button>
                     </div>
                     <div style="padding:8px 18px; font-size:0.74rem; color:var(--text2); display:flex; gap:10px; align-items:center; border-bottom:1px solid var(--border); flex-wrap:wrap;">
-                        <span>전체 ${chars.length}명</span>
-                        <button onclick="document.querySelectorAll('.lb-batch-sel').forEach(c=>c.checked=true)" style="background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:2px 8px; border-radius:4px; cursor:pointer; font-size:0.7rem;">전체 선택</button>
+                        <span>전체 ${targets.length}카드 · 실행 가능 ${availableCount}카드</span>
+                        <button onclick="document.querySelectorAll('.lb-batch-sel:not(:disabled)').forEach(c=>c.checked=true)" style="background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:2px 8px; border-radius:4px; cursor:pointer; font-size:0.7rem;">전체 선택</button>
                         <button onclick="document.querySelectorAll('.lb-batch-sel').forEach(c=>c.checked=false)" style="background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:2px 8px; border-radius:4px; cursor:pointer; font-size:0.7rem;">전체 해제</button>
-                        <span style="color:var(--error,#dc2626);">선택한 캐릭터의 Appearance/default_outfit을 덮어씁니다.</span>
+                        <span style="color:var(--error,#dc2626);">선택한 카드의 Appearance/default_outfit을 덮어씁니다. 카드 1은 이식용 데이터에도 반영됩니다.</span>
                     </div>
                     <div style="padding:10px 18px; overflow-y:auto; flex:1; display:flex; flex-direction:column; gap:6px;">${listHtml}</div>
                     <div style="padding:12px 18px; border-top:1px solid var(--border); display:flex; justify-content:flex-end; gap:8px;">
@@ -67637,14 +67675,15 @@
 
         function _lbExtraBatchRefineStart() {
             const checks = document.querySelectorAll('.lb-batch-sel:checked');
-            if (checks.length === 0) { showToast('선택된 캐릭터가 없습니다', 'error'); return; }
-            const indices = [...checks].map(c => parseInt(c.dataset.ci, 10)).filter(n => !isNaN(n));
+            if (checks.length === 0) { showToast('선택된 프로필 카드가 없습니다', 'error'); return; }
+            const selectedKeys = new Set([...checks].map(c => c.dataset.targetKey));
+            const targets = _lbExtraBatchTargets.filter(target => selectedKeys.has(target.key));
             document.getElementById('lb-extra-batch-select-overlay').remove();
-            _lbExtraBatchRefineRun(indices);
+            _lbExtraBatchRefineRun(targets);
         }
 
-        async function _lbExtraBatchRefineRun(indices) {
-            if (!indices || !indices.length) return;
+        async function _lbExtraBatchRefineRun(targets) {
+            if (!targets || !targets.length) return;
 
             // 진행도 오버레이 (화면 잠금)
             const overlay = document.createElement('div');
@@ -67660,7 +67699,7 @@
                     <div style="font-size:0.8rem; color:var(--text2);">현재: <span id="lb-batch-current" style="color:var(--text); font-weight:600;">준비 중…</span></div>
                     <div>
                         <div style="display:flex; justify-content:space-between; font-size:0.78rem; color:var(--text2); margin-bottom:4px;">
-                            <span id="lb-batch-count">0 / ${indices.length}</span>
+                            <span id="lb-batch-count">0 / ${targets.length}</span>
                             <span id="lb-batch-summary" style="color:var(--text2);">성공 0 · 실패 0</span>
                         </div>
                         <div style="width:100%; height:8px; background:var(--surface2); border-radius:4px; overflow:hidden;">
@@ -67674,7 +67713,7 @@
                 </div>`;
             document.body.appendChild(overlay);
 
-            const total = indices.length;
+            const total = targets.length;
             const controller = new AbortController();
             _lbExtraBatchCancelled = false;
             _lbExtraBatchAbort = controller;
@@ -67685,24 +67724,44 @@
 
             for (let p = 0; p < total; p++) {
                 if (_lbExtraBatchCancelled) { logLine('— 사용자 중단 —'); break; }
-                const ci = indices[p];
-                const orig = _lbExtraOriginal[ci];
+                const target = targets[p];
+                const ci = target.ci;
+                const targetLabel = `${target.character} · [${target.visualCardIndex}] ${target.visualCardLabel}`;
                 const cur = document.getElementById('lb-batch-current');
                 const cnt = document.getElementById('lb-batch-count');
                 const bar = document.getElementById('lb-batch-bar');
-                if (cur) cur.textContent = `${orig.name} (${p + 1}/${total})`;
+                if (cur) cur.textContent = `${targetLabel} (${p + 1}/${total})`;
                 if (cnt) cnt.textContent = `${p} / ${total}`;
                 if (bar) bar.style.width = `${(p / total) * 100}%`;
 
-                const appearanceTags = (orig.appearance || []).map(t => t.tag).filter(Boolean);
-                const outfitTags = (orig.outfit || []).map(t => t.tag).filter(Boolean);
-                const etcTags = (orig.uncategorized || []).map(t => t.tag).filter(Boolean);
-
                 try {
+                    const cardState = _visualCardState(target.character);
+                    const profileIndex = (cardState?.data?.profiles || []).findIndex(profile => profile.id === target.visualCardId);
+                    if (!cardState || profileIndex < 0) throw new Error(`프로필 카드를 찾지 못했습니다: ${target.visualCardId}`);
+                    const profile = cardState.data.profiles[profileIndex];
+                    const resolved = _visualCardResolvedById(target.character, target.visualCardId);
+                    const original = await _loadVisualCardRefineOriginal(
+                        target.character,
+                        profile,
+                        resolved?.rep_images || [],
+                    );
+                    const appearanceTags = (original.appearance || []).map(t => t.tag).filter(Boolean);
+                    const outfitTags = (original.outfit || []).map(t => t.tag).filter(Boolean);
+                    const etcTags = (original.uncategorized || []).map(t => t.tag).filter(Boolean);
+                    const previousProfile = JSON.parse(JSON.stringify(profile));
                     const resp = await fetch('/api/bot_mode/lb_extra_refine', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ bot: botCurrentBot, character: orig.name, appearance: appearanceTags, outfit: outfitTags, etc: etcTags }),
+                        body: JSON.stringify({
+                            bot: botCurrentBot,
+                            character: target.character,
+                            appearance: appearanceTags,
+                            outfit: outfitTags,
+                            etc: etcTags,
+                            visual_card_id: target.visualCardId,
+                            visual_card_label: target.visualCardLabel,
+                            visual_card_index: target.visualCardIndex,
+                        }),
                         signal: controller.signal,
                     });
                     const text = await resp.text();
@@ -67711,18 +67770,30 @@
                     catch (_) { data = { success: false, error: `JSON 아님 (HTTP ${resp.status}): ${text.slice(0, 120)}` }; }
                     if (!data.success) {
                         failed++;
-                        logLine(`✗ ${orig.name}: ${data.error || '실패'}`);
+                        logLine(`✗ ${targetLabel}: ${data.error || '실패'}`);
                     } else {
-                        _lbExtraEdited[ci].appearance = _lbExtraRefineResultToTags(ci, data.data.appearance);
-                        _lbExtraEdited[ci].outfit = _lbExtraRefineResultToTags(ci, data.data.outfit);
+                        const refinedAppearance = _lbExtraRefineResultToTags(ci, data.data.appearance, target.visualCardId);
+                        const refinedOutfit = _lbExtraRefineResultToTags(ci, data.data.outfit, target.visualCardId);
+                        profile.appearance = JSON.parse(JSON.stringify(refinedAppearance));
+                        profile.default_outfit = JSON.parse(JSON.stringify(refinedOutfit));
+                        try {
+                            await _saveVisualCardState(target.character, {quiet:true});
+                        } catch (saveError) {
+                            cardState.data.profiles[profileIndex] = previousProfile;
+                            throw saveError;
+                        }
+                        if (target.isPortable && _lbExtraEdited[ci]) {
+                            _lbExtraEdited[ci].appearance = JSON.parse(JSON.stringify(refinedAppearance));
+                            _lbExtraEdited[ci].outfit = JSON.parse(JSON.stringify(refinedOutfit));
+                        }
                         success++;
-                        logLine(`✓ ${orig.name}: appearance ${_lbExtraEdited[ci].appearance.length} / outfit ${_lbExtraEdited[ci].outfit.length}`);
+                        logLine(`✓ ${targetLabel}: appearance ${refinedAppearance.length} / outfit ${refinedOutfit.length}${target.isPortable ? ' · 이식용 동기화' : ''}`);
                     }
                 } catch (e) {
                     if (e.name === 'AbortError' || _lbExtraBatchCancelled) { logLine('— 사용자 중단 —'); break; }
                     failed++;
-                    logLine(`✗ ${orig.name}: ${e.message}`);
-                    console.error('[LB_EXTRA_BATCH] 실패:', orig.name, e);
+                    logLine(`✗ ${targetLabel}: ${e.message}`);
+                    console.error('[LB_EXTRA_BATCH] 실패:', {character: target.character, visualCardId: target.visualCardId}, e);
                 }
 
                 const sum = document.getElementById('lb-batch-summary');
@@ -71311,29 +71382,30 @@
             const trigHit = trigTok.length > 0 && _tokensContainAll(trigTok, cn);
             return idHit || trigHit;
         }
-        function _findBestBotProjectCharacter(characters, charName) {
+        function _findBestBotProjectCharacter(characters, charName, visualCardId = '') {
             const chars = Array.isArray(characters) ? characters : [];
             const exactName = _normCharMatch(charName);
             if (!exactName) return null;
 
-            // 현재 선택된 비주얼 카드와 같은 카드 ID를 우선한다. 레거시 프로젝트의
-            // 카드 ID 없는 항목은 호환 대상으로 남기되, 다른 카드 ID는 후보에서 뺀다.
-            const activeCardId = ((_botAutoLoraState?.chars || []).find(c => c.name === charName)?.visualCardId)
-                || (_visualCardProfile(charName)?.id || '');
-            const scopedChars = activeCardId
-                ? chars.filter(ch => !(ch?.visual_card_id) || ch.visual_card_id === activeCardId)
+            // 요청한 비주얼 카드 ID의 프로젝트 항목을 최우선한다. 카드 ID가 없는
+            // 레거시 항목은 호환 폴백으로만 남기고 다른 카드 항목은 후보에서 제외한다.
+            const exactCardChars = visualCardId
+                ? chars.filter(ch => ch?.visual_card_id === visualCardId)
                 : chars;
-
-            // 구분자와 대소문자를 정규화한 정확 일치를 배열 순서와 무관하게 최우선한다.
-            const exact = scopedChars.find(ch => _normCharMatch(ch && ch.name) === exactName);
-            if (exact) return exact;
-
-            // 정확 일치가 없을 때만 기존의 토큰 포함 매칭을 폴백으로 사용한다.
+            const legacyChars = visualCardId ? chars.filter(ch => !ch?.visual_card_id) : [];
             const cnTok = _normTokens(charName);
-            return scopedChars.find(ch => {
-                const chTok = _normTokens(ch && ch.name);
-                return chTok.length > 0 && _tokensContainAll(chTok, cnTok);
-            }) || null;
+            const findMatch = candidates => {
+                // 구분자와 대소문자를 정규화한 정확 일치를 배열 순서와 무관하게 최우선한다.
+                const exact = candidates.find(ch => _normCharMatch(ch && ch.name) === exactName);
+                if (exact) return exact;
+
+                // 정확 일치가 없을 때만 기존의 토큰 포함 매칭을 폴백으로 사용한다.
+                return candidates.find(ch => {
+                    const chTok = _normTokens(ch && ch.name);
+                    return chTok.length > 0 && _tokensContainAll(chTok, cnTok);
+                }) || null;
+            };
+            return findMatch(exactCardChars) || findMatch(legacyChars);
         }
         function renderBclpInstanceLoras() {
             const grid = document.getElementById('bclp-grid');
@@ -71692,25 +71764,59 @@
         // ─── 캐릭터 로라 자동 세팅 모달 ─────────────────────────
         let _botAutoLoraState = null;
 
+        function _alrTargetKey(charName, visualCardId) {
+            return `${charName || ''}::${visualCardId || 'legacy'}`;
+        }
+
+        function _botAutoLoraTargets(bot) {
+            const targets = [];
+            for (const root of (bot?.characters || [])) {
+                const profiles = _visualCardState(root.name)?.data?.profiles || [];
+                if (profiles.length === 0) {
+                    console.error('[BOT_AUTO_LORA] 캐릭터 프로필 카드 없음', {character: root.name});
+                    targets.push({
+                        key: _alrTargetKey(root.name, ''),
+                        name: root.name,
+                        rep: (root.rep_images || [])[0] || '',
+                        gender: root.gender_tag || '',
+                        visualCardId: '',
+                        visualCardLabel: '기본 카드',
+                        visualCardIndex: 1,
+                    });
+                    continue;
+                }
+                profiles.forEach((profile, index) => {
+                    const resolved = {...root, ...(profile.render_overrides || {})};
+                    targets.push({
+                        key: _alrTargetKey(root.name, profile.id),
+                        name: root.name,
+                        rep: (resolved.rep_images || [])[0] || '',
+                        gender: resolved.gender_tag || '',
+                        visualCardId: profile.id || '',
+                        visualCardLabel: profile.label || profile.id || `카드 ${index + 1}`,
+                        visualCardIndex: index + 1,
+                    });
+                });
+            }
+            return targets;
+        }
+
         function openBotAutoLoraSetupModal() {
             if (!botCurrentBot) { showToast('봇을 먼저 선택하세요', 'error'); return; }
             const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
             if (!bot || !bot.characters || bot.characters.length === 0) {
                 showToast(`봇 "${botCurrentBot}"에 캐릭터가 없습니다`, 'error'); return;
             }
+            const targets = _botAutoLoraTargets(bot);
+            if (targets.length === 0) {
+                console.error('[BOT_AUTO_LORA] 자동 세팅 가능한 프로필 카드 없음', {bot: botCurrentBot});
+                showToast('자동 세팅 가능한 프로필 카드가 없습니다', 'error');
+                return;
+            }
             _botAutoLoraState = {
                 step: 1,
-                chars: bot.characters.map(c => {
-                    const visualCard = _visualCardProfile(c.name);
-                    return {
-                        name: c.name,
-                        rep: (c.rep_images || [])[0] || '',
-                        gender: c.gender_tag || '',
-                        visualCardId: visualCard?.id || '',
-                        visualCardLabel: visualCard?.label || visualCard?.id || '기본 카드',
-                    };
-                }),
-                checkedChars: {},
+                targets,
+                checkedTargets: {},
                 profile: 'solo',
                 conflict: 'add',
                 strength: 0.5,
@@ -71726,14 +71832,14 @@
             overlay.innerHTML = `
                 <div style="background:var(--surface); border-radius:12px; padding:20px; max-width:1150px; width:96%; height:92vh; max-height:95vh; display:flex; flex-direction:column;">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-                        <h3 style="margin:0;">선택 캐릭터 로라 자동 세팅 <span id="alr-step-label" style="font-size:0.75rem; color:var(--text2); font-weight:normal;">— 1/2 캐릭터 선택</span></h3>
+                        <h3 style="margin:0;">선택 캐릭터 로라 자동 세팅 <span id="alr-step-label" style="font-size:0.75rem; color:var(--text2); font-weight:normal;">— 1/2 프로필 카드 선택</span></h3>
                         <button onclick="document.getElementById('bot-auto-lora-overlay').remove()" style="background:none; border:none; color:var(--text); font-size:1.2rem; cursor:pointer;">x</button>
                     </div>
 
                     <!-- STEP 1: 캐릭터 선택 -->
                     <div id="alr-step1" style="display:flex; flex-direction:column; flex:1; min-height:0;">
                         <div style="font-size:0.75rem; color:var(--text2); display:flex; gap:10px; align-items:center; margin-bottom:8px; flex-wrap:wrap;">
-                            <span>선택 <span id="alr-char-count">0</span> / ${bot.characters.length}</span>
+                            <span>프로필 카드 선택 <span id="alr-char-count">0</span> / ${targets.length}</span>
                             <button onclick="document.querySelectorAll('.alr-char-check').forEach(c=>c.checked=true); _alrSyncCharCount()" style="background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:2px 8px; border-radius:4px; cursor:pointer; font-size:0.7rem;">전체 선택</button>
                             <button onclick="document.querySelectorAll('.alr-char-check').forEach(c=>c.checked=false); _alrSyncCharCount()" style="background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:2px 8px; border-radius:4px; cursor:pointer; font-size:0.7rem;">전체 해제</button>
                         </div>
@@ -71786,16 +71892,16 @@
             const grid = document.getElementById('alr-char-grid');
             if (!grid || !_botAutoLoraState) return;
             const enc = encodeURIComponent;
-            grid.innerHTML = _botAutoLoraState.chars.map(c => {
-                const checked = _botAutoLoraState.checkedChars[c.name] ? 'checked' : '';
-                const img = c.rep
-                    ? `<img src="/api/bot_lora/char_image/${enc(botCurrentBot)}/${enc(c.name)}/${enc(c.rep)}" loading="lazy" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';" style="width:160px; height:160px; object-fit:cover; display:block; border-radius:6px;"><div style="width:160px; height:160px; display:none; align-items:center; justify-content:center; background:var(--surface2); border-radius:6px; font-size:1.4rem;">👤</div>`
+            grid.innerHTML = _botAutoLoraState.targets.map(target => {
+                const checked = _botAutoLoraState.checkedTargets[target.key] ? 'checked' : '';
+                const img = target.rep
+                    ? `<img src="/api/bot_lora/char_image/${enc(botCurrentBot)}/${enc(target.name)}/${enc(target.rep)}" loading="lazy" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';" style="width:160px; height:160px; object-fit:cover; display:block; border-radius:6px;"><div style="width:160px; height:160px; display:none; align-items:center; justify-content:center; background:var(--surface2); border-radius:6px; font-size:1.4rem;">👤</div>`
                     : `<div style="width:160px; height:160px; display:flex; align-items:center; justify-content:center; background:var(--surface2); border-radius:6px; font-size:1.4rem;">👤</div>`;
                 return `<label style="display:block; width:172px; max-width:172px; height:200px; padding:6px; border:1px solid var(--border); border-radius:8px; background:var(--surface2); cursor:pointer; box-sizing:border-box; overflow:hidden;">
                     ${img}
                     <div style="width:160px; max-width:160px; margin-top:4px; display:flex; align-items:center; gap:4px;">
-                        <input type="checkbox" class="alr-char-check" data-character="${escAttr(c.name)}" ${checked} onchange="_alrSyncCharCount()" style="cursor:pointer; flex-shrink:0;">
-                        <span style="font-size:0.74rem; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${escAttr(c.name)} · ${escAttr(c.visualCardLabel)}">${escHtml(c.name)} · ${escHtml(c.visualCardLabel)}</span>
+                        <input type="checkbox" class="alr-char-check" data-target-key="${escAttr(target.key)}" ${checked} onchange="_alrSyncCharCount()" style="cursor:pointer; flex-shrink:0;">
+                        <span style="font-size:0.74rem; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${escAttr(target.name)} · [${target.visualCardIndex}] ${escAttr(target.visualCardLabel)}">${escHtml(target.name)} · [${target.visualCardIndex}] ${escHtml(target.visualCardLabel)}</span>
                     </div>
                 </label>`;
             }).join('');
@@ -71808,19 +71914,21 @@
             const btn = document.getElementById('alr-continue-btn');
             if (btn) btn.disabled = n === 0;
         }
-        function _alrSyncCheckedChars() {
+        function _alrSyncCheckedTargets() {
             if (!_botAutoLoraState) return;
-            const set = new Set([...document.querySelectorAll('.alr-char-check:checked')].map(c => c.dataset.character));
-            _botAutoLoraState.chars.forEach(c => { _botAutoLoraState.checkedChars[c.name] = set.has(c.name); });
+            const set = new Set([...document.querySelectorAll('.alr-char-check:checked')].map(c => c.dataset.targetKey));
+            _botAutoLoraState.targets.forEach(target => {
+                _botAutoLoraState.checkedTargets[target.key] = set.has(target.key);
+            });
         }
-        function _alrCheckedChars() {
+        function _alrCheckedTargets() {
             if (!_botAutoLoraState) return [];
-            return _botAutoLoraState.chars.filter(c => _botAutoLoraState.checkedChars[c.name]).map(c => c.name);
+            return _botAutoLoraState.targets.filter(target => _botAutoLoraState.checkedTargets[target.key]);
         }
         function _alrGoStep2() {
-            _alrSyncCheckedChars();
-            const targets = _alrCheckedChars();
-            if (targets.length === 0) { showToast('세팅할 캐릭터를 한 개 이상 선택하세요', 'error'); return; }
+            _alrSyncCheckedTargets();
+            const targets = _alrCheckedTargets();
+            if (targets.length === 0) { showToast('세팅할 프로필 카드를 한 개 이상 선택하세요', 'error'); return; }
             _botAutoLoraState.step = 2;
             document.getElementById('alr-step1').style.display = 'none';
             document.getElementById('alr-step2').style.display = 'flex';
@@ -71828,21 +71936,21 @@
             switchAutoLoraTab('instance');
         }
         function _alrBackStep1() {
-            _alrSyncCheckedChars();
+            _alrSyncCheckedTargets();
             _botAutoLoraState.step = 1;
             document.getElementById('alr-step2').style.display = 'none';
             document.getElementById('alr-step1').style.display = 'flex';
-            document.getElementById('alr-step-label').textContent = '— 1/2 캐릭터 선택';
+            document.getElementById('alr-step-label').textContent = '— 1/2 프로필 카드 선택';
             _renderAutoLoraStep1();
         }
 
         // ── STEP 2: 로라 선택 키/체크 ──
-        function _alrIKey(cn, loraId, base) { return `i|${cn}|${loraId}|${base}`; }
-        function _alrBKey(cn, path) { return `b|${cn}|${path}`; }
+        function _alrIKey(targetKey, loraId, base) { return `i|${targetKey}|${loraId}|${base}`; }
+        function _alrBKey(targetKey, path) { return `b|${targetKey}|${path}`; }
         function _alrLoraIsChecked(key) { return _botAutoLoraState.loraChecked[key] !== false; }
         function _alrLoraOnChange(el) {
             const d = el.dataset;
-            const key = d.src === 'i' ? _alrIKey(d.cn, d.lora, d.base) : _alrBKey(d.cn, d.lora);
+            const key = d.src === 'i' ? _alrIKey(d.targetKey, d.lora, d.base) : _alrBKey(d.targetKey, d.lora);
             _botAutoLoraState.loraChecked[key] = el.checked;
         }
 
@@ -71860,7 +71968,7 @@
         function _renderAutoLoraTab() {
             const c = document.getElementById('alr-tab-content');
             if (!c || !_botAutoLoraState) return;
-            const targets = _alrCheckedChars();
+            const targets = _alrCheckedTargets();
             if (_botAutoLoraState.tab === 'instance') _renderAutoLoraInstance(targets, c);
             else _renderAutoLoraBot(targets, c);
         }
@@ -71880,7 +71988,8 @@
             }
             const items = _botAutoLoraState.instanceItems || [];
             const enc = encodeURIComponent;
-            c.innerHTML = '<div style="font-size:0.72rem; color:var(--text2); margin-bottom:6px;">체크된 로라만 임포트됩니다 (기본: 캐릭터 이름과 lora_id/trigger 매칭).</div>' + targets.map(cn => {
+            c.innerHTML = '<div style="font-size:0.72rem; color:var(--text2); margin-bottom:6px;">체크된 로라만 선택한 프로필 카드에 임포트됩니다 (기본: 캐릭터 이름과 lora_id/trigger 매칭).</div>' + targets.map(target => {
+                const cn = target.name;
                 const matched = items.filter(it => _isInstanceLoraRecommended(it, cn));
                 let body;
                 if (matched.length === 0) {
@@ -71891,19 +72000,19 @@
                         if (it.first_image) prev = `/api/instance_lora/image/${enc(it.lora_id)}/${enc(it.first_image)}`;
                         const profs = Object.keys(it.profiles || {});
                         return profs.map(bk => {
-                            const key = _alrIKey(cn, it.lora_id, bk);
+                            const key = _alrIKey(target.key, it.lora_id, bk);
                             const chk = _alrLoraIsChecked(key) ? 'checked' : '';
                             const img = prev ? `<img src="${escapeHtml(prev)}" loading="lazy" onerror="this.style.display='none'" style="width:48px; height:48px; object-fit:cover; border-radius:4px; flex-shrink:0;">` : '<div style="width:48px; height:48px; display:flex; align-items:center; justify-content:center; background:var(--surface2); border-radius:4px; flex-shrink:0;">⚡</div>';
                             return `<label style="display:flex; align-items:center; gap:6px; padding:4px 6px; border:1px solid var(--border); border-radius:5px; background:var(--surface2); cursor:pointer; margin-top:3px;">
                                 ${img}
-                                <input type="checkbox" data-src="i" data-cn="${escAttr(cn)}" data-lora="${escAttr(it.lora_id)}" data-base="${escAttr(bk)}" ${chk} onchange="_alrLoraOnChange(this)" style="cursor:pointer;">
+                                <input type="checkbox" data-src="i" data-target-key="${escAttr(target.key)}" data-lora="${escAttr(it.lora_id)}" data-base="${escAttr(bk)}" ${chk} onchange="_alrLoraOnChange(this)" style="cursor:pointer;">
                                 <span style="font-size:0.7rem;"><b>⭐ ${escHtml(it.lora_id)}</b> <span style="color:var(--text2);">(${bk})</span><br><span style="color:var(--text2);">${escHtml(it.trigger || '')}</span></span>
                             </label>`;
                         }).join('');
                     }).join('');
                 }
                 return `<div style="border:1px solid var(--border); border-radius:6px; padding:6px 8px; margin-bottom:6px;">
-                    <div style="font-size:0.8rem; font-weight:600; margin-bottom:3px;">${escHtml(cn)} <span style="color:var(--text2); font-weight:normal;">— ${matched.length}개 매칭</span></div>
+                    <div style="font-size:0.8rem; font-weight:600; margin-bottom:3px;">${escHtml(cn)} · [${target.visualCardIndex}] ${escHtml(target.visualCardLabel)} <span style="color:var(--text2); font-weight:normal;">— ${matched.length}개 매칭</span></div>
                     ${body}
                 </div>`;
             }).join('');
@@ -71941,8 +72050,9 @@
                 const prof = (pd.training_config && pd.training_config.profile) || 'anima';
                 const chars = pd.characters || [];
                 html += `<div style="font-size:0.72rem; color:var(--text2); margin-bottom:6px;">선택 프로젝트 BASE: <b>${escHtml(prof)}</b></div>`;
-                html += targets.map(cn => {
-                    const mch = _findBestBotProjectCharacter(chars, cn);
+                html += targets.map(target => {
+                    const cn = target.name;
+                    const mch = _findBestBotProjectCharacter(chars, cn, target.visualCardId);
                     let body;
                     if (!mch) {
                         body = '<div style="font-size:0.7rem; color:var(--warning);">이 프로젝트에 매칭되는 캐릭터 없음</div>';
@@ -71958,18 +72068,18 @@
                             const loraPath = [botCurrentBot, 'Lora', _botAutoLoraState.botSelectedProject, mch.name]
                                 .concat(mch.visual_card_id ? ['_visual_profiles', mch.visual_card_id] : [])
                                 .concat([rep.name, repData.safetensors || '']).join('\\');
-                            const key = _alrBKey(cn, loraPath);
+                            const key = _alrBKey(target.key, loraPath);
                             const chk = _alrLoraIsChecked(key) ? 'checked' : '';
                             const img = rep.preview_url ? `<img src="${escapeHtml(rep.preview_url)}" loading="lazy" onerror="this.style.display='none'" style="width:48px; height:48px; object-fit:cover; border-radius:4px; flex-shrink:0;">` : '<div style="width:48px; height:48px; display:flex; align-items:center; justify-content:center; background:var(--surface2); border-radius:4px; flex-shrink:0;">👤</div>';
                             body = `<label style="display:flex; align-items:center; gap:6px; padding:4px 6px; border:1px solid var(--border); border-radius:5px; background:var(--surface2); cursor:pointer; margin-top:3px;">
                                 ${img}
-                                <input type="checkbox" data-src="b" data-cn="${escAttr(cn)}" data-lora="${escAttr(loraPath)}" ${chk} onchange="_alrLoraOnChange(this)" style="cursor:pointer;">
+                                <input type="checkbox" data-src="b" data-target-key="${escAttr(target.key)}" data-lora="${escAttr(loraPath)}" ${chk} onchange="_alrLoraOnChange(this)" style="cursor:pointer;">
                                 <span style="font-size:0.7rem;"><b>⭐ ${escHtml(mch.name)} · ${escHtml(mch.visual_card_label || mch.visual_card_id || '기본 카드')}</b> <span style="color:var(--text2);">→ ${escHtml(rep.name)}</span></span>
                             </label>`;
                         }
                     }
                     return `<div style="border:1px solid var(--border); border-radius:6px; padding:6px 8px; margin-bottom:6px;">
-                        <div style="font-size:0.8rem; font-weight:600; margin-bottom:3px;">${escHtml(cn)}</div>
+                        <div style="font-size:0.8rem; font-weight:600; margin-bottom:3px;">${escHtml(cn)} · [${target.visualCardIndex}] ${escHtml(target.visualCardLabel)}</div>
                         ${body}
                     </div>`;
                 }).join('');
@@ -72001,8 +72111,8 @@
         async function executeBotAutoLoraSetup() {
             const st = document.getElementById('alr-exec-status');
             if (!_botAutoLoraState) return;
-            const targets = _alrCheckedChars();
-            if (targets.length === 0) { if (st) { st.style.color = 'var(--error)'; st.textContent = '선택된 캐릭터가 없습니다. 뒤로 가서 선택하세요.'; } return; }
+            const targets = _alrCheckedTargets();
+            if (targets.length === 0) { if (st) { st.style.color = 'var(--error)'; st.textContent = '선택된 프로필 카드가 없습니다. 뒤로 가서 선택하세요.'; } return; }
 
             const tab = _botAutoLoraState.tab;
             const srcLabel = tab === 'bot' ? '봇' : '인스턴스';
@@ -72012,6 +72122,11 @@
             const profile = _botAutoLoraState.profile;
             const isFace = profile === 'face';
             const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
+            if (!bot) {
+                console.error('[BOT_AUTO_LORA] 실행 대상 봇 없음', {bot: botCurrentBot});
+                if (st) { st.style.color = 'var(--error)'; st.textContent = '실행 대상 봇을 찾지 못했습니다.'; }
+                return;
+            }
             const instanceItems = _botAutoLoraState.instanceItems || [];
             const botProject = _botAutoLoraState.botProjectData;
             const botProf = botProject ? ((botProject.training_config && botProject.training_config.profile) || 'anima') : 'anima';
@@ -72021,12 +72136,24 @@
 
             let totalAdded = 0;
             const results = [];
-            for (const cn of targets) {
+            for (const target of targets) {
+                const cn = target.name;
+                const visualCardId = target.visualCardId || '';
+                const targetLabel = `${cn} · [${target.visualCardIndex}] ${target.visualCardLabel}`;
                 try {
                     const charIdx = bot.characters.findIndex(c => c.name === cn);
-                    if (charIdx < 0) { results.push(`${cn}: 캐릭터 없음`); continue; }
+                    if (charIdx < 0) {
+                        console.error('[BOT_AUTO_LORA] 실행 대상 캐릭터 없음', {character: cn, visualCardId});
+                        results.push(`${targetLabel}: 캐릭터 없음`);
+                        continue;
+                    }
+                    if (!_visualCardProfileById(cn, visualCardId)) {
+                        throw new Error(`프로필 카드 없음(${visualCardId || 'legacy'})`);
+                    }
 
-                    let loras = isFace ? getBotCharFaceLoras(cn) : getBotCharLoras(cn, profile);
+                    let loras = isFace
+                        ? getBotCharFaceLoras(cn, visualCardId)
+                        : getBotCharLoras(cn, profile, visualCardId);
                     if (_botAutoLoraState.conflict === 'overwrite') loras = [];
                     const before = loras.length;
                     const existPaths = new Set(loras.map(l => l.lora_path).filter(Boolean));
@@ -72039,7 +72166,7 @@
                             let previewUrl = '';
                             if (it.first_image) previewUrl = `/api/instance_lora/image/${enc(it.lora_id)}/${enc(it.first_image)}`;
                             for (const [baseKey, pData] of Object.entries(it.profiles || {})) {
-                                if (!_alrLoraIsChecked(_alrIKey(cn, it.lora_id, baseKey))) continue;
+                                if (!_alrLoraIsChecked(_alrIKey(target.key, it.lora_id, baseKey))) continue;
                                 if (existPaths.has(pData.lora_path)) { skippedDup++; continue; }
                                 loras.push({
                                     source: 'instance', name: `${it.lora_id} (${baseKey})`, character: 'instance',
@@ -72053,7 +72180,7 @@
                         // 봇: 체크된 representative만
                         const chars = (botProject && botProject.characters) || [];
                         // 미리보기와 실제 전송 모두 정확 일치 우선 공통 선택기를 사용한다.
-                        const mch = _findBestBotProjectCharacter(chars, cn);
+                        const mch = _findBestBotProjectCharacter(chars, cn, visualCardId);
                         if (mch) {
                             const sessions = (mch.trained_sessions || []).filter(s => !!s.representative);
                             const prio = sessions.filter(s => s.priority_rank && s.priority_rank > 0).sort((a, b) => (a.priority_rank || 999) - (b.priority_rank || 999));
@@ -72064,7 +72191,7 @@
                                 const botLoraPath = [botCurrentBot, 'Lora', _botAutoLoraState.botSelectedProject, mch.name]
                                     .concat(mch.visual_card_id ? ['_visual_profiles', mch.visual_card_id] : [])
                                     .concat([rep.name, repData.safetensors || '']).join('\\');
-                                if (_alrLoraIsChecked(_alrBKey(cn, botLoraPath))) {
+                                if (_alrLoraIsChecked(_alrBKey(target.key, botLoraPath))) {
                                     if (existPaths.has(botLoraPath)) { skippedDup++; }
                                     else {
                                         loras.push({
@@ -72084,29 +72211,30 @@
                     const added = loras.length - before;
                     const kept = _botAutoLoraState.conflict === 'overwrite' ? 0 : before;
                     if (isFace) {
-                        setBotCharFaceLoras(cn, loras);
-                        renderBotCharFaceLoraList(charIdx, cn, loras);
-                        await saveBotCharFaceLoras(cn);
+                        setBotCharFaceLoras(cn, loras, visualCardId);
                     } else {
-                        setBotCharLoras(cn, loras, profile);
-                        renderBotCharLoraList(charIdx, cn, loras);
-                        await saveBotCharLoras(cn, profile);
+                        setBotCharLoras(cn, loras, profile, visualCardId);
+                    }
+                    await _saveVisualCardState(cn, {quiet:true});
+                    if ((_visualCardProfile(cn)?.id || '') === visualCardId) {
+                        if (isFace) renderBotCharFaceLoraList(charIdx, cn, loras);
+                        else renderBotCharLoraList(charIdx, cn, loras);
                     }
                     totalAdded += added;
-                    const parts = [`${cn}: 기존${kept} +${added}`];
+                    const parts = [`${targetLabel}: 기존${kept} +${added}`];
                     if (skippedDup > 0) parts.push(`(중복${skippedDup}제거)`);
                     results.push(parts.join(' '));
                 } catch (e) {
-                    console.error(`[BOT_AUTO_LORA] ${cn} 세팅 실패:`, e);
-                    results.push(`${cn}: 오류(${e.message})`);
+                    console.error(`[BOT_AUTO_LORA] ${targetLabel} 세팅 실패:`, e);
+                    results.push(`${targetLabel}: 오류(${e.message})`);
                 }
             }
 
-            const msg = `완료[${srcLabel}] — ${targets.length}캐릭터 / +${totalAdded}로라. ` + results.join(' / ');
+            const msg = `완료[${srcLabel}] — ${targets.length}프로필 카드 / +${totalAdded}로라. ` + results.join(' / ');
             if (st) { st.style.color = 'var(--text2)'; st.textContent = msg; }
             const statusBar = document.getElementById('bot-auto-lora-status');
             if (statusBar) { statusBar.style.display = 'block'; statusBar.textContent = msg; }
-            showToast(`자동 세팅 완료(${srcLabel}): ${targets.length}캐릭터 +${totalAdded}로라`, totalAdded > 0 ? 'success' : 'info');
+            showToast(`자동 세팅 완료(${srcLabel}): ${targets.length}프로필 카드 +${totalAdded}로라`, totalAdded > 0 ? 'success' : 'info');
         }
 
         async function checkPatchFiles() {
@@ -72500,6 +72628,10 @@
 
         function updateBotBreadcrumb() {
             const bc = document.getElementById('bot-breadcrumb');
+            if (!bc) {
+                console.error('[BOT_SEARCH] breadcrumb 요소가 없습니다.');
+                return;
+            }
             let html = '<span class="bc-active" style="cursor:pointer;" onclick="botNavBack()">삽화 모드</span>';
             if (botCurrentBot) {
                 html += `<span class="bc-sep">›</span>`;
@@ -72514,7 +72646,29 @@
                     html += `<span class="bc-active">${escHtml(botCurrentChar)}</span>`;
                 }
             }
+            if (_botCurrentView === 'chars' && botCurrentBot && !botCurrentChar) {
+                html += `<input id="bot-character-search" class="breadcrumb-character-search" type="search" autocomplete="off" placeholder="캐릭터 검색" aria-label="삽화 모드 캐릭터 검색" value="${escAttr(_botCharacterSearchQuery)}" oninput="filterBotCharacters(this.value)">`;
+            }
             bc.innerHTML = html;
+        }
+
+        function filterBotCharacters(query) {
+            _botCharacterSearchQuery = String(query || '');
+            const normalizedQuery = _botCharacterSearchQuery.trim().toLocaleLowerCase();
+            const cards = document.querySelectorAll('#bot-character-grid > .bot-char-card');
+            let visibleCount = 0;
+            cards.forEach(card => {
+                const characterName = String(card.dataset.characterName || '').toLocaleLowerCase();
+                const matches = !normalizedQuery || characterName.includes(normalizedQuery);
+                card.style.display = matches ? '' : 'none';
+                if (matches) visibleCount++;
+            });
+            const empty = document.getElementById('bot-character-search-empty');
+            if (empty) empty.style.display = normalizedQuery && visibleCount === 0 ? 'block' : 'none';
+            const count = document.getElementById('bot-char-count');
+            if (count && cards.length > 0) {
+                count.textContent = normalizedQuery ? `(${visibleCount}/${cards.length}개)` : `(${cards.length}개)`;
+            }
         }
 
         async function navToBotChars() {
@@ -76296,6 +76450,7 @@
                     {key: 'nsfw', label: 'NSFW 태깅', type: 'toggle', help: 'CALL2에 성인 장면용 태깅 지침을 허용합니다. Manga 대사 모드의 버블 타입에도 함께 반영됩니다.'},
                     {key: 'supplement', label: 'SUPPLEMENT 생성', type: 'toggle', help: 'CALL2가 효과와 보조 묘사 섹션을 생성하도록 합니다.'},
                     {key: 'key_visual', label: 'Key Visual 생성', type: 'toggle', help: 'CALL2-PLAN과 동시에 독립 CALL2-KEYVIS LLM을 호출해 슬롯 장면과 분리된 대표 이미지 한 장을 생성합니다. 외부 LLM 분기는 기존 삽화 CALL2 설정을 공유합니다.'},
+                    {key: 'minimal_background_description', label: '배경 묘사 최소화', type: 'toggle', help: '켜면 배경을 가장 작은 이야기 근거 또는 simple background로 제한합니다. 끄면 중복 방지 규칙은 유지하면서 이야기에서 확인되는 장소·시간·날씨·조명·소품을 충분히 묘사합니다.'},
                     {key: 'character_limit', label: '이미지당 최대 캐릭터', type: 'select', help: '한 이미지에 함께 배치할 캐릭터 수입니다.', options: [1, 2, 3]},
                     {
                         key: 'scene_mode', label: 'Scene 수 결정', type: 'select',
@@ -90775,6 +90930,7 @@
             instance_lora_prompt_refine: '프롬프트 정제',
             lora_prompt_review: '프롬프트 2차 검수',
             bot_llm_face_tag_analysis: 'LLM 얼굴분석',
+            bot_lb_extra_refine: 'lb.extra 프로필 정제',
             qwen_edit_translate: 'EDIT 번역',
             video_instruction_draft: 'H3 AI 초안',
             video_instruction_refine: 'H3 V1 일반 다듬기',

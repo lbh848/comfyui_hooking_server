@@ -20,13 +20,7 @@ def _card(card_id, label, rep_name, *, use_profile_embedding=False):
         "selection_guide": f"{label}을 사용해야 하는 모습",
         "aliases": [],
         "appearance": [],
-        "default_outfit_id": "default",
-        "outfits": [{
-            "id": "default",
-            "label": "기본 복장",
-            "selection_guide": "기본 복장",
-            "tags": [],
-        }],
+        "default_outfit": [],
         "rep_images": [rep_name],
         "face_tags": f"face {card_id}",
         "eye_tags": f"eyes {card_id}",
@@ -325,7 +319,7 @@ async def test_bulk_main_rep_creates_profile_from_selected_source_on_apply(
     assert created["label"] == "변신 상태"
     assert created["rep_images"] == ["transformed.webp"]
     assert created["face_tags"] == source_before["face_tags"]
-    assert created["outfits"] == source_before["outfits"]
+    assert created["default_outfit"] == source_before["default_outfit"]
     assert created["selection_guide"] == ""
     assert created["aliases"] == []
     assert created["use_profile_embedding"] is True

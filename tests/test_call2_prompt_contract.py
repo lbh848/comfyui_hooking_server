@@ -14,12 +14,15 @@ def test_call2_resolves_wardrobe_change_as_semantic_instruction():
     assert "semantic instructions, never as a ready-made tag list" in system
 
 
-def test_call2_default_compatible_prose_keeps_authoritative_tags():
+def test_call2_default_outfit_is_fallback_and_context_can_create_replacement():
     system = CALL2_SYSTEM.read_text(encoding="utf-8")
     thoughts = CALL2_THOUGHTS.read_text(encoding="utf-8")
 
-    assert "keep the authoritative default tags" in system
-    assert "the default tags win" in thoughts
+    assert "fallback visual reference" in system
+    assert "create a coherent outfit suited to that context" in system
+    assert "explicit garment sentence is not required" in thoughts
+    assert "without keyword matching" in thoughts
+    assert "Do not mix abandoned default garments" in thoughts
 
 
 def test_call2_remove_targets_semantic_garment_cluster():
@@ -43,7 +46,7 @@ def test_call2_replace_keeps_independent_accessories_and_minimal_new_tags():
 def test_call2_reset_default_restores_exact_outfit():
     system = CALL2_SYSTEM.read_text(encoding="utf-8")
 
-    assert "restore the exact authoritative `default_outfit`" in system
+    assert "restore the exact `default_outfit` reference" in system
 
 
 def test_call2_body_state_suppresses_conflicting_garments():
@@ -73,8 +76,20 @@ def test_call2_authority_audit_rejects_associated_accessory_removal():
         "Do not grant an authority exception for an accessory merely because it is"
         in source
     )
-    assert "physically associated with a removed garment" in source
-    assert "removing a belt does not authorize removing `belt pouch`" in source
+    assert "physically associated with one explicitly removed garment" in source
+    assert "unless the whole outfit is contextually" in source
+
+
+def test_call2_authority_audit_allows_contextual_outfit_creation():
+    source = PIPELINE_PY.read_text(encoding="utf-8")
+
+    assert "default_outfit is only a fallback wardrobe reference" in source
+    assert "explicit removal wording is" in source
+    assert "not required for such a contextual wardrobe replacement" in source
+    assert "Do not flag a" in source
+    assert "coherent scene-appropriate garment merely because" in source
+    assert "generated_outfit_state is an untrusted proposal, but it" in source
+    assert "is evidence to judge together with generated_positive" in source
 
 
 def test_call2_builds_one_coherent_explicit_bundle_without_tag_dictionary():
@@ -122,6 +137,21 @@ def test_call2_uses_simple_background_without_inventing_scene_detail():
     assert "when no clear or story-important background exists add only" in source
     assert "Establish the world-building, time, and weather" not in system
     assert "Setup lighting with multiple tags" not in system
+
+
+def test_call2_background_density_has_minimal_and_normal_toggle_branches():
+    system = CALL2_SYSTEM.read_text(encoding="utf-8")
+    thoughts = CALL2_THOUGHTS.read_text(encoding="utf-8")
+    source = PIPELINE_PY.read_text(encoding="utf-8")
+
+    assert "lb-xnai.background.minimal" in system
+    assert "lb-xnai.background.minimal" in thoughts
+    assert "Describe the environment at a useful visual density" in system
+    assert "do not collapse a specific story-supported setting" in system
+    assert "story-supported setting at a useful visual density" in thoughts
+    assert 'toggles.get("minimal_background_description", True)' in source
+    assert "Environment is a normal visual-completeness concern" in source
+    assert "environment at a useful visual density" in source
 
 
 def test_call2_keeps_scene_environment_out_of_character_positive():

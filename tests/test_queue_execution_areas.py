@@ -5,6 +5,7 @@ import pytest
 from queue_manager import (
     GPU_QUEUE_PRIORITY_TYPES,
     LLM_QUEUE_PRIORITY_TYPES,
+    LLM_TYPES,
     QueueItem,
     QueueManager,
     normalize_queue_priority_orders,
@@ -1073,6 +1074,73 @@ def test_queue_priority_normalization_registers_every_non_illustration_type():
         range(10, 10 + len(LLM_QUEUE_PRIORITY_TYPES))
     )
     assert llm_order["bot_llm_face_tag_analysis"] == 10
+
+
+@pytest.mark.asyncio
+async def test_lb_extra_profile_refine_runs_in_llm_lane_with_card_context(monkeypatch):
+    import importlib
+
+    bot_mode = importlib.import_module("modes.bot_mode")
+    llm_service = importlib.import_module("modes.llm_service")
+
+    manager = QueueManager()
+    observed = {}
+
+    class ExecutionContext:
+        execution_id = "lb-extra-execution"
+
+    def fake_create_context(task_key, **kwargs):
+        observed["context"] = {"task_key": task_key, **kwargs}
+        return ExecutionContext()
+
+    async def fake_run(
+        bot_name,
+        char_name,
+        appearance_tags,
+        outfit_tags,
+        etc_tags,
+        visual_card_id,
+        **kwargs,
+    ):
+        observed["run"] = {
+            "bot_name": bot_name,
+            "char_name": char_name,
+            "appearance_tags": appearance_tags,
+            "outfit_tags": outfit_tags,
+            "etc_tags": etc_tags,
+            "visual_card_id": visual_card_id,
+            **kwargs,
+        }
+        return {"success": True, "data": {"appearance": ["silver hair"], "outfit": ["armor"]}}
+
+    monkeypatch.setattr(llm_service, "create_llm_execution_context", fake_create_context)
+    monkeypatch.setattr(bot_mode, "run_lb_extra_refine", fake_run)
+    item = _item(
+        "bot_lb_extra_refine",
+        {
+            "bot_name": "demo",
+            "char_name": "Laura",
+            "visual_card_id": "awakened",
+            "visual_card_label": "각성",
+            "visual_card_index": 2,
+            "appearance_tags": ["silver hair"],
+            "outfit_tags": ["armor"],
+            "etc_tags": [],
+        },
+    )
+
+    manager.items = [item]
+    assert manager.get_status()["items"][0]["execution_area"] == "llm"
+    result = await manager._handle_bot_lb_extra_refine(item)
+
+    assert "bot_lb_extra_refine" in LLM_TYPES
+    assert observed["context"]["task_key"] == "refine_lb_extra"
+    assert observed["context"]["call_name"] == "lb_extra_profile_refine"
+    assert observed["context"]["metadata"]["visual_card_id"] == "awakened"
+    assert observed["run"]["visual_card_id"] == "awakened"
+    assert observed["run"]["queue_item_id"] == item.id
+    assert observed["run"]["execution_context"].execution_id == "lb-extra-execution"
+    assert result["data"]["outfit"] == ["armor"]
 
 
 @pytest.mark.asyncio

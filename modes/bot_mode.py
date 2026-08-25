@@ -581,14 +581,6 @@ def _build_visual_guide_messages(system_prompt: str, targets: list[dict]) -> lis
             for value in render_overrides.get("rep_images", [])
             if str(value).strip()
         ]
-        outfits = []
-        for outfit in profile.get("outfits") or []:
-            outfits.append(
-                f"  - {outfit.get('label') or outfit.get('id')} "
-                f"(internal id: {outfit.get('id')}): "
-                f"guide={str(outfit.get('selection_guide') or '').strip() or '(none)'}; "
-                f"visual tags={_visual_guide_tag_text(outfit.get('tags'))}"
-            )
         target_sections.append("\n".join([
             f"### Target {target['target_key']}",
             f"Character: {target['character']}",
@@ -598,8 +590,7 @@ def _build_visual_guide_messages(system_prompt: str, targets: list[dict]) -> lis
             f"Current aliases: {', '.join(profile.get('aliases') or []) or '(none)'}",
             f"Current selection guide: {str(profile.get('selection_guide') or '').strip() or '(none)'}",
             f"Appearance evidence: {_visual_guide_tag_text(profile.get('appearance'))}",
-            "Registered outfits:",
-            *(outfits or ["  - (none)"]),
+            f"Default outfit evidence: {_visual_guide_tag_text(profile.get('default_outfit'))}",
         ]))
 
     system_message = """You organize illustration character-card routing metadata.
@@ -607,7 +598,7 @@ Read the supplied image-command document as a whole and reason about its own gra
 
 For every target, infer which canonical character command, form, outfit, corruption/overcome state, or other profile identity it represents. Representative filenames and visual tags are supporting evidence, while the source document is authoritative.
 
-Write Korean natural-language selection guides that explain when the profile becomes true, when it remains true, and the important situations in which it must not be selected. Preserve distinctions such as normal/corrupted/overcome forms, outfit variants, and first-event-only special assets. Do not turn ordinary emotion or action suffixes into a persistent profile unless the target itself is demonstrably that profile.
+Write Korean natural-language selection guides that explain when the profile becomes true, when it remains true, and the important situations in which it must not be selected. Preserve distinctions such as normal/corrupted/overcome forms, profile-level outfit variants, and first-event-only special assets. Each card has one flat default-outfit reference and no nested outfit choice; that reference is a fallback example, not a rule that prevents scene-appropriate attire. Do not turn ordinary emotion or action suffixes into a persistent profile unless the target itself is demonstrably that profile.
 
 Aliases are short source-grounded names that identify this profile or form, including exact canonical command labels and confirmed in-story form/outfit titles. Do not add the character's ordinary base name as a profile alias, and do not invent unsupported nicknames or translations. If the match is unclear, use low confidence and explain why instead of fabricating certainty.
 
@@ -6744,6 +6735,9 @@ async def run_lb_extra_refine(
     outfit_tags: list,
     etc_tags: list,
     visual_card_id: str = "",
+    *,
+    execution_context=None,
+    queue_item_id: str = "",
 ) -> dict:
     """LLM 비전 기반 Appearance/default_outfit 정제 (HTTP 래퍼 없는 core).
 
@@ -6758,6 +6752,88 @@ async def run_lb_extra_refine(
     from modes.llm_service import callLLMVisionTask, supports_vision, get_config, routing_primary_service
     from modes.lighbd_service import _log_lighbd_history
 
+    selected_card_id = str(visual_card_id or "").strip()
+    prompt_id = f"lb_extra_refine:{char_name}:{selected_card_id or 'root'}"
+    messages = []
+    cfg = {}
+    service = ""
+    usage = {}
+    execution_complete = {}
+
+    def _history_slot_config(slot: str) -> tuple[str, str]:
+        suffix = "" if slot in ("", "llm1") else slot[-1]
+        service_key = f"llm_service{suffix}" if suffix else "llm_service"
+        model_key = f"llm_model{suffix}" if suffix else "llm_model"
+        actual_service = str(cfg.get(service_key) or cfg.get("llm_service") or service or "")
+        actual_model = str(cfg.get(model_key) or cfg.get("llm_model") or "")
+        return actual_service, actual_model
+
+    def _write_lb_extra_history(
+        *,
+        status: str,
+        output: str = "",
+        error: str = "",
+        elapsed: float = 0.0,
+        phase: str = "",
+        slot: str = "",
+        attempt_id: str = "",
+        attempt: int = 0,
+        total_attempts: int = 0,
+        tps: float = 0.0,
+    ) -> None:
+        resolved_slot = str(slot or execution_complete.get("llm_slot") or "")
+        actual_service, actual_model = _history_slot_config(resolved_slot)
+        history_input = messages or [{
+            "role": "user",
+            "content": (
+                f"Appearance: {appearance_tags or []}\n"
+                f"default_outfit: {outfit_tags or []}\n"
+                f"unclassified context: {etc_tags or []}"
+            ),
+        }]
+        _log_lighbd_history({
+            "ts": datetime.datetime.now().isoformat(timespec="seconds"),
+            "task_key": "refine_lb_extra",
+            "call_name": "lb_extra_profile_refine",
+            "prompt_id": prompt_id if not attempt_id else f"{prompt_id}:attempt:{attempt_id}",
+            "execution_id": str(
+                attempt_id
+                or execution_complete.get("execution_id")
+                or getattr(execution_context, "execution_id", "")
+            ),
+            "parent_execution_id": str(
+                execution_complete.get("parent_execution_id")
+                or (getattr(execution_context, "execution_id", "") if attempt_id else "")
+            ),
+            "queue_item_id": queue_item_id,
+            "bot_name": bot_name,
+            "character": char_name,
+            "visual_card_id": selected_card_id,
+            "phase": str(phase or execution_complete.get("phase") or "preflight"),
+            "llm_slot": resolved_slot,
+            "service": actual_service,
+            "model": actual_model,
+            "attempt_id": attempt_id,
+            "attempt": int(attempt or 0),
+            "total_attempts": int(total_attempts or 0),
+            "input": history_input,
+            "output": str(output or ""),
+            "prompt_tokens": int(usage.get("prompt_tokens") or 0),
+            "completion_tokens": int(usage.get("completion_tokens") or 0),
+            "elapsed": round(float(elapsed or 0.0), 3),
+            "tps": float(tps or 0.0),
+            "status": status,
+            "error": str(error or ""),
+        })
+
+    def _preflight_failure(error: str) -> dict:
+        print(
+            f"[BOT_MODE] lb_extra_refine 사전 검사 실패: bot={bot_name!r}, "
+            f"character={char_name!r}, card={selected_card_id!r}, error={error}"
+        )
+        _write_lb_extra_history(status="error", error=error, phase="preflight")
+        return {"success": False, "error": error}
+
     async def _notify_llm_widget(event_type: str, data: dict = None):
         try:
             import server as _server
@@ -6767,23 +6843,21 @@ async def run_lb_extra_refine(
 
     try:
         if not bot_name or not char_name:
-            return {"success": False, "error": "bot, character 필드가 필요합니다."}
+            return _preflight_failure("bot, character 필드가 필요합니다.")
 
         char_dir = os.path.join(BOT_DIR, bot_name, char_name)
         if not os.path.isdir(char_dir):
-            print(f"[BOT_MODE] 캐릭터 디렉토리 없음: {char_dir}")
-            return {"success": False, "error": f"캐릭터 디렉토리가 없습니다: {char_dir}"}
+            return _preflight_failure(f"캐릭터 디렉토리가 없습니다: {char_dir}")
 
         # 대표 이미지(rep_images[0]) 로드
         data = _load_bot_data()
         bot = next((b for b in data.get("bots", []) if b["name"] == bot_name), None)
         if not bot:
-            return {"success": False, "error": f"봇을 찾을 수 없습니다: {bot_name}"}
+            return _preflight_failure(f"봇을 찾을 수 없습니다: {bot_name}")
         char = next((c for c in bot.get("characters", []) if c["name"] == char_name), None)
         if not char:
-            return {"success": False, "error": f"캐릭터를 찾을 수 없습니다: {char_name}"}
+            return _preflight_failure(f"캐릭터를 찾을 수 없습니다: {char_name}")
 
-        selected_card_id = str(visual_card_id or "").strip()
         if selected_card_id:
             cards, _source = effective_character_cards(char, None)
             selected_card = next(
@@ -6795,10 +6869,7 @@ async def run_lb_extra_refine(
                     f"[BOT_MODE] lb_extra_refine 카드 없음: bot={bot_name!r}, "
                     f"character={char_name!r}, card={selected_card_id!r}"
                 )
-                return {
-                    "success": False,
-                    "error": f"캐릭터 카드를 찾을 수 없습니다: {selected_card_id}",
-                }
+                return _preflight_failure(f"캐릭터 카드를 찾을 수 없습니다: {selected_card_id}")
             rep_images = selected_card.get("rep_images", [])
         else:
             rep_images = char.get("rep_images", [])
@@ -6807,7 +6878,7 @@ async def run_lb_extra_refine(
                 f"[BOT_MODE] lb_extra_refine 대표 이미지 없음: bot={bot_name!r}, "
                 f"character={char_name!r}, card={selected_card_id!r}"
             )
-            return {"success": False, "error": "대표 이미지(rep_images)가 없습니다."}
+            return _preflight_failure("대표 이미지(rep_images)가 없습니다.")
         rep0 = rep_images[0]
         if (
             not isinstance(rep0, str)
@@ -6821,24 +6892,19 @@ async def run_lb_extra_refine(
                 f"bot={bot_name!r}, character={char_name!r}, card={selected_card_id!r}, "
                 f"image={rep0!r}"
             )
-            return {"success": False, "error": "대표 이미지 파일명이 올바르지 않습니다."}
+            return _preflight_failure("대표 이미지 파일명이 올바르지 않습니다.")
         img_path = os.path.join(char_dir, rep0)
         if not os.path.isfile(img_path):
-            print(f"[BOT_MODE] 대표 이미지 파일 없음: {img_path}")
-            return {"success": False, "error": f"대표 이미지 파일이 없습니다: {rep0}"}
+            return _preflight_failure(f"대표 이미지 파일이 없습니다: {rep0}")
 
         # 비전 서비스 확인 (외부 LLM 분기: primary LLM 기준)
         cfg = get_config()
         service = routing_primary_service("refine_lb_extra")
         if not supports_vision(service):
-            print(f"[BOT_MODE] 비전 미지원 서비스: {service}")
-            return {
-                "success": False,
-                "error": (
-                    f"현재 LLM 서비스({service})는 비전(이미지 입력)을 지원하지 않습니다. "
-                    "텍스트 전용 SDK를 사용하는 vertex 대신 OpenAI 호환/Gemini/Claude 등을 config.json에서 선택하세요."
-                ),
-            }
+            return _preflight_failure(
+                f"현재 LLM 서비스({service})는 비전(이미지 입력)을 지원하지 않습니다. "
+                "텍스트 전용 SDK를 사용하는 vertex 대신 OpenAI 호환/Gemini/Claude 등을 config.json에서 선택하세요."
+            )
 
         # 프롬프트 선택 + 변수 치환
         custom_text, use_custom = _load_lb_extra_refine_custom()
@@ -6847,7 +6913,7 @@ async def run_lb_extra_refine(
         else:
             template = _load_lb_extra_refine_builtin()
         if not template.strip():
-            return {"success": False, "error": "정제 프롬프트 템플릿이 비어 있습니다."}
+            return _preflight_failure("정제 프롬프트 템플릿이 비어 있습니다.")
 
         rendered = _render_lb_extra_refine_prompt(template, appearance_tags, outfit_tags, etc_tags)
 
@@ -6861,7 +6927,7 @@ async def run_lb_extra_refine(
         except Exception as e:
             print(f"[BOT_MODE] 대표 이미지 읽기 실패: {e}")
             traceback.print_exc()
-            return {"success": False, "error": f"대표 이미지 읽기 실패: {e}"}
+            return _preflight_failure(f"대표 이미지 읽기 실패: {e}")
         img_b64 = base64.b64encode(img_bytes).decode("ascii")
 
         messages = [
@@ -6875,11 +6941,33 @@ async def run_lb_extra_refine(
               f"etc={len(etc_tags or [])} use_custom={use_custom}")
 
         use_model = cfg.get("llm_model", "")
-        await _notify_llm_widget("start", {"model": use_model, "prompt_id": f"lb_extra_refine:{char_name}"})
+        await _notify_llm_widget("start", {"model": use_model, "prompt_id": prompt_id})
 
         raw = None
         last_err = None
         t0 = _time.time()
+        def observe_execution(event):
+            if str(event.get("type") or "") == "execution_complete":
+                execution_complete.update(event)
+
+        def record_attempt_failure(event):
+            reason = str(event.get("reason") or event.get("error") or "LLM 시도 실패")
+            attempt_raw = event.get("raw_response", event.get("result"))
+            _write_lb_extra_history(
+                status="error",
+                output="" if attempt_raw is None else str(attempt_raw),
+                error=(
+                    f"[재시도 {event.get('phase')} {event.get('slot')} "
+                    f"{event.get('attempt')}/{event.get('total_attempts')}] {reason}"
+                ),
+                elapsed=float(event.get("elapsed") or 0.0),
+                phase=str(event.get("phase") or ""),
+                slot=str(event.get("slot") or ""),
+                attempt_id=str(event.get("attempt_id") or ""),
+                attempt=int(event.get("attempt") or 0),
+                total_attempts=int(event.get("total_attempts") or 0),
+            )
+
         try:
             raw = await callLLMVisionTask(
                 "refine_lb_extra",
@@ -6890,6 +6978,10 @@ async def run_lb_extra_refine(
                     _parse_lb_extra_refine_response(result) is not None,
                     "외모/복장 태그 JSON 파싱 실패",
                 ),
+                metadata_sink=usage,
+                execution_context=execution_context,
+                execution_observer=observe_execution,
+                on_attempt_failure=record_attempt_failure,
             )
         except Exception as call_err:
             print(f"[BOT_MODE] callLLMVision 예외: {call_err}")
@@ -6909,16 +7001,16 @@ async def run_lb_extra_refine(
                     "ttft": None,
                 }
                 await _notify_llm_widget("done", done_data)
-                _log_lighbd_history({
-                    "ts": datetime.datetime.now().isoformat(timespec="seconds"),
-                    "prompt_id": f"lb_extra_refine:{char_name}",
-                    "input": messages,
-                    "output": raw,
-                    "completion_tokens": done_data["completion_tokens"],
-                    "elapsed": done_data["elapsed"],
-                    "tps": done_data["tps"],
-                    "status": "ok",
-                })
+                if not usage.get("completion_tokens"):
+                    usage["completion_tokens"] = done_data["completion_tokens"]
+                _write_lb_extra_history(
+                    status="ok",
+                    output=raw,
+                    elapsed=done_data["elapsed"],
+                    phase=str(execution_complete.get("phase") or "primary"),
+                    slot=str(execution_complete.get("llm_slot") or ""),
+                    tps=done_data["tps"],
+                )
                 print(f"[BOT_MODE] lb_extra_refine 완료: appearance={len(parsed['appearance'])}개 outfit={len(parsed['outfit'])}개")
                 return {"success": True, "data": parsed}
             last_err = f"LLM 응답을 JSON으로 파싱하지 못했습니다. raw: {raw[:300]}"
@@ -6928,28 +7020,26 @@ async def run_lb_extra_refine(
             print(f"[BOT_MODE] LLM 호출 실패(라우팅 재시도 소진): {raw}")
 
         await _notify_llm_widget("error", {"error": last_err or "알 수 없는 오류", "elapsed": round(total_elapsed, 3)})
-        _log_lighbd_history({
-            "ts": datetime.datetime.now().isoformat(timespec="seconds"),
-            "prompt_id": f"lb_extra_refine:{char_name}",
-            "input": messages,
-            "output": "",
-            "elapsed": round(total_elapsed, 3),
-            "status": "error",
-            "error": last_err or "알 수 없는 오류",
-        })
+        _write_lb_extra_history(
+            status="error",
+            output=str(raw or ""),
+            error=last_err or "알 수 없는 오류",
+            elapsed=total_elapsed,
+            phase=str(execution_complete.get("phase") or "primary"),
+            slot=str(execution_complete.get("llm_slot") or ""),
+        )
         return {"success": False, "error": f"라우팅 재시도 후 실패: {last_err}"}
     except Exception as e:
         print(f"[BOT_MODE] lb_extra_refine 예외: {e}")
         traceback.print_exc()
         await _notify_llm_widget("error", {"error": f"{type(e).__name__}: {e}"})
-        _log_lighbd_history({
-            "ts": datetime.datetime.now().isoformat(timespec="seconds"),
-            "prompt_id": f"lb_extra_refine:{char_name}",
-            "input": messages if "messages" in locals() else [],
-            "output": "",
-            "status": "error",
-            "error": f"{type(e).__name__}: {e}",
-        })
+        _write_lb_extra_history(
+            status="error",
+            output="",
+            error=f"{type(e).__name__}: {e}",
+            phase=str(execution_complete.get("phase") or "exception"),
+            slot=str(execution_complete.get("llm_slot") or ""),
+        )
         return {"success": False, "error": str(e)}
 
 
@@ -7006,14 +7096,40 @@ async def handle_lb_extra_refine(request):
         if not isinstance(visual_card_id, str):
             print(f"[BOT_MODE] lb_extra_refine visual_card_id 타입 오류: {visual_card_id!r}")
             return web.json_response({"success": False, "error": "visual_card_id는 문자열이어야 합니다."})
-        result = await run_lb_extra_refine(
-            bot_name,
-            char_name,
-            appearance_tags,
-            outfit_tags,
-            etc_tags,
-            visual_card_id.strip(),
+        try:
+            import server as _server
+            queue_manager = _server.queue_manager
+        except Exception as e:
+            print(f"[BOT_MODE] lb_extra_refine 큐 접근 실패: {e}")
+            traceback.print_exc()
+            return web.json_response({"success": False, "error": f"통합 LLM 큐 접근 실패: {e}"})
+
+        selected_card_id = visual_card_id.strip()
+        item = await queue_manager.add_item(
+            item_type="bot_lb_extra_refine",
+            label=f"lb.extra 정제: {bot_name}/{char_name}/{selected_card_id or 'root'}",
+            params={
+                "bot_name": bot_name,
+                "char_name": char_name,
+                "visual_card_id": selected_card_id,
+                "visual_card_label": str(body.get("visual_card_label") or "").strip(),
+                "visual_card_index": int(body.get("visual_card_index") or 1),
+                "appearance_tags": appearance_tags,
+                "outfit_tags": outfit_tags,
+                "etc_tags": etc_tags,
+            },
+            priority=10,
         )
+        try:
+            result = await item.completion_future
+        except Exception as e:
+            print(
+                f"[BOT_MODE] lb_extra_refine 큐 실행 실패: item={item.id}, "
+                f"bot={bot_name!r}, character={char_name!r}, card={selected_card_id!r}, "
+                f"error={type(e).__name__}: {e}"
+            )
+            traceback.print_exc()
+            return web.json_response({"success": False, "error": str(e), "queue_item_id": item.id})
         return web.json_response(result)
     except Exception as e:
         print(f"[BOT_MODE] handle_lb_extra_refine 예외: {e}")

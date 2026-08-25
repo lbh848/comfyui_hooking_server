@@ -1,9 +1,9 @@
 """Character-card routing for illustration generation.
 
 Users edit up to ten complete cards stored on ``bot.json`` characters under
-``visual_cards``.  The illustration pipeline still consumes stable internal
-profile IDs, so this module converts cards into that existing routing shape.
-There is intentionally no separate visual-profile data file.
+``visual_cards``. Each card has one flat ``appearance`` list and one flat
+``default_outfit`` list. The illustration pipeline routes only by stable card
+ID; there is intentionally no nested outfit axis or separate profile data file.
 """
 
 from __future__ import annotations
@@ -16,7 +16,6 @@ import traceback
 
 MAX_VISUAL_CARDS = 10
 LEGACY_VISUAL_PROFILE_ID = "card_1"
-LEGACY_OUTFIT_ID = "default"
 PROFILE_ASSET_FOLDER = "_visual_profiles"
 
 _ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
@@ -36,6 +35,17 @@ _CARD_RENDER_KEYS = {
     "style_loras",
     "use_image_name_tag",
     "use_profile_embedding",
+}
+
+# LoRA settings belong to one visual card.  The root character mirrors card [1]
+# for legacy consumers, so these fields must be removed before another card's
+# overrides are applied or card [1]'s LoRAs leak into cards that omit the field.
+_CARD_LOCAL_LORA_KEYS = {
+    "face_loras",
+    "loras",
+    "loras_group",
+    "loras_solo",
+    "style_loras",
 }
 
 
@@ -144,7 +154,7 @@ def _normalize_rep_images(values, *, field: str) -> list[str]:
     return result
 
 
-def normalize_outfit(raw: dict, *, field: str = "outfit") -> dict:
+def _normalize_legacy_outfit(raw: dict, *, field: str = "outfit") -> dict:
     if not isinstance(raw, dict):
         error = f"{field}는 object여야 합니다."
         print(f"[CHARACTER_CARD] 복장 검증 실패: {error}, value={raw!r}")
@@ -158,47 +168,69 @@ def normalize_outfit(raw: dict, *, field: str = "outfit") -> dict:
     }
 
 
+def _normalize_flat_default_outfit(raw: dict, *, field: str) -> list[dict]:
+    """Read the flat field, or migrate one selected outfit from the old nested schema."""
+    if "default_outfit" in raw:
+        if "outfits" in raw or "default_outfit_id" in raw:
+            print(
+                f"[CHARACTER_CARD] 평면 default_outfit 우선 사용, 구형 복장 필드 무시: "
+                f"field={field}"
+            )
+        return normalize_tag_entries(
+            raw.get("default_outfit"),
+            field=f"{field}.default_outfit",
+        )
+
+    outfits_raw = raw.get("outfits")
+    if outfits_raw is None and raw.get("default_outfit_id") is None:
+        return []
+    if not isinstance(outfits_raw, list) or not outfits_raw:
+        error = f"{field}.outfits에는 평탄화할 복장이 최소 1개 필요합니다."
+        print(f"[CHARACTER_CARD] 구형 복장 마이그레이션 실패: {error}")
+        raise VisualProfileValidationError(error)
+    outfits = [
+        _normalize_legacy_outfit(item, field=f"{field}.outfits[{index}]")
+        for index, item in enumerate(outfits_raw)
+    ]
+    outfit_ids = [item["id"] for item in outfits]
+    if len(set(outfit_ids)) != len(outfit_ids):
+        error = f"{field}.outfits에 중복 ID가 있습니다: {outfit_ids}"
+        print(f"[CHARACTER_CARD] 구형 복장 마이그레이션 실패: {error}")
+        raise VisualProfileValidationError(error)
+    selected_id = _require_id(
+        raw.get("default_outfit_id") or outfit_ids[0],
+        f"{field}.default_outfit_id",
+    )
+    selected = next((item for item in outfits if item["id"] == selected_id), None)
+    if selected is None:
+        error = f"{field}.default_outfit_id가 outfits에 없습니다: {selected_id!r}"
+        print(f"[CHARACTER_CARD] 구형 복장 마이그레이션 실패: {error}")
+        raise VisualProfileValidationError(error)
+    print(
+        f"[CHARACTER_CARD] 구형 복장 구조 평탄화: field={field}, "
+        f"selected={selected_id!r}, dropped={max(0, len(outfits) - 1)}"
+    )
+    return deepcopy(selected["tags"])
+
+
 def normalize_visual_card(raw: dict, *, field: str = "card") -> dict:
     if not isinstance(raw, dict):
         error = f"{field}는 object여야 합니다."
         print(f"[CHARACTER_CARD] 카드 검증 실패: {error}, value={raw!r}")
         raise VisualProfileValidationError(error)
     card_id = _require_id(raw.get("id"), f"{field}.id")
-    outfits_raw = raw.get("outfits")
-    if not isinstance(outfits_raw, list) or not outfits_raw:
-        error = f"{field}.outfits에는 복장이 최소 1개 필요합니다."
-        print(f"[CHARACTER_CARD] 카드 검증 실패: {error}")
-        raise VisualProfileValidationError(error)
-    outfits = [
-        normalize_outfit(item, field=f"{field}.outfits[{index}]")
-        for index, item in enumerate(outfits_raw)
-    ]
-    outfit_ids = [item["id"] for item in outfits]
-    if len(set(outfit_ids)) != len(outfit_ids):
-        error = f"{field}.outfits에 중복 ID가 있습니다: {outfit_ids}"
-        print(f"[CHARACTER_CARD] 카드 검증 실패: {error}")
-        raise VisualProfileValidationError(error)
-    default_outfit_id = _require_id(
-        raw.get("default_outfit_id") or outfit_ids[0],
-        f"{field}.default_outfit_id",
-    )
-    if default_outfit_id not in set(outfit_ids):
-        error = f"{field}.default_outfit_id가 outfits에 없습니다: {default_outfit_id!r}"
-        print(f"[CHARACTER_CARD] 카드 검증 실패: {error}")
-        raise VisualProfileValidationError(error)
     result = {
         "id": card_id,
         "label": _clean_text(raw.get("label")) or card_id,
         "selection_guide": _clean_text(raw.get("selection_guide")),
         "aliases": _normalize_aliases(raw.get("aliases"), field=f"{field}.aliases"),
         "appearance": normalize_tag_entries(raw.get("appearance"), field=f"{field}.appearance"),
-        "default_outfit_id": default_outfit_id,
-        "outfits": outfits,
+        "default_outfit": _normalize_flat_default_outfit(raw, field=field),
     }
     unknown = sorted(
         set(raw) - _CARD_RENDER_KEYS - {
             "id", "label", "selection_guide", "aliases", "appearance",
-            "default_outfit_id", "outfits",
+            "default_outfit", "default_outfit_id", "outfits",
         }
     )
     if unknown:
@@ -259,13 +291,7 @@ def legacy_visual_card(
         "selection_guide": "다른 카드로 바뀌었다는 서사적 근거가 없을 때 유지하는 기본 모습.",
         "aliases": [],
         "appearance": normalize_tag_entries(extra.get("appearance"), field="legacy.appearance"),
-        "default_outfit_id": LEGACY_OUTFIT_ID,
-        "outfits": [{
-            "id": LEGACY_OUTFIT_ID,
-            "label": "기본 복장",
-            "selection_guide": "다른 등록 복장이 명시되지 않았을 때의 기본 복장.",
-            "tags": normalize_tag_entries(extra.get("outfit"), field="legacy.outfit"),
-        }],
+        "default_outfit": normalize_tag_entries(extra.get("outfit"), field="legacy.outfit"),
     }
     for key in _CARD_RENDER_KEYS - {"use_profile_embedding"}:
         if key in root_character:
@@ -297,8 +323,7 @@ def cards_to_character_profiles(character_name: str, cards: list[dict]) -> dict:
             "selection_guide": card["selection_guide"],
             "aliases": deepcopy(card["aliases"]),
             "appearance": deepcopy(card["appearance"]),
-            "default_outfit_id": card["default_outfit_id"],
-            "outfits": deepcopy(card["outfits"]),
+            "default_outfit": deepcopy(card["default_outfit"]),
             "render_overrides": render_overrides,
         })
     return {
@@ -324,11 +349,15 @@ def character_profiles_to_cards(raw: dict) -> list[dict]:
             error = f"profiles[{index}]는 object여야 합니다."
             print(f"[CHARACTER_CARD] 변환 실패: {error}")
             raise VisualProfileValidationError(error)
+        # 키 존재 여부를 보존해야 구형 profiles[].outfits 입력이 정상 평탄화된다.
+        # 누락된 default_outfit을 None으로 만들어 넣으면 구형 값보다 우선되어
+        # 실제 선택 복장이 유실되므로, 원본에 있는 키만 전달한다.
         card = {
-            key: deepcopy(profile.get(key)) for key in (
+            key: deepcopy(profile[key]) for key in (
                 "id", "label", "selection_guide", "aliases", "appearance",
-                "default_outfit_id", "outfits",
+                "default_outfit", "default_outfit_id", "outfits",
             )
+            if key in profile
         }
         overrides = profile.get("render_overrides") or {}
         if not isinstance(overrides, dict):
@@ -424,21 +453,9 @@ def profile_by_id(character_profiles: dict, profile_id: str) -> dict | None:
     )
 
 
-def outfit_by_id(profile: dict, outfit_id: str) -> dict | None:
-    wanted = _clean_text(outfit_id)
-    return next(
-        (
-            outfit for outfit in profile.get("outfits") or []
-            if _clean_text(outfit.get("id")) == wanted
-        ),
-        None,
-    )
-
-
 def resolve_visual_base(
     character_profiles: dict,
     profile_id: str = "",
-    outfit_id: str = "",
 ) -> dict:
     selected_profile_id = _clean_text(profile_id) or _clean_text(
         character_profiles.get("default_visual_profile_id")
@@ -457,28 +474,12 @@ def resolve_visual_base(
         print(f"[CHARACTER_CARD] 카드 해석 실패: {error}")
         raise VisualProfileValidationError(error)
 
-    selected_outfit_id = _clean_text(outfit_id) or _clean_text(profile.get("default_outfit_id"))
-    outfit = outfit_by_id(profile, selected_outfit_id)
-    if outfit is None:
-        fallback_outfit_id = _clean_text(profile.get("default_outfit_id"))
-        print(
-            f"[CHARACTER_CARD] 복장 ID를 찾지 못해 카드 기본값 사용: "
-            f"character={character_profiles.get('name')!r}, card={profile.get('id')!r}, "
-            f"requested={outfit_id!r}, fallback={fallback_outfit_id!r}"
-        )
-        outfit = outfit_by_id(profile, fallback_outfit_id)
-    if outfit is None:
-        error = f"카드에 해석 가능한 기본 복장이 없습니다: {profile.get('id')!r}"
-        print(f"[CHARACTER_CARD] 복장 해석 실패: {error}")
-        raise VisualProfileValidationError(error)
     return {
         "character": _clean_text(character_profiles.get("name")),
         "visual_profile_id": profile["id"],
         "visual_profile_label": profile["label"],
-        "outfit_id": outfit["id"],
-        "outfit_label": outfit["label"],
         "appearance": deepcopy(profile.get("appearance") or []),
-        "outfit": deepcopy(outfit.get("tags") or []),
+        "outfit": deepcopy(profile.get("default_outfit") or []),
         "render_overrides": deepcopy(profile.get("render_overrides") or {}),
     }
 
@@ -487,17 +488,17 @@ def resolve_render_character(
     root_character: dict,
     character_profiles: dict,
     profile_id: str = "",
-    outfit_id: str = "",
 ) -> tuple[dict, dict]:
-    base = resolve_visual_base(character_profiles, profile_id, outfit_id)
+    base = resolve_visual_base(character_profiles, profile_id)
     resolved = deepcopy(root_character or {})
     resolved["name"] = _clean_text(root_character.get("name")) or base["character"]
+    for key in _CARD_LOCAL_LORA_KEYS:
+        resolved.pop(key, None)
     for key, value in base["render_overrides"].items():
         if key == "use_profile_embedding":
             continue
         resolved[key] = deepcopy(value)
     resolved["_visual_profile_id"] = base["visual_profile_id"]
-    resolved["_visual_outfit_id"] = base["outfit_id"]
     resolved["_use_profile_embedding"] = bool(
         base["render_overrides"].get("use_profile_embedding", False)
     )
@@ -529,12 +530,10 @@ def build_natural_profile_catalog(effective_profiles: dict[str, dict]) -> str:
                 f"- 카드 [{index + 1}] (내부 ID `{profile.get('id')}`): {guide} "
                 f"작중 호칭/별칭: {aliases}"
             )
-            lines.append(f"  이 카드의 평소 복장 ID는 `{profile.get('default_outfit_id')}`이다.")
-            for outfit in profile.get("outfits") or []:
-                outfit_guide = _clean_text(outfit.get("selection_guide")) or "별도 선택 설명 없음."
-                lines.append(
-                    f"  - 복장 `{outfit.get('id')}` (작중 별칭: {outfit.get('label')}): "
-                    f"{outfit_guide}"
-                )
+            lines.append(
+                "  이 카드에는 별도 복장 선택 축이 없으며, 카드 자체의 "
+                "default_outfit은 서사상 다른 복장이 정해지지 않았을 때 참고하는 "
+                "기본 복장이다. 장면 맥락이 다른 복장을 요구하면 고정하지 않는다."
+            )
         sections.append("\n".join(lines))
     return "\n\n".join(sections)

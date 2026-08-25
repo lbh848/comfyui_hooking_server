@@ -12,25 +12,13 @@ def _profiles():
                 "label": "카드 1",
                 "selection_guide": "변신 전의 인간 모습.",
                 "appearance": ["brown hair", "brown eyes"],
-                "default_outfit_id": "casual",
-                "outfits": [{
-                    "id": "casual",
-                    "label": "사복",
-                    "selection_guide": "평상복.",
-                    "tags": ["hoodie", "jeans"],
-                }],
+                "default_outfit": ["hoodie", "jeans"],
             }, {
                 "id": "despair",
                 "label": "카드 2",
                 "selection_guide": "몸 자체가 절망 형태로 변한 뒤의 모습.",
                 "appearance": ["white hair", "red eyes", "black horns"],
-                "default_outfit_id": "armor",
-                "outfits": [{
-                    "id": "armor",
-                    "label": "절망 갑주",
-                    "selection_guide": "변신과 함께 생기는 갑주.",
-                    "tags": ["black armor"],
-                }],
+                "default_outfit": ["black armor"],
                 "face_tags": "white hair, red eyes",
                 "use_profile_embedding": True,
             }])
@@ -55,7 +43,6 @@ def _event():
         "segment_id": "C002",
         "character": "Adachi",
         "target_visual_profile_id": "despair",
-        "target_outfit_id": "armor",
         "visual_change": "Her whole body changed into her despair form.",
         "evidence": "her whole body changed into her despair form",
         "confidence": 0.96,
@@ -69,7 +56,11 @@ def test_call1_prompt_dynamically_selects_cards_from_narrative_state():
 
     assert "Registered character cards" in prompt
     assert "including on first appearance" in prompt
-    assert "Use the registered default only when the narrative does not establish another card/outfit" in prompt
+    assert "Use the registered default only when the narrative does not establish another card" in prompt
+    assert "no nested outfit choice" in prompt
+    assert "fallback when the story and scene context do not call for different attire" in prompt
+    assert "not a mandatory outfit" in prompt
+    assert "target_outfit_id" not in prompt
     assert "never choose by a fixed keyword list" in prompt
 
 
@@ -94,7 +85,7 @@ def test_call1_visual_event_requires_literal_evidence_and_registered_ids():
 
     assert parsed is not None
     assert parsed["visual_base_events"][0]["target_visual_profile_id"] == "despair"
-    assert parsed["visual_base_events"][0]["target_outfit_id"] == "armor"
+    assert "target_outfit_id" not in parsed["visual_base_events"][0]
 
     raw["visual_base_events"][0]["target_visual_profile_id"] = "invented"
     rejected = pipeline.parse_call1_analysis(
@@ -108,7 +99,7 @@ def test_call1_visual_event_requires_literal_evidence_and_registered_ids():
     assert any("등록되지 않은 외형 프로필" in warning for warning in rejected["validation_warnings"])
 
 
-def test_visual_event_resets_registered_wardrobe_base_and_persists_ids():
+def test_visual_event_resets_flat_profile_wardrobe_base_and_removes_legacy_outfit_state():
     before = {
         "adachi": {
             "canonical_name": "Adachi",
@@ -132,7 +123,7 @@ def test_visual_event_resets_registered_wardrobe_base_and_persists_ids():
 
     state = after["adachi"]
     assert state["active_visual_profile_id"] == "despair"
-    assert state["active_outfit_id"] == "armor"
+    assert "active_outfit_id" not in state
     assert state["current_wardrobe"] == {
         "body_state": "clothed",
         "worn": ["black armor"],

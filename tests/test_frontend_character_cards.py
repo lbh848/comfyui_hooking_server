@@ -13,7 +13,7 @@ def test_character_cards_are_switched_inline_and_limited_to_ten():
     assert "[${index + 1}]" in FRONTEND
 
 
-def test_card_metadata_and_outfit_entry_are_on_the_character_card():
+def test_card_metadata_and_flat_lb_extra_editor_are_on_the_character_card():
     assert "자연어 선택 기준" in FRONTEND
     assert "작중 별칭" in FRONTEND
     card_metadata = FRONTEND[FRONTEND.index('<div class="card-section" style="display:grid;grid-template-columns:minmax(180px,.65fr) minmax(320px,1.35fr)'):]
@@ -22,8 +22,13 @@ def test_card_metadata_and_outfit_entry_are_on_the_character_card():
     assert "lb-xnai.lb.extra 복장 설정" not in FRONTEND
     assert "openVisualCardLbExtraEditor" in FRONTEND
     assert "_openFocusEditModal(0)" in FRONTEND
-    assert 'id="fe-card-controls"' in FRONTEND
+    assert 'id="fe-card-controls"' not in FRONTEND
     assert "saveVisualCardFocusEdit" in FRONTEND
+    assert "session.profile.default_outfit" in FRONTEND
+    assert "session.profile.outfits" not in FRONTEND
+    assert "default_outfit_id" not in FRONTEND
+    assert "addVisualCardFocusOutfit" not in FRONTEND
+    assert "deleteVisualCardFocusOutfit" not in FRONTEND
     assert "visual_card_id: _visualCardFocusSession?.profileId" in FRONTEND
     assert "openVisualOutfitEditor" not in FRONTEND
     assert "visual-outfit-overlay" not in FRONTEND
@@ -55,3 +60,47 @@ def test_active_character_card_face_preview_and_prompt_edit_keep_profile_id():
     modal_source = FRONTEND[modal_start:modal_end]
     assert "const visualCardId = box.dataset.visualCardId || '';" in modal_source
     assert "visual_card_id: visualCardId" in modal_source
+
+
+def test_lb_extra_batch_refine_targets_every_profile_and_only_syncs_card_one_portable_data():
+    assert "프로필 카드 일괄 정제" in FRONTEND
+    assert "이식용 데이터 일괄 정제" not in FRONTEND
+
+    target_start = FRONTEND.index("function _lbExtraProfileBatchTargets()")
+    target_end = FRONTEND.index("async function _lbExtraBatchRefine()", target_start)
+    target_source = FRONTEND[target_start:target_end]
+    assert "profiles.forEach((profile, profileIndex)" in target_source
+    assert "profile.default_outfit" in target_source
+    assert "defaultOutfitId" not in target_source
+    assert "rep: repImages[0] || ''" in target_source
+    assert "cardData.default_visual_profile_id || profiles[0]?.id" in target_source
+    assert "isPortable: String(profile.id || '') === portableProfileId" in target_source
+
+    run_start = FRONTEND.index("async function _lbExtraBatchRefineRun(targets)")
+    run_end = FRONTEND.index("let _lbExtraBatchAbort = null", run_start)
+    run_source = FRONTEND[run_start:run_end]
+    assert "profile.id === target.visualCardId" in run_source
+    assert "profile.outfits" not in run_source
+    assert "await _loadVisualCardRefineOriginal(" in run_source
+    assert "const appearanceTags = (original.appearance || [])" in run_source
+    assert "const outfitTags = (original.outfit || [])" in run_source
+    assert "const etcTags = (original.uncategorized || [])" in run_source
+    assert "etc: etcTags" in run_source
+    assert "etc: []" not in run_source
+    assert "visual_card_id: target.visualCardId" in run_source
+    assert "await _saveVisualCardState(target.character, {quiet:true})" in run_source
+    assert "profile.default_outfit = JSON.parse" in run_source
+    assert "if (target.isPortable && _lbExtraEdited[ci])" in run_source
+    assert "_lbExtraEdited[ci].appearance" in run_source
+    assert "_lbExtraEdited[ci].outfit" in run_source
+
+
+def test_lb_extra_refine_is_registered_in_queue_ui_and_routing_ui():
+    assert "bot_lb_extra_refine: 'lb.extra 프로필 정제'" in FRONTEND
+    assert "{ key: 'refine_lb_extra'" in FRONTEND
+
+
+def test_focused_and_batch_refine_share_the_same_representative_prompt_loader():
+    assert "async function _loadVisualCardRefineOriginal(" in FRONTEND
+    assert FRONTEND.count("await _loadVisualCardRefineOriginal(") == 2
+    assert "_loadVisualCardFocusOriginal" not in FRONTEND
