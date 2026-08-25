@@ -92,6 +92,22 @@ def test_call2_authority_audit_allows_contextual_outfit_creation():
     assert "is evidence to judge together with generated_positive" in source
 
 
+def test_call2_fixed_appearance_requires_explicit_narrative_change():
+    system = CALL2_SYSTEM.read_text(encoding="utf-8")
+    thoughts = CALL2_THOUGHTS.read_text(encoding="utf-8")
+    source = PIPELINE_PY.read_text(encoding="utf-8")
+
+    assert "authoritative identity of the already-selected visual profile" in system
+    assert "Only a direct, explicit statement in the actual narrative" in system
+    assert "active evidence-bearing history event" in thoughts
+    assert "CURRENT CONTEXT and literal evidence inside hairstyle_history" in source
+    assert "A fixed-appearance authority_exception is allowed only" in source
+    assert "assigned PLAN controls the visual beat but has no appearance authority" in source
+    assert "without turning appearance wording into a temporary replacement" in source
+    assert "generated_positive, generated_outfit_state" in source
+    assert "scene's coherent contextual outfit replaces the fallback as a set" in source
+
+
 def test_call2_builds_one_coherent_explicit_bundle_without_tag_dictionary():
     system = CALL2_SYSTEM.read_text(encoding="utf-8")
     thoughts = CALL2_THOUGHTS.read_text(encoding="utf-8")

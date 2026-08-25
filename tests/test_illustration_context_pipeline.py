@@ -5779,7 +5779,7 @@ def test_call2_authority_base_restores_missing_fixed_and_default_tags():
     }]
 
 
-def test_call2_authority_base_allows_only_explicit_exact_temporary_exceptions():
+def test_call2_authority_base_allows_audited_explicit_fixed_exception():
     descriptors = [{
         "kind": "scene",
         "slot": 7,
@@ -5826,6 +5826,115 @@ def test_call2_authority_base_allows_only_explicit_exact_temporary_exceptions():
     assert audits[0]["conflicts_removed"] == []
     assert audits[0]["rejected_exceptions"] == ["invented omission"]
     assert audits[0]["semantic_status"] == "ok"
+
+
+def test_call2_audit_keeps_fixed_hair_without_explicit_change():
+    descriptors = [{
+        "kind": "scene",
+        "slot": 17,
+        "characters": [{
+            "name": "Hibiki",
+            "positive": (
+                "girl, black hair, very long hair, hair down, "
+                "black sports bra, bottomless"
+            ),
+            "outfit_state": {
+                "body_state": "bottomless",
+                "worn": ["black sports bra"],
+                "removed": ["school uniform"],
+            },
+        }],
+    }]
+    fixed = {"Hibiki": "1girl, black hair, very long hair, side ponytail"}
+    defaults = {"Hibiki": ["school uniform"]}
+    entries, entry_keys = pipeline._call2_authority_audit_entries(
+        descriptors,
+        fixed,
+        defaults,
+    )
+    decisions, reason = pipeline._parse_call2_authority_audit_output(
+        json.dumps({
+            "entries": [{
+                "id": 1,
+                "authority_exceptions": ["school uniform"],
+                "forbidden_additions": [],
+                "conflicts": ["hair down"],
+            }],
+        }),
+        entries,
+        entry_keys,
+    )
+
+    assert reason == ""
+    decision = decisions[("scene", 17, "hibiki")]
+    assert decision["authority_exceptions"] == ["school uniform"]
+
+    pipeline.apply_call2_authority_base(
+        descriptors,
+        fixed,
+        defaults,
+        decisions,
+        "ok",
+    )
+    tags = pipeline._split_top_level_authority_tags(
+        descriptors[0]["characters"][0]["positive"]
+    )
+    assert "side ponytail" in tags
+    assert "hair down" not in tags
+    assert "black sports bra" in tags
+    assert "school uniform" not in tags
+
+
+def test_call2_audit_allows_explicit_hair_change_and_contextual_outfit():
+    descriptors = [{
+        "kind": "scene",
+        "slot": 17,
+        "anchor_before": "Hibiki untied her side ponytail and let her hair down.",
+        "characters": [{
+            "name": "Hibiki",
+            "positive": "girl, black hair, very long hair, hair down, black sports bra",
+            "outfit_state": {
+                "body_state": "partial",
+                "worn": ["black sports bra"],
+                "removed": ["school uniform"],
+            },
+        }],
+    }]
+    fixed = {"Hibiki": "1girl, black hair, very long hair, side ponytail"}
+    defaults = {"Hibiki": ["school uniform"]}
+    entries, entry_keys = pipeline._call2_authority_audit_entries(
+        descriptors,
+        fixed,
+        defaults,
+    )
+    decisions, reason = pipeline._parse_call2_authority_audit_output(
+        json.dumps({
+            "entries": [{
+                "id": 1,
+                "authority_exceptions": ["side ponytail", "school uniform"],
+                "forbidden_additions": [],
+                "conflicts": [],
+            }],
+        }),
+        entries,
+        entry_keys,
+    )
+
+    assert reason == ""
+    pipeline.apply_call2_authority_base(
+        descriptors,
+        fixed,
+        defaults,
+        decisions,
+        "ok",
+    )
+    tags = pipeline._split_top_level_authority_tags(
+        descriptors[0]["characters"][0]["positive"]
+    )
+    assert "side ponytail" not in tags
+    assert "hair down" in tags
+    assert "black sports bra" in tags
+    assert "school uniform" not in tags
 
 
 def test_call2_semantic_authority_audit_removes_unsupported_hair_conflict():

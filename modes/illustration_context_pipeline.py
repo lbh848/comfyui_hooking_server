@@ -1540,13 +1540,18 @@ def _fixed_appearance_authority_content(fixed_appearance: dict[str, str]) -> str
     return (
         "# AUTHORITATIVE FIXED APPEARANCE\n"
         "For each named character, this server-extracted map is the only authority for "
-        "persistent identity and is a complete base, not a menu. Copy every supplied tag. "
-        "Narrative and the assigned PLAN may control scene-specific pose, action, expression, "
-        "and a directly conflicting temporary appearance change; a separate server audit "
-        "validates the exact replaced base tag. Authoritative wardrobe state controls "
-        "temporary attire. Generated visual references may inform a scene only as permitted "
-        "by SERVER REFERENCE CLASSIFICATION. None of those sources may silently shorten, "
-        "extend, or replace persistent traits.\n\n"
+        "persistent identity for the already-selected visual profile and is a complete authoritative "
+        "base, not a menu. Copy every supplied tag exactly by default. Only a direct explicit statement "
+        "in the actual narrative, or an active evidence-bearing history event derived from such a "
+        "statement, may temporarily replace the exact fixed tag it physically contradicts. Keep every "
+        "other fixed tag. The assigned PLAN, scene_brief, mood, role, activity, setting, generated tags, "
+        "generated references, visual plausibility, and contextual inference never establish an appearance "
+        "exception. Cropping, framing, occlusion, brevity, and model preference are not exceptions either. "
+        "Narrative may control pose, action, expression, gaze, visibility, and other compatible temporary "
+        "state. `closed eyes` is a visibility/expression state, not a fixed-appearance exception. "
+        "Authoritative wardrobe state controls temporary attire because wardrobe is not fixed appearance. "
+        "A persistent appearance change requires the upstream selector to choose another registered visual "
+        "profile; CALL2 does not infer a profile change.\n\n"
         + json.dumps(fixed_appearance, ensure_ascii=False, indent=2)
     )
 
@@ -2342,7 +2347,8 @@ def apply_wardrobe_events(
 
     ``hairstyle_events`` are stored verbatim into each character's
     ``hairstyle_timeline`` (append-only, capped). The server never interprets
-    hairstyle semantics; CALL2/AUDIT resolve them against fixed appearance.
+    hairstyle semantics; CALL2 may replace a conflicting fixed arrangement only
+    when the stored event carries direct literal narrative evidence.
     """
     states = deepcopy(state_before or {})
     parsed_defaults = (
@@ -2551,7 +2557,7 @@ def apply_wardrobe_events(
         states[key]["last_seen_message_id"] = str(current_message_id or "")
 
     # hairstyle timeline: 서버는 의미를 해석하지 않고 이벤트를 append 한다.
-    # CALL2/AUDIT가 이 timeline을 fixed appearance에 대해 해석한다.
+    # CALL2/AUDIT는 literal evidence가 명시한 직접 변경만 fixed appearance 예외로 해석한다.
     for event in (hairstyle_events or []):
         name = str(event.get("character") or "").strip()
         if not name:
@@ -2869,7 +2875,10 @@ def _visual_base_authority_note(snapshot: dict[str, dict]) -> str:
         statements.append(
             f"{name} is in visual profile `{base.get('visual_profile_id')}` "
             f"({base.get('visual_profile_label')}). "
-            f"Its complete fixed appearance is: {appearance}. "
+            f"Its complete authoritative fixed appearance is: {appearance}. Copy every one of "
+            "those appearance tags by default. Only a direct explicit narrative statement or an "
+            "active evidence-bearing history event may temporarily replace the exact fixed tag it "
+            "physically contradicts; PLAN wording and generated material never may. "
             f"Its default-outfit reference is: {outfit}. This outfit is a fallback "
             "reference, not fixed identity: preserve it when it fits, but design a "
             "different coherent outfit when the full scene context calls for one."
@@ -2879,7 +2888,7 @@ def _visual_base_authority_note(snapshot: dict[str, dict]) -> str:
     return (
         "For this exact scene, these server-selected visual profiles override the default "
         "appearance profile for the same logical character. Do not choose another profile. "
-        "Only fixed appearance is mandatory; each default outfit below is a reference fallback. "
+        "Fixed appearance is mandatory except for an exact explicitly stated temporary change; each default outfit below is a reference fallback. "
         "Apply later natural-language wardrobe continuity first, then use scene-appropriate "
         "attire when the full context calls for it.\n"
         + "\n".join(statements)
@@ -5095,6 +5104,9 @@ def _parse_call2_authority_audit_output(
             )
         observed_ids.add(entry_id)
         candidate = candidates[entry_id]
+        # Fixed-appearance exceptions are candidates only for the existing semantic
+        # audit, whose prompt requires direct literal narrative evidence. Default
+        # outfit exceptions remain contextual because wardrobe is not fixed identity.
         authority_by_id = {
             _authority_tag_identity(tag): tag
             for tag in candidate["fixed_appearance"] + candidate["default_outfit"]
@@ -5223,15 +5235,26 @@ async def _run_call2_authority_audit(
     system_prompt = (
         "You are CALL2-AUTHORITY-AUDIT. Perform the existing authority audit and a final visual-"
         "completeness repair in this same call. Read CURRENT CONTEXT and each entry's scene_context by "
-        "meaning and chronology; never use keyword matching. The complete fixed_appearance is a "
-        "mandatory identity base. default_outfit is only a fallback wardrobe reference, not fixed "
+        "meaning and chronology; never use keyword matching. The complete fixed_appearance is the "
+        "authoritative mandatory identity base for the already-selected visual profile. Keep every fixed "
+        "tag by default. A fixed-appearance authority_exception is allowed only when the actual narrative "
+        "directly and explicitly states a temporary physical change that contradicts that exact tag, or "
+        "when an active hairstyle_history event carries literal narrative evidence of that direct change. "
+        "For example, an explicit statement that she untied her side ponytail and let her hair down may "
+        "except only `side ponytail`; intimacy, sleep, action, dishevelment, or loose-looking hair may not. "
+        "CURRENT CONTEXT and literal evidence inside hairstyle_history are the only evidence sources for "
+        "fixed-appearance exceptions. scene_brief, PLAN wording, generated_positive, generated_outfit_state, "
+        "supplement, mood, role, activity, setting, visual plausibility, and contextual inference are proposals, "
+        "not evidence. Cropping, framing, occlusion, brevity, and model preference are never exceptions. "
+        "`closed eyes` is an expression/visibility state, not a fixed-appearance exception. If a fixed tag is "
+        "omitted without qualifying explicit evidence, do not create an exception: the server restores it. "
+        "If generated_positive contains an appearance or hairstyle tag that contradicts fixed appearance "
+        "without qualifying explicit evidence, return that exact generated tag in conflicts. default_outfit is only a fallback wardrobe reference, not fixed "
         "identity and not a mandatory outfit. A short historical description is not automatically a "
         "complete replacement outfit, but the full scene may make a different coherent outfit "
         "appropriate even without an explicit sentence listing garments. Judge that from the whole "
         "narrative, role, activity, occasion, setting, and continuity by meaning and common sense, never "
-        "by matching individual words. For each id, return authority_exceptions for exact supplied "
-        "fixed-appearance tags only when the assigned scene explicitly and temporarily replaces them. "
-        "For default-outfit tags, also return authority_exceptions when the tracked wardrobe or the "
+        "by matching individual words. For default-outfit tags, return authority_exceptions when the tracked wardrobe or the "
         "scene's coherent contextual outfit replaces the fallback as a set; explicit removal wording is "
         "not required for such a contextual wardrobe replacement. When replacement is warranted, except "
         "every default garment or accessory that should not carry into the new outfit, while preserving "
@@ -5242,17 +5265,14 @@ async def _run_call2_authority_audit(
         "overwritten merely for differing from default_outfit. Return forbidden_additions for exact "
         "generated_positive tags that invent a persistent identity, body, hair, face, eye, skin, or "
         "species trait, or a wardrobe detail that is incoherent with the assigned scene. Do not flag a "
-        "coherent scene-appropriate garment merely because it is absent from default_outfit. An entry may include `hairstyle_history`: a "
-        "chronological list of semantic hairstyle-arrangement transitions. An active transition in "
-        "that history may temporarily authorize, for this scene only, replacement of the directly "
-        "conflicting fixed hairstyle-arrangement tag — list the suppressed fixed arrangement tag "
-        "(e.g. `ponytail`) in `authority_exceptions` and do not flag the active arrangement tag "
-        "(e.g. `twintails`) as a forbidden addition, because it is a temporary hairstyle state, not "
-        "a new persistent trait. Authorize such overrides ONLY for hairstyle-arrangement tags "
-        "(ponytail, twintails, braid, hair bun, two side up, side ponytail, hair down); hair color, "
-        "hair length, texture, bangs, sidelocks, ahoge, eyes, body, species, and any other fixed "
-        "trait remain mandatory and must never be excepted because of hairstyle history. The "
-        "override ends at `reset_default` or a later conflicting hairstyle event. Do not classify pose, action, expression, gaze, "
+        "coherent scene-appropriate garment merely because it is absent from default_outfit. An entry may include `hairstyle_history`. "
+        "Resolve its evidence-bearing events chronologically. An active event may authorize replacement "
+        "of only the directly conflicting fixed arrangement tag when its literal evidence explicitly states "
+        "that change; keep every non-conflicting fixed tag. An event label without qualifying literal evidence "
+        "does not authorize an exception. When a generated arrangement such as `hair down` conflicts with fixed "
+        "appearance without that evidence, put the exact generated conflicting tag in conflicts and keep the "
+        "complete fixed appearance. "
+        "Do not classify pose, action, expression, gaze, "
         "or temporary scene state as a forbidden addition. Return conflicts even when every base "
         "tag is already present, but only for exact generated_positive tags that directly "
         "contradict fixed appearance and are not supported by that assigned scene. When a contextual "
@@ -5431,6 +5451,8 @@ def apply_call2_authority_base(
             body_state = outfit_state["body_state"]
             wardrobe_authority = default_tags
 
+            # The semantic audit may except a fixed tag only under its explicit-
+            # narrative-evidence contract. Wardrobe exceptions remain contextual.
             allowed_authority = {
                 _authority_tag_identity(tag): tag
                 for tag in fixed_tags + wardrobe_authority
@@ -5688,13 +5710,15 @@ async def _run_call2_keyvis(
             "AUTHORITATIVE FIXED APPEARANCE block; other CHARACTER DICTIONARY sections are not "
             "identity sources. Do not "
             "creatively fill missing identity traits from narrative prose. Narrative may control pose, "
-            "action, expression, composition, and temporary visual state. "
-            "Rebuild each named character from the complete fixed appearance. Treat the supplied current "
+            "action, expression, composition, and compatible temporary visual state. Replace an exact "
+            "conflicting fixed appearance tag only when the actual narrative directly and explicitly states "
+            "that temporary change; never infer it from the Key Visual concept. Rebuild each named character "
+            "from the complete fixed appearance by default. Treat the supplied current "
             "wardrobe as continuity and default_outfit as a fallback reference, not fixed identity. If the full "
             "Key Visual concept calls for different attire, design one coherent context-appropriate outfit by "
             "meaning and replace the fallback as a set; do not keyword-match or mix incompatible default garments "
             "into it. A separate server audit validates the contextual replacement while keeping every fixed "
-            "appearance tag mandatory. Generated visual references "
+            "appearance tag mandatory unless directly contradicted by an explicit narrative change. Generated visual references "
             "are intentionally absent and must not be reconstructed as identity facts. "
             "Before returning, silently verify that the composition is one physically possible image and "
             "that its camera can actually show every story-essential action, contact, exposure, displaced "
@@ -5930,7 +5954,10 @@ async def _run_parallel_call2_details(
                 "When continuity_note is present, read that natural-language chronology by meaning and "
                 "treat it as authority for the affected character's current wardrobe, coverage, and "
                 "exposure; coarse operation/body-state hints or a stale snapshot must never simplify, "
-                "euphemize, or contradict it. Include every fixed-appearance tag. Use the complete default outfit "
+                "euphemize, or contradict it. Include every fixed-appearance tag by default. Replace only the "
+                "exact tag directly contradicted by an explicit current-narrative statement or active "
+                "evidence-bearing history event; the assigned PLAN controls the visual beat but has no appearance authority. "
+                "Use the complete default outfit "
                 "only as fallback when the tracked wardrobe and full scene do not call for something different. "
                 "When different attire is contextually appropriate, design one coherent outfit by meaning and "
                 "replace the default as a set even if no sentence lists every garment; never keyword-match or "
@@ -9434,15 +9461,14 @@ async def build_from_context(
                 "role": "user",
                 "content": (
                     "# SPARSE HAIRSTYLE CHANGE HISTORY\n"
-                    "Each event is a semantic hairstyle-arrangement transition with `operation` and "
-                    "`hairstyle_change`, not an image-generation tag. Resolve them chronologically "
-                    "against AUTHORITATIVE FIXED APPEARANCE and change only the hairstyle-arrangement "
-                    "dimension. The active hairstyle from this history is the continuity authority: "
-                    "keep it across later scenes that do not repeat the hairstyle, use current-scene "
-                    "prose only as a secondary cue, and never treat a generated visual reference as "
-                    "hairstyle authority. `replace`/`add`/`remove` change only the conflicting "
-                    "arrangement tags; `reset_default` restores the fixed hairstyle. Preserve hair "
-                    "color, length, bangs, eyes, body, and every unrelated fixed trait.\n\n"
+                    "Each event is a semantic hairstyle-arrangement transition with `operation`, "
+                    "`hairstyle_change`, and literal narrative `evidence`, not an image-generation tag. "
+                    "Resolve evidence-bearing events chronologically. An active event may temporarily "
+                    "replace only the exact fixed arrangement tag directly contradicted by its literal "
+                    "evidence; keep every other fixed appearance tag. An event label without explicit "
+                    "supporting evidence, current-scene inference, PLAN wording, and generated visual "
+                    "references never authorize a fixed exception. `reset_default` ends the temporary "
+                    "history state and restores the fixed arrangement.\n\n"
                     + json.dumps(hairstyle_history, ensure_ascii=False, indent=2)
                 ),
             }, include_plan=False)
@@ -9630,7 +9656,7 @@ async def build_from_context(
                     "Reason silently and return only the compact JSON requested by the user message.",
                     "Do not output Danbooru tags, camera fields, outfit lists, plan_id, source_segments, slots, analysis, or prose outside JSON.",
                     "Plan narrative scene beats only. You are not an appearance, wardrobe, or Key Visual authority.",
-                    "Do not copy or invent persistent visual traits in scene_brief.",
+                    "Do not copy, restate, infer, or invent hair arrangement, hair/eye/body/species traits, or any other persistent appearance in scene_brief; DETAIL receives the complete fixed appearance separately. Preserve only the visible action or expression, such as narrowing the eyes, without turning appearance wording into a temporary replacement.",
                     "Treat consecutive paragraphs sharing one time, location, and ongoing action as one visual beat; select at most one scene from that beat.",
                     "An existing <img ...> block already occupies its visual beat, so select a different beat.",
                     "Choose each anchor by semantic context and common sense, never by keyword matching.",
@@ -10237,8 +10263,8 @@ async def build_from_context(
     if progress:
         await progress(49, "call2_authority_audit", "CALL2 외형·복장 권위 감사")
     # AUDIT에 hairstyle history(누적 timeline + 이번 턴 events)를 전달한다. 서버는
-    # 의미 해석 없이 전달만 하고, AUDIT이 fixed appearance에 대해 temporary override
-    # 여부를 판단한다. 없으면 빈 dict로 전달된다.
+    # 의미 해석 없이 전달만 하고, AUDIT은 literal evidence가 fixed appearance의 정확한
+    # 충돌 태그를 직접 변경했는지 판단한다. 없으면 빈 dict로 전달된다.
     audit_hairstyle_history: dict[str, list] = {}
     for value in (selected_states or {}).values():
         if not isinstance(value, dict):

@@ -49,19 +49,23 @@ def _event():
     }
 
 
-def test_call1_prompt_dynamically_selects_cards_from_narrative_state():
+def test_call1_prompt_changes_cards_only_from_explicit_narrative_state():
     prompt = (
         Path(__file__).parents[1] / "prompts" / "lighbd" / "enhance.txt"
     ).read_text(encoding="utf-8")
 
     assert "Registered character cards" in prompt
-    assert "including on first appearance" in prompt
-    assert "Use the registered default only when the narrative does not establish another card" in prompt
+    assert "the registered default remains authoritative" in prompt
+    assert "directly and explicitly states the form/base transition" in prompt
+    assert "First appearance, a matching trait bundle, or contextual plausibility does not lower this threshold" in prompt
+    assert "the guide is not evidence that the state is active" in prompt
+    assert "distinctive eyes or pupils" in prompt
+    assert "If no qualifying literal excerpt exists, leave `visual_base_events` empty" in prompt
     assert "no nested outfit choice" in prompt
     assert "fallback when the story and scene context do not call for different attire" in prompt
     assert "not a mandatory outfit" in prompt
     assert "target_outfit_id" not in prompt
-    assert "never choose by a fixed keyword list" in prompt
+    assert "never by a fixed keyword list" in prompt
 
 
 def test_call1_visual_event_requires_literal_evidence_and_registered_ids():
