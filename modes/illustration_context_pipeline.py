@@ -5966,6 +5966,13 @@ async def _run_parallel_call2_details(
                 + detail_background_instruction
                 + "Never repeat scene-wide environment, "
                 "lighting, weather, time, character-count, or shared background-prop tags in characters[].positive. "
+                "Treat each assigned plan's characters list as its exact unique canonical roster. Emit exactly one "
+                "characters[] item for each listed name, in PLAN order, and no extra item; never repeat the same "
+                "canonical name within one scene. When the PLAN has one named girl and the scene uses `1girl` with "
+                "`solo` or `solo focus`, physically emit exactly one characters[] list item and never append a second "
+                "minimal `positive: girl` item for the same person. Keep anonymous or unnamed cropped body parts from "
+                "another person only in scene and supplement rather than inventing or duplicating a named character. "
+                "The declared characters[n] count must equal the physical number of list items; stop the array after n. "
                 "Do not reduce a "
                 "story-essential explicit state to an ambiguous isolated tag or crop it out. "
                 "When a plan has characters: [], preserve characters: [] and express anonymous people "

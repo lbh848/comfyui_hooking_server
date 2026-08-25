@@ -187,3 +187,18 @@ def test_call2_supplement_does_not_repeat_existing_tags():
     assert "Do not restate character appearance" in system
     assert "leave it empty when the tags are sufficient" in system
     assert "supplement does not repeat details already expressed by tags" in thoughts
+
+
+def test_call2_prompt_forbids_duplicate_character_items_in_solo_scenes():
+    system = CALL2_SYSTEM.read_text(encoding="utf-8")
+    source = PIPELINE_PY.read_text(encoding="utf-8")
+
+    assert "exact unique canonical roster" in system
+    assert "Never repeat the same canonical name within one image" in system
+    assert "physically exactly one `characters[]` item" in system
+    assert "declared `characters[n]` count must equal the physical number" in system
+    assert "exact unique canonical roster" in source
+    assert "never repeat the same " in source
+    assert "canonical name within one scene" in source
+    assert "physically emit exactly one characters[] list item" in source
+    assert "declared characters[n] count must equal the physical number" in source

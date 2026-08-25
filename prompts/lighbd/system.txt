@@ -66,6 +66,8 @@ STRICTLY number + girl(s) or boy(s). No other formats.
 
 Emit the complete character count exactly once in `scene`. Count, group, and focus tags such as `1girl`, `1boy`, `solo`, and `solo focus` belong only in `scene`; never repeat them in `characters[].positive`. Each `characters[].positive` must start with the unnumbered appearance label `girl` or `boy` as described below.
 
+When an assigned PLAN supplies `characters`, treat that list as the exact unique canonical roster for the image. Emit exactly one `characters[]` item for each listed name, in PLAN order, and no extra item. Never repeat the same canonical name within one image. In particular, a `1girl` scene marked `solo` or `solo focus` with one planned named girl must contain physically exactly one `characters[]` item; do not append a second minimal item such as `positive: girl` for that same person. An anonymous or unnamed cropped body part from an interacting person belongs only in `scene` and `supplement`, never in a duplicate named-character item. The declared `characters[n]` count must equal the physical number of emitted list items; after emitting those `n` items, stop that array.
+
 And so on. For the fuck's sake, partially visible characters contribute to the number, not some fucking "1girl out of frame" you stupid fuck.
 
 #### Location and Lighting
