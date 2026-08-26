@@ -437,6 +437,34 @@ def test_video_page_generates_editable_direction_draft_in_separate_llm_queue() -
     assert "allow_background_change: isVideoBackgroundChangeAllowed()" in FRONTEND
 
 
+def test_generated_video_instruction_resizes_only_after_programmatic_updates() -> None:
+    css = FRONTEND.split(".video-instruction {", 1)[1].split("}", 1)[0]
+    assert "min-height: 128px" in css
+    assert "max-height: 60vh" in css
+    assert "overflow-y: auto" in css
+
+    helper = FRONTEND.split(
+        "function resizeVideoInstructionToContent(input)", 1
+    )[1].split("function resetVideoInstructionHeight(input)", 1)[0]
+    assert "input.style.height = 'auto'" in helper
+    assert "input.style.height = `${input.scrollHeight}px`" in helper
+
+    assert FRONTEND.count("resizeVideoInstructionToContent(instructionInput);") == 1
+    assert FRONTEND.count("resizeVideoInstructionToContent(target);") == 3
+    assert FRONTEND.count("resizeVideoInstructionToContent(input);") == 1
+    assert "resetVideoInstructionHeight(instructionInput);" in FRONTEND
+
+    instruction = FRONTEND.split(
+        'id="video-generation-instruction"', 1
+    )[1].split("</textarea>", 1)[0]
+    assert "oninput=" not in instruction
+
+    modal_open = FRONTEND.split(
+        "async function openVideoWorkspaceForReference(reference)", 1
+    )[1].split("function closeVideoModal()", 1)[0]
+    assert "resizeVideoInstructionToContent" not in modal_open
+
+
 def test_video_refine_uses_one_button_and_ai_context_version_dropdown() -> None:
     modal = FRONTEND.split('id="video-modal"', 1)[1].split(
         '<!-- 기존 animated AVIF/WebP 재후처리 모달 -->', 1

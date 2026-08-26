@@ -1784,6 +1784,8 @@
             width: 100%;
             box-sizing: border-box;
             min-height: 128px;
+            max-height: 60vh;
+            overflow-y: auto;
             resize: vertical;
             padding: 11px;
             border: 1px solid var(--border);
@@ -31228,6 +31230,23 @@
             }
         }
 
+        function resizeVideoInstructionToContent(input) {
+            if (!input) {
+                console.error('[VIDEO_UI] 내용에 맞춰 높이를 조절할 영상 지시 입력란이 없습니다.');
+                return;
+            }
+            input.style.height = 'auto';
+            input.style.height = `${input.scrollHeight}px`;
+        }
+
+        function resetVideoInstructionHeight(input) {
+            if (!input) {
+                console.error('[VIDEO_UI] 기본 높이로 되돌릴 영상 지시 입력란이 없습니다.');
+                return;
+            }
+            input.style.height = '';
+        }
+
         function videoInstructionDraftSelectionKey() {
             const sourceKey = document.getElementById('video-generation-source')?.value || '';
             const lastRef = getEffectiveLastVideoReference();
@@ -31321,6 +31340,7 @@
                     throw new Error('영상 지시 입력란을 찾지 못했습니다');
                 }
                 instructionInput.value = String(data.draft).trim();
+                resizeVideoInstructionToContent(instructionInput);
                 instructionInput.focus();
                 clearVideoInstructionRefineUndo();
                 replaceVideoInstructionProvenance(data.llm_trace);
@@ -31429,7 +31449,10 @@
             const input = document.getElementById('video-generation-instruction');
             if (input) {
                 input.value = String(snapshot.instruction || '');
+                resizeVideoInstructionToContent(input);
                 input.focus();
+            } else {
+                console.error('[VIDEO_UI] 원문을 복원할 영상 지시 입력란을 찾지 못했습니다.');
             }
             videoInstructionOriginalInput = String(snapshot.originalInput || '');
             videoInstructionLlmTrace = normalizeVideoInstructionLlmTrace(snapshot.llmTrace);
@@ -31553,6 +31576,7 @@
                 videoInstructionRefineUndoSnapshot = snapshotVideoInstructionProvenance(target.value);
                 appendVideoInstructionProvenance(target.value, data.llm_trace);
                 target.value = String(data.draft).trim();
+                resizeVideoInstructionToContent(target);
                 showVideoInstructionRefineUndo();
                 target.focus();
                 updateVideoInstructionDraftPresentation(
@@ -31666,6 +31690,7 @@
                 videoInstructionRefineUndoSnapshot = snapshotVideoInstructionProvenance(target.value);
                 appendVideoInstructionProvenance(target.value, data.llm_trace);
                 target.value = String(data.draft).trim();
+                resizeVideoInstructionToContent(target);
                 showVideoInstructionRefineUndo();
                 target.focus();
                 updateVideoInstructionDraftPresentation(
@@ -32406,6 +32431,7 @@
             videoInstructionLlmTrace = normalizeVideoInstructionLlmTrace(baseSnapshot.llmTrace);
             appendVideoInstructionProvenance(baseInstruction, videoDirectionEditState.llmTrace);
             target.value = candidate;
+            resizeVideoInstructionToContent(target);
             showVideoInstructionRefineUndo();
             const appliedRound = videoDirectionEditState.round;
             closeVideoDirectionEditModal();
@@ -33357,7 +33383,12 @@
                 if (!data.success) throw new Error(data.error || '영상화 큐 등록 실패');
                 showToast(`영상화 프롬프트 작업을 큐에 등록했습니다. (${data.item_id})`, 'success');
                 const instructionInput = document.getElementById('video-generation-instruction');
-                if (instructionInput) instructionInput.value = '';
+                if (instructionInput) {
+                    instructionInput.value = '';
+                    resetVideoInstructionHeight(instructionInput);
+                } else {
+                    console.error('[VIDEO_UI] 큐 등록 후 초기화할 영상 지시 입력란을 찾지 못했습니다.');
+                }
                 clearVideoInstructionProvenance();
                 clearVideoInstructionRefineUndo();
                 closeVideoModal();
