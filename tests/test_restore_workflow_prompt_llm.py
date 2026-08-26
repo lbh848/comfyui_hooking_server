@@ -89,6 +89,47 @@ def test_scene_payload_rejects_extra_or_reordered_character():
         restore_llm._parse_scene_payload(result, contexts, False)
 
 
+def test_character_context_uses_the_selected_profile_instead_of_flat_portable_data(
+    monkeypatch,
+):
+    character = {
+        "name": "Alice",
+        "gender_tag": "1girl",
+        "visual_cards": [{
+            "id": "base",
+            "label": "카드 1",
+            "appearance": ["brown hair", "brown eyes"],
+            "default_outfit": ["school uniform"],
+        }, {
+            "id": "awakened",
+            "label": "각성",
+            "appearance": ["white hair", "red eyes", "black horns"],
+            "default_outfit": ["black armor"],
+        }],
+    }
+    monkeypatch.setattr(
+        restore_llm,
+        "_get_lb_extra_entry",
+        lambda _bot, _name: {
+            "name": "Alice",
+            "appearance": [{"tag": "stale flat hair"}],
+            "outfit": [{"tag": "stale flat outfit"}],
+        },
+    )
+
+    context = restore_llm._character_context(
+        "Example Bot",
+        character,
+        "awakened",
+    )
+
+    assert context["visual_profile_id"] == "awakened"
+    assert context["visual_profile_label"] == "각성"
+    assert context["appearance_tags"] == ["white hair", "red eyes", "black horns"]
+    assert context["outfit_tags"] == ["black armor"]
+    assert "stale flat hair" not in context["appearance_tags"]
+
+
 @pytest.mark.asyncio
 async def test_run_builds_two_character_v3_sections_and_llm_speak(
     monkeypatch,
@@ -189,6 +230,103 @@ def test_manual_speak_requires_speaker_names_for_two_characters():
         )
 
 
+def test_manual_profile_selection_is_validated_and_defaults_to_card_one(monkeypatch):
+    import importlib
+
+    bot_mode = importlib.import_module("modes.bot_mode")
+
+    bot_data = {
+        "bots": [{
+            "name": "Example Bot",
+            "characters": [{
+                "name": "Alice",
+                "gender_tag": "1girl",
+                "visual_cards": [{
+                    "id": "base",
+                    "label": "카드 1",
+                    "appearance": ["brown hair"],
+                    "default_outfit": ["uniform"],
+                }, {
+                    "id": "awakened",
+                    "label": "각성",
+                    "appearance": ["white hair"],
+                    "default_outfit": ["black armor"],
+                }],
+            }],
+        }],
+    }
+    monkeypatch.setattr(server, "_load_bot_data_readonly", lambda: bot_data)
+    monkeypatch.setattr(bot_mode, "_load_lb_extra", lambda _bot: [])
+
+    names, selected = server._resolve_restore_manual_visual_profiles(
+        "Example Bot",
+        ["alice"],
+        {"alice": "awakened"},
+    )
+    default_names, default_selected = server._resolve_restore_manual_visual_profiles(
+        "Example Bot",
+        ["Alice"],
+        None,
+    )
+
+    assert names == ["Alice"]
+    assert selected == {"Alice": "awakened"}
+    assert default_names == ["Alice"]
+    assert default_selected == {"Alice": "base"}
+    with pytest.raises(ValueError, match="프로필 카드를 찾을 수 없습니다"):
+        server._resolve_restore_manual_visual_profiles(
+            "Example Bot",
+            ["Alice"],
+            {"Alice": "missing"},
+        )
+
+
+@pytest.mark.asyncio
+async def test_manual_character_api_returns_each_characters_profile_cards(monkeypatch):
+    import importlib
+
+    bot_mode = importlib.import_module("modes.bot_mode")
+
+    bot_data = {
+        "bots": [{
+            "name": "Example Bot",
+            "characters": [{
+                "name": "Alice",
+                "gender_tag": "1girl",
+                "visual_cards": [{
+                    "id": "base",
+                    "label": "카드 1",
+                    "appearance": ["brown hair"],
+                    "default_outfit": ["uniform"],
+                }, {
+                    "id": "awakened",
+                    "label": "각성",
+                    "appearance": ["white hair"],
+                    "default_outfit": ["black armor"],
+                }],
+            }],
+        }],
+    }
+    monkeypatch.setattr(server, "app_config", {"bot_selected": "Example Bot"})
+    monkeypatch.setattr(server, "_load_bot_data_readonly", lambda: bot_data)
+    monkeypatch.setattr(bot_mode, "_load_lb_extra", lambda _bot: [])
+
+    response = await server.handle_api_restore_manual_characters(object())
+    payload = json.loads(response.text)
+
+    assert response.status == 200
+    assert payload["characters"][0]["default_visual_profile_id"] == "base"
+    assert payload["characters"][0]["profiles"] == [{
+        "id": "base",
+        "label": "카드 1",
+        "is_default": True,
+    }, {
+        "id": "awakened",
+        "label": "각성",
+        "is_default": False,
+    }]
+
+
 @pytest.mark.asyncio
 async def test_restore_multi_char_context_uses_existing_layout_pipeline(monkeypatch):
     layout = {
@@ -279,6 +417,7 @@ def _write_fake_restore_module(tmp_path):
         """
 async def run(
     char_names=None,
+    visual_profile_ids=None,
     situation=None,
     postprocess_test=False,
     speak_text=None,
@@ -336,6 +475,14 @@ async def test_manual_draw_routes_local_v3_mask_and_chansub_without_mask(
     workflow_profiles.normalize_workflow_config(config)
     monkeypatch.setattr(server, "app_config", config)
     monkeypatch.setattr(server, "CUSTOMPROMPT_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        server,
+        "_resolve_restore_manual_visual_profiles",
+        lambda _bot, names, profile_ids: (
+            list(names),
+            dict(profile_ids or {name: "card_1" for name in names}),
+        ),
+    )
 
     multi_context_calls = 0
 
@@ -372,6 +519,7 @@ async def test_manual_draw_routes_local_v3_mask_and_chansub_without_mask(
     response = await server.handle_api_restore_manual_draw(_JsonRequest({
         "character_count": 2,
         "char_names": ["Alice", "Bob"],
+        "visual_profile_ids": {"Alice": "alice_alt", "Bob": "bob_base"},
         "situation_mode": "llm",
         "situation": "",
         "postprocess_test": False,
@@ -383,5 +531,9 @@ async def test_manual_draw_routes_local_v3_mask_and_chansub_without_mask(
     assert response.status == 200
     raw_body = queued["params"]["raw_body"]
     assert raw_body["illustration_provider"] == expected_provider
+    assert raw_body["illustration_visual_states"] == {
+        "Alice": {"visual_profile_id": "alice_alt"},
+        "Bob": {"visual_profile_id": "bob_base"},
+    }
     assert ("illustration_multi_char" in raw_body) is expects_mask
     assert multi_context_calls == (1 if expects_mask else 0)

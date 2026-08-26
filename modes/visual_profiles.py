@@ -392,6 +392,87 @@ def store_visual_cards(root_character: dict, cards: list[dict]) -> list[dict]:
     return normalized
 
 
+def sync_primary_cards_to_portable_data(
+    bot: dict,
+    portable_data: list[dict] | None,
+) -> tuple[list[dict], bool]:
+    """Mirror explicit card [1] appearance/outfit into legacy portable data.
+
+    Characters that have not been migrated to explicit ``visual_cards`` keep the
+    legacy portable entry as their source of truth.  Once cards exist, card [1]
+    is authoritative and the flat entry is only a download-compatible mirror.
+    """
+    if portable_data is None:
+        result: list[dict] = []
+    elif isinstance(portable_data, list):
+        result = deepcopy(portable_data)
+    else:
+        error = "이식용 평면 데이터는 배열이어야 합니다."
+        print(
+            f"[CHARACTER_CARD] 이식용 평면 데이터 동기화 실패: "
+            f"{error} type={type(portable_data).__name__}"
+        )
+        raise VisualProfileValidationError(error)
+
+    by_name = {
+        _clean_text(item.get("name")).casefold(): item
+        for item in result
+        if isinstance(item, dict) and _clean_text(item.get("name"))
+    }
+    changed = False
+    for root_character in bot.get("characters") or []:
+        if not isinstance(root_character, dict):
+            print(
+                "[CHARACTER_CARD] 이식용 평면 동기화에서 object가 아닌 "
+                f"캐릭터 스킵: {root_character!r}"
+            )
+            continue
+        raw_cards = root_character.get("visual_cards")
+        if not isinstance(raw_cards, list) or not raw_cards:
+            continue
+        character_name = _clean_text(root_character.get("name"))
+        if not character_name:
+            print(
+                "[CHARACTER_CARD] 이식용 평면 동기화에서 이름 없는 "
+                f"캐릭터 스킵: {root_character!r}"
+            )
+            continue
+
+        primary = normalize_visual_cards(raw_cards)[0]
+        entry = by_name.get(character_name.casefold())
+        if entry is None:
+            entry = {
+                "name": character_name,
+                "appearance": [],
+                "uncategorized": [],
+                "outfit": [],
+            }
+            result.append(entry)
+            by_name[character_name.casefold()] = entry
+            changed = True
+
+        appearance = deepcopy(primary.get("appearance") or [])
+        outfit = deepcopy(primary.get("default_outfit") or [])
+        if entry.get("name") != character_name:
+            entry["name"] = character_name
+            changed = True
+        if entry.get("appearance") != appearance:
+            entry["appearance"] = appearance
+            changed = True
+        if entry.get("outfit") != outfit:
+            entry["outfit"] = outfit
+            changed = True
+        if not isinstance(entry.get("uncategorized"), list):
+            print(
+                f"[CHARACTER_CARD] 잘못된 이식용 미분류 데이터를 빈 배열로 복구: "
+                f"character={character_name!r}, value={entry.get('uncategorized')!r}"
+            )
+            entry["uncategorized"] = []
+            changed = True
+
+    return result, changed
+
+
 def sync_root_fields_to_primary_card(root_character: dict, fields) -> None:
     """Mirror an explicit legacy root-field update into complete card [1]."""
     requested = set(fields or [])

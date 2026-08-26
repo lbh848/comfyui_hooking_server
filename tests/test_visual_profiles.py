@@ -19,6 +19,7 @@ from modes.visual_profiles import (
     resolve_render_character,
     resolve_visual_base,
     store_visual_cards,
+    sync_primary_cards_to_portable_data,
     sync_root_fields_to_primary_card,
 )
 
@@ -103,6 +104,54 @@ def test_complete_cards_are_stored_on_the_character_and_card_one_is_mirrored():
     assert root.get("rep_images", []) == []
     assert stored[1]["face_tags"] == "white hair, red eyes"
     assert stored[1]["rep_images"] == ["despair.webp"]
+
+
+def test_card_one_is_the_source_of_truth_for_portable_flat_data():
+    root = _root_character()
+    root["visual_cards"] = deepcopy(_cards())
+    bot = {"characters": [root]}
+    portable = [{
+        "name": "Adachi",
+        "appearance": [{"tag": "stale hair", "desc": "old"}],
+        "uncategorized": [{"tag": "keep me", "desc": ""}],
+        "outfit": [{"tag": "stale outfit", "desc": "old"}],
+    }]
+
+    synchronized, changed = sync_primary_cards_to_portable_data(bot, portable)
+
+    assert changed is True
+    assert [item["tag"] for item in synchronized[0]["appearance"]] == [
+        "short brown hair",
+        "brown eyes",
+    ]
+    assert [item["tag"] for item in synchronized[0]["outfit"]] == [
+        "hoodie",
+        "jeans",
+    ]
+    assert synchronized[0]["uncategorized"] == [{"tag": "keep me", "desc": ""}]
+    assert portable[0]["appearance"][0]["tag"] == "stale hair"
+
+
+def test_secondary_card_never_changes_portable_flat_data():
+    root = _root_character()
+    cards = _cards()
+    root["visual_cards"] = deepcopy(cards)
+    portable, _changed = sync_primary_cards_to_portable_data(
+        {"characters": [root]},
+        [],
+    )
+    root["visual_cards"][1]["appearance"] = [{"tag": "silver hair", "desc": ""}]
+
+    synchronized, changed = sync_primary_cards_to_portable_data(
+        {"characters": [root]},
+        portable,
+    )
+
+    assert changed is False
+    assert [item["tag"] for item in synchronized[0]["appearance"]] == [
+        "short brown hair",
+        "brown eyes",
+    ]
 
 
 def test_existing_root_update_paths_only_sync_the_changed_card_one_fields():
@@ -257,6 +306,21 @@ async def test_character_card_api_saves_cards_on_bot_character(monkeypatch):
     saved = {}
     monkeypatch.setattr(bot_mode_module, "_load_bot_data", lambda: data)
     monkeypatch.setattr(bot_mode_module, "_save_bot_data", lambda value: saved.setdefault("data", value))
+    monkeypatch.setattr(
+        bot_mode_module,
+        "_load_lb_extra",
+        lambda _bot: [{
+            "name": "Adachi",
+            "appearance": [{"tag": "stale"}],
+            "uncategorized": [],
+            "outfit": [{"tag": "stale outfit"}],
+        }],
+    )
+    monkeypatch.setattr(
+        bot_mode_module,
+        "_save_lb_extra",
+        lambda _bot, value: saved.setdefault("portable", value),
+    )
 
     class Request:
         async def json(self):
@@ -274,6 +338,55 @@ async def test_character_card_api_saves_cards_on_bot_character(monkeypatch):
     assert len(character["visual_cards"]) == 2
     assert character["visual_cards"][1]["face_tags"] == "white hair, red eyes"
     assert character["face_tags"] == "short brown hair, brown eyes"
+    assert [item["tag"] for item in saved["portable"][0]["appearance"]] == [
+        "short brown hair",
+        "brown eyes",
+    ]
+    assert [item["tag"] for item in saved["portable"][0]["outfit"]] == [
+        "hoodie",
+        "jeans",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_portable_flat_save_cannot_diverge_from_card_one(monkeypatch):
+    bot_mode_module = importlib.import_module("modes.bot_mode")
+    root = _root_character()
+    root["visual_cards"] = deepcopy(_cards())
+    data = {"bots": [{"name": "demo", "characters": [root]}]}
+    saved = {}
+    monkeypatch.setattr(bot_mode_module, "_load_bot_data", lambda: data)
+    monkeypatch.setattr(
+        bot_mode_module,
+        "_save_lb_extra",
+        lambda _bot, value: saved.setdefault("portable", value),
+    )
+
+    class Request:
+        async def json(self):
+            return {
+                "bot_name": "demo",
+                "data": [{
+                    "name": "Adachi",
+                    "appearance": [{"tag": "manual stale hair"}],
+                    "uncategorized": [{"tag": "keep me"}],
+                    "outfit": [{"tag": "manual stale outfit"}],
+                }],
+            }
+
+    response = await bot_mode_module.BotMode().handle_save_lb_extra(Request())
+    payload = json.loads(response.text)
+
+    assert payload["saved"] is True
+    assert [item["tag"] for item in saved["portable"][0]["appearance"]] == [
+        "short brown hair",
+        "brown eyes",
+    ]
+    assert [item["tag"] for item in saved["portable"][0]["outfit"]] == [
+        "hoodie",
+        "jeans",
+    ]
+    assert saved["portable"][0]["uncategorized"] == [{"tag": "keep me"}]
 
 
 @pytest.mark.asyncio

@@ -79,7 +79,7 @@ def _assert_image_security_headers(response, *, cache_control="no-store") -> Non
 
 
 @pytest.mark.asyncio
-async def test_short_manifest_media_extension_is_opt_in_and_marks_only_animation(
+async def test_short_manifest_media_extension_marks_animation_and_original_assets(
     tmp_path,
     monkeypatch,
 ):
@@ -95,7 +95,12 @@ async def test_short_manifest_media_extension_is_opt_in_and_marks_only_animation
     avif_bytes = _build_two_frame_animation("AVIF")
     items = [
         {"slot": -1, "raw_positive": "gif", "raw_negative": ""},
-        {"slot": 0, "raw_positive": "png", "raw_negative": ""},
+        {
+            "kind": "original_asset",
+            "slot": 0,
+            "raw_positive": "png",
+            "raw_negative": "",
+        },
         {"slot": 1, "raw_positive": "webp", "raw_negative": ""},
         {"slot": 2, "raw_positive": "avif", "raw_negative": ""},
     ]
@@ -119,6 +124,7 @@ async def test_short_manifest_media_extension_is_opt_in_and_marks_only_animation
     assert json.loads(extended.text) == {
         "slots": [-1, 0, 1, 2],
         "animated": [-1, 1, 2],
+        "assets": [0],
     }
 
     pipeline._SESSIONS.pop(session_id, None)

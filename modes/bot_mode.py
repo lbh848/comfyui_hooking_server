@@ -31,6 +31,7 @@ from modes.visual_profiles import (
     effective_character_cards,
     effective_character_profiles,
     store_visual_cards,
+    sync_primary_cards_to_portable_data,
     sync_root_fields_to_primary_card,
 )
 
@@ -2983,26 +2984,45 @@ class BotMode:
             if not bot_name:
                 return _json_error("봇 이름이 비어있습니다.")
 
-            saved = _load_lb_extra(bot_name)
-            if saved is None:
-                return _json_ok({"data": None})
-
+            stored_value = _load_lb_extra(bot_name)
+            saved = stored_value
             # 구버전 호환: {original, edited} 구조면 edited만 사용
             if isinstance(saved, dict) and "edited" in saved:
                 saved = saved["edited"]
+            if saved is not None and not isinstance(saved, list):
+                print(
+                    f"[LB_EXTRA] 저장 데이터 형식 오류: bot={bot_name!r}, "
+                    f"type={type(saved).__name__}"
+                )
+                return _json_error("저장된 이식용 평면 데이터 형식이 올바르지 않습니다.", 500)
 
             data = _load_bot_data()
             bot = next((b for b in data["bots"] if b["name"] == bot_name), None)
             if not bot:
                 return _json_error(f"봇을 찾을 수 없습니다: {bot_name}")
             current_names = {c["name"] for c in bot.get("characters", [])}
-            filtered = [e for e in saved if e.get("name") in current_names]
+            filtered = [
+                entry for entry in (saved or [])
+                if isinstance(entry, dict) and entry.get("name") in current_names
+            ]
+            synchronized, card_changed = sync_primary_cards_to_portable_data(
+                bot,
+                filtered,
+            )
 
-            if len(filtered) != len(saved):
-                _save_lb_extra(bot_name, filtered)
-                print(f"[LB_EXTRA] 캐릭터 불일치: {len(saved)} -> {len(filtered)}개로 정리")
+            filtered_changed = len(filtered) != len(saved or [])
+            if filtered_changed or card_changed:
+                _save_lb_extra(bot_name, synchronized)
+                print(
+                    f"[LB_EXTRA] 이식용 평면 데이터 정리/카드 [1] 동기화: "
+                    f"bot={bot_name!r}, before={len(saved or [])}, "
+                    f"after={len(synchronized)}, filtered={filtered_changed}, "
+                    f"card_sync={card_changed}"
+                )
 
-            return _json_ok({"data": filtered})
+            if stored_value is None and not synchronized:
+                return _json_ok({"data": None})
+            return _json_ok({"data": synchronized})
         except Exception as e:
             print(f"[LB_EXTRA] 로드 실패: {e}")
             traceback.print_exc()
@@ -3019,9 +3039,31 @@ class BotMode:
                 return _json_error("봇 이름이 비어있습니다.")
             if extra_data is None:
                 return _json_error("데이터가 없습니다.")
+            if not isinstance(extra_data, list):
+                print(
+                    f"[LB_EXTRA] 저장 데이터 형식 오류: bot={bot_name!r}, "
+                    f"type={type(extra_data).__name__}"
+                )
+                return _json_error("이식용 평면 데이터는 배열이어야 합니다.")
 
-            _save_lb_extra(bot_name, extra_data)
-            return _json_ok({"saved": True})
+            data = _load_bot_data()
+            bot = next(
+                (item for item in data.get("bots", []) if item.get("name") == bot_name),
+                None,
+            )
+            if bot is None:
+                print(f"[LB_EXTRA] 저장할 봇 없음: bot={bot_name!r}")
+                return _json_error(f"봇을 찾을 수 없습니다: {bot_name}", 404)
+            synchronized, card_changed = sync_primary_cards_to_portable_data(
+                bot,
+                extra_data,
+            )
+            _save_lb_extra(bot_name, synchronized)
+            print(
+                f"[LB_EXTRA] 이식용 평면 데이터 저장 완료: bot={bot_name!r}, "
+                f"characters={len(synchronized)}, card_1_forced={card_changed}"
+            )
+            return _json_ok({"saved": True, "data": synchronized})
         except Exception as e:
             print(f"[LB_EXTRA] 저장 실패: {e}")
             traceback.print_exc()
@@ -3140,19 +3182,34 @@ class BotMode:
                     return _json_error("경로와 데이터의 캐릭터 이름이 일치하지 않습니다.")
                 cards = character_profiles_to_cards(raw_character)
                 stored_cards = store_visual_cards(root_character, cards)
+                portable_value = _load_lb_extra(bot_name)
+                if isinstance(portable_value, dict) and "edited" in portable_value:
+                    portable_value = portable_value.get("edited")
+                if portable_value is not None and not isinstance(portable_value, list):
+                    raise VisualProfileValidationError(
+                        "저장된 이식용 평면 데이터 형식이 올바르지 않습니다."
+                    )
+                synchronized, portable_changed = sync_primary_cards_to_portable_data(
+                    bot,
+                    portable_value,
+                )
                 _save_bot_data(data)
+                if portable_changed:
+                    _save_lb_extra(bot_name, synchronized)
                 saved_character = cards_to_character_profiles(
                     canonical_name,
                     stored_cards,
                 )
                 print(
                     f"[CHARACTER_CARD:API] 카드 저장 완료: bot={bot_name!r}, "
-                    f"character={canonical_name!r}, cards={len(stored_cards)}"
+                    f"character={canonical_name!r}, cards={len(stored_cards)}, "
+                    f"portable_card_1_sync={portable_changed}"
                 )
                 return _json_ok({
                     "saved": True,
                     "source": "cards",
                     "character": saved_character,
+                    "portable_data": synchronized,
                     "max_cards": MAX_VISUAL_CARDS,
                     "bots": data["bots"],
                 })
@@ -4645,8 +4702,13 @@ def _save_lb_extra(bot_name: str, data):
     path = _lb_extra_path(bot_name)
     bot_dir = os.path.dirname(path)
     os.makedirs(bot_dir, exist_ok=True)
+    _backup_data_file_before_overwrite(path, "lb.extra 이식용 평면 데이터")
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
+    print(
+        f"[BOT_MODE] lb.extra 이식용 평면 데이터 저장 완료: "
+        f"bot={bot_name!r}, path={path!r}"
+    )
 
 
 def _utility_settings_path(bot_name: str, char_name: str) -> str:

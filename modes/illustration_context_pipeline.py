@@ -635,7 +635,7 @@ def parse_context_request(positive: str) -> dict | None:
         print(f"[ILLUST_CONTEXT] CHAT 데이터가 비어 있음: session={session_id}")
         return None
     action = str(payload.get("action") or "regenerate").strip().lower()
-    if action not in ("regenerate", "generate", "result"):
+    if action not in ("regenerate", "generate", "result", "asset_reroll"):
         print(f"[ILLUST_CONTEXT] 지원하지 않는 CONTEXT action: session={session_id}, action={action!r}")
         return None
     slot = None

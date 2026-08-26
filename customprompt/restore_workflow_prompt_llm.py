@@ -1,8 +1,9 @@
 """
 워크플로우 복원 프롬프트 - LLM 수동 그리기
 
-선택된 봇에서 사용자가 지정한 캐릭터 1명 또는 2명의 외모/복장 정보를 읽고,
-LLM으로 V3 RAW 섹션([SPEAK]/[Name]/[SETUP]/[CHAR]/[SUPPLEMENT])을 만든다.
+선택된 봇에서 사용자가 지정한 캐릭터 1명 또는 2명의 프로필 카드별
+외모/복장 정보를 읽고, LLM으로 V3 RAW 섹션
+([SPEAK]/[Name]/[SETUP]/[CHAR]/[SUPPLEMENT])을 만든다.
 
 공급자별 최종 처리는 server.py가 담당한다.
   - 로컬 V3: 캐릭터 LoRA/캐시/얼굴 정보와 2인 Regional RGB 마스크를 적용한다.
@@ -146,22 +147,69 @@ def _resolve_characters(bot: dict, requested_names: list[str] | None) -> list[di
     return selected
 
 
-def _character_context(bot_name: str, character: dict) -> dict:
+def _character_context(
+    bot_name: str,
+    character: dict,
+    visual_profile_id: str = "",
+) -> dict:
     name = str(character.get("name") or "").strip()
-    gender = str(character.get("gender_tag") or "1girl").strip() or "1girl"
     entry = _get_lb_extra_entry(bot_name, name)
-    appearance = _collect_tags(entry, "appearance")
-    outfit = _collect_tags(entry, "outfit")
+    try:
+        from modes.visual_profiles import (
+            effective_character_profiles,
+            resolve_visual_base,
+        )
+
+        character_profiles, source = effective_character_profiles(
+            name,
+            character,
+            entry,
+        )
+        visual_base = resolve_visual_base(character_profiles, visual_profile_id)
+    except Exception as exc:
+        print(
+            f"{LOG_PREFIX} 프로필 카드 해석 실패: bot={bot_name!r}, "
+            f"character={name!r}, profile={visual_profile_id!r}, error={exc}"
+        )
+        traceback.print_exc()
+        raise
+    if visual_profile_id and visual_base["visual_profile_id"] != visual_profile_id:
+        raise ValueError(
+            f"선택한 프로필 카드가 다른 카드로 대체되었습니다: "
+            f"character={name!r}, requested={visual_profile_id!r}, "
+            f"resolved={visual_base['visual_profile_id']!r}"
+        )
+    gender = str(
+        visual_base.get("render_overrides", {}).get("gender_tag")
+        or character.get("gender_tag")
+        or "1girl"
+    ).strip() or "1girl"
+    appearance = _collect_tags(
+        {"appearance": visual_base.get("appearance") or []},
+        "appearance",
+    )
+    outfit = _collect_tags(
+        {"outfit": visual_base.get("outfit") or []},
+        "outfit",
+    )
     if not appearance and not outfit:
         print(
             f"{LOG_PREFIX} 외모/복장 태그가 모두 비어 있음: "
-            f"bot={bot_name!r}, character={name!r}"
+            f"bot={bot_name!r}, character={name!r}, "
+            f"profile={visual_base['visual_profile_id']!r}"
         )
+    print(
+        f"{LOG_PREFIX} 프로필 카드 적용: bot={bot_name!r}, "
+        f"character={name!r}, profile={visual_base['visual_profile_id']!r}, "
+        f"label={visual_base['visual_profile_label']!r}, source={source}"
+    )
     return {
         "name": name,
         "gender_tag": gender,
         "appearance_tags": appearance,
         "outfit_tags": outfit,
+        "visual_profile_id": visual_base["visual_profile_id"],
+        "visual_profile_label": visual_base["visual_profile_label"],
     }
 
 
@@ -341,6 +389,8 @@ def _parse_scene_payload(
             "positive": tags,
             "negative": "",
             "position": position,
+            "visual_profile_id": str(context.get("visual_profile_id") or ""),
+            "visual_profile_label": str(context.get("visual_profile_label") or ""),
         })
 
     raw_dialogue = raw.get("dialogue", [])
@@ -428,6 +478,7 @@ def _record_llm_history(logger, entry: dict) -> None:
 
 async def run(
     char_names: list[str] | None = None,
+    visual_profile_ids: dict[str, str] | None = None,
     situation: str | None = None,
     postprocess_test: bool = False,
     speak_text: str | None = None,
@@ -455,14 +506,27 @@ async def run(
 
     try:
         selected = _resolve_characters(bot, char_names)
+        requested_profiles = {
+            str(name or "").strip().casefold(): str(profile_id or "").strip()
+            for name, profile_id in (visual_profile_ids or {}).items()
+            if str(name or "").strip()
+        }
         character_contexts = [
-            _character_context(bot_name, character)
+            _character_context(
+                bot_name,
+                character,
+                requested_profiles.get(
+                    str(character.get("name") or "").strip().casefold(),
+                    "",
+                ),
+            )
             for character in selected
         ]
     except Exception as exc:
         print(
             f"{LOG_PREFIX} 캐릭터 선택/정보 로드 실패: "
-            f"bot={bot_name!r}, requested={char_names!r}, error={exc}"
+            f"bot={bot_name!r}, requested={char_names!r}, "
+            f"profiles={visual_profile_ids!r}, error={exc}"
         )
         traceback.print_exc()
         return {"positive": "", "negative": ""}
@@ -480,9 +544,14 @@ async def run(
         {"role": "user", "content": user_prompt},
     ]
     prompt_id = "restore_llm:" + ",".join(item["name"] for item in character_contexts)
+    selected_profile_log = {
+        item["name"]: item["visual_profile_id"]
+        for item in character_contexts
+    }
     print(
         f"{LOG_PREFIX} LLM 장면 생성 시작: bot={bot_name!r}, "
         f"characters={[item['name'] for item in character_contexts]}, "
+        f"profiles={selected_profile_log}, "
         f"situation={'custom' if str(situation or '').strip() else 'llm'}, "
         f"postprocess={bool(postprocess_test)}, "
         f"speak={'llm' if generate_speak else ('custom' if direct_speak else 'off')}"

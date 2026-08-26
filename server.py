@@ -6106,11 +6106,320 @@ async def _select_original_asset_outputs(
     return result
 
 
+async def _process_illustration_asset_reroll_queue_item(item) -> dict:
+    """Re-select only existing original assets and atomically update one session.
+
+    This deliberately reuses the first-generation original-asset selector.  It
+    never builds regular illustration descriptors and never enqueues an
+    ``illustration`` (Comfy/hybrid) image job.
+    """
+    params = item.params or {}
+    prompt_id = str(params.get("prompt_id") or "")
+    payload = params.get("payload") or {}
+    session_id = str(payload.get("session_id") or "")
+    prompt_data = params.get("prompt_data") or {}
+    session = illustration_context_pipeline.get_session(session_id)
+    session_snapshot = copy.deepcopy(session) if session is not None else None
+
+    async def progress(
+        value: float,
+        phase: str,
+        detail: str,
+        done: int = 0,
+        total: int = 0,
+    ) -> None:
+        illustration_context_pipeline.set_session_progress(
+            session_id,
+            phase,
+            detail,
+            value,
+            done,
+            total,
+        )
+        await queue_manager._notify_progress(item, {
+            "phase": phase,
+            "percentage": value,
+            "value": value,
+            "max": 100,
+            "current": done,
+            "total": total,
+            "detail": detail,
+        })
+
+    async def stream_notify(event: dict) -> None:
+        data = dict(event)
+        subtask_metadata = data.pop("queue_subtask", None)
+        if subtask_metadata:
+            try:
+                await queue_manager.update_subtask(item, subtask_metadata, data)
+            except Exception as e:
+                print(
+                    f"[ILLUST_ORIGINAL_ASSET:REROLL] 큐 하위 작업 갱신 실패: "
+                    f"item={getattr(item, 'id', '')}, metadata={subtask_metadata!r}, "
+                    f"event={data!r}, error={e}"
+                )
+                traceback.print_exc()
+        data.update({"prompt_id": prompt_id, "session_id": session_id})
+        await notify_frontend("lighbd_llm_stream", data)
+
+    try:
+        if not prompt_id or prompt_id not in prompts:
+            print(
+                f"[ILLUST_ORIGINAL_ASSET:REROLL] 원본 prompt 엔트리 없음: "
+                f"prompt_id={prompt_id!r}, session={session_id!r}"
+            )
+            raise RuntimeError("에셋 리롤 prompt 엔트리를 찾지 못했습니다")
+        if not session or session.get("status") != "ready":
+            status = str((session or {}).get("status") or "missing")
+            print(
+                f"[ILLUST_ORIGINAL_ASSET:REROLL] 준비된 세션 없음: "
+                f"session={session_id!r}, status={status!r}"
+            )
+            raise RuntimeError("에셋 리롤에 사용할 준비된 세션이 없습니다")
+
+        current_items = list(session.get("items") or [])
+        current_images = list(session.get("images") or [])
+        if len(current_images) < len(current_items):
+            current_images.extend([None] * (len(current_items) - len(current_images)))
+
+        asset_items = [
+            descriptor
+            for descriptor in current_items
+            if isinstance(descriptor, dict)
+            and str(descriptor.get("kind") or "") == "original_asset"
+        ]
+        if not asset_items:
+            print(
+                f"[ILLUST_ORIGINAL_ASSET:REROLL] 기존 에셋 descriptor 없음: "
+                f"session={session_id}, items={len(current_items)}"
+            )
+            raise RuntimeError("현재 응답에 리롤할 에셋이 없습니다")
+
+        preserved_pairs = []
+        regular_slots: set[int] = set()
+        for index, descriptor in enumerate(current_items):
+            if not isinstance(descriptor, dict):
+                print(
+                    f"[ILLUST_ORIGINAL_ASSET:REROLL] descriptor 형식 오류: "
+                    f"session={session_id}, index={index}, descriptor={descriptor!r}"
+                )
+                raise RuntimeError("현재 세션 descriptor 형식이 올바르지 않습니다")
+            if str(descriptor.get("kind") or "") == "original_asset":
+                continue
+            try:
+                slot = int(descriptor.get("slot"))
+            except Exception as e:
+                print(
+                    f"[ILLUST_ORIGINAL_ASSET:REROLL] 일반 삽화 slot 파싱 실패: "
+                    f"session={session_id}, index={index}, error={e}, "
+                    f"descriptor={descriptor!r}"
+                )
+                traceback.print_exc()
+                raise RuntimeError("현재 일반 삽화 슬롯을 읽지 못했습니다") from e
+            regular_slots.add(slot)
+            preserved_pairs.append((copy.deepcopy(descriptor), current_images[index]))
+
+        runtime_snapshot = _capture_illustration_runtime_snapshot()
+        active_bot = str(runtime_snapshot.get("bot_name") or "")
+        reroll_toggles = illustration_context_pipeline.merged_toggles(
+            copy.deepcopy(runtime_snapshot.get("illustration_context_toggles") or {})
+        )
+        reroll_toggles["original_asset_count"] = len(asset_items)
+        llm_trace: list[str] = []
+
+        # This is an in-place refresh of a ready session.  Mark it non-terminal
+        # while the selector is running so the bridge/dashboard cannot mistake
+        # the old ready result for completion of the new request.
+        session["status"] = "building"
+        session["error"] = ""
+        session["updated_at"] = time.time()
+        await progress(
+            1,
+            "asset_reroll",
+            f"기존 에셋 {len(asset_items)}장 재선택",
+            0,
+            len(asset_items),
+        )
+        selected = await _select_original_asset_outputs(
+            payload=payload,
+            toggles=reroll_toggles,
+            active_bot=active_bot,
+            used_slots=regular_slots,
+            reserve_slot_count=0,
+            stream_notify=stream_notify,
+            llm_trace=llm_trace,
+        )
+        selected_items = list(selected.get("items") or [])
+        selected_images = list(selected.get("images") or [])
+        selected_failures = list(selected.get("failures") or [])
+        if (
+            selected_failures
+            or len(selected_items) != len(asset_items)
+            or len(selected_images) != len(asset_items)
+        ):
+            print(
+                f"[ILLUST_ORIGINAL_ASSET:REROLL] 재선택 결과 불완전: "
+                f"session={session_id}, expected={len(asset_items)}, "
+                f"items={len(selected_items)}, images={len(selected_images)}, "
+                f"failures={selected_failures!r}"
+            )
+            raise RuntimeError("에셋 전체를 다시 선택하지 못해 기존 결과를 유지합니다")
+
+        selected_slots = []
+        for descriptor in selected_items:
+            try:
+                slot = int(descriptor.get("slot"))
+            except Exception as e:
+                print(
+                    f"[ILLUST_ORIGINAL_ASSET:REROLL] 새 에셋 slot 파싱 실패: "
+                    f"session={session_id}, descriptor={descriptor!r}, error={e}"
+                )
+                traceback.print_exc()
+                raise RuntimeError("새 에셋 슬롯을 읽지 못했습니다") from e
+            if slot in regular_slots:
+                print(
+                    f"[ILLUST_ORIGINAL_ASSET:REROLL] 일반 삽화 슬롯 충돌: "
+                    f"session={session_id}, slot={slot}, regular={sorted(regular_slots)}"
+                )
+                raise RuntimeError("새 에셋 슬롯이 일반 삽화와 충돌했습니다")
+            selected_slots.append(slot)
+        if len(selected_slots) != len(set(selected_slots)):
+            print(
+                f"[ILLUST_ORIGINAL_ASSET:REROLL] 새 에셋 슬롯 중복: "
+                f"session={session_id}, slots={selected_slots}"
+            )
+            raise RuntimeError("새 에셋 슬롯이 중복되었습니다")
+
+        merged_pairs = preserved_pairs + list(zip(selected_items, selected_images))
+        merged_pairs.sort(key=lambda pair: int(pair[0].get("slot")))
+        merged_items = [pair[0] for pair in merged_pairs]
+        merged_images = [pair[1] for pair in merged_pairs]
+        illustration_context_pipeline.set_session_result(
+            session_id,
+            merged_items,
+            merged_images,
+            requested_count=len(merged_items),
+            failures=[],
+        )
+
+        primary_slot = min(selected_slots)
+        primary_index = next(
+            index
+            for index, descriptor in enumerate(merged_items)
+            if int(descriptor.get("slot")) == primary_slot
+        )
+        primary_image = merged_images[primary_index]
+        if not primary_image:
+            print(
+                f"[ILLUST_ORIGINAL_ASSET:REROLL] 대표 에셋 bytes 없음: "
+                f"session={session_id}, slot={primary_slot}"
+            )
+            raise RuntimeError("새 에셋 이미지가 비어 있습니다")
+
+        prompt_entry = prompts[prompt_id]
+        prompt_entry["image_bytes"] = primary_image
+        prompt_entry["_serve_image_bytes_original"] = True
+        filename = f"ComfyUI_{prompt_id[:8]}.png"
+        await progress(
+            100,
+            "ready",
+            f"에셋 {len(selected_items)}장 재선택 완료",
+            len(selected_items),
+            len(selected_items),
+        )
+        await complete_prompt_from_reschedule(
+            prompt_id,
+            prompt_entry.get("save_node_id")
+            or find_save_image_node(prompt_data)
+            or "9",
+            filename,
+        )
+        print(
+            f"[ILLUST_ORIGINAL_ASSET:REROLL] 완료: session={session_id}, "
+            f"old_assets={len(asset_items)}, new_slots={sorted(selected_slots)}, "
+            f"regular_slots={sorted(regular_slots)}, comfy_enqueued=false"
+        )
+        return {
+            "success": True,
+            "session_id": session_id,
+            "asset_count": len(selected_items),
+            "asset_slots": sorted(selected_slots),
+        }
+    except asyncio.CancelledError:
+        print(
+            f"[ILLUST_ORIGINAL_ASSET:REROLL] 작업 취소: "
+            f"session={session_id}, prompt_id={prompt_id}"
+        )
+        if session is not None and session_snapshot is not None:
+            session.clear()
+            session.update(copy.deepcopy(session_snapshot))
+            try:
+                illustration_context_pipeline._persist_session_metadata(session)
+            except Exception as persist_error:
+                print(
+                    f"[ILLUST_ORIGINAL_ASSET:REROLL] 취소 후 기존 세션 복원 저장 실패: "
+                    f"session={session_id}, error={persist_error}"
+                )
+                traceback.print_exc()
+        raise
+    except Exception as e:
+        print(
+            f"[ILLUST_ORIGINAL_ASSET:REROLL] 최종 실패 - 기존 세션 유지: "
+            f"session={session_id}, prompt_id={prompt_id}, error={e}"
+        )
+        traceback.print_exc()
+        if session is not None and session_snapshot is not None:
+            session.clear()
+            session.update(copy.deepcopy(session_snapshot))
+            session["status"] = "ready"
+            session["error"] = str(e)
+            session["progress"] = {
+                "phase": "error",
+                "label": f"에셋 리롤 실패: {e}".replace("\r", " ").replace("\n", " ")[:160],
+                "value": 0,
+                "done": 0,
+                "total": len([
+                    descriptor
+                    for descriptor in (session.get("items") or [])
+                    if isinstance(descriptor, dict)
+                    and str(descriptor.get("kind") or "") == "original_asset"
+                ]),
+            }
+            session["updated_at"] = time.time()
+            try:
+                illustration_context_pipeline._persist_session_metadata(session)
+            except Exception as persist_error:
+                print(
+                    f"[ILLUST_ORIGINAL_ASSET:REROLL] 기존 세션 복원 저장 실패: "
+                    f"session={session_id}, error={persist_error}"
+                )
+                traceback.print_exc()
+        if prompt_id in prompts:
+            prompts[prompt_id]["status"] = "completed"
+            prompts[prompt_id]["outputs"] = {"images": []}
+            prompts[prompt_id]["image_bytes"] = None
+        try:
+            await stream_notify({
+                "type": "error",
+                "call_name": "ORIGINAL-ASSET-REROLL",
+                "error": str(e),
+            })
+        except Exception as notify_error:
+            print(
+                f"[ILLUST_ORIGINAL_ASSET:REROLL] 실패 알림 전송 실패: "
+                f"session={session_id}, error={notify_error}"
+            )
+            traceback.print_exc()
+        raise
+
+
 async def process_illustration_context_queue_item(item) -> dict:
     """CALL2 뒤 이미지 큐와 CALL3를 병렬 실행하고 후처리 합류까지 기다린다."""
     params = item.params or {}
     original_prompt_id = str(params.get("prompt_id") or "")
     payload = params.get("payload") or {}
+    if str(payload.get("action") or "").lower() == "asset_reroll":
+        return await _process_illustration_asset_reroll_queue_item(item)
     session_id = str(payload.get("session_id") or "")
     prompt_data = params.get("prompt_data") or {}
     raw_body = params.get("raw_body") or {}
@@ -7117,8 +7426,8 @@ async def handle_api_illustration_context_short_slots(request: web.Request) -> w
     """Return compact slot data for Risu Lua's 120-character HTTPS request limit.
 
     The legacy route remains a plain slot array.  The opt-in ``?m=1`` response
-    adds only the slots that currently contain animated image bytes so v49 can
-    hide easy edit without adding one request per illustration.
+    also identifies animated and original-asset slots so compatible modules can
+    choose per-media controls and display styles without one request per image.
     """
     lookup_key = str(request.match_info.get("key") or "").strip().lower()
     try:
@@ -7129,11 +7438,14 @@ async def handle_api_illustration_context_short_slots(request: web.Request) -> w
                 lookup_key
             )
             animated_slots = []
+            asset_slots = []
             for slot in slots:
                 descriptor = illustration_context_pipeline.session_item_by_slot(
                     session_id,
                     slot,
                 )
+                if str((descriptor or {}).get("kind") or "") == "original_asset":
+                    asset_slots.append(slot)
                 if _illustration_session_slot_is_animated(
                     session_id,
                     slot,
@@ -7143,6 +7455,7 @@ async def handle_api_illustration_context_short_slots(request: web.Request) -> w
             return web.json_response({
                 "slots": slots,
                 "animated": animated_slots,
+                "assets": asset_slots,
             })
         return web.json_response(slots)
     except ValueError as e:
@@ -7168,15 +7481,17 @@ async def handle_api_illustration_context_bridge_health(request: web.Request) ->
     return web.json_response({
         "ok": True,
         "service": "illustration_context_bridge",
-        "version": 8,
+        "version": 10,
         "prompt_batch": True,
         "bot_selection": True,
         "easy_edit": True,
         "short_slot_manifest": True,
         "slot_animation_metadata": True,
+        "asset_display_metadata": True,
+        "asset_reroll": True,
         "lookup_key_length": 24,
         "max_slot_manifest_count": illustration_context_pipeline.MAX_ILLUSTRATION_SLOT_COUNT,
-        "progress_phases": ["call1", "call2", "call2_plan", "call2_keyvis", "call2_detail", "call2_authority_audit", "call2_fallback", "call3", "multi_char_mask", "enqueue", "generating", "retrying", "regenerating", "ready", "error"],
+        "progress_phases": ["call1", "call2", "call2_plan", "call2_keyvis", "call2_detail", "call2_authority_audit", "call2_fallback", "call3", "multi_char_mask", "asset_reroll", "enqueue", "generating", "retrying", "regenerating", "ready", "error"],
     })
 
 
@@ -9263,6 +9578,64 @@ async def handle_prompt(request: web.Request) -> web.Response:
                     attach_context=False,
                     operation_label="전체 생성",
                     whole_session=True,
+                )
+            if context_action == "asset_reroll":
+                session = illustration_context_pipeline.get_session(session_id)
+                if not session or session.get("status") != "ready":
+                    status = str((session or {}).get("status") or "missing")
+                    print(
+                        f"[ILLUST_ORIGINAL_ASSET:REROLL] 요청 거절 - 준비된 세션 없음: "
+                        f"session={session_id!r}, status={status!r}"
+                    )
+                    return web.json_response(
+                        {"error": "original asset reroll session is not ready"},
+                        status=409,
+                    )
+                asset_count = sum(
+                    1
+                    for descriptor in (session.get("items") or [])
+                    if isinstance(descriptor, dict)
+                    and str(descriptor.get("kind") or "") == "original_asset"
+                )
+                if asset_count < 1:
+                    print(
+                        f"[ILLUST_ORIGINAL_ASSET:REROLL] 요청 거절 - 기존 에셋 없음: "
+                        f"session={session_id}, items={len(session.get('items') or [])}"
+                    )
+                    return web.json_response(
+                        {"error": "original asset reroll has no existing assets"},
+                        status=409,
+                    )
+                save_node = find_save_image_node(prompt_data)
+                prompts[prompt_id] = {
+                    "status": "running",
+                    "prompt": prompt_data,
+                    "client_id": body.get("client_id", ""),
+                    "extra_data": body.get("extra_data", {}),
+                    "outputs": {},
+                    "filename": None,
+                    "save_node_id": save_node,
+                    "image_bytes": None,
+                    "timestamp": time.time(),
+                }
+                asyncio.create_task(queue_manager.add_item(
+                    "illustration_llm_build",
+                    f"에셋 리롤 · {session_id[:12]} · {asset_count}장",
+                    {
+                        "prompt_id": prompt_id,
+                        "prompt_data": prompt_data,
+                        "raw_body": body,
+                        "payload": context_payload,
+                    },
+                    priority=0,
+                ))
+                print(
+                    f"[ILLUST_ORIGINAL_ASSET:REROLL] 접수: prompt={prompt_id[:8]}, "
+                    f"session={session_id}, assets={asset_count}, "
+                    f"route=original_asset_selector, comfy_enqueued=false"
+                )
+                return web.json_response(
+                    {"prompt_id": prompt_id, "number": len(prompts), "node_errors": {}}
                 )
             context_value = illustration_context_pipeline.context_text(context_payload["chats"])
             illustration_context_pipeline.create_session(session_id, context_value)
@@ -16325,6 +16698,100 @@ async def handle_api_memo(request: web.Request) -> web.Response:
 RESTORE_WORKFLOW_PROMPT_LLM = "restore_workflow_prompt_llm.py"
 
 
+def _resolve_restore_manual_visual_profiles(
+    bot_name: str,
+    requested_names: list[str],
+    raw_profile_ids: object,
+) -> tuple[list[str], dict[str, str]]:
+    """Validate manual-draw character/card choices and return canonical names."""
+    if raw_profile_ids is None:
+        raw_profile_ids = {}
+    if not isinstance(raw_profile_ids, dict):
+        raise ValueError("visual_profile_ids는 캐릭터 이름별 카드 ID object여야 합니다")
+
+    requested_by_name: dict[str, str] = {}
+    for raw_name, raw_profile_id in raw_profile_ids.items():
+        name = str(raw_name or "").strip()
+        if not name:
+            raise ValueError("visual_profile_ids에 빈 캐릭터 이름이 있습니다")
+        if raw_profile_id is not None and not isinstance(raw_profile_id, str):
+            raise ValueError(
+                f"프로필 카드 ID는 문자열이어야 합니다: "
+                f"character={name!r}, value={raw_profile_id!r}"
+            )
+        folded = name.casefold()
+        if folded in requested_by_name:
+            raise ValueError(f"프로필 카드 선택에 중복 캐릭터가 있습니다: {name!r}")
+        requested_by_name[folded] = str(raw_profile_id or "").strip()
+
+    data = _load_bot_data_readonly()
+    bot = next(
+        (
+            item for item in data.get("bots", [])
+            if isinstance(item, dict)
+            and str(item.get("name") or "") == bot_name
+        ),
+        None,
+    )
+    if bot is None:
+        raise ValueError(f"선택된 봇을 찾을 수 없습니다: {bot_name}")
+
+    from modes.bot_mode import _load_lb_extra
+    from modes.visual_profiles import effective_bot_profiles, profile_by_id
+
+    portable_data = _load_lb_extra(bot_name) or []
+    if isinstance(portable_data, dict) and "edited" in portable_data:
+        portable_data = portable_data.get("edited") or []
+    if not isinstance(portable_data, list):
+        raise ValueError("저장된 이식용 평면 데이터 형식이 올바르지 않습니다")
+    effective_profiles = effective_bot_profiles(bot, portable_data)
+    roots_by_name = {
+        str(item.get("name") or "").strip().casefold(): item
+        for item in bot.get("characters", [])
+        if isinstance(item, dict) and str(item.get("name") or "").strip()
+    }
+    selected_name_keys = {str(name or "").strip().casefold() for name in requested_names}
+    unexpected = sorted(set(requested_by_name) - selected_name_keys)
+    if unexpected:
+        raise ValueError(
+            "선택하지 않은 캐릭터의 프로필 카드가 포함되어 있습니다: "
+            + ", ".join(unexpected)
+        )
+
+    canonical_names: list[str] = []
+    selected_profiles: dict[str, str] = {}
+    for requested_name in requested_names:
+        folded = str(requested_name or "").strip().casefold()
+        root_character = roots_by_name.get(folded)
+        if root_character is None:
+            raise ValueError(
+                f"선택된 봇에서 캐릭터를 찾을 수 없습니다: {requested_name!r}"
+            )
+        canonical_name = str(root_character.get("name") or "").strip()
+        character_profiles = next(
+            (
+                value for name, value in effective_profiles.items()
+                if str(name).casefold() == canonical_name.casefold()
+            ),
+            None,
+        )
+        if not character_profiles:
+            raise ValueError(f"캐릭터에 선택 가능한 프로필 카드가 없습니다: {canonical_name}")
+        profile_id = requested_by_name.get(folded) or str(
+            character_profiles.get("default_visual_profile_id") or ""
+        ).strip()
+        profile = profile_by_id(character_profiles, profile_id)
+        if profile is None:
+            raise ValueError(
+                f"캐릭터의 프로필 카드를 찾을 수 없습니다: "
+                f"character={canonical_name}, profile={profile_id}"
+            )
+        canonical_names.append(canonical_name)
+        selected_profiles[canonical_name] = str(profile.get("id") or "").strip()
+
+    return canonical_names, selected_profiles
+
+
 def _normalize_restore_manual_speak_text(
     speak_text: str,
     character_names: list[str],
@@ -16503,6 +16970,7 @@ async def handle_api_restore_manual_draw(request: web.Request) -> web.Response:
     char_name = None
     situation = None
     char_names: list[str] = []
+    visual_profile_ids: dict[str, str] = {}
     postprocess_test = False
     speak_text = ""
     postprocess_mode = "vn"
@@ -16538,6 +17006,11 @@ async def handle_api_restore_manual_draw(request: web.Request) -> web.Response:
                 )
             if len({name.casefold() for name in char_names}) != len(char_names):
                 raise ValueError("같은 캐릭터를 중복 선택할 수 없습니다")
+            char_names, visual_profile_ids = _resolve_restore_manual_visual_profiles(
+                bot_name,
+                char_names,
+                body.get("visual_profile_ids"),
+            )
 
             situation_mode = str(body.get("situation_mode") or "llm").strip().lower()
             if situation_mode not in ("llm", "custom"):
@@ -16571,6 +17044,7 @@ async def handle_api_restore_manual_draw(request: web.Request) -> web.Response:
             print(
                 f"[RESTORE_MANUAL] LLM 모달 입력 검증 완료: "
                 f"provider={restore_provider}, characters={char_names}, "
+                f"profiles={visual_profile_ids}, "
                 f"situation={'custom' if situation else 'llm'}, "
                 f"postprocess={postprocess_test}, "
                 f"speak={'custom' if speak_text else ('llm' if postprocess_test else 'off')}"
@@ -16607,6 +17081,12 @@ async def handle_api_restore_manual_draw(request: web.Request) -> web.Response:
                 kwargs["char_names"] = char_names
             else:
                 raise RuntimeError("새 LLM 복원 프롬프트가 char_names 인자를 지원하지 않습니다")
+            if "visual_profile_ids" in run_params:
+                kwargs["visual_profile_ids"] = visual_profile_ids
+            else:
+                raise RuntimeError(
+                    "새 LLM 복원 프롬프트가 visual_profile_ids 인자를 지원하지 않습니다"
+                )
             if "situation" in run_params:
                 kwargs["situation"] = situation
             if "postprocess_test" in run_params:
@@ -16646,6 +17126,10 @@ async def handle_api_restore_manual_draw(request: web.Request) -> web.Response:
             raw_body = {
                 "illustration_provider": restore_provider,
                 "illustration_gen_method": "수동 복원",
+                "illustration_visual_states": {
+                    name: {"visual_profile_id": profile_id}
+                    for name, profile_id in visual_profile_ids.items()
+                },
             }
             result_characters = (
                 result.get("characters") if isinstance(result, dict) else []
@@ -16743,8 +17227,70 @@ async def handle_api_restore_manual_draw(request: web.Request) -> web.Response:
         return web.json_response({"error": str(e)}, status=500)
 
 
+def _build_restore_manual_character_choices(bot_name: str, bot: dict) -> list[dict]:
+    """Build the manual-draw character/card catalog from effective profiles."""
+    from modes.bot_mode import _load_lb_extra
+    from modes.visual_profiles import effective_bot_profiles
+
+    portable_data = _load_lb_extra(bot_name) or []
+    if isinstance(portable_data, dict) and "edited" in portable_data:
+        portable_data = portable_data.get("edited") or []
+    if not isinstance(portable_data, list):
+        raise ValueError(
+            "저장된 이식용 평면 데이터 형식이 올바르지 않습니다: "
+            f"type={type(portable_data).__name__}"
+        )
+    effective_profiles = effective_bot_profiles(bot, portable_data)
+    characters = []
+    for c in bot.get("characters", []):
+        if not isinstance(c, dict):
+            print(
+                f"[RESTORE_MANUAL_CHARS] object가 아닌 캐릭터 제외: "
+                f"bot={bot_name!r}, value={c!r}"
+            )
+            continue
+        rep_images = c.get("rep_images", []) or []
+        rep_url = ""
+        if rep_images:
+            rep_url = f"/api/bot_mode/image/{bot_name}/{c.get('name','')}/{rep_images[0]}"
+        name = str(c.get("name") or "").strip()
+        character_profiles = next(
+            (
+                value for profile_name, value in effective_profiles.items()
+                if str(profile_name).casefold() == name.casefold()
+            ),
+            None,
+        )
+        if not character_profiles:
+            print(
+                f"[RESTORE_MANUAL_CHARS] 프로필 카드가 없어 캐릭터 제외: "
+                f"bot={bot_name!r}, character={name!r}"
+            )
+            continue
+        default_profile_id = str(
+            character_profiles.get("default_visual_profile_id") or ""
+        ).strip()
+        profiles = [
+            {
+                "id": str(profile.get("id") or "").strip(),
+                "label": str(profile.get("label") or profile.get("id") or "").strip(),
+                "is_default": str(profile.get("id") or "").strip() == default_profile_id,
+            }
+            for profile in character_profiles.get("profiles", [])
+            if isinstance(profile, dict) and str(profile.get("id") or "").strip()
+        ]
+        characters.append({
+            "name": name,
+            "gender_tag": c.get("gender_tag", ""),
+            "rep_url": rep_url,
+            "default_visual_profile_id": default_profile_id,
+            "profiles": profiles,
+        })
+    return characters
+
+
 async def handle_api_restore_manual_characters(request: web.Request) -> web.Response:
-    """수동 그리기 캐릭터 선택 모달용: 선택된 봇의 캐릭터 목록(name/gender/대표이미지) 반환."""
+    """수동 그리기 모달용 캐릭터와 선택 가능한 프로필 카드 목록 반환."""
     bot_name = app_config.get("bot_selected", "")
     if not bot_name:
         print("[RESTORE_MANUAL_CHARS] bot_selected가 없어 캐릭터 목록을 반환할 수 없음")
@@ -16754,29 +17300,20 @@ async def handle_api_restore_manual_characters(request: web.Request) -> web.Resp
 
     try:
         data = _load_bot_data_readonly()
+        bot = next((b for b in data.get("bots", []) if b.get("name") == bot_name), None)
+        if not bot:
+            print(f"[RESTORE_MANUAL_CHARS] 선택된 봇을 찾을 수 없음: bot={bot_name!r}")
+            return web.json_response(
+                {"error": f"봇을 찾을 수 없습니다: {bot_name}"}, status=404
+            )
+        characters = _build_restore_manual_character_choices(bot_name, bot)
     except Exception as e:
-        print(f"[RESTORE_MANUAL_CHARS] bot.json 읽기 실패: {e}")
-        traceback.print_exc()
-        return web.json_response({"error": f"봇 데이터 로드 실패: {e}"}, status=500)
-
-    bot = next((b for b in data.get("bots", []) if b.get("name") == bot_name), None)
-    if not bot:
-        print(f"[RESTORE_MANUAL_CHARS] 선택된 봇을 찾을 수 없음: bot={bot_name!r}")
-        return web.json_response(
-            {"error": f"봇을 찾을 수 없습니다: {bot_name}"}, status=404
+        print(
+            f"[RESTORE_MANUAL_CHARS] 캐릭터/프로필 카드 목록 생성 실패: "
+            f"bot={bot_name!r}, error={e}"
         )
-
-    characters = []
-    for c in bot.get("characters", []):
-        rep_images = c.get("rep_images", []) or []
-        rep_url = ""
-        if rep_images:
-            rep_url = f"/api/bot_mode/image/{bot_name}/{c.get('name','')}/{rep_images[0]}"
-        characters.append({
-            "name": c.get("name", ""),
-            "gender_tag": c.get("gender_tag", ""),
-            "rep_url": rep_url,
-        })
+        traceback.print_exc()
+        return web.json_response({"error": f"캐릭터 카드 로드 실패: {e}"}, status=500)
 
     if not characters:
         print(f"[RESTORE_MANUAL_CHARS] 선택된 봇의 캐릭터 목록이 비어 있음: bot={bot_name!r}")

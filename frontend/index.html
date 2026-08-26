@@ -19485,14 +19485,26 @@
                 <div style="padding:12px; margin-bottom:12px; border:1px solid var(--border); border-radius:8px;">
                     <div style="font-size:0.84rem; font-weight:700; margin-bottom:8px;">캐릭터</div>
                     <div style="display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:10px;">
-                        <label style="display:flex; flex-direction:column; gap:5px; font-size:0.78rem; color:var(--text-secondary);">
-                            첫 번째 캐릭터
-                            <select id="restore-character-select-1" class="select" onchange="onRestoreCharacterSelectionChange()"></select>
-                        </label>
-                        <label id="restore-character-select-2-wrap" style="display:none; flex-direction:column; gap:5px; font-size:0.78rem; color:var(--text-secondary);">
-                            두 번째 캐릭터
-                            <select id="restore-character-select-2" class="select" onchange="onRestoreCharacterSelectionChange()"></select>
-                        </label>
+                        <div id="restore-character-select-1-wrap" style="display:flex; flex-direction:column; gap:8px;">
+                            <label style="display:flex; flex-direction:column; gap:5px; font-size:0.78rem; color:var(--text-secondary);">
+                                첫 번째 캐릭터
+                                <select id="restore-character-select-1" class="select" onchange="onRestoreCharacterSelectionChange(1)"></select>
+                            </label>
+                            <label style="display:flex; flex-direction:column; gap:5px; font-size:0.78rem; color:var(--text-secondary);">
+                                첫 번째 프로필 카드
+                                <select id="restore-profile-select-1" class="select" onchange="onRestoreProfileSelectionChange()"></select>
+                            </label>
+                        </div>
+                        <div id="restore-character-select-2-wrap" style="display:none; flex-direction:column; gap:8px;">
+                            <label style="display:flex; flex-direction:column; gap:5px; font-size:0.78rem; color:var(--text-secondary);">
+                                두 번째 캐릭터
+                                <select id="restore-character-select-2" class="select" onchange="onRestoreCharacterSelectionChange(2)"></select>
+                            </label>
+                            <label style="display:flex; flex-direction:column; gap:5px; font-size:0.78rem; color:var(--text-secondary);">
+                                두 번째 프로필 카드
+                                <select id="restore-profile-select-2" class="select" onchange="onRestoreProfileSelectionChange()"></select>
+                            </label>
+                        </div>
                     </div>
                     <div id="restore-provider-note" style="margin-top:8px; font-size:0.75rem; color:var(--text-secondary);"></div>
                 </div>
@@ -41538,13 +41550,41 @@
         function onRestoreCharacterCountChange() {
             const count = _restoreSelectedCharacterCount();
             const secondWrap = document.getElementById('restore-character-select-2-wrap');
-            const firstWrap = document.getElementById('restore-character-select-1').parentElement;
+            const firstWrap = document.getElementById('restore-character-select-1-wrap');
             secondWrap.style.display = count === 2 ? 'flex' : 'none';
             firstWrap.style.gridColumn = count === 1 ? '1 / -1' : '';
             onRestoreCharacterSelectionChange();
         }
 
-        function onRestoreCharacterSelectionChange() {
+        function _restoreCharacterByName(name) {
+            return _restoreDrawState.characters.find(character => character.name === name) || null;
+        }
+
+        function _fillRestoreProfileSelect(slot) {
+            const characterSelect = document.getElementById(`restore-character-select-${slot}`);
+            const profileSelect = document.getElementById(`restore-profile-select-${slot}`);
+            const character = _restoreCharacterByName(characterSelect?.value || '');
+            if (!profileSelect) {
+                console.error('[수동 그리기] 프로필 카드 select를 찾지 못했습니다:', slot);
+                return;
+            }
+            profileSelect.innerHTML = '';
+            const profiles = Array.isArray(character?.profiles) ? character.profiles : [];
+            profiles.forEach((profile, index) => {
+                const option = document.createElement('option');
+                option.value = profile.id || '';
+                option.textContent = `[${index + 1}] ${profile.label || profile.id || `카드 ${index + 1}`}`;
+                option.selected = profile.id === character.default_visual_profile_id || !!profile.is_default;
+                profileSelect.appendChild(option);
+            });
+            profileSelect.disabled = profiles.length < 2;
+            if (profiles.length === 0) {
+                console.error('[수동 그리기] 선택 가능한 프로필 카드가 없습니다:', character?.name || '');
+            }
+        }
+
+        function onRestoreCharacterSelectionChange(slot = 0) {
+            if (slot === 1 || slot === 2) _fillRestoreProfileSelect(slot);
             const statusEl = document.getElementById('restore-char-select-status');
             const count = _restoreSelectedCharacterCount();
             const first = document.getElementById('restore-character-select-1').value;
@@ -41556,6 +41596,10 @@
             }
             statusEl.textContent = `${_restoreDrawState.characters.length}명 중 ${count}명을 선택해 그립니다.`;
             statusEl.style.color = 'var(--text-secondary)';
+        }
+
+        function onRestoreProfileSelectionChange() {
+            onRestoreCharacterSelectionChange();
         }
 
         function onRestoreSituationModeChange() {
@@ -41594,6 +41638,19 @@
                 showToast('2인 생성에서는 서로 다른 캐릭터를 선택하세요', 'warning');
                 return;
             }
+            const profileIds = [
+                document.getElementById('restore-profile-select-1').value,
+            ];
+            if (characterCount === 2) {
+                profileIds.push(document.getElementById('restore-profile-select-2').value);
+            }
+            if (profileIds.some(profileId => !profileId)) {
+                showToast('각 캐릭터의 프로필 카드를 선택하세요', 'warning');
+                return;
+            }
+            const visualProfileIds = Object.fromEntries(
+                charNames.map((name, index) => [name, profileIds[index]])
+            );
 
             const situationMode = document.querySelector('input[name="restore-situation-mode"]:checked').value;
             let situation = '';
@@ -41622,6 +41679,7 @@
                 _restoreDrawResolve({
                     character_count: characterCount,
                     char_names: charNames,
+                    visual_profile_ids: visualProfileIds,
                     situation_mode: situationMode,
                     situation,
                     postprocess_test: postprocessTest,
@@ -41688,6 +41746,8 @@
                 _fillRestoreCharacterSelect(select2, characters);
                 select1.selectedIndex = 0;
                 select2.selectedIndex = characters.length > 1 ? 1 : 0;
+                _fillRestoreProfileSelect(1);
+                _fillRestoreProfileSelect(2);
 
                 const twoRadio = document.querySelector('input[name="restore-character-count"][value="2"]');
                 twoRadio.disabled = characters.length < 2;
@@ -68431,6 +68491,9 @@
                     });
                     const result = await resp.json();
                     if (result.saved) {
+                        if (Array.isArray(result.data)) {
+                            _lbExtraEdited = JSON.parse(JSON.stringify(result.data));
+                        }
                         savedCount++;
                     } else {
                         showToast('분류 데이터 저장 실패: ' + (result.error || ''), 'error');

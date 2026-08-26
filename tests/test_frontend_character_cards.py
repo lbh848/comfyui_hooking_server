@@ -104,3 +104,11 @@ def test_focused_and_batch_refine_share_the_same_representative_prompt_loader():
     assert "async function _loadVisualCardRefineOriginal(" in FRONTEND
     assert FRONTEND.count("await _loadVisualCardRefineOriginal(") == 2
     assert "_loadVisualCardFocusOriginal" not in FRONTEND
+
+
+def test_manual_restore_draw_selects_a_profile_for_each_character():
+    assert 'id="restore-profile-select-1"' in FRONTEND
+    assert 'id="restore-profile-select-2"' in FRONTEND
+    assert "function _fillRestoreProfileSelect(slot)" in FRONTEND
+    assert "character.default_visual_profile_id" in FRONTEND
+    assert "visual_profile_ids: visualProfileIds" in FRONTEND

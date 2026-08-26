@@ -22,13 +22,16 @@ class _JsonRequest:
 
 
 @pytest.mark.asyncio
-async def test_bridge_health_advertises_slot_animation_metadata():
+async def test_bridge_health_advertises_media_display_metadata():
     response = await server.handle_api_illustration_context_bridge_health(None)
     payload = json.loads(response.text)
-    assert payload["version"] == 8
+    assert payload["version"] == 10
     assert payload["bot_selection"] is True
     assert payload["easy_edit"] is True
     assert payload["slot_animation_metadata"] is True
+    assert payload["asset_display_metadata"] is True
+    assert payload["asset_reroll"] is True
+    assert "asset_reroll" in payload["progress_phases"]
 
 
 @pytest.mark.asyncio
