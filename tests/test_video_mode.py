@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import json
 from pathlib import Path
 
@@ -1605,6 +1606,61 @@ def test_overlay_render_base_falls_back_to_crop_without_record() -> None:
         )
         is crop
     )
+
+
+def test_high_res_overlay_routes_subtitle_mode_to_subtitle_renderer(
+    monkeypatch,
+) -> None:
+    import modes.postprocess as vn_renderer
+    import modes.subtitle_render as subtitle_renderer
+
+    calls = []
+
+    def fake_subtitle(image_bytes, speak_text, settings, bot_name):
+        calls.append({
+            "speak_text": speak_text,
+            "settings": dict(settings),
+            "bot_name": bot_name,
+        })
+        with Image.open(io.BytesIO(image_bytes)) as source:
+            rendered = source.convert("RGBA")
+        for x in range(40, 120):
+            for y in range(160, 175):
+                rendered.putpixel((x, y), (255, 255, 255, 255))
+        output = io.BytesIO()
+        rendered.save(output, format="PNG")
+        return output.getvalue()
+
+    def reject_vn(*_args, **_kwargs):
+        raise AssertionError("subtitle mode must not use the VN dialogue renderer")
+
+    monkeypatch.setattr(subtitle_renderer, "compose_subtitle", fake_subtitle)
+    monkeypatch.setattr(vn_renderer, "compose_postprocess", reject_vn)
+
+    base = Image.new("RGBA", (200, 200), (10, 20, 30, 255))
+    overlay, mask = VideoMode._build_high_res_overlay(
+        base,
+        {
+            "bot_name": "anime-bot",
+            "speak_text": "Hana: (마음속 대사)",
+            "postprocess_settings": {
+                "_mode": "subtitle",
+                "enabled": True,
+                "thought_italic_enabled": True,
+            },
+        },
+    )
+
+    assert calls == [{
+        "speak_text": "Hana: (마음속 대사)",
+        "settings": {
+            "enabled": True,
+            "thought_italic_enabled": True,
+        },
+        "bot_name": "anime-bot",
+    }]
+    assert overlay is not None and overlay.size == base.size
+    assert mask is not None and mask.getbbox() is not None
 
 
 def test_animated_archive_writer_keeps_all_frames(tmp_path: Path) -> None:

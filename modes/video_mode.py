@@ -4770,15 +4770,27 @@ Final protocol audit: reread every exact <Subject N> occurrence against its defi
         settings = info.get("postprocess_settings")
         speak_text = str(info.get("speak_text") or "")
         if not isinstance(settings, dict) or not speak_text.strip():
-            print("[VIDEO:COMPOSE] 원본 대사/말풍선 설정 없음: 합성 레이어 생략")
+            print("[VIDEO:COMPOSE] 원본 대사/말풍선/자막 설정 없음: 합성 레이어 생략")
             return None, None
         source_bytes = _image_to_png_bytes(high_res_crop)
         try:
-            if settings.get("_mode") == "bubble":
+            postprocess_mode = str(settings.get("_mode") or "vn").strip().lower()
+            clean_settings = {
+                key: value for key, value in settings.items() if key != "_mode"
+            }
+            if postprocess_mode == "bubble":
                 from modes.bubble_render import compose_bubble
 
-                clean_settings = {key: value for key, value in settings.items() if key != "_mode"}
                 rendered_bytes = compose_bubble(
+                    source_bytes,
+                    speak_text,
+                    clean_settings,
+                    str(info.get("bot_name") or ""),
+                )
+            elif postprocess_mode == "subtitle":
+                from modes.subtitle_render import compose_subtitle
+
+                rendered_bytes = compose_subtitle(
                     source_bytes,
                     speak_text,
                     clean_settings,
@@ -4796,9 +4808,14 @@ Final protocol audit: reread every exact <Subject N> occurrence against its defi
             with Image.open(io.BytesIO(rendered_bytes)) as rendered_image:
                 rendered = rendered_image.convert("RGBA")
         except Exception as exc:
-            print(f"[VIDEO:COMPOSE] 고해상도 대사/말풍선 렌더 실패: error={exc}")
+            print(
+                "[VIDEO:COMPOSE] 고해상도 대사/말풍선/자막 렌더 실패: "
+                f"mode={postprocess_mode!r}, error={exc}"
+            )
             traceback.print_exc()
-            raise RuntimeError("원본 크기 대사/말풍선 렌더링에 실패했습니다") from exc
+            raise RuntimeError(
+                "원본 크기 대사/말풍선/자막 렌더링에 실패했습니다"
+            ) from exc
 
         if rendered.size[0] != high_res_crop.size[0] or rendered.size[1] < high_res_crop.size[1]:
             print(

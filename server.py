@@ -14100,6 +14100,10 @@ async def handle_api_postprocess_preview(request: web.Request) -> web.Response:
                 "shadow_opacity": body.get("shadow_opacity", 0.82),
                 "shadow_offset_x": body.get("shadow_offset_x", 2),
                 "shadow_offset_y": body.get("shadow_offset_y", 3),
+                "thought_italic_enabled": bool(
+                    body.get("thought_italic_enabled", True)
+                ),
+                "thought_italic_shear": body.get("thought_italic_shear", 0.10),
                 "max_lines": body.get("max_lines", 2),
             }
             composed = compose_subtitle(

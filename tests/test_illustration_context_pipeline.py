@@ -3755,6 +3755,7 @@ def test_subtitle_prompt_is_self_contained_and_hides_internal_stage_names():
     assert "finished television-animation subtitle" in prompt
     assert "internal identifiers for machine-readable speaker attribution only" in prompt
     assert "never displayed" in prompt
+    assert "subtle italic slant" in prompt
     assert "no more than two centered subtitle lines" in prompt
     assert not re.search(r"\bCALL[123]\b", prompt, re.IGNORECASE)
     assert "pipeline" not in prompt.lower()

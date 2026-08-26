@@ -27,6 +27,8 @@ DEFAULT_SUBTITLE_SETTINGS = {
     "shadow_opacity": 0.82,
     "shadow_offset_x": 2,
     "shadow_offset_y": 3,
+    "thought_italic_enabled": True,
+    "thought_italic_shear": 0.10,
     "max_lines": 2,
 }
 
@@ -136,6 +138,21 @@ def normalize_subtitle_settings(raw: object) -> dict:
         source.get("shadow_offset_y", normalized["shadow_offset_y"]),
         normalized["shadow_offset_y"], -30, 30, "shadow_offset_y",
     )))
+    thought_italic_enabled = source.get(
+        "thought_italic_enabled",
+        normalized["thought_italic_enabled"],
+    )
+    if not isinstance(thought_italic_enabled, bool):
+        print(
+            "[SUBTITLE:CONFIG] thought_italic_enabled가 bool이 아니어서 기본값 사용: "
+            f"value={thought_italic_enabled!r}"
+        )
+        thought_italic_enabled = normalized["thought_italic_enabled"]
+    normalized["thought_italic_enabled"] = thought_italic_enabled
+    normalized["thought_italic_shear"] = _number(
+        source.get("thought_italic_shear", normalized["thought_italic_shear"]),
+        normalized["thought_italic_shear"], 0.04, 0.20, "thought_italic_shear",
+    )
     normalized["max_lines"] = int(round(_number(
         source.get("max_lines", normalized["max_lines"]),
         normalized["max_lines"], 1, 2, "max_lines",
@@ -232,10 +249,19 @@ def _ellipsize(
 def _fit_subtitle(
     draw: ImageDraw.ImageDraw,
     texts: list[str],
+    thought_flags: list[bool],
     settings: dict,
     max_width: float,
-) -> tuple[object, list[str], int]:
+) -> tuple[object, list[str], list[bool], int]:
     from modes.font_assets import load_font
+
+    def flags_for(lines: list[str]) -> list[bool]:
+        if len(texts) == 1:
+            return [bool(thought_flags[0])] * len(lines)
+        if len(lines) == len(texts):
+            return [bool(value) for value in thought_flags[:len(lines)]]
+        # 둘 이상의 발화를 한 줄로 합친 경우 모두 생각일 때만 기울인다.
+        return [bool(thought_flags) and all(thought_flags)] * len(lines)
 
     start_size = int(settings["font_size"])
     min_size = int(settings["min_font_size"])
@@ -245,7 +271,7 @@ def _fit_subtitle(
             draw, texts, font, max_width, int(settings["max_lines"])
         )
         if lines is not None:
-            return font, lines, size
+            return font, lines, flags_for(lines), size
 
     font = load_font(min_size, settings["font_id"], settings["font_path"])
     joined = " ".join(texts)
@@ -280,7 +306,73 @@ def _fit_subtitle(
         "[SUBTITLE] 자막이 안전 폭에 들어가지 않아 최소 폰트/말줄임 적용: "
         f"font_size={min_size}, max_width={max_width:.1f}, text={joined!r}"
     )
-    return font, lines, min_size
+    return font, lines, flags_for(lines), min_size
+
+
+def _slant_layer(layer: Image.Image, shear: float) -> Image.Image:
+    """투명 텍스트 레이어의 윗부분을 오른쪽으로 밀어 약한 합성 이탤릭을 만든다."""
+    amount = max(0.0, float(shear or 0.0))
+    if amount <= 0.0 or layer.height <= 0:
+        return layer
+    shift = max(1, int(math.ceil(layer.height * amount)))
+    return layer.transform(
+        (layer.width + shift, layer.height),
+        Image.Transform.AFFINE,
+        (1.0, amount, -amount * layer.height, 0.0, 1.0, 0.0),
+        resample=Image.Resampling.BICUBIC,
+    )
+
+
+def _build_line_layers(
+    measure: ImageDraw.ImageDraw,
+    text: str,
+    font,
+    settings: dict,
+    *,
+    italic: bool,
+) -> tuple[Image.Image, Image.Image, int, int]:
+    """같은 기준점으로 정렬된 그림자/전경 한 줄 레이어를 만든다."""
+    outline_width = int(settings["outline_width"])
+    outer_stroke = outline_width + 2
+    bbox = measure.textbbox(
+        (0, 0),
+        text,
+        font=font,
+        stroke_width=outer_stroke,
+    )
+    logical_width = max(1, int(math.ceil(bbox[2] - bbox[0])))
+    logical_height = max(1, int(math.ceil(bbox[3] - bbox[1])))
+    pad = max(4, outer_stroke + 2)
+    layer_size = (logical_width + pad * 2, logical_height + pad * 2)
+    origin = (pad - bbox[0], pad - bbox[1])
+
+    shadow_alpha = int(round(255 * float(settings["shadow_opacity"])))
+    shadow_rgb = ImageColor.getrgb(settings["shadow_color"])
+    shadow = Image.new("RGBA", layer_size, (0, 0, 0, 0))
+    ImageDraw.Draw(shadow).text(
+        origin,
+        text,
+        font=font,
+        fill=(*shadow_rgb, shadow_alpha),
+        stroke_width=outer_stroke,
+        stroke_fill=(*shadow_rgb, shadow_alpha),
+    )
+
+    foreground = Image.new("RGBA", layer_size, (0, 0, 0, 0))
+    ImageDraw.Draw(foreground).text(
+        origin,
+        text,
+        font=font,
+        fill=(*ImageColor.getrgb(settings["text_color"]), 255),
+        stroke_width=outline_width,
+        stroke_fill=(*ImageColor.getrgb(settings["outline_color"]), 255),
+    )
+
+    if italic:
+        shear = float(settings["thought_italic_shear"])
+        shadow = _slant_layer(shadow, shear)
+        foreground = _slant_layer(foreground, shear)
+    return shadow, foreground, logical_height, pad
 
 
 def compose_subtitle(
@@ -313,18 +405,26 @@ def compose_subtitle(
                 "[SUBTITLE] 화면 자막은 최대 2개 발화만 표시: "
                 f"bot={bot_name!r}, segments={len(segments)}"
             )
-        texts = [str(item.get("text") or "").strip() for item in segments[:2]]
-        texts = [value for value in texts if value]
-        if not texts:
+        entries = [
+            {
+                "text": str(item.get("text") or "").strip(),
+                "thought": str(item.get("type") or "") == "thought",
+            }
+            for item in segments[:2]
+            if str(item.get("text") or "").strip()
+        ]
+        if not entries:
             print(f"[SUBTITLE] 표시할 자막 본문 없음, 합성 스킵: bot={bot_name!r}")
             return image_bytes
+        texts = [str(entry["text"]) for entry in entries]
+        thought_flags = [bool(entry["thought"]) for entry in entries]
 
         base = Image.open(io.BytesIO(image_bytes)).convert("RGBA")
         width, height = base.size
         measure = ImageDraw.Draw(Image.new("RGBA", (8, 8), (0, 0, 0, 0)))
         max_width = max(1.0, width * float(effective["max_width_ratio"]))
-        font, lines, font_size = _fit_subtitle(
-            measure, texts, effective, max_width
+        font, lines, line_thought_flags, font_size = _fit_subtitle(
+            measure, texts, thought_flags, effective, max_width
         )
         if not lines:
             print(f"[SUBTITLE] 레이아웃 결과가 비어 합성 스킵: bot={bot_name!r}")
@@ -332,62 +432,61 @@ def compose_subtitle(
 
         text = "\n".join(lines)
         spacing = max(0, int(round(font_size * float(effective["line_spacing_ratio"]))))
-        bbox = measure.multiline_textbbox(
-            (0, 0), text, font=font, spacing=spacing, align="center",
-            stroke_width=int(effective["outline_width"]),
+        line_layers = [
+            _build_line_layers(
+                measure,
+                line,
+                font,
+                effective,
+                italic=(
+                    bool(is_thought)
+                    and bool(effective["thought_italic_enabled"])
+                ),
+            )
+            for line, is_thought in zip(lines, line_thought_flags)
+        ]
+        block_height = max(
+            1,
+            sum(item[2] for item in line_layers)
+            + spacing * max(0, len(line_layers) - 1),
         )
-        block_height = max(1, bbox[3] - bbox[1])
         bottom_margin = max(
             int(effective["outline_width"]) + 4,
             int(round(height * float(effective["bottom_margin_ratio"]))),
         )
-        x = width / 2.0
-        y = max(
+        y_cursor = max(
             int(effective["outline_width"]) + 2,
-            height - bottom_margin - block_height - bbox[1],
+            height - bottom_margin - block_height,
         )
 
-        shadow_alpha = int(round(255 * float(effective["shadow_opacity"])))
-        shadow_rgb = ImageColor.getrgb(effective["shadow_color"])
         shadow = Image.new("RGBA", base.size, (0, 0, 0, 0))
-        shadow_draw = ImageDraw.Draw(shadow)
-        shadow_draw.multiline_text(
-            (
-                x + int(effective["shadow_offset_x"]),
-                y + int(effective["shadow_offset_y"]),
-            ),
-            text,
-            font=font,
-            fill=(*shadow_rgb, shadow_alpha),
-            anchor="ma",
-            align="center",
-            spacing=spacing,
-            stroke_width=int(effective["outline_width"]) + 2,
-            stroke_fill=(*shadow_rgb, shadow_alpha),
-        )
+        foreground = Image.new("RGBA", base.size, (0, 0, 0, 0))
+        for shadow_line, foreground_line, logical_height, pad in line_layers:
+            shadow_x = int(round((width - shadow_line.width) / 2.0))
+            foreground_x = int(round((width - foreground_line.width) / 2.0))
+            paste_y = int(round(y_cursor - pad))
+            shadow.alpha_composite(
+                shadow_line,
+                (
+                    shadow_x + int(effective["shadow_offset_x"]),
+                    paste_y + int(effective["shadow_offset_y"]),
+                ),
+            )
+            foreground.alpha_composite(
+                foreground_line,
+                (foreground_x, paste_y),
+            )
+            y_cursor += logical_height + spacing
+
         shadow = shadow.filter(ImageFilter.GaussianBlur(max(0.8, font_size * 0.018)))
         composed = Image.alpha_composite(base, shadow)
-
-        foreground = Image.new("RGBA", base.size, (0, 0, 0, 0))
-        foreground_draw = ImageDraw.Draw(foreground)
-        foreground_draw.multiline_text(
-            (x, y),
-            text,
-            font=font,
-            fill=(*ImageColor.getrgb(effective["text_color"]), 255),
-            anchor="ma",
-            align="center",
-            spacing=spacing,
-            stroke_width=int(effective["outline_width"]),
-            stroke_fill=(*ImageColor.getrgb(effective["outline_color"]), 255),
-        )
         composed = Image.alpha_composite(composed, foreground)
         output = io.BytesIO()
         composed.save(output, format="PNG")
         print(
             "[SUBTITLE] 자막 합성 완료: "
             f"bot={bot_name!r}, size={width}x{height}, font={font_size}, "
-            f"lines={len(lines)}, text={text!r}"
+            f"lines={len(lines)}, thoughts={sum(line_thought_flags)}, text={text!r}"
         )
         return output.getvalue()
     except Exception as exc:

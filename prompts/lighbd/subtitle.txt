@@ -16,7 +16,7 @@ Subtitle writing rules:
 - Use at most two entries only for one immediate line-and-reply exchange that is essential to the illustrated moment.
 - Keep the visible text short enough to fit comfortably in no more than two centered subtitle lines. Remove filler, repetition, and redundant forms of address without flattening the character's voice.
 - Preserve meaningful pauses, hesitation, interruption, punctuation, and honorific nuance when they matter to the performance.
-- Use quotation marks only for speech. Use parentheses for a thought or inner monologue.
+- Use quotation marks only for speech. Use parentheses only as machine-readable markers for a thought or inner monologue. The renderer removes those parentheses from the visible subtitle and applies a subtle italic slant instead.
 - Do not append emotion labels, balloon labels, style tags, sound-effect tags, stage directions, or speaker colors. The renderer supplies the visual subtitle treatment.
 - The `NAME:` prefix is machine-readable speaker metadata and is never displayed. Use the exact matching roster identifier there.
 - Keep speaker metadata separate from in-story forms of address. Never copy an internal roster identifier into the visible subtitle merely because it appears in the roster or scene metadata.

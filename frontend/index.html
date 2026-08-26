@@ -21793,6 +21793,15 @@
                                     </div>
                                 </div>
                                 <div class="pp-row">
+                                    <span class="pp-label">생각 대사</span>
+                                    <div class="pp-field-inline">
+                                        <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+                                            <input id="pp-subtitle-thought-italic-enabled" type="checkbox" onchange="renderPostprocessPreview()">
+                                            <span style="font-size:0.78rem;">약한 이탤릭 적용</span>
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="pp-row">
                                     <span class="pp-label">그림자</span>
                                     <div class="pp-field-inline">
                                         <input id="pp-subtitle-shadow-color" type="color" class="input" style="width:58px; padding:2px;" oninput="renderPostprocessPreview()">
@@ -21804,12 +21813,13 @@
                                         <input id="pp-subtitle-shadow-offset-y" type="number" class="input" min="-30" max="30" step="1" style="width:75px;" oninput="renderPostprocessPreview()">
                                     </div>
                                 </div>
-                                <div class="pp-hint">검정 하드 외곽선 위에 살짝 번진 그림자를 한 번 더 합성하는 이중 대비 방식입니다. 배경판 없이도 흰 글자가 밝은 하늘과 어두운 실내 모두에서 유지됩니다.</div>
+                                <div class="pp-hint">검정 하드 외곽선 위에 살짝 번진 그림자를 한 번 더 합성하는 이중 대비 방식입니다. 생각 대사는 괄호를 화면에서 제거하고 약 6°만 기울여 은근하게 구분합니다.</div>
                             </div>
 
                             <div class="pp-card">
                                 <div class="pp-card-title">미리보기</div>
-                                <textarea id="pp-subtitle-preview-speak" class="input" rows="2" style="width:100%; font-family:monospace; resize:vertical;" placeholder='NAME: "대사"' oninput="renderPostprocessPreview()">kapri: "이 장면, 진짜 애니메이션 같지 않아?"</textarea>
+                                <textarea id="pp-subtitle-preview-speak" class="input" rows="2" style="width:100%; font-family:monospace; resize:vertical;" placeholder='NAME: "대사" 또는 NAME: (생각)' oninput="renderPostprocessPreview()">kapri: (이 장면…… 정말 애니메이션 같아.)</textarea>
+                                <div class="pp-hint">입력의 괄호는 생각 대사를 구분하는 내부 표식이며 최종 이미지에는 표시되지 않습니다.</div>
                                 <div class="pp-subsection">
                                     <div style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
                                         <span style="font-size:0.74rem; color:var(--text2,#999);">베이스 이미지 (미리보기 전용)</span>
@@ -62825,6 +62835,8 @@
                     shadow_opacity: 0.82,
                     shadow_offset_x: 2,
                     shadow_offset_y: 3,
+                    thought_italic_enabled: true,
+                    thought_italic_shear: 0.10,
                     max_lines: 2,
                 },
                 mode: 'vn',  // 활성 후처리 모드: 'vn' | 'bubble' | 'subtitle'
@@ -63704,6 +63716,8 @@
             base.shadow_opacity = Math.max(0, Math.min(1, finiteOr(base.shadow_opacity, 0.82)));
             base.shadow_offset_x = Math.max(-30, Math.min(30, Math.round(finiteOr(base.shadow_offset_x, 2))));
             base.shadow_offset_y = Math.max(-30, Math.min(30, Math.round(finiteOr(base.shadow_offset_y, 3))));
+            if (typeof base.thought_italic_enabled !== 'boolean') base.thought_italic_enabled = true;
+            base.thought_italic_shear = Math.max(0.04, Math.min(0.20, finiteOr(base.thought_italic_shear, 0.10)));
             base.max_lines = Number(base.max_lines) === 1 ? 1 : 2;
             for (const [key, fallback] of Object.entries({
                 text_color: '#FFFFFF', outline_color: '#101010', shadow_color: '#000000',
@@ -63733,6 +63747,8 @@
             set('pp-subtitle-shadow-opacity', s.shadow_opacity);
             set('pp-subtitle-shadow-offset-x', s.shadow_offset_x);
             set('pp-subtitle-shadow-offset-y', s.shadow_offset_y);
+            const thoughtItalic = document.getElementById('pp-subtitle-thought-italic-enabled');
+            if (thoughtItalic) thoughtItalic.checked = s.thought_italic_enabled !== false;
             set('pp-subtitle-max-lines', s.max_lines);
             ppClearSubtitleBase();
         }
@@ -63975,6 +63991,10 @@
             s.shadow_opacity = _ppNum('pp-subtitle-shadow-opacity', 0.82, 0, 1);
             s.shadow_offset_x = Math.round(_ppNum('pp-subtitle-shadow-offset-x', 2, -30, 30));
             s.shadow_offset_y = Math.round(_ppNum('pp-subtitle-shadow-offset-y', 3, -30, 30));
+            s.thought_italic_enabled = document.getElementById(
+                'pp-subtitle-thought-italic-enabled'
+            )?.checked !== false;
+            s.thought_italic_shear = 0.10;
             s.max_lines = Number(document.getElementById('pp-subtitle-max-lines')?.value) === 1 ? 1 : 2;
             return s;
         }

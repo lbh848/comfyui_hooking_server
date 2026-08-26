@@ -9,6 +9,7 @@ from PIL import Image, ImageChops, ImageDraw, ImageFont
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from modes import font_assets, postprocess
+from modes import subtitle_render
 from modes.subtitle_render import compose_subtitle, normalize_subtitle_settings
 
 
@@ -26,13 +27,13 @@ def _png_bytes(size=(640, 360), color=(42, 64, 92, 255)) -> bytes:
 def test_subtitle_renderer_hides_speaker_metadata_and_draws_near_bottom(monkeypatch):
     original = _png_bytes()
     drawn_texts = []
-    original_multiline_text = ImageDraw.ImageDraw.multiline_text
+    original_text = ImageDraw.ImageDraw.text
 
-    def capture_multiline_text(self, xy, text, *args, **kwargs):
+    def capture_text(self, xy, text, *args, **kwargs):
         drawn_texts.append(text)
-        return original_multiline_text(self, xy, text, *args, **kwargs)
+        return original_text(self, xy, text, *args, **kwargs)
 
-    monkeypatch.setattr(ImageDraw.ImageDraw, "multiline_text", capture_multiline_text)
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", capture_text)
     monkeypatch.setattr(
         font_assets,
         "load_font",
@@ -75,13 +76,13 @@ def test_subtitle_renderer_respects_disabled_setting():
 
 def test_single_line_subtitle_ellipsizes_instead_of_creating_two_lines(monkeypatch):
     drawn_texts = []
-    original_multiline_text = ImageDraw.ImageDraw.multiline_text
+    original_text = ImageDraw.ImageDraw.text
 
-    def capture_multiline_text(self, xy, text, *args, **kwargs):
+    def capture_text(self, xy, text, *args, **kwargs):
         drawn_texts.append(text)
-        return original_multiline_text(self, xy, text, *args, **kwargs)
+        return original_text(self, xy, text, *args, **kwargs)
 
-    monkeypatch.setattr(ImageDraw.ImageDraw, "multiline_text", capture_multiline_text)
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", capture_text)
     monkeypatch.setattr(
         font_assets,
         "load_font",
@@ -106,6 +107,70 @@ def test_single_line_subtitle_ellipsizes_instead_of_creating_two_lines(monkeypat
     assert all(text.endswith("…") for text in drawn_texts)
 
 
+def test_thought_subtitle_uses_subtle_italic_without_visible_parentheses(monkeypatch):
+    slants = []
+    drawn_texts = []
+    original_slant = subtitle_render._slant_layer
+    original_text = ImageDraw.ImageDraw.text
+
+    def capture_slant(layer, shear):
+        slants.append(shear)
+        return original_slant(layer, shear)
+
+    def capture_text(self, xy, text, *args, **kwargs):
+        drawn_texts.append(text)
+        return original_text(self, xy, text, *args, **kwargs)
+
+    monkeypatch.setattr(subtitle_render, "_slant_layer", capture_slant)
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", capture_text)
+    monkeypatch.setattr(
+        font_assets,
+        "load_font",
+        lambda _size, _font_id=None, _legacy_path=None: ImageFont.load_default(),
+    )
+
+    rendered = compose_subtitle(
+        _png_bytes(),
+        "Hana: (This is only in my head.)",
+        {
+            "font_id": "system",
+            "thought_italic_enabled": True,
+            "thought_italic_shear": 0.10,
+        },
+        "thought-bot",
+    )
+
+    assert rendered
+    assert slants == [0.10, 0.10]
+    assert drawn_texts == ["This is only in my head.", "This is only in my head."]
+    assert all("(" not in text and ")" not in text for text in drawn_texts)
+
+
+def test_speech_line_stays_upright_when_followed_by_italic_thought(monkeypatch):
+    slants = []
+
+    monkeypatch.setattr(
+        subtitle_render,
+        "_slant_layer",
+        lambda layer, shear: slants.append(shear) or layer,
+    )
+    monkeypatch.setattr(
+        font_assets,
+        "load_font",
+        lambda _size, _font_id=None, _legacy_path=None: ImageFont.load_default(),
+    )
+
+    compose_subtitle(
+        _png_bytes(),
+        'Hana: "I said it aloud."\nHana: (But this stays inside.)',
+        {"font_id": "system", "thought_italic_enabled": True},
+        "mixed-bot",
+    )
+
+    # 그림자와 전경 중 생각 줄에만 각각 한 번씩 적용된다.
+    assert slants == [0.10, 0.10]
+
+
 def test_subtitle_settings_clamp_to_broadcast_safe_bounds():
     normalized = normalize_subtitle_settings({
         "font_size": 8,
@@ -123,6 +188,8 @@ def test_subtitle_settings_clamp_to_broadcast_safe_bounds():
     assert normalized["bottom_margin_ratio"] == 0.02
     assert normalized["outline_width"] == 20
     assert normalized["shadow_opacity"] == 0.0
+    assert normalized["thought_italic_enabled"] is True
+    assert normalized["thought_italic_shear"] == 0.10
     assert normalized["max_lines"] == 2
 
 
@@ -180,3 +247,4 @@ def test_subtitle_mode_is_registered_in_backend_frontend_and_routes():
     assert "call3_prompt_mode: 'subtitle'" not in frontend_source
     assert "subtitle: 'subtitle'" in frontend_source
     assert "mode: 'subtitle'" in frontend_source
+    assert 'id="pp-subtitle-thought-italic-enabled"' in frontend_source
