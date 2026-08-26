@@ -713,6 +713,7 @@ DEFAULT_CONFIG = {
         "illustration_call3":      _llm_route_defaults(),  # 대사 생성(speak/manga)
         "illustration_call3_subtitle": _llm_route_defaults(),  # 방송 애니 자막 전용 대사 생성
         "illustration_original_asset": _llm_route_defaults(json_mode=True),  # 업로드 원본 에셋 단일 선택
+        "illustration_original_asset_recovery": _llm_route_defaults(json_mode=True),  # 실패한 원본 에셋을 실제 유사 후보 중 재선택
         "illustration_multi_char_mask": _llm_route_defaults(json_mode=True),  # CALL3 뒤 캐릭터별 정규화 영역 계산
     },
     "llm_max_concurrency": 1,         # LLM1 실제 API 동시 요청 상한
@@ -6195,8 +6196,84 @@ async def _select_original_asset_outputs(
         requested_count=effective_count,
         asset_index=asset_index,
     )
+    failed_selections = [
+        selection for selection in selections if selection.get("error")
+    ]
+    if failed_selections:
+        async def call_recovery(messages, validator):
+            return await illustration_context_pipeline._call_pipeline_llm(
+                "ORIGINAL-ASSET-RECOVERY",
+                messages,
+                stream_notify=stream_notify,
+                result_validator=validator,
+                json_mode=True,
+                history_ids_sink=llm_trace,
+            )
+
+        try:
+            recovered = await illustration_original_assets.recover_original_asset_selections(
+                call_llm=call_recovery,
+                instruction=instruction,
+                conversation_context=conversation_context,
+                target_slotted=target_slotted,
+                allowed_slots=allowed_slots,
+                selections=selections,
+                asset_index=asset_index,
+            )
+        except asyncio.CancelledError:
+            print(
+                f"[ILLUST_ORIGINAL_ASSET:RECOVERY] 복구 작업 취소: "
+                f"bot={active_bot!r}, failed={len(failed_selections)}"
+            )
+            raise
+        except Exception as e:
+            print(
+                f"[ILLUST_ORIGINAL_ASSET:RECOVERY] 복구 호출 최종 실패, "
+                f"정상 선택 유지: bot={active_bot!r}, "
+                f"failed={len(failed_selections)}, error={e}"
+            )
+            traceback.print_exc()
+            recovered = []
+
+        recovered_by_slot = {
+            int(selection["slot"]): selection
+            for selection in recovered
+            if selection.get("slot") is not None and not selection.get("error")
+        }
+        if recovered_by_slot:
+            merged_selections = []
+            for selection in selections:
+                replacement = None
+                if selection.get("error") and selection.get("slot") is not None:
+                    try:
+                        replacement = recovered_by_slot.get(int(selection["slot"]))
+                    except Exception as e:
+                        print(
+                            f"[ILLUST_ORIGINAL_ASSET:RECOVERY] 복구 병합 slot 파싱 실패: "
+                            f"selection={selection!r}, error={e}"
+                        )
+                        traceback.print_exc()
+                merged_selections.append(replacement or selection)
+            selections = merged_selections
+            print(
+                f"[ILLUST_ORIGINAL_ASSET:RECOVERY] 복구 결과 병합: "
+                f"bot={active_bot!r}, recovered={len(recovered_by_slot)}, "
+                f"remaining_failed={sum(1 for item in selections if item.get('error'))}"
+            )
     anchors = illustration_context_pipeline.slot_context_anchors(target_slotted)
     for selection in selections:
+        selection_error = str(selection.get("error") or "").strip()
+        if selection_error:
+            result["failures"].append({
+                "slot": selection.get("slot"),
+                "error": selection_error,
+            })
+            print(
+                f"[ILLUST_ORIGINAL_ASSET] 선택 실패 항목 건너뜀: "
+                f"bot={active_bot!r}, slot={selection.get('slot')!r}, "
+                f"src={selection.get('src')!r}, error={selection_error}"
+            )
+            continue
         candidate = selection["candidate"]
         slot = int(selection["slot"])
         try:
@@ -6606,6 +6683,7 @@ async def process_illustration_context_queue_item(item) -> dict:
     all_child_pairs = []
     early_descriptor_slots = []
     early_dispatch = False
+    early_keyvis_pair = None
     raw_items = []
     original_asset_result = {
         "items": [],
@@ -7137,6 +7215,55 @@ async def process_illustration_context_queue_item(item) -> dict:
                 "subtitle": "subtitle",
             }.get(_pp_mode, "speak")
 
+            async def _on_keyvis_ready(keyvis_built: dict):
+                nonlocal early_dispatch, early_keyvis_pair
+                keyvis_items = keyvis_built.get("items") or []
+                if len(keyvis_items) != 1:
+                    print(
+                        f"[ILLUST_CONTEXT:KEYVIS] 조기 등록 항목 수 불일치: "
+                        f"session={session_id}, count={len(keyvis_items)}"
+                    )
+                    raise RuntimeError("KEYVIS 조기 등록 항목은 정확히 하나여야 합니다")
+                descriptor = keyvis_items[0]
+                if str(descriptor.get("kind") or "") != "keyvis":
+                    print(
+                        f"[ILLUST_CONTEXT:KEYVIS] 조기 등록 descriptor 종류 불일치: "
+                        f"session={session_id}, kind={descriptor.get('kind')!r}"
+                    )
+                    raise RuntimeError("KEYVIS 조기 등록 descriptor가 아닙니다")
+                if early_keyvis_pair is not None:
+                    print(
+                        f"[ILLUST_CONTEXT:KEYVIS] 중복 조기 등록 요청 거부: "
+                        f"session={session_id}"
+                    )
+                    raise RuntimeError("KEYVIS가 이미 조기 등록되었습니다")
+                preliminary_format = keyvis_built.get("prompt_format", "v3")
+                if (
+                    _is_multi_char_descriptor(descriptor, preliminary_format)
+                    and not isinstance(descriptor.get("multi_char_layout"), dict)
+                ):
+                    print(
+                        f"[ILLUST_CONTEXT:KEYVIS] 다중 캐릭터 레이아웃 없이 조기 등록 불가: "
+                        f"session={session_id}, characters={len(descriptor.get('characters') or [])}"
+                    )
+                    raise RuntimeError("KEYVIS 다중 캐릭터 레이아웃이 준비되지 않았습니다")
+                total_count = max(1, int(keyvis_built.get("total_count") or 1))
+                early_keyvis_pair = await _enqueue_child(
+                    descriptor,
+                    1,
+                    total_count,
+                    keyvis_built.get("context", ""),
+                    preliminary_format,
+                    defer_postprocess=True,
+                    queue_priority=0,
+                )
+                early_dispatch = True
+                print(
+                    f"[ILLUST_CONTEXT:KEYVIS] KEYVIS 프롬프트 확정 · 이미지 즉시 등록: "
+                    f"session={session_id}, total={total_count}, "
+                    f"provider={illustration_provider_snapshot}"
+                )
+
             async def _on_call2_ready(call2_built: dict):
                 nonlocal child_pairs, early_dispatch, early_descriptor_slots
                 preliminary_items = call2_built.get("items") or []
@@ -7153,6 +7280,16 @@ async def process_illustration_context_queue_item(item) -> dict:
                 )
                 preliminary_format = call2_built.get("prompt_format", "v3")
                 for index, descriptor in enumerate(preliminary_items, start=1):
+                    if (
+                        str(descriptor.get("kind") or "") == "keyvis"
+                        and early_keyvis_pair is not None
+                    ):
+                        child_pairs.append(early_keyvis_pair)
+                        print(
+                            f"[ILLUST_CONTEXT:KEYVIS] 기존 조기 등록 이미지 재사용: "
+                            f"session={session_id}, index={index}/{total_count}"
+                        )
+                        continue
                     if _is_multi_char_descriptor(descriptor, preliminary_format):
                         child_pairs.append(None)
                         print(
@@ -7179,6 +7316,7 @@ async def process_illustration_context_queue_item(item) -> dict:
                     progress=progress,
                     stream_notify=stream_notify,
                     on_call2_ready=_on_call2_ready,
+                    on_keyvis_ready=_on_keyvis_ready,
                     extra_instruction=extra_instruction,
                     extra_costume=extra_costume,
                     extra_names=extra_names,

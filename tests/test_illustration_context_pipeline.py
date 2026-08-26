@@ -263,8 +263,9 @@ def test_segment_slot_map_binds_segments_to_following_server_slot():
 
     assert reason == ""
     assert mapping == {"C001": 0, "C002": 1, "C003": 1, "C004": 1}
-    assert "[C001 slot=0]" in annotated
-    assert "[C004 slot=1]" in annotated
+    assert "[C001]" in annotated
+    assert "[C004]" in annotated
+    assert "slot=" not in annotated
 
 
 def test_segment_slot_map_excludes_only_unmatched_segment_and_resynchronizes():
@@ -282,9 +283,10 @@ def test_segment_slot_map_excludes_only_unmatched_segment_and_resynchronizes():
     mapping, annotated, reason = pipeline.build_segment_slot_map(slotted, segments)
 
     assert mapping == {"C001": 0, "C003": 1}
-    assert "[C001 slot=0]" in annotated
+    assert "[C001]" in annotated
     assert "[C002" not in annotated
-    assert "[C003 slot=1]" in annotated
+    assert "[C003]" in annotated
+    assert "slot=" not in annotated
     assert "mapped=2/3" in reason
     assert "excluded=['C002']" in reason
 
@@ -1331,9 +1333,13 @@ async def test_call2_pipeline_continues_with_partial_segment_slot_map(monkeypatc
     assert result["call2_fallback_stage"] == ""
     assert [item["slot"] for item in result["items"]] == [0, 1]
     assert plan_requests
-    assert "[C001 slot=0]" in plan_requests[0]
+    assert "[C001]" in plan_requests[0]
     assert "[C002" not in plan_requests[0]
-    assert "[C003 slot=1]" in plan_requests[0]
+    assert "[C003]" in plan_requests[0]
+    assert "[C001 slot=" not in plan_requests[0]
+    assert "[C003 slot=" not in plan_requests[0]
+    assert "[Slot " not in plan_requests[0]
+    assert "[Last log entry]" not in plan_requests[0]
     assert "minimum of 2 and a maximum of 2" in plan_requests[0]
     output = capsys.readouterr().out
     assert "부분 segment-slot 매핑으로 계속 진행" in output
@@ -4594,10 +4600,11 @@ scenes: []
         },
     )
 
-    assert task_keys == ["illustration_call2"] * 4
+    assert task_keys == ["illustration_call2"] * 3
     assert "CALL2-PLAN" in call_names
     assert "CALL2-KEYVIS" in call_names
     assert sum(name.startswith("CALL2-DETAIL") for name in call_names) == 1
+    assert "CALL2-AUTHORITY-AUDIT" not in call_names
     assert len(result["items"]) == 1
     assert result["items"][0]["kind"] == "keyvis"
     assert result["items"][0]["slot"] == -1
@@ -4669,6 +4676,98 @@ scenes[1]:
     assert len(early_payloads) == 1
     assert result["items"][0]["speak"] == 'Hana: "Ready." #normal'
     assert '[SPEAK]\nHana: "Ready." #normal' in result["items"][0]["raw_positive"]
+
+
+@pytest.mark.asyncio
+async def test_independent_keyvis_dispatches_before_detail_and_skips_authority_mutation(monkeypatch):
+    events = []
+    keyvis_dispatched = asyncio.Event()
+    keyvis_payloads = []
+
+    keyvis_output = """<lb-xnai>
+keyvis:
+  camera: portrait
+  characters[1]:
+    - name: Hana
+      positive: 1girl, red dress
+      outfit_state:
+        body_state: clothed
+        worn: [red dress]
+        removed: []
+  scene: promotional poster
+  supplement: trusted independent key visual
+scenes: []
+</lb-xnai>"""
+
+    async def fake_pipeline_call(call_name, messages, *args, **kwargs):
+        events.append(call_name)
+        if call_name == "CALL2-PLAN":
+            return json.dumps({
+                "scene_plan": [{
+                    "anchor_segment": "C001",
+                    "characters": ["Hana"],
+                    "scene_brief": "Hana waits in the classroom",
+                }],
+            })
+        if call_name == "CALL2-KEYVIS":
+            return keyvis_output
+        if call_name.startswith("CALL2-DETAIL"):
+            events.append("detail-waiting-for-keyvis")
+            await keyvis_dispatched.wait()
+            events.append("detail-resumed")
+            return _toon_for_slots([0])
+        if call_name == "CALL2-AUTHORITY-AUDIT":
+            audit_request = "\n".join(str(message.get("content") or "") for message in messages)
+            assert '"kind":"keyvis"' not in audit_request
+            return _authority_audit_response(messages)
+        raise AssertionError(f"unexpected call: {call_name}")
+
+    async def on_keyvis_ready(payload):
+        events.append("keyvis-dispatch")
+        keyvis_payloads.append(payload)
+        assert payload["total_count"] == 2
+        assert len(payload["items"]) == 1
+        assert payload["items"][0]["kind"] == "keyvis"
+        assert "black hair" not in payload["items"][0]["raw_positive"]
+        keyvis_dispatched.set()
+
+    async def on_call2_ready(_payload):
+        events.append("call2-dispatch")
+        assert keyvis_dispatched.is_set()
+
+    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
+    result = await pipeline.build_from_context(
+        {
+            "session_id": "keyvis_immediate_dispatch_test",
+            "target_slotted": "Hana waits.\n\n[Slot 0]",
+            "chats": [
+                {"role": "user", "data": "Continue."},
+                {"role": "char", "data": "Hana waits."},
+            ],
+        },
+        {
+            "call1_enabled": False,
+            "call2_parallel_enabled": True,
+            "call2_parallel_max_concurrency": 1,
+            "call2_parallel_slow_retry_enabled": False,
+            "output_count_min": 1,
+            "output_count_max": 1,
+            "key_visual": True,
+            "call3_enabled": False,
+            "speak_enabled": False,
+        },
+        "### Hana\n-Appearance\n1girl, black hair\n-default_outfit\nschool uniform",
+        extra_names="Hana",
+        on_keyvis_ready=on_keyvis_ready,
+        on_call2_ready=on_call2_ready,
+    )
+
+    assert events.index("keyvis-dispatch") < events.index("detail-resumed")
+    assert events.index("keyvis-dispatch") < events.index("CALL2-AUTHORITY-AUDIT")
+    assert len(keyvis_payloads) == 1
+    assert [item["kind"] for item in result["items"]] == ["keyvis", "scene"]
+    assert result["items"][0]["characters"][0]["positive"] == "1girl, red dress"
+    assert all(audit.get("kind") == "scene" for audit in result["call2_authority_audit"])
 
 
 @pytest.mark.asyncio
@@ -5244,7 +5343,13 @@ scenes[1]:
                 {"role": "char", "data": "첫 문장.\n\n둘째 문장."},
             ],
         },
-        {"call1_parallel_enabled": False, "call3_enabled": False, "speak_enabled": False, "key_visual": False},
+        {
+            "call1_parallel_enabled": False,
+            "call2_parallel_enabled": False,
+            "call3_enabled": False,
+            "speak_enabled": False,
+            "key_visual": False,
+        },
         "### hana\n-Appearance: 1girl, black hair",
     )
 
@@ -5453,6 +5558,52 @@ def test_call1_shard_scope_violations_are_warnings_but_conflicts_are_fatal():
         ["C001"],
     )
     assert any("지칭 충돌" in item for item in fallback_errors)
+
+
+def test_call1_shards_keep_start_profile_and_later_transition():
+    initial = {
+        "segment_id": "START",
+        "character": "Shiho",
+        "profile": "Shiho_Corrupted Heart",
+        "state": "Shiho begins CURRENT already transformed.",
+    }
+    release = {
+        "segment_id": "C037",
+        "character": "Shiho",
+        "profile": "Shiho_Overcome_School",
+        "state": "Shiho releases her transformation.",
+    }
+    merged, warnings, fallback_errors = pipeline._merge_call1_shard_values(
+        [{
+            "assigned_segment_ids": ["C007"],
+            "value": {
+                "history_characters": ["Shiho"],
+                "current_characters": ["Shiho"],
+                "profile_events": [initial],
+            },
+        }, {
+            "assigned_segment_ids": ["C037"],
+            "value": {
+                "history_characters": ["Shiho"],
+                "current_characters": ["Shiho"],
+                "profile_events": [release],
+            },
+        }],
+        ["C007", "C037"],
+    )
+
+    assert warnings == []
+    assert fallback_errors == []
+    assert merged["profile_events"] == [initial, release]
+    assert set(merged) == {
+        "reference_assignments",
+        "history_characters",
+        "current_characters",
+        "profile_events",
+        "wardrobe_events",
+        "hairstyle_events",
+        "unresolved_references",
+    }
 
 
 def test_call3_scene_selection_contains_bounded_upper_and_lower_windows():
@@ -6719,6 +6870,9 @@ scenes[1]:
         {
             "call1_enabled": True,
             "call1_parallel_enabled": False,
+            "call2_parallel_enabled": False,
+            "output_count_min": 1,
+            "output_count_max": 1,
             "call3_enabled": False,
             "speak_enabled": False,
             "key_visual": False,

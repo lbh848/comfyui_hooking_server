@@ -12,11 +12,16 @@ import os
 import re
 import traceback
 from dataclasses import dataclass
+from difflib import SequenceMatcher
 from typing import Awaitable, Callable
 
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 MAX_ORIGINAL_ASSET_INSTRUCTION_CHARS = 120_000
+MAX_ORIGINAL_ASSET_RECOVERY_CANDIDATES = 30
+ORIGINAL_ASSET_RECOVERY_DIVERSITY_WEIGHT = 0.45
+ORIGINAL_ASSET_RECOVERY_POOL_MULTIPLIER = 4
+ORIGINAL_ASSET_RECOVERY_RELEVANCE_SEED_COUNT = 3
 
 
 @dataclass(frozen=True)
@@ -211,14 +216,11 @@ def validate_selection_response(
     allowed_slots: list[int],
     requested_count: int,
 ) -> tuple[bool, str]:
+    valid, reason = validate_selection_response_envelope(raw, requested_count)
+    if not valid:
+        return valid, reason
     document = _json_object(raw)
-    if document is None:
-        return False, "JSON 객체를 파싱할 수 없음"
-    selections = document.get("selections")
-    if not isinstance(selections, list):
-        return False, "selections가 배열이 아님"
-    if len(selections) != requested_count:
-        return False, f"선택 장수 불일치: expected={requested_count}, actual={len(selections)}"
+    selections = document.get("selections") if document else []
     allowed = set(allowed_slots)
     seen_slots: set[int] = set()
     for index, selection in enumerate(selections, start=1):
@@ -242,6 +244,26 @@ def validate_selection_response(
             return False, f"selection {index} 실제 업로드 파일 없음: {src!r}"
         if len(matches) != 1:
             return False, f"selection {index} 업로드 파일 ID 중복: {src!r}"
+    return True, ""
+
+
+def validate_selection_response_envelope(
+    raw: str,
+    requested_count: int,
+) -> tuple[bool, str]:
+    """Validate only the response shape shared by all selection items.
+
+    Individual selection errors are intentionally resolved after the LLM call so
+    one missing uploaded file does not discard otherwise valid selections.
+    """
+    document = _json_object(raw)
+    if document is None:
+        return False, "JSON 객체를 파싱할 수 없음"
+    selections = document.get("selections")
+    if not isinstance(selections, list):
+        return False, "selections가 배열이 아님"
+    if len(selections) != requested_count:
+        return False, f"선택 장수 불일치: expected={requested_count}, actual={len(selections)}"
     return True, ""
 
 
@@ -301,7 +323,7 @@ async def select_original_assets(
     requested_count: int,
     asset_index: dict[str, list[OriginalAssetCandidate]],
 ) -> list[dict]:
-    """Run one LLM task and return validated selections with resolved candidates."""
+    """Return per-item resolutions; invalid items carry an ``error`` value."""
     messages = build_selection_messages(
         instruction=instruction,
         conversation_context=conversation_context,
@@ -311,12 +333,7 @@ async def select_original_assets(
     )
 
     def validate(raw: str):
-        return validate_selection_response(
-            raw,
-            asset_index,
-            allowed_slots,
-            requested_count,
-        )
+        return validate_selection_response_envelope(raw, requested_count)
 
     raw = await call_llm(messages, validate)
     valid, reason = validate(raw)
@@ -328,16 +345,349 @@ async def select_original_assets(
         raise RuntimeError(f"원본 에셋 선택 응답이 유효하지 않습니다: {reason}")
     document = _json_object(raw) or {}
     resolved = []
-    for selection in document.get("selections") or []:
-        src = str(selection.get("src") or "").strip()
-        slot = int(selection["slot"])
-        candidate = asset_index[canonical_asset_command(src)][0]
+    allowed = set(allowed_slots)
+    seen_slots: set[int] = set()
+    for index, selection in enumerate(document.get("selections") or [], start=1):
+        src = ""
+        slot = None
+        reason = ""
+        if not isinstance(selection, dict):
+            reason = f"selection {index}가 객체가 아님"
+        else:
+            src = str(selection.get("src") or "").strip()
+            try:
+                slot = int(selection.get("slot"))
+            except Exception:
+                reason = f"selection {index} slot이 정수가 아님"
+        if not reason and slot not in allowed:
+            reason = f"selection {index} slot이 허용 목록에 없음: {slot}"
+        if not reason and slot in seen_slots:
+            reason = f"selection {index} slot 중복: {slot}"
+        key = canonical_asset_command(src) if not reason else ""
+        if not reason and not key:
+            reason = f"selection {index} src 형식 오류: {src!r}"
+        matches = (asset_index.get(key) or []) if key else []
+        if not reason and not matches:
+            reason = f"selection {index} 실제 업로드 파일 없음: {src!r}"
+        if not reason and len(matches) != 1:
+            reason = f"selection {index} 업로드 파일 ID 중복: {src!r}"
+        if reason:
+            print(
+                f"[ILLUST_ORIGINAL_ASSET] 선택 항목 제외: "
+                f"selection={index}, slot={slot!r}, src={src!r}, error={reason}"
+            )
+            resolved.append({
+                "src": src,
+                "slot": slot,
+                "error": reason,
+            })
+            continue
+        seen_slots.add(slot)
+        candidate = matches[0]
         resolved.append({
             "src": candidate.command,
             "slot": slot,
             "candidate": candidate,
         })
+    failure_count = sum(1 for selection in resolved if selection.get("error"))
+    if failure_count:
+        print(
+            f"[ILLUST_ORIGINAL_ASSET] 부분 선택 완료: "
+            f"success={len(resolved) - failure_count}, failed={failure_count}, "
+            f"requested={requested_count}"
+        )
     return resolved
+
+
+def similar_asset_commands(
+    rejected_src: str,
+    asset_index: dict[str, list[OriginalAssetCandidate]],
+    limit: int = MAX_ORIGINAL_ASSET_RECOVERY_CANDIDATES,
+) -> list[str]:
+    """Return bounded real command IDs balancing relevance and lexical variety."""
+    query = str(rejected_src or "").strip().strip('"').strip("'").casefold()
+    if not query:
+        print(
+            "[ILLUST_ORIGINAL_ASSET:RECOVERY] 유사 후보 생성 건너뜀 - "
+            "거부된 src가 비어 있음"
+        )
+        return []
+    try:
+        bounded_limit = max(
+            1,
+            min(MAX_ORIGINAL_ASSET_RECOVERY_CANDIDATES, int(limit)),
+        )
+    except Exception as e:
+        print(
+            f"[ILLUST_ORIGINAL_ASSET:RECOVERY] 후보 수 파싱 실패: "
+            f"value={limit!r}, error={e}"
+        )
+        traceback.print_exc()
+        bounded_limit = MAX_ORIGINAL_ASSET_RECOVERY_CANDIDATES
+
+    scored: list[tuple[float, str, str]] = []
+    for matches in asset_index.values():
+        if len(matches) != 1:
+            continue
+        command = matches[0].command
+        folded = command.casefold()
+        score = SequenceMatcher(
+            None,
+            query,
+            folded,
+            autojunk=False,
+        ).ratio()
+        scored.append((score, folded, command))
+    scored.sort(key=lambda row: (-row[0], row[1]))
+    pool_size = min(
+        len(scored),
+        max(bounded_limit, bounded_limit * ORIGINAL_ASSET_RECOVERY_POOL_MULTIPLIER),
+    )
+    pool = scored[:pool_size]
+    selected: list[tuple[float, str, str]] = []
+    seed_count = min(
+        bounded_limit,
+        ORIGINAL_ASSET_RECOVERY_RELEVANCE_SEED_COUNT,
+        len(pool),
+    )
+    selected.extend(pool[:seed_count])
+    del pool[:seed_count]
+    relevance_weight = 1.0 - ORIGINAL_ASSET_RECOVERY_DIVERSITY_WEIGHT
+    while pool and len(selected) < bounded_limit:
+        ranked = []
+        for row in pool:
+            redundancy = max(
+                SequenceMatcher(
+                    None,
+                    row[1],
+                    chosen[1],
+                    autojunk=False,
+                ).ratio()
+                for chosen in selected
+            )
+            diversified_score = (
+                relevance_weight * row[0]
+                + ORIGINAL_ASSET_RECOVERY_DIVERSITY_WEIGHT * (1.0 - redundancy)
+            )
+            ranked.append((diversified_score, row[0], row[1], row))
+        ranked.sort(key=lambda item: (-item[0], -item[1], item[2]))
+        chosen = ranked[0][3]
+        selected.append(chosen)
+        pool.remove(chosen)
+    candidates = [row[2] for row in selected]
+    if not candidates:
+        print(
+            f"[ILLUST_ORIGINAL_ASSET:RECOVERY] 유사 후보 없음: "
+            f"rejected_src={rejected_src!r}, commands={len(asset_index)}"
+        )
+    return candidates
+
+
+def build_recovery_messages(
+    *,
+    instruction: str,
+    conversation_context: str,
+    target_slotted: str,
+    recovery_items: list[dict],
+) -> list[dict]:
+    """Build a closed-set recovery prompt for rejected selection IDs."""
+    instruction = str(instruction or "").strip()
+    if len(instruction) > MAX_ORIGINAL_ASSET_INSTRUCTION_CHARS:
+        print(
+            f"[ILLUST_ORIGINAL_ASSET:RECOVERY] 사용자 지시문 길이 제한 적용: "
+            f"chars={len(instruction)}, max={MAX_ORIGINAL_ASSET_INSTRUCTION_CHARS}"
+        )
+        instruction = instruction[:MAX_ORIGINAL_ASSET_INSTRUCTION_CHARS]
+    recovery_blocks = []
+    for item in recovery_items:
+        candidates = "\n".join(
+            f"- {command}" for command in (item.get("candidates") or [])
+        )
+        recovery_blocks.append("\n".join([
+            f"Slot: {item['slot']}",
+            f"Rejected src: {item.get('rejected_src') or '(empty)'}",
+            f"Rejection reason: {item.get('error') or '(unknown)'}",
+            "Allowed existing candidates:",
+            candidates or "- (none)",
+        ]))
+    system = """You repair rejected original image asset selections.
+For each rejected slot, read the original asset instructions and conversation context, then choose the contextually correct src from that slot's Allowed existing candidates. Candidate lists contain real uploaded command IDs and are exhaustive for this recovery step.
+
+Return JSON only with this exact machine-consumed shape:
+{"selections":[{"src":"<one exact allowed candidate>","slot":0}]}
+
+Requirements:
+- Return exactly one selection for every rejected slot.
+- Preserve each supplied slot integer exactly and do not repeat slots.
+- Copy src exactly from the Allowed existing candidates for that same slot.
+- Never invent, shorten, combine, or rewrite a candidate.
+- Do not output explanations or markdown."""
+    user = "\n\n".join([
+        "[USER ASSET COMMAND INSTRUCTIONS — VERBATIM]",
+        instruction or "(empty)",
+        "[RECENT CONVERSATION CONTEXT]",
+        str(conversation_context or "").strip() or "(none)",
+        "[CURRENT RESPONSE WITH INSERTION SLOTS]",
+        str(target_slotted or "").strip() or "(none)",
+        "[REJECTED SELECTIONS AND ALLOWED EXISTING CANDIDATES]",
+        "\n\n".join(recovery_blocks),
+        "[EXACT OUTPUT COUNT]",
+        str(len(recovery_items)),
+    ])
+    return [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user},
+    ]
+
+
+async def recover_original_asset_selections(
+    *,
+    call_llm: Callable[..., Awaitable[str]],
+    instruction: str,
+    conversation_context: str,
+    target_slotted: str,
+    allowed_slots: list[int],
+    selections: list[dict],
+    asset_index: dict[str, list[OriginalAssetCandidate]],
+    candidate_limit: int = MAX_ORIGINAL_ASSET_RECOVERY_CANDIDATES,
+) -> list[dict]:
+    """Recover invalid selections by asking the LLM to choose real candidates."""
+    allowed = set(allowed_slots)
+    occupied_slots = {
+        int(selection["slot"])
+        for selection in selections
+        if not selection.get("error") and selection.get("slot") is not None
+    }
+    recovery_items = []
+    recovery_slots: set[int] = set()
+    for selection in selections:
+        if not selection.get("error"):
+            continue
+        try:
+            slot = int(selection.get("slot"))
+        except Exception as e:
+            print(
+                f"[ILLUST_ORIGINAL_ASSET:RECOVERY] 복구 제외 - slot 파싱 실패: "
+                f"selection={selection!r}, error={e}"
+            )
+            traceback.print_exc()
+            continue
+        if slot not in allowed:
+            print(
+                f"[ILLUST_ORIGINAL_ASSET:RECOVERY] 복구 제외 - 허용되지 않은 slot: "
+                f"slot={slot}, allowed={sorted(allowed)}, selection={selection!r}"
+            )
+            continue
+        if slot in occupied_slots or slot in recovery_slots:
+            print(
+                f"[ILLUST_ORIGINAL_ASSET:RECOVERY] 복구 제외 - 이미 사용 중인 slot: "
+                f"slot={slot}, selection={selection!r}"
+            )
+            continue
+        candidates = similar_asset_commands(
+            str(selection.get("src") or ""),
+            asset_index,
+            candidate_limit,
+        )
+        if not candidates:
+            print(
+                f"[ILLUST_ORIGINAL_ASSET:RECOVERY] 복구 제외 - 실제 유사 후보 없음: "
+                f"slot={slot}, src={selection.get('src')!r}"
+            )
+            continue
+        recovery_slots.add(slot)
+        recovery_items.append({
+            "slot": slot,
+            "rejected_src": str(selection.get("src") or ""),
+            "error": str(selection.get("error") or ""),
+            "candidates": candidates,
+        })
+
+    if not recovery_items:
+        print(
+            "[ILLUST_ORIGINAL_ASSET:RECOVERY] 복구 가능한 실패 항목이 없어 "
+            "LLM 호출 건너뜀"
+        )
+        return []
+
+    messages = build_recovery_messages(
+        instruction=instruction,
+        conversation_context=conversation_context,
+        target_slotted=target_slotted,
+        recovery_items=recovery_items,
+    )
+
+    def validate(raw: str):
+        return validate_selection_response_envelope(raw, len(recovery_items))
+
+    raw = await call_llm(messages, validate)
+    valid, reason = validate(raw)
+    if not valid:
+        print(
+            f"[ILLUST_ORIGINAL_ASSET:RECOVERY] 최종 LLM 응답 검증 실패: "
+            f"reason={reason}, raw={str(raw)[:1000]!r}"
+        )
+        raise RuntimeError(f"원본 에셋 복구 응답이 유효하지 않습니다: {reason}")
+
+    document = _json_object(raw) or {}
+    expected_by_slot = {item["slot"]: item for item in recovery_items}
+    seen_slots: set[int] = set()
+    recovered = []
+    for index, selection in enumerate(document.get("selections") or [], start=1):
+        src = ""
+        slot = None
+        reason = ""
+        if not isinstance(selection, dict):
+            reason = f"recovery selection {index}가 객체가 아님"
+        else:
+            src = str(selection.get("src") or "").strip()
+            try:
+                slot = int(selection.get("slot"))
+            except Exception:
+                reason = f"recovery selection {index} slot이 정수가 아님"
+        expected = expected_by_slot.get(slot) if not reason else None
+        if not reason and expected is None:
+            reason = f"recovery selection {index} 요청하지 않은 slot: {slot}"
+        if not reason and slot in seen_slots:
+            reason = f"recovery selection {index} slot 중복: {slot}"
+        key = canonical_asset_command(src) if not reason else ""
+        candidate_keys = {
+            canonical_asset_command(command)
+            for command in (expected.get("candidates") or [])
+        } if expected else set()
+        if not reason and (not key or key not in candidate_keys):
+            reason = (
+                f"recovery selection {index} 허용 후보에 없는 src: {src!r}"
+            )
+        matches = (asset_index.get(key) or []) if key else []
+        if not reason and len(matches) != 1:
+            reason = (
+                f"recovery selection {index} 실제 업로드 파일을 고유하게 찾지 못함: "
+                f"{src!r}"
+            )
+        if reason:
+            print(
+                f"[ILLUST_ORIGINAL_ASSET:RECOVERY] 복구 항목 제외: "
+                f"selection={index}, slot={slot!r}, src={src!r}, error={reason}"
+            )
+            continue
+        seen_slots.add(slot)
+        candidate = matches[0]
+        recovered.append({
+            "src": candidate.command,
+            "slot": slot,
+            "candidate": candidate,
+        })
+        print(
+            f"[ILLUST_ORIGINAL_ASSET:RECOVERY] 복구 성공: "
+            f"slot={slot}, src={candidate.command!r}"
+        )
+    print(
+        f"[ILLUST_ORIGINAL_ASSET:RECOVERY] 복구 완료: "
+        f"success={len(recovered)}, failed={len(recovery_items) - len(recovered)}, "
+        f"requested={len(recovery_items)}"
+    )
+    return recovered
 
 
 def load_original_asset_bytes(bot_dir: str, descriptor: dict) -> bytes | None:

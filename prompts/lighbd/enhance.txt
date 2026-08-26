@@ -14,11 +14,11 @@ Known character appearance and default outfit:
 Registered character cards and their lb-xnai.lb.extra base data:
 {visual_profile_catalog}
 
-Treat a registered character card as the character's persistent body/identity state: for example, an untransformed form versus a transformed form whose hair, eyes, body, species, or identity-conditioning assets may be completely different. The previously tracked card remains authoritative; when none is tracked, the registered default remains authoritative. Select a different card only when the actual CURRENT narrative directly and explicitly states the form/base transition or directly declares that the character is in the specific non-default form. Read the full discourse to understand that explicit statement, never by a fixed keyword list. Appearance traits, eye or pupil designs, colors, hairstyle, outfit, role, faction, powers, mood, behavior, aliases, speaker labels, and resemblance to a card guide do not by themselves establish a card state or transition. A card's natural-language selection guide maps an explicitly established state to the correct ID; the guide is not evidence that the state is active. Each card has one flat default-outfit reference and no nested outfit choice. That outfit is only the fallback when the story and scene context do not call for different attire; it is not part of the character's fixed identity.
+Treat a registered character card as the character's persistent body/identity state: for example, an untransformed form versus a transformed form whose hair, eyes, body, species, or identity-conditioning assets may be completely different. Determine one chronological `profile_events` timeline from PAST HISTORY and the full CURRENT narrative. A previously tracked profile is a candidate, not unquestionable authority: correct it at START when later or clearer narrative evidence establishes a different state. A later explicit release, reversion, transformation, or other form transition may prove which form was already active at START. This is semantic chronology reasoning, never keyword matching. Appearance traits, eye or pupil designs, colors, hairstyle, outfit, role, faction, powers, mood, behavior, aliases, speaker labels, and resemblance to a card guide do not by themselves establish a card state. A card's natural-language selection guide maps a narratively established state to a registered meaningful profile name; the guide is not evidence by itself. Each card has one flat default-outfit reference and no nested outfit choice. That outfit is only the fallback when the story and scene context do not call for different attire; it is not part of the character's fixed identity.
 
 Your single wardrobe responsibility is to read the story and preserve, in ordinary natural language, what semantic wardrobe, coverage, or exposure change happened to each character. You do not resolve wardrobe tags. A downstream stage (CALL2) later translates your semantic change into the actual image-generation prompt against the tracked outfit or the default-outfit reference, and may design different scene-appropriate attire when the full context calls for it. `wardrobe_change` is the primary meaning-bearing handoff; `operation` and `state_after` are only coarse compatibility hints and must never simplify or contradict it.
 
-Required JSON shape (all seven arrays must exist; keep them empty when there is no change):
+Required JSON shape (all seven arrays must exist; keep them empty when there is no applicable item):
 {
   "reference_assignments": [
     {
@@ -29,13 +29,12 @@ Required JSON shape (all seven arrays must exist; keep them empty when there is 
   ],
   "history_characters": ["canonical name"],
   "current_characters": ["canonical name"],
-  "visual_base_events": [
+  "profile_events": [
     {
-      "segment_id": "C001",
+      "segment_id": "START or one exact Cxxx ID",
       "character": "canonical name",
-      "target_visual_profile_id": "exact registered profile ID",
-      "visual_change": "short natural-language description of the form/base state or transition established by this segment",
-      "evidence": "exact short excerpt copied from that CURRENT segment"
+      "profile": "exact meaningful profile name copied from the registered catalog",
+      "state": "short natural-language description of the profile state active from this point"
     }
   ],
   "wardrobe_events": [
@@ -72,11 +71,11 @@ Rules:
 - current_characters are every character present, acting, speaking, being addressed, or clearly participating in CURRENT CONTEXT. Include implicit participants when discourse establishes them.
 - Use plain canonical-name strings in history_characters and current_characters. Do not wrap a certain name in an object. Only use {"name": ..., "confidence": ...} when confidence is below 1.0 and materially useful.
 - Appearing in CURRENT does not authorize a wardrobe change. Existing wardrobe is carried forward by default.
-- `visual_base_events` is a sparse card-state history. When a previous card state is tracked, emit one only when CURRENT directly and explicitly states a transition to a different registered form/base. Repeated description or merely remaining in the same state is not an event. When no prior card state exists, keep the registered default unless CURRENT itself directly and explicitly declares that a specific non-default form is active. First appearance, a matching trait bundle, or contextual plausibility does not lower this threshold.
-- Choose the profile by the meaning of the direct explicit form statement, prior tracked state, and the natural-language selection guides. Never use keyword matching, substring rules, a transformation-word list, or filename conventions. Do not infer a profile from appearance descriptions, distinctive eyes or pupils, colors, hairstyle, attire, title, role, faction, powers, behavior, setting, historical lore, or similarity to a card guide. The chosen profile supplies one default-outfit reference, not a mandatory outfit.
-- Copy the target profile ID exactly from the registered catalog. Never invent, translate, slugify, combine, or partially match an ID.
-- `visual_change` is the natural-language semantic handoff and must explain the direct explicit form/base state or transition stated by CURRENT. It must not upgrade a trait, outfit, role, affiliation, or inference into a form declaration. The IDs are routing handles, not a replacement for reasoning.
-- Every emitted visual-base event needs literal evidence from its numbered CURRENT segment, and that copied evidence must itself directly express the form/base transition or explicitly active non-default form. A nearby appearance, outfit, eye, role, or faction description is not qualifying evidence. Do not use PAST HISTORY as evidence for a new event. If no qualifying literal excerpt exists, leave `visual_base_events` empty. If the card merely persists from history, emit no event.
+- For every CURRENT character who has more than one registered profile, emit exactly one `profile_events` item with `segment_id: "START"`. Determine that starting profile from PAST HISTORY, the previous tracked candidate, and the full CURRENT chronology. If the state remains genuinely ambiguous, preserve the previous tracked profile; use the registered default only when neither narrative evidence nor a previous tracked profile establishes another state.
+- After START, emit another `profile_events` item only at an exact Cxxx segment where CURRENT establishes a transition to a different registered form/base. Repeated description or merely remaining in the same state is not another event. Keep events in chronology order.
+- `profile` must copy one meaningful registered profile name exactly from that character's catalog. Never output or reconstruct an internal profile ID, translate a profile name, invent a name, or partially match one.
+- `state` is the natural-language CALL1-to-CALL2 handoff. State what form/base is active from START or what transition becomes active at the Cxxx event. It must not upgrade a trait, outfit, role, affiliation, or inference into a form declaration.
+- Choose each profile by the meaning of PAST HISTORY, CURRENT chronology, the previous tracked candidate, and the natural-language selection guides. Never use keyword matching, substring rules, a transformation-word list, or filename conventions. Do not infer a profile from appearance descriptions, distinctive eyes or pupils, colors, hairstyle, attire, title, role, faction, powers, behavior, setting, historical lore, or similarity to a card guide. The chosen profile supplies one default-outfit reference, not a mandatory outfit.
 - When a character card changes, its default outfit becomes the fallback wardrobe reference only when no stronger tracked or contextual attire applies. If the same passage establishes a clothing change, emit the visual-base event first and a separate wardrobe event; downstream CALL2 may also construct context-appropriate attire when the full scene clearly calls for it.
 - A temporary hairstyle arrangement, expression, pose, damage, dirt, lighting, camera effect, or one-off garment adjustment is not a visual profile change. Use hairstyle_events or wardrobe_events where applicable, otherwise leave it to the scene builder.
 - `wardrobe_events` is a sparse, evidence-bearing change history, not a sequence of complete outfit snapshots. Each event reports only what CURRENT establishes as changed. Downstream resolves the resulting wardrobe according to the operation.

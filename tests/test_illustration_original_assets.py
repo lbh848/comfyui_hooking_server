@@ -41,6 +41,38 @@ def test_original_asset_index_uses_direct_character_files_and_logical_webp_id(
     assert index[key][0].command == "Yuu_Casual_happy.webp"
 
 
+def test_similar_asset_commands_caps_at_thirty_and_keeps_diverse_matches() -> None:
+    commands = [
+        f"Hero_School_sad_{index:02}.webp"
+        for index in range(40)
+    ] + [
+        "Hero_Overcome_School_sad.webp",
+        "Hero_Corruption_School_sad.webp",
+        "Hero_Casual_sad.webp",
+        "Hero_School_crying.webp",
+    ]
+    asset_index = {}
+    for command in commands:
+        candidate = original_assets.OriginalAssetCandidate(
+            command=command,
+            bot_name="sample",
+            character="Hero",
+            filename=f"{command}.webp",
+            path=str(Path("Hero") / f"{command}.webp"),
+        )
+        asset_index[original_assets.canonical_asset_command(command)] = [candidate]
+
+    candidates = original_assets.similar_asset_commands(
+        "Hero_School_sad.webp",
+        asset_index,
+    )
+
+    assert len(candidates) == 30
+    assert len(candidates) < len(commands)
+    assert "Hero_Overcome_School_sad.webp" in candidates
+    assert "Hero_Corruption_School_sad.webp" in candidates
+
+
 @pytest.mark.asyncio
 async def test_one_step_selector_does_not_send_uploaded_filename_index_to_llm(
     tmp_path: Path,
@@ -82,6 +114,153 @@ async def test_one_step_selector_does_not_send_uploaded_filename_index_to_llm(
     assert "SHOULD_NOT_ENTER_PROMPT.webp" not in prompt_text
     assert selected[0]["src"] == "Aoi_School_happy.webp"
     assert selected[0]["candidate"].filename == "Aoi_School_happy.webp.webp"
+
+
+@pytest.mark.asyncio
+async def test_original_asset_output_keeps_valid_items_when_one_file_is_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bot_dir = tmp_path / "bot"
+    valid_bytes = b"RIFFvalidWEBP"
+    _write_image(
+        bot_dir / "sample" / "Aoi" / "Aoi_School_happy.webp.webp",
+        valid_bytes,
+    )
+    monkeypatch.setattr(server, "BASE_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        server,
+        "_original_asset_bot_character_names",
+        lambda _bot_name: ["Aoi"],
+    )
+
+    raw = json.dumps({
+        "selections": [
+            {"src": "Aoi_School_happy.webp", "slot": 1},
+            {"src": "Aoi_School_missing.webp", "slot": 2},
+        ]
+    })
+
+    async def fake_pipeline_llm(call_name, _messages, **kwargs):
+        if call_name == "ORIGINAL-ASSET":
+            assert kwargs["result_validator"](raw) == (True, "")
+            return raw
+        assert call_name == "ORIGINAL-ASSET-RECOVERY"
+        raise RuntimeError("recovery unavailable")
+
+    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_llm)
+
+    result = await server._select_original_asset_outputs(
+        payload={
+            "chats": [{"role": "char", "data": "First\n\nSecond\n\nThird"}],
+            "target_slotted": (
+                "First\n\n[Slot 1]\n\nSecond\n\n[Slot 2]\n\nThird"
+            ),
+        },
+        toggles={
+            "original_asset_count": 2,
+            "original_asset_instruction": "Aoi: Aoi_School; happy, missing",
+            "call2_context_turns": 5,
+        },
+        active_bot="sample",
+        used_slots=set(),
+        reserve_slot_count=0,
+        stream_notify=None,
+        llm_trace=[],
+    )
+
+    assert len(result["items"]) == 1
+    assert result["items"][0]["slot"] == 1
+    assert result["images"] == [valid_bytes]
+    assert result["failures"] == [{
+        "slot": 2,
+        "error": "selection 2 실제 업로드 파일 없음: 'Aoi_School_missing.webp'",
+    }]
+
+
+@pytest.mark.asyncio
+async def test_original_asset_output_recovers_missing_id_from_real_candidates(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bot_dir = tmp_path / "bot"
+    valid_bytes = b"RIFFvalidWEBP"
+    recovered_bytes = b"RIFFrecoveredWEBP"
+    _write_image(
+        bot_dir / "sample" / "Aoi" / "Aoi_Casual_happy.webp.webp",
+        valid_bytes,
+    )
+    _write_image(
+        bot_dir / "sample" / "Aoi" / "Aoi_Overcome_School_sad.webp.webp",
+        recovered_bytes,
+    )
+    _write_image(
+        bot_dir / "sample" / "Aoi" / "Aoi_Corruption_School_sad.webp.webp"
+    )
+    monkeypatch.setattr(server, "BASE_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        server,
+        "_original_asset_bot_character_names",
+        lambda _bot_name: ["Aoi"],
+    )
+
+    initial_raw = json.dumps({
+        "selections": [
+            {"src": "Aoi_Casual_happy.webp", "slot": 1},
+            {"src": "Aoi_School_sad.webp", "slot": 2},
+        ]
+    })
+    recovery_raw = json.dumps({
+        "selections": [
+            {"src": "Aoi_Overcome_School_sad.webp", "slot": 2},
+        ]
+    })
+    calls = []
+
+    async def fake_pipeline_llm(call_name, messages, **kwargs):
+        calls.append(call_name)
+        if call_name == "ORIGINAL-ASSET":
+            assert kwargs["result_validator"](initial_raw) == (True, "")
+            return initial_raw
+        assert call_name == "ORIGINAL-ASSET-RECOVERY"
+        prompt_text = "\n".join(message["content"] for message in messages)
+        assert "Rejected src: Aoi_School_sad.webp" in prompt_text
+        assert "Aoi_Overcome_School_sad.webp" in prompt_text
+        assert "Aoi_Corruption_School_sad.webp" in prompt_text
+        assert kwargs["result_validator"](recovery_raw) == (True, "")
+        return recovery_raw
+
+    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_llm)
+
+    result = await server._select_original_asset_outputs(
+        payload={
+            "chats": [{
+                "role": "char",
+                "data": "Aoi changes back into her school uniform and looks sad.",
+            }],
+            "target_slotted": (
+                "First\n\n[Slot 1]\n\nSecond\n\n[Slot 2]\n\nThird"
+            ),
+        },
+        toggles={
+            "original_asset_count": 2,
+            "original_asset_instruction": (
+                "Aoi: Aoi_Casual, Aoi_Overcome_School, "
+                "Aoi_Corruption_School; happy, sad"
+            ),
+            "call2_context_turns": 5,
+        },
+        active_bot="sample",
+        used_slots=set(),
+        reserve_slot_count=0,
+        stream_notify=None,
+        llm_trace=[],
+    )
+
+    assert calls == ["ORIGINAL-ASSET", "ORIGINAL-ASSET-RECOVERY"]
+    assert [item["slot"] for item in result["items"]] == [1, 2]
+    assert result["images"] == [valid_bytes, recovered_bytes]
+    assert result["failures"] == []
 
 
 def test_original_asset_session_reloads_source_bytes_after_metadata_restore(
@@ -131,10 +310,22 @@ def test_original_asset_settings_and_routing_are_registered() -> None:
     assert toggles["original_asset_count"] == 30
     assert toggles["original_asset_instruction"] == "rules"
     assert pipeline._CALL_TASK_KEYS["ORIGINAL-ASSET"] == "illustration_original_asset"
+    assert (
+        pipeline._CALL_TASK_KEYS["ORIGINAL-ASSET-RECOVERY"]
+        == "illustration_original_asset_recovery"
+    )
+    assert pipeline._CALL_QUEUE_SUBTASK_GROUPS["ORIGINAL-ASSET-RECOVERY"] == (
+        "original_asset_recovery",
+        "원본 에셋 실패 항목 복구",
+    )
     assert "illustration_original_asset" in server.DEFAULT_CONFIG["llm_routing"]
     assert server.DEFAULT_CONFIG["llm_routing"]["illustration_original_asset"][
         "json_mode"
     ] is True
+    assert "illustration_original_asset_recovery" in server.DEFAULT_CONFIG["llm_routing"]
+    assert server.DEFAULT_CONFIG["llm_routing"][
+        "illustration_original_asset_recovery"
+    ]["json_mode"] is True
 
 
 def test_illustration_output_mode_derives_booleans_and_legacy_fallback() -> None:
@@ -181,6 +372,7 @@ def test_frontend_places_original_asset_tab_after_output_count() -> None:
     assert "key: 'original_asset_count'" in groups
     assert "key: 'original_asset_instruction'" in groups
     assert "key: 'illustration_original_asset'" in frontend
+    assert "key: 'illustration_original_asset_recovery'" in frontend
 
 
 @pytest.mark.asyncio

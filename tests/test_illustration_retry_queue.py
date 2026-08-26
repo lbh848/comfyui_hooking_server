@@ -538,6 +538,136 @@ async def test_context_queue_keeps_generating_until_call3_returns(tmp_path, monk
 
 
 @pytest.mark.asyncio
+async def test_context_queue_reuses_immediately_enqueued_keyvis_without_duplicate(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(pipeline, "SESSION_DIR", str(tmp_path / "sessions"))
+    session_id = "risu_" + ("a" * 64)
+    original_prompt_id = "early-keyvis-original"
+    pipeline.create_session(session_id, "")
+    server.prompts[original_prompt_id] = {
+        "status": "running",
+        "prompt": {},
+        "outputs": {},
+        "filename": None,
+        "save_node_id": "9",
+        "image_bytes": None,
+    }
+
+    keyvis = {
+        "kind": "keyvis",
+        "slot": -1,
+        "characters": [{"name": "Hero", "positive": "hero key visual"}],
+        "raw_positive": "trusted key visual prompt",
+        "raw_negative": "key visual negative",
+    }
+    scene = {
+        "kind": "scene",
+        "slot": 0,
+        "characters": [{"name": "Hero", "positive": "hero scene"}],
+        "raw_positive": "scene prompt",
+        "raw_negative": "scene negative",
+    }
+    enqueue_log = []
+    child_prompt_ids = []
+
+    async def fake_build(
+        *args,
+        on_call2_ready=None,
+        on_keyvis_ready=None,
+        **kwargs,
+    ):
+        assert on_keyvis_ready is not None
+        assert on_call2_ready is not None
+        await on_keyvis_ready({
+            "session_id": session_id,
+            "context": "context",
+            "prompt_format": "v3",
+            "total_count": 2,
+            "items": [keyvis],
+        })
+        assert [entry[0] for entry in enqueue_log] == [-1]
+        await on_call2_ready({
+            "session_id": session_id,
+            "context": "context",
+            "prompt_format": "v3",
+            "items": [keyvis, scene],
+        })
+        assert [entry[0] for entry in enqueue_log] == [-1, 0]
+        return {
+            "session_id": session_id,
+            "context": "context",
+            "prompt_format": "v3",
+            "items": [keyvis, scene],
+        }
+
+    async def fake_add_item(item_type, label, params, priority=10, **kwargs):
+        assert item_type == "illustration"
+        child_id = params["prompt_id"]
+        child_prompt_ids.append(child_id)
+        raw = params["raw_body"]
+        slot = -1 if "slot -1" in label else 0
+        enqueue_log.append((
+            slot,
+            raw["illustration_context_index"],
+            raw["illustration_defer_postprocess"],
+        ))
+        future = asyncio.get_running_loop().create_future()
+        queue_item = SimpleNamespace(status="completed", completion_future=future)
+        server.prompts[child_id]["image_bytes"] = f"image-{slot}".encode()
+        future.set_result({"success": True})
+        return queue_item
+
+    async def fake_complete_prompt(prompt_id, save_node_id, filename):
+        server.prompts[prompt_id]["status"] = "completed"
+
+    async def ignore_progress(*args, **kwargs):
+        return None
+
+    monkeypatch.setitem(server.app_config, "bot_selected", "")
+    monkeypatch.setitem(server.app_config, "illustration_provider", "comfy")
+    monkeypatch.setitem(
+        server.app_config,
+        "illustration_context_toggles",
+        {
+            "prompt_format": "v3",
+            "multi_char_mask_enabled": False,
+            "original_asset_enabled": False,
+        },
+    )
+    monkeypatch.setattr(pipeline, "build_from_context", fake_build)
+    monkeypatch.setattr(server.queue_manager, "add_item", fake_add_item)
+    monkeypatch.setattr(server.queue_manager, "_notify_progress", ignore_progress)
+    monkeypatch.setattr(server, "set_prompt_by_title", lambda *args, **kwargs: True)
+    monkeypatch.setattr(server, "complete_prompt_from_reschedule", fake_complete_prompt)
+    monkeypatch.setattr(server, "build_active_lb_instruction", lambda *args: "")
+    monkeypatch.setattr(server, "build_lb_extra_costume", lambda *args: "")
+    monkeypatch.setattr(server, "build_lb_extra_names", lambda *args: "")
+    monkeypatch.setattr(server, "build_bot_character_names", lambda *args: "")
+
+    parent_item = SimpleNamespace(params={
+        "prompt_id": original_prompt_id,
+        "payload": {"session_id": session_id, "chats": []},
+        "prompt_data": {},
+        "raw_body": {},
+    })
+
+    try:
+        result = await server.process_illustration_context_queue_item(parent_item)
+
+        assert [entry[0] for entry in enqueue_log] == [-1, 0]
+        assert enqueue_log[0][1:] == (1, True)
+        assert result["count"] == 2
+        assert result["requested_count"] == 2
+    finally:
+        pipeline._SESSIONS.pop(session_id, None)
+        pipeline._LOOKUP_KEYS.pop("a" * 24, None)
+        server.prompts.pop(original_prompt_id, None)
+        for child_prompt_id in child_prompt_ids:
+            server.prompts.pop(child_prompt_id, None)
+
+
+@pytest.mark.asyncio
 async def test_context_queue_defers_multi_character_scene_until_layout_is_ready(
     tmp_path, monkeypatch
 ):

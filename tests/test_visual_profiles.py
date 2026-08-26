@@ -16,6 +16,7 @@ from modes.visual_profiles import (
     effective_bot_profiles,
     effective_character_cards,
     normalize_visual_cards,
+    profile_by_name,
     resolve_render_character,
     resolve_visual_base,
     store_visual_cards,
@@ -228,7 +229,7 @@ def test_card_rep_image_must_stay_inside_character_folder():
         normalize_visual_cards(cards)
 
 
-def test_natural_catalog_keeps_prose_and_internal_route_ids():
+def test_natural_catalog_keeps_prose_and_hides_internal_route_ids():
     profiles = {"Adachi": cards_to_character_profiles("Adachi", _cards())}
 
     catalog = build_natural_profile_catalog(profiles)
@@ -237,12 +238,21 @@ def test_natural_catalog_keeps_prose_and_internal_route_ids():
     assert "카드 [2]" in catalog
     assert "서사가 확정한 다른 카드 상태도 없을 때만 폴백" in catalog
     assert "몸 자체가 변형된 상태" in catalog
-    assert "`despair`" in catalog
+    assert "`평상시 모습`" in catalog
+    assert "`절망체`" in catalog
+    assert "`despair`" not in catalog
     assert "별도 복장 선택 축이 없으며" in catalog
     assert "default_outfit" in catalog
     assert "참고하는 기본 복장" in catalog
     assert "장면 맥락이 다른 복장을 요구하면 고정하지 않는다" in catalog
     assert "white hair" not in catalog
+
+
+def test_profile_name_resolution_is_exact_and_returns_internal_card():
+    profiles = cards_to_character_profiles("Adachi", _cards())
+
+    assert profile_by_name(profiles, "절망체")["id"] == "despair"
+    assert profile_by_name(profiles, "절망") is None
 
 
 def test_nested_outfits_are_migrated_to_the_selected_default_only():

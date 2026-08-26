@@ -534,6 +534,42 @@ def profile_by_id(character_profiles: dict, profile_id: str) -> dict | None:
     )
 
 
+def visual_profile_names(profile: dict) -> list[str]:
+    """Return meaningful exact names that an LLM may use for one profile."""
+    aliases = [
+        _clean_text(value)
+        for value in (profile.get("aliases") or [])
+        if _clean_text(value)
+    ]
+    if aliases:
+        return list(dict.fromkeys(aliases))
+    label = _clean_text(profile.get("label"))
+    return [label] if label else []
+
+
+def profile_by_name(character_profiles: dict, profile_name: str) -> dict | None:
+    """Resolve one exact registered semantic name without fuzzy matching."""
+    wanted = _clean_text(profile_name).casefold()
+    if not wanted:
+        return None
+    matches = [
+        profile
+        for profile in character_profiles.get("profiles") or []
+        if wanted in {
+            name.casefold() for name in visual_profile_names(profile)
+        }
+    ]
+    if len(matches) > 1:
+        error = (
+            "캐릭터 카드의 의미 이름이 중복됩니다: "
+            f"character={character_profiles.get('name')!r}, name={profile_name!r}, "
+            f"ids={[profile.get('id') for profile in matches]}"
+        )
+        print(f"[CHARACTER_CARD] 카드 의미 이름 해석 실패: {error}")
+        raise VisualProfileValidationError(error)
+    return matches[0] if matches else None
+
+
 def resolve_visual_base(
     character_profiles: dict,
     profile_id: str = "",
@@ -558,6 +594,11 @@ def resolve_visual_base(
     return {
         "character": _clean_text(character_profiles.get("name")),
         "visual_profile_id": profile["id"],
+        "visual_profile_name": (
+            visual_profile_names(profile)[0]
+            if visual_profile_names(profile)
+            else profile["label"]
+        ),
         "visual_profile_label": profile["label"],
         "appearance": deepcopy(profile.get("appearance") or []),
         "outfit": deepcopy(profile.get("default_outfit") or []),
@@ -592,24 +633,31 @@ def profile_asset_relative_dir(character_name: str, profile_id: str) -> str:
 
 
 def build_natural_profile_catalog(effective_profiles: dict[str, dict]) -> str:
-    """Render exact internal IDs alongside user-authored natural-language rules."""
+    """Render semantic profile names and user-authored selection rules for CALL1."""
     sections: list[str] = []
     for character_name, character in effective_profiles.items():
         profiles = character.get("profiles") or []
         if not profiles:
             print(f"[CHARACTER_CARD] CALL1 카탈로그에 넣을 카드 없음: {character_name!r}")
             continue
+        default_profile = profile_by_id(
+            character,
+            _clean_text(character.get("default_visual_profile_id")),
+        )
+        default_names = visual_profile_names(default_profile or {})
+        default_name = default_names[0] if default_names else "카드 1"
         lines = [
             f"### {character_name}",
-            f"기본 카드의 내부 ID는 `{character.get('default_visual_profile_id')}`이다. "
+            f"기본 프로필 이름은 `{default_name}`이다. "
             "이전 추적 상태도 서사가 확정한 다른 카드 상태도 없을 때만 폴백으로 사용한다.",
         ]
         for index, profile in enumerate(profiles):
             guide = _clean_text(profile.get("selection_guide")) or "별도 선택 설명 없음."
-            aliases = ", ".join(profile.get("aliases") or []) or "없음"
+            names = visual_profile_names(profile)
+            rendered_names = ", ".join(f"`{name}`" for name in names) or f"`카드 {index + 1}`"
             lines.append(
-                f"- 카드 [{index + 1}] (내부 ID `{profile.get('id')}`): {guide} "
-                f"작중 호칭/별칭: {aliases}"
+                f"- 카드 [{index + 1}] — profile에 복사할 수 있는 정확한 이름: "
+                f"{rendered_names}. 선택 기준: {guide}"
             )
             lines.append(
                 "  이 카드에는 별도 복장 선택 축이 없으며, 카드 자체의 "
