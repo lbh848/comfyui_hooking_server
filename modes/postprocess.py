@@ -2890,6 +2890,34 @@ def _default_bubble() -> dict:
     }
 
 
+def _default_subtitle() -> dict:
+    """봇별 방송 애니메이션 자막 설정 기본값."""
+    from modes.subtitle_render import DEFAULT_SUBTITLE_SETTINGS
+
+    return dict(DEFAULT_SUBTITLE_SETTINGS)
+
+
+def _load_bot_subtitle(bot_name: str) -> dict:
+    """bot.json에서 해당 봇의 postprocess_subtitle을 읽고 검증한다."""
+    from modes.subtitle_render import normalize_subtitle_settings
+
+    if not bot_name:
+        print("[POSTPROCESS] 봇 이름이 비어 자막 기본값 사용")
+        return _default_subtitle()
+    try:
+        from modes.bot_mode import _load_bot_data
+
+        data = _load_bot_data()
+        bot = next((b for b in data.get("bots", []) if b.get("name") == bot_name), None)
+        if bot and isinstance(bot.get("postprocess_subtitle"), dict):
+            return normalize_subtitle_settings(bot["postprocess_subtitle"])
+        print(f"[POSTPROCESS] 봇 자막 저장값 없음, 기본값 사용: bot={bot_name!r}")
+    except Exception as e:
+        print(f"[POSTPROCESS] 봇 자막 설정 로드 실패({bot_name}): {e}")
+        traceback.print_exc()
+    return _default_subtitle()
+
+
 def _load_bot_bubble(bot_name: str) -> dict:
     """bot.json에서 해당 봇의 postprocess_bubble 반환. 없으면 기본값."""
     if not bot_name:
@@ -3084,6 +3112,31 @@ def get_bubble_settings(
         "face_crop_top": max(1.0, min(10.0, float(face_crop_top))),
         "face_crop_bottom": max(1.0, min(10.0, float(face_crop_bottom))),
     }
+
+
+def get_subtitle_settings(
+    config: dict,
+    bot_name: str = "",
+    *,
+    force: bool = False,
+) -> Optional[dict]:
+    """활성 시 검증된 방송 애니메이션 자막 설정을 반환한다."""
+    if not force and not is_postprocess_active(config):
+        print(
+            "[POSTPROCESS] 자막 후처리 스킵: "
+            f"마스터 토글 비활성, bot={bot_name!r}"
+        )
+        return None
+    subtitle = _load_bot_subtitle(bot_name) if bot_name else _default_subtitle()
+    if not force and not bool(subtitle.get("enabled", False)):
+        print(
+            "[POSTPROCESS] 자막 후처리 스킵: "
+            f"봇별 자막 토글 비활성, bot={bot_name!r}"
+        )
+        return None
+    from modes.subtitle_render import normalize_subtitle_settings
+
+    return normalize_subtitle_settings(subtitle)
 
 
 def default_postprocess_config() -> dict:

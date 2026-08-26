@@ -2976,6 +2976,39 @@ class BotMode:
             traceback.print_exc()
             return _json_error(str(e))
 
+    async def handle_get_postprocess_subtitle(self, request):
+        """GET /api/bot_mode/postprocess_subtitle?bot=X"""
+        try:
+            bot_name = request.query.get("bot", "").strip()
+            if not bot_name:
+                print("[BOT_MODE] postprocess_subtitle 로드 거부: 봇 이름이 비어 있음")
+                return _json_error("봇 이름이 필요합니다.")
+            subtitle = _load_postprocess_subtitle(bot_name)
+            mode = _get_postprocess_mode(bot_name)
+            return _json_ok({"subtitle": subtitle, "mode": mode})
+        except Exception as e:
+            print(f"[BOT_MODE] postprocess_subtitle 로드 실패: {e}")
+            traceback.print_exc()
+            return _json_error(str(e))
+
+    async def handle_save_postprocess_subtitle(self, request):
+        """POST /api/bot_mode/postprocess_subtitle body: {bot, subtitle, mode?}"""
+        try:
+            body = await request.json()
+            bot_name = str(body.get("bot") or "").strip()
+            subtitle = body.get("subtitle", {})
+            mode = body.get("mode")
+            if not bot_name:
+                print("[BOT_MODE] postprocess_subtitle 저장 거부: 봇 이름이 비어 있음")
+                return _json_error("봇 이름이 필요합니다.")
+            async with self._lock:
+                _save_postprocess_subtitle(bot_name, subtitle, mode=mode)
+            return _json_ok({"saved": True})
+        except Exception as e:
+            print(f"[BOT_MODE] postprocess_subtitle 저장 실패: {e}")
+            traceback.print_exc()
+            return _json_error(str(e))
+
 
     async def handle_get_lb_extra(self, request):
         """GET /api/bot_mode/lb_extra - 저장된 분류 데이터(편집본) 로드"""
@@ -4735,18 +4768,6 @@ def _save_utility_settings(bot_name: str, char_name: str, settings: dict):
 
 
 # ─── 후처리 봇별 설정 (postprocess_vn) ─────────────────────
-def _backup_bot_json():
-    """bot.json 덮어쓰기 전 요구사항/ 폴더에 백업 (CLAUDE.md 데이터 안전 규칙)."""
-    backup_dir = os.path.join(BASE_DIR, "요구사항")
-    try:
-        os.makedirs(backup_dir, exist_ok=True)
-        ts = time.strftime("%Y%m%d_%H%M%S")
-        if os.path.isfile(BOT_DATA_FILE):
-            shutil.copy2(BOT_DATA_FILE, os.path.join(backup_dir, f"bot.json.bak_{ts}"))
-    except Exception as e:
-        print(f"[BOT_MODE] WARN: bot.json 백업 실패: {e}")
-
-
 def _load_postprocess_vn(bot_name: str) -> dict:
     """봇의 postprocess_vn 반환. 없으면 기본값."""
     if not bot_name:
@@ -4773,7 +4794,6 @@ def _save_postprocess_vn(bot_name: str, vn: dict):
     bot = next((b for b in data.get("bots", []) if b.get("name") == bot_name), None)
     if not bot:
         raise ValueError(f"봇을 찾을 수 없음: {bot_name}")
-    _backup_bot_json()
     # 임시/파생 필드는 저장 제외
     clean = dict(vn or {})
     clean.pop("emotion_rows", None)
@@ -4817,7 +4837,6 @@ def _save_postprocess_bubble(bot_name: str, bubble: dict):
     bot = next((b for b in data.get("bots", []) if b.get("name") == bot_name), None)
     if not bot:
         raise ValueError(f"봇을 찾을 수 없음: {bot_name}")
-    _backup_bot_json()
     from modes.postprocess import (
         normalize_layout_font_scale,
         normalize_min_font_size,
@@ -4852,8 +4871,55 @@ def _save_postprocess_bubble(bot_name: str, bubble: dict):
     print(f"[BOT_MODE] postprocess_bubble 저장: bot={bot_name}")
 
 
+def _load_postprocess_subtitle(bot_name: str) -> dict:
+    """봇의 postprocess_subtitle 반환. 저장값이 없으면 안전한 기본값."""
+    from modes.postprocess import _default_subtitle
+    from modes.subtitle_render import normalize_subtitle_settings
+
+    if not bot_name:
+        print("[BOT_MODE] postprocess_subtitle 기본값 사용: 봇 이름이 비어 있음")
+        return _default_subtitle()
+    try:
+        data = _load_bot_data()
+        bot = next((b for b in data.get("bots", []) if b.get("name") == bot_name), None)
+        if bot and isinstance(bot.get("postprocess_subtitle"), dict):
+            return normalize_subtitle_settings(bot["postprocess_subtitle"])
+        print(f"[BOT_MODE] postprocess_subtitle 저장값 없음: bot={bot_name!r}")
+    except Exception as e:
+        print(f"[BOT_MODE] postprocess_subtitle 로드 실패({bot_name}): {e}")
+        traceback.print_exc()
+    return _default_subtitle()
+
+
+def _save_postprocess_subtitle(
+    bot_name: str,
+    subtitle: dict,
+    *,
+    mode: str | None = None,
+) -> None:
+    """검증된 봇별 자막 설정과 선택적 활성 모드를 한 번에 저장한다."""
+    if not bot_name:
+        raise ValueError("봇 이름이 필요합니다.")
+    if mode is not None and mode not in ("vn", "bubble", "subtitle"):
+        raise ValueError(f"잘못된 postprocess_mode: {mode}")
+    from modes.subtitle_render import normalize_subtitle_settings
+
+    data = _load_bot_data()
+    bot = next((b for b in data.get("bots", []) if b.get("name") == bot_name), None)
+    if not bot:
+        raise ValueError(f"봇을 찾을 수 없음: {bot_name}")
+    bot["postprocess_subtitle"] = normalize_subtitle_settings(subtitle)
+    if mode is not None:
+        bot["postprocess_mode"] = mode
+    _save_bot_data(data)
+    print(
+        f"[BOT_MODE] postprocess_subtitle 저장: bot={bot_name}, "
+        f"mode={mode or bot.get('postprocess_mode') or 'vn'}"
+    )
+
+
 def _get_postprocess_mode(bot_name: str) -> str:
-    """봇의 활성 후처리 모드: 'vn' | 'bubble'. 기본 'vn' (기존 동작 유지)."""
+    """봇의 활성 후처리 모드: vn | bubble | subtitle. 기본 vn."""
     if not bot_name:
         return "vn"
     try:
@@ -4861,24 +4927,24 @@ def _get_postprocess_mode(bot_name: str) -> str:
         bot = next((b for b in data.get("bots", []) if b.get("name") == bot_name), None)
         if bot:
             m = bot.get("postprocess_mode")
-            if m in ("vn", "bubble"):
+            if m in ("vn", "bubble", "subtitle"):
                 return m
     except Exception as e:
         print(f"[BOT_MODE] postprocess_mode 로드 실패({bot_name}): {e}")
+        traceback.print_exc()
     return "vn"
 
 
 def _set_postprocess_mode(bot_name: str, mode: str):
-    """봇의 활성 후처리 모드 저장('vn' | 'bubble'). 백업 후 갱신."""
+    """봇의 활성 후처리 모드 저장(vn | bubble | subtitle)."""
     if not bot_name:
         raise ValueError("봇 이름이 필요합니다.")
-    if mode not in ("vn", "bubble"):
+    if mode not in ("vn", "bubble", "subtitle"):
         raise ValueError(f"잘못된 postprocess_mode: {mode}")
     data = _load_bot_data()
     bot = next((b for b in data.get("bots", []) if b.get("name") == bot_name), None)
     if not bot:
         raise ValueError(f"봇을 찾을 수 없음: {bot_name}")
-    _backup_bot_json()
     bot["postprocess_mode"] = mode
     _save_bot_data(data)
     print(f"[BOT_MODE] postprocess_mode 저장: bot={bot_name} → {mode}")
@@ -4898,7 +4964,6 @@ def _migrate_postprocess_vn(data: dict):
         except Exception as e:
             print(f"[BOT_MODE] config.json 로드 실패(마이그레이션): {e}")
     if old_vn:
-        _backup_bot_json()
         from modes.postprocess import _default_vn
         changed = False
         for bot in data.get("bots", []):

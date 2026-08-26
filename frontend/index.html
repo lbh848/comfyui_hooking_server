@@ -21416,6 +21416,10 @@
                                 <span>💭 말풍선 모드</span>
                                 <span class="pp-mode-badge inactive" data-mode="bubble">비활성</span>
                             </button>
+                            <button type="button" class="pp-tab-btn" onclick="switchPostprocessTab('subtitle')">
+                                <span>🎞 자막 모드</span>
+                                <span class="pp-mode-badge inactive" data-mode="subtitle">비활성</span>
+                            </button>
                         </div>
 
                         <!-- 대사 모드 패널 -->
@@ -21718,6 +21722,103 @@
                                         <button type="button" class="btn" style="padding:3px 10px; font-size:0.72rem;" onclick="ppOpenParallelTestModal()">병렬 테스트</button>
                                     </div>
                                     <div id="pp-preview-match" style="min-height:0;"></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 방송 애니메이션 자막 모드 패널 -->
+                        <div id="postprocess-tab-subtitle" class="settings-tab-panel" style="display:none;">
+                            <div class="pp-card pp-card-primary">
+                                <div class="pp-switch-line">
+                                    <div>
+                                        <div style="font-size:0.88rem; font-weight:600;">방송 애니 자막 모드</div>
+                                        <div class="pp-hint">화자 메타데이터는 숨기고 대사만 하단 안전영역에 배치합니다. 굵은 검정 외곽선과 부드러운 그림자를 겹쳐 밝고 복잡한 장면에서도 읽히게 합니다.</div>
+                                    </div>
+                                    <label class="switch"><input type="checkbox" id="pp-subtitle-enabled" onchange="renderPostprocessPreview()"><span class="slider"></span></label>
+                                </div>
+                            </div>
+
+                            <div class="pp-card">
+                                <div class="pp-card-title">글자 · 줄 구성</div>
+                                <div class="pp-row">
+                                    <span class="pp-label">폰트</span>
+                                    <div class="pp-field-inline">
+                                        <select id="pp-subtitle-font" class="select" style="flex:1;" onchange="onPpFontChange('pp-subtitle-font')"></select>
+                                        <button type="button" class="btn" style="padding:4px 10px; font-size:0.72rem;" onclick="ppRefreshFontList(true, 'pp-subtitle-font')">새로고침</button>
+                                        <label class="btn" style="padding:4px 10px; font-size:0.72rem; cursor:pointer;">업로드<input type="file" accept=".ttf,.otf,.ttc" style="display:none;" onchange="ppUploadFont(event, 'pp-subtitle-font')"></label>
+                                        <button type="button" class="btn" style="padding:4px 10px; font-size:0.72rem;" onclick="ppDeleteFont('pp-subtitle-font')">삭제</button>
+                                    </div>
+                                </div>
+                                <div class="pp-row">
+                                    <span class="pp-label">폰트 크기</span>
+                                    <div class="pp-field-inline">
+                                        <input id="pp-subtitle-font-size" type="number" class="input" min="12" max="400" step="1" style="width:110px;" oninput="renderPostprocessPreview()">
+                                        <span style="font-size:0.72rem; color:var(--text2,#999);">px</span>
+                                        <span style="font-size:0.72rem; color:var(--text2,#999); margin-left:10px;">최소</span>
+                                        <input id="pp-subtitle-min-font-size" type="number" class="input" min="10" max="400" step="1" style="width:110px;" oninput="renderPostprocessPreview()">
+                                    </div>
+                                </div>
+                                <div class="pp-row">
+                                    <span class="pp-label">자막 폭</span>
+                                    <div class="pp-field-inline">
+                                        <input id="pp-subtitle-max-width-ratio" type="number" class="input" min="0.3" max="0.96" step="0.01" style="width:110px;" oninput="renderPostprocessPreview()">
+                                        <span style="font-size:0.72rem; color:var(--text2,#999);">화면 폭 비율</span>
+                                        <select id="pp-subtitle-max-lines" class="select" style="width:130px; margin-left:10px;" onchange="renderPostprocessPreview()">
+                                            <option value="1">최대 1줄</option>
+                                            <option value="2">최대 2줄</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div class="pp-row">
+                                    <span class="pp-label">하단 안전 여백</span>
+                                    <div class="pp-field-inline">
+                                        <input id="pp-subtitle-bottom-margin-ratio" type="number" class="input" min="0.02" max="0.3" step="0.005" style="width:110px;" oninput="renderPostprocessPreview()">
+                                        <span style="font-size:0.72rem; color:var(--text2,#999);">화면 높이 비율</span>
+                                        <span style="font-size:0.72rem; color:var(--text2,#999); margin-left:10px;">행간</span>
+                                        <input id="pp-subtitle-line-spacing-ratio" type="number" class="input" min="0" max="0.8" step="0.01" style="width:100px;" oninput="renderPostprocessPreview()">
+                                    </div>
+                                </div>
+                                <div class="pp-hint">문장이 폭을 넘으면 띄어쓰기와 문장 균형을 고려해 두 줄로 나누고, 그래도 길면 설정한 최소 크기까지 단계적으로 축소합니다.</div>
+                            </div>
+
+                            <div class="pp-card">
+                                <div class="pp-card-title">방송 자막 대비 처리</div>
+                                <div class="pp-row">
+                                    <span class="pp-label">글자 / 외곽선</span>
+                                    <div class="pp-field-inline">
+                                        <input id="pp-subtitle-text-color" type="color" class="input" style="width:58px; padding:2px;" oninput="renderPostprocessPreview()">
+                                        <input id="pp-subtitle-outline-color" type="color" class="input" style="width:58px; padding:2px;" oninput="renderPostprocessPreview()">
+                                        <input id="pp-subtitle-outline-width" type="number" class="input" min="0" max="20" step="1" style="width:90px;" oninput="renderPostprocessPreview()">
+                                        <span style="font-size:0.72rem; color:var(--text2,#999);">px</span>
+                                    </div>
+                                </div>
+                                <div class="pp-row">
+                                    <span class="pp-label">그림자</span>
+                                    <div class="pp-field-inline">
+                                        <input id="pp-subtitle-shadow-color" type="color" class="input" style="width:58px; padding:2px;" oninput="renderPostprocessPreview()">
+                                        <span style="font-size:0.72rem; color:var(--text2,#999);">불투명도</span>
+                                        <input id="pp-subtitle-shadow-opacity" type="number" class="input" min="0" max="1" step="0.01" style="width:90px;" oninput="renderPostprocessPreview()">
+                                        <span style="font-size:0.72rem; color:var(--text2,#999);">X</span>
+                                        <input id="pp-subtitle-shadow-offset-x" type="number" class="input" min="-30" max="30" step="1" style="width:75px;" oninput="renderPostprocessPreview()">
+                                        <span style="font-size:0.72rem; color:var(--text2,#999);">Y</span>
+                                        <input id="pp-subtitle-shadow-offset-y" type="number" class="input" min="-30" max="30" step="1" style="width:75px;" oninput="renderPostprocessPreview()">
+                                    </div>
+                                </div>
+                                <div class="pp-hint">검정 하드 외곽선 위에 살짝 번진 그림자를 한 번 더 합성하는 이중 대비 방식입니다. 배경판 없이도 흰 글자가 밝은 하늘과 어두운 실내 모두에서 유지됩니다.</div>
+                            </div>
+
+                            <div class="pp-card">
+                                <div class="pp-card-title">미리보기</div>
+                                <textarea id="pp-subtitle-preview-speak" class="input" rows="2" style="width:100%; font-family:monospace; resize:vertical;" placeholder='NAME: "대사"' oninput="renderPostprocessPreview()">kapri: "이 장면, 진짜 애니메이션 같지 않아?"</textarea>
+                                <div class="pp-subsection">
+                                    <div style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
+                                        <span style="font-size:0.74rem; color:var(--text2,#999);">베이스 이미지 (미리보기 전용)</span>
+                                        <div style="display:flex; gap:6px; align-items:center;">
+                                            <button type="button" class="btn" style="padding:3px 10px; font-size:0.72rem;" onclick="ppOpenBasePicker()">백업에서 선택</button>
+                                            <span id="pp-subtitle-base-name" style="font-size:0.72rem; color:var(--text2,#999);">(없음 → 더미)</span>
+                                            <button type="button" class="btn" style="padding:3px 10px; font-size:0.72rem;" onclick="ppClearSubtitleBase()">지우기</button>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -44281,6 +44382,7 @@
             { key: 'illustration_call2',       label: '삽화 CALL2 (PLAN/DETAIL/KEYVIS)', kind: '텍스트', modality: 'text', group: 'illustration_pipeline' },
             { key: 'illustration_call2_fix',   label: '삽화 CALL2-FIX (TOON 교정)',    kind: '텍스트', modality: 'text', group: 'illustration_pipeline' },
             { key: 'illustration_call3',       label: '삽화 CALL3 (대사 생성)',         kind: '텍스트', modality: 'text', group: 'illustration_pipeline' },
+            { key: 'illustration_call3_subtitle', label: '삽화 CALL3 (애니 자막)',       kind: '텍스트', modality: 'text', group: 'illustration_pipeline' },
             { key: 'illustration_original_asset', label: '삽화 원본 에셋 선택',          kind: 'JSON · 1단계', modality: 'text', group: 'illustration_pipeline', json: true },
             { key: 'illustration_multi_char_mask', label: '삽화 다중 캐릭터 마스크',    kind: 'JSON', modality: 'text', group: 'illustration_pipeline', json: true },
             { key: 'video_prompt_i2v',        label: 'H3 I2V 연출·정적 분석', kind: '비전', modality: 'vision', group: 'video_pipeline' },
@@ -62707,14 +62809,32 @@
                     face_fallback: true,
                     speech_split: true,
                 },
-                mode: 'vn',  // 활성 후처리 모드: 'vn' | 'bubble'
+                subtitle: {
+                    enabled: true,
+                    font_id: 'noto-sans-kr-medium',
+                    font_path: '',
+                    font_size: 52,
+                    min_font_size: 28,
+                    max_width_ratio: 0.86,
+                    bottom_margin_ratio: 0.075,
+                    line_spacing_ratio: 0.18,
+                    text_color: '#FFFFFF',
+                    outline_color: '#101010',
+                    outline_width: 4,
+                    shadow_color: '#000000',
+                    shadow_opacity: 0.82,
+                    shadow_offset_x: 2,
+                    shadow_offset_y: 3,
+                    max_lines: 2,
+                },
+                mode: 'vn',  // 활성 후처리 모드: 'vn' | 'bubble' | 'subtitle'
             };
         }
 
         let ppCurrentBot = '';   // 후처리 모달에서 현재 편집 중인 봇
 
-        // 현재 봇의 후처리 활성 모드('vn'|'bubble'). CALL3 대사 프롬프트 잠금의 진실 소스.
-        // bubble(말풍선 모드)=manga / vn(대사 모드)=speak. 서버가 생성 시 같은 규칙으로 덮어쓴다.
+        // 현재 봇의 후처리 활성 모드. CALL3 대사 프롬프트 잠금의 진실 소스.
+        // bubble=manga / subtitle=subtitle / vn=speak. 서버도 생성 시 같은 규칙으로 덮어쓴다.
         let _postprocessActiveMode = 'vn';
 
         function ppFillBotSelect() {
@@ -62841,7 +62961,7 @@
                 if (!resp.ok) throw new Error('HTTP ' + resp.status);
                 const j = await resp.json();
                 const vn = _ppNormalizeVn(j);
-                ppWorking = { vn, bubble: null, mode: 'vn' };
+                ppWorking = { vn, bubble: null, subtitle: null, mode: 'vn' };
                 ppApplyVnToUI();
                 // 말풍선 모드 설정 + 활성 모드 로드
                 try {
@@ -62849,7 +62969,7 @@
                     if (rb.ok) {
                         const jb = await rb.json();
                         ppWorking.bubble = _ppNormalizeBubble(jb.bubble);
-                        ppWorking.mode = (jb.mode === 'bubble') ? 'bubble' : 'vn';
+                        ppWorking.mode = ['vn', 'bubble', 'subtitle'].includes(jb.mode) ? jb.mode : 'vn';
                         ppApplyBubbleToUI();
                     } else {
                         ppWorking.bubble = _ppNormalizeBubble(null);
@@ -62860,8 +62980,25 @@
                     ppWorking.bubble = _ppNormalizeBubble(null);
                     ppApplyBubbleToUI();
                 }
+                // 방송 애니 자막 설정과 최종 활성 모드를 로드
+                try {
+                    const rs = await fetch('/api/bot_mode/postprocess_subtitle?bot=' + encodeURIComponent(botName));
+                    if (rs.ok) {
+                        const js = await rs.json();
+                        ppWorking.subtitle = _ppNormalizeSubtitle(js.subtitle);
+                        ppWorking.mode = ['vn', 'bubble', 'subtitle'].includes(js.mode) ? js.mode : ppWorking.mode;
+                    } else {
+                        console.error('[POSTPROCESS] subtitle 설정 응답 실패:', rs.status);
+                        ppWorking.subtitle = _ppNormalizeSubtitle(null);
+                    }
+                } catch (se) {
+                    console.error('[POSTPROCESS] subtitle 설정 로드 실패:', se);
+                    ppWorking.subtitle = _ppNormalizeSubtitle(null);
+                }
+                ppApplySubtitleToUI();
                 switchPostprocessTab(ppWorking.mode || 'vn');  // 저장된 활성 모드 탭으로
-                _postprocessActiveMode = (ppWorking.mode === 'bubble') ? 'bubble' : 'vn';
+                _postprocessActiveMode = ['vn', 'bubble', 'subtitle'].includes(ppWorking.mode)
+                    ? ppWorking.mode : 'vn';
                 _applyCall3PromptModeLock();  // 생성 설정 CALL3 잠금 동기화
                 renderPpModeBadges();  // 적용중 모드 딱지
                 ppRefreshFaceDevices().then(() => ppRenderFaceCrop());  // vn 얼굴 크롭 미리보기
@@ -62882,6 +63019,7 @@
             ppWorking = JSON.parse(JSON.stringify(defaultPpConfig()));
             ppBubbleBaseDataUrl = null;
             ppVnBaseDataUrl = null;
+            ppSubtitleBaseDataUrl = null;
             ppFillBotSelect();
             document.getElementById('postprocess-modal').classList.add('visible');
             if (ppCurrentBot) {
@@ -62889,6 +63027,7 @@
             } else {
                 ppApplyVnToUI();
                 ppApplyBubbleToUI();
+                ppApplySubtitleToUI();
                 switchPostprocessTab('vn');
                 ppRefreshFaceDevices().then(() => ppRenderFaceCrop());
             }
@@ -62900,12 +63039,13 @@
             ppEmotionResetSession();
         }
 
-        let ppActiveTab = 'vn';  // 후처리 모달 현재 활성 탭: 'vn' | 'bubble'
+        let ppActiveTab = 'vn';  // 후처리 모달 현재 활성 탭: vn | bubble | subtitle
 
         // 적용중 모드(ppWorking.mode) 기준 딱지 렌더: 적용 탭=초록(적용중), 나머지=회색(비활성)
         // 저장해야 ppWorking.mode가 바뀌므로, 탭을 눌러보기만 한 동안에는 딱지가 안 움직임.
         function renderPpModeBadges() {
-            const applied = (ppWorking && ppWorking.mode === 'bubble') ? 'bubble' : 'vn';
+            const candidate = ppWorking && ppWorking.mode;
+            const applied = ['vn', 'bubble', 'subtitle'].includes(candidate) ? candidate : 'vn';
             document.querySelectorAll('#postprocess-modal .pp-mode-badge').forEach(b => {
                 const m = b.getAttribute('data-mode');
                 if (m === applied) { b.className = 'pp-mode-badge applied'; b.textContent = '적용중'; }
@@ -63428,6 +63568,7 @@
             ppPreviewTimer = setTimeout(async () => {
                 // 활성 탭에 따라 분기 — 미리보기는 실제 전송과 동일 빌더만 경유 (CLAUDE.md).
                 if (ppActiveTab === 'bubble') { await _renderBubblePreview(); return; }
+                if (ppActiveTab === 'subtitle') { await _renderSubtitlePreview(); return; }
                 const errEl = document.getElementById('pp-preview-error');
                 const imgEl = document.getElementById('pp-preview-img');
                 errEl.style.display = 'none'; errEl.textContent = '';
@@ -63508,7 +63649,8 @@
         // ─── 말풍선 모드 (bubble) ────────────────────────────────
         let ppBubbleBaseDataUrl = null;  // 삽화 백업에서 고른 베이스 이미지(data URL). null=더미.
         let ppVnBaseDataUrl = null;      // 대사 모드 미리보기 베이스(data URL). null=더미.
-        let ppBasePickerTarget = 'bubble';  // 베이스 피커가 어느 모드용으로 열렸는지('vn'|'bubble') → ppPickBase/ppClearBase 분기용
+        let ppSubtitleBaseDataUrl = null; // 자막 모드 미리보기 베이스(data URL). null=더미.
+        let ppBasePickerTarget = 'bubble';  // 베이스 피커 대상: vn | bubble | subtitle
 
         function _ppNormalizeBubble(b) {
             const base = defaultPpConfig().bubble;
@@ -63542,10 +63684,63 @@
             return base;
         }
 
+        function _ppNormalizeSubtitle(value) {
+            const source = (value && typeof value === 'object') ? value : {};
+            const base = defaultPpConfig().subtitle;
+            Object.assign(base, source);
+            const finiteOr = (candidate, fallback) => {
+                const parsed = Number(candidate);
+                return Number.isFinite(parsed) ? parsed : fallback;
+            };
+            if (typeof base.enabled !== 'boolean') base.enabled = true;
+            if (typeof base.font_id !== 'string' || !base.font_id) base.font_id = 'noto-sans-kr-medium';
+            if (typeof base.font_path !== 'string') base.font_path = '';
+            base.font_size = Math.max(12, Math.min(400, Math.round(finiteOr(base.font_size, 52))));
+            base.min_font_size = Math.max(10, Math.min(base.font_size, Math.round(finiteOr(base.min_font_size, 28))));
+            base.max_width_ratio = Math.max(0.3, Math.min(0.96, finiteOr(base.max_width_ratio, 0.86)));
+            base.bottom_margin_ratio = Math.max(0.02, Math.min(0.3, finiteOr(base.bottom_margin_ratio, 0.075)));
+            base.line_spacing_ratio = Math.max(0, Math.min(0.8, finiteOr(base.line_spacing_ratio, 0.18)));
+            base.outline_width = Math.max(0, Math.min(20, Math.round(finiteOr(base.outline_width, 4))));
+            base.shadow_opacity = Math.max(0, Math.min(1, finiteOr(base.shadow_opacity, 0.82)));
+            base.shadow_offset_x = Math.max(-30, Math.min(30, Math.round(finiteOr(base.shadow_offset_x, 2))));
+            base.shadow_offset_y = Math.max(-30, Math.min(30, Math.round(finiteOr(base.shadow_offset_y, 3))));
+            base.max_lines = Number(base.max_lines) === 1 ? 1 : 2;
+            for (const [key, fallback] of Object.entries({
+                text_color: '#FFFFFF', outline_color: '#101010', shadow_color: '#000000',
+            })) {
+                if (!/^#[0-9a-f]{6}$/i.test(String(base[key] || ''))) base[key] = fallback;
+            }
+            return base;
+        }
+
+        function ppApplySubtitleToUI() {
+            if (!ppWorking) return;
+            if (!ppWorking.subtitle) ppWorking.subtitle = _ppNormalizeSubtitle(null);
+            const s = ppWorking.subtitle;
+            const set = (id, value) => { const el = document.getElementById(id); if (el) el.value = value; };
+            const enabled = document.getElementById('pp-subtitle-enabled');
+            if (enabled) enabled.checked = !!s.enabled;
+            ppPopulateFontDropdown(s.font_id || 'noto-sans-kr-medium', 'pp-subtitle-font');
+            set('pp-subtitle-font-size', s.font_size);
+            set('pp-subtitle-min-font-size', s.min_font_size);
+            set('pp-subtitle-max-width-ratio', s.max_width_ratio);
+            set('pp-subtitle-bottom-margin-ratio', s.bottom_margin_ratio);
+            set('pp-subtitle-line-spacing-ratio', s.line_spacing_ratio);
+            set('pp-subtitle-text-color', s.text_color);
+            set('pp-subtitle-outline-color', s.outline_color);
+            set('pp-subtitle-outline-width', s.outline_width);
+            set('pp-subtitle-shadow-color', s.shadow_color);
+            set('pp-subtitle-shadow-opacity', s.shadow_opacity);
+            set('pp-subtitle-shadow-offset-x', s.shadow_offset_x);
+            set('pp-subtitle-shadow-offset-y', s.shadow_offset_y);
+            set('pp-subtitle-max-lines', s.max_lines);
+            ppClearSubtitleBase();
+        }
+
         // 폰트 드롭박스를 서버 목록으로 채운다. selectedId 유지.
         let _ppFontListCache = [];
-        async function ppPopulateFontDropdown(selectedId) {
-            const sel = document.getElementById('pp-bubble-font');
+        async function ppPopulateFontDropdown(selectedId, selectId = 'pp-bubble-font') {
+            const sel = document.getElementById(selectId);
             if (!sel) return;
             let fonts = _ppFontListCache;
             try {
@@ -63575,26 +63770,28 @@
             sel.value = target;
         }
 
-        function onPpBubbleFontChange() {
+        function onPpFontChange(selectId = 'pp-bubble-font') {
             // 번들 폰트를 처음 선택하면 서버가 자동 다운로드 → 목록 새로고침 후 미리보기.
-            const sel = document.getElementById('pp-bubble-font');
+            const sel = document.getElementById(selectId);
             const opt = sel && sel.selectedOptions[0];
             if (opt && opt.dataset.source === 'builtin') {
-                ppRefreshFontList(true).finally(() => renderPostprocessPreview());
+                ppRefreshFontList(true, selectId).finally(() => renderPostprocessPreview());
             } else {
                 renderPostprocessPreview();
             }
         }
 
-        async function ppRefreshFontList(keepSelection) {
-            const sel = document.getElementById('pp-bubble-font');
+        function onPpBubbleFontChange() { onPpFontChange('pp-bubble-font'); }
+
+        async function ppRefreshFontList(keepSelection, selectId = 'pp-bubble-font') {
+            const sel = document.getElementById(selectId);
             const prev = sel ? sel.value : 'system';
             _ppFontListCache = [];
-            await ppPopulateFontDropdown(keepSelection ? prev : null);
+            await ppPopulateFontDropdown(keepSelection ? prev : null, selectId);
             if (window.showToast) showToast('폰트 목록을 새로고침했습니다.');
         }
 
-        async function ppUploadFont(event) {
+        async function ppUploadFont(event, selectId = 'pp-bubble-font') {
             const file = event.target.files && event.target.files[0];
             event.target.value = '';
             if (!file) return;
@@ -63608,7 +63805,7 @@
                     throw new Error((j && j.error) || txt || ('HTTP ' + resp.status));
                 }
                 _ppFontListCache = (j && j.fonts) || [];
-                await ppPopulateFontDropdown(file.name);
+                await ppPopulateFontDropdown(file.name, selectId);
                 if (window.showToast) showToast('폰트 업로드 완료: ' + file.name);
                 renderPostprocessPreview();
             } catch (e) {
@@ -63617,8 +63814,8 @@
             }
         }
 
-        async function ppDeleteFont() {
-            const sel = document.getElementById('pp-bubble-font');
+        async function ppDeleteFont(selectId = 'pp-bubble-font') {
+            const sel = document.getElementById(selectId);
             if (!sel) return;
             const fontId = sel.value;
             const opt = sel.selectedOptions[0];
@@ -63636,7 +63833,7 @@
                 let j = null; try { j = JSON.parse(txt); } catch (_) {}
                 if (!resp.ok) throw new Error((j && j.error) || txt || ('HTTP ' + resp.status));
                 _ppFontListCache = (j && j.fonts) || [];
-                await ppPopulateFontDropdown('system');
+                await ppPopulateFontDropdown('system', selectId);
                 if (window.showToast) showToast('폰트를 삭제했습니다.');
                 renderPostprocessPreview();
             } catch (e) {
@@ -63755,6 +63952,89 @@
             return b;
         }
 
+        function collectPpSubtitleSettings() {
+            if (!ppWorking) return null;
+            if (!ppWorking.subtitle) ppWorking.subtitle = _ppNormalizeSubtitle(null);
+            const s = ppWorking.subtitle;
+            const font = document.getElementById('pp-subtitle-font');
+            s.enabled = !!document.getElementById('pp-subtitle-enabled')?.checked;
+            s.font_id = font ? (font.value || 'noto-sans-kr-medium') : 'noto-sans-kr-medium';
+            s.font_path = '';
+            s.font_size = Math.round(_ppNum('pp-subtitle-font-size', 52, 12, 400));
+            s.min_font_size = Math.min(
+                s.font_size,
+                Math.round(_ppNum('pp-subtitle-min-font-size', 28, 10, 400)),
+            );
+            s.max_width_ratio = _ppNum('pp-subtitle-max-width-ratio', 0.86, 0.3, 0.96);
+            s.bottom_margin_ratio = _ppNum('pp-subtitle-bottom-margin-ratio', 0.075, 0.02, 0.3);
+            s.line_spacing_ratio = _ppNum('pp-subtitle-line-spacing-ratio', 0.18, 0, 0.8);
+            s.text_color = document.getElementById('pp-subtitle-text-color')?.value || '#FFFFFF';
+            s.outline_color = document.getElementById('pp-subtitle-outline-color')?.value || '#101010';
+            s.outline_width = Math.round(_ppNum('pp-subtitle-outline-width', 4, 0, 20));
+            s.shadow_color = document.getElementById('pp-subtitle-shadow-color')?.value || '#000000';
+            s.shadow_opacity = _ppNum('pp-subtitle-shadow-opacity', 0.82, 0, 1);
+            s.shadow_offset_x = Math.round(_ppNum('pp-subtitle-shadow-offset-x', 2, -30, 30));
+            s.shadow_offset_y = Math.round(_ppNum('pp-subtitle-shadow-offset-y', 3, -30, 30));
+            s.max_lines = Number(document.getElementById('pp-subtitle-max-lines')?.value) === 1 ? 1 : 2;
+            return s;
+        }
+
+        async function _renderSubtitlePreview() {
+            const errEl = document.getElementById('pp-preview-error');
+            const imgEl = document.getElementById('pp-preview-img');
+            const placeholderEl = document.getElementById('pp-preview-placeholder');
+            errEl.style.display = 'none';
+            errEl.textContent = '';
+            const s = collectPpSubtitleSettings();
+            if (!s || !s.enabled) {
+                imgEl.style.display = 'none';
+                imgEl.src = '';
+                if (placeholderEl) {
+                    placeholderEl.style.display = 'block';
+                    placeholderEl.innerHTML = '자막 모드를 켜면<br>미리보기가 표시됩니다';
+                }
+                const size = document.getElementById('pp-preview-size');
+                if (size) size.textContent = '';
+                return;
+            }
+            try {
+                const body = {
+                    mode: 'subtitle',
+                    ...s,
+                    speak: document.getElementById('pp-subtitle-preview-speak')?.value || '',
+                    bot_name: ppCurrentBot || '',
+                    profile: (typeof _illustSettingsProfile !== 'undefined' && _illustSettingsProfile)
+                        ? _illustSettingsProfile : 'solo',
+                };
+                if (ppSubtitleBaseDataUrl) body.base = ppSubtitleBaseDataUrl;
+                const resp = await fetch('/api/postprocess/preview', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(body),
+                });
+                if (!resp.ok) {
+                    const txt = await resp.text().catch(() => '');
+                    throw new Error('HTTP ' + resp.status + (txt ? ' - ' + txt.slice(0, 300) : ''));
+                }
+                const blob = await resp.blob();
+                const sizeEl = document.getElementById('pp-preview-size');
+                imgEl.onload = () => {
+                    if (sizeEl && imgEl.naturalWidth) {
+                        sizeEl.textContent = `· ${imgEl.naturalWidth}×${imgEl.naturalHeight}`;
+                    }
+                };
+                imgEl.src = URL.createObjectURL(blob);
+                imgEl.style.display = 'block';
+                if (placeholderEl) placeholderEl.style.display = 'none';
+            } catch (e) {
+                console.error('[POSTPROCESS] 자막 미리보기 실패:', e);
+                errEl.textContent = '자막 미리보기 실패: ' + (e.message || e);
+                errEl.style.display = 'block';
+                const size = document.getElementById('pp-preview-size');
+                if (size) size.textContent = '';
+            }
+        }
+
         async function _renderBubblePreview() {
             const errEl = document.getElementById('pp-preview-error');
             const imgEl = document.getElementById('pp-preview-img');
@@ -63821,16 +64101,22 @@
             }
         }
 
-        // 베이스 이미지 피커 (삽화 백업에서 선택) — 대사/말풍선 모드 공용.
+        // 베이스 이미지 피커 (삽화 백업에서 선택) — 모든 후처리 모드 공용.
         // 어느 모드용으로 열렸는지 ppBasePickerTarget 에 기록 → ppPickBase 가 알맞은 변수/이름표에 기록.
-        function _ppBaseNameId() { return ppBasePickerTarget === 'bubble' ? 'pp-bubble-base-name' : 'pp-vn-base-name'; }
+        function _ppBaseNameId() {
+            if (ppBasePickerTarget === 'bubble') return 'pp-bubble-base-name';
+            if (ppBasePickerTarget === 'subtitle') return 'pp-subtitle-base-name';
+            return 'pp-vn-base-name';
+        }
 
         async function ppOpenBasePicker() {
-            ppBasePickerTarget = (ppActiveTab === 'bubble') ? 'bubble' : 'vn';
+            ppBasePickerTarget = ['vn', 'bubble', 'subtitle'].includes(ppActiveTab)
+                ? ppActiveTab : 'vn';
             const titleEl = document.getElementById('pp-base-modal-title');
-            if (titleEl) titleEl.textContent = ppBasePickerTarget === 'bubble'
-                ? '베이스 이미지 선택 (삽화 백업) — 말풍선 모드'
-                : '베이스 이미지 선택 (삽화 백업) — 대사 모드';
+            if (titleEl) {
+                const labels = {vn: '대사 모드', bubble: '말풍선 모드', subtitle: '자막 모드'};
+                titleEl.textContent = '베이스 이미지 선택 (삽화 백업) — ' + labels[ppBasePickerTarget];
+            }
             document.getElementById('pp-bubble-base-modal').classList.add('visible');
             const grid = document.getElementById('pp-bubble-base-grid');
             grid.innerHTML = '<div style="font-size:0.8rem; color:var(--text2,#999);">불러오는 중…</div>';
@@ -63863,9 +64149,11 @@
                 const blob = await resp.blob();
                 const reader = new FileReader();
                 reader.onload = () => {
-                    // 피커가 열린 모드의 베이스 변수/이름표에 기록 (대사·말풍선 독립)
+                    // 피커가 열린 모드의 베이스 변수/이름표에 기록
                     if (ppBasePickerTarget === 'bubble') {
                         ppBubbleBaseDataUrl = reader.result;
+                    } else if (ppBasePickerTarget === 'subtitle') {
+                        ppSubtitleBaseDataUrl = reader.result;
                     } else {
                         ppVnBaseDataUrl = reader.result;
                     }
@@ -63898,13 +64186,22 @@
             if (ppWorking) renderPostprocessPreview();
         }
 
+        function ppClearSubtitleBase() {
+            ppSubtitleBaseDataUrl = null;
+            const nm = document.getElementById('pp-subtitle-base-name');
+            if (nm) nm.textContent = '(없음 → 더미)';
+            if (ppWorking) renderPostprocessPreview();
+        }
+
         async function savePostprocessSettings() {
             if (!ppWorking) { closePostprocessModal(); return; }
             if (!ppCurrentBot) { showToast('봇을 먼저 선택하세요', 'error'); return; }
             collectPpVnSettings();
             collectPpBubbleSettings();
-            // 활성 탭 = 저장할 활성 모드(vn|bubble). 사용자가 마지막에 본 탭이 적용 모드.
-            ppWorking.mode = (ppActiveTab === 'bubble') ? 'bubble' : 'vn';
+            collectPpSubtitleSettings();
+            // 활성 탭 = 저장할 활성 모드. 사용자가 마지막에 본 탭이 적용 모드.
+            ppWorking.mode = ['vn', 'bubble', 'subtitle'].includes(ppActiveTab)
+                ? ppActiveTab : 'vn';
             renderPpModeBadges();  // 저장 직후 딱지 이동(적용 모드 = 현재 탭)
             // 감정 추출 결과(emotion_rows/emotion_total)는 임시 — 저장/재오픈 시 사라지도록 제외.
             const payload = JSON.parse(JSON.stringify(ppWorking));
@@ -63931,8 +64228,22 @@
                     showToast('말풍선 설정 저장 실패: ' + (txt || rb.status), 'error');
                     return;
                 }
+                const rs = await fetch('/api/bot_mode/postprocess_subtitle', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        bot: ppCurrentBot,
+                        subtitle: payload.subtitle,
+                        mode: ppWorking.mode,
+                    }),
+                });
+                if (!rs.ok) {
+                    const txt = await rs.text().catch(() => '');
+                    showToast('자막 설정 저장 실패: ' + (txt || rs.status), 'error');
+                    return;
+                }
                 showToast('후처리 설정 저장 완료 (' + ppCurrentBot + ' · ' + ppWorking.mode + ')');
-                _postprocessActiveMode = (ppWorking.mode === 'bubble') ? 'bubble' : 'vn';
+                _postprocessActiveMode = ppWorking.mode;
                 _applyCall3PromptModeLock();  // 저장된 모드로 CALL3 대사 프롬프트 잠금 이동
             } catch (e) {
                 console.error('[POSTPROCESS] 저장 실패:', e);
@@ -63951,9 +64262,14 @@
         function ppSaveToCache() {
             if (!ppWorking || !ppCurrentBot) { showToast('봇을 선택하세요', 'error'); return; }
             collectPpVnSettings();
+            collectPpBubbleSettings();
+            collectPpSubtitleSettings();
             const cache = _ppGetCache();
             cache[ppCurrentBot] = {
                 vn: JSON.parse(JSON.stringify(ppWorking.vn)),
+                bubble: JSON.parse(JSON.stringify(ppWorking.bubble)),
+                subtitle: JSON.parse(JSON.stringify(ppWorking.subtitle)),
+                mode: ['vn', 'bubble', 'subtitle'].includes(ppWorking.mode) ? ppWorking.mode : 'vn',
                 ts: Date.now()
             };
             try {
@@ -63968,8 +64284,17 @@
             if (!ppCurrentBot) { showToast('봇을 선택하세요', 'error'); return; }
             const entry = _ppGetCache()[ppCurrentBot];
             if (!entry || !entry.vn) { showToast('캐시에 ' + ppCurrentBot + ' 설정 없음', 'error'); return; }
-            ppWorking = { vn: _ppNormalizeVn(entry.vn) };
+            ppWorking = {
+                vn: _ppNormalizeVn(entry.vn),
+                bubble: _ppNormalizeBubble(entry.bubble),
+                subtitle: _ppNormalizeSubtitle(entry.subtitle),
+                mode: ['vn', 'bubble', 'subtitle'].includes(entry.mode) ? entry.mode : 'vn',
+            };
             ppApplyVnToUI();
+            ppApplyBubbleToUI();
+            ppApplySubtitleToUI();
+            switchPostprocessTab(ppWorking.mode);
+            renderPpModeBadges();
             renderPostprocessPreview();
             showToast('캐시에서 불러옴: ' + ppCurrentBot);
         }
@@ -76029,7 +76354,7 @@
                                 2. CALL1은 <strong>enhance.txt</strong>와 저장 히스토리로 인물 목록, 지칭 할당, 복장 변화 타임라인을 JSON으로 만듭니다. 병렬 분석을 켜면 segment를 최대 동시 요청 수만큼 균등 분할해 동시에 분석하고 검증된 결과를 하나로 병합합니다.<br>
                                 3. CALL2-PLAN은 장면 앵커·등장 캐릭터·짧은 장면 개요만 선택합니다. 독립 CALL2-KEYVIS는 같은 시점에 별도 LLM 요청으로 대표 이미지 한 장만 완성합니다. PLAN이 끝나면 서버가 복장 상태와 슬롯을 결합해 장면을 CALL2-DETAIL 작업들에 균등 분배하며, Key Visual 결과는 DETAIL과 CALL3 입력에 넣지 않고 마지막 이미지 목록에만 병합합니다.<br>
                                 4. CALL2 system = <strong>jailbreak.txt</strong> + <strong>job.txt</strong> + <strong>system.txt</strong>이며, DETAIL 출력은 <strong>format.txt</strong> 구조를 사용합니다. CALL1이 모호하거나 PLAN/KEYVIS/DETAIL이 실패하면 기존 단일 CALL2 경로로 폴백합니다.<br>
-                                5. CALL2 파싱이 실패하면 <strong>repair.txt</strong>(CALL2-FIX)가 TOON 블록을 교정합니다. CALL3는 생성 설정에서 선택한 <strong>speak.txt</strong> 또는 <strong>manga.txt</strong>로 대사만 생성합니다.<br>
+                                5. CALL2 파싱이 실패하면 <strong>repair.txt</strong>(CALL2-FIX)가 TOON 블록을 교정합니다. 대사 단계는 후처리 모드에 맞춰 <strong>speak.txt</strong>, <strong>manga.txt</strong>, <strong>subtitle.txt</strong> 중 하나를 사용합니다.<br>
                                 <strong>preset.txt</strong>는 V3의 <code>[SETUP]/[CHAR]/[SUPPLEMENT]</code> RAW 입력 템플릿과 공통 부정 프롬프트를 담습니다. V1을 선택하면 서버가 같은 장면을 <code>[ILXL]/[UPSCALE]</code> 입력 형태로 생성합니다.
                             </div>
                             <div style="display:flex; gap:5px; margin:0 0 10px;">
@@ -76093,6 +76418,10 @@
                                 <details open style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
                                     <summary style="cursor:pointer; font-size:0.8rem; font-weight:600;">📝 manga.txt (만화 대사와 말풍선 형태)</summary>
                                     <textarea id="lighbd-prompt-call3_manga" data-lighbd-prompt="call3_manga" style="width:100%; height:320px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;"></textarea>
+                                </details>
+                                <details open style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
+                                    <summary style="cursor:pointer; font-size:0.8rem; font-weight:600;">📝 subtitle.txt (방송 애니 자막 대사)</summary>
+                                    <textarea id="lighbd-prompt-call3_subtitle" data-lighbd-prompt="call3_subtitle" style="width:100%; height:320px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;"></textarea>
                                 </details>
                                 <details style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
                                     <summary style="cursor:pointer; font-size:0.8rem; font-weight:600; color:var(--warning);">📝 manga_nsfw.txt (NSFW 보강 — #nsfw_soft/#nsfw_hard)</summary>
@@ -76760,8 +77089,8 @@
                     {key: 'speak_enabled', label: '장면별 SPEAK 생성', type: 'toggle', help: 'CALL3가 각 장면에 표시할 대사를 생성합니다.', dependsOn: ['call3_enabled']},
                     {
                         key: 'call3_prompt_mode', label: 'CALL3 대사 프롬프트', type: 'select',
-                        help: '후처리 설정(대사 모드=Speak / 말풍선 모드=Manga)에 따라 자동 지정됩니다. 나머지 항목은 회색으로 선택 불가.',
-                        options: [{value: 'speak', label: 'Speak'}, {value: 'manga', label: 'Manga'}],
+                        help: '후처리 설정(대사=Speak / 말풍선=Manga / 자막=Subtitle)에 따라 자동 지정됩니다. 나머지 항목은 회색으로 선택 불가.',
+                        options: [{value: 'speak', label: 'Speak'}, {value: 'manga', label: 'Manga'}, {value: 'subtitle', label: 'Subtitle'}],
                         dependsOn: ['call3_enabled', 'speak_enabled'],
                     },
                     {key: 'speak_emotion_enabled', label: 'SPEAK 감정 태그', type: 'toggle', help: 'CALL3가 생성한 Speak 대사에 감정 태그를 덧붙입니다.', dependsOn: ['call3_enabled', 'speak_enabled']},
@@ -77156,11 +77485,14 @@
         }
 
         // call3_prompt_mode 셀렉트를 후처리 활성 모드에 맞춰 잠근다.
-        // 후처리 bubble(말풍선 모드) → manga, vn(대사 모드) → speak.
+        // 후처리 bubble → manga, subtitle → subtitle, vn → speak.
         // 매칭하지 않는 옵션은 disabled(회색) 처리하고 값을 강제한다.
         // 서버도 생성 시 같은 규칙으로 덮어쓰므로 여기서 값이 틀려도 결과는 안전.
         function _applyCall3PromptModeLock() {
-            const target = (_postprocessActiveMode === 'bubble') ? 'manga' : 'speak';
+            const target = {
+                bubble: 'manga',
+                subtitle: 'subtitle',
+            }[_postprocessActiveMode] || 'speak';
             const select = document.querySelector('[data-illust-toggle="call3_prompt_mode"]');
             _illustrationContextToggles.call3_prompt_mode = target;
             if (!select) return;  // 대사 카테고리가 아직 렌더되지 않았을 수 있음
@@ -77176,7 +77508,9 @@
                 const resp = await fetch('/api/bot_mode/postprocess_bubble?bot=' + encodeURIComponent(bot));
                 if (!resp.ok) throw new Error('HTTP ' + resp.status);
                 const j = await resp.json();
-                _postprocessActiveMode = (j && j.mode === 'bubble') ? 'bubble' : 'vn';
+                _postprocessActiveMode = (
+                    j && ['vn', 'bubble', 'subtitle'].includes(j.mode)
+                ) ? j.mode : 'vn';
             } catch (e) {
                 console.error('[POSTPROCESS] 활성 모드 조회 실패:', e);
             }

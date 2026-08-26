@@ -39,7 +39,7 @@ from modes.visual_profiles import (
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PROMPTS_DIR = os.path.join(BASE_DIR, "prompts", "lighbd")
-REQUIREMENTS_DIR = os.path.join(BASE_DIR, "요구사항")
+PROMPT_BACKUP_DIR = os.path.join(BASE_DIR, "backups", "prompt_files")
 SESSION_DIR = os.path.join(BASE_DIR, "logs", "illustration_context_sessions")
 
 CONTEXT_PREFIX = "__LB_ILLUST_CONTEXT_V1__"
@@ -88,6 +88,7 @@ PROMPT_FILES = {
     "call2_preset": "preset.txt",
     "call3_speak": "speak.txt",
     "call3_manga": "manga.txt",
+    "call3_subtitle": "subtitle.txt",
     # NSFW(SOFT/HARD) 버블 타입 보강. manga 모드 + nsfw 토글 ON일 때만 manga 프롬프트
     # 끝에 추가로 주입한다(일반 작업에 노출 안 됨).
     "call3_manga_nsfw": "manga_nsfw.txt",
@@ -361,7 +362,7 @@ def merged_toggles(value: dict | None) -> dict:
         prompt_format = "v3"
     out["prompt_format"] = prompt_format
     call3_prompt_mode = str(out.get("call3_prompt_mode") or "").strip().lower()
-    if call3_prompt_mode not in ("speak", "manga"):
+    if call3_prompt_mode not in ("speak", "manga", "subtitle"):
         print(
             f"[ILLUST_CONTEXT] 지원하지 않는 CALL3 대사 프롬프트 "
             f"{call3_prompt_mode!r}, speak 사용"
@@ -571,9 +572,9 @@ def load_prompt_files() -> dict:
 
 
 def save_prompt_files(values: dict) -> list[str]:
-    """UI 편집본 저장. 기존 텍스트는 요구사항/에 먼저 백업한다."""
+    """UI 편집본 저장. 기존 텍스트는 배포 가능한 backups/에 먼저 백업한다."""
     os.makedirs(PROMPTS_DIR, exist_ok=True)
-    os.makedirs(REQUIREMENTS_DIR, exist_ok=True)
+    os.makedirs(PROMPT_BACKUP_DIR, exist_ok=True)
     stamp = time.strftime("%Y%m%d_%H%M%S")
     saved = []
     for key, filename in PROMPT_FILES.items():
@@ -582,7 +583,10 @@ def save_prompt_files(values: dict) -> list[str]:
         path = os.path.join(PROMPTS_DIR, filename)
         try:
             if os.path.exists(path):
-                backup = os.path.join(REQUIREMENTS_DIR, f"lighbd_{filename}.{stamp}.bak")
+                backup = os.path.join(
+                    PROMPT_BACKUP_DIR,
+                    f"lighbd_{filename}.{stamp}.bak",
+                )
                 with open(path, "r", encoding="utf-8") as src:
                     old = src.read()
                 with open(backup, "w", encoding="utf-8") as dst:
@@ -6926,9 +6930,12 @@ def build_call3_dialogue_system_prompt(
     toggles: dict,
     extra_names: str,
 ) -> tuple[str, str]:
-    """Select the Speak/Manga prompt and append only mode-compatible instructions."""
+    """Select the Speak/Manga/Subtitle prompt and append compatible instructions."""
     prompt_mode = str(toggles.get("call3_prompt_mode") or "speak").strip().lower()
-    prompt_key = "call3_manga" if prompt_mode == "manga" else "call3_speak"
+    prompt_key = {
+        "manga": "call3_manga",
+        "subtitle": "call3_subtitle",
+    }.get(prompt_mode, "call3_speak")
     selected_prompt = str(prompts.get(prompt_key) or "").strip()
     if not selected_prompt:
         print(
@@ -6945,6 +6952,8 @@ def build_call3_dialogue_system_prompt(
             emotion_instruction += " Allowed labels: " + emotions
     elif prompt_mode == "manga" and toggles.get("speak_emotion_enabled"):
         print("[ILLUST_CONTEXT:CALL3] Manga 모드에서는 감정 태그 설정을 사용하지 않음")
+    elif prompt_mode == "subtitle" and toggles.get("speak_emotion_enabled"):
+        print("[ILLUST_CONTEXT:CALL3] Subtitle 모드에서는 감정 태그 설정을 사용하지 않음")
 
     # NSFW 버블 타입(#nsfw_soft/#nsfw_hard) 보강 블록. manga 모드이고 nsfw 토글이
     # 켜져 있을 때만 manga 프롬프트 끝에 붙인다. 일반 장면엔 노출되지 않는다.
@@ -6990,6 +6999,25 @@ def build_call3_dialogue_system_prompt(
     return prompt_mode, system_prompt
 
 
+def build_call3_scene_request(
+    original_narrative: str,
+    selected_scene_payload: str,
+    output_language: str,
+    prompt_mode: str,
+) -> str:
+    """Build the scene request without exposing internal stage names in subtitle mode."""
+    scene_heading = (
+        "Selected illustrated scenes"
+        if str(prompt_mode or "").strip().lower() == "subtitle"
+        else "Selected scenes from CALL2"
+    )
+    return (
+        f"[Original narrative]\n{original_narrative}"
+        f"\n\n[{scene_heading}]\n{selected_scene_payload}"
+        f"\n\nLanguage: {output_language}"
+    )
+
+
 def _build_character_history(extra_reference: str) -> str:
     # 서버가 보유한 lb.extra 자체가 가장 안정적인 외형 이력/영문 이름 사전이다.
     return str(extra_reference or "").strip()
@@ -7009,6 +7037,8 @@ _CALL_TASK_KEYS = {
     "CALL2-FIX": "illustration_call2_fix",
     "CALL3": "illustration_call3",
     "CALL3-CORRECTION": "illustration_call3",
+    "CALL3-SUBTITLE": "illustration_call3_subtitle",
+    "CALL3-SUBTITLE-CORRECTION": "illustration_call3_subtitle",
     "MULTI-CHAR-MASK": "illustration_multi_char_mask",
 }
 
@@ -7029,6 +7059,11 @@ _CALL_QUEUE_SUBTASK_GROUPS = {
     "CALL2-FIX": ("call2_fix", "CALL2-FIX TOON 교정"),
     "CALL3": ("call3", "CALL3 대사 빌드"),
     "CALL3-CORRECTION": ("call3_correction", "CALL3 슬롯/언어 교정"),
+    "CALL3-SUBTITLE": ("call3", "CALL3 애니 자막 빌드"),
+    "CALL3-SUBTITLE-CORRECTION": (
+        "call3_correction",
+        "CALL3 애니 자막 슬롯/언어 교정",
+    ),
 }
 
 
@@ -7320,6 +7355,8 @@ async def _build_call3_dialogue_with_recovery(
     character_names: str,
     speak_language: str,
     stream_notify=None,
+    call_name: str = "CALL3",
+    correction_call_name: str = "CALL3-CORRECTION",
 ) -> dict:
     """CALL3를 실행하고 실패 범위를 대사 슬롯 안으로 격리한다."""
     state = {
@@ -7335,7 +7372,7 @@ async def _build_call3_dialogue_with_recovery(
     normalized_messages = _normalize_messages(speak_messages)
     try:
         initial_output = await _call_pipeline_llm(
-            "CALL3",
+            call_name,
             normalized_messages,
             stream_notify,
         )
@@ -7378,6 +7415,16 @@ async def _build_call3_dialogue_with_recovery(
 
     state["correction_used"] = True
     state["failure_reason"] = call3_failure_reason
+    model_failure_reason = call3_failure_reason
+    if call_name == "CALL3-SUBTITLE":
+        # 검증/로그에는 내부 호출명을 유지하되 자막 편집 LLM에는 역할과 실패 내용만
+        # 전달한다. 독립 역할 프롬프트가 모르는 파이프라인 단계명을 노출하지 않는다.
+        model_failure_reason = re.sub(
+            r"\bCALL[123]\b",
+            "subtitle dialogue",
+            model_failure_reason,
+            flags=re.IGNORECASE,
+        )
     roster_correction_instruction = ""
     if _call3_dialogue_requires_localized_names(speak_language):
         roster_correction_instruction = (
@@ -7411,13 +7458,13 @@ async def _build_call3_dialogue_with_recovery(
             + roster_correction_instruction
             + "Character names in speaker prefixes, Scene headers, and required tags are "
             "the only language exceptions. "
-            f"Validation failure to fix: {call3_failure_reason}. "
+            f"Validation failure to fix: {model_failure_reason}. "
             "Output only the corrected Scene blocks."
         ),
     }])
     try:
         corrected_output = await _call_pipeline_llm(
-            "CALL3-CORRECTION",
+            correction_call_name,
             _normalize_messages(retry_messages),
             stream_notify,
             result_validator=lambda result: validate_call3_output_contract(
@@ -10558,10 +10605,11 @@ async def build_from_context(
                 })
         speak_messages.append({
             "role": "user",
-            "content": (
-                f"[Original narrative]\n{original_narrative}"
-                f"\n\n[Selected scenes from CALL2]\n{selected_scene_payload}"
-                f"\n\nLanguage: {speak_language}"
+            "content": build_call3_scene_request(
+                original_narrative,
+                selected_scene_payload,
+                speak_language,
+                call3_prompt_mode,
             ),
         })
         call3_state = await _build_call3_dialogue_with_recovery(
@@ -10570,6 +10618,12 @@ async def build_from_context(
             extra_names,
             speak_language,
             stream_notify,
+            "CALL3-SUBTITLE" if call3_prompt_mode == "subtitle" else "CALL3",
+            (
+                "CALL3-SUBTITLE-CORRECTION"
+                if call3_prompt_mode == "subtitle"
+                else "CALL3-CORRECTION"
+            ),
         )
         call3_output = str(call3_state["output"] or "")
         call3_initial_output = str(call3_state["initial_output"] or "")
@@ -10589,7 +10643,9 @@ async def build_from_context(
         call3_output = postprocess.postprocess_call3_emotion_placement(call3_output)
         speak_map = parse_speak_output(
             call3_output,
-            max_entries_per_scene=2 if call3_prompt_mode == "speak" else None,
+            max_entries_per_scene=(
+                2 if call3_prompt_mode in {"speak", "subtitle"} else None
+            ),
         )
         for descriptor in call3_descriptors:
             descriptor["speak"] = speak_map.get(int(descriptor.get("slot", 0)), "")

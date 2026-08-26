@@ -711,6 +711,7 @@ DEFAULT_CONFIG = {
         "illustration_call2":      _llm_route_defaults(),  # PLAN/DETAIL/KEYVIS 장면·태그 빌드 공유
         "illustration_call2_fix":  _llm_route_defaults(),  # CALL2 파싱 실패 시 TOON 교정(repair.txt)
         "illustration_call3":      _llm_route_defaults(),  # 대사 생성(speak/manga)
+        "illustration_call3_subtitle": _llm_route_defaults(),  # 방송 애니 자막 전용 대사 생성
         "illustration_original_asset": _llm_route_defaults(json_mode=True),  # 업로드 원본 에셋 단일 선택
         "illustration_multi_char_mask": _llm_route_defaults(json_mode=True),  # CALL3 뒤 캐릭터별 정규화 영역 계산
     },
@@ -2620,7 +2621,7 @@ async def save_backup(
     )
 
     # 0) 후처리([SPEAK] 합성) — 저장 전 이미지에 적용
-    #    postprocess_settings._mode == "bubble" 이면 말풍선 빌더, 아니면 vn 대사창 빌더.
+    #    postprocess_settings._mode에 따라 말풍선/자막/VN 빌더를 선택한다.
     #    합성 전 원본을 _raw로 별도 보존하기 위해 합성 전 bytes를 캡처하고 성공 여부를
     #    추적한다. 합성 실패/스킵 시 .webp 자체가 원본이므로 _raw는 저장하지 않는다.
     raw_image_bytes = image_bytes
@@ -2630,11 +2631,24 @@ async def save_backup(
     raw_saved_extension = ""
     if postprocess_settings and speak_text:
         try:
-            if postprocess_settings.get("_mode") == "bubble":
+            postprocess_mode = postprocess_settings.get("_mode")
+            if postprocess_mode == "bubble":
                 from modes.bubble_render import compose_bubble
                 _bs = {k: v for k, v in postprocess_settings.items() if k != "_mode"}
                 image_bytes = compose_bubble(image_bytes, speak_text, _bs, bot_name)
                 print(f"[BACKUP] 말풍선 합성 적용: speak_len={len(speak_text)}")
+            elif postprocess_mode == "subtitle":
+                from modes.subtitle_render import compose_subtitle
+
+                subtitle_settings = {
+                    key: value
+                    for key, value in postprocess_settings.items()
+                    if key != "_mode"
+                }
+                image_bytes = compose_subtitle(
+                    image_bytes, speak_text, subtitle_settings, bot_name
+                )
+                print(f"[BACKUP] 애니 자막 합성 적용: speak_len={len(speak_text)}")
             else:
                 from modes.postprocess import compose_postprocess
                 image_bytes = compose_postprocess(image_bytes, speak_text, postprocess_settings, bot_name)
@@ -4677,7 +4691,11 @@ def _get_illustration_postprocess_settings(
     저장하지 않고 우회한다.
     """
     try:
-        from modes.postprocess import get_vn_settings, get_bubble_settings
+        from modes.postprocess import (
+            get_bubble_settings,
+            get_subtitle_settings,
+            get_vn_settings,
+        )
         from modes.bot_mode import _get_postprocess_mode
 
         postprocess_mode = _get_postprocess_mode(bot_name)
@@ -4691,6 +4709,19 @@ def _get_illustration_postprocess_settings(
                 return {"_mode": "bubble", **bubble_settings}
             print(
                 f"[BACKUP] 말풍선 후처리 설정이 비어 있음: "
+                f"bot={bot_name!r}, force={force}"
+            )
+            return None
+        if postprocess_mode == "subtitle":
+            subtitle_settings = get_subtitle_settings(
+                app_config,
+                bot_name=bot_name,
+                force=force,
+            )
+            if subtitle_settings:
+                return {"_mode": "subtitle", **subtitle_settings}
+            print(
+                f"[BACKUP] 자막 후처리 설정이 비어 있음: "
                 f"bot={bot_name!r}, force={force}"
             )
             return None
@@ -7101,7 +7132,10 @@ async def process_illustration_context_queue_item(item) -> dict:
                 print(f"[ILLUST_CONTEXT] postprocess_mode 조회 실패(bot={active_bot}): {e}")
                 traceback.print_exc()
                 _pp_mode = "vn"
-            illust_toggles["call3_prompt_mode"] = "manga" if _pp_mode == "bubble" else "speak"
+            illust_toggles["call3_prompt_mode"] = {
+                "bubble": "manga",
+                "subtitle": "subtitle",
+            }.get(_pp_mode, "speak")
 
             async def _on_call2_ready(call2_built: dict):
                 nonlocal child_pairs, early_dispatch, early_descriptor_slots
@@ -13997,7 +14031,7 @@ async def handle_api_postprocess_preview(request: web.Request) -> web.Response:
             print(f"[POSTPROCESS_PREVIEW] ⚠ HRF 변환 실패, 원본 베이스 사용: {_e}")
             traceback.print_exc()
 
-        # 말풍선 모드 분기 — 미리보기도 실제 전송과 동일 빌더(compose_bubble) 경유 (CLAUDE.md).
+        # 모드 분기 — 미리보기도 실제 전송과 동일한 합성 빌더를 경유한다.
         mode = body.get("mode", "vn")
         if mode == "bubble":
             from modes.bubble_render import compose_bubble
@@ -14046,6 +14080,31 @@ async def handle_api_postprocess_preview(request: web.Request) -> web.Response:
                 "preview_force_min_font_size": bool(body.get("preview_force_min_font_size", False)),
             }
             composed = compose_bubble(base_bytes, speak, bubble_settings, bot_name)
+            return web.Response(body=composed, content_type="image/png")
+        if mode == "subtitle":
+            from modes.subtitle_render import compose_subtitle
+
+            subtitle_settings = {
+                "enabled": bool(body.get("enabled", True)),
+                "font_id": body.get("font_id", "noto-sans-kr-medium"),
+                "font_path": body.get("font_path", ""),
+                "font_size": body.get("font_size", 52),
+                "min_font_size": body.get("min_font_size", 28),
+                "max_width_ratio": body.get("max_width_ratio", 0.86),
+                "bottom_margin_ratio": body.get("bottom_margin_ratio", 0.075),
+                "line_spacing_ratio": body.get("line_spacing_ratio", 0.18),
+                "text_color": body.get("text_color", "#FFFFFF"),
+                "outline_color": body.get("outline_color", "#101010"),
+                "outline_width": body.get("outline_width", 4),
+                "shadow_color": body.get("shadow_color", "#000000"),
+                "shadow_opacity": body.get("shadow_opacity", 0.82),
+                "shadow_offset_x": body.get("shadow_offset_x", 2),
+                "shadow_offset_y": body.get("shadow_offset_y", 3),
+                "max_lines": body.get("max_lines", 2),
+            }
+            composed = compose_subtitle(
+                base_bytes, speak, subtitle_settings, bot_name
+            )
             return web.Response(body=composed, content_type="image/png")
 
         composed = compose_postprocess(base_bytes, speak, settings, bot_name)
@@ -18411,6 +18470,14 @@ app.router.add_get("/api/bot_mode/postprocess_vn", bot_mode.handle_get_postproce
 app.router.add_post("/api/bot_mode/postprocess_vn", bot_mode.handle_save_postprocess_vn)
 app.router.add_get("/api/bot_mode/postprocess_bubble", bot_mode.handle_get_postprocess_bubble)
 app.router.add_post("/api/bot_mode/postprocess_bubble", bot_mode.handle_save_postprocess_bubble)
+app.router.add_get(
+    "/api/bot_mode/postprocess_subtitle",
+    bot_mode.handle_get_postprocess_subtitle,
+)
+app.router.add_post(
+    "/api/bot_mode/postprocess_subtitle",
+    bot_mode.handle_save_postprocess_subtitle,
+)
 app.router.add_post("/api/llm_edit_prompt", handle_api_llm_edit_prompt)
 app.router.add_get("/api/llm_edit_prompt/capability", handle_api_llm_edit_capability)
 app.router.add_get("/api/llm_edit_prompt_template", handle_api_get_llm_edit_template)
@@ -20587,10 +20654,39 @@ async def handle_api_asset_mode_image(request: web.Request) -> web.Response:
     outfit = request.match_info.get("outfit", "")
     expression = request.match_info.get("expression", "")
     filename = request.match_info.get("filename", "")
-    filepath = asset_mode.get_image_path(character, outfit, expression, filename)
-    if filepath and os.path.isfile(filepath):
-        return web.FileResponse(filepath)
-    return web.Response(text="Not found", status=404)
+    try:
+        filepath = asset_mode.get_image_path(character, outfit, expression, filename)
+        if not filepath or not os.path.isfile(filepath):
+            print(
+                "[ASSET_MODE] 이미지 조회 실패: 파일이 존재하지 않음, "
+                f"character={character!r}, outfit={outfit!r}, "
+                f"expression={expression!r}, filename={filename!r}, "
+                f"path={filepath!r}, status=404"
+            )
+            return web.Response(text="Not found", status=404)
+
+        # 에셋은 삭제 후 같은 파일명으로 다시 업로드될 수 있다. FileResponse의
+        # ETag/Last-Modified 조건부 응답을 사용하면 브라우저가 이전 파일 바이트를
+        # 304 캐시에서 다시 표시할 수 있으므로, 매 요청마다 현재 바이트를 읽어
+        # no-store 응답으로 전달한다.
+        with open(filepath, "rb") as image_file:
+            image_data = image_file.read()
+        return web.Response(
+            body=image_data,
+            content_type=(
+                mimetypes.guess_type(filepath)[0] or "application/octet-stream"
+            ),
+            headers={"Cache-Control": "no-store, no-cache, must-revalidate"},
+        )
+    except Exception as e:
+        print(
+            "[ASSET_MODE] 이미지 조회 오류: "
+            f"character={character!r}, outfit={outfit!r}, "
+            f"expression={expression!r}, filename={filename!r}, "
+            f"error={type(e).__name__}: {e}, status=500"
+        )
+        traceback.print_exc()
+        return web.Response(text="Image read error", status=500)
 
 
 async def handle_api_asset_mode_video_poster(request: web.Request) -> web.Response:

@@ -2918,6 +2918,7 @@ def test_prompt_format_migrates_legacy_preset_and_rejects_unknown_value(capsys):
 def test_call3_prompt_mode_defaults_and_rejects_unknown_value(capsys):
     assert pipeline.merged_toggles({})["call3_prompt_mode"] == "speak"
     assert pipeline.merged_toggles({"call3_prompt_mode": "MANGA"})["call3_prompt_mode"] == "manga"
+    assert pipeline.merged_toggles({"call3_prompt_mode": "SUBTITLE"})["call3_prompt_mode"] == "subtitle"
     assert pipeline.merged_toggles({"call3_prompt_mode": "future"})["call3_prompt_mode"] == "speak"
     assert "지원하지 않는 CALL3 대사 프롬프트" in capsys.readouterr().out
 
@@ -3678,10 +3679,11 @@ async def test_backtranslation_slow_retry_does_nothing_when_all_conditions_are_o
     assert "hedged" not in statuses[1]
 
 
-def test_call3_dialogue_prompt_selects_speak_or_manga_and_scopes_emotions():
+def test_call3_dialogue_prompt_selects_mode_and_scopes_emotions():
     prompts = {
         "call3_speak": "SPEAK PROMPT",
         "call3_manga": "MANGA PROMPT",
+        "call3_subtitle": "SUBTITLE PROMPT",
     }
 
     speak_mode, speak_prompt = pipeline.build_call3_dialogue_system_prompt(
@@ -3703,6 +3705,15 @@ def test_call3_dialogue_prompt_selects_speak_or_manga_and_scopes_emotions():
         }),
         "CHARACTER REFERENCE",
     )
+    subtitle_mode, subtitle_prompt = pipeline.build_call3_dialogue_system_prompt(
+        prompts,
+        pipeline.merged_toggles({
+            "call3_prompt_mode": "subtitle",
+            "speak_emotion_enabled": True,
+            "speak_emotions": "joy; anger",
+        }),
+        "CHARACTER REFERENCE",
+    )
 
     assert speak_mode == "speak"
     assert speak_prompt.startswith("# OUTPUT LANGUAGE — HARD REQUIREMENT")
@@ -3715,6 +3726,11 @@ def test_call3_dialogue_prompt_selects_speak_or_manga_and_scopes_emotions():
     assert "MANGA PROMPT" in manga_prompt
     assert "CHARACTER REFERENCE" in manga_prompt
     assert "#emotion" not in manga_prompt
+    assert subtitle_mode == "subtitle"
+    assert subtitle_prompt.startswith("# OUTPUT LANGUAGE — HARD REQUIREMENT")
+    assert "SUBTITLE PROMPT" in subtitle_prompt
+    assert "CHARACTER REFERENCE" in subtitle_prompt
+    assert "#emotion" not in subtitle_prompt
 
 
 def test_call3_prompts_separate_internal_speaker_ids_from_in_story_address():
@@ -3730,6 +3746,64 @@ def test_call3_prompts_separate_internal_speaker_ids_from_in_story_address():
         assert "If the proper form of address is uncertain, omit it" in prompt
         assert "exact roster identifier belongs only on the left side of the colon" in prompt
         assert "never leave that Latin-script roster identifier inside" in prompt
+
+
+def test_subtitle_prompt_is_self_contained_and_hides_internal_stage_names():
+    prompt = pipeline.load_prompt_files()["call3_subtitle"]
+
+    assert prompt.startswith("You are a broadcast-anime subtitle dialogue editor.")
+    assert "finished television-animation subtitle" in prompt
+    assert "internal identifiers for machine-readable speaker attribution only" in prompt
+    assert "never displayed" in prompt
+    assert "no more than two centered subtitle lines" in prompt
+    assert not re.search(r"\bCALL[123]\b", prompt, re.IGNORECASE)
+    assert "pipeline" not in prompt.lower()
+
+
+def test_subtitle_scene_request_hides_internal_stage_names():
+    request = pipeline.build_call3_scene_request(
+        "A quiet station platform.",
+        '{"selected_scenes": [{"slot": 4}]}',
+        "한국어",
+        "subtitle",
+    )
+
+    assert "[Selected illustrated scenes]" in request
+    assert "[Original narrative]" in request
+    assert not re.search(r"\bCALL[123]\b", request, re.IGNORECASE)
+
+
+@pytest.mark.asyncio
+async def test_subtitle_correction_prompt_hides_internal_stage_names(monkeypatch):
+    calls = []
+
+    async def fake_call(call_name, messages, *_args, **_kwargs):
+        calls.append((call_name, messages))
+        if len(calls) == 1:
+            return '[Scene slot=999]\nHana: "잘못된 슬롯"'
+        return '[Scene slot=4]\nHana: "다시 만났네."'
+
+    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_call)
+    result = await pipeline._build_call3_dialogue_with_recovery(
+        [
+            {"role": "system", "content": "You edit broadcast-anime subtitles."},
+            {"role": "user", "content": "[Selected illustrated scenes]"},
+        ],
+        [4],
+        "Hana",
+        "한국어",
+        call_name="CALL3-SUBTITLE",
+        correction_call_name="CALL3-SUBTITLE-CORRECTION",
+    )
+
+    assert result["output"] == '[Scene slot=4]\nHana: "다시 만났네."'
+    assert [item[0] for item in calls] == [
+        "CALL3-SUBTITLE",
+        "CALL3-SUBTITLE-CORRECTION",
+    ]
+    correction_input = json.dumps(calls[1][1], ensure_ascii=False)
+    assert "subtitle dialogue 선택 slot 불일치" in correction_input
+    assert not re.search(r"\bCALL[123]\b", correction_input, re.IGNORECASE)
 
 
 def test_call3_output_contract_rejects_roster_ids_only_inside_localized_dialogue(capsys):
@@ -4945,6 +5019,45 @@ async def test_pipeline_llm_records_success_in_lighbd_history(monkeypatch):
     assert {event["execution_id"] for event in events} == {
         records[0]["execution_id"]
     }
+
+
+@pytest.mark.asyncio
+async def test_subtitle_dialogue_uses_dedicated_queue_route_and_lb_history(monkeypatch):
+    records = []
+    events = []
+    messages = [{"role": "user", "content": "subtitle scene"}]
+
+    async def fake_call(task_key, actual_messages, **_kwargs):
+        assert task_key == "illustration_call3_subtitle"
+        assert actual_messages == messages
+        metadata = pipeline.llm_service._stream_metadata_ctx.get({})
+        assert metadata["task_key"] == "illustration_call3_subtitle"
+        assert metadata["call_name"] == "CALL3-SUBTITLE"
+        assert metadata["execution_id"]
+        return '[Scene slot=7]\nHana: "지금 갈게."'
+
+    async def fake_notify(event):
+        events.append(event)
+
+    monkeypatch.setattr(pipeline.llm_service, "callLLMTask", fake_call)
+    monkeypatch.setattr(pipeline.lighbd_service, "_log_lighbd_history", records.append)
+
+    result = await pipeline._call_pipeline_llm(
+        "CALL3-SUBTITLE",
+        messages,
+        fake_notify,
+    )
+
+    assert result == '[Scene slot=7]\nHana: "지금 갈게."'
+    assert [event["type"] for event in events] == ["start", "done"]
+    assert {event["queue_subtask"]["group_id"] for event in events} == {"call3"}
+    assert len(records) == 1
+    assert records[0]["call_name"] == "CALL3-SUBTITLE"
+    assert records[0]["task_key"] == "illustration_call3_subtitle"
+    assert records[0]["input"] == messages
+    assert records[0]["output"] == result
+    assert records[0]["status"] == "ok"
+    assert records[0]["execution_id"]
 
 
 @pytest.mark.asyncio
