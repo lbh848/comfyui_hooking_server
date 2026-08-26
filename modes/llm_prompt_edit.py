@@ -559,8 +559,9 @@ def character_selection_contract(
     bot: dict,
     previous_names: list[str],
     selected_names: list[str],
+    visual_bases: dict[str, dict] | None = None,
 ) -> str:
-    """LLM이 선택된 정체성을 scene_char에 명시하도록 동적 계약을 만든다."""
+    """LLM이 선택된 캐릭터/프로필을 scene_char에 명시하도록 계약을 만든다."""
     names = validate_character_selection(bot, selected_names)
     characters = bot.get("characters") or []
     identity_lines = []
@@ -571,8 +572,31 @@ def character_selection_contract(
             if isinstance(item, dict)
             and str(item.get("name") or "").strip().casefold() == name.casefold()
         )
+        visual_base = next((
+            value for base_name, value in (visual_bases or {}).items()
+            if str(base_name).casefold() == name.casefold()
+            and isinstance(value, dict)
+        ), {})
+        appearance = ", ".join(
+            str(item.get("tag") if isinstance(item, dict) else item).strip()
+            for item in (visual_base.get("appearance") or [])
+            if str(item.get("tag") if isinstance(item, dict) else item).strip()
+        )
+        default_outfit = ", ".join(
+            str(item.get("tag") if isinstance(item, dict) else item).strip()
+            for item in (visual_base.get("outfit") or [])
+            if str(item.get("tag") if isinstance(item, dict) else item).strip()
+        )
+        profile_label = str(
+            visual_base.get("visual_profile_label")
+            or visual_base.get("visual_profile_id")
+            or ""
+        ).strip()
         identity_lines.append(
-            f"{index + 1}. {name}: gender={str(character.get('gender_tag') or '').strip() or '(none)'}; "
+            f"{index + 1}. {name}: selected visual profile={profile_label or '(default)'}; "
+            f"fixed appearance={appearance or '(none)'}; "
+            f"default outfit fallback={default_outfit or '(none)'}; "
+            f"gender={str(character.get('gender_tag') or '').strip() or '(none)'}; "
             f"face={str(character.get('face_tags') or '').strip() or '(none)'}; "
             f"eyes={str(character.get('eye_tags') or '').strip() or '(none)'}"
         )
@@ -587,8 +611,76 @@ def character_selection_contract(
         "Canonical identity reference from the active bot:\n"
         + "\n".join(identity_lines)
         + "\nEach scene_char character block must start with its exact selected character name. "
-        "For two characters, keep the exact order and use one ` | ` separator."
+        "For two characters, keep the exact order and use one ` | ` separator. "
+        "Treat each selected visual profile's fixed appearance as mandatory. Its default outfit is "
+        "the fallback only when the user's edit direction does not establish another outfit."
     )
+
+
+def apply_visual_profile_appearance(
+    parsed: dict,
+    character_names: list[str],
+    visual_bases: dict[str, dict] | None,
+    previous_visual_bases: list[dict] | None = None,
+) -> dict:
+    """Bind fixed appearance tags from explicitly selected visual profiles.
+
+    Old fixed-appearance tags are removed only by exact tag identity.  The selected
+    profile's fixed tags are then restored deterministically; outfit choice remains
+    with the LLM because a user's edit direction may intentionally change clothing.
+    """
+    scene = _coerce_scene_fields(parsed)
+    names = [str(name or "").strip() for name in character_names]
+    blocks = _split_char_blocks(scene.get("scene_char", ""))
+    if len(blocks) != len(names):
+        raise ValueError(
+            "프로필 외형을 적용할 캐릭터 수와 장면 블록 수가 다릅니다: "
+            f"characters={len(names)}, blocks={len(blocks)}"
+        )
+
+    def tag_values(base: dict | None, field: str) -> list[str]:
+        values = (base or {}).get(field) or []
+        return [
+            str(value.get("tag") if isinstance(value, dict) else value).strip()
+            for value in values
+            if str(value.get("tag") if isinstance(value, dict) else value).strip()
+        ]
+
+    updated_blocks = []
+    for index, (name, block) in enumerate(zip(names, blocks)):
+        selected_base = next((
+            value for base_name, value in (visual_bases or {}).items()
+            if str(base_name).casefold() == name.casefold()
+            and isinstance(value, dict)
+        ), {})
+        selected_tags = tag_values(selected_base, "appearance")
+        previous_base = (
+            previous_visual_bases[index]
+            if previous_visual_bases and index < len(previous_visual_bases)
+            and isinstance(previous_visual_bases[index], dict)
+            else {}
+        )
+        old_tag_ids = {tag.casefold() for tag in tag_values(previous_base, "appearance")}
+        tokens = _split_tokens(block)
+        character_name_ids = {candidate.casefold() for candidate in names}
+        filtered = [
+            token for token in tokens
+            if token.casefold() not in old_tag_ids
+            and token.casefold() not in character_name_ids
+        ]
+        existing_ids = {token.casefold() for token in filtered}
+        additions = [tag for tag in selected_tags if tag.casefold() not in existing_ids]
+        updated_blocks.append(_join_tags(name, *additions, *filtered))
+        print(
+            f"[LLM_EDIT:PROFILE] 고정 외형 적용: character={name!r}, "
+            f"profile={selected_base.get('visual_profile_id')!r}, "
+            f"removed={len(tokens) - len(filtered)}, added={additions}"
+        )
+
+    result = dict(parsed)
+    result.update(scene)
+    result["scene_char"] = " | ".join(updated_blocks)
+    return result
 
 
 def bind_scene_characters(

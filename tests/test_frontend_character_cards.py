@@ -112,3 +112,20 @@ def test_manual_restore_draw_selects_a_profile_for_each_character():
     assert "function _fillRestoreProfileSelect(slot)" in FRONTEND
     assert "character.default_visual_profile_id" in FRONTEND
     assert "visual_profile_ids: visualProfileIds" in FRONTEND
+    assert 'id="restore-profile-thumb-1"' in FRONTEND
+    assert 'id="restore-profile-thumb-2"' in FRONTEND
+    assert "function _updateRestoreProfileThumbnail(slot)" in FRONTEND
+    assert "encodeURIComponent(filename)" in FRONTEND
+    assert "const filename = String(profile?.rep_image || '').trim();" in FRONTEND
+    assert "openRestoreProfileThumbnail(1)" in FRONTEND
+
+
+def test_easy_edit_selects_and_submits_a_visual_profile_for_each_slot():
+    assert "function fillLlmEditProfileSelect(index, preferredProfileId = '')" in FRONTEND
+    assert "llm-edit-profile-select-${index}" in FRONTEND
+    assert "capability.visual_profile_ids" in FRONTEND
+    assert "state.visualProfileIds[character.name] = profile.id" in FRONTEND
+    assert "requestBody.visual_profile_ids = selectedVisualProfileIds" in FRONTEND
+    assert "requestBody.previous_identity = currentModalIdentityEdit" in FRONTEND
+    assert "currentModalIdentityEdit?.visual_profile_ids" in FRONTEND
+    assert "profile?.rep_image" in FRONTEND

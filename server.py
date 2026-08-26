@@ -2424,6 +2424,72 @@ def _test_keyvis_gif_bytes() -> bytes:
 _BACKUP_SNAPSHOT_UNSET = object()
 
 
+def _normalize_illustration_visual_states(
+    raw_states: object,
+    *,
+    context: str,
+) -> dict[str, dict]:
+    """Normalize the persisted character -> visual profile selection contract."""
+    if raw_states is None:
+        return {}
+    if not isinstance(raw_states, dict):
+        print(
+            f"[VISUAL_PROFILE:STATE] object가 아닌 상태 거부: "
+            f"context={context}, type={type(raw_states).__name__}, value={raw_states!r}"
+        )
+        raise ValueError("시각 프로필 상태는 캐릭터별 object여야 합니다")
+
+    normalized: dict[str, dict] = {}
+    seen: set[str] = set()
+    for raw_name, raw_state in raw_states.items():
+        name = str(raw_name or "").strip()
+        if not name:
+            print(
+                f"[VISUAL_PROFILE:STATE] 빈 캐릭터 이름 거부: "
+                f"context={context}, value={raw_states!r}"
+            )
+            raise ValueError("시각 프로필 상태에 빈 캐릭터 이름이 있습니다")
+        folded = name.casefold()
+        if folded in seen:
+            print(
+                f"[VISUAL_PROFILE:STATE] 중복 캐릭터 거부: "
+                f"context={context}, character={name!r}"
+            )
+            raise ValueError(f"시각 프로필 상태의 캐릭터가 중복됩니다: {name}")
+        seen.add(folded)
+        if isinstance(raw_state, str):
+            profile_id = raw_state.strip()
+            state = {"visual_profile_id": profile_id}
+        elif isinstance(raw_state, dict):
+            profile_id = str(raw_state.get("visual_profile_id") or "").strip()
+            state = {"visual_profile_id": profile_id}
+            if "profile_embedding" in raw_state:
+                if not isinstance(raw_state.get("profile_embedding"), bool):
+                    print(
+                        f"[VISUAL_PROFILE:STATE] profile_embedding 타입 오류: "
+                        f"context={context}, character={name!r}, state={raw_state!r}"
+                    )
+                    raise ValueError(
+                        f"{name}의 profile_embedding은 boolean이어야 합니다"
+                    )
+                state["profile_embedding"] = raw_state["profile_embedding"]
+        else:
+            print(
+                f"[VISUAL_PROFILE:STATE] 캐릭터 상태 타입 오류: "
+                f"context={context}, character={name!r}, "
+                f"type={type(raw_state).__name__}, value={raw_state!r}"
+            )
+            raise ValueError(f"{name}의 시각 프로필 상태가 object가 아닙니다")
+        if not profile_id:
+            print(
+                f"[VISUAL_PROFILE:STATE] 빈 프로필 ID 거부: "
+                f"context={context}, character={name!r}, state={raw_state!r}"
+            )
+            raise ValueError(f"{name}의 시각 프로필 ID가 비어 있습니다")
+        normalized[name] = state
+    return normalized
+
+
 async def save_backup(
     image_bytes: bytes,
     prompt_id: str,
@@ -2445,6 +2511,7 @@ async def save_backup(
     api_workflow_snapshot=_BACKUP_SNAPSHOT_UNSET,
     conversion_info_snapshot=_BACKUP_SNAPSHOT_UNSET,
     illustration_multi_char: dict = None,
+    illustration_visual_states: dict = None,
     llm_trace: list = None,
     llm_final_result: dict = None,
     execution_target: str = "",
@@ -2459,6 +2526,7 @@ async def save_backup(
     prompt_provider: 저장 프롬프트 문법을 만든 공급자(comfy 또는 chansub).
     *_snapshot: 이미지 생성과 백업이 겹칠 때 해당 이미지 생성 시점의 전역 메타데이터를 고정한다.
     illustration_multi_char: 2~3인 재생성용 정규화 레이아웃 스냅샷.
+    illustration_visual_states: 캐릭터별로 실제 적용된 시각 프로필 스냅샷.
     execution_target: 이미지를 실제로 생성한 Comfy 실행처("modal"/"local" 등). 빈 값이면
         CURRENT_COMFY_EXECUTION_TARGET 컨텍스트 변수에서 읽는다. provider와 함께
         execution_source(modal/chansub/local)를 산출해 _info.json에 저장하며, 프론트는
@@ -2513,6 +2581,18 @@ async def save_backup(
         print(
             f"[BACKUP:MULTI_CHAR] 마스크 스냅샷 검증 실패: "
             f"prompt={prompt_id}, error={e}"
+        )
+        traceback.print_exc()
+        raise
+    try:
+        backup_visual_states = _normalize_illustration_visual_states(
+            illustration_visual_states,
+            context=f"backup:{prompt_id}",
+        )
+    except Exception as e:
+        print(
+            f"[BACKUP:VISUAL_PROFILE] 상태 검증 실패: "
+            f"prompt={prompt_id}, value={illustration_visual_states!r}, error={e}"
         )
         traceback.print_exc()
         raise
@@ -2729,6 +2809,12 @@ async def save_backup(
             f"order={backup_multi_char['character_order']}, "
             f"fingerprint={backup_multi_char['mask_fingerprint'][:12]}"
         )
+    if backup_visual_states:
+        info_to_save["illustration_visual_states"] = backup_visual_states
+        print(
+            f"[BACKUP:VISUAL_PROFILE] 상태 저장: base={base_name}, "
+            f"states={backup_visual_states}"
+        )
     # LLM 흐름 추적: 이 백업을 만든 삽화 파이프라인(MULTI-CHAR-MASK~CALL3)이 거친
     # 모든 LLM 호출의 history_id. 프론트의 "LLM 흐름" 버튼이 lighbd_history.jsonl
     # 에서 이 id들로 레코드를 정확히 매칭해 자르기 없이 보여준다. 빈 목록이면 버튼 비활성.
@@ -2754,6 +2840,12 @@ async def save_backup(
                     if str(n).strip()
                 ],
             }
+            final_visual_states = _normalize_illustration_visual_states(
+                llm_final_result.get("visual_states"),
+                context=f"llm_final_result:{prompt_id}",
+            )
+            if final_visual_states:
+                info_to_save["llm_final_result"]["visual_states"] = final_visual_states
         except Exception as e:
             print(f"[BACKUP] llm_final_result 정규화 실패, 무시: {e}")
             traceback.print_exc()
@@ -4714,6 +4806,7 @@ async def _finalize_deferred_illustration_prompt(prompt_id: str, speak_text: str
             api_workflow_snapshot=state.get("api_workflow"),
             conversion_info_snapshot=state.get("conversion_info"),
             illustration_multi_char=state.get("illustration_multi_char"),
+            illustration_visual_states=state.get("illustration_visual_states"),
             llm_trace=entry.get("_llm_trace"),
             llm_final_result=entry.get("_llm_final_result"),
             execution_target=str(state.get("execution_target") or ""),
@@ -4888,6 +4981,8 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
         generation_height = 756 if illustration_provider == "chansub" else None
         chansub_quality_tag_start = 0
         chansub_quality_tag_count = 0
+        applied_visual_states: dict[str, dict] = {}
+        backup_visual_states: dict[str, dict] = {}
         _speak_text = ""  # [SPEAK] 섹션 원문 (후처리 합성용)
         word_rule_character_count = None
         queued_multi_char = raw_body.get("illustration_multi_char") or {}
@@ -4953,7 +5048,6 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                 effective_profiles = _effective_bot_profiles(bot, lb_extra_data)
                 resolved_bot = copy.deepcopy(bot)
                 resolved_characters = []
-                applied_visual_states = {}
                 for root_character in bot.get("characters", []):
                     char_name = str(root_character.get("name") or "").strip()
                     character_profiles = next((
@@ -5281,6 +5375,26 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                         traceback.print_exc()
                         raise
 
+                applied_by_key = {
+                    str(name).casefold(): (str(name), state)
+                    for name, state in applied_visual_states.items()
+                }
+                backup_visual_states = {}
+                for detected_name in detected:
+                    applied = applied_by_key.get(str(detected_name).casefold())
+                    if not applied:
+                        continue
+                    canonical_name, state = applied
+                    backup_visual_states[canonical_name] = copy.deepcopy(state)
+                if backup_visual_states:
+                    raw_body["illustration_visual_states"] = copy.deepcopy(
+                        backup_visual_states
+                    )
+                    print(
+                        f"[VISUAL_PROFILE:RENDER] 백업 상태 확정: "
+                        f"prompt={prompt_id}, states={backup_visual_states}"
+                    )
+
                 # 4. 캐릭터 수에 따라 solo/group 프로필 선택
                 tags = asset_mode._tags
                 is_multi = len(detected) >= 2
@@ -5514,6 +5628,9 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                 "illustration_multi_char": copy.deepcopy(
                     queued_multi_char if multi_char_requested else None
                 ),
+                "illustration_visual_states": copy.deepcopy(
+                    backup_visual_states
+                ),
                 # 후처리는 별도 태스크에서 나중에 실행되므로, 생성 시점의 Comfy 실행처를
                 # 보존해 둔다. _finalize_deferred_illustration_prompt가 save_backup으로
                 # 전달하며, Modal 삽화가 M 딱지로 남기 위한 근거.
@@ -5557,6 +5674,7 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
             illustration_multi_char=(
                 queued_multi_char if multi_char_requested else None
             ),
+            illustration_visual_states=backup_visual_states,
             llm_trace=(prompts.get(prompt_id) or {}).get("_llm_trace"),
             llm_final_result=(prompts.get(prompt_id) or {}).get("_llm_final_result"),
         )
@@ -10379,6 +10497,111 @@ def _read_backup_prompt_provider(
         return fallback
 
 
+def _infer_visual_states_from_prompt(
+    source_positive: str,
+    *,
+    backup_name: str,
+) -> dict[str, dict]:
+    """Recover legacy profile-embedding selections from V3 control paths."""
+    if not source_positive:
+        return {}
+    try:
+        blocks = llm_prompt_edit.parse_blocks(source_positive)
+    except Exception as e:
+        print(
+            f"[BACKUP:VISUAL_PROFILE] 레거시 프롬프트 파싱 실패: "
+            f"backup={backup_name}, error={e}"
+        )
+        traceback.print_exc()
+        return {}
+
+    inferred: dict[str, dict] = {}
+    for block_name, path_key in (("CACHE_PATH", "emb_path"), ("FACE_ID_DIR", "ipa_path")):
+        raw = str(blocks.get(block_name) or "").strip()
+        if not raw:
+            continue
+        try:
+            payload = json.loads(raw)
+        except Exception as e:
+            print(
+                f"[BACKUP:VISUAL_PROFILE] [{block_name}] 파싱 실패: "
+                f"backup={backup_name}, error={e}"
+            )
+            traceback.print_exc()
+            continue
+        for item in payload.get("list", []) if isinstance(payload, dict) else []:
+            if not isinstance(item, dict):
+                print(
+                    f"[BACKUP:VISUAL_PROFILE] [{block_name}] object가 아닌 항목 스킵: "
+                    f"backup={backup_name}, value={item!r}"
+                )
+                continue
+            name = str(item.get("CHAR") or "").strip()
+            path = str(item.get(path_key) or "").strip().replace("\\", "/")
+            match = re.search(r"/_visual_profiles/([^/]+)/", "/" + path.lstrip("/"))
+            if not name or not match:
+                continue
+            profile_id = match.group(1).strip()
+            if profile_id:
+                inferred[name] = {
+                    "visual_profile_id": profile_id,
+                    "profile_embedding": True,
+                }
+    if inferred:
+        print(
+            f"[BACKUP:VISUAL_PROFILE] 레거시 제어 경로에서 복구: "
+            f"backup={backup_name}, states={inferred}"
+        )
+    return inferred
+
+
+def _read_backup_visual_states(
+    backup_name: str,
+    source_positive: str = "",
+) -> dict[str, dict]:
+    """Read exact visual profile selections, with a legacy embedding-path fallback."""
+    info_path = os.path.join(WORKFLOW_BACKUP_DIR, f"{backup_name}_info.json")
+    if not os.path.isfile(info_path):
+        print(
+            f"[BACKUP:VISUAL_PROFILE] info 파일 없음, 레거시 복구 시도: "
+            f"backup={backup_name}, path={info_path}"
+        )
+        return _infer_visual_states_from_prompt(
+            source_positive,
+            backup_name=backup_name,
+        )
+    try:
+        with open(info_path, "r", encoding="utf-8") as file:
+            info = json.load(file)
+        if not isinstance(info, dict):
+            raise ValueError(f"info 루트가 object가 아닙니다: {type(info).__name__}")
+        raw_states = info.get("illustration_visual_states")
+        if raw_states is None:
+            final_result = info.get("llm_final_result")
+            if isinstance(final_result, dict):
+                raw_states = final_result.get("visual_states")
+        if raw_states is not None:
+            return _normalize_illustration_visual_states(
+                raw_states,
+                context=f"backup-read:{backup_name}",
+            )
+        print(
+            f"[BACKUP:VISUAL_PROFILE] 저장 상태 없음, 레거시 복구 시도: "
+            f"backup={backup_name}"
+        )
+        return _infer_visual_states_from_prompt(
+            source_positive,
+            backup_name=backup_name,
+        )
+    except Exception as e:
+        print(
+            f"[BACKUP:VISUAL_PROFILE] 상태 읽기 실패: "
+            f"backup={backup_name}, path={info_path}, error={e}"
+        )
+        traceback.print_exc()
+        raise ValueError(f"백업의 시각 프로필 상태를 읽지 못했습니다: {e}") from e
+
+
 def _backup_uses_hybrid_regeneration(backup_name: str) -> bool:
     """명시적으로 hybrid 출처가 저장된 백업인지 확인한다."""
     if (
@@ -10440,6 +10663,7 @@ async def _run_regeneration_attempts(
     generation_params: dict,
     illustration_multi_char: dict | None,
     label: str,
+    illustration_visual_states: dict | None = None,
     regeneration_request_id: str = "",
     first_item_future: asyncio.Future | None = None,
 ) -> tuple[dict, object]:
@@ -10511,6 +10735,7 @@ async def _run_regeneration_attempts(
                     "prompt_provider": prompt_provider,
                     "generation_params": attempt_params,
                     "illustration_multi_char": illustration_multi_char,
+                    "illustration_visual_states": illustration_visual_states,
                     "regeneration_request_id": regeneration_request_id,
                 },
                 priority=0,
@@ -10768,13 +10993,159 @@ def _load_bot_data_readonly() -> dict:
     return data
 
 
+def _resolve_easy_edit_visual_profiles(
+    bot_name: str,
+    bot: dict,
+    character_names: list[str],
+    raw_visual_profile_ids: object,
+) -> tuple[dict, dict[str, str], dict[str, dict]]:
+    """Resolve explicitly selected cards into the bot copy used by prompt builders."""
+    if raw_visual_profile_ids is None:
+        raw_visual_profile_ids = {}
+    if not isinstance(raw_visual_profile_ids, dict):
+        print(
+            f"[LLM_EDIT:PROFILE] visual_profile_ids 형식 오류: "
+            f"bot={bot_name!r}, type={type(raw_visual_profile_ids).__name__}, "
+            f"value={raw_visual_profile_ids!r}"
+        )
+        raise ValueError("visual_profile_ids는 캐릭터 이름별 프로필 ID object여야 합니다")
+
+    requested_by_key: dict[str, str] = {}
+    for raw_name, raw_profile_id in raw_visual_profile_ids.items():
+        name = str(raw_name or "").strip()
+        if not name or not isinstance(raw_profile_id, str):
+            print(
+                f"[LLM_EDIT:PROFILE] 프로필 선택값 오류: "
+                f"bot={bot_name!r}, character={raw_name!r}, profile={raw_profile_id!r}"
+            )
+            raise ValueError("프로필 선택의 캐릭터 이름과 ID는 비지 않은 문자열이어야 합니다")
+        folded = name.casefold()
+        if folded in requested_by_key:
+            raise ValueError(f"프로필 선택에 중복 캐릭터가 있습니다: {name}")
+        profile_id = raw_profile_id.strip()
+        if not profile_id:
+            raise ValueError(f"{name}의 프로필 ID가 비어 있습니다")
+        requested_by_key[folded] = profile_id
+
+    selected_keys = {name.casefold() for name in character_names}
+    unknown_names = sorted(set(requested_by_key) - selected_keys)
+    if unknown_names:
+        print(
+            f"[LLM_EDIT:PROFILE] 선택 캐릭터에 없는 프로필 키 거부: "
+            f"bot={bot_name!r}, selected={character_names}, unknown={unknown_names}"
+        )
+        raise ValueError("선택하지 않은 캐릭터의 프로필 ID가 포함되어 있습니다")
+
+    try:
+        from modes.bot_mode import _load_lb_extra
+        from modes.visual_profiles import (
+            effective_bot_profiles,
+            profile_by_id,
+            resolve_render_character,
+        )
+
+        portable_data = _load_lb_extra(bot_name) or []
+        if isinstance(portable_data, dict) and "edited" in portable_data:
+            portable_data = portable_data.get("edited") or []
+        if not isinstance(portable_data, list):
+            raise ValueError(
+                f"이식용 캐릭터 데이터가 배열이 아닙니다: "
+                f"{type(portable_data).__name__}"
+            )
+        effective_profiles = effective_bot_profiles(bot, portable_data)
+        profiles_by_key = {
+            str(name).casefold(): value for name, value in effective_profiles.items()
+        }
+        roots_by_key = {
+            str(character.get("name") or "").strip().casefold(): character
+            for character in (bot.get("characters") or [])
+            if isinstance(character, dict)
+            and str(character.get("name") or "").strip()
+        }
+        resolved_by_key: dict[str, dict] = {}
+        selected_profile_ids: dict[str, str] = {}
+        visual_bases: dict[str, dict] = {}
+        for name in character_names:
+            folded = name.casefold()
+            root_character = roots_by_key.get(folded)
+            character_profiles = profiles_by_key.get(folded)
+            if root_character is None or character_profiles is None:
+                raise ValueError(f"캐릭터의 프로필 카드를 찾을 수 없습니다: {name}")
+            profile_id = requested_by_key.get(folded) or str(
+                character_profiles.get("default_visual_profile_id") or ""
+            ).strip()
+            if profile_by_id(character_profiles, profile_id) is None:
+                raise ValueError(
+                    f"캐릭터의 프로필 카드를 찾을 수 없습니다: "
+                    f"character={name}, profile={profile_id}"
+                )
+            resolved_character, visual_base = resolve_render_character(
+                root_character,
+                character_profiles,
+                profile_id,
+            )
+            canonical_name = str(resolved_character.get("name") or name).strip()
+            resolved_by_key[folded] = resolved_character
+            selected_profile_ids[canonical_name] = str(
+                visual_base.get("visual_profile_id") or ""
+            ).strip()
+            visual_bases[canonical_name] = visual_base
+
+        resolved_bot = copy.deepcopy(bot)
+        resolved_bot["characters"] = [
+            copy.deepcopy(resolved_by_key.get(
+                str(character.get("name") or "").strip().casefold(),
+                character,
+            ))
+            for character in (bot.get("characters") or [])
+            if isinstance(character, dict)
+        ]
+        print(
+            f"[LLM_EDIT:PROFILE] 프로필 카드 결속 완료: "
+            f"bot={bot_name!r}, selections={selected_profile_ids}"
+        )
+        return resolved_bot, selected_profile_ids, visual_bases
+    except Exception as e:
+        print(
+            f"[LLM_EDIT:PROFILE] 프로필 카드 해석 실패: "
+            f"bot={bot_name!r}, characters={character_names}, "
+            f"profiles={raw_visual_profile_ids!r}, error={e}"
+        )
+        traceback.print_exc()
+        raise
+
+
+def _selected_visual_states(
+    profile_ids: dict[str, str],
+    visual_bases: dict[str, dict],
+) -> dict[str, dict]:
+    states = {}
+    for name, profile_id in profile_ids.items():
+        base = next((
+            value for base_name, value in visual_bases.items()
+            if str(base_name).casefold() == str(name).casefold()
+            and isinstance(value, dict)
+        ), {})
+        states[name] = {
+            "visual_profile_id": profile_id,
+            "profile_embedding": bool(
+                (base.get("render_overrides") or {}).get(
+                    "use_profile_embedding",
+                    False,
+                )
+            ),
+        }
+    return states
+
+
 def _load_active_bot_character_selection(
     raw_character_names: object,
     *,
     expected_count: int,
     requested_bot_name: str = "",
-) -> tuple[str, dict, dict, list[str]]:
-    """편하게 수정에서 보낸 캐릭터를 현재 활성 봇 기준으로 검증한다."""
+    raw_visual_profile_ids: object = None,
+) -> tuple[str, dict, dict, list[str], dict[str, str], dict[str, dict]]:
+    """편하게 수정에서 보낸 캐릭터/프로필을 현재 활성 봇 기준으로 검증한다."""
     active_bot_name = str(app_config.get("bot_selected") or "").strip()
     if not active_bot_name:
         print("[LLM_EDIT:IDENTITY] 활성 봇(bot_selected)이 비어 있음")
@@ -10813,7 +11184,22 @@ def _load_active_bot_character_selection(
         raise ValueError(
             f"기존 {expected_count}인 구성을 유지해야 합니다. 현재 선택: {len(names)}명"
         )
-    return active_bot_name, bot_root, bot, names
+    resolved_bot, selected_profile_ids, visual_bases = (
+        _resolve_easy_edit_visual_profiles(
+            active_bot_name,
+            bot,
+            names,
+            raw_visual_profile_ids,
+        )
+    )
+    return (
+        active_bot_name,
+        bot_root,
+        resolved_bot,
+        names,
+        selected_profile_ids,
+        visual_bases,
+    )
 
 
 def _v3_prompt_character_names(blocks: dict, multi_payload: object = None) -> list[str]:
@@ -10850,6 +11236,7 @@ def _llm_edit_identity_capability(backup_name: str) -> dict:
         "provider": "",
         "format": "",
         "character_names": [],
+        "visual_profile_ids": {},
         "requires_multi_char_snapshot": False,
     }
     if (
@@ -10922,6 +11309,41 @@ def _llm_edit_identity_capability(backup_name: str) -> dict:
         return result
 
     result["character_names"] = character_names
+    try:
+        saved_visual_states = _read_backup_visual_states(
+            backup_name,
+            source_positive,
+        )
+        states_by_key = {
+            str(name).casefold(): state
+            for name, state in saved_visual_states.items()
+            if isinstance(state, dict)
+        }
+        result["visual_profile_ids"] = {
+            name: str(
+                (states_by_key.get(name.casefold()) or {}).get(
+                    "visual_profile_id"
+                )
+                or ""
+            ).strip()
+            for name in character_names
+            if str(
+                (states_by_key.get(name.casefold()) or {}).get(
+                    "visual_profile_id"
+                )
+                or ""
+            ).strip()
+        }
+    except Exception as exc:
+        result["reason"] = (
+            f"백업의 시각 프로필 상태를 검증하지 못했습니다: {exc}"
+        )
+        print(
+            f"[LLM_EDIT:CAPABILITY] 시각 프로필 상태 검증 실패: "
+            f"backup={backup_name}, error={exc}"
+        )
+        traceback.print_exc()
+        return result
     if len(character_names) == 1:
         result["enabled"] = True
         result["reason"] = "1인 V3 Comfy 백업의 캐릭터를 교체할 수 있습니다."
@@ -14074,6 +14496,10 @@ async def handle_api_regenerate(
                 backup_name,
                 source_positive,
             )
+            src_visual_states = _read_backup_visual_states(
+                backup_name,
+                source_positive,
+            )
             if src_multi_char:
                 multi_char_mask.validate_multi_char_prompt_context(
                     positive,
@@ -14081,12 +14507,12 @@ async def handle_api_regenerate(
                 )
         except Exception as e:
             print(
-                f"[REGEN:MULTI_CHAR] 마스크 복원/검증 실패: "
+                f"[REGEN:METADATA] 재생성 메타데이터 복원/검증 실패: "
                 f"backup={backup_name}, error={e}"
             )
             traceback.print_exc()
             return web.json_response(
-                {"error": f"다중 캐릭터 마스크를 안전하게 복원하지 못했습니다: {e}"},
+                {"error": f"재생성 메타데이터를 안전하게 복원하지 못했습니다: {e}"},
                 status=409,
             )
 
@@ -14105,6 +14531,7 @@ async def handle_api_regenerate(
             "prompt_provider": src_prompt_provider,
             "generation_params": src_generation_params,
             "illustration_multi_char": src_multi_char,
+            "illustration_visual_states": src_visual_states,
             "label": "재생성",
         }
         if not _return_queue_result:
@@ -14394,6 +14821,21 @@ async def handle_api_reschedule_with_modified_prompt(
             backup_name,
             src_provider,
         )
+        try:
+            src_visual_states = _read_backup_visual_states(
+                backup_name,
+                source_positive,
+            )
+        except Exception as e:
+            print(
+                f"[RESCHEDULE_MOD:VISUAL_PROFILE] 백업 상태 복원 실패: "
+                f"backup={backup_name}, error={e}"
+            )
+            traceback.print_exc()
+            return web.json_response(
+                {"error": f"시각 프로필 상태를 안전하게 복원하지 못했습니다: {e}"},
+                status=409,
+            )
         if camera_control_requested:
             try:
                 normalized_camera_control = illustration_camera.normalize_camera_control(
@@ -14458,10 +14900,17 @@ async def handle_api_reschedule_with_modified_prompt(
                     _identity_bot_root,
                     _identity_bot,
                     identity_names,
+                    identity_profile_ids,
+                    identity_visual_bases,
                 ) = _load_active_bot_character_selection(
                     identity_edit.get("character_names"),
                     expected_count=len(previous_names),
                     requested_bot_name=str(identity_edit.get("bot_name") or ""),
+                    raw_visual_profile_ids=identity_edit.get("visual_profile_ids"),
+                )
+                src_visual_states = _selected_visual_states(
+                    identity_profile_ids,
+                    identity_visual_bases,
                 )
                 llm_prompt_edit.validate_v3_character_identity(
                     effective_positive,
@@ -14476,7 +14925,8 @@ async def handle_api_reschedule_with_modified_prompt(
                     raise ValueError("2인 캐릭터 교체에 필요한 고정 마스크 스냅샷이 없습니다")
                 print(
                     f"[RESCHEDULE_MOD:IDENTITY] 활성 봇/캐릭터 교체 검증 완료: "
-                    f"backup={backup_name}, bot={src_bot_name!r}, characters={identity_names}"
+                    f"backup={backup_name}, bot={src_bot_name!r}, "
+                    f"characters={identity_names}, profiles={identity_profile_ids}"
                 )
             if src_multi_char:
                 multi_char_mask.validate_multi_char_prompt_context(
@@ -14515,6 +14965,7 @@ async def handle_api_reschedule_with_modified_prompt(
             "prompt_provider": src_prompt_provider,
             "generation_params": src_generation_params,
             "illustration_multi_char": src_multi_char,
+            "illustration_visual_states": src_visual_states,
             "label": "수정재생성",
         }
         if not _return_queue_result:
@@ -14559,11 +15010,14 @@ async def handle_api_llm_edit_prompt(
 ) -> web.Response:
     """삽화백업 "편하게 수정" — 장면 편집과 V3 Comfy 캐릭터 교체를 처리한다.
 
-    요청: {name, positive, negative, direction, characters?}
+    요청: {name, positive, negative, direction, characters?, visual_profile_ids?,
+           previous_identity?}
     응답: {plan, positive, negative, identity_edit?} 또는 {error}
 
     V1/챈섭은 기존 장면 편집만 유지한다. V3 Comfy에서 characters가 전달되면
     NAME/FACE/LoRA 제어 데이터와 2인 고정 마스크 스냅샷을 함께 재구성한다.
+    previous_identity는 재생성 전 연속 편집에서 현재 프로필을 원본 백업 상태로
+    되돌리지 않고, 교체 전 고정 외형을 정확히 제거하기 위한 검증된 상태다.
     """
     try:
         body = copy.deepcopy(_body) if _body is not None else await request.json()
@@ -14572,6 +15026,16 @@ async def handle_api_llm_edit_prompt(
         negative = body.get("negative", "")
         direction = (body.get("direction", "") or "").strip()
         requested_characters = body.get("characters") if "characters" in body else None
+        requested_visual_profile_ids = (
+            body.get("visual_profile_ids")
+            if "visual_profile_ids" in body
+            else None
+        )
+        requested_previous_identity = (
+            body.get("previous_identity")
+            if "previous_identity" in body
+            else None
+        )
         camera_control_requested = "camera_control" in body
         camera_control = None
         camera_contract = ""
@@ -14599,6 +15063,25 @@ async def handle_api_llm_edit_prompt(
                     {"error": "구도 조정과 캐릭터 교체는 한 번에 실행할 수 없습니다"},
                     status=400,
                 )
+
+        if requested_visual_profile_ids is not None and requested_characters is None:
+            print(
+                f"[LLM_EDIT:PROFILE] 캐릭터 없는 프로필 선택 거부: "
+                f"name={backup_name!r}, profiles={requested_visual_profile_ids!r}"
+            )
+            return web.json_response(
+                {"error": "프로필 카드를 선택할 때는 캐릭터 선택도 함께 보내야 합니다"},
+                status=400,
+            )
+        if requested_previous_identity is not None and requested_characters is None:
+            print(
+                f"[LLM_EDIT:PROFILE] 캐릭터 없는 이전 identity 상태 거부: "
+                f"name={backup_name!r}, previous_identity={requested_previous_identity!r}"
+            )
+            return web.json_response(
+                {"error": "이전 캐릭터·프로필 상태는 캐릭터 선택과 함께 보내야 합니다"},
+                status=400,
+            )
 
         # 경로 조작 가드 (기존 reschedule 핸들러와 동일)
         if ".." in backup_name or "/" in backup_name or "\\" in backup_name:
@@ -14694,6 +15177,9 @@ async def handle_api_llm_edit_prompt(
         identity_bot = None
         identity_names = None
         identity_bot_name = ""
+        identity_profile_ids: dict[str, str] = {}
+        identity_visual_bases: dict[str, dict] = {}
+        previous_visual_bases: list[dict] = []
         # V1 파이프라인 상태
         v1_parsed = {}
         v1_char = ""
@@ -14754,6 +15240,7 @@ async def handle_api_llm_edit_prompt(
                     bot_name = info.get("bot_name", "") or ""
             except Exception as e:
                 print(f"[LLM_EDIT] _info.json 읽기 실패 name={backup_name}: {e}")
+                traceback.print_exc()
 
             previous_names = []
             if requested_characters is not None:
@@ -14777,10 +15264,82 @@ async def handle_api_llm_edit_prompt(
                         identity_bot_root,
                         identity_bot,
                         identity_names,
+                        identity_profile_ids,
+                        identity_visual_bases,
                     ) = _load_active_bot_character_selection(
                         requested_characters,
                         expected_count=len(previous_names),
+                        raw_visual_profile_ids=requested_visual_profile_ids,
                     )
+                    try:
+                        previous_bot_name = bot_name
+                        previous_profile_ids = (
+                            (identity_capability or {}).get("visual_profile_ids")
+                        )
+                        if requested_previous_identity is not None:
+                            if not isinstance(requested_previous_identity, dict):
+                                raise ValueError("previous_identity 요청이 object가 아닙니다")
+                            declared_names_raw = requested_previous_identity.get(
+                                "character_names"
+                            )
+                            if not isinstance(declared_names_raw, list):
+                                raise ValueError(
+                                    "previous_identity.character_names가 배열이 아닙니다"
+                                )
+                            declared_names = [
+                                str(value or "").strip()
+                                for value in declared_names_raw
+                            ]
+                            if (
+                                any(not value for value in declared_names)
+                                or [value.casefold() for value in declared_names]
+                                != [value.casefold() for value in previous_names]
+                            ):
+                                raise ValueError(
+                                    "현재 프롬프트와 previous_identity의 캐릭터 순서가 다릅니다"
+                                )
+                            previous_bot_name = str(
+                                requested_previous_identity.get("bot_name") or ""
+                            ).strip()
+                            if not previous_bot_name:
+                                raise ValueError("previous_identity.bot_name이 비어 있습니다")
+                            previous_profile_ids = requested_previous_identity.get(
+                                "visual_profile_ids"
+                            )
+                        source_bot = next(
+                            item for item in (identity_bot_root.get("bots") or [])
+                            if isinstance(item, dict)
+                            and str(item.get("name") or "") == previous_bot_name
+                        )
+                        _previous_bot, _previous_ids, previous_bases_by_name = (
+                            _resolve_easy_edit_visual_profiles(
+                                previous_bot_name,
+                                source_bot,
+                                previous_names,
+                                previous_profile_ids,
+                            )
+                        )
+                        previous_visual_bases = [
+                            next((
+                                value for base_name, value in previous_bases_by_name.items()
+                                if str(base_name).casefold() == old_name.casefold()
+                            ), {})
+                            for old_name in previous_names
+                        ]
+                    except Exception as profile_error:
+                        print(
+                            f"[LLM_EDIT:PROFILE] 원본 프로필 외형 복원 실패, "
+                            f"backup={backup_name}, "
+                            f"error={profile_error}"
+                        )
+                        traceback.print_exc()
+                        if requested_previous_identity is not None:
+                            raise
+                        print(
+                            f"[LLM_EDIT:PROFILE] 구 백업 호환을 위해 선택 프로필 적용은 계속: "
+                            f"backup={backup_name}"
+                        )
+                        previous_visual_bases = []
                     selected_trigger_data = llm_prompt_edit.collect_character_triggers(
                         identity_bot,
                         identity_names,
@@ -14789,6 +15348,7 @@ async def handle_api_llm_edit_prompt(
                         identity_bot,
                         previous_names,
                         identity_names,
+                        identity_visual_bases,
                     )
 
                     if multi_char_edit_payload:
@@ -14829,7 +15389,8 @@ async def handle_api_llm_edit_prompt(
                     print(
                         f"[LLM_EDIT:IDENTITY] 캐릭터 교체 준비 완료: "
                         f"backup={backup_name}, bot={identity_bot_name!r}, "
-                        f"old={previous_names}, new={identity_names}"
+                        f"old={previous_names}, new={identity_names}, "
+                        f"profiles={identity_profile_ids}"
                     )
                 except Exception as exc:
                     print(
@@ -15086,6 +15647,12 @@ async def handle_api_llm_edit_prompt(
                         identity_names,
                         previous_names,
                     )
+                    parsed = llm_prompt_edit.apply_visual_profile_appearance(
+                        parsed,
+                        identity_names,
+                        identity_visual_bases,
+                        previous_visual_bases,
+                    )
                     parsed["scene_char"] = (
                         IllustPromptBuilder.apply_bound_character_identity_tags(
                             parsed.get("scene_char", ""),
@@ -15185,6 +15752,7 @@ async def handle_api_llm_edit_prompt(
             response_payload["identity_edit"] = {
                 "bot_name": identity_bot_name,
                 "character_names": identity_names,
+                "visual_profile_ids": identity_profile_ids,
             }
         if camera_control is not None:
             response_payload["camera_control"] = camera_control
@@ -15363,9 +15931,13 @@ async def process_illustration_easy_edit_queue_item(item) -> dict:
                 )
                 raise RuntimeError("편집할 캐릭터 슬롯을 자동 선택하지 못했습니다")
             edit_body["characters"] = current_characters
+            current_profile_ids = identity_capability.get("visual_profile_ids") or {}
+            if current_profile_ids:
+                edit_body["visual_profile_ids"] = current_profile_ids
             print(
                 f"[ILLUST_CONTEXT:EDIT] 백업 캐릭터 자동 선택: "
-                f"backup={backup_name}, characters={current_characters}"
+                f"backup={backup_name}, characters={current_characters}, "
+                f"profiles={current_profile_ids}"
             )
         else:
             print(
@@ -17275,6 +17847,13 @@ def _build_restore_manual_character_choices(bot_name: str, bot: dict) -> list[di
                 "id": str(profile.get("id") or "").strip(),
                 "label": str(profile.get("label") or profile.get("id") or "").strip(),
                 "is_default": str(profile.get("id") or "").strip() == default_profile_id,
+                "rep_image": str(
+                    (
+                        profile.get("render_overrides", {}).get("rep_images")
+                        or [""]
+                    )[0]
+                    or ""
+                ).strip(),
             }
             for profile in character_profiles.get("profiles", [])
             if isinstance(profile, dict) and str(profile.get("id") or "").strip()

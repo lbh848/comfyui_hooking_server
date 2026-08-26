@@ -157,6 +157,9 @@ async def test_hybrid_regeneration_uses_source_then_opposite_provider(
         prompt_provider=source_provider,
         generation_params={"width": 1024, "height": 1024},
         illustration_multi_char=None,
+        illustration_visual_states={
+            "Hero": {"visual_profile_id": "awakened"},
+        },
         label="수정재생성",
     )
 
@@ -166,6 +169,9 @@ async def test_hybrid_regeneration_uses_source_then_opposite_provider(
         call[2]["prompt_provider"] == source_provider for call in calls
     )
     assert all(call[2]["positive"] == "edited positive" for call in calls)
+    assert all(call[2]["illustration_visual_states"] == {
+        "Hero": {"visual_profile_id": "awakened"},
+    } for call in calls)
     assert result["provider"] == expected_providers[-1]
     assert result["provider_mode"] == "hybrid"
     assert result["fallback_used"] is True
@@ -237,6 +243,9 @@ async def test_regenerate_queue_preserves_hybrid_mode_in_new_backup():
             "provider_mode": "hybrid",
             "prompt_provider": "comfy",
             "generation_params": {"width": 1024, "height": 1024},
+            "illustration_visual_states": {
+                "Hero": {"visual_profile_id": "awakened"},
+            },
         },
     )
 
@@ -248,6 +257,9 @@ async def test_regenerate_queue_preserves_hybrid_mode_in_new_backup():
     assert saved["provider"] == "chansub"
     assert saved["provider_mode"] == "hybrid"
     assert saved["prompt_provider"] == "comfy"
+    assert saved["illustration_visual_states"] == {
+        "Hero": {"visual_profile_id": "awakened"},
+    }
 
 
 @pytest.mark.asyncio

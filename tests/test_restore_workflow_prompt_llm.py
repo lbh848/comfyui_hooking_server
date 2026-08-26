@@ -251,6 +251,7 @@ def test_manual_profile_selection_is_validated_and_defaults_to_card_one(monkeypa
                     "label": "각성",
                     "appearance": ["white hair"],
                     "default_outfit": ["black armor"],
+                    "rep_images": ["awakened.webp"],
                 }],
             }],
         }],
@@ -303,6 +304,7 @@ async def test_manual_character_api_returns_each_characters_profile_cards(monkey
                     "label": "각성",
                     "appearance": ["white hair"],
                     "default_outfit": ["black armor"],
+                    "rep_images": ["awakened.webp"],
                 }],
             }],
         }],
@@ -320,10 +322,12 @@ async def test_manual_character_api_returns_each_characters_profile_cards(monkey
         "id": "base",
         "label": "카드 1",
         "is_default": True,
+        "rep_image": "",
     }, {
         "id": "awakened",
         "label": "각성",
         "is_default": False,
+        "rep_image": "awakened.webp",
     }]
 
 

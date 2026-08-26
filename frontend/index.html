@@ -19490,20 +19490,32 @@
                                 첫 번째 캐릭터
                                 <select id="restore-character-select-1" class="select" onchange="onRestoreCharacterSelectionChange(1)"></select>
                             </label>
-                            <label style="display:flex; flex-direction:column; gap:5px; font-size:0.78rem; color:var(--text-secondary);">
-                                첫 번째 프로필 카드
-                                <select id="restore-profile-select-1" class="select" onchange="onRestoreProfileSelectionChange()"></select>
-                            </label>
+                            <div style="display:grid; grid-template-columns:72px minmax(0,1fr); gap:8px; align-items:end;">
+                                <button type="button" id="restore-profile-thumb-wrap-1" onclick="openRestoreProfileThumbnail(1)" title="대표 이미지 확대" style="width:72px; height:72px; padding:0; border:1px solid var(--border); border-radius:7px; background:var(--surface2); overflow:hidden; display:flex; align-items:center; justify-content:center; color:var(--text-secondary); cursor:default;">
+                                    <img id="restore-profile-thumb-1" alt="첫 번째 프로필 카드 대표 이미지" style="display:none; width:100%; height:100%; object-fit:cover;">
+                                    <span id="restore-profile-thumb-empty-1" style="padding:5px; font-size:0.64rem; line-height:1.25;">대표 이미지 없음</span>
+                                </button>
+                                <label style="display:flex; flex-direction:column; gap:5px; font-size:0.78rem; color:var(--text-secondary); min-width:0;">
+                                    첫 번째 프로필 카드
+                                    <select id="restore-profile-select-1" class="select" onchange="onRestoreProfileSelectionChange(1)"></select>
+                                </label>
+                            </div>
                         </div>
                         <div id="restore-character-select-2-wrap" style="display:none; flex-direction:column; gap:8px;">
                             <label style="display:flex; flex-direction:column; gap:5px; font-size:0.78rem; color:var(--text-secondary);">
                                 두 번째 캐릭터
                                 <select id="restore-character-select-2" class="select" onchange="onRestoreCharacterSelectionChange(2)"></select>
                             </label>
-                            <label style="display:flex; flex-direction:column; gap:5px; font-size:0.78rem; color:var(--text-secondary);">
-                                두 번째 프로필 카드
-                                <select id="restore-profile-select-2" class="select" onchange="onRestoreProfileSelectionChange()"></select>
-                            </label>
+                            <div style="display:grid; grid-template-columns:72px minmax(0,1fr); gap:8px; align-items:end;">
+                                <button type="button" id="restore-profile-thumb-wrap-2" onclick="openRestoreProfileThumbnail(2)" title="대표 이미지 확대" style="width:72px; height:72px; padding:0; border:1px solid var(--border); border-radius:7px; background:var(--surface2); overflow:hidden; display:flex; align-items:center; justify-content:center; color:var(--text-secondary); cursor:default;">
+                                    <img id="restore-profile-thumb-2" alt="두 번째 프로필 카드 대표 이미지" style="display:none; width:100%; height:100%; object-fit:cover;">
+                                    <span id="restore-profile-thumb-empty-2" style="padding:5px; font-size:0.64rem; line-height:1.25;">대표 이미지 없음</span>
+                                </button>
+                                <label style="display:flex; flex-direction:column; gap:5px; font-size:0.78rem; color:var(--text-secondary); min-width:0;">
+                                    두 번째 프로필 카드
+                                    <select id="restore-profile-select-2" class="select" onchange="onRestoreProfileSelectionChange(2)"></select>
+                                </label>
+                            </div>
                         </div>
                     </div>
                     <div id="restore-provider-note" style="margin-top:8px; font-size:0.75rem; color:var(--text-secondary);"></div>
@@ -34418,18 +34430,44 @@
             const selects = Array.from(document.querySelectorAll('.llm-edit-character-select'));
             const names = selects.map(select => select.value.trim());
             state.slotNames = names;
+            state.visualProfileIds = {};
             selects.forEach((select, index) => {
                 const character = state.characters.find(item => item.name === select.value);
+                const profileSelect = document.getElementById(`llm-edit-profile-select-${index}`);
+                const profile = (character?.profiles || []).find(
+                    item => item.id === profileSelect?.value
+                ) || null;
+                if (character && profile) {
+                    state.visualProfileIds[character.name] = profile.id;
+                }
                 const img = document.getElementById(`llm-edit-character-img-${index}`);
                 if (img) {
-                    img.src = character?.rep_url || '';
-                    img.style.display = character?.rep_url ? 'block' : 'none';
+                    const profileFilename = String(profile?.rep_image || '').trim();
+                    const profileUrl = profileFilename
+                        ? `/api/bot_mode/image/${encodeURIComponent(state.botName)}/${encodeURIComponent(character?.name || '')}/${encodeURIComponent(profileFilename)}`
+                        : '';
+                    const previewUrl = profileUrl || character?.rep_url || '';
+                    img.onerror = () => {
+                        console.error('[EASY_EDIT] 프로필 대표 이미지 로드 실패:', {
+                            character: character?.name || '',
+                            profile: profile?.id || '',
+                            url: previewUrl,
+                        });
+                        img.style.display = 'none';
+                    };
+                    img.src = previewUrl;
+                    img.alt = character && profile
+                        ? `${character.name} · ${profile.label || profile.id}`
+                        : '';
+                    img.style.display = previewUrl ? 'block' : 'none';
                 }
             });
             let error = '';
             if (names.some(name => !name)) error = '각 슬롯의 캐릭터를 선택해주세요.';
             else if (new Set(names.map(name => name.toLowerCase())).size !== names.length) {
                 error = '두 슬롯에 같은 캐릭터를 선택할 수 없습니다.';
+            } else if (names.some(name => !state.visualProfileIds[name])) {
+                error = '각 슬롯의 프로필 카드를 선택해주세요.';
             }
             const errorEl = document.getElementById('llm-edit-character-error');
             if (errorEl) {
@@ -34441,17 +34479,47 @@
             return !error;
         }
 
-        function renderLlmEditCharacterSlots(currentNames) {
+        function fillLlmEditProfileSelect(index, preferredProfileId = '') {
+            const state = llmEditModalState;
+            const characterSelect = document.querySelector(
+                `.llm-edit-character-select[data-slot-index="${index}"]`
+            );
+            const profileSelect = document.getElementById(`llm-edit-profile-select-${index}`);
+            if (!state || !characterSelect || !profileSelect) {
+                console.error('[EASY_EDIT] 프로필 선택 요소 없음:', index);
+                return;
+            }
+            const character = state.characters.find(
+                item => item.name === characterSelect.value
+            ) || null;
+            const profiles = Array.isArray(character?.profiles) ? character.profiles : [];
+            profileSelect.innerHTML = '';
+            profiles.forEach(profile => {
+                const option = document.createElement('option');
+                option.value = String(profile.id || '');
+                option.textContent = `${profile.label || profile.id}${profile.is_default ? ' · 기본' : ''}`;
+                profileSelect.appendChild(option);
+            });
+            const preferred = profiles.find(profile => profile.id === preferredProfileId);
+            const fallback = profiles.find(profile => profile.is_default) || profiles[0] || null;
+            profileSelect.value = String((preferred || fallback)?.id || '');
+            profileSelect.disabled = profiles.length <= 1;
+            if (!profiles.length) {
+                console.error('[EASY_EDIT] 선택 가능한 프로필 카드 없음:', character?.name || '');
+            }
+        }
+
+        function renderLlmEditCharacterSlots(currentNames, currentVisualProfileIds = {}) {
             const state = llmEditModalState;
             const host = document.getElementById('llm-edit-character-slots');
             host.innerHTML = '';
             currentNames.forEach((currentName, index) => {
                 const card = document.createElement('div');
-                card.style.cssText = 'display:grid;grid-template-columns:42px minmax(0,1fr);gap:8px;align-items:center;padding:8px;border:1px solid var(--border);border-radius:7px;background:var(--surface1);';
+                card.style.cssText = 'display:grid;grid-template-columns:52px minmax(0,1fr);gap:9px;align-items:center;padding:9px;border:1px solid var(--border);border-radius:7px;background:var(--surface1);';
                 const img = document.createElement('img');
                 img.id = `llm-edit-character-img-${index}`;
                 img.alt = '';
-                img.style.cssText = 'display:none;width:42px;height:42px;object-fit:cover;border-radius:6px;background:var(--surface2);';
+                img.style.cssText = 'display:none;width:52px;height:52px;object-fit:cover;border-radius:6px;background:var(--surface2);';
                 const control = document.createElement('div');
                 const label = document.createElement('div');
                 label.textContent = currentNames.length === 1 ? '캐릭터' : `슬롯 ${index + 1} · ${index === 0 ? '왼쪽' : '오른쪽'}`;
@@ -34471,12 +34539,29 @@
                     if (character.name.toLowerCase() === String(currentName).toLowerCase()) option.selected = true;
                     select.appendChild(option);
                 });
-                select.addEventListener('change', updateLlmEditCharacterSelection);
+                select.addEventListener('change', () => {
+                    fillLlmEditProfileSelect(index);
+                    updateLlmEditCharacterSelection();
+                });
+                const profileLabel = document.createElement('div');
+                profileLabel.textContent = '프로필 카드';
+                profileLabel.style.cssText = 'margin:6px 0 4px;font-size:0.7rem;color:var(--text-secondary);font-weight:600;';
+                const profileSelect = document.createElement('select');
+                profileSelect.id = `llm-edit-profile-select-${index}`;
+                profileSelect.className = 'llm-edit-profile-select';
+                profileSelect.style.cssText = select.style.cssText;
+                profileSelect.addEventListener('change', updateLlmEditCharacterSelection);
                 control.appendChild(label);
                 control.appendChild(select);
+                control.appendChild(profileLabel);
+                control.appendChild(profileSelect);
                 card.appendChild(img);
                 card.appendChild(control);
                 host.appendChild(card);
+                const savedProfileEntry = Object.entries(currentVisualProfileIds || {}).find(
+                    ([name]) => String(name).toLowerCase() === String(currentName).toLowerCase()
+                );
+                fillLlmEditProfileSelect(index, String(savedProfileEntry?.[1] || ''));
             });
             updateLlmEditCharacterSelection();
         }
@@ -34499,6 +34584,7 @@
                 botName: '',
                 characters: [],
                 slotNames: [],
+                visualProfileIds: {},
             };
             llmEditModalState = openingState;
             // 감지된 형식 배지 표시
@@ -34549,9 +34635,15 @@
                         return;
                     }
 
-                    const currentNames = Array.isArray(capability.character_names)
+                    const backupNames = Array.isArray(capability.character_names)
                         ? capability.character_names.map(v => String(v || '').trim()).filter(Boolean)
                         : [];
+                    const carriedNames = Array.isArray(currentModalIdentityEdit?.character_names)
+                        ? currentModalIdentityEdit.character_names.map(v => String(v || '').trim()).filter(Boolean)
+                        : [];
+                    const currentNames = carriedNames.length === backupNames.length
+                        ? carriedNames
+                        : backupNames;
                     if (currentNames.length !== 1 && currentNames.length !== 2) {
                         throw new Error(`서버가 지원하지 않는 캐릭터 슬롯 수를 반환했습니다: ${currentNames.length}명`);
                     }
@@ -34567,12 +34659,24 @@
                     openingState.botName = data.bot_name || '';
                     openingState.characters = data.characters;
                     openingState.slotNames = currentNames;
+                    const carriedProfileIds = currentModalIdentityEdit?.visual_profile_ids;
+                    openingState.visualProfileIds = (
+                        carriedNames.length === currentNames.length
+                        && carriedProfileIds
+                        && typeof carriedProfileIds === 'object'
+                    ) ? { ...carriedProfileIds } : (
+                        capability.visual_profile_ids
+                        && typeof capability.visual_profile_ids === 'object'
+                    ) ? { ...capability.visual_profile_ids } : {};
                     botBadge.textContent = `활성 봇: ${openingState.botName}`;
                     botBadge.style.display = 'block';
                     scopeNote.textContent = currentNames.length === 2
-                        ? '검증된 2인 고정 마스크를 유지하며 장면·표정·복장과 캐릭터·FACE·LoRA를 수정합니다.'
-                        : '장면·표정·복장을 자연어로 수정하고, 선택 캐릭터에 맞춰 일반 LoRA·Face LoRA·FACE-ID·얼굴 태그를 함께 교체합니다.';
-                    renderLlmEditCharacterSlots(currentNames);
+                        ? '검증된 2인 고정 마스크를 유지하며 슬롯별 캐릭터·프로필·FACE·LoRA를 수정합니다.'
+                        : '장면을 자연어로 수정하고, 선택한 프로필 카드의 고정 외형·LoRA·Face LoRA·FACE-ID·얼굴 태그를 함께 적용합니다.';
+                    renderLlmEditCharacterSlots(
+                        currentNames,
+                        openingState.visualProfileIds
+                    );
                 } catch (e) {
                     if (currentModalBackupName !== openingBackupName || llmEditModalState !== openingState) return;
                     console.error('[EASY_EDIT] 캐릭터 교체 가능 여부/목록 확인 실패:', e);
@@ -34602,9 +34706,11 @@
             const negative = document.getElementById('modal-negative').value;
             const direction = (document.getElementById('llm-edit-direction-input').value || '').trim();
             let selectedCharacters = null;
+            let selectedVisualProfileIds = null;
             if (llmEditModalState?.identityEnabled) {
                 if (!updateLlmEditCharacterSelection()) return;
                 selectedCharacters = [...llmEditModalState.slotNames];
+                selectedVisualProfileIds = { ...llmEditModalState.visualProfileIds };
             }
             if (!direction) {
                 alert('수정 방향을 입력해주세요.');
@@ -34626,6 +34732,12 @@
                     direction: direction,
                 };
                 if (selectedCharacters) requestBody.characters = selectedCharacters;
+                if (selectedVisualProfileIds) {
+                    requestBody.visual_profile_ids = selectedVisualProfileIds;
+                }
+                if (selectedCharacters && currentModalIdentityEdit) {
+                    requestBody.previous_identity = currentModalIdentityEdit;
+                }
                 const data = await fetchJSON('/api/llm_edit_prompt', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -34659,7 +34771,7 @@
                 }
                 currentModalIdentityEdit = data.identity_edit || currentModalIdentityEdit;
                 showToast(data.identity_edit
-                    ? '장면과 캐릭터·FACE·LoRA 수정 적용 완료'
+                    ? '장면과 캐릭터·프로필·FACE·LoRA 수정 적용 완료'
                     : '편하게 수정 적용 완료', 'success');
                 closeLlmEditModal();
             } catch (e) {
@@ -41531,7 +41643,7 @@
         // restore_workflow_prompt_llm.py 전용:
         //   인원(1/2), 캐릭터 드롭다운, 상황(LLM/직접), 1회성 후처리(LLM/직접)
         let _restoreDrawResolve = null;
-        let _restoreDrawState = { characters: [] };
+        let _restoreDrawState = { botName: '', characters: [] };
 
         function closeRestoreCharSelectModal() {
             const modal = document.getElementById('restore-char-select-modal');
@@ -41560,6 +41672,59 @@
             return _restoreDrawState.characters.find(character => character.name === name) || null;
         }
 
+        function _updateRestoreProfileThumbnail(slot) {
+            const characterSelect = document.getElementById(`restore-character-select-${slot}`);
+            const profileSelect = document.getElementById(`restore-profile-select-${slot}`);
+            const wrap = document.getElementById(`restore-profile-thumb-wrap-${slot}`);
+            const image = document.getElementById(`restore-profile-thumb-${slot}`);
+            const empty = document.getElementById(`restore-profile-thumb-empty-${slot}`);
+            if (!characterSelect || !profileSelect || !wrap || !image || !empty) {
+                console.error('[수동 그리기] 프로필 대표 이미지 요소를 찾지 못했습니다:', slot);
+                return;
+            }
+            const character = _restoreCharacterByName(characterSelect.value);
+            const profile = (character?.profiles || []).find(item => item.id === profileSelect.value) || null;
+            const filename = String(profile?.rep_image || '').trim();
+            image.onerror = null;
+            image.removeAttribute('src');
+            image.dataset.fullSrc = '';
+            if (!character || !filename) {
+                image.style.display = 'none';
+                empty.style.display = '';
+                empty.textContent = '대표 이미지 없음';
+                wrap.style.cursor = 'default';
+                wrap.title = '대표 이미지 없음';
+                return;
+            }
+            const src = `/api/bot_mode/image/${encodeURIComponent(_restoreDrawState.botName)}/${encodeURIComponent(character.name)}/${encodeURIComponent(filename)}`;
+            image.onerror = () => {
+                console.error('[수동 그리기] 프로필 대표 이미지 로드 실패:', {
+                    character: character.name,
+                    profile: profile?.id || '',
+                    filename,
+                });
+                image.style.display = 'none';
+                image.dataset.fullSrc = '';
+                empty.style.display = '';
+                empty.textContent = '이미지 로드 실패';
+                wrap.style.cursor = 'default';
+                wrap.title = '대표 이미지 로드 실패';
+            };
+            image.dataset.fullSrc = src;
+            image.alt = `${character.name} · ${profile?.label || profile?.id || ''} 대표 이미지`;
+            image.style.display = '';
+            empty.style.display = 'none';
+            wrap.style.cursor = 'zoom-in';
+            wrap.title = `${character.name} · ${profile?.label || profile?.id || ''} 대표 이미지 확대`;
+            image.src = src;
+        }
+
+        function openRestoreProfileThumbnail(slot) {
+            const image = document.getElementById(`restore-profile-thumb-${slot}`);
+            const src = image?.dataset?.fullSrc || '';
+            if (src) openLightbox(src);
+        }
+
         function _fillRestoreProfileSelect(slot) {
             const characterSelect = document.getElementById(`restore-character-select-${slot}`);
             const profileSelect = document.getElementById(`restore-profile-select-${slot}`);
@@ -41581,6 +41746,7 @@
             if (profiles.length === 0) {
                 console.error('[수동 그리기] 선택 가능한 프로필 카드가 없습니다:', character?.name || '');
             }
+            _updateRestoreProfileThumbnail(slot);
         }
 
         function onRestoreCharacterSelectionChange(slot = 0) {
@@ -41598,7 +41764,8 @@
             statusEl.style.color = 'var(--text-secondary)';
         }
 
-        function onRestoreProfileSelectionChange() {
+        function onRestoreProfileSelectionChange(slot) {
+            _updateRestoreProfileThumbnail(slot);
             onRestoreCharacterSelectionChange();
         }
 
@@ -41709,7 +41876,7 @@
             statusEl.textContent = '캐릭터 목록을 불러오는 중...';
             statusEl.style.color = 'var(--text-secondary)';
             confirmBtn.disabled = true;
-            _restoreDrawState = { characters: [] };
+            _restoreDrawState = { botName: '', characters: [] };
             document.querySelector('input[name="restore-character-count"][value="1"]').checked = true;
             document.querySelector('input[name="restore-situation-mode"][value="llm"]').checked = true;
             document.querySelector('input[name="restore-postprocess-text-mode"][value="llm"]').checked = true;
@@ -41739,7 +41906,10 @@
                 if (characters.length === 0) {
                     throw new Error('선택된 봇에 캐릭터가 없습니다. 먼저 봇/캐릭터를 설정하세요.');
                 }
-                _restoreDrawState.characters = characters;
+                _restoreDrawState = {
+                    botName: String(data.bot_name || ''),
+                    characters,
+                };
                 const select1 = document.getElementById('restore-character-select-1');
                 const select2 = document.getElementById('restore-character-select-2');
                 _fillRestoreCharacterSelect(select1, characters);

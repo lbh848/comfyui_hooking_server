@@ -476,6 +476,10 @@ async def test_modified_regenerate_uses_active_bot_and_remapped_two_character_sn
     assert captured["params"]["illustration_multi_char"]["mask_fingerprint"] == remapped[
         "mask_fingerprint"
     ]
+    assert captured["params"]["illustration_visual_states"] == {
+        "New Left": {"visual_profile_id": "card_1", "profile_embedding": False},
+        "New Right": {"visual_profile_id": "card_1", "profile_embedding": False},
+    }
 
 
 class _JsonRequest:
@@ -625,6 +629,7 @@ async def test_easy_edit_api_rebuilds_single_character_identity_from_active_bot(
     assert payload["identity_edit"] == {
         "bot_name": bot["name"],
         "character_names": ["New"],
+        "visual_profile_ids": {"New": "card_1"},
     }
     llm_prompt_edit.validate_v3_character_identity(payload["positive"], ["New"])
     content_blocks = llm_prompt_edit.parse_blocks(payload["positive"])
@@ -636,3 +641,198 @@ async def test_easy_edit_api_rebuilds_single_character_identity_from_active_bot(
         tag.strip() for tag in content_blocks["ANIMA_CONTENT"].split(",")
     ]
     assert "new-negative" in payload["negative"]
+
+
+@pytest.mark.asyncio
+async def test_easy_edit_applies_selected_visual_profile_to_scene_and_control_blocks(
+    tmp_path,
+    monkeypatch,
+):
+    old = _character("Old", "old_trigger")
+    old["visual_cards"] = [{
+        "id": "base",
+        "label": "카드 1",
+        "selection_guide": "기본 외형",
+        "aliases": [],
+        "appearance": [{"tag": "black hair"}],
+        "default_outfit": [{"tag": "school uniform"}],
+        "gender_tag": old["gender_tag"],
+        "face_tags": old["face_tags"],
+        "eye_tags": old["eye_tags"],
+        "character_negative": old["character_negative"],
+        "loras_solo": old["loras_solo"],
+        "loras_group": old["loras_group"],
+        "face_loras": old["face_loras"],
+        "style_loras": old["style_loras"],
+        "use_profile_embedding": False,
+    }]
+    new = _character("New", "new_trigger")
+    awakened_lora = {
+        "lora_path": "new-awakened-body.safetensors",
+        "trigger": "new_awakened",
+        "strength": 0.85,
+        "BASE": "anima",
+    }
+    new["visual_cards"] = [{
+        "id": "base",
+        "label": "카드 1",
+        "selection_guide": "기본 외형",
+        "aliases": [],
+        "appearance": [{"tag": "brown hair"}],
+        "default_outfit": [{"tag": "school uniform"}],
+        "gender_tag": "1girl",
+        "face_tags": "brown hair, small nose",
+        "eye_tags": "brown eyes",
+        "character_negative": "base-negative",
+        "loras_solo": [new["loras_solo"][0]],
+        "loras_group": [],
+        "face_loras": new["face_loras"],
+        "style_loras": new["style_loras"],
+        "use_profile_embedding": False,
+    }, {
+        "id": "awakened",
+        "label": "각성",
+        "selection_guide": "각성한 뒤에 사용",
+        "aliases": [],
+        "appearance": [{"tag": "white hair"}, {"tag": "glowing skin"}],
+        "default_outfit": [{"tag": "black armor"}],
+        "gender_tag": "1girl",
+        "face_tags": "white hair, glowing skin",
+        "eye_tags": "gold eyes",
+        "character_negative": "awakened-negative",
+        "loras_solo": [awakened_lora],
+        "loras_group": [],
+        "face_loras": [{
+            "lora_path": "new-awakened-face.safetensors",
+            "trigger": "new_awakened_face",
+            "strength": 0.7,
+            "BASE": "anima",
+        }],
+        "style_loras": [],
+        "use_profile_embedding": True,
+    }]
+    source_bot = _bot(old)
+    source_bot["name"] = "Source Bot"
+    active_bot = _bot(new)
+    bot_root = {
+        "bots": [source_bot, active_bot],
+        "positive_whitelist": [],
+        "positive_blacklist": [],
+    }
+    source_positive = IllustPromptBuilder().build_positive_prompt(
+        "daytime street",
+        "Old, black hair, standing",
+        "looking at viewer",
+        ["Old"],
+        source_bot,
+        _tags(),
+        source_bot["illust_settings_solo"],
+        source_bot["name"],
+    )
+    backup_name = "easy-edit-profile"
+    _write_backup(
+        tmp_path,
+        backup_name,
+        source_positive,
+        info={
+            "provider": "comfy",
+            "bot_name": source_bot["name"],
+            "illustration_visual_states": {
+                "Old": {"visual_profile_id": "base", "profile_embedding": False},
+            },
+        },
+    )
+    captured_messages = []
+    llm_responses = iter([
+        {
+            "plan": "각성 프로필로 교체",
+            "scene_setup": "night street",
+            "scene_char": "Old, black hair, standing",
+            "scene_supplement": "looking at viewer",
+        },
+        {
+            "plan": "기본 프로필로 교체",
+            "scene_setup": "night street",
+            "scene_char": "New, white hair, glowing skin, standing",
+            "scene_supplement": "looking at viewer",
+        },
+    ])
+
+    async def fake_llm_task(_task_key, messages, **_kwargs):
+        captured_messages.extend(messages)
+        return json.dumps(next(llm_responses), ensure_ascii=False)
+
+    async def ignore_notify(*_args, **_kwargs):
+        return None
+
+    import importlib
+
+    lighbd_module = importlib.import_module("modes.lighbd_service")
+    monkeypatch.setattr(server, "WORKFLOW_BACKUP_DIR", str(tmp_path))
+    monkeypatch.setattr(server, "_load_bot_data_readonly", lambda: bot_root)
+    monkeypatch.setattr(server.llm_service, "callLLMTask", fake_llm_task)
+    monkeypatch.setattr(server, "notify_frontend", ignore_notify)
+    monkeypatch.setattr(lighbd_module, "_log_lighbd_history", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(server, "apply_word_replacements", lambda p, n, *_args, **_kwargs: (p, n))
+    monkeypatch.setattr(server.asset_mode, "_tags", _tags())
+    monkeypatch.setitem(server.app_config, "bot_selected", active_bot["name"])
+
+    response = await server.handle_api_llm_edit_prompt(_JsonRequest({
+        "name": backup_name,
+        "positive": source_positive,
+        "negative": "source negative",
+        "direction": "각성 프로필로 바꿔줘",
+        "characters": ["New"],
+        "visual_profile_ids": {"New": "awakened"},
+    }))
+    payload = json.loads(response.text)
+
+    assert response.status == 200
+    assert payload["identity_edit"]["visual_profile_ids"] == {"New": "awakened"}
+    blocks = llm_prompt_edit.parse_blocks(payload["positive"])
+    assert "white hair" in blocks["ANIMA_CONTENT"]
+    assert "glowing skin" in blocks["ANIMA_CONTENT"]
+    assert "black hair" not in blocks["ANIMA_CONTENT"]
+    assert _json_block(payload["positive"], "CACHE_PATH")["list"][0]["emb_path"].endswith(
+        "/New/_visual_profiles/awakened/cache.pt"
+    )
+    assert _json_block(payload["positive"], "FACE_ID_DIR")["list"][0]["ipa_path"].endswith(
+        "/New/_visual_profiles/awakened/cache.ipadpt"
+    )
+    assert "new-awakened-body.safetensors" in json.dumps(
+        _json_block(payload["positive"], "LORA_DATA")
+    )
+    assert "new-awakened-face.safetensors" in json.dumps(
+        _json_block(payload["positive"], "FACE_LORA_DATA")
+    )
+    assert "awakened-negative" in payload["negative"]
+    assert any("selected visual profile=각성" in str(message) for message in captured_messages)
+
+    second_response = await server.handle_api_llm_edit_prompt(_JsonRequest({
+        "name": backup_name,
+        "positive": payload["positive"],
+        "negative": payload["negative"],
+        "direction": "기본 프로필로 다시 바꿔줘",
+        "characters": ["New"],
+        "visual_profile_ids": {"New": "base"},
+        "previous_identity": payload["identity_edit"],
+    }))
+    second_payload = json.loads(second_response.text)
+
+    assert second_response.status == 200
+    assert second_payload["identity_edit"] == {
+        "bot_name": active_bot["name"],
+        "character_names": ["New"],
+        "visual_profile_ids": {"New": "base"},
+    }
+    second_blocks = llm_prompt_edit.parse_blocks(second_payload["positive"])
+    assert "brown hair" in second_blocks["ANIMA_CONTENT"]
+    assert "white hair" not in second_blocks["ANIMA_CONTENT"]
+    assert "glowing skin" not in second_blocks["ANIMA_CONTENT"]
+    second_cache_path = _json_block(
+        second_payload["positive"], "CACHE_PATH"
+    )["list"][0]["emb_path"]
+    assert second_cache_path.endswith("/New/cache.pt")
+    assert "/_visual_profiles/" not in second_cache_path
+    assert "base-negative" in second_payload["negative"]
+    assert "awakened-negative" not in second_payload["negative"]

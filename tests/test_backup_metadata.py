@@ -89,6 +89,78 @@ async def test_save_backup_records_raw_extension_for_composited_backup(
 
 
 @pytest.mark.asyncio
+async def test_save_backup_records_visual_profile_state_for_followup_edits(
+    tmp_path, monkeypatch
+):
+    _patch_backup_env(monkeypatch, tmp_path)
+
+    backup_name, _ = await server.save_backup(
+        _png_bytes((20, 20)),
+        "meta-visual-profile",
+        "positive",
+        "negative",
+        illustration_visual_states={
+            "Hero": {
+                "visual_profile_id": "awakened",
+                "profile_embedding": True,
+            },
+        },
+        llm_final_result={
+            "raw_positive": "[NAME]\nHero",
+            "character_names": ["Hero"],
+            "visual_states": {
+                "Hero": {"visual_profile_id": "awakened"},
+            },
+        },
+    )
+
+    info = json.loads(
+        (tmp_path / f"{backup_name}_info.json").read_text(encoding="utf-8")
+    )
+    assert info["illustration_visual_states"] == {
+        "Hero": {
+            "visual_profile_id": "awakened",
+            "profile_embedding": True,
+        },
+    }
+    assert info["llm_final_result"]["visual_states"] == {
+        "Hero": {"visual_profile_id": "awakened"},
+    }
+    assert server._read_backup_visual_states(backup_name, "positive") == {
+        "Hero": {
+            "visual_profile_id": "awakened",
+            "profile_embedding": True,
+        },
+    }
+
+
+def test_legacy_backup_recovers_profile_state_from_embedding_control_path(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(server, "WORKFLOW_BACKUP_DIR", str(tmp_path))
+    cache_payload = {
+        "list": [{
+            "CHAR": "Hero",
+            "emb_path": (
+                "soya_bot/Legacy Bot/Hero/"
+                "_visual_profiles/awakened/cache.pt"
+            ),
+        }],
+    }
+    source_positive = "[CACHE_PATH]\n" + json.dumps(cache_payload)
+
+    assert server._read_backup_visual_states(
+        "legacy-profile-backup",
+        source_positive,
+    ) == {
+        "Hero": {
+            "visual_profile_id": "awakened",
+            "profile_embedding": True,
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_reference_options_pages_without_resolving_legacy_dimensions(
     tmp_path, monkeypatch
 ):

@@ -148,6 +148,7 @@ async def test_easy_edit_bridge_reuses_existing_edit_and_regenerate_handlers(
             "enabled": True,
             "reason": "",
             "character_names": ["hero"],
+            "visual_profile_ids": {"hero": "awakened"},
         },
     )
 
@@ -209,6 +210,7 @@ async def test_easy_edit_bridge_reuses_existing_edit_and_regenerate_handlers(
     assert edit_body["name"] == "source-backup"
     assert edit_body["direction"] == "배경을 밤으로 바꿔줘"
     assert edit_body["characters"] == ["hero"]
+    assert edit_body["visual_profile_ids"] == {"hero": "awakened"}
     assert regenerate_body["positive"] == "edited positive"
     assert server.prompts[prompt_id]["image_bytes"] == b"edited-image"
     assert pipeline.session_image_by_slot(session_id, 2) == b"edited-image"

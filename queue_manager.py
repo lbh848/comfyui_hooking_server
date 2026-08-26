@@ -3412,6 +3412,7 @@ class QueueManager:
         ).strip().lower()
         generation_params = params.get("generation_params") or {}
         multi_char_context = params.get("illustration_multi_char")
+        visual_states = params.get("illustration_visual_states")
 
         if not self.generate_image_with_prompt:
             raise RuntimeError("generate_image_with_prompt 콜백이 설정되지 않았습니다")
@@ -3506,6 +3507,7 @@ class QueueManager:
                 prompt_provider=prompt_provider,
                 generation_params=generation_params,
                 illustration_multi_char=multi_char_context,
+                illustration_visual_states=visual_states,
             )
         print(
             f"[QUEUE:regenerate] 완료: backup={backup_name} ({len(img_bytes):,}B, {elapsed_time:.1f}s)"
