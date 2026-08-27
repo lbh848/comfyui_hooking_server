@@ -632,8 +632,60 @@ def profile_asset_relative_dir(character_name: str, profile_id: str) -> str:
     return f"{character_name}/{PROFILE_ASSET_FOLDER}/{safe_profile_id}"
 
 
+def _profile_label_variants(character_name: str, profile: dict) -> list[str]:
+    """Return registered labels that must not leak semantics into resolution."""
+    raw_names = visual_profile_names(profile)
+    variants: list[str] = []
+    seen: set[str] = set()
+
+    def add(value: str) -> None:
+        cleaned = _clean_text(value)
+        folded = cleaned.casefold()
+        if cleaned and folded not in seen:
+            seen.add(folded)
+            variants.append(cleaned)
+
+    for raw_name in raw_names:
+        add(raw_name)
+        name = _clean_text(raw_name)
+        character = _clean_text(character_name)
+        if not name or not character or not name.casefold().startswith(character.casefold()):
+            continue
+        suffix = name[len(character):].lstrip(" _-")
+        normalized_suffix = re.sub(r"[_-]+", " ", suffix).strip()
+        # A bare word such as "Casual" may itself be an authored state or
+        # appearance condition. Only mask a character-prefix-free variant when
+        # it remains a multi-word proper profile label.
+        if len(normalized_suffix.split()) >= 2:
+            add(suffix)
+            add(normalized_suffix)
+    return variants
+
+
+def _selection_guide_without_profile_labels(
+    character_name: str,
+    profiles: list[dict],
+    guide: str,
+) -> str:
+    """Mask registered labels while preserving authored semantic criteria."""
+    replacements: list[tuple[str, str]] = []
+    for index, profile in enumerate(profiles, start=1):
+        placeholder = f"[{index}]"
+        for label in _profile_label_variants(character_name, profile):
+            replacements.append((label, placeholder))
+
+    masked = guide
+    for label, placeholder in sorted(
+        replacements,
+        key=lambda item: len(item[0]),
+        reverse=True,
+    ):
+        masked = re.sub(re.escape(label), placeholder, masked, flags=re.IGNORECASE)
+    return masked
+
+
 def build_natural_profile_catalog(effective_profiles: dict[str, dict]) -> str:
-    """Render semantic profile names and user-authored rules for profile resolution."""
+    """Render label-neutral, user-authored rules for semantic profile resolution."""
     sections: list[str] = []
     for character_name, character in effective_profiles.items():
         profiles = character.get("profiles") or []
@@ -647,21 +699,28 @@ def build_natural_profile_catalog(effective_profiles: dict[str, dict]) -> str:
             character,
             _clean_text(character.get("default_visual_profile_id")),
         )
-        default_names = visual_profile_names(default_profile or {})
-        default_name = default_names[0] if default_names else "카드 1"
+        default_profile_id = _clean_text((default_profile or {}).get("id"))
+        if not default_profile_id:
+            default_profile_id = _clean_text(profiles[0].get("id"))
         lines = [
             f"### {character_name}",
-            f"기본 프로필 이름은 `{default_name}`이다. "
+            f"기본 프로필의 정확한 profile_id는 `{default_profile_id}`이다. "
             "이전 추적 상태도 서사가 확정한 다른 카드 상태도 없을 때만 폴백으로 사용한다.",
         ]
         for index, profile in enumerate(profiles):
-            guide = _clean_text(profile.get("selection_guide")) or "별도 선택 설명 없음."
+            raw_guide = (
+                _clean_text(profile.get("selection_guide"))
+                or "별도 선택 설명 없음."
+            )
+            guide = _selection_guide_without_profile_labels(
+                character_name,
+                profiles,
+                raw_guide,
+            )
             profile_id = _clean_text(profile.get("id"))
-            names = visual_profile_names(profile)
-            rendered_names = ", ".join(f"`{name}`" for name in names) or f"`카드 {index + 1}`"
             lines.append(
-                f"- 카드 [{index + 1}] — 출력할 정확한 profile_id: `{profile_id}`. "
-                f"사람이 읽는 등록 이름: {rendered_names}. 선택 기준: {guide}"
+                f"- 카드 [{index + 1}] — 선택 기준: {guide} "
+                f"이 기준이 충족될 때만 출력할 정확한 profile_id: `{profile_id}`."
             )
             lines.append(
                 "  이 카드에는 별도 복장 선택 축이 없으며, 카드 자체의 "
@@ -669,4 +728,12 @@ def build_natural_profile_catalog(effective_profiles: dict[str, dict]) -> str:
                 "기본 복장이다. 장면 맥락이 다른 복장을 요구하면 고정하지 않는다."
             )
         sections.append("\n".join(lines))
-    return "\n\n".join(sections)
+    if not sections:
+        return ""
+    authority = (
+        "프로필 등록 이름과 별칭은 선택 근거가 아니므로 이 카탈로그에서 "
+        "제외하거나 중립 표기로 가렸다. profile_id도 의미 없는 기계 식별자다. "
+        "선택 기준에 직접 명시된 상태, 행동, 연속성, 외형 또는 복장 조건만 "
+        "서사와 대조하여 판단한다."
+    )
+    return authority + "\n\n" + "\n\n".join(sections)

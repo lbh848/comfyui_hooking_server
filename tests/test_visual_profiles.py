@@ -229,7 +229,7 @@ def test_card_rep_image_must_stay_inside_character_folder():
         normalize_visual_cards(cards)
 
 
-def test_natural_catalog_keeps_prose_and_exposes_exact_profile_ids():
+def test_natural_catalog_keeps_prose_and_ids_but_omits_profile_names():
     profiles = {"Adachi": cards_to_character_profiles("Adachi", _cards())}
 
     catalog = build_natural_profile_catalog(profiles)
@@ -238,15 +238,54 @@ def test_natural_catalog_keeps_prose_and_exposes_exact_profile_ids():
     assert "카드 [2]" in catalog
     assert "서사가 확정한 다른 카드 상태도 없을 때만 폴백" in catalog
     assert "몸 자체가 변형된 상태" in catalog
-    assert "`평상시 모습`" in catalog
-    assert "`절망체`" in catalog
+    assert "평상시 모습" not in catalog
+    assert "절망체" not in catalog
     assert "출력할 정확한 profile_id: `civilian`" in catalog
     assert "출력할 정확한 profile_id: `despair`" in catalog
+    assert "profile_id도 의미 없는 기계 식별자" in catalog
+    assert "선택 기준에 직접 명시된" in catalog
     assert "별도 복장 선택 축이 없으며" in catalog
     assert "default_outfit" in catalog
     assert "참고하는 기본 복장" in catalog
     assert "장면 맥락이 다른 복장을 요구하면 고정하지 않는다" in catalog
     assert "white hair" not in catalog
+
+
+def test_natural_catalog_keeps_explicit_appearance_but_masks_registered_labels():
+    cards = [{
+        "id": "denial",
+        "label": "카드 1",
+        "aliases": ["Aya_Denial Lapis"],
+        "selection_guide": (
+            "Denial Lapis는 푸른 망토가 명시되고 자신의 힘을 부정할 때 선택한다."
+        ),
+        "appearance": ["unlisted appearance metadata"],
+        "default_outfit": [],
+    }, {
+        "id": "luminant",
+        "label": "카드 2",
+        "aliases": ["Aya_Luminant Lapis"],
+        "selection_guide": (
+            "Luminant Lapis는 금빛 날개가 명시되고 부정 상태가 아닐 때 선택한다."
+        ),
+        "appearance": ["other unlisted metadata"],
+        "default_outfit": [],
+    }]
+    profiles = {"Aya": cards_to_character_profiles("Aya", cards)}
+
+    catalog = build_natural_profile_catalog(profiles)
+
+    assert "Aya_Denial Lapis" not in catalog
+    assert "Aya_Luminant Lapis" not in catalog
+    assert "Denial Lapis" not in catalog
+    assert "Luminant Lapis" not in catalog
+    assert "[1]는 푸른 망토가 명시되고" in catalog
+    assert "[2]는 금빛 날개가 명시되고" in catalog
+    assert "현재 후보 프로필의 등록명" not in catalog
+    assert "다른 후보 프로필의 등록명" not in catalog
+    assert "푸른 망토가 명시되고 자신의 힘을 부정할 때" in catalog
+    assert "금빛 날개가 명시되고 부정 상태가 아닐 때" in catalog
+    assert "unlisted appearance metadata" not in catalog
 
 
 def test_profile_name_resolution_is_exact_and_returns_internal_card():

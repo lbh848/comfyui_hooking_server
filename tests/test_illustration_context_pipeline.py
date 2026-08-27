@@ -5855,9 +5855,9 @@ async def test_profile_resolution_runs_once_before_call1_and_filters_catalog(mon
         calls.append((call_name, messages, kwargs))
         prompt = "\n".join(message["content"] for message in messages)
         assert "# COMPLETE REGISTERED CHARACTER ROSTER" in prompt
-        assert "Adachi_Civilian" in prompt
-        assert "Adachi_Changed" in prompt
-        assert "Bob_Default" in prompt
+        assert "Adachi_Civilian" not in prompt
+        assert "Adachi_Changed" not in prompt
+        assert "Bob_Default" not in prompt
         assert "선택 기준: ordinary human form" in prompt
         assert "선택 기준: persistent transformed form" in prompt
         assert "선택 기준: ordinary form" in prompt
@@ -5865,7 +5865,7 @@ async def test_profile_resolution_runs_once_before_call1_and_filters_catalog(mon
         assert "# FINAL CONTRACT CHECK" in prompt
         assert "re-check every chosen `profile_id`" in prompt
         assert "complete registered selection guide" in prompt
-        assert "appearance, outfit, resemblance, or lack of a perfect alternative" in prompt
+        assert "Appearance or outfit is support only when the selection guide" in prompt
         return json.dumps({
             "characters": [{
                 "name": "Adachi",
@@ -6108,7 +6108,8 @@ async def test_profile_resolution_repairs_only_unknown_profile_id_character(monk
             })
         assert call_name == "PROFILE-RESOLVE-REPAIR"
         assert '"character": "Adachi"' in prompt
-        assert "Adachi_Civilian" in prompt
+        assert "Adachi_Civilian" not in prompt
+        assert "선택 기준: ordinary human form" in prompt
         assert "Mina_Normal" not in prompt
         return json.dumps({
             "characters": [{
@@ -7461,8 +7462,10 @@ async def test_persistent_history_path_uses_compact_call2_and_updates_wardrobe(m
             })
         if task_key == "illustration_profile_resolve":
             request_text = "\n".join(message["content"] for message in messages)
-            assert "Hana_Ordinary" in request_text
-            assert "Hana_Transformed" in request_text
+            assert "Hana_Ordinary" not in request_text
+            assert "Hana_Transformed" not in request_text
+            assert "선택 기준: ordinary persistent form" in request_text
+            assert "선택 기준: persistent transformed form" in request_text
             return json.dumps({
                 "characters": [{
                     "name": "Hana",
