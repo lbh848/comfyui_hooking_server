@@ -104,6 +104,37 @@ def test_runtime_has_task_allocation_tab_next_to_second_instance() -> None:
     assert 'id="comfy-allocation-list"' in FRONTEND
 
 
+def test_video_engine_tab_is_next_to_vast_and_exposes_managed_runtime() -> None:
+    vast = FRONTEND.index('id="comfy-runtime-tab-vast"')
+    engine = FRONTEND.index('id="comfy-runtime-tab-video-engine"')
+    allocation = FRONTEND.index('id="comfy-runtime-tab-allocation"')
+
+    assert vast < engine < allocation
+    for value in (
+        'id="comfy-video-engine-panel"',
+        'id="setting-video-engine-port"',
+        'id="setting-video-engine-project-path"',
+        'id="setting-video-engine-auto-start"',
+        'id="video-engine-start"',
+        'id="video-engine-stop"',
+        'id="video-engine-terminal"',
+        'id="video-engine-raise"',
+        'id="video-engine-lower"',
+        "/api/video-engine/status",
+        "/api/video-engine/start",
+        "/api/video-engine/stop",
+        "/api/video-engine/resources",
+        "video_engine_port: videoEnginePort",
+        "video_engine_project_path: videoEngineProjectPathValue(false)",
+        "video_engine_auto_start:",
+        "외부 실행 중",
+        "4060의 4B VL은 유지됩니다.",
+    ):
+        assert value in FRONTEND
+    assert "engineOption.textContent = '영상 전용 엔진'" in FRONTEND
+    assert "videoEngineSupported: true" in FRONTEND
+
+
 def test_runtime_has_managed_modal_tab_lifecycle_sync_and_log_controls() -> None:
     allocation = FRONTEND.index('id="comfy-runtime-tab-allocation"')
     modal = FRONTEND.index('id="comfy-runtime-tab-modal"')

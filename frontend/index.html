@@ -5744,6 +5744,70 @@
             background: color-mix(in srgb, var(--surface2) 48%, var(--surface));
         }
         .comfy-runtime-allocation-panel.active { display: flex; }
+        .comfy-video-engine-panel {
+            display: none;
+            flex: 1;
+            flex-direction: column;
+            gap: 12px;
+            min-height: 0;
+            padding: 14px;
+            overflow: auto;
+            border: 1px solid color-mix(in srgb, var(--border) 76%, #f59e0b);
+            border-radius: 11px;
+            background:
+                radial-gradient(circle at top right, rgba(245,158,11,.12), transparent 34%),
+                color-mix(in srgb, var(--surface2) 48%, var(--surface));
+        }
+        .comfy-video-engine-panel.active { display: flex; }
+        .video-engine-port-card {
+            display: grid;
+            grid-template-columns: minmax(150px, 1fr) auto auto;
+            align-items: end;
+            gap: 10px;
+            padding: 12px;
+            border: 1px solid var(--border);
+            border-radius: 9px;
+            background: color-mix(in srgb, var(--surface) 82%, var(--bg));
+        }
+        .video-engine-port-card .video-engine-project-field {
+            grid-column: 1 / -1;
+        }
+        .video-engine-port-card > label { min-width: 0; }
+        .video-engine-port-card > label > span {
+            display: block;
+            margin-bottom: 5px;
+            color: var(--text2);
+            font-size: .62rem;
+            font-weight: 700;
+        }
+        .video-engine-port-card > label > input {
+            width: 100%;
+            padding: 8px 9px;
+            box-sizing: border-box;
+            border: 1px solid var(--border);
+            border-radius: 7px;
+            background: var(--surface2);
+            color: var(--text);
+            font-size: .72rem;
+        }
+        .video-engine-autostart {
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            min-height: 34px;
+            color: var(--text2);
+            font-size: .66rem;
+            white-space: nowrap;
+        }
+        .video-engine-resource-note {
+            padding: 9px 11px;
+            border: 1px solid rgba(245,158,11,.25);
+            border-radius: 8px;
+            background: rgba(245,158,11,.06);
+            color: var(--text2);
+            font-size: .64rem;
+            line-height: 1.55;
+        }
         .comfy-modal-runtime-panel {
             display: none;
             flex: 1;
@@ -19365,7 +19429,7 @@
     </div>
 
     <!-- 프롬프트 수정 모달 -->
-    <div class="modal" id="prompt-modal" onclick="if (event.target === this) closePromptModal()">
+    <div class="modal" id="prompt-modal">
         <div class="modal-content">
             <div class="modal-header">
                 <h2>✏️ 프롬프트 수정 후 재전송</h2>
@@ -19416,7 +19480,7 @@
     </div>
 
     <!-- 삽화 백업 Anima 카메라 구도 조정 모달 -->
-    <div class="modal" id="illustration-camera-modal" style="z-index:10001;" onclick="if (event.target === this) closeIllustrationCameraModal()">
+    <div class="modal" id="illustration-camera-modal" style="z-index:10001;">
         <div class="modal-content" style="width:min(900px,94vw); max-width:900px; max-height:92vh; display:flex; flex-direction:column;">
             <div class="modal-header">
                 <div>
@@ -22304,6 +22368,9 @@
                             <button type="button" class="comfy-runtime-tab" id="comfy-runtime-tab-vast" onclick="switchComfyRuntimeVast()" role="tab" aria-selected="false">
                                 <span class="comfy-runtime-tab-dot"></span>VAST
                             </button>
+                            <button type="button" class="comfy-runtime-tab" id="comfy-runtime-tab-video-engine" onclick="switchComfyRuntimeVideoEngine()" role="tab" aria-selected="false">
+                                <span class="comfy-runtime-tab-dot"></span>영상 전용 엔진
+                            </button>
                             <button type="button" class="comfy-runtime-tab" id="comfy-runtime-tab-allocation" onclick="switchComfyRuntimeAllocation()" role="tab" aria-selected="false">
                                 Comfy 배분 관리
                             </button>
@@ -22383,10 +22450,61 @@
                         <section class="comfy-runtime-allocation-panel" id="comfy-runtime-allocation-panel" aria-labelledby="comfy-runtime-tab-allocation">
                             <div class="comfy-allocation-head">
                                 <div class="comfy-allocation-title">내부 Comfy 작업 배분</div>
-                                <div class="comfy-allocation-copy">기본 실행 대상을 로컬 Comfy·MODAL·VAST 중에서 선택하고, MODAL·VAST 병렬 사용을 각각 추가할 수 있습니다. 활성화된 실행 레인 중 먼저 빈 워커가 다음 작업을 가져가며 같은 작업을 중복 실행하지 않습니다. VAST는 준비 완료된 머신 한 대에서 작업을 하나씩 실행합니다.</div>
+                                <div class="comfy-allocation-copy">기본 실행 대상을 로컬 Comfy·MODAL·VAST 중에서 선택하고, 영상화는 영상 전용 엔진도 선택할 수 있습니다. MODAL·VAST 병렬 사용을 각각 추가할 수 있으며, 활성화된 실행 레인 중 먼저 빈 워커가 다음 작업을 가져가 같은 작업을 중복 실행하지 않습니다.</div>
                                 <div class="comfy-allocation-runtime-state" id="comfy-allocation-runtime-state">실행 상태 확인 중…</div>
                             </div>
                             <div class="comfy-allocation-list" id="comfy-allocation-list"></div>
+                        </section>
+
+                        <section class="comfy-video-engine-panel" id="comfy-video-engine-panel" aria-labelledby="comfy-runtime-tab-video-engine">
+                            <div class="comfy-modal-runtime-head">
+                                <div>
+                                    <div class="comfy-modal-runtime-title">영상 전용 엔진</div>
+                                    <div class="comfy-modal-runtime-copy">같은 PC의 MiniMax H3 Low-VRAM 서비스에 포트로 연결합니다. 영상 큐가 시작되면 로컬 Comfy의 RAM/VRAM을 비운 뒤 엔진을 올리고, 다음 로컬 Comfy 큐 전에 엔진의 H3/VAE를 내립니다.</div>
+                                </div>
+                                <span class="comfy-runtime-state" id="video-engine-state">● 상태 확인 중</span>
+                            </div>
+                            <div class="comfy-modal-runtime-metrics">
+                                <div class="comfy-modal-runtime-metric"><small>연결</small><strong id="video-engine-reachable">확인 중</strong></div>
+                                <div class="comfy-modal-runtime-metric"><small>프로세스</small><strong id="video-engine-process">확인 중</strong></div>
+                                <div class="comfy-modal-runtime-metric"><small>엔진 상태</small><strong id="video-engine-status">확인 중</strong></div>
+                                <div class="comfy-modal-runtime-metric"><small>모델 모드</small><strong id="video-engine-model-mode">-</strong></div>
+                                <div class="comfy-modal-runtime-metric"><small>4080 H3 / VAE</small><strong id="video-engine-residency">-</strong></div>
+                            </div>
+                            <div class="video-engine-port-card">
+                                <label class="video-engine-project-field" for="setting-video-engine-project-path">
+                                    <span>프로젝트 위치</span>
+                                    <input type="text" id="setting-video-engine-project-path" placeholder="예: E:\minmax_low_vram" spellcheck="false">
+                                </label>
+                                <label for="setting-video-engine-port">
+                                    <span>서비스 포트</span>
+                                    <input type="number" id="setting-video-engine-port" min="1" max="65535" step="1" value="8093" inputmode="numeric">
+                                </label>
+                                <div class="video-engine-autostart" title="이 매니저가 시작될 때 영상 전용 엔진을 자동 실행합니다.">
+                                    <label class="toggle-switch sm" for="setting-video-engine-auto-start">
+                                        <input type="checkbox" id="setting-video-engine-auto-start">
+                                        <span class="toggle-slider"></span>
+                                    </label>
+                                    <label for="setting-video-engine-auto-start">매니저 시작 시 자동 실행</label>
+                                </div>
+                                <button type="button" class="comfy-runtime-btn connect" id="video-engine-save-runtime" onclick="videoEngineSaveRuntimeSettings()">실행 설정 저장</button>
+                            </div>
+                            <div class="comfy-modal-runtime-actions">
+                                <button type="button" class="comfy-runtime-btn start" id="video-engine-start" onclick="videoEngineStart()">▶ 실행</button>
+                                <button type="button" class="comfy-runtime-btn connect" onclick="videoEngineOpen()">↗ 엔진 열기</button>
+                                <button type="button" class="comfy-runtime-btn start" id="video-engine-raise" onclick="videoEngineSetResources(true)">▲ RAM/VRAM 올리기</button>
+                                <button type="button" class="comfy-runtime-btn clean" id="video-engine-lower" onclick="videoEngineSetResources(false)">▼ H3/VAE 내리기</button>
+                                <button type="button" class="comfy-runtime-btn stop" id="video-engine-stop" onclick="videoEngineStop()" disabled>■ 종료</button>
+                                <button type="button" class="comfy-runtime-btn" onclick="videoEngineRefreshStatus(true)">↻ 상태 새로고침</button>
+                            </div>
+                            <div class="video-engine-resource-note">내리기는 4080의 H3·VAE와 해당 시스템 RAM만 정리합니다. 4060의 4B VL 모델은 다음 영상 요청을 위해 계속 상주합니다. I2V·FLF2V·REF2V는 모두 같은 통합 큐와 이 전환 규칙을 사용합니다.</div>
+                            <section class="comfy-runtime-terminal-card">
+                                <div class="comfy-runtime-terminal-head">
+                                    <span><span class="comfy-runtime-terminal-lights"><i></i><i></i><i></i></span>영상 전용 엔진 CMD 출력</span>
+                                    <span class="comfy-runtime-terminal-meta" id="video-engine-terminal-meta">출력 대기</span>
+                                </div>
+                                <pre class="comfy-runtime-terminal" id="video-engine-terminal" role="log" aria-live="polite">이 프로그램에서 영상 전용 엔진을 실행하면 원본 CMD 출력이 여기에 표시됩니다.</pre>
+                            </section>
                         </section>
 
                         <section class="comfy-modal-runtime-panel" id="comfy-modal-runtime-panel" aria-labelledby="comfy-runtime-tab-modal">
@@ -27327,6 +27445,7 @@
         }
 
         function switchComfyRuntimeVast() {
+            deactivateVideoEngineTab();
             try { comfyRuntimeCaptureActiveProfile(); } catch (e) { /* capture는 best-effort */ }
             comfyRuntimeActiveView = 'vast';
             for (const id of [1, 2, 3]) {
@@ -35563,7 +35682,7 @@
             { key: 'instance_lora', label: '인스턴스 / 스타일 LoRA', description: '인스턴스·스타일 LoRA 분석 및 학습', modalSupported: true },
             { key: 'face_extract', label: '얼굴 추출', description: '인스턴스 LoRA 얼굴 추출', modalSupported: false },
             { key: 'utility_debug', label: '유틸리티 / 디버그', description: '데이터 패치, 봇 유틸리티, 디버그 워크플로우', modalSupported: false },
-            { key: 'video_generation', label: '영상화', description: 'MiniMax H3 I2V·FLF2V 영상화', modalSupported: true },
+            { key: 'video_generation', label: '영상화', description: 'MiniMax H3 I2V·FLF2V·REF2V 영상화', modalSupported: true, videoEngineSupported: true },
         ]);
         let comfyRuntimeActiveInstance = 1;
         let comfyRuntimeActiveView = 'instance';
@@ -35579,6 +35698,12 @@
         let comfyRuntimePollTimer = null;
         let comfyRuntimePollBusy = false;
         let comfyRuntimeActionBusy = false;
+        let videoEnginePollTimer = null;
+        let videoEnginePollBusy = false;
+        let videoEngineActionBusy = false;
+        let videoEngineLogSeq = 0;
+        let videoEngineLogText = '';
+        let videoEngineLastStatus = null;
         let comfyTaskAllocations = Object.fromEntries(
             COMFY_TASK_DEFINITIONS.map(item => [item.key, item.defaultInstance || 1]),
         );
@@ -35605,7 +35730,10 @@
                     const value = String(source[item.key] ?? '').trim().toLowerCase();
                     const allowedInstances = item.localInstances || [1, 2, 3];
                     const numericValue = Number(source[item.key]);
-                    normalized[item.key] = item.modalSupported && ['modal', 'vast'].includes(value)
+                    normalized[item.key] = (
+                        (item.modalSupported && ['modal', 'vast'].includes(value))
+                        || (item.videoEngineSupported && value === 'video_engine')
+                    )
                         ? value
                         : (allowedInstances.includes(numericValue)
                             ? numericValue
@@ -35715,6 +35843,12 @@
                     vastOption.textContent = 'VAST';
                     select.appendChild(vastOption);
                 }
+                if (item.videoEngineSupported) {
+                    const engineOption = document.createElement('option');
+                    engineOption.value = 'video_engine';
+                    engineOption.textContent = '영상 전용 엔진';
+                    select.appendChild(engineOption);
+                }
                 select.value = String(comfyTaskAllocations[item.key] || item.defaultInstance || 1);
 
                 const controls = document.createElement('span');
@@ -35740,7 +35874,7 @@
                     controls.appendChild(localOnly);
                 }
                 select.addEventListener('change', () => {
-                    comfyTaskAllocations[item.key] = ['modal', 'vast'].includes(select.value)
+                    comfyTaskAllocations[item.key] = ['modal', 'vast', 'video_engine'].includes(select.value)
                         ? select.value
                         : Number(select.value);
                     comfyAllocationSyncRemoteParallel(
@@ -35797,7 +35931,10 @@
                 const value = String(select?.value || comfyTaskAllocations[item.key]);
                 const allowedInstances = item.localInstances || [1, 2, 3];
                 const numericValue = Number(value);
-                result[item.key] = item.modalSupported && ['modal', 'vast'].includes(value)
+                result[item.key] = (
+                    (item.modalSupported && ['modal', 'vast'].includes(value))
+                    || (item.videoEngineSupported && value === 'video_engine')
+                )
                     ? value
                     : (allowedInstances.includes(numericValue)
                         ? numericValue
@@ -35841,15 +35978,15 @@
             const running3 = !!comfyRuntimeStatuses[3]?.running;
             const runningIds = [running1 && 1, running2 && 2, running3 && 3].filter(Boolean);
             if (runningIds.length > 1) {
-                state.textContent = `Comfy ${runningIds.map(id => '#' + id).join(', ')} 실행 중 · 작업별 로컬·MODAL·VAST 배분을 적용합니다.`;
+                state.textContent = `Comfy ${runningIds.map(id => '#' + id).join(', ')} 실행 중 · 작업별 로컬·MODAL·VAST·영상 전용 엔진 배분을 적용합니다.`;
             } else if (running1) {
-                state.textContent = 'Comfy #1만 실행 중 · 로컬 대상 작업은 #1로 폴백하고 MODAL·VAST 대상은 각 원격 대기열을 사용합니다.';
+                state.textContent = 'Comfy #1만 실행 중 · 로컬 대상 작업은 #1로 폴백하고 MODAL·VAST 대상은 각 원격 대기열, 영상화는 선택 시 전용 엔진 큐를 사용합니다.';
             } else if (running2) {
-                state.textContent = 'Comfy #2만 실행 중 · 로컬 대상 작업은 #2로 폴백하고 MODAL·VAST 대상은 각 원격 대기열을 사용합니다.';
+                state.textContent = 'Comfy #2만 실행 중 · 로컬 대상 작업은 #2로 폴백하고 MODAL·VAST 대상은 각 원격 대기열, 영상화는 선택 시 전용 엔진 큐를 사용합니다.';
             } else if (running3) {
-                state.textContent = 'Comfy #3만 실행 중 · 로컬 대상 작업은 #3로 폴백하고 MODAL·VAST 대상은 각 원격 대기열을 사용합니다.';
+                state.textContent = 'Comfy #3만 실행 중 · 로컬 대상 작업은 #3로 폴백하고 MODAL·VAST 대상은 각 원격 대기열, 영상화는 선택 시 전용 엔진 큐를 사용합니다.';
             } else {
-                state.textContent = '실행 중인 로컬 관리 인스턴스 없음 · 로컬은 선택 포트, MODAL·VAST 대상은 각 원격 대기열을 사용합니다.';
+                state.textContent = '실행 중인 로컬 관리 인스턴스 없음 · 영상 전용 엔진 배분은 로컬 Comfy 실행 여부와 독립적으로 대기합니다.';
             }
         }
 
@@ -36140,7 +36277,7 @@
                 if (meta) meta.textContent = '상태 조회 실패';
             } finally {
                 comfyRuntimePollBusy = false;
-                if (comfyRuntimeActiveView !== 'modal'
+                if (['instance', 'allocation'].includes(comfyRuntimeActiveView)
                     && document.getElementById('settings-tab-comfy_runtime')?.classList.contains('active')) {
                     comfyRuntimePollTimer = window.setTimeout(comfyRuntimePollAll, 800);
                 }
@@ -36159,8 +36296,324 @@
             }
         }
 
+        function videoEngineStopPolling() {
+            if (videoEnginePollTimer !== null) {
+                window.clearTimeout(videoEnginePollTimer);
+                videoEnginePollTimer = null;
+            }
+        }
+
+        function videoEnginePortValue() {
+            const raw = String(document.getElementById('setting-video-engine-port')?.value || '').trim();
+            const port = Number(raw);
+            if (!/^\d+$/.test(raw) || !Number.isInteger(port) || port < 1 || port > 65535) {
+                console.error('[VIDEO_ENGINE] 포트 검증 실패:', { raw });
+                throw new Error('영상 전용 엔진 포트는 1~65535 사이 정수여야 합니다.');
+            }
+            return port;
+        }
+
+        function videoEngineProjectPathValue(requireValue = false) {
+            const path = String(
+                document.getElementById('setting-video-engine-project-path')?.value || '',
+            ).trim();
+            if (requireValue && !path) {
+                console.error('[VIDEO_ENGINE_RUNTIME] 프로젝트 경로가 비어 있습니다.');
+                throw new Error('영상 전용 엔진 프로젝트 위치를 먼저 입력하세요.');
+            }
+            return path;
+        }
+
+        function videoEngineResidencyText(residency) {
+            if (!residency || typeof residency !== 'object') return '-';
+            const format = (label, value) => value && typeof value === 'object'
+                ? `${label} ${Number(value.loaded_gib || 0).toFixed(1)}/${Number(value.total_gib || 0).toFixed(1)} GiB`
+                : `${label} 해제`;
+            return `${format('H3', residency.h3)} · ${format('VAE', residency.video_vae)}`;
+        }
+
+        function videoEngineRenderStatus(data) {
+            videoEngineLastStatus = data;
+            const reachable = data?.reachable === true;
+            const status = String(data?.status || (reachable ? 'unknown' : 'offline'));
+            const residency = data?.residency && typeof data.residency === 'object'
+                ? data.residency
+                : null;
+            const runtime = data?.runtime && typeof data.runtime === 'object'
+                ? data.runtime
+                : null;
+            const runtimeRunning = runtime?.running === true;
+            const externalRunning = runtime?.external === true;
+            const state = document.getElementById('video-engine-state');
+            const reachableEl = document.getElementById('video-engine-reachable');
+            const processEl = document.getElementById('video-engine-process');
+            const statusEl = document.getElementById('video-engine-status');
+            const modeEl = document.getElementById('video-engine-model-mode');
+            const residencyEl = document.getElementById('video-engine-residency');
+            if (state) {
+                if (runtimeRunning) state.textContent = `● 실행 중 · PID ${runtime.pid}`;
+                else if (externalRunning) state.textContent = '● 외부 실행 중';
+                else if (runtime?.state === 'starting') state.textContent = '● 시작 중';
+                else if (runtime?.state === 'stopping') state.textContent = '● 종료 중';
+                else state.textContent = reachable ? `● ${status}` : '● 중지됨';
+                state.classList.toggle('running', runtimeRunning || externalRunning);
+            }
+            if (reachableEl) reachableEl.textContent = reachable ? `127.0.0.1:${data.port}` : '오프라인';
+            if (processEl) {
+                processEl.textContent = runtimeRunning
+                    ? `관리 PID ${runtime.pid}`
+                    : (externalRunning
+                        ? '외부 프로세스'
+                        : (runtime?.exit_code !== null && runtime?.exit_code !== undefined
+                            ? `종료 코드 ${runtime.exit_code}`
+                            : '중지됨'));
+            }
+            if (statusEl) statusEl.textContent = status;
+            if (modeEl) modeEl.textContent = residency?.model_mode || '-';
+            if (residencyEl) residencyEl.textContent = videoEngineResidencyText(residency);
+            if (runtime) {
+                if (runtime.log_reset) videoEngineLogText = '';
+                const chunks = Array.isArray(runtime.logs) ? runtime.logs : [];
+                if (chunks.length) {
+                    videoEngineLogText += chunks.map(item => String(item?.text || '')).join('');
+                    if (videoEngineLogText.length > 1500000) {
+                        videoEngineLogText = videoEngineLogText.slice(-1200000);
+                    }
+                }
+                videoEngineLogSeq = Number(runtime.log_seq) || 0;
+                const terminal = document.getElementById('video-engine-terminal');
+                if (terminal && (chunks.length || runtime.log_reset)) {
+                    const wasAtBottom = terminal.scrollHeight - terminal.scrollTop
+                        - terminal.clientHeight < 70;
+                    terminal.textContent = videoEngineLogText
+                        || '이 프로그램에서 영상 전용 엔진을 실행하면 원본 CMD 출력이 여기에 표시됩니다.';
+                    if (wasAtBottom) terminal.scrollTop = terminal.scrollHeight;
+                }
+                const terminalMeta = document.getElementById('video-engine-terminal-meta');
+                if (terminalMeta) {
+                    terminalMeta.textContent = runtimeRunning
+                        ? `PID ${runtime.pid} · PORT ${runtime.port}`
+                        : (externalRunning
+                            ? '외부 실행 프로세스 · 로그 미수집'
+                            : (runtime.exit_code !== null && runtime.exit_code !== undefined
+                                ? `EXIT ${runtime.exit_code}`
+                                : '출력 대기'));
+                }
+            }
+            const transitionBusy = ['starting', 'warming', 'busy', 'rewarming', 'cooling'].includes(status);
+            const raise = document.getElementById('video-engine-raise');
+            const lower = document.getElementById('video-engine-lower');
+            const start = document.getElementById('video-engine-start');
+            const stop = document.getElementById('video-engine-stop');
+            const save = document.getElementById('video-engine-save-runtime');
+            const pathInput = document.getElementById('setting-video-engine-project-path');
+            const portInput = document.getElementById('setting-video-engine-port');
+            if (raise) raise.disabled = videoEngineActionBusy || transitionBusy || !reachable;
+            if (lower) lower.disabled = videoEngineActionBusy || transitionBusy || !reachable;
+            if (start) start.disabled = videoEngineActionBusy || runtimeRunning || externalRunning;
+            if (stop) stop.disabled = videoEngineActionBusy || transitionBusy || !runtimeRunning;
+            if (save) save.disabled = videoEngineActionBusy;
+            if (pathInput) pathInput.disabled = runtimeRunning;
+            if (portInput) portInput.disabled = runtimeRunning;
+        }
+
+        async function videoEngineRefreshStatus(manual = false) {
+            if (videoEnginePollBusy) return;
+            videoEnginePollBusy = true;
+            videoEngineStopPolling();
+            try {
+                const data = await fetchJSON(
+                    `/api/video-engine/status?after=${encodeURIComponent(String(videoEngineLogSeq || 0))}`,
+                );
+                videoEngineRenderStatus(data);
+                if (manual) {
+                    showToast(data.reachable ? '영상 전용 엔진 상태를 갱신했습니다.' : '영상 전용 엔진에 연결할 수 없습니다.', data.reachable ? 'success' : 'warning');
+                }
+            } catch (error) {
+                console.error('[VIDEO_ENGINE] 상태 조회 실패:', error);
+                videoEngineRenderStatus({ reachable: false, status: 'error' });
+                if (manual) showToast('영상 전용 엔진 상태 조회 실패: ' + (error.message || error), 'error');
+            } finally {
+                videoEnginePollBusy = false;
+                if (comfyRuntimeActiveView === 'video_engine'
+                    && document.getElementById('settings-tab-comfy_runtime')?.classList.contains('active')) {
+                    videoEnginePollTimer = window.setTimeout(() => void videoEngineRefreshStatus(false), 1500);
+                }
+            }
+        }
+
+        async function videoEngineSaveRuntimeSettings(showSuccess = true) {
+            let port, projectPath;
+            try {
+                port = videoEnginePortValue();
+                projectPath = videoEngineProjectPathValue(false);
+            } catch (error) {
+                showToast(error.message || String(error), 'error');
+                return false;
+            }
+            const autoStart = document.getElementById('setting-video-engine-auto-start')?.checked === true;
+            try {
+                const result = await fetchJSON('/api/config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        video_engine_port: port,
+                        video_engine_project_path: projectPath,
+                        video_engine_auto_start: autoStart,
+                    }),
+                });
+                if (result?.success !== true) throw new Error(result?.error || '실행 설정 저장 실패');
+                currentConfig = result.config || {
+                    ...currentConfig,
+                    video_engine_port: port,
+                    video_engine_project_path: projectPath,
+                    video_engine_auto_start: autoStart,
+                };
+                currentConfigLoadPromise = Promise.resolve(currentConfig);
+                if (showSuccess) showToast('영상 전용 엔진 실행 설정을 저장했습니다.', 'success');
+                void videoEngineRefreshStatus(false);
+                return true;
+            } catch (error) {
+                console.error('[VIDEO_ENGINE_RUNTIME] 실행 설정 저장 실패:', error);
+                showToast('영상 전용 엔진 실행 설정 저장 실패: ' + (error.message || error), 'error');
+                return false;
+            }
+        }
+
+        async function videoEngineSavePort(showSuccess = true) {
+            return videoEngineSaveRuntimeSettings(showSuccess);
+        }
+
+        async function videoEngineStart() {
+            if (videoEngineActionBusy) return;
+            try {
+                videoEngineProjectPathValue(true);
+                videoEnginePortValue();
+            } catch (error) {
+                showToast(error.message || String(error), 'error');
+                return;
+            }
+            if (!await videoEngineSaveRuntimeSettings(false)) return;
+            videoEngineActionBusy = true;
+            videoEngineRenderStatus(videoEngineLastStatus || { reachable: false, status: 'starting' });
+            try {
+                await fetchJSON('/api/video-engine/start', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: '{}',
+                });
+                showToast('영상 전용 엔진을 시작했습니다.', 'success');
+            } catch (error) {
+                console.error('[VIDEO_ENGINE_RUNTIME] 실행 실패:', error);
+                showToast('영상 전용 엔진 실행 실패: ' + (error.message || error), 'error');
+            } finally {
+                videoEngineActionBusy = false;
+                void videoEngineRefreshStatus(false);
+            }
+        }
+
+        async function videoEngineStop() {
+            if (videoEngineActionBusy) return;
+            if (!window.confirm('영상 전용 엔진을 완전히 종료할까요? 4060의 4B VL도 함께 해제됩니다.')) return;
+            videoEngineActionBusy = true;
+            videoEngineRenderStatus(videoEngineLastStatus || { reachable: false, status: 'stopping' });
+            try {
+                await fetchJSON('/api/video-engine/stop', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: '{}',
+                });
+                showToast('영상 전용 엔진을 종료했습니다. 4060의 4B VL도 해제됐습니다.', 'success');
+            } catch (error) {
+                console.error('[VIDEO_ENGINE_RUNTIME] 종료 실패:', error);
+                showToast('영상 전용 엔진 종료 실패: ' + (error.message || error), 'error');
+            } finally {
+                videoEngineActionBusy = false;
+                void videoEngineRefreshStatus(false);
+            }
+        }
+
+        function videoEngineOpen() {
+            try {
+                window.open(`http://127.0.0.1:${videoEnginePortValue()}/`, '_blank', 'noopener');
+            } catch (error) {
+                showToast(error.message || String(error), 'error');
+            }
+        }
+
+        async function videoEngineSetResources(enabled) {
+            if (videoEngineActionBusy) return;
+            let port;
+            try {
+                port = videoEnginePortValue();
+            } catch (error) {
+                showToast(error.message || String(error), 'error');
+                return;
+            }
+            if (Number(currentConfig?.video_engine_port || 8093) !== port) {
+                const saved = await videoEngineSaveRuntimeSettings(false);
+                if (!saved) return;
+            }
+            videoEngineActionBusy = true;
+            videoEngineRenderStatus({
+                reachable: true,
+                port,
+                status: enabled ? 'warming' : 'cooling',
+            });
+            try {
+                await fetchJSON('/api/video-engine/resources', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ enabled: enabled === true, mode: 'i2v' }),
+                });
+                showToast(enabled ? '영상 전용 엔진 RAM/VRAM을 올렸습니다.' : 'H3/VAE RAM/VRAM을 내렸습니다. 4060의 4B VL은 유지됩니다.', 'success');
+            } catch (error) {
+                console.error('[VIDEO_ENGINE] 자원 전환 실패:', { enabled, error });
+                showToast('영상 전용 엔진 자원 전환 실패: ' + (error.message || error), 'error');
+            } finally {
+                videoEngineActionBusy = false;
+                void videoEngineRefreshStatus(false);
+            }
+        }
+
+        function deactivateVideoEngineTab() {
+            const tab = document.getElementById('comfy-runtime-tab-video-engine');
+            tab?.classList.remove('active');
+            tab?.setAttribute('aria-selected', 'false');
+            document.getElementById('comfy-video-engine-panel')?.classList.remove('active');
+            videoEngineStopPolling();
+        }
+
+        function switchComfyRuntimeVideoEngine() {
+            deactivateVastTab();
+            comfyRuntimeCaptureActiveProfile();
+            comfyRuntimeActiveView = 'video_engine';
+            for (const id of [1, 2, 3]) {
+                const tab = document.getElementById(`comfy-runtime-tab-${id}`);
+                tab?.classList.remove('active');
+                tab?.setAttribute('aria-selected', 'false');
+            }
+            for (const id of ['allocation', 'modal']) {
+                const tab = document.getElementById(`comfy-runtime-tab-${id}`);
+                tab?.classList.remove('active');
+                tab?.setAttribute('aria-selected', 'false');
+            }
+            const engineTab = document.getElementById('comfy-runtime-tab-video-engine');
+            engineTab?.classList.add('active');
+            engineTab?.setAttribute('aria-selected', 'true');
+            const instancePanel = document.getElementById('comfy-runtime-instance-panel');
+            if (instancePanel) instancePanel.style.display = 'none';
+            document.getElementById('comfy-runtime-allocation-panel')?.classList.remove('active');
+            document.getElementById('comfy-modal-runtime-panel')?.classList.remove('active');
+            document.getElementById('comfy-video-engine-panel')?.classList.add('active');
+            comfyRuntimeStopPolling();
+            modalRuntimeStopPolling();
+            void videoEngineRefreshStatus(false);
+        }
+
         function switchComfyRuntimeInstance(instanceId) {
             deactivateVastTab();
+            deactivateVideoEngineTab();
             const requestedInstance = Number(instanceId);
             const nextInstance = [1, 2, 3].includes(requestedInstance)
                 ? requestedInstance
@@ -36204,6 +36657,7 @@
 
         function switchComfyRuntimeAllocation() {
             deactivateVastTab();
+            deactivateVideoEngineTab();
             comfyRuntimeCaptureActiveProfile();
             comfyRuntimeActiveView = 'allocation';
             for (const id of [1, 2, 3]) {
@@ -36249,6 +36703,7 @@
 
         function switchComfyRuntimeModal() {
             deactivateVastTab();
+            deactivateVideoEngineTab();
             comfyRuntimeCaptureActiveProfile();
             comfyRuntimeActiveView = 'modal';
             for (const id of [1, 2, 3]) {
@@ -39471,12 +39926,15 @@
                     switchComfyRuntimeAllocation();
                 } else if (comfyRuntimeActiveView === 'vast') {
                     switchComfyRuntimeVast();
+                } else if (comfyRuntimeActiveView === 'video_engine') {
+                    switchComfyRuntimeVideoEngine();
                 } else {
                     switchComfyRuntimeInstance(comfyRuntimeActiveInstance);
                 }
             } else {
                 comfyRuntimeStopPolling();
                 modalRuntimeStopPolling();
+                videoEngineStopPolling();
             }
             // 활성 탭이 보이도록 최소 스크롤.
             // 이전에는 활성 탭을 우측 끝으로 밀어붙이는(scrollTo right) 로직 때문에,
@@ -39527,6 +39985,9 @@
                 || currentConfig.comfyui_port_illustration
                 || 8187;
             document.getElementById('setting-comfyui-port-3').value = currentConfig.comfyui_port_3 || 8186;
+            document.getElementById('setting-video-engine-port').value = currentConfig.video_engine_port || 8093;
+            document.getElementById('setting-video-engine-project-path').value = currentConfig.video_engine_project_path || '';
+            document.getElementById('setting-video-engine-auto-start').checked = currentConfig.video_engine_auto_start === true;
             const memoEnabled = currentConfig.memo_enabled !== false;
             document.getElementById('setting-memo-enabled').checked = memoEnabled;
             updateMemoSettingStatus(memoEnabled);
@@ -40830,6 +41291,7 @@
             if (modalOperationLockActive() || modalRedeployChoiceActive()) return;
             comfyRuntimeStopPolling();
             modalRuntimeStopPolling();
+            videoEngineStopPolling();
             if (modalStatusPollTimer) {
                 clearTimeout(modalStatusPollTimer);
                 modalStatusPollTimer = null;
@@ -41148,6 +41610,13 @@
             const modalWebGpu = document.getElementById('modal-runtime-web-gpu')?.value;
             const modalVramMode = document.getElementById('modal-runtime-vram-mode')?.value || 'highvram';
             const vastVramMode = document.getElementById('setting-vast-vram-mode')?.value || 'highvram';
+            let videoEnginePort;
+            try {
+                videoEnginePort = videoEnginePortValue();
+            } catch (error) {
+                showToast(error.message || String(error), 'error');
+                return false;
+            }
             if (!modalWorkerGpu || !modalWebGpu) {
                 console.error('[MODAL_RUNTIME] GPU 설정 저장 거부:', {
                     workerGpu: modalWorkerGpu,
@@ -41162,6 +41631,9 @@
                 comfyui_port: parseInt(document.getElementById('setting-comfyui-port').value) || 8188,
                 comfyui_port_2: parseInt(document.getElementById('setting-comfyui-port-2').value) || 8187,
                 comfyui_port_3: parseInt(document.getElementById('setting-comfyui-port-3').value) || 8186,
+                video_engine_port: videoEnginePort,
+                video_engine_project_path: videoEngineProjectPathValue(false),
+                video_engine_auto_start: document.getElementById('setting-video-engine-auto-start')?.checked === true,
                 comfyui_port_illustration: null,
                 comfy_launch_profiles: comfyRuntimeProfilesForSave(),
                 comfy_task_allocations: comfyAllocationsForSave(),

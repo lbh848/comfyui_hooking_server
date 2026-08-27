@@ -6,6 +6,7 @@ from comfy_allocation import (
     COMFY_TASK_KEYS,
     MODAL_COMFY_TARGET,
     VAST_COMFY_TARGET,
+    VIDEO_ENGINE_COMFY_TARGET,
     ComfyTaskAllocationValidationError,
     normalize_comfy_task_allocations,
     normalize_comfy_task_modal_parallel,
@@ -149,6 +150,29 @@ def test_vast_is_accepted_where_modal_is_supported(task_key: str) -> None:
 def test_vast_is_rejected_for_local_only_tasks(task_key: str) -> None:
     with pytest.raises(ComfyTaskAllocationValidationError, match="Vast"):
         normalize_comfy_task_allocations({task_key: "vast"})
+
+
+def test_video_engine_is_accepted_only_for_video_generation() -> None:
+    allocations = normalize_comfy_task_allocations(
+        {"video_generation": "VIDEO_ENGINE"}
+    )
+
+    assert allocations["video_generation"] == VIDEO_ENGINE_COMFY_TARGET
+    with pytest.raises(ComfyTaskAllocationValidationError, match="영상 전용 엔진"):
+        normalize_comfy_task_allocations({"illustration": "video_engine"})
+
+
+def test_video_engine_primary_rejects_local_instance_selection() -> None:
+    allocations = normalize_comfy_task_allocations(
+        {"video_generation": "video_engine"}
+    )
+
+    with pytest.raises(ComfyTaskAllocationValidationError, match="영상 전용 엔진 전용"):
+        select_comfy_instance(
+            allocations,
+            "video_generation",
+            {1: True, 2: False, 3: False},
+        )
 
 
 def test_modal_parallel_is_allowed_with_local_or_vast_primary_target() -> None:

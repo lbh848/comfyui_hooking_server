@@ -23,6 +23,7 @@ from comfy_allocation import (
     REMOTE_COMFY_TARGETS,
     VAST_COMFY_TARGET,
     VAST_SUPPORTED_COMFY_TASK_KEYS,
+    VIDEO_ENGINE_COMFY_TARGET,
     normalize_comfy_task_allocations,
     normalize_comfy_task_modal_parallel,
     normalize_comfy_task_vast_parallel,
@@ -386,6 +387,7 @@ class QueueManager:
         self.is_vast_ready = None               # def() -> bool
         self.acquire_modal_warm_lease = None    # async def(reason=...) -> str | None
         self.release_modal_warm_lease = None    # async def(token, reason=...) -> bool
+        self.prepare_local_gpu_target = None    # async def(target, item) -> None
         # 삽화 생성 콜백 (server.py에서 주입)
         self.generate_image_with_prompt = None  # async def(positive, negative) -> (bytes, errors)
         self.process_prompt_full = None         # async def(prompt_id, prompt_data, positive, negative) -> None
@@ -883,7 +885,12 @@ class QueueManager:
 
     @staticmethod
     def _bind_comfy_execution_target(item: QueueItem, target: str) -> None:
-        if target not in ("local", MODAL_COMFY_TARGET, VAST_COMFY_TARGET):
+        if target not in (
+            "local",
+            MODAL_COMFY_TARGET,
+            VAST_COMFY_TARGET,
+            VIDEO_ENGINE_COMFY_TARGET,
+        ):
             print(
                 "[QUEUE:COMFY_ALLOCATION] 실행 대상 바인딩 실패: "
                 f"item={item.id}, target={target!r}"
@@ -913,6 +920,8 @@ class QueueManager:
             return "vast", "vast"
         if fixed_target == "local":
             return "gpu", "comfy"
+        if fixed_target == VIDEO_ENGINE_COMFY_TARGET:
+            return "gpu", "video-engine"
 
         params = item.params if isinstance(item.params, dict) else {}
         raw_body = params.get("raw_body") if isinstance(params.get("raw_body"), dict) else {}
@@ -952,6 +961,8 @@ class QueueManager:
                 configured_providers.append("modal")
             elif target == VAST_COMFY_TARGET:
                 configured_providers.append("vast")
+            elif target == VIDEO_ENGINE_COMFY_TARGET:
+                configured_providers.append("video-engine")
             else:
                 configured_providers.append("comfy")
             if modal_parallel and "modal" not in configured_providers:
@@ -964,6 +975,8 @@ class QueueManager:
                 return "modal", "modal"
             if target == VAST_COMFY_TARGET:
                 return "vast", "vast"
+            if target == VIDEO_ENGINE_COMFY_TARGET:
+                return "gpu", "video-engine"
         return "gpu", provider or "local"
 
     def _bind_hybrid_item_provider(self, item: QueueItem, provider: str) -> bool:
@@ -1527,7 +1540,15 @@ class QueueManager:
                         )
                         break
                 if self._comfy_task_key_for_item(next_item):
-                    self._bind_comfy_execution_target(next_item, "local")
+                    configured_target, _modal_parallel, _vast_parallel = (
+                        self._comfy_execution_policy(next_item)
+                    )
+                    self._bind_comfy_execution_target(
+                        next_item,
+                        VIDEO_ENGINE_COMFY_TARGET
+                        if configured_target == VIDEO_ENGINE_COMFY_TARGET
+                        else "local",
+                    )
                 self.current_item = next_item
                 await self._run_item_pipeline(next_item, is_gpu=True)
         finally:
@@ -1573,6 +1594,15 @@ class QueueManager:
                 item.status = "processing"
                 gate_cb_token = None
         try:
+            if (
+                is_gpu
+                and self._comfy_task_key_for_item(item)
+                and callable(self.prepare_local_gpu_target)
+            ):
+                await self.prepare_local_gpu_target(
+                    str(execution_target or "local"),
+                    item,
+                )
             result = await self._execute_item(item)
             item.result = result
             if getattr(item, "_runtime_cancelled", False):
@@ -3009,6 +3039,10 @@ class QueueManager:
                 dict(item.params or {}),
                 queue_item_id=item.id,
                 progress_callback=on_comfy_progress,
+                use_video_engine=(
+                    CURRENT_COMFY_EXECUTION_TARGET.get()
+                    == VIDEO_ENGINE_COMFY_TARGET
+                ),
             )
             postprocess_params = result.get("postprocess_job")
             if not isinstance(postprocess_params, dict):

@@ -206,6 +206,19 @@ def test_video_render_can_be_claimed_by_modal_lane() -> None:
     assert manager._local_comfy_lane_allowed(item) is False
 
 
+def test_video_render_uses_serial_main_lane_for_video_engine() -> None:
+    manager = QueueManager()
+    manager.get_config = lambda: {
+        "comfy_task_allocations": {"video_generation": "video_engine"},
+    }
+    item = _item("video_ref2v")
+
+    assert manager._item_execution_area(item) == ("gpu", "video-engine")
+    assert manager._local_comfy_lane_allowed(item) is True
+    assert manager._modal_comfy_lane_allowed(item) is False
+    assert manager._vast_comfy_lane_allowed(item) is False
+
+
 def test_modal_supported_work_can_be_claimed_by_ready_vast_lane() -> None:
     manager = QueueManager()
     manager.get_config = lambda: {

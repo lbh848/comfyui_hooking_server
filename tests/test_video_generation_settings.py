@@ -215,6 +215,48 @@ def test_load_config_inherits_legacy_video_postprocess_defaults(
     assert loaded["video_generation_defaults"]["upscale_scale"] == 4
 
 
+def test_video_engine_runtime_migration_preserves_existing_config_exactly(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    legacy = {
+        "comfyui_port": 9001,
+        "comfy_task_allocations": {"video_generation": 2},
+        "backup_max_count": 321,
+        "user_extension_field": {"preserve": [1, 2, 3]},
+    }
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(legacy, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    saved: list[dict] = []
+    monkeypatch.setattr(server, "CONFIG_FILE", str(config_path))
+    monkeypatch.setattr(
+        server,
+        "save_config",
+        lambda value: saved.append(copy.deepcopy(value)),
+    )
+
+    loaded = server.load_config()
+
+    assert saved == [
+        {
+            **legacy,
+            "video_engine_port": 8093,
+            "video_engine_project_path": "",
+            "video_engine_auto_start": False,
+        }
+    ]
+    assert loaded["video_engine_port"] == 8093
+    assert loaded["video_engine_project_path"] == ""
+    assert loaded["video_engine_auto_start"] is False
+    assert loaded["comfyui_port"] == 9001
+    assert loaded["comfy_task_allocations"]["video_generation"] == 2
+    assert loaded["backup_max_count"] == 321
+    assert loaded["user_extension_field"] == {"preserve": [1, 2, 3]}
+
+
 @pytest.mark.asyncio
 async def test_config_api_persists_video_generation_defaults(monkeypatch) -> None:
     config = copy.deepcopy(server.DEFAULT_CONFIG)
@@ -270,4 +312,80 @@ async def test_config_api_rejects_invalid_video_generation_defaults(monkeypatch)
     )
 
     assert response.status == 400
+    assert saved == []
+
+
+@pytest.mark.asyncio
+async def test_config_api_persists_video_engine_runtime_settings(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config = copy.deepcopy(server.DEFAULT_CONFIG)
+    saved: list[dict] = []
+    monkeypatch.setattr(server, "app_config", config)
+    monkeypatch.setattr(
+        server,
+        "save_config",
+        lambda value: saved.append(copy.deepcopy(value)),
+    )
+
+    response = await server.handle_api_config(
+        _ConfigRequest(
+            {
+                "video_engine_port": 8094,
+                "video_engine_project_path": str(tmp_path),
+                "video_engine_auto_start": True,
+            }
+        )
+    )
+
+    payload = json.loads(response.text)
+    assert response.status == 200
+    assert payload["success"] is True
+    assert saved[-1]["video_engine_port"] == 8094
+    assert saved[-1]["video_engine_project_path"] == str(tmp_path)
+    assert saved[-1]["video_engine_auto_start"] is True
+
+
+@pytest.mark.asyncio
+async def test_config_api_rejects_non_boolean_video_engine_autostart(
+    monkeypatch,
+) -> None:
+    config = copy.deepcopy(server.DEFAULT_CONFIG)
+    saved: list[dict] = []
+    monkeypatch.setattr(server, "app_config", config)
+    monkeypatch.setattr(server, "save_config", lambda value: saved.append(value))
+
+    response = await server.handle_api_config(
+        _ConfigRequest({"video_engine_auto_start": "yes"})
+    )
+
+    assert response.status == 400
+    assert saved == []
+
+
+@pytest.mark.asyncio
+async def test_config_api_rejects_engine_identity_change_while_managed_process_runs(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config = copy.deepcopy(server.DEFAULT_CONFIG)
+    config["video_engine_project_path"] = str(tmp_path)
+    config["video_engine_port"] = 8093
+    saved: list[dict] = []
+    manager = server.VideoEngineRuntimeManager()
+    monkeypatch.setattr(
+        manager,
+        "running_identity",
+        lambda: (str(tmp_path), 8093),
+    )
+    monkeypatch.setattr(server, "video_engine_runtime_manager", manager)
+    monkeypatch.setattr(server, "app_config", config)
+    monkeypatch.setattr(server, "save_config", lambda value: saved.append(value))
+
+    response = await server.handle_api_config(
+        _ConfigRequest({"video_engine_port": 8094})
+    )
+
+    assert response.status == 409
     assert saved == []

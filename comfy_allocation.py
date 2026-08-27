@@ -34,7 +34,7 @@ COMFY_TASK_DEFINITIONS: tuple[tuple[str, str, str], ...] = (
     (
         "video_generation",
         "영상화",
-        "MiniMax H3 I2V·FLF2V 영상화",
+        "MiniMax H3 I2V·FLF2V·REF2V 영상화",
     ),
 )
 
@@ -42,6 +42,7 @@ COMFY_TASK_KEYS = tuple(item[0] for item in COMFY_TASK_DEFINITIONS)
 DEFAULT_COMFY_TASK_ALLOCATIONS = {key: 1 for key in COMFY_TASK_KEYS}
 MODAL_COMFY_TARGET = "modal"
 VAST_COMFY_TARGET = "vast"
+VIDEO_ENGINE_COMFY_TARGET = "video_engine"
 MODAL_SUPPORTED_COMFY_TASK_KEYS = frozenset(
     {
         "illustration",
@@ -56,6 +57,10 @@ MODAL_SUPPORTED_COMFY_TASK_KEYS = frozenset(
 )
 VAST_SUPPORTED_COMFY_TASK_KEYS = MODAL_SUPPORTED_COMFY_TASK_KEYS
 REMOTE_COMFY_TARGETS = frozenset({MODAL_COMFY_TARGET, VAST_COMFY_TARGET})
+VIDEO_ENGINE_SUPPORTED_COMFY_TASK_KEYS = frozenset({"video_generation"})
+NONLOCAL_COMFY_TARGETS = frozenset(
+    {*REMOTE_COMFY_TARGETS, VIDEO_ENGINE_COMFY_TARGET}
+)
 DEFAULT_COMFY_TASK_MODAL_PARALLEL = {key: False for key in COMFY_TASK_KEYS}
 DEFAULT_COMFY_TASK_VAST_PARALLEL = {key: False for key in COMFY_TASK_KEYS}
 
@@ -122,6 +127,16 @@ def normalize_comfy_task_allocations(
                 raise ComfyTaskAllocationValidationError(message)
             normalized[key] = normalized_target
             continue
+        if normalized_target == VIDEO_ENGINE_COMFY_TARGET:
+            if key not in VIDEO_ENGINE_SUPPORTED_COMFY_TASK_KEYS:
+                message = f"{key} 작업은 영상 전용 엔진 배분을 지원하지 않습니다."
+                print(
+                    "[COMFY_ALLOCATION] 영상 전용 엔진 작업 배분 값 검증 실패: "
+                    f"task={key}, value={value!r}, error={message}"
+                )
+                raise ComfyTaskAllocationValidationError(message)
+            normalized[key] = normalized_target
+            continue
         try:
             if isinstance(value, bool):
                 raise TypeError("bool은 허용되지 않음")
@@ -142,7 +157,9 @@ def normalize_comfy_task_allocations(
             raise ComfyTaskAllocationValidationError(
                 f"comfy_task_allocations.{key} 값은 1, 2, 3"
                 + (
-                    " 또는 modal, vast여야 합니다."
+                    " 또는 modal, vast, video_engine이어야 합니다."
+                    if key in VIDEO_ENGINE_SUPPORTED_COMFY_TASK_KEYS
+                    else " 또는 modal, vast여야 합니다."
                     if key in MODAL_SUPPORTED_COMFY_TASK_KEYS
                     else " 중 하나여야 합니다."
                 )
@@ -300,8 +317,14 @@ def select_comfy_instance(
             f"알 수 없는 Comfy 작업 배분 키입니다: {task_key}"
         )
     configured = allocations[task_key]
-    if configured in REMOTE_COMFY_TARGETS:
-        provider_label = "Modal" if configured == MODAL_COMFY_TARGET else "Vast"
+    if configured in NONLOCAL_COMFY_TARGETS:
+        provider_label = (
+            "Modal"
+            if configured == MODAL_COMFY_TARGET
+            else "Vast"
+            if configured == VAST_COMFY_TARGET
+            else "영상 전용 엔진"
+        )
         print(
             "[COMFY_ALLOCATION] 로컬 인스턴스 선택 거부: "
             f"task={task_key}, configured={provider_label}"

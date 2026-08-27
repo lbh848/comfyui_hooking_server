@@ -1796,6 +1796,7 @@ class VideoMode:
         self.notify_frontend_func = None
         self.convert_workflow_func = None
         self.submit_workflow_func = None
+        self.generate_video_engine_func = None
         self.cleanup_comfy_video_func = None
         self.cleanup_backups_func = None
         self.invalidate_backup_cache_func = None
@@ -6153,6 +6154,8 @@ Final protocol audit: reread every exact <Subject N> occurrence against its defi
         params: dict,
         queue_item_id: str = "",
         progress_callback=None,
+        *,
+        use_video_engine: bool = False,
     ) -> dict:
         mode = str((params or {}).get("mode") or "").strip().lower()
         if mode not in VIDEO_MODES:
@@ -6280,139 +6283,222 @@ Final protocol audit: reread every exact <Subject N> occurrence against its defi
                 source_info,
             )
 
+        last_resized: Image.Image | None = None
+        if mode == "first_last":
+            (
+                _last_crop,
+                last_resized,
+                _last_key,
+                _last_quality,
+                _lw,
+                _lh,
+                _last_path,
+            ) = self._prepared_reference(
+                last_ref,
+                aspect_ratio_key,
+                quality_level,
+                workflow_variant,
+                target_size=(target_w, target_h),
+                sharpen=sharpen_for_reference,
+            )
+
         config = self._config()
-        comfy_input_dir = os.path.realpath(str(config.get("comfy_input_dir") or ""))
-        if not comfy_input_dir or not os.path.isdir(comfy_input_dir):
-            print(f"[VIDEO:RENDER] Comfy input 폴더 오류: path={comfy_input_dir!r}")
-            raise FileNotFoundError("설정된 ComfyUI input 폴더가 없습니다")
         job_id = f"{mode}_{queue_item_id or uuid.uuid4().hex[:12]}_{uuid.uuid4().hex[:6]}"
-        staging_parent = comfy_input_dir
-        workflow_input_path = f"{I2V_WORKFLOW_INPUT_PATH.rstrip('/')}/{job_id}"
-        staging_dir = os.path.join(
-            comfy_input_dir,
-            *Path(workflow_input_path).parts,
-        )
+        staging_parent = ""
+        workflow_input_path = ""
+        staging_dir = ""
         comfy_video_descriptor: dict | None = None
         staging_created = False
         video_seed: int | None = None
         started = time.time()
         try:
-            if os.path.isdir(staging_dir):
-                self._remove_exact_tree(staging_dir, staging_parent)
-            os.makedirs(staging_dir, exist_ok=False)
-            staging_created = True
-            if mode in ("i2v", "first_last"):
-                if first_resized is None:
-                    print(f"[VIDEO:WORKFLOW] 시작 이미지 준비 누락: mode={mode}")
-                    raise RuntimeError("H3 시작 이미지가 준비되지 않았습니다")
-                first_path = os.path.join(staging_dir, "[1].png")
-                first_resized.save(first_path, format="PNG")
-                print(
-                    f"[VIDEO:WORKFLOW] 시작 이미지 [1] 스테이징 완료: "
-                    f"mode={mode}, "
-                    f"path={first_path!r}, size={first_resized.size}"
+            if use_video_engine:
+                if not callable(self.generate_video_engine_func):
+                    print("[VIDEO:ENGINE] 생성 콜백 없음")
+                    raise RuntimeError("영상 전용 엔진 생성 함수가 연결되지 않았습니다")
+                video_seed = (
+                    int.from_bytes(os.urandom(7), "big") % 1_000_000_000_000_000
                 )
-            if mode == "first_last":
-                (
-                    _last_crop,
-                    last_resized,
-                    _last_key,
-                    _last_quality,
-                    _lw,
-                    _lh,
-                    _last_path,
-                ) = self._prepared_reference(
-                    last_ref,
-                    aspect_ratio_key,
-                    quality_level,
-                    workflow_variant,
-                    target_size=(target_w, target_h),
-                    sharpen=sharpen_for_reference,
-                )
-                last_path = os.path.join(staging_dir, "[2].png")
-                last_resized.save(last_path, format="PNG")
-                print(
-                    f"[VIDEO:WORKFLOW] 마지막 이미지 [2] 스테이징 완료: "
-                    f"path={last_path!r}, size={last_resized.size}"
-                )
-            elif mode == "ref2v":
-                for index, reference in enumerate(reference_refs, start=1):
-                    resolved = self._resolve_reference(reference, raw=True)
-                    reference_image = self._load_first_frame(str(resolved["path"]))
-                    reference_path = os.path.join(staging_dir, f"[{index}].png")
-                    reference_image.save(reference_path, format="PNG")
-                    print(
-                        "[VIDEO:WORKFLOW] REF 원본 이미지 스테이징 완료: "
-                        f"index={index}, path={reference_path!r}, "
-                        f"size={reference_image.size}"
+                requested_frames = max(5, round(duration * VIDEO_FPS))
+                requested_frames += (5 - requested_frames % 17) % 17
+                engine_payload: dict = {
+                    "mode": mode,
+                    "prompt": h3_prompt,
+                    "width": target_w,
+                    "height": target_h,
+                    "frames": requested_frames,
+                    "fps": VIDEO_FPS,
+                    "seed": video_seed,
+                }
+                if mode in ("i2v", "first_last"):
+                    if first_resized is None:
+                        print(f"[VIDEO:ENGINE] 시작 이미지 준비 누락: mode={mode}")
+                        raise RuntimeError("H3 시작 이미지가 준비되지 않았습니다")
+                    engine_payload["first_frame"] = (
+                        "data:image/png;base64,"
+                        + base64.b64encode(_image_to_png_bytes(first_resized)).decode(
+                            "ascii"
+                        )
                     )
-
-            workflow_paths = config.get("video_workflow_source_paths")
-            workflow_key = video_workflow_config_key(mode, workflow_variant)
-            workflow_path = (
-                str(workflow_paths.get(workflow_key) or "").strip()
-                if isinstance(workflow_paths, dict)
-                else ""
-            )
-            if not workflow_path or not os.path.isfile(workflow_path):
+                if mode == "first_last":
+                    if last_resized is None:
+                        print("[VIDEO:ENGINE] 마지막 이미지 준비 누락")
+                        raise RuntimeError("H3 마지막 이미지가 준비되지 않았습니다")
+                    engine_payload["last_frame"] = (
+                        "data:image/png;base64,"
+                        + base64.b64encode(_image_to_png_bytes(last_resized)).decode(
+                            "ascii"
+                        )
+                    )
+                elif mode == "ref2v":
+                    encoded_references: list[str] = []
+                    for index, reference in enumerate(reference_refs, start=1):
+                        resolved = self._resolve_reference(reference, raw=True)
+                        reference_image = self._load_first_frame(
+                            str(resolved["path"])
+                        )
+                        encoded_references.append(
+                            "data:image/png;base64,"
+                            + base64.b64encode(
+                                _image_to_png_bytes(reference_image)
+                            ).decode("ascii")
+                        )
+                        print(
+                            "[VIDEO:ENGINE] REF 원본 이미지 준비 완료: "
+                            f"index={index}, size={reference_image.size}"
+                        )
+                    engine_payload["reference_images"] = encoded_references
                 print(
-                    f"[VIDEO:WORKFLOW] H3 워크플로우 파일 없음: "
-                    f"mode={mode}, variant={workflow_variant}, "
-                    f"key={workflow_key}, path={workflow_path!r}"
+                    "[VIDEO:ENGINE] 영상 생성 요청: "
+                    f"item={queue_item_id}, mode={mode}, size={target_w}x{target_h}, "
+                    f"frames={requested_frames}, references={len(reference_refs)}"
                 )
-                raise FileNotFoundError(
-                    f"{mode} {workflow_variant} H3 워크플로우 파일이 없습니다"
+                mp4_bytes, comfy_video_descriptor = (
+                    await self.generate_video_engine_func(
+                        engine_payload,
+                        progress_callback=progress_callback,
+                    )
                 )
-            with open(workflow_path, "r", encoding="utf-8") as handle:
-                ui_workflow = json.load(handle)
-            if not callable(self.convert_workflow_func):
-                print("[VIDEO:WORKFLOW] 변환 콜백 없음")
-                raise RuntimeError("H3 워크플로우 변환 함수가 연결되지 않았습니다")
+            else:
+                comfy_input_dir = os.path.realpath(
+                    str(config.get("comfy_input_dir") or "")
+                )
+                if not comfy_input_dir or not os.path.isdir(comfy_input_dir):
+                    print(
+                        f"[VIDEO:RENDER] Comfy input 폴더 오류: path={comfy_input_dir!r}"
+                    )
+                    raise FileNotFoundError("설정된 ComfyUI input 폴더가 없습니다")
+                staging_parent = comfy_input_dir
+                workflow_input_path = (
+                    f"{I2V_WORKFLOW_INPUT_PATH.rstrip('/')}/{job_id}"
+                )
+                staging_dir = os.path.join(
+                    comfy_input_dir,
+                    *Path(workflow_input_path).parts,
+                )
+            if not use_video_engine:
+                if os.path.isdir(staging_dir):
+                    self._remove_exact_tree(staging_dir, staging_parent)
+                os.makedirs(staging_dir, exist_ok=False)
+                staging_created = True
+                if mode in ("i2v", "first_last"):
+                    if first_resized is None:
+                        print(f"[VIDEO:WORKFLOW] 시작 이미지 준비 누락: mode={mode}")
+                        raise RuntimeError("H3 시작 이미지가 준비되지 않았습니다")
+                    first_path = os.path.join(staging_dir, "[1].png")
+                    first_resized.save(first_path, format="PNG")
+                    print(
+                        f"[VIDEO:WORKFLOW] 시작 이미지 [1] 스테이징 완료: "
+                        f"mode={mode}, "
+                        f"path={first_path!r}, size={first_resized.size}"
+                    )
+                if mode == "first_last":
+                    if last_resized is None:
+                        print("[VIDEO:WORKFLOW] 마지막 이미지 준비 누락")
+                        raise RuntimeError("H3 마지막 이미지가 준비되지 않았습니다")
+                    last_path = os.path.join(staging_dir, "[2].png")
+                    last_resized.save(last_path, format="PNG")
+                    print(
+                        f"[VIDEO:WORKFLOW] 마지막 이미지 [2] 스테이징 완료: "
+                        f"path={last_path!r}, size={last_resized.size}"
+                    )
+                elif mode == "ref2v":
+                    for index, reference in enumerate(reference_refs, start=1):
+                        resolved = self._resolve_reference(reference, raw=True)
+                        reference_image = self._load_first_frame(str(resolved["path"]))
+                        reference_path = os.path.join(staging_dir, f"[{index}].png")
+                        reference_image.save(reference_path, format="PNG")
+                        print(
+                            "[VIDEO:WORKFLOW] REF 원본 이미지 스테이징 완료: "
+                            f"index={index}, path={reference_path!r}, "
+                            f"size={reference_image.size}"
+                        )
 
-            workflow_for_conversion = ui_workflow
-            video_seed = (
-                int.from_bytes(os.urandom(7), "big") % 1_000_000_000_000_000
-            )
-            video_transport_block = build_i2v_workflow_block(
-                h3_prompt,
-                target_w,
-                target_h,
-                duration,
-                video_seed,
-                workflow_input_path,
-            )
-            api_workflow, convert_error = await self.convert_workflow_func(
-                workflow_for_conversion,
-                task_key="video_generation",
-            )
-            if not api_workflow:
-                print(
-                    f"[VIDEO:WORKFLOW] API 변환 실패: mode={mode}, "
-                    f"error={convert_error!r}"
+                workflow_paths = config.get("video_workflow_source_paths")
+                workflow_key = video_workflow_config_key(mode, workflow_variant)
+                workflow_path = (
+                    str(workflow_paths.get(workflow_key) or "").strip()
+                    if isinstance(workflow_paths, dict)
+                    else ""
                 )
-                raise RuntimeError(f"H3 워크플로우 변환 실패: {convert_error}")
-            if mode in ("i2v", "first_last"):
-                api_workflow = self._patch_i2v_api_workflow(
+                if not workflow_path or not os.path.isfile(workflow_path):
+                    print(
+                        f"[VIDEO:WORKFLOW] H3 워크플로우 파일 없음: "
+                        f"mode={mode}, variant={workflow_variant}, "
+                        f"key={workflow_key}, path={workflow_path!r}"
+                    )
+                    raise FileNotFoundError(
+                        f"{mode} {workflow_variant} H3 워크플로우 파일이 없습니다"
+                    )
+                with open(workflow_path, "r", encoding="utf-8") as handle:
+                    ui_workflow = json.load(handle)
+                if not callable(self.convert_workflow_func):
+                    print("[VIDEO:WORKFLOW] 변환 콜백 없음")
+                    raise RuntimeError("H3 워크플로우 변환 함수가 연결되지 않았습니다")
+
+                video_seed = (
+                    int.from_bytes(os.urandom(7), "big") % 1_000_000_000_000_000
+                )
+                video_transport_block = build_i2v_workflow_block(
+                    h3_prompt,
+                    target_w,
+                    target_h,
+                    duration,
+                    video_seed,
+                    workflow_input_path,
+                )
+                api_workflow, convert_error = await self.convert_workflow_func(
+                    ui_workflow,
+                    task_key="video_generation",
+                )
+                if not api_workflow:
+                    print(
+                        f"[VIDEO:WORKFLOW] API 변환 실패: mode={mode}, "
+                        f"error={convert_error!r}"
+                    )
+                    raise RuntimeError(f"H3 워크플로우 변환 실패: {convert_error}")
+                if mode in ("i2v", "first_last"):
+                    api_workflow = self._patch_i2v_api_workflow(
+                        api_workflow,
+                        video_transport_block,
+                        job_id,
+                        mode,
+                    )
+                elif mode == "ref2v":
+                    api_workflow = self._inject_ref2v_transport_block(
+                        api_workflow,
+                        video_transport_block,
+                        job_id,
+                    )
+                if not callable(self.submit_workflow_func):
+                    print("[VIDEO:WORKFLOW] 영상 제출 콜백 없음")
+                    raise RuntimeError("H3 영상 제출 함수가 연결되지 않았습니다")
+                mp4_bytes, comfy_video_descriptor = await self.submit_workflow_func(
                     api_workflow,
-                    video_transport_block,
-                    job_id,
-                    mode,
+                    progress_callback=progress_callback,
+                    task_key="video_generation",
+                    input_paths=[staging_dir],
                 )
-            elif mode == "ref2v":
-                api_workflow = self._inject_ref2v_transport_block(
-                    api_workflow,
-                    video_transport_block,
-                    job_id,
-                )
-            if not callable(self.submit_workflow_func):
-                print("[VIDEO:WORKFLOW] 영상 제출 콜백 없음")
-                raise RuntimeError("H3 영상 제출 함수가 연결되지 않았습니다")
-            mp4_bytes, comfy_video_descriptor = await self.submit_workflow_func(
-                api_workflow,
-                progress_callback=progress_callback,
-                task_key="video_generation",
-                input_paths=[staging_dir],
-            )
             if not mp4_bytes:
                 print(
                     f"[VIDEO:WORKFLOW] MP4 결과 없음: item={queue_item_id}, "
@@ -6442,7 +6528,7 @@ Final protocol audit: reread every exact <Subject N> occurrence against its defi
                 if isinstance(comfy_video_descriptor, dict)
                 else "local"
             )
-            if execution_source not in {"local", "modal"}:
+            if execution_source not in {"local", "modal", "vast", "video_engine"}:
                 print(
                     "[VIDEO:RENDER] MP4 실행 출처 값 오류, local로 복구: "
                     f"item={queue_item_id}, value={execution_source!r}, "

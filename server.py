@@ -176,6 +176,21 @@ from comfy_installer.workflow_library import migrate_legacy_workflow_layout
 from modal_backend import register_modal_routes
 from modal_backend.settings import ModalSettings
 from vast_backend.settings import VastSettings
+from video_engine_backend import (
+    VIDEO_ENGINE_DEFAULT_PORT,
+    VIDEO_ENGINE_TARGET,
+    normalize_video_engine_port,
+    register_video_engine_routes,
+)
+from video_engine_runtime import (
+    VIDEO_ENGINE_DEFAULT_AUTO_START,
+    VIDEO_ENGINE_DEFAULT_PROJECT_PATH,
+    VideoEngineRuntimeManager,
+    VideoEngineRuntimeValidationError,
+    autostart_video_engine,
+    normalize_video_engine_auto_start,
+    normalize_video_engine_project_path,
+)
 from comfy_runtime import (
     COMFY_INSTANCE_IDS,
     DEFAULT_COMFY_LAUNCH_PROFILES,
@@ -190,6 +205,7 @@ from comfy_allocation import (
     DEFAULT_COMFY_TASK_MODAL_PARALLEL,
     DEFAULT_COMFY_TASK_VAST_PARALLEL,
     MODAL_COMFY_TARGET,
+    NONLOCAL_COMFY_TARGETS,
     REMOTE_COMFY_TARGETS,
     VAST_COMFY_TARGET,
     ComfyTaskAllocationValidationError,
@@ -507,6 +523,9 @@ DEFAULT_CONFIG = {
     "comfy_task_allocations": copy.deepcopy(DEFAULT_COMFY_TASK_ALLOCATIONS),
     "comfy_task_modal_parallel": copy.deepcopy(DEFAULT_COMFY_TASK_MODAL_PARALLEL),
     "comfy_task_vast_parallel": copy.deepcopy(DEFAULT_COMFY_TASK_VAST_PARALLEL),
+    "video_engine_port": VIDEO_ENGINE_DEFAULT_PORT,
+    "video_engine_project_path": VIDEO_ENGINE_DEFAULT_PROJECT_PATH,
+    "video_engine_auto_start": VIDEO_ENGINE_DEFAULT_AUTO_START,
     "modal_enabled": False,
     "modal_profile": "soya-comfy",
     "modal_environment": "main",
@@ -965,9 +984,76 @@ def load_config() -> dict:
         try:
             with open(CONFIG_FILE, "r", encoding="utf-8") as f:
                 config = json.load(f)
+                if not isinstance(config, dict):
+                    raise TypeError(
+                        f"config.json 최상위 값은 객체여야 합니다: {type(config).__name__}"
+                    )
+                video_engine_migrated: list[str] = []
+                for key, default in (
+                    ("video_engine_port", VIDEO_ENGINE_DEFAULT_PORT),
+                    ("video_engine_project_path", VIDEO_ENGINE_DEFAULT_PROJECT_PATH),
+                    ("video_engine_auto_start", VIDEO_ENGINE_DEFAULT_AUTO_START),
+                ):
+                    if key not in config:
+                        config[key] = copy.deepcopy(default)
+                        video_engine_migrated.append(key)
+                if video_engine_migrated:
+                    print(
+                        "[CONFIG:MIGRATION] 영상 전용 엔진 실행 설정 기본값 추가: "
+                        f"keys={video_engine_migrated}"
+                    )
+                    save_config(config)
                 # 기본값과 병합 (deepcopy로 중첩 dict 오염 방지)
                 merged = copy.deepcopy(DEFAULT_CONFIG)
                 merged.update(config)
+                try:
+                    merged["video_engine_port"] = normalize_video_engine_port(
+                        config.get("video_engine_port", VIDEO_ENGINE_DEFAULT_PORT)
+                    )
+                except ValueError as e:
+                    print(
+                        "[CONFIG] 영상 전용 엔진 포트 로드 실패, 기본값 사용: "
+                        f"value={config.get('video_engine_port')!r}, error={e}"
+                    )
+                    traceback.print_exc()
+                    merged["video_engine_port"] = VIDEO_ENGINE_DEFAULT_PORT
+                try:
+                    merged["video_engine_project_path"] = (
+                        normalize_video_engine_project_path(
+                            config.get(
+                                "video_engine_project_path",
+                                VIDEO_ENGINE_DEFAULT_PROJECT_PATH,
+                            )
+                        )
+                    )
+                except VideoEngineRuntimeValidationError as e:
+                    print(
+                        "[CONFIG] 영상 전용 엔진 프로젝트 경로 로드 실패, "
+                        "빈 값 사용: "
+                        f"value={config.get('video_engine_project_path')!r}, error={e}"
+                    )
+                    traceback.print_exc()
+                    merged["video_engine_project_path"] = (
+                        VIDEO_ENGINE_DEFAULT_PROJECT_PATH
+                    )
+                try:
+                    merged["video_engine_auto_start"] = (
+                        normalize_video_engine_auto_start(
+                            config.get(
+                                "video_engine_auto_start",
+                                VIDEO_ENGINE_DEFAULT_AUTO_START,
+                            )
+                        )
+                    )
+                except VideoEngineRuntimeValidationError as e:
+                    print(
+                        "[CONFIG] 영상 전용 엔진 자동 시작 로드 실패, OFF 사용: "
+                        f"value={config.get('video_engine_auto_start')!r}, error={e}"
+                    )
+                    traceback.print_exc()
+                    merged["video_engine_auto_start"] = (
+                        VIDEO_ENGINE_DEFAULT_AUTO_START
+                    )
                 review_enabled = merged.get("lora_prompt_review_enabled", False)
                 if not isinstance(review_enabled, bool):
                     try:
@@ -1163,8 +1249,14 @@ def resolve_comfy_instance(task_key: str) -> tuple[int, int]:
         legacy_illustration_port=app_config.get("comfyui_port_illustration"),
     )
     configured = allocations.get(task_key)
-    if configured in REMOTE_COMFY_TARGETS:
-        provider_label = "Modal" if configured == MODAL_COMFY_TARGET else "Vast"
+    if configured in NONLOCAL_COMFY_TARGETS:
+        provider_label = (
+            "Modal"
+            if configured == MODAL_COMFY_TARGET
+            else "Vast"
+            if configured == VAST_COMFY_TARGET
+            else "영상 전용 엔진"
+        )
         print(
             f"[COMFY_ALLOCATION] {provider_label} 전용 작업의 로컬 포트 조회 거부: "
             f"task={task_key}, execution_target={CURRENT_COMFY_EXECUTION_TARGET.get()!r}"
@@ -3966,7 +4058,7 @@ async def cleanup_comfy_video_output(
     *,
     task_key: str,
 ) -> bool:
-    """Delete the exact local/Modal MP4 only after the postprocess spool is durable."""
+    """Delete the exact local/remote MP4 only after the postprocess spool is durable."""
 
     if not isinstance(descriptor, dict):
         print(
@@ -3974,6 +4066,23 @@ async def cleanup_comfy_video_output(
             f"task={task_key}, value={descriptor!r}"
         )
         return False
+    if descriptor.get("execution_source") == "video_engine":
+        try:
+            deleted = await video_engine_service.delete_video_output(descriptor)
+            if not deleted:
+                print(
+                    "[VIDEO:CLEANUP:ENGINE] 외부 엔진 MP4 삭제 미완료: "
+                    f"task={task_key}, descriptor={descriptor!r}"
+                )
+            return deleted
+        except Exception as exc:
+            print(
+                "[VIDEO:CLEANUP:ENGINE] 외부 엔진 MP4 삭제 예외: "
+                f"task={task_key}, descriptor={descriptor!r}, "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            return False
     if descriptor.get("execution_source") == "modal":
         artifact = descriptor.get("artifact")
         if not isinstance(artifact, dict):
@@ -4225,6 +4334,7 @@ def init_queue_manager():
     queue_manager.download_modal_artifacts = modal_service.download_lora_artifacts
     queue_manager.acquire_modal_warm_lease = modal_service.acquire_worker_warm_lease
     queue_manager.release_modal_warm_lease = modal_service.release_worker_warm_lease
+    queue_manager.prepare_local_gpu_target = prepare_local_gpu_execution_target
     queue_manager.run_vast_workflow = vast_service.run_workflow
     queue_manager.download_vast_artifacts = vast_service.download_lora_artifacts
     queue_manager.is_vast_ready = vast_service.ready_for_queue
@@ -4240,6 +4350,32 @@ def init_queue_manager():
     queue_manager.generate_image_with_prompt = generate_image_with_prompt
     queue_manager.run_data_patch_utility = _run_data_patch_utility
     print("[QUEUE] 통합 큐 매니저 초기화 완료")
+
+
+async def prepare_local_gpu_execution_target(target: str, item) -> None:
+    """Before a local Comfy queue item, release the video engine's 4080/RAM."""
+
+    if target == VIDEO_ENGINE_TARGET:
+        print(
+            "[VIDEO_ENGINE] 영상 전용 엔진 큐 항목 준비는 렌더 직전에 수행: "
+            f"item={item.id}, type={item.type}"
+        )
+        return
+    try:
+        result = await video_engine_service.ensure_cold_for_comfy()
+        print(
+            "[VIDEO_ENGINE] 로컬 Comfy 실행 전 외부 엔진 내리기 확인: "
+            f"item={item.id}, type={item.type}, target={target}, "
+            f"status={result.get('status')!r}, reachable={result.get('reachable')!r}"
+        )
+    except Exception as exc:
+        print(
+            "[VIDEO_ENGINE] 로컬 Comfy 실행 전 외부 엔진 내리기 실패: "
+            f"item={item.id}, type={item.type}, target={target}, "
+            f"error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        raise
 
 
 async def _run_data_patch_utility(
@@ -16679,6 +16815,49 @@ async def handle_api_config(request: web.Request) -> web.Response:
                     traceback.print_exc()
                     return web.json_response({"error": str(e)}, status=400)
 
+            if "video_engine_port" in body:
+                try:
+                    body["video_engine_port"] = normalize_video_engine_port(
+                        body.get("video_engine_port")
+                    )
+                except ValueError as e:
+                    print(
+                        "[CONFIG] 영상 전용 엔진 포트 저장 거부: "
+                        f"value={body.get('video_engine_port')!r}, error={e}"
+                    )
+                    traceback.print_exc()
+                    return web.json_response({"error": str(e)}, status=400)
+
+            if "video_engine_project_path" in body:
+                try:
+                    body["video_engine_project_path"] = (
+                        normalize_video_engine_project_path(
+                            body.get("video_engine_project_path")
+                        )
+                    )
+                except VideoEngineRuntimeValidationError as e:
+                    print(
+                        "[CONFIG] 영상 전용 엔진 프로젝트 경로 저장 거부: "
+                        f"value={body.get('video_engine_project_path')!r}, error={e}"
+                    )
+                    traceback.print_exc()
+                    return web.json_response({"error": str(e)}, status=400)
+
+            if "video_engine_auto_start" in body:
+                try:
+                    body["video_engine_auto_start"] = (
+                        normalize_video_engine_auto_start(
+                            body.get("video_engine_auto_start")
+                        )
+                    )
+                except VideoEngineRuntimeValidationError as e:
+                    print(
+                        "[CONFIG] 영상 전용 엔진 자동 시작 저장 거부: "
+                        f"value={body.get('video_engine_auto_start')!r}, error={e}"
+                    )
+                    traceback.print_exc()
+                    return web.json_response({"error": str(e)}, status=400)
+
             if "video_postprocess" in body:
                 try:
                     body["video_postprocess"] = normalize_video_postprocess_config(
@@ -17160,6 +17339,46 @@ async def handle_api_config(request: web.Request) -> web.Response:
                         status=400,
                     )
                 body[timeout_key] = idle_timeout
+
+            if {
+                "video_engine_port",
+                "video_engine_project_path",
+            }.intersection(body):
+                runtime_manager = globals().get("video_engine_runtime_manager")
+                if isinstance(runtime_manager, VideoEngineRuntimeManager):
+                    identity = runtime_manager.running_identity()
+                    if identity is not None:
+                        running_path, running_port = identity
+                        requested_path = str(
+                            body.get(
+                                "video_engine_project_path",
+                                app_config.get("video_engine_project_path", ""),
+                            )
+                        )
+                        requested_port = int(
+                            body.get(
+                                "video_engine_port",
+                                app_config.get(
+                                    "video_engine_port", VIDEO_ENGINE_DEFAULT_PORT
+                                ),
+                            )
+                        )
+                        same_path = os.path.normcase(
+                            os.path.normpath(requested_path)
+                        ) == os.path.normcase(os.path.normpath(running_path))
+                        if requested_port != running_port or not same_path:
+                            message = (
+                                "영상 전용 엔진이 실행 중일 때는 프로젝트 경로나 "
+                                "포트를 변경할 수 없습니다. 데몬을 종료한 뒤 저장하세요."
+                            )
+                            print(
+                                "[CONFIG] 실행 중 영상 엔진 주소 변경 거부: "
+                                f"running_path={running_path!r}, "
+                                f"running_port={running_port}, "
+                                f"requested_path={requested_path!r}, "
+                                f"requested_port={requested_port}"
+                            )
+                            return web.json_response({"error": message}, status=409)
 
             # 설정 업데이트
             for key in body:
@@ -18679,6 +18898,43 @@ comfy_runtime_manager = register_comfy_runtime_routes(
         request.cookies.get(SESSION_COOKIE_NAME)
     ),
 )
+
+
+def _configured_comfy_ports_for_video_engine() -> list[tuple[int, int]]:
+    config = load_config()
+    ports: list[tuple[int, int]] = []
+    for instance_id, key, fallback in (
+        (1, "comfyui_port", 8188),
+        (2, "comfyui_port_2", 8187),
+        (3, "comfyui_port_3", 8186),
+    ):
+        try:
+            port = int(config.get(key, fallback))
+            if not 1 <= port <= 65535:
+                raise ValueError("포트 범위는 1~65535")
+        except (TypeError, ValueError, OverflowError) as exc:
+            print(
+                "[VIDEO_ENGINE] Comfy 포트 목록 구성 실패: "
+                f"instance={instance_id}, key={key}, value={config.get(key)!r}, "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            continue
+        ports.append((instance_id, port))
+    return ports
+
+
+video_engine_runtime_manager = VideoEngineRuntimeManager()
+video_engine_service = register_video_engine_routes(
+    app,
+    get_config=load_config,
+    get_comfy_ports=_configured_comfy_ports_for_video_engine,
+    runtime_manager=video_engine_runtime_manager,
+    authorize=lambda request: frontend_auth_manager.verify_session(
+        request.cookies.get(SESSION_COOKIE_NAME)
+    ),
+)
+video_mode.generate_video_engine_func = video_engine_service.generate_video
 
 
 def _pause_managed_comfy_for_update() -> dict[str, Any]:
@@ -28794,6 +29050,24 @@ async def on_startup(app):
     except Exception as e:
         print(
             f"[COMFY_RUNTIME_AUTOSTART] 자동 시작 설정 처리 실패: "
+            f"error={type(e).__name__}: {e}"
+        )
+        traceback.print_exc()
+    try:
+        await asyncio.to_thread(
+            autostart_video_engine,
+            video_engine_runtime_manager,
+            enabled=app_config.get(
+                "video_engine_auto_start", VIDEO_ENGINE_DEFAULT_AUTO_START
+            ),
+            project_path=app_config.get(
+                "video_engine_project_path", VIDEO_ENGINE_DEFAULT_PROJECT_PATH
+            ),
+            port=app_config.get("video_engine_port", VIDEO_ENGINE_DEFAULT_PORT),
+        )
+    except Exception as e:
+        print(
+            "[VIDEO_ENGINE_RUNTIME_AUTOSTART] 자동 시작 설정 처리 실패: "
             f"error={type(e).__name__}: {e}"
         )
         traceback.print_exc()
