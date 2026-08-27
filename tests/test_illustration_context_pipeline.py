@@ -1300,6 +1300,113 @@ async def test_call2_pipeline_generates_characterless_scene_without_fallback(mon
 
 
 @pytest.mark.asyncio
+async def test_call2_plan_resolves_delayed_identity_before_assigning_scene_roster(monkeypatch):
+    narrative = "\n\n".join([
+        "유이는 도윤에게 오늘 저녁 담당 선배 마법소녀가 후지노 아야(Aya)라고 말했다.",
+        "도윤은 해가 진 뒤 도시 외곽으로 향했다.",
+        "무너진 벽 옆에 정체불명의 마법소녀가 쓰러져 있었다.",
+        "???는 부상을 입은 채 간신히 고개를 들었다.",
+        "도윤은 유이의 말을 떠올렸다. 이 사람이 유이가 말했던 그 선배인가?",
+    ])
+    target_slotted = pipeline.insert_slots(narrative)
+    _rendered, segments = pipeline._segment_current_context(narrative)
+    segment_slots, _catalog, mapping_reason = pipeline.build_segment_slot_map(
+        target_slotted,
+        segments,
+    )
+    assert mapping_reason == ""
+    aya_anchor = "C003"
+    aya_slot = segment_slots[aya_anchor]
+    call_names = []
+
+    async def fake_pipeline_call(call_name, messages, *args, **kwargs):
+        call_names.append(call_name)
+        request_text = "\n".join(
+            str(message.get("content") or "") for message in messages
+        )
+        if call_name == "CALL2-PLAN":
+            assert "???" not in str(messages[0].get("content") or "")
+            assert (
+                "read the supplied current narrative from its first segment through "
+                "its final segment"
+            ) in request_text
+            assert "First resolve character identity and reference continuity globally" in request_text
+            assert "evidence from both before and after each possible anchor" in request_text
+            assert "Never decide a scene roster from its anchor segment alone" in request_text
+            assert "An initially unidentified person resolved elsewhere" in request_text
+            catalog = request_text.split(
+                "# SERVER SEGMENT CATALOG (Cxxx IDs ONLY; SLOT MAPPING IS PRIVATE)",
+                1,
+            )[1]
+            plan_contract = str(messages[-1].get("content") or "").split(
+                "# SERVER SEGMENT CATALOG (Cxxx IDs ONLY; SLOT MAPPING IS PRIVATE)",
+                1,
+            )[0]
+            assert "???" not in plan_contract
+            assert catalog.index("후지노 아야(Aya)") < catalog.index("정체불명의 마법소녀")
+            assert catalog.index("정체불명의 마법소녀") < catalog.index("그 선배인가?")
+            return json.dumps({
+                "scene_plan": [{
+                    "anchor_segment": aya_anchor,
+                    "characters": ["Aya"],
+                    "scene_brief": "The wounded magical girl Aya lies beside the collapsed wall.",
+                }],
+            })
+        if call_name.startswith("CALL2-DETAIL 1/1"):
+            return f"""<lb-xnai>
+scenes[1]:
+  - camera: medium shot, eye level
+    characters[1]:
+      - name: Aya
+        positive: 1girl, pink hair, wounded, magical girl
+        outfit_state:
+          body_state: clothed
+          worn: [magical girl uniform]
+          removed: []
+    scene: Aya lies wounded beside a collapsed wall at night
+    slot: {aya_slot}
+    supplement: She raises her head with difficulty.
+</lb-xnai>"""
+        if call_name == "CALL2-AUTHORITY-AUDIT":
+            return _authority_audit_response(messages)
+        raise AssertionError(f"unexpected call: {call_name}")
+
+    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
+    result = await pipeline.build_from_context(
+        {
+            "session_id": "call2_delayed_identity_resolution_test",
+            "target_slotted": target_slotted,
+            "chats": [
+                {"role": "user", "data": "Continue."},
+                {"role": "char", "data": narrative},
+            ],
+        },
+        {
+            "call1_enabled": False,
+            "call2_parallel_enabled": True,
+            "call2_parallel_max_concurrency": 1,
+            "call2_parallel_slow_retry_enabled": False,
+            "output_count_min": 1,
+            "output_count_max": 1,
+            "key_visual": False,
+            "call3_enabled": False,
+            "speak_enabled": False,
+        },
+        "### Aya\n-default_outfit\nmagical girl uniform",
+        extra_costume="### Aya\n-default_outfit\nmagical girl uniform",
+        extra_names="Aya",
+        backtranslate_names="Aya",
+    )
+
+    assert call_names[0] == "CALL2-PLAN"
+    assert sum(name.startswith("CALL2-DETAIL 1/1") for name in call_names) == 1
+    assert sum(name.startswith("CALL2-FIX") for name in call_names) == 0
+    assert [item["slot"] for item in result["items"]] == [aya_slot]
+    assert result["items"][0]["characters"][0]["name"] == "Aya"
+    assert result["call2_fix_output"] == ""
+
+
+@pytest.mark.asyncio
 async def test_call2_pipeline_continues_with_partial_segment_slot_map(monkeypatch, capsys):
     call_names = []
     plan_requests = []

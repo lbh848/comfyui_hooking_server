@@ -11943,7 +11943,9 @@ async def build_from_context(
             if plan_messages and plan_messages[0].get("role") == "system":
                 planner_rules = [
                     "Select the global semantic visual beats that should become illustrations.",
-                    "Read the full supplied context and select binding moments before each selected moment is expanded into image details.",
+                    "Before selecting any scene, read the supplied current narrative from its first segment through its final segment.",
+                    "First resolve character identity and reference continuity globally across the whole narrative, using relevant prior context plus evidence from both before and after each possible anchor. Resolve explicit names, aliases, roles or titles, pronouns, initially unidentified references, and delayed identity reveals to canonical tracked characters when the full context supports that resolution.",
+                    "Only after that global identity pass, select binding moments and assign each selected scene's canonical character roster. Never decide a scene roster from its anchor segment alone.",
                     "Reason silently and return only the compact JSON requested by the user message.",
                     "Do not output Danbooru tags, camera fields, outfit lists, plan_id, source_segments, slots, analysis, or prose outside JSON.",
                     "Plan narrative scene beats only. You are not an appearance, wardrobe, or Key Visual authority.",
@@ -12006,11 +12008,15 @@ async def build_from_context(
                     "outfit inventory into scene_brief, but never omit a transient wardrobe, coverage, "
                     "contact, or exposure state that defines the selected visual moment; describe that "
                     "state in ordinary natural language. The server separately carries the upstream wardrobe "
-                    "analyzer's literal change wording into the scene-detail task. characters must contain every named tracked character intended to "
-                    "appear in that image, in canonical-name form. Use characters: [] when the visual beat "
-                    "contains no named tracked character; anonymous students, crowds, staff, or other "
-                    "background people belong in scene_brief and must not be given invented canonical "
-                    "names.\n\n# SERVER SEGMENT CATALOG (Cxxx IDs ONLY; SLOT MAPPING IS PRIVATE)\n"
+                    "analyzer's literal change wording into the scene-detail task. characters must contain every tracked character intended to "
+                    "appear in that image, in canonical-name form. Determine that roster from the full narrative, not just the anchor text. "
+                    "If the anchor refers to a character indirectly by an alias, role, title, pronoun, initially unidentified reference, "
+                    "or other withheld name, use the canonical name when earlier or later context resolves the identity. An initially unidentified "
+                    "person resolved elsewhere in the supplied narrative is not anonymous background. Use only canonical names available in the "
+                    "supplied profile authority or character dictionary; never invent a canonical identity. Use characters: [] only when the whole "
+                    "supplied context leaves the depicted person genuinely unresolved or the visual beat contains no tracked character. Anonymous "
+                    "students, crowds, staff, or other background people belong in scene_brief and must not be given invented canonical names."
+                    "\n\n# SERVER SEGMENT CATALOG (Cxxx IDs ONLY; SLOT MAPPING IS PRIVATE)\n"
                     + call2_segment_map
                 ),
             })

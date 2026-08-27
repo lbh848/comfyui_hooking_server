@@ -377,6 +377,103 @@ async def test_original_asset_output_recovers_missing_id_from_real_candidates(
     assert result["failures"] == []
 
 
+@pytest.mark.asyncio
+async def test_original_asset_recovery_is_consumed_once_for_duplicate_failed_slot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bot_dir = tmp_path / "bot"
+    recovered_bytes = b"RIFFrecovered-onceWEBP"
+    _write_image(
+        bot_dir / "sample" / "Aoi" / "Aoi_Overcome_School_sad.webp.webp",
+        recovered_bytes,
+    )
+    monkeypatch.setattr(server, "BASE_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        server,
+        "_original_asset_bot_character_names",
+        lambda _bot_name: ["Aoi"],
+    )
+
+    initial_raw = json.dumps({
+        "selections": [
+            {"src": "Aoi_School_missing_one.webp", "slot": 1},
+            {"src": "Aoi_School_missing_two.webp", "slot": 1},
+        ]
+    })
+    recovery_raw = json.dumps({
+        "selections": [
+            {"src": "Aoi_Overcome_School_sad.webp", "slot": 1},
+        ]
+    })
+    calls = []
+
+    async def fake_pipeline_llm(call_name, _messages, **kwargs):
+        calls.append(call_name)
+        raw = initial_raw if call_name == "ORIGINAL-ASSET" else recovery_raw
+        assert kwargs["result_validator"](raw) == (True, "")
+        return raw
+
+    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_llm)
+
+    result = await server._select_original_asset_outputs(
+        payload={
+            "chats": [{"role": "char", "data": "Aoi looks sad after class."}],
+            "target_slotted": (
+                "First\n\n[Slot 1]\n\nSecond\n\n[Slot 2]\n\nThird"
+            ),
+        },
+        toggles={
+            "original_asset_count": 2,
+            "original_asset_instruction": "Aoi: Aoi_School; sad",
+            "call2_context_turns": 5,
+        },
+        active_bot="sample",
+        used_slots=set(),
+        reserve_slot_count=0,
+        stream_notify=None,
+        llm_trace=[],
+    )
+
+    assert calls == ["ORIGINAL-ASSET", "ORIGINAL-ASSET-RECOVERY"]
+    assert [item["slot"] for item in result["items"]] == [1]
+    assert result["images"] == [recovered_bytes]
+    assert result["failures"] == [{
+        "slot": 1,
+        "error": (
+            "selection 2 실제 업로드 파일 없음: "
+            "'Aoi_School_missing_two.webp'"
+        ),
+    }]
+
+
+def test_final_result_slot_collision_prefers_original_asset_and_keeps_session_alive(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    pairs = [
+        ({"kind": "scene", "slot": 35}, b"generated"),
+        ({"kind": "original_asset", "slot": 35}, b"original"),
+        ({"kind": "scene", "slot": 36}, b"next"),
+    ]
+
+    unique_pairs, failures = server._deduplicate_illustration_result_pairs(
+        pairs,
+        session_id="test-session",
+    )
+
+    assert [pair[0]["slot"] for pair in unique_pairs] == [35, 36]
+    assert [pair[0]["kind"] for pair in unique_pairs] == ["original_asset", "scene"]
+    assert [pair[1] for pair in unique_pairs] == [b"original", b"next"]
+    assert failures == [{
+        "slot": 35,
+        "error": (
+            "중복 삽입 슬롯 결과 제외: "
+            "slot=35, kept=original_asset, dropped=scene"
+        ),
+    }]
+    assert "최종 결과 중복 slot 한 건 제외" in capsys.readouterr().out
+
+
 def test_original_asset_session_reloads_source_bytes_after_metadata_restore(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

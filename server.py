@@ -6410,7 +6410,11 @@ async def _select_original_asset_outputs(
                 replacement = None
                 if selection.get("error") and selection.get("slot") is not None:
                     try:
-                        replacement = recovered_by_slot.get(int(selection["slot"]))
+                        # A recovery result belongs to exactly one failed row.  When
+                        # the selector returned multiple invalid rows for the same
+                        # slot, reusing the same replacement for every row created
+                        # duplicate final descriptors and aborted the whole session.
+                        replacement = recovered_by_slot.pop(int(selection["slot"]), None)
                     except Exception as e:
                         print(
                             f"[ILLUST_ORIGINAL_ASSET:RECOVERY] 복구 병합 slot 파싱 실패: "
@@ -6494,6 +6498,52 @@ async def _select_original_asset_outputs(
             f"bytes={len(image_bytes)}"
         )
     return result
+
+
+def _deduplicate_illustration_result_pairs(
+    pairs: list[tuple[dict, bytes]],
+    *,
+    session_id: str,
+) -> tuple[list[tuple[dict, bytes]], list[dict]]:
+    """Keep one result per insertion slot instead of aborting every success.
+
+    Original assets own their reserved slot, so they take precedence over a
+    generated scene if an upstream regression nevertheless produces a collision.
+    Equal-kind collisions keep the first stable result.
+    """
+    unique_pairs: list[tuple[dict, bytes]] = []
+    pair_index_by_slot: dict[int, int] = {}
+    duplicate_failures: list[dict] = []
+    for pair in pairs:
+        descriptor, _image_bytes = pair
+        slot = int(descriptor.get("slot"))
+        existing_index = pair_index_by_slot.get(slot)
+        if existing_index is None:
+            pair_index_by_slot[slot] = len(unique_pairs)
+            unique_pairs.append(pair)
+            continue
+
+        existing_descriptor = unique_pairs[existing_index][0]
+        existing_kind = str(existing_descriptor.get("kind") or "scene")
+        current_kind = str(descriptor.get("kind") or "scene")
+        if current_kind == "original_asset" and existing_kind != "original_asset":
+            kept_kind = current_kind
+            dropped_kind = existing_kind
+            unique_pairs[existing_index] = pair
+        else:
+            kept_kind = existing_kind
+            dropped_kind = current_kind
+        error = (
+            "중복 삽입 슬롯 결과 제외: "
+            f"slot={slot}, kept={kept_kind}, dropped={dropped_kind}"
+        )
+        duplicate_failures.append({"slot": slot, "error": error})
+        print(
+            f"[ILLUST_CONTEXT] 최종 결과 중복 slot 한 건 제외: "
+            f"session={session_id}, slot={slot}, "
+            f"kept={kept_kind}, dropped={dropped_kind}"
+        )
+    return unique_pairs, duplicate_failures
 
 
 async def _process_illustration_asset_reroll_queue_item(item) -> dict:
@@ -6974,13 +7024,12 @@ async def process_illustration_context_queue_item(item) -> dict:
             )
             traceback.print_exc()
             raise
-        sorted_slots = [int(pair[0].get("slot")) for pair in pairs]
-        if len(sorted_slots) != len(set(sorted_slots)):
-            print(
-                f"[ILLUST_CONTEXT] 최종 결과 slot 중복: "
-                f"session={session_id}, slots={sorted_slots}"
-            )
-            raise RuntimeError("최종 삽화와 원본 에셋의 삽입 슬롯이 중복됩니다")
+        pairs, duplicate_failures = _deduplicate_illustration_result_pairs(
+            pairs,
+            session_id=session_id,
+        )
+        if duplicate_failures:
+            failures = [*failures, *duplicate_failures]
         sorted_items = [pair[0] for pair in pairs]
         sorted_images = [pair[1] for pair in pairs]
         failure_count = max(
