@@ -187,14 +187,15 @@ class IllustPromptBuilder:
 
         1. name_section을 쉼표로 분할 → 후보 이름
         2. lb_extra/캐릭터 카드/캐릭터 찾기 규칙으로 이름을 카드에 연결
-        3. char_section을 | 로 분할 → 세그먼트
-        4. 각 (세그먼트, 후보) 쌍에 대해 교집합 개수 산출:
+        3. char_section을 | 또는 빈 줄로 분할 → 세그먼트
+        4. NAME 수와 세그먼트 수가 같으면 상류의 확정 순서를 그대로 결속
+        5. 구형/수동 입력처럼 수가 다를 때만 각 (세그먼트, 후보) 쌍의 교집합 산출:
            - char_tag의 모든 단어가 세그먼트 단어 집합에 있으면 매칭
            - 다중 단어 태그("long hair")가 세그먼트의 "long red hair"에도 걸리도록
-        5. 점수 내림차순 그리디 1:1 배정
-        6. 이미지 이름 태그 옵션이 켜져 있으면 카드 이름 대신 해당 태그 삽입
-        7. (absolute_tags) 매칭된 캐릭터의 절대 태그 중 세그먼트에 없는 것만 삽입
-        8. " | " 로 재조립
+        6. 점수 내림차순 그리디 1:1 배정
+        7. 이미지 이름 태그 옵션이 켜져 있으면 카드 이름 대신 해당 태그 삽입
+        8. (absolute_tags) 매칭된 캐릭터의 절대 태그 중 세그먼트에 없는 것만 삽입
+        9. 후속 캐릭터별 처리기가 읽을 수 있도록 " | " 로 재조립
         """
         if not char_section or not name_section:
             return char_section
@@ -264,49 +265,65 @@ class IllustPromptBuilder:
                         tags.add(tag)
             char_tag_map[name] = tags
 
-        # 4. CHAR를 | 로 분할
-        segments = [s.strip() for s in char_section.split("|")]
+        # 4. 파이프와 호환용 빈 줄 구분을 모두 실제 캐릭터 블록으로 읽는다.
+        # build_raw_prompt는 NAME과 CHAR를 같은 descriptor 순서로 직렬화하므로
+        # 개수가 맞는 정상 경로에서는 외형 태그로 이름을 다시 추측하면 안 된다.
+        if "|" in char_section:
+            segments = [s.strip() for s in char_section.split("|")]
+        else:
+            segments = [
+                s.strip()
+                for s in re.split(r"(?:\r?\n)[ \t]*(?:\r?\n)+", char_section)
+            ]
         if not segments:
             return char_section
 
-        # 5. (score, seg_idx, name) 쌍 생성 → 내림차순 정렬
-        scored = []
-        for seg_idx, seg in enumerate(segments):
-            seg_words = set(t for t in re.split(r'[\s,]+', seg.lower()) if t)
-            for name in candidates:
-                tags = char_tag_map.get(name, set())
-                score = 0
-                for ct in tags:
-                    ct_words = set(ct.split())
-                    if ct_words and ct_words.issubset(seg_words):
-                        score += 1
-                scored.append((score, seg_idx, name))
-        # 점수 내림차, seg_idx 오름차, name 오름차 (안정적)
-        scored.sort(key=lambda x: (-x[0], x[1], x[2]))
-
-        # 6. 그리디 1:1 배정
         assignment: dict[int, str] = {}
-        used_names: set = set()
-        for score, seg_idx, name in scored:
-            if seg_idx in assignment:
-                continue
-            if name in used_names:
-                continue
-            assignment[seg_idx] = name
-            used_names.add(name)
-            if len(assignment) >= min(len(segments), len(candidates)):
-                break
+        if len(segments) == len(candidates) and all(segments):
+            assignment = {
+                index: name for index, name in enumerate(candidates)
+            }
+            print(
+                "[ILLUST_NAME_INSERT] 상류 NAME/CHAR 순서로 직접 결속: "
+                f"candidates={candidates}, blocks={len(segments)}"
+            )
+        else:
+            print(
+                "[ILLUST_NAME_INSERT] NAME/CHAR 수 불일치로 구형 태그 매칭 폴백: "
+                f"candidates={candidates}, blocks={len(segments)}"
+            )
+            # 5. 구형/수동 RAW 호환: 수가 다를 때만 외형 태그 점수를 사용한다.
+            scored = []
+            for seg_idx, seg in enumerate(segments):
+                seg_words = set(t for t in re.split(r'[\s,]+', seg.lower()) if t)
+                for name in candidates:
+                    tags = char_tag_map.get(name, set())
+                    score = 0
+                    for ct in tags:
+                        ct_words = set(ct.split())
+                        if ct_words and ct_words.issubset(seg_words):
+                            score += 1
+                    scored.append((score, seg_idx, name))
+            scored.sort(key=lambda x: (-x[0], x[1], x[2]))
 
-        # 7. 매칭 안 된 세그먼트 fallback (남은 이름 → 첫 후보)
-        remaining = [n for n in candidates if n not in used_names]
-        for seg_idx in range(len(segments)):
-            if seg_idx in assignment:
-                continue
-            if remaining:
-                assignment[seg_idx] = remaining.pop(0)
-                used_names.add(assignment[seg_idx])
-            else:
-                assignment[seg_idx] = candidates[0]
+            used_names: set = set()
+            for score, seg_idx, name in scored:
+                if seg_idx in assignment or name in used_names:
+                    continue
+                assignment[seg_idx] = name
+                used_names.add(name)
+                if len(assignment) >= min(len(segments), len(candidates)):
+                    break
+
+            remaining = [n for n in candidates if n not in used_names]
+            for seg_idx in range(len(segments)):
+                if seg_idx in assignment:
+                    continue
+                if remaining:
+                    assignment[seg_idx] = remaining.pop(0)
+                    used_names.add(assignment[seg_idx])
+                else:
+                    assignment[seg_idx] = candidates[0]
 
         segments = IllustPromptBuilder._apply_assigned_character_identity_tags(
             segments,

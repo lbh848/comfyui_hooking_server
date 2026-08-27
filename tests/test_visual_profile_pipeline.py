@@ -632,7 +632,7 @@ def test_authority_repair_uses_descriptor_profile_not_global_default():
     assert "hoodie" not in positive
 
 
-def test_authority_audit_entries_expose_each_scene_meaningful_profile_name():
+def test_authority_audit_entries_expose_profile_name_for_targeted_mismatches():
     despair_base = pipeline.visual_base_snapshot(
         pipeline.apply_initial_visual_bases(
             {}, [_initial_base()], "message-1", _profiles()
@@ -659,7 +659,7 @@ def test_authority_audit_entries_expose_each_scene_meaningful_profile_name():
         "visual_base_snapshot": despair_base,
         "characters": [{
             "name": "Adachi",
-            "positive": "white hair, red eyes, black horns, black armor",
+            "positive": "red eyes, black horns, black armor",
             "outfit_state": {
                 "body_state": "clothed",
                 "worn": ["black armor"],
@@ -672,7 +672,7 @@ def test_authority_audit_entries_expose_each_scene_meaningful_profile_name():
         "visual_base_snapshot": civilian_base,
         "characters": [{
             "name": "Adachi",
-            "positive": "brown hair, brown eyes, hoodie, jeans",
+            "positive": "brown hair, brown eyes, hoodie",
             "outfit_state": {
                 "body_state": "clothed",
                 "worn": ["hoodie", "jeans"],

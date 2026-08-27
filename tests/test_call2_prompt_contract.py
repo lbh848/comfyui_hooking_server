@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 
@@ -5,6 +6,17 @@ ROOT = Path(__file__).resolve().parents[1]
 CALL2_SYSTEM = ROOT / "prompts" / "lighbd" / "system.txt"
 CALL2_THOUGHTS = ROOT / "prompts" / "lighbd" / "thoughts.txt"
 PIPELINE_PY = ROOT / "modes" / "illustration_context_pipeline.py"
+
+
+def test_model_facing_prompt_files_do_not_assign_internal_call_stage_roles():
+    prompt_dir = ROOT / "prompts" / "lighbd"
+    for prompt_path in prompt_dir.glob("*.txt"):
+        prompt = prompt_path.read_text(encoding="utf-8")
+        assert not re.search(
+            r"\bCALL[1235](?:-[A-Z-]+)?\b",
+            prompt,
+            re.IGNORECASE,
+        ), prompt_path.name
 
 
 def test_call2_resolves_wardrobe_change_as_semantic_instruction():
@@ -72,24 +84,18 @@ def test_call2_injection_message_states_items_may_be_empty():
 def test_call2_authority_audit_rejects_associated_accessory_removal():
     source = PIPELINE_PY.read_text(encoding="utf-8")
 
-    assert (
-        "Do not grant an authority exception for an accessory merely because it is"
-        in source
-    )
-    assert "physically associated with one explicitly removed garment" in source
-    assert "unless the whole outfit is contextually" in source
+    assert "Do not except an accessory merely because it is associated" in source
+    assert "the accessory itself is removed" in source
+    assert "the coherent outfit is replaced" in source
 
 
 def test_call2_authority_audit_allows_contextual_outfit_creation():
     source = PIPELINE_PY.read_text(encoding="utf-8")
 
-    assert "default_outfit is only a fallback wardrobe reference" in source
-    assert "explicit removal wording is" in source
-    assert "not required for such a contextual wardrobe replacement" in source
-    assert "Do not flag a" in source
-    assert "coherent scene-appropriate garment merely because" in source
-    assert "generated_outfit_state is an untrusted proposal, but it" in source
-    assert "is evidence to judge together with generated_positive" in source
+    assert "default_outfit is a fallback reference rather than identity" in source
+    assert "scene-appropriate replacement outfit may except" in source
+    assert "preserve any default item that logically remains" in source
+    assert "full narrative, role, activity, occasion, setting, and continuity" in source
 
 
 def test_call2_fixed_appearance_requires_explicit_narrative_change():
@@ -100,21 +106,21 @@ def test_call2_fixed_appearance_requires_explicit_narrative_change():
     assert "authoritative identity of the already-selected visual profile" in system
     assert "Only a direct, explicit statement in the actual narrative" in system
     assert "active evidence-bearing history event" in thoughts
-    assert "CURRENT CONTEXT and literal evidence inside hairstyle_history" in source
-    assert "A fixed-appearance authority_exception is allowed only" in source
-    assert "assigned PLAN controls the visual beat but has no appearance authority" in source
+    assert "actual narrative or an active hairstyle_history event contains" in source
+    assert "literal evidence of a temporary physical change" in source
+    assert "assigned scene selection controls the visual beat but has no appearance authority" in source
     assert "without turning appearance wording into a temporary replacement" in source
-    assert "generated_positive, generated_outfit_state" in source
-    assert "scene's coherent contextual outfit replaces the fallback as a set" in source
+    assert "generated visual " in source
+    assert "state structurally differs" in source
+    assert "scene-appropriate replacement outfit may except" in source
 
 
 def test_call2_authority_audit_never_leaves_hair_color_unspecified():
     source = PIPELINE_PY.read_text(encoding="utf-8")
 
-    assert "Hair color must never become unspecified" in source
-    assert "replacement hair color in required_additions" in source
-    assert "Never return a hair-color authority_exception by itself" in source
-    assert "keep the fixed hair-color tag and do not create that exception" in source
+    assert "fixed hair-color exception is truly established" in source
+    assert "explicit replacement color in required_additions" in source
+    assert "otherwise keep the fixed color" in source
 
 
 def test_call2_builds_one_coherent_explicit_bundle_without_tag_dictionary():
@@ -139,7 +145,8 @@ def test_call2_plan_handoff_stays_natural_and_schema_remains_compact():
     assert "lower_body_exposure" not in source
     assert '"must_show"' not in source
     assert "required_additions" in source
-    assert "camera_replacement" in source
+    assert "camera_replacement" not in source
+    assert "Do not rewrite the scene, camera, composition, dialogue" in source
 
 
 def test_call2_prioritizes_character_state_over_environment_detail():
@@ -159,7 +166,8 @@ def test_call2_uses_simple_background_without_inventing_scene_detail():
 
     assert "use `simple background` as the sole environment description" in system
     assert "when no clear or important background exists" in thoughts
-    assert "when no clear or story-important background exists add only" in source
+    assert "when no clear " in source
+    assert "or important background exists" in source
     assert "Establish the world-building, time, and weather" not in system
     assert "Setup lighting with multiple tags" not in system
 
@@ -175,8 +183,9 @@ def test_call2_background_density_has_minimal_and_normal_toggle_branches():
     assert "do not collapse a specific story-supported setting" in system
     assert "story-supported setting at a useful visual density" in thoughts
     assert 'toggles.get("minimal_background_description", True)' in source
-    assert "Environment is a normal visual-completeness concern" in source
     assert "environment at a useful visual density" in source
+    assert "Keep the environment " in source
+    assert "to the smallest story-supported cue" in source
 
 
 def test_call2_keeps_scene_environment_out_of_character_positive():

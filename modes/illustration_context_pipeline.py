@@ -210,7 +210,7 @@ This is a hard constraint, not a suggestion.
 - Character Count & Focus: Tailor the character count to the specific focus of the image. If character interaction is emphasized, include a maximum of 2 characters. If a character's emotion or expression is the focal point, restrict the image to a maximum of 1 character.
 - Distribution Ratio: Across your total image output, maintain a recommended ratio of 70-80% single-character images and 20-30% two-character interaction images.
 - If the scene contains more than {max} potential visual moments, select the {max} most impactful ones.
-- Never output under {min} images. Never output {max} or more."""
+- Never output fewer than {min} images or more than {max} images."""
 
 
 def render_output_count_rule(min_value: int, max_value: int) -> str:
@@ -1657,14 +1657,14 @@ def _fixed_appearance_authority_content(fixed_appearance: dict[str, str]) -> str
         "base, not a menu. Copy every supplied tag exactly by default. Only a direct explicit statement "
         "in the actual narrative, or an active evidence-bearing history event derived from such a "
         "statement, may temporarily replace the exact fixed tag it physically contradicts. Keep every "
-        "other fixed tag. The assigned PLAN, scene_brief, mood, role, activity, setting, generated tags, "
+        "other fixed tag. The assigned scene selection, scene_brief, mood, role, activity, setting, generated tags, "
         "generated references, visual plausibility, and contextual inference never establish an appearance "
         "exception. Cropping, framing, occlusion, brevity, and model preference are not exceptions either. "
         "Narrative may control pose, action, expression, gaze, visibility, and other compatible temporary "
         "state. `closed eyes` is a visibility/expression state, not a fixed-appearance exception. "
         "Authoritative wardrobe state controls temporary attire because wardrobe is not fixed appearance. "
         "A persistent appearance change requires the upstream selector to choose another registered visual "
-        "profile; CALL2 does not infer a profile change.\n\n"
+        "profile; the downstream scene renderer does not infer a profile change.\n\n"
         + json.dumps(fixed_appearance, ensure_ascii=False, indent=2)
     )
 
@@ -4311,7 +4311,7 @@ def _visual_base_authority_note(snapshot: dict[str, dict]) -> str:
         outfit = ", ".join(visual_tag_values(base.get("outfit") or [])) or "(none)"
         profile_state = str(base.get("visual_profile_state") or "").strip()
         profile_state_note = (
-            f"CALL1's chronological state is: {profile_state}. "
+            f"The upstream chronological profile state is: {profile_state}. "
             if profile_state
             else ""
         )
@@ -4322,7 +4322,7 @@ def _visual_base_authority_note(snapshot: dict[str, dict]) -> str:
             + f"Its complete authoritative fixed appearance is: {appearance}. Copy every one of "
             "those appearance tags by default. Only a direct explicit narrative statement or an "
             "active evidence-bearing history event may temporarily replace the exact fixed tag it "
-            "physically contradicts; PLAN wording and generated material never may. "
+            "physically contradicts; scene-selection wording and generated material never may. "
             f"Its default-outfit reference is: {outfit}. This outfit is a fallback "
             "reference, not fixed identity: preserve it when it fits, but design a "
             "different coherent outfit when the full scene context calls for one."
@@ -5994,7 +5994,11 @@ def _match_call2_detail_characters(
         for character in characters
         if str(character.get("name") or "").strip()
     }
-    if set(actual_by_name) == set(expected_by_name):
+    if (
+        len(characters) == len(expected_by_name)
+        and len(actual_by_name) == len(characters)
+        and set(actual_by_name) == set(expected_by_name)
+    ):
         return actual_by_name, ""
 
     if (
@@ -6194,6 +6198,7 @@ def _parse_call2_detail_partial(
     assigned_wardrobes_by_slot: dict[int, dict[str, dict]] | None = None,
     assigned_characters_by_slot: dict[int, list[str]] | None = None,
     assigned_scene_context_by_slot: dict[int, dict] | None = None,
+    character_mismatch_sink: dict[int, dict] | None = None,
 ) -> tuple[dict[int, dict], list[int], list[int], str]:
     """CALL2-DETAIL 부분 허용 파서.
 
@@ -6262,12 +6267,6 @@ def _parse_call2_detail_partial(
                 for name in assigned_characters_by_slot.get(slot, [])
                 if str(name or "").strip()
             ]
-        if expected_characters and not (item.get("characters") or []):
-            print(
-                f"[ILLUST_CONTEXT:CALL2_DETAIL_PARTIAL] 이름 있는 PLAN 캐릭터 누락 스킵: "
-                f"source={source}, slot={slot}, expected={expected_characters}"
-            )
-            continue
         kept_by_slot[slot] = item
 
     # 보존된 슬롯에 대해 plan_id 주입 + 복장 확정(strict 경로와 동일 규칙).
@@ -6287,6 +6286,50 @@ def _parse_call2_detail_partial(
             assigned_scene_context.get("visual_base_snapshot") or {}
         )
         expected_wardrobes = (assigned_wardrobes_by_slot or {}).get(slot) or {}
+        expected_character_names = [
+            str(name or "").strip()
+            for name in (assigned_characters_by_slot or {}).get(slot, [])
+            if str(name or "").strip()
+        ]
+        if assigned_characters_by_slot is None:
+            expected_character_names = [
+                str(name or "").strip()
+                for name in expected_wardrobes
+                if str(name or "").strip()
+            ]
+        has_character_contract = (
+            assigned_characters_by_slot is not None or bool(expected_wardrobes)
+        )
+        if has_character_contract:
+            actual_by_name, character_reason = _match_call2_detail_characters(
+                item,
+                expected_character_names,
+                f"slot={slot}",
+            )
+        else:
+            actual_by_name, character_reason = {}, ""
+        if character_reason:
+            discarded_slots.add(slot)
+            if character_mismatch_sink is not None:
+                character_mismatch_sink[slot] = {
+                    "slot": slot,
+                    "descriptor": deepcopy(item),
+                    "reason": character_reason,
+                    "expected_characters": expected_character_names,
+                    "assigned_wardrobe": deepcopy(expected_wardrobes),
+                    "scene_context": deepcopy(assigned_scene_context),
+                    "plan_id": str(plan_id_by_slot.get(slot) or ""),
+                }
+            print(
+                f"[ILLUST_CONTEXT:CALL2_DETAIL_PARTIAL] PLAN 캐릭터 불일치로 스킵: "
+                f"source={source}, slot={slot}, reason={character_reason}"
+            )
+            continue
+        if expected_character_names:
+            item["characters"] = [
+                actual_by_name[name.casefold()]
+                for name in expected_character_names
+            ]
         if not expected_wardrobes:
             continue
         expected_by_name = {
@@ -6294,20 +6337,14 @@ def _parse_call2_detail_partial(
             for name, outfit in expected_wardrobes.items()
             if str(name).strip()
         }
-        actual_by_name, character_reason = _match_call2_detail_characters(
-            item,
-            [value[0] for value in expected_by_name.values()],
-            f"slot={slot}",
-        )
-        if character_reason:
-            discarded_slots.add(slot)
-            print(
-                f"[ILLUST_CONTEXT:CALL2_DETAIL_PARTIAL] PLAN 캐릭터 불일치로 스킵: "
-                f"source={source}, slot={slot}, reason={character_reason}"
-            )
-            continue
         for folded, (expected_name, expected_outfit) in expected_by_name.items():
-            character = actual_by_name[folded]
+            character = actual_by_name.get(folded)
+            if character is None:
+                print(
+                    f"[ILLUST_CONTEXT:CALL2_DETAIL_PARTIAL] 복장 기준 캐릭터가 PLAN "
+                    f"roster에 없어 복장 비교 스킵: slot={slot}, character={expected_name}"
+                )
+                continue
             actual_outfit = character.get("outfit_state")
             conflict = _outfit_contract_conflict(expected_outfit, actual_outfit)
             if conflict:
@@ -6498,14 +6535,67 @@ def _call2_authority_audit_entries(
             generated_tags = _split_top_level_authority_tags(
                 str(character.get("positive") or "")
             )
+            generated_ids = {
+                _authority_tag_identity(tag)
+                for tag in generated_tags
+                if _authority_tag_identity(tag)
+            }
             authority_ids = {
                 _authority_tag_identity(tag) for tag in fixed_tags + default_tags
             }
             if not authority_ids:
                 print(
-                    f"[ILLUST_CONTEXT:CALL2_AUTHORITY_AUDIT] 권위 태그는 없지만 시각 완성도 "
-                    f"감사는 유지: kind={kind}, slot={slot}, character={name}"
+                    f"[ILLUST_CONTEXT:CALL2_AUTHORITY_AUDIT] 비교할 권위 태그가 없어 "
+                    f"감사 제외: kind={kind}, slot={slot}, character={name}"
                 )
+                continue
+            missing_fixed_ids = [
+                _authority_tag_identity(tag) for tag in fixed_tags
+                if _authority_tag_identity(tag) not in generated_ids
+            ]
+            missing_default_ids = [
+                _authority_tag_identity(tag) for tag in default_tags
+                if _authority_tag_identity(tag) not in generated_ids
+            ]
+            default_ids = {
+                _authority_tag_identity(tag) for tag in default_tags
+                if _authority_tag_identity(tag)
+            }
+            worn_ids = {
+                _authority_tag_identity(tag)
+                for tag in generated_outfit_state.get("worn") or []
+                if _authority_tag_identity(tag)
+            }
+            removed_ids = {
+                _authority_tag_identity(tag)
+                for tag in generated_outfit_state.get("removed") or []
+                if _authority_tag_identity(tag)
+            }
+            active_hairstyle_history = list(
+                (hairstyle_history or {}).get(name.casefold(), [])
+            )
+            audit_reasons = []
+            if missing_fixed_ids:
+                audit_reasons.append("fixed_appearance_differs")
+            if missing_default_ids or (
+                default_ids
+                and (
+                    worn_ids != default_ids
+                    or bool(removed_ids & default_ids)
+                    or generated_outfit_state.get("body_state") not in {
+                        "unknown", "clothed",
+                    }
+                )
+            ):
+                audit_reasons.append("default_outfit_differs")
+            if active_hairstyle_history:
+                audit_reasons.append("hairstyle_history_requires_exception_check")
+            if not audit_reasons:
+                print(
+                    f"[ILLUST_CONTEXT:CALL2_AUTHORITY_AUDIT] 권위와 구조적으로 "
+                    f"일치해 LLM 감사 제외: kind={kind}, slot={slot}, character={name}"
+                )
+                continue
             entry_id = next_id
             next_id += 1
             entry_keys[entry_id] = (kind, slot, name.casefold())
@@ -6522,9 +6612,8 @@ def _call2_authority_audit_entries(
                 "default_outfit": default_tags,
                 "generated_positive": generated_tags,
                 "generated_outfit_state": generated_outfit_state,
-                "hairstyle_history": (hairstyle_history or {}).get(
-                    name.casefold(), []
-                ),
+                "hairstyle_history": active_hairstyle_history,
+                "audit_reasons": audit_reasons,
             })
     return entries, entry_keys
 
@@ -6549,9 +6638,11 @@ def _parse_call2_authority_audit_output(
     decisions: dict[tuple[str, int, str], dict] = {}
     for index, raw_entry in enumerate(raw_entries, start=1):
         if not isinstance(raw_entry, dict):
-            return reject(
-                f"CALL2-AUTHORITY-AUDIT entries[{index}]가 object가 아님"
+            print(
+                f"[ILLUST_CONTEXT:CALL2_AUTHORITY_AUDIT] 잘못된 감사 항목만 제외: "
+                f"index={index}, reason=object가 아님, value={raw_entry!r}"
             )
+            continue
         try:
             entry_id = int(raw_entry.get("id"))
         except Exception as e:
@@ -6560,14 +6651,14 @@ def _parse_call2_authority_audit_output(
                 f"index={index}, value={raw_entry.get('id')!r}, error={e}"
             )
             traceback.print_exc()
-            return reject(
-                f"CALL2-AUTHORITY-AUDIT entries[{index}].id 파싱 실패"
-            )
+            continue
         if entry_id not in candidates or entry_id in observed_ids:
-            return reject(
+            print(
+                "[ILLUST_CONTEXT:CALL2_AUTHORITY_AUDIT] 잘못된 감사 id 항목만 제외: "
                 f"CALL2-AUTHORITY-AUDIT id 불일치/중복: id={entry_id}, "
                 f"expected={sorted(candidates)}"
             )
+            continue
         observed_ids.add(entry_id)
         candidate = candidates[entry_id]
         # Fixed-appearance exceptions are candidates only for the existing semantic
@@ -6584,7 +6675,8 @@ def _parse_call2_authority_audit_output(
             if _authority_tag_identity(tag)
         }
 
-        normalized_fields: dict[str, object] = {}
+        normalized_fields: dict[str, object] = {"_audit_status": "ok"}
+        entry_error = ""
         for field, allowed in (
             ("authority_exceptions", authority_by_id),
             ("forbidden_additions", generated_by_id),
@@ -6592,9 +6684,10 @@ def _parse_call2_authority_audit_output(
         ):
             values = raw_entry.get(field) or []
             if not isinstance(values, list):
-                return reject(
-                    f"CALL2-AUTHORITY-AUDIT entries[{index}].{field}가 list가 아님"
+                entry_error = (
+                    f"entries[{index}].{field}가 list가 아님"
                 )
+                break
             normalized: list[str] = []
             seen: set[str] = set()
             dropped: list[str] = []
@@ -6617,12 +6710,20 @@ def _parse_call2_authority_audit_output(
                     f"dropped={dropped}"
                 )
             normalized_fields[field] = normalized
-        for field in ("required_additions", "scene_additions"):
+        if entry_error:
+            observed_ids.discard(entry_id)
+            print(
+                "[ILLUST_CONTEXT:CALL2_AUTHORITY_AUDIT] 잘못된 감사 항목만 제외: "
+                f"id={entry_id}, reason={entry_error}"
+            )
+            continue
+        for field in ("required_additions",):
             values = raw_entry.get(field) or []
             if not isinstance(values, list):
-                return reject(
-                    f"CALL2-AUTHORITY-AUDIT entries[{index}].{field}가 list가 아님"
+                entry_error = (
+                    f"entries[{index}].{field}가 list가 아님"
                 )
+                break
             normalized: list[str] = []
             seen: set[str] = set()
             for value in values:
@@ -6639,22 +6740,22 @@ def _parse_call2_authority_audit_output(
                 )
                 normalized = normalized[:16]
             normalized_fields[field] = normalized
-        camera_replacement = re.sub(
-            r"\s+", " ", str(raw_entry.get("camera_replacement") or "")
-        ).strip(" ,")
-        if len(camera_replacement) > 300:
+        if entry_error:
+            observed_ids.discard(entry_id)
             print(
-                "[ILLUST_CONTEXT:CALL2_AUTHORITY_AUDIT] camera_replacement 길이 초과로 "
-                f"300자까지 보존: id={entry_id}, length={len(camera_replacement)}"
+                "[ILLUST_CONTEXT:CALL2_AUTHORITY_AUDIT] 잘못된 감사 항목만 제외: "
+                f"id={entry_id}, reason={entry_error}"
             )
-            camera_replacement = camera_replacement[:300].rstrip(" ,")
-        normalized_fields["camera_replacement"] = camera_replacement
+            continue
         decisions[entry_keys[entry_id]] = normalized_fields
     if observed_ids != set(candidates):
-        return reject(
-            f"CALL2-AUTHORITY-AUDIT 응답 id 누락: expected={sorted(candidates)}, "
-            f"actual={sorted(observed_ids)}"
+        print(
+            f"[ILLUST_CONTEXT:CALL2_AUTHORITY_AUDIT] 응답 id 일부 누락, "
+            f"도착한 유효 항목만 적용: expected={sorted(candidates)}, "
+            f"actual={sorted(observed_ids)}, valid={len(decisions)}"
         )
+    if not decisions:
+        return reject("CALL2-AUTHORITY-AUDIT 유효한 개별 감사 결정이 없음")
     return decisions, ""
 
 
@@ -6666,7 +6767,13 @@ async def _run_call2_authority_audit(
     stream_notify,
     hairstyle_history: dict[str, list[dict]] | None = None,
     toggles: dict | None = None,
-) -> tuple[dict[tuple[str, int, str], dict], str, str]:
+) -> tuple[dict[tuple[str, int, str], dict], str, str, dict]:
+    total_characters = sum(
+        1
+        for descriptor in descriptors or []
+        for character in descriptor.get("characters") or []
+        if str(character.get("name") or "").strip()
+    )
     entries, entry_keys = _call2_authority_audit_entries(
         descriptors,
         fixed_appearance,
@@ -6678,99 +6785,45 @@ async def _run_call2_authority_audit(
             "[ILLUST_CONTEXT:CALL2_AUTHORITY_AUDIT] 감사 가능한 권위 태그가 없어 "
             "semantic audit LLM 호출 생략"
         )
-        return {}, "", "not_needed"
+        return {}, "", "not_needed", {
+            "total_characters": total_characters,
+            "submitted_entries": 0,
+            "skipped_conforming": total_characters,
+            "valid_decisions": 0,
+            "degraded_entries": 0,
+        }
 
-    if (toggles or {}).get("minimal_background_description", True):
-        audit_background_instruction = (
-            "Environment is a last-priority completeness concern: keep an existing minimal "
-            "location cue or `simple background` as-is, never add a second background "
-            "description, and when no clear or story-important background exists add only "
-            "`simple background`. Never request decorative props, weather, time, or elaborate "
-            "lighting merely for background detail. "
-        )
-    else:
-        audit_background_instruction = (
-            "Environment is a normal visual-completeness concern: preserve and, when missing, "
-            "request enough concrete story-supported location, time, weather, lighting, scenery, "
-            "furniture, and prominent prop detail to make the setting readable. Multiple "
-            "complementary environment additions are allowed when they express distinct visible "
-            "facts. Never invent unsupported decoration, and request `simple background` only "
-            "when the narrative provides no meaningful environment. "
-        )
-
+    # This is intentionally a narrow, character-only audit. Scene composition,
+    # camera, dialogue, and environment remain owned by their existing stages.
     system_prompt = (
-        "You are CALL2-AUTHORITY-AUDIT. Perform the existing authority audit and a final visual-"
-        "completeness repair in this same call. Read CURRENT CONTEXT and each entry's scene_context by "
-        "meaning and chronology; never use keyword matching. The complete fixed_appearance is the "
-        "authoritative mandatory identity base for that entry's already-selected visual_profile. "
-        "Each entry is independent: never reuse one entry's profile or fixed tags for another entry, and "
-        "do not assume every scene uses the first/default profile. Keep every fixed "
-        "tag by default. A fixed-appearance authority_exception is allowed only when the actual narrative "
-        "directly and explicitly states a temporary physical change that contradicts that exact tag, or "
-        "when an active hairstyle_history event carries literal narrative evidence of that direct change. "
-        "For example, an explicit statement that she untied her side ponytail and let her hair down may "
-        "except only `side ponytail`; intimacy, sleep, action, dishevelment, or loose-looking hair may not. "
-        "CURRENT CONTEXT and literal evidence inside hairstyle_history are the only evidence sources for "
-        "fixed-appearance exceptions. scene_brief, PLAN wording, generated_positive, generated_outfit_state, "
-        "supplement, mood, role, activity, setting, visual plausibility, and contextual inference are proposals, "
-        "not evidence. Cropping, framing, occlusion, brevity, and model preference are never exceptions. "
-        "`closed eyes` is an expression/visibility state, not a fixed-appearance exception. If a fixed tag is "
-        "omitted without qualifying explicit evidence, do not create an exception: the server restores it. "
-        "Hair color must never become unspecified. Whenever fixed_appearance supplies a hair color, preserve "
-        "that color unless CURRENT CONTEXT or literal evidence inside hairstyle_history explicitly establishes "
-        "a different color for this exact moment. If you return the fixed hair-color tag in authority_exceptions, "
-        "you must also put the explicit narrative-supported replacement hair color in required_additions for the "
-        "same entry. Never return a hair-color authority_exception by itself. If the replacement color is not "
-        "explicit enough to state, keep the fixed hair-color tag and do not create that exception. "
-        "If generated_positive contains an appearance or hairstyle tag that contradicts fixed appearance "
-        "without qualifying explicit evidence, return that exact generated tag in conflicts. default_outfit is only a fallback wardrobe reference, not fixed "
-        "identity and not a mandatory outfit. A short historical description is not automatically a "
-        "complete replacement outfit, but the full scene may make a different coherent outfit "
-        "appropriate even without an explicit sentence listing garments. Judge that from the whole "
-        "narrative, role, activity, occasion, setting, and continuity by meaning and common sense, never "
-        "by matching individual words. For default-outfit tags, return authority_exceptions when the tracked wardrobe or the "
-        "scene's coherent contextual outfit replaces the fallback as a set; explicit removal wording is "
-        "not required for such a contextual wardrobe replacement. When replacement is warranted, except "
-        "every default garment or accessory that should not carry into the new outfit, while preserving "
-        "an item only when it logically remains. Do not grant an authority exception for an accessory merely because it is "
-        "physically associated with one explicitly removed garment; unless the whole outfit is contextually "
-        "replaced, the scene must establish removal of that accessory itself. generated_outfit_state is an untrusted proposal, but it "
-        "is evidence to judge together with generated_positive and the full context rather than being "
-        "overwritten merely for differing from default_outfit. Return forbidden_additions for exact "
-        "generated_positive tags that invent a persistent identity, body, hair, face, eye, skin, or "
-        "species trait, or a wardrobe detail that is incoherent with the assigned scene. Do not flag a "
-        "coherent scene-appropriate garment merely because it is absent from default_outfit. An entry may include `hairstyle_history`. "
-        "Resolve its evidence-bearing events chronologically. An active event may authorize replacement "
-        "of only the directly conflicting fixed arrangement tag when its literal evidence explicitly states "
-        "that change; keep every non-conflicting fixed tag. An event label without qualifying literal evidence "
-        "does not authorize an exception. When a generated arrangement such as `hair down` conflicts with fixed "
-        "appearance without that evidence, put the exact generated conflicting tag in conflicts and keep the "
-        "complete fixed appearance. "
-        "Do not classify pose, action, expression, gaze, "
-        "or temporary scene state as a forbidden addition. Return conflicts even when every base "
-        "tag is already present, but only for exact generated_positive tags that directly "
-        "contradict fixed appearance and are not supported by that assigned scene. When a contextual "
-        "outfit replaces the fallback, also return as conflicts any exact generated default-outfit "
-        "tags that were mistakenly retained and do not belong with the resolved new outfit. Do not report camera "
-        "invisibility, brevity, or ordinary scene/action/expression tags as authority conflicts. "
-        "Then silently cross-check whether the generated camera, scene, supplement, character tags, "
-        "scene_brief, and natural-language continuity_note form one physically possible image. For "
-        "explicit content, judge the whole scene-specific visual bundle: participant roles and relative "
-        "positions, exact action/contact and touched anatomy, visible exposure, displaced or removed "
-        "clothing, pose, expression, and whether the camera actually includes story-essential evidence. "
-        "Do not invent a sexual act, body detail, intensity, or exposure unsupported by the story. "
-        "Contextual wardrobe design is allowed as described above, but it must remain coherent with the "
-        "scene and must not rewrite identity. Do not euphemize or omit an explicit fact that the assigned image is meant to show. "
-        "Put only missing character-level visible facts in required_additions, and only missing scene-level "
-        "facts such as overall interaction or `nsfw` in scene_additions. "
-        + audit_background_instruction
-        + "Each list item is one "
-        "concise tag or natural visual phrase; it need not be validated against an external tag dictionary. "
-        "Use camera_replacement only when the present framing or perspective cannot show an essential fact; "
-        "then return one complete coherent replacement camera string, otherwise return an empty string. "
-        "Keep all repairs minimal and mutually compatible. Copy authority/conflict candidate strings exactly. "
-        "Return compact JSON only: "
-        '{"entries":[{"id":1,"authority_exceptions":[],"forbidden_additions":[],"conflicts":[],"required_additions":[],"scene_additions":[],"camera_replacement":""}]}.'
+        "Audit only the supplied illustration-character entries whose generated visual "
+        "state structurally differs from the supplied appearance or fallback wardrobe "
+        "authority. Each entry is independent. Read the current narrative and that entry's "
+        "bounded scene context by meaning and chronology; never decide from hard-coded "
+        "keywords. Do not rewrite the scene, camera, composition, dialogue, or complete "
+        "character prompt. Return only minimal authority decisions. "
+        "fixed_appearance is mandatory identity for the already selected profile. Keep every "
+        "fixed tag unless the actual narrative or an active hairstyle_history event contains "
+        "literal evidence of a temporary physical change that directly contradicts that exact "
+        "tag. Cropping, occlusion, mood, activity, scene_brief, generated tags, and visual "
+        "plausibility are not evidence. Put an allowed omitted fixed tag in "
+        "authority_exceptions. If a fixed hair-color exception is truly established, also put "
+        "the explicit replacement color in required_additions; otherwise keep the fixed color. "
+        "default_outfit is a fallback reference rather than identity. A coherent tracked or "
+        "scene-appropriate replacement outfit may except the default garments that no longer "
+        "belong, but preserve any default item that logically remains. Judge a replacement from "
+        "the full narrative, role, activity, occasion, setting, and continuity by meaning. "
+        "Do not except an accessory merely because it is associated with one removed garment; "
+        "remove it only when the accessory itself is removed or the coherent outfit is replaced. "
+        "Put exact generated_positive tags that invent persistent identity or incoherent "
+        "wardrobe details in forbidden_additions. Put exact generated_positive tags that "
+        "directly conflict with fixed appearance or the resolved outfit in conflicts. Do not "
+        "classify pose, action, expression, gaze, or a supported temporary state as a conflict. "
+        "Use required_additions only for the smallest character-level visible replacement fact "
+        "needed to keep an approved exception coherent. Copy candidate strings exactly when a "
+        "field requires an existing candidate. Return compact JSON only, with one object for "
+        "every supplied id: "
+        '{"entries":[{"id":1,"authority_exceptions":[],"forbidden_additions":[],"conflicts":[],"required_additions":[]}]}.'
     )
     messages = [{"role": "system", "content": system_prompt}, {
         "role": "user",
@@ -6809,12 +6862,36 @@ async def _run_call2_authority_audit(
                 f"기본 세트 전부 복원하는 degraded 모드 사용: reason={reason}, "
                 f"raw={raw_output[:1000]!r}"
             )
-            return {}, raw_output, "degraded"
+            degraded = {
+                key: {"_audit_status": "degraded"}
+                for key in entry_keys.values()
+            }
+            return degraded, raw_output, "degraded", {
+                "total_characters": total_characters,
+                "submitted_entries": len(entries),
+                "skipped_conforming": max(0, total_characters - len(entries)),
+                "valid_decisions": 0,
+                "degraded_entries": len(entries),
+            }
+        valid_count = len(decisions)
+        missing_keys = [
+            key for key in entry_keys.values() if key not in decisions
+        ]
+        for key in missing_keys:
+            decisions[key] = {"_audit_status": "degraded"}
+        status = "partial" if missing_keys else "ok"
         print(
             f"[ILLUST_CONTEXT:CALL2_AUTHORITY_AUDIT] semantic audit 완료: "
-            f"entries={len(entries)}, decisions={len(decisions)}"
+            f"entries={len(entries)}, valid={valid_count}, "
+            f"degraded={len(missing_keys)}, skipped={total_characters - len(entries)}"
         )
-        return decisions, raw_output, "ok"
+        return decisions, raw_output, status, {
+            "total_characters": total_characters,
+            "submitted_entries": len(entries),
+            "skipped_conforming": max(0, total_characters - len(entries)),
+            "valid_decisions": valid_count,
+            "degraded_entries": len(missing_keys),
+        }
     except asyncio.CancelledError:
         print("[ILLUST_CONTEXT:CALL2_AUTHORITY_AUDIT] 상위 작업 취소")
         raise
@@ -6824,7 +6901,17 @@ async def _run_call2_authority_audit(
             f"복원하는 degraded 모드 사용: error={e}"
         )
         traceback.print_exc()
-        return {}, "", "degraded"
+        degraded = {
+            key: {"_audit_status": "degraded"}
+            for key in entry_keys.values()
+        }
+        return degraded, "", "degraded", {
+            "total_characters": total_characters,
+            "submitted_entries": len(entries),
+            "skipped_conforming": max(0, total_characters - len(entries)),
+            "valid_decisions": 0,
+            "degraded_entries": len(entries),
+        }
 
 
 def apply_call2_authority_base(
@@ -6846,60 +6933,6 @@ def apply_call2_authority_base(
     for descriptor in descriptors or []:
         kind = str(descriptor.get("kind") or "scene")
         slot = int(descriptor.get("slot") or 0)
-        descriptor_decisions = [
-            (semantic_decisions or {}).get(
-                (
-                    kind,
-                    slot,
-                    str(character.get("name") or "").strip().casefold(),
-                ),
-                {},
-            )
-            for character in descriptor.get("characters") or []
-            if str(character.get("name") or "").strip()
-        ]
-        camera_replacements: list[str] = []
-        for decision in descriptor_decisions:
-            replacement = str(decision.get("camera_replacement") or "").strip()
-            if replacement and replacement.casefold() not in {
-                value.casefold() for value in camera_replacements
-            }:
-                camera_replacements.append(replacement)
-        applied_camera_replacement = ""
-        if camera_replacements:
-            applied_camera_replacement = camera_replacements[0]
-            if len(camera_replacements) > 1:
-                print(
-                    "[ILLUST_CONTEXT:CALL2_AUTHORITY_AUDIT] 캐릭터별 camera_replacement "
-                    f"불일치, 첫 결정 사용: kind={kind}, slot={slot}, "
-                    f"candidates={camera_replacements}"
-                )
-            descriptor["camera"] = applied_camera_replacement
-
-        scene_additions: list[str] = []
-        scene_addition_ids: set[str] = set()
-        for decision in descriptor_decisions:
-            for raw_addition in decision.get("scene_additions") or []:
-                addition = str(raw_addition or "").strip()
-                identity = _authority_tag_identity(addition)
-                if not identity or identity in scene_addition_ids:
-                    continue
-                scene_addition_ids.add(identity)
-                scene_additions.append(addition)
-        existing_scene_tags = _split_top_level_authority_tags(
-            str(descriptor.get("scene") or "")
-        )
-        existing_scene_ids = {
-            _authority_tag_identity(tag) for tag in existing_scene_tags
-        }
-        applied_scene_additions = [
-            addition for addition in scene_additions
-            if _authority_tag_identity(addition) not in existing_scene_ids
-        ]
-        if applied_scene_additions:
-            descriptor["scene"] = ", ".join(
-                existing_scene_tags + applied_scene_additions
-            )
         for character in descriptor.get("characters") or []:
             name = str(character.get("name") or "").strip()
             if not name:
@@ -6951,6 +6984,11 @@ def apply_call2_authority_base(
             semantic_decision = (semantic_decisions or {}).get(
                 (kind, slot, name.casefold()),
                 {},
+            )
+            entry_semantic_status = str(
+                semantic_decision.get("_audit_status") or (
+                    semantic_status if semantic_decision else "not_needed"
+                )
             )
             untrusted_exceptions = list(character.get("authority_exceptions") or [])
             if untrusted_exceptions:
@@ -7128,7 +7166,7 @@ def apply_call2_authority_base(
                 "forbidden_added_removed": forbidden_added_removed,
                 "conflicts_removed": conflicts_removed,
                 "rejected_exceptions": rejected_exceptions,
-                "semantic_status": semantic_status,
+                "semantic_status": entry_semantic_status,
             }
             if selected_profile_id:
                 audit["visual_profile_id"] = selected_profile_id
@@ -7136,10 +7174,6 @@ def apply_call2_authority_base(
                 audit["visual_profile_label"] = selected_profile_label
             if semantic_required:
                 audit["required_additions"] = semantic_required
-            if applied_scene_additions:
-                audit["scene_additions"] = applied_scene_additions
-            if applied_camera_replacement:
-                audit["camera_replacement"] = applied_camera_replacement
             audits.append(audit)
             print(
                 "[ILLUST_CONTEXT:CALL2_AUTHORITY_AUDIT] "
@@ -7190,9 +7224,9 @@ async def _run_call2_keyvis(
         )
     if messages and messages[0].get("role") == "system":
         messages[0]["content"] = str(messages[0].get("content") or "") + (
-            "\n\n# Independent CALL2-KEYVIS override\n"
+            "\n\n# Independent promotional Key Visual task\n"
             "Create exactly one standalone promotional Key Visual from the supplied current context. "
-            "This worker runs independently from CALL2-PLAN: do not select narrative slots, do not "
+            "This task is independent from the narrative scene planner: do not select narrative slots, do not "
             "output a scene plan, and do not wait for or refer to another worker. Synthesize the central "
             "relationship, contrast, or theme into one magazine-cover-level composition instead of "
             "copying one presumed planned scene. Output exactly one keyvis object and no scene objects. "
@@ -7299,7 +7333,7 @@ async def _run_parallel_call2_details(
     toggles: dict,
     stream_notify,
     call2_thoughts: str = "",
-) -> tuple[list[dict], list[str]]:
+) -> tuple[list[dict], list[str], list[int], list[dict]]:
     source_format = str(call2_format or "").strip()
     keyvis_marker = re.search(r"(?m)^keyvis:\s*$", source_format)
     if keyvis_marker is not None:
@@ -7413,7 +7447,7 @@ async def _run_parallel_call2_details(
             base = deepcopy(call2_context_messages)
             if base and base[0].get("role") == "system":
                 base[0]["content"] = str(base[0].get("content") or "") + (
-                    "\n\n# Parallel CALL2-DETAIL instructions\n"
+                    "\n\n# Parallel scene-detail instructions\n"
                     "The global planner already selected the visual beats. Do not select, add, remove, or move a scene. "
                     "Copy every assigned slot exactly; the server will attach plan_id after slot validation. "
                     "Omit keyvis completely. "
@@ -7447,7 +7481,7 @@ async def _run_parallel_call2_details(
                 "exposure; coarse operation/body-state hints or a stale snapshot must never simplify, "
                 "euphemize, or contradict it. Include every fixed-appearance tag by default. Replace only the "
                 "exact tag directly contradicted by an explicit current-narrative statement or active "
-                "evidence-bearing history event; the assigned PLAN controls the visual beat but has no appearance authority. "
+                "evidence-bearing history event; the assigned scene selection controls the visual beat but has no appearance authority. "
                 "Use the complete default outfit "
                 "only as fallback when the tracked wardrobe and full scene do not call for something different. "
                 "When different attire is contextually appropriate, design one coherent outfit by meaning and "
@@ -7458,8 +7492,8 @@ async def _run_parallel_call2_details(
                 + "Never repeat scene-wide environment, "
                 "lighting, weather, time, character-count, or shared background-prop tags in characters[].positive. "
                 "Treat each assigned plan's characters list as its exact unique canonical roster. Emit exactly one "
-                "characters[] item for each listed name, in PLAN order, and no extra item; never repeat the same "
-                "canonical name within one scene. When the PLAN has one named girl and the scene uses `1girl` with "
+                "characters[] item for each listed name, in the supplied order, and no extra item; never repeat the same "
+                "canonical name within one scene. When the assigned scene has one named girl and uses `1girl` with "
                 "`solo` or `solo focus`, physically emit exactly one characters[] list item and never append a second "
                 "minimal `positive: girl` item for the same person. Keep anonymous or unnamed cropped body parts from "
                 "another person only in scene and supplement rather than inventing or duplicating a named character. "
@@ -7484,7 +7518,7 @@ async def _run_parallel_call2_details(
                     + "\n\n"
                     + expand_instruction
                     + (
-                        "\n\n# DETAIL CHECKLIST\n"
+                        "\n\n# SCENE EXPANSION CHECKLIST\n"
                         + detail_checklist
                         if detail_checklist
                         else ""
@@ -7525,6 +7559,7 @@ async def _run_parallel_call2_details(
                 assigned_wardrobes_by_slot,
                 assigned_characters_by_slot,
                 assigned_scene_context_by_slot,
+                character_mismatch_candidates,
             )
 
         def make_validator(scope_slots: list[int]):
@@ -7543,6 +7578,7 @@ async def _run_parallel_call2_details(
 
         kept_by_slot: dict[int, dict] = {}
         char_discarded: set[int] = set()
+        character_mismatch_candidates: dict[int, dict] = {}
         raw_outputs: list[str] = []
         last_reason = ""
         cycle = 0
@@ -7562,31 +7598,44 @@ async def _run_parallel_call2_details(
                 break
             cycle += 1
 
-            # ① 전부 예측 (primary 슬롯 1회 강제)
+            # ① primary 예측. 첫 사이클에는 shard 전체, 이후 사이클에는 아직
+            # 확보하지 못한 슬롯만 요청한다. 이미 검증된 슬롯은 다시 생성하거나
+            # 덮어쓰지 않는다.
             full_name = f"CALL2-DETAIL {index}/{total}"
             if attempt_kind == "duplicate":
                 full_name += " [느리다고? 다시해!]"
-            elif attempt_kind == "failed_shard_retry":
-                full_name += " [FAILED-SHARD-RETRY]"
             full_name += f" [FULL c{cycle}/{max_cycles}]"
+            full_scope_slots = list(missing_slots)
+            full_scope_set = set(full_scope_slots)
+            full_plans = [
+                plan for plan in plans
+                if int(plan["slot"]) in full_scope_set
+            ]
             try:
                 raw_full = await _call_pipeline_llm(
                     full_name,
-                    _normalize_messages(build_messages(plans, partial=False)),
+                    _normalize_messages(build_messages(
+                        full_plans,
+                        partial=bool(kept_by_slot),
+                    )),
                     job_stream_notify,
-                    result_validator=make_validator(assigned_slots),
+                    result_validator=make_validator(full_scope_slots),
                     stream_observer=stream_observer,
                     history_id=(history_id if cycle == 1 else ""),
                     force_slot=primary_slot,
                 )
                 kept, _missing, discarded, hard = parse_scope(
                     raw_full,
-                    assigned_slots,
+                    full_scope_slots,
                     f"CALL2-DETAIL-{index}-FULL-c{cycle}",
                 )
-                kept_by_slot.update(kept)
+                for slot, descriptor in kept.items():
+                    if slot not in kept_by_slot:
+                        kept_by_slot[slot] = descriptor
                 char_discarded.update(discarded)
                 char_discarded -= set(kept)
+                for slot in kept:
+                    character_mismatch_candidates.pop(slot, None)
                 raw_outputs.append(str(raw_full or ""))
                 last_reason = hard or ""
             except Exception as e:
@@ -7596,6 +7645,7 @@ async def _run_parallel_call2_details(
                     f"실패/진행없음: job={index}/{total}, cycle={cycle}/{max_cycles}, "
                     f"kept={sorted(kept_by_slot)}, error={last_reason}"
                 )
+                traceback.print_exc()
 
             missing_slots = remaining_to_fill()
             if not missing_slots:
@@ -7618,9 +7668,13 @@ async def _run_parallel_call2_details(
                     missing_slots,
                     f"CALL2-DETAIL-{index}-PARTIAL-c{cycle}",
                 )
-                kept_by_slot.update(kept)
+                for slot, descriptor in kept.items():
+                    if slot not in kept_by_slot:
+                        kept_by_slot[slot] = descriptor
                 char_discarded.update(discarded)
                 char_discarded -= set(kept)
+                for slot in kept:
+                    character_mismatch_candidates.pop(slot, None)
                 raw_outputs.append(str(raw_part or ""))
                 last_reason = hard or ""
             except Exception as e:
@@ -7630,16 +7684,28 @@ async def _run_parallel_call2_details(
                     f"실패/진행없음: job={index}/{total}, cycle={cycle}/{max_cycles}, "
                     f"missing={missing_slots}, error={last_reason}"
                 )
+                traceback.print_exc()
 
         missing_slots = remaining_to_fill()
         if missing_slots:
-            raise ValueError(
-                f"CALL2-DETAIL 부분 재시도 상한({max_cycles}사이클) 초과로 미확보 슬롯 남음: "
-                f"missing={missing_slots}, assigned={assigned_slots}, last_reason={last_reason}"
+            print(
+                f"[ILLUST_CONTEXT:CALL2_DETAIL] 부분 재시도 상한({max_cycles}사이클) "
+                f"초과 슬롯만 폐기 후보로 반환: job={index}/{total}, "
+                f"missing={missing_slots}, assigned={assigned_slots}, "
+                f"last_reason={last_reason}"
             )
         descriptors = [kept_by_slot[slot] for slot in assigned_slots if slot in kept_by_slot]
         combined_raw = "\n\n".join(raw for raw in raw_outputs if raw)
-        return {"raw": combined_raw, "descriptors": descriptors}
+        return {
+            "raw": combined_raw,
+            "descriptors": descriptors,
+            "failed_slots": list(missing_slots),
+            "character_mismatches": [
+                character_mismatch_candidates[slot]
+                for slot in assigned_slots
+                if slot in character_mismatch_candidates
+            ],
+        }
 
     try:
         results = await _run_parallel_pipeline_jobs(
@@ -7660,55 +7726,191 @@ async def _run_parallel_call2_details(
     except ParallelPipelineJobsError as group_error:
         result_by_index = dict(group_error.resolved_values)
         print(
-            f"[ILLUST_CONTEXT:CALL2_DETAIL] 성공 shard 보존 후 실패 shard만 재시도: "
+            f"[ILLUST_CONTEXT:CALL2_DETAIL] 성공 shard 보존, 라우팅 재시도까지 "
+            "소진된 shard의 슬롯만 폐기 후보로 전환: "
             f"preserved={sorted(result_by_index)}, failed={sorted(group_error.failures)}"
         )
-        for failed_index, first_reason in sorted(group_error.failures.items()):
-            retry_notify = None
-            if stream_notify:
-                async def retry_notify(event: dict, shard_index=failed_index):
-                    payload = dict(event)
-                    payload["queue_subtask"] = {
-                        "group_id": "call2_detail",
-                        "group_label": "CALL2 상세 장면",
-                        "index": shard_index,
-                        "total": len(jobs),
-                    }
-                    await stream_notify(payload)
-            try:
-                result_by_index[failed_index] = await invoke(
-                    jobs[failed_index - 1],
-                    failed_index,
-                    len(jobs),
-                    "failed_shard_retry",
-                    None,
-                    "",
-                    retry_notify,
-                )
-            except asyncio.CancelledError:
-                print(
-                    f"[ILLUST_CONTEXT:CALL2_DETAIL] 실패 shard 재시도 중 상위 작업 취소: "
-                    f"job={failed_index}/{len(jobs)}"
-                )
-                raise
-            except Exception as retry_error:
-                print(
-                    f"[ILLUST_CONTEXT:CALL2_DETAIL] 실패 shard 재시도 최종 실패: "
-                    f"job={failed_index}/{len(jobs)}, first_reason={first_reason}, "
-                    f"retry_error={retry_error}"
-                )
-                traceback.print_exc()
-                raise RuntimeError(
-                    f"CALL2 상세 장면 실패 shard {failed_index}/{len(jobs)} 재시도 실패: "
-                    f"{retry_error}"
-                ) from retry_error
+        for failed_index, reason in sorted(group_error.failures.items()):
+            failed_job_slots = [
+                int(plan["slot"])
+                for plan in jobs[failed_index - 1].get("plans") or []
+            ]
+            result_by_index[failed_index] = {
+                "raw": "",
+                "descriptors": [],
+                "failed_slots": failed_job_slots,
+                "character_mismatches": [],
+            }
+            print(
+                f"[ILLUST_CONTEXT:CALL2_DETAIL] 실패 shard 추가 호출 없이 담당 "
+                f"슬롯만 폐기 후보로 전환: job={failed_index}/{len(jobs)}, "
+                f"slots={failed_job_slots}, reason={reason}"
+            )
         results = [result_by_index[index] for index in range(1, len(jobs) + 1)]
     descriptors = []
     raw_outputs = []
+    failed_slots: list[int] = []
+    character_mismatches: list[dict] = []
     for result in results:
         descriptors.extend(result.get("descriptors") or [])
         raw_outputs.append(str(result.get("raw") or ""))
-    return descriptors, raw_outputs
+        failed_slots.extend(int(slot) for slot in result.get("failed_slots") or [])
+        character_mismatches.extend(result.get("character_mismatches") or [])
+    return descriptors, raw_outputs, list(dict.fromkeys(failed_slots)), character_mismatches
+
+
+async def _run_call2_character_mismatch_fixes(
+    *,
+    candidates: list[dict],
+    fix_prompt: str,
+    toggles: dict,
+    stream_notify,
+) -> tuple[list[dict], list[str], list[int]]:
+    """Repair each character-roster mismatch once without touching valid scenes."""
+    if not candidates:
+        return [], [], []
+    system_prompt = str(fix_prompt or "").strip()
+    if not system_prompt:
+        failed = [int(candidate.get("slot") or 0) for candidate in candidates]
+        print(
+            "[ILLUST_CONTEXT:CALL2_FIX] 전용 프롬프트가 비어 불일치 슬롯 폐기: "
+            f"slots={failed}"
+        )
+        return [], [], failed
+
+    async def repair_one(index: int, candidate: dict):
+        slot = int(candidate.get("slot") or 0)
+        expected_names = [
+            str(name or "").strip()
+            for name in candidate.get("expected_characters") or []
+            if str(name or "").strip()
+        ]
+        plan_id = str(candidate.get("plan_id") or "").strip()
+        assigned_wardrobe = deepcopy(candidate.get("assigned_wardrobe") or {})
+        raw_scene_context = candidate.get("scene_context") or {}
+        scene_context = {
+            "scene_brief": str(raw_scene_context.get("scene_brief") or "").strip(),
+            "continuity_note": str(
+                raw_scene_context.get("continuity_note") or ""
+            ).strip(),
+        }
+        rejected_descriptor = candidate.get("descriptor") or {}
+        rejected_scene = {
+            key: deepcopy(rejected_descriptor.get(key))
+            for key in ("camera", "characters", "scene", "slot", "supplement")
+            if key in rejected_descriptor
+        }
+        request = {
+            "slot": slot,
+            "expected_characters_in_order": expected_names,
+            "scene_context": scene_context,
+            "assigned_wardrobe": assigned_wardrobe,
+            "rejection_reason": (
+                "The rejected scene's character list did not exactly match the "
+                "authoritative canonical roster."
+            ),
+            "rejected_scene": rejected_scene,
+        }
+        messages = [{
+            "role": "system",
+            "content": system_prompt,
+        }, {
+            "role": "user",
+            "content": (
+                "Repair only this rejected scene. Preserve its valid visual content, but make "
+                "characters[] contain exactly the supplied canonical roster in the supplied order. "
+                "Return exactly one <lb-xnai> block containing exactly this scene and no keyvis.\n\n"
+                + json.dumps(request, ensure_ascii=False, indent=2)
+            ),
+        }]
+
+        def parse_fixed(result: str, source: str) -> tuple[dict | None, str]:
+            mismatch_sink: dict[int, dict] = {}
+            kept, _missing, discarded, hard = _parse_call2_detail_partial(
+                result,
+                toggles,
+                [slot],
+                [plan_id],
+                source,
+                {slot: assigned_wardrobe},
+                {slot: expected_names},
+                {slot: scene_context},
+                mismatch_sink,
+            )
+            descriptor = kept.get(slot)
+            if descriptor is None:
+                return None, hard or (
+                    f"CALL2-FIX 캐릭터 불일치 지속: slot={slot}, "
+                    f"discarded={discarded}, mismatch={mismatch_sink.get(slot)}"
+                )
+            actual_by_name, character_reason = _match_call2_detail_characters(
+                descriptor,
+                expected_names,
+                f"CALL2-FIX slot={slot}",
+            )
+            if character_reason:
+                return None, character_reason
+            descriptor["characters"] = [
+                actual_by_name[name.casefold()] for name in expected_names
+            ]
+            return descriptor, ""
+
+        def validate(result: str):
+            descriptor, reason = parse_fixed(
+                result,
+                f"CALL2-FIX-slot={slot}-RETRY-CHECK",
+            )
+            return bool(descriptor), reason or "CALL2-FIX 장면 검증 실패"
+
+        fix_stream_notify = None
+        if stream_notify:
+            async def fix_stream_notify(event: dict):
+                payload = dict(event)
+                payload["queue_subtask"] = {
+                    "group_id": "call2_fix",
+                    "group_label": "CALL2 캐릭터 불일치 교정",
+                    "index": index,
+                    "total": len(candidates),
+                }
+                await stream_notify(payload)
+        try:
+            raw_output = await _call_pipeline_llm(
+                f"CALL2-FIX slot={slot}",
+                _normalize_messages(messages),
+                fix_stream_notify,
+                result_validator=validate,
+            )
+            descriptor, reason = parse_fixed(raw_output, f"CALL2-FIX-slot={slot}")
+            if descriptor is None:
+                print(
+                    f"[ILLUST_CONTEXT:CALL2_FIX] 최종 교정 결과 검증 실패: "
+                    f"slot={slot}, reason={reason}, raw={raw_output[:1000]!r}"
+                )
+                return None, str(raw_output or ""), slot
+            print(
+                f"[ILLUST_CONTEXT:CALL2_FIX] 캐릭터 불일치 슬롯 교정 성공: "
+                f"slot={slot}, characters={expected_names}"
+            )
+            return descriptor, str(raw_output or ""), None
+        except asyncio.CancelledError:
+            print(f"[ILLUST_CONTEXT:CALL2_FIX] 상위 작업 취소: slot={slot}")
+            raise
+        except Exception as e:
+            print(
+                f"[ILLUST_CONTEXT:CALL2_FIX] 1회 교정 실패로 해당 슬롯만 폐기: "
+                f"slot={slot}, characters={expected_names}, error={e}"
+            )
+            traceback.print_exc()
+            return None, "", slot
+
+    results = await asyncio.gather(*(
+        repair_one(index, candidate)
+        for index, candidate in enumerate(candidates, start=1)
+    ))
+    repaired = [descriptor for descriptor, _raw, _failed in results if descriptor]
+    raw_outputs = [raw for _descriptor, raw, _failed in results if raw]
+    failed_slots = [int(failed) for _descriptor, _raw, failed in results if failed is not None]
+    return repaired, raw_outputs, failed_slots
 
 
 def candidate_slots(target_slotted: str) -> list[int]:
@@ -7849,12 +8051,54 @@ def sanitize_descriptor_slots(descriptors: list[dict], target_slotted: str) -> l
     return normalized
 
 
+_CALL3_EMPTY_BODY_PLACEHOLDERS = {"empty", "none", "null", "nil"}
+
+
+def normalize_call3_empty_placeholders(text: str) -> str:
+    """Turn exact placeholder-only Scene bodies into intentional silence."""
+    output_lines: list[str] = []
+    current_slot: int | None = None
+    removed: list[tuple[int, str]] = []
+    for raw_line in str(text or "").splitlines():
+        header = re.match(
+            r"(?i)^(?P<prefix>\s*\[Scene\s+slot\s*=\s*(?P<slot>-?\d+)\])"
+            r"(?P<spacing>\s*)(?P<tail>.*)$",
+            raw_line,
+        )
+        if header:
+            current_slot = int(header.group("slot"))
+            tail = header.group("tail").strip()
+            if tail.casefold() in _CALL3_EMPTY_BODY_PLACEHOLDERS:
+                removed.append((current_slot, tail))
+                output_lines.append(header.group("prefix"))
+            else:
+                output_lines.append(raw_line)
+            continue
+        stripped = raw_line.strip()
+        if (
+            current_slot is not None
+            and stripped.casefold() in _CALL3_EMPTY_BODY_PLACEHOLDERS
+        ):
+            removed.append((current_slot, stripped))
+            continue
+        output_lines.append(raw_line)
+    if removed:
+        print(
+            "[ILLUST_CONTEXT:CALL3] 빈 대사 placeholder를 무대사로 정규화: "
+            f"removed={removed}"
+        )
+    normalized = "\n".join(output_lines)
+    if str(text or "").endswith("\n"):
+        normalized += "\n"
+    return normalized
+
+
 def parse_speak_output(text: str, max_entries_per_scene: int | None = None) -> dict[int, str]:
     """Parse CALL3 Scene blocks and optionally enforce a structural entry limit."""
     result: dict[int, list[str]] = {}
     current = None
     dropped: dict[int, int] = {}
-    for line in str(text or "").splitlines():
+    for line in normalize_call3_empty_placeholders(text).splitlines():
         match = re.match(r"\s*\[Scene\s+slot\s*=\s*(-?\d+)\]\s*(.*)", line, re.I)
         if match:
             current = int(match.group(1))
@@ -8265,6 +8509,39 @@ def recover_call3_partial_output(
     return normalized_output, metadata
 
 
+def _merge_call3_slot_repairs(
+    baseline: str,
+    repaired: str,
+    expected_slots: list[int],
+    repair_slots: list[int],
+) -> str:
+    """Replace only explicitly repaired Scene blocks and preserve every other block."""
+    baseline_by_slot = {
+        int(block["slot"]): block for block in _call3_scene_blocks(baseline)
+    }
+    repaired_by_slot = {
+        int(block["slot"]): block for block in _call3_scene_blocks(repaired)
+    }
+    repair_set = {int(slot) for slot in repair_slots}
+    normalized_blocks = []
+    for slot in expected_slots:
+        block = (
+            repaired_by_slot.get(int(slot))
+            if int(slot) in repair_set
+            else baseline_by_slot.get(int(slot))
+        ) or {"slot": int(slot), "lines": []}
+        body_lines = list(block.get("lines") or [])
+        while body_lines and not str(body_lines[0]).strip():
+            body_lines.pop(0)
+        while body_lines and not str(body_lines[-1]).strip():
+            body_lines.pop()
+        normalized = f"[Scene slot={int(slot)}]"
+        if body_lines:
+            normalized += "\n" + "\n".join(body_lines)
+        normalized_blocks.append(normalized)
+    return "\n\n".join(normalized_blocks)
+
+
 def _call3_dialogue_requires_localized_names(output_language: str) -> bool:
     """영어 출력에서는 roster ID 자체가 자연스러운 고유명일 수 있다."""
     language = str(output_language or "").strip().casefold()
@@ -8389,11 +8666,7 @@ def build_call3_scene_request(
     prompt_mode: str,
 ) -> str:
     """Build the scene request without exposing internal stage names in subtitle mode."""
-    scene_heading = (
-        "Selected illustrated scenes"
-        if str(prompt_mode or "").strip().lower() == "subtitle"
-        else "Selected scenes from CALL2"
-    )
+    scene_heading = "Selected illustrated scenes"
     return (
         f"[Original narrative]\n{original_narrative}"
         f"\n\n[{scene_heading}]\n{selected_scene_payload}"
@@ -8488,6 +8761,8 @@ async def _call_pipeline_llm(
         or call_name.startswith("CALL2-KEYVIS")
     ):
         task_key = _CALL_TASK_KEYS["CALL2"]
+    if task_key is None and call_name.startswith("CALL2-FIX"):
+        task_key = _CALL_TASK_KEYS["CALL2-FIX"]
     if task_key is None and call_name.startswith("MULTI-CHAR-MASK"):
         task_key = _CALL_TASK_KEYS["MULTI-CHAR-MASK"]
     if task_key is None:
@@ -8791,32 +9066,71 @@ async def _build_call3_dialogue_with_recovery(
         return state
 
     state["initial_output"] = initial_output
+    normalized_initial_output = normalize_call3_empty_placeholders(initial_output)
     call3_valid, call3_failure_reason = validate_call3_output_contract(
-        initial_output,
+        normalized_initial_output,
         selected_slots,
         character_names,
         speak_language,
     )
     if call3_valid:
-        state["output"] = initial_output
+        state["output"] = normalized_initial_output
         state["silent_slots"] = [
             slot for slot in selected_slots
-            if slot not in parse_speak_output(initial_output)
+            if slot not in parse_speak_output(normalized_initial_output)
         ]
         return state
 
-    state["correction_used"] = True
     state["failure_reason"] = call3_failure_reason
-    model_failure_reason = call3_failure_reason
-    if call_name == "CALL3-SUBTITLE":
-        # 검증/로그에는 내부 호출명을 유지하되 자막 편집 LLM에는 역할과 실패 내용만
-        # 전달한다. 독립 역할 프롬프트가 모르는 파이프라인 단계명을 노출하지 않는다.
-        model_failure_reason = re.sub(
-            r"\bCALL[123]\b",
-            "subtitle dialogue",
-            model_failure_reason,
-            flags=re.IGNORECASE,
+    baseline_output, baseline_recovery = recover_call3_partial_output(
+        normalized_initial_output,
+        selected_slots,
+        character_names,
+        speak_language,
+    )
+    removed_entries = list(baseline_recovery["removed_entries"])
+    repair_slots = list(dict.fromkeys([
+        *baseline_recovery["missing_headers"],
+        *[
+            int(entry["slot"])
+            for entry in removed_entries
+            if entry.get("slot") is not None
+        ],
+    ]))
+    # Header order, unexpected slots, and duplicates are structural defects that
+    # the server can repair deterministically. Only genuinely missing dialogue
+    # slots or slots containing an unsafe localized roster leak need another LLM.
+    if not repair_slots:
+        print(
+            "[ILLUST_CONTEXT:CALL3-RECOVERY] LLM 없이 구조만 슬롯별 정규화: "
+            f"slots={selected_slots}, reason={call3_failure_reason}"
         )
+        state.update({
+            "output": baseline_output,
+            "partial_recovery_used": True,
+            "dialogue_drop_recovery_used": bool(removed_entries),
+            "dropped_dialogue_entries": removed_entries,
+            "silent_slots": baseline_recovery["silent_slots"],
+        })
+        return state
+
+    state["correction_used"] = True
+    state["partial_recovery_used"] = True
+    state["dialogue_drop_recovery_used"] = bool(removed_entries)
+    state["dropped_dialogue_entries"] = removed_entries
+    # 검증/로그에는 내부 호출명을 유지하되 교정 LLM에는 실패 내용만 전달한다.
+    # CALL 번호는 서버 라우팅 명칭일 뿐 모델의 역할 설명이 아니다.
+    failure_role = (
+        "subtitle dialogue output"
+        if call_name == "CALL3-SUBTITLE"
+        else "dialogue output"
+    )
+    model_failure_reason = re.sub(
+        r"\bCALL[1235](?:-[A-Z-]+)?\b",
+        failure_role,
+        call3_failure_reason,
+        flags=re.IGNORECASE,
+    )
     roster_correction_instruction = ""
     if _call3_dialogue_requires_localized_names(speak_language):
         roster_correction_instruction = (
@@ -8828,19 +9142,23 @@ async def _build_call3_dialogue_with_recovery(
         )
     print(
         f"[ILLUST_CONTEXT:CALL3-CORRECTION] 최초 CALL3 결과가 출력 계약을 위반해 "
-        f"교정 호출 1회 실행: slots={selected_slots}, reason={call3_failure_reason}"
+        f"실패 슬롯만 교정 호출 1회 실행: repair_slots={repair_slots}, "
+        f"preserved_slots={[slot for slot in selected_slots if slot not in set(repair_slots)]}, "
+        f"reason={call3_failure_reason}"
     )
     retry_messages = deepcopy(speak_messages)
     retry_messages.extend([{
         "role": "assistant",
-        "content": initial_output,
+        "content": normalized_initial_output,
     }, {
         "role": "user",
         "content": (
-            "Your previous output violated the selected-scene contract. "
-            f"Required slots, in order: {selected_slots}. "
-            "Rewrite the entire output. Emit exactly one [Scene slot=N] block "
-            "for every required slot and no block for any other slot. "
+            "Repair only the failed Scene slots listed below. Every other Scene block has "
+            "already passed validation and is preserved by the server; do not repeat, rewrite, "
+            "summarize, or mention it. "
+            f"Repair slots, in order: {repair_slots}. "
+            "Emit exactly one [Scene slot=N] block for every repair slot and no block for "
+            "any other slot. "
             "A scene that should intentionally remain silent, or has no suitable "
             "visible or narratively present speaker, must keep its Scene header with "
             "an empty body. Do not invent narration, action description, dialogue, or "
@@ -8851,7 +9169,9 @@ async def _build_call3_dialogue_with_recovery(
             + "Character names in speaker prefixes, Scene headers, and required tags are "
             "the only language exceptions. "
             f"Validation failure to fix: {model_failure_reason}. "
-            "Output only the corrected Scene blocks."
+            "Never write the literal placeholders `empty`, `none`, `null`, or `nil`; an "
+            "intentionally silent block contains its Scene header and no body text. "
+            "Output only the repaired Scene blocks."
         ),
     }])
     try:
@@ -8860,16 +9180,35 @@ async def _build_call3_dialogue_with_recovery(
             _normalize_messages(retry_messages),
             stream_notify,
             result_validator=lambda result: validate_call3_output_contract(
-                result,
-                selected_slots,
+                normalize_call3_empty_placeholders(result),
+                repair_slots,
                 character_names,
                 speak_language,
             ),
         )
-        state["output"] = corrected_output
+        corrected_output = normalize_call3_empty_placeholders(corrected_output)
+        merged_output = _merge_call3_slot_repairs(
+            baseline_output,
+            corrected_output,
+            selected_slots,
+            repair_slots,
+        )
+        merged_valid, merged_reason = validate_call3_output_contract(
+            merged_output,
+            selected_slots,
+            character_names,
+            speak_language,
+        )
+        if not merged_valid:
+            print(
+                "[ILLUST_CONTEXT:CALL3-RECOVERY] 슬롯별 교정 병합 후 검증 실패: "
+                f"repair_slots={repair_slots}, reason={merged_reason}"
+            )
+            raise ValueError(merged_reason or "CALL3 슬롯별 교정 병합 실패")
+        state["output"] = merged_output
         state["silent_slots"] = [
             slot for slot in selected_slots
-            if slot not in parse_speak_output(corrected_output)
+            if slot not in parse_speak_output(merged_output)
         ]
         return state
     except Exception as correction_error:
@@ -8877,23 +9216,13 @@ async def _build_call3_dialogue_with_recovery(
         print(
             "[ILLUST_CONTEXT:CALL3-RECOVERY] CALL3 교정/라우팅 폴백 소진, "
             "최초 결과에서 안전한 슬롯별 대사만 복구하고 이미지 파이프라인 계속: "
-            f"slots={selected_slots}, error={type(correction_error).__name__}: "
+            f"repair_slots={repair_slots}, error={type(correction_error).__name__}: "
             f"{correction_error}"
         )
         traceback.print_exc()
-        recovered, recovery = recover_call3_partial_output(
-            initial_output,
-            selected_slots,
-            character_names,
-            speak_language,
-        )
-        removed_entries = list(recovery["removed_entries"])
         state.update({
-            "output": recovered,
-            "partial_recovery_used": True,
-            "dialogue_drop_recovery_used": bool(removed_entries),
-            "dropped_dialogue_entries": removed_entries,
-            "silent_slots": recovery["silent_slots"],
+            "output": baseline_output,
+            "silent_slots": baseline_recovery["silent_slots"],
         })
         return state
 
@@ -9457,25 +9786,50 @@ async def _run_parallel_call1_analysis(
             "assigned_segment_ids": assigned,
         }
 
-    shard_values = await _run_parallel_pipeline_jobs(
-        jobs,
-        group_id="CALL1_PARALLEL",
-        group_label="CALL1 병렬 분석",
-        max_concurrency=int(toggles["call1_parallel_max_concurrency"]),
-        slow_retry_enabled=bool(toggles["call1_parallel_slow_retry_enabled"]),
-        slow_retry_remaining=int(toggles["call1_parallel_slow_retry_remaining"]),
-        slow_retry_progress_enabled=bool(toggles["call1_parallel_slow_retry_progress_enabled"]),
-        slow_retry_progress_threshold=int(toggles["call1_parallel_slow_retry_progress_threshold"]),
-        slow_retry_tps_enabled=bool(toggles["call1_parallel_slow_retry_tps_enabled"]),
-        slow_retry_tps_threshold=float(toggles["call1_parallel_slow_retry_tps_threshold"]),
-        slow_retry_condition_operator=str(toggles["call1_parallel_slow_retry_condition_operator"]),
-        stream_notify=stream_notify,
-        invoke=invoke,
-    )
+    failed_shard_warnings: list[str] = []
+    try:
+        shard_values = await _run_parallel_pipeline_jobs(
+            jobs,
+            group_id="CALL1_PARALLEL",
+            group_label="CALL1 병렬 분석",
+            max_concurrency=int(toggles["call1_parallel_max_concurrency"]),
+            slow_retry_enabled=bool(toggles["call1_parallel_slow_retry_enabled"]),
+            slow_retry_remaining=int(toggles["call1_parallel_slow_retry_remaining"]),
+            slow_retry_progress_enabled=bool(toggles["call1_parallel_slow_retry_progress_enabled"]),
+            slow_retry_progress_threshold=int(toggles["call1_parallel_slow_retry_progress_threshold"]),
+            slow_retry_tps_enabled=bool(toggles["call1_parallel_slow_retry_tps_enabled"]),
+            slow_retry_tps_threshold=float(toggles["call1_parallel_slow_retry_tps_threshold"]),
+            slow_retry_condition_operator=str(toggles["call1_parallel_slow_retry_condition_operator"]),
+            stream_notify=stream_notify,
+            invoke=invoke,
+        )
+    except ParallelPipelineJobsError as group_error:
+        # 각 shard는 공통 전체 문맥을 읽지만 담당 segment의 사건만 출력한다.
+        # 라우팅 재시도까지 소진된 shard 때문에 이미 검증된 다른 shard를 버리고
+        # 전체 CALL1을 다시 호출하지 않는다. 실패 shard의 segment 사건만 누락시키고
+        # 성공 shard를 시간순으로 병합해 후속 CALL2에 전달한다.
+        shard_values = [
+            group_error.resolved_values[index]
+            for index in sorted(group_error.resolved_values)
+        ]
+        for failed_index, reason in sorted(group_error.failures.items()):
+            assigned = list(jobs[failed_index - 1].get("assigned_segment_ids") or [])
+            warning = (
+                f"CALL1 shard {failed_index}/{len(jobs)} 최종 실패로 담당 사건만 누락: "
+                f"segments={assigned}, reason={reason}"
+            )
+            failed_shard_warnings.append(warning)
+            print(f"[ILLUST_CONTEXT:CALL1_PARALLEL] {warning}")
+        if not shard_values:
+            print(
+                "[ILLUST_CONTEXT:CALL1_PARALLEL] 모든 shard가 실패해 빈 사건 목록으로 "
+                f"계속 진행: failures={group_error.failures}"
+            )
     merged, merge_warnings, merge_fallback_errors = _merge_call1_shard_values(
         shard_values,
         segment_ids,
     )
+    merge_warnings.extend(failed_shard_warnings)
     compact = {
         "wardrobe_events": list(merged.get("wardrobe_events") or []),
         "hairstyle_events": list(merged.get("hairstyle_events") or []),
@@ -10633,7 +10987,7 @@ def build_raw_prompt(descriptor: dict, narrative: str, prompts: dict, toggles: d
     replacements = {
         "{chat}": narrative,
         "{slot}": str(descriptor.get("slot", "")),
-        "{speak}": descriptor.get("speak") or "None",
+        "{speak}": descriptor.get("speak") or "",
         "{name}": names,
         "{setup}": setup,
         "{prompt}": setup,
@@ -11290,7 +11644,7 @@ async def build_from_context(
                     "Resolve evidence-bearing events chronologically. An active event may temporarily "
                     "replace only the exact fixed arrangement tag directly contradicted by its literal "
                     "evidence; keep every other fixed appearance tag. An event label without explicit "
-                    "supporting evidence, current-scene inference, PLAN wording, and generated visual "
+                    "supporting evidence, current-scene inference, scene-selection wording, and generated visual "
                     "references never authorize a fixed exception. `reset_default` ends the temporary "
                     "history state and restores the fixed arrangement.\n\n"
                     + json.dumps(hairstyle_history, ensure_ascii=False, indent=2)
@@ -11423,18 +11777,23 @@ async def build_from_context(
         call2_messages.append({"role": "assistant", "content": prompts["call2_prefill"]})
     call2_messages.append({"role": "user", "content": "Return the final <lb-xnai> TOON block only after your analysis."})
     call2_output = ""
+    call2_fix_output = ""
     call2_plan_output = ""
     call2_keyvis_output = ""
     call2_detail_outputs: list[str] = []
     call2_authority_audit: list[dict] = []
     call2_authority_audit_output = ""
     call2_authority_audit_status = "not_run"
+    call2_authority_audit_metrics: dict = {}
     call2_parallel_fallback_stage = ""
     call2_parallel_fallback_reason = ""
     call2_fallback_expected_slots: list[int] | None = None
     call2_fallback_scene_plan: list[dict] = []
     call2_preserved_keyvis_descriptor: dict | None = None
     call2_preserved_scene_descriptors: list[dict] = []
+    call2_detail_failed_slots: list[int] = []
+    call2_character_mismatch_candidates: list[dict] = []
+    call2_fix_failed_slots: list[int] = []
     keyvis_allowed_names: list[str] = []
     call2_detail_completed = False
     descriptors = []
@@ -11583,12 +11942,12 @@ async def build_from_context(
                 )
             if plan_messages and plan_messages[0].get("role") == "system":
                 planner_rules = [
-                    "You are CALL2-PLAN, the global semantic visual-beat planner for an illustration pipeline.",
-                    "Read the full supplied context and select binding moments before DETAIL workers expand them.",
+                    "Select the global semantic visual beats that should become illustrations.",
+                    "Read the full supplied context and select binding moments before each selected moment is expanded into image details.",
                     "Reason silently and return only the compact JSON requested by the user message.",
                     "Do not output Danbooru tags, camera fields, outfit lists, plan_id, source_segments, slots, analysis, or prose outside JSON.",
                     "Plan narrative scene beats only. You are not an appearance, wardrobe, or Key Visual authority.",
-                    "Do not copy, restate, infer, or invent hair arrangement, hair/eye/body/species traits, or any other persistent appearance in scene_brief; DETAIL receives the complete fixed appearance separately. Preserve only the visible action or expression, such as narrowing the eyes, without turning appearance wording into a temporary replacement.",
+                    "Do not copy, restate, infer, or invent hair arrangement, hair/eye/body/species traits, or any other persistent appearance in scene_brief; the later image-detail task receives the complete fixed appearance separately. Preserve only the visible action or expression, such as narrowing the eyes, without turning appearance wording into a temporary replacement.",
                     "Treat consecutive paragraphs sharing one time, location, and ongoing action as one visual beat; select at most one scene from that beat.",
                     "An existing <img ...> block already occupies its visual beat, so select a different beat.",
                     "Choose each anchor by semantic context and common sense, never by keyword matching.",
@@ -11625,7 +11984,7 @@ async def build_from_context(
             plan_messages.append({
                 "role": "user",
                 "content": (
-                    "# GLOBAL CALL2 PLAN\n"
+                    "# GLOBAL ILLUSTRATION SCENE PLAN\n"
                     + scene_count_rule
                     + " Select at most one scene per semantic visual beat. Do not invent or output a "
                     "slot number. The segment catalog below intentionally contains no slot numbers. "
@@ -11646,8 +12005,8 @@ async def build_from_context(
                     "anchor_segment must be one exact Cxxx ID from the server map. Do not copy a full "
                     "outfit inventory into scene_brief, but never omit a transient wardrobe, coverage, "
                     "contact, or exposure state that defines the selected visual moment; describe that "
-                    "state in ordinary natural language. The server separately carries CALL1's literal "
-                    "wardrobe-change wording into DETAIL. characters must contain every named tracked character intended to "
+                    "state in ordinary natural language. The server separately carries the upstream wardrobe "
+                    "analyzer's literal change wording into the scene-detail task. characters must contain every named tracked character intended to "
                     "appear in that image, in canonical-name form. Use characters: [] when the visual beat "
                     "contains no named tracked character; anonymous students, crowds, staff, or other "
                     "background people belong in scene_brief and must not be given invented canonical "
@@ -11798,7 +12157,12 @@ async def build_from_context(
                         if isinstance(detail_result, asyncio.CancelledError):
                             raise detail_result
                         raise detail_result
-                    descriptors, call2_detail_outputs = detail_result
+                    (
+                        descriptors,
+                        call2_detail_outputs,
+                        call2_detail_failed_slots,
+                        call2_character_mismatch_candidates,
+                    ) = detail_result
                     if isinstance(keyvis_result, BaseException):
                         if isinstance(keyvis_result, asyncio.CancelledError):
                             raise keyvis_result
@@ -11806,7 +12170,66 @@ async def build_from_context(
                         parallel_stage = "CALL2-KEYVIS"
                         raise keyvis_result
                 else:
-                    descriptors, call2_detail_outputs = await detail_task
+                    (
+                        descriptors,
+                        call2_detail_outputs,
+                        call2_detail_failed_slots,
+                        call2_character_mismatch_candidates,
+                    ) = await detail_task
+                if call2_character_mismatch_candidates:
+                    if progress:
+                        await progress(
+                            42,
+                            "call2_fix",
+                            f"CALL2 캐릭터 불일치 {len(call2_character_mismatch_candidates)}개 교정",
+                        )
+                    (
+                        repaired_descriptors,
+                        call2_fix_outputs,
+                        call2_fix_failed_slots,
+                    ) = await _run_call2_character_mismatch_fixes(
+                        candidates=call2_character_mismatch_candidates,
+                        fix_prompt=prompts.get("call2_fix", ""),
+                        toggles=toggles,
+                        stream_notify=stream_notify,
+                    )
+                    descriptors.extend(repaired_descriptors)
+                    call2_fix_output = "\n\n".join(call2_fix_outputs)
+
+                planned_slots = [
+                    int(plan["slot"]) for plan in parsed_plan["scene_plan"]
+                ]
+                descriptor_by_slot = {
+                    int(descriptor.get("slot") or 0): descriptor
+                    for descriptor in descriptors
+                    if str(descriptor.get("kind") or "") == "scene"
+                }
+                descriptors = [
+                    descriptor_by_slot[slot]
+                    for slot in planned_slots
+                    if slot in descriptor_by_slot
+                ]
+                final_failed_slots = [
+                    slot for slot in planned_slots if slot not in descriptor_by_slot
+                ]
+                call2_detail_failed_slots = final_failed_slots
+                if final_failed_slots:
+                    failed_count = len(final_failed_slots)
+                    planned_count = len(planned_slots)
+                    if failed_count * 3 >= planned_count:
+                        call2_preserved_scene_descriptors = deepcopy(descriptors)
+                        parallel_stage = "CALL2-DETAIL-FAILURE-THRESHOLD"
+                        raise RuntimeError(
+                            "CALL2 DETAIL 실패 장면이 전체의 1/3 이상이라 극단적 전체 "
+                            f"폴백 사용: failed={final_failed_slots}, "
+                            f"success={sorted(descriptor_by_slot)}, total={planned_count}"
+                        )
+                    print(
+                        "[ILLUST_CONTEXT:CALL2_DETAIL] 실패 장면이 전체의 1/3 미만이라 "
+                        "해당 슬롯만 버리고 성공 장면을 후속 단계로 전달: "
+                        f"failed={final_failed_slots}, success={sorted(descriptor_by_slot)}, "
+                        f"total={planned_count}"
+                    )
                 if call2_preserved_keyvis_descriptor is not None:
                     descriptors = [
                         deepcopy(call2_preserved_keyvis_descriptor),
@@ -11950,7 +12373,7 @@ async def build_from_context(
             fallback_messages.append({
                 "role": "user",
                 "content": (
-                    "# PRESERVED GLOBAL PLAN AFTER DETAIL FAILURE\n"
+                    "# PRESERVED GLOBAL SCENE PLAN AFTER DETAIL FAILURE\n"
                     "The planner already completed successfully. Expand every scene below into the final "
                     "<lb-xnai> block. Use every supplied slot exactly once, preserve character coverage and "
                     "the natural meaning of scene_brief and continuity_note, and do not reselect, omit, or "
@@ -11961,38 +12384,73 @@ async def build_from_context(
                     + json.dumps(preserved_plan_payload, ensure_ascii=False, indent=2)
                 ),
             })
-        fallback_output = await _call_pipeline_llm(
-            call2_call_name,
-            _normalize_messages(fallback_messages),
-            stream_notify,
-            result_validator=validate_fallback,
-        )
-        descriptors, fallback_validation_reason = validate_complete_call2_output(
-            fallback_output,
-            fallback_toggles,
-            original_slotted,
-            call2_parse_source,
-            call2_fallback_expected_slots,
-        )
-        if not descriptors:
-            print(
-                f"[ILLUST_CONTEXT:{call2_call_name}] 최종 폴백 검증 실패: "
-                f"reason={fallback_validation_reason}"
+        try:
+            fallback_output = await _call_pipeline_llm(
+                call2_call_name,
+                _normalize_messages(fallback_messages),
+                stream_notify,
+                result_validator=validate_fallback,
             )
-            raise RuntimeError(
-                fallback_validation_reason or f"{call2_call_name} 최종 검증 실패"
+            descriptors, fallback_validation_reason = validate_complete_call2_output(
+                fallback_output,
+                fallback_toggles,
+                original_slotted,
+                call2_parse_source,
+                call2_fallback_expected_slots,
             )
-        if preserve_independent_keyvis:
-            descriptors = [
-                deepcopy(call2_preserved_keyvis_descriptor),
-                *[
-                    item for item in descriptors
-                    if str(item.get("kind") or "") != "keyvis"
-                ],
-            ]
-            call2_output = descriptors_to_toon(descriptors)
-        else:
-            call2_output = fallback_output
+            if not descriptors:
+                print(
+                    f"[ILLUST_CONTEXT:{call2_call_name}] 최종 폴백 검증 실패: "
+                    f"reason={fallback_validation_reason}"
+                )
+                raise RuntimeError(
+                    fallback_validation_reason or f"{call2_call_name} 최종 검증 실패"
+                )
+            if preserve_independent_keyvis:
+                descriptors = [
+                    deepcopy(call2_preserved_keyvis_descriptor),
+                    *[
+                        item for item in descriptors
+                        if str(item.get("kind") or "") != "keyvis"
+                    ],
+                ]
+                call2_output = descriptors_to_toon(descriptors)
+            else:
+                call2_output = fallback_output
+        except asyncio.CancelledError:
+            print(f"[ILLUST_CONTEXT:{call2_call_name}] 폴백 중 상위 작업 취소")
+            raise
+        except Exception as fallback_error:
+            if (
+                call2_parallel_fallback_stage == "CALL2-DETAIL-FAILURE-THRESHOLD"
+                and (
+                    call2_preserved_scene_descriptors
+                    or call2_preserved_keyvis_descriptor is not None
+                )
+            ):
+                descriptors = deepcopy(call2_preserved_scene_descriptors)
+                if call2_preserved_keyvis_descriptor is not None:
+                    descriptors.insert(
+                        0,
+                        deepcopy(call2_preserved_keyvis_descriptor),
+                    )
+                call2_output = descriptors_to_toon(descriptors)
+                call2_detail_completed = True
+                print(
+                    "[ILLUST_CONTEXT:CALL2_FALLBACK] 극단적 전체 폴백도 실패해 "
+                    "이전에 검증된 성공 항목으로 계속 진행: "
+                    f"preserved_scenes={len(call2_preserved_scene_descriptors)}, "
+                    f"preserved_keyvis={call2_preserved_keyvis_descriptor is not None}, "
+                    f"error={fallback_error}"
+                )
+                traceback.print_exc()
+            else:
+                print(
+                    f"[ILLUST_CONTEXT:{call2_call_name}] 복구 가능한 성공 장면 없이 "
+                    f"폴백 실패: error={fallback_error}"
+                )
+                traceback.print_exc()
+                raise
 
     # Optimized CALL1 path deliberately sends only selected character details.  If
     # CALL2 nevertheless emits another named character, retry once with the
@@ -12043,7 +12501,8 @@ async def build_from_context(
             }, {
                 "role": "user",
                 "content": (
-                    "Character coverage did not match CALL1. Re-evaluate the current context "
+                    "Character coverage did not match the authoritative current-character roster. "
+                    "Re-evaluate the current context "
                     "with the bounded past history and full character dictionary below. "
                     "Preserve established wardrobe state unless a supplied wardrobe event changes it.\n\n"
                     + (
@@ -12110,44 +12569,7 @@ async def build_from_context(
                     f"reason={coverage_retry_reason}"
                 )
 
-    # CALL2 파싱 실패 시 CALL2-FIX(repair.txt)가 TOON 블록을 교정한다.
-    # CALL3는 대사 생성 전용이므로 교정은 여기서 먼저 마무리한다.
-    call2_fix_output = ""
-    if not descriptors and not call2_detail_completed:
-        if progress:
-            await progress(48, "call2_fix", "CALL2-FIX TOON 교정")
-        fix_system_parts = [prompts.get("call2_fix", "")]
-        if call2_instruction:
-            fix_system_parts.append(
-                "# ACTIVE BOT IMAGE INSTRUCTIONS\n\n" + call2_instruction
-            )
-        if call2_reference.strip():
-            fix_system_parts.append(
-                "# CHARACTER DICTIONARY\n\n" + call2_reference
-            )
-        fix_messages = [{
-            "role": "system",
-            "content": "\n\n".join(
-                part for part in fix_system_parts if str(part or "").strip()
-            ),
-        }, {
-            "role": "user",
-            "content": "Repair this malformed output. Return [TOON]...[/TOON].\n\n" + call2_output,
-        }]
-        call2_fix_output = await _call_pipeline_llm(
-            "CALL2-FIX",
-            _normalize_messages(fix_messages),
-            stream_notify,
-            result_validator=lambda result: (
-                bool(parse_toon_plan(result, toggles, "CALL2-FIX-RETRY-CHECK")),
-                "CALL2-FIX TOON 파싱 실패",
-            ),
-        )
-        descriptors = parse_toon_plan(call2_fix_output, toggles, "CALL2-FIX")
-        if not descriptors:
-            raise RuntimeError("CALL2-FIX 교정 후에도 장면 TOON 파싱에 실패했습니다")
-
-    # 이미지 생성에는 CALL3의 대사가 필요하지 않다. CALL2(+필요 시 FIX)가 확정되면
+    # 이미지 생성에는 CALL3의 대사가 필요하지 않다. CALL2(+필요 시 슬롯 FIX)가 확정되면
     # 슬롯/RAW를 먼저 고정하고 콜백으로 공개해, CALL3와 이미지 생성을 병렬로 진행한다.
     # 콜백에는 SPEAK이 없는 RAW가 전달되며 최종 반환 RAW에는 아래 CALL3 결과가 합쳐진다.
     had_descriptors_before_slot_sanitize = bool(descriptors)
@@ -12223,6 +12645,7 @@ async def build_from_context(
         semantic_authority_decisions,
         call2_authority_audit_output,
         call2_authority_audit_status,
+        call2_authority_audit_metrics,
     ) = await _run_call2_authority_audit(
         authority_audit_descriptors,
         fixed_appearance,
@@ -12238,6 +12661,18 @@ async def build_from_context(
         default_outfits,
         semantic_authority_decisions,
         call2_authority_audit_status,
+    )
+    call2_authority_audit_metrics["applied_change_entries"] = sum(
+        1
+        for audit in call2_authority_audit
+        if any(audit.get(field) for field in (
+            "missing_fixed_added",
+            "missing_wardrobe_added",
+            "authority_exceptions",
+            "forbidden_added_removed",
+            "conflicts_removed",
+            "required_additions",
+        ))
     )
     # 일반 장면의 권위 감사 결과는 모든 후속 소비자에 동일하게 반영한다. 독립
     # KEYVIS는 전용 LLM의 검증된 출력을 신뢰하므로 이 감사에서 변경하지 않는다.
@@ -12496,12 +12931,15 @@ async def build_from_context(
         "call2_plan_output": call2_plan_output,
         "call2_keyvis_output": call2_keyvis_output,
         "call2_detail_outputs": call2_detail_outputs,
+        "call2_detail_failed_slots": call2_detail_failed_slots,
         "call2_authority_audit": call2_authority_audit,
         "call2_authority_audit_output": call2_authority_audit_output,
         "call2_authority_audit_status": call2_authority_audit_status,
+        "call2_authority_audit_metrics": call2_authority_audit_metrics,
         "call2_fallback_stage": call2_parallel_fallback_stage,
         "call2_fallback_reason": call2_parallel_fallback_reason,
         "call2_fix_output": call2_fix_output,
+        "call2_fix_failed_slots": call2_fix_failed_slots,
         "call3_output": call3_output,
         "call3_initial_output": call3_initial_output,
         "call3_correction_used": call3_correction_used,

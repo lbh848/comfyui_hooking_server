@@ -652,6 +652,20 @@ class ImageNameTagTest(unittest.TestCase):
 
         self.assertEqual(sections["char"].split(",", 1)[0], "Alisa")
 
+    def test_blank_line_character_blocks_bind_by_authoritative_name_order(self):
+        result = IllustPromptBuilder._insert_character_names(
+            "same shared tags\n\nsame shared tags",
+            "Left, Right",
+            [],
+            characters=[{"name": "Left"}, {"name": "Right"}],
+            character_aliases={},
+        )
+
+        self.assertEqual(
+            result,
+            "Left, same shared tags | Right, same shared tags",
+        )
+
 
 class ActiveTriggerDeduplicationTest(unittest.TestCase):
     @staticmethod

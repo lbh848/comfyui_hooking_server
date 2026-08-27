@@ -925,7 +925,8 @@ async def test_call2_detail_contextual_outfit_is_deferred_to_audit_without_retry
         return initial
 
     monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
-    descriptors, raw_outputs = await pipeline._run_parallel_call2_details(
+    descriptors, raw_outputs, failed_slots, character_mismatches = (
+        await pipeline._run_parallel_call2_details(
         scene_plan=[{
             "plan_id": "S001",
             "slot": 4,
@@ -949,11 +950,14 @@ async def test_call2_detail_contextual_outfit_is_deferred_to_audit_without_retry
             "call2_parallel_slow_retry_enabled": False,
         }),
         stream_notify=None,
+        )
     )
 
     assert len(call_names) == 1
     assert call_names[0].startswith("CALL2-DETAIL 1/1")
     assert len(raw_outputs) == 1
+    assert failed_slots == []
+    assert character_mismatches == []
     assert descriptors[0]["characters"][0]["outfit_state"]["worn"] == ["school uniform"]
     assert "contextual 복장 보존" in capsys.readouterr().out
 
@@ -965,7 +969,7 @@ async def test_call2_detail_preserves_successful_shards_and_retries_only_failed(
     async def fake_pipeline_call(call_name, messages, *args, **kwargs):
         call_names.append(call_name)
         shard = int(re.search(r"CALL2-DETAIL (\d+)/3", call_name).group(1))
-        if shard == 2 and "FAILED-SHARD-RETRY" not in call_name:
+        if shard == 2:
             return "not toon"
         return _toon_for_slots([shard])
 
@@ -988,7 +992,8 @@ async def test_call2_detail_preserves_successful_shards_and_retries_only_failed(
             },
         })
 
-    descriptors, raw_outputs = await pipeline._run_parallel_call2_details(
+    descriptors, raw_outputs, failed_slots, character_mismatches = (
+        await pipeline._run_parallel_call2_details(
         scene_plan=scene_plan,
         call2_context_messages=[{"role": "system", "content": "Build detail."}],
         call2_format="Return TOON.",
@@ -998,15 +1003,18 @@ async def test_call2_detail_preserves_successful_shards_and_retries_only_failed(
             "call2_parallel_slow_retry_enabled": False,
         }),
         stream_notify=None,
+        )
     )
 
-    assert [item["slot"] for item in descriptors] == [1, 2, 3]
+    assert [item["slot"] for item in descriptors] == [1, 3]
     assert len(raw_outputs) == 3
+    assert failed_slots == [2]
+    assert character_mismatches == []
     assert sum("CALL2-DETAIL 1/3" in name for name in call_names) == 1
     assert sum("CALL2-DETAIL 3/3" in name for name in call_names) == 1
-    assert sum("CALL2-DETAIL 2/3" in name for name in call_names) == 3
-    assert any("FAILED-SHARD-RETRY" in name for name in call_names)
-    assert "성공 shard 보존 후 실패 shard만 재시도" in capsys.readouterr().out
+    assert sum("CALL2-DETAIL 2/3" in name for name in call_names) >= 2
+    assert not any("FAILED-SHARD-RETRY" in name for name in call_names)
+    assert "초과 슬롯만 폐기 후보로 반환" in capsys.readouterr().out
 
 
 @pytest.mark.asyncio
@@ -1018,7 +1026,8 @@ async def test_call2_detail_accepts_empty_shard_after_character_discard(monkeypa
         return _toon_for_slots([60])
 
     monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
-    descriptors, raw_outputs = await pipeline._run_parallel_call2_details(
+    descriptors, raw_outputs, failed_slots, character_mismatches = (
+        await pipeline._run_parallel_call2_details(
         scene_plan=[{
             "plan_id": "S001",
             "slot": 60,
@@ -1042,9 +1051,12 @@ async def test_call2_detail_accepts_empty_shard_after_character_discard(monkeypa
             "call2_parallel_slow_retry_enabled": False,
         }),
         stream_notify=None,
+        )
     )
 
     assert descriptors == []
+    assert failed_slots == []
+    assert [item["slot"] for item in character_mismatches] == [60]
     assert len(raw_outputs) == 1
     assert len(call_names) == 1
     assert call_names[0].startswith("CALL2-DETAIL 1/1")
@@ -1084,6 +1096,24 @@ def test_call2_detail_partial_marks_character_discard_as_not_missing(capsys):
     assert hard == ""
 
 
+def test_call2_detail_character_contract_rejects_duplicate_roster_items():
+    item = {
+        "characters": [
+            {"name": "Hana", "positive": "girl, black hair"},
+            {"name": "Hana", "positive": "girl, black hair"},
+        ],
+    }
+
+    matched, reason = pipeline._match_call2_detail_characters(
+        item,
+        ["Hana"],
+        "duplicate-test",
+    )
+
+    assert matched == {}
+    assert "expected=['Hana']" in reason
+
+
 @pytest.mark.asyncio
 async def test_call2_detail_partial_loop_fills_only_missing_slot(monkeypatch):
     """①전부예측이 일부 슬롯만 맞춰도 좋은 슬롯은 보존하고 ②실패분만 채운다."""
@@ -1115,7 +1145,8 @@ async def test_call2_detail_partial_loop_fills_only_missing_slot(monkeypatch):
             },
         })
 
-    descriptors, _raw_outputs = await pipeline._run_parallel_call2_details(
+    descriptors, _raw_outputs, failed_slots, character_mismatches = (
+        await pipeline._run_parallel_call2_details(
         scene_plan=scene_plan,
         call2_context_messages=[{"role": "system", "content": "Build detail."}],
         call2_format="Return TOON.",
@@ -1125,9 +1156,12 @@ async def test_call2_detail_partial_loop_fills_only_missing_slot(monkeypatch):
             "call2_parallel_slow_retry_enabled": False,
         }),
         stream_notify=None,
+        )
     )
 
     assert [item["slot"] for item in descriptors] == [1, 2, 3]
+    assert failed_slots == []
+    assert character_mismatches == []
     assert sum("[FULL" in name for name in calls) == 1
     assert sum("[PARTIAL" in name for name in calls) == 1
     # ② 실패분만 요청에는 빠진 slot 3만 들어있고, 이미 확보한 1/2는 없다.
@@ -1138,7 +1172,7 @@ async def test_call2_detail_partial_loop_fills_only_missing_slot(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_call2_pipeline_returns_empty_without_fallback_when_all_slots_discarded(
+async def test_call2_pipeline_repairs_character_mismatch_without_global_fallback(
     monkeypatch,
     capsys,
 ):
@@ -1157,6 +1191,8 @@ async def test_call2_pipeline_returns_empty_without_fallback_when_all_slots_disc
             })
         if call_name.startswith("CALL2-DETAIL 1/1"):
             return _toon_for_slots([0])
+        if call_name.startswith("CALL2-FIX slot=0"):
+            return _toon_for_slots([0]).replace("name: Hana", "name: Maria")
         raise AssertionError(f"unexpected call: {call_name}")
 
     monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
@@ -1188,12 +1224,13 @@ async def test_call2_pipeline_returns_empty_without_fallback_when_all_slots_disc
 
     assert call_names[0] == "CALL2-PLAN"
     assert sum(name.startswith("CALL2-DETAIL") for name in call_names) == 1
+    assert sum(name.startswith("CALL2-FIX slot=0") for name in call_names) == 1
     assert "CALL2-FALLBACK" not in call_names
-    assert result["items"] == []
-    assert result["call2_fix_output"] == ""
+    assert [item["slot"] for item in result["items"]] == [0]
+    assert result["items"][0]["characters"][0]["name"] == "Maria"
+    assert "name: Maria" in result["call2_fix_output"]
     assert result["call2_fallback_stage"] == ""
-    assert "scenes: []" in result["call2_output"]
-    assert "모든 scene 슬롯이 폐기되어 빈 결과로 완료" in capsys.readouterr().out
+    assert "캐릭터 불일치 슬롯 교정 성공" in capsys.readouterr().out
 
 
 @pytest.mark.asyncio
@@ -1383,7 +1420,7 @@ async def test_independent_call2_keyvis_returns_one_object_and_rejects_scenes(mo
     assert descriptor["slot"] == -1
     assert raw_output == keyvis_output
     combined = "\n".join(str(message.get("content") or "") for message in seen_messages)
-    assert "# INDEPENDENT KEY VISUAL" in combined
+    assert "# Independent promotional Key Visual task" in combined
     assert "# ASSIGNED GLOBAL SCENE PLAN" not in combined
     assert "Output exactly one keyvis object and no scene objects" in combined
 
@@ -1580,7 +1617,7 @@ scenes: []
         for name, content in request_by_call.items()
         if name.startswith("CALL2-DETAIL 1/1")
     )
-    assert "# DETAIL CHECKLIST" in detail_request
+    assert "# SCENE EXPANSION CHECKLIST" in detail_request
     assert "Reason silently and return only the requested final <lb-xnai> block." in detail_request
     assert "\nkeyvis:\n" not in detail_request
     assert "negative: ..." not in detail_request
@@ -1782,7 +1819,7 @@ async def test_call2_detail_failure_reuses_preserved_plan_in_global_fallback(mon
             return "not toon"
         if call_name == "CALL2-FALLBACK":
             combined = "\n".join(str(message.get("content") or "") for message in messages)
-            assert "# PRESERVED GLOBAL PLAN AFTER DETAIL FAILURE" in combined
+            assert "# PRESERVED GLOBAL SCENE PLAN AFTER DETAIL FAILURE" in combined
             assert '"slot": 0' in combined
             assert '"scene_brief": "Hana waits"' in combined
             assert '"wardrobe_snapshot"' not in combined
@@ -1826,13 +1863,13 @@ async def test_call2_detail_failure_reuses_preserved_plan_in_global_fallback(mon
 
     assert call_names[0] == "CALL2-PLAN"
     assert call_names[-2:] == ["CALL2-FALLBACK", "CALL2-AUTHORITY-AUDIT"]
-    assert sum(name.startswith("CALL2-DETAIL 1/1") for name in call_names) == 4
-    assert any("FAILED-SHARD-RETRY" in name for name in call_names)
+    assert sum(name.startswith("CALL2-DETAIL 1/1") for name in call_names) == 2
+    assert not any("FAILED-SHARD-RETRY" in name for name in call_names)
     assert any("[FULL" in name for name in call_names)
     assert any("[PARTIAL" in name for name in call_names)
     assert [item["slot"] for item in result["items"]] == [0]
     assert result["call2_plan_output"]
-    assert result["call2_fallback_stage"] == "CALL2-DETAIL"
+    assert result["call2_fallback_stage"] == "CALL2-DETAIL-FAILURE-THRESHOLD"
 
 
 @pytest.mark.asyncio
@@ -1915,10 +1952,10 @@ scenes: []
 
     assert call_names.count("CALL2-KEYVIS") == 1
     assert any(name.startswith("CALL2-DETAIL 1/1") for name in call_names)
-    assert any("FAILED-SHARD-RETRY" in name for name in call_names)
+    assert not any("FAILED-SHARD-RETRY" in name for name in call_names)
     assert call_names[-2:] == ["CALL2-FALLBACK", "CALL2-AUTHORITY-AUDIT"]
     assert result["call2_keyvis_output"] == keyvis_output
-    assert result["call2_fallback_stage"] == "CALL2-DETAIL"
+    assert result["call2_fallback_stage"] == "CALL2-DETAIL-FAILURE-THRESHOLD"
     assert [item["kind"] for item in result["items"]] == ["keyvis", "scene"]
     assert "Hana stands alone in the classroom." in result["call2_output"]
 
@@ -2023,7 +2060,9 @@ async def test_call1_segments_and_call2_plan_keyvis_and_details_run_in_parallel(
             assert "Follow these steps and output each and all step" not in text
             assert '"keyvis_plan"' not in text
             assert '"plan_id": "S001"' not in text
-            assert '"outfit_state"' not in text.split("# GLOBAL CALL2 PLAN", 1)[1]
+            assert '"outfit_state"' not in text.split(
+                "# GLOBAL ILLUSTRATION SCENE PLAN", 1
+            )[1]
             plan_keyvis_active += 1
             plan_keyvis_max_active = max(plan_keyvis_max_active, plan_keyvis_active)
             plan_started.set()
@@ -2044,8 +2083,8 @@ async def test_call1_segments_and_call2_plan_keyvis_and_details_run_in_parallel(
                 plan_keyvis_active -= 1
 
         if call_name == "CALL2-KEYVIS":
-            assert "# INDEPENDENT KEY VISUAL" in text
-            assert "# GLOBAL CALL2 PLAN" not in text
+            assert "# Independent promotional Key Visual task" in text
+            assert "# GLOBAL ILLUSTRATION SCENE PLAN" not in text
             assert "# ASSIGNED GLOBAL SCENE PLAN" not in text
             plan_keyvis_active += 1
             plan_keyvis_max_active = max(plan_keyvis_max_active, plan_keyvis_active)
@@ -2074,7 +2113,7 @@ scenes: []
         assert call_name.startswith("CALL2-DETAIL")
         assert "# ASSIGNED GLOBAL SCENE PLAN" in text
         assert "Omit keyvis" in text
-        assert "# INDEPENDENT KEY VISUAL" not in text
+        assert "# Independent promotional Key Visual task" not in text
         plan_match = re.search(
             r"# ASSIGNED GLOBAL SCENE PLAN\s*(\[[\s\S]*?\])\s*\n\nExpand each plan",
             text,
@@ -2843,26 +2882,10 @@ async def test_call2_detail_background_toggle_reaches_worker_instruction(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("minimal", "expected", "unexpected"),
-    [
-        (
-            True,
-            "Environment is a last-priority completeness concern",
-            "Environment is a normal visual-completeness concern",
-        ),
-        (
-            False,
-            "Environment is a normal visual-completeness concern",
-            "Environment is a last-priority completeness concern",
-        ),
-    ],
-)
-async def test_call2_authority_audit_background_toggle_reaches_system_instruction(
+@pytest.mark.parametrize("minimal", [True, False])
+async def test_call2_authority_audit_is_limited_to_character_authority(
     monkeypatch,
     minimal,
-    expected,
-    unexpected,
 ):
     requests = []
 
@@ -2882,7 +2905,7 @@ async def test_call2_authority_audit_background_toggle_reaches_system_instructio
         })
 
     monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
-    _decisions, _raw, status = await pipeline._run_call2_authority_audit(
+    _decisions, _raw, status, metrics = await pipeline._run_call2_authority_audit(
         descriptors=[{
             "kind": "scene",
             "slot": 4,
@@ -2891,7 +2914,7 @@ async def test_call2_authority_audit_background_toggle_reaches_system_instructio
             "supplement": "",
             "characters": [{
                 "name": "Hana",
-                "positive": "girl, black hair, school uniform",
+                "positive": "girl, school uniform",
                 "outfit_state": {
                     "body_state": "clothed",
                     "worn": ["school uniform"],
@@ -2910,8 +2933,13 @@ async def test_call2_authority_audit_background_toggle_reaches_system_instructio
 
     combined = "\n".join(requests)
     assert status == "ok"
-    assert expected in combined
-    assert unexpected not in combined
+    assert metrics["submitted_entries"] == 1
+    assert "Environment is a last-priority completeness concern" not in combined
+    assert "Environment is a normal visual-completeness concern" not in combined
+    assert "camera_replacement" not in combined
+    assert "scene_additions" not in combined
+    assert "Do not rewrite the scene, camera, composition, dialogue" in combined
+    assert not re.search(r"\bCALL[123]\b", combined, re.IGNORECASE)
 
 
 def test_prompt_format_migrates_legacy_preset_and_rejects_unknown_value(capsys):
@@ -3810,7 +3838,7 @@ async def test_subtitle_correction_prompt_hides_internal_stage_names(monkeypatch
         "CALL3-SUBTITLE-CORRECTION",
     ]
     correction_input = json.dumps(calls[1][1], ensure_ascii=False)
-    assert "subtitle dialogue 선택 slot 불일치" in correction_input
+    assert "subtitle dialogue output 선택 slot 불일치" in correction_input
     assert not re.search(r"\bCALL[123]\b", correction_input, re.IGNORECASE)
 
 
@@ -4153,9 +4181,9 @@ Hana: "No way!" #burst""",
         "### hana\n-Appearance: 1girl, black hair",
     )
 
-    assert len(calls) == 3
-    assert "manga dialogue writer and balloon-style editor" in calls[2][0]["content"]
-    assert "#normal" in calls[2][0]["content"]
+    assert len(calls) == 2
+    assert "Write concise character dialogue and choose balloon styles" in calls[1][0]["content"]
+    assert "#normal" in calls[1][0]["content"]
     assert result["items"][0]["speak"] == 'Hana: "No way!" #burst'
     assert '[SPEAK]\nHana: "No way!" #burst' in result["items"][0]["raw_positive"]
 
@@ -4225,7 +4253,7 @@ scenes: []
         assert "Translated second sentence." not in request
         assert "poster key visual" not in request
         assert '"slot": -1' not in request
-        selected = json.loads(request.split("[Selected scenes from CALL2]\n", 1)[1].split(
+        selected = json.loads(request.split("[Selected illustrated scenes]\n", 1)[1].split(
             "\n\nLanguage:",
             1,
         )[0])
@@ -4265,7 +4293,7 @@ Hana: (다음은 어떤 장면일까?) #thought_cloud"""
     task_keys = [task_key for task_key, _messages, _kwargs in calls]
     assert task_keys[0] == "illustration_call1_backtranslate"
     assert task_keys[-1] == "illustration_call3"
-    assert task_keys.count("illustration_call2") == 5
+    assert task_keys.count("illustration_call2") == 4
     assert "CALL2-PLAN" in call_names
     assert "CALL2-KEYVIS" in call_names
     assert sum(name.startswith("CALL2-DETAIL") for name in call_names) == 2
@@ -4307,14 +4335,11 @@ scenes[2]:
             assert "Language: 한국어" in messages[-1]["content"]
             return '[Scene slot=0]\nHana: "첫 장면." #normal'
 
-        assert "Required slots, in order: [0, 1]" in messages[-1]["content"]
+        assert "Repair slots, in order: [1]" in messages[-1]["content"]
         assert "Write every dialogue and thought in 한국어" in messages[-1]["content"]
         validator = kwargs.get("result_validator")
         assert validator is not None
-        corrected = """[Scene slot=0]
-Hana: "첫 장면." #normal
-[Scene slot=1]
-Hana: "둘째 장면." #normal"""
+        corrected = '[Scene slot=1]\nHana: "둘째 장면." #normal'
         assert validator(corrected) == (True, "")
         return corrected
 
@@ -4527,15 +4552,10 @@ Alisa: (Alisa라면 어떻게 했을까?) #thought_cloud"""
 
 @pytest.mark.asyncio
 async def test_call3_skips_dialogue_when_call2_selected_only_key_visual(monkeypatch, capsys):
-    task_keys = []
     call_names = []
 
-    async def fake_call(task_key, messages, **kwargs):
-        task_keys.append(task_key)
-        metadata = pipeline.llm_service._stream_metadata_ctx.get({})
-        call_name = str(metadata.get("call_name") or task_key)
+    async def fake_call(call_name, messages, *args, **kwargs):
         call_names.append(call_name)
-        assert task_key == "illustration_call2"
         if call_name == "CALL2-PLAN":
             return json.dumps({
                 "scene_plan": [{
@@ -4554,12 +4574,15 @@ keyvis:
   scene: poster key visual
 scenes: []
 </lb-xnai>"""
-        if call_name == "CALL2-AUTHORITY-AUDIT":
-            return _authority_audit_response(messages)
-        assert call_name.startswith("CALL2-DETAIL")
-        return _toon_for_slots([0])
+        if call_name.startswith("CALL2-DETAIL"):
+            return _toon_for_slots([0])
+        if call_name.startswith("CALL2-FIX"):
+            raise RuntimeError("character repair failed")
+        if call_name == "CALL2-FALLBACK":
+            raise RuntimeError("extreme fallback failed")
+        raise AssertionError(f"unexpected call: {call_name}")
 
-    monkeypatch.setattr(pipeline.llm_service, "callLLMTask", fake_call)
+    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_call)
     result = await pipeline.build_from_context(
         {
             "session_id": "call3_key_visual_only_test",
@@ -4601,10 +4624,11 @@ scenes: []
         },
     )
 
-    assert task_keys == ["illustration_call2"] * 3
     assert "CALL2-PLAN" in call_names
     assert "CALL2-KEYVIS" in call_names
     assert sum(name.startswith("CALL2-DETAIL") for name in call_names) == 1
+    assert sum(name.startswith("CALL2-FIX") for name in call_names) == 1
+    assert "CALL2-FALLBACK" in call_names
     assert "CALL2-AUTHORITY-AUDIT" not in call_names
     assert len(result["items"]) == 1
     assert result["items"][0]["kind"] == "keyvis"
@@ -4634,7 +4658,6 @@ scenes[1]:
 </lb-xnai>"""
         assert task_key == "illustration_call3"
         assert events == [
-            "illustration_call2",
             "illustration_call2",
             "dispatch",
             "illustration_call3",
@@ -4669,7 +4692,6 @@ scenes[1]:
     )
 
     assert events == [
-        "illustration_call2",
         "illustration_call2",
         "dispatch",
         "illustration_call3",
@@ -6424,7 +6446,7 @@ def test_call2_authority_base_restores_missing_fixed_and_default_tags():
         "forbidden_added_removed": [],
         "conflicts_removed": [],
         "rejected_exceptions": [],
-        "semantic_status": "not_run",
+        "semantic_status": "not_needed",
     }]
 
 
@@ -6640,7 +6662,7 @@ def test_call2_semantic_authority_audit_removes_unsupported_hair_conflict():
     assert audits[0]["conflicts_removed"] == ["hair down"]
 
 
-def test_call2_existing_audit_call_repairs_missing_visual_bundle_and_camera():
+def test_call2_existing_audit_repairs_character_bundle_without_rewriting_scene_or_camera():
     descriptors = [{
         "kind": "scene",
         "slot": 4,
@@ -6697,8 +6719,8 @@ def test_call2_existing_audit_call_repairs_missing_visual_bundle_and_camera():
     )
 
     assert reason == ""
-    assert descriptors[0]["camera"] == "full body, straight-on"
-    assert pipeline._split_top_level_authority_tags(descriptors[0]["scene"])[-1] == "nsfw"
+    assert descriptors[0]["camera"] == "upper body, straight-on"
+    assert descriptors[0]["scene"] == "1boy, interior, bedroom"
     tags = pipeline._split_top_level_authority_tags(
         descriptors[0]["characters"][0]["positive"]
     )
@@ -6712,11 +6734,11 @@ def test_call2_existing_audit_call_repairs_missing_visual_bundle_and_camera():
         "removed": ["blue pants", "underwear"],
     }
     assert audits[0]["required_additions"] == ["bottomless", "penis", "pants down"]
-    assert audits[0]["scene_additions"] == ["nsfw"]
-    assert audits[0]["camera_replacement"] == "full body, straight-on"
+    assert "scene_additions" not in audits[0]
+    assert "camera_replacement" not in audits[0]
 
 
-def test_call2_semantic_audit_checks_conflicts_even_when_base_is_complete():
+def test_call2_semantic_audit_skips_structurally_conforming_entry():
     descriptors = [{
         "kind": "scene",
         "slot": 2,
@@ -6745,22 +6767,17 @@ def test_call2_semantic_audit_checks_conflicts_even_when_base_is_complete():
         fixed,
         defaults,
     )
-    decisions, reason = pipeline._parse_call2_authority_audit_output(
-        '{"entries":[{"id":1,"authority_exceptions":[],"conflicts":["hair down"]}]}',
-        entries,
-        entry_keys,
-    )
+    assert entries == []
+    assert entry_keys == {}
     pipeline.apply_call2_authority_base(
         descriptors,
         fixed,
         defaults,
-        decisions,
-        "ok",
+        {},
+        "not_needed",
     )
 
-    assert reason == ""
-    assert len(entries) == 1
-    assert "hair down" not in pipeline._split_top_level_authority_tags(
+    assert "hair down" in pipeline._split_top_level_authority_tags(
         descriptors[0]["characters"][0]["positive"]
     )
 
@@ -6773,7 +6790,7 @@ def test_call2_semantic_audit_removes_and_logs_forbidden_identity_additions():
             "name": "Elizabella",
             "positive": (
                 "girl, blonde hair, long hair, hair rings, two side up, "
-                "orange eyes, white dress, detached sleeves, adult, fair skin, "
+                "white dress, detached sleeves, adult, fair skin, "
                 "tsurime, hair down, straight hair"
             ),
             "outfit_state": {
@@ -6840,7 +6857,7 @@ def test_call2_semantic_audit_drops_out_of_candidate_value_not_whole_response():
                 "name": "Elizabella",
                 "positive": (
                     "girl, blonde hair, long hair, hair rings, two side up, "
-                    "orange eyes, white dress, detached sleeves, adult, "
+                    "white dress, detached sleeves, adult, "
                     "fair skin, hair down"
                 ),
                 "outfit_state": {
@@ -6856,7 +6873,7 @@ def test_call2_semantic_audit_drops_out_of_candidate_value_not_whole_response():
             "characters": [{
                 "name": "Elizabella",
                 "positive": (
-                    "girl, blonde hair, long hair, orange eyes, white dress, "
+                    "girl, blonde hair, long hair, white dress, "
                     "detached sleeves, tsurime, straight hair"
                 ),
                 "outfit_state": {
@@ -7382,7 +7399,6 @@ scenes[1]:
 
     assert [task_key for task_key, _messages in calls] == [
         "illustration_call2",
-        "illustration_call2",
     ]
     assert result["balanced_fallback_used"] is True
     assert result["enhanced_narrative"] == "She waits by the door."
@@ -7469,7 +7485,6 @@ scenes[1]:
 
     assert [task_key for task_key, _messages in calls] == [
         "illustration_call1",
-        "illustration_call2",
         "illustration_call2",
     ]
     assert result["balanced_fallback_used"] is True
@@ -7572,7 +7587,6 @@ scenes[1]:
     assert [task_key for task_key, _messages in calls] == [
         "illustration_call1",
         "illustration_call2",
-        "illustration_call2",
         "illustration_call3",
     ]
     assert result["balanced_fallback_used"] is False
@@ -7644,9 +7658,354 @@ scenes[1]:
 
     assert [task_key for task_key, _messages in calls] == [
         "illustration_call2",
-        "illustration_call2",
         "illustration_call3",
     ]
     assert result["balanced_fallback_used"] is True
     assert result["enhanced_narrative"] == "She waits by the door."
     assert result["items"][0]["speak"] == 'Hana: "Still here." #normal'
+
+
+@pytest.mark.asyncio
+async def test_call1_parallel_keeps_successful_shard_when_another_shard_exhausts(monkeypatch):
+    async def fail_one_shard(*args, **kwargs):
+        raise pipeline.ParallelPipelineJobsError(
+            "one shard failed",
+            {
+                1: {
+                    "raw": "",
+                    "value": {
+                        "wardrobe_events": [{
+                            "segment_id": "C001",
+                            "character": "Hana",
+                            "operation": "set",
+                            "wardrobe_change": "Hana put on a blue coat.",
+                        }],
+                        "hairstyle_events": [],
+                    },
+                    "assigned_segment_ids": ["C001"],
+                },
+            },
+            {2: "routing retries exhausted"},
+        )
+
+    monkeypatch.setattr(pipeline, "_run_parallel_pipeline_jobs", fail_one_shard)
+    raw, warnings, fallback_errors = await pipeline._run_parallel_call1_analysis(
+        call1_system="Analyze wardrobe changes.",
+        segmented_current="[C001] First.\n[C002] Second.",
+        current_segments={"C001": {}, "C002": {}},
+        history_text="",
+        toggles=pipeline.merged_toggles({
+            "call1_parallel_max_concurrency": 2,
+            "call1_parallel_slow_retry_enabled": False,
+        }),
+        stream_notify=None,
+    )
+
+    parsed = json.loads(raw)
+    assert [event["segment_id"] for event in parsed["wardrobe_events"]] == ["C001"]
+    assert parsed["hairstyle_events"] == []
+    assert any("segments=['C002']" in warning for warning in warnings)
+    assert fallback_errors == []
+
+
+@pytest.mark.asyncio
+async def test_call2_drops_only_generic_failure_below_one_third(monkeypatch):
+    call_names = []
+
+    async def fake_pipeline_call(call_name, messages, *args, **kwargs):
+        call_names.append(call_name)
+        if call_name == "CALL2-PLAN":
+            return json.dumps({
+                "scene_plan": [{
+                    "anchor_segment": f"C{slot + 1:03d}",
+                    "characters": ["Hana"],
+                    "scene_brief": f"Hana scene {slot}",
+                } for slot in range(4)],
+            })
+        if call_name.startswith("CALL2-DETAIL"):
+            shard = int(re.search(r"CALL2-DETAIL (\d+)/4", call_name).group(1))
+            return (
+                "not toon"
+                if shard == 2
+                else _toon_for_slots([shard - 1]).replace(
+                    "black hair", "black hair, school uniform"
+                )
+            )
+        raise AssertionError(f"unexpected call: {call_name}")
+
+    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
+    result = await pipeline.build_from_context(
+        {
+            "session_id": "call2_below_threshold_drop_test",
+            "target_slotted": (
+                "One.\n\n[Slot 0]\n\nTwo.\n\n[Slot 1]\n\n"
+                "Three.\n\n[Slot 2]\n\nFour.\n\n[Slot 3]"
+            ),
+            "chats": [{
+                "role": "char",
+                "data": "One.\n\nTwo.\n\nThree.\n\nFour.",
+            }],
+        },
+        {
+            "call1_enabled": False,
+            "call2_parallel_enabled": True,
+            "call2_parallel_max_concurrency": 4,
+            "call2_parallel_slow_retry_enabled": False,
+            "output_count_min": 4,
+            "output_count_max": 4,
+            "key_visual": False,
+            "call3_enabled": False,
+            "speak_enabled": False,
+        },
+        "### Hana\n-default_outfit\nschool uniform",
+        extra_costume="### Hana\n-default_outfit\nschool uniform",
+        extra_names="Hana",
+    )
+
+    assert [item["slot"] for item in result["items"]] == [0, 2, 3]
+    assert result["call2_detail_failed_slots"] == [1]
+    assert "CALL2-FALLBACK" not in call_names
+    assert result["call2_fallback_stage"] == ""
+
+
+@pytest.mark.asyncio
+async def test_character_roster_fix_failure_drops_only_that_scene_below_threshold(monkeypatch):
+    call_names = []
+
+    async def fake_pipeline_call(call_name, messages, *args, **kwargs):
+        call_names.append(call_name)
+        if call_name == "CALL2-PLAN":
+            return json.dumps({
+                "scene_plan": [{
+                    "anchor_segment": f"C{slot + 1:03d}",
+                    "characters": ["Maria" if slot == 1 else "Hana"],
+                    "scene_brief": f"Scene {slot}",
+                } for slot in range(4)],
+            })
+        if call_name.startswith("CALL2-DETAIL"):
+            shard = int(re.search(r"CALL2-DETAIL (\d+)/4", call_name).group(1))
+            return _toon_for_slots([shard - 1]).replace(
+                "black hair", "black hair, school uniform"
+            )
+        if call_name.startswith("CALL2-FIX slot=1"):
+            raise RuntimeError("one bounded roster repair failed")
+        raise AssertionError(f"unexpected call: {call_name}")
+
+    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
+    result = await pipeline.build_from_context(
+        {
+            "session_id": "call2_roster_fix_drop_test",
+            "target_slotted": (
+                "One.\n\n[Slot 0]\n\nTwo.\n\n[Slot 1]\n\n"
+                "Three.\n\n[Slot 2]\n\nFour.\n\n[Slot 3]"
+            ),
+            "chats": [{
+                "role": "char",
+                "data": "One.\n\nTwo.\n\nThree.\n\nFour.",
+            }],
+        },
+        {
+            "call1_enabled": False,
+            "call2_parallel_enabled": True,
+            "call2_parallel_max_concurrency": 4,
+            "call2_parallel_slow_retry_enabled": False,
+            "output_count_min": 4,
+            "output_count_max": 4,
+            "key_visual": False,
+            "call3_enabled": False,
+            "speak_enabled": False,
+        },
+        (
+            "### Hana\n-default_outfit\nschool uniform\n\n"
+            "### Maria\n-default_outfit\nschool uniform"
+        ),
+        extra_costume=(
+            "### Hana\n-default_outfit\nschool uniform\n\n"
+            "### Maria\n-default_outfit\nschool uniform"
+        ),
+        extra_names="Hana, Maria",
+    )
+
+    assert [item["slot"] for item in result["items"]] == [0, 2, 3]
+    assert result["call2_fix_failed_slots"] == [1]
+    assert sum(name.startswith("CALL2-FIX slot=1") for name in call_names) == 1
+    assert "CALL2-FALLBACK" not in call_names
+
+
+@pytest.mark.asyncio
+async def test_call2_global_fallback_starts_at_exactly_one_third_failure(monkeypatch):
+    call_names = []
+
+    async def fake_pipeline_call(call_name, messages, *args, **kwargs):
+        call_names.append(call_name)
+        if call_name == "CALL2-PLAN":
+            return json.dumps({
+                "scene_plan": [{
+                    "anchor_segment": f"C{slot + 1:03d}",
+                    "characters": ["Hana"],
+                    "scene_brief": f"Hana scene {slot}",
+                } for slot in range(3)],
+            })
+        if call_name.startswith("CALL2-DETAIL"):
+            shard = int(re.search(r"CALL2-DETAIL (\d+)/3", call_name).group(1))
+            return (
+                "not toon"
+                if shard == 2
+                else _toon_for_slots([shard - 1]).replace(
+                    "black hair", "black hair, school uniform"
+                )
+            )
+        if call_name == "CALL2-FALLBACK":
+            return _toon_for_slots([0, 1, 2]).replace(
+                "black hair", "black hair, school uniform"
+            )
+        raise AssertionError(f"unexpected call: {call_name}")
+
+    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
+    result = await pipeline.build_from_context(
+        {
+            "session_id": "call2_exact_threshold_fallback_test",
+            "target_slotted": (
+                "One.\n\n[Slot 0]\n\nTwo.\n\n[Slot 1]\n\nThree.\n\n[Slot 2]"
+            ),
+            "chats": [{"role": "char", "data": "One.\n\nTwo.\n\nThree."}],
+        },
+        {
+            "call1_enabled": False,
+            "call2_parallel_enabled": True,
+            "call2_parallel_max_concurrency": 3,
+            "call2_parallel_slow_retry_enabled": False,
+            "output_count_min": 3,
+            "output_count_max": 3,
+            "key_visual": False,
+            "call3_enabled": False,
+            "speak_enabled": False,
+        },
+        "### Hana\n-default_outfit\nschool uniform",
+        extra_costume="### Hana\n-default_outfit\nschool uniform",
+        extra_names="Hana",
+    )
+
+    assert "CALL2-FALLBACK" in call_names
+    assert result["call2_fallback_stage"] == "CALL2-DETAIL-FAILURE-THRESHOLD"
+    assert [item["slot"] for item in result["items"]] == [0, 1, 2]
+
+
+@pytest.mark.asyncio
+async def test_subtitle_empty_placeholder_becomes_intentional_silence(monkeypatch):
+    async def fake_pipeline_call(*args, **kwargs):
+        return "[Scene slot=4]\nempty"
+
+    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
+    state = await pipeline._build_call3_dialogue_with_recovery(
+        [{"role": "system", "content": "Write subtitle dialogue."}],
+        [4],
+        "Hana",
+        "한국어",
+        call_name="CALL3-SUBTITLE",
+        correction_call_name="CALL3-SUBTITLE-CORRECTION",
+    )
+
+    assert state["output"] == "[Scene slot=4]"
+    assert state["correction_used"] is False
+    assert state["silent_slots"] == [4]
+    assert pipeline.parse_speak_output(state["output"]) == {}
+
+
+@pytest.mark.asyncio
+async def test_character_roster_repair_messages_describe_purpose_without_stage_names(monkeypatch):
+    captured_messages = []
+
+    async def fake_pipeline_call(call_name, messages, *args, **kwargs):
+        captured_messages.extend(messages)
+        return _toon_for_slots([5]).replace("name: Hana", "name: Maria")
+
+    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
+    repaired, _raw, failed = await pipeline._run_call2_character_mismatch_fixes(
+        candidates=[{
+            "slot": 5,
+            "plan_id": "S006",
+            "expected_characters": ["Maria"],
+            "assigned_wardrobe": {
+                "Maria": {
+                    "body_state": "clothed",
+                    "worn": ["school uniform"],
+                    "removed": [],
+                },
+            },
+            "scene_context": {"scene_brief": "Maria waits."},
+            "reason": "CALL2-DETAIL internal mismatch",
+            "descriptor": {
+                "kind": "scene",
+                "slot": 5,
+                "camera": "medium shot",
+                "scene": "classroom",
+                "characters": [{"name": "Hana", "positive": "1girl"}],
+            },
+        }],
+        fix_prompt=pipeline.load_prompt_files()["call2_fix"],
+        toggles=pipeline.merged_toggles({"key_visual": False}),
+        stream_notify=None,
+    )
+
+    model_input = json.dumps(captured_messages, ensure_ascii=False)
+    assert [item["slot"] for item in repaired] == [5]
+    assert failed == []
+    assert "repair the character roster of one rejected illustration scene" in model_input.lower()
+    assert "authoritative canonical roster" in model_input
+    assert "plan_id" not in model_input
+    assert "visual_base_snapshot" not in model_input
+    assert not re.search(r"\bCALL[1235](?:-[A-Z-]+)?\b", model_input, re.IGNORECASE)
+
+
+def test_output_count_rule_treats_maximum_as_inclusive():
+    rule = pipeline.render_output_count_rule(2, 4)
+
+    assert "fewer than 2 images or more than 4 images" in rule
+    assert "Never output 4 or more" not in rule
+
+
+@pytest.mark.asyncio
+async def test_authority_audit_keeps_valid_entries_when_another_entry_is_missing(monkeypatch):
+    async def fake_pipeline_call(*args, **kwargs):
+        return json.dumps({
+            "entries": [{
+                "id": 1,
+                "authority_exceptions": [],
+                "forbidden_additions": [],
+                "conflicts": [],
+                "required_additions": [],
+            }],
+        })
+
+    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
+    decisions, _raw, status, metrics = await pipeline._run_call2_authority_audit(
+        descriptors=[{
+            "kind": "scene",
+            "slot": slot,
+            "characters": [{
+                "name": "Hana",
+                "positive": "girl, school uniform",
+                "outfit_state": {
+                    "body_state": "clothed",
+                    "worn": ["school uniform"],
+                    "removed": [],
+                },
+            }],
+        } for slot in (1, 2)],
+        fixed_appearance={"Hana": "1girl, black hair"},
+        default_outfits={"Hana": ["school uniform"]},
+        current_context="Hana appears in two selected moments.",
+        stream_notify=None,
+    )
+
+    assert status == "partial"
+    assert decisions[("scene", 1, "hana")]["_audit_status"] == "ok"
+    assert decisions[("scene", 2, "hana")]["_audit_status"] == "degraded"
+    assert metrics == {
+        "total_characters": 2,
+        "submitted_entries": 2,
+        "skipped_conforming": 0,
+        "valid_decisions": 1,
+        "degraded_entries": 1,
+    }

@@ -383,7 +383,7 @@ def compose_subtitle(
 ) -> bytes:
     """이미지 위에 방송 애니메이션 스타일 자막을 합성해 PNG로 반환한다."""
     source = str(speak_text or "")
-    if not source.strip() or source.strip().lower() in {"none", "null", "nil"}:
+    if not source.strip() or source.strip().lower() in {"empty", "none", "null", "nil"}:
         print(f"[SUBTITLE] 자막 원문 없음, 합성 스킵: bot={bot_name!r}")
         return image_bytes
     try:
