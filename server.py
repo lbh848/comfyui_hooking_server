@@ -706,6 +706,7 @@ DEFAULT_CONFIG = {
             max_retries=1, fallback_max_retries=1, json_mode=True
         ),
         "visual_profile_guide": _llm_route_defaults(json_mode=True),
+        "visual_profile_appearance_vision": _llm_route_defaults(json_mode=True),
         "character_maker_draft": _llm_route_defaults(
             max_retries=1, fallback_max_retries=1, json_mode=True
         ),

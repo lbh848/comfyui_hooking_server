@@ -33,10 +33,10 @@ def test_every_llm_route_has_an_explicit_text_or_vision_modality() -> None:
     frontend = _frontend()
     entries = _routing_task_entries(frontend)
 
-    assert len(entries) == 34
+    assert len(entries) == 35
     assert all("modality: 'text'" in entry or "modality: 'vision'" in entry for entry in entries)
     assert sum("modality: 'text'" in entry for entry in entries) == 24
-    assert sum("modality: 'vision'" in entry for entry in entries) == 10
+    assert sum("modality: 'vision'" in entry for entry in entries) == 11
 
     vision_keys = {
         re.search(r"key: '([^']+)'", entry).group(1)
@@ -48,6 +48,7 @@ def test_every_llm_route_has_an_explicit_text_or_vision_modality() -> None:
         "refine_lb_extra",
         "refine_lora_prompt",
         "lora_prompt_review",
+        "visual_profile_appearance_vision",
         "edit_illustration_prompt",
         "illustration_auto_feedback_review",
         "character_maker_feedback",
@@ -75,6 +76,7 @@ def test_easy_routing_bulk_applies_json_on_or_off_only_to_json_tasks() -> None:
         "asset_name_mapping_full",
         "preset_import_classify",
         "visual_profile_guide",
+        "visual_profile_appearance_vision",
         "edit_illustration_prompt",
         "illustration_auto_feedback_review",
         "character_maker_draft",

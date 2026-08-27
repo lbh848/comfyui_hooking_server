@@ -6,6 +6,7 @@ BotMode - 삽화 설정 모드
 """
 
 import asyncio
+import base64
 from copy import deepcopy
 import hashlib
 import json
@@ -525,7 +526,10 @@ def copy_default() -> dict:
 
 VISUAL_GUIDE_MAX_TARGETS = 120
 VISUAL_GUIDE_TASK_KEY = "visual_profile_guide"
+VISUAL_APPEARANCE_TASK_KEY = "visual_profile_appearance_vision"
 VISUAL_GUIDE_QUEUE_TYPE = "visual_profile_guide"
+VISUAL_GUIDE_MAX_SELECTION_LENGTH = 4000
+VISUAL_APPEARANCE_MAX_CONTEXT_LENGTH = 1200
 
 
 def _selected_bot_system_prompt(data: dict, bot: dict) -> tuple[str, str, str]:
@@ -569,6 +573,161 @@ def _visual_guide_tag_text(values) -> str:
         if tag:
             tags.append(tag)
     return ", ".join(tags) or "(none)"
+
+
+def _build_visual_profile_appearance_messages() -> list[dict]:
+    """Build the dedicated single-image vision prompt for one character card."""
+    system_message = """You extract visible character appearance from one representative image for character-profile routing.
+Describe only appearance that is directly visible in the supplied image: face and eye traits, hair, skin, body traits, non-human or transformed anatomy, clothing, accessories, and other visually distinctive features that could help distinguish this profile from another profile of the same character.
+
+Ignore pose, action, expression, camera angle, crop, lighting, image style, image quality, and background. Do not infer personality, story state, identity, age, or hidden features from the character name or filename. Do not use the profile's label or internal ID as evidence. If a feature is obscured or uncertain, omit it instead of guessing.
+
+Write one concise Korean natural-language description. Return strict JSON only:
+{"visual_context":"Korean visible-appearance description"}"""
+    user_message = (
+        "이 이미지는 한 캐릭터 카드에 등록된 첫 번째 대표 이미지 한 장이다. "
+        "제공된 다른 텍스트 단서 없이 이미지 자체만 관찰해, 같은 캐릭터의 다른 "
+        "프로필과 외형으로 구별하는 데 도움이 되는 정보만 작성하라."
+    )
+    return [
+        {"role": "system", "content": system_message},
+        {"role": "user", "content": user_message},
+    ]
+
+
+def _normalize_visual_profile_appearance_result(parsed) -> tuple[str | None, str]:
+    if not isinstance(parsed, dict):
+        reason = "최상위 응답이 object가 아닙니다."
+        print(f"[VISUAL_APPEARANCE] LLM 응답 구조 오류: {reason}, value={parsed!r}")
+        return None, reason
+    raw_context = parsed.get("visual_context")
+    if not isinstance(raw_context, str):
+        reason = "visual_context가 문자열이 아닙니다."
+        print(f"[VISUAL_APPEARANCE] LLM 응답 구조 오류: {reason}, value={raw_context!r}")
+        return None, reason
+    visual_context = raw_context.strip()
+    if not visual_context:
+        reason = "visual_context가 비어 있습니다."
+        print(f"[VISUAL_APPEARANCE] LLM 응답 내용 오류: {reason}")
+        return None, reason
+    if len(visual_context) > VISUAL_APPEARANCE_MAX_CONTEXT_LENGTH:
+        reason = (
+            "visual_context가 "
+            f"{VISUAL_APPEARANCE_MAX_CONTEXT_LENGTH}자를 초과했습니다."
+        )
+        print(
+            f"[VISUAL_APPEARANCE] LLM 응답 길이 오류: {reason}, "
+            f"length={len(visual_context)}"
+        )
+        return None, reason
+    return visual_context, ""
+
+
+def _append_visual_context_to_selection_guide(
+    selection_guide: str,
+    visual_context: str,
+) -> str:
+    base = str(selection_guide or "").strip()
+    context = str(visual_context or "").strip()
+    if not context:
+        print(
+            "[VISUAL_APPEARANCE] 선택 기준 병합 스킵: "
+            f"visual_context가 비어 있음, guide_length={len(base)}"
+        )
+        return base
+    separator = "\n\n외형 참고: "
+    available = VISUAL_GUIDE_MAX_SELECTION_LENGTH - len(base) - len(separator)
+    if available <= 0:
+        print(
+            "[VISUAL_APPEARANCE] 선택 기준 병합 스킵: "
+            f"기존 선택 기준 길이 한도 도달, guide_length={len(base)}"
+        )
+        return base
+    if len(context) > available:
+        print(
+            "[VISUAL_APPEARANCE] 외형 참고 길이 축소: "
+            f"context_length={len(context)}, available={available}"
+        )
+        context = context[:available].rstrip()
+    return f"{base}{separator}{context}" if base else f"외형 참고: {context}"
+
+
+def _visual_profile_first_rep_image(
+    bot_name: str,
+    target: dict,
+) -> tuple[str, str, str]:
+    """Resolve only rep_images[0] for a selected profile without reading other reps."""
+    character = str(target.get("character") or "").strip()
+    profile = target.get("profile") or {}
+    profile_id = str(profile.get("id") or "").strip()
+    render_overrides = profile.get("render_overrides") or {}
+    rep_images = render_overrides.get("rep_images") or []
+    if not isinstance(rep_images, list) or not rep_images:
+        reason = "첫 번째 대표 이미지가 등록되어 있지 않습니다."
+        print(
+            f"[VISUAL_APPEARANCE] 대표 이미지 없음: bot={bot_name!r}, "
+            f"character={character!r}, profile={profile_id!r}"
+        )
+        return "", "", reason
+    filename = rep_images[0]
+    if (
+        not isinstance(filename, str)
+        or not filename.strip()
+        or filename != os.path.basename(filename)
+        or "/" in filename
+        or "\\" in filename
+        or filename in {".", ".."}
+    ):
+        reason = "첫 번째 대표 이미지 파일명이 올바르지 않습니다."
+        print(
+            f"[VISUAL_APPEARANCE] 대표 이미지 경로 거부: bot={bot_name!r}, "
+            f"character={character!r}, profile={profile_id!r}, "
+            f"filename={filename!r}"
+        )
+        return "", str(filename or ""), reason
+    filename = filename.strip()
+    bot_root = os.path.abspath(BOT_DIR)
+    image_path = os.path.abspath(
+        os.path.join(bot_root, bot_name, character, filename)
+    )
+    try:
+        inside_bot_root = os.path.commonpath([bot_root, image_path]) == bot_root
+    except ValueError as exc:
+        print(
+            f"[VISUAL_APPEARANCE] 대표 이미지 경로 비교 실패: "
+            f"bot={bot_name!r}, character={character!r}, profile={profile_id!r}, "
+            f"path={image_path!r}, error={exc}"
+        )
+        traceback.print_exc()
+        inside_bot_root = False
+    if not inside_bot_root:
+        reason = "첫 번째 대표 이미지 경로가 봇 폴더를 벗어납니다."
+        print(
+            f"[VISUAL_APPEARANCE] 대표 이미지 경로 이탈 차단: "
+            f"bot={bot_name!r}, character={character!r}, profile={profile_id!r}, "
+            f"path={image_path!r}"
+        )
+        return "", filename, reason
+    if not os.path.isfile(image_path):
+        reason = f"첫 번째 대표 이미지 파일이 없습니다: {filename}"
+        print(
+            f"[VISUAL_APPEARANCE] 대표 이미지 파일 없음: "
+            f"bot={bot_name!r}, character={character!r}, profile={profile_id!r}, "
+            f"path={image_path!r}"
+        )
+        return "", filename, reason
+    return image_path, filename, ""
+
+
+def _visual_profile_image_mime(filename: str) -> str:
+    extension = os.path.splitext(str(filename or ""))[1].lower()
+    return {
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".webp": "image/webp",
+        ".gif": "image/gif",
+    }.get(extension, "application/octet-stream")
 
 
 def _build_visual_guide_messages(system_prompt: str, targets: list[dict]) -> list[dict]:
@@ -744,6 +903,19 @@ def _visual_guide_character_call_name(
     return f"프로필 선택 기준 자동 작성{f' · {suffix}' if suffix else ''}"
 
 
+def _visual_profile_appearance_call_name(
+    *,
+    character: str,
+    profile_index: int,
+    profile_count: int,
+) -> str:
+    position = f"{profile_index}/{profile_count}" if profile_count else ""
+    suffix = " · ".join(
+        value for value in (str(character).strip(), position) if value
+    )
+    return f"프로필 외형 비전 분석{f' · {suffix}' if suffix else ''}"
+
+
 def _log_visual_guide_llm_history(
     *,
     llm_service_module,
@@ -767,8 +939,12 @@ def _log_visual_guide_llm_history(
     character_count: int = 0,
     attempt: int | None = None,
     total_attempts: int | None = None,
+    task_key: str = VISUAL_GUIDE_TASK_KEY,
+    call_name: str = "",
+    prompt_id: str = "",
+    image_filename: str = "",
 ) -> None:
-    """Persist one visual-guide LLM result or failed attempt in LB details."""
+    """Persist one guide-pipeline LLM result or failed attempt in LB details."""
     try:
         from modes.lighbd_service import _log_lighbd_history
 
@@ -777,16 +953,22 @@ def _log_visual_guide_llm_history(
         token_usage = dict(usage or {})
         target_profile_ids = list(profile_ids or [])
         target_profile_labels = list(profile_labels or [])
-        call_name = _visual_guide_character_call_name(
-            character=character,
-            character_index=character_index,
-            character_count=character_count,
+        resolved_call_name = str(call_name or "").strip() or (
+            _visual_guide_character_call_name(
+                character=character,
+                character_index=character_index,
+                character_count=character_count,
+            )
         )
+        resolved_task_key = str(task_key or VISUAL_GUIDE_TASK_KEY).strip()
         record = {
             "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
-            "prompt_id": f"visual_profile_guide:{bot_name}:{character}",
-            "task_key": VISUAL_GUIDE_TASK_KEY,
-            "call_name": call_name,
+            "prompt_id": (
+                str(prompt_id or "").strip()
+                or f"{resolved_task_key}:{bot_name}:{character}"
+            ),
+            "task_key": resolved_task_key,
+            "call_name": resolved_call_name,
             "history_id": history_id or execution_id or uuid.uuid4().hex,
             "execution_id": execution_id or history_id,
             "parent_execution_id": parent_execution_id,
@@ -815,6 +997,9 @@ def _log_visual_guide_llm_history(
             "character_count": character_count,
             "target_count": len(target_profile_ids),
         }
+        if image_filename:
+            record["image_filename"] = str(image_filename)
+            record["vision_image_count"] = 1
         if attempt is not None:
             record["attempt"] = attempt
         if total_attempts is not None:
@@ -827,9 +1012,353 @@ def _log_visual_guide_llm_history(
             f"[VISUAL_GUIDE:DETAIL] LB 자세히 기록 실패: bot={bot_name!r}, "
             f"character={character!r}, profiles={profile_ids!r}, "
             f"call={character_index}/{character_count}, status={status!r}, "
+            f"task_key={task_key!r}, "
             f"error={type(exc).__name__}: {exc}"
         )
         traceback.print_exc()
+
+
+async def _generate_visual_profile_appearance_context(
+    *,
+    llm_service_module,
+    llm_prompt_edit_module,
+    bot_name: str,
+    target: dict,
+    queue_item,
+    character_index: int,
+    character_count: int,
+    profile_index: int,
+    profile_count: int,
+    parent_execution_id: str = "",
+) -> dict:
+    """Analyze exactly one profile's first representative image in a separate call."""
+    character = str(target.get("character") or "").strip()
+    profile = target.get("profile") or {}
+    profile_id = str(profile.get("id") or "").strip()
+    profile_label = str(profile.get("label") or profile_id).strip()
+    image_path, image_filename, preflight_error = _visual_profile_first_rep_image(
+        bot_name,
+        target,
+    )
+    if preflight_error:
+        return {
+            "status": "missing",
+            "visual_context": "",
+            "error": preflight_error,
+            "image_filename": image_filename,
+        }
+
+    messages = _build_visual_profile_appearance_messages()
+    try:
+        with open(image_path, "rb") as image_file:
+            image_b64 = base64.b64encode(image_file.read()).decode("ascii")
+    except Exception as exc:
+        error = f"첫 번째 대표 이미지 읽기 실패: {type(exc).__name__}: {exc}"
+        print(
+            f"[VISUAL_APPEARANCE] 대표 이미지 읽기 실패: bot={bot_name!r}, "
+            f"character={character!r}, profile={profile_id!r}, "
+            f"image={image_filename!r}, error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        return {
+            "status": "failed",
+            "visual_context": "",
+            "error": error,
+            "image_filename": image_filename,
+        }
+    if not image_b64:
+        error = "첫 번째 대표 이미지 파일이 비어 있습니다."
+        print(
+            f"[VISUAL_APPEARANCE] 빈 대표 이미지 스킵: bot={bot_name!r}, "
+            f"character={character!r}, profile={profile_id!r}, "
+            f"image={image_filename!r}"
+        )
+        return {
+            "status": "failed",
+            "visual_context": "",
+            "error": error,
+            "image_filename": image_filename,
+        }
+
+    call_name = _visual_profile_appearance_call_name(
+        character=character,
+        profile_index=profile_index,
+        profile_count=profile_count,
+    )
+    prompt_id = (
+        f"visual_profile_appearance_vision:{bot_name}:{character}:{profile_id}"
+    )
+    execution_context = llm_service_module.create_llm_execution_context(
+        VISUAL_APPEARANCE_TASK_KEY,
+        call_name=call_name,
+        json_mode=True,
+        parent_execution_id=parent_execution_id,
+        metadata={
+            "prompt_id": prompt_id,
+            "queue_item_id": queue_item.id,
+            "bot_name": bot_name,
+            "character": character,
+            "profile_id": profile_id,
+            "profile_label": profile_label,
+            "profile_index": profile_index,
+            "profile_count": profile_count,
+            "character_index": character_index,
+            "character_count": character_count,
+            "image_filename": image_filename,
+            "vision_image_count": 1,
+        },
+    )
+    accepted: dict[str, str] = {}
+    usage: dict = {}
+    execution_complete: dict = {}
+    last_raw_result = ""
+    last_failure_reason = ""
+    stream_state = {"cancelled": False}
+    call_started = time.perf_counter()
+
+    def result_validator(raw_result):
+        parsed = llm_prompt_edit_module.parse_llm_json(raw_result)
+        visual_context, reason = _normalize_visual_profile_appearance_result(parsed)
+        if visual_context is None:
+            return False, reason
+        accepted["visual_context"] = visual_context
+        return True, ""
+
+    def log_history(
+        *,
+        output,
+        status: str,
+        error: str = "",
+        elapsed: float = 0.0,
+        phase: str = "",
+        slot: str = "",
+        history_id: str = "",
+        execution_id: str = "",
+        attempt: int | None = None,
+        total_attempts: int | None = None,
+    ) -> None:
+        _log_visual_guide_llm_history(
+            llm_service_module=llm_service_module,
+            bot_name=bot_name,
+            messages=messages,
+            output=output,
+            status=status,
+            error=error,
+            usage=dict(usage),
+            elapsed=elapsed,
+            phase=phase,
+            llm_slot=slot,
+            history_id=history_id,
+            execution_id=execution_id,
+            parent_execution_id=(
+                execution_context.execution_id
+                if history_id and history_id != execution_context.execution_id
+                else execution_context.parent_execution_id
+            ),
+            queue_item_id=queue_item.id,
+            character=character,
+            profile_ids=[profile_id],
+            profile_labels=[profile_label],
+            character_index=character_index,
+            character_count=character_count,
+            attempt=attempt,
+            total_attempts=total_attempts,
+            task_key=VISUAL_APPEARANCE_TASK_KEY,
+            call_name=call_name,
+            prompt_id=prompt_id,
+            image_filename=image_filename,
+        )
+
+    def on_attempt_failure(info):
+        nonlocal last_raw_result, last_failure_reason
+        attempt_raw = info.get("raw_response", info.get("result"))
+        if attempt_raw is not None:
+            last_raw_result = str(attempt_raw)
+        attempt_slot = str(info.get("slot") or "llm1")
+        attempt_phase = str(info.get("phase") or "primary")
+        attempt_number = int(info.get("attempt") or 0)
+        total_attempts = int(info.get("total_attempts") or 0)
+        attempt_reason = str(info.get("reason") or "비전 LLM 응답 검증 실패")
+        last_failure_reason = attempt_reason
+        log_history(
+            output=str(attempt_raw or ""),
+            status="error",
+            error=(
+                f"[재시도 {attempt_phase} {attempt_slot} "
+                f"{attempt_number}/{total_attempts}] {attempt_reason}"
+            ),
+            elapsed=float(info.get("elapsed") or 0.0),
+            phase=attempt_phase,
+            slot=attempt_slot,
+            history_id=str(info.get("attempt_id") or ""),
+            execution_id=str(info.get("attempt_id") or ""),
+            attempt=attempt_number,
+            total_attempts=total_attempts,
+        )
+
+    def observe_execution(event):
+        if str(event.get("type") or "") == "execution_complete":
+            execution_complete.update(event)
+
+    async def observe_stream(event):
+        event_type = str(event.get("type") or "").strip().lower()
+        stream_id = str(event.get("stream_id") or "").strip()
+        if event_type == "request_mode":
+            queue_item._visual_guide_streaming = bool(event.get("streaming", False))
+        if event_type == "stream_open" and stream_id:
+            queue_item._visual_guide_active_stream_ids.add(stream_id)
+            if bool(queue_item._visual_guide_cancel_requested):
+                success, reason = llm_service_module.request_stream_control(
+                    stream_id,
+                    "cancel",
+                )
+                if not success:
+                    print(
+                        f"[VISUAL_APPEARANCE:CANCEL] 스트림 즉시 중단 실패: "
+                        f"item={queue_item.id}, stream={stream_id}, reason={reason}"
+                    )
+        if event_type in {"done", "error", "cancelled"} and stream_id:
+            queue_item._visual_guide_active_stream_ids.discard(stream_id)
+        if event_type == "cancelled":
+            stream_state["cancelled"] = True
+
+    print(
+        f"[VISUAL_APPEARANCE] 비전 분석 시작: bot={bot_name!r}, "
+        f"character={character!r}, profile={profile_id!r}, "
+        f"image={image_filename!r}, profile_call={profile_index}/{profile_count}, "
+        f"queue_item={queue_item.id}"
+    )
+    try:
+        raw = await llm_service_module.callLLMVisionTask(
+            VISUAL_APPEARANCE_TASK_KEY,
+            messages,
+            image_b64=image_b64,
+            image_mime=_visual_profile_image_mime(image_filename),
+            json_mode=True,
+            result_validator=result_validator,
+            stream_observer=observe_stream,
+            metadata_sink=usage,
+            on_attempt_failure=on_attempt_failure,
+            execution_context=execution_context,
+            execution_observer=observe_execution,
+        )
+    except Exception as exc:
+        elapsed = time.perf_counter() - call_started
+        slot = str(
+            execution_complete.get("llm_slot")
+            or llm_service_module.routing_primary_slot(VISUAL_APPEARANCE_TASK_KEY)
+        )
+        phase = str(execution_complete.get("phase") or "primary")
+        error = f"{type(exc).__name__}: {exc}"
+        print(
+            f"[VISUAL_APPEARANCE] 비전 호출 예외: bot={bot_name!r}, "
+            f"character={character!r}, profile={profile_id!r}, "
+            f"image={image_filename!r}, error={error}"
+        )
+        traceback.print_exc()
+        log_history(
+            output=last_raw_result,
+            status="error",
+            error=error,
+            elapsed=elapsed,
+            phase=phase,
+            slot=slot,
+            history_id=execution_context.execution_id,
+            execution_id=execution_context.execution_id,
+        )
+        return {
+            "status": "failed",
+            "visual_context": "",
+            "error": error,
+            "image_filename": image_filename,
+        }
+
+    elapsed = time.perf_counter() - call_started
+    slot = str(
+        execution_complete.get("llm_slot")
+        or llm_service_module.routing_primary_slot(VISUAL_APPEARANCE_TASK_KEY)
+    )
+    phase = str(execution_complete.get("phase") or "primary")
+    manual_cancel_type = getattr(llm_service_module, "ManualCancelledText", None)
+    if bool(queue_item._visual_guide_cancel_requested) and (
+        stream_state["cancelled"]
+        or (manual_cancel_type is not None and isinstance(raw, manual_cancel_type))
+    ):
+        error = "사용자가 프로필 외형 비전 분석을 중단했습니다"
+        log_history(
+            output=raw,
+            status="cancelled",
+            error=error,
+            elapsed=elapsed,
+            phase=phase,
+            slot=slot,
+            history_id=execution_context.execution_id,
+            execution_id=execution_context.execution_id,
+        )
+        print(
+            f"[VISUAL_APPEARANCE:CANCEL] 비전 분석 중단 완료: "
+            f"bot={bot_name!r}, character={character!r}, profile={profile_id!r}"
+        )
+        return {
+            "status": "cancelled",
+            "visual_context": "",
+            "error": error,
+            "image_filename": image_filename,
+        }
+
+    visual_context = accepted.get("visual_context")
+    if visual_context is None:
+        parsed = llm_prompt_edit_module.parse_llm_json(raw)
+        _normalized, reason = _normalize_visual_profile_appearance_result(parsed)
+        error = (
+            last_failure_reason
+            or reason
+            or "비전 LLM 응답이 검증을 통과하지 못했습니다."
+        )
+        raw_for_detail = last_raw_result or str(raw or "")
+        print(
+            f"[VISUAL_APPEARANCE] 비전 분석 최종 실패: bot={bot_name!r}, "
+            f"character={character!r}, profile={profile_id!r}, "
+            f"image={image_filename!r}, error={error}, "
+            f"raw_preview={raw_for_detail[:500]!r}"
+        )
+        log_history(
+            output=raw_for_detail,
+            status="error",
+            error=error,
+            elapsed=elapsed,
+            phase=phase,
+            slot=slot,
+            history_id=execution_context.execution_id,
+            execution_id=execution_context.execution_id,
+        )
+        return {
+            "status": "failed",
+            "visual_context": "",
+            "error": error,
+            "image_filename": image_filename,
+        }
+
+    log_history(
+        output=raw,
+        status="ok",
+        elapsed=elapsed,
+        phase=phase,
+        slot=slot,
+        history_id=execution_context.execution_id,
+        execution_id=execution_context.execution_id,
+    )
+    print(
+        f"[VISUAL_APPEARANCE] 비전 분석 완료: bot={bot_name!r}, "
+        f"character={character!r}, profile={profile_id!r}, "
+        f"image={image_filename!r}, context_length={len(visual_context)}"
+    )
+    return {
+        "status": "ok",
+        "visual_context": visual_context,
+        "error": "",
+        "image_filename": image_filename,
+    }
 
 
 class BotMode:
@@ -3438,6 +3967,8 @@ class BotMode:
                 completed: int,
                 suggestions: list[dict] | None = None,
                 error: str = "",
+                profile_current: int = 0,
+                profile_total: int = 0,
             ) -> None:
                 detail = {
                     "phase": "visual_profile_guide",
@@ -3449,6 +3980,8 @@ class BotMode:
                     "total": character_count,
                     "profile_count": len(profile_ids),
                     "profile_ids": list(profile_ids),
+                    "profile_current": profile_current,
+                    "profile_total": profile_total,
                     "percentage": (
                         (completed / character_count) * 100
                         if character_count > 0
@@ -3825,8 +4358,109 @@ class BotMode:
                         character_index=character_index,
                         character_count=character_count,
                     )
+
+                    for profile_index, (target, suggestion) in enumerate(
+                        zip(call_targets, profile_suggestions),
+                        start=1,
+                    ):
+                        if bool(queue_item._visual_guide_cancel_requested):
+                            cancelled = True
+                            print(
+                                f"[VISUAL_APPEARANCE:CANCEL] 다음 프로필 분석 전 중단: "
+                                f"bot={bot_name!r}, character={character!r}, "
+                                f"profile_call={profile_index}/{len(call_targets)}"
+                            )
+                            break
+                        vision_profile_id = str(
+                            target["profile"].get("id") or ""
+                        )
+                        await notify_visual_guide_progress(
+                            queue_item,
+                            stage="appearance_processing",
+                            character=character,
+                            character_index=character_index,
+                            profile_ids=[vision_profile_id],
+                            completed=character_index - 1,
+                            profile_current=profile_index,
+                            profile_total=len(call_targets),
+                        )
+                        appearance_result = (
+                            await _generate_visual_profile_appearance_context(
+                                llm_service_module=llm_service,
+                                llm_prompt_edit_module=llm_prompt_edit,
+                                bot_name=bot_name,
+                                target=target,
+                                queue_item=queue_item,
+                                character_index=character_index,
+                                character_count=character_count,
+                                profile_index=profile_index,
+                                profile_count=len(call_targets),
+                                parent_execution_id=execution_context.execution_id,
+                            )
+                        )
+                        suggestion["visual_context"] = str(
+                            appearance_result.get("visual_context") or ""
+                        )
+                        suggestion["visual_context_status"] = str(
+                            appearance_result.get("status") or "failed"
+                        )
+                        suggestion["visual_context_error"] = str(
+                            appearance_result.get("error") or ""
+                        )
+                        suggestion["visual_context_image"] = str(
+                            appearance_result.get("image_filename") or ""
+                        )
+                        if suggestion["visual_context_status"] == "ok":
+                            suggestion["selection_guide"] = (
+                                _append_visual_context_to_selection_guide(
+                                    suggestion["selection_guide"],
+                                    suggestion["visual_context"],
+                                )
+                            )
+                        appearance_stage = (
+                            "appearance_completed"
+                            if suggestion["visual_context_status"] == "ok"
+                            else "appearance_failed"
+                        )
+                        await notify_visual_guide_progress(
+                            queue_item,
+                            stage=appearance_stage,
+                            character=character,
+                            character_index=character_index,
+                            profile_ids=[vision_profile_id],
+                            completed=character_index - 1,
+                            suggestions=[suggestion],
+                            error=suggestion["visual_context_error"],
+                            profile_current=profile_index,
+                            profile_total=len(call_targets),
+                        )
+                        if suggestion["visual_context_status"] == "cancelled":
+                            cancelled = True
+                            break
+
                     suggestions.extend(profile_suggestions)
                     completed_character_count = character_index
+                    if cancelled:
+                        await notify_visual_guide_progress(
+                            queue_item,
+                            stage="completed",
+                            character=character,
+                            character_index=character_index,
+                            profile_ids=profile_ids,
+                            completed=completed_character_count,
+                            suggestions=profile_suggestions,
+                        )
+                        await notify_visual_guide_progress(
+                            queue_item,
+                            stage="cancelled",
+                            character=character,
+                            character_index=character_index,
+                            profile_ids=profile_ids,
+                            completed=completed_character_count,
+                            suggestions=profile_suggestions,
+                            error="프로필 외형 비전 분석 중 사용자 요청으로 중단",
+                        )
+                        break
                     await notify_visual_guide_progress(
                         queue_item,
                         stage="completed",

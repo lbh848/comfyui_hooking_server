@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import importlib
 import json
 from copy import deepcopy
@@ -213,6 +214,179 @@ async def test_suggest_metadata_reads_the_whole_selected_prompt_and_does_not_sav
 
 
 @pytest.mark.asyncio
+async def test_suggest_metadata_reads_only_each_profiles_first_rep_with_separate_vision_route(
+    monkeypatch,
+    tmp_path,
+):
+    bot_mode = importlib.import_module("modes.bot_mode")
+    llm_service = importlib.import_module("modes.llm_service")
+    lighbd_service = importlib.import_module("modes.lighbd_service")
+    card = _card("card_1", "카드 1", "first.webp")
+    card["rep_images"] = ["first.webp", "second.webp"]
+    data = _bot_data([card])
+    char_dir = tmp_path / "bot" / "demo" / "Riko"
+    char_dir.mkdir(parents=True)
+    (char_dir / "first.webp").write_bytes(b"first-representative-image")
+    (char_dir / "second.webp").write_bytes(b"must-not-be-read")
+    queue = _InlineLlmQueue()
+    detail_records = []
+    calls = []
+
+    async def fake_text_call(task_key, messages, **kwargs):
+        calls.append((task_key, "text"))
+        raw = json.dumps({
+            "suggestions": [{
+                "target_key": "0",
+                "aliases": ["Prism Heart"],
+                "selection_guide": "Prism Heart 형태가 유지되는 동안 선택한다.",
+                "evidence": "이미지 지침의 정준 명령을 근거로 삼았다.",
+                "confidence": "high",
+            }]
+        }, ensure_ascii=False)
+        valid, reason = kwargs["result_validator"](raw)
+        assert valid, reason
+        context = kwargs["execution_context"]
+        kwargs["metadata_sink"].update({"prompt_tokens": 10, "completion_tokens": 5})
+        kwargs["execution_observer"]({
+            "type": "execution_complete",
+            "llm_slot": "llm1",
+            "phase": "primary",
+            "execution_id": context.execution_id,
+        })
+        return raw
+
+    async def fake_vision_call(task_key, messages, **kwargs):
+        calls.append((task_key, base64.b64decode(kwargs["image_b64"])))
+        assert kwargs["image_mime"] == "image/webp"
+        prompt = "\n".join(str(item["content"]) for item in messages)
+        assert "first.webp" not in prompt
+        assert "second.webp" not in prompt
+        assert "Riko" not in prompt
+        raw = json.dumps({
+            "visual_context": "푸른 장발과 금빛 눈, 흰 망토와 별 모양 브로치를 착용한 모습."
+        }, ensure_ascii=False)
+        valid, reason = kwargs["result_validator"](raw)
+        assert valid, reason
+        context = kwargs["execution_context"]
+        kwargs["metadata_sink"].update({"prompt_tokens": 20, "completion_tokens": 8})
+        kwargs["execution_observer"]({
+            "type": "execution_complete",
+            "llm_slot": "llm2",
+            "phase": "primary",
+            "execution_id": context.execution_id,
+        })
+        return raw
+
+    monkeypatch.setattr(bot_mode, "BOT_DIR", str(tmp_path / "bot"))
+    monkeypatch.setattr(bot_mode, "_load_bot_data", lambda: data)
+    monkeypatch.setattr(bot_mode, "_load_lb_extra", lambda _bot_name: [])
+    monkeypatch.setattr(llm_service, "callLLMTask", fake_text_call)
+    monkeypatch.setattr(llm_service, "callLLMVisionTask", fake_vision_call)
+    monkeypatch.setattr(lighbd_service, "_log_lighbd_history", detail_records.append)
+
+    manager = bot_mode.BotMode()
+    manager.set_queue_manager(queue)
+    response = await manager.handle_suggest_character_card_metadata(
+        _JsonRequest({
+            "bot_name": "demo",
+            "targets": [{"character": "Riko", "profile_id": "card_1"}],
+        })
+    )
+    payload = json.loads(response.text)
+    suggestion = payload["suggestions"][0]
+
+    assert response.status == 200
+    assert calls == [
+        ("visual_profile_guide", "text"),
+        ("visual_profile_appearance_vision", b"first-representative-image"),
+    ]
+    assert suggestion["visual_context_status"] == "ok"
+    assert suggestion["visual_context_image"] == "first.webp"
+    assert suggestion["selection_guide"] == (
+        "Prism Heart 형태가 유지되는 동안 선택한다.\n\n"
+        "외형 참고: 푸른 장발과 금빛 눈, 흰 망토와 별 모양 브로치를 착용한 모습."
+    )
+    assert [record["task_key"] for record in detail_records] == [
+        "visual_profile_guide",
+        "visual_profile_appearance_vision",
+    ]
+    assert detail_records[1]["vision_image_count"] == 1
+    assert detail_records[1]["image_filename"] == "first.webp"
+    assert any(
+        event["detail"]["stage"] == "appearance_processing"
+        and event["detail"]["profile_current"] == 1
+        and event["detail"]["profile_total"] == 1
+        for event in queue.progress_events
+    )
+
+
+@pytest.mark.asyncio
+async def test_profile_appearance_vision_final_failure_is_recorded_without_context(
+    monkeypatch,
+    tmp_path,
+):
+    bot_mode = importlib.import_module("modes.bot_mode")
+    llm_service = importlib.import_module("modes.llm_service")
+    llm_prompt_edit = importlib.import_module("modes.llm_prompt_edit")
+    lighbd_service = importlib.import_module("modes.lighbd_service")
+    char_dir = tmp_path / "bot" / "demo" / "Riko"
+    char_dir.mkdir(parents=True)
+    (char_dir / "first.webp").write_bytes(b"representative-image")
+    target = {
+        "character": "Riko",
+        "profile": {
+            "id": "card_1",
+            "label": "카드 1",
+            "render_overrides": {"rep_images": ["first.webp", "second.webp"]},
+        },
+    }
+    queue_item = SimpleNamespace(
+        id="visual-guide-queue",
+        _visual_guide_cancel_requested=False,
+        _visual_guide_active_stream_ids=set(),
+        _visual_guide_streaming=False,
+    )
+    detail_records = []
+
+    async def fake_vision_call(_task_key, _messages, **kwargs):
+        context = kwargs["execution_context"]
+        kwargs["execution_observer"]({
+            "type": "execution_complete",
+            "llm_slot": "llm2",
+            "phase": "primary",
+            "execution_id": context.execution_id,
+            "accepted": False,
+        })
+        return "[LLM 실패] visual_profile_appearance_vision primary 재시도 소진"
+
+    monkeypatch.setattr(bot_mode, "BOT_DIR", str(tmp_path / "bot"))
+    monkeypatch.setattr(llm_service, "callLLMVisionTask", fake_vision_call)
+    monkeypatch.setattr(lighbd_service, "_log_lighbd_history", detail_records.append)
+
+    result = await bot_mode._generate_visual_profile_appearance_context(
+        llm_service_module=llm_service,
+        llm_prompt_edit_module=llm_prompt_edit,
+        bot_name="demo",
+        target=target,
+        queue_item=queue_item,
+        character_index=1,
+        character_count=1,
+        profile_index=1,
+        profile_count=1,
+    )
+
+    assert result["status"] == "failed"
+    assert result["visual_context"] == ""
+    assert result["image_filename"] == "first.webp"
+    assert len(detail_records) == 1
+    assert detail_records[0]["task_key"] == "visual_profile_appearance_vision"
+    assert detail_records[0]["status"] == "error"
+    assert detail_records[0]["input"]
+    assert detail_records[0]["output"].startswith("[LLM 실패]")
+    assert detail_records[0]["error"]
+
+
+@pytest.mark.asyncio
 async def test_suggest_metadata_calls_llm_once_per_character(monkeypatch):
     bot_mode = importlib.import_module("modes.bot_mode")
     llm_service = importlib.import_module("modes.llm_service")
@@ -320,24 +494,32 @@ async def test_suggest_metadata_calls_llm_once_per_character(monkeypatch):
     assert detail_records[0]["target_count"] == 2
     assert detail_records[1]["profile_ids"] == ["mina_1"]
     assert detail_records[1]["target_count"] == 1
-    assert [event["progress"] for event in queue.progress_events] == [
+    character_progress_events = [
+        event for event in queue.progress_events
+        if event["detail"]["stage"] in {"processing", "completed"}
+    ]
+    assert [event["progress"] for event in character_progress_events] == [
         0.0,
         50.0,
         50.0,
         100.0,
     ]
-    assert [event["detail"]["stage"] for event in queue.progress_events] == [
+    assert [event["detail"]["stage"] for event in character_progress_events] == [
         "processing",
         "completed",
         "processing",
         "completed",
     ]
-    assert queue.progress_events[0]["detail"]["character"] == "Riko"
-    assert queue.progress_events[0]["detail"]["current"] == 1
-    assert queue.progress_events[0]["detail"]["total"] == 2
-    assert len(queue.progress_events[1]["detail"]["suggestions"]) == 2
-    assert queue.progress_events[2]["detail"]["character"] == "Mina"
-    assert len(queue.progress_events[3]["detail"]["suggestions"]) == 1
+    assert character_progress_events[0]["detail"]["character"] == "Riko"
+    assert character_progress_events[0]["detail"]["current"] == 1
+    assert character_progress_events[0]["detail"]["total"] == 2
+    assert len(character_progress_events[1]["detail"]["suggestions"]) == 2
+    assert character_progress_events[2]["detail"]["character"] == "Mina"
+    assert len(character_progress_events[3]["detail"]["suggestions"]) == 1
+    assert sum(
+        event["detail"]["stage"] == "appearance_failed"
+        for event in queue.progress_events
+    ) == 3
 
 
 @pytest.mark.asyncio
@@ -726,7 +908,9 @@ def test_visual_profile_guide_is_registered_in_routing_queue_and_frontend():
     queue_manager = importlib.import_module("queue_manager")
 
     assert '"visual_profile_guide": _llm_route_defaults(json_mode=True)' in server_source
+    assert '"visual_profile_appearance_vision": _llm_route_defaults(json_mode=True)' in server_source
     assert "{ key: 'visual_profile_guide'" in frontend
+    assert "{ key: 'visual_profile_appearance_vision'" in frontend
     assert "visual_profile_guide" in queue_manager.LLM_TYPES
     assert 'visual_profile_guide: \'프로필 선택 기준\'' in frontend
     assert '"/api/bot_mode/character_cards/suggest_metadata/cancel"' in server_source
@@ -841,6 +1025,9 @@ def test_frontend_has_thumbnail_review_modal_and_explicit_apply_modes():
     assert "visual-guide-thumb" in frontend
     assert "LLM 제안" in frontend
     assert "판단 근거" in frontend
+    assert "대표 이미지 외형" in frontend
+    assert "visual_context_status" in frontend
+    assert "대표 이미지 외형 분석 실패" in frontend
     assert "비어 있는 값만 채우기" in frontend
     assert "기존 값도 교체" in frontend
     assert "source_text: state.sourceText" in frontend

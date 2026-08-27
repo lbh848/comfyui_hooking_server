@@ -45399,7 +45399,7 @@
             {
                 key: 'bot_profiles',
                 label: '봇 · 캐릭터 카드',
-                description: '봇 캐릭터 카드의 별칭과 자연어 선택 기준 작성',
+                description: '봇 캐릭터 카드의 별칭·선택 기준 작성과 대표 이미지 외형 분석',
                 color: '#8b5cf6',
             },
             {
@@ -45441,6 +45441,7 @@
             { key: 'asset_name_mapping_full',  label: '에셋 이름 전체 매핑', kind: 'JSON', modality: 'text', group: 'asset_management', json: true },
             { key: 'preset_import_classify',   label: '프리셋 가져오기 분류', kind: 'JSON', modality: 'text', group: 'asset_management', json: true },
             { key: 'visual_profile_guide',     label: '프로필 선택 기준 자동 작성', kind: '텍스트/JSON', modality: 'text', group: 'bot_profiles', json: true },
+            { key: 'visual_profile_appearance_vision', label: '프로필 대표 이미지 외형 분석', kind: '비전/JSON', modality: 'vision', group: 'bot_profiles', json: true },
             { key: 'edit_illustration_prompt', label: '삽화 편하게 수정', kind: '비전/JSON', modality: 'vision', group: 'image_editing', json: true },
             { key: 'illustration_auto_feedback_review', label: '삽화 오토피드백 검수', kind: '비전/JSON', modality: 'vision', group: 'image_editing', json: true },
             { key: 'qwen_edit_translate',      label: 'EDIT 지시 영어 번역', kind: '텍스트', modality: 'text', group: 'image_editing' },
@@ -66631,14 +66632,19 @@
                 : '';
             const progressCharacter = String(progress?.character || '').trim();
             const progressProfiles = Math.max(0, Number(progress?.profile_count || 0));
+            const progressProfileCurrent = Math.max(0, Number(progress?.profile_current || 0));
+            const progressProfileTotal = Math.max(0, Number(progress?.profile_total || 0));
+            const isAppearanceStage = String(progress?.stage || '').startsWith('appearance_');
             const footerStatus = document.getElementById('visual-guide-footer-status');
             if (footerStatus) {
                 if (state.busy && progressTotal > 0) {
                     const stageText = state.cancelRequested || progress?.stage === 'cancelling'
                         ? `중단 요청 중 · 완료 ${progressCompleted}/${progressTotal}`
-                        : (progress?.stage === 'completed'
+                        : (isAppearanceStage
+                            ? `대표 이미지 외형 분석 ${progressProfileCurrent}/${progressProfileTotal}`
+                            : (progress?.stage === 'completed'
                             ? `완료 ${progressCompleted}/${progressTotal}`
-                            : `처리 중 ${progressPosition}`);
+                            : `처리 중 ${progressPosition}`));
                     footerStatus.textContent = [
                         stageText,
                         progressCharacter,
@@ -66656,7 +66662,9 @@
                 generate.style.opacity = generate.disabled ? '.55' : '1';
                 generate.style.cursor = state.busy ? 'wait' : (selectedCount ? 'pointer' : 'not-allowed');
                 generate.textContent = state.busy
-                    ? (progressPosition ? `LLM 처리 중 ${progressPosition}` : 'LLM 큐 대기 중…')
+                    ? (isAppearanceStage
+                        ? `외형 분석 중 ${progressProfileCurrent}/${progressProfileTotal}`
+                        : (progressPosition ? `LLM 처리 중 ${progressPosition}` : 'LLM 큐 대기 중…'))
                     : '선택 항목 생성/재생성';
             }
             const stop = document.getElementById('visual-guide-stop');
@@ -66704,6 +66712,14 @@
                 const thumb = target.imageUrl
                     ? `<button type="button" class="visual-guide-thumb" data-vg-thumb="${index}" title="썸네일 확대"><img src="${escAttr(target.imageUrl)}" alt="${escAttr(target.character + ' ' + target.profileLabel)} 썸네일"></button>`
                     : '<div class="visual-guide-thumb" style="cursor:default;font-size:.7rem">대표 이미지 없음</div>';
+                const visualContextStatus = String(suggestion?.visual_context_status || '');
+                const visualContext = String(suggestion?.visual_context || '');
+                const visualContextError = String(suggestion?.visual_context_error || '');
+                const visualContextHtml = visualContextStatus === 'ok'
+                    ? `<div style="margin-top:7px;font-size:.68rem;line-height:1.45;color:var(--text2)"><b style="color:var(--text)">대표 이미지 외형</b> · ${escHtml(visualContext)}</div>`
+                    : (visualContextStatus
+                        ? `<div style="margin-top:7px;font-size:.68rem;line-height:1.45;color:#fca5a5"><b>대표 이미지 외형 분석 실패</b> · ${escHtml(visualContextError || '원인을 확인할 수 없습니다.')}</div>`
+                        : '');
                 const suggestionHtml = suggestion ? `
                     <div style="display:flex;align-items:center;gap:7px;margin-bottom:6px">
                         <b style="font-size:.75rem">LLM 제안</b>
@@ -66715,7 +66731,8 @@
                     <label style="display:block;font-size:.69rem;color:var(--text2)">자연어 선택 기준
                         <textarea class="visual-guide-field" data-vg-guide="${index}" ${state.busy ? 'disabled' : ''} style="display:block;margin-top:4px">${escHtml(suggestion.selection_guide || '')}</textarea>
                     </label>
-                    <div style="margin-top:7px;font-size:.68rem;line-height:1.45;color:var(--text2)"><b style="color:var(--text)">판단 근거</b> · ${escHtml(suggestion.evidence || '근거 설명 없음')}</div>`
+                    <div style="margin-top:7px;font-size:.68rem;line-height:1.45;color:var(--text2)"><b style="color:var(--text)">판단 근거</b> · ${escHtml(suggestion.evidence || '근거 설명 없음')}</div>
+                    ${visualContextHtml}`
                     : '<div style="height:100%;min-height:150px;display:flex;align-items:center;justify-content:center;border:1px dashed var(--border);border-radius:8px;color:var(--text2);font-size:.75rem">선택 후 LLM 생성을 실행하세요.</div>';
                 return `
                     <article class="visual-guide-row${target.focused ? ' is-focused' : ''}" data-vg-row="${index}">
@@ -66835,6 +66852,10 @@
                     aliases: Array.isArray(suggestion.aliases) ? [...suggestion.aliases] : [],
                     selection_guide: String(suggestion.selection_guide || ''),
                     evidence: String(suggestion.evidence || ''),
+                    visual_context: String(suggestion.visual_context || ''),
+                    visual_context_status: String(suggestion.visual_context_status || ''),
+                    visual_context_error: String(suggestion.visual_context_error || ''),
+                    visual_context_image: String(suggestion.visual_context_image || ''),
                     confidence: ['high','medium','low'].includes(suggestion.confidence)
                         ? suggestion.confidence
                         : 'low',
@@ -66863,6 +66884,8 @@
                 total: Number(detail.total || 0),
                 character: String(detail.character || ''),
                 profile_count: Number(detail.profile_count || 0),
+                profile_current: Number(detail.profile_current || 0),
+                profile_total: Number(detail.profile_total || 0),
             };
             const liveSuggestions = Array.isArray(detail.suggestions)
                 ? detail.suggestions
@@ -66953,6 +66976,8 @@
                 ).size,
                 character: '',
                 profile_count: 0,
+                profile_current: 0,
+                profile_total: 0,
             };
             _renderVisualGuideRows();
             try {
@@ -92039,7 +92064,12 @@
                         } else if (d.phase === 'visual_profile_guide') {
                             const cur = Math.max(0, Number(d.current || 0));
                             const tot = Math.max(0, Number(d.total || 0));
-                            statusText = tot > 0 ? cur + '/' + tot : Math.round(item.progress || 0) + '%';
+                            const isAppearanceStage = String(d.stage || '').startsWith('appearance_');
+                            const profileCurrent = Math.max(0, Number(d.profile_current || 0));
+                            const profileTotal = Math.max(0, Number(d.profile_total || 0));
+                            statusText = isAppearanceStage
+                                ? `외형 ${profileCurrent}/${profileTotal}`
+                                : (tot > 0 ? cur + '/' + tot : Math.round(item.progress || 0) + '%');
                             const character = String(d.character || '').trim();
                             if (character) {
                                 phaseHint = '<span style="font-size:0.65rem;color:var(--text3);margin-left:2px;">' +
@@ -92927,10 +92957,17 @@
                     const current = Math.max(0, Number(d.current || 0));
                     const total = Math.max(0, Number(d.total || 0));
                     const character = String(d.character || '').trim();
-                    progressLabel = `${pct}%`;
-                    if (total > 0) {
+                    const isAppearanceStage = String(d.stage || '').startsWith('appearance_');
+                    const profileCurrent = Math.max(0, Number(d.profile_current || 0));
+                    const profileTotal = Math.max(0, Number(d.profile_total || 0));
+                    progressLabel = isAppearanceStage
+                        ? `외형 분석 ${profileCurrent}/${profileTotal}`
+                        : `${pct}%`;
+                    if (!isAppearanceStage && total > 0) {
                         progressLabel += ` <span style="font-size:0.65rem;color:var(--text3);">${current}/${total}` +
                             `${character ? ' · ' + escapeHtml(character) : ''}</span>`;
+                    } else if (isAppearanceStage && character) {
+                        progressLabel += ` <span style="font-size:0.65rem;color:var(--text3);">${escapeHtml(character)}</span>`;
                     }
                 } else if (String(d.phase || '').startsWith('video_')) {
                     const phaseLabels = {
