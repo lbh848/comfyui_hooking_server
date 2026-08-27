@@ -24,7 +24,7 @@ def test_auto_feedback_llm_routing_is_registered_in_backend_and_frontend() -> No
     assert 'id="illustration-auto-feedback-modal"' in frontend
     assert 'id="llm-edit-auto-feedback-current-direction"' in frontend
     assert "openIllustrationAutoFeedbackModal()" in frontend
-    assert "closeLlmEditModal();" in frontend
+    assert "closePromptModal();" in frontend
     assert "안전 중지" in frontend
     assert "모든 회차 이미지는 백업에 보존" in frontend
 
@@ -166,6 +166,7 @@ async def test_auto_feedback_preserves_failed_round_backups_until_goal_is_met(
 
     async def run_edit(_job, round_number, _edit_body):
         return {
+            "plan": f"{round_number}회 구체적인 프롬프트 수정 계획",
             "positive": f"positive-{round_number}",
             "negative": f"negative-{round_number}",
         }
@@ -223,8 +224,9 @@ async def test_auto_feedback_preserves_failed_round_backups_until_goal_is_met(
             "generated-2",
         ]
         assert job["rounds"][0]["review"]["achieved"] is False
-        assert job["rounds"][0]["edit_direction"] == body["direction"]
-        assert "표정을 목표에 맞게 수정하세요." in job["rounds"][1]["edit_direction"]
+        assert job["rounds"][0]["edit_direction"] == "1회 구체적인 프롬프트 수정 계획"
+        assert job["rounds"][1]["edit_direction"] == "2회 구체적인 프롬프트 수정 계획"
+        assert "표정을 목표에 맞게 수정하세요." in job["rounds"][1]["llm_instruction"]
         assert job["current_direction"] == job["rounds"][1]["edit_direction"]
         assert job["best_backup_name"] == "generated-2"
         assert server._auto_feedback_public_job(job)["preserved_backup_names"] == [
@@ -247,7 +249,11 @@ async def test_auto_feedback_max_rounds_selects_best_but_keeps_every_backup(
         return None
 
     async def run_edit(_job, round_number, _edit_body):
-        return {"positive": f"positive-{round_number}", "negative": "negative"}
+        return {
+            "plan": f"{round_number}회 구체적인 프롬프트 수정 계획",
+            "positive": f"positive-{round_number}",
+            "negative": "negative",
+        }
 
     async def run_regeneration(_job, round_number, _regenerate_body):
         return {
@@ -306,7 +312,11 @@ async def test_auto_feedback_cancel_after_generation_keeps_generated_backup(
         return None
 
     async def run_edit(_job, _round_number, _edit_body):
-        return {"positive": "edited", "negative": "negative"}
+        return {
+            "plan": "구체적인 프롬프트 수정 계획",
+            "positive": "edited",
+            "negative": "negative",
+        }
 
     async def run_regeneration(job, _round_number, _regenerate_body):
         job["cancel_requested"] = True

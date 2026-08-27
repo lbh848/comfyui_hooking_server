@@ -19729,7 +19729,7 @@
                         <pre id="llm-edit-auto-feedback-goal" style="white-space:pre-wrap; word-break:break-word; margin:7px 0 0; color:var(--text); font:inherit; font-size:.78rem; line-height:1.45; max-height:150px; overflow:auto;">-</pre>
                     </section>
                     <section style="padding:11px 12px; border:1px solid var(--border); border-radius:8px; background:var(--surface1); min-width:0;">
-                        <div style="font-size:.72rem; color:var(--text-secondary); font-weight:700;">현재/다음 수정 방향</div>
+                        <div style="font-size:.72rem; color:var(--text-secondary); font-weight:700;">실제 프롬프트 수정 계획 / 다음 회차 지시</div>
                         <pre id="llm-edit-auto-feedback-current-direction" style="white-space:pre-wrap; word-break:break-word; margin:7px 0 0; color:var(--text); font:inherit; font-size:.78rem; line-height:1.45; max-height:150px; overflow:auto;">-</pre>
                     </section>
                 </div>
@@ -35235,13 +35235,13 @@
                         ? `<div style="margin-top:7px;color:var(--text-secondary);"><strong>검수:</strong> ${escapeHtml(review.summary)}</div>`
                         : '';
                     const appliedDirection = entry.edit_direction
-                        ? `<div style="margin-top:7px;color:var(--text);"><strong>수정 방향:</strong> ${escapeHtml(entry.edit_direction)}</div>`
+                        ? `<div style="margin-top:7px;color:var(--text);"><strong>실제 수정 계획:</strong> ${escapeHtml(entry.edit_direction)}</div>`
                         : '';
                     const remainingGaps = review?.remaining_gaps
                         ? `<div style="margin-top:5px;color:#e3a750;"><strong>남은 차이:</strong> ${escapeHtml(review.remaining_gaps)}</div>`
                         : '';
                     const nextDirection = review?.next_direction && !review?.achieved
-                        ? `<div style="margin-top:5px;color:#53b7a8;"><strong>다음 방향:</strong> ${escapeHtml(review.next_direction)}</div>`
+                        ? `<div style="margin-top:5px;color:#53b7a8;"><strong>다음 회차 지시:</strong> ${escapeHtml(review.next_direction)}</div>`
                         : '';
                     return `<div style="padding:9px 10px;border:1px solid var(--border);border-radius:7px;background:var(--surface1);font-size:0.72rem;line-height:1.45;">
                         <div style="display:flex;justify-content:space-between;gap:8px;">
@@ -35339,11 +35339,12 @@
 
         async function startIllustrationAutoFeedback() {
             if (isIllustrationAutoFeedbackActive()) {
-                closeLlmEditModal();
+                closePromptModal();
                 openIllustrationAutoFeedbackModal();
                 return;
             }
             if (!currentModalBackupName || llmEditInFlight) return;
+            const sourceBackupName = currentModalBackupName;
             const directionInput = document.getElementById('llm-edit-direction-input');
             const direction = String(directionInput?.value || '').trim();
             const maxInput = document.getElementById('llm-edit-auto-feedback-max');
@@ -35366,7 +35367,7 @@
                 selectedVisualProfileIds = { ...llmEditModalState.visualProfileIds };
             }
             const requestBody = {
-                name: currentModalBackupName,
+                name: sourceBackupName,
                 positive: document.getElementById('modal-positive').value || '',
                 negative: document.getElementById('modal-negative').value || '',
                 direction,
@@ -35382,7 +35383,7 @@
             }
             illustrationAutoFeedbackState = {
                 jobId: '',
-                sourceBackupName: currentModalBackupName,
+                sourceBackupName,
                 job: {
                     status: 'queued',
                     phase: 'queued',
@@ -35391,13 +35392,13 @@
                     max_rounds: maxRounds,
                     rounds: [],
                     goal: direction,
-                    current_direction: direction,
+                    current_direction: '이미지와 기존 프롬프트를 분석해 구체적인 수정 계획을 준비하고 있습니다.',
                     message: '서버에 오토피드백 작업을 등록하고 있습니다',
                 },
                 pollTimer: null,
                 terminalHandled: false,
             };
-            closeLlmEditModal();
+            closePromptModal();
             openIllustrationAutoFeedbackModal();
             renderIllustrationAutoFeedbackJob(illustrationAutoFeedbackState.job);
             try {
@@ -35410,7 +35411,7 @@
                     throw new Error('서버가 오토피드백 작업 ID를 반환하지 않았습니다.');
                 }
                 illustrationAutoFeedbackState.jobId = data.job.job_id;
-                illustrationAutoFeedbackState.sourceBackupName = data.job.source_backup_name || currentModalBackupName;
+                illustrationAutoFeedbackState.sourceBackupName = data.job.source_backup_name || sourceBackupName;
                 illustrationAutoFeedbackState.terminalHandled = false;
                 renderIllustrationAutoFeedbackJob(data.job);
                 startIllustrationAutoFeedbackPolling();

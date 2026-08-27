@@ -16593,7 +16593,7 @@ def _create_auto_feedback_job(body: dict) -> dict:
         "source_backup_name": str(body.get("name") or ""),
         "current_backup_name": str(body.get("name") or ""),
         "goal": str(body.get("direction") or ""),
-        "current_direction": str(body.get("direction") or ""),
+        "current_direction": "이미지와 기존 프롬프트를 분석해 구체적인 수정 계획을 준비하고 있습니다.",
         "max_rounds": int(body.get("max_rounds") or 1),
         "round": 0,
         "rounds": [],
@@ -17112,7 +17112,10 @@ async def _run_illustration_auto_feedback_job(job_id: str, body: dict) -> None:
                 job,
                 round=round_number,
                 phase="editing",
-                current_direction=round_direction,
+                current_direction=(
+                    "편집 LLM이 이미지와 기존 프롬프트를 분석해 "
+                    "구체적인 수정 계획을 세우고 있습니다."
+                ),
                 message=f"{round_number}/{job.get('max_rounds')}회 프롬프트를 수정하고 있습니다",
             )
             edit_body = {
@@ -17134,12 +17137,23 @@ async def _run_illustration_auto_feedback_job(job_id: str, body: dict) -> None:
             modified_negative = str(edited.get("negative") or "")
             if not modified_positive:
                 raise RuntimeError("오토피드백 수정 결과의 긍정 프롬프트가 비어 있습니다")
+            edit_plan = str(edited.get("plan") or "").strip()
+            if not edit_plan:
+                print(
+                    f"[AUTO_FEEDBACK] 편집 LLM의 구체적 계획이 비어 있음: "
+                    f"job={job_id}, round={round_number}, direction={round_direction!r}"
+                )
+                edit_plan = (
+                    "편집 LLM이 별도 계획을 반환하지 않아 다음 목표를 직접 적용합니다: "
+                    f"{round_direction}"
+                )
             current_identity = copy.deepcopy(edited.get("identity_edit") or current_identity)
 
             _raise_if_auto_feedback_cancelled(job)
             await _update_auto_feedback_job(
                 job,
                 phase="generating",
+                current_direction=edit_plan,
                 message=f"{round_number}/{job.get('max_rounds')}회 이미지를 생성하고 있습니다",
             )
             regenerate_body = {
@@ -17163,7 +17177,8 @@ async def _run_illustration_auto_feedback_job(job_id: str, body: dict) -> None:
                 "source_backup_name": current_name,
                 "provider": str(generated.get("provider") or ""),
                 "fallback_used": bool(generated.get("fallback_used")),
-                "edit_direction": round_direction,
+                "llm_instruction": round_direction,
+                "edit_direction": edit_plan,
                 "review": None,
             }
             job["rounds"].append(round_info)
@@ -17205,7 +17220,7 @@ async def _run_illustration_auto_feedback_job(job_id: str, body: dict) -> None:
                 current_direction=(
                     str(review.get("next_direction") or "").strip()
                     if not review.get("achieved")
-                    else round_direction
+                    else edit_plan
                 ),
                 message=(
                     f"{round_number}/{job.get('max_rounds')}회 검수: "
