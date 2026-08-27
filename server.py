@@ -715,6 +715,7 @@ DEFAULT_CONFIG = {
             max_retries=1, fallback_max_retries=1, json_mode=True
         ),
         "edit_illustration_prompt":_llm_route_defaults(json_mode=True),  # 끄면 response_format 미전송(Cerebras/Gemma 루프 회피)
+        "illustration_auto_feedback_review": _llm_route_defaults(json_mode=True),
         "qwen_edit_translate":     _llm_route_defaults(max_retries=1),
         "video_prompt_i2v":        _llm_route_defaults(max_retries=1),
         "video_prompt_first_last": _llm_route_defaults(max_retries=1),
@@ -15344,6 +15345,7 @@ async def handle_api_llm_edit_prompt(
     request: web.Request | None,
     *,
     _body: dict | None = None,
+    _tracking: dict | None = None,
 ) -> web.Response:
     """삽화백업 "편하게 수정" — 장면 편집과 V3 Comfy 캐릭터 교체를 처리한다.
 
@@ -15809,7 +15811,7 @@ async def handle_api_llm_edit_prompt(
         # raw 전체를 위젯에 띄워 파싱 실패 원인을 즉시 확인 가능하게 한다.
         from modes.lighbd_service import _log_lighbd_history as _log_hist
         t0 = time.time()
-        _hist_pid = f"edit_illustration_prompt:{backup_name}"
+        _edit_tracking = dict(_tracking or {})
         # 위젯 '모델:' 칸에는 라우팅 primary 실제 모델명 표시(video_mode 패턴).
         # 호출 종류 라벨은 카드 타이틀(call_name)로 옮긴다.
         _edit_model_name = (
@@ -15819,6 +15821,70 @@ async def handle_api_llm_edit_prompt(
             if camera_control is not None
             else f"삽화 프롬프트 편집 ({'비전' if image_b64 else '텍스트'})"
         )
+        if _edit_tracking.get("round"):
+            _edit_call_label += (
+                f" · 오토피드백 {_edit_tracking.get('round')}/"
+                f"{_edit_tracking.get('max_rounds')}"
+            )
+        _edit_execution_context = llm_service.create_llm_execution_context(
+            "edit_illustration_prompt",
+            call_name=_edit_call_label,
+            json_mode=True,
+            execution_id=str(_edit_tracking.get("execution_id") or uuid.uuid4().hex),
+            parent_execution_id=str(_edit_tracking.get("job_id") or ""),
+            metadata={
+                "backup_name": backup_name,
+                "queue_item_id": str(_edit_tracking.get("queue_item_id") or ""),
+                "auto_feedback_job_id": str(_edit_tracking.get("job_id") or ""),
+                "auto_feedback_round": int(_edit_tracking.get("round") or 0),
+            },
+        )
+        _hist_pid = _edit_execution_context.execution_id
+        _edit_usage: dict = {}
+        _edit_route_result: dict = {}
+
+        async def _edit_execution_observer(event: dict) -> None:
+            if str(event.get("type") or "") == "execution_complete":
+                _edit_route_result.clear()
+                _edit_route_result.update(event)
+
+        async def _record_edit_attempt_failure(event: dict) -> None:
+            try:
+                attempt_slot = str(event.get("slot") or "llm1")
+                attempt_service, attempt_model = _auto_feedback_slot_identity(attempt_slot)
+                attempt_raw = event.get("raw_response", event.get("result"))
+                attempt_output = "" if attempt_raw is None else str(attempt_raw)
+                _log_hist({
+                    "ts": datetime.datetime.now().isoformat(timespec="seconds"),
+                    "prompt_id": f"{_hist_pid}:attempt:{event.get('attempt_id')}",
+                    "history_id": str(event.get("attempt_id") or uuid.uuid4().hex),
+                    "execution_id": str(event.get("attempt_id") or ""),
+                    "parent_execution_id": _edit_execution_context.execution_id,
+                    "input": messages,
+                    "output": attempt_output,
+                    "call_name": _edit_call_label,
+                    "task_key": "edit_illustration_prompt",
+                    "llm_slot": attempt_slot,
+                    "phase": str(event.get("phase") or "primary"),
+                    "service": attempt_service,
+                    "model": attempt_model,
+                    "completion_tokens": llm_service._approx_tokens(attempt_output),
+                    "prompt_tokens": llm_service._approx_input_tokens(messages),
+                    "elapsed": round(float(event.get("elapsed") or 0.0), 3),
+                    "status": "error",
+                    "error": str(event.get("reason") or event.get("error") or "LLM 시도 실패"),
+                    "attempt": int(event.get("attempt") or 0),
+                    "total_attempts": int(event.get("total_attempts") or 0),
+                    "queue_item_id": str(_edit_tracking.get("queue_item_id") or ""),
+                    "auto_feedback_job_id": str(_edit_tracking.get("job_id") or ""),
+                    "auto_feedback_round": int(_edit_tracking.get("round") or 0),
+                })
+            except Exception as exc:
+                print(
+                    f"[LLM_EDIT] 라우팅 재시도 자세히 기록 실패: "
+                    f"backup={backup_name}, event={event!r}, error={exc}"
+                )
+                traceback.print_exc()
         try:
             await notify_frontend("lighbd_llm_stream", {
                 "type": "start",
@@ -15846,18 +15912,56 @@ async def handle_api_llm_edit_prompt(
                 raw = await llm_service.callLLMVisionTask(
                     "edit_illustration_prompt", messages,
                     image_b64=image_b64, image_mime=image_mime, json_mode=True,
-                    result_validator=edit_result_validator)
+                    result_validator=edit_result_validator,
+                    metadata_sink=_edit_usage,
+                    on_attempt_failure=_record_edit_attempt_failure,
+                    execution_context=_edit_execution_context,
+                    execution_observer=_edit_execution_observer)
             else:
                 raw = await llm_service.callLLMTask(
                     "edit_illustration_prompt", messages, json_mode=True,
-                    result_validator=edit_result_validator)
+                    result_validator=edit_result_validator,
+                    metadata_sink=_edit_usage,
+                    on_attempt_failure=_record_edit_attempt_failure,
+                    execution_context=_edit_execution_context,
+                    execution_observer=_edit_execution_observer)
         except RuntimeError as e:
             # 비전 미지원 서비스 → 텍스트 전용 폴백
             print(f"[LLM_EDIT] 비전 미지원, 텍스트 폴백 name={backup_name}: {e}")
             fallback_note = " (현재 LLM 서비스가 비전을 지원하지 않아 텍스트만으로 분석했습니다)"
+            _edit_execution_context = llm_service.create_llm_execution_context(
+                "edit_illustration_prompt",
+                call_name=_edit_call_label + " · 텍스트 폴백",
+                json_mode=True,
+                parent_execution_id=str(_edit_tracking.get("job_id") or ""),
+                metadata={
+                    "backup_name": backup_name,
+                    "queue_item_id": str(_edit_tracking.get("queue_item_id") or ""),
+                    "auto_feedback_job_id": str(_edit_tracking.get("job_id") or ""),
+                    "auto_feedback_round": int(_edit_tracking.get("round") or 0),
+                },
+            )
+            _hist_pid = _edit_execution_context.execution_id
+            _edit_usage = {}
+            _edit_route_result.clear()
             raw = await llm_service.callLLMTask(
                 "edit_illustration_prompt", messages, json_mode=True,
-                result_validator=edit_result_validator)
+                result_validator=edit_result_validator,
+                metadata_sink=_edit_usage,
+                on_attempt_failure=_record_edit_attempt_failure,
+                execution_context=_edit_execution_context,
+                execution_observer=_edit_execution_observer)
+
+        _edit_final_slot = str(
+            _edit_route_result.get("llm_slot")
+            or _edit_route_result.get("slot")
+            or llm_service.routing_primary_slot("edit_illustration_prompt")
+            or "llm1"
+        )
+        _edit_final_phase = str(_edit_route_result.get("phase") or "primary")
+        _edit_service_name, _edit_final_model_name = _auto_feedback_slot_identity(
+            _edit_final_slot
+        )
 
         # 위젯에 raw 표시 — LLM 실패/빈 응답은 error, 정상 응답은 done(raw 전체)
         if not raw:
@@ -15865,17 +15969,24 @@ async def handle_api_llm_edit_prompt(
             try:
                 await notify_frontend("lighbd_llm_stream", {
                     "type": "error", "error": "LLM 응답이 빈 문자열입니다.",
-                    "model": _edit_model_name})
+                    "model": _edit_final_model_name})
             except Exception as _e:
                 print(f"[LLM_EDIT] WARN: 위젯 error 알림 실패: {_e}")
             try:
                 _log_hist({
                     "ts": datetime.datetime.now().isoformat(timespec="seconds"),
                     "prompt_id": _hist_pid, "input": messages, "output": "",
+                    "history_id": _edit_execution_context.execution_id,
+                    "execution_id": _edit_execution_context.execution_id,
+                    "parent_execution_id": _edit_execution_context.parent_execution_id,
                     "call_name": _edit_call_label, "task_key": "edit_illustration_prompt",
-                    "model": _edit_model_name,
+                    "llm_slot": _edit_final_slot, "phase": _edit_final_phase,
+                    "service": _edit_service_name, "model": _edit_final_model_name,
                     "elapsed": round(time.time() - t0, 3),
                     "status": "error", "error": "LLM 응답이 빈 문자열입니다.",
+                    "queue_item_id": str(_edit_tracking.get("queue_item_id") or ""),
+                    "auto_feedback_job_id": str(_edit_tracking.get("job_id") or ""),
+                    "auto_feedback_round": int(_edit_tracking.get("round") or 0),
                 })
             except Exception as _e:
                 print(f"[LLM_EDIT] WARN: 히스토리 기록 실패: {_e}")
@@ -15887,17 +15998,24 @@ async def handle_api_llm_edit_prompt(
             try:
                 await notify_frontend("lighbd_llm_stream", {
                     "type": "error", "error": raw,
-                    "model": _edit_model_name})
+                    "model": _edit_final_model_name})
             except Exception as _e:
                 print(f"[LLM_EDIT] WARN: 위젯 error 알림 실패: {_e}")
             try:
                 _log_hist({
                     "ts": datetime.datetime.now().isoformat(timespec="seconds"),
-                    "prompt_id": _hist_pid, "input": messages, "output": "",
+                    "prompt_id": _hist_pid, "input": messages, "output": raw,
+                    "history_id": _edit_execution_context.execution_id,
+                    "execution_id": _edit_execution_context.execution_id,
+                    "parent_execution_id": _edit_execution_context.parent_execution_id,
                     "call_name": _edit_call_label, "task_key": "edit_illustration_prompt",
-                    "model": _edit_model_name,
+                    "llm_slot": _edit_final_slot, "phase": _edit_final_phase,
+                    "service": _edit_service_name, "model": _edit_final_model_name,
                     "elapsed": round(time.time() - t0, 3),
                     "status": "error", "error": raw,
+                    "queue_item_id": str(_edit_tracking.get("queue_item_id") or ""),
+                    "auto_feedback_job_id": str(_edit_tracking.get("job_id") or ""),
+                    "auto_feedback_round": int(_edit_tracking.get("round") or 0),
                 })
             except Exception as _e:
                 print(f"[LLM_EDIT] WARN: 히스토리 기록 실패: {_e}")
@@ -15909,14 +16027,18 @@ async def handle_api_llm_edit_prompt(
         # 토큰/속도 근사치를 직접 계산해서 done 이벤트와 히스토리에 채운다.
         # (채우지 않으면 프론트에서 data.prompt_tokens ?? 0 → 항상 0 으로 표시됨)
         _edit_elapsed = time.time() - t0
-        _edit_completion_tokens = llm_service._approx_tokens(raw)
-        _edit_prompt_tokens = llm_service._approx_input_tokens(messages)
+        _edit_completion_tokens = int(
+            _edit_usage.get("completion_tokens") or llm_service._approx_tokens(raw)
+        )
+        _edit_prompt_tokens = int(
+            _edit_usage.get("prompt_tokens") or llm_service._approx_input_tokens(messages)
+        )
         _edit_tps = (_edit_completion_tokens / _edit_elapsed) if _edit_elapsed > 0 else 0.0
         try:
             await notify_frontend("lighbd_llm_stream", {
                 "type": "done",
                 "text": raw,
-                "model": _edit_model_name,
+                "model": _edit_final_model_name,
                 "completion_tokens": _edit_completion_tokens,
                 "prompt_tokens": _edit_prompt_tokens,
                 "elapsed": _edit_elapsed,
@@ -15929,13 +16051,20 @@ async def handle_api_llm_edit_prompt(
             _log_hist({
                 "ts": datetime.datetime.now().isoformat(timespec="seconds"),
                 "prompt_id": _hist_pid, "input": messages, "output": raw,
+                "history_id": _edit_execution_context.execution_id,
+                "execution_id": _edit_execution_context.execution_id,
+                "parent_execution_id": _edit_execution_context.parent_execution_id,
                 "call_name": _edit_call_label, "task_key": "edit_illustration_prompt",
-                "model": _edit_model_name,
+                "llm_slot": _edit_final_slot, "phase": _edit_final_phase,
+                "service": _edit_service_name, "model": _edit_final_model_name,
                 "completion_tokens": _edit_completion_tokens,
                 "prompt_tokens": _edit_prompt_tokens,
                 "elapsed": round(_edit_elapsed, 3),
                 "tps": round(_edit_tps, 1),
                 "status": "ok",
+                "queue_item_id": str(_edit_tracking.get("queue_item_id") or ""),
+                "auto_feedback_job_id": str(_edit_tracking.get("job_id") or ""),
+                "auto_feedback_round": int(_edit_tracking.get("round") or 0),
             })
         except Exception as _e:
             print(f"[LLM_EDIT] WARN: 히스토리 기록 실패: {_e}")
@@ -16357,6 +16486,927 @@ async def process_illustration_easy_edit_queue_item(item) -> dict:
             prompt_entry["status"] = "completed"
             prompt_entry["outputs"] = {"images": []}
         raise
+
+
+ILLUSTRATION_AUTO_FEEDBACK_REVIEW_TASK_KEY = "illustration_auto_feedback_review"
+ILLUSTRATION_AUTO_FEEDBACK_MIN_ROUNDS = 1
+ILLUSTRATION_AUTO_FEEDBACK_MAX_ROUNDS = 10
+_illustration_auto_feedback_jobs: dict[str, dict] = {}
+_illustration_auto_feedback_tasks: dict[str, asyncio.Task] = {}
+
+
+class _IllustrationAutoFeedbackCancelled(RuntimeError):
+    pass
+
+
+def _auto_feedback_public_job(job: dict) -> dict:
+    public = {
+        key: copy.deepcopy(value)
+        for key, value in job.items()
+        if not str(key).startswith("_")
+    }
+    public["preserved_backup_names"] = [
+        str(round_info.get("backup_name") or "")
+        for round_info in public.get("rounds", [])
+        if str(round_info.get("backup_name") or "")
+    ]
+    return public
+
+
+def _auto_feedback_progress(job: dict) -> int:
+    max_rounds = max(1, int(job.get("max_rounds") or 1))
+    current_round = max(0, int(job.get("round") or 0))
+    phase = str(job.get("phase") or "queued")
+    if str(job.get("status") or "") in ("completed", "failed", "cancelled"):
+        if job.get("status") == "completed":
+            return 100
+        completed_rounds = len(job.get("rounds") or [])
+        return min(99, round((completed_rounds * 3 / (max_rounds * 3)) * 100))
+    phase_offset = {
+        "editing": 0,
+        "generating": 1,
+        "reviewing": 2,
+    }.get(phase, 0)
+    completed_steps = max(0, current_round - 1) * 3 + phase_offset
+    return min(99, round((completed_steps / (max_rounds * 3)) * 100))
+
+
+async def _update_auto_feedback_job(job: dict, **changes) -> None:
+    job.update(changes)
+    job["updated_at"] = datetime.datetime.now().isoformat(timespec="seconds")
+    job["_updated_ts"] = time.time()
+    job["progress"] = _auto_feedback_progress(job)
+    try:
+        await notify_frontend(
+            "illustration_auto_feedback_updated",
+            _auto_feedback_public_job(job),
+        )
+    except Exception as exc:
+        print(
+            f"[AUTO_FEEDBACK] 진행 상태 알림 실패: job={job.get('job_id')}, "
+            f"status={job.get('status')}, phase={job.get('phase')}, error={exc}"
+        )
+        traceback.print_exc()
+
+
+def _raise_if_auto_feedback_cancelled(job: dict) -> None:
+    if bool(job.get("cancel_requested")):
+        raise _IllustrationAutoFeedbackCancelled("사용자가 오토피드백을 중지했습니다")
+
+
+def _prune_auto_feedback_jobs() -> None:
+    cutoff = time.time() - (24 * 60 * 60)
+    terminal = {"completed", "failed", "cancelled"}
+    removable = [
+        job_id
+        for job_id, job in _illustration_auto_feedback_jobs.items()
+        if str(job.get("status") or "") in terminal
+        and float(job.get("_updated_ts") or job.get("_created_ts") or 0.0) < cutoff
+    ]
+    for job_id in removable:
+        _illustration_auto_feedback_jobs.pop(job_id, None)
+        _illustration_auto_feedback_tasks.pop(job_id, None)
+    if len(_illustration_auto_feedback_jobs) <= 100:
+        return
+    finished = sorted(
+        (
+            (float(job.get("_updated_ts") or job.get("_created_ts") or 0.0), job_id)
+            for job_id, job in _illustration_auto_feedback_jobs.items()
+            if str(job.get("status") or "") in terminal
+        ),
+        key=lambda entry: entry[0],
+    )
+    for _timestamp, job_id in finished[: max(0, len(_illustration_auto_feedback_jobs) - 100)]:
+        _illustration_auto_feedback_jobs.pop(job_id, None)
+        _illustration_auto_feedback_tasks.pop(job_id, None)
+
+
+def _create_auto_feedback_job(body: dict) -> dict:
+    now = time.time()
+    now_text = datetime.datetime.now().isoformat(timespec="seconds")
+    job_id = uuid.uuid4().hex
+    job = {
+        "job_id": job_id,
+        "status": "queued",
+        "phase": "queued",
+        "progress": 0,
+        "source_backup_name": str(body.get("name") or ""),
+        "current_backup_name": str(body.get("name") or ""),
+        "goal": str(body.get("direction") or ""),
+        "max_rounds": int(body.get("max_rounds") or 1),
+        "round": 0,
+        "rounds": [],
+        "best_round": None,
+        "best_backup_name": "",
+        "best_score": None,
+        "achieved": False,
+        "cancel_requested": False,
+        "active_queue_item_id": "",
+        "message": "오토피드백 작업이 등록되었습니다",
+        "error": "",
+        "created_at": now_text,
+        "updated_at": now_text,
+        "_created_ts": now,
+        "_updated_ts": now,
+    }
+    _illustration_auto_feedback_jobs[job_id] = job
+    return job
+
+
+def _parse_auto_feedback_review(raw: str) -> tuple[dict | None, str]:
+    parsed = llm_prompt_edit.parse_llm_json(raw)
+    if not isinstance(parsed, dict):
+        return None, "오토피드백 검수 JSON을 해석하지 못했습니다"
+    achieved = parsed.get("achieved")
+    if not isinstance(achieved, bool):
+        return None, "오토피드백 검수 achieved가 true/false가 아닙니다"
+    score = parsed.get("score")
+    if isinstance(score, bool) or not isinstance(score, int):
+        return None, "오토피드백 검수 score가 정수가 아닙니다"
+    normalized_score = score
+    if not 0 <= normalized_score <= 100:
+        return None, "오토피드백 검수 score가 0~100 범위를 벗어났습니다"
+    summary = str(parsed.get("summary") or "").strip()
+    remaining_gaps = str(parsed.get("remaining_gaps") or "").strip()
+    next_direction = str(parsed.get("next_direction") or "").strip()
+    if not summary:
+        return None, "오토피드백 검수 summary가 비어 있습니다"
+    if not achieved and not next_direction:
+        return None, "목표 미달 검수의 next_direction이 비어 있습니다"
+    return {
+        "achieved": achieved,
+        "score": normalized_score,
+        "summary": summary,
+        "remaining_gaps": remaining_gaps,
+        "next_direction": next_direction,
+    }, ""
+
+
+def _auto_feedback_slot_identity(slot: str) -> tuple[str, str]:
+    config = llm_service.get_config()
+    normalized = str(slot or "llm1").strip().lower()
+    suffix = "" if normalized == "llm1" else normalized.removeprefix("llm")
+    return (
+        str(config.get(f"llm_service{suffix}") or config.get("llm_service") or ""),
+        str(config.get(f"llm_model{suffix}") or config.get("llm_model") or ""),
+    )
+
+
+def _log_auto_feedback_review_history(
+    *,
+    job: dict,
+    round_number: int,
+    messages: list,
+    output: str,
+    status: str,
+    execution_id: str,
+    parent_execution_id: str,
+    phase: str,
+    llm_slot: str,
+    elapsed: float,
+    usage: dict | None = None,
+    error: str = "",
+    attempt: int | None = None,
+    total_attempts: int | None = None,
+    queue_item_id: str = "",
+) -> None:
+    try:
+        service, model = _auto_feedback_slot_identity(llm_slot)
+        token_usage = dict(usage or {})
+        completion_tokens = int(
+            token_usage.get("completion_tokens")
+            or llm_service._approx_tokens(output)
+        )
+        prompt_tokens = int(
+            token_usage.get("prompt_tokens")
+            or llm_service._approx_input_tokens(messages)
+        )
+        duration = max(0.0, float(elapsed or 0.0))
+        record = {
+            "ts": datetime.datetime.now().isoformat(timespec="seconds"),
+            "prompt_id": f"auto_feedback:{job.get('job_id')}:review:{round_number}",
+            "history_id": execution_id or uuid.uuid4().hex,
+            "execution_id": execution_id,
+            "parent_execution_id": parent_execution_id,
+            "task_key": ILLUSTRATION_AUTO_FEEDBACK_REVIEW_TASK_KEY,
+            "call_name": f"삽화 오토피드백 비전 검수 {round_number}/{job.get('max_rounds')}",
+            "llm_slot": llm_slot,
+            "phase": phase or "primary",
+            "service": service,
+            "model": model,
+            "input": messages,
+            "output": str(output or ""),
+            "completion_tokens": completion_tokens,
+            "prompt_tokens": prompt_tokens,
+            "elapsed": round(duration, 3),
+            "tps": round(completion_tokens / duration, 1) if duration > 0 else 0.0,
+            "status": status,
+            "error": str(error or ""),
+            "auto_feedback_job_id": str(job.get("job_id") or ""),
+            "auto_feedback_round": round_number,
+            "auto_feedback_max_rounds": int(job.get("max_rounds") or 0),
+            "queue_item_id": queue_item_id,
+        }
+        if attempt is not None:
+            record["attempt"] = attempt
+        if total_attempts is not None:
+            record["total_attempts"] = total_attempts
+        lighbd_service._log_lighbd_history(record)
+    except Exception as exc:
+        print(
+            f"[AUTO_FEEDBACK:DETAIL] LB 자세히 기록 실패: "
+            f"job={job.get('job_id')}, round={round_number}, status={status}, error={exc}"
+        )
+        traceback.print_exc()
+
+
+def _build_auto_feedback_review_messages(
+    goal: str,
+    round_number: int,
+    max_rounds: int,
+) -> list[dict]:
+    system_prompt = (
+        "당신은 이미지 수정 결과를 엄격하게 검수하는 비전 평가자입니다. "
+        "사용자의 자연어 목표를 문맥과 상식으로 이해하고, 고정된 단어 목록이나 키워드 규칙으로 "
+        "판정하지 마세요. 첫 번째 이미지는 수정 전 원본, 두 번째 이미지는 현재 회차의 생성 결과입니다. "
+        "사용자가 요구하지 않은 취향은 평가 기준에 추가하지 말고, 이미지에서 실제로 확인 가능한 결과를 "
+        "중심으로 판단하세요. 반드시 JSON 객체 하나만 반환하세요."
+    )
+    user_prompt = (
+        f"사용자의 최종 목표:\n{goal}\n\n"
+        f"현재 반복: {round_number}/{max_rounds}\n\n"
+        "현재 결과가 목표를 모두 충족하면 achieved를 true로 판단하세요. 일부만 충족하거나 중요한 요구가 "
+        "이미지에서 확인되지 않으면 false입니다. score는 목표 달성도를 0~100 정수로 평가합니다. "
+        "목표 미달이면 다음 프롬프트 편집 LLM이 바로 이해할 수 있도록 next_direction에 구체적인 자연어 "
+        "수정 지시를 작성하세요.\n\n"
+        "응답 형식:\n"
+        "{\n"
+        '  "achieved": true 또는 false,\n'
+        '  "score": 0부터 100 사이 정수,\n'
+        '  "summary": "현재 결과에 대한 간결한 평가",\n'
+        '  "remaining_gaps": "아직 충족되지 않은 내용. 없으면 빈 문자열",\n'
+        '  "next_direction": "다음 회차에 전달할 자연어 수정 지시. 달성했으면 빈 문자열"\n'
+        "}"
+    )
+    return [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
+
+
+async def _execute_auto_feedback_review(
+    queue_item,
+    job: dict,
+    round_number: int,
+    original_image_bytes: bytes,
+    generated_image_bytes: bytes,
+) -> dict:
+    messages = _build_auto_feedback_review_messages(
+        str(job.get("goal") or ""),
+        round_number,
+        int(job.get("max_rounds") or 1),
+    )
+    call_name = f"삽화 오토피드백 비전 검수 {round_number}/{job.get('max_rounds')}"
+    execution_context = llm_service.create_llm_execution_context(
+        ILLUSTRATION_AUTO_FEEDBACK_REVIEW_TASK_KEY,
+        call_name=call_name,
+        json_mode=True,
+        execution_id=f"{job.get('job_id')}:review:{round_number}:{uuid.uuid4().hex[:8]}",
+        parent_execution_id=str(job.get("job_id") or ""),
+        metadata={
+            "auto_feedback_job_id": str(job.get("job_id") or ""),
+            "auto_feedback_round": round_number,
+            "queue_item_id": str(getattr(queue_item, "id", "") or ""),
+        },
+    )
+    usage: dict = {}
+    primary_model = llm_service.routing_primary_model(
+        ILLUSTRATION_AUTO_FEEDBACK_REVIEW_TASK_KEY
+    )
+
+    async def record_attempt_failure(event: dict) -> None:
+        raw_response = event.get("raw_response", event.get("result"))
+        _log_auto_feedback_review_history(
+            job=job,
+            round_number=round_number,
+            messages=messages,
+            output="" if raw_response is None else str(raw_response),
+            status="error",
+            execution_id=str(event.get("attempt_id") or ""),
+            parent_execution_id=execution_context.execution_id,
+            phase=str(event.get("phase") or ""),
+            llm_slot=str(event.get("slot") or "llm1"),
+            elapsed=float(event.get("elapsed") or 0.0),
+            usage=usage,
+            error=str(event.get("reason") or event.get("error") or "LLM 시도 실패"),
+            attempt=int(event.get("attempt") or 0),
+            total_attempts=int(event.get("total_attempts") or 0),
+            queue_item_id=str(getattr(queue_item, "id", "") or ""),
+        )
+
+    try:
+        await notify_frontend("lighbd_llm_stream", {
+            "type": "start",
+            "model": primary_model,
+            "call_name": call_name,
+            "prompt_id": execution_context.execution_id,
+        })
+    except Exception as exc:
+        print(
+            f"[AUTO_FEEDBACK:REVIEW] 위젯 start 알림 실패: "
+            f"job={job.get('job_id')}, round={round_number}, error={exc}"
+        )
+        traceback.print_exc()
+
+    started = time.time()
+    def review_validator(raw: str) -> tuple[bool, str]:
+        parsed_review, validation_error = _parse_auto_feedback_review(raw)
+        return parsed_review is not None, validation_error
+
+    result = await llm_service.callLLMVisionTaskResult(
+        ILLUSTRATION_AUTO_FEEDBACK_REVIEW_TASK_KEY,
+        messages,
+        images=[
+            (
+                base64.b64encode(original_image_bytes).decode("ascii"),
+                "image/webp",
+                "IMAGE 1 ROLE: ORIGINAL SOURCE BEFORE AUTO FEEDBACK",
+            ),
+            (
+                base64.b64encode(generated_image_bytes).decode("ascii"),
+                "image/webp",
+                f"IMAGE 2 ROLE: GENERATED RESULT ROUND {round_number}",
+            ),
+        ],
+        json_mode=True,
+        result_validator=review_validator,
+        metadata_sink=usage,
+        on_attempt_failure=record_attempt_failure,
+        execution_context=execution_context,
+    )
+    elapsed = time.time() - started
+    raw = str(result.raw_response if result.raw_response is not None else result.text or "")
+    final_slot = str(result.final_slot or "llm1")
+    final_phase = str(result.final_phase or "primary")
+    if not result.accepted:
+        error = str(
+            result.reason
+            or (f"{type(result.exception).__name__}: {result.exception}" if result.exception else "")
+            or result.text
+            or "오토피드백 비전 검수 실패"
+        )
+        _log_auto_feedback_review_history(
+            job=job,
+            round_number=round_number,
+            messages=messages,
+            output=raw,
+            status="error",
+            execution_id=execution_context.execution_id,
+            parent_execution_id=execution_context.parent_execution_id,
+            phase=final_phase,
+            llm_slot=final_slot,
+            elapsed=elapsed,
+            usage=usage,
+            error=error,
+            queue_item_id=str(getattr(queue_item, "id", "") or ""),
+        )
+        try:
+            await notify_frontend("lighbd_llm_stream", {
+                "type": "error",
+                "model": _auto_feedback_slot_identity(final_slot)[1],
+                "error": error,
+            })
+        except Exception as exc:
+            print(
+                f"[AUTO_FEEDBACK:REVIEW] 위젯 error 알림 실패: "
+                f"job={job.get('job_id')}, round={round_number}, error={exc}"
+            )
+            traceback.print_exc()
+        raise RuntimeError(error)
+
+    parsed, parse_error = _parse_auto_feedback_review(raw)
+    if parsed is None:
+        print(
+            f"[AUTO_FEEDBACK:REVIEW] 최종 응답 파싱 실패: "
+            f"job={job.get('job_id')}, round={round_number}, "
+            f"error={parse_error}, raw={raw[:500]!r}"
+        )
+        raise RuntimeError(parse_error)
+    _log_auto_feedback_review_history(
+        job=job,
+        round_number=round_number,
+        messages=messages,
+        output=raw,
+        status="ok",
+        execution_id=execution_context.execution_id,
+        parent_execution_id=execution_context.parent_execution_id,
+        phase=final_phase,
+        llm_slot=final_slot,
+        elapsed=elapsed,
+        usage=usage,
+        queue_item_id=str(getattr(queue_item, "id", "") or ""),
+    )
+    completion_tokens = int(
+        usage.get("completion_tokens") or llm_service._approx_tokens(raw)
+    )
+    prompt_tokens = int(
+        usage.get("prompt_tokens") or llm_service._approx_input_tokens(messages)
+    )
+    try:
+        await notify_frontend("lighbd_llm_stream", {
+            "type": "done",
+            "text": raw,
+            "model": _auto_feedback_slot_identity(final_slot)[1],
+            "completion_tokens": completion_tokens,
+            "prompt_tokens": prompt_tokens,
+            "elapsed": elapsed,
+            "tps": completion_tokens / elapsed if elapsed > 0 else 0.0,
+            "ttft": None,
+        })
+    except Exception as exc:
+        print(
+            f"[AUTO_FEEDBACK:REVIEW] 위젯 done 알림 실패: "
+            f"job={job.get('job_id')}, round={round_number}, error={exc}"
+        )
+        traceback.print_exc()
+    return parsed
+
+
+async def _queue_auto_feedback_llm_phase(
+    job: dict,
+    *,
+    label: str,
+    phase: str,
+    round_number: int,
+    runtime_handler,
+) -> dict:
+    item = await queue_manager.add_item(
+        "illustration_auto_feedback_llm",
+        label,
+        {
+            "auto_feedback_job_id": str(job.get("job_id") or ""),
+            "auto_feedback_phase": phase,
+            "auto_feedback_round": round_number,
+            "auto_feedback_max_rounds": int(job.get("max_rounds") or 0),
+        },
+        priority=0,
+        runtime_handler=runtime_handler,
+    )
+    await _update_auto_feedback_job(
+        job,
+        active_queue_item_id=str(getattr(item, "id", "") or ""),
+    )
+    try:
+        result = await item.completion_future
+        if not isinstance(result, dict):
+            raise RuntimeError(f"오토피드백 {phase} 큐 결과가 객체가 아닙니다")
+        return result
+    finally:
+        if str(job.get("active_queue_item_id") or "") == str(getattr(item, "id", "") or ""):
+            await _update_auto_feedback_job(job, active_queue_item_id="")
+
+
+async def _run_auto_feedback_edit(
+    job: dict,
+    round_number: int,
+    edit_body: dict,
+) -> dict:
+    async def runtime_handler(queue_item):
+        response = await handle_api_llm_edit_prompt(
+            None,
+            _body=edit_body,
+            _tracking={
+                "job_id": str(job.get("job_id") or ""),
+                "round": round_number,
+                "max_rounds": int(job.get("max_rounds") or 0),
+                "queue_item_id": str(getattr(queue_item, "id", "") or ""),
+            },
+        )
+        return _internal_json_response_payload(response, "오토피드백 프롬프트 수정")
+
+    return await _queue_auto_feedback_llm_phase(
+        job,
+        label=f"오토피드백 {round_number}/{job.get('max_rounds')} · 프롬프트 수정",
+        phase="editing",
+        round_number=round_number,
+        runtime_handler=runtime_handler,
+    )
+
+
+async def _run_auto_feedback_regeneration(
+    job: dict,
+    round_number: int,
+    regenerate_body: dict,
+) -> dict:
+    result = await handle_api_reschedule_with_modified_prompt(
+        None,
+        _body=regenerate_body,
+        _return_queue_result=True,
+    )
+    if isinstance(result, web.Response):
+        _internal_json_response_payload(result, "오토피드백 이미지 생성")
+        raise RuntimeError("오토피드백 생성 결과 이미지가 없습니다")
+    if not isinstance(result, dict):
+        raise RuntimeError("오토피드백 생성 결과 형식이 올바르지 않습니다")
+    image_bytes = result.get("image_bytes")
+    if not image_bytes:
+        raise RuntimeError("오토피드백 생성 결과 이미지가 비어 있습니다")
+    print(
+        f"[AUTO_FEEDBACK:GENERATE] 백업 보존 완료: job={job.get('job_id')}, "
+        f"round={round_number}/{job.get('max_rounds')}, "
+        f"backup={result.get('backup_name')}, bytes={len(image_bytes):,}"
+    )
+    return result
+
+
+async def _run_auto_feedback_review(
+    job: dict,
+    round_number: int,
+    original_image_bytes: bytes,
+    generated_image_bytes: bytes,
+) -> dict:
+    async def runtime_handler(queue_item):
+        return await _execute_auto_feedback_review(
+            queue_item,
+            job,
+            round_number,
+            original_image_bytes,
+            generated_image_bytes,
+        )
+
+    return await _queue_auto_feedback_llm_phase(
+        job,
+        label=f"오토피드백 {round_number}/{job.get('max_rounds')} · 이미지 검수",
+        phase="reviewing",
+        round_number=round_number,
+        runtime_handler=runtime_handler,
+    )
+
+
+def _compose_auto_feedback_edit_direction(
+    goal: str,
+    previous_review: dict | None,
+) -> str:
+    if not previous_review:
+        return goal
+    parts = [
+        "사용자의 최종 목표:",
+        goal,
+        "",
+        "직전 생성 이미지에 대한 비전 검수:",
+        str(previous_review.get("summary") or ""),
+    ]
+    remaining_gaps = str(previous_review.get("remaining_gaps") or "").strip()
+    next_direction = str(previous_review.get("next_direction") or "").strip()
+    if remaining_gaps:
+        parts.extend(["아직 충족되지 않은 내용:", remaining_gaps])
+    if next_direction:
+        parts.extend(["다음 수정 지시:", next_direction])
+    parts.extend([
+        "",
+        "위 검수를 자연어 문맥 그대로 반영해 최종 목표에 더 가까워지도록 프롬프트를 수정해 주세요.",
+    ])
+    return "\n".join(parts)
+
+
+async def _run_illustration_auto_feedback_job(job_id: str, body: dict) -> None:
+    job = _illustration_auto_feedback_jobs.get(job_id)
+    if not job:
+        print(f"[AUTO_FEEDBACK] 시작 실패: 작업 상태 없음 job={job_id}")
+        return
+    try:
+        source_name = str(body.get("name") or "")
+        original_image_path = os.path.join(WORKFLOW_BACKUP_DIR, f"{source_name}.webp")
+        if not os.path.isfile(original_image_path):
+            raise RuntimeError("오토피드백 원본 백업 이미지를 찾지 못했습니다")
+        with open(original_image_path, "rb") as image_file:
+            original_image_bytes = image_file.read()
+        if not original_image_bytes:
+            raise RuntimeError("오토피드백 원본 백업 이미지가 비어 있습니다")
+
+        current_name = source_name
+        current_positive = str(body.get("positive") or "")
+        current_negative = str(body.get("negative") or "")
+        current_identity = copy.deepcopy(body.get("previous_identity"))
+        selected_characters = copy.deepcopy(body.get("characters"))
+        selected_profiles = copy.deepcopy(body.get("visual_profile_ids"))
+        camera_control_present = "camera_control" in body
+        camera_control = copy.deepcopy(body.get("camera_control"))
+        previous_review = None
+        best = None
+
+        await _update_auto_feedback_job(
+            job,
+            status="running",
+            phase="preparing",
+            message="오토피드백 반복을 준비하고 있습니다",
+        )
+        for round_number in range(1, int(job.get("max_rounds") or 1) + 1):
+            _raise_if_auto_feedback_cancelled(job)
+            await _update_auto_feedback_job(
+                job,
+                round=round_number,
+                phase="editing",
+                message=f"{round_number}/{job.get('max_rounds')}회 프롬프트를 수정하고 있습니다",
+            )
+            edit_body = {
+                "name": current_name,
+                "positive": current_positive,
+                "negative": current_negative,
+                "direction": _compose_auto_feedback_edit_direction(
+                    str(job.get("goal") or ""),
+                    previous_review,
+                ),
+            }
+            if selected_characters:
+                edit_body["characters"] = copy.deepcopy(selected_characters)
+            if selected_profiles:
+                edit_body["visual_profile_ids"] = copy.deepcopy(selected_profiles)
+            if current_identity:
+                edit_body["previous_identity"] = copy.deepcopy(current_identity)
+            edited = await _run_auto_feedback_edit(job, round_number, edit_body)
+            if edited.get("parse_failed"):
+                raise RuntimeError("오토피드백 프롬프트 수정 응답을 파싱하지 못했습니다")
+            modified_positive = str(edited.get("positive") or "")
+            modified_negative = str(edited.get("negative") or "")
+            if not modified_positive:
+                raise RuntimeError("오토피드백 수정 결과의 긍정 프롬프트가 비어 있습니다")
+            current_identity = copy.deepcopy(edited.get("identity_edit") or current_identity)
+
+            _raise_if_auto_feedback_cancelled(job)
+            await _update_auto_feedback_job(
+                job,
+                phase="generating",
+                message=f"{round_number}/{job.get('max_rounds')}회 이미지를 생성하고 있습니다",
+            )
+            regenerate_body = {
+                "name": current_name,
+                "positive": modified_positive,
+                "negative": modified_negative,
+                "identity_edit": copy.deepcopy(current_identity),
+            }
+            if camera_control_present:
+                regenerate_body["camera_control"] = copy.deepcopy(camera_control)
+            generated = await _run_auto_feedback_regeneration(
+                job,
+                round_number,
+                regenerate_body,
+            )
+            generated_image_bytes = generated.get("image_bytes")
+            generated_backup_name = str(generated.get("backup_name") or current_name)
+            round_info = {
+                "round": round_number,
+                "backup_name": generated_backup_name,
+                "source_backup_name": current_name,
+                "provider": str(generated.get("provider") or ""),
+                "fallback_used": bool(generated.get("fallback_used")),
+                "review": None,
+            }
+            job["rounds"].append(round_info)
+            await _update_auto_feedback_job(
+                job,
+                current_backup_name=generated_backup_name,
+                message=(
+                    f"{round_number}/{job.get('max_rounds')}회 이미지를 백업에 저장했습니다. "
+                    "목표 달성 여부를 검수합니다"
+                ),
+            )
+
+            _raise_if_auto_feedback_cancelled(job)
+            await _update_auto_feedback_job(
+                job,
+                phase="reviewing",
+                message=f"{round_number}/{job.get('max_rounds')}회 생성 이미지를 비전 검수하고 있습니다",
+            )
+            review = await _run_auto_feedback_review(
+                job,
+                round_number,
+                original_image_bytes,
+                generated_image_bytes,
+            )
+            round_info["review"] = copy.deepcopy(review)
+            candidate = {
+                "round": round_number,
+                "backup_name": generated_backup_name,
+                "score": int(review.get("score") or 0),
+            }
+            if best is None or candidate["score"] > best["score"]:
+                best = candidate
+                job["best_round"] = candidate["round"]
+                job["best_backup_name"] = candidate["backup_name"]
+                job["best_score"] = candidate["score"]
+            await _update_auto_feedback_job(
+                job,
+                achieved=bool(review.get("achieved")),
+                message=(
+                    f"{round_number}/{job.get('max_rounds')}회 검수: "
+                    f"{review.get('score')}점 · {review.get('summary')}"
+                ),
+            )
+            if review.get("achieved"):
+                job["best_round"] = round_number
+                job["best_backup_name"] = generated_backup_name
+                job["best_score"] = int(review.get("score") or 0)
+                await _update_auto_feedback_job(
+                    job,
+                    status="completed",
+                    phase="completed",
+                    progress=100,
+                    message=(
+                        f"{round_number}회 만에 목표를 달성했습니다. "
+                        "모든 회차 이미지는 백업에 보존되었습니다"
+                    ),
+                )
+                return
+
+            previous_review = review
+            current_name = generated_backup_name
+            current_positive = modified_positive
+            current_negative = modified_negative
+
+        await _update_auto_feedback_job(
+            job,
+            status="completed",
+            phase="completed",
+            progress=100,
+            achieved=False,
+            message=(
+                f"최대 {job.get('max_rounds')}회까지 생성했습니다. "
+                f"최고 평가 결과({job.get('best_score')}점)를 선택했으며 모든 이미지는 백업에 보존되었습니다"
+            ),
+        )
+    except _IllustrationAutoFeedbackCancelled as exc:
+        print(
+            f"[AUTO_FEEDBACK] 사용자 중지: job={job_id}, round={job.get('round')}, "
+            f"preserved={[item.get('backup_name') for item in job.get('rounds', [])]}"
+        )
+        await _update_auto_feedback_job(
+            job,
+            status="cancelled",
+            phase="cancelled",
+            message=(
+                f"오토피드백을 중지했습니다. 생성 완료된 {len(job.get('rounds') or [])}개 이미지는 "
+                "백업에 그대로 보존되었습니다"
+            ),
+        )
+    except Exception as exc:
+        print(
+            f"[AUTO_FEEDBACK] 작업 실패: job={job_id}, round={job.get('round')}, "
+            f"phase={job.get('phase')}, error={exc}, "
+            f"preserved={[item.get('backup_name') for item in job.get('rounds', [])]}"
+        )
+        traceback.print_exc()
+        if bool(job.get("cancel_requested")):
+            await _update_auto_feedback_job(
+                job,
+                status="cancelled",
+                phase="cancelled",
+                message=(
+                    f"오토피드백을 중지했습니다. 생성 완료된 {len(job.get('rounds') or [])}개 이미지는 "
+                    "백업에 그대로 보존되었습니다"
+                ),
+                error="",
+            )
+        else:
+            await _update_auto_feedback_job(
+                job,
+                status="failed",
+                phase="failed",
+                error=str(exc),
+                message=(
+                    f"오토피드백 실패: {exc}. 생성 완료된 {len(job.get('rounds') or [])}개 이미지는 "
+                    "백업에 그대로 보존되었습니다"
+                ),
+            )
+    finally:
+        job["_updated_ts"] = time.time()
+        job["active_queue_item_id"] = ""
+
+
+async def handle_api_illustration_auto_feedback_start(request: web.Request) -> web.Response:
+    try:
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise ValueError("요청 본문은 JSON 객체여야 합니다")
+        backup_name = str(body.get("name") or "").strip()
+        direction = str(body.get("direction") or "").strip()
+        if not backup_name or ".." in backup_name or "/" in backup_name or "\\" in backup_name:
+            raise ValueError("올바른 백업 이름이 필요합니다")
+        if not direction:
+            raise ValueError("오토피드백의 최종 목표를 입력해주세요")
+        if len(direction) > 5000:
+            raise ValueError("오토피드백 최종 목표는 5000자 이하여야 합니다")
+        raw_max_rounds = body.get("max_rounds", 3)
+        if isinstance(raw_max_rounds, bool):
+            raise ValueError("최대 횟수는 정수여야 합니다")
+        max_rounds = int(raw_max_rounds)
+        if not ILLUSTRATION_AUTO_FEEDBACK_MIN_ROUNDS <= max_rounds <= ILLUSTRATION_AUTO_FEEDBACK_MAX_ROUNDS:
+            raise ValueError(
+                f"최대 횟수는 {ILLUSTRATION_AUTO_FEEDBACK_MIN_ROUNDS}~"
+                f"{ILLUSTRATION_AUTO_FEEDBACK_MAX_ROUNDS} 사이여야 합니다"
+            )
+        prompt_path_json = os.path.join(WORKFLOW_BACKUP_DIR, f"{backup_name}.json")
+        prompt_path_txt = os.path.join(WORKFLOW_BACKUP_DIR, f"{backup_name}.txt")
+        prompt_path = prompt_path_json if os.path.isfile(prompt_path_json) else prompt_path_txt
+        if not os.path.isfile(prompt_path):
+            raise ValueError("오토피드백 원본 프롬프트 백업을 찾지 못했습니다")
+        if not os.path.isfile(os.path.join(WORKFLOW_BACKUP_DIR, f"{backup_name}.webp")):
+            raise ValueError("오토피드백 원본 백업 이미지를 찾지 못했습니다")
+        positive = body.get("positive")
+        negative = body.get("negative")
+        if positive is not None and not isinstance(positive, str):
+            raise ValueError("positive는 문자열이어야 합니다")
+        if negative is not None and not isinstance(negative, str):
+            raise ValueError("negative는 문자열이어야 합니다")
+        if not str(positive or "") or negative is None:
+            source_positive, source_negative = _extract_prompts_from_backup(prompt_path)
+        if not str(positive or ""):
+            body["positive"] = source_positive
+        if negative is None:
+            body["negative"] = source_negative
+        body["name"] = backup_name
+        body["direction"] = direction
+        body["max_rounds"] = max_rounds
+        _prune_auto_feedback_jobs()
+        job = _create_auto_feedback_job(body)
+        task = asyncio.create_task(
+            _run_illustration_auto_feedback_job(job["job_id"], copy.deepcopy(body))
+        )
+        _illustration_auto_feedback_tasks[job["job_id"]] = task
+
+        def finish_task(done_task: asyncio.Task, target_job_id: str = job["job_id"]) -> None:
+            _illustration_auto_feedback_tasks.pop(target_job_id, None)
+            try:
+                done_task.result()
+            except asyncio.CancelledError:
+                print(f"[AUTO_FEEDBACK] 백그라운드 작업 취소 회수: job={target_job_id}")
+            except Exception as exc:
+                print(
+                    f"[AUTO_FEEDBACK] 백그라운드 작업 회수 실패: "
+                    f"job={target_job_id}, error={exc}"
+                )
+                traceback.print_exc()
+
+        task.add_done_callback(finish_task)
+        print(
+            f"[AUTO_FEEDBACK] 작업 접수: job={job['job_id']}, backup={backup_name}, "
+            f"max_rounds={max_rounds}, goal={direction!r}"
+        )
+        return web.json_response(
+            {"success": True, "job": _auto_feedback_public_job(job)},
+            status=202,
+        )
+    except (TypeError, ValueError) as exc:
+        print(f"[AUTO_FEEDBACK] 요청 검증 실패: error={exc}")
+        traceback.print_exc()
+        return web.json_response({"error": str(exc)}, status=400)
+    except Exception as exc:
+        print(f"[AUTO_FEEDBACK] 작업 접수 실패: error={exc}")
+        traceback.print_exc()
+        return web.json_response({"error": str(exc)}, status=500)
+
+
+async def handle_api_illustration_auto_feedback_status(request: web.Request) -> web.Response:
+    job_id = str(request.match_info.get("job_id") or "").strip()
+    job = _illustration_auto_feedback_jobs.get(job_id)
+    if not job:
+        print(f"[AUTO_FEEDBACK] 상태 조회 실패: 작업 없음 job={job_id!r}")
+        return web.json_response({"error": "오토피드백 작업을 찾지 못했습니다"}, status=404)
+    return web.json_response({"success": True, "job": _auto_feedback_public_job(job)})
+
+
+async def handle_api_illustration_auto_feedback_cancel(request: web.Request) -> web.Response:
+    job_id = str(request.match_info.get("job_id") or "").strip()
+    job = _illustration_auto_feedback_jobs.get(job_id)
+    if not job:
+        print(f"[AUTO_FEEDBACK] 중지 실패: 작업 없음 job={job_id!r}")
+        return web.json_response({"error": "오토피드백 작업을 찾지 못했습니다"}, status=404)
+    if str(job.get("status") or "") in ("completed", "failed", "cancelled"):
+        print(
+            f"[AUTO_FEEDBACK] 중지 스킵: 이미 종료됨 job={job_id}, status={job.get('status')}"
+        )
+        return web.json_response({"success": True, "job": _auto_feedback_public_job(job)})
+    job["cancel_requested"] = True
+    active_item_id = str(job.get("active_queue_item_id") or "")
+    if active_item_id:
+        try:
+            await queue_manager.cancel_item(active_item_id)
+        except Exception as exc:
+            print(
+                f"[AUTO_FEEDBACK] 대기 큐 항목 중지 실패: job={job_id}, "
+                f"item={active_item_id}, error={exc}"
+            )
+            traceback.print_exc()
+    if str(job.get("status") or "") not in ("completed", "failed", "cancelled"):
+        await _update_auto_feedback_job(
+            job,
+            message="현재 처리 중인 단계가 안전하게 끝나는 즉시 중지합니다",
+        )
+    print(
+        f"[AUTO_FEEDBACK] 중지 요청: job={job_id}, round={job.get('round')}, "
+        f"phase={job.get('phase')}, active_item={active_item_id or '(없음)'}"
+    )
+    return web.json_response({"success": True, "job": _auto_feedback_public_job(job)})
 
 
 async def handle_api_llm_edit_capability(request: web.Request) -> web.Response:
@@ -18841,6 +19891,18 @@ app.router.add_post(
 )
 app.router.add_post("/api/llm_edit_prompt", handle_api_llm_edit_prompt)
 app.router.add_get("/api/llm_edit_prompt/capability", handle_api_llm_edit_capability)
+app.router.add_post(
+    "/api/illustration_auto_feedback",
+    handle_api_illustration_auto_feedback_start,
+)
+app.router.add_get(
+    "/api/illustration_auto_feedback/{job_id}",
+    handle_api_illustration_auto_feedback_status,
+)
+app.router.add_post(
+    "/api/illustration_auto_feedback/{job_id}/cancel",
+    handle_api_illustration_auto_feedback_cancel,
+)
 app.router.add_get("/api/llm_edit_prompt_template", handle_api_get_llm_edit_template)
 app.router.add_post("/api/llm_edit_prompt_template", handle_api_set_llm_edit_template)
 # 복장 추출 모드 API

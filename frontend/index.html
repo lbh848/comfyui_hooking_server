@@ -19671,11 +19671,37 @@
                             <label>수정 방향</label>
                             <textarea id="llm-edit-direction-input" rows="5" placeholder="예: 밤 분위기로 바꾸고 두 캐릭터가 서로 마주 보며 웃게 해줘" style="width:100%; resize:vertical;"></textarea>
                         </div>
+                        <div id="llm-edit-auto-feedback-panel" style="margin-top:12px; padding:10px 12px; border:1px solid var(--border); border-radius:8px; background:var(--surface2);">
+                            <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+                                <div>
+                                    <div style="font-size:0.8rem; font-weight:700;">오토피드백 반복</div>
+                                    <div style="margin-top:2px; font-size:0.7rem; color:var(--text-secondary);">생성 이미지를 비전 LLM이 검수하고 목표 미달이면 다시 수정합니다. 모든 회차 이미지는 백업에 보존됩니다.</div>
+                                </div>
+                                <label style="display:flex; align-items:center; gap:7px; font-size:0.75rem; white-space:nowrap;">
+                                    최대 횟수
+                                    <input id="llm-edit-auto-feedback-max" type="number" min="1" max="10" step="1" value="3" style="width:64px; padding:5px 7px; border:1px solid var(--border); border-radius:6px; background:var(--surface1); color:var(--text);">
+                                </label>
+                            </div>
+                            <div id="llm-edit-auto-feedback-status" style="display:none; margin-top:10px; padding-top:9px; border-top:1px solid var(--border);">
+                                <div style="display:flex; justify-content:space-between; gap:10px; align-items:center; font-size:0.74rem;">
+                                    <span id="llm-edit-auto-feedback-status-text" style="color:var(--text);">대기 중</span>
+                                    <span id="llm-edit-auto-feedback-progress-text" style="color:var(--text-secondary);">0%</span>
+                                </div>
+                                <div style="height:5px; margin-top:6px; border-radius:999px; overflow:hidden; background:var(--surface1);">
+                                    <div id="llm-edit-auto-feedback-progress-bar" style="width:0%; height:100%; background:var(--accent); transition:width .2s ease;"></div>
+                                </div>
+                                <div id="llm-edit-auto-feedback-rounds" style="margin-top:8px; max-height:130px; overflow-y:auto; display:grid; gap:5px;"></div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
             <div class="modal-footer">
                 <button class="cancel" onclick="closeLlmEditModal()">취소</button>
+                <button class="cancel" id="llm-edit-auto-feedback-cancel-btn" onclick="cancelIllustrationAutoFeedback()" style="display:none; border-color:var(--error); color:var(--error);">오토피드백 중지</button>
+                <button id="llm-edit-auto-feedback-run-btn" onclick="startIllustrationAutoFeedback()" style="padding:8px 14px; border:1px solid #53b7a8; border-radius:6px; background:var(--surface2); color:#53b7a8; font-weight:700; cursor:pointer;">
+                    오토피드백
+                </button>
                 <button class="confirm" id="llm-edit-run-btn" onclick="llmEditPrompt()">
                     <span id="llm-edit-run-text">수정 적용</span>
                 </button>
@@ -29278,6 +29304,9 @@
                         case 'lighbd_llm_stream':
                             handleLighbdLlmStream(msg.data);
                             break;
+                        case 'illustration_auto_feedback_updated':
+                            handleIllustrationAutoFeedbackUpdate(msg.data);
+                            break;
                         case 'enhance_started':
                             showToast(`프롬프트 강화 시작 (${msg.data.char_count}명)`, 'info');
                             break;
@@ -33991,6 +34020,13 @@
         let llmEditInFlight = false;
         let currentModalIdentityEdit = null;
         let llmEditModalState = null;
+        let illustrationAutoFeedbackState = {
+            jobId: '',
+            sourceBackupName: '',
+            job: null,
+            pollTimer: null,
+            terminalHandled: false,
+        };
         let currentModalCameraSupported = false;
         let currentModalCameraAppliedControl = null;
         let currentModalCameraDirty = false;
@@ -34880,6 +34916,17 @@
             document.getElementById('llm-edit-run-text').textContent = '수정 적용';
             document.getElementById('llm-edit-run-btn').disabled = false;
             document.getElementById('llm-edit-direction-modal').classList.add('visible');
+            if (
+                illustrationAutoFeedbackState.jobId
+                && illustrationAutoFeedbackState.sourceBackupName === openingBackupName
+                && !['completed', 'failed', 'cancelled'].includes(
+                    String(illustrationAutoFeedbackState.job?.status || '')
+                )
+            ) {
+                renderIllustrationAutoFeedbackJob(illustrationAutoFeedbackState.job);
+            } else {
+                resetIllustrationAutoFeedbackUi();
+            }
 
             if (fmt === 'v3') {
                 charSection.style.display = 'block';
@@ -34964,6 +35011,292 @@
         function closeLlmEditModal() {
             const el = document.getElementById('llm-edit-direction-modal');
             if (el) el.classList.remove('visible');
+        }
+
+        function isIllustrationAutoFeedbackActive() {
+            const status = String(illustrationAutoFeedbackState.job?.status || '');
+            return !!illustrationAutoFeedbackState.jobId
+                && !['completed', 'failed', 'cancelled'].includes(status);
+        }
+
+        function resetIllustrationAutoFeedbackUi() {
+            const status = document.getElementById('llm-edit-auto-feedback-status');
+            const statusText = document.getElementById('llm-edit-auto-feedback-status-text');
+            const progressText = document.getElementById('llm-edit-auto-feedback-progress-text');
+            const progressBar = document.getElementById('llm-edit-auto-feedback-progress-bar');
+            const rounds = document.getElementById('llm-edit-auto-feedback-rounds');
+            const runButton = document.getElementById('llm-edit-auto-feedback-run-btn');
+            const cancelButton = document.getElementById('llm-edit-auto-feedback-cancel-btn');
+            const editButton = document.getElementById('llm-edit-run-btn');
+            const directionInput = document.getElementById('llm-edit-direction-input');
+            const maxInput = document.getElementById('llm-edit-auto-feedback-max');
+            if (status) status.style.display = 'none';
+            if (statusText) statusText.textContent = '대기 중';
+            if (progressText) progressText.textContent = '0%';
+            if (progressBar) progressBar.style.width = '0%';
+            if (rounds) rounds.innerHTML = '';
+            if (runButton) runButton.disabled = false;
+            if (cancelButton) {
+                cancelButton.style.display = 'none';
+                cancelButton.disabled = false;
+                cancelButton.textContent = '오토피드백 중지';
+            }
+            if (editButton) editButton.disabled = false;
+            if (directionInput) directionInput.disabled = false;
+            if (maxInput) maxInput.disabled = false;
+        }
+
+        function autoFeedbackPhaseLabel(phase) {
+            return ({
+                queued: '큐 등록',
+                preparing: '준비',
+                editing: '프롬프트 수정',
+                generating: '이미지 생성',
+                reviewing: '비전 검수',
+                completed: '완료',
+                failed: '실패',
+                cancelled: '중지',
+            })[String(phase || '')] || String(phase || '진행 중');
+        }
+
+        function renderIllustrationAutoFeedbackJob(job) {
+            if (!job || typeof job !== 'object') {
+                console.error('[AUTO_FEEDBACK_UI] 표시할 작업 상태가 없습니다:', job);
+                return;
+            }
+            illustrationAutoFeedbackState.job = job;
+            const active = !['completed', 'failed', 'cancelled'].includes(String(job.status || ''));
+            const progress = Math.max(0, Math.min(100, Number(job.progress) || 0));
+            const status = document.getElementById('llm-edit-auto-feedback-status');
+            const statusText = document.getElementById('llm-edit-auto-feedback-status-text');
+            const progressText = document.getElementById('llm-edit-auto-feedback-progress-text');
+            const progressBar = document.getElementById('llm-edit-auto-feedback-progress-bar');
+            const rounds = document.getElementById('llm-edit-auto-feedback-rounds');
+            const runButton = document.getElementById('llm-edit-auto-feedback-run-btn');
+            const cancelButton = document.getElementById('llm-edit-auto-feedback-cancel-btn');
+            const editButton = document.getElementById('llm-edit-run-btn');
+            const directionInput = document.getElementById('llm-edit-direction-input');
+            const maxInput = document.getElementById('llm-edit-auto-feedback-max');
+            if (status) status.style.display = 'block';
+            if (statusText) {
+                const prefix = job.round
+                    ? `${job.round}/${job.max_rounds}회 · ${autoFeedbackPhaseLabel(job.phase)}`
+                    : autoFeedbackPhaseLabel(job.phase);
+                statusText.textContent = `${prefix} — ${job.message || ''}`;
+                statusText.style.color = job.status === 'failed'
+                    ? 'var(--error)'
+                    : job.status === 'completed'
+                        ? 'var(--success)'
+                        : 'var(--text)';
+            }
+            if (progressText) progressText.textContent = `${Math.round(progress)}%`;
+            if (progressBar) {
+                progressBar.style.width = `${progress}%`;
+                progressBar.style.background = job.status === 'failed'
+                    ? 'var(--error)'
+                    : job.status === 'completed'
+                        ? 'var(--success)'
+                        : 'var(--accent)';
+            }
+            if (rounds) {
+                const entries = Array.isArray(job.rounds) ? job.rounds : [];
+                rounds.innerHTML = entries.map(entry => {
+                    const review = entry.review && typeof entry.review === 'object' ? entry.review : null;
+                    const verdict = !review
+                        ? '검수 대기'
+                        : review.achieved
+                            ? `목표 달성 · ${review.score}점`
+                            : `목표 미달 · ${review.score}점`;
+                    const verdictColor = review?.achieved ? 'var(--success)' : (review ? '#e3a750' : 'var(--text-secondary)');
+                    const summary = review?.summary
+                        ? `<div style="margin-top:2px;color:var(--text-secondary);">${escapeHtml(review.summary)}</div>`
+                        : '';
+                    return `<div style="padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface1);font-size:0.7rem;line-height:1.35;">
+                        <div style="display:flex;justify-content:space-between;gap:8px;">
+                            <strong>${escapeHtml(String(entry.round || ''))}회 · 백업 보존</strong>
+                            <span style="color:${verdictColor};">${escapeHtml(verdict)}</span>
+                        </div>
+                        <div style="margin-top:2px;color:var(--text-secondary);word-break:break-all;">${escapeHtml(entry.backup_name || '')}</div>
+                        ${summary}
+                    </div>`;
+                }).join('');
+                rounds.scrollTop = rounds.scrollHeight;
+            }
+            if (runButton) runButton.disabled = active;
+            if (cancelButton) {
+                cancelButton.style.display = active ? '' : 'none';
+                cancelButton.disabled = !!job.cancel_requested;
+                cancelButton.textContent = job.cancel_requested ? '중지 대기 중...' : '오토피드백 중지';
+            }
+            if (editButton) editButton.disabled = active;
+            if (directionInput) directionInput.disabled = active;
+            if (maxInput) maxInput.disabled = active;
+
+            if (!active && !illustrationAutoFeedbackState.terminalHandled) {
+                illustrationAutoFeedbackState.terminalHandled = true;
+                stopIllustrationAutoFeedbackPolling();
+                if (job.status === 'completed') {
+                    const resultText = job.achieved
+                        ? `${job.round}회 만에 목표 달성`
+                        : `최대 횟수 완료 · 최고 ${job.best_score ?? 0}점`;
+                    showToast(`${resultText} · 모든 생성 이미지는 백업에 보존됨`, 'success');
+                } else if (job.status === 'cancelled') {
+                    showToast(`오토피드백 중지 · 생성 완료된 ${(job.rounds || []).length}개 이미지는 백업에 보존됨`, 'warning');
+                } else {
+                    showToast(job.message || `오토피드백 실패: ${job.error || '알 수 없는 오류'}`, 'error');
+                }
+                if (typeof loadBackups === 'function') loadBackups(true);
+            }
+        }
+
+        function stopIllustrationAutoFeedbackPolling() {
+            if (illustrationAutoFeedbackState.pollTimer) {
+                clearInterval(illustrationAutoFeedbackState.pollTimer);
+                illustrationAutoFeedbackState.pollTimer = null;
+            }
+        }
+
+        function startIllustrationAutoFeedbackPolling() {
+            stopIllustrationAutoFeedbackPolling();
+            illustrationAutoFeedbackState.pollTimer = setInterval(async () => {
+                const jobId = illustrationAutoFeedbackState.jobId;
+                if (!jobId || !isIllustrationAutoFeedbackActive()) {
+                    stopIllustrationAutoFeedbackPolling();
+                    return;
+                }
+                try {
+                    const data = await fetchJSON(`/api/illustration_auto_feedback/${encodeURIComponent(jobId)}`);
+                    if (data.job) handleIllustrationAutoFeedbackUpdate(data.job);
+                } catch (error) {
+                    console.error('[AUTO_FEEDBACK_UI] 상태 폴링 실패:', {jobId, error});
+                }
+            }, 1500);
+        }
+
+        function handleIllustrationAutoFeedbackUpdate(job) {
+            if (!job || !job.job_id) {
+                console.error('[AUTO_FEEDBACK_UI] 잘못된 상태 이벤트:', job);
+                return;
+            }
+            if (
+                !illustrationAutoFeedbackState.jobId
+                && (!illustrationAutoFeedbackState.sourceBackupName
+                    || illustrationAutoFeedbackState.sourceBackupName !== job.source_backup_name)
+            ) {
+                return;
+            }
+            if (illustrationAutoFeedbackState.jobId && illustrationAutoFeedbackState.jobId !== job.job_id) {
+                return;
+            }
+            illustrationAutoFeedbackState.jobId = job.job_id;
+            illustrationAutoFeedbackState.sourceBackupName = job.source_backup_name || '';
+            renderIllustrationAutoFeedbackJob(job);
+        }
+
+        async function startIllustrationAutoFeedback() {
+            if (!currentModalBackupName || llmEditInFlight || isIllustrationAutoFeedbackActive()) return;
+            const directionInput = document.getElementById('llm-edit-direction-input');
+            const direction = String(directionInput?.value || '').trim();
+            const maxInput = document.getElementById('llm-edit-auto-feedback-max');
+            const maxRounds = Number(maxInput?.value || 3);
+            if (!direction) {
+                alert('오토피드백의 최종 목표를 입력해주세요.');
+                directionInput?.focus();
+                return;
+            }
+            if (!Number.isInteger(maxRounds) || maxRounds < 1 || maxRounds > 10) {
+                alert('최대 횟수는 1~10 사이 정수로 입력해주세요.');
+                maxInput?.focus();
+                return;
+            }
+            let selectedCharacters = null;
+            let selectedVisualProfileIds = null;
+            if (llmEditModalState?.identityEnabled) {
+                if (!updateLlmEditCharacterSelection()) return;
+                selectedCharacters = [...llmEditModalState.slotNames];
+                selectedVisualProfileIds = { ...llmEditModalState.visualProfileIds };
+            }
+            const requestBody = {
+                name: currentModalBackupName,
+                positive: document.getElementById('modal-positive').value || '',
+                negative: document.getElementById('modal-negative').value || '',
+                direction,
+                max_rounds: maxRounds,
+            };
+            if (selectedCharacters) requestBody.characters = selectedCharacters;
+            if (selectedVisualProfileIds) requestBody.visual_profile_ids = selectedVisualProfileIds;
+            if (selectedCharacters && currentModalIdentityEdit) {
+                requestBody.previous_identity = currentModalIdentityEdit;
+            }
+            if (currentModalCameraAppliedControl) {
+                requestBody.camera_control = currentModalCameraAppliedControl;
+            }
+            illustrationAutoFeedbackState = {
+                jobId: '',
+                sourceBackupName: currentModalBackupName,
+                job: {
+                    status: 'queued',
+                    phase: 'queued',
+                    progress: 0,
+                    round: 0,
+                    max_rounds: maxRounds,
+                    rounds: [],
+                    message: '서버에 오토피드백 작업을 등록하고 있습니다',
+                },
+                pollTimer: null,
+                terminalHandled: false,
+            };
+            renderIllustrationAutoFeedbackJob(illustrationAutoFeedbackState.job);
+            try {
+                const data = await fetchJSON('/api/illustration_auto_feedback', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(requestBody),
+                });
+                if (!data.job?.job_id) {
+                    throw new Error('서버가 오토피드백 작업 ID를 반환하지 않았습니다.');
+                }
+                illustrationAutoFeedbackState.jobId = data.job.job_id;
+                illustrationAutoFeedbackState.sourceBackupName = data.job.source_backup_name || currentModalBackupName;
+                illustrationAutoFeedbackState.terminalHandled = false;
+                renderIllustrationAutoFeedbackJob(data.job);
+                startIllustrationAutoFeedbackPolling();
+                showToast(`오토피드백 최대 ${maxRounds}회 작업을 시작했습니다`, 'info');
+            } catch (error) {
+                console.error('[AUTO_FEEDBACK_UI] 작업 시작 실패:', {requestBody, error});
+                illustrationAutoFeedbackState.job = {
+                    ...illustrationAutoFeedbackState.job,
+                    status: 'failed',
+                    phase: 'failed',
+                    message: `오토피드백 시작 실패: ${error.message}`,
+                    error: error.message,
+                };
+                renderIllustrationAutoFeedbackJob(illustrationAutoFeedbackState.job);
+            }
+        }
+
+        async function cancelIllustrationAutoFeedback() {
+            const jobId = illustrationAutoFeedbackState.jobId;
+            if (!jobId || !isIllustrationAutoFeedbackActive()) return;
+            const button = document.getElementById('llm-edit-auto-feedback-cancel-btn');
+            if (button) {
+                button.disabled = true;
+                button.textContent = '중지 요청 중...';
+            }
+            try {
+                const data = await fetchJSON(
+                    `/api/illustration_auto_feedback/${encodeURIComponent(jobId)}/cancel`,
+                    { method: 'POST' },
+                );
+                if (data.job) handleIllustrationAutoFeedbackUpdate(data.job);
+            } catch (error) {
+                console.error('[AUTO_FEEDBACK_UI] 중지 요청 실패:', {jobId, error});
+                showToast(`오토피드백 중지 요청 실패: ${error.message}`, 'error');
+                if (button) {
+                    button.disabled = false;
+                    button.textContent = '오토피드백 중지';
+                }
+            }
         }
 
         async function llmEditPrompt() {
@@ -40636,6 +40969,35 @@
                 ],
             },
             {
+                id: 'illustration-auto-feedback',
+                number: '02-A',
+                color: '#53b7a8',
+                label: '삽화 오토피드백',
+                fixed: true,
+                description: '사용자가 정한 최대 횟수 안에서 프롬프트 수정, 이미지 생성, 비전 검수를 반복합니다. 목표 미달 이미지도 회차별 백업으로 보존합니다.',
+                steps: [
+                    {
+                        type: 'illustration_auto_feedback_llm',
+                        lane: 'llm',
+                        laneLabel: 'LLM',
+                        label: '프롬프트 수정',
+                    },
+                    {
+                        type: 'regenerate',
+                        lane: 'dynamic',
+                        laneLabel: '저장된 공급자',
+                        label: '생성·백업',
+                    },
+                    {
+                        type: 'illustration_auto_feedback_llm',
+                        lane: 'llm',
+                        laneLabel: '비전 LLM',
+                        label: '목표 달성 검수',
+                        qualifier: 'N회까지 반복',
+                    },
+                ],
+            },
+            {
                 id: 'instance-lora',
                 number: '03',
                 color: '#46b98a',
@@ -44924,6 +45286,7 @@
             { key: 'preset_import_classify',   label: '프리셋 가져오기 분류', kind: 'JSON', modality: 'text', group: 'asset_management', json: true },
             { key: 'visual_profile_guide',     label: '프로필 선택 기준 자동 작성', kind: '텍스트/JSON', modality: 'text', group: 'bot_profiles', json: true },
             { key: 'edit_illustration_prompt', label: '삽화 편하게 수정', kind: '비전/JSON', modality: 'vision', group: 'image_editing', json: true },
+            { key: 'illustration_auto_feedback_review', label: '삽화 오토피드백 검수', kind: '비전/JSON', modality: 'vision', group: 'image_editing', json: true },
             { key: 'qwen_edit_translate',      label: 'EDIT 지시 영어 번역', kind: '텍스트', modality: 'text', group: 'image_editing' },
             { key: 'character_maker_draft',    label: '캐릭터 메이커 초안', kind: '텍스트/JSON', modality: 'text', group: 'character_maker', json: true },
             { key: 'character_maker_feedback', label: '캐릭터 메이커 이미지 피드백', kind: '비전/JSON', modality: 'vision', group: 'character_maker', json: true },
@@ -92107,6 +92470,7 @@
             qwen_edit: 'EDIT 툴',
             illustration_llm_build: '삽화 LLM',
             illustration_easy_edit: '삽화 편집',
+            illustration_auto_feedback_llm: '삽화 오토피드백 LLM',
             llm_test: 'LLM 테스트',
             visual_profile_guide: '프로필 선택 기준',
             asset_lora_training: '에셋로라', bot_lora_training: '봇로라',
