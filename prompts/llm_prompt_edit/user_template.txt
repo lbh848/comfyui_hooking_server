@@ -9,18 +9,22 @@
 
 ## Instructions
 1. Look at the provided image (if any) and the tags above to understand the current scene.
-2. Adjust scene_setup/scene_char/scene_supplement to match the user's edit direction.
-3. Preserve the character's core identity (key appearance traits); focus changes on scene/mood/pose/outfit.
-4. Keep original tags for any part that does not need changing (avoid unnecessary edits).
-5. scene_supplement is applied only to the ANIMA blocks and is NOT applied to the SDXL block. Use it only for visual details that tags cannot express well, such as detailed composition, framing, character actions or interactions, atmosphere, and lighting.
-6. Write scene_setup and scene_char as English Danbooru-style tags separated by comma+space (", ").
-7. Write scene_supplement in concise, minimal English natural language. Use objective, telegraphic visual description, preferably one short sentence. Do NOT write it as a comma-separated tag list. Return an empty string when tags already express the scene sufficiently.
-8. Do not include character names in scene_supplement. Refer to people by gender, visible appearance, or relative position (for example, "the girl with blue hair" or "the girl on the left"). Unusual framing and vantage points may be described directly, such as being viewed through, reflected in, or framed behind something.
-9. Write the "plan" field in Korean; write all scene_* fields in English.
+2. Treat the user's direction as the desired visual outcome, not as a literal instruction to append or strengthen the most obvious matching tag.
+3. Before rewriting, causally audit the direction, visible result, ANIMA tags, SDXL tags, and supplement together. In plan, name the prompt constraints most likely responsible for the unwanted result and state which of them you will remove, rewrite, or merge.
+4. Fix the cause before treating the symptom. If pose, action, held-object, interaction, subject-count, or composition requirements cannot all be true in one image, replace them with one unambiguous and physically feasible description. When one subject is requested, make every remaining pose, limb use, held object, and interaction compatible with that same single subject, and remove leftover multi-subject or multi-shot cues that contradict the requested outcome.
+5. Do not solve a failure merely by repeating, weighting, or synonym-stacking count/focus tags or by adding negative tags while retaining the causal conflict. Count/focus tags may be kept once when useful, but causal cleanup is primary.
+6. Preserve the character's core identity (key appearance traits); focus changes on scene/mood/pose/outfit.
+7. Keep original tags for any part that does not need changing (avoid unnecessary edits), but treat every tag that conflicts with the desired result as affected rather than blindly preserving it.
+8. Return a complete edited scene whose setup, character details, supplement, subject count, pose, objects, and composition agree with one another.
+9. scene_supplement is applied only to the ANIMA blocks and is NOT applied to the SDXL block. Use it only for visual details that tags cannot express well, such as detailed composition, framing, character actions or interactions, atmosphere, and lighting.
+10. Write scene_setup and scene_char as English Danbooru-style tags separated by comma+space (", ").
+11. Write scene_supplement in concise, minimal English natural language. Use objective, telegraphic visual description, preferably one short sentence. Do NOT write it as a comma-separated tag list. Return an empty string when tags already express the scene sufficiently.
+12. Do not include character names in scene_supplement. Refer to people by gender, visible appearance, or relative position (for example, "the girl with blue hair" or "the girl on the left"). Unusual framing and vantage points may be described directly, such as being viewed through, reflected in, or framed behind something.
+13. Write the "plan" field in Korean; write all scene_* fields in English.
 
 ## Output (JSON schema - return ONLY a JSON object in this form)
 {
-  "plan": "edit plan - briefly explain why and which tags to add/remove (write in Korean)",
+  "plan": "root-cause diagnosis and the tags/details to remove, rewrite, merge, or add (write in Korean)",
   "scene_setup": "background/location/lighting/weather/mood tags, comma+space separated",
   "scene_char": "character appearance/pose/expression/outfit tags, comma+space separated",
   "scene_supplement": "concise objective natural-language visual description for ANIMA-only details, preferably one short sentence, or empty string \"\""
