@@ -248,7 +248,16 @@ def test_pipeline_snapshot_preserves_call2_authority_audit(isolated_history):
         "semantic_status": "ok",
     }]
 
+    profile_result = {
+        "profile_events": [{
+            "segment_id": "START",
+            "character": "Elizabella",
+            "profile": "Elizabella_Default",
+            "state": "Elizabella remains in her ordinary form.",
+        }],
+    }
     saved = history.finalize_history(plan, {
+        "profile_result": profile_result,
         "call2_authority_audit": audit,
         "call2_authority_audit_output": (
             '{"entries":[{"id":1,"authority_exceptions":[],'
@@ -258,6 +267,7 @@ def test_pipeline_snapshot_preserves_call2_authority_audit(isolated_history):
     })
 
     snapshot = saved["last_pipeline"]
+    assert snapshot["profile_result"] == profile_result
     assert snapshot["call2_authority_audit"] == audit
     assert snapshot["call2_authority_audit_status"] == "ok"
     assert '"hair down"' in snapshot["call2_authority_audit_output"]

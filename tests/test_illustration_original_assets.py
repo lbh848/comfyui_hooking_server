@@ -116,6 +116,120 @@ async def test_one_step_selector_does_not_send_uploaded_filename_index_to_llm(
     assert selected[0]["candidate"].filename == "Aoi_School_happy.webp.webp"
 
 
+def test_selector_prompt_requires_present_subject_and_post_evidence_slot() -> None:
+    messages = original_assets.build_selection_messages(
+        instruction="Aoi: Aoi_School; happy, smirk, crazy smile",
+        conversation_context="Shiho appeared in the previous scene.",
+        target_slotted=(
+            "Aoi enters the classroom.\n\n"
+            "[Slot 0]\n\n"
+            "Aoi smiles.\n\n"
+            "[Slot 1]\n\n"
+            "She briefly remembers Shiho."
+        ),
+        allowed_slots=[0, 1],
+        requested_count=1,
+        profile_authority=(
+            "### START · Aoi · Aoi_School\n"
+            "- authoritative appearance: black hair\n"
+            "- profile default outfit: school uniform"
+        ),
+    )
+
+    system = messages[0]["content"]
+    assert "only selection target is [CURRENT RESPONSE WITH INSERTION SLOTS]" in system
+    assert "physically present in the active narrative scene" in system
+    assert "visualized in a brief recollection" in system
+    assert "Never substitute a default, habitual" in system
+    assert "Do not exaggerate a smile or smirk into a crazy smile" in system
+    assert "after the paragraph above it and before the paragraph below it" in system
+    assert "Do not spend multiple selections on near-duplicate states" in system
+    assert "Never relax presence, outfit/form, state, or non-duplication rules" in system
+    assert "Return no more than the requested maximum" in system
+    assert "was resolved before this stage" in system
+    assert "Aoi_School" in messages[1]["content"]
+    assert "profile default outfit: school uniform" in messages[1]["content"]
+    assert "[REQUESTED MAXIMUM OUTPUT COUNT]" in messages[1]["content"]
+
+
+def test_original_asset_context_excludes_current_target_from_recent_context() -> None:
+    payload = {
+        "chats": [
+            {"role": "user", "data": "opening request"},
+            {"role": "char", "data": "previous response with Shiho"},
+            {"role": "user", "data": "continue"},
+            {"role": "char", "data": "current classroom response with Aoi"},
+        ],
+        "target_slotted": "current classroom\n\n[Slot 0]\n\nresponse with Aoi",
+    }
+
+    context, target = server._original_asset_context(payload, context_turns=3)
+
+    assert "opening request" in context
+    assert "previous response with Shiho" in context
+    assert "continue" in context
+    assert "current classroom response with Aoi" not in context
+    assert target == payload["target_slotted"]
+
+
+@pytest.mark.asyncio
+async def test_original_asset_output_keeps_underfilled_valid_selections(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bot_dir = tmp_path / "bot"
+    valid_bytes = b"RIFFpartialWEBP"
+    _write_image(
+        bot_dir / "sample" / "Aoi" / "Aoi_School_happy.webp.webp",
+        valid_bytes,
+    )
+    monkeypatch.setattr(server, "BASE_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        server,
+        "_original_asset_bot_character_names",
+        lambda _bot_name: ["Aoi"],
+    )
+
+    raw = json.dumps({
+        "selections": [{"src": "Aoi_School_happy.webp", "slot": 1}],
+    })
+    calls = []
+
+    async def fake_pipeline_llm(call_name, _messages, **kwargs):
+        calls.append(call_name)
+        assert call_name == "ORIGINAL-ASSET"
+        assert kwargs["result_validator"](raw) == (True, "")
+        return raw
+
+    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_llm)
+
+    result = await server._select_original_asset_outputs(
+        payload={
+            "chats": [{"role": "char", "data": "Aoi smiles after class."}],
+            "target_slotted": "First\n\n[Slot 1]\n\nSecond\n\n[Slot 2]\n\nThird",
+        },
+        toggles={
+            "original_asset_count": 2,
+            "original_asset_instruction": "Aoi: Aoi_School; happy",
+            "call2_context_turns": 5,
+        },
+        active_bot="sample",
+        used_slots=set(),
+        reserve_slot_count=0,
+        stream_notify=None,
+        llm_trace=[],
+    )
+
+    assert calls == ["ORIGINAL-ASSET"]
+    assert len(result["items"]) == 1
+    assert result["items"][0]["slot"] == 1
+    assert result["images"] == [valid_bytes]
+    assert result["failures"] == [{
+        "slot": None,
+        "error": "원본 에셋 선택 수 부족: requested=2, returned=1",
+    }]
+
+
 @pytest.mark.asyncio
 async def test_original_asset_output_keeps_valid_items_when_one_file_is_missing(
     tmp_path: Path,
@@ -536,6 +650,15 @@ async def test_mixed_output_reserves_original_asset_slot_before_regular_build(
         "raw_negative": "",
     }
     child_ids = []
+    stage_order = []
+    resolved_profile_output = '{"profile_events":[]}'
+    resolved_profile_result = {
+        "profile_events": [],
+        "initial_visual_bases": [],
+        "visual_base_events": [],
+        "validation_warnings": [],
+        "validation_errors": [],
+    }
 
     monkeypatch.setattr(
         server,
@@ -556,8 +679,16 @@ async def test_mixed_output_reserves_original_asset_slot_before_regular_build(
         },
     )
 
+    async def fake_profile_resolve(**kwargs):
+        stage_order.append("profile")
+        assert kwargs["payload"]["target_slotted"].startswith("First")
+        return resolved_profile_output, resolved_profile_result
+
     async def fake_select(**kwargs):
+        stage_order.append("asset")
+        assert stage_order == ["profile", "asset"]
         assert kwargs["reserve_slot_count"] == 1
+        assert kwargs["profile_authority"] == "selected profile authority"
         return {
             "items": [original_descriptor],
             "images": [original_bytes],
@@ -567,8 +698,12 @@ async def test_mixed_output_reserves_original_asset_slot_before_regular_build(
         }
 
     async def fake_build(build_payload, *_args, **kwargs):
+        stage_order.append("build")
+        assert stage_order == ["profile", "asset", "build"]
         assert "[Slot 0]" not in build_payload["target_slotted"]
         assert "[Slot 1]" in build_payload["target_slotted"]
+        assert kwargs["pre_resolved_profile_output"] == resolved_profile_output
+        assert kwargs["pre_resolved_profile_result"] == resolved_profile_result
         await kwargs["on_call2_ready"]({
             "context": "context",
             "prompt_format": "v3",
@@ -595,6 +730,12 @@ async def test_mixed_output_reserves_original_asset_slot_before_regular_build(
     async def complete_prompt(completed_prompt_id, _save_node_id, _filename):
         server.prompts[completed_prompt_id]["status"] = "completed"
 
+    monkeypatch.setattr(pipeline, "resolve_profiles_before_generation", fake_profile_resolve)
+    monkeypatch.setattr(
+        pipeline,
+        "profile_authority_text",
+        lambda *_args: "selected profile authority",
+    )
     monkeypatch.setattr(server, "_select_original_asset_outputs", fake_select)
     monkeypatch.setattr(pipeline, "build_from_context", fake_build)
     monkeypatch.setattr(server.queue_manager, "add_item", fake_add_item)
@@ -631,6 +772,7 @@ async def test_mixed_output_reserves_original_asset_slot_before_regular_build(
             "scene",
         ]
         assert session["images"] == [original_bytes, generated_bytes]
+        assert stage_order == ["profile", "asset", "build"]
     finally:
         pipeline._SESSIONS.pop(session_id, None)
         pipeline._LOOKUP_KEYS.pop(lookup_key, None)

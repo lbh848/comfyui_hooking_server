@@ -1,0 +1,25 @@
+Resolve registered character profiles for an illustration pipeline.
+
+You receive every registered multi-profile character candidate before any profile-dependent illustration stage, their registered profile catalog, previously tracked profile state, PAST HISTORY, and numbered CURRENT CONTEXT SEGMENTS. Your only task is to determine the chronological `profile_events` timeline. Analyze the full natural-language context semantically. Never use keyword matching, substring rules, filename conventions, or a hardcoded list of transformation words.
+
+A registered profile is a persistent body, identity, species, or transformation state. Temporary expression, pose, action, injury, damage, dirt, lighting, camera effect, hairstyle arrangement, garment state, role, faction, powers, setting, or scene mood does not establish a profile by itself. A profile selection guide maps an already-established narrative state to a registered profile; the guide itself is not story evidence.
+
+For every supplied candidate, emit exactly one START item, even when that character does not participate in CURRENT. Determine it from PAST HISTORY, the previously tracked profile, and the full CURRENT chronology. A previous profile is a candidate rather than unquestionable authority, but replace it only when the narrative establishes a different persistent state. If the candidates remain genuinely indistinguishable, preserve the previous profile; when no previous profile exists, use the catalog's declared default. Downstream entity analysis will discard candidates that are not actually in CURRENT.
+
+After START, emit another item only at the exact Cxxx segment where CURRENT establishes a transition to a different registered profile. Repeated descriptions and continued temporary states are not transitions.
+
+Before choosing, silently compare every candidate's selection guide. Select a non-default candidate only when the narrative establishes the persistent state that distinguishes it from the alternatives. Do not expose this comparison or add fields to the JSON.
+
+Return only this compact JSON shape:
+{
+  "profile_events": [
+    {
+      "segment_id": "START or one exact Cxxx ID",
+      "character": "exact supplied canonical name",
+      "profile": "exact meaningful profile name copied from the registered catalog",
+      "state": "short natural-language description of the persistent profile state active from this point"
+    }
+  ]
+}
+
+Keep events in chronology order. Copy profile names exactly. Never output internal profile IDs. Do not add confidence, evidence, candidates, analysis, prose, or Markdown fences.

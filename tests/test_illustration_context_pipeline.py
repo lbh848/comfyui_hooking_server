@@ -10,6 +10,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from modes import illustration_context_pipeline as pipeline
+from modes.visual_profiles import cards_to_character_profiles
 
 
 @pytest.fixture(autouse=True)
@@ -5122,6 +5123,43 @@ async def test_pipeline_llm_records_success_in_lighbd_history(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_profile_resolve_uses_dedicated_route_queue_group_and_lb_history(monkeypatch):
+    records = []
+    events = []
+    messages = [{"role": "user", "content": "profile scene"}]
+
+    async def fake_call(task_key, actual_messages, **_kwargs):
+        assert task_key == "illustration_profile_resolve"
+        assert actual_messages == messages
+        return '{"profile_events": []}'
+
+    async def fake_notify(event):
+        events.append(event)
+
+    monkeypatch.setattr(pipeline.llm_service, "callLLMTask", fake_call)
+    monkeypatch.setattr(pipeline.lighbd_service, "_log_lighbd_history", records.append)
+
+    result = await pipeline._call_pipeline_llm(
+        "PROFILE-RESOLVE",
+        messages,
+        fake_notify,
+        json_mode=True,
+    )
+
+    assert result == '{"profile_events": []}'
+    assert len(records) == 1
+    assert records[0]["call_name"] == "PROFILE-RESOLVE"
+    assert records[0]["task_key"] == "illustration_profile_resolve"
+    assert records[0]["input"] == messages
+    assert records[0]["output"] == result
+    assert records[0]["status"] == "ok"
+    assert [event["type"] for event in events] == ["start", "done"]
+    assert {
+        event["queue_subtask"]["group_id"] for event in events
+    } == {"profile_resolve"}
+
+
+@pytest.mark.asyncio
 async def test_subtitle_dialogue_uses_dedicated_queue_route_and_lb_history(monkeypatch):
     records = []
     events = []
@@ -5560,7 +5598,7 @@ def test_call1_shard_scope_violations_are_warnings_but_conflicts_are_fatal():
     assert any("지칭 충돌" in item for item in fallback_errors)
 
 
-def test_call1_shards_keep_start_profile_and_later_transition():
+def test_call1_shards_merge_only_pre_profile_schema():
     initial = {
         "segment_id": "START",
         "character": "Shiho",
@@ -5594,16 +5632,77 @@ def test_call1_shards_keep_start_profile_and_later_transition():
 
     assert warnings == []
     assert fallback_errors == []
-    assert merged["profile_events"] == [initial, release]
+    assert "profile_events" not in merged
     assert set(merged) == {
         "reference_assignments",
         "history_characters",
         "current_characters",
-        "profile_events",
         "wardrobe_events",
         "hairstyle_events",
         "unresolved_references",
     }
+
+
+@pytest.mark.asyncio
+async def test_profile_resolution_runs_once_before_call1_and_filters_catalog(monkeypatch):
+    adachi = cards_to_character_profiles("Adachi", [{
+        "id": "civilian",
+        "aliases": ["Adachi_Civilian"],
+        "selection_guide": "ordinary human form",
+        "appearance": ["brown hair"],
+        "default_outfit": ["hoodie"],
+    }, {
+        "id": "changed",
+        "aliases": ["Adachi_Changed"],
+        "selection_guide": "persistent transformed form",
+        "appearance": ["white hair"],
+        "default_outfit": ["armor"],
+    }])
+    bob = cards_to_character_profiles("Bob", [{
+        "id": "default",
+        "aliases": ["Bob_Default"],
+        "selection_guide": "ordinary form",
+        "appearance": ["black hair"],
+        "default_outfit": ["suit"],
+    }])
+    calls = []
+
+    async def fake_pipeline_call(call_name, messages, _stream_notify, **kwargs):
+        calls.append((call_name, messages, kwargs))
+        prompt = "\n".join(message["content"] for message in messages)
+        assert "Adachi_Civilian" in prompt
+        assert "Adachi_Changed" in prompt
+        assert "Bob_Default" not in prompt
+        assert "# FULL CURRENT CONTEXT SEGMENTS" in prompt
+        return json.dumps({
+            "profile_events": [{
+                "segment_id": "START",
+                "character": "Adachi",
+                "profile": "Adachi_Civilian",
+                "state": "Adachi remains in the ordinary human form.",
+            }],
+        })
+
+    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
+    current = "Adachi and Bob wait."
+    segmented, segments = pipeline._segment_current_context(current)
+    raw, parsed = await pipeline._run_profile_resolution(
+        profile_system="Return profile_events JSON.",
+        segmented_current=segmented,
+        current_context=current,
+        current_segments=segments,
+        history_text="Earlier context.",
+        candidate_names=["Adachi", "Bob"],
+        previous_state={},
+        visual_profiles={"Adachi": adachi, "Bob": bob},
+        stream_notify=None,
+    )
+
+    assert len(calls) == 1
+    assert calls[0][0] == "PROFILE-RESOLVE"
+    assert calls[0][2]["json_mode"] is True
+    assert json.loads(raw)["profile_events"][0]["profile"] == "Adachi_Civilian"
+    assert parsed["initial_visual_bases"][0]["target_visual_profile_id"] == "civilian"
 
 
 def test_call3_scene_selection_contains_bounded_upper_and_lower_windows():
@@ -6774,6 +6873,19 @@ def test_call1_prompt_state_preserves_default_when_lb_extra_character_is_missing
 @pytest.mark.asyncio
 async def test_persistent_history_path_uses_compact_call2_and_updates_wardrobe(monkeypatch):
     calls = []
+    hana_profiles = cards_to_character_profiles("Hana", [{
+        "id": "ordinary",
+        "aliases": ["Hana_Ordinary"],
+        "selection_guide": "ordinary persistent form",
+        "appearance": ["black hair"],
+        "default_outfit": ["blue dress"],
+    }, {
+        "id": "transformed",
+        "aliases": ["Hana_Transformed"],
+        "selection_guide": "persistent transformed form",
+        "appearance": ["white hair"],
+        "default_outfit": ["white armor"],
+    }])
 
     async def fake_call(task_key, messages, **kwargs):
         calls.append((task_key, messages))
@@ -6782,6 +6894,8 @@ async def test_persistent_history_path_uses_compact_call2_and_updates_wardrobe(m
             assert "generated visual contamination marker" not in request_text
             assert "duplicate default marker" not in request_text
             assert "blue dress" in request_text
+            assert "# PRESELECTED PROFILE AUTHORITY" in request_text
+            assert "Hana_Ordinary" in request_text
             return json.dumps({
                 "reference_assignments": [{
                     "segment_id": "C001",
@@ -6804,6 +6918,18 @@ async def test_persistent_history_path_uses_compact_call2_and_updates_wardrobe(m
                 }],
                 "unresolved_references": [],
             })
+        if task_key == "illustration_profile_resolve":
+            request_text = "\n".join(message["content"] for message in messages)
+            assert "Hana_Ordinary" in request_text
+            assert "Hana_Transformed" in request_text
+            return json.dumps({
+                "profile_events": [{
+                    "segment_id": "START",
+                    "character": "Hana",
+                    "profile": "Hana_Ordinary",
+                    "state": "Hana remains in her ordinary persistent form.",
+                }],
+            })
         assert task_key == "illustration_call2"
         if _call_name(task_key) == "CALL2-AUTHORITY-AUDIT":
             return _authority_audit_response(
@@ -6812,6 +6938,8 @@ async def test_persistent_history_path_uses_compact_call2_and_updates_wardrobe(m
             )
         request_text = "\n".join(message["content"] for message in messages)
         assert "very old fallback history" not in request_text
+        assert "# PRESELECTED PROFILE AUTHORITY" in request_text
+        assert "Hana_Ordinary" in request_text
         assert "### Hana" in request_text
         assert "### Bob" not in request_text
         assert "Hana enters the room." in request_text
@@ -6893,9 +7021,11 @@ scenes[1]:
             "call3_fallback_history": [],
             "record_before": {"last_pipeline": {}},
         },
+        visual_profiles={"Hana": hana_profiles},
     )
 
     assert [task_key for task_key, _messages in calls] == [
+        "illustration_profile_resolve",
         "illustration_call1",
         "illustration_call2",
         "illustration_call2",
@@ -6903,6 +7033,9 @@ scenes[1]:
     assert result["balanced_fallback_used"] is False
     assert result["reference_provenance"]["turn_relation"] == "PRIOR_COMMITTED_TURN"
     assert result["enhanced_narrative"].startswith("Hana enters")
+    assert result["profile_result"]["initial_visual_bases"][0][
+        "target_visual_profile_id"
+    ] == "ordinary"
     wardrobe = result["character_states_after"]["hana"]["current_wardrobe"]
     assert wardrobe["body_state"] == "nude"
     assert wardrobe["worn"] == []

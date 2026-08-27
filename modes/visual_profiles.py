@@ -633,12 +633,15 @@ def profile_asset_relative_dir(character_name: str, profile_id: str) -> str:
 
 
 def build_natural_profile_catalog(effective_profiles: dict[str, dict]) -> str:
-    """Render semantic profile names and user-authored selection rules for CALL1."""
+    """Render semantic profile names and user-authored rules for profile resolution."""
     sections: list[str] = []
     for character_name, character in effective_profiles.items():
         profiles = character.get("profiles") or []
         if not profiles:
-            print(f"[CHARACTER_CARD] CALL1 카탈로그에 넣을 카드 없음: {character_name!r}")
+            print(
+                "[CHARACTER_CARD] 프로필 결정 카탈로그에 넣을 카드 없음: "
+                f"{character_name!r}"
+            )
             continue
         default_profile = profile_by_id(
             character,

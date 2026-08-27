@@ -1,4 +1,4 @@
-"""CHAT -> CALL1/CALL2/CALL3 -> 기존 RAW 삽화 프롬프트 전단계.
+"""CHAT -> PROFILE-RESOLVE -> ORIGINAL-ASSET/CALL1 -> CALL2/CALL3 pipeline.
 
 RisuAI는 Comfy history에 이미지가 여러 장 있어도 첫 장만 소비한다. 이 모듈은
 최초 CHAT 요청과 후속 결과 회수 요청을 구분하고, 한 세션의 모든 장면 프롬프트와
@@ -31,6 +31,7 @@ from modes import (
     postprocess,
 )
 from modes.visual_profiles import (
+    build_natural_profile_catalog,
     profile_by_id,
     profile_by_name,
     resolve_visual_base,
@@ -81,6 +82,7 @@ def _trace_append(history_id: str) -> None:
 PROMPT_FILES = {
     "call1_backtranslate": "backtranslate.txt",
     "call1_enhance": "enhance.txt",
+    "profile_resolve": "profile.txt",
     "call2_jailbreak": "jailbreak.txt",
     "call2_job": "job.txt",
     "call2_prefill": "prefill.txt",
@@ -1893,6 +1895,101 @@ def _call1_state_for_prompt(
     return result
 
 
+def _call1_wardrobe_state_for_prompt(
+    character_state: dict | None,
+    costume_reference: str = "",
+    visual_profiles: dict[str, dict] | None = None,
+) -> dict:
+    """Project CALL1 wardrobe state without duplicating profile authority fields."""
+    result = _call1_state_for_prompt(
+        character_state,
+        costume_reference,
+        visual_profiles,
+    )
+    for tracked in result.values():
+        if not isinstance(tracked, dict):
+            continue
+        tracked.pop("active_visual_profile", None)
+        tracked.pop("active_visual_profile_state", None)
+    return result
+
+
+def _selected_visual_profiles(
+    visual_profiles: dict[str, dict] | None,
+    character_names: list[str],
+    *,
+    multiple_only: bool = False,
+) -> dict[str, dict]:
+    """Return exact registered profile entries for resolved CURRENT characters."""
+    selected: dict[str, dict] = {}
+    for name in character_names or []:
+        canonical_name = str(name or "").strip()
+        if not canonical_name:
+            continue
+        character_profiles = _authority_values_for_name(
+            visual_profiles or {},
+            canonical_name,
+        )
+        if not isinstance(character_profiles, dict):
+            print(
+                f"[ILLUST_CONTEXT:PROFILE_RESOLVE] 등록 프로필 없음: "
+                f"character={canonical_name!r}"
+            )
+            continue
+        if multiple_only and len(character_profiles.get("profiles") or []) <= 1:
+            continue
+        selected[canonical_name] = deepcopy(character_profiles)
+    return selected
+
+
+def _profile_state_for_prompt(
+    character_state: dict | None,
+    character_names: list[str],
+    visual_profiles: dict[str, dict] | None,
+) -> dict[str, dict]:
+    """Render only the prior semantic profile state needed by PROFILE-RESOLVE."""
+    result: dict[str, dict] = {}
+    states = character_state if isinstance(character_state, dict) else {}
+    for name in character_names or []:
+        canonical_name = str(name or "").strip()
+        if not canonical_name:
+            continue
+        tracked = next((
+            value
+            for key, value in states.items()
+            if isinstance(value, dict)
+            and str(value.get("canonical_name") or key).strip().casefold()
+            == canonical_name.casefold()
+        ), None)
+        if not isinstance(tracked, dict):
+            continue
+        profile_id = str(tracked.get("active_visual_profile_id") or "").strip()
+        character_profiles = _authority_values_for_name(
+            visual_profiles or {},
+            canonical_name,
+        )
+        profile = (
+            profile_by_id(character_profiles, profile_id)
+            if isinstance(character_profiles, dict) and profile_id
+            else None
+        )
+        names = visual_profile_names(profile or {})
+        if not names:
+            print(
+                f"[ILLUST_CONTEXT:PROFILE_RESOLVE] 이전 프로필 의미 이름 없음: "
+                f"character={canonical_name!r}, profile_id={profile_id!r}"
+            )
+            continue
+        item = {"active_visual_profile": names[0]}
+        state_description = str(
+            tracked.get("active_visual_profile_state") or ""
+        ).strip()
+        if state_description:
+            item["active_visual_profile_state"] = state_description
+        result[canonical_name] = item
+    return result
+
+
 def _state_without_generated_visual_references(
     character_state: dict | None,
     *,
@@ -2551,26 +2648,30 @@ def parse_call1_analysis(
     if character_names.strip() and not current_characters:
         fallback_errors.append("현재 캐릭터 목록이 비어 있음")
 
-    start_profile_characters = {
-        str(item.get("character") or "").strip().casefold()
-        for item in profile_events
-        if str(item.get("segment_id") or "").strip().upper() == "START"
-    }
-    for current_character in current_characters:
-        name = str(current_character.get("name") or "").strip()
-        character_profiles = _visual_profiles_for_name(visual_profiles, name)
-        if (
-            character_profiles is None
-            or len(character_profiles.get("profiles") or []) <= 1
-            or name.casefold() in start_profile_characters
-        ):
-            continue
-        warning = (
-            f"다중 프로필 CURRENT 캐릭터의 START 판정 누락: character={name}; "
-            "이전 추적 프로필 또는 등록 기본 프로필 폴백 사용"
-        )
-        warnings.append(warning)
-        print(f"[ILLUST_CONTEXT:CALL1] {warning}")
+    # 구형 CALL1/저장 응답에 profile_events가 실제로 포함된 경우에만 완전성을
+    # 검사한다. 신규 CALL1은 프로필 결정을 전용 직렬 단계에 넘기므로 이 키를
+    # 출력하지 않는다.
+    if "profile_events" in raw:
+        start_profile_characters = {
+            str(item.get("character") or "").strip().casefold()
+            for item in profile_events
+            if str(item.get("segment_id") or "").strip().upper() == "START"
+        }
+        for current_character in current_characters:
+            name = str(current_character.get("name") or "").strip()
+            character_profiles = _visual_profiles_for_name(visual_profiles, name)
+            if (
+                character_profiles is None
+                or len(character_profiles.get("profiles") or []) <= 1
+                or name.casefold() in start_profile_characters
+            ):
+                continue
+            warning = (
+                f"다중 프로필 CURRENT 캐릭터의 START 판정 누락: character={name}; "
+                "이전 추적 프로필 또는 등록 기본 프로필 폴백 사용"
+            )
+            warnings.append(warning)
+            print(f"[ILLUST_CONTEXT:CALL1] {warning}")
 
     return {
         "reference_assignments": assignments,
@@ -2588,6 +2689,288 @@ def parse_call1_analysis(
         "validation_errors": warnings + fallback_errors,
         "fallback_required": bool(fallback_errors),
     }
+
+
+def parse_profile_resolution(
+    text: str,
+    current_context: str,
+    segments: dict[str, dict],
+    current_characters: list[dict],
+    visual_profiles: dict[str, dict] | None,
+) -> dict | None:
+    """Validate the dedicated PROFILE-RESOLVE four-field event schema."""
+    raw = _json_object_from_text(text)
+    if raw is None:
+        print("[ILLUST_CONTEXT:PROFILE_RESOLVE] JSON object 파싱 실패")
+        return None
+    raw_events = raw.get("profile_events")
+    if not isinstance(raw_events, list):
+        print(
+            "[ILLUST_CONTEXT:PROFILE_RESOLVE] profile_events가 list가 아님: "
+            f"type={type(raw_events).__name__}"
+        )
+        return None
+
+    names = []
+    normalized_current = []
+    for item in current_characters or []:
+        if isinstance(item, dict):
+            name = str(item.get("name") or "").strip()
+            confidence = item.get("confidence", 1.0)
+        else:
+            name = str(item or "").strip()
+            confidence = 1.0
+        if not name or name.casefold() in {value.casefold() for value in names}:
+            continue
+        names.append(name)
+        normalized_current.append({"name": name, "confidence": confidence})
+
+    selected_profiles = _selected_visual_profiles(
+        visual_profiles,
+        names,
+        multiple_only=True,
+    )
+    composite = {
+        "reference_assignments": [],
+        "history_characters": [],
+        "current_characters": normalized_current,
+        "profile_events": raw_events,
+        "wardrobe_events": [],
+        "hairstyle_events": [],
+        "unresolved_references": [],
+    }
+    parsed = parse_call1_analysis(
+        json.dumps(composite, ensure_ascii=False),
+        current_context,
+        segments,
+        ", ".join(names),
+        visual_profiles=selected_profiles,
+    )
+    if parsed is None:
+        print("[ILLUST_CONTEXT:PROFILE_RESOLVE] 프로필 사건 검증 실패")
+        return None
+    parsed_events = list(parsed.get("profile_events") or [])
+    start_counts = {
+        name.casefold(): sum(
+            1
+            for event in parsed_events
+            if str(event.get("character") or "").strip().casefold() == name.casefold()
+            and str(event.get("segment_id") or "").strip().upper() == "START"
+        )
+        for name in selected_profiles
+    }
+    incomplete = [
+        name
+        for name in selected_profiles
+        if start_counts.get(name.casefold(), 0) != 1
+    ]
+    if incomplete:
+        print(
+            "[ILLUST_CONTEXT:PROFILE_RESOLVE] 다중 프로필 캐릭터 START 완전성 검증 실패: "
+            f"characters={incomplete}, counts={start_counts}"
+        )
+        return None
+    return {
+        "profile_events": parsed_events,
+        "initial_visual_bases": list(parsed.get("initial_visual_bases") or []),
+        "visual_base_events": list(parsed.get("visual_base_events") or []),
+        "validation_warnings": list(parsed.get("validation_warnings") or []),
+        "validation_errors": list(parsed.get("validation_errors") or []),
+    }
+
+
+def _empty_profile_result() -> dict:
+    return {
+        "profile_events": [],
+        "initial_visual_bases": [],
+        "visual_base_events": [],
+        "validation_warnings": [],
+        "validation_errors": [],
+    }
+
+
+def _filter_profile_result_for_characters(
+    profile_result: dict | None,
+    character_names: list[str],
+) -> dict:
+    """Keep preselected profile events only for CALL1-confirmed CURRENT characters."""
+    selected = {
+        str(name or "").strip().casefold()
+        for name in character_names or []
+        if str(name or "").strip()
+    }
+    source = profile_result if isinstance(profile_result, dict) else {}
+    if not selected:
+        return {
+            **_empty_profile_result(),
+            "validation_warnings": list(source.get("validation_warnings") or []),
+            "validation_errors": list(source.get("validation_errors") or []),
+        }
+
+    def belongs(item: dict) -> bool:
+        return (
+            isinstance(item, dict)
+            and str(item.get("character") or "").strip().casefold() in selected
+        )
+
+    return {
+        "profile_events": [
+            deepcopy(item) for item in source.get("profile_events") or [] if belongs(item)
+        ],
+        "initial_visual_bases": [
+            deepcopy(item)
+            for item in source.get("initial_visual_bases") or []
+            if belongs(item)
+        ],
+        "visual_base_events": [
+            deepcopy(item)
+            for item in source.get("visual_base_events") or []
+            if belongs(item)
+        ],
+        "validation_warnings": list(source.get("validation_warnings") or []),
+        "validation_errors": list(source.get("validation_errors") or []),
+    }
+
+
+def profile_authority_text(
+    profile_result: dict | None,
+    visual_profiles: dict[str, dict] | None,
+) -> str:
+    """Render preselected profile-specific appearance/outfit authority as prose."""
+    lines: list[str] = []
+    for event in (profile_result or {}).get("profile_events") or []:
+        if not isinstance(event, dict):
+            continue
+        name = str(event.get("character") or "").strip()
+        profile_name = str(event.get("profile") or "").strip()
+        segment_id = str(event.get("segment_id") or "").strip().upper()
+        state = str(event.get("state") or "").strip()
+        character_profiles = _authority_values_for_name(visual_profiles or {}, name)
+        if not name or not profile_name or not isinstance(character_profiles, dict):
+            print(
+                "[ILLUST_CONTEXT:PROFILE_RESOLVE] 권위 문맥 구성용 캐릭터/프로필 없음: "
+                f"character={name!r}, profile={profile_name!r}"
+            )
+            continue
+        try:
+            profile = profile_by_name(character_profiles, profile_name)
+            base = (
+                resolve_visual_base(character_profiles, str(profile.get("id") or ""))
+                if isinstance(profile, dict)
+                else None
+            )
+        except Exception as e:
+            print(
+                "[ILLUST_CONTEXT:PROFILE_RESOLVE] 권위 문맥 프로필 해석 실패: "
+                f"character={name!r}, profile={profile_name!r}, error={e}"
+            )
+            traceback.print_exc()
+            continue
+        if not isinstance(profile, dict):
+            print(
+                "[ILLUST_CONTEXT:PROFILE_RESOLVE] 권위 문맥 등록 프로필 없음: "
+                f"character={name!r}, profile={profile_name!r}"
+            )
+            continue
+        if not isinstance(base, dict):
+            print(
+                "[ILLUST_CONTEXT:PROFILE_RESOLVE] 권위 문맥 프로필 기반값 없음: "
+                f"character={name!r}, profile={profile_name!r}"
+            )
+            continue
+        appearance_values = visual_tag_values(base.get("appearance") or [])
+        gender_tag = str(character_profiles.get("gender_tag") or "").strip()
+        if gender_tag and gender_tag.casefold() not in {
+            value.casefold() for value in appearance_values
+        }:
+            appearance_values.insert(0, gender_tag)
+        appearance = ", ".join(appearance_values) or "(none)"
+        outfit = ", ".join(visual_tag_values(base.get("outfit") or [])) or "(none)"
+        lines.extend([
+            f"### {segment_id} · {name} · {profile_name}",
+            f"- profile state: {state or '(unspecified)'}",
+            f"- authoritative appearance: {appearance}",
+            f"- profile default outfit: {outfit}",
+        ])
+    if not lines:
+        return ""
+    return (
+        "Profile selection is already complete. The chronological profile-specific "
+        "appearance and default outfit below override any generic/default character "
+        "reference. Do not choose another profile. A later explicit wardrobe or "
+        "hairstyle-arrangement change may overlay this base.\n\n"
+        + "\n".join(lines)
+    )
+
+
+def profile_start_reference(
+    profile_result: dict | None,
+    visual_profiles: dict[str, dict] | None,
+) -> str:
+    """Build lb.extra-shaped START references from the already selected profiles."""
+    blocks: list[str] = []
+    for initial in (profile_result or {}).get("initial_visual_bases") or []:
+        if not isinstance(initial, dict):
+            continue
+        name = str(initial.get("character") or "").strip()
+        profile_id = str(initial.get("target_visual_profile_id") or "").strip()
+        character_profiles = _authority_values_for_name(visual_profiles or {}, name)
+        if not name or not profile_id or not isinstance(character_profiles, dict):
+            print(
+                "[ILLUST_CONTEXT:PROFILE_RESOLVE] START reference 구성값 없음: "
+                f"character={name!r}, profile_id={profile_id!r}"
+            )
+            continue
+        try:
+            base = resolve_visual_base(character_profiles, profile_id)
+        except Exception as e:
+            print(
+                "[ILLUST_CONTEXT:PROFILE_RESOLVE] START reference 프로필 해석 실패: "
+                f"character={name!r}, profile_id={profile_id!r}, error={e}"
+            )
+            traceback.print_exc()
+            continue
+        appearance_values = visual_tag_values(base.get("appearance") or [])
+        gender_tag = str(character_profiles.get("gender_tag") or "").strip()
+        if gender_tag and gender_tag.casefold() not in {
+            value.casefold() for value in appearance_values
+        }:
+            appearance_values.insert(0, gender_tag)
+        appearance = ", ".join(appearance_values)
+        outfit = ", ".join(visual_tag_values(base.get("outfit") or []))
+        blocks.append(
+            f"### {name}\n-Name\n{name}\n-Appearance\n{appearance}"
+            f"\n-default_outfit\n{outfit}"
+        )
+    return "\n\n".join(blocks)
+
+
+def _preselected_profile_inputs(
+    profile_result: dict | None,
+    visual_profiles: dict[str, dict] | None,
+    extra_reference: str,
+    extra_costume: str,
+) -> tuple[str, str, str]:
+    """Compose the profile authority and replacement dictionaries for consumers."""
+    authority = profile_authority_text(profile_result, visual_profiles)
+    start_reference = profile_start_reference(profile_result, visual_profiles)
+    preselected_names = [
+        str(item.get("character") or "").strip()
+        for item in (profile_result or {}).get("initial_visual_bases") or []
+        if isinstance(item, dict) and str(item.get("character") or "").strip()
+    ]
+
+    def replace_generic(source: str) -> str:
+        return "\n\n".join(
+            item
+            for item in (
+                _exclude_character_reference(source, preselected_names),
+                start_reference,
+            )
+            if str(item or "").strip()
+        )
+
+    return authority, replace_generic(extra_reference), replace_generic(extra_costume)
 
 
 def apply_reference_assignments(
@@ -2712,6 +3095,36 @@ def _filter_character_reference(extra_reference: str, selected_names: list[str])
     if missing:
         print(f"[ILLUST_CONTEXT:CALL2] 선택 캐릭터 lb.extra 누락: names={missing}")
     return "\n\n".join(blocks)
+
+
+def _exclude_character_reference(extra_reference: str, excluded_names: list[str]) -> str:
+    """Remove exact character-schema blocks replaced by preselected profile authority."""
+    excluded = {
+        str(name or "").strip().casefold()
+        for name in excluded_names or []
+        if str(name or "").strip()
+    }
+    source = str(extra_reference or "")
+    if not excluded or not source.strip():
+        return source.strip()
+    matches = list(re.finditer(r"(?m)^###\s+([^\r\n]+)\s*$", source))
+    if not matches:
+        print(
+            "[ILLUST_CONTEXT:PROFILE_RESOLVE] 교체할 캐릭터 reference 블록 헤더 없음: "
+            f"characters={sorted(excluded)}"
+        )
+        return source.strip()
+    kept = []
+    prefix = source[:matches[0].start()].strip()
+    if prefix:
+        kept.append(prefix)
+    for index, match in enumerate(matches):
+        name = match.group(1).strip()
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(source)
+        if name.casefold() in excluded:
+            continue
+        kept.append(source[match.start():end].strip())
+    return "\n\n".join(item for item in kept if item)
 
 
 def _selected_character_states(states: dict, selected_names: list[str]) -> dict:
@@ -3155,7 +3568,7 @@ def apply_initial_visual_bases(
     current_message_id: str,
     visual_profiles: dict[str, dict] | None,
 ) -> dict:
-    """Apply CALL1's revalidated profile at the start of CURRENT chronology."""
+    """Apply the preselected profile at the start of CURRENT chronology."""
     result = deepcopy(states or {})
     for initial in initial_visual_bases or []:
         name = str(initial.get("character") or "").strip()
@@ -3218,7 +3631,7 @@ def apply_initial_visual_bases(
             })
         state["last_seen_message_id"] = str(current_message_id or "")
         print(
-            f"[ILLUST_CONTEXT:VISUAL_BASE] CALL1 START 프로필 적용: "
+            f"[ILLUST_CONTEXT:VISUAL_BASE] 최전단 START 프로필 적용: "
             f"character={name}, tracked={tracked_profile_id!r}, "
             f"selected={base['visual_profile_name']!r}, changed={changed}"
         )
@@ -5765,6 +6178,12 @@ async def _run_call2_authority_audit(
         "not evidence. Cropping, framing, occlusion, brevity, and model preference are never exceptions. "
         "`closed eyes` is an expression/visibility state, not a fixed-appearance exception. If a fixed tag is "
         "omitted without qualifying explicit evidence, do not create an exception: the server restores it. "
+        "Hair color must never become unspecified. Whenever fixed_appearance supplies a hair color, preserve "
+        "that color unless CURRENT CONTEXT or literal evidence inside hairstyle_history explicitly establishes "
+        "a different color for this exact moment. If you return the fixed hair-color tag in authority_exceptions, "
+        "you must also put the explicit narrative-supported replacement hair color in required_additions for the "
+        "same entry. Never return a hair-color authority_exception by itself. If the replacement color is not "
+        "explicit enough to state, keep the fixed hair-color tag and do not create that exception. "
         "If generated_positive contains an appearance or hairstyle tag that contradicts fixed appearance "
         "without qualifying explicit evidence, return that exact generated tag in conflicts. default_outfit is only a fallback wardrobe reference, not fixed "
         "identity and not a mandatory outfit. A short historical description is not automatically a "
@@ -7456,6 +7875,7 @@ _CALL_TASK_KEYS = {
     "ORIGINAL-ASSET-RECOVERY": "illustration_original_asset_recovery",
     "CALL1-BACKTRANSLATE": "illustration_call1_backtranslate",
     "CALL1": "illustration_call1",
+    "PROFILE-RESOLVE": "illustration_profile_resolve",
     "CALL2": "illustration_call2",
     "CALL2-PLAN": "illustration_call2",
     "CALL2-KEYVIS": "illustration_call2",
@@ -7469,7 +7889,7 @@ _CALL_TASK_KEYS = {
     "MULTI-CHAR-MASK": "illustration_multi_char_mask",
 }
 
-# CALL1/2/2-FIX/3 각 LLM 호출을 큐 서브태스크로 표시하기 위한 그룹 정의.
+# 직렬 분석/프로필 결정/CALL2/2-FIX/3 호출을 큐 서브태스크로 표시하기 위한 그룹 정의.
 # 역번역(CALL1-BACKTRANSLATE)/다중캐릭터마스크(MULTI-CHAR-MASK)는 병렬 청크용 wrapper가
 # index/total을 직접 주입하므로 여기서 제외한다.
 _CALL_QUEUE_SUBTASK_GROUPS = {
@@ -7479,6 +7899,7 @@ _CALL_QUEUE_SUBTASK_GROUPS = {
         "원본 에셋 실패 항목 복구",
     ),
     "CALL1": ("call1", "CALL1 컨텍스트 보강"),
+    "PROFILE-RESOLVE": ("profile_resolve", "캐릭터 프로필 결정"),
     "CALL2": ("call2", "CALL2 장면/태그 빌드"),
     "CALL2-PLAN": ("call2_plan", "CALL2 장면 PLAN"),
     "CALL2-KEYVIS": ("call2_keyvis", "CALL2 Key Visual"),
@@ -7510,7 +7931,7 @@ async def _call_pipeline_llm(
     history_ids_sink: list[str] | None = None,
     force_slot: str | None = None,
 ) -> str:
-    """삽화 CALL1/2/3 의 LLM 호출. 외부 LLM 분기(illustration_callN task_key)를 경유한다.
+    """삽화 파이프라인 LLM 호출. 단계별 외부 LLM 분기 task_key를 경유한다.
 
     외부 LLM 분기 탭에서 CALL별로 LLM1/LLM2/LLM3 을 선택하거나 폴백을 켤 수 있다.
     실패 시 callLLMTask 가 지정된 폴백 LLM 으로 재시도한다.
@@ -8341,7 +8762,6 @@ def _merge_call1_shard_values(
         "reference_assignments": [],
         "history_characters": [],
         "current_characters": [],
-        "profile_events": [],
         "wardrobe_events": [],
         "hairstyle_events": [],
         "unresolved_references": [],
@@ -8351,8 +8771,6 @@ def _merge_call1_shard_values(
     history_seen = set()
     current_by_name: dict[str, dict] = {}
     assignment_by_key: dict[tuple, dict] = {}
-    profile_start_by_character: dict[str, dict] = {}
-    profile_event_by_key: dict[tuple[str, str], dict] = {}
     wardrobe_seen = set()
     hairstyle_seen = set()
     unresolved_seen = set()
@@ -8424,56 +8842,6 @@ def _merge_call1_shard_values(
                 wardrobe_seen.add(key)
                 merged["wardrobe_events"].append(deepcopy(item))
 
-        for item in raw.get("profile_events") or []:
-            if not isinstance(item, dict):
-                warnings.append(f"CALL1 shard {shard_index} 프로필 사건 형식 오류로 폐기")
-                continue
-            segment_id = str(item.get("segment_id") or "").strip().upper()
-            name = str(item.get("character") or item.get("name") or "").strip()
-            profile_name = str(item.get("profile") or "").strip()
-            if not name or not profile_name:
-                warnings.append(
-                    f"CALL1 shard {shard_index} 프로필 사건 필수값 오류로 폐기: "
-                    f"item={item!r}"
-                )
-                continue
-            folded = name.casefold()
-            if segment_id == "START":
-                if shard_index != 1:
-                    warnings.append(
-                        f"CALL1 shard {shard_index}의 START 프로필 사건 폐기: "
-                        f"START는 shard 1만 담당, character={name}"
-                    )
-                    continue
-                previous = profile_start_by_character.get(folded)
-                if previous is not None:
-                    previous_name = str(previous.get("profile") or "").strip()
-                    if previous_name != profile_name:
-                        fallback_errors.append(
-                            f"CALL1 shard START 프로필 충돌: character={name}, "
-                            f"profiles={[previous_name, profile_name]}"
-                        )
-                    continue
-                profile_start_by_character[folded] = deepcopy(item)
-                continue
-            if segment_id not in assigned_ids:
-                warnings.append(
-                    f"CALL1 shard {shard_index} 담당 밖 프로필 사건 폐기: "
-                    f"segment={segment_id!r}"
-                )
-                continue
-            key = (segment_id, folded)
-            previous = profile_event_by_key.get(key)
-            if previous is not None:
-                previous_name = str(previous.get("profile") or "").strip()
-                if previous_name != profile_name:
-                    fallback_errors.append(
-                        f"CALL1 shard 프로필 사건 충돌: character={name}, "
-                        f"segment={segment_id}, profiles={[previous_name, profile_name]}"
-                    )
-                continue
-            profile_event_by_key[key] = deepcopy(item)
-
         for item in raw.get("hairstyle_events") or []:
             if not isinstance(item, dict):
                 warnings.append(f"CALL1 shard {shard_index} 헤어스타일 이벤트 형식 오류로 폐기")
@@ -8504,16 +8872,6 @@ def _merge_call1_shard_values(
                 merged["unresolved_references"].append(deepcopy(item))
 
     merged["current_characters"] = list(current_by_name.values())
-    merged["profile_events"] = (
-        list(profile_start_by_character.values())
-        + sorted(
-            profile_event_by_key.values(),
-            key=lambda item: segment_rank.get(
-                str(item.get("segment_id") or ""),
-                len(segment_rank),
-            ),
-        )
-    )
     merged["reference_assignments"] = sorted(
         assignment_by_key.values(),
         key=lambda item: (
@@ -8587,12 +8945,10 @@ async def _run_parallel_call1_analysis(
         shard_instruction = (
             "\n\n# Parallel shard contract\n"
             f"This is shard {index}/{total}. Read the full context for discourse understanding, "
-            "but emit reference_assignments, non-START profile_events, wardrobe_events, "
-            "hairstyle_events, and unresolved_references only "
+            "but emit reference_assignments, wardrobe_events, hairstyle_events, and "
+            "unresolved_references only "
             f"for these assigned segment IDs: {json.dumps(assigned, ensure_ascii=False)}.\n"
-            "Shard 1 alone must emit the required START profile_events for every CURRENT character "
-            "with multiple registered profiles, using the full PAST and CURRENT chronology. Other shards "
-            "must not repeat START items. Emit history_characters and current_characters only for characters relevant to those "
+            "Emit history_characters and current_characters only for characters relevant to those "
             "assigned segments; the server unions all shard lists. Do not repeat the global roster in "
             "every shard. Use canonical-name strings and omit optional default-valued fields as allowed "
             "by the existing schema. Return one JSON object only."
@@ -8620,7 +8976,6 @@ async def _run_parallel_call1_analysis(
                 "reference_assignments",
                 "history_characters",
                 "current_characters",
-                "profile_events",
                 "wardrobe_events",
                 "hairstyle_events",
                 "unresolved_references",
@@ -8670,6 +9025,156 @@ async def _run_parallel_call1_analysis(
         segment_ids,
     )
     return json.dumps(merged, ensure_ascii=False), merge_warnings, merge_fallback_errors
+
+
+async def _run_profile_resolution(
+    *,
+    profile_system: str,
+    segmented_current: str,
+    current_context: str,
+    current_segments: dict[str, dict],
+    history_text: str,
+    candidate_names: list[str],
+    previous_state: dict,
+    visual_profiles: dict[str, dict] | None,
+    stream_notify,
+    history_ids_sink: list[str] | None = None,
+) -> tuple[str, dict]:
+    """Run one global profile decision before any profile-dependent selection."""
+    current_names = [str(name or "").strip() for name in candidate_names or []]
+    current_names = list(dict.fromkeys(name for name in current_names if name))
+    selected_profiles = _selected_visual_profiles(
+        visual_profiles,
+        current_names,
+        multiple_only=True,
+    )
+    if not selected_profiles:
+        print(
+            "[ILLUST_CONTEXT:PROFILE_RESOLVE] 다중 프로필 CURRENT 캐릭터가 없어 "
+            "전용 호출 건너뜀"
+        )
+        return "", _empty_profile_result()
+
+    selected_names = list(selected_profiles)
+    catalog = build_natural_profile_catalog(selected_profiles)
+    tracked_state = _profile_state_for_prompt(
+        previous_state,
+        selected_names,
+        selected_profiles,
+    )
+    messages = _normalize_messages([
+        {"role": "system", "content": str(profile_system or "").strip()},
+        {
+            "role": "user",
+            "content": (
+                "# REGISTERED MULTI-PROFILE CANDIDATES (PRE-CALL1)\n"
+                + json.dumps(selected_names, ensure_ascii=False)
+                + "\n\n# PREVIOUSLY TRACKED PROFILE STATE\n"
+                + json.dumps(tracked_state, ensure_ascii=False, indent=2)
+                + "\n\n# REGISTERED PROFILE CATALOG FOR CURRENT CHARACTERS\n"
+                + (catalog or "(none)")
+                + "\n\n# PAST HISTORY\n"
+                + (history_text or "(empty)")
+                + "\n\n# FULL CURRENT CONTEXT SEGMENTS\n"
+                + segmented_current
+            ),
+        },
+    ])
+
+    def validate(result):
+        parsed = parse_profile_resolution(
+            result,
+            current_context,
+            current_segments,
+            [{"name": name, "confidence": 1.0} for name in selected_names],
+            selected_profiles,
+        )
+        if parsed is None:
+            return False, "PROFILE-RESOLVE JSON/프로필 사건 검증 실패"
+        return True, ""
+
+    raw_output = await _call_pipeline_llm(
+        "PROFILE-RESOLVE",
+        messages,
+        stream_notify,
+        result_validator=validate,
+        json_mode=True,
+        history_ids_sink=history_ids_sink,
+    )
+    parsed = parse_profile_resolution(
+        raw_output,
+        current_context,
+        current_segments,
+        [{"name": name, "confidence": 1.0} for name in selected_names],
+        selected_profiles,
+    )
+    if parsed is None:
+        raise ValueError("PROFILE-RESOLVE 최종 응답 파싱 실패")
+    print(
+        f"[ILLUST_CONTEXT:PROFILE_RESOLVE] 전역 프로필 결정 완료: "
+        f"characters={selected_names}, events={len(parsed['profile_events'])}"
+    )
+    return raw_output, parsed
+
+
+async def resolve_profiles_before_generation(
+    *,
+    payload: dict,
+    toggles: dict | None,
+    history_plan: dict | None,
+    visual_profiles: dict[str, dict] | None,
+    stream_notify=None,
+    progress=None,
+    history_ids_sink: list[str] | None = None,
+) -> tuple[str, dict]:
+    """Resolve all multi-profile candidates before assets, CALL1, or CALL2."""
+    candidate_names = [
+        str(name or "").strip()
+        for name, value in (visual_profiles or {}).items()
+        if str(name or "").strip()
+        and isinstance(value, dict)
+        and len(value.get("profiles") or []) > 1
+    ]
+    if not candidate_names:
+        print(
+            "[ILLUST_CONTEXT:PROFILE_RESOLVE] 등록된 다중 프로필 캐릭터가 없어 "
+            "최전단 호출 건너뜀"
+        )
+        return "", _empty_profile_result()
+
+    chats = payload.get("chats") or []
+    target_index, narrative = _latest_narrative(chats)
+    if target_index < 0 or not str(narrative or "").strip():
+        print(
+            "[ILLUST_CONTEXT:PROFILE_RESOLVE] 최전단 프로필 결정용 최신 CHAR 서사 없음: "
+            f"chats={len(chats)}"
+        )
+        raise RuntimeError("프로필 결정용 최신 CHAR 서사를 찾지 못했습니다")
+    current_context = _strip_nodes(narrative)
+    segmented_current, current_segments = _segment_current_context(current_context)
+    merged = merged_toggles(toggles)
+    if isinstance(history_plan, dict):
+        history_items = history_plan.get("call1_history") or []
+    else:
+        history_items = chats[
+            max(0, target_index - int(merged["call1_context_turns"])):target_index
+        ]
+    history_text = _history_messages_text(history_items)
+    if progress:
+        await progress(1, "profile_resolve", "캐릭터 프로필 최전단 결정")
+    prompts = load_prompt_files()
+    return await _run_profile_resolution(
+        profile_system=prompts.get("profile_resolve", ""),
+        segmented_current=segmented_current,
+        current_context=current_context,
+        current_segments=current_segments,
+        history_text=history_text,
+        candidate_names=candidate_names,
+        previous_state=(history_plan or {}).get("state_before") or {},
+        visual_profiles=visual_profiles,
+        stream_notify=stream_notify,
+        history_ids_sink=history_ids_sink,
+    )
 
 
 def _parse_multi_char_layout_response(
@@ -9575,6 +10080,8 @@ async def build_from_context(
     history_plan: dict | None = None,
     visual_profile_catalog: str = "",
     visual_profiles: dict[str, dict] | None = None,
+    pre_resolved_profile_output: str = "",
+    pre_resolved_profile_result: dict | None = None,
 ) -> dict:
     toggles = merged_toggles(toggles)
     prompts = load_prompt_files()
@@ -9655,6 +10162,12 @@ async def build_from_context(
         await progress(5, "call1", "CALL1 컨텍스트 준비")
     call1_output = ""
     call1_result: dict = {}
+    profile_output = str(pre_resolved_profile_output or "")
+    profile_result = deepcopy(
+        pre_resolved_profile_result
+        if isinstance(pre_resolved_profile_result, dict)
+        else _empty_profile_result()
+    )
     wardrobe_events: list[dict] = []
     profile_events: list[dict] = []
     initial_visual_bases: list[dict] = []
@@ -9667,37 +10180,75 @@ async def build_from_context(
     segmented_current, current_segments = _segment_current_context(enhanced)
     persistent_history = history_plan if isinstance(history_plan, dict) else None
     reference_provenance = build_reference_provenance(persistent_history)
+    if persistent_history:
+        context_slice = persistent_history.get("call1_history") or []
+    else:
+        n = int(toggles["call1_context_turns"])
+        context_slice = chats[max(0, target_index - n):target_index]
+    history_text = _history_messages_text(context_slice)
+
+    if visual_profiles and pre_resolved_profile_result is None:
+        candidate_names = [
+            str(name or "").strip()
+            for name, value in visual_profiles.items()
+            if str(name or "").strip()
+            and isinstance(value, dict)
+            and len(value.get("profiles") or []) > 1
+        ]
+        if candidate_names:
+            if progress:
+                await progress(4, "profile_resolve", "캐릭터 프로필 최전단 결정")
+            profile_output, profile_result = await _run_profile_resolution(
+                profile_system=prompts.get("profile_resolve", ""),
+                segmented_current=segmented_current,
+                current_context=enhanced,
+                current_segments=current_segments,
+                history_text=history_text,
+                candidate_names=candidate_names,
+                previous_state=(persistent_history or {}).get("state_before") or {},
+                visual_profiles=visual_profiles,
+                stream_notify=stream_notify,
+            )
+    profile_events = list(profile_result.get("profile_events") or [])
+    initial_visual_bases = list(profile_result.get("initial_visual_bases") or [])
+    visual_base_events = list(profile_result.get("visual_base_events") or [])
+    (
+        selected_profile_authority,
+        effective_profile_reference,
+        effective_profile_costume,
+    ) = _preselected_profile_inputs(
+        profile_result,
+        visual_profiles,
+        extra_reference,
+        extra_costume,
+    )
+    profile_seeded_state = apply_initial_visual_bases(
+        (persistent_history or {}).get("state_before") or {},
+        initial_visual_bases,
+        str((persistent_history or {}).get("current_message_id") or ""),
+        visual_profiles,
+    )
     if toggles.get("call1_enabled"):
-        if persistent_history:
-            context_slice = persistent_history.get("call1_history") or []
-        else:
-            n = int(toggles["call1_context_turns"])
-            context_slice = chats[max(0, target_index - n):target_index]
         # CALL1에는 lb.extra 중 시스템 프롬프트를 빼고 캐릭터 복장 정보만 넘긴다.
         # enhance 프롬프트의 {lb_extra_costume} 자리표시자를 치환한다.
         # (자리표시자가 없으면 복장 정보를 뒤에 덧붙여 정보 유실을 막는다.)
         call1_system = prompts.get("call1_enhance", "")
-        costume = str(extra_costume or "").strip()
+        costume = effective_profile_costume
         if "{lb_extra_costume}" in call1_system:
             call1_system = call1_system.replace("{lb_extra_costume}", costume)
         elif costume:
             call1_system = call1_system + "\n\n" + costume
-        if "{visual_profile_catalog}" in call1_system:
-            call1_system = call1_system.replace(
-                "{visual_profile_catalog}",
-                str(visual_profile_catalog or "").strip() or "(none)",
-            )
-        elif str(visual_profile_catalog or "").strip():
+        if selected_profile_authority:
             call1_system += (
-                "\n\n# REGISTERED CHARACTER CARDS\n"
-                + str(visual_profile_catalog).strip()
+                "\n\n# PRESELECTED PROFILE AUTHORITY\n"
+                + selected_profile_authority
             )
         call1_system = call1_system.replace("{character_names}", str(backtranslate_names or extra_names or ""))
         call1_system = call1_system.replace(
             "{character_state}",
             json.dumps(
-                _call1_state_for_prompt(
-                    (persistent_history or {}).get("state_before") or {},
+                _call1_wardrobe_state_for_prompt(
+                    profile_seeded_state,
                     costume,
                     visual_profiles,
                 ),
@@ -9705,7 +10256,6 @@ async def build_from_context(
                 indent=2,
             ),
         )
-        history_text = _history_messages_text(context_slice)
         parallel_call1_used = False
         parallel_merge_warnings: list[str] = []
         parallel_merge_fallback_errors: list[str] = []
@@ -9795,14 +10345,27 @@ async def build_from_context(
                         f"errors={parallel_merge_fallback_errors}"
                     )
                 wardrobe_events = list(parsed_call1.get("wardrobe_events") or [])
-                profile_events = list(parsed_call1.get("profile_events") or [])
+                if parsed_call1.get("profile_events"):
+                    print(
+                        "[ILLUST_CONTEXT:CALL1] 전용 단계 이전 CALL1 프로필 출력은 "
+                        f"사용하지 않음: events={len(parsed_call1['profile_events'])}"
+                    )
+                hairstyle_events = list(parsed_call1.get("hairstyle_events") or [])
+                confirmed_profile_names = [
+                    str(item.get("name") if isinstance(item, dict) else item or "").strip()
+                    for item in parsed_call1.get("current_characters") or []
+                ]
+                profile_result = _filter_profile_result_for_characters(
+                    profile_result,
+                    confirmed_profile_names,
+                )
+                profile_events = list(profile_result.get("profile_events") or [])
                 initial_visual_bases = list(
-                    parsed_call1.get("initial_visual_bases") or []
+                    profile_result.get("initial_visual_bases") or []
                 )
                 visual_base_events = list(
-                    parsed_call1.get("visual_base_events") or []
+                    profile_result.get("visual_base_events") or []
                 )
-                hairstyle_events = list(parsed_call1.get("hairstyle_events") or [])
                 resolved_current, assignment_errors, reference_variables = apply_reference_assignments(
                     enhanced,
                     current_segments,
@@ -9842,11 +10405,26 @@ async def build_from_context(
                         f"[ILLUST_CONTEXT:CALL1] 슬롯 보존 지칭 치환 경고: "
                         f"warnings={slotted_assignment_errors}"
                     )
+
         else:
             enhanced = _splice_enhancements(enhanced, call1_output)
     else:
         print("[ILLUST_CONTEXT:CALL1] 토글로 비활성화됨")
         balanced_fallback = bool(persistent_history)
+
+    # CALL1이 실제 CURRENT 등장 인물을 확정한 뒤에는 최전단 선택 결과도 같은
+    # 집합으로 다시 좁힌다. CALL2 정상/폴백 경로 모두 이 권위 블록과 교체 사전을
+    # 직접 소비하므로 프로필을 독립적으로 재선택하지 않는다.
+    (
+        selected_profile_authority,
+        effective_profile_reference,
+        effective_profile_costume,
+    ) = _preselected_profile_inputs(
+        profile_result,
+        visual_profiles,
+        extra_reference,
+        extra_costume,
+    )
 
     # Risu는 결과 메타데이터를 텍스트로 받을 수 없고 generateImage만 반복 호출한다.
     # 결과를 slot 번호로 회수할 수 있도록 슬롯 번호는 원문 문단을 기준으로 고정한다.
@@ -9864,11 +10442,14 @@ async def build_from_context(
         if isinstance(item, dict) and str(item.get("name") or "").strip()
     ]
     call2_instruction = str(extra_instruction or "").strip()
-    call2_reference = str(extra_reference or "")
+    call2_reference = str(effective_profile_reference or extra_reference or "")
     selected_states = {}
     previous_visual = {}
     if persistent_history and toggles.get("call1_enabled") and call1_result and not balanced_fallback:
-        call2_reference = _filter_character_reference(extra_reference, current_character_names)
+        call2_reference = _filter_character_reference(
+            effective_profile_reference or extra_reference,
+            current_character_names,
+        )
         state_before = persistent_history.get("state_before") or {}
         selected_states = _selected_character_states(
             state_before,
@@ -10034,6 +10615,14 @@ async def build_from_context(
         append_call2_context({
             "role": "user",
             "content": "# ACTIVE BOT IMAGE INSTRUCTIONS\n\n" + call2_instruction,
+        })
+    if selected_profile_authority:
+        append_call2_context({
+            "role": "user",
+            "content": (
+                "# PRESELECTED PROFILE AUTHORITY\n\n"
+                + selected_profile_authority
+            ),
         })
     if call2_reference.strip():
         append_call2_context({
@@ -11303,6 +11892,8 @@ async def build_from_context(
         "enhanced_narrative": enhanced,
         "call1_output": call1_output,
         "call1_result": call1_result,
+        "profile_output": profile_output,
+        "profile_result": profile_result,
         "reference_provenance": reference_provenance,
         "last_visual_reference_classification": last_visual_reference_classification,
         "reference_variables": reference_variables,

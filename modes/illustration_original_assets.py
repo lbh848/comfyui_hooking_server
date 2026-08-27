@@ -220,7 +220,7 @@ def validate_selection_response(
     if not valid:
         return valid, reason
     document = _json_object(raw)
-    selections = document.get("selections") if document else []
+    selections = (document.get("selections") if document else [])[:requested_count]
     allowed = set(allowed_slots)
     seen_slots: set[int] = set()
     for index, selection in enumerate(selections, start=1):
@@ -249,12 +249,13 @@ def validate_selection_response(
 
 def validate_selection_response_envelope(
     raw: str,
-    requested_count: int,
+    _requested_count: int,
 ) -> tuple[bool, str]:
-    """Validate only the response shape shared by all selection items.
+    """Validate only the response shape shared by partial selection results.
 
     Individual selection errors are intentionally resolved after the LLM call so
-    one missing uploaded file does not discard otherwise valid selections.
+    one missing uploaded file or an underfilled result does not discard otherwise
+    valid selections. Count normalization happens after the routed call returns.
     """
     document = _json_object(raw)
     if document is None:
@@ -262,8 +263,6 @@ def validate_selection_response_envelope(
     selections = document.get("selections")
     if not isinstance(selections, list):
         return False, "selections가 배열이 아님"
-    if len(selections) != requested_count:
-        return False, f"선택 장수 불일치: expected={requested_count}, actual={len(selections)}"
     return True, ""
 
 
@@ -274,6 +273,7 @@ def build_selection_messages(
     target_slotted: str,
     allowed_slots: list[int],
     requested_count: int,
+    profile_authority: str = "",
 ) -> list[dict]:
     instruction = str(instruction or "").strip()
     if len(instruction) > MAX_ORIGINAL_ASSET_INSTRUCTION_CHARS:
@@ -282,29 +282,55 @@ def build_selection_messages(
             f"chars={len(instruction)}, max={MAX_ORIGINAL_ASSET_INSTRUCTION_CHARS}"
         )
         instruction = instruction[:MAX_ORIGINAL_ASSET_INSTRUCTION_CHARS]
-    system = """You are a one-step original image asset selector.
-Read the user's asset command instructions as natural-language rules and apply them to the conversation context. Do not infer availability from an uploaded-file list; no file list is provided. Select only command IDs explicitly permitted by the user's instructions. Never select an asset for {{user}} when the instructions prohibit it.
+    system = """You are a one-step original image asset selector. Your only selection target is [CURRENT RESPONSE WITH INSERTION SLOTS]. The asset command instructions define permitted command grammar and IDs; they are not evidence that a character, outfit, form, emotion, or action occurs in the story. No uploaded-file list is provided, so do not infer availability from one. Never select an asset for {{user}} when the instructions prohibit it. [PRESELECTED PROFILE AUTHORITY] was resolved before this stage and is authoritative for each character's chronological form, appearance, and profile-default outfit. Never choose a different profile independently.
+
+Apply this evidence priority whenever sources differ:
+1. The local passage immediately around the candidate slot in the current response.
+2. Earlier passages in the same active scene of the current response.
+3. Recent conversation context, only to carry forward a fact that the current response leaves unstated.
+The current response always overrides recent context. Asset command instructions never establish story facts.
+
+Eligibility rules:
+- Select only a character or entity physically present in the active narrative scene at that slot, in the same time and place as the surrounding passage.
+- Exclude anyone who is merely mentioned, remembered, visualized in a brief recollection, imagined, dreamed about, quoted, planned for later, shown hypothetically, or currently located elsewhere/off-screen. A name appearing in text or in recent context does not make that subject eligible.
+- A full scene narrated directly by the response may be eligible regardless of its chronology, but an embedded memory, mental image, recap, or passing description inside another active scene is not a separate eligible scene.
+
+Command-selection rules:
+- Match the command to the exact eligible subject at the chosen slot.
+- Determine the subject's outfit/form from the current local scene first. Use carried-forward context only when the current response truly leaves it unstated and has not changed it. Never substitute a default, habitual, more familiar, or merely available outfit/form.
+- Match the state suffix conservatively to an expression or action actually established at that moment. Do not exaggerate a smile or smirk into a crazy smile, infer an unseen action, or use a nearby emotional label without textual support.
+- Apply every special-situation condition in the user's instructions literally. Compose and copy only command IDs permitted by those instructions.
+- Treat one continuous, unchanged pose/expression/action as one visual beat. Do not spend multiple selections on near-duplicate states from the same beat. Select the same subject again only after the response establishes a meaningful visual change.
+
+Slot-placement rules:
+- Each [Slot N] is the insertion gap after the paragraph above it and before the paragraph below it.
+- Choose the first suitable slot after the text has established the eligible subject, current outfit/form, and depicted state, while that state still applies. Never place an image before its subject or visual evidence is introduced, and never carry it past a scene or state change.
+- Keep selections in narrative order and distribute them across distinct, meaningful visual beats.
 
 Return JSON only with this exact machine-consumed shape:
 {"selections":[{"src":"<exact command filename including extension>","slot":0}]}
 
 Requirements:
-- Return exactly the requested number of selections.
+- Return no more than the requested maximum number of selections.
+- If the current response contains fewer valid distinct visual beats than the requested maximum, return fewer selections. Never invent, weaken, or duplicate a choice merely to reach the maximum.
 - Use only the allowed insertion slot integers supplied below.
 - Do not repeat a slot.
 - Preserve command spelling, spaces, underscores, and capitalization from the user's instructions.
 - The server will reject invented commands and commands without an uploaded original file.
-- This is the only selection stage; make the best contextual choices now."""
+- Accuracy rules above are mandatory. Prefer a less prominent but still valid distinct visual beat before returning fewer selections; if no such beat exists, stop below the maximum. Never relax presence, outfit/form, state, or non-duplication rules merely to fill remaining capacity.
+- This is the only selection stage; make the best valid choices now."""
     user = "\n\n".join([
         "[USER ASSET COMMAND INSTRUCTIONS — VERBATIM]",
         instruction or "(empty)",
+        "[PRESELECTED PROFILE AUTHORITY]",
+        str(profile_authority or "").strip() or "(no multi-profile character)",
         "[RECENT CONVERSATION CONTEXT]",
         str(conversation_context or "").strip() or "(none)",
         "[CURRENT RESPONSE WITH INSERTION SLOTS]",
         str(target_slotted or "").strip() or "(none)",
         "[ALLOWED INSERTION SLOTS]",
         ", ".join(str(slot) for slot in allowed_slots),
-        "[EXACT OUTPUT COUNT]",
+        "[REQUESTED MAXIMUM OUTPUT COUNT]",
         str(requested_count),
     ])
     return [
@@ -322,6 +348,7 @@ async def select_original_assets(
     allowed_slots: list[int],
     requested_count: int,
     asset_index: dict[str, list[OriginalAssetCandidate]],
+    profile_authority: str = "",
 ) -> list[dict]:
     """Return per-item resolutions; invalid items carry an ``error`` value."""
     messages = build_selection_messages(
@@ -330,6 +357,7 @@ async def select_original_assets(
         target_slotted=target_slotted,
         allowed_slots=allowed_slots,
         requested_count=requested_count,
+        profile_authority=profile_authority,
     )
 
     def validate(raw: str):
@@ -344,10 +372,24 @@ async def select_original_assets(
         )
         raise RuntimeError(f"원본 에셋 선택 응답이 유효하지 않습니다: {reason}")
     document = _json_object(raw) or {}
+    selection_rows = list(document.get("selections") or [])
+    if len(selection_rows) > requested_count:
+        print(
+            f"[ILLUST_ORIGINAL_ASSET] 요청 수 초과 선택 제외: "
+            f"requested={requested_count}, returned={len(selection_rows)}, "
+            f"dropped={len(selection_rows) - requested_count}"
+        )
+        selection_rows = selection_rows[:requested_count]
+    elif len(selection_rows) < requested_count:
+        print(
+            f"[ILLUST_ORIGINAL_ASSET] 부분 선택 응답 허용: "
+            f"requested={requested_count}, returned={len(selection_rows)}, "
+            f"shortfall={requested_count - len(selection_rows)}"
+        )
     resolved = []
     allowed = set(allowed_slots)
     seen_slots: set[int] = set()
-    for index, selection in enumerate(document.get("selections") or [], start=1):
+    for index, selection in enumerate(selection_rows, start=1):
         src = ""
         slot = None
         reason = ""
@@ -390,11 +432,12 @@ async def select_original_assets(
             "candidate": candidate,
         })
     failure_count = sum(1 for selection in resolved if selection.get("error"))
-    if failure_count:
+    shortfall = max(0, requested_count - len(resolved))
+    if failure_count or shortfall:
         print(
             f"[ILLUST_ORIGINAL_ASSET] 부분 선택 완료: "
             f"success={len(resolved) - failure_count}, failed={failure_count}, "
-            f"requested={requested_count}"
+            f"shortfall={shortfall}, requested={requested_count}"
         )
     return resolved
 
@@ -489,6 +532,7 @@ def build_recovery_messages(
     conversation_context: str,
     target_slotted: str,
     recovery_items: list[dict],
+    profile_authority: str = "",
 ) -> list[dict]:
     """Build a closed-set recovery prompt for rejected selection IDs."""
     instruction = str(instruction or "").strip()
@@ -510,7 +554,7 @@ def build_recovery_messages(
             "Allowed existing candidates:",
             candidates or "- (none)",
         ]))
-    system = """You repair rejected original image asset selections.
+    system = """You repair rejected original image asset selections. [PRESELECTED PROFILE AUTHORITY] was resolved before asset selection and remains authoritative for form, appearance, and profile-default outfit. Never choose a different profile independently.
 For each rejected slot, read the original asset instructions and conversation context, then choose the contextually correct src from that slot's Allowed existing candidates. Candidate lists contain real uploaded command IDs and are exhaustive for this recovery step.
 
 Return JSON only with this exact machine-consumed shape:
@@ -525,6 +569,8 @@ Requirements:
     user = "\n\n".join([
         "[USER ASSET COMMAND INSTRUCTIONS — VERBATIM]",
         instruction or "(empty)",
+        "[PRESELECTED PROFILE AUTHORITY]",
+        str(profile_authority or "").strip() or "(no multi-profile character)",
         "[RECENT CONVERSATION CONTEXT]",
         str(conversation_context or "").strip() or "(none)",
         "[CURRENT RESPONSE WITH INSERTION SLOTS]",
@@ -550,6 +596,7 @@ async def recover_original_asset_selections(
     selections: list[dict],
     asset_index: dict[str, list[OriginalAssetCandidate]],
     candidate_limit: int = MAX_ORIGINAL_ASSET_RECOVERY_CANDIDATES,
+    profile_authority: str = "",
 ) -> list[dict]:
     """Recover invalid selections by asking the LLM to choose real candidates."""
     allowed = set(allowed_slots)
@@ -615,6 +662,7 @@ async def recover_original_asset_selections(
         conversation_context=conversation_context,
         target_slotted=target_slotted,
         recovery_items=recovery_items,
+        profile_authority=profile_authority,
     )
 
     def validate(raw: str):
@@ -633,7 +681,15 @@ async def recover_original_asset_selections(
     expected_by_slot = {item["slot"]: item for item in recovery_items}
     seen_slots: set[int] = set()
     recovered = []
-    for index, selection in enumerate(document.get("selections") or [], start=1):
+    recovery_rows = list(document.get("selections") or [])
+    if len(recovery_rows) > len(recovery_items):
+        print(
+            f"[ILLUST_ORIGINAL_ASSET:RECOVERY] 요청 수 초과 복구 선택 제외: "
+            f"requested={len(recovery_items)}, returned={len(recovery_rows)}, "
+            f"dropped={len(recovery_rows) - len(recovery_items)}"
+        )
+        recovery_rows = recovery_rows[:len(recovery_items)]
+    for index, selection in enumerate(recovery_rows, start=1):
         src = ""
         slot = None
         reason = ""

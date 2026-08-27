@@ -728,6 +728,7 @@ DEFAULT_CONFIG = {
         # 폴백 없음(fallback_target 미지정)이 기본.
         "illustration_call1_backtranslate": _llm_route_defaults(max_retries=1, retry_delay_sec=0.0, fallback_max_retries=1, fallback_retry_delay_sec=0.0),
         "illustration_call1":      _llm_route_defaults(),  # 전처리(컨텍스트 보강)
+        "illustration_profile_resolve": _llm_route_defaults(json_mode=True),  # 생성 최전단 전역 캐릭터 프로필 결정
         "illustration_call2":      _llm_route_defaults(),  # PLAN/DETAIL/KEYVIS 장면·태그 빌드 공유
         "illustration_call2_fix":  _llm_route_defaults(),  # CALL2 파싱 실패 시 TOON 교정(repair.txt)
         "illustration_call3":      _llm_route_defaults(),  # 대사 생성(speak/manga)
@@ -6035,6 +6036,10 @@ def _collect_lb_extra(bot_name: str) -> dict | None:
                 if str(profile_name).casefold() == name.casefold()
             ), None)
             if character_profiles:
+                # 성별 태그는 프로필 선택 대상이 아닌 캐릭터 공통 렌더 메타데이터다.
+                # 선택 프로필이 기본 lb.extra 블록을 대체해도 이 값을 잃지 않도록
+                # 서버 소유 유효 프로필 맵에 구조적으로 보존한다.
+                character_profiles["gender_tag"] = gender_tag
                 visual_base = resolve_visual_base(character_profiles)
                 appearance = _tag_text(visual_base.get("appearance"))
                 outfit = _tag_text(visual_base.get("outfit"))
@@ -6137,7 +6142,7 @@ def build_bot_character_names(bot_name: str) -> str:
 
 
 def build_visual_profile_catalog(bot_name: str) -> str:
-    """CALL1이 의미로 판단할 자연어 캐릭터 카드·등록 복장 카탈로그."""
+    """최전단 프로필 결정 단계가 의미로 판단할 자연어 카드 카탈로그."""
     collected = _collect_lb_extra(bot_name)
     if not collected:
         return ""
@@ -6181,7 +6186,7 @@ def _original_asset_bot_character_names(bot_name: str) -> list[str]:
 
 
 def _original_asset_context(payload: dict, context_turns: int) -> tuple[str, str]:
-    """Build prose context and the current slotted response for the one-step selector."""
+    """Build preceding prose context and the current slotted selector target."""
     chats = payload.get("chats") or []
     if not isinstance(chats, list):
         print(
@@ -6210,7 +6215,10 @@ def _original_asset_context(payload: dict, context_turns: int) -> tuple[str, str
         )
         traceback.print_exc()
         context_turns = 5
-    recent = chats[max(0, target_index - context_turns):target_index + 1]
+    # The current response is supplied separately with insertion slots. Repeating it
+    # in RECENT CONVERSATION CONTEXT weakens the prompt's source hierarchy and can
+    # make embedded memories look like a second active scene.
+    recent = chats[max(0, target_index - context_turns):target_index]
     context_parts = []
     for message in recent:
         if not isinstance(message, dict):
@@ -6246,6 +6254,7 @@ async def _select_original_asset_outputs(
     reserve_slot_count: int,
     stream_notify,
     llm_trace: list[str],
+    profile_authority: str = "",
 ) -> dict:
     """Run the single selector call, validate exact IDs, and read source bytes."""
     requested_count = int(toggles.get("original_asset_count") or 1)
@@ -6332,7 +6341,23 @@ async def _select_original_asset_outputs(
         allowed_slots=allowed_slots,
         requested_count=effective_count,
         asset_index=asset_index,
+        profile_authority=profile_authority,
     )
+    selection_shortfall = max(0, effective_count - len(selections))
+    if selection_shortfall:
+        shortfall_error = (
+            f"원본 에셋 선택 수 부족: requested={effective_count}, "
+            f"returned={len(selections)}"
+        )
+        result["failures"].extend(
+            {"slot": None, "error": shortfall_error}
+            for _ in range(selection_shortfall)
+        )
+        print(
+            f"[ILLUST_ORIGINAL_ASSET] 부분 성공 - 부족분만 실패 처리: "
+            f"bot={active_bot!r}, requested={effective_count}, "
+            f"returned={len(selections)}, shortfall={selection_shortfall}"
+        )
     failed_selections = [
         selection for selection in selections if selection.get("error")
     ]
@@ -6356,6 +6381,7 @@ async def _select_original_asset_outputs(
                 allowed_slots=allowed_slots,
                 selections=selections,
                 asset_index=asset_index,
+                profile_authority=profile_authority,
             )
         except asyncio.CancelledError:
             print(
@@ -7184,6 +7210,66 @@ async def process_illustration_context_queue_item(item) -> dict:
         if not original_prompt_id or original_prompt_id not in prompts:
             print(f"[ILLUST_CONTEXT] 원본 prompt 엔트리 없음: {original_prompt_id!r}")
             raise RuntimeError("원본 prompt 엔트리를 찾지 못했습니다")
+        profile_output = ""
+        profile_result = illustration_context_pipeline._empty_profile_result()
+        profile_authority = ""
+        extra_instruction = ""
+        extra_costume = ""
+        extra_character_cards = ""
+        extra_names = ""
+        backtranslate_names = ""
+        visual_profile_catalog = ""
+        effective_visual_profiles = {}
+        if payload.get("protocol") != "prompt_batch_v1":
+            history_chats = payload.get("chats") or []
+            if not history_chats:
+                print(
+                    f"[ILLUST_HISTORY] CHAT이 비어 있어 히스토리 저장을 건너뜁니다: "
+                    f"session={session_id}"
+                )
+                history_plan = None
+            else:
+                history_target_index = next((
+                    index
+                    for index in range(len(history_chats) - 1, -1, -1)
+                    if history_chats[index].get("role") == "char"
+                    and str(history_chats[index].get("data") or "").strip()
+                ), -1)
+                if history_target_index < 0:
+                    print(
+                        f"[ILLUST_HISTORY] 저장 준비 실패 - 최신 CHAR 없음: "
+                        f"session={session_id}, chats={len(history_chats)}"
+                    )
+                    raise RuntimeError("채팅 히스토리에 저장할 최신 CHAR 응답이 없습니다")
+                history_plan = illustration_chat_history.prepare_history(
+                    history_chats,
+                    history_target_index,
+                    active_bot,
+                )
+
+            # 프로필을 먼저 확정한 뒤 이 결과를 ORIGINAL-ASSET, CALL1, CALL2가 공유한다.
+            extra_instruction = build_active_lb_instruction(active_bot)
+            extra_costume = build_lb_extra_costume(active_bot)
+            extra_character_cards = extra_costume
+            extra_names = build_lb_extra_names(active_bot)
+            backtranslate_names = build_bot_character_names(active_bot)
+            visual_profile_catalog = build_visual_profile_catalog(active_bot)
+            effective_visual_profiles = build_effective_visual_profiles(active_bot)
+            profile_output, profile_result = (
+                await illustration_context_pipeline.resolve_profiles_before_generation(
+                    payload=payload,
+                    toggles=illust_toggles,
+                    history_plan=history_plan,
+                    visual_profiles=effective_visual_profiles,
+                    stream_notify=stream_notify,
+                    progress=progress,
+                    history_ids_sink=llm_trace,
+                )
+            )
+            profile_authority = illustration_context_pipeline.profile_authority_text(
+                profile_result,
+                effective_visual_profiles,
+            )
         pipeline_payload = payload
         if original_asset_enabled:
             reserve_slot_count = 0
@@ -7206,7 +7292,7 @@ async def process_illustration_context_queue_item(item) -> dict:
                         traceback.print_exc()
                         raise
             await progress(
-                1,
+                2,
                 "original_asset",
                 f"원본 에셋 {illust_toggles['original_asset_count']}장 선택",
             )
@@ -7219,6 +7305,7 @@ async def process_illustration_context_queue_item(item) -> dict:
                     reserve_slot_count=reserve_slot_count,
                     stream_notify=stream_notify,
                     llm_trace=llm_trace,
+                    profile_authority=profile_authority,
                 )
             except asyncio.CancelledError:
                 print(
@@ -7303,41 +7390,6 @@ async def process_illustration_context_queue_item(item) -> dict:
             }
             raw_items = []
         else:
-            await progress(2, "context", "CHAT 컨텍스트 수신")
-            history_chats = payload.get("chats") or []
-            if not history_chats:
-                print(
-                    f"[ILLUST_HISTORY] CHAT이 비어 있어 히스토리 저장을 건너뜁니다: "
-                    f"session={session_id}"
-                )
-                history_plan = None
-            else:
-                history_target_index = next((
-                    index
-                    for index in range(len(history_chats) - 1, -1, -1)
-                    if history_chats[index].get("role") == "char"
-                    and str(history_chats[index].get("data") or "").strip()
-                ), -1)
-                if history_target_index < 0:
-                    print(
-                        f"[ILLUST_HISTORY] 저장 준비 실패 - 최신 CHAR 없음: "
-                        f"session={session_id}, chats={len(history_chats)}"
-                    )
-                    raise RuntimeError("채팅 히스토리에 저장할 최신 CHAR 응답이 없습니다")
-                history_plan = illustration_chat_history.prepare_history(
-                    history_chats,
-                    history_target_index,
-                    active_bot,
-                )
-            # 봇 시스템 지침은 CALL2 계열에 항상 별도 전달하고, 캐릭터 카드는
-            # 등장 캐릭터만 필터링할 수 있도록 처음부터 분리한다.
-            extra_instruction = build_active_lb_instruction(active_bot)
-            extra_costume = build_lb_extra_costume(active_bot)
-            extra_character_cards = extra_costume
-            extra_names = build_lb_extra_names(active_bot)
-            backtranslate_names = build_bot_character_names(active_bot)
-            visual_profile_catalog = build_visual_profile_catalog(active_bot)
-            effective_visual_profiles = build_effective_visual_profiles(active_bot)
             # 후처리 모드(bubble→manga / vn→speak)가 CALL3 대사 프롬프트를 자동 결정한다.
             # call3_prompt_mode는 봇별 후처리 모드를 진실 소스로 삼아 덮어쓴다(전역 토글은 UI 힌트용).
             try:
@@ -7462,6 +7514,8 @@ async def process_illustration_context_queue_item(item) -> dict:
                     enable_multi_char_layout=multi_char_mask_active,
                     visual_profile_catalog=visual_profile_catalog,
                     visual_profiles=effective_visual_profiles,
+                    pre_resolved_profile_output=profile_output,
+                    pre_resolved_profile_result=profile_result,
                 )
             else:
                 print(
@@ -7477,7 +7531,9 @@ async def process_illustration_context_queue_item(item) -> dict:
                     "character_states_after": copy.deepcopy(
                         (history_plan or {}).get("state_before") or {}
                     ),
-                    "llm_trace": [],
+                    "profile_output": profile_output,
+                    "profile_result": profile_result,
+                    "llm_trace": list(llm_trace),
                 }
             # 이 삽화 생성에서 거친 LLM 흐름(MULTI-CHAR-MASK~CALL3)의 history_id 목록.
             # build_from_context 완료 시점에 한 번 캡처해 모든 자식 백업에 동일 주입.

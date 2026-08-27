@@ -87,26 +87,41 @@ def _reversion_event():
     }
 
 
-def test_call1_prompt_tracks_initial_card_before_sparse_transitions():
-    prompt = (
+def test_call1_prompt_defers_profiles_to_minimal_dedicated_prompt():
+    call1_prompt = (
         Path(__file__).parents[1] / "prompts" / "lighbd" / "enhance.txt"
     ).read_text(encoding="utf-8")
+    profile_prompt = (
+        Path(__file__).parents[1] / "prompts" / "lighbd" / "profile.txt"
+    ).read_text(encoding="utf-8")
 
-    assert "Registered character cards" in prompt
-    assert '"profile_events"' in prompt
-    assert '"segment_id": "START or one exact Cxxx ID"' in prompt
-    assert "correct it at START" in prompt
-    assert "later explicit release" in prompt
-    assert "use the registered default only when neither narrative evidence nor a previous tracked profile" in prompt
-    assert "distinctive eyes or pupils" in prompt
-    assert "initial_visual_bases" not in prompt
-    assert "target_visual_profile_id" not in prompt
-    assert "visual_base_events" not in prompt
-    assert "no nested outfit choice" in prompt
-    assert "fallback when the story and scene context do not call for different attire" in prompt
-    assert "not a mandatory outfit" in prompt
-    assert "target_outfit_id" not in prompt
-    assert "never from a trigger word or a fixed keyword list" in prompt
+    assert "Registered character cards" not in call1_prompt
+    assert "{visual_profile_catalog}" not in call1_prompt
+    assert '"profile_events"' not in call1_prompt
+    assert "profile" not in call1_prompt.casefold()
+    assert "all six arrays must exist" in call1_prompt
+
+    assert '"profile_events"' in profile_prompt
+    assert '"segment_id": "START or one exact Cxxx ID"' in profile_prompt
+    assert "exactly one START item" in profile_prompt
+    assert "silently compare every candidate" in profile_prompt
+    assert "Never use keyword matching" in profile_prompt
+    assert "Do not add confidence, evidence, candidates" in profile_prompt
+    assert "initial_visual_bases" not in profile_prompt
+    assert "target_visual_profile_id" not in profile_prompt
+    assert "Adachi" not in profile_prompt
+    assert "Lapis" not in profile_prompt
+
+
+def test_profile_resolve_is_registered_in_routing_and_prompt_editor():
+    root = Path(__file__).parents[1]
+    server_source = (root / "server.py").read_text(encoding="utf-8")
+    frontend_source = (root / "frontend" / "index.html").read_text(encoding="utf-8")
+
+    assert '"illustration_profile_resolve": _llm_route_defaults(json_mode=True)' in server_source
+    assert "key: 'illustration_profile_resolve'" in frontend_source
+    assert 'data-lighbd-prompt="profile_resolve"' in frontend_source
+    assert "profile_result" in frontend_source
 
 
 def test_call1_profile_event_maps_exact_meaningful_name_to_internal_route():
@@ -193,6 +208,91 @@ def test_call1_profile_timeline_keeps_start_and_reversion_as_four_field_events()
     assert parsed["initial_visual_bases"][0]["target_visual_profile_id"] == "despair"
     assert parsed["initial_visual_bases"][0]["anchor_segment"] == "START"
     assert parsed["visual_base_events"][0]["target_visual_profile_id"] == "civilian"
+
+
+def test_profile_resolution_maps_four_fields_and_requires_one_start_per_character():
+    segments = _segments()
+    current = "\n".join(item["text"] for item in segments.values())
+    raw = {
+        "profile_events": [{
+            "segment_id": "START",
+            "character": "Adachi",
+            "profile": "Adachi_Civilian",
+            "state": "Adachi begins CURRENT in her civilian form.",
+        }, {
+            "segment_id": "C002",
+            "character": "Adachi",
+            "profile": "Adachi_Despair",
+            "state": "Her whole body changes into her despair form.",
+        }],
+    }
+
+    parsed = pipeline.parse_profile_resolution(
+        json.dumps(raw),
+        current,
+        segments,
+        [{"name": "Adachi", "confidence": 0.99}],
+        _profiles(),
+    )
+
+    assert parsed is not None
+    assert [set(item) - {"confidence"} for item in parsed["profile_events"]] == [
+        {"segment_id", "character", "profile", "state"},
+        {"segment_id", "character", "profile", "state"},
+    ]
+    assert parsed["initial_visual_bases"][0]["target_visual_profile_id"] == "civilian"
+    assert parsed["visual_base_events"][0]["target_visual_profile_id"] == "despair"
+
+    raw["profile_events"] = raw["profile_events"][1:]
+    assert pipeline.parse_profile_resolution(
+        json.dumps(raw),
+        current,
+        segments,
+        [{"name": "Adachi", "confidence": 0.99}],
+        _profiles(),
+    ) is None
+
+
+def test_preselected_nondefault_profile_replaces_generic_reference_before_call1_call2():
+    profiles = _profiles()
+    profiles["Adachi"]["gender_tag"] = "1girl"
+    parsed = pipeline.parse_profile_resolution(
+        json.dumps({
+            "profile_events": [{
+                "segment_id": "START",
+                "character": "Adachi",
+                "profile": "Adachi_Despair",
+                "state": "Adachi is already in her despair form.",
+            }],
+        }),
+        "Adachi is already in her despair form.",
+        {"C001": {
+            "text": "Adachi is already in her despair form.",
+            "start": 0,
+            "end": len("Adachi is already in her despair form."),
+        }},
+        [{"name": "Adachi", "confidence": 1.0}],
+        profiles,
+    )
+
+    assert parsed is not None
+    selected = pipeline.profile_start_reference(parsed, profiles)
+    generic = (
+        "### Adachi\n-Name\nAdachi\n-Appearance\n1girl, brown hair, brown eyes"
+        "\n-default_outfit\nhoodie, jeans"
+    )
+    effective = "\n\n".join(filter(None, (
+        pipeline._exclude_character_reference(generic, ["Adachi"]),
+        selected,
+    )))
+    authority = pipeline.profile_authority_text(parsed, profiles)
+
+    assert "1girl, white hair, red eyes, black horns" in effective
+    assert "black armor" in effective
+    assert "brown hair" not in effective
+    assert "hoodie" not in effective
+    assert "authoritative appearance: 1girl, white hair, red eyes, black horns" in authority
+    assert "profile default outfit: black armor" in authority
 
 
 def test_initial_visual_base_seeds_nondefault_before_reversion_event():

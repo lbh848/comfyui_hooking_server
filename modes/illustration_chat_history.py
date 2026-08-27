@@ -614,6 +614,7 @@ def _safe_pipeline_snapshot(result: dict | None, error: str = "") -> dict:
         "status": "error" if error else "success",
         "error": str(error or "")[:2_000],
         "call1_result": deepcopy(value.get("call1_result") or {}),
+        "profile_result": deepcopy(value.get("profile_result") or {}),
         "wardrobe_events": deepcopy(value.get("wardrobe_events") or []),
         "call2_out": str(value.get("call2_output") or ""),
         "call2_authority_audit": deepcopy(value.get("call2_authority_audit") or []),

@@ -44769,14 +44769,16 @@
                 lines.push('> 역번역/다중캐릭터 등은 토글·조건부라 생략될 수 있음. ');
                 lines.push('> 최종 사용값은 본문 최하단 **결과 요약(시간순)** 에 정리.');
                 lines.push('');
-                lines.push('1. **CALL1-BACKTRANSLATE** — 최신 CHAR 응답(현재 맥락)을 영어로 역번역. 후속 단계가 상황을 정확히 이해하도록 정규화. (토글 시)');
-                lines.push('2. **CALL1** (enhance) — 엔티티 정체성·공참조(coreference)·복장 상태 분석. sparse event items(set/replace/복장 변화) 생성해 CALL2에 전달.');
-                lines.push('3. **CALL2-PLAN** — 전역 시각 비트 플래너. 어떤 장면(scene)/키비주얼(keyvis)을 그릴지 JSON scene_plan으로 결정.');
-                lines.push('4. **CALL2-KEYVIS / CALL2-DETAIL** — 릴레이 소설 로그에 Danbooru 태그를 붙여 `<lb-xnai>` TOON 구조(camera/scene/supplement/characters) 생성. KEYVIS=키비주얼, DETAIL=일반 장면. PLAN 없이 단독일 때 **CALL2-FALLBACK**.');
-                lines.push('5. **CALL2-AUTHORITY-AUDIT** — 외형·복장 감사. 고정 외형은 강제하고, 기본 복장은 참고값으로 두되 장면 맥락에 맞게 LLM이 구성한 복장은 유지합니다. 맥락에 맞지 않는 후보만 개별 drop합니다.');
-                lines.push('6. **CALL2-FIX** — CALL2 출력이 malformed일 때 내용을 바꾸지 않고 구조만 교정(실패 시에만).');
-                lines.push('7. **CALL3** (speak/manga) — 선택된 일반 장면의 대사/생각 작성. speak=vn 대사창, manga=말풍선. 이미지 생성과 병렬 실행.');
-                lines.push('8. **MULTI-CHAR-MASK** (CALL5) — 2인 이상 장면의 캐릭터별 영역 공간 분해(마스크). CALL3 이후, 장면(slot)마다 별도 호출.');
+                lines.push('1. **PROFILE-RESOLVE** — 모든 다중 프로필 후보의 START와 이후 변환 프로필을 최전단에서 한 번 결정. 이 결과가 원본 에셋·CALL1·CALL2의 외형과 기본 복장 기준이 됩니다.');
+                lines.push('2. **ORIGINAL-ASSET** — 켜진 경우, 확정 프로필을 기준으로 현재 장면에 맞는 등록 원본 에셋과 삽입 슬롯을 선택.');
+                lines.push('3. **CALL1-BACKTRANSLATE** — 최신 CHAR 응답(현재 맥락)을 영어로 역번역. 후속 단계가 상황을 정확히 이해하도록 정규화. (토글 시)');
+                lines.push('4. **CALL1** (enhance) — 확정된 프로필을 바탕으로 엔티티 정체성·공참조(coreference)·복장 상태를 분석하고 sparse 변화 사건을 CALL2에 전달.');
+                lines.push('5. **CALL2-PLAN** — 전역 시각 비트 플래너. 어떤 장면(scene)/키비주얼(keyvis)을 그릴지 JSON scene_plan으로 결정.');
+                lines.push('6. **CALL2-KEYVIS / CALL2-DETAIL** — 릴레이 소설 로그에 Danbooru 태그를 붙여 `<lb-xnai>` TOON 구조(camera/scene/supplement/characters) 생성. KEYVIS=키비주얼, DETAIL=일반 장면. PLAN 없이 단독일 때 **CALL2-FALLBACK**.');
+                lines.push('7. **CALL2-AUTHORITY-AUDIT** — 외형·복장 감사. 고정 외형은 강제하고, 기본 복장은 참고값으로 두되 장면 맥락에 맞게 LLM이 구성한 복장은 유지합니다. 맥락에 맞지 않는 후보만 개별 drop합니다.');
+                lines.push('8. **CALL2-FIX** — CALL2 출력이 malformed일 때 내용을 바꾸지 않고 구조만 교정(실패 시에만).');
+                lines.push('9. **CALL3** (speak/manga) — 선택된 일반 장면의 대사/생각 작성. speak=vn 대사창, manga=말풍선. 이미지 생성과 병렬 실행.');
+                lines.push('10. **MULTI-CHAR-MASK** (CALL5) — 2인 이상 장면의 캐릭터별 영역 공간 분해(마스크). CALL3 이후, 장면(slot)마다 별도 호출.');
                 lines.push('');
                 lines.push('**결과 요약(본문 최하단, 시간순):** ');
                 lines.push('- **③ 캐릭터 원본(lb.extra)** — 이 그림 캐릭터들의 원형 외형/복장 태그(태그 누락 점검용). ');
@@ -45447,6 +45449,7 @@
             { key: 'danbooru_tag_search',      label: '단부르 태그 검색', kind: '텍스트/JSON · 2단계', modality: 'text', group: 'knowledge_search', json: true },
             { key: 'illustration_call1_backtranslate', label: '삽화 CALL1 역번역',               kind: '텍스트', modality: 'text', group: 'illustration_pipeline' },
             { key: 'illustration_call1',       label: '삽화 CALL1 (전처리)',           kind: '텍스트', modality: 'text', group: 'illustration_pipeline' },
+            { key: 'illustration_profile_resolve', label: '삽화 프로필 결정',          kind: 'JSON · 전역 직렬', modality: 'text', group: 'illustration_pipeline', json: true },
             { key: 'illustration_call2',       label: '삽화 CALL2 (PLAN/DETAIL/KEYVIS)', kind: '텍스트', modality: 'text', group: 'illustration_pipeline' },
             { key: 'illustration_call2_fix',   label: '삽화 CALL2-FIX (TOON 교정)',    kind: '텍스트', modality: 'text', group: 'illustration_pipeline' },
             { key: 'illustration_call3',       label: '삽화 CALL3 (대사 생성)',         kind: '텍스트', modality: 'text', group: 'illustration_pipeline' },
@@ -77428,16 +77431,19 @@
                         </div>
                         <div id="illust-tab-content-llm" style="display:none; padding:12px 16px;">
                             <div style="margin-bottom:12px; padding:8px; background:rgba(0,0,0,0.06); border-radius:6px; font-size:0.75rem; color:var(--text2); line-height:1.5;">
-                                CHAT을 받은 서버가 히스토리 연속성/리롤 판정 → CALL1 역번역 → CALL1 병렬 분석·병합 → CALL2-PLAN과 독립 CALL2-KEYVIS 동시 호출 → CALL2-DETAIL 병렬 생성·최종 병합 → (폴백/파싱 실패 시 기존 CALL2/CALL2-FIX) → CALL3 순서로 실행합니다. 삽화 프롬프트 본문은 config.json이 아니라 아래 개별 txt 파일에 저장됩니다.
-                                1. 역번역이 켜져 있으면 <strong>backtranslate.txt</strong>로 현재 응답만 영어로 병렬 번역하며, 과거 CHAT은 번역하지 않습니다.<br>
-                                2. CALL1은 <strong>enhance.txt</strong>와 저장 히스토리로 인물 목록, 지칭 할당, 복장 변화 타임라인을 JSON으로 만듭니다. 병렬 분석을 켜면 segment를 최대 동시 요청 수만큼 균등 분할해 동시에 분석하고 검증된 결과를 하나로 병합합니다.<br>
-                                3. CALL2-PLAN은 장면 앵커·등장 캐릭터·짧은 장면 개요만 선택합니다. 독립 CALL2-KEYVIS는 같은 시점에 별도 LLM 요청으로 대표 이미지 한 장만 완성합니다. PLAN이 끝나면 서버가 복장 상태와 슬롯을 결합해 장면을 CALL2-DETAIL 작업들에 균등 분배하며, Key Visual 결과는 DETAIL과 CALL3 입력에 넣지 않고 마지막 이미지 목록에만 병합합니다.<br>
-                                4. CALL2 system = <strong>jailbreak.txt</strong> + <strong>job.txt</strong> + <strong>system.txt</strong>이며, DETAIL 출력은 <strong>format.txt</strong> 구조를 사용합니다. CALL1이 모호하거나 PLAN/KEYVIS/DETAIL이 실패하면 기존 단일 CALL2 경로로 폴백합니다.<br>
-                                5. CALL2 파싱이 실패하면 <strong>repair.txt</strong>(CALL2-FIX)가 TOON 블록을 교정합니다. 대사 단계는 후처리 모드에 맞춰 <strong>speak.txt</strong>, <strong>manga.txt</strong>, <strong>subtitle.txt</strong> 중 하나를 사용합니다.<br>
+                                CHAT을 받은 서버가 히스토리 연속성/리롤 판정 → PROFILE-RESOLVE 최전단 직렬 결정 → 원본 에셋 선택/CALL1 역번역·병렬 분석 → CALL2-PLAN과 독립 CALL2-KEYVIS 동시 호출 → CALL2-DETAIL 병렬 생성·최종 병합 → (폴백/파싱 실패 시 기존 CALL2/CALL2-FIX) → CALL3 순서로 실행합니다. 삽화 프롬프트 본문은 config.json이 아니라 아래 개별 txt 파일에 저장됩니다.
+                                1. PROFILE-RESOLVE는 <strong>profile.txt</strong>와 전체 문맥을 사용해 모든 다중 프로필 후보의 START 및 변환 타임라인을 먼저 한 번 결정합니다. 선택된 프로필의 외형·기본 복장이 이후 단계의 권위 기준입니다.<br>
+                                2. 원본 에셋 출력이 켜져 있으면 확정 프로필을 받은 선택기가 등록 에셋과 삽입 슬롯을 먼저 정합니다.<br>
+                                3. 역번역이 켜져 있으면 <strong>backtranslate.txt</strong>로 현재 응답만 영어로 병렬 번역하며, 과거 CHAT은 번역하지 않습니다.<br>
+                                4. CALL1은 <strong>enhance.txt</strong>, 저장 히스토리, 확정 프로필을 바탕으로 인물 목록, 지칭 할당, 복장 변화 타임라인을 JSON으로 만듭니다. 병렬 분석을 켜면 segment를 최대 동시 요청 수만큼 균등 분할해 동시에 분석하고 검증된 결과를 하나로 병합합니다.<br>
+                                5. CALL2-PLAN은 장면 앵커·등장 캐릭터·짧은 장면 개요만 선택합니다. 독립 CALL2-KEYVIS는 같은 시점에 별도 LLM 요청으로 대표 이미지 한 장만 완성합니다. PLAN이 끝나면 서버가 복장 상태와 슬롯을 결합해 장면을 CALL2-DETAIL 작업들에 균등 분배하며, Key Visual 결과는 DETAIL과 CALL3 입력에 넣지 않고 마지막 이미지 목록에만 병합합니다.<br>
+                                6. CALL2 system = <strong>jailbreak.txt</strong> + <strong>job.txt</strong> + <strong>system.txt</strong>이며, DETAIL 출력은 <strong>format.txt</strong> 구조를 사용합니다. CALL1이 모호하거나 PLAN/KEYVIS/DETAIL이 실패하면 기존 단일 CALL2 경로로 폴백합니다.<br>
+                                7. CALL2 파싱이 실패하면 <strong>repair.txt</strong>(CALL2-FIX)가 TOON 블록을 교정합니다. 대사 단계는 후처리 모드에 맞춰 <strong>speak.txt</strong>, <strong>manga.txt</strong>, <strong>subtitle.txt</strong> 중 하나를 사용합니다.<br>
                                 <strong>preset.txt</strong>는 V3의 <code>[SETUP]/[CHAR]/[SUPPLEMENT]</code> RAW 입력 템플릿과 공통 부정 프롬프트를 담습니다. V1을 선택하면 서버가 같은 장면을 <code>[ILXL]/[UPSCALE]</code> 입력 형태로 생성합니다.
                             </div>
                             <div style="display:flex; gap:5px; margin:0 0 10px;">
                                 <button id="illust-call-tab-backtranslate" onclick="switchIllustCallTab('backtranslate')" style="padding:6px 14px; border:1px solid var(--border); border-radius:5px; background:var(--accent); color:#fff; cursor:pointer;">CALL1 역번역</button>
+                                <button id="illust-call-tab-profile" onclick="switchIllustCallTab('profile')" style="padding:6px 14px; border:1px solid var(--border); border-radius:5px; background:var(--surface2); color:var(--text); cursor:pointer;">프로필 결정</button>
                                 <button id="illust-call-tab-call1" onclick="switchIllustCallTab('call1')" style="padding:6px 14px; border:1px solid var(--border); border-radius:5px; background:var(--surface2); color:var(--text); cursor:pointer;">CALL1 분석</button>
                                 <button id="illust-call-tab-call2" onclick="switchIllustCallTab('call2')" style="padding:6px 14px; border:1px solid var(--border); border-radius:5px; background:var(--surface2); color:var(--text); cursor:pointer;">CALL2</button>
                                 <button id="illust-call-tab-call3" onclick="switchIllustCallTab('call3')" style="padding:6px 14px; border:1px solid var(--border); border-radius:5px; background:var(--surface2); color:var(--text); cursor:pointer;">CALL3</button>
@@ -77453,6 +77459,12 @@
                                 <details open style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
                                     <summary style="cursor:pointer; font-size:0.8rem; font-weight:600;">📝 enhance.txt (인물·지칭·복장 상태 분석)</summary>
                                     <textarea id="lighbd-prompt-call1_enhance" data-lighbd-prompt="call1_enhance" style="width:100%; height:300px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;"></textarea>
+                                </details>
+                            </div>
+                            <div id="illust-call-content-profile" style="display:none;">
+                                <details open style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
+                                    <summary style="cursor:pointer; font-size:0.8rem; font-weight:600;">📝 profile.txt (전역 프로필 타임라인 결정)</summary>
+                                    <textarea id="lighbd-prompt-profile_resolve" data-lighbd-prompt="profile_resolve" style="width:100%; height:300px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;"></textarea>
                                 </details>
                             </div>
                             <div id="illust-call-content-call2" style="display:none;">
@@ -77587,7 +77599,7 @@
         }
 
         function switchIllustCallTab(tab) {
-            for (const name of ['backtranslate', 'call1', 'call2', 'call3']) {
+            for (const name of ['backtranslate', 'call1', 'profile', 'call2', 'call3']) {
                 const active = name === tab;
                 const button = document.getElementById('illust-call-tab-' + name);
                 const content = document.getElementById('illust-call-content-' + name);
@@ -77604,6 +77616,7 @@
             const fields = {
                 call1_backtranslate: 'call1_backtranslate',
                 call1_enhance: 'call1_enhance',
+                profile_resolve: 'profile_resolve',
                 call2_jailbreak: 'jailbreak', call2_job: 'job', call2_prefill: 'call2_prefill',
                 call2_thoughts: 'thoughts', call2_system: 'system', call2_format: 'format', call2_preset: 'preset',
                 call3_speak: 'call3_speak', call3_manga: 'call3_manga', call3_manga_nsfw: 'call3_manga_nsfw', call2_fix: 'call2_fix',
@@ -77629,6 +77642,7 @@
             const fields = {
                 call1_backtranslate: 'call1_backtranslate',
                 call1_enhance: 'call1_enhance',
+                profile_resolve: 'profile_resolve',
                 call2_jailbreak: 'jailbreak', call2_job: 'job', call2_prefill: 'call2_prefill',
                 call2_thoughts: 'thoughts', call2_system: 'system', call2_format: 'format', call2_preset: 'preset',
                 call3_speak: 'call3_speak', call3_manga: 'call3_manga', call3_manga_nsfw: 'call3_manga_nsfw', call2_fix: 'call2_fix',
@@ -77651,7 +77665,7 @@
                 }
                 const data = await res.json();
                 statusEl.innerHTML = `<span style="color:#5cd5a0;">저장 완료 (파일: ${(data.saved || []).join(', ')})</span>`;
-                showToast('CALL1 역번역/1/2/3 프롬프트 저장 완료', 'success');
+                showToast('프로필/CALL1 역번역/1/2/3 프롬프트 저장 완료', 'success');
             } catch (e) {
                 statusEl.innerHTML = `<span style="color:#ff6b6b;">저장 실패: ${escapeHtml(e.message || String(e))}</span>`;
                 showToast('lighbd 프롬프트 저장 실패: ' + (e.message || String(e)), 'error');
@@ -77714,6 +77728,10 @@
                             <details class="illust-history-detail-section">
                                 <summary>CALL1 구조화 결과</summary>
                                 <pre id="illust-history-detail-call1"></pre>
+                            </details>
+                            <details class="illust-history-detail-section">
+                                <summary>PROFILE-RESOLVE 구조화 결과</summary>
+                                <pre id="illust-history-detail-profile"></pre>
                             </details>
                             <details class="illust-history-detail-section">
                                 <summary>CALL2 출력</summary>
@@ -77831,6 +77849,7 @@
             _setIllustrationHistoryDetailText('illust-history-detail-characters', record?.characters || {}, true);
             _setIllustrationHistoryDetailText('illust-history-detail-active-turn', activeTurn, true);
             _setIllustrationHistoryDetailText('illust-history-detail-call1', pipelineResult.call1_result || {}, true);
+            _setIllustrationHistoryDetailText('illust-history-detail-profile', pipelineResult.profile_result || {}, true);
             _setIllustrationHistoryDetailText('illust-history-detail-call2', pipelineResult.call2_out || '');
             _setIllustrationHistoryDetailText('illust-history-detail-call2-fix', pipelineResult.call2_fix_out || '');
             _setIllustrationHistoryDetailText('illust-history-detail-call3-initial', pipelineResult.call3_initial_out || '');

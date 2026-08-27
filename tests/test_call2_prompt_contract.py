@@ -108,6 +108,15 @@ def test_call2_fixed_appearance_requires_explicit_narrative_change():
     assert "scene's coherent contextual outfit replaces the fallback as a set" in source
 
 
+def test_call2_authority_audit_never_leaves_hair_color_unspecified():
+    source = PIPELINE_PY.read_text(encoding="utf-8")
+
+    assert "Hair color must never become unspecified" in source
+    assert "replacement hair color in required_additions" in source
+    assert "Never return a hair-color authority_exception by itself" in source
+    assert "keep the fixed hair-color tag and do not create that exception" in source
+
+
 def test_call2_builds_one_coherent_explicit_bundle_without_tag_dictionary():
     system = CALL2_SYSTEM.read_text(encoding="utf-8")
     thoughts = CALL2_THOUGHTS.read_text(encoding="utf-8")
