@@ -113,8 +113,17 @@ def test_character_profile_prompt_precedes_compact_call1_contract():
     assert '"profile_id"' in profile_prompt
     assert "emit exactly one START event" in profile_prompt
     assert "complete registered character roster" in profile_prompt
+    assert "copy each `name` verbatim" in profile_prompt
+    assert "Never translate, transliterate, localize" in profile_prompt
+    assert "Do not force an unidentified or unregistered narrative person" in profile_prompt
     assert "When DISABLED, do not infer profiles" in profile_prompt
     assert "Never use keyword matching" in profile_prompt
+    assert "authoritative semantic contract" in profile_prompt
+    assert "Apply every material inclusion, prerequisite, persistence, and exclusion" in profile_prompt
+    assert "Absence of a contradiction is not positive support" in profile_prompt
+    assert "Compare all registered guides for the character before choosing" in profile_prompt
+    assert "Never derive an unestablished state from a profile's name" in profile_prompt
+    assert "rather than the nearest special profile" in profile_prompt
     assert "Do not add profile names, state summaries, confidence" in profile_prompt
     assert '"profile_events"' not in profile_prompt
     assert "initial_visual_bases" not in profile_prompt
@@ -259,6 +268,29 @@ def test_profile_resolution_maps_four_fields_and_requires_one_start_per_characte
         current,
         segments,
         [{"name": "Adachi", "confidence": 0.99}],
+        _profiles(),
+    ) is None
+
+
+def test_profile_resolution_rejects_noncanonical_character_name_instead_of_dropping_it():
+    current = "A transformed character enters."
+    raw = {
+        "characters": [{
+            "name": "Localized Name",
+            "in_history": False,
+            "profile_timeline": [{
+                "at": "START",
+                "profile_id": "despair",
+            }],
+        }],
+        "uncertainties": [],
+    }
+
+    assert pipeline.parse_profile_resolution(
+        json.dumps(raw),
+        current,
+        {"C001": {"text": current, "start": 0, "end": len(current)}},
+        [{"name": "Adachi", "confidence": 1.0}],
         _profiles(),
     ) is None
 

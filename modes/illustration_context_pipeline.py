@@ -2910,6 +2910,72 @@ def _materialize_profile_character_records(
     }
 
 
+def _profile_resolution_name_contract_issues(
+    text: str,
+    canonical_names: list[str],
+) -> list[dict]:
+    """Return rejected character items without guessing identity from name text."""
+    raw = _json_object_from_text(text)
+    if raw is None:
+        return [{"source_index": 0, "reason": "JSON object 없음", "item": None}]
+    raw_characters = raw.get("characters")
+    if not isinstance(raw_characters, list):
+        return [{
+            "source_index": 0,
+            "reason": "characters가 list가 아님",
+            "item": deepcopy(raw_characters),
+        }]
+
+    allowed = {
+        str(name or "").strip()
+        for name in canonical_names or []
+        if str(name or "").strip()
+    }
+    issues = []
+    seen = set()
+    for index, item in enumerate(raw_characters, start=1):
+        if not isinstance(item, dict):
+            issues.append({
+                "source_index": index,
+                "reason": f"characters[{index}]가 object가 아님",
+                "item": deepcopy(item),
+            })
+            continue
+        name = str(item.get("name") or "").strip()
+        if name not in allowed:
+            issues.append({
+                "source_index": index,
+                "reason": (
+                    f"characters[{index}].name={name!r}가 "
+                    "정확한 등록명 목록에 없음"
+                ),
+                "item": deepcopy(item),
+            })
+            continue
+        if name in seen:
+            issues.append({
+                "source_index": index,
+                "reason": f"characters[{index}].name={name!r} 중복",
+                "item": deepcopy(item),
+            })
+            continue
+        seen.add(name)
+    return issues
+
+
+def _profile_resolution_name_contract_errors(
+    text: str,
+    canonical_names: list[str],
+) -> list[str]:
+    return [
+        str(issue.get("reason") or "등록명 계약 위반")
+        for issue in _profile_resolution_name_contract_issues(
+            text,
+            canonical_names,
+        )
+    ]
+
+
 def parse_profile_resolution(
     text: str,
     current_context: str,
@@ -2953,6 +3019,7 @@ def parse_profile_resolution(
         if str(name or "").strip() and isinstance(value, dict)
     }
     warnings = []
+    name_contract_errors = []
     repair_requests = []
     normalized_characters = []
     seen_names = set()
@@ -2965,6 +3032,7 @@ def parse_profile_resolution(
         if not isinstance(item, dict):
             warning = f"등장인물 항목 형식 오류로 폐기: index={index}, item={item!r}"
             warnings.append(warning)
+            name_contract_errors.append(warning)
             print(f"[ILLUST_CONTEXT:PROFILE_RESOLVE] {warning}")
             continue
         raw_name = str(item.get("name") or "").strip()
@@ -2972,12 +3040,14 @@ def parse_profile_resolution(
         if not name:
             warning = f"등록되지 않은 CURRENT 캐릭터로 폐기: index={index}, name={raw_name!r}"
             warnings.append(warning)
+            name_contract_errors.append(warning)
             print(f"[ILLUST_CONTEXT:PROFILE_RESOLVE] {warning}")
             continue
         folded = name.casefold()
         if folded in seen_names:
             warning = f"중복 CURRENT 캐릭터로 후속 항목 폐기: character={name}"
             warnings.append(warning)
+            name_contract_errors.append(warning)
             print(f"[ILLUST_CONTEXT:PROFILE_RESOLVE] {warning}")
             continue
         seen_names.add(folded)
@@ -3094,6 +3164,13 @@ def parse_profile_resolution(
             warning = f"프로필 타임라인 부분 교정 필요: {request}"
             warnings.append(warning)
             print(f"[ILLUST_CONTEXT:PROFILE_RESOLVE] {warning}")
+
+    if name_contract_errors:
+        print(
+            "[ILLUST_CONTEXT:PROFILE_RESOLVE] 등록명 계약 위반으로 응답 전체 거부: "
+            f"errors={name_contract_errors}"
+        )
+        return None
 
     uncertainties = []
     for index, item in enumerate(raw_uncertainties, start=1):
@@ -9890,6 +9967,18 @@ async def _run_profile_resolution(
                 + (history_text or "(empty)")
                 + "\n\n# FULL CURRENT CONTEXT SEGMENTS\n"
                 + segmented_current
+                + "\n\n# FINAL CONTRACT CHECK\n"
+                "Before responding, re-check every chosen `profile_id` against that "
+                "profile's complete registered selection guide. Keep it only when the "
+                "narrative or valid tracked state supplies the guide's required semantic "
+                "support and violates none of its exclusions. A profile name, ID, alias, "
+                "appearance, outfit, resemblance, or lack of a perfect alternative is "
+                "not support. Otherwise preserve a valid unchanged tracked profile or use "
+                "the declared default as instructed above. Also verify that every emitted "
+                "`name` is copied "
+                "verbatim from COMPLETE REGISTERED CHARACTER ROSTER. Never translate "
+                "or re-spell a name. Do not force an unidentified person onto a "
+                "similar roster character; omit unsupported identities."
             ),
         },
     ])
@@ -9904,6 +9993,18 @@ async def _run_profile_resolution(
             return False, "PROFILE-RESOLVE uncertainties가 list가 아님"
         return True, ""
 
+    def validate_canonical_names(names):
+        def validate(result):
+            valid, reason = validate_shape(result)
+            if not valid:
+                return valid, reason
+            errors = _profile_resolution_name_contract_errors(result, names)
+            if errors:
+                return False, "PROFILE-RESOLVE 등록명 계약 위반: " + "; ".join(errors)
+            return True, ""
+
+        return validate
+
     raw_output = await _call_pipeline_llm(
         "PROFILE-RESOLVE",
         messages,
@@ -9912,6 +10013,171 @@ async def _run_profile_resolution(
         json_mode=True,
         history_ids_sink=history_ids_sink,
     )
+    name_contract_issues = _profile_resolution_name_contract_issues(
+        raw_output,
+        selected_names,
+    )
+    if name_contract_issues:
+        print(
+            "[ILLUST_CONTEXT:PROFILE_RESOLVE] 등록명 계약 위반 감지, "
+            f"오류 항목만 교정 호출: issues={name_contract_issues}"
+        )
+        primary_raw = _json_object_from_text(raw_output) or {}
+        rejected_indices = {
+            int(issue.get("source_index") or 0)
+            for issue in name_contract_issues
+            if int(issue.get("source_index") or 0) > 0
+        }
+        accepted_names = [
+            str(item.get("name") or "").strip()
+            for index, item in enumerate(
+                primary_raw.get("characters") or [],
+                start=1,
+            )
+            if index not in rejected_indices
+            and isinstance(item, dict)
+            and str(item.get("name") or "").strip()
+        ]
+
+        def validate_name_item_repairs(result):
+            raw = _json_object_from_text(result)
+            if raw is None:
+                return False, "PROFILE-RESOLVE 이름 교정 JSON object 없음"
+            repairs = raw.get("repairs")
+            if not isinstance(repairs, list):
+                return False, "PROFILE-RESOLVE 이름 교정 repairs가 list가 아님"
+            if not isinstance(raw.get("uncertainties"), list):
+                return False, "PROFILE-RESOLVE 이름 교정 uncertainties가 list가 아님"
+            seen_indices = set()
+            seen_names = set(accepted_names)
+            allowed_names = set(selected_names)
+            for repair_index, repair in enumerate(repairs, start=1):
+                if not isinstance(repair, dict):
+                    return False, f"이름 교정 repairs[{repair_index}]가 object가 아님"
+                source_index = repair.get("source_index")
+                if source_index not in rejected_indices:
+                    return False, (
+                        f"이름 교정 source_index가 거부 항목이 아님: {source_index!r}"
+                    )
+                if source_index in seen_indices:
+                    return False, f"이름 교정 source_index 중복: {source_index}"
+                character = repair.get("character")
+                if not isinstance(character, dict):
+                    return False, (
+                        f"이름 교정 character가 object가 아님: index={source_index}"
+                    )
+                name = str(character.get("name") or "").strip()
+                if name not in allowed_names:
+                    return False, f"이름 교정 결과가 정확한 등록명이 아님: {name!r}"
+                if name in seen_names:
+                    return False, f"이름 교정 결과 캐릭터 중복: {name!r}"
+                seen_indices.add(source_index)
+                seen_names.add(name)
+            return True, ""
+
+        repair_messages = _normalize_messages([
+            {
+                "role": "system",
+                "content": (
+                    str(profile_system or "").strip()
+                    + "\n\n# REJECTED-ITEM NAME REPAIR\n"
+                    "Correct only the supplied rejected character items. Accepted items "
+                    "are authoritative and must not be repeated or rewritten. Re-evaluate "
+                    "the natural-language context for each rejected item, then return only "
+                    "repairs using this JSON shape:\n"
+                    '{"repairs":[{"source_index":1,"character":{"name":"exact '
+                    'canonical name","in_history":true,"profile_timeline":[]}}],'
+                    '"uncertainties":[]}\n'
+                    "Copy each repaired name verbatim from COMPLETE REGISTERED CHARACTER "
+                    "ROSTER. Never translate, transliterate, localize, or re-spell it. "
+                    "Keep the supplied source_index unchanged. Repair an item only when "
+                    "the full natural-language discourse establishes its exact registered "
+                    "identity. Never choose the closest roster character from role, "
+                    "appearance, outfit, profile, or name resemblance. When exact identity "
+                    "is unsupported or uncertain, omit that source_index from `repairs`; "
+                    "the server will delete that rejected item."
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    "# PROFILE INFERENCE MODE\n"
+                    + ("ENABLED" if profile_inference_enabled else "DISABLED")
+                    + "\n\n# COMPLETE REGISTERED CHARACTER ROSTER\n"
+                    + json.dumps(selected_names, ensure_ascii=False)
+                    + "\n\n# ALREADY ACCEPTED CHARACTER NAMES\n"
+                    + json.dumps(accepted_names, ensure_ascii=False)
+                    + "\n\n# REJECTED CHARACTER ITEMS ONLY\n"
+                    + json.dumps(name_contract_issues, ensure_ascii=False, indent=2)
+                    + "\n\n# PREVIOUSLY TRACKED PROFILE STATE\n"
+                    + json.dumps(tracked_state, ensure_ascii=False, indent=2)
+                    + "\n\n# REGISTERED PROFILE CATALOG\n"
+                    + (catalog or "(none)")
+                    + "\n\n# PAST HISTORY\n"
+                    + (history_text or "(empty)")
+                    + "\n\n# FULL CURRENT CONTEXT SEGMENTS\n"
+                    + segmented_current
+                ),
+            },
+        ])
+        repair_output = await _call_pipeline_llm(
+            "PROFILE-RESOLVE-REPAIR",
+            repair_messages,
+            stream_notify,
+            result_validator=validate_name_item_repairs,
+            json_mode=True,
+            history_ids_sink=history_ids_sink,
+        )
+        repair_valid, repair_reason = validate_name_item_repairs(repair_output)
+        if not repair_valid:
+            print(
+                "[ILLUST_CONTEXT:PROFILE_RESOLVE] 오류 항목 이름 교정 검증 실패: "
+                f"reason={repair_reason}"
+            )
+            raise ValueError(repair_reason)
+        repaired_raw = _json_object_from_text(repair_output) or {}
+        replacements = {
+            int(item["source_index"]): deepcopy(item["character"])
+            for item in repaired_raw.get("repairs") or []
+        }
+        discarded_indices = rejected_indices - set(replacements)
+        merged_characters = []
+        for index, item in enumerate(
+            primary_raw.get("characters") or [],
+            start=1,
+        ):
+            if index in rejected_indices:
+                replacement = replacements.get(index)
+                if replacement is not None:
+                    merged_characters.append(replacement)
+                continue
+            merged_characters.append(deepcopy(item))
+        raw_output = json.dumps({
+            "characters": merged_characters,
+            "uncertainties": [
+                *list(primary_raw.get("uncertainties") or []),
+                *list(repaired_raw.get("uncertainties") or []),
+            ],
+        }, ensure_ascii=False)
+        remaining_name_errors = _profile_resolution_name_contract_errors(
+            raw_output,
+            selected_names,
+        )
+        if remaining_name_errors:
+            print(
+                "[ILLUST_CONTEXT:PROFILE_RESOLVE] 오류 항목 병합 후 등록명 계약 위반: "
+                f"errors={remaining_name_errors}"
+            )
+            raise ValueError(
+                "PROFILE-RESOLVE 오류 항목 이름 교정 실패: "
+                + "; ".join(remaining_name_errors)
+            )
+        print(
+            "[ILLUST_CONTEXT:PROFILE_RESOLVE] 오류 항목 이름 교정 병합 완료: "
+            f"repaired_indices={sorted(replacements)}, "
+            f"discarded_indices={sorted(discarded_indices)}"
+        )
+
     parsed = parse_profile_resolution(
         raw_output,
         current_context,
@@ -9970,10 +10236,19 @@ async def _run_profile_resolution(
                     "PROFILE-RESOLVE-REPAIR",
                     repair_messages,
                     stream_notify,
-                    result_validator=validate_shape,
+                    result_validator=validate_canonical_names(repair_names),
                     json_mode=True,
                     history_ids_sink=history_ids_sink,
                 )
+                remaining_name_errors = _profile_resolution_name_contract_errors(
+                    repair_output,
+                    repair_names,
+                )
+                if remaining_name_errors:
+                    raise ValueError(
+                        "PROFILE-RESOLVE 부분 교정 등록명 위반: "
+                        + "; ".join(remaining_name_errors)
+                    )
                 repaired = parse_profile_resolution(
                     repair_output,
                     current_context,

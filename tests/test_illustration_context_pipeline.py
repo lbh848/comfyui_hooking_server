@@ -5858,7 +5858,14 @@ async def test_profile_resolution_runs_once_before_call1_and_filters_catalog(mon
         assert "Adachi_Civilian" in prompt
         assert "Adachi_Changed" in prompt
         assert "Bob_Default" in prompt
+        assert "선택 기준: ordinary human form" in prompt
+        assert "선택 기준: persistent transformed form" in prompt
+        assert "선택 기준: ordinary form" in prompt
         assert "# FULL CURRENT CONTEXT SEGMENTS" in prompt
+        assert "# FINAL CONTRACT CHECK" in prompt
+        assert "re-check every chosen `profile_id`" in prompt
+        assert "complete registered selection guide" in prompt
+        assert "appearance, outfit, resemblance, or lack of a perfect alternative" in prompt
         return json.dumps({
             "characters": [{
                 "name": "Adachi",
@@ -5900,6 +5907,151 @@ async def test_profile_resolution_runs_once_before_call1_and_filters_catalog(mon
         {"name": "Bob", "confidence": 1.0},
     ]
     assert parsed["initial_visual_bases"][0]["target_visual_profile_id"] == "civilian"
+
+
+@pytest.mark.asyncio
+async def test_profile_resolution_repairs_only_noncanonical_name_items_and_preserves_valid_items(
+    monkeypatch,
+):
+    doyun = cards_to_character_profiles("Doyun", [{
+        "id": "default",
+        "aliases": ["Doyun_Default"],
+        "selection_guide": "ordinary appearance",
+        "appearance": ["black hair"],
+        "default_outfit": ["school uniform"],
+    }])
+    shiho = cards_to_character_profiles("Shiho", [{
+        "id": "ordinary",
+        "aliases": ["Shiho_Ordinary"],
+        "selection_guide": "ordinary appearance",
+        "appearance": ["grey hair"],
+        "default_outfit": ["school uniform"],
+    }, {
+        "id": "corrupted",
+        "aliases": ["Shiho_Corrupted"],
+        "selection_guide": "corrupted transformed appearance",
+        "appearance": ["purple hair"],
+        "default_outfit": ["black armor"],
+    }])
+    aya = cards_to_character_profiles("Aya", [{
+        "id": "casual",
+        "aliases": ["Aya_Casual"],
+        "selection_guide": "ordinary appearance",
+        "appearance": ["brown hair"],
+        "default_outfit": ["hoodie"],
+    }, {
+        "id": "denial",
+        "aliases": ["Aya_Denial"],
+        "selection_guide": "magical transformed appearance",
+        "appearance": ["pink hair"],
+        "default_outfit": ["blue magical dress"],
+    }])
+    calls = []
+
+    async def fake_pipeline_call(call_name, messages, _stream_notify, **kwargs):
+        prompt = "\n".join(message["content"] for message in messages)
+        calls.append((call_name, prompt, kwargs))
+        if call_name == "PROFILE-RESOLVE":
+            return json.dumps({
+                "characters": [{
+                    "name": "Doyun",
+                    "in_history": True,
+                    "profile_timeline": [],
+                }, {
+                    "name": "시호",
+                    "in_history": True,
+                    "profile_timeline": [{
+                        "at": "START",
+                        "profile_id": "corrupted",
+                    }],
+                }, {
+                    "name": "아야",
+                    "in_history": False,
+                    "profile_timeline": [{
+                        "at": "START",
+                        "profile_id": "denial",
+                    }],
+                }, {
+                    "name": "Invented Similar Girl",
+                    "in_history": False,
+                    "profile_timeline": [],
+                }],
+                "uncertainties": [],
+            }, ensure_ascii=False)
+
+        assert call_name == "PROFILE-RESOLVE-REPAIR"
+        rejected_section = prompt.split(
+            "# REJECTED CHARACTER ITEMS ONLY\n",
+            1,
+        )[1].split("\n\n# PREVIOUSLY TRACKED PROFILE STATE", 1)[0]
+        assert '"name": "시호"' in rejected_section
+        assert '"name": "아야"' in rejected_section
+        assert '"name": "Invented Similar Girl"' in rejected_section
+        assert '"name": "Doyun"' not in rejected_section
+        assert "Never choose the closest roster character" in prompt
+        assert "the server will delete that rejected item" in prompt
+        response = json.dumps({
+            "repairs": [{
+                "source_index": 2,
+                "character": {
+                    "name": "Shiho",
+                    "in_history": True,
+                    "profile_timeline": [{
+                        "at": "START",
+                        "profile_id": "corrupted",
+                    }],
+                },
+            }, {
+                "source_index": 3,
+                "character": {
+                    "name": "Aya",
+                    "in_history": False,
+                    "profile_timeline": [{
+                        "at": "START",
+                        "profile_id": "denial",
+                    }],
+                },
+            }],
+            "uncertainties": [],
+        })
+        valid, reason = kwargs["result_validator"](response)
+        assert valid, reason
+        return response
+
+    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
+    current = "Doyun finds Shiho and the transformed Aya."
+    segmented, segments = pipeline._segment_current_context(current)
+    raw, parsed = await pipeline._run_profile_resolution(
+        profile_system="Return compact character profile JSON.",
+        segmented_current=segmented,
+        current_context=current,
+        current_segments=segments,
+        history_text="Doyun and Shiho were present earlier.",
+        candidate_names=["Doyun", "Shiho", "Aya"],
+        previous_state={},
+        visual_profiles={"Doyun": doyun, "Shiho": shiho, "Aya": aya},
+        profile_inference_enabled=True,
+        stream_notify=None,
+    )
+
+    assert [call[0] for call in calls] == [
+        "PROFILE-RESOLVE",
+        "PROFILE-RESOLVE-REPAIR",
+    ]
+    assert [item["name"] for item in json.loads(raw)["characters"]] == [
+        "Doyun",
+        "Shiho",
+        "Aya",
+    ]
+    assert [item["name"] for item in parsed["current_characters"]] == [
+        "Doyun",
+        "Shiho",
+        "Aya",
+    ]
+    assert {
+        item["character"]: item["target_visual_profile_id"]
+        for item in parsed["initial_visual_bases"]
+    } == {"Shiho": "corrupted", "Aya": "denial"}
 
 
 @pytest.mark.asyncio
@@ -5951,10 +6103,6 @@ async def test_profile_resolution_repairs_only_unknown_profile_id_character(monk
                         "at": "START",
                         "profile_id": "normal",
                     }],
-                }, {
-                    "name": "Invented Character",
-                    "in_history": False,
-                    "profile_timeline": [],
                 }],
                 "uncertainties": [],
             })
@@ -5962,7 +6110,6 @@ async def test_profile_resolution_repairs_only_unknown_profile_id_character(monk
         assert '"character": "Adachi"' in prompt
         assert "Adachi_Civilian" in prompt
         assert "Mina_Normal" not in prompt
-        assert "Invented Character" not in prompt
         return json.dumps({
             "characters": [{
                 "name": "Adachi",
@@ -6004,10 +6151,6 @@ async def test_profile_resolution_repairs_only_unknown_profile_id_character(monk
         for item in parsed["initial_visual_bases"]
     } == {"Adachi": "civilian", "Mina": "normal"}
     assert parsed["repair_requests"] == []
-    assert any(
-        "등록되지 않은 CURRENT 캐릭터" in warning
-        for warning in parsed["validation_warnings"]
-    )
 
 
 @pytest.mark.asyncio
