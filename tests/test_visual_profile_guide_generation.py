@@ -494,28 +494,31 @@ async def test_suggest_metadata_calls_llm_once_per_character(monkeypatch):
     assert detail_records[0]["target_count"] == 2
     assert detail_records[1]["profile_ids"] == ["mina_1"]
     assert detail_records[1]["target_count"] == 1
-    character_progress_events = [
+    processing_events = [
         event for event in queue.progress_events
-        if event["detail"]["stage"] in {"processing", "completed"}
+        if event["detail"]["stage"] == "processing"
     ]
-    assert [event["progress"] for event in character_progress_events] == [
-        0.0,
-        50.0,
-        50.0,
-        100.0,
+    guide_completed_events = [
+        event for event in queue.progress_events
+        if event["detail"]["stage"] == "guide_completed"
     ]
-    assert [event["detail"]["stage"] for event in character_progress_events] == [
-        "processing",
-        "completed",
-        "processing",
-        "completed",
+    completed_events = [
+        event for event in queue.progress_events
+        if event["detail"]["stage"] == "completed"
     ]
-    assert character_progress_events[0]["detail"]["character"] == "Riko"
-    assert character_progress_events[0]["detail"]["current"] == 1
-    assert character_progress_events[0]["detail"]["total"] == 2
-    assert len(character_progress_events[1]["detail"]["suggestions"]) == 2
-    assert character_progress_events[2]["detail"]["character"] == "Mina"
-    assert len(character_progress_events[3]["detail"]["suggestions"]) == 1
+    assert [event["detail"]["character"] for event in processing_events] == [
+        "Riko",
+        "Mina",
+    ]
+    assert [event["detail"]["current"] for event in processing_events] == [1, 2]
+    assert all(event["detail"]["total"] == 2 for event in processing_events)
+    assert [event["progress"] for event in guide_completed_events] == [50.0, 100.0]
+    assert [event["progress"] for event in completed_events] == [50.0, 100.0]
+    completed_by_character = {
+        event["detail"]["character"]: event for event in completed_events
+    }
+    assert len(completed_by_character["Riko"]["detail"]["suggestions"]) == 2
+    assert len(completed_by_character["Mina"]["detail"]["suggestions"]) == 1
     assert sum(
         event["detail"]["stage"] == "appearance_failed"
         for event in queue.progress_events
@@ -523,7 +526,166 @@ async def test_suggest_metadata_calls_llm_once_per_character(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_visual_guide_cancel_stops_active_stream_and_skips_remaining_characters(
+async def test_visual_guide_runs_parallel_character_stage_then_parallel_appearance_stage(
+    monkeypatch,
+    tmp_path,
+):
+    bot_mode = importlib.import_module("modes.bot_mode")
+    llm_service = importlib.import_module("modes.llm_service")
+    lighbd_service = importlib.import_module("modes.lighbd_service")
+    data = _bot_data([_card("riko_1", "기본", "Riko_normal.webp")])
+    data["bots"][0]["characters"].append({
+        "name": "Mina",
+        "visual_cards": [_card("mina_1", "기본", "Mina_normal.webp")],
+    })
+    for character, filename in (
+        ("Riko", "Riko_normal.webp"),
+        ("Mina", "Mina_normal.webp"),
+    ):
+        character_dir = tmp_path / "bot" / "demo" / character
+        character_dir.mkdir(parents=True)
+        (character_dir / filename).write_bytes(f"{character}-image".encode("utf-8"))
+
+    queue = _InlineLlmQueue()
+    detail_records = []
+    phase_events = []
+    text_stage_started = asyncio.Event()
+    text_stage_release = asyncio.Event()
+    vision_stage_started = asyncio.Event()
+    vision_stage_release = asyncio.Event()
+    text_active = 0
+    text_finished = 0
+    vision_active = 0
+    max_text_active = 0
+    max_vision_active = 0
+
+    async def fake_text_call(task_key, _messages, **kwargs):
+        nonlocal text_active, text_finished, max_text_active
+        assert task_key == "visual_profile_guide"
+        assert vision_active == 0
+        metadata = kwargs["execution_context"].metadata
+        character = metadata["character"]
+        phase_events.append(("text_start", character))
+        text_active += 1
+        max_text_active = max(max_text_active, text_active)
+        if text_active == 2:
+            text_stage_started.set()
+        await text_stage_release.wait()
+        text_active -= 1
+        text_finished += 1
+        raw = json.dumps({
+            "suggestions": [{
+                "target_key": "0",
+                "aliases": [f"{character}-alias"],
+                "selection_guide": f"{character} 프로필이 성립할 때 선택한다.",
+                "evidence": f"{character} 근거",
+                "confidence": "high",
+            }]
+        }, ensure_ascii=False)
+        valid, reason = kwargs["result_validator"](raw)
+        assert valid, reason
+        context = kwargs["execution_context"]
+        kwargs["execution_observer"]({
+            "type": "execution_complete",
+            "llm_slot": "llm1",
+            "phase": "primary",
+            "execution_id": context.execution_id,
+        })
+        phase_events.append(("text_done", character))
+        return raw
+
+    async def fake_vision_call(task_key, _messages, **kwargs):
+        nonlocal vision_active, max_vision_active
+        assert task_key == "visual_profile_appearance_vision"
+        assert text_finished == 2
+        metadata = kwargs["execution_context"].metadata
+        character = metadata["character"]
+        phase_events.append(("vision_start", character))
+        vision_active += 1
+        max_vision_active = max(max_vision_active, vision_active)
+        if vision_active == 2:
+            vision_stage_started.set()
+        await vision_stage_release.wait()
+        vision_active -= 1
+        raw = json.dumps({
+            "visual_context": f"{character}의 대표 이미지에서 확인되는 외형"
+        }, ensure_ascii=False)
+        valid, reason = kwargs["result_validator"](raw)
+        assert valid, reason
+        context = kwargs["execution_context"]
+        kwargs["execution_observer"]({
+            "type": "execution_complete",
+            "llm_slot": "llm2",
+            "phase": "primary",
+            "execution_id": context.execution_id,
+        })
+        phase_events.append(("vision_done", character))
+        return raw
+
+    monkeypatch.setattr(bot_mode, "BOT_DIR", str(tmp_path / "bot"))
+    monkeypatch.setattr(bot_mode, "_load_bot_data", lambda: data)
+    monkeypatch.setattr(bot_mode, "_load_lb_extra", lambda _bot_name: [])
+    monkeypatch.setattr(llm_service, "callLLMTask", fake_text_call)
+    monkeypatch.setattr(llm_service, "callLLMVisionTask", fake_vision_call)
+    monkeypatch.setattr(lighbd_service, "_log_lighbd_history", detail_records.append)
+
+    manager = bot_mode.BotMode()
+    manager.set_queue_manager(queue)
+    suggest_task = asyncio.create_task(
+        manager.handle_suggest_character_card_metadata(
+            _JsonRequest({
+                "bot_name": "demo",
+                "targets": [
+                    {"character": "Riko", "profile_id": "riko_1"},
+                    {"character": "Mina", "profile_id": "mina_1"},
+                ],
+            })
+        )
+    )
+    try:
+        await asyncio.wait_for(text_stage_started.wait(), timeout=2)
+        assert max_text_active == 2
+        assert not vision_stage_started.is_set()
+        text_stage_release.set()
+        await asyncio.wait_for(vision_stage_started.wait(), timeout=2)
+        assert max_vision_active == 2
+        assert text_finished == 2
+        vision_stage_release.set()
+        response = await asyncio.wait_for(suggest_task, timeout=2)
+    finally:
+        text_stage_release.set()
+        vision_stage_release.set()
+        if not suggest_task.done():
+            suggest_task.cancel()
+            try:
+                await suggest_task
+            except asyncio.CancelledError:
+                pass
+
+    payload = json.loads(response.text)
+    assert response.status == 200
+    assert payload["success"] is True
+    assert payload["cancelled"] is False
+    assert [item["character"] for item in payload["suggestions"]] == [
+        "Riko",
+        "Mina",
+    ]
+    first_vision_index = next(
+        index for index, event in enumerate(phase_events) if event[0] == "vision_start"
+    )
+    assert all(event[0] == "text_done" for event in phase_events[2:first_vision_index])
+    assert [record["task_key"] for record in detail_records[:2]] == [
+        "visual_profile_guide",
+        "visual_profile_guide",
+    ]
+    assert [record["task_key"] for record in detail_records[2:]] == [
+        "visual_profile_appearance_vision",
+        "visual_profile_appearance_vision",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_visual_guide_cancel_stops_active_parallel_streams_and_skips_appearance(
     monkeypatch,
 ):
     bot_mode = importlib.import_module("modes.bot_mode")
@@ -538,11 +700,13 @@ async def test_visual_guide_cancel_stops_active_stream_and_skips_remaining_chara
     detail_records = []
     calls = []
     cancel_calls = []
-    stream_started = asyncio.Event()
+    streams_started = asyncio.Event()
     stream_released = asyncio.Event()
 
     async def fake_call(_task_key, _messages, **kwargs):
-        calls.append(kwargs["execution_context"].metadata["character"])
+        character = kwargs["execution_context"].metadata["character"]
+        stream_id = f"visual-stream-{character.casefold()}"
+        calls.append(character)
         await kwargs["stream_observer"]({
             "type": "request_mode",
             "streaming": True,
@@ -550,14 +714,15 @@ async def test_visual_guide_cancel_stops_active_stream_and_skips_remaining_chara
         })
         await kwargs["stream_observer"]({
             "type": "stream_open",
-            "stream_id": "visual-stream-1",
+            "stream_id": stream_id,
             "llm_slot": "llm1",
         })
-        stream_started.set()
+        if len(calls) == 2:
+            streams_started.set()
         await stream_released.wait()
         await kwargs["stream_observer"]({
             "type": "cancelled",
-            "stream_id": "visual-stream-1",
+            "stream_id": stream_id,
             "llm_slot": "llm1",
         })
         context = kwargs["execution_context"]
@@ -594,7 +759,7 @@ async def test_visual_guide_cancel_stops_active_stream_and_skips_remaining_chara
         )
     )
     try:
-        await asyncio.wait_for(stream_started.wait(), timeout=2)
+        await asyncio.wait_for(streams_started.wait(), timeout=2)
         assert len(queue.items) == 1
         cancel_response = await manager.handle_cancel_character_card_metadata_suggestion(
             _JsonRequest({"item_id": queue.items[0].id})
@@ -608,9 +773,12 @@ async def test_visual_guide_cancel_stops_active_stream_and_skips_remaining_chara
     assert cancel_response.status == 200
     assert cancel_payload["success"] is True
     assert cancel_payload["mode"] == "stream_cancel_requested"
-    assert cancel_payload["stream_cancelled"] == 1
-    assert cancel_calls == [("visual-stream-1", "cancel")]
-    assert calls == ["Riko"]
+    assert cancel_payload["stream_cancelled"] == 2
+    assert set(cancel_calls) == {
+        ("visual-stream-riko", "cancel"),
+        ("visual-stream-mina", "cancel"),
+    }
+    assert calls == ["Riko", "Mina"]
     assert response.status == 200
     assert payload["success"] is True
     assert payload["cancelled"] is True
@@ -618,13 +786,12 @@ async def test_visual_guide_cancel_stops_active_stream_and_skips_remaining_chara
     assert payload["character_call_count"] == 2
     assert payload["suggestions"] == []
     assert queue.items[0].status == "cancelled"
-    assert [event["detail"]["stage"] for event in queue.progress_events] == [
-        "processing",
-        "cancelling",
-        "cancelled",
-    ]
-    assert len(detail_records) == 1
-    assert detail_records[0]["status"] == "cancelled"
+    progress_stages = [event["detail"]["stage"] for event in queue.progress_events]
+    assert progress_stages.count("processing") == 2
+    assert progress_stages.count("cancelling") == 1
+    assert progress_stages.count("cancelled") == 2
+    assert len(detail_records) == 2
+    assert all(record["status"] == "cancelled" for record in detail_records)
 
 
 @pytest.mark.asyncio
@@ -642,25 +809,27 @@ async def test_visual_guide_cancel_waits_for_non_streaming_call_and_keeps_its_re
     queue = _InlineLlmQueue()
     detail_records = []
     calls = []
-    call_started = asyncio.Event()
+    calls_started = asyncio.Event()
     call_released = asyncio.Event()
 
     async def fake_call(_task_key, _messages, **kwargs):
         metadata = kwargs["execution_context"].metadata
-        calls.append(metadata["character"])
+        character = metadata["character"]
+        calls.append(character)
         await kwargs["stream_observer"]({
             "type": "request_mode",
             "streaming": False,
             "llm_slot": "llm1",
         })
-        call_started.set()
+        if len(calls) == 2:
+            calls_started.set()
         await call_released.wait()
         raw = json.dumps({
             "suggestions": [{
                 "target_key": "0",
-                "aliases": ["Riko_Normal"],
-                "selection_guide": "리코의 기본 프로필이 성립할 때 선택한다.",
-                "evidence": "기본 형태 근거",
+                "aliases": [f"{character}_Normal"],
+                "selection_guide": f"{character}의 기본 프로필이 성립할 때 선택한다.",
+                "evidence": f"{character} 기본 형태 근거",
                 "confidence": "high",
             }]
         }, ensure_ascii=False)
@@ -694,7 +863,7 @@ async def test_visual_guide_cancel_waits_for_non_streaming_call_and_keeps_its_re
         )
     )
     try:
-        await asyncio.wait_for(call_started.wait(), timeout=2)
+        await asyncio.wait_for(calls_started.wait(), timeout=2)
         cancel_response = await manager.handle_cancel_character_card_metadata_suggestion(
             _JsonRequest({"item_id": queue.items[0].id})
         )
@@ -708,21 +877,24 @@ async def test_visual_guide_cancel_waits_for_non_streaming_call_and_keeps_its_re
     assert cancel_response.status == 200
     assert cancel_payload["mode"] == "after_current"
     assert cancel_payload["stream_cancelled"] == 0
-    assert calls == ["Riko"]
+    assert calls == ["Riko", "Mina"]
     assert response.status == 200
     assert payload["cancelled"] is True
-    assert payload["completed_character_count"] == 1
+    assert payload["completed_character_count"] == 2
     assert payload["character_call_count"] == 2
-    assert [item["profile_id"] for item in payload["suggestions"]] == ["riko_1"]
-    assert queue.items[0].status == "cancelled"
-    assert [event["detail"]["stage"] for event in queue.progress_events] == [
-        "processing",
-        "cancelling",
-        "completed",
-        "cancelled",
+    assert [item["profile_id"] for item in payload["suggestions"]] == [
+        "riko_1",
+        "mina_1",
     ]
-    assert len(detail_records) == 1
-    assert detail_records[0]["status"] == "ok"
+    assert queue.items[0].status == "cancelled"
+    progress_stages = [event["detail"]["stage"] for event in queue.progress_events]
+    assert progress_stages.count("processing") == 2
+    assert progress_stages.count("cancelling") == 1
+    assert progress_stages.count("guide_completed") == 2
+    assert progress_stages.count("cancelled") == 1
+    assert "appearance_processing" not in progress_stages
+    assert len(detail_records) == 2
+    assert all(record["status"] == "ok" for record in detail_records)
 
 
 @pytest.mark.asyncio
@@ -1035,7 +1207,8 @@ def test_frontend_has_thumbnail_review_modal_and_explicit_apply_modes():
     assert "_handleVisualGuideQueueProgress(data)" in frontend
     assert "_visualGuideMergeSuggestions(liveSuggestions)" in frontend
     assert "detail.phase !== 'visual_profile_guide'" in frontend
-    assert "LLM 처리 중 ${progressPosition}" in frontend
+    assert "캐릭터 병렬 분석 ${progressPosition}" in frontend
+    assert "외형 병렬 분석 ${progressProfileCurrent}/${progressProfileTotal}" in frontend
     assert "d.phase === 'visual_profile_guide'" in frontend
     assert 'id="visual-guide-stop"' in frontend
     assert "stopVisualGuideGeneration()" in frontend

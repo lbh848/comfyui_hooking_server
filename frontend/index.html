@@ -66625,10 +66625,9 @@
             if (count) count.textContent = `전체 ${state.targets.length} · 선택 ${selectedCount} · 적용 가능 ${readyCount}`;
             const progress = state.busy && state.progress ? state.progress : null;
             const progressTotal = Math.max(0, Number(progress?.total || 0));
-            const progressCurrent = Math.max(0, Number(progress?.current || 0));
             const progressCompleted = Math.max(0, Number(progress?.completed || 0));
             const progressPosition = progressTotal > 0
-                ? `${progressCurrent}/${progressTotal}`
+                ? `${progressCompleted}/${progressTotal}`
                 : '';
             const progressCharacter = String(progress?.character || '').trim();
             const progressProfiles = Math.max(0, Number(progress?.profile_count || 0));
@@ -66641,10 +66640,10 @@
                     const stageText = state.cancelRequested || progress?.stage === 'cancelling'
                         ? `중단 요청 중 · 완료 ${progressCompleted}/${progressTotal}`
                         : (isAppearanceStage
-                            ? `대표 이미지 외형 분석 ${progressProfileCurrent}/${progressProfileTotal}`
+                            ? `대표 이미지 외형 병렬 분석 ${progressProfileCurrent}/${progressProfileTotal}`
                             : (progress?.stage === 'completed'
                             ? `완료 ${progressCompleted}/${progressTotal}`
-                            : `처리 중 ${progressPosition}`));
+                            : `캐릭터 병렬 분석 · 완료 ${progressPosition}`));
                     footerStatus.textContent = [
                         stageText,
                         progressCharacter,
@@ -66663,8 +66662,8 @@
                 generate.style.cursor = state.busy ? 'wait' : (selectedCount ? 'pointer' : 'not-allowed');
                 generate.textContent = state.busy
                     ? (isAppearanceStage
-                        ? `외형 분석 중 ${progressProfileCurrent}/${progressProfileTotal}`
-                        : (progressPosition ? `LLM 처리 중 ${progressPosition}` : 'LLM 큐 대기 중…'))
+                        ? `외형 병렬 분석 ${progressProfileCurrent}/${progressProfileTotal}`
+                        : (progressPosition ? `캐릭터 병렬 분석 ${progressPosition}` : 'LLM 큐 대기 중…'))
                     : '선택 항목 생성/재생성';
             }
             const stop = document.getElementById('visual-guide-stop');
@@ -92062,14 +92061,14 @@
                                     comfyInstallerFormatBytes(done) + '/' + comfyInstallerFormatBytes(total) + '</span>';
                             }
                         } else if (d.phase === 'visual_profile_guide') {
-                            const cur = Math.max(0, Number(d.current || 0));
+                            const completed = Math.max(0, Number(d.completed || 0));
                             const tot = Math.max(0, Number(d.total || 0));
                             const isAppearanceStage = String(d.stage || '').startsWith('appearance_');
                             const profileCurrent = Math.max(0, Number(d.profile_current || 0));
                             const profileTotal = Math.max(0, Number(d.profile_total || 0));
                             statusText = isAppearanceStage
                                 ? `외형 ${profileCurrent}/${profileTotal}`
-                                : (tot > 0 ? cur + '/' + tot : Math.round(item.progress || 0) + '%');
+                                : (tot > 0 ? `캐릭터 ${completed}/${tot}` : Math.round(item.progress || 0) + '%');
                             const character = String(d.character || '').trim();
                             if (character) {
                                 phaseHint = '<span style="font-size:0.65rem;color:var(--text3);margin-left:2px;">' +
@@ -92954,7 +92953,7 @@
                         progressLabel += ` <span style="font-size:0.65rem;color:var(--text3);">${current}/${total} 단계</span>`;
                     }
                 } else if (d.phase === 'visual_profile_guide') {
-                    const current = Math.max(0, Number(d.current || 0));
+                    const completed = Math.max(0, Number(d.completed || 0));
                     const total = Math.max(0, Number(d.total || 0));
                     const character = String(d.character || '').trim();
                     const isAppearanceStage = String(d.stage || '').startsWith('appearance_');
@@ -92964,7 +92963,7 @@
                         ? `외형 분석 ${profileCurrent}/${profileTotal}`
                         : `${pct}%`;
                     if (!isAppearanceStage && total > 0) {
-                        progressLabel += ` <span style="font-size:0.65rem;color:var(--text3);">${current}/${total}` +
+                        progressLabel += ` <span style="font-size:0.65rem;color:var(--text3);">${completed}/${total}` +
                             `${character ? ' · ' + escapeHtml(character) : ''}</span>`;
                     } else if (isAppearanceStage && character) {
                         progressLabel += ` <span style="font-size:0.65rem;color:var(--text3);">${escapeHtml(character)}</span>`;

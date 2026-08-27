@@ -4015,13 +4015,8 @@ class BotMode:
                     queue_item._visual_guide_cancel_requested = False
                 queue_item._visual_guide_active_stream_ids = set()
                 queue_item._visual_guide_streaming = False
-                suggestions = []
-                completed_character_count = 0
-                cancelled = False
+                character_jobs = []
                 for character_index, group in enumerate(character_groups, start=1):
-                    if bool(queue_item._visual_guide_cancel_requested):
-                        cancelled = completed_character_count < character_count
-                        break
                     character = str(group["character"])
                     call_targets = [
                         {**target, "target_key": str(target_index)}
@@ -4039,13 +4034,40 @@ class BotMode:
                         )
                         for target in call_targets
                     ]
+                    character_jobs.append({
+                        "character_index": character_index,
+                        "character": character,
+                        "call_targets": call_targets,
+                        "profile_ids": profile_ids,
+                        "profile_labels": profile_labels,
+                    })
+
+                guide_progress_lock = asyncio.Lock()
+                guide_completed_count = 0
+
+                async def run_character_guide(job: dict) -> dict:
+                    nonlocal guide_completed_count
+                    character_index = int(job["character_index"])
+                    character = str(job["character"])
+                    call_targets = job["call_targets"]
+                    profile_ids = job["profile_ids"]
+                    profile_labels = job["profile_labels"]
+                    if bool(queue_item._visual_guide_cancel_requested):
+                        print(
+                            f"[VISUAL_GUIDE:CANCEL] 병렬 캐릭터 호출 시작 전 중단: "
+                            f"bot={bot_name!r}, character={character!r}, "
+                            f"call={character_index}/{character_count}"
+                        )
+                        return {**job, "status": "skipped", "suggestions": []}
+                    async with guide_progress_lock:
+                        completed_before = guide_completed_count
                     await notify_visual_guide_progress(
                         queue_item,
                         stage="processing",
                         character=character,
                         character_index=character_index,
                         profile_ids=profile_ids,
-                        completed=character_index - 1,
+                        completed=completed_before,
                     )
                     messages = _build_visual_guide_messages(system_prompt, call_targets)
                     accepted = {}
@@ -4197,7 +4219,7 @@ class BotMode:
                             character=character,
                             character_index=character_index,
                             profile_ids=profile_ids,
-                            completed=character_index - 1,
+                            completed=guide_completed_count,
                             error=f"{type(exc).__name__}: {exc}",
                         )
                         _log_visual_guide_llm_history(
@@ -4252,7 +4274,7 @@ class BotMode:
                             character=character,
                             character_index=character_index,
                             profile_ids=profile_ids,
-                            completed=completed_character_count,
+                            completed=guide_completed_count,
                             error=cancel_reason,
                         )
                         _log_visual_guide_llm_history(
@@ -4280,9 +4302,14 @@ class BotMode:
                             f"[VISUAL_GUIDE:CANCEL] 현재 스트림 중단 완료: "
                             f"bot={bot_name!r}, character={character!r}, "
                             f"call={character_index}/{character_count}, "
-                            f"completed={completed_character_count}"
+                            f"completed={guide_completed_count}"
                         )
-                        break
+                        return {
+                            **job,
+                            "status": "cancelled",
+                            "suggestions": [],
+                            "execution_context": execution_context,
+                        }
                     profile_suggestions = accepted.get("suggestions")
                     if profile_suggestions is None:
                         parsed = llm_prompt_edit.parse_llm_json(raw)
@@ -4308,7 +4335,7 @@ class BotMode:
                             character=character,
                             character_index=character_index,
                             profile_ids=profile_ids,
-                            completed=character_index - 1,
+                            completed=guide_completed_count,
                             error=error,
                         )
                         _log_visual_guide_llm_history(
@@ -4358,137 +4385,338 @@ class BotMode:
                         character_index=character_index,
                         character_count=character_count,
                     )
-
-                    for profile_index, (target, suggestion) in enumerate(
-                        zip(call_targets, profile_suggestions),
-                        start=1,
-                    ):
-                        if bool(queue_item._visual_guide_cancel_requested):
-                            cancelled = True
-                            print(
-                                f"[VISUAL_APPEARANCE:CANCEL] 다음 프로필 분석 전 중단: "
-                                f"bot={bot_name!r}, character={character!r}, "
-                                f"profile_call={profile_index}/{len(call_targets)}"
-                            )
-                            break
-                        vision_profile_id = str(
-                            target["profile"].get("id") or ""
-                        )
-                        await notify_visual_guide_progress(
-                            queue_item,
-                            stage="appearance_processing",
-                            character=character,
-                            character_index=character_index,
-                            profile_ids=[vision_profile_id],
-                            completed=character_index - 1,
-                            profile_current=profile_index,
-                            profile_total=len(call_targets),
-                        )
-                        appearance_result = (
-                            await _generate_visual_profile_appearance_context(
-                                llm_service_module=llm_service,
-                                llm_prompt_edit_module=llm_prompt_edit,
-                                bot_name=bot_name,
-                                target=target,
-                                queue_item=queue_item,
-                                character_index=character_index,
-                                character_count=character_count,
-                                profile_index=profile_index,
-                                profile_count=len(call_targets),
-                                parent_execution_id=execution_context.execution_id,
-                            )
-                        )
-                        suggestion["visual_context"] = str(
-                            appearance_result.get("visual_context") or ""
-                        )
-                        suggestion["visual_context_status"] = str(
-                            appearance_result.get("status") or "failed"
-                        )
-                        suggestion["visual_context_error"] = str(
-                            appearance_result.get("error") or ""
-                        )
-                        suggestion["visual_context_image"] = str(
-                            appearance_result.get("image_filename") or ""
-                        )
-                        if suggestion["visual_context_status"] == "ok":
-                            suggestion["selection_guide"] = (
-                                _append_visual_context_to_selection_guide(
-                                    suggestion["selection_guide"],
-                                    suggestion["visual_context"],
-                                )
-                            )
-                        appearance_stage = (
-                            "appearance_completed"
-                            if suggestion["visual_context_status"] == "ok"
-                            else "appearance_failed"
-                        )
-                        await notify_visual_guide_progress(
-                            queue_item,
-                            stage=appearance_stage,
-                            character=character,
-                            character_index=character_index,
-                            profile_ids=[vision_profile_id],
-                            completed=character_index - 1,
-                            suggestions=[suggestion],
-                            error=suggestion["visual_context_error"],
-                            profile_current=profile_index,
-                            profile_total=len(call_targets),
-                        )
-                        if suggestion["visual_context_status"] == "cancelled":
-                            cancelled = True
-                            break
-
-                    suggestions.extend(profile_suggestions)
-                    completed_character_count = character_index
-                    if cancelled:
-                        await notify_visual_guide_progress(
-                            queue_item,
-                            stage="completed",
-                            character=character,
-                            character_index=character_index,
-                            profile_ids=profile_ids,
-                            completed=completed_character_count,
-                            suggestions=profile_suggestions,
-                        )
-                        await notify_visual_guide_progress(
-                            queue_item,
-                            stage="cancelled",
-                            character=character,
-                            character_index=character_index,
-                            profile_ids=profile_ids,
-                            completed=completed_character_count,
-                            suggestions=profile_suggestions,
-                            error="프로필 외형 비전 분석 중 사용자 요청으로 중단",
-                        )
-                        break
+                    async with guide_progress_lock:
+                        guide_completed_count += 1
+                        completed_after = guide_completed_count
                     await notify_visual_guide_progress(
                         queue_item,
-                        stage="completed",
+                        stage="guide_completed",
                         character=character,
                         character_index=character_index,
                         profile_ids=profile_ids,
-                        completed=character_index,
+                        completed=completed_after,
                         suggestions=profile_suggestions,
                     )
                     print(
-                        f"[VISUAL_GUIDE:API] LLM 생성 완료: bot={bot_name!r}, "
+                        f"[VISUAL_GUIDE:API] 캐릭터 분석 완료: bot={bot_name!r}, "
                         f"character={character!r}, profiles={profile_ids!r}, "
                         f"call={character_index}/{character_count}, "
                         f"suggestions={len(profile_suggestions)}, queue_item={queue_item.id}"
                     )
+                    return {
+                        **job,
+                        "status": "ok",
+                        "suggestions": profile_suggestions,
+                        "execution_context": execution_context,
+                    }
+
+                print(
+                    f"[VISUAL_GUIDE:PARALLEL] 캐릭터 분석 병렬 단계 시작: "
+                    f"bot={bot_name!r}, calls={len(character_jobs)}, "
+                    f"queue_item={queue_item.id}"
+                )
+                guide_results_raw = await asyncio.gather(
+                    *(run_character_guide(job) for job in character_jobs),
+                    return_exceptions=True,
+                )
+                guide_errors = [
+                    result
+                    for result in guide_results_raw
+                    if isinstance(result, BaseException)
+                ]
+                if guide_errors:
+                    first_error = guide_errors[0]
+                    print(
+                        f"[VISUAL_GUIDE:PARALLEL] 캐릭터 분석 병렬 단계 실패: "
+                        f"bot={bot_name!r}, failures={len(guide_errors)}, "
+                        f"error={type(first_error).__name__}: {first_error}"
+                    )
+                    raise first_error
+
+                guide_results = sorted(
+                    (
+                        result
+                        for result in guide_results_raw
+                        if isinstance(result, dict)
+                    ),
+                    key=lambda result: int(result["character_index"]),
+                )
+                successful_guides = [
+                    result for result in guide_results if result["status"] == "ok"
+                ]
+                suggestions = [
+                    suggestion
+                    for result in successful_guides
+                    for suggestion in result["suggestions"]
+                ]
+                completed_character_count = len(successful_guides)
+                cancelled = bool(queue_item._visual_guide_cancel_requested) or any(
+                    result["status"] != "ok" for result in guide_results
+                )
+                print(
+                    f"[VISUAL_GUIDE:PARALLEL] 캐릭터 분석 병렬 단계 완료: "
+                    f"bot={bot_name!r}, completed={completed_character_count}/"
+                    f"{character_count}, cancelled={cancelled}, "
+                    f"queue_item={queue_item.id}"
+                )
+
+                if cancelled:
+                    if not any(
+                        result["status"] == "cancelled" for result in guide_results
+                    ):
+                        last_result = successful_guides[-1] if successful_guides else character_jobs[0]
+                        await notify_visual_guide_progress(
+                            queue_item,
+                            stage="cancelled",
+                            character=str(last_result["character"]),
+                            character_index=int(last_result["character_index"]),
+                            profile_ids=list(last_result["profile_ids"]),
+                            completed=completed_character_count,
+                            suggestions=suggestions,
+                            error="캐릭터 병렬 분석 단계 완료 후 사용자 요청으로 중단",
+                        )
+                    queue_item._runtime_cancelled = True
+                    queue_item._runtime_cancel_reason = "프로필 선택 기준 자동 작성을 중단했습니다"
+                    queue_item._return_result_on_cancel = True
+                    return {
+                        "suggestions": suggestions,
+                        "target_count": len(resolved_targets),
+                        "character_call_count": character_count,
+                        "completed_character_count": completed_character_count,
+                        "cancelled": True,
+                    }
+
+                appearance_jobs = []
+                appearance_total = sum(
+                    len(result["call_targets"]) for result in successful_guides
+                )
+                appearance_index = 0
+                for result in successful_guides:
+                    for profile_index, (target, suggestion) in enumerate(
+                        zip(result["call_targets"], result["suggestions"]),
+                        start=1,
+                    ):
+                        appearance_index += 1
+                        appearance_jobs.append({
+                            "appearance_index": appearance_index,
+                            "character_result": result,
+                            "profile_index": profile_index,
+                            "profile_count": len(result["call_targets"]),
+                            "target": target,
+                            "suggestion": suggestion,
+                        })
+
+                appearance_progress_lock = asyncio.Lock()
+                appearance_completed_count = 0
+                appearance_completed_character_count = 0
+                appearance_remaining_by_character = {
+                    int(result["character_index"]): len(result["call_targets"])
+                    for result in successful_guides
+                }
+                appearance_cancelled_characters = set()
+
+                async def run_profile_appearance(job: dict) -> dict:
+                    nonlocal appearance_completed_count
+                    nonlocal appearance_completed_character_count
+                    result = job["character_result"]
+                    character = str(result["character"])
+                    character_index = int(result["character_index"])
+                    target = job["target"]
+                    suggestion = job["suggestion"]
+                    vision_profile_id = str(target["profile"].get("id") or "")
+                    async with appearance_progress_lock:
+                        started_position = min(
+                            appearance_total,
+                            appearance_completed_count + 1,
+                        )
+                        completed_before = appearance_completed_character_count
+                    await notify_visual_guide_progress(
+                        queue_item,
+                        stage="appearance_processing",
+                        character=character,
+                        character_index=character_index,
+                        profile_ids=[vision_profile_id],
+                        completed=completed_before,
+                        profile_current=started_position,
+                        profile_total=appearance_total,
+                    )
                     if bool(queue_item._visual_guide_cancel_requested):
-                        cancelled = completed_character_count < character_count
-                        if cancelled:
-                            await notify_visual_guide_progress(
-                                queue_item,
-                                stage="cancelled",
-                                character=character,
-                                character_index=character_index,
-                                profile_ids=profile_ids,
-                                completed=completed_character_count,
-                                error="현재 캐릭터 완료 후 사용자 요청으로 중단",
+                        error = "프로필 외형 병렬 분석 시작 전 사용자 요청으로 중단"
+                        print(
+                            f"[VISUAL_APPEARANCE:CANCEL] 병렬 비전 호출 시작 전 중단: "
+                            f"bot={bot_name!r}, character={character!r}, "
+                            f"profile={vision_profile_id!r}, "
+                            f"profile_call={job['appearance_index']}/{appearance_total}"
+                        )
+                        appearance_result = {
+                            "status": "cancelled",
+                            "visual_context": "",
+                            "error": error,
+                            "image_filename": "",
+                        }
+                    else:
+                        try:
+                            appearance_result = (
+                                await _generate_visual_profile_appearance_context(
+                                    llm_service_module=llm_service,
+                                    llm_prompt_edit_module=llm_prompt_edit,
+                                    bot_name=bot_name,
+                                    target=target,
+                                    queue_item=queue_item,
+                                    character_index=character_index,
+                                    character_count=character_count,
+                                    profile_index=int(job["profile_index"]),
+                                    profile_count=int(job["profile_count"]),
+                                    parent_execution_id=(
+                                        result["execution_context"].execution_id
+                                    ),
+                                )
                             )
-                        break
+                        except Exception as exc:
+                            error = f"{type(exc).__name__}: {exc}"
+                            print(
+                                f"[VISUAL_APPEARANCE] 병렬 비전 작업 예외: "
+                                f"bot={bot_name!r}, character={character!r}, "
+                                f"profile={vision_profile_id!r}, error={error}"
+                            )
+                            traceback.print_exc()
+                            appearance_result = {
+                                "status": "failed",
+                                "visual_context": "",
+                                "error": error,
+                                "image_filename": "",
+                            }
+
+                    suggestion["visual_context"] = str(
+                        appearance_result.get("visual_context") or ""
+                    )
+                    suggestion["visual_context_status"] = str(
+                        appearance_result.get("status") or "failed"
+                    )
+                    suggestion["visual_context_error"] = str(
+                        appearance_result.get("error") or ""
+                    )
+                    suggestion["visual_context_image"] = str(
+                        appearance_result.get("image_filename") or ""
+                    )
+                    if suggestion["visual_context_status"] == "ok":
+                        suggestion["selection_guide"] = (
+                            _append_visual_context_to_selection_guide(
+                                suggestion["selection_guide"],
+                                suggestion["visual_context"],
+                            )
+                        )
+
+                    async with appearance_progress_lock:
+                        appearance_completed_count += 1
+                        profile_completed_snapshot = appearance_completed_count
+                        if suggestion["visual_context_status"] == "cancelled":
+                            appearance_cancelled_characters.add(character_index)
+                        appearance_remaining_by_character[character_index] -= 1
+                        character_finished = (
+                            appearance_remaining_by_character[character_index] == 0
+                        )
+                        character_cancelled = (
+                            character_index in appearance_cancelled_characters
+                        )
+                        if character_finished and not character_cancelled:
+                            appearance_completed_character_count += 1
+                        completed_character_snapshot = (
+                            appearance_completed_character_count
+                        )
+
+                    appearance_stage = (
+                        "appearance_completed"
+                        if suggestion["visual_context_status"] == "ok"
+                        else (
+                            "appearance_cancelled"
+                            if suggestion["visual_context_status"] == "cancelled"
+                            else "appearance_failed"
+                        )
+                    )
+                    await notify_visual_guide_progress(
+                        queue_item,
+                        stage=appearance_stage,
+                        character=character,
+                        character_index=character_index,
+                        profile_ids=[vision_profile_id],
+                        completed=completed_character_snapshot,
+                        suggestions=[suggestion],
+                        error=suggestion["visual_context_error"],
+                        profile_current=profile_completed_snapshot,
+                        profile_total=appearance_total,
+                    )
+                    if character_finished:
+                        terminal_stage = (
+                            "cancelled" if character_cancelled else "completed"
+                        )
+                        terminal_error = (
+                            "프로필 외형 비전 병렬 분석 중 사용자 요청으로 중단"
+                            if character_cancelled
+                            else ""
+                        )
+                        await notify_visual_guide_progress(
+                            queue_item,
+                            stage=terminal_stage,
+                            character=character,
+                            character_index=character_index,
+                            profile_ids=list(result["profile_ids"]),
+                            completed=completed_character_snapshot,
+                            suggestions=result["suggestions"],
+                            error=terminal_error,
+                            profile_current=profile_completed_snapshot,
+                            profile_total=appearance_total,
+                        )
+                        print(
+                            f"[VISUAL_GUIDE:API] 외형 분석 단계 캐릭터 완료: "
+                            f"bot={bot_name!r}, character={character!r}, "
+                            f"profiles={result['profile_ids']!r}, "
+                            f"call={character_index}/{character_count}, "
+                            f"cancelled={character_cancelled}, queue_item={queue_item.id}"
+                        )
+                    return {
+                        "status": suggestion["visual_context_status"],
+                        "character_index": character_index,
+                        "profile_id": vision_profile_id,
+                    }
+
+                print(
+                    f"[VISUAL_GUIDE:PARALLEL] 외형 분석 병렬 단계 시작: "
+                    f"bot={bot_name!r}, calls={appearance_total}, "
+                    f"queue_item={queue_item.id}"
+                )
+                appearance_results = await asyncio.gather(
+                    *(run_profile_appearance(job) for job in appearance_jobs)
+                )
+                completed_character_count = appearance_completed_character_count
+                cancelled = bool(queue_item._visual_guide_cancel_requested) or any(
+                    result["status"] == "cancelled"
+                    for result in appearance_results
+                )
+                print(
+                    f"[VISUAL_GUIDE:PARALLEL] 외형 분석 병렬 단계 완료: "
+                    f"bot={bot_name!r}, profiles={appearance_completed_count}/"
+                    f"{appearance_total}, characters={completed_character_count}/"
+                    f"{character_count}, cancelled={cancelled}, "
+                    f"queue_item={queue_item.id}"
+                )
+                if cancelled and not any(
+                    result["status"] == "cancelled"
+                    for result in appearance_results
+                ):
+                    last_result = successful_guides[-1]
+                    await notify_visual_guide_progress(
+                        queue_item,
+                        stage="cancelled",
+                        character=str(last_result["character"]),
+                        character_index=int(last_result["character_index"]),
+                        profile_ids=list(last_result["profile_ids"]),
+                        completed=completed_character_count,
+                        suggestions=suggestions,
+                        error="외형 병렬 분석 단계 완료 후 사용자 요청으로 중단",
+                        profile_current=appearance_completed_count,
+                        profile_total=appearance_total,
+                    )
                 if cancelled:
                     queue_item._runtime_cancelled = True
                     queue_item._runtime_cancel_reason = "프로필 선택 기준 자동 작성을 중단했습니다"
