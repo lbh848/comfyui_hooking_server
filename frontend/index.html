@@ -6278,6 +6278,11 @@
             background: rgba(108,160,255,.12);
             color: #a8c7ff;
         }
+        .comfy-runtime-btn.clean {
+            border-color: rgba(190,132,255,.4);
+            background: rgba(190,132,255,.12);
+            color: #d3adff;
+        }
         .comfy-runtime-btn:hover:not(:disabled) { filter: brightness(1.14); }
         .comfy-runtime-btn:disabled { opacity: .38; cursor: not-allowed; }
         .comfy-runtime-terminal-card {
@@ -22361,6 +22366,7 @@
                                 </div>
                                 <button type="button" class="comfy-runtime-btn start" id="comfy-runtime-start" onclick="comfyRuntimeStart()">▶ 실행</button>
                                 <button type="button" class="comfy-runtime-btn connect" id="comfy-runtime-connect" onclick="comfyRuntimeOpen()" title="현재 Comfy 인스턴스의 웹 UI를 새 탭으로 엽니다.">↗ ComfyUI 접속</button>
+                                <button type="button" class="comfy-runtime-btn clean" id="comfy-runtime-free-memory" onclick="comfyRuntimeFreeMemory()" title="현재 Comfy 인스턴스의 모델을 언로드하고 VRAM과 실행 캐시 RAM을 정리합니다." disabled>♻ VRAM/RAM 정리</button>
                                 <button type="button" class="comfy-runtime-btn stop" id="comfy-runtime-stop" onclick="comfyRuntimeStop()" disabled>■ 종료</button>
                             </div>
                         </section>
@@ -36045,6 +36051,7 @@
             const port = document.getElementById('comfy-runtime-port');
             const state = document.getElementById('comfy-runtime-state');
             const start = document.getElementById('comfy-runtime-start');
+            const freeMemory = document.getElementById('comfy-runtime-free-memory');
             const stop = document.getElementById('comfy-runtime-stop');
             const profile = comfyRuntimeProfiles[instanceId] || COMFY_RUNTIME_PROFILE_DEFAULTS;
             if (title) title.textContent = `Comfy #${instanceId} 실행 옵션`;
@@ -36054,6 +36061,7 @@
                 state.classList.toggle('running', !!status?.running);
             }
             if (start) start.disabled = comfyRuntimeActionBusy || !!status?.running;
+            if (freeMemory) freeMemory.disabled = comfyRuntimeActionBusy || !status?.running;
             if (stop) stop.disabled = comfyRuntimeActionBusy || !status?.running;
         }
 
@@ -36321,6 +36329,36 @@
                 comfyRuntimeRefreshActiveChrome();
                 await comfyRuntimePollOne(instanceId).catch(pollError => {
                     console.error('[COMFY_RUNTIME] 종료 후 상태 조회 실패:', pollError);
+                });
+            }
+        }
+
+        async function comfyRuntimeFreeMemory() {
+            const instanceId = comfyRuntimeActiveInstance;
+            comfyRuntimeActionBusy = true;
+            comfyRuntimeRefreshActiveChrome();
+            try {
+                const payload = await fetchJSON('/api/comfy-runtime/free-memory', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ instance_id: instanceId }),
+                });
+                showToast(
+                    payload.message
+                        || `Comfy #${instanceId}에 VRAM/RAM 정리를 요청했습니다.`,
+                    'success',
+                );
+            } catch (error) {
+                console.error(`[COMFY_RUNTIME] Comfy #${instanceId} VRAM/RAM 정리 실패:`, error);
+                showToast(
+                    `Comfy #${instanceId} VRAM/RAM 정리 실패: ${error.message || error}`,
+                    'error',
+                );
+            } finally {
+                comfyRuntimeActionBusy = false;
+                comfyRuntimeRefreshActiveChrome();
+                await comfyRuntimePollOne(instanceId).catch(pollError => {
+                    console.error('[COMFY_RUNTIME] VRAM/RAM 정리 후 상태 조회 실패:', pollError);
                 });
             }
         }

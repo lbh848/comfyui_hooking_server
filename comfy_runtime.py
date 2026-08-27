@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
-from aiohttp import web
+from aiohttp import ClientSession, ClientTimeout, web
 
 from comfy_installer.python_runtime import (
     ManagedPythonError,
@@ -47,6 +47,10 @@ class ComfyRuntimeError(RuntimeError):
 
 class ComfyRuntimeValidationError(ComfyRuntimeError):
     """ComfyUI 실행 요청 검증 실패."""
+
+
+class ComfyRuntimeApiError(ComfyRuntimeError):
+    """실행 중인 ComfyUI API 호출 실패."""
 
 
 def normalize_comfy_launch_profile(value: Any) -> dict[str, Any]:
@@ -691,6 +695,78 @@ class ComfyRuntimeManager:
         with state.lock:
             return state.process is not None and state.process.poll() is None
 
+    def running_port(self, *, instance_id: Any) -> tuple[int, int]:
+        """관리자가 실행 중인 로컬 Comfy 인스턴스와 포트를 반환한다."""
+
+        parsed_instance = self._validate_instance_id(instance_id)
+        state = self._states[parsed_instance]
+        with state.lock:
+            process = state.process
+            if process is None or process.poll() is not None:
+                message = f"Comfy #{parsed_instance}는 실행 중이 아닙니다."
+                print(f"[COMFY_RUNTIME] VRAM/RAM 정리 거부: {message}")
+                raise ComfyRuntimeError(message)
+            if state.port is None:
+                message = f"Comfy #{parsed_instance}의 실행 포트를 확인할 수 없습니다."
+                print(f"[COMFY_RUNTIME] VRAM/RAM 정리 거부: {message}")
+                raise ComfyRuntimeError(message)
+            return parsed_instance, self._validate_port(state.port)
+
+
+async def request_comfy_memory_cleanup(
+    *,
+    instance_id: int,
+    port: int,
+) -> dict[str, Any]:
+    """ComfyUI의 공식 /free API에 모델 언로드와 캐시 정리를 요청한다."""
+
+    url = f"http://127.0.0.1:{port}/free"
+    request_body = {"unload_models": True, "free_memory": True}
+    print(
+        f"[COMFY_RUNTIME] Comfy #{instance_id} VRAM/RAM 정리 요청: "
+        f"url={url}, body={request_body}"
+    )
+    try:
+        async with ClientSession(timeout=ClientTimeout(total=5)) as session:
+            async with session.post(url, json=request_body) as response:
+                response_text = await response.text()
+                if not 200 <= response.status < 300:
+                    print(
+                        f"[COMFY_RUNTIME] Comfy #{instance_id} VRAM/RAM 정리 응답 실패: "
+                        f"url={url}, status={response.status}, "
+                        f"response={response_text[:500]!r}"
+                    )
+                    raise ComfyRuntimeApiError(
+                        f"Comfy #{instance_id} VRAM/RAM 정리 요청이 실패했습니다. "
+                        f"(HTTP {response.status})"
+                    )
+    except ComfyRuntimeApiError:
+        raise
+    except Exception as exc:
+        print(
+            f"[COMFY_RUNTIME] Comfy #{instance_id} VRAM/RAM 정리 연결 실패: "
+            f"url={url}, error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        raise ComfyRuntimeApiError(
+            f"Comfy #{instance_id}의 VRAM/RAM 정리 API에 연결하지 못했습니다."
+        ) from exc
+
+    print(
+        f"[COMFY_RUNTIME] Comfy #{instance_id} VRAM/RAM 정리 요청 접수: "
+        f"url={url}"
+    )
+    return {
+        "ok": True,
+        "instance_id": instance_id,
+        "port": port,
+        "requested": True,
+        "message": (
+            f"Comfy #{instance_id}에 VRAM/RAM 정리를 요청했습니다. "
+            "실행 중인 작업이 있으면 완료 후 적용됩니다."
+        ),
+    }
+
 
 def autostart_comfy_instances(
     manager: ComfyRuntimeManager,
@@ -851,6 +927,54 @@ def register_comfy_runtime_routes(
             traceback.print_exc()
             return web.json_response({"ok": False, "error": str(exc)}, status=500)
 
+    async def handle_free_memory(request: web.Request) -> web.Response:
+        denied = require_authorized(request)
+        if denied is not None:
+            return denied
+        body: Any = None
+        try:
+            body = await request.json()
+            if not isinstance(body, dict):
+                raise ComfyRuntimeValidationError(
+                    "VRAM/RAM 정리 요청 본문은 객체여야 합니다."
+                )
+            instance_id, port = manager.running_port(
+                instance_id=body.get("instance_id")
+            )
+            payload = await request_comfy_memory_cleanup(
+                instance_id=instance_id,
+                port=port,
+            )
+            return web.json_response(payload)
+        except ComfyRuntimeValidationError as exc:
+            print(
+                f"[COMFY_RUNTIME_API] VRAM/RAM 정리 요청 검증 실패: "
+                f"body={body!r}, error={exc}"
+            )
+            traceback.print_exc()
+            return web.json_response({"ok": False, "error": str(exc)}, status=400)
+        except ComfyRuntimeApiError as exc:
+            print(
+                f"[COMFY_RUNTIME_API] VRAM/RAM 정리 API 호출 실패: "
+                f"body={body!r}, error={exc}"
+            )
+            traceback.print_exc()
+            return web.json_response({"ok": False, "error": str(exc)}, status=502)
+        except ComfyRuntimeError as exc:
+            print(
+                f"[COMFY_RUNTIME_API] VRAM/RAM 정리 요청 실패: "
+                f"body={body!r}, error={exc}"
+            )
+            traceback.print_exc()
+            return web.json_response({"ok": False, "error": str(exc)}, status=409)
+        except Exception as exc:
+            print(
+                f"[COMFY_RUNTIME_API] VRAM/RAM 정리 처리 예외: body={body!r}, "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            return web.json_response({"ok": False, "error": str(exc)}, status=500)
+
     async def cleanup_runtime(_app: web.Application) -> None:
         try:
             await asyncio.to_thread(manager.stop_all)
@@ -864,5 +988,6 @@ def register_comfy_runtime_routes(
     app.router.add_get("/api/comfy-runtime/status", handle_status)
     app.router.add_post("/api/comfy-runtime/start", handle_start)
     app.router.add_post("/api/comfy-runtime/stop", handle_stop)
+    app.router.add_post("/api/comfy-runtime/free-memory", handle_free_memory)
     app.on_cleanup.append(cleanup_runtime)
     return manager

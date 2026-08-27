@@ -44,6 +44,7 @@ def test_runtime_has_three_instance_tabs_controls_and_raw_terminal() -> None:
         'id="comfy-runtime-cuda-device"',
         'id="comfy-runtime-auto-start"',
         'id="comfy-runtime-start"',
+        'id="comfy-runtime-free-memory"',
         'id="comfy-runtime-stop"',
         'id="comfy-runtime-terminal"',
     ):
@@ -59,6 +60,7 @@ def test_runtime_frontend_uses_dedicated_process_apis_and_persists_profiles() ->
         "/api/comfy-runtime/status",
         "/api/comfy-runtime/start",
         "/api/comfy-runtime/stop",
+        "/api/comfy-runtime/free-memory",
     ):
         assert endpoint in FRONTEND
 
@@ -73,6 +75,21 @@ def test_runtime_frontend_uses_dedicated_process_apis_and_persists_profiles() ->
     assert "disable_dynamic_vram: source.disable_dynamic_vram === true" in FRONTEND
     assert "'3': comfyRuntimeNormalizeProfile(comfyRuntimeProfiles[3])" in FRONTEND
     assert "vram_mode: 'auto'" in FRONTEND
+    assert "async function comfyRuntimeFreeMemory()" in FRONTEND
+    assert "freeMemory.disabled = comfyRuntimeActionBusy || !status?.running" in FRONTEND
+
+
+def test_vram_cleanup_control_is_only_in_local_comfy_instance_panel() -> None:
+    local_start = FRONTEND.index('id="comfy-runtime-instance-panel"')
+    local_end = FRONTEND.index('id="comfy-runtime-allocation-panel"', local_start)
+    local_panel = FRONTEND[local_start:local_end]
+    modal_start = FRONTEND.index('id="comfy-modal-runtime-panel"')
+    modal_end = FRONTEND.index('id="settings-tab-comfy_install"', modal_start)
+    modal_panel = FRONTEND[modal_start:modal_end]
+
+    assert local_panel.count('id="comfy-runtime-free-memory"') == 1
+    assert "VRAM/RAM 정리" in local_panel
+    assert "VRAM/RAM 정리" not in modal_panel
 
 
 def test_runtime_has_task_allocation_tab_next_to_second_instance() -> None:

@@ -270,8 +270,52 @@ async def test_runtime_http_status_and_validation(tmp_path: Path) -> None:
         )
         assert response.status == 409
         assert "Python" in (await response.json())["error"]
+
+        response = await client.post(
+            "/api/comfy-runtime/free-memory",
+            json={"instance_id": 1},
+        )
+        assert response.status == 409
+        assert "실행 중이 아닙니다" in (await response.json())["error"]
     finally:
         await client.close()
+
+
+@pytest.mark.asyncio
+async def test_runtime_free_vram_targets_selected_managed_instance(tmp_path: Path) -> None:
+    received: list[dict] = []
+
+    async def handle_free(request: web.Request) -> web.Response:
+        received.append(await request.json())
+        return web.Response(status=200)
+
+    comfy_app = web.Application()
+    comfy_app.router.add_post("/free", handle_free)
+    comfy_server = TestServer(comfy_app)
+    await comfy_server.start_server()
+
+    dashboard_app = web.Application()
+    manager = register_comfy_runtime_routes(dashboard_app, project_root=tmp_path)
+    process = _FakeProcess(b"")
+    manager._states[2].process = process
+    manager._states[2].port = comfy_server.port
+    client = TestClient(TestServer(dashboard_app))
+    await client.start_server()
+    try:
+        response = await client.post(
+            "/api/comfy-runtime/free-memory",
+            json={"instance_id": 2},
+        )
+        assert response.status == 200
+        payload = await response.json()
+        assert payload["ok"] is True
+        assert payload["instance_id"] == 2
+        assert payload["requested"] is True
+        assert received == [{"unload_models": True, "free_memory": True}]
+    finally:
+        process.returncode = 0
+        await client.close()
+        await comfy_server.close()
 
 
 @pytest.mark.asyncio
@@ -290,5 +334,11 @@ async def test_runtime_http_routes_can_require_dashboard_session(tmp_path: Path)
         payload = await response.json()
         assert payload["ok"] is False
         assert "로그인" in payload["error"]
+
+        response = await client.post(
+            "/api/comfy-runtime/free-memory",
+            json={"instance_id": 1},
+        )
+        assert response.status == 401
     finally:
         await client.close()
