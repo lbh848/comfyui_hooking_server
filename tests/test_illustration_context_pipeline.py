@@ -1234,6 +1234,82 @@ async def test_call2_pipeline_repairs_character_mismatch_without_global_fallback
 
 
 @pytest.mark.asyncio
+async def test_call2_plan_excludes_balanced_fallback_past_scenes(monkeypatch):
+    requests = {}
+
+    async def fake_pipeline_call(call_name, messages, *args, **kwargs):
+        requests[call_name] = "\n".join(
+            str(message.get("content") or "") for message in messages
+        )
+        if call_name == "CALL2-PLAN":
+            return json.dumps({
+                "scene_plan": [{
+                    "anchor_segment": "C001",
+                    "characters": ["Hana"],
+                    "scene_brief": "Hana waits in the current hallway",
+                }],
+            })
+        if call_name.startswith("CALL2-DETAIL 1/1"):
+            return _toon_for_slots([0])
+        raise AssertionError(f"unexpected call: {call_name}")
+
+    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
+    result = await pipeline.build_from_context(
+        {
+            "session_id": "call2_plan_current_only_fallback_test",
+            "target_slotted": "Hana waits in the current hallway.\n\n[Slot 0]",
+            "chats": [
+                {"role": "user", "data": "Continue."},
+                {"role": "char", "data": "Hana waits in the current hallway."},
+            ],
+        },
+        {
+            "call1_enabled": False,
+            "call2_parallel_enabled": True,
+            "call2_parallel_max_concurrency": 1,
+            "call2_parallel_slow_retry_enabled": False,
+            "output_count_min": 1,
+            "output_count_max": 1,
+            "key_visual": False,
+            "call3_enabled": False,
+            "speak_enabled": False,
+        },
+        "### Hana\n-default_outfit\nschool uniform",
+        extra_costume="### Hana\n-default_outfit\nschool uniform",
+        extra_names="Hana",
+        backtranslate_names="Hana",
+        history_plan={
+            "history_id": "hist_call2_plan_current_only",
+            "operation": "append",
+            "current_message_id": "msg_current",
+            "state_before": {},
+            "call1_history": [],
+            "call2_fallback_history": [{
+                "role": "char",
+                "data": "PAST SCENE MARKER: Hana cooked ramen in the old kitchen.",
+            }],
+            "call3_fallback_history": [],
+            "record_before": {"last_pipeline": {}},
+        },
+    )
+
+    plan_request = requests["CALL2-PLAN"]
+    detail_request = next(
+        content
+        for name, content in requests.items()
+        if name.startswith("CALL2-DETAIL 1/1")
+    )
+    assert "# SERVER SEGMENT CATALOG" in plan_request
+    assert "Hana waits in the current hallway." in plan_request
+    assert "PAST SCENE MARKER" not in plan_request
+    assert "# BALANCED FALLBACK PAST HISTORY" not in plan_request
+    assert "# BALANCED FALLBACK PAST HISTORY" in detail_request
+    assert "PAST SCENE MARKER" in detail_request
+    assert result["balanced_fallback_used"] is True
+    assert [item["slot"] for item in result["items"]] == [0]
+
+
+@pytest.mark.asyncio
 async def test_call2_pipeline_generates_characterless_scene_without_fallback(monkeypatch):
     call_names = []
     detail_messages = []
@@ -7602,9 +7678,19 @@ async def test_persistent_call2_only_uses_bounded_history_and_visual_candidate(m
     async def fake_call(task_key, messages, **kwargs):
         calls.append((task_key, messages))
         assert task_key == "illustration_call2"
-        if _call_name(task_key) == "CALL2-AUTHORITY-AUDIT":
+        call_name = _call_name(task_key)
+        if call_name == "CALL2-AUTHORITY-AUDIT":
             return _authority_audit_response(messages)
         request_text = "\n".join(message["content"] for message in messages)
+        if call_name == "CALL2-PLAN":
+            assert "bounded past marker" not in request_text
+            return json.dumps({
+                "scene_plan": [{
+                    "anchor_segment": "C001",
+                    "characters": ["Hana"],
+                    "scene_brief": "Hana waits by the current door",
+                }],
+            })
         assert "bounded past marker" in request_text
         assert "### Hana" in request_text
         assert "She waits by the door." in request_text
@@ -7658,6 +7744,7 @@ scenes[1]:
 
     assert [task_key for task_key, _messages in calls] == [
         "illustration_call2",
+        "illustration_call2",
     ]
     assert result["balanced_fallback_used"] is True
     assert result["enhanced_narrative"] == "She waits by the door."
@@ -7684,9 +7771,19 @@ async def test_persistent_history_recovers_missing_prior_wardrobe_with_balanced_
                 "unresolved_references": [],
             })
         assert task_key == "illustration_call2"
-        if _call_name(task_key) == "CALL2-AUTHORITY-AUDIT":
+        call_name = _call_name(task_key)
+        if call_name == "CALL2-AUTHORITY-AUDIT":
             return _authority_audit_response(messages)
         request_text = "\n".join(message["content"] for message in messages)
+        if call_name == "CALL2-PLAN":
+            assert "past wardrobe recovery marker" not in request_text
+            return json.dumps({
+                "scene_plan": [{
+                    "anchor_segment": "C001",
+                    "characters": ["Hana"],
+                    "scene_brief": "Hana looks outside in the current scene",
+                }],
+            })
         assert "past wardrobe recovery marker" in request_text
         assert "### Hana" in request_text
         assert "### Bob" in request_text
@@ -7744,6 +7841,7 @@ scenes[1]:
 
     assert [task_key for task_key, _messages in calls] == [
         "illustration_call1",
+        "illustration_call2",
         "illustration_call2",
     ]
     assert result["balanced_fallback_used"] is True
@@ -7860,8 +7958,19 @@ async def test_persistent_call1_off_keeps_call2_call3_with_separate_bounded_hist
         calls.append((task_key, messages))
         request_text = "\n".join(message["content"] for message in messages)
         if task_key == "illustration_call2":
-            if _call_name(task_key) == "CALL2-AUTHORITY-AUDIT":
+            call_name = _call_name(task_key)
+            if call_name == "CALL2-AUTHORITY-AUDIT":
                 return _authority_audit_response(messages)
+            if call_name == "CALL2-PLAN":
+                assert "call2 bounded marker" not in request_text
+                assert "call3 bounded marker" not in request_text
+                return json.dumps({
+                    "scene_plan": [{
+                        "anchor_segment": "C001",
+                        "characters": ["Hana"],
+                        "scene_brief": "Hana waits by the current door",
+                    }],
+                })
             assert "call2 bounded marker" in request_text
             assert "call3 bounded marker" not in request_text
             return """<lb-xnai>
@@ -7916,6 +8025,7 @@ scenes[1]:
     )
 
     assert [task_key for task_key, _messages in calls] == [
+        "illustration_call2",
         "illustration_call2",
         "illustration_call3",
     ]

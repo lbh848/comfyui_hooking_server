@@ -11971,10 +11971,14 @@ async def build_from_context(
                 persistent_history.get("call2_fallback_history") or []
             )
             if fallback_text:
+                # The planner selects only from the current server segment catalog.
+                # Supplying prior prose here lets a model attach an old visual beat
+                # to a valid current Cxxx anchor. DETAIL/KEYVIS may still use the
+                # bounded history for continuity, but PLAN must remain current-only.
                 append_call2_context({
                     "role": "user",
                     "content": "# BALANCED FALLBACK PAST HISTORY\n\n" + fallback_text,
-                })
+                }, include_plan=False)
             print(
                 f"[ILLUST_CONTEXT:CALL2] 균형형 폴백 입력 사용: "
                 f"history_chars={len(fallback_text)}, full_reference={bool(call2_reference.strip())}"
