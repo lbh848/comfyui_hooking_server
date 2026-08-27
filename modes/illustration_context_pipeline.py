@@ -10052,6 +10052,7 @@ async def _run_profile_resolution(
         raw_output,
         selected_names,
     )
+    name_repair_warnings: list[str] = []
     if name_contract_issues:
         print(
             "[ILLUST_CONTEXT:PROFILE_RESOLVE] 등록명 계약 위반 감지, "
@@ -10073,114 +10074,198 @@ async def _run_profile_resolution(
             and isinstance(item, dict)
             and str(item.get("name") or "").strip()
         ]
+        accepted_name_set = set(accepted_names)
+        available_names = [
+            name for name in selected_names
+            if name not in accepted_name_set
+        ]
+        available_name_set = set(available_names)
+        primary_characters = list(primary_raw.get("characters") or [])
+        repairable_name_issues = [
+            issue for issue in name_contract_issues
+            if int(issue.get("source_index") or 0) in rejected_indices
+            and isinstance(issue.get("item"), dict)
+        ]
+        repairable_indices = {
+            int(issue.get("source_index") or 0)
+            for issue in repairable_name_issues
+        }
 
-        def validate_name_item_repairs(result):
+        def inspect_name_item_repairs(result):
             raw = _json_object_from_text(result)
             if raw is None:
-                return False, "PROFILE-RESOLVE 이름 교정 JSON object 없음"
+                return (
+                    False,
+                    "PROFILE-RESOLVE 이름 교정 JSON object 없음",
+                    {},
+                    {},
+                    [],
+                )
             repairs = raw.get("repairs")
             if not isinstance(repairs, list):
-                return False, "PROFILE-RESOLVE 이름 교정 repairs가 list가 아님"
+                return (
+                    False,
+                    "PROFILE-RESOLVE 이름 교정 repairs가 list가 아님",
+                    {},
+                    raw,
+                    [],
+                )
             if not isinstance(raw.get("uncertainties"), list):
-                return False, "PROFILE-RESOLVE 이름 교정 uncertainties가 list가 아님"
-            seen_indices = set()
-            seen_names = set(accepted_names)
-            allowed_names = set(selected_names)
+                return (
+                    False,
+                    "PROFILE-RESOLVE 이름 교정 uncertainties가 list가 아님",
+                    {},
+                    raw,
+                    [],
+                )
+            replacements = {}
+            used_names = set(accepted_names)
+            invalid_items = []
             for repair_index, repair in enumerate(repairs, start=1):
+                source_index = None
+                name = ""
+                reason = ""
                 if not isinstance(repair, dict):
-                    return False, f"이름 교정 repairs[{repair_index}]가 object가 아님"
-                source_index = repair.get("source_index")
-                if source_index not in rejected_indices:
-                    return False, (
-                        f"이름 교정 source_index가 거부 항목이 아님: {source_index!r}"
+                    reason = f"repairs[{repair_index}]가 object가 아님"
+                else:
+                    source_index = repair.get("source_index")
+                    name = str(repair.get("name") or "").strip()
+                    if not isinstance(source_index, int) or isinstance(source_index, bool):
+                        reason = f"source_index가 정수가 아님: {source_index!r}"
+                    elif source_index not in repairable_indices:
+                        reason = f"교정 가능한 거부 항목이 아님: {source_index!r}"
+                    elif source_index in replacements:
+                        reason = f"source_index 중복: {source_index}"
+                    elif name in accepted_name_set:
+                        reason = f"이미 승인된 캐릭터 중복: {name!r}"
+                    elif name not in available_name_set:
+                        reason = f"사용 가능한 정확한 등록명이 아님: {name!r}"
+                    elif name in used_names:
+                        reason = f"교정 결과 캐릭터 중복: {name!r}"
+                    else:
+                        original = primary_characters[source_index - 1]
+                        replacement = deepcopy(original)
+                        replacement["name"] = name
+                        replacements[source_index] = replacement
+                        used_names.add(name)
+                if reason:
+                    invalid_items.append(
+                        f"repair_index={repair_index}, source_index={source_index!r}, "
+                        f"name={name!r}, reason={reason}"
                     )
-                if source_index in seen_indices:
-                    return False, f"이름 교정 source_index 중복: {source_index}"
-                character = repair.get("character")
-                if not isinstance(character, dict):
-                    return False, (
-                        f"이름 교정 character가 object가 아님: index={source_index}"
-                    )
-                name = str(character.get("name") or "").strip()
-                if name not in allowed_names:
-                    return False, f"이름 교정 결과가 정확한 등록명이 아님: {name!r}"
-                if name in seen_names:
-                    return False, f"이름 교정 결과 캐릭터 중복: {name!r}"
-                seen_indices.add(source_index)
-                seen_names.add(name)
-            return True, ""
+            if repairs and not replacements:
+                return (
+                    False,
+                    "PROFILE-RESOLVE 이름 교정 유효 항목 없음: "
+                    + "; ".join(invalid_items),
+                    {},
+                    raw,
+                    invalid_items,
+                )
+            return True, "", replacements, raw, invalid_items
+
+        def validate_name_item_repairs(result):
+            valid, reason, _replacements, _raw, _invalid = (
+                inspect_name_item_repairs(result)
+            )
+            return valid, reason
 
         repair_messages = _normalize_messages([
             {
                 "role": "system",
                 "content": (
-                    str(profile_system or "").strip()
-                    + "\n\n# REJECTED-ITEM NAME REPAIR\n"
-                    "Correct only the supplied rejected character items. Accepted items "
-                    "are authoritative and must not be repeated or rewritten. Re-evaluate "
-                    "the natural-language context for each rejected item, then return only "
-                    "repairs using this JSON shape:\n"
-                    '{"repairs":[{"source_index":1,"character":{"name":"exact '
-                    'canonical name","in_history":true,"profile_timeline":[]}}],'
+                    "# REJECTED-ITEM CANONICAL NAME REPAIR\n"
+                    "Resolve only the canonical name of each supplied rejected character "
+                    "item from the natural-language discourse. Accepted names are "
+                    "authoritative and unavailable. A repair name must be copied verbatim "
+                    "from REMAINING AVAILABLE REGISTERED NAMES, and each available name may "
+                    "be used at most once. Return only this JSON shape:\n"
+                    '{"repairs":[{"source_index":1,"name":"exact canonical name"}],'
                     '"uncertainties":[]}\n'
-                    "Copy each repaired name verbatim from COMPLETE REGISTERED CHARACTER "
-                    "ROSTER. Never translate, transliterate, localize, or re-spell it. "
-                    "Keep the supplied source_index unchanged. Repair an item only when "
-                    "the full natural-language discourse establishes its exact registered "
-                    "identity. Never choose the closest roster character from role, "
-                    "appearance, outfit, profile, or name resemblance. When exact identity "
-                    "is unsupported or uncertain, omit that source_index from `repairs`; "
-                    "the server will delete that rejected item."
+                    "Do not return character objects, in_history, profile data, appearance, "
+                    "or outfit decisions; the server preserves every non-name field from "
+                    "the rejected source item. Keep source_index unchanged. Repair an item "
+                    "only when the full discourse establishes its exact registered identity. "
+                    "Never choose a roster character merely from role, appearance, outfit, "
+                    "profile, or name resemblance. If the item is an unregistered distinct "
+                    "person, refers to an already accepted identity, or remains uncertain, "
+                    "omit that source_index from repairs and explain the omission briefly in "
+                    "uncertainties."
                 ),
             },
             {
                 "role": "user",
                 "content": (
-                    "# PROFILE INFERENCE MODE\n"
-                    + ("ENABLED" if profile_inference_enabled else "DISABLED")
-                    + "\n\n# COMPLETE REGISTERED CHARACTER ROSTER\n"
-                    + json.dumps(selected_names, ensure_ascii=False)
-                    + "\n\n# ALREADY ACCEPTED CHARACTER NAMES\n"
+                    "# ALREADY ACCEPTED CHARACTER NAMES\n"
                     + json.dumps(accepted_names, ensure_ascii=False)
+                    + "\n\n# REMAINING AVAILABLE REGISTERED NAMES\n"
+                    + json.dumps(available_names, ensure_ascii=False)
                     + "\n\n# REJECTED CHARACTER ITEMS ONLY\n"
-                    + json.dumps(name_contract_issues, ensure_ascii=False, indent=2)
-                    + "\n\n# PREVIOUSLY TRACKED PROFILE STATE\n"
-                    + json.dumps(tracked_state, ensure_ascii=False, indent=2)
-                    + "\n\n# REGISTERED PROFILE CATALOG\n"
-                    + (catalog or "(none)")
-                    + "\n\n# PAST HISTORY (IDENTITY AND in_history ONLY; NEVER PROFILE EVIDENCE)\n"
+                    + json.dumps(repairable_name_issues, ensure_ascii=False, indent=2)
+                    + "\n\n# PAST HISTORY FOR IDENTITY CONTINUITY\n"
                     + (history_text or "(empty)")
                     + "\n\n# FULL CURRENT CONTEXT SEGMENTS\n"
                     + segmented_current
                 ),
             },
         ])
-        repair_output = await _call_pipeline_llm(
-            "PROFILE-RESOLVE-REPAIR",
-            repair_messages,
-            stream_notify,
-            result_validator=validate_name_item_repairs,
-            json_mode=True,
-            history_ids_sink=history_ids_sink,
-        )
-        repair_valid, repair_reason = validate_name_item_repairs(repair_output)
-        if not repair_valid:
-            print(
-                "[ILLUST_CONTEXT:PROFILE_RESOLVE] 오류 항목 이름 교정 검증 실패: "
-                f"reason={repair_reason}"
+        replacements = {}
+        repair_uncertainties = []
+        if not repairable_name_issues:
+            warning = (
+                "이름 교정 가능한 object 항목이 없어 거부 항목 폐기: "
+                f"source_indices={sorted(rejected_indices)}"
             )
-            raise ValueError(repair_reason)
-        repaired_raw = _json_object_from_text(repair_output) or {}
-        replacements = {
-            int(item["source_index"]): deepcopy(item["character"])
-            for item in repaired_raw.get("repairs") or []
-        }
+            print(f"[ILLUST_CONTEXT:PROFILE_RESOLVE] {warning}")
+            name_repair_warnings.append(warning)
+        elif not available_names:
+            warning = (
+                "이름 교정에 사용할 미배정 등록명이 없어 거부 항목 폐기: "
+                f"source_indices={sorted(rejected_indices)}, "
+                f"accepted_names={accepted_names}"
+            )
+            print(f"[ILLUST_CONTEXT:PROFILE_RESOLVE] {warning}")
+            name_repair_warnings.append(warning)
+        else:
+            try:
+                repair_output = await _call_pipeline_llm(
+                    "PROFILE-RESOLVE-REPAIR",
+                    repair_messages,
+                    stream_notify,
+                    result_validator=validate_name_item_repairs,
+                    json_mode=True,
+                    history_ids_sink=history_ids_sink,
+                )
+                (
+                    repair_valid,
+                    repair_reason,
+                    replacements,
+                    repaired_raw,
+                    invalid_repair_items,
+                ) = inspect_name_item_repairs(repair_output)
+                if not repair_valid:
+                    raise ValueError(repair_reason)
+                repair_uncertainties = list(
+                    repaired_raw.get("uncertainties") or []
+                )
+                for invalid_item in invalid_repair_items:
+                    warning = f"이름 교정 응답 항목 폐기: {invalid_item}"
+                    print(f"[ILLUST_CONTEXT:PROFILE_RESOLVE] {warning}")
+                    name_repair_warnings.append(warning)
+            except Exception as e:
+                warning = (
+                    "오류 항목 이름 교정 호출 실패로 거부 항목만 폐기하고 계속 진행: "
+                    f"source_indices={sorted(rejected_indices)}, error={e}"
+                )
+                print(f"[ILLUST_CONTEXT:PROFILE_RESOLVE] {warning}")
+                traceback.print_exc()
+                name_repair_warnings.append(warning)
+                replacements = {}
+                repair_uncertainties = []
+
         discarded_indices = rejected_indices - set(replacements)
         merged_characters = []
-        for index, item in enumerate(
-            primary_raw.get("characters") or [],
-            start=1,
-        ):
+        for index, item in enumerate(primary_characters, start=1):
             if index in rejected_indices:
                 replacement = replacements.get(index)
                 if replacement is not None:
@@ -10191,7 +10276,7 @@ async def _run_profile_resolution(
             "characters": merged_characters,
             "uncertainties": [
                 *list(primary_raw.get("uncertainties") or []),
-                *list(repaired_raw.get("uncertainties") or []),
+                *repair_uncertainties,
             ],
         }, ensure_ascii=False)
         remaining_name_errors = _profile_resolution_name_contract_errors(
@@ -10200,13 +10285,20 @@ async def _run_profile_resolution(
         )
         if remaining_name_errors:
             print(
-                "[ILLUST_CONTEXT:PROFILE_RESOLVE] 오류 항목 병합 후 등록명 계약 위반: "
-                f"errors={remaining_name_errors}"
+                "[ILLUST_CONTEXT:PROFILE_RESOLVE] 안전 병합 후에도 등록명 계약 위반: "
+                f"errors={remaining_name_errors}, output={raw_output[:1000]!r}"
             )
             raise ValueError(
-                "PROFILE-RESOLVE 오류 항목 이름 교정 실패: "
+                "PROFILE-RESOLVE 안전 병합 내부 오류: "
                 + "; ".join(remaining_name_errors)
             )
+        if discarded_indices:
+            warning = (
+                "미해결 이름 항목 폐기: "
+                f"source_indices={sorted(discarded_indices)}"
+            )
+            print(f"[ILLUST_CONTEXT:PROFILE_RESOLVE] {warning}")
+            name_repair_warnings.append(warning)
         print(
             "[ILLUST_CONTEXT:PROFILE_RESOLVE] 오류 항목 이름 교정 병합 완료: "
             f"repaired_indices={sorted(replacements)}, "
@@ -10223,6 +10315,12 @@ async def _run_profile_resolution(
     )
     if parsed is None:
         raise ValueError("PROFILE-RESOLVE 최종 응답 파싱 실패")
+    if name_repair_warnings:
+        parsed["validation_warnings"] = [
+            *list(parsed.get("validation_warnings") or []),
+            *name_repair_warnings,
+        ]
+        parsed["validation_errors"] = list(parsed["validation_warnings"])
     repair_requests = list(parsed.get("repair_requests") or [])
     if profile_inference_enabled and repair_requests:
         repair_names = [
