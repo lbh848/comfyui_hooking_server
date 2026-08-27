@@ -3,6 +3,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+CALL1_ENHANCE = ROOT / "prompts" / "lighbd" / "enhance.txt"
 CALL2_SYSTEM = ROOT / "prompts" / "lighbd" / "system.txt"
 CALL2_THOUGHTS = ROOT / "prompts" / "lighbd" / "thoughts.txt"
 PIPELINE_PY = ROOT / "modes" / "illustration_context_pipeline.py"
@@ -113,6 +114,16 @@ def test_call2_fixed_appearance_requires_explicit_narrative_change():
     assert "generated visual " in source
     assert "state structurally differs" in source
     assert "scene-appropriate replacement outfit may except" in source
+
+
+def test_call1_dishevelment_does_not_invent_hairstyle_transition():
+    enhance = CALL1_ENHANCE.read_text(encoding="utf-8")
+
+    assert "real before-to-after arrangement change" in enhance
+    assert '"a girl with disheveled long twintails" still has twintails' in enhance
+    assert 'never paraphrase it as "her twintails came undone"' in enhance
+    assert "ambiguous between disorder and a true arrangement change" in enhance
+    assert "emit no event and preserve the fixed appearance" in enhance
 
 
 def test_call2_authority_audit_never_leaves_hair_color_unspecified():
