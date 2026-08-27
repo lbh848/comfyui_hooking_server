@@ -5862,10 +5862,16 @@ async def test_profile_resolution_runs_once_before_call1_and_filters_catalog(mon
         assert "선택 기준: persistent transformed form" in prompt
         assert "선택 기준: ordinary form" in prompt
         assert "# FULL CURRENT CONTEXT SEGMENTS" in prompt
+        assert (
+            "# PAST HISTORY (IDENTITY AND in_history ONLY; NEVER PROFILE EVIDENCE)"
+            in prompt
+        )
         assert "# FINAL CONTRACT CHECK" in prompt
         assert "re-check every chosen `profile_ref`" in prompt
         assert "complete registered selection guide" in prompt
         assert "Appearance or outfit is support only when the selection guide" in prompt
+        assert "Never use PAST or another character's state as profile evidence" in prompt
+        assert "self-reference such as `wearing [2]` is only a label" in prompt
         return json.dumps({
             "characters": [{
                 "name": "Adachi",

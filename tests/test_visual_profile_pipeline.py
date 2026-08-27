@@ -125,6 +125,11 @@ def test_character_profile_prompt_precedes_compact_call1_contract():
     assert "Compare all registered guides for the character before choosing" in profile_prompt
     assert "Registered profile names, aliases, and internal IDs are deliberately absent" in profile_prompt
     assert "Appearance or outfit is valid selection evidence only" in profile_prompt
+    assert "PAST HISTORY may be used only to resolve identity" in profile_prompt
+    assert "it is never profile-selection evidence" in profile_prompt
+    assert "Another character's feelings, conflict, actions" in profile_prompt
+    assert 'such as "wearing [2]" inside candidate `[2]`' in profile_prompt
+    assert "independently stated required conditions" in profile_prompt
     assert "rather than the nearest special profile" in profile_prompt
     assert "Do not add profile names, state summaries, confidence" in profile_prompt
     assert '"profile_events"' not in profile_prompt

@@ -9993,7 +9993,7 @@ async def _run_profile_resolution(
                 + json.dumps(tracked_state, ensure_ascii=False, indent=2)
                 + "\n\n# REGISTERED PROFILE CATALOG\n"
                 + (catalog or "(none)")
-                + "\n\n# PAST HISTORY\n"
+                + "\n\n# PAST HISTORY (IDENTITY AND in_history ONLY; NEVER PROFILE EVIDENCE)\n"
                 + (history_text or "(empty)")
                 + "\n\n# FULL CURRENT CONTEXT SEGMENTS\n"
                 + segmented_current
@@ -10004,7 +10004,10 @@ async def _run_profile_resolution(
                 "support and violates none of its exclusions. A profile name, ID, alias, "
                 "resemblance, or lack of a perfect alternative is not support. Appearance "
                 "or outfit is support only when the selection guide explicitly makes it a "
-                "condition and the narrative establishes it. Otherwise preserve a valid "
+                "condition and CURRENT establishes it for that same character. Never use "
+                "PAST or another character's state as profile evidence. A candidate's "
+                "self-reference such as `wearing [2]` is only a label, not evidence. "
+                "Otherwise preserve a valid "
                 "unchanged tracked profile or use "
                 "the declared default as instructed above. Also verify that every emitted "
                 "`name` is copied "
@@ -10145,7 +10148,7 @@ async def _run_profile_resolution(
                     + json.dumps(tracked_state, ensure_ascii=False, indent=2)
                     + "\n\n# REGISTERED PROFILE CATALOG\n"
                     + (catalog or "(none)")
-                    + "\n\n# PAST HISTORY\n"
+                    + "\n\n# PAST HISTORY (IDENTITY AND in_history ONLY; NEVER PROFILE EVIDENCE)\n"
                     + (history_text or "(empty)")
                     + "\n\n# FULL CURRENT CONTEXT SEGMENTS\n"
                     + segmented_current
@@ -10257,7 +10260,7 @@ async def _run_profile_resolution(
                         + json.dumps(tracked_state, ensure_ascii=False, indent=2)
                         + "\n\n# REGISTERED PROFILE CATALOG FOR REJECTED CHARACTERS\n"
                         + build_natural_profile_catalog(repair_profiles)
-                        + "\n\n# PAST HISTORY\n"
+                        + "\n\n# PAST HISTORY (IDENTITY AND in_history ONLY; NEVER PROFILE EVIDENCE)\n"
                         + (history_text or "(empty)")
                         + "\n\n# FULL CURRENT CONTEXT SEGMENTS\n"
                         + segmented_current
