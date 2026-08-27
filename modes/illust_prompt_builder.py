@@ -530,6 +530,53 @@ class IllustPromptBuilder:
         return core.casefold()
 
     @staticmethod
+    def remove_active_trigger_tags(
+        text: str,
+        triggers: list[str] | tuple[str, ...] | set[str] | str | None,
+        *,
+        context: str = "",
+    ) -> str:
+        """렌더링 본문에서 별도로 선행 배치되는 LoRA 트리거만 제거한다.
+
+        NAME 기반 CHAR 식별 태그는 내부 캐릭터 매핑에 필요하지만, 같은 값이
+        활성 LoRA 트리거이면 최종 프롬프트에서는 이미 맨 앞에 배치된다. 이
+        함수는 쉼표로 분리된 *독립 최상위 태그*만 정확히 비교하므로
+        ``Shiho walks ...`` 같은 서술문이나 부분 문자열은 건드리지 않는다.
+        """
+        source = str(text or "")
+        if not source.strip() or not triggers:
+            return source
+
+        trigger_values = [triggers] if isinstance(triggers, str) else list(triggers)
+        trigger_keys = {
+            IllustPromptBuilder._top_level_tag_core(tag)
+            for value in trigger_values
+            for tag in IllustPromptBuilder._split_top_level_tags(str(value or ""))
+            if IllustPromptBuilder._top_level_tag_core(tag)
+        }
+        if not trigger_keys:
+            return source
+
+        cleaned_segments = []
+        removed = []
+        for segment in source.split("|"):
+            kept_tags = []
+            for tag in IllustPromptBuilder._split_top_level_tags(segment):
+                if IllustPromptBuilder._top_level_tag_core(tag) in trigger_keys:
+                    removed.append(tag)
+                    continue
+                kept_tags.append(tag)
+            cleaned_segments.append(", ".join(kept_tags))
+
+        cleaned = " | ".join(cleaned_segments)
+        if removed:
+            print(
+                f"[ILLUST_TRIGGER_DEDUP] 렌더링 본문의 중복 트리거 제거: "
+                f"context={context or 'unspecified'}, removed={removed}"
+            )
+        return cleaned
+
+    @staticmethod
     def detect_characters_from_name(
         name_section: str,
         char_names: list,
@@ -904,6 +951,19 @@ class IllustPromptBuilder:
         # ─── ANIMA 트리거 (맨 앞 보장) ───
         anima_trigger_clean = [t.strip() for t in anima_triggers if t.strip()]
         sdxl_trigger_clean = [t.strip() for t in sdxl_triggers if t.strip()]
+        # NAME 기반 CHAR 식별 태그는 캐릭터/얼굴 매핑용 원본 ``char``에는
+        # 유지하되, 모델별 렌더링 본문에서는 이미 맨 앞에 놓인 활성 트리거와
+        # 정확히 같은 독립 태그만 제거한다.
+        anima_render_char = self.remove_active_trigger_tags(
+            char,
+            anima_trigger_clean,
+            context="ANIMA CHAR",
+        )
+        sdxl_render_char = self.remove_active_trigger_tags(
+            char,
+            sdxl_trigger_clean,
+            context="SDXL CHAR",
+        )
 
         # ─── 성별 태그 (캐릭터 gender_tag 수집, " and "로 결합) ───
         gender_tags = []
@@ -924,8 +984,8 @@ class IllustPromptBuilder:
         if setup.strip():
             anima_content_core.append(setup.strip())
         # 2. char
-        if char.strip():
-            anima_content_core.append(char.strip())
+        if anima_render_char.strip():
+            anima_content_core.append(anima_render_char.strip())
         # 3. supplement
         if supplement.strip():
             anima_content_core.append(supplement.strip())
@@ -942,8 +1002,8 @@ class IllustPromptBuilder:
         if setup.strip():
             sdxl_content_core.append(setup.strip())
         # 2. char (supplement 없음)
-        if char.strip():
-            sdxl_content_core.append(char.strip())
+        if sdxl_render_char.strip():
+            sdxl_content_core.append(sdxl_render_char.strip())
 
         # ─── 품질 뒤 강제 삽입 규칙 ───
         # 조립 전에 품질 배열에 반영해야 개별 품질 블록뿐 아니라 실제 생성에
@@ -1107,22 +1167,38 @@ class IllustPromptBuilder:
                 # 더하면 캐릭터 복장/자세가 전역으로 새므로 사용하지 않는다.
                 shared_before.append(background_prompt)
                 shared_after = []
+                char_trigger_list = [
+                    list(dict.fromkeys(
+                        str(trigger).strip()
+                        for trigger in (
+                            anima_triggers_by_char.get(name, [])
+                            + anima_shared_triggers
+                        )
+                        if str(trigger).strip()
+                    ))
+                    for name in ordered_names
+                ]
+                render_char_inform = [
+                    self.remove_active_trigger_tags(
+                        info,
+                        char_trigger_list[index],
+                        context=f"MULTI_CHAR[{name}]",
+                    ).strip()
+                    for index, (name, info) in enumerate(zip(ordered_names, char_inform))
+                ]
+                if any(not info for info in render_char_inform):
+                    print(
+                        f"[MULTI_CHAR:PROMPT] 트리거 중복 제거 후 캐릭터 태그가 비었습니다: "
+                        f"names={ordered_names}, char_inform={char_inform}, "
+                        f"triggers={char_trigger_list}"
+                    )
+                    raise ValueError("트리거 중복 제거 후 MULTI_CHAR 캐릭터 태그가 비었습니다")
                 multi_payload = {
                     "enable": True,
                     "char_num": len(ordered_names),
-                    "char_inform": char_inform,
+                    "char_inform": render_char_inform,
                     "char_name_list": ordered_names,
-                    "char_trigger_list": [
-                        list(dict.fromkeys(
-                            str(trigger).strip()
-                            for trigger in (
-                                anima_triggers_by_char.get(name, [])
-                                + anima_shared_triggers
-                            )
-                            if str(trigger).strip()
-                        ))
-                        for name in ordered_names
-                    ],
+                    "char_trigger_list": char_trigger_list,
                     "background_trigger_list": list(anima_shared_triggers),
                     "background_prompt": background_prompt,
                     "composition_prompt": composition_prompt,
@@ -1390,7 +1466,11 @@ class IllustPromptBuilder:
 
                 filtered_tags = [t for t in whitelisted
                                  if not IllustPromptBuilder._match_tag_pattern(t, auto_blacklist)]
-                filtered_positive = ", ".join(filtered_tags)
+                filtered_positive = IllustPromptBuilder.remove_active_trigger_tags(
+                    ", ".join(filtered_tags),
+                    anima_triggers + sdxl_triggers,
+                    context=f"CHAR_FACE_TAG_INFORM[{char_name}]",
+                )
 
             # FACE_TAGS 맨 앞에 gender_tag 보장
             gender_tag = char_data.get("gender_tag", "")

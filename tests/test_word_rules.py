@@ -653,6 +653,141 @@ class ImageNameTagTest(unittest.TestCase):
         self.assertEqual(sections["char"].split(",", 1)[0], "Alisa")
 
 
+class ActiveTriggerDeduplicationTest(unittest.TestCase):
+    @staticmethod
+    def _section(positive: str, name: str) -> str:
+        return positive.split(f"[{name}]\n", 1)[1].split("\n[", 1)[0]
+
+    def test_single_character_keeps_only_leading_active_anima_trigger(self):
+        bot = {
+            "characters": [{
+                "name": "Shiho",
+                "gender_tag": "1girl",
+                "face_tags": "long hair",
+                "eye_tags": "red eyes",
+                "loras_solo": [{
+                    "source": "asset",
+                    "lora_path": "shiho.safetensors",
+                    "trigger": "Shiho",
+                    "BASE": "anima",
+                }],
+                "face_loras": [{
+                    "source": "asset",
+                    "lora_path": "shiho-face.safetensors",
+                    "trigger": "Shiho",
+                    "BASE": "anima",
+                }],
+            }],
+        }
+
+        positive = IllustPromptBuilder().build_positive_prompt(
+            "cowboy shot, alley",
+            "Shiho, very long hair, brown hair, red eyes",
+            "Shiho walks hunched in the dark empty alley",
+            ["Shiho"],
+            bot,
+            {},
+            {},
+            "test-bot",
+        )
+
+        anima_content = self._section(positive, "ANIMA_CONTENT")
+        anima_tags = IllustPromptBuilder._split_top_level_tags(anima_content)
+        self.assertEqual(
+            [IllustPromptBuilder._top_level_tag_core(tag) for tag in anima_tags].count(
+                "shiho"
+            ),
+            1,
+        )
+        self.assertTrue(anima_content.startswith("Shiho, "))
+        self.assertIn("Shiho walks hunched in the dark empty alley", anima_content)
+
+        # SDXL에는 활성 트리거가 없으므로 CHAR의 이름 태그는 모델별로 보존된다.
+        sdxl = self._section(positive, "SDXL")
+        sdxl_tags = IllustPromptBuilder._split_top_level_tags(sdxl)
+        self.assertEqual(
+            [IllustPromptBuilder._top_level_tag_core(tag) for tag in sdxl_tags].count(
+                "shiho"
+            ),
+            1,
+        )
+
+        face_info = json.loads(
+            self._section(positive, "CHAR_FACE_TAG_INFORM")
+        )["list"][0]
+        self.assertEqual(face_info["TRIGGER_ANIMA"], "Shiho")
+        self.assertNotIn(
+            "shiho",
+            {
+                IllustPromptBuilder._top_level_tag_core(tag)
+                for tag in IllustPromptBuilder._split_top_level_tags(
+                    face_info["POSITIVE"]
+                )
+            },
+        )
+        self.assertIn("brown hair", face_info["POSITIVE"])
+
+    def test_exact_and_weighted_duplicates_are_removed_but_prose_is_preserved(self):
+        cleaned = IllustPromptBuilder.remove_active_trigger_tags(
+            "Shiho, (Shiho:1.2), Shiho walks hunched, brown hair",
+            ["Shiho"],
+            context="test",
+        )
+
+        self.assertEqual(cleaned, "Shiho walks hunched, brown hair")
+
+    def test_multi_char_regions_keep_trigger_only_in_trigger_list(self):
+        bot = {
+            "characters": [{
+                "name": "Left",
+                "gender_tag": "1girl",
+                "loras_group": [{
+                    "source": "asset",
+                    "lora_path": "left.safetensors",
+                    "trigger": "Left",
+                    "BASE": "anima",
+                }],
+            }, {
+                "name": "Right",
+                "gender_tag": "1girl",
+                "loras_group": [{
+                    "source": "asset",
+                    "lora_path": "right.safetensors",
+                    "trigger": "Right",
+                    "BASE": "anima",
+                }],
+            }],
+        }
+        positive = IllustPromptBuilder().build_positive_prompt(
+            "shared setup",
+            "Left, red hair | Right, blue hair",
+            "shared supplement",
+            ["Left", "Right"],
+            bot,
+            {},
+            {},
+            "test-bot",
+            multi_char_context={
+                "enable": True,
+                "char_name_list": ["Left", "Right"],
+                "char_inform": [
+                    "Left, red hair, Left looks away",
+                    "(Right:1.2), blue hair",
+                ],
+                "background_prompt": "shared background",
+                "composition_prompt": "two people standing apart",
+                "mask_fingerprint": "a" * 64,
+            },
+        )
+
+        payload = json.loads(self._section(positive, "MULTI_CHAR"))
+        self.assertEqual(payload["char_trigger_list"], [["Left"], ["Right"]])
+        self.assertEqual(
+            payload["char_inform"],
+            ["red hair, Left looks away", "blue hair"],
+        )
+
+
 class InsertRuleTest(unittest.TestCase):
     """삽입(insert) 규칙: 단어가 없으면 품질([ANIMA_QUALITY]/[SDXL_QUALITY]) 뒤에
     평문으로 강제 삽입. 가중치 괄호/일반 괄호 형태도 중복으로 간주해 스킵."""
