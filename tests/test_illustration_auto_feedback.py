@@ -21,7 +21,11 @@ def test_auto_feedback_llm_routing_is_registered_in_backend_and_frontend() -> No
     assert "illustration_auto_feedback_review" in frontend
     assert "삽화 오토피드백 검수" in frontend
     assert "startIllustrationAutoFeedback()" in frontend
-    assert "오토피드백 중지" in frontend
+    assert 'id="illustration-auto-feedback-modal"' in frontend
+    assert 'id="llm-edit-auto-feedback-current-direction"' in frontend
+    assert "openIllustrationAutoFeedbackModal()" in frontend
+    assert "closeLlmEditModal();" in frontend
+    assert "안전 중지" in frontend
     assert "모든 회차 이미지는 백업에 보존" in frontend
 
 
@@ -219,6 +223,9 @@ async def test_auto_feedback_preserves_failed_round_backups_until_goal_is_met(
             "generated-2",
         ]
         assert job["rounds"][0]["review"]["achieved"] is False
+        assert job["rounds"][0]["edit_direction"] == body["direction"]
+        assert "표정을 목표에 맞게 수정하세요." in job["rounds"][1]["edit_direction"]
+        assert job["current_direction"] == job["rounds"][1]["edit_direction"]
         assert job["best_backup_name"] == "generated-2"
         assert server._auto_feedback_public_job(job)["preserved_backup_names"] == [
             "generated-1",

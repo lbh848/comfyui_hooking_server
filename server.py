@@ -16593,6 +16593,7 @@ def _create_auto_feedback_job(body: dict) -> dict:
         "source_backup_name": str(body.get("name") or ""),
         "current_backup_name": str(body.get("name") or ""),
         "goal": str(body.get("direction") or ""),
+        "current_direction": str(body.get("direction") or ""),
         "max_rounds": int(body.get("max_rounds") or 1),
         "round": 0,
         "rounds": [],
@@ -17103,20 +17104,22 @@ async def _run_illustration_auto_feedback_job(job_id: str, body: dict) -> None:
         )
         for round_number in range(1, int(job.get("max_rounds") or 1) + 1):
             _raise_if_auto_feedback_cancelled(job)
+            round_direction = _compose_auto_feedback_edit_direction(
+                str(job.get("goal") or ""),
+                previous_review,
+            )
             await _update_auto_feedback_job(
                 job,
                 round=round_number,
                 phase="editing",
+                current_direction=round_direction,
                 message=f"{round_number}/{job.get('max_rounds')}회 프롬프트를 수정하고 있습니다",
             )
             edit_body = {
                 "name": current_name,
                 "positive": current_positive,
                 "negative": current_negative,
-                "direction": _compose_auto_feedback_edit_direction(
-                    str(job.get("goal") or ""),
-                    previous_review,
-                ),
+                "direction": round_direction,
             }
             if selected_characters:
                 edit_body["characters"] = copy.deepcopy(selected_characters)
@@ -17160,6 +17163,7 @@ async def _run_illustration_auto_feedback_job(job_id: str, body: dict) -> None:
                 "source_backup_name": current_name,
                 "provider": str(generated.get("provider") or ""),
                 "fallback_used": bool(generated.get("fallback_used")),
+                "edit_direction": round_direction,
                 "review": None,
             }
             job["rounds"].append(round_info)
@@ -17198,6 +17202,11 @@ async def _run_illustration_auto_feedback_job(job_id: str, body: dict) -> None:
             await _update_auto_feedback_job(
                 job,
                 achieved=bool(review.get("achieved")),
+                current_direction=(
+                    str(review.get("next_direction") or "").strip()
+                    if not review.get("achieved")
+                    else round_direction
+                ),
                 message=(
                     f"{round_number}/{job.get('max_rounds')}회 검수: "
                     f"{review.get('score')}점 · {review.get('summary')}"

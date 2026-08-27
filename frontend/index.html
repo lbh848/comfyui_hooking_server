@@ -19682,29 +19682,72 @@
                                     <input id="llm-edit-auto-feedback-max" type="number" min="1" max="10" step="1" value="3" style="width:64px; padding:5px 7px; border:1px solid var(--border); border-radius:6px; background:var(--surface1); color:var(--text);">
                                 </label>
                             </div>
-                            <div id="llm-edit-auto-feedback-status" style="display:none; margin-top:10px; padding-top:9px; border-top:1px solid var(--border);">
-                                <div style="display:flex; justify-content:space-between; gap:10px; align-items:center; font-size:0.74rem;">
-                                    <span id="llm-edit-auto-feedback-status-text" style="color:var(--text);">대기 중</span>
-                                    <span id="llm-edit-auto-feedback-progress-text" style="color:var(--text-secondary);">0%</span>
-                                </div>
-                                <div style="height:5px; margin-top:6px; border-radius:999px; overflow:hidden; background:var(--surface1);">
-                                    <div id="llm-edit-auto-feedback-progress-bar" style="width:0%; height:100%; background:var(--accent); transition:width .2s ease;"></div>
-                                </div>
-                                <div id="llm-edit-auto-feedback-rounds" style="margin-top:8px; max-height:130px; overflow-y:auto; display:grid; gap:5px;"></div>
-                            </div>
                         </div>
                     </div>
                 </div>
             </div>
             <div class="modal-footer">
                 <button class="cancel" onclick="closeLlmEditModal()">취소</button>
-                <button class="cancel" id="llm-edit-auto-feedback-cancel-btn" onclick="cancelIllustrationAutoFeedback()" style="display:none; border-color:var(--error); color:var(--error);">오토피드백 중지</button>
                 <button id="llm-edit-auto-feedback-run-btn" onclick="startIllustrationAutoFeedback()" style="padding:8px 14px; border:1px solid #53b7a8; border-radius:6px; background:var(--surface2); color:#53b7a8; font-weight:700; cursor:pointer;">
                     오토피드백
                 </button>
                 <button class="confirm" id="llm-edit-run-btn" onclick="llmEditPrompt()">
                     <span id="llm-edit-run-text">수정 적용</span>
                 </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 오토피드백 전용 진행 모달 -->
+    <div class="modal" id="illustration-auto-feedback-modal" style="z-index:10003;">
+        <div class="modal-content" style="width:min(900px,94vw); max-width:900px; max-height:92vh; display:flex; flex-direction:column;">
+            <div class="modal-header">
+                <div>
+                    <h2 style="margin:0;">🔁 오토피드백</h2>
+                    <div style="margin-top:3px; color:var(--text-secondary); font-size:0.72rem;">이 창을 닫아도 서버 작업은 계속됩니다. 안전 중지는 현재 단계를 마친 뒤 다음 회차를 시작하지 않습니다.</div>
+                </div>
+                <button class="modal-close" onclick="closeIllustrationAutoFeedbackModal()">&times;</button>
+            </div>
+            <div class="modal-body" style="overflow-y:auto;">
+                <div id="llm-edit-auto-feedback-status" style="display:block; padding:12px; border:1px solid var(--border); border-radius:9px; background:var(--surface2);">
+                    <div style="display:flex; justify-content:space-between; gap:10px; align-items:flex-start; flex-wrap:wrap;">
+                        <div style="display:flex; align-items:center; gap:7px; flex-wrap:wrap;">
+                            <span id="llm-edit-auto-feedback-status-badge" style="padding:3px 9px; border-radius:999px; background:rgba(83,183,168,.14); color:#53b7a8; font-size:.72rem; font-weight:800;">대기</span>
+                            <span id="llm-edit-auto-feedback-round-badge" style="padding:3px 9px; border-radius:999px; background:var(--surface1); color:var(--text-secondary); font-size:.72rem; font-weight:700;">0/0회</span>
+                        </div>
+                        <span id="llm-edit-auto-feedback-progress-text" style="color:var(--text-secondary); font-size:.74rem; font-weight:700;">0%</span>
+                    </div>
+                    <div id="llm-edit-auto-feedback-status-text" style="margin-top:8px; color:var(--text); font-size:.8rem; line-height:1.45;">서버 작업을 준비하고 있습니다.</div>
+                    <div style="height:6px; margin-top:8px; border-radius:999px; overflow:hidden; background:var(--surface1);">
+                        <div id="llm-edit-auto-feedback-progress-bar" style="width:0%; height:100%; background:var(--accent); transition:width .2s ease;"></div>
+                    </div>
+                </div>
+
+                <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:10px; margin-top:10px;">
+                    <section style="padding:11px 12px; border:1px solid var(--border); border-radius:8px; background:var(--surface1); min-width:0;">
+                        <div style="font-size:.72rem; color:var(--text-secondary); font-weight:700;">사용자의 최종 목표</div>
+                        <pre id="llm-edit-auto-feedback-goal" style="white-space:pre-wrap; word-break:break-word; margin:7px 0 0; color:var(--text); font:inherit; font-size:.78rem; line-height:1.45; max-height:150px; overflow:auto;">-</pre>
+                    </section>
+                    <section style="padding:11px 12px; border:1px solid var(--border); border-radius:8px; background:var(--surface1); min-width:0;">
+                        <div style="font-size:.72rem; color:var(--text-secondary); font-weight:700;">현재/다음 수정 방향</div>
+                        <pre id="llm-edit-auto-feedback-current-direction" style="white-space:pre-wrap; word-break:break-word; margin:7px 0 0; color:var(--text); font:inherit; font-size:.78rem; line-height:1.45; max-height:150px; overflow:auto;">-</pre>
+                    </section>
+                </div>
+
+                <div id="llm-edit-auto-feedback-best" style="display:none; margin-top:10px; padding:9px 11px; border:1px solid rgba(83,183,168,.45); border-radius:8px; background:rgba(83,183,168,.08); color:var(--text); font-size:.76rem;"></div>
+
+                <section style="margin-top:12px;">
+                    <div style="display:flex; justify-content:space-between; gap:8px; align-items:center;">
+                        <div style="font-size:.8rem; font-weight:800;">회차별 생성·검수 기록</div>
+                        <div style="font-size:.68rem; color:var(--text-secondary);">목표 미달 이미지도 모두 백업 보존</div>
+                    </div>
+                    <div id="llm-edit-auto-feedback-rounds" style="margin-top:8px; max-height:340px; overflow-y:auto; display:grid; gap:8px;"></div>
+                    <div id="llm-edit-auto-feedback-empty" style="margin-top:8px; padding:16px; border:1px dashed var(--border); border-radius:8px; color:var(--text-secondary); text-align:center; font-size:.75rem;">첫 번째 수정·생성 결과를 기다리고 있습니다.</div>
+                </section>
+            </div>
+            <div class="modal-footer">
+                <button class="cancel" onclick="closeIllustrationAutoFeedbackModal()">창 닫기</button>
+                <button class="cancel" id="llm-edit-auto-feedback-cancel-btn" onclick="cancelIllustrationAutoFeedback()" style="border-color:var(--error); color:var(--error); font-weight:700;">안전 중지</button>
             </div>
         </div>
     </div>
@@ -35013,6 +35056,25 @@
             if (el) el.classList.remove('visible');
         }
 
+        function openIllustrationAutoFeedbackModal() {
+            const modal = document.getElementById('illustration-auto-feedback-modal');
+            if (!modal) {
+                console.error('[AUTO_FEEDBACK_UI] 오토피드백 모달을 찾을 수 없습니다.');
+                return;
+            }
+            modal.classList.add('visible');
+            if (illustrationAutoFeedbackState.job) {
+                renderIllustrationAutoFeedbackJob(illustrationAutoFeedbackState.job);
+            } else {
+                resetIllustrationAutoFeedbackUi();
+            }
+        }
+
+        function closeIllustrationAutoFeedbackModal() {
+            const modal = document.getElementById('illustration-auto-feedback-modal');
+            if (modal) modal.classList.remove('visible');
+        }
+
         function isIllustrationAutoFeedbackActive() {
             const status = String(illustrationAutoFeedbackState.job?.status || '');
             return !!illustrationAutoFeedbackState.jobId
@@ -35021,25 +35083,53 @@
 
         function resetIllustrationAutoFeedbackUi() {
             const status = document.getElementById('llm-edit-auto-feedback-status');
+            const statusBadge = document.getElementById('llm-edit-auto-feedback-status-badge');
+            const roundBadge = document.getElementById('llm-edit-auto-feedback-round-badge');
             const statusText = document.getElementById('llm-edit-auto-feedback-status-text');
             const progressText = document.getElementById('llm-edit-auto-feedback-progress-text');
             const progressBar = document.getElementById('llm-edit-auto-feedback-progress-bar');
+            const goal = document.getElementById('llm-edit-auto-feedback-goal');
+            const currentDirection = document.getElementById('llm-edit-auto-feedback-current-direction');
+            const best = document.getElementById('llm-edit-auto-feedback-best');
             const rounds = document.getElementById('llm-edit-auto-feedback-rounds');
+            const empty = document.getElementById('llm-edit-auto-feedback-empty');
             const runButton = document.getElementById('llm-edit-auto-feedback-run-btn');
             const cancelButton = document.getElementById('llm-edit-auto-feedback-cancel-btn');
             const editButton = document.getElementById('llm-edit-run-btn');
             const directionInput = document.getElementById('llm-edit-direction-input');
             const maxInput = document.getElementById('llm-edit-auto-feedback-max');
-            if (status) status.style.display = 'none';
-            if (statusText) statusText.textContent = '대기 중';
+            if (status) status.style.display = 'block';
+            if (statusBadge) {
+                statusBadge.textContent = '대기';
+                statusBadge.style.background = 'rgba(83,183,168,.14)';
+                statusBadge.style.color = '#53b7a8';
+            }
+            if (roundBadge) roundBadge.textContent = '0/0회';
+            if (statusText) {
+                statusText.textContent = '서버 작업을 준비하고 있습니다.';
+                statusText.style.color = 'var(--text)';
+            }
             if (progressText) progressText.textContent = '0%';
-            if (progressBar) progressBar.style.width = '0%';
+            if (progressBar) {
+                progressBar.style.width = '0%';
+                progressBar.style.background = 'var(--accent)';
+            }
+            if (goal) goal.textContent = '-';
+            if (currentDirection) currentDirection.textContent = '-';
+            if (best) {
+                best.style.display = 'none';
+                best.textContent = '';
+            }
             if (rounds) rounds.innerHTML = '';
-            if (runButton) runButton.disabled = false;
+            if (empty) empty.style.display = 'block';
+            if (runButton) {
+                runButton.disabled = false;
+                runButton.textContent = '오토피드백';
+            }
             if (cancelButton) {
                 cancelButton.style.display = 'none';
-                cancelButton.disabled = false;
-                cancelButton.textContent = '오토피드백 중지';
+                cancelButton.disabled = true;
+                cancelButton.textContent = '안전 중지';
             }
             if (editButton) editButton.disabled = false;
             if (directionInput) directionInput.disabled = false;
@@ -35068,35 +35158,68 @@
             const active = !['completed', 'failed', 'cancelled'].includes(String(job.status || ''));
             const progress = Math.max(0, Math.min(100, Number(job.progress) || 0));
             const status = document.getElementById('llm-edit-auto-feedback-status');
+            const statusBadge = document.getElementById('llm-edit-auto-feedback-status-badge');
+            const roundBadge = document.getElementById('llm-edit-auto-feedback-round-badge');
             const statusText = document.getElementById('llm-edit-auto-feedback-status-text');
             const progressText = document.getElementById('llm-edit-auto-feedback-progress-text');
             const progressBar = document.getElementById('llm-edit-auto-feedback-progress-bar');
+            const goal = document.getElementById('llm-edit-auto-feedback-goal');
+            const currentDirection = document.getElementById('llm-edit-auto-feedback-current-direction');
+            const best = document.getElementById('llm-edit-auto-feedback-best');
             const rounds = document.getElementById('llm-edit-auto-feedback-rounds');
+            const empty = document.getElementById('llm-edit-auto-feedback-empty');
             const runButton = document.getElementById('llm-edit-auto-feedback-run-btn');
             const cancelButton = document.getElementById('llm-edit-auto-feedback-cancel-btn');
             const editButton = document.getElementById('llm-edit-run-btn');
             const directionInput = document.getElementById('llm-edit-direction-input');
             const maxInput = document.getElementById('llm-edit-auto-feedback-max');
             if (status) status.style.display = 'block';
+            if (statusBadge) {
+                const badge = job.status === 'failed'
+                    ? {text: '실패', background: 'rgba(239,68,68,.14)', color: 'var(--error)'}
+                    : job.status === 'cancelled'
+                        ? {text: '안전 중지', background: 'rgba(148,163,184,.14)', color: 'var(--text-secondary)'}
+                        : job.status === 'completed' && job.achieved
+                            ? {text: '성공', background: 'rgba(83,183,168,.14)', color: 'var(--success)'}
+                            : job.status === 'completed'
+                                ? {text: '목표 미달 종료', background: 'rgba(227,167,80,.14)', color: '#e3a750'}
+                                : {text: autoFeedbackPhaseLabel(job.phase), background: 'rgba(83,183,168,.14)', color: '#53b7a8'};
+                statusBadge.textContent = badge.text;
+                statusBadge.style.background = badge.background;
+                statusBadge.style.color = badge.color;
+            }
+            if (roundBadge) roundBadge.textContent = `${Number(job.round) || 0}/${Number(job.max_rounds) || 0}회`;
             if (statusText) {
-                const prefix = job.round
-                    ? `${job.round}/${job.max_rounds}회 · ${autoFeedbackPhaseLabel(job.phase)}`
-                    : autoFeedbackPhaseLabel(job.phase);
-                statusText.textContent = `${prefix} — ${job.message || ''}`;
+                statusText.textContent = job.message || autoFeedbackPhaseLabel(job.phase);
                 statusText.style.color = job.status === 'failed'
                     ? 'var(--error)'
-                    : job.status === 'completed'
+                    : job.status === 'completed' && job.achieved
                         ? 'var(--success)'
+                        : job.status === 'completed'
+                            ? '#e3a750'
                         : 'var(--text)';
             }
+            if (goal) goal.textContent = job.goal || '-';
+            if (currentDirection) currentDirection.textContent = job.current_direction || job.goal || '-';
             if (progressText) progressText.textContent = `${Math.round(progress)}%`;
             if (progressBar) {
                 progressBar.style.width = `${progress}%`;
                 progressBar.style.background = job.status === 'failed'
                     ? 'var(--error)'
-                    : job.status === 'completed'
+                    : job.status === 'completed' && job.achieved
                         ? 'var(--success)'
+                        : job.status === 'completed'
+                            ? '#e3a750'
                         : 'var(--accent)';
+            }
+            if (best) {
+                if (job.best_backup_name) {
+                    best.style.display = 'block';
+                    best.textContent = `현재 최고 결과: ${Number(job.best_round) || 0}회 · ${Number(job.best_score) || 0}점 · ${job.best_backup_name}`;
+                } else {
+                    best.style.display = 'none';
+                    best.textContent = '';
+                }
             }
             if (rounds) {
                 const entries = Array.isArray(job.rounds) ? job.rounds : [];
@@ -35109,24 +35232,45 @@
                             : `목표 미달 · ${review.score}점`;
                     const verdictColor = review?.achieved ? 'var(--success)' : (review ? '#e3a750' : 'var(--text-secondary)');
                     const summary = review?.summary
-                        ? `<div style="margin-top:2px;color:var(--text-secondary);">${escapeHtml(review.summary)}</div>`
+                        ? `<div style="margin-top:7px;color:var(--text-secondary);"><strong>검수:</strong> ${escapeHtml(review.summary)}</div>`
                         : '';
-                    return `<div style="padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface1);font-size:0.7rem;line-height:1.35;">
+                    const appliedDirection = entry.edit_direction
+                        ? `<div style="margin-top:7px;color:var(--text);"><strong>수정 방향:</strong> ${escapeHtml(entry.edit_direction)}</div>`
+                        : '';
+                    const remainingGaps = review?.remaining_gaps
+                        ? `<div style="margin-top:5px;color:#e3a750;"><strong>남은 차이:</strong> ${escapeHtml(review.remaining_gaps)}</div>`
+                        : '';
+                    const nextDirection = review?.next_direction && !review?.achieved
+                        ? `<div style="margin-top:5px;color:#53b7a8;"><strong>다음 방향:</strong> ${escapeHtml(review.next_direction)}</div>`
+                        : '';
+                    return `<div style="padding:9px 10px;border:1px solid var(--border);border-radius:7px;background:var(--surface1);font-size:0.72rem;line-height:1.45;">
                         <div style="display:flex;justify-content:space-between;gap:8px;">
                             <strong>${escapeHtml(String(entry.round || ''))}회 · 백업 보존</strong>
                             <span style="color:${verdictColor};">${escapeHtml(verdict)}</span>
                         </div>
-                        <div style="margin-top:2px;color:var(--text-secondary);word-break:break-all;">${escapeHtml(entry.backup_name || '')}</div>
+                        <div style="margin-top:3px;color:var(--text-secondary);word-break:break-all;">${escapeHtml(entry.backup_name || '')}</div>
+                        ${appliedDirection}
                         ${summary}
+                        ${remainingGaps}
+                        ${nextDirection}
                     </div>`;
                 }).join('');
                 rounds.scrollTop = rounds.scrollHeight;
+                if (empty) empty.style.display = entries.length ? 'none' : 'block';
             }
-            if (runButton) runButton.disabled = active;
+            if (runButton) {
+                runButton.disabled = false;
+                runButton.textContent = active ? '진행 보기' : '오토피드백';
+            }
             if (cancelButton) {
+                const hasServerJob = !!(job.job_id || illustrationAutoFeedbackState.jobId);
                 cancelButton.style.display = active ? '' : 'none';
-                cancelButton.disabled = !!job.cancel_requested;
-                cancelButton.textContent = job.cancel_requested ? '중지 대기 중...' : '오토피드백 중지';
+                cancelButton.disabled = !hasServerJob || !!job.cancel_requested;
+                cancelButton.textContent = !hasServerJob
+                    ? '작업 등록 중...'
+                    : job.cancel_requested
+                        ? '안전 중지 대기 중...'
+                        : '안전 중지';
             }
             if (editButton) editButton.disabled = active;
             if (directionInput) directionInput.disabled = active;
@@ -35194,7 +35338,12 @@
         }
 
         async function startIllustrationAutoFeedback() {
-            if (!currentModalBackupName || llmEditInFlight || isIllustrationAutoFeedbackActive()) return;
+            if (isIllustrationAutoFeedbackActive()) {
+                closeLlmEditModal();
+                openIllustrationAutoFeedbackModal();
+                return;
+            }
+            if (!currentModalBackupName || llmEditInFlight) return;
             const directionInput = document.getElementById('llm-edit-direction-input');
             const direction = String(directionInput?.value || '').trim();
             const maxInput = document.getElementById('llm-edit-auto-feedback-max');
@@ -35241,11 +35390,15 @@
                     round: 0,
                     max_rounds: maxRounds,
                     rounds: [],
+                    goal: direction,
+                    current_direction: direction,
                     message: '서버에 오토피드백 작업을 등록하고 있습니다',
                 },
                 pollTimer: null,
                 terminalHandled: false,
             };
+            closeLlmEditModal();
+            openIllustrationAutoFeedbackModal();
             renderIllustrationAutoFeedbackJob(illustrationAutoFeedbackState.job);
             try {
                 const data = await fetchJSON('/api/illustration_auto_feedback', {
@@ -35281,7 +35434,7 @@
             const button = document.getElementById('llm-edit-auto-feedback-cancel-btn');
             if (button) {
                 button.disabled = true;
-                button.textContent = '중지 요청 중...';
+                button.textContent = '안전 중지 요청 중...';
             }
             try {
                 const data = await fetchJSON(
@@ -35294,7 +35447,7 @@
                 showToast(`오토피드백 중지 요청 실패: ${error.message}`, 'error');
                 if (button) {
                     button.disabled = false;
-                    button.textContent = '오토피드백 중지';
+                    button.textContent = '안전 중지';
                 }
             }
         }
