@@ -5160,6 +5160,62 @@ async def test_profile_resolve_uses_dedicated_route_queue_group_and_lb_history(m
 
 
 @pytest.mark.asyncio
+async def test_profile_resolution_global_toggle_skips_llm_before_context_validation(
+    monkeypatch,
+):
+    async def unexpected_profile_call(**_kwargs):
+        raise AssertionError("PROFILE-RESOLVE must not run while globally disabled")
+
+    monkeypatch.setattr(pipeline, "_run_profile_resolution", unexpected_profile_call)
+
+    visual_profiles = {
+        "Hana": cards_to_character_profiles("Hana", [{
+            "id": "ordinary",
+            "aliases": ["Hana_Ordinary"],
+            "appearance": ["black hair"],
+            "default_outfit": ["blue dress"],
+        }, {
+            "id": "transformed",
+            "aliases": ["Hana_Transformed"],
+            "appearance": ["white hair"],
+            "default_outfit": ["white armor"],
+        }]),
+    }
+    output, result = await pipeline.resolve_profiles_before_generation(
+        payload={"chats": []},
+        toggles={"profile_resolve_enabled": False},
+        history_plan=None,
+        visual_profiles=visual_profiles,
+    )
+
+    assert output == ""
+    assert result["profile_events"][0]["profile"] == "Hana_Ordinary"
+    assert result["initial_visual_bases"][0]["target_visual_profile_id"] == "ordinary"
+    seeded = pipeline.apply_initial_visual_bases(
+        {
+            "hana": {
+                "canonical_name": "Hana",
+                "active_visual_profile_id": "transformed",
+                "current_wardrobe": {
+                    "body_state": "clothed",
+                    "worn": ["white armor"],
+                    "removed": [],
+                },
+            },
+        },
+        result["initial_visual_bases"],
+        "message-off",
+        visual_profiles,
+    )
+    assert seeded["hana"]["active_visual_profile_id"] == "ordinary"
+    assert seeded["hana"]["current_wardrobe"]["worn"] == ["blue dress"]
+    assert pipeline.merged_toggles({})["profile_resolve_enabled"] is True
+    assert pipeline.merged_toggles({
+        "profile_resolve_enabled": False,
+    })["profile_resolve_enabled"] is False
+
+
+@pytest.mark.asyncio
 async def test_subtitle_dialogue_uses_dedicated_queue_route_and_lb_history(monkeypatch):
     records = []
     events = []

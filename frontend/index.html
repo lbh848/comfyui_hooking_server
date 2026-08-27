@@ -44769,7 +44769,7 @@
                 lines.push('> 역번역/다중캐릭터 등은 토글·조건부라 생략될 수 있음. ');
                 lines.push('> 최종 사용값은 본문 최하단 **결과 요약(시간순)** 에 정리.');
                 lines.push('');
-                lines.push('1. **PROFILE-RESOLVE** — 모든 다중 프로필 후보의 START와 이후 변환 프로필을 최전단에서 한 번 결정. 이 결과가 원본 에셋·CALL1·CALL2의 외형과 기본 복장 기준이 됩니다.');
+                lines.push('1. **PROFILE-RESOLVE** — 다중 프로필 추론이 켜진 경우, 모든 다중 프로필 후보의 START와 이후 변환 프로필을 최전단에서 한 번 결정. 끄면 호출을 생략하고 등록된 기본 프로필을 사용합니다.');
                 lines.push('2. **ORIGINAL-ASSET** — 켜진 경우, 확정 프로필을 기준으로 현재 장면에 맞는 등록 원본 에셋과 삽입 슬롯을 선택.');
                 lines.push('3. **CALL1-BACKTRANSLATE** — 최신 CHAR 응답(현재 맥락)을 영어로 역번역. 후속 단계가 상황을 정확히 이해하도록 정규화. (토글 시)');
                 lines.push('4. **CALL1** (enhance) — 확정된 프로필을 바탕으로 엔티티 정체성·공참조(coreference)·복장 상태를 분석하고 sparse 변화 사건을 CALL2에 전달.');
@@ -77431,8 +77431,8 @@
                         </div>
                         <div id="illust-tab-content-llm" style="display:none; padding:12px 16px;">
                             <div style="margin-bottom:12px; padding:8px; background:rgba(0,0,0,0.06); border-radius:6px; font-size:0.75rem; color:var(--text2); line-height:1.5;">
-                                CHAT을 받은 서버가 히스토리 연속성/리롤 판정 → PROFILE-RESOLVE 최전단 직렬 결정 → 원본 에셋 선택/CALL1 역번역·병렬 분석 → CALL2-PLAN과 독립 CALL2-KEYVIS 동시 호출 → CALL2-DETAIL 병렬 생성·최종 병합 → (폴백/파싱 실패 시 기존 CALL2/CALL2-FIX) → CALL3 순서로 실행합니다. 삽화 프롬프트 본문은 config.json이 아니라 아래 개별 txt 파일에 저장됩니다.
-                                1. PROFILE-RESOLVE는 <strong>profile.txt</strong>와 전체 문맥을 사용해 모든 다중 프로필 후보의 START 및 변환 타임라인을 먼저 한 번 결정합니다. 선택된 프로필의 외형·기본 복장이 이후 단계의 권위 기준입니다.<br>
+                                CHAT을 받은 서버가 히스토리 연속성/리롤 판정 → PROFILE-RESOLVE 최전단 직렬 결정(토글 ON) → 원본 에셋 선택/CALL1 역번역·병렬 분석 → CALL2-PLAN과 독립 CALL2-KEYVIS 동시 호출 → CALL2-DETAIL 병렬 생성·최종 병합 → (폴백/파싱 실패 시 기존 CALL2/CALL2-FIX) → CALL3 순서로 실행합니다. 삽화 프롬프트 본문은 config.json이 아니라 아래 개별 txt 파일에 저장됩니다.
+                                1. 다중 프로필 추론이 켜져 있으면 PROFILE-RESOLVE가 <strong>profile.txt</strong>와 전체 문맥을 사용해 모든 다중 프로필 후보의 START 및 변환 타임라인을 먼저 한 번 결정합니다. 끄면 전용 LLM 호출을 생략하고 등록된 기본 프로필을 사용합니다.<br>
                                 2. 원본 에셋 출력이 켜져 있으면 확정 프로필을 받은 선택기가 등록 에셋과 삽입 슬롯을 먼저 정합니다.<br>
                                 3. 역번역이 켜져 있으면 <strong>backtranslate.txt</strong>로 현재 응답만 영어로 병렬 번역하며, 과거 CHAT은 번역하지 않습니다.<br>
                                 4. CALL1은 <strong>enhance.txt</strong>, 저장 히스토리, 확정 프로필을 바탕으로 인물 목록, 지칭 할당, 복장 변화 타임라인을 JSON으로 만듭니다. 병렬 분석을 켜면 segment를 최대 동시 요청 수만큼 균등 분할해 동시에 분석하고 검증된 결과를 하나로 병합합니다.<br>
@@ -78049,6 +78049,7 @@
                 description: '삽화 프롬프트 파이프라인에서 실행할 단계를 설정합니다. 각 Call의 세부 옵션은 해당 Call 탭에서 관리합니다.',
                 fields: [
                     {key: 'illustration_output_mode', label: '출력 모드', type: 'select', help: '일반 삽화(CALL1/2/3 + Comfy), 원본 에셋(업로드 원본 선택), 또는 둘 다를 반환합니다. 원본 에셋 장수·지침은 아래 원본 에셋 출력 섹션에서 설정합니다.', options: [{value: 'illustration', label: '일반 삽화'}, {value: 'original_asset', label: '원본 에셋'}, {value: 'both', label: '일반 삽화 + 원본 에셋'}], onchange: 'onIllustrationOutputModeChange(this)'},
+                    {key: 'profile_resolve_enabled', label: '다중 프로필 추론', type: 'toggle', help: '등록 프로필이 2개 이상인 캐릭터의 시작 프로필과 변환 타임라인을 PROFILE-RESOLVE LLM으로 결정합니다. 끄면 이 호출을 완전히 건너뛰고 등록된 기본 프로필을 사용합니다.'},
                     {key: 'call1_backtranslate_enabled', label: 'CALL1 역번역', type: 'toggle', help: 'CALL1 컨텍스트 보강 전에 현재 응답을 영어로 역번역합니다.'},
                     {key: 'call1_enabled', label: 'CALL1 인물·복장 분석', type: 'toggle', help: '히스토리와 현재 context에서 캐릭터, 지칭 대상, 복장 변화 사건을 구조화합니다.'},
                     {key: 'call3_enabled', label: 'CALL3 대사 생성', type: 'toggle', help: 'CALL3 대사(speak/manga) 생성을 켭니다. CALL2 파싱 실패 시 CALL2-FIX 교정은 항상 동작합니다.'},

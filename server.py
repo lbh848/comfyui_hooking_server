@@ -616,6 +616,7 @@ DEFAULT_CONFIG = {
         "illustration_output_mode": "illustration",
         "original_asset_count": 1,
         "original_asset_instruction": "",
+        "profile_resolve_enabled": True,
         "call1_backtranslate_enabled": False,
         "call1_backtranslate_max_concurrency": 4,
         "call1_backtranslate_slow_retry_enabled": False,

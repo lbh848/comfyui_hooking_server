@@ -136,6 +136,7 @@ DEFAULT_TOGGLES = {
     "illustration_output_mode": DEFAULT_ILLUSTRATION_OUTPUT_MODE,
     "original_asset_count": 1,
     "original_asset_instruction": "",
+    "profile_resolve_enabled": True,
     "call1_backtranslate_enabled": False,
     "call1_backtranslate_max_concurrency": 4,
     "call1_backtranslate_slow_retry_enabled": False,
@@ -2787,6 +2788,64 @@ def _empty_profile_result() -> dict:
         "validation_warnings": [],
         "validation_errors": [],
     }
+
+
+def _default_profile_result(
+    visual_profiles: dict[str, dict] | None,
+) -> dict:
+    """Lock multi-profile characters to their registered default without an LLM."""
+    result = _empty_profile_result()
+    for raw_name, character_profiles in (visual_profiles or {}).items():
+        name = str(raw_name or "").strip()
+        if (
+            not name
+            or not isinstance(character_profiles, dict)
+            or len(character_profiles.get("profiles") or []) <= 1
+        ):
+            continue
+        try:
+            base = resolve_visual_base(character_profiles)
+            profile_id = str(base.get("visual_profile_id") or "").strip()
+            profile = profile_by_id(character_profiles, profile_id)
+        except Exception as e:
+            print(
+                "[ILLUST_CONTEXT:PROFILE_RESOLVE] 기본 프로필 고정 실패: "
+                f"character={name!r}, error={e}"
+            )
+            traceback.print_exc()
+            continue
+        if not profile_id or not isinstance(profile, dict):
+            print(
+                "[ILLUST_CONTEXT:PROFILE_RESOLVE] 기본 프로필 고정값 없음: "
+                f"character={name!r}, profile_id={profile_id!r}"
+            )
+            continue
+        profile_names = visual_profile_names(profile)
+        state = "Profile inference is disabled; use the registered default profile."
+        result["initial_visual_bases"].append({
+            "character": name,
+            "target_visual_profile_id": profile_id,
+            "visual_profile_name": profile_names[0] if profile_names else "",
+            "initial_state": state,
+            "anchor_segment": "START",
+            "evidence": [],
+            "confidence": 1.0,
+        })
+        if profile_names:
+            result["profile_events"].append({
+                "segment_id": "START",
+                "character": name,
+                "profile": profile_names[0],
+                "state": state,
+                "confidence": 1.0,
+            })
+        else:
+            print(
+                "[ILLUST_CONTEXT:PROFILE_RESOLVE] 기본 프로필 의미 이름 없음: "
+                f"character={name!r}, profile_id={profile_id!r}; "
+                "ID 기반 기본 프로필만 고정"
+            )
+    return result
 
 
 def _filter_profile_result_for_characters(
@@ -9128,6 +9187,14 @@ async def resolve_profiles_before_generation(
     history_ids_sink: list[str] | None = None,
 ) -> tuple[str, dict]:
     """Resolve all multi-profile candidates before assets, CALL1, or CALL2."""
+    merged = merged_toggles(toggles)
+    if not merged.get("profile_resolve_enabled", True):
+        print(
+            "[ILLUST_CONTEXT:PROFILE_RESOLVE] 전역 토글로 비활성화됨: "
+            "전용 LLM 호출 건너뜀, 등록 기본 프로필 고정"
+        )
+        return "", _default_profile_result(visual_profiles)
+
     candidate_names = [
         str(name or "").strip()
         for name, value in (visual_profiles or {}).items()
@@ -9152,7 +9219,6 @@ async def resolve_profiles_before_generation(
         raise RuntimeError("프로필 결정용 최신 CHAR 서사를 찾지 못했습니다")
     current_context = _strip_nodes(narrative)
     segmented_current, current_segments = _segment_current_context(current_context)
-    merged = merged_toggles(toggles)
     if isinstance(history_plan, dict):
         history_items = history_plan.get("call1_history") or []
     else:
@@ -10162,12 +10228,22 @@ async def build_from_context(
         await progress(5, "call1", "CALL1 컨텍스트 준비")
     call1_output = ""
     call1_result: dict = {}
-    profile_output = str(pre_resolved_profile_output or "")
-    profile_result = deepcopy(
-        pre_resolved_profile_result
-        if isinstance(pre_resolved_profile_result, dict)
-        else _empty_profile_result()
-    )
+    profile_resolve_enabled = bool(toggles.get("profile_resolve_enabled", True))
+    if profile_resolve_enabled:
+        profile_output = str(pre_resolved_profile_output or "")
+        profile_result = deepcopy(
+            pre_resolved_profile_result
+            if isinstance(pre_resolved_profile_result, dict)
+            else _empty_profile_result()
+        )
+    else:
+        profile_output = ""
+        profile_result = _default_profile_result(visual_profiles)
+        if pre_resolved_profile_result is None:
+            print(
+                "[ILLUST_CONTEXT:PROFILE_RESOLVE] 전역 토글로 비활성화됨: "
+                "직접 LLM 호출 건너뜀, 등록 기본 프로필 고정"
+            )
     wardrobe_events: list[dict] = []
     profile_events: list[dict] = []
     initial_visual_bases: list[dict] = []
@@ -10187,7 +10263,11 @@ async def build_from_context(
         context_slice = chats[max(0, target_index - n):target_index]
     history_text = _history_messages_text(context_slice)
 
-    if visual_profiles and pre_resolved_profile_result is None:
+    if (
+        profile_resolve_enabled
+        and visual_profiles
+        and pre_resolved_profile_result is None
+    ):
         candidate_names = [
             str(name or "").strip()
             for name, value in visual_profiles.items()

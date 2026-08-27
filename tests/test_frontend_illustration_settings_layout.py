@@ -38,3 +38,9 @@ def test_background_description_toggle_is_persistent_call2_setting() -> None:
     assert "label: '배경 묘사 최소화'" in FRONTEND
     assert "'/api/illustration_context/toggles'" in FRONTEND
     assert '"minimal_background_description": True' in SERVER
+
+
+def test_profile_resolution_toggle_is_persistent_pipeline_setting() -> None:
+    assert "{key: 'profile_resolve_enabled'" in FRONTEND
+    assert "label: '다중 프로필 추론'" in FRONTEND
+    assert '"profile_resolve_enabled": True' in SERVER
