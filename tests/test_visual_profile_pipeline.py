@@ -110,7 +110,8 @@ def test_character_profile_prompt_precedes_compact_call1_contract():
     assert '"in_history"' in profile_prompt
     assert '"profile_timeline"' in profile_prompt
     assert '"at": "START or one exact Cxxx ID"' in profile_prompt
-    assert '"profile_id"' in profile_prompt
+    assert '"profile_ref"' in profile_prompt
+    assert '"profile_id"' not in profile_prompt
     assert "emit exactly one START event" in profile_prompt
     assert "complete registered character roster" in profile_prompt
     assert "copy each `name` verbatim" in profile_prompt
@@ -122,7 +123,7 @@ def test_character_profile_prompt_precedes_compact_call1_contract():
     assert "Apply every material inclusion, prerequisite, persistence, and exclusion" in profile_prompt
     assert "Absence of a contradiction is not positive support" in profile_prompt
     assert "Compare all registered guides for the character before choosing" in profile_prompt
-    assert "registered name, alias, and `profile_id` are labels" in profile_prompt
+    assert "Registered profile names, aliases, and internal IDs are deliberately absent" in profile_prompt
     assert "Appearance or outfit is valid selection evidence only" in profile_prompt
     assert "rather than the nearest special profile" in profile_prompt
     assert "Do not add profile names, state summaries, confidence" in profile_prompt
@@ -296,6 +297,37 @@ def test_profile_resolution_rejects_noncanonical_character_name_instead_of_dropp
     ) is None
 
 
+def test_profile_resolution_maps_bracketed_profile_refs_to_internal_ids():
+    segments = _segments()
+    current = "\n".join(item["text"] for item in segments.values())
+    raw = {
+        "characters": [{
+            "name": "Adachi",
+            "in_history": False,
+            "profile_timeline": [{
+                "at": "START",
+                "profile_ref": "[1]",
+            }, {
+                "at": "C002",
+                "profile_ref": "[2]",
+            }],
+        }],
+        "uncertainties": [],
+    }
+
+    parsed = pipeline.parse_profile_resolution(
+        json.dumps(raw),
+        current,
+        segments,
+        [{"name": "Adachi", "confidence": 1.0}],
+        _profiles(),
+    )
+
+    assert parsed is not None
+    assert parsed["initial_visual_bases"][0]["target_visual_profile_id"] == "civilian"
+    assert parsed["visual_base_events"][0]["target_visual_profile_id"] == "despair"
+
+
 def test_preselected_nondefault_profile_replaces_generic_reference_before_call1_call2():
     profiles = _profiles()
     profiles["Adachi"]["gender_tag"] = "1girl"
@@ -421,6 +453,27 @@ def test_call1_prompt_state_replaces_internal_profile_id_with_meaningful_name():
     assert prompt_state["adachi"]["active_visual_profile"] == "Adachi_Despair"
     assert "active_visual_profile_id" not in prompt_state["adachi"]
     assert "visual_base_timeline" not in prompt_state["adachi"]
+
+
+def test_profile_resolve_prompt_state_uses_opaque_card_reference():
+    prompt_state = pipeline._profile_state_for_prompt(
+        {
+            "adachi": {
+                "canonical_name": "Adachi",
+                "active_visual_profile_id": "despair",
+                "active_visual_profile_state": "The transformed state remains active.",
+            }
+        },
+        ["Adachi"],
+        _profiles(),
+    )
+
+    assert prompt_state == {
+        "Adachi": {
+            "active_profile_ref": "[2]",
+            "active_visual_profile_state": "The transformed state remains active.",
+        }
+    }
 
 
 def test_shiho_trace_uses_corrupted_profile_before_c037_and_card1_after_release():

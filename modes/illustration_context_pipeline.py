@@ -1974,16 +1974,27 @@ def _profile_state_for_prompt(
             if isinstance(character_profiles, dict) and profile_id
             else None
         )
-        names = visual_profile_names(profile or {})
-        if not names:
+        registered_profiles = (
+            list(character_profiles.get("profiles") or [])
+            if isinstance(character_profiles, dict)
+            else []
+        )
+        profile_number = next(
+            (
+                index
+                for index, candidate in enumerate(registered_profiles, start=1)
+                if candidate is profile
+            ),
+            0,
+        )
+        if not profile_number:
             print(
-                f"[ILLUST_CONTEXT:PROFILE_RESOLVE] 이전 프로필 의미 이름 없음: "
+                f"[ILLUST_CONTEXT:PROFILE_RESOLVE] 이전 프로필 참조 번호 없음: "
                 f"character={canonical_name!r}, profile_id={profile_id!r}"
             )
             continue
         item = {
-            "active_visual_profile_id": profile_id,
-            "active_visual_profile": names[0],
+            "active_profile_ref": f"[{profile_number}]",
         }
         state_description = str(
             tracked.get("active_visual_profile_state") or ""
@@ -3111,16 +3122,35 @@ def parse_profile_resolution(
                     invalid_reasons.append(f"event[{event_index}] 형식 오류")
                     continue
                 at = str(event.get("at") or "").strip().upper()
-                profile_id = str(event.get("profile_id") or "").strip()
+                profile_ref = str(event.get("profile_ref") or "").strip()
+                profile_id = ""
                 if at != "START" and at not in (segments or {}):
                     invalid_reasons.append(
                         f"event[{event_index}] 존재하지 않는 구간 {at!r}"
                     )
                     continue
-                profile = profile_by_id(character_profiles, profile_id)
+                profile = None
+                if profile_ref:
+                    match = re.fullmatch(r"\[(\d+)\]", profile_ref)
+                    profile_number = int(match.group(1)) if match else 0
+                    if 1 <= profile_number <= len(registered_profiles):
+                        profile = registered_profiles[profile_number - 1]
+                        profile_id = str(profile.get("id") or "").strip()
+                    else:
+                        invalid_reasons.append(
+                            f"event[{event_index}] 등록되지 않은 profile_ref "
+                            f"{profile_ref!r}"
+                        )
+                        continue
+                else:
+                    # Stored records and pre-migration callers may still contain the
+                    # former internal-ID contract. New resolver prompts never expose it.
+                    profile_id = str(event.get("profile_id") or "").strip()
+                    profile = profile_by_id(character_profiles, profile_id)
                 if not isinstance(profile, dict):
                     invalid_reasons.append(
-                        f"event[{event_index}] 등록되지 않은 profile_id {profile_id!r}"
+                        f"event[{event_index}] 등록되지 않은 profile_ref/profile_id "
+                        f"{profile_ref or profile_id!r}"
                     )
                     continue
                 previous_id = seen_points.get(at)
@@ -9968,7 +9998,7 @@ async def _run_profile_resolution(
                 + "\n\n# FULL CURRENT CONTEXT SEGMENTS\n"
                 + segmented_current
                 + "\n\n# FINAL CONTRACT CHECK\n"
-                "Before responding, re-check every chosen `profile_id` against that "
+                "Before responding, re-check every chosen `profile_ref` against that "
                 "profile's complete registered selection guide. Keep it only when the "
                 "narrative or valid tracked state supplies the guide's required semantic "
                 "support and violates none of its exclusions. A profile name, ID, alias, "
@@ -10212,8 +10242,9 @@ async def _run_profile_resolution(
                         + "\n\n# PARTIAL REPAIR CONTRACT\n"
                         "Correct only the supplied rejected characters. Return the same "
                         "characters/uncertainties schema and include exactly those characters. "
-                        "Preserve every valid narrative decision, but use only registered "
-                        "profile_id values. Do not output unrelated characters."
+                           "Preserve every valid narrative decision, but use only bracketed "
+                           "profile_ref values supplied for that character. Do not output "
+                           "unrelated characters."
                     ),
                 },
                 {

@@ -5863,7 +5863,7 @@ async def test_profile_resolution_runs_once_before_call1_and_filters_catalog(mon
         assert "선택 기준: ordinary form" in prompt
         assert "# FULL CURRENT CONTEXT SEGMENTS" in prompt
         assert "# FINAL CONTRACT CHECK" in prompt
-        assert "re-check every chosen `profile_id`" in prompt
+        assert "re-check every chosen `profile_ref`" in prompt
         assert "complete registered selection guide" in prompt
         assert "Appearance or outfit is support only when the selection guide" in prompt
         return json.dumps({
@@ -5872,7 +5872,7 @@ async def test_profile_resolution_runs_once_before_call1_and_filters_catalog(mon
                 "in_history": False,
                 "profile_timeline": [{
                     "at": "START",
-                    "profile_id": "civilian",
+                    "profile_ref": "[1]",
                 }],
             }, {
                 "name": "Bob",
@@ -5901,7 +5901,7 @@ async def test_profile_resolution_runs_once_before_call1_and_filters_catalog(mon
     assert len(calls) == 1
     assert calls[0][0] == "PROFILE-RESOLVE"
     assert calls[0][2]["json_mode"] is True
-    assert json.loads(raw)["characters"][0]["profile_timeline"][0]["profile_id"] == "civilian"
+    assert json.loads(raw)["characters"][0]["profile_timeline"][0]["profile_ref"] == "[1]"
     assert parsed["current_characters"] == [
         {"name": "Adachi", "confidence": 1.0},
         {"name": "Bob", "confidence": 1.0},

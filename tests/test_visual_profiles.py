@@ -234,15 +234,17 @@ def test_natural_catalog_keeps_prose_and_ids_but_omits_profile_names():
 
     catalog = build_natural_profile_catalog(profiles)
 
-    assert "카드 [1]" in catalog
-    assert "카드 [2]" in catalog
+    assert "- [1]" in catalog
+    assert "- [2]" in catalog
     assert "서사가 확정한 다른 카드 상태도 없을 때만 폴백" in catalog
     assert "몸 자체가 변형된 상태" in catalog
     assert "평상시 모습" not in catalog
     assert "절망체" not in catalog
-    assert "출력할 정확한 profile_id: `civilian`" in catalog
-    assert "출력할 정확한 profile_id: `despair`" in catalog
-    assert "profile_id도 의미 없는 기계 식별자" in catalog
+    assert "profile_ref로 `[1]`을 출력" in catalog
+    assert "profile_ref로 `[2]`을 출력" in catalog
+    assert "`civilian`" not in catalog
+    assert "`despair`" not in catalog
+    assert "내부 ID는 선택 근거가 아니므로" in catalog
     assert "선택 기준에 직접 명시된" in catalog
     assert "별도 복장 선택 축이 없으며" in catalog
     assert "default_outfit" in catalog

@@ -699,12 +699,17 @@ def build_natural_profile_catalog(effective_profiles: dict[str, dict]) -> str:
             character,
             _clean_text(character.get("default_visual_profile_id")),
         )
-        default_profile_id = _clean_text((default_profile or {}).get("id"))
-        if not default_profile_id:
-            default_profile_id = _clean_text(profiles[0].get("id"))
+        default_index = next(
+            (
+                index
+                for index, profile in enumerate(profiles, start=1)
+                if profile is default_profile
+            ),
+            1,
+        )
         lines = [
             f"### {character_name}",
-            f"기본 프로필의 정확한 profile_id는 `{default_profile_id}`이다. "
+            f"기본 프로필 참조는 [{default_index}]이다. "
             "이전 추적 상태도 서사가 확정한 다른 카드 상태도 없을 때만 폴백으로 사용한다.",
         ]
         for index, profile in enumerate(profiles):
@@ -717,10 +722,9 @@ def build_natural_profile_catalog(effective_profiles: dict[str, dict]) -> str:
                 profiles,
                 raw_guide,
             )
-            profile_id = _clean_text(profile.get("id"))
             lines.append(
-                f"- 카드 [{index + 1}] — 선택 기준: {guide} "
-                f"이 기준이 충족될 때만 출력할 정확한 profile_id: `{profile_id}`."
+                f"- [{index + 1}] — 선택 기준: {guide} "
+                f"이 기준이 충족될 때만 profile_ref로 `[{index + 1}]`을 출력한다."
             )
             lines.append(
                 "  이 카드에는 별도 복장 선택 축이 없으며, 카드 자체의 "
@@ -731,8 +735,8 @@ def build_natural_profile_catalog(effective_profiles: dict[str, dict]) -> str:
     if not sections:
         return ""
     authority = (
-        "프로필 등록 이름과 별칭은 선택 근거가 아니므로 이 카탈로그에서 "
-        "제외하거나 중립 표기로 가렸다. profile_id도 의미 없는 기계 식별자다. "
+        "프로필 등록 이름, 별칭, 내부 ID는 선택 근거가 아니므로 이 카탈로그에서 "
+        "제외하고 각 후보를 [1], [2], ... 참조로만 표시했다. "
         "선택 기준에 직접 명시된 상태, 행동, 연속성, 외형 또는 복장 조건만 "
         "서사와 대조하여 판단한다."
     )
