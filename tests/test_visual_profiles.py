@@ -229,7 +229,7 @@ def test_card_rep_image_must_stay_inside_character_folder():
         normalize_visual_cards(cards)
 
 
-def test_natural_catalog_keeps_prose_and_hides_internal_route_ids():
+def test_natural_catalog_keeps_prose_and_exposes_exact_profile_ids():
     profiles = {"Adachi": cards_to_character_profiles("Adachi", _cards())}
 
     catalog = build_natural_profile_catalog(profiles)
@@ -240,7 +240,8 @@ def test_natural_catalog_keeps_prose_and_hides_internal_route_ids():
     assert "몸 자체가 변형된 상태" in catalog
     assert "`평상시 모습`" in catalog
     assert "`절망체`" in catalog
-    assert "`despair`" not in catalog
+    assert "출력할 정확한 profile_id: `civilian`" in catalog
+    assert "출력할 정확한 profile_id: `despair`" in catalog
     assert "별도 복장 선택 축이 없으며" in catalog
     assert "default_outfit" in catalog
     assert "참고하는 기본 복장" in catalog

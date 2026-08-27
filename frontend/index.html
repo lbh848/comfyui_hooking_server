@@ -44769,10 +44769,10 @@
                 lines.push('> 역번역/다중캐릭터 등은 토글·조건부라 생략될 수 있음. ');
                 lines.push('> 최종 사용값은 본문 최하단 **결과 요약(시간순)** 에 정리.');
                 lines.push('');
-                lines.push('1. **PROFILE-RESOLVE** — 다중 프로필 추론이 켜진 경우, 모든 다중 프로필 후보의 START와 이후 변환 프로필을 최전단에서 한 번 결정. 끄면 호출을 생략하고 등록된 기본 프로필을 사용합니다.');
+                lines.push('1. **CHARACTER/PROFILE-RESOLVE** — 최전단에서 CURRENT 등장인물과 PAST 등장 여부를 항상 결정합니다. 다중 프로필 추론을 켜면 같은 호출이 START와 이후 변환 프로필도 결정하고, 끄면 등장인물만 결정한 뒤 서버가 등록된 기본 프로필을 적용합니다.');
                 lines.push('2. **ORIGINAL-ASSET** — 켜진 경우, 확정 프로필을 기준으로 현재 장면에 맞는 등록 원본 에셋과 삽입 슬롯을 선택.');
                 lines.push('3. **CALL1-BACKTRANSLATE** — 최신 CHAR 응답(현재 맥락)을 영어로 역번역. 후속 단계가 상황을 정확히 이해하도록 정규화. (토글 시)');
-                lines.push('4. **CALL1** (enhance) — 확정된 프로필을 바탕으로 엔티티 정체성·공참조(coreference)·복장 상태를 분석하고 sparse 변화 사건을 CALL2에 전달.');
+                lines.push('4. **CALL1** (enhance) — 앞 단계가 확정한 CURRENT 캐릭터를 기준으로 복장·헤어스타일 변화 사건만 분석해 CALL2에 전달. 지칭어는 문맥상 해석하되 본문을 치환하지 않습니다.');
                 lines.push('5. **CALL2-PLAN** — 전역 시각 비트 플래너. 어떤 장면(scene)/키비주얼(keyvis)을 그릴지 JSON scene_plan으로 결정.');
                 lines.push('6. **CALL2-KEYVIS / CALL2-DETAIL** — 릴레이 소설 로그에 Danbooru 태그를 붙여 `<lb-xnai>` TOON 구조(camera/scene/supplement/characters) 생성. KEYVIS=키비주얼, DETAIL=일반 장면. PLAN 없이 단독일 때 **CALL2-FALLBACK**.');
                 lines.push('7. **CALL2-AUTHORITY-AUDIT** — 외형·복장 감사. 고정 외형은 강제하고, 기본 복장은 참고값으로 두되 장면 맥락에 맞게 LLM이 구성한 복장은 유지합니다. 맥락에 맞지 않는 후보만 개별 drop합니다.');
@@ -45448,8 +45448,8 @@
             { key: 'character_maker_feedback', label: '캐릭터 메이커 이미지 피드백', kind: '비전/JSON', modality: 'vision', group: 'character_maker', json: true },
             { key: 'danbooru_tag_search',      label: '단부르 태그 검색', kind: '텍스트/JSON · 2단계', modality: 'text', group: 'knowledge_search', json: true },
             { key: 'illustration_call1_backtranslate', label: '삽화 CALL1 역번역',               kind: '텍스트', modality: 'text', group: 'illustration_pipeline' },
-            { key: 'illustration_call1',       label: '삽화 CALL1 (전처리)',           kind: '텍스트', modality: 'text', group: 'illustration_pipeline' },
-            { key: 'illustration_profile_resolve', label: '삽화 프로필 결정',          kind: 'JSON · 전역 직렬', modality: 'text', group: 'illustration_pipeline', json: true },
+            { key: 'illustration_call1',       label: '삽화 CALL1 (복장·헤어)',         kind: 'JSON · 병렬 가능', modality: 'text', group: 'illustration_pipeline', json: true },
+            { key: 'illustration_profile_resolve', label: '삽화 등장인물·프로필 결정', kind: 'JSON · 전역 직렬', modality: 'text', group: 'illustration_pipeline', json: true },
             { key: 'illustration_call2',       label: '삽화 CALL2 (PLAN/DETAIL/KEYVIS)', kind: '텍스트', modality: 'text', group: 'illustration_pipeline' },
             { key: 'illustration_call2_fix',   label: '삽화 CALL2-FIX (TOON 교정)',    kind: '텍스트', modality: 'text', group: 'illustration_pipeline' },
             { key: 'illustration_call3',       label: '삽화 CALL3 (대사 생성)',         kind: '텍스트', modality: 'text', group: 'illustration_pipeline' },
@@ -77431,11 +77431,11 @@
                         </div>
                         <div id="illust-tab-content-llm" style="display:none; padding:12px 16px;">
                             <div style="margin-bottom:12px; padding:8px; background:rgba(0,0,0,0.06); border-radius:6px; font-size:0.75rem; color:var(--text2); line-height:1.5;">
-                                CHAT을 받은 서버가 히스토리 연속성/리롤 판정 → PROFILE-RESOLVE 최전단 직렬 결정(토글 ON) → 원본 에셋 선택/CALL1 역번역·병렬 분석 → CALL2-PLAN과 독립 CALL2-KEYVIS 동시 호출 → CALL2-DETAIL 병렬 생성·최종 병합 → (폴백/파싱 실패 시 기존 CALL2/CALL2-FIX) → CALL3 순서로 실행합니다. 삽화 프롬프트 본문은 config.json이 아니라 아래 개별 txt 파일에 저장됩니다.
-                                1. 다중 프로필 추론이 켜져 있으면 PROFILE-RESOLVE가 <strong>profile.txt</strong>와 전체 문맥을 사용해 모든 다중 프로필 후보의 START 및 변환 타임라인을 먼저 한 번 결정합니다. 끄면 전용 LLM 호출을 생략하고 등록된 기본 프로필을 사용합니다.<br>
+                                CHAT을 받은 서버가 히스토리 연속성/리롤 판정 → CHARACTER/PROFILE-RESOLVE 최전단 직렬 결정(등장인물 판별은 항상 실행) → 원본 에셋 선택/CALL1 역번역·병렬 분석 → CALL2-PLAN과 독립 CALL2-KEYVIS 동시 호출 → CALL2-DETAIL 병렬 생성·최종 병합 → (폴백/파싱 실패 시 기존 CALL2/CALL2-FIX) → CALL3 순서로 실행합니다. 삽화 프롬프트 본문은 config.json이 아니라 아래 개별 txt 파일에 저장됩니다.
+                                1. CHARACTER/PROFILE-RESOLVE는 <strong>profile.txt</strong>와 전체 문맥을 사용해 CURRENT 등장인물 및 PAST 등장 여부를 항상 먼저 결정합니다. 다중 프로필 추론이 켜져 있으면 같은 호출에서 START 및 변환 타임라인도 결정하고, 끄면 등장인물만 결정한 뒤 등록된 기본 프로필을 사용합니다.<br>
                                 2. 원본 에셋 출력이 켜져 있으면 확정 프로필을 받은 선택기가 등록 에셋과 삽입 슬롯을 먼저 정합니다.<br>
                                 3. 역번역이 켜져 있으면 <strong>backtranslate.txt</strong>로 현재 응답만 영어로 병렬 번역하며, 과거 CHAT은 번역하지 않습니다.<br>
-                                4. CALL1은 <strong>enhance.txt</strong>, 저장 히스토리, 확정 프로필을 바탕으로 인물 목록, 지칭 할당, 복장 변화 타임라인을 JSON으로 만듭니다. 병렬 분석을 켜면 segment를 최대 동시 요청 수만큼 균등 분할해 동시에 분석하고 검증된 결과를 하나로 병합합니다.<br>
+                                4. CALL1은 <strong>enhance.txt</strong>, 저장 히스토리, 확정 등장인물·프로필을 바탕으로 복장 및 헤어스타일 변화 타임라인만 JSON으로 만듭니다. 지칭어는 자연어 문맥으로 해석해 각 사건에 확정 canonical name을 쓰며 본문은 치환하지 않습니다. 병렬 분석을 켜면 segment를 최대 동시 요청 수만큼 균등 분할해 동시에 분석하고 검증된 결과를 하나로 병합합니다.<br>
                                 5. CALL2-PLAN은 장면 앵커·등장 캐릭터·짧은 장면 개요만 선택합니다. 독립 CALL2-KEYVIS는 같은 시점에 별도 LLM 요청으로 대표 이미지 한 장만 완성합니다. PLAN이 끝나면 서버가 복장 상태와 슬롯을 결합해 장면을 CALL2-DETAIL 작업들에 균등 분배하며, Key Visual 결과는 DETAIL과 CALL3 입력에 넣지 않고 마지막 이미지 목록에만 병합합니다.<br>
                                 6. CALL2 system = <strong>jailbreak.txt</strong> + <strong>job.txt</strong> + <strong>system.txt</strong>이며, DETAIL 출력은 <strong>format.txt</strong> 구조를 사용합니다. CALL1이 모호하거나 PLAN/KEYVIS/DETAIL이 실패하면 기존 단일 CALL2 경로로 폴백합니다.<br>
                                 7. CALL2 파싱이 실패하면 <strong>repair.txt</strong>(CALL2-FIX)가 TOON 블록을 교정합니다. 대사 단계는 후처리 모드에 맞춰 <strong>speak.txt</strong>, <strong>manga.txt</strong>, <strong>subtitle.txt</strong> 중 하나를 사용합니다.<br>
@@ -78049,9 +78049,9 @@
                 description: '삽화 프롬프트 파이프라인에서 실행할 단계를 설정합니다. 각 Call의 세부 옵션은 해당 Call 탭에서 관리합니다.',
                 fields: [
                     {key: 'illustration_output_mode', label: '출력 모드', type: 'select', help: '일반 삽화(CALL1/2/3 + Comfy), 원본 에셋(업로드 원본 선택), 또는 둘 다를 반환합니다. 원본 에셋 장수·지침은 아래 원본 에셋 출력 섹션에서 설정합니다.', options: [{value: 'illustration', label: '일반 삽화'}, {value: 'original_asset', label: '원본 에셋'}, {value: 'both', label: '일반 삽화 + 원본 에셋'}], onchange: 'onIllustrationOutputModeChange(this)'},
-                    {key: 'profile_resolve_enabled', label: '다중 프로필 추론', type: 'toggle', help: '등록 프로필이 2개 이상인 캐릭터의 시작 프로필과 변환 타임라인을 PROFILE-RESOLVE LLM으로 결정합니다. 끄면 이 호출을 완전히 건너뛰고 등록된 기본 프로필을 사용합니다.'},
+                    {key: 'profile_resolve_enabled', label: '다중 프로필 추론', type: 'toggle', help: '등장인물 판별 LLM은 항상 실행됩니다. 켜면 같은 호출이 다중 프로필의 시작 및 변환 타임라인까지 추론하고, 끄면 프로필은 추론하지 않고 CURRENT 캐릭터에 등록된 기본 프로필을 적용합니다.'},
                     {key: 'call1_backtranslate_enabled', label: 'CALL1 역번역', type: 'toggle', help: 'CALL1 컨텍스트 보강 전에 현재 응답을 영어로 역번역합니다.'},
-                    {key: 'call1_enabled', label: 'CALL1 인물·복장 분석', type: 'toggle', help: '히스토리와 현재 context에서 캐릭터, 지칭 대상, 복장 변화 사건을 구조화합니다.'},
+                    {key: 'call1_enabled', label: 'CALL1 복장·헤어 분석', type: 'toggle', help: '앞 단계가 확정한 CURRENT 캐릭터를 기준으로 현재 context의 복장·헤어스타일 변화 사건을 구조화합니다.'},
                     {key: 'call3_enabled', label: 'CALL3 대사 생성', type: 'toggle', help: 'CALL3 대사(speak/manga) 생성을 켭니다. CALL2 파싱 실패 시 CALL2-FIX 교정은 항상 동작합니다.'},
                     {key: 'multi_char_mask_enabled', label: 'MULTI-CHAR-MASK', type: 'toggle', help: '2명 이상 장면에서 캐릭터별 Regional RGB 마스크를 계산합니다. 끄면 마스크 LLM 호출과 Regional 마스크 전달 없이 일반 다중 캐릭터 프롬프트로 생성합니다.'},
                 ],
@@ -78128,9 +78128,9 @@
                     {key: 'call1_parallel_slow_retry_condition_operator', label: '조건 결합 방식', type: 'select', help: 'AND는 켜진 조건을 모두, OR는 하나 이상 만족할 때 복제합니다.', options: [{value: 'and', label: 'AND — 모두 만족'}, {value: 'or', label: 'OR — 하나 이상 만족'}], dependsOn: ['call1_enabled', 'call1_parallel_enabled', 'call1_parallel_slow_retry_enabled'], requiresMin: {key: 'call1_parallel_max_concurrency', value: 2}},
                 ],
                 callInfo: [
-                    {label: '실행 여부', text: '파이프라인의 CALL1 인물·복장 분석 토글에서 설정합니다.'},
+                    {label: '실행 여부', text: '파이프라인의 CALL1 복장·헤어 분석 토글에서 설정합니다.'},
                     {label: '프롬프트', text: 'Call 프롬프트 탭의 enhance.txt (CALL1 분석)에서 편집합니다.'},
-                    {label: 'LLM과 재시도', text: '외부 LLM 분기의 삽화 CALL1 (전처리)에서 설정합니다.'},
+                    {label: 'LLM과 재시도', text: '외부 LLM 분기의 삽화 CALL1 (복장·헤어)에서 설정합니다.'},
                     {label: '히스토리 범위', text: '채팅 히스토리 탭의 CALL1 히스토리 글자수에서 설정합니다.'},
                 ],
             },

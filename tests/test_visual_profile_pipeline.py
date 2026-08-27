@@ -87,7 +87,7 @@ def _reversion_event():
     }
 
 
-def test_call1_prompt_defers_profiles_to_minimal_dedicated_prompt():
+def test_character_profile_prompt_precedes_compact_call1_contract():
     call1_prompt = (
         Path(__file__).parents[1] / "prompts" / "lighbd" / "enhance.txt"
     ).read_text(encoding="utf-8")
@@ -99,14 +99,24 @@ def test_call1_prompt_defers_profiles_to_minimal_dedicated_prompt():
     assert "{visual_profile_catalog}" not in call1_prompt
     assert '"profile_events"' not in call1_prompt
     assert "profile" not in call1_prompt.casefold()
-    assert "all six arrays must exist" in call1_prompt
+    assert "both arrays must exist" in call1_prompt
+    assert '"wardrobe_events"' in call1_prompt
+    assert '"hairstyle_events"' in call1_prompt
+    assert '"reference_assignments"' not in call1_prompt
+    assert '"unresolved_references"' not in call1_prompt
+    assert '"current_characters"' not in call1_prompt
 
-    assert '"profile_events"' in profile_prompt
-    assert '"segment_id": "START or one exact Cxxx ID"' in profile_prompt
-    assert "exactly one START item" in profile_prompt
-    assert "silently compare every candidate" in profile_prompt
+    assert '"characters"' in profile_prompt
+    assert '"in_history"' in profile_prompt
+    assert '"profile_timeline"' in profile_prompt
+    assert '"at": "START or one exact Cxxx ID"' in profile_prompt
+    assert '"profile_id"' in profile_prompt
+    assert "emit exactly one START event" in profile_prompt
+    assert "complete registered character roster" in profile_prompt
+    assert "When DISABLED, do not infer profiles" in profile_prompt
     assert "Never use keyword matching" in profile_prompt
-    assert "Do not add confidence, evidence, candidates" in profile_prompt
+    assert "Do not add profile names, state summaries, confidence" in profile_prompt
+    assert '"profile_events"' not in profile_prompt
     assert "initial_visual_bases" not in profile_prompt
     assert "target_visual_profile_id" not in profile_prompt
     assert "Adachi" not in profile_prompt

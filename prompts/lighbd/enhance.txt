@@ -1,8 +1,8 @@
-Analyze entity identity, coreference, wardrobe state, and hairstyle arrangement for an illustration pipeline.
+Analyze wardrobe state and hairstyle arrangement for an illustration pipeline.
 
-You receive PAST HISTORY and numbered CURRENT CONTEXT SEGMENTS. Analyze meaning and discourse; do not use simplistic keyword rules. Return compact JSON only. Never rewrite or repeat the full context.
+You receive PAST HISTORY, numbered CURRENT CONTEXT SEGMENTS, and the CURRENT canonical characters already resolved by the preceding stage. Analyze meaning and discourse; do not use simplistic keyword rules. Resolve aliases, titles, and pronouns naturally when attributing an event, but do not emit a separate entity/coreference analysis. Return compact JSON only. Never rewrite or repeat the full context.
 
-Canonical character names:
+Resolved CURRENT canonical character names:
 {character_names}
 
 Previously tracked character state:
@@ -13,17 +13,8 @@ Known character appearance and default outfit:
 
 Your single wardrobe responsibility is to read the story and preserve, in ordinary natural language, what semantic wardrobe, coverage, or exposure change happened to each character. You do not resolve wardrobe tags. A downstream stage (CALL2) later translates your semantic change into the actual image-generation prompt against the tracked outfit or the default-outfit reference, and may design different scene-appropriate attire when the full context calls for it. `wardrobe_change` is the primary meaning-bearing handoff; `operation` and `state_after` are only coarse compatibility hints and must never simplify or contradict it.
 
-Required JSON shape (all six arrays must exist; keep them empty when there is no applicable item):
+Required JSON shape (both arrays must exist; keep them empty when there is no applicable item):
 {
-  "reference_assignments": [
-    {
-      "segment_id": "C001",
-      "surface": "exact referring expression copied from that segment",
-      "canonical_name": "exact canonical character name"
-    }
-  ],
-  "history_characters": ["canonical name"],
-  "current_characters": ["canonical name"],
   "wardrobe_events": [
     {
       "segment_id": "C001",
@@ -42,21 +33,11 @@ Required JSON shape (all six arrays must exist; keep them empty when there is no
       "hairstyle_change": "short literal description of the hairstyle-arrangement change",
       "evidence": "exact short excerpt copied from that CURRENT segment"
     }
-  ],
-  "unresolved_references": [
-    {
-      "segment_id": "C001",
-      "surface": "exact unresolved expression",
-      "candidates": ["canonical name"],
-      "reason": "short reason"
-    }
   ]
 }
 
 Rules:
-- history_characters are characters who appear in PAST HISTORY.
-- current_characters are every character present, acting, speaking, being addressed, or clearly participating in CURRENT CONTEXT. Include implicit participants when discourse establishes them.
-- Use plain canonical-name strings in history_characters and current_characters. Do not wrap a certain name in an object. Only use {"name": ..., "confidence": ...} when confidence is below 1.0 and materially useful.
+- The supplied CURRENT canonical names are authoritative. Every event's `character` must copy one of those names exactly. Do not emit events for another character.
 - Appearing in CURRENT does not authorize a wardrobe change. Existing wardrobe is carried forward by default.
 - `wardrobe_events` is a sparse, evidence-bearing change history, not a sequence of complete outfit snapshots. Each event reports only what CURRENT establishes as changed. Downstream resolves the resulting wardrobe according to the operation.
 - Emit only actual wardrobe changes established by CURRENT. A sentence that merely describes a character wearing their known/default outfit, including a first appearance, is not a change. Never emit keep events or restate carried-forward/default outfits. Copy exact evidence from the numbered segment. Evidence may span adjacent lines inside that segment; preserve their wording and order instead of joining, paraphrasing, or cleaning them.
@@ -86,11 +67,4 @@ Rules:
 - A wearable object on the hair (hair ribbon, hair bow, hairclip, hair ornament, tiara, crown) is a wardrobe/accessory change, not a hairstyle change. Classify by what physically changed: "she untied her ponytail" is a hairstyle event; "she removed her hair ribbon" is a wardrobe event.
 - Use `hairstyle_events` operations only for an actual arrangement transition: `replace` (one arrangement becomes another, including "let her hair down" ending a tied style), `add` (a component is added while the existing arrangement stays), `remove` (a component is undone while the rest stays meaningful), or `reset_default` (the story establishes a return to the usual hairstyle). A sentence that merely re-describes or repeats the known/default hairstyle, only moves the hair (e.g. "her ponytail swayed in the wind"), or only describes color/lighting (e.g. "her hair looked almost silver") is not an event.
 - `hairstyle_change` is a short literal semantic description of the arrangement transition, never a Danbooru tag list. Do not output hairstyle tags, normalize hairstyle wording into tag syntax, or infer a more specific style than the story establishes. Describe only the arrangement transition and preserve its literal `evidence`. CALL2 may replace only the exact fixed arrangement tag directly contradicted by that evidence-bearing event; it keeps every other fixed appearance tag and never infers a change from the event label alone.
-- Emit a reference_assignment only when downstream character presence, attribution, or wardrobe tracking would otherwise be wrong or genuinely ambiguous. Do not enumerate every pronoun after identity is already clear, do not emit canonical names already present, and do not repeat equivalent references in the same segment.
-- Omit occurrence when it is 1. Omit replacement when the canonical name itself is the correct replacement. Omit confidence when fully certain; omitted values default to 1.0.
-- For possessives or reflexives, replacement may add only the minimal grammar around the canonical name, such as "Alice's" or "Alice herself".
-- If one expression refers to multiple characters, use a natural replacement containing all canonical names.
-- Never guess an ambiguous identity. Put it in unresolved_references.
-- Names in reference_assignments must use the canonical list exactly when a matching character exists.
-- Keep confidence calibrated. Include confidence only for uncertainty; use below 0.70 whenever the result should trigger a broader-context fallback.
 - Output one valid JSON object and nothing else. No Markdown fence, analysis, or prose.

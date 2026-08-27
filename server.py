@@ -728,8 +728,8 @@ DEFAULT_CONFIG = {
         # 삽화 컨텍스트 파이프라인 역번역/CALL1/2/2-FIX/3. 메인 LLM/폴백은 외부 LLM 분기 탭에서 드롭박스로 선택.
         # 폴백 없음(fallback_target 미지정)이 기본.
         "illustration_call1_backtranslate": _llm_route_defaults(max_retries=1, retry_delay_sec=0.0, fallback_max_retries=1, fallback_retry_delay_sec=0.0),
-        "illustration_call1":      _llm_route_defaults(),  # 전처리(컨텍스트 보강)
-        "illustration_profile_resolve": _llm_route_defaults(json_mode=True),  # 생성 최전단 전역 캐릭터 프로필 결정
+        "illustration_call1":      _llm_route_defaults(json_mode=True),  # 복장·헤어 변화 JSON 분석
+        "illustration_profile_resolve": _llm_route_defaults(json_mode=True),  # 생성 최전단 전역 등장인물·프로필 결정
         "illustration_call2":      _llm_route_defaults(),  # PLAN/DETAIL/KEYVIS 장면·태그 빌드 공유
         "illustration_call2_fix":  _llm_route_defaults(),  # CALL2 파싱 실패 시 TOON 교정(repair.txt)
         "illustration_call3":      _llm_route_defaults(),  # 대사 생성(speak/manga)

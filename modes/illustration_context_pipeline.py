@@ -1981,7 +1981,10 @@ def _profile_state_for_prompt(
                 f"character={canonical_name!r}, profile_id={profile_id!r}"
             )
             continue
-        item = {"active_visual_profile": names[0]}
+        item = {
+            "active_visual_profile_id": profile_id,
+            "active_visual_profile": names[0],
+        }
         state_description = str(
             tracked.get("active_visual_profile_state") or ""
         ).strip()
@@ -2136,11 +2139,24 @@ def parse_call1_analysis(
     character_names: str,
     history_context: str = "",
     visual_profiles: dict[str, dict] | None = None,
+    resolved_characters: dict | None = None,
 ) -> dict | None:
-    """Validate CALL1's compact entity/coreference/wardrobe analysis."""
+    """Validate CALL1 wardrobe/hairstyle output with optional pre-resolved entities."""
     raw = _json_object_from_text(text)
     if raw is None:
         return None
+    if isinstance(resolved_characters, dict):
+        raw = deepcopy(raw)
+        raw["reference_assignments"] = []
+        raw["history_characters"] = list(
+            resolved_characters.get("history_characters") or []
+        )
+        raw["current_characters"] = list(
+            resolved_characters.get("current_characters") or []
+        )
+        raw["unresolved_references"] = list(
+            resolved_characters.get("uncertainties") or []
+        )
     canonical = _canonical_name_map(character_names)
     warnings = []
     fallback_errors = []
@@ -2225,18 +2241,19 @@ def parse_call1_analysis(
             current_names.add(name.casefold())
             current_characters.append({"name": name, "confidence": confidence})
 
-    for folded, name in canonical.items():
-        if _contains_canonical_name(current_context, name) and folded not in current_names:
-            current_names.add(folded)
-            current_characters.append({"name": name, "confidence": 1.0})
-            warnings.append(f"CALL1이 원문 정식 이름을 누락해 서버가 보완: {name}")
+    if not isinstance(resolved_characters, dict):
+        for folded, name in canonical.items():
+            if _contains_canonical_name(current_context, name) and folded not in current_names:
+                current_names.add(folded)
+                current_characters.append({"name": name, "confidence": 1.0})
+                warnings.append(f"CALL1이 원문 정식 이름을 누락해 서버가 보완: {name}")
 
-    history_names = {name.casefold() for name in history_characters}
-    for folded, name in canonical.items():
-        if _contains_canonical_name(history_context, name) and folded not in history_names:
-            history_names.add(folded)
-            history_characters.append(name)
-            warnings.append(f"CALL1이 과거 히스토리 정식 이름을 누락해 서버가 보완: {name}")
+        history_names = {name.casefold() for name in history_characters}
+        for folded, name in canonical.items():
+            if _contains_canonical_name(history_context, name) and folded not in history_names:
+                history_names.add(folded)
+                history_characters.append(name)
+                warnings.append(f"CALL1이 과거 히스토리 정식 이름을 누락해 서버가 보완: {name}")
 
     wardrobe_events = []
     changing_operations = {
@@ -2265,6 +2282,12 @@ def parse_call1_analysis(
             confidence = 0.0
         if not name:
             warnings.append(f"복장 사건 캐릭터 없어 폐기: index={index}")
+            continue
+        if name.casefold() not in current_names:
+            warnings.append(
+                f"CURRENT 캐릭터 밖 복장 사건으로 폐기: "
+                f"index={index}, character={name!r}"
+            )
             continue
         if operation in changing_operations:
             segment_text = str((segments.get(segment_id) or {}).get("text") or "")
@@ -2608,6 +2631,12 @@ def parse_call1_analysis(
         if not name:
             warnings.append(f"헤어스타일 사건 캐릭터 없어 폐기: index={index}")
             continue
+        if name.casefold() not in current_names:
+            warnings.append(
+                f"CURRENT 캐릭터 밖 헤어스타일 사건으로 폐기: "
+                f"index={index}, character={name!r}"
+            )
+            continue
         if operation not in hairstyle_operations:
             warnings.append(
                 f"헤어스타일 사건 operation 미지정/범위외로 폐기: character={name}, "
@@ -2692,7 +2721,7 @@ def parse_call1_analysis(
     }
 
 
-def parse_profile_resolution(
+def _parse_legacy_profile_resolution(
     text: str,
     current_context: str,
     segments: dict[str, dict],
@@ -2780,11 +2809,325 @@ def parse_profile_resolution(
     }
 
 
+def _materialize_profile_character_records(
+    characters: list[dict],
+    visual_profiles: dict[str, dict] | None,
+    *,
+    uncertainties: list[str] | None = None,
+    warnings: list[str] | None = None,
+    repair_requests: list[dict] | None = None,
+) -> dict:
+    """Convert the compact LLM contract into the existing internal profile timeline."""
+    profile_events = []
+    initial_visual_bases = []
+    visual_base_events = []
+    current_characters = []
+    history_characters = []
+
+    for character in characters or []:
+        if not isinstance(character, dict):
+            continue
+        name = str(character.get("name") or "").strip()
+        if not name:
+            continue
+        current_characters.append({"name": name, "confidence": 1.0})
+        if bool(character.get("in_history")):
+            history_characters.append(name)
+        character_profiles = _authority_values_for_name(
+            visual_profiles or {},
+            name,
+        )
+        if not isinstance(character_profiles, dict):
+            print(
+                "[ILLUST_CONTEXT:PROFILE_RESOLVE] 내부 변환용 캐릭터 프로필 없음: "
+                f"character={name!r}"
+            )
+            continue
+        for event in character.get("profile_timeline") or []:
+            if not isinstance(event, dict):
+                continue
+            segment_id = str(event.get("at") or "").strip().upper()
+            profile_id = str(event.get("profile_id") or "").strip()
+            profile = profile_by_id(character_profiles, profile_id)
+            if not segment_id or not isinstance(profile, dict):
+                print(
+                    "[ILLUST_CONTEXT:PROFILE_RESOLVE] 내부 변환용 프로필 사건 오류: "
+                    f"character={name!r}, at={segment_id!r}, profile_id={profile_id!r}"
+                )
+                continue
+            profile_names = visual_profile_names(profile)
+            profile_name = (
+                profile_names[0]
+                if profile_names
+                else str(profile.get("label") or profile_id).strip()
+            )
+            profile_events.append({
+                "segment_id": segment_id,
+                "character": name,
+                "profile": profile_name,
+                "profile_id": profile_id,
+                "state": "",
+                "confidence": 1.0,
+            })
+            if segment_id == "START":
+                initial_visual_bases.append({
+                    "character": name,
+                    "target_visual_profile_id": profile_id,
+                    "visual_profile_name": profile_name,
+                    "initial_state": "",
+                    "anchor_segment": "START",
+                    "evidence": [],
+                    "confidence": 1.0,
+                })
+            else:
+                visual_base_events.append({
+                    "segment_id": segment_id,
+                    "character": name,
+                    "target_visual_profile_id": profile_id,
+                    "visual_profile_name": profile_name,
+                    "visual_change": "",
+                    "evidence": "",
+                    "confidence": 1.0,
+                })
+
+    normalized_warnings = list(warnings or [])
+    normalized_uncertainties = [
+        str(item).strip()
+        for item in uncertainties or []
+        if str(item).strip()
+    ]
+    return {
+        "characters": deepcopy(characters or []),
+        "history_characters": history_characters,
+        "current_characters": current_characters,
+        "uncertainties": normalized_uncertainties,
+        "profile_events": profile_events,
+        "initial_visual_bases": initial_visual_bases,
+        "visual_base_events": visual_base_events,
+        "repair_requests": deepcopy(repair_requests or []),
+        "validation_warnings": normalized_warnings,
+        "validation_errors": normalized_warnings,
+    }
+
+
+def parse_profile_resolution(
+    text: str,
+    current_context: str,
+    segments: dict[str, dict],
+    current_characters: list[dict] | None,
+    visual_profiles: dict[str, dict] | None,
+    *,
+    profile_inference_enabled: bool = True,
+) -> dict | None:
+    """Validate the compact CURRENT-character/profile contract.
+
+    Legacy four-field ``profile_events`` output remains readable for stored records
+    and older callers, while new calls use ``characters[].profile_timeline``.
+    """
+    raw = _json_object_from_text(text)
+    if raw is None:
+        print("[ILLUST_CONTEXT:PROFILE_RESOLVE] JSON object 파싱 실패")
+        return None
+    if "characters" not in raw and "profile_events" in raw:
+        return _parse_legacy_profile_resolution(
+            text,
+            current_context,
+            segments,
+            current_characters or [],
+            visual_profiles,
+        )
+
+    raw_characters = raw.get("characters")
+    raw_uncertainties = raw.get("uncertainties")
+    if not isinstance(raw_characters, list) or not isinstance(raw_uncertainties, list):
+        print(
+            "[ILLUST_CONTEXT:PROFILE_RESOLVE] 최상위 스키마 오류: "
+            f"characters={type(raw_characters).__name__}, "
+            f"uncertainties={type(raw_uncertainties).__name__}"
+        )
+        return None
+
+    registered_names = {
+        str(name or "").strip().casefold(): str(name or "").strip()
+        for name, value in (visual_profiles or {}).items()
+        if str(name or "").strip() and isinstance(value, dict)
+    }
+    warnings = []
+    repair_requests = []
+    normalized_characters = []
+    seen_names = set()
+    segment_rank = {
+        segment_id: index
+        for index, segment_id in enumerate(segments or {}, start=1)
+    }
+
+    for index, item in enumerate(raw_characters, start=1):
+        if not isinstance(item, dict):
+            warning = f"등장인물 항목 형식 오류로 폐기: index={index}, item={item!r}"
+            warnings.append(warning)
+            print(f"[ILLUST_CONTEXT:PROFILE_RESOLVE] {warning}")
+            continue
+        raw_name = str(item.get("name") or "").strip()
+        name = registered_names.get(raw_name.casefold(), "")
+        if not name:
+            warning = f"등록되지 않은 CURRENT 캐릭터로 폐기: index={index}, name={raw_name!r}"
+            warnings.append(warning)
+            print(f"[ILLUST_CONTEXT:PROFILE_RESOLVE] {warning}")
+            continue
+        folded = name.casefold()
+        if folded in seen_names:
+            warning = f"중복 CURRENT 캐릭터로 후속 항목 폐기: character={name}"
+            warnings.append(warning)
+            print(f"[ILLUST_CONTEXT:PROFILE_RESOLVE] {warning}")
+            continue
+        seen_names.add(folded)
+
+        in_history = item.get("in_history")
+        if not isinstance(in_history, bool):
+            warning = (
+                f"in_history가 bool이 아니어서 false 사용: "
+                f"character={name}, value={in_history!r}"
+            )
+            warnings.append(warning)
+            print(f"[ILLUST_CONTEXT:PROFILE_RESOLVE] {warning}")
+            in_history = False
+
+        raw_timeline = item.get("profile_timeline")
+        timeline_format_error = not isinstance(raw_timeline, list)
+        if timeline_format_error:
+            warning = (
+                f"profile_timeline이 list가 아니어서 빈 목록 사용: "
+                f"character={name}, type={type(raw_timeline).__name__}"
+            )
+            warnings.append(warning)
+            print(f"[ILLUST_CONTEXT:PROFILE_RESOLVE] {warning}")
+            raw_timeline = []
+
+        character_profiles = _authority_values_for_name(
+            visual_profiles or {},
+            name,
+        )
+        registered_profiles = (
+            list(character_profiles.get("profiles") or [])
+            if isinstance(character_profiles, dict)
+            else []
+        )
+        is_multi_profile = len(registered_profiles) > 1
+        normalized_timeline = []
+        invalid_reasons = []
+        seen_points: dict[str, str] = {}
+
+        if not profile_inference_enabled:
+            if raw_timeline:
+                warning = (
+                    f"프로필 추론 OFF인데 타임라인이 있어 무시: "
+                    f"character={name}, events={len(raw_timeline)}"
+                )
+                warnings.append(warning)
+                print(f"[ILLUST_CONTEXT:PROFILE_RESOLVE] {warning}")
+        elif not is_multi_profile:
+            if raw_timeline:
+                warning = (
+                    f"단일 프로필 캐릭터 타임라인은 불필요해 무시: "
+                    f"character={name}, events={len(raw_timeline)}"
+                )
+                warnings.append(warning)
+                print(f"[ILLUST_CONTEXT:PROFILE_RESOLVE] {warning}")
+        else:
+            if timeline_format_error:
+                invalid_reasons.append("profile_timeline 형식 오류")
+            for event_index, event in enumerate(raw_timeline, start=1):
+                if not isinstance(event, dict):
+                    invalid_reasons.append(f"event[{event_index}] 형식 오류")
+                    continue
+                at = str(event.get("at") or "").strip().upper()
+                profile_id = str(event.get("profile_id") or "").strip()
+                if at != "START" and at not in (segments or {}):
+                    invalid_reasons.append(
+                        f"event[{event_index}] 존재하지 않는 구간 {at!r}"
+                    )
+                    continue
+                profile = profile_by_id(character_profiles, profile_id)
+                if not isinstance(profile, dict):
+                    invalid_reasons.append(
+                        f"event[{event_index}] 등록되지 않은 profile_id {profile_id!r}"
+                    )
+                    continue
+                previous_id = seen_points.get(at)
+                if previous_id is not None:
+                    if previous_id != profile_id:
+                        invalid_reasons.append(
+                            f"동일 시점 프로필 충돌 at={at}, ids={[previous_id, profile_id]}"
+                        )
+                    else:
+                        warnings.append(
+                            f"동일 프로필 사건 중복 제거: character={name}, at={at}, "
+                            f"profile_id={profile_id}"
+                        )
+                    continue
+                seen_points[at] = profile_id
+                normalized_timeline.append({"at": at, "profile_id": profile_id})
+
+            normalized_timeline.sort(
+                key=lambda event: (
+                    -1 if event["at"] == "START" else segment_rank.get(event["at"], 10**9)
+                )
+            )
+            start_count = sum(
+                1 for event in normalized_timeline if event.get("at") == "START"
+            )
+            if start_count != 1:
+                invalid_reasons.append(f"START 개수 오류: {start_count}")
+
+        normalized_characters.append({
+            "name": name,
+            "in_history": in_history,
+            "profile_timeline": normalized_timeline,
+        })
+        if invalid_reasons:
+            request = {
+                "character": name,
+                "reasons": invalid_reasons,
+                "raw_profile_timeline": deepcopy(raw_timeline),
+            }
+            repair_requests.append(request)
+            warning = f"프로필 타임라인 부분 교정 필요: {request}"
+            warnings.append(warning)
+            print(f"[ILLUST_CONTEXT:PROFILE_RESOLVE] {warning}")
+
+    uncertainties = []
+    for index, item in enumerate(raw_uncertainties, start=1):
+        if not isinstance(item, str) or not item.strip():
+            warning = f"불확실성 항목 형식 오류로 폐기: index={index}, item={item!r}"
+            warnings.append(warning)
+            print(f"[ILLUST_CONTEXT:PROFILE_RESOLVE] {warning}")
+            continue
+        uncertainties.append(item.strip())
+
+    if registered_names and not normalized_characters:
+        warning = "CURRENT 등장인물 결과가 비어 있음"
+        warnings.append(warning)
+        print(f"[ILLUST_CONTEXT:PROFILE_RESOLVE] {warning}")
+
+    return _materialize_profile_character_records(
+        normalized_characters,
+        visual_profiles,
+        uncertainties=uncertainties,
+        warnings=warnings,
+        repair_requests=repair_requests,
+    )
+
+
 def _empty_profile_result() -> dict:
     return {
+        "characters": [],
+        "history_characters": [],
+        "current_characters": [],
+        "uncertainties": [],
         "profile_events": [],
         "initial_visual_bases": [],
         "visual_base_events": [],
+        "repair_requests": [],
         "validation_warnings": [],
         "validation_errors": [],
     }
@@ -2792,67 +3135,167 @@ def _empty_profile_result() -> dict:
 
 def _default_profile_result(
     visual_profiles: dict[str, dict] | None,
+    characters: list[dict] | None = None,
 ) -> dict:
-    """Lock multi-profile characters to their registered default without an LLM."""
-    result = _empty_profile_result()
-    for raw_name, character_profiles in (visual_profiles or {}).items():
-        name = str(raw_name or "").strip()
+    """Lock resolved CURRENT multi-profile characters to registered defaults."""
+    if characters is None:
+        source_characters = [
+            {
+                "name": str(name or "").strip(),
+                "in_history": False,
+                "profile_timeline": [],
+            }
+            for name, value in (visual_profiles or {}).items()
+            if str(name or "").strip()
+            and isinstance(value, dict)
+            and len(value.get("profiles") or []) > 1
+        ]
+    else:
+        source_characters = [
+            {
+                "name": str(item.get("name") or "").strip(),
+                "in_history": bool(item.get("in_history")),
+                "profile_timeline": [],
+            }
+            for item in characters
+            if isinstance(item, dict) and str(item.get("name") or "").strip()
+        ]
+
+    normalized = []
+    warnings = []
+    for item in source_characters:
+        name = item["name"]
+        character_profiles = _authority_values_for_name(
+            visual_profiles or {},
+            name,
+        )
+        if not isinstance(character_profiles, dict):
+            warning = f"기본 프로필 고정용 캐릭터 없음: character={name!r}"
+            warnings.append(warning)
+            print(f"[ILLUST_CONTEXT:PROFILE_RESOLVE] {warning}")
+            continue
+        timeline = []
+        if len(character_profiles.get("profiles") or []) > 1:
+            try:
+                base = resolve_visual_base(character_profiles)
+                profile_id = str(base.get("visual_profile_id") or "").strip()
+                profile = profile_by_id(character_profiles, profile_id)
+            except Exception as e:
+                print(
+                    "[ILLUST_CONTEXT:PROFILE_RESOLVE] 기본 프로필 고정 실패: "
+                    f"character={name!r}, error={e}"
+                )
+                traceback.print_exc()
+                continue
+            if not profile_id or not isinstance(profile, dict):
+                warning = (
+                    f"기본 프로필 고정값 없음: character={name!r}, "
+                    f"profile_id={profile_id!r}"
+                )
+                warnings.append(warning)
+                print(f"[ILLUST_CONTEXT:PROFILE_RESOLVE] {warning}")
+                continue
+            timeline = [{"at": "START", "profile_id": profile_id}]
+        normalized.append({
+            "name": name,
+            "in_history": bool(item.get("in_history")),
+            "profile_timeline": timeline,
+        })
+
+    return _materialize_profile_character_records(
+        normalized,
+        visual_profiles,
+        warnings=warnings,
+    )
+
+
+def _profile_previous_id(
+    previous_state: dict | None,
+    character_name: str,
+    character_profiles: dict,
+) -> str:
+    states = previous_state if isinstance(previous_state, dict) else {}
+    tracked = next((
+        value
+        for key, value in states.items()
+        if isinstance(value, dict)
+        and str(value.get("canonical_name") or key).strip().casefold()
+        == str(character_name or "").strip().casefold()
+    ), None)
+    profile_id = str((tracked or {}).get("active_visual_profile_id") or "").strip()
+    return profile_id if profile_by_id(character_profiles, profile_id) is not None else ""
+
+
+def _apply_profile_resolution_fallbacks(
+    profile_result: dict,
+    visual_profiles: dict[str, dict] | None,
+    previous_state: dict | None,
+    *,
+    default_only: bool,
+) -> dict:
+    """Fill only missing START decisions; valid LLM events remain untouched."""
+    characters = deepcopy(profile_result.get("characters") or [])
+    warnings = list(profile_result.get("validation_warnings") or [])
+    for character in characters:
+        if not isinstance(character, dict):
+            continue
+        name = str(character.get("name") or "").strip()
+        character_profiles = _authority_values_for_name(
+            visual_profiles or {},
+            name,
+        )
         if (
             not name
             or not isinstance(character_profiles, dict)
             or len(character_profiles.get("profiles") or []) <= 1
         ):
+            character["profile_timeline"] = []
             continue
-        try:
-            base = resolve_visual_base(character_profiles)
-            profile_id = str(base.get("visual_profile_id") or "").strip()
-            profile = profile_by_id(character_profiles, profile_id)
-        except Exception as e:
-            print(
-                "[ILLUST_CONTEXT:PROFILE_RESOLVE] 기본 프로필 고정 실패: "
-                f"character={name!r}, error={e}"
-            )
-            traceback.print_exc()
+        timeline = list(character.get("profile_timeline") or [])
+        starts = [event for event in timeline if event.get("at") == "START"]
+        if len(starts) == 1 and not default_only:
             continue
-        if not profile_id or not isinstance(profile, dict):
-            print(
-                "[ILLUST_CONTEXT:PROFILE_RESOLVE] 기본 프로필 고정값 없음: "
-                f"character={name!r}, profile_id={profile_id!r}"
-            )
-            continue
-        profile_names = visual_profile_names(profile)
-        state = "Profile inference is disabled; use the registered default profile."
-        result["initial_visual_bases"].append({
-            "character": name,
-            "target_visual_profile_id": profile_id,
-            "visual_profile_name": profile_names[0] if profile_names else "",
-            "initial_state": state,
-            "anchor_segment": "START",
-            "evidence": [],
-            "confidence": 1.0,
-        })
-        if profile_names:
-            result["profile_events"].append({
-                "segment_id": "START",
-                "character": name,
-                "profile": profile_names[0],
-                "state": state,
-                "confidence": 1.0,
-            })
+        if default_only:
+            profile_id = str(
+                character_profiles.get("default_visual_profile_id") or ""
+            ).strip()
         else:
-            print(
-                "[ILLUST_CONTEXT:PROFILE_RESOLVE] 기본 프로필 의미 이름 없음: "
-                f"character={name!r}, profile_id={profile_id!r}; "
-                "ID 기반 기본 프로필만 고정"
+            profile_id = _profile_previous_id(
+                previous_state,
+                name,
+                character_profiles,
+            ) or str(character_profiles.get("default_visual_profile_id") or "").strip()
+        if profile_by_id(character_profiles, profile_id) is None:
+            warning = (
+                f"START 폴백 프로필 없음: character={name!r}, profile_id={profile_id!r}"
             )
-    return result
+            warnings.append(warning)
+            print(f"[ILLUST_CONTEXT:PROFILE_RESOLVE] {warning}")
+            continue
+        timeline = [event for event in timeline if event.get("at") != "START"]
+        character["profile_timeline"] = [
+            {"at": "START", "profile_id": profile_id},
+            *timeline,
+        ]
+        reason = "추론 OFF 기본 프로필" if default_only else "교정 실패 안전 폴백"
+        warning = f"{reason} 적용: character={name}, profile_id={profile_id}"
+        warnings.append(warning)
+        print(f"[ILLUST_CONTEXT:PROFILE_RESOLVE] {warning}")
+
+    return _materialize_profile_character_records(
+        characters,
+        visual_profiles,
+        uncertainties=list(profile_result.get("uncertainties") or []),
+        warnings=warnings,
+        repair_requests=list(profile_result.get("repair_requests") or []),
+    )
 
 
 def _filter_profile_result_for_characters(
     profile_result: dict | None,
     character_names: list[str],
 ) -> dict:
-    """Keep preselected profile events only for CALL1-confirmed CURRENT characters."""
+    """Keep profile resolution data only for the selected CURRENT characters."""
     selected = {
         str(name or "").strip().casefold()
         for name in character_names or []
@@ -2872,7 +3315,37 @@ def _filter_profile_result_for_characters(
             and str(item.get("character") or "").strip().casefold() in selected
         )
 
+    filtered_characters = [
+        deepcopy(item)
+        for item in source.get("characters") or []
+        if isinstance(item, dict)
+        and str(item.get("name") or "").strip().casefold() in selected
+    ]
+    filtered_history = [
+        deepcopy(item)
+        for item in source.get("history_characters") or []
+        if (
+            str(item.get("name") if isinstance(item, dict) else item or "")
+            .strip()
+            .casefold()
+            in selected
+        )
+    ]
+    filtered_current = [
+        deepcopy(item)
+        for item in source.get("current_characters") or []
+        if (
+            str(item.get("name") if isinstance(item, dict) else item or "")
+            .strip()
+            .casefold()
+            in selected
+        )
+    ]
     return {
+        "characters": filtered_characters,
+        "history_characters": filtered_history,
+        "current_characters": filtered_current,
+        "uncertainties": list(source.get("uncertainties") or []),
         "profile_events": [
             deepcopy(item) for item in source.get("profile_events") or [] if belongs(item)
         ],
@@ -2888,6 +3361,11 @@ def _filter_profile_result_for_characters(
         ],
         "validation_warnings": list(source.get("validation_warnings") or []),
         "validation_errors": list(source.get("validation_errors") or []),
+        "repair_requests": [
+            deepcopy(item)
+            for item in source.get("repair_requests") or []
+            if belongs(item)
+        ],
     }
 
 
@@ -2945,9 +3423,10 @@ def profile_authority_text(
             appearance_values.insert(0, gender_tag)
         appearance = ", ".join(appearance_values) or "(none)"
         outfit = ", ".join(visual_tag_values(base.get("outfit") or [])) or "(none)"
+        lines.append(f"### {segment_id} · {name} · {profile_name}")
+        if state:
+            lines.append(f"- profile state: {state}")
         lines.extend([
-            f"### {segment_id} · {name} · {profile_name}",
-            f"- profile state: {state or '(unspecified)'}",
             f"- authoritative appearance: {appearance}",
             f"- profile default outfit: {outfit}",
         ])
@@ -7935,6 +8414,7 @@ _CALL_TASK_KEYS = {
     "CALL1-BACKTRANSLATE": "illustration_call1_backtranslate",
     "CALL1": "illustration_call1",
     "PROFILE-RESOLVE": "illustration_profile_resolve",
+    "PROFILE-RESOLVE-REPAIR": "illustration_profile_resolve",
     "CALL2": "illustration_call2",
     "CALL2-PLAN": "illustration_call2",
     "CALL2-KEYVIS": "illustration_call2",
@@ -7948,7 +8428,7 @@ _CALL_TASK_KEYS = {
     "MULTI-CHAR-MASK": "illustration_multi_char_mask",
 }
 
-# 직렬 분석/프로필 결정/CALL2/2-FIX/3 호출을 큐 서브태스크로 표시하기 위한 그룹 정의.
+# 직렬 변화 분석/프로필 결정/CALL2/2-FIX/3 호출을 큐 서브태스크로 표시하기 위한 그룹 정의.
 # 역번역(CALL1-BACKTRANSLATE)/다중캐릭터마스크(MULTI-CHAR-MASK)는 병렬 청크용 wrapper가
 # index/total을 직접 주입하므로 여기서 제외한다.
 _CALL_QUEUE_SUBTASK_GROUPS = {
@@ -7957,8 +8437,9 @@ _CALL_QUEUE_SUBTASK_GROUPS = {
         "original_asset_recovery",
         "원본 에셋 실패 항목 복구",
     ),
-    "CALL1": ("call1", "CALL1 컨텍스트 보강"),
-    "PROFILE-RESOLVE": ("profile_resolve", "캐릭터 프로필 결정"),
+    "CALL1": ("call1", "CALL1 복장·헤어 분석"),
+    "PROFILE-RESOLVE": ("profile_resolve", "등장인물·프로필 결정"),
+    "PROFILE-RESOLVE-REPAIR": ("profile_resolve", "프로필 오류 항목 교정"),
     "CALL2": ("call2", "CALL2 장면/태그 빌드"),
     "CALL2-PLAN": ("call2_plan", "CALL2 장면 PLAN"),
     "CALL2-KEYVIS": ("call2_keyvis", "CALL2 Key Visual"),
@@ -8818,73 +9299,18 @@ def _merge_call1_shard_values(
 ) -> tuple[dict, list[str], list[str]]:
     """Merge disjoint CALL1 shard JSON without semantic keyword inference."""
     merged = {
-        "reference_assignments": [],
-        "history_characters": [],
-        "current_characters": [],
         "wardrobe_events": [],
         "hairstyle_events": [],
-        "unresolved_references": [],
     }
     warnings = []
     fallback_errors = []
-    history_seen = set()
-    current_by_name: dict[str, dict] = {}
-    assignment_by_key: dict[tuple, dict] = {}
     wardrobe_seen = set()
     hairstyle_seen = set()
-    unresolved_seen = set()
     segment_rank = {segment_id: index for index, segment_id in enumerate(segment_order)}
 
     for shard_index, value in enumerate(shard_values, start=1):
         assigned_ids = set(value.get("assigned_segment_ids") or [])
         raw = value.get("value") if isinstance(value.get("value"), dict) else {}
-
-        for item in raw.get("history_characters") or []:
-            name = str(item.get("name") if isinstance(item, dict) else item or "").strip()
-            folded = name.casefold()
-            if name and folded not in history_seen:
-                history_seen.add(folded)
-                merged["history_characters"].append(name)
-
-        for item in raw.get("current_characters") or []:
-            if isinstance(item, dict):
-                name = str(item.get("name") or "").strip()
-                try:
-                    confidence = max(0.0, min(1.0, float(item.get("confidence", 1.0))))
-                except (TypeError, ValueError):
-                    confidence = 0.0
-            else:
-                name = str(item or "").strip()
-                confidence = 1.0
-            if not name:
-                continue
-            folded = name.casefold()
-            previous = current_by_name.get(folded)
-            if previous is None or confidence > float(previous.get("confidence") or 0.0):
-                current_by_name[folded] = {"name": name, "confidence": confidence}
-
-        for item in raw.get("reference_assignments") or []:
-            if not isinstance(item, dict):
-                warnings.append(f"CALL1 shard {shard_index} 지칭 할당 형식 오류로 폐기")
-                continue
-            segment_id = str(item.get("segment_id") or "").strip()
-            if segment_id not in assigned_ids:
-                warnings.append(
-                    f"CALL1 shard {shard_index} 담당 밖 지칭 할당 폐기: segment={segment_id!r}"
-                )
-                continue
-            key = (
-                segment_id,
-                str(item.get("surface") or ""),
-                int(item.get("occurrence") or 1),
-            )
-            previous = assignment_by_key.get(key)
-            if previous is not None and str(previous.get("canonical_name") or "").casefold() != str(
-                item.get("canonical_name") or item.get("name") or ""
-            ).casefold():
-                fallback_errors.append(f"CALL1 shard 지칭 충돌: key={key!r}")
-                continue
-            assignment_by_key[key] = deepcopy(item)
 
         for item in raw.get("wardrobe_events") or []:
             if not isinstance(item, dict):
@@ -8916,29 +9342,6 @@ def _merge_call1_shard_values(
                 hairstyle_seen.add(key)
                 merged["hairstyle_events"].append(deepcopy(item))
 
-        for item in raw.get("unresolved_references") or []:
-            if not isinstance(item, dict):
-                continue
-            segment_id = str(item.get("segment_id") or "").strip()
-            if segment_id and segment_id not in assigned_ids:
-                warnings.append(
-                    f"CALL1 shard {shard_index} 담당 밖 미해결 지칭 폐기: segment={segment_id!r}"
-                )
-                continue
-            key = json.dumps(item, ensure_ascii=False, sort_keys=True)
-            if key not in unresolved_seen:
-                unresolved_seen.add(key)
-                merged["unresolved_references"].append(deepcopy(item))
-
-    merged["current_characters"] = list(current_by_name.values())
-    merged["reference_assignments"] = sorted(
-        assignment_by_key.values(),
-        key=lambda item: (
-            segment_rank.get(str(item.get("segment_id") or ""), len(segment_rank)),
-            str(item.get("surface") or ""),
-            int(item.get("occurrence") or 1),
-        ),
-    )
     merged["wardrobe_events"].sort(
         key=lambda item: segment_rank.get(
             str(item.get("segment_id") or ""),
@@ -9004,13 +9407,10 @@ async def _run_parallel_call1_analysis(
         shard_instruction = (
             "\n\n# Parallel shard contract\n"
             f"This is shard {index}/{total}. Read the full context for discourse understanding, "
-            "but emit reference_assignments, wardrobe_events, hairstyle_events, and "
-            "unresolved_references only "
+            "but emit wardrobe_events and hairstyle_events only "
             f"for these assigned segment IDs: {json.dumps(assigned, ensure_ascii=False)}.\n"
-            "Emit history_characters and current_characters only for characters relevant to those "
-            "assigned segments; the server unions all shard lists. Do not repeat the global roster in "
-            "every shard. Use canonical-name strings and omit optional default-valued fields as allowed "
-            "by the existing schema. Return one JSON object only."
+            "Use only the resolved CURRENT canonical names supplied by the system prompt. "
+            "Return one JSON object with exactly those two arrays."
         )
         messages = _normalize_messages([
             {"role": "system", "content": call1_system + shard_instruction},
@@ -9031,14 +9431,7 @@ async def _run_parallel_call1_analysis(
             raw = _json_object_from_text(result)
             if raw is None:
                 return False, "CALL1 shard JSON object 없음"
-            for key in (
-                "reference_assignments",
-                "history_characters",
-                "current_characters",
-                "wardrobe_events",
-                "hairstyle_events",
-                "unresolved_references",
-            ):
+            for key in ("wardrobe_events", "hairstyle_events"):
                 if not isinstance(raw.get(key, []), list):
                     return False, f"CALL1 shard {key}가 list가 아님"
             return True, ""
@@ -9083,7 +9476,11 @@ async def _run_parallel_call1_analysis(
         shard_values,
         segment_ids,
     )
-    return json.dumps(merged, ensure_ascii=False), merge_warnings, merge_fallback_errors
+    compact = {
+        "wardrobe_events": list(merged.get("wardrobe_events") or []),
+        "hairstyle_events": list(merged.get("hairstyle_events") or []),
+    }
+    return json.dumps(compact, ensure_ascii=False), merge_warnings, merge_fallback_errors
 
 
 async def _run_profile_resolution(
@@ -9096,21 +9493,22 @@ async def _run_profile_resolution(
     candidate_names: list[str],
     previous_state: dict,
     visual_profiles: dict[str, dict] | None,
+    profile_inference_enabled: bool,
     stream_notify,
     history_ids_sink: list[str] | None = None,
 ) -> tuple[str, dict]:
-    """Run one global profile decision before any profile-dependent selection."""
+    """Resolve CURRENT characters and optionally their profiles in one global call."""
     current_names = [str(name or "").strip() for name in candidate_names or []]
     current_names = list(dict.fromkeys(name for name in current_names if name))
     selected_profiles = _selected_visual_profiles(
         visual_profiles,
         current_names,
-        multiple_only=True,
+        multiple_only=False,
     )
     if not selected_profiles:
         print(
-            "[ILLUST_CONTEXT:PROFILE_RESOLVE] 다중 프로필 CURRENT 캐릭터가 없어 "
-            "전용 호출 건너뜀"
+            "[ILLUST_CONTEXT:PROFILE_RESOLVE] 등록 캐릭터가 없어 선행 호출 건너뜀: "
+            f"candidates={current_names}"
         )
         return "", _empty_profile_result()
 
@@ -9126,11 +9524,13 @@ async def _run_profile_resolution(
         {
             "role": "user",
             "content": (
-                "# REGISTERED MULTI-PROFILE CANDIDATES (PRE-CALL1)\n"
+                "# PROFILE INFERENCE MODE\n"
+                + ("ENABLED" if profile_inference_enabled else "DISABLED")
+                + "\n\n# COMPLETE REGISTERED CHARACTER ROSTER\n"
                 + json.dumps(selected_names, ensure_ascii=False)
                 + "\n\n# PREVIOUSLY TRACKED PROFILE STATE\n"
                 + json.dumps(tracked_state, ensure_ascii=False, indent=2)
-                + "\n\n# REGISTERED PROFILE CATALOG FOR CURRENT CHARACTERS\n"
+                + "\n\n# REGISTERED PROFILE CATALOG\n"
                 + (catalog or "(none)")
                 + "\n\n# PAST HISTORY\n"
                 + (history_text or "(empty)")
@@ -9140,23 +9540,21 @@ async def _run_profile_resolution(
         },
     ])
 
-    def validate(result):
-        parsed = parse_profile_resolution(
-            result,
-            current_context,
-            current_segments,
-            [{"name": name, "confidence": 1.0} for name in selected_names],
-            selected_profiles,
-        )
-        if parsed is None:
-            return False, "PROFILE-RESOLVE JSON/프로필 사건 검증 실패"
+    def validate_shape(result):
+        raw = _json_object_from_text(result)
+        if raw is None:
+            return False, "PROFILE-RESOLVE JSON object 없음"
+        if not isinstance(raw.get("characters"), list):
+            return False, "PROFILE-RESOLVE characters가 list가 아님"
+        if not isinstance(raw.get("uncertainties"), list):
+            return False, "PROFILE-RESOLVE uncertainties가 list가 아님"
         return True, ""
 
     raw_output = await _call_pipeline_llm(
         "PROFILE-RESOLVE",
         messages,
         stream_notify,
-        result_validator=validate,
+        result_validator=validate_shape,
         json_mode=True,
         history_ids_sink=history_ids_sink,
     )
@@ -9166,12 +9564,142 @@ async def _run_profile_resolution(
         current_segments,
         [{"name": name, "confidence": 1.0} for name in selected_names],
         selected_profiles,
+        profile_inference_enabled=profile_inference_enabled,
     )
     if parsed is None:
         raise ValueError("PROFILE-RESOLVE 최종 응답 파싱 실패")
+    repair_requests = list(parsed.get("repair_requests") or [])
+    if profile_inference_enabled and repair_requests:
+        repair_names = [
+            str(item.get("character") or "").strip()
+            for item in repair_requests
+            if isinstance(item, dict) and str(item.get("character") or "").strip()
+        ]
+        repair_names = list(dict.fromkeys(repair_names))
+        repair_profiles = _selected_visual_profiles(
+            selected_profiles,
+            repair_names,
+            multiple_only=True,
+        )
+        if repair_profiles:
+            repair_messages = _normalize_messages([
+                {
+                    "role": "system",
+                    "content": (
+                        str(profile_system or "").strip()
+                        + "\n\n# PARTIAL REPAIR CONTRACT\n"
+                        "Correct only the supplied rejected characters. Return the same "
+                        "characters/uncertainties schema and include exactly those characters. "
+                        "Preserve every valid narrative decision, but use only registered "
+                        "profile_id values. Do not output unrelated characters."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        "# PROFILE INFERENCE MODE\nENABLED\n\n"
+                        "# REJECTED CHARACTER PROFILE ITEMS\n"
+                        + json.dumps(repair_requests, ensure_ascii=False, indent=2)
+                        + "\n\n# PREVIOUSLY TRACKED PROFILE STATE\n"
+                        + json.dumps(tracked_state, ensure_ascii=False, indent=2)
+                        + "\n\n# REGISTERED PROFILE CATALOG FOR REJECTED CHARACTERS\n"
+                        + build_natural_profile_catalog(repair_profiles)
+                        + "\n\n# PAST HISTORY\n"
+                        + (history_text or "(empty)")
+                        + "\n\n# FULL CURRENT CONTEXT SEGMENTS\n"
+                        + segmented_current
+                    ),
+                },
+            ])
+            try:
+                repair_output = await _call_pipeline_llm(
+                    "PROFILE-RESOLVE-REPAIR",
+                    repair_messages,
+                    stream_notify,
+                    result_validator=validate_shape,
+                    json_mode=True,
+                    history_ids_sink=history_ids_sink,
+                )
+                repaired = parse_profile_resolution(
+                    repair_output,
+                    current_context,
+                    current_segments,
+                    [{"name": name, "confidence": 1.0} for name in repair_names],
+                    repair_profiles,
+                    profile_inference_enabled=True,
+                )
+                if repaired is None:
+                    print(
+                        "[ILLUST_CONTEXT:PROFILE_RESOLVE] 부분 교정 응답 파싱 실패: "
+                        f"characters={repair_names}"
+                    )
+                else:
+                    still_invalid = {
+                        str(item.get("character") or "").strip().casefold()
+                        for item in repaired.get("repair_requests") or []
+                        if isinstance(item, dict)
+                    }
+                    repaired_by_name = {
+                        str(item.get("name") or "").strip().casefold(): item
+                        for item in repaired.get("characters") or []
+                        if isinstance(item, dict) and str(item.get("name") or "").strip()
+                    }
+                    merged_characters = deepcopy(parsed.get("characters") or [])
+                    repaired_names = []
+                    for item in merged_characters:
+                        name = str(item.get("name") or "").strip()
+                        folded = name.casefold()
+                        replacement = repaired_by_name.get(folded)
+                        if replacement is None or folded in still_invalid:
+                            continue
+                        item["profile_timeline"] = deepcopy(
+                            replacement.get("profile_timeline") or []
+                        )
+                        repaired_names.append(name)
+                    remaining_requests = [
+                        item for item in repair_requests
+                        if str(item.get("character") or "").strip().casefold()
+                        not in {name.casefold() for name in repaired_names}
+                    ]
+                    repair_warnings = list(parsed.get("validation_warnings") or [])
+                    repair_warnings.extend(repaired.get("validation_warnings") or [])
+                    if repaired_names:
+                        message = f"부분 교정 반영 완료: characters={repaired_names}"
+                        repair_warnings.append(message)
+                        print(f"[ILLUST_CONTEXT:PROFILE_RESOLVE] {message}")
+                    parsed = _materialize_profile_character_records(
+                        merged_characters,
+                        selected_profiles,
+                        uncertainties=[
+                            *list(parsed.get("uncertainties") or []),
+                            *list(repaired.get("uncertainties") or []),
+                        ],
+                        warnings=repair_warnings,
+                        repair_requests=remaining_requests,
+                    )
+            except Exception as e:
+                print(
+                    "[ILLUST_CONTEXT:PROFILE_RESOLVE] 부분 교정 호출 실패, "
+                    f"안전 폴백 진행: characters={repair_names}, error={e}"
+                )
+                traceback.print_exc()
+
+    parsed = _apply_profile_resolution_fallbacks(
+        parsed,
+        selected_profiles,
+        previous_state,
+        default_only=not profile_inference_enabled,
+    )
+    current_result_names = [
+        str(item.get("name") or "").strip()
+        for item in parsed.get("characters") or []
+        if isinstance(item, dict) and str(item.get("name") or "").strip()
+    ]
     print(
-        f"[ILLUST_CONTEXT:PROFILE_RESOLVE] 전역 프로필 결정 완료: "
-        f"characters={selected_names}, events={len(parsed['profile_events'])}"
+        f"[ILLUST_CONTEXT:PROFILE_RESOLVE] 전역 등장인물·프로필 결정 완료: "
+        f"characters={current_result_names}, events={len(parsed['profile_events'])}, "
+        f"inference={profile_inference_enabled}, "
+        f"unresolved_repairs={len(parsed.get('repair_requests') or [])}"
     )
     return raw_output, parsed
 
@@ -9186,25 +9714,17 @@ async def resolve_profiles_before_generation(
     progress=None,
     history_ids_sink: list[str] | None = None,
 ) -> tuple[str, dict]:
-    """Resolve all multi-profile candidates before assets, CALL1, or CALL2."""
+    """Resolve CURRENT characters and optional profiles before every consumer."""
     merged = merged_toggles(toggles)
-    if not merged.get("profile_resolve_enabled", True):
-        print(
-            "[ILLUST_CONTEXT:PROFILE_RESOLVE] 전역 토글로 비활성화됨: "
-            "전용 LLM 호출 건너뜀, 등록 기본 프로필 고정"
-        )
-        return "", _default_profile_result(visual_profiles)
-
     candidate_names = [
         str(name or "").strip()
         for name, value in (visual_profiles or {}).items()
         if str(name or "").strip()
         and isinstance(value, dict)
-        and len(value.get("profiles") or []) > 1
     ]
     if not candidate_names:
         print(
-            "[ILLUST_CONTEXT:PROFILE_RESOLVE] 등록된 다중 프로필 캐릭터가 없어 "
+            "[ILLUST_CONTEXT:PROFILE_RESOLVE] 등록된 캐릭터가 없어 "
             "최전단 호출 건너뜀"
         )
         return "", _empty_profile_result()
@@ -9213,10 +9733,10 @@ async def resolve_profiles_before_generation(
     target_index, narrative = _latest_narrative(chats)
     if target_index < 0 or not str(narrative or "").strip():
         print(
-            "[ILLUST_CONTEXT:PROFILE_RESOLVE] 최전단 프로필 결정용 최신 CHAR 서사 없음: "
+            "[ILLUST_CONTEXT:PROFILE_RESOLVE] 최전단 등장인물·프로필 결정용 최신 CHAR 서사 없음: "
             f"chats={len(chats)}"
         )
-        raise RuntimeError("프로필 결정용 최신 CHAR 서사를 찾지 못했습니다")
+        raise RuntimeError("등장인물·프로필 결정용 최신 CHAR 서사를 찾지 못했습니다")
     current_context = _strip_nodes(narrative)
     segmented_current, current_segments = _segment_current_context(current_context)
     if isinstance(history_plan, dict):
@@ -9227,7 +9747,7 @@ async def resolve_profiles_before_generation(
         ]
     history_text = _history_messages_text(history_items)
     if progress:
-        await progress(1, "profile_resolve", "캐릭터 프로필 최전단 결정")
+        await progress(1, "profile_resolve", "등장인물·프로필 최전단 결정")
     prompts = load_prompt_files()
     return await _run_profile_resolution(
         profile_system=prompts.get("profile_resolve", ""),
@@ -9238,6 +9758,9 @@ async def resolve_profiles_before_generation(
         candidate_names=candidate_names,
         previous_state=(history_plan or {}).get("state_before") or {},
         visual_profiles=visual_profiles,
+        profile_inference_enabled=bool(
+            merged.get("profile_resolve_enabled", True)
+        ),
         stream_notify=stream_notify,
         history_ids_sink=history_ids_sink,
     )
@@ -10229,21 +10752,12 @@ async def build_from_context(
     call1_output = ""
     call1_result: dict = {}
     profile_resolve_enabled = bool(toggles.get("profile_resolve_enabled", True))
-    if profile_resolve_enabled:
-        profile_output = str(pre_resolved_profile_output or "")
-        profile_result = deepcopy(
-            pre_resolved_profile_result
-            if isinstance(pre_resolved_profile_result, dict)
-            else _empty_profile_result()
-        )
-    else:
-        profile_output = ""
-        profile_result = _default_profile_result(visual_profiles)
-        if pre_resolved_profile_result is None:
-            print(
-                "[ILLUST_CONTEXT:PROFILE_RESOLVE] 전역 토글로 비활성화됨: "
-                "직접 LLM 호출 건너뜀, 등록 기본 프로필 고정"
-            )
+    profile_output = str(pre_resolved_profile_output or "")
+    profile_result = deepcopy(
+        pre_resolved_profile_result
+        if isinstance(pre_resolved_profile_result, dict)
+        else _empty_profile_result()
+    )
     wardrobe_events: list[dict] = []
     profile_events: list[dict] = []
     initial_visual_bases: list[dict] = []
@@ -10263,21 +10777,16 @@ async def build_from_context(
         context_slice = chats[max(0, target_index - n):target_index]
     history_text = _history_messages_text(context_slice)
 
-    if (
-        profile_resolve_enabled
-        and visual_profiles
-        and pre_resolved_profile_result is None
-    ):
+    if visual_profiles and pre_resolved_profile_result is None:
         candidate_names = [
             str(name or "").strip()
             for name, value in visual_profiles.items()
             if str(name or "").strip()
             and isinstance(value, dict)
-            and len(value.get("profiles") or []) > 1
         ]
         if candidate_names:
             if progress:
-                await progress(4, "profile_resolve", "캐릭터 프로필 최전단 결정")
+                await progress(4, "profile_resolve", "등장인물·프로필 최전단 결정")
             profile_output, profile_result = await _run_profile_resolution(
                 profile_system=prompts.get("profile_resolve", ""),
                 segmented_current=segmented_current,
@@ -10287,6 +10796,7 @@ async def build_from_context(
                 candidate_names=candidate_names,
                 previous_state=(persistent_history or {}).get("state_before") or {},
                 visual_profiles=visual_profiles,
+                profile_inference_enabled=profile_resolve_enabled,
                 stream_notify=stream_notify,
             )
     profile_events = list(profile_result.get("profile_events") or [])
@@ -10308,6 +10818,45 @@ async def build_from_context(
         str((persistent_history or {}).get("current_message_id") or ""),
         visual_profiles,
     )
+    resolved_current_names = [
+        str(item.get("name") or "").strip()
+        for item in profile_result.get("current_characters") or []
+        if isinstance(item, dict) and str(item.get("name") or "").strip()
+    ]
+    # 정상 서버 경로에서는 선행 등장인물·프로필 단계가 CURRENT 명단을 확정한다.
+    # 테스트나 저수준 직접 호출처럼 그 선행 결과 자체가 없는 경우에만 기존 CALL1
+    # 등장인물 필드를 읽게 하여 호출 API의 하위 호환성을 유지한다.
+    has_pre_resolved_characters = bool(resolved_current_names)
+    call1_character_names = (
+        resolved_current_names
+        if has_pre_resolved_characters
+        else [
+            name.strip()
+            for name in str(backtranslate_names or extra_names or "").split(",")
+            if name.strip()
+        ]
+    )
+    call1_result = {
+        "reference_assignments": [],
+        "history_characters": list(profile_result.get("history_characters") or []),
+        "current_characters": deepcopy(
+            profile_result.get("current_characters") or []
+        ),
+        "wardrobe_events": [],
+        "profile_events": [],
+        "initial_visual_bases": [],
+        "visual_base_events": [],
+        "hairstyle_events": [],
+        "unresolved_references": list(profile_result.get("uncertainties") or []),
+        "validation_warnings": list(
+            profile_result.get("validation_warnings") or []
+        ),
+        "fallback_errors": [],
+        "validation_errors": list(
+            profile_result.get("validation_warnings") or []
+        ),
+        "fallback_required": bool(profile_result.get("uncertainties") or []),
+    }
     if toggles.get("call1_enabled"):
         # CALL1에는 lb.extra 중 시스템 프롬프트를 빼고 캐릭터 복장 정보만 넘긴다.
         # enhance 프롬프트의 {lb_extra_costume} 자리표시자를 치환한다.
@@ -10323,7 +10872,10 @@ async def build_from_context(
                 "\n\n# PRESELECTED PROFILE AUTHORITY\n"
                 + selected_profile_authority
             )
-        call1_system = call1_system.replace("{character_names}", str(backtranslate_names or extra_names or ""))
+        call1_system = call1_system.replace(
+            "{character_names}",
+            ", ".join(call1_character_names),
+        )
         call1_system = call1_system.replace(
             "{character_state}",
             json.dumps(
@@ -10367,134 +10919,91 @@ async def build_from_context(
 
         if not parallel_call1_used:
             call1_messages = [{"role": "system", "content": call1_system}]
-            if persistent_history:
-                call1_messages.append({
-                    "role": "user",
-                    "content": (
-                        "# PAST HISTORY\n"
-                        + (history_text or "(empty)")
-                        + "\n\n# CURRENT CONTEXT SEGMENTS\n"
-                        + segmented_current
-                    ),
-                })
-            else:
-                call1_messages.extend({
-                    "role": "assistant" if item["role"] == "char" else "user",
-                    "content": _strip_nodes(item["data"]),
-                } for item in context_slice)
-                call1_messages.append({"role": "user", "content": "---\n[Current Response]\n" + enhanced})
+            call1_messages.append({
+                "role": "user",
+                "content": (
+                    "# PAST HISTORY\n"
+                    + (history_text or "(empty)")
+                    + "\n\n# CURRENT CONTEXT SEGMENTS\n"
+                    + segmented_current
+                ),
+            })
+
+            def validate_call1_events(result):
+                raw = _json_object_from_text(result)
+                if raw is None:
+                    return False, "CALL1 JSON object 없음"
+                if not isinstance(raw.get("wardrobe_events", []), list):
+                    return False, "CALL1 wardrobe_events가 list가 아님"
+                if not isinstance(raw.get("hairstyle_events", []), list):
+                    return False, "CALL1 hairstyle_events가 list가 아님"
+                return True, ""
+
             call1_output = await _call_pipeline_llm(
                 "CALL1",
                 _normalize_messages(call1_messages),
                 stream_notify,
+                result_validator=validate_call1_events,
+                json_mode=True,
             )
 
-        if persistent_history or parallel_call1_used:
-            parsed_call1 = parse_call1_analysis(
-                call1_output,
-                enhanced,
-                current_segments,
-                str(backtranslate_names or extra_names or ""),
-                history_context=history_text,
-                visual_profiles=visual_profiles,
+        parsed_call1 = parse_call1_analysis(
+            call1_output,
+            enhanced,
+            current_segments,
+            ", ".join(call1_character_names),
+            history_context=history_text,
+            visual_profiles=visual_profiles,
+            resolved_characters=(
+                profile_result if has_pre_resolved_characters else None
+            ),
+        )
+        if parsed_call1 is None:
+            balanced_fallback = True
+            print(
+                "[ILLUST_CONTEXT:CALL1] 구조화 분석 실패로 균형형 CALL2 폴백 사용"
             )
-            if parsed_call1 is None:
-                balanced_fallback = True
-                print(
-                    "[ILLUST_CONTEXT:CALL1] 구조화 분석 실패로 균형형 CALL2 폴백 사용"
-                )
-            else:
-                call1_result = parsed_call1
-                if parallel_merge_warnings:
-                    parsed_call1["validation_warnings"].extend(parallel_merge_warnings)
-                    parsed_call1["validation_errors"].extend(parallel_merge_warnings)
-                    print(
-                        f"[ILLUST_CONTEXT:CALL1_PARALLEL] shard 병합 경고(개별 항목 폐기): "
-                        f"warnings={parallel_merge_warnings}"
-                    )
-                if parallel_merge_fallback_errors:
-                    parsed_call1["fallback_errors"].extend(
-                        parallel_merge_fallback_errors
-                    )
-                    parsed_call1["validation_errors"].extend(
-                        parallel_merge_fallback_errors
-                    )
-                    parsed_call1["fallback_required"] = True
-                    print(
-                        f"[ILLUST_CONTEXT:CALL1_PARALLEL] shard 병합 치명 오류: "
-                        f"errors={parallel_merge_fallback_errors}"
-                    )
-                wardrobe_events = list(parsed_call1.get("wardrobe_events") or [])
-                if parsed_call1.get("profile_events"):
-                    print(
-                        "[ILLUST_CONTEXT:CALL1] 전용 단계 이전 CALL1 프로필 출력은 "
-                        f"사용하지 않음: events={len(parsed_call1['profile_events'])}"
-                    )
-                hairstyle_events = list(parsed_call1.get("hairstyle_events") or [])
-                confirmed_profile_names = [
-                    str(item.get("name") if isinstance(item, dict) else item or "").strip()
-                    for item in parsed_call1.get("current_characters") or []
-                ]
-                profile_result = _filter_profile_result_for_characters(
-                    profile_result,
-                    confirmed_profile_names,
-                )
-                profile_events = list(profile_result.get("profile_events") or [])
-                initial_visual_bases = list(
-                    profile_result.get("initial_visual_bases") or []
-                )
-                visual_base_events = list(
-                    profile_result.get("visual_base_events") or []
-                )
-                resolved_current, assignment_errors, reference_variables = apply_reference_assignments(
-                    enhanced,
-                    current_segments,
-                    parsed_call1.get("reference_assignments") or [],
-                )
-                if assignment_errors:
-                    parsed_call1["validation_warnings"].extend(assignment_errors)
-                    parsed_call1["validation_errors"].extend(assignment_errors)
-                    print(
-                        f"[ILLUST_CONTEXT:CALL1] 지칭 치환 경고(개별 항목 폐기): "
-                        f"warnings={assignment_errors}"
-                    )
-                balanced_fallback = bool(parsed_call1.get("fallback_required"))
-                validation_warnings = parsed_call1.get("validation_warnings") or []
-                if validation_warnings:
-                    print(
-                        f"[ILLUST_CONTEXT:CALL1] 복구 가능한 검증 경고: "
-                        f"warnings={validation_warnings}"
-                    )
-                if balanced_fallback:
-                    print(
-                        f"[ILLUST_CONTEXT:CALL1] 균형형 폴백 조건 감지: "
-                        f"errors={parsed_call1.get('fallback_errors') or []}"
-                    )
-                enhanced = resolved_current
-                slotted, slotted_assignment_errors = apply_reference_assignments_to_slotted(
-                    slotted,
-                    current_segments,
-                    parsed_call1.get("reference_assignments") or [],
-                )
-                if slotted_assignment_errors:
-                    parsed_call1["validation_warnings"].extend(
-                        slotted_assignment_errors
-                    )
-                    parsed_call1["validation_errors"].extend(slotted_assignment_errors)
-                    print(
-                        f"[ILLUST_CONTEXT:CALL1] 슬롯 보존 지칭 치환 경고: "
-                        f"warnings={slotted_assignment_errors}"
-                    )
-
         else:
-            enhanced = _splice_enhancements(enhanced, call1_output)
+            call1_result = parsed_call1
+            if parallel_merge_warnings:
+                parsed_call1["validation_warnings"].extend(parallel_merge_warnings)
+                parsed_call1["validation_errors"].extend(parallel_merge_warnings)
+                print(
+                    f"[ILLUST_CONTEXT:CALL1_PARALLEL] shard 병합 경고(개별 항목 폐기): "
+                    f"warnings={parallel_merge_warnings}"
+                )
+            if parallel_merge_fallback_errors:
+                parsed_call1["fallback_errors"].extend(
+                    parallel_merge_fallback_errors
+                )
+                parsed_call1["validation_errors"].extend(
+                    parallel_merge_fallback_errors
+                )
+                parsed_call1["fallback_required"] = True
+                print(
+                    f"[ILLUST_CONTEXT:CALL1_PARALLEL] shard 병합 치명 오류: "
+                    f"errors={parallel_merge_fallback_errors}"
+                )
+            wardrobe_events = list(parsed_call1.get("wardrobe_events") or [])
+            hairstyle_events = list(parsed_call1.get("hairstyle_events") or [])
+            balanced_fallback = bool(parsed_call1.get("fallback_required"))
+            validation_warnings = parsed_call1.get("validation_warnings") or []
+            if validation_warnings:
+                print(
+                    f"[ILLUST_CONTEXT:CALL1] 복구 가능한 검증 경고: "
+                    f"warnings={validation_warnings}"
+                )
+            if balanced_fallback:
+                print(
+                    f"[ILLUST_CONTEXT:CALL1] 균형형 폴백 조건 감지: "
+                    f"errors={parsed_call1.get('fallback_errors') or []}"
+                )
     else:
         print("[ILLUST_CONTEXT:CALL1] 토글로 비활성화됨")
         balanced_fallback = bool(persistent_history)
 
-    # CALL1이 실제 CURRENT 등장 인물을 확정한 뒤에는 최전단 선택 결과도 같은
-    # 집합으로 다시 좁힌다. CALL2 정상/폴백 경로 모두 이 권위 블록과 교체 사전을
-    # 직접 소비하므로 프로필을 독립적으로 재선택하지 않는다.
+    # 선행 단계가 CURRENT 등장인물과 프로필을 이미 확정했다. CALL1은 이 결과를
+    # 재선택하거나 본문 지칭을 치환하지 않고 복장·헤어 사건만 추가한다.
     (
         selected_profile_authority,
         effective_profile_reference,

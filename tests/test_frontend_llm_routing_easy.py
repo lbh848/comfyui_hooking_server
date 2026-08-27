@@ -80,9 +80,10 @@ def test_easy_routing_bulk_applies_json_on_or_off_only_to_json_tasks() -> None:
         "character_maker_draft",
         "character_maker_feedback",
         "danbooru_tag_search",
-        "illustration_original_asset",
-        "illustration_original_asset_recovery",
-        "illustration_profile_resolve",
+            "illustration_original_asset",
+            "illustration_original_asset_recovery",
+            "illustration_call1",
+            "illustration_profile_resolve",
         "illustration_multi_char_mask",
     }
 

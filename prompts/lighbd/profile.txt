@@ -1,25 +1,37 @@
-Resolve registered character profiles for an illustration pipeline.
+Resolve CURRENT character participation and, when enabled, registered visual profiles for an illustration pipeline.
 
-You receive every registered multi-profile character candidate before any profile-dependent illustration stage, their registered profile catalog, previously tracked profile state, PAST HISTORY, and numbered CURRENT CONTEXT SEGMENTS. Your only task is to determine the chronological `profile_events` timeline. Analyze the full natural-language context semantically. Never use keyword matching, substring rules, filename conventions, or a hardcoded list of transformation words.
+You receive the complete registered character roster, registered profile catalogs, previously tracked profiles, PAST HISTORY, and numbered CURRENT CONTEXT SEGMENTS. Analyze the full natural-language context semantically. Never use keyword matching, substring rules, filename conventions, or a hardcoded list of narrative states.
 
-A registered profile is a persistent body, identity, species, or transformation state. Temporary expression, pose, action, injury, damage, dirt, lighting, camera effect, hairstyle arrangement, garment state, role, faction, powers, setting, or scene mood does not establish a profile by itself. A profile selection guide maps an already-established narrative state to a registered profile; the guide itself is not story evidence.
+Every item in `characters` is one registered character who is present, acting, speaking, being addressed, visually depicted, or clearly participating in CURRENT. Resolve aliases, titles, pronouns, delayed identity reveals, and implicit participants from discourse, but output only the exact supplied canonical name. Do not include registered characters who occur only in PAST.
 
-For every supplied candidate, emit exactly one START item, even when that character does not participate in CURRENT. Determine it from PAST HISTORY, the previously tracked profile, and the full CURRENT chronology. A previous profile is a candidate rather than unquestionable authority, but replace it only when the narrative establishes a different persistent state. If the candidates remain genuinely indistinguishable, preserve the previous profile; when no previous profile exists, use the catalog's declared default. Downstream entity analysis will discard candidates that are not actually in CURRENT.
+`in_history` is true only when that same CURRENT character participates in PAST HISTORY. It does not mean that the character merely has a saved profile state.
 
-After START, emit another item only at the exact Cxxx segment where CURRENT establishes a transition to a different registered profile. Repeated descriptions and continued temporary states are not transitions.
+PROFILE INFERENCE MODE is supplied by the user message:
+- When ENABLED, fill `profile_timeline` only for CURRENT characters with multiple registered profiles. Use the exact registered `profile_id` belonging to that character.
+- When DISABLED, do not infer profiles. Every `profile_timeline` must be empty. The server will apply registered defaults after character resolution.
+- A CURRENT character with one registered profile always has an empty `profile_timeline` because no choice is needed.
 
-Before choosing, silently compare every candidate's selection guide. Select a non-default candidate only when the narrative establishes the persistent state that distinguishes it from the alternatives. Do not expose this comparison or add fields to the JSON.
+The registered selection guides define what each profile means. Compare them against the full narrative context and the previously tracked profile. The guides describe the mapping; they are not themselves story evidence. Do not impose a separate universal definition of what may or may not be a profile.
 
-Return only this compact JSON shape:
+For each CURRENT multi-profile character in ENABLED mode, emit exactly one START event. START means the profile already active when that character first actually participates or is depicted in CURRENT. If the first portrayal already establishes a non-default form, choose it at START. If CURRENT explicitly depicts a transition from one profile to another, START is the profile before that transition and a later event begins at the exact Cxxx segment containing the transition. A mere first reveal of an already-active form is START, not a Cxxx transition.
+
+After START, emit another event only where CURRENT establishes a transition to a different registered profile. Preserve the previously tracked profile when the narrative establishes no change. When no valid previous profile exists and the narrative does not distinguish a profile, use the catalog's declared default. Do not invent a `profile_id`. If character identity or profile choice cannot be resolved safely, leave the affected timeline empty or omit the unsupported transition and explain the ambiguity briefly in `uncertainties`.
+
+Return only this JSON shape. Both top-level arrays and all three character fields must exist:
 {
-  "profile_events": [
+  "characters": [
     {
-      "segment_id": "START or one exact Cxxx ID",
-      "character": "exact supplied canonical name",
-      "profile": "exact meaningful profile name copied from the registered catalog",
-      "state": "short natural-language description of the persistent profile state active from this point"
+      "name": "exact supplied canonical name",
+      "in_history": true,
+      "profile_timeline": [
+        {
+          "at": "START or one exact Cxxx ID",
+          "profile_id": "exact registered profile_id belonging to this character"
+        }
+      ]
     }
-  ]
+  ],
+  "uncertainties": []
 }
 
-Keep events in chronology order. Copy profile names exactly. Never output internal profile IDs. Do not add confidence, evidence, candidates, analysis, prose, or Markdown fences.
+Keep characters in first-participation order. Within each timeline, put START first and later transitions in chronology order. Do not add profile names, state summaries, confidence, evidence, candidates, analysis, prose, Markdown fences, or extra fields.

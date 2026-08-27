@@ -57,7 +57,7 @@ def test_generation_settings_are_grouped_by_pipeline_call_and_output_stage():
     assert "key: 'scene', title: '장면 구성'" not in FRONTEND
     assert "key: 'context', title: '컨텍스트와 연출'" not in FRONTEND
     assert "key: 'compatibility', title: '호환성'" not in FRONTEND
-    assert "파이프라인의 CALL1 인물·복장 분석 토글에서 설정합니다." in FRONTEND
+    assert "파이프라인의 CALL1 복장·헤어 분석 토글에서 설정합니다." in FRONTEND
     assert "CALL2 TOON 파싱 실패 시 자동으로 교정 단계에 진입합니다." in FRONTEND
     assert "Comfy 공급자와 V3 형식에서 한 장면에 캐릭터가 2~3명일 때" in FRONTEND
     assert "prompts/lighbd/multi_char_mask.txt" in FRONTEND

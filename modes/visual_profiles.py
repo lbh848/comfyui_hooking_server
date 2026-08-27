@@ -656,11 +656,12 @@ def build_natural_profile_catalog(effective_profiles: dict[str, dict]) -> str:
         ]
         for index, profile in enumerate(profiles):
             guide = _clean_text(profile.get("selection_guide")) or "별도 선택 설명 없음."
+            profile_id = _clean_text(profile.get("id"))
             names = visual_profile_names(profile)
             rendered_names = ", ".join(f"`{name}`" for name in names) or f"`카드 {index + 1}`"
             lines.append(
-                f"- 카드 [{index + 1}] — profile에 복사할 수 있는 정확한 이름: "
-                f"{rendered_names}. 선택 기준: {guide}"
+                f"- 카드 [{index + 1}] — 출력할 정확한 profile_id: `{profile_id}`. "
+                f"사람이 읽는 등록 이름: {rendered_names}. 선택 기준: {guide}"
             )
             lines.append(
                 "  이 카드에는 별도 복장 선택 축이 없으며, 카드 자체의 "
