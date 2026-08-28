@@ -282,12 +282,13 @@ def build_selection_messages(
             f"chars={len(instruction)}, max={MAX_ORIGINAL_ASSET_INSTRUCTION_CHARS}"
         )
         instruction = instruction[:MAX_ORIGINAL_ASSET_INSTRUCTION_CHARS]
-    system = """You are a one-step original image asset selector. Your only selection target is [CURRENT RESPONSE WITH INSERTION SLOTS]. The asset command instructions define permitted command grammar and IDs; they are not evidence that a character, outfit, form, emotion, or action occurs in the story. No uploaded-file list is provided, so do not infer availability from one. Never select an asset for {{user}} when the instructions prohibit it. [PRESELECTED PROFILE AUTHORITY] was resolved before this stage and is authoritative for each character's chronological form, appearance, and profile-default outfit. Never choose a different profile independently.
+    system = """You are a one-step original image asset selector. Your only selection target is [CURRENT RESPONSE WITH INSERTION SLOTS]. The asset command instructions define permitted command grammar and IDs; they are not evidence that a character, outfit, form, emotion, or action occurs in the story. No uploaded-file list is provided, so do not infer availability from one. Never select an asset for {{user}} when the instructions prohibit it. [PRESELECTED PROFILE AUTHORITY] was resolved before this stage. It fixes each character's chronological semantic form/state and appearance; preserve those facts and never infer a different transformation or profile state independently. A profile heading or profile name is opaque internal metadata: it is not an asset command, is not wardrobe evidence, and must never be copied or lexically matched to a command ID. Its profile-default outfit is only a fallback when the narrative evidence below leaves the current wardrobe unstated.
 
 Apply this evidence priority whenever sources differ:
 1. The local passage immediately around the candidate slot in the current response.
 2. Earlier passages in the same active scene of the current response.
 3. Recent conversation context, only to carry forward a fact that the current response leaves unstated.
+4. The profile-default outfit, only when all narrative sources above leave the current wardrobe unstated.
 The current response always overrides recent context. Asset command instructions never establish story facts.
 
 Eligibility rules:
@@ -297,7 +298,9 @@ Eligibility rules:
 
 Command-selection rules:
 - Match the command to the exact eligible subject at the chosen slot.
-- Determine the subject's outfit/form from the current local scene first. Use carried-forward context only when the current response truly leaves it unstated and has not changed it. Never substitute a default, habitual, more familiar, or merely available outfit/form.
+- Resolve the preselected profile's semantic form/state and the subject's current wardrobe as separate decisions. Preserve the profile's form/state, but determine wardrobe from the current local scene first. Use carried-forward context only when the current response truly leaves wardrobe unstated and has not changed it, then use the profile-default outfit only if narrative context still provides no wardrobe. Never substitute a habitual, more familiar, or merely available outfit.
+- Never treat a profile heading/name, or words shared between that identifier and a command ID, as evidence of the current wardrobe. Compare the complete scene, profile state, and command meanings semantically; do not select by keyword or string similarity.
+- When the asset instructions provide multiple wardrobe variants compatible with the same semantic form/state, choose the variant matching the current narrative wardrobe. Selecting that wardrobe variant does not constitute changing the preselected profile.
 - Match the state suffix conservatively to an expression or action actually established at that moment. Do not exaggerate a smile or smirk into a crazy smile, infer an unseen action, or use a nearby emotional label without textual support.
 - Apply every special-situation condition in the user's instructions literally. Compose and copy only command IDs permitted by those instructions.
 - Treat one continuous, unchanged pose/expression/action as one visual beat. Do not spend multiple selections on near-duplicate states from the same beat. Select the same subject again only after the response establishes a meaningful visual change.
@@ -554,8 +557,8 @@ def build_recovery_messages(
             "Allowed existing candidates:",
             candidates or "- (none)",
         ]))
-    system = """You repair rejected original image asset selections. [PRESELECTED PROFILE AUTHORITY] was resolved before asset selection and remains authoritative for form, appearance, and profile-default outfit. Never choose a different profile independently.
-For each rejected slot, read the original asset instructions and conversation context, then choose the contextually correct src from that slot's Allowed existing candidates. Candidate lists contain real uploaded command IDs and are exhaustive for this recovery step.
+    system = """You repair rejected original image asset selections. [PRESELECTED PROFILE AUTHORITY] was resolved before asset selection. Preserve its chronological semantic form/state and appearance, but treat its profile-default outfit only as a fallback when the narrative leaves wardrobe unstated. A profile heading or profile name is opaque internal metadata: it is not an asset command, is not wardrobe evidence, and must never be copied or lexically matched to a command ID.
+For each rejected slot, read the original asset instructions and conversation context, then choose the contextually correct src from that slot's Allowed existing candidates. Resolve semantic form/state and current wardrobe separately. The local current-response passage determines wardrobe first, followed by earlier passages in the same active scene, carried-forward recent context when still unchanged, and only then the profile-default outfit. When multiple wardrobe variants are compatible with the same semantic form/state, choosing the variant matching the narrative wardrobe does not change the preselected profile. Reason from the complete context and command meanings, never keyword or string similarity. Candidate lists contain real uploaded command IDs and are exhaustive for this recovery step.
 
 Return JSON only with this exact machine-consumed shape:
 {"selections":[{"src":"<one exact allowed candidate>","slot":0}]}

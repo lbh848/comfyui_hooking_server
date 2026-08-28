@@ -140,7 +140,7 @@ def test_selector_prompt_requires_present_subject_and_post_evidence_slot() -> No
     assert "only selection target is [CURRENT RESPONSE WITH INSERTION SLOTS]" in system
     assert "physically present in the active narrative scene" in system
     assert "visualized in a brief recollection" in system
-    assert "Never substitute a default, habitual" in system
+    assert "Never substitute a habitual, more familiar" in system
     assert "Do not exaggerate a smile or smirk into a crazy smile" in system
     assert "after the paragraph above it and before the paragraph below it" in system
     assert "Do not spend multiple selections on near-duplicate states" in system
@@ -150,6 +150,73 @@ def test_selector_prompt_requires_present_subject_and_post_evidence_slot() -> No
     assert "Aoi_School" in messages[1]["content"]
     assert "profile default outfit: school uniform" in messages[1]["content"]
     assert "[REQUESTED MAXIMUM OUTPUT COUNT]" in messages[1]["content"]
+
+
+def test_selector_prompt_keeps_profile_identifier_separate_from_scene_outfit() -> None:
+    messages = original_assets.build_selection_messages(
+        instruction=(
+            "Hoshino Yui: Hoshino_Normal_Casual, Hoshino_Normal_School\n"
+            "Normal emotions: smile"
+        ),
+        conversation_context="Hoshino remains in the same after-school scene.",
+        target_slotted=(
+            "Hoshino walks out of the school gate in her school uniform.\n\n"
+            "[Slot 12]\n\n"
+            "She looks back and smiles."
+        ),
+        allowed_slots=[12],
+        requested_count=1,
+        profile_authority=(
+            "### START · Hoshino · Hoshino_Normal_Casual\n"
+            "- profile state: ordinary untransformed state\n"
+            "- authoritative appearance: black hair, yellow eyes\n"
+            "- profile default outfit: school uniform"
+        ),
+    )
+
+    system = messages[0]["content"]
+    prompt_text = "\n".join(message["content"] for message in messages)
+    assert "profile name is opaque internal metadata" in system
+    assert "not wardrobe evidence" in system
+    assert "must never be copied or lexically matched to a command ID" in system
+    assert "semantic form/state and the subject's current wardrobe as separate decisions" in system
+    assert "Selecting that wardrobe variant does not constitute changing" in system
+    assert "profile-default outfit, only when all narrative sources above" in system
+    assert "Hoshino_Normal_Casual" in prompt_text
+    assert "Hoshino_Normal_School" in prompt_text
+    assert "school uniform" in prompt_text
+
+
+def test_recovery_prompt_keeps_profile_identifier_separate_from_scene_outfit() -> None:
+    messages = original_assets.build_recovery_messages(
+        instruction="Hoshino: Hoshino_Normal_Casual, Hoshino_Normal_School",
+        conversation_context="The after-school scene continues without a wardrobe change.",
+        target_slotted=(
+            "Hoshino is still wearing her school uniform.\n\n"
+            "[Slot 12]\n\n"
+            "She smiles."
+        ),
+        recovery_items=[{
+            "slot": 12,
+            "rejected_src": "Hoshino_Normal_Casual_smile.webp",
+            "error": "uploaded file missing",
+            "candidates": [
+                "Hoshino_Normal_Casual_smile.webp",
+                "Hoshino_Normal_School_smile.webp",
+            ],
+        }],
+        profile_authority=(
+            "### START · Hoshino · Hoshino_Normal_Casual\n"
+            "- profile state: ordinary untransformed state\n"
+            "- profile default outfit: school uniform"
+        ),
+    )
+
+    system = messages[0]["content"]
+    assert "profile name is opaque internal metadata" in system
+    assert "Resolve semantic form/state and current wardrobe separately" in system
+    assert "choosing the variant matching the narrative wardrobe does not change" in system
+    assert "never keyword or string similarity" in system
 
 
 def test_original_asset_context_excludes_current_target_from_recent_context() -> None:
