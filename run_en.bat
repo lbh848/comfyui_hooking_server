@@ -2,6 +2,8 @@
 setlocal
 cd /d %~dp0
 chcp 65001 >nul 2>&1
+set "PYTHONUTF8=1"
+set "PYTHONIOENCODING=utf-8"
 
 set "UV_VERSION=0.11.8"
 set "UV_TOOL_DIR=%CD%\.tools\uv-%UV_VERSION%"
