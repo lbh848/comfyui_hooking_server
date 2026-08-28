@@ -17208,6 +17208,7 @@ async def _run_auto_feedback_review(
 def _compose_auto_feedback_edit_direction(
     goal: str,
     previous_review: dict | None,
+    previous_edit_plan: str = "",
 ) -> str:
     if not previous_review:
         return goal
@@ -17224,6 +17225,19 @@ def _compose_auto_feedback_edit_direction(
         parts.extend(["아직 충족되지 않은 내용:", remaining_gaps])
     if next_direction:
         parts.extend(["다음 수정 지시:", next_direction])
+    previous_edit_plan = str(previous_edit_plan or "").strip()
+    if previous_edit_plan:
+        parts.extend([
+            "",
+            "직전 회차에서 실제 적용한 수정 전략:",
+            previous_edit_plan,
+            "",
+            (
+                "위 전략을 적용한 결과가 바로 위의 직전 검수입니다. 실패한 전략을 표현만 "
+                "바꿔 반복하지 말고, 현재 이미지와 프롬프트를 다시 읽어 다른 원인 또는 "
+                "다른 장면 구성으로 수정해 주세요."
+            ),
+        ])
     parts.extend([
         "",
         "위 검수를 자연어 문맥 그대로 반영해 최종 목표에 더 가까워지도록 프롬프트를 수정해 주세요.",
@@ -17255,6 +17269,7 @@ async def _run_illustration_auto_feedback_job(job_id: str, body: dict) -> None:
         camera_control_present = "camera_control" in body
         camera_control = copy.deepcopy(body.get("camera_control"))
         previous_review = None
+        previous_edit_plan = ""
         best = None
 
         await _update_auto_feedback_job(
@@ -17268,6 +17283,7 @@ async def _run_illustration_auto_feedback_job(job_id: str, body: dict) -> None:
             round_direction = _compose_auto_feedback_edit_direction(
                 str(job.get("goal") or ""),
                 previous_review,
+                previous_edit_plan,
             )
             await _update_auto_feedback_job(
                 job,
@@ -17405,6 +17421,7 @@ async def _run_illustration_auto_feedback_job(job_id: str, body: dict) -> None:
                 return
 
             previous_review = review
+            previous_edit_plan = edit_plan
             current_name = generated_backup_name
             current_positive = modified_positive
             current_negative = modified_negative

@@ -227,6 +227,9 @@ async def test_auto_feedback_preserves_failed_round_backups_until_goal_is_met(
         assert job["rounds"][0]["edit_direction"] == "1회 구체적인 프롬프트 수정 계획"
         assert job["rounds"][1]["edit_direction"] == "2회 구체적인 프롬프트 수정 계획"
         assert "표정을 목표에 맞게 수정하세요." in job["rounds"][1]["llm_instruction"]
+        assert "직전 회차에서 실제 적용한 수정 전략:" in job["rounds"][1]["llm_instruction"]
+        assert "1회 구체적인 프롬프트 수정 계획" in job["rounds"][1]["llm_instruction"]
+        assert "실패한 전략을 표현만 바꿔 반복하지 말고" in job["rounds"][1]["llm_instruction"]
         assert job["current_direction"] == job["rounds"][1]["edit_direction"]
         assert job["best_backup_name"] == "generated-2"
         assert server._auto_feedback_public_job(job)["preserved_backup_names"] == [
