@@ -3065,14 +3065,19 @@ def parse_profile_resolution(
             continue
         seen_names.add(folded)
 
-        in_history = item.get("in_history")
-        if not isinstance(in_history, bool):
-            warning = (
-                f"in_history가 bool이 아니어서 false 사용: "
-                f"character={name}, value={in_history!r}"
-            )
-            warnings.append(warning)
-            print(f"[ILLUST_CONTEXT:PROFILE_RESOLVE] {warning}")
+        if profile_inference_enabled:
+            in_history = item.get("in_history")
+            if not isinstance(in_history, bool):
+                warning = (
+                    f"in_history가 bool이 아니어서 false 사용: "
+                    f"character={name}, value={in_history!r}"
+                )
+                warnings.append(warning)
+                print(f"[ILLUST_CONTEXT:PROFILE_RESOLVE] {warning}")
+                in_history = False
+        else:
+            # CHARACTER-RESOLVE sees CURRENT only. Prior participation is derived
+            # deterministically from the server's tracked state after this parse.
             in_history = False
 
         raw_timeline = item.get("profile_timeline")
@@ -3252,6 +3257,47 @@ def _empty_profile_result() -> dict:
         "validation_warnings": [],
         "validation_errors": [],
     }
+
+
+def _mark_current_characters_with_tracked_history(
+    character_result: dict,
+    previous_state: dict | None,
+    visual_profiles: dict[str, dict] | None,
+) -> dict:
+    """Derive prior participation without exposing PAST narrative to the LLM."""
+    tracked_names = {
+        str(value.get("canonical_name") or key).strip().casefold()
+        for key, value in (
+            previous_state.items() if isinstance(previous_state, dict) else []
+        )
+        if isinstance(value, dict)
+        and str(value.get("canonical_name") or key).strip()
+    }
+    characters = []
+    for item in (character_result or {}).get("characters") or []:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        if not name:
+            continue
+        character = deepcopy(item)
+        character["in_history"] = name.casefold() in tracked_names
+        characters.append(character)
+
+    history_names = [
+        item["name"] for item in characters if bool(item.get("in_history"))
+    ]
+    print(
+        "[ILLUST_CONTEXT:CHARACTER_RESOLVE] 서버 추적 상태로 과거 참여 표시: "
+        f"current={[item['name'] for item in characters]}, history={history_names}"
+    )
+    return _materialize_profile_character_records(
+        characters,
+        visual_profiles,
+        uncertainties=list((character_result or {}).get("uncertainties") or []),
+        warnings=list((character_result or {}).get("validation_warnings") or []),
+        repair_requests=list((character_result or {}).get("repair_requests") or []),
+    )
 
 
 def _default_profile_result(
@@ -9978,7 +10024,6 @@ async def _run_resolution_stage(
     segmented_current: str,
     current_context: str,
     current_segments: dict[str, dict],
-    history_text: str,
     candidate_names: list[str],
     previous_state: dict,
     visual_profiles: dict[str, dict] | None,
@@ -10045,14 +10090,12 @@ async def _run_resolution_stage(
         user_content = (
             "# COMPLETE REGISTERED CHARACTER ROSTER\n"
             + json.dumps(selected_names, ensure_ascii=False)
-            + "\n\n# PAST HISTORY (IDENTITY AND in_history ONLY)\n"
-            + (history_text or "(empty)")
             + "\n\n# FULL CURRENT CONTEXT SEGMENTS\n"
             + segmented_current
             + "\n\n# FINAL CANONICAL NAME OUTPUT AUTHORITY\n"
-            "The preceding PAST and CURRENT narrative is identity evidence only. "
-            "Its name spellings, aliases, titles, and localized forms are never valid "
-            "output values. Select the CURRENT participants semantically, then copy every "
+            "The preceding CURRENT narrative is the only participation and identity "
+            "evidence. Its name spellings, aliases, titles, and localized forms are never "
+            "valid output values. Select the CURRENT participants semantically, then copy every "
             "characters[].name character-for-character from this exact registered-name "
             "list and nowhere else:\n"
             + json.dumps(selected_names, ensure_ascii=False)
@@ -10060,8 +10103,8 @@ async def _run_resolution_stage(
             "If a value is not an exact member, replace it with the exact registered name "
             "when identity is established; otherwise omit the item and add an uncertainty. "
             "Return only this JSON shape:\n"
-            '{"characters":[{"name":"exact registered name from the list above",'
-            '"in_history":true}],"uncertainties":[]}'
+            '{"characters":[{"name":"exact registered name from the list above"'
+            '}],"uncertainties":[]}'
         )
     messages = _normalize_messages([
         {"role": "system", "content": str(profile_system or "").strip()},
@@ -10221,16 +10264,7 @@ async def _run_resolution_stage(
             )
             return valid, reason
 
-        repair_context = (
-            "# FULL CURRENT CONTEXT SEGMENTS\n" + segmented_current
-            if profile_inference_enabled
-            else (
-                "# PAST HISTORY FOR IDENTITY CONTINUITY\n"
-                + (history_text or "(empty)")
-                + "\n\n# FULL CURRENT CONTEXT SEGMENTS\n"
-                + segmented_current
-            )
-        )
+        repair_context = "# FULL CURRENT CONTEXT SEGMENTS\n" + segmented_current
         repair_targets = [
             {
                 "source_index": int(issue.get("source_index") or 0),
@@ -10415,11 +10449,11 @@ async def _run_resolution_stage(
     else:
         normalized_characters = [
             {
-                **deepcopy(item),
+                "name": str(item.get("name") or "").strip(),
                 "profile_timeline": [],
             }
             for item in normalized_raw.get("characters") or []
-            if isinstance(item, dict)
+            if isinstance(item, dict) and str(item.get("name") or "").strip()
         ]
     parse_output = json.dumps({
         "characters": normalized_characters,
@@ -10572,6 +10606,15 @@ async def _run_resolution_stage(
             previous_state,
             default_only=False,
         )
+    else:
+        raw_output = json.dumps({
+            "characters": [
+                {"name": str(item.get("name") or "").strip()}
+                for item in parsed.get("characters") or []
+                if isinstance(item, dict) and str(item.get("name") or "").strip()
+            ],
+            "uncertainties": list(parsed.get("uncertainties") or []),
+        }, ensure_ascii=False)
     current_result_names = [
         str(item.get("name") or "").strip()
         for item in parsed.get("characters") or []
@@ -10592,19 +10635,17 @@ async def _run_character_resolution(
     segmented_current: str,
     current_context: str,
     current_segments: dict[str, dict],
-    history_text: str,
     candidate_names: list[str],
     visual_profiles: dict[str, dict] | None,
     stream_notify,
     history_ids_sink: list[str] | None = None,
 ) -> tuple[str, dict]:
-    """Always-on CURRENT participation and in_history observation."""
+    """Always-on CURRENT participation observation without PAST narrative."""
     return await _run_resolution_stage(
         profile_system=character_system,
         segmented_current=segmented_current,
         current_context=current_context,
         current_segments=current_segments,
-        history_text=history_text,
         candidate_names=candidate_names,
         previous_state={},
         visual_profiles=visual_profiles,
@@ -10663,7 +10704,6 @@ async def _run_profile_resolution(
             segmented_current=segmented_current,
             current_context=current_context,
             current_segments=current_segments,
-            history_text="",
             candidate_names=[name],
             previous_state=previous_state,
             visual_profiles=job.get("profiles") or {},
@@ -10894,13 +10934,6 @@ async def resolve_profiles_before_generation(
         raise RuntimeError("CURRENT 등장인물 판별용 최신 CHAR 서사를 찾지 못했습니다")
     current_context = _strip_nodes(narrative)
     segmented_current, current_segments = _segment_current_context(current_context)
-    if isinstance(history_plan, dict):
-        history_items = history_plan.get("call1_history") or []
-    else:
-        history_items = chats[
-            max(0, target_index - int(merged["call1_context_turns"])):target_index
-        ]
-    history_text = _history_messages_text(history_items)
     if progress:
         await progress(1, "character_resolve", "CURRENT 등장인물 판별")
     prompts = load_prompt_files()
@@ -10909,11 +10942,16 @@ async def resolve_profiles_before_generation(
         segmented_current=segmented_current,
         current_context=current_context,
         current_segments=current_segments,
-        history_text=history_text,
         candidate_names=candidate_names,
         visual_profiles=visual_profiles,
         stream_notify=stream_notify,
         history_ids_sink=history_ids_sink,
+    )
+    previous_state = (history_plan or {}).get("state_before") or {}
+    character_result = _mark_current_characters_with_tracked_history(
+        character_result,
+        previous_state,
+        visual_profiles,
     )
     current_names = [
         str(item.get("name") or "").strip()
@@ -10933,7 +10971,7 @@ async def resolve_profiles_before_generation(
         return character_output, _apply_profile_resolution_fallbacks(
             character_result,
             current_profiles,
-            (history_plan or {}).get("state_before") or {},
+            previous_state,
             default_only=True,
         )
 
@@ -10957,7 +10995,7 @@ async def resolve_profiles_before_generation(
         current_context=current_context,
         current_segments=current_segments,
         candidate_names=multi_profile_names,
-        previous_state=(history_plan or {}).get("state_before") or {},
+        previous_state=previous_state,
         visual_profiles=current_profiles,
         stream_notify=stream_notify,
         history_ids_sink=history_ids_sink,
@@ -13297,122 +13335,12 @@ async def build_from_context(
                 traceback.print_exc()
                 raise
 
-    # Optimized CALL1 path deliberately sends only selected character details.  If
-    # CALL2 nevertheless emits another named character, retry once with the
-    # bounded history and full dictionary instead of silently accepting a likely
-    # CALL1 coverage miss.
-    if (
-        descriptors
-        and persistent_history
-        and toggles.get("call1_enabled")
-        and call1_result
-        and not balanced_fallback
-    ):
-        allowed = {name.casefold() for name in current_character_names}
-        observed = {
-            str(character.get("name") or "").strip()
-            for descriptor in descriptors
-            if str(descriptor.get("kind") or "") == "scene"
-            for character in descriptor.get("characters") or []
-            if str(character.get("name") or "").strip()
-        }
-        unexpected = sorted(name for name in observed if name.casefold() not in allowed)
-        if unexpected:
-            balanced_fallback = True
-            print(
-                f"[ILLUST_CONTEXT:CALL2] CALL1 선택 밖 캐릭터 감지, 균형형 1회 재시도: "
-                f"unexpected={unexpected}, allowed={current_character_names}"
-            )
-            preserve_keyvis_during_coverage_retry = bool(
-                call2_preserved_keyvis_descriptor is not None
-                and toggles.get("key_visual")
-            )
-            coverage_retry_toggles = deepcopy(toggles)
-            if preserve_keyvis_during_coverage_retry:
-                coverage_retry_toggles["key_visual"] = False
-            scene_only_previous_output = descriptors_to_toon([
-                descriptor
-                for descriptor in descriptors
-                if str(descriptor.get("kind") or "") == "scene"
-            ])
-            retry_messages = deepcopy(call2_messages)
-            retry_messages.extend([{
-                "role": "assistant",
-                "content": (
-                    scene_only_previous_output
-                    if preserve_keyvis_during_coverage_retry
-                    else call2_output
-                ),
-            }, {
-                "role": "user",
-                "content": (
-                    "Character coverage did not match the authoritative current-character roster. "
-                    "Re-evaluate the current context "
-                    "with the bounded past history and full character dictionary below. "
-                    "Preserve established wardrobe state unless a supplied wardrobe event changes it.\n\n"
-                    + (
-                        "# ACTIVE BOT IMAGE INSTRUCTIONS\n\n"
-                        + call2_instruction
-                        + "\n\n"
-                        if call2_instruction
-                        else ""
-                    )
-                    + "# FULL CHARACTER DICTIONARY\n"
-                    + str(extra_reference or "")
-                    + "\n\n# BOUNDED PAST HISTORY\n"
-                    + (_history_messages_text(
-                        persistent_history.get("call2_fallback_history") or []
-                    ) or "(empty)")
-                    + (
-                        "\n\nAn independently validated Key Visual is already preserved and is not "
-                        "included above. Return corrected scene objects only and omit keyvis."
-                        if preserve_keyvis_during_coverage_retry
-                        else "\n\nReturn the complete corrected <lb-xnai> block only."
-                    )
-                ),
-            }])
-
-            def validate_coverage_retry(result):
-                parsed, reason = validate_complete_call2_output(
-                    result,
-                    coverage_retry_toggles,
-                    original_slotted,
-                    "CALL2-COVERAGE-RETRY-CHECK",
-                    call2_fallback_expected_slots,
-                )
-                return bool(parsed), reason or "CALL2 캐릭터 커버리지 재시도 검증 실패"
-
-            retried_output = await _call_pipeline_llm(
-                "CALL2",
-                _normalize_messages(retry_messages),
-                stream_notify,
-                result_validator=validate_coverage_retry,
-            )
-            retried_descriptors, coverage_retry_reason = validate_complete_call2_output(
-                retried_output,
-                coverage_retry_toggles,
-                original_slotted,
-                "CALL2-COVERAGE-RETRY",
-                call2_fallback_expected_slots,
-            )
-            if retried_descriptors:
-                if preserve_keyvis_during_coverage_retry:
-                    descriptors = [
-                        deepcopy(call2_preserved_keyvis_descriptor),
-                        *[
-                            item for item in retried_descriptors
-                            if str(item.get("kind") or "") == "scene"
-                        ],
-                    ]
-                    call2_output = descriptors_to_toon(descriptors)
-                else:
-                    call2_output = retried_output
-                    descriptors = retried_descriptors
-            else:
-                print(
-                    "[ILLUST_CONTEXT:CALL2] 캐릭터 커버리지 재시도 최종 검증 실패: "
-                    f"reason={coverage_retry_reason}"
-                )
+    # CALL1의 current_character_names는 등록 캐릭터의 프로필·복장 권위를 고르는
+    # 범위이지, 현재 장면에 등장할 수 있는 전체 인물 allowlist가 아니다. 특히
+    # CURRENT에 명확히 등장하지만 등록 카드가 없는 인물도 CALL2 장면에는 유효하다.
+    # 병렬 경로는 각 DETAIL을 이미 서버가 확정한 PLAN의 장면별 캐릭터 목록과
+    # 대조하므로, 그 검증을 통과한 결과를 current_character_names 불일치만으로
+    # 전체 CALL2 재호출해 교체하지 않는다.
 
     # 이미지 생성에는 CALL3의 대사가 필요하지 않다. CALL2(+필요 시 슬롯 FIX)가 확정되면
     # 슬롯/RAW를 먼저 고정하고 콜백으로 공개해, CALL3와 이미지 생성을 병렬로 진행한다.

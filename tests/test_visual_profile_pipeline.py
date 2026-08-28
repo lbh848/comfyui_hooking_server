@@ -110,9 +110,11 @@ def test_character_and_profile_prompts_are_separated_before_compact_call1_contra
     assert '"current_characters"' not in call1_prompt
 
     assert '"characters"' in character_prompt
-    assert '"in_history"' in character_prompt
+    assert '"in_history"' not in character_prompt
     assert '"profile_timeline"' not in character_prompt
     assert "complete registered character roster" in character_prompt.casefold()
+    assert "No PAST HISTORY is supplied" in character_prompt
+    assert "infer participation from prior events" in character_prompt
     assert "copy each `name` verbatim" in character_prompt.casefold()
     assert "Never translate, transliterate, localize" in character_prompt
     assert "Do not force an unidentified or unregistered narrative person" in character_prompt

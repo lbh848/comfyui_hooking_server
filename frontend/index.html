@@ -44769,7 +44769,7 @@
                 lines.push('> 역번역/다중캐릭터 등은 토글·조건부라 생략될 수 있음. ');
                 lines.push('> 최종 사용값은 본문 최하단 **결과 요약(시간순)** 에 정리.');
                 lines.push('');
-                lines.push('1. **CHARACTER-RESOLVE** — 토글과 무관하게 CURRENT 등장인물과 각 인물의 PAST 등장 여부를 항상 결정합니다. 프로필 카탈로그는 받지 않습니다.');
+                lines.push('1. **CHARACTER-RESOLVE** — 토글과 무관하게 CURRENT 본문만 보고 현재 등장인물을 결정합니다. PAST와 프로필 카탈로그는 받지 않으며, 과거 추적 여부는 서버 상태에서 결합합니다.');
                 lines.push('2. **PROFILE-RESOLVE** — 다중 프로필 추론을 켠 경우에만, 앞 단계가 확정한 CURRENT 다중 프로필 캐릭터를 캐릭터별로 병렬 판정합니다. 각 호출은 한 캐릭터의 START·이후 변환 프로필과 구체적인 판단 reason을 반환합니다. PAST는 받지 않습니다. 끄면 서버가 등록 기본 프로필을 적용합니다.');
                 lines.push('3. **ORIGINAL-ASSET** — 켜진 경우, 확정 프로필을 기준으로 현재 장면에 맞는 등록 원본 에셋과 삽입 슬롯을 선택.');
                 lines.push('4. **CALL1-BACKTRANSLATE** — 최신 CHAR 응답(현재 맥락)을 영어로 역번역. 후속 단계가 상황을 정확히 이해하도록 정규화. (토글 시)');
@@ -77458,7 +77458,7 @@
                         <div id="illust-tab-content-llm" style="display:none; padding:12px 16px;">
                             <div style="margin-bottom:12px; padding:8px; background:rgba(0,0,0,0.06); border-radius:6px; font-size:0.75rem; color:var(--text2); line-height:1.5;">
                                 CHAT을 받은 서버가 히스토리 연속성/리롤 판정 → CHARACTER-RESOLVE(항상) → PROFILE-RESOLVE(다중 프로필 추론 토글 시) → 원본 에셋 선택/CALL1 역번역·병렬 분석 → CALL2-PLAN과 독립 CALL2-KEYVIS 동시 호출 → CALL2-DETAIL 병렬 생성·최종 병합 → (폴백/파싱 실패 시 기존 CALL2/CALL2-FIX) → CALL3 순서로 실행합니다. 삽화 프롬프트 본문은 config.json이 아니라 아래 개별 txt 파일에 저장됩니다.
-                                1. CHARACTER-RESOLVE는 <strong>character.txt</strong>, 전체 CURRENT와 제한된 PAST를 사용해 CURRENT 등장인물 및 PAST 등장 여부만 항상 결정합니다. 프로필 카탈로그는 받지 않습니다.<br>
+                                1. CHARACTER-RESOLVE는 <strong>character.txt</strong>와 전체 CURRENT만 사용해 현재 등장인물을 결정합니다. PAST와 프로필 카탈로그는 받지 않으며, 과거 추적 여부는 서버의 기존 상태에서 결합합니다.<br>
                                 2. PROFILE-RESOLVE는 다중 프로필 추론을 켠 경우에만 확정된 CURRENT 다중 프로필 캐릭터를 한 명씩 병렬 호출합니다. 각 호출은 <strong>profile.txt</strong>, 전체 CURRENT, 대상 캐릭터 한 명의 카탈로그만 사용해 START·변환 타임라인과 실제 본문에 근거한 reason을 결정합니다. PAST는 받지 않으며, 토글을 끄면 서버가 등록 기본 프로필을 사용합니다.<br>
                                 3. 원본 에셋 출력이 켜져 있으면 확정 프로필을 받은 선택기가 등록 에셋과 삽입 슬롯을 먼저 정합니다.<br>
                                 4. 역번역이 켜져 있으면 <strong>backtranslate.txt</strong>로 현재 응답만 영어로 병렬 번역하며, 과거 CHAT은 번역하지 않습니다.<br>
@@ -77491,7 +77491,7 @@
                             </div>
                             <div id="illust-call-content-character" style="display:none;">
                                 <details open style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
-                                    <summary style="cursor:pointer; font-size:0.8rem; font-weight:600;">📝 character.txt (CURRENT 등장인물·PAST 등장 여부)</summary>
+                                    <summary style="cursor:pointer; font-size:0.8rem; font-weight:600;">📝 character.txt (CURRENT 등장인물 전용)</summary>
                                     <textarea id="lighbd-prompt-character_resolve" data-lighbd-prompt="character_resolve" style="width:100%; height:300px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;"></textarea>
                                 </details>
                             </div>

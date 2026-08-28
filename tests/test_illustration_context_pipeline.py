@@ -1310,6 +1310,109 @@ async def test_call2_plan_excludes_balanced_fallback_past_scenes(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_call2_plan_allows_unregistered_current_character_without_global_retry(
+    monkeypatch,
+):
+    call_names = []
+
+    async def fake_pipeline_call(call_name, messages, *args, **kwargs):
+        call_names.append(call_name)
+        if call_name == "CALL1":
+            return json.dumps({
+                "wardrobe_events": [],
+                "hairstyle_events": [],
+            })
+        if call_name == "CALL2-PLAN":
+            return json.dumps({
+                "scene_plan": [{
+                    "anchor_segment": "C001",
+                    "characters": ["Doyoon"],
+                    "scene_brief": "Doyoon studies alone at his desk.",
+                }],
+            })
+        if call_name.startswith("CALL2-DETAIL 1/1"):
+            return """<lb-xnai>
+scenes[1]:
+  - camera: from side, upper body
+    characters[1]:
+      - positive: boy, sitting at desk, studying
+        name: Doyoon
+        position: center
+        outfit_state:
+          body_state: clothed
+          worn: [casual clothes]
+          removed: []
+    scene: 1boy, interior, small room
+    slot: 0
+    supplement: parallel detail marker
+</lb-xnai>"""
+        raise AssertionError(f"unexpected call: {call_name}")
+
+    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
+    result = await pipeline.build_from_context(
+        {
+            "session_id": "call2_unregistered_current_character_test",
+            "target_slotted": "Doyoon studies alone at his desk.\n\n[Slot 0]",
+            "chats": [
+                {"role": "user", "data": "Continue."},
+                {"role": "char", "data": "Doyoon studies alone at his desk."},
+            ],
+        },
+        {
+            "call1_backtranslate_enabled": False,
+            "call1_enabled": True,
+            "call1_parallel_enabled": False,
+            "call2_parallel_enabled": True,
+            "call2_parallel_max_concurrency": 1,
+            "call2_parallel_slow_retry_enabled": False,
+            "output_count_min": 1,
+            "output_count_max": 1,
+            "key_visual": False,
+            "call3_enabled": False,
+            "speak_enabled": False,
+        },
+        "### Hiyori\n-Appearance: 1girl, blonde hair\n-default_outfit\nyellow dress",
+        extra_costume="### Hiyori\n-default_outfit\nyellow dress",
+        extra_names="Hiyori",
+        backtranslate_names="Hiyori",
+        history_plan={
+            "history_id": "hist_unregistered_doyoon",
+            "operation": "append",
+            "current_message_id": "msg_current",
+            "state_before": {},
+            "call1_history": [],
+            "call2_fallback_history": [],
+            "call3_fallback_history": [],
+            "record_before": {"last_pipeline": {}},
+        },
+        pre_resolved_profile_result={
+            "characters": [{
+                "name": "Hiyori",
+                "in_history": False,
+                "profile_timeline": [],
+            }],
+            "history_characters": [],
+            "current_characters": [{"name": "Hiyori", "confidence": 1.0}],
+            "uncertainties": [],
+            "profile_events": [],
+            "initial_visual_bases": [],
+            "visual_base_events": [],
+            "repair_requests": [],
+            "validation_warnings": [],
+            "validation_errors": [],
+        },
+    )
+
+    assert call_names[0] == "CALL1"
+    assert call_names[1] == "CALL2-PLAN"
+    assert sum(name.startswith("CALL2-DETAIL 1/1") for name in call_names) == 1
+    assert "CALL2" not in call_names
+    assert result["balanced_fallback_used"] is False
+    assert result["items"][0]["characters"][0]["name"] == "Doyoon"
+    assert result["items"][0]["supplement"] == "parallel detail marker"
+
+
+@pytest.mark.asyncio
 async def test_call2_pipeline_generates_characterless_scene_without_fallback(monkeypatch):
     call_names = []
     detail_messages = []
@@ -5420,12 +5523,11 @@ async def test_profile_resolution_toggle_off_still_resolves_characters_and_uses_
         calls.append((call_name, messages, kwargs))
         prompt = "\n".join(message["content"] for message in messages)
         assert "# COMPLETE REGISTERED CHARACTER ROSTER" in prompt
-        assert "# PAST HISTORY (IDENTITY AND in_history ONLY)" in prompt
+        assert "# PAST HISTORY" not in prompt
         assert "# REGISTERED PROFILE CATALOG" not in prompt
         return json.dumps({
             "characters": [{
                 "name": "Hana",
-                "in_history": True,
             }],
             "uncertainties": [],
         })
@@ -5452,7 +5554,15 @@ async def test_profile_resolution_toggle_off_still_resolves_characters_and_uses_
             ],
         },
         toggles={"profile_resolve_enabled": False},
-        history_plan=None,
+        history_plan={
+            "call1_history": [{"role": "char", "data": "past-only marker"}],
+            "state_before": {
+                "hana": {
+                    "canonical_name": "Hana",
+                    "active_visual_profile_id": "transformed",
+                },
+            },
+        },
         visual_profiles=visual_profiles,
     )
 
@@ -5498,10 +5608,12 @@ async def test_character_observation_always_precedes_optional_profile_only_call(
         if call_name == "CHARACTER-RESOLVE":
             assert "# COMPLETE REGISTERED CHARACTER ROSTER" in prompt
             assert "# REGISTERED PROFILE CATALOG" not in prompt
+            assert "# PAST HISTORY" not in prompt
+            assert "PastOnly dominates old history marker" not in prompt
             return json.dumps({
                 "characters": [
-                    {"name": "Hana", "in_history": True},
-                    {"name": "Bob", "in_history": False},
+                    {"name": "Hana"},
+                    {"name": "Bob"},
                 ],
                 "uncertainties": [],
             })
@@ -5510,13 +5622,14 @@ async def test_character_observation_always_precedes_optional_profile_only_call(
         assert "# PAST HISTORY" not in prompt
         assert "Hana transformed form" in prompt
         assert "Bob ordinary form" not in prompt
+        assert "PastOnly historical form" not in prompt
         return json.dumps({
             "characters": [{
                 "name": "Hana",
                 "profile_timeline": [{
                     "at": "START",
                     "profile_ref": "[2]",
-                    "reason": "C001에서 Hana가 변신을 완료해 흰 머리와 흰 갑옷 형태로 등장하므로 [2]다.",
+                    "reason": "At C001, Hana has completed the transformation and appears with white hair and white armor, so [2] is active.",
                 }],
             }],
             "uncertainties": [],
@@ -5544,14 +5657,39 @@ async def test_character_observation_always_precedes_optional_profile_only_call(
             "appearance": ["brown hair"],
             "default_outfit": ["suit"],
         }]),
+        "PastOnly": cards_to_character_profiles("PastOnly", [{
+            "id": "ordinary",
+            "aliases": ["PastOnly_Ordinary"],
+            "selection_guide": "PastOnly ordinary form",
+            "appearance": ["red hair"],
+            "default_outfit": ["coat"],
+        }, {
+            "id": "historical",
+            "aliases": ["PastOnly_Historical"],
+            "selection_guide": "PastOnly historical form",
+            "appearance": ["blue hair"],
+            "default_outfit": ["armor"],
+        }]),
     }
 
     _output, result = await pipeline.resolve_profiles_before_generation(
         payload={"chats": [{"role": "char", "data": "Hana transforms beside Bob."}]},
         toggles={"profile_resolve_enabled": True},
         history_plan={
-            "call1_history": [{"role": "char", "data": "old history marker"}],
-            "state_before": {},
+            "call1_history": [{
+                "role": "char",
+                "data": "PastOnly dominates old history marker.",
+            }],
+            "state_before": {
+                "hana": {
+                    "canonical_name": "Hana",
+                    "active_visual_profile_id": "ordinary",
+                },
+                "pastonly": {
+                    "canonical_name": "PastOnly",
+                    "active_visual_profile_id": "historical",
+                },
+            },
         },
         visual_profiles=visual_profiles,
     )
@@ -6258,16 +6396,12 @@ async def test_character_resolution_repairs_only_noncanonical_name_items_and_pre
             return json.dumps({
                 "characters": [{
                     "name": "Doyun",
-                    "in_history": True,
                 }, {
                     "name": "시호",
-                    "in_history": True,
                 }, {
                     "name": "아야",
-                    "in_history": False,
                 }, {
                     "name": "Invented Similar Girl",
-                    "in_history": False,
                 }],
                 "uncertainties": [],
             }, ensure_ascii=False)
@@ -6276,7 +6410,7 @@ async def test_character_resolution_repairs_only_noncanonical_name_items_and_pre
         rejected_section = prompt.split(
             "# REJECTED CHARACTER ITEMS ONLY\n",
             1,
-        )[1].split("\n\n# PAST HISTORY FOR IDENTITY CONTINUITY", 1)[0]
+        )[1].split("\n\n# FULL CURRENT CONTEXT SEGMENTS", 1)[0]
         assert '"name": "시호"' in rejected_section
         assert '"name": "아야"' in rejected_section
         assert '"name": "Invented Similar Girl"' in rejected_section
@@ -6323,7 +6457,6 @@ async def test_character_resolution_repairs_only_noncanonical_name_items_and_pre
         segmented_current=segmented,
         current_context=current,
         current_segments=segments,
-        history_text="Doyun and Shiho were present earlier.",
         candidate_names=["Doyun", "Shiho", "Aya"],
         visual_profiles={"Doyun": doyun, "Shiho": shiho, "Aya": aya},
         stream_notify=None,
@@ -6344,7 +6477,7 @@ async def test_character_resolution_repairs_only_noncanonical_name_items_and_pre
         "Aya",
     ]
     assert parsed["initial_visual_bases"] == []
-    assert parsed["history_characters"] == ["Doyun", "Shiho"]
+    assert parsed["history_characters"] == []
     assert any(
         "이미 승인된 캐릭터 중복: 'Doyun'" in warning
         for warning in parsed["validation_warnings"]
@@ -6383,11 +6516,8 @@ async def test_character_resolution_repair_recovers_localized_registered_names_o
             ) in final_authority
             return json.dumps({
                 "characters": [
-                    {
-                        "name": name,
-                        "in_history": index < 4,
-                    }
-                    for index, name in enumerate(localized_names)
+                    {"name": name}
+                    for name in localized_names
                 ],
                 "uncertainties": [],
             }, ensure_ascii=False)
@@ -6425,7 +6555,6 @@ async def test_character_resolution_repair_recovers_localized_registered_names_o
         segmented_current=segmented,
         current_context=current,
         current_segments=segments,
-        history_text="도윤, 유이, 히비키, 시호가 이전 장면에도 참여했다.",
         candidate_names=canonical_names,
         visual_profiles=visual_profiles,
         stream_notify=None,
@@ -6434,7 +6563,7 @@ async def test_character_resolution_repair_recovers_localized_registered_names_o
     assert calls == ["CHARACTER-RESOLVE", "CHARACTER-RESOLVE-REPAIR"]
     assert [item["name"] for item in json.loads(raw)["characters"]] == canonical_names
     assert [item["name"] for item in parsed["current_characters"]] == canonical_names
-    assert parsed["history_characters"] == canonical_names[:3]
+    assert parsed["history_characters"] == []
     assert any(
         "source_index 1 is not a registered character" in uncertainty
         for uncertainty in parsed["uncertainties"]
@@ -6467,10 +6596,8 @@ async def test_character_resolution_name_repair_failure_discards_only_rejected_i
             return json.dumps({
                 "characters": [{
                     "name": "Hiyori",
-                    "in_history": False,
                 }, {
                     "name": "Doyun",
-                    "in_history": True,
                 }],
                 "uncertainties": [],
             })
@@ -6495,7 +6622,6 @@ async def test_character_resolution_name_repair_failure_discards_only_rejected_i
         segmented_current=segmented,
         current_context=current,
         current_segments=segments,
-        history_text="Hiyori met Doyun earlier.",
         candidate_names=["Hiyori", "Hoshino"],
         visual_profiles={"Hiyori": hiyori, "Hoshino": hoshino},
         stream_notify=None,
