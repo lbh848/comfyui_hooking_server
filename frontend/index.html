@@ -44776,7 +44776,7 @@
                 lines.push('5. **CALL1** (enhance) — 앞 단계가 확정한 CURRENT 캐릭터를 기준으로 복장·헤어스타일 변화 사건만 분석해 CALL2에 전달. 지칭어는 문맥상 해석하되 본문을 치환하지 않습니다.');
                 lines.push('6. **CALL2-PLAN** — 전역 시각 비트 플래너. 어떤 장면(scene)/키비주얼(keyvis)을 그릴지 JSON scene_plan으로 결정.');
                 lines.push('7. **CALL2-KEYVIS / CALL2-DETAIL** — 릴레이 소설 로그에 Danbooru 태그를 붙여 `<lb-xnai>` TOON 구조(camera/scene/supplement/characters) 생성. KEYVIS=키비주얼, DETAIL=일반 장면. PLAN 없이 단독일 때 **CALL2-FALLBACK**.');
-                lines.push('8. **CALL2-AUTHORITY-AUDIT** — 외형·복장 감사. 고정 외형은 강제하고, 기본 복장은 참고값으로 두되 장면 맥락에 맞게 LLM이 구성한 복장은 유지합니다. 맥락에 맞지 않는 후보만 개별 drop합니다.');
+                lines.push('8. **CALL2-AUTHORITY-AUDIT** — 고정 외형 예외 감사. 복장은 CALL2의 outfit_state를 그대로 신뢰하며 감사하지 않습니다. 고정 외형은 유지하되 서사에 명시된 헤어스타일·신체 변화가 있을 때만 예외를 의미로 판정합니다.');
                 lines.push('9. **CALL2-FIX** — CALL2 출력이 malformed일 때 내용을 바꾸지 않고 구조만 교정(실패 시에만).');
                 lines.push('10. **CALL3** (speak/manga) — 선택된 일반 장면의 대사/생각 작성. speak=vn 대사창, manga=말풍선. 이미지 생성과 병렬 실행.');
                 lines.push('11. **MULTI-CHAR-MASK** (CALL5) — 2인 이상 장면의 캐릭터별 영역 공간 분해(마스크). CALL3 이후, 장면(slot)마다 별도 호출.');

@@ -2017,7 +2017,6 @@ async def test_call2_parallel_failure_is_named_fallback_and_logs_reason(
     assert call_names == [
         "CALL2-PLAN",
         "CALL2-FALLBACK",
-        "CALL2-AUTHORITY-AUDIT",
     ]
     assert "[ILLUST_CONTEXT:CALL2-FALLBACK] 폴백 시작" in output
     assert "failed_stage=CALL2-PLAN" in output
@@ -2148,7 +2147,7 @@ async def test_call2_detail_failure_reuses_preserved_plan_in_global_fallback(mon
     )
 
     assert call_names[0] == "CALL2-PLAN"
-    assert call_names[-2:] == ["CALL2-FALLBACK", "CALL2-AUTHORITY-AUDIT"]
+    assert call_names[-1] == "CALL2-FALLBACK"
     assert sum(name.startswith("CALL2-DETAIL 1/1") for name in call_names) == 2
     assert not any("FAILED-SHARD-RETRY" in name for name in call_names)
     assert any("[FULL" in name for name in call_names)
@@ -2239,7 +2238,7 @@ scenes: []
     assert call_names.count("CALL2-KEYVIS") == 1
     assert any(name.startswith("CALL2-DETAIL 1/1") for name in call_names)
     assert not any("FAILED-SHARD-RETRY" in name for name in call_names)
-    assert call_names[-2:] == ["CALL2-FALLBACK", "CALL2-AUTHORITY-AUDIT"]
+    assert call_names[-1] == "CALL2-FALLBACK"
     assert result["call2_keyvis_output"] == keyvis_output
     assert result["call2_fallback_stage"] == "CALL2-DETAIL-FAILURE-THRESHOLD"
     assert [item["kind"] for item in result["items"]] == ["keyvis", "scene"]
@@ -3225,41 +3224,21 @@ async def test_call2_authority_audit_is_limited_to_character_authority(
     assert "camera_replacement" not in combined
     assert "scene_additions" not in combined
     assert "Do not rewrite the scene, camera, composition, dialogue" in combined
-    assert not re.search(r"\bCALL[123]\b", combined, re.IGNORECASE)
+    assert "Audit only fixed physical appearance" in combined
+    assert "Wardrobe, outfit, accessories, coverage, and exposure" in combined
+    assert '"default_outfit"' not in combined
+    assert '"generated_outfit_state"' not in combined
 
 
 @pytest.mark.asyncio
-async def test_call2_authority_audit_resolves_same_garment_tags_by_meaning(
+async def test_call2_authority_audit_skips_wardrobe_only_difference(
     monkeypatch,
 ):
-    requests = []
+    calls = []
 
     async def fake_pipeline_call(call_name, messages, *args, **kwargs):
-        assert call_name == "CALL2-AUTHORITY-AUDIT"
-        requests.append("\n".join(
-            str(item.get("content") or "") for item in messages
-        ))
-        return json.dumps({
-            "entries": [{
-                "id": 1,
-                "authority_exceptions": [
-                    "turtleneck sweater",
-                    "white sweater",
-                    "ribbed sweater",
-                    "brown coat",
-                    "open coat",
-                    "blue skirt",
-                    "stud earrings",
-                ],
-                "forbidden_additions": [],
-                "conflicts": [],
-                "required_additions": [
-                    "white shirt",
-                    "collared shirt",
-                    "navy pleated skirt",
-                ],
-            }],
-        })
+        calls.append((call_name, messages))
+        raise AssertionError("wardrobe-only differences must not invoke the audit LLM")
 
     monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
     descriptors = [{
@@ -3301,7 +3280,7 @@ async def test_call2_authority_audit_resolves_same_garment_tags_by_meaning(
         ],
     }
 
-    decisions, _raw, status, metrics = await pipeline._run_call2_authority_audit(
+    decisions, raw, status, metrics = await pipeline._run_call2_authority_audit(
         descriptors=descriptors,
         fixed_appearance=fixed,
         default_outfits=defaults,
@@ -3312,23 +3291,11 @@ async def test_call2_authority_audit_resolves_same_garment_tags_by_meaning(
         stream_notify=None,
     )
 
-    combined = "\n".join(requests)
-    assert status == "ok"
-    assert metrics["valid_decisions"] == 1
-    assert "physical outfit as a coherent whole" in combined
-    assert "not an inventory of independent objects" in combined
-    assert "Never determine exceptions by merely copying" in combined
-    assert "default_outfit_action" not in combined
-    decision = decisions[("scene", 62, "hiyori")]
-    assert set(decision) == {
-        "_audit_status",
-        "authority_exceptions",
-        "forbidden_additions",
-        "conflicts",
-        "required_additions",
-    }
-    assert "brown coat" in decision["authority_exceptions"]
-    assert "open coat" in decision["authority_exceptions"]
+    assert calls == []
+    assert decisions == {}
+    assert raw == ""
+    assert status == "not_needed"
+    assert metrics["submitted_entries"] == 0
 
     pipeline.apply_call2_authority_base(
         descriptors,
@@ -3341,9 +3308,12 @@ async def test_call2_authority_audit_resolves_same_garment_tags_by_meaning(
     tags = pipeline._split_top_level_authority_tags(character["positive"])
     assert "brown coat" not in tags
     assert "open coat" not in tags
+    assert "stud earrings" not in tags
     assert "white shirt" in tags
     assert "navy pleated skirt" in tags
-    assert "pleated skirt" in tags
+    assert character["outfit_state"]["worn"] == [
+        "white shirt", "collared shirt", "navy pleated skirt",
+    ]
 
 
 def test_prompt_format_migrates_legacy_preset_and_rejects_unknown_value(capsys):
@@ -5190,7 +5160,7 @@ scenes: []
     )
 
     assert events.index("keyvis-dispatch") < events.index("detail-resumed")
-    assert events.index("keyvis-dispatch") < events.index("CALL2-AUTHORITY-AUDIT")
+    assert "CALL2-AUTHORITY-AUDIT" not in events
     assert len(keyvis_payloads) == 1
     assert [item["kind"] for item in result["items"]] == ["keyvis", "scene"]
     assert result["items"][0]["characters"][0]["positive"] == "1girl, red dress"
@@ -7357,7 +7327,7 @@ def test_apply_wardrobe_semantic_reset_default_restores_outfit():
     assert wardrobe["body_state"] == "clothed"
 
 
-def test_call2_authority_base_restores_missing_fixed_and_default_tags():
+def test_call2_authority_base_restores_fixed_and_trusts_known_outfit():
     descriptors = [{
         "kind": "scene",
         "slot": 5,
@@ -7392,9 +7362,13 @@ def test_call2_authority_base_restores_missing_fixed_and_default_tags():
     positive = descriptors[0]["characters"][0]["positive"]
     for required in (
         "hair rings", "two side up", "hair between eyes", "hair intakes",
-        "detached sleeves", "white gloves", "white choker",
     ):
         assert required in positive
+    for default_only in (
+        "white dress", "halter dress", "detached sleeves",
+        "white gloves", "white choker",
+    ):
+        assert default_only not in positive
     assert audits == [{
         "kind": "scene",
         "slot": 5,
@@ -7403,10 +7377,7 @@ def test_call2_authority_base_restores_missing_fixed_and_default_tags():
             "hair rings", "two side up", "hair between eyes", "hair intakes",
             "sidelocks", "orange eyes",
         ],
-        "missing_wardrobe_added": [
-            "white dress", "halter dress", "detached sleeves",
-            "white gloves", "white choker",
-        ],
+        "missing_wardrobe_added": [],
         "authority_exceptions": [],
         "forbidden_added_removed": [],
         "conflicts_removed": [],
@@ -7457,7 +7428,7 @@ def test_call2_authority_base_allows_audited_explicit_fixed_exception():
     assert "hair between eyes" in tags
     assert "hair intakes" in tags
     assert "detached sleeves" in tags
-    assert "white choker" in tags
+    assert "white choker" not in tags
     assert "authority_exceptions" not in character
     assert audits[0]["conflicts_removed"] == []
     assert audits[0]["rejected_exceptions"] == ["invented omission"]
@@ -7503,7 +7474,7 @@ def test_call2_audit_keeps_fixed_hair_without_explicit_change():
 
     assert reason == ""
     decision = decisions[("scene", 17, "hibiki")]
-    assert decision["authority_exceptions"] == ["school uniform"]
+    assert decision["authority_exceptions"] == []
 
     pipeline.apply_call2_authority_base(
         descriptors,
@@ -7623,7 +7594,7 @@ def test_call2_semantic_authority_audit_removes_unsupported_hair_conflict():
     assert "hair down" not in tags
     assert "hair rings" in tags
     assert "two side up" in tags
-    assert "detached sleeves" in tags
+    assert "detached sleeves" not in tags
     assert audits[0]["conflicts_removed"] == ["hair down"]
 
 
@@ -7642,7 +7613,10 @@ def test_call2_existing_audit_repairs_character_bundle_without_rewriting_scene_o
         "supplement": "The man thrusts his hips forward.",
         "characters": [{
             "name": "Sato",
-            "positive": "boy, white shirt, blue pants, underwear, hips forward",
+            "positive": (
+                "boy, white shirt, blue pants, underwear, bottomless, "
+                "penis, pants down, hips forward"
+            ),
             "outfit_state": {
                 "body_state": "bottomless",
                 "worn": ["white shirt"],
@@ -7667,7 +7641,7 @@ def test_call2_existing_audit_repairs_character_bundle_without_rewriting_scene_o
                 "authority_exceptions": ["blue pants", "underwear"],
                 "forbidden_additions": [],
                 "conflicts": [],
-                "required_additions": ["bottomless", "penis", "pants down"],
+                "required_additions": [],
                 "scene_additions": ["nsfw"],
                 "camera_replacement": "full body, straight-on",
             }],
@@ -7698,7 +7672,9 @@ def test_call2_existing_audit_repairs_character_bundle_without_rewriting_scene_o
         "worn": ["white shirt"],
         "removed": ["blue pants", "underwear"],
     }
-    assert audits[0]["required_additions"] == ["bottomless", "penis", "pants down"]
+    assert decisions[("scene", 4, "sato")]["authority_exceptions"] == []
+    assert audits[0]["rejected_exceptions"] == []
+    assert "required_additions" not in audits[0]
     assert "scene_additions" not in audits[0]
     assert "camera_replacement" not in audits[0]
 
@@ -7913,7 +7889,7 @@ def test_call2_semantic_audit_drops_out_of_candidate_value_not_whole_response():
     assert "straight hair" not in tags2
 
 
-def test_call2_audited_contextual_outfit_replaces_default_reference_as_a_set():
+def test_call2_known_contextual_outfit_replaces_default_without_audit():
     descriptors = [{
         "kind": "scene",
         "slot": 4,
@@ -7932,14 +7908,6 @@ def test_call2_audited_contextual_outfit_replaces_default_reference_as_a_set():
         descriptors,
         {"Elizabella": "1girl, blonde hair"},
         {"Elizabella": ["white dress", "detached sleeves", "mini crown"]},
-        {("scene", 4, "elizabella"): {
-            "authority_exceptions": [
-                "white dress", "detached sleeves", "mini crown",
-            ],
-            "forbidden_additions": [],
-            "conflicts": [],
-        }},
-        "ok",
     )
 
     character = descriptors[0]["characters"][0]
@@ -7956,12 +7924,10 @@ def test_call2_audited_contextual_outfit_replaces_default_reference_as_a_set():
         "removed": [],
     }
     assert audits[0]["missing_wardrobe_added"] == []
-    assert audits[0]["authority_exceptions"] == [
-        "white dress", "detached sleeves", "mini crown",
-    ]
+    assert audits[0]["authority_exceptions"] == []
 
 
-def test_call2_untrusted_removed_or_nude_state_cannot_skip_default_restore():
+def test_call2_known_nude_outfit_state_is_trusted_without_default_restore():
     descriptors = [{
         "kind": "scene",
         "slot": 4,
@@ -7990,26 +7956,21 @@ def test_call2_untrusted_removed_or_nude_state_cannot_skip_default_restore():
 
     character = descriptors[0]["characters"][0]
     assert character["outfit_state"] == {
-        "body_state": "clothed",
-        "worn": ["white dress", "detached sleeves"],
-        "removed": [],
+        "body_state": "nude",
+        "worn": [],
+        "removed": ["white dress", "detached sleeves"],
     }
     assert "authority_exceptions" not in character
     assert audits[0]["rejected_exceptions"] == ["detached sleeves"]
 
 
-def test_call2_audited_explicit_nude_change_can_except_default_outfit():
+def test_call2_missing_outfit_state_uses_default_fallback(capsys):
     descriptors = [{
         "kind": "scene",
         "slot": 4,
         "characters": [{
             "name": "Elizabella",
             "positive": "girl, blonde hair",
-            "outfit_state": {
-                "body_state": "nude",
-                "worn": [],
-                "removed": ["white dress", "detached sleeves"],
-            },
         }],
     }]
 
@@ -8017,24 +7978,15 @@ def test_call2_audited_explicit_nude_change_can_except_default_outfit():
         descriptors,
         {"Elizabella": "1girl, blonde hair"},
         {"Elizabella": ["white dress", "detached sleeves"]},
-        {("scene", 4, "elizabella"): {
-            "authority_exceptions": ["white dress", "detached sleeves"],
-            "conflicts": [],
-        }},
-        "ok",
     )
 
     character = descriptors[0]["characters"][0]
     assert character["outfit_state"] == {
-        "body_state": "nude",
-        "worn": [],
-        "removed": ["white dress", "detached sleeves"],
+        "body_state": "clothed",
+        "worn": ["white dress", "detached sleeves"],
+        "removed": [],
     }
-    assert "authority_exceptions" not in character
-    assert character["outfit_state"]["removed"] == [
-        "white dress",
-        "detached sleeves",
-    ]
+    assert "기본 복장 폴백" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize(

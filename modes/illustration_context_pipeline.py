@@ -6776,14 +6776,11 @@ def _call2_authority_audit_entries(
                     f"[ILLUST_CONTEXT:CALL2_AUTHORITY_AUDIT] 장면별 프로필 의미 이름 누락: "
                     f"kind={kind}, slot={slot}, character={name}"
                 )
-            fixed_tags, default_tags = _descriptor_authority_tags(
+            fixed_tags, _default_tags = _descriptor_authority_tags(
                 descriptor,
                 name,
                 fixed_appearance,
                 default_outfits,
-            )
-            generated_outfit_state = _normalize_outfit_state(
-                character.get("outfit_state")
             )
             generated_tags = _split_top_level_authority_tags(
                 str(character.get("positive") or "")
@@ -6794,11 +6791,11 @@ def _call2_authority_audit_entries(
                 if _authority_tag_identity(tag)
             }
             authority_ids = {
-                _authority_tag_identity(tag) for tag in fixed_tags + default_tags
+                _authority_tag_identity(tag) for tag in fixed_tags
             }
             if not authority_ids:
                 print(
-                    f"[ILLUST_CONTEXT:CALL2_AUTHORITY_AUDIT] 비교할 권위 태그가 없어 "
+                    f"[ILLUST_CONTEXT:CALL2_AUTHORITY_AUDIT] 비교할 고정 외형 태그가 없어 "
                     f"감사 제외: kind={kind}, slot={slot}, character={name}"
                 )
                 continue
@@ -6806,41 +6803,12 @@ def _call2_authority_audit_entries(
                 _authority_tag_identity(tag) for tag in fixed_tags
                 if _authority_tag_identity(tag) not in generated_ids
             ]
-            missing_default_ids = [
-                _authority_tag_identity(tag) for tag in default_tags
-                if _authority_tag_identity(tag) not in generated_ids
-            ]
-            default_ids = {
-                _authority_tag_identity(tag) for tag in default_tags
-                if _authority_tag_identity(tag)
-            }
-            worn_ids = {
-                _authority_tag_identity(tag)
-                for tag in generated_outfit_state.get("worn") or []
-                if _authority_tag_identity(tag)
-            }
-            removed_ids = {
-                _authority_tag_identity(tag)
-                for tag in generated_outfit_state.get("removed") or []
-                if _authority_tag_identity(tag)
-            }
             active_hairstyle_history = list(
                 (hairstyle_history or {}).get(name.casefold(), [])
             )
             audit_reasons = []
             if missing_fixed_ids:
                 audit_reasons.append("fixed_appearance_differs")
-            if missing_default_ids or (
-                default_ids
-                and (
-                    worn_ids != default_ids
-                    or bool(removed_ids & default_ids)
-                    or generated_outfit_state.get("body_state") not in {
-                        "unknown", "clothed",
-                    }
-                )
-            ):
-                audit_reasons.append("default_outfit_differs")
             if active_hairstyle_history:
                 audit_reasons.append("hairstyle_history_requires_exception_check")
             if not audit_reasons:
@@ -6862,9 +6830,7 @@ def _call2_authority_audit_entries(
                 "profile_state": visual_profile_state,
                 "scene_context": scene_context,
                 "fixed_appearance": fixed_tags,
-                "default_outfit": default_tags,
                 "generated_positive": generated_tags,
-                "generated_outfit_state": generated_outfit_state,
                 "hairstyle_history": active_hairstyle_history,
                 "audit_reasons": audit_reasons,
             })
@@ -6914,12 +6880,12 @@ def _parse_call2_authority_audit_output(
             continue
         observed_ids.add(entry_id)
         candidate = candidates[entry_id]
-        # Fixed-appearance exceptions are candidates only for the existing semantic
-        # audit, whose prompt requires direct literal narrative evidence. Default
-        # outfit exceptions remain contextual because wardrobe is not fixed identity.
+        # This audit owns fixed-appearance exceptions only. Wardrobe is already
+        # resolved by CALL2's complete outfit_state and is never an authority
+        # exception candidate here.
         authority_by_id = {
             _authority_tag_identity(tag): tag
-            for tag in candidate["fixed_appearance"] + candidate["default_outfit"]
+            for tag in candidate["fixed_appearance"]
             if _authority_tag_identity(tag)
         }
         generated_by_id = {
@@ -7035,8 +7001,8 @@ async def _run_call2_authority_audit(
     )
     if not entries:
         print(
-            "[ILLUST_CONTEXT:CALL2_AUTHORITY_AUDIT] 감사 가능한 권위 태그가 없어 "
-            "semantic audit LLM 호출 생략"
+            "[ILLUST_CONTEXT:CALL2_AUTHORITY_AUDIT] 고정 외형 예외를 판단할 "
+            "항목이 없어 semantic audit LLM 호출 생략"
         )
         return {}, "", "not_needed", {
             "total_characters": total_characters,
@@ -7046,48 +7012,29 @@ async def _run_call2_authority_audit(
             "degraded_entries": 0,
         }
 
-    # This is intentionally a narrow, character-only audit. Scene composition,
-    # camera, dialogue, and environment remain owned by their existing stages.
+    # This is intentionally a fixed-appearance-only audit. Wardrobe is owned by
+    # CALL2's complete outfit_state; scene composition, camera, dialogue, and
+    # environment remain owned by their existing stages.
     system_prompt = (
-        "Audit only the supplied illustration-character entries whose generated visual "
-        "state structurally differs from the supplied appearance or fallback wardrobe "
-        "authority. Each entry is independent. Read the current narrative and that entry's "
-        "bounded scene context by meaning and chronology; never decide from hard-coded "
-        "keywords. Do not rewrite the scene, camera, composition, dialogue, or complete "
-        "character prompt. Return only minimal authority decisions. "
-        "fixed_appearance is mandatory identity for the already selected profile. Keep every "
-        "fixed tag unless the actual narrative or an active hairstyle_history event contains "
-        "literal evidence of a temporary physical change that directly contradicts that exact "
-        "tag. Cropping, occlusion, mood, activity, scene_brief, generated tags, and visual "
-        "plausibility are not evidence. Put an allowed omitted fixed tag in "
-        "authority_exceptions. If a fixed hair-color exception is truly established, also put "
-        "the explicit replacement color in required_additions; otherwise keep the fixed color. "
-        "default_outfit is a fallback reference rather than identity. A coherent tracked or "
-        "scene-appropriate replacement outfit may except the default garments that no longer "
-        "belong, but preserve any default item that logically remains. Judge a replacement from "
-        "the full narrative, role, activity, occasion, setting, and continuity by meaning. "
-        "Understand the physical outfit as a coherent whole before mapping that judgment back "
-        "to tags. The flat default_outfit list is descriptive tag vocabulary, not an inventory "
-        "of independent objects: several tags may describe different properties or wearing "
-        "states of the same physical garment. If that garment is absent or replaced, put every "
-        "default_outfit tag that describes it in authority_exceptions; do not leave one of its "
-        "descriptors active as though it were a separate garment. Conversely, keep every tag "
-        "whose described item or property truly remains in the current outfit. Treat "
-        "generated_outfit_state as a proposed complete logical snapshot, but verify it against "
-        "the natural-language narrative. Never determine exceptions by merely copying its "
-        "removed strings, comparing word overlap, or matching keywords. First resolve what the "
-        "character is physically wearing by meaning, then map that resolved outfit to the exact "
-        "candidate strings required by authority_exceptions. "
-        "Do not except an accessory merely because it is associated with one removed garment; "
-        "remove it only when the accessory itself is removed or the coherent outfit is replaced. "
-        "Put exact generated_positive tags that invent persistent identity or incoherent "
-        "wardrobe details in forbidden_additions. Put exact generated_positive tags that "
-        "directly conflict with fixed appearance or the resolved outfit in conflicts. Do not "
-        "classify pose, action, expression, gaze, or a supported temporary state as a conflict. "
-        "Use required_additions only for the smallest character-level visible replacement fact "
-        "needed to keep an approved exception coherent. Copy candidate strings exactly when a "
-        "field requires an existing candidate. Return compact JSON only, with one object for "
-        "every supplied id: "
+        "Audit only fixed physical appearance for the supplied illustration-character "
+        "entries. Each entry is independent. Read the current narrative, bounded scene "
+        "context, and hairstyle history by meaning and chronology; never decide from "
+        "hard-coded keywords. Wardrobe, outfit, accessories, coverage, and exposure are fully "
+        "owned by CALL2 and are outside this audit. Never add, remove, restore, or judge them. "
+        "Do not rewrite the scene, camera, composition, dialogue, action, expression, or "
+        "complete character prompt. fixed_appearance is mandatory identity for the already "
+        "selected profile. Keep every fixed tag unless the narrative or active "
+        "hairstyle_history establishes a temporary physical change that directly contradicts "
+        "it. Cropping, occlusion, mood, activity, scene_brief, generated tags, and visual "
+        "plausibility are not evidence. Put an exact supplied fixed_appearance tag in "
+        "authority_exceptions only when that physical exception is established. Use "
+        "required_additions to state the explicit replacement color whenever a fixed "
+        "hair-color exception is established; otherwise keep the fixed color. Use "
+        "forbidden_additions and conflicts only for generated_positive details that invent or "
+        "contradict persistent physical identity; never use them for wardrobe or scene details. "
+        "Use required_additions only for the smallest visible physical replacement needed to "
+        "express an approved exception. Copy candidate strings exactly when a field requires "
+        "an existing candidate. Return compact JSON only, with one object for every supplied id: "
         '{"entries":[{"id":1,"authority_exceptions":[],"forbidden_additions":[],"conflicts":[],"required_additions":[]}]}.'
     )
     messages = [{"role": "system", "content": system_prompt}, {
@@ -7124,7 +7071,7 @@ async def _run_call2_authority_audit(
         if reason:
             print(
                 f"[ILLUST_CONTEXT:CALL2_AUTHORITY_AUDIT] 최종 응답 검증 실패, "
-                f"기본 세트 전부 복원하는 degraded 모드 사용: reason={reason}, "
+                f"고정 외형 예외 없이 복원하는 degraded 모드 사용: reason={reason}, "
                 f"raw={raw_output[:1000]!r}"
             )
             degraded = {
@@ -7162,7 +7109,7 @@ async def _run_call2_authority_audit(
         raise
     except Exception as e:
         print(
-            f"[ILLUST_CONTEXT:CALL2_AUTHORITY_AUDIT] LLM 실패, 기본 세트 전부 "
+            f"[ILLUST_CONTEXT:CALL2_AUTHORITY_AUDIT] LLM 실패, 고정 외형 예외 없이 "
             f"복원하는 degraded 모드 사용: error={e}"
         )
         traceback.print_exc()
@@ -7186,13 +7133,13 @@ def apply_call2_authority_base(
     semantic_decisions: dict[tuple[str, int, str], dict] | None = None,
     semantic_status: str = "not_run",
 ) -> list[dict]:
-    """Restore fixed appearance and validate the default-outfit fallback.
+    """Restore fixed appearance and use CALL2's complete wardrobe snapshot.
 
-    Only the separate semantic audit may approve exact authority exceptions.
-    DETAIL/PLAN fields remain untrusted proposals, but an audited contextual
-    outfit may replace the default reference as a set. Other omissions are
-    deterministic server repairs. This function compares only server-provided
-    tag-set membership; it does not classify narrative words.
+    Only the separate semantic audit may approve fixed-appearance exceptions.
+    A known CALL2 outfit_state owns wardrobe as a complete set. The profile
+    default outfit is restored only when CALL2 did not provide a usable state.
+    This function compares only server-provided tag-set membership; it does not
+    classify narrative words.
     """
     audits: list[dict] = []
     for descriptor in descriptors or []:
@@ -7232,15 +7179,22 @@ def apply_call2_authority_base(
                     f"kind={kind}, slot={slot}, character={name}"
                 )
 
-            outfit_state = _normalize_outfit_state(character.get("outfit_state"))
-            body_state = outfit_state["body_state"]
-            wardrobe_authority = default_tags
+            raw_outfit_state = character.get("outfit_state")
+            outfit_state = _normalize_outfit_state(raw_outfit_state)
+            outfit_state_known = _outfit_state_is_known(raw_outfit_state)
+            wardrobe_authority = [] if outfit_state_known else default_tags
+            if not outfit_state_known:
+                print(
+                    f"[ILLUST_CONTEXT:CALL2_AUTHORITY] CALL2 outfit_state 사용 불가, "
+                    f"기본 복장 폴백: kind={kind}, slot={slot}, character={name}, "
+                    f"raw={raw_outfit_state!r}, default_outfit={default_tags}"
+                )
 
-            # The semantic audit may except a fixed tag only under its explicit-
-            # narrative-evidence contract. Wardrobe exceptions remain contextual.
+            # The semantic audit may except fixed appearance only. Wardrobe is
+            # owned by CALL2 and is not an authority-exception candidate.
             allowed_authority = {
                 _authority_tag_identity(tag): tag
-                for tag in fixed_tags + wardrobe_authority
+                for tag in fixed_tags
                 if _authority_tag_identity(tag)
             }
             valid_exceptions: list[str] = []
@@ -7299,12 +7253,26 @@ def apply_call2_authority_base(
             generated_by_id = {
                 _authority_tag_identity(tag): tag for tag in generated_tags
             }
+            trusted_worn_ids = {
+                _authority_tag_identity(tag)
+                for tag in outfit_state["worn"]
+                if _authority_tag_identity(tag)
+            }
+            trusted_removed_ids = {
+                _authority_tag_identity(tag)
+                for tag in outfit_state["removed"]
+                if _authority_tag_identity(tag)
+            }
             semantic_forbidden: list[str] = []
             for raw_forbidden in semantic_decision.get("forbidden_additions") or []:
                 identity = _authority_tag_identity(raw_forbidden)
-                if identity in generated_by_id and identity not in {
-                    _authority_tag_identity(tag) for tag in semantic_forbidden
-                }:
+                if (
+                    identity in generated_by_id
+                    and identity not in trusted_worn_ids
+                    and identity not in {
+                        _authority_tag_identity(tag) for tag in semantic_forbidden
+                    }
+                ):
                     semantic_forbidden.append(generated_by_id[identity])
             semantic_forbidden_ids = {
                 _authority_tag_identity(tag) for tag in semantic_forbidden
@@ -7314,6 +7282,7 @@ def apply_call2_authority_base(
                 identity = _authority_tag_identity(raw_conflict)
                 if (
                     identity in generated_by_id
+                    and identity not in trusted_worn_ids
                     and identity not in semantic_forbidden_ids
                     and identity not in {
                         _authority_tag_identity(tag) for tag in semantic_conflicts
@@ -7328,6 +7297,10 @@ def apply_call2_authority_base(
             }
             semantic_required: list[str] = []
             semantic_required_ids: set[str] = set()
+            default_outfit_ids = {
+                _authority_tag_identity(tag) for tag in default_tags
+                if _authority_tag_identity(tag)
+            }
             for raw_required in semantic_decision.get("required_additions") or []:
                 required = str(raw_required or "").strip()
                 identity = _authority_tag_identity(required)
@@ -7340,16 +7313,20 @@ def apply_call2_authority_base(
                     or identity in semantic_conflict_ids
                 ):
                     continue
+                if outfit_state_known and identity in default_outfit_ids:
+                    print(
+                        f"[ILLUST_CONTEXT:CALL2_AUTHORITY] 감사의 기본 복장 재삽입 "
+                        f"요청 무시: kind={kind}, slot={slot}, character={name}, "
+                        f"tag={required!r}"
+                    )
+                    continue
                 semantic_required_ids.add(identity)
                 semantic_required.append(required)
             mandatory_fixed = [
                 tag for tag in fixed_tags
                 if _authority_tag_identity(tag) not in exception_ids
             ]
-            mandatory_wardrobe = [
-                tag for tag in wardrobe_authority
-                if _authority_tag_identity(tag) not in exception_ids
-            ]
+            mandatory_wardrobe = list(wardrobe_authority)
             missing_fixed = [
                 tag for tag in mandatory_fixed
                 if _authority_tag_identity(tag) not in generated_ids
@@ -7360,7 +7337,10 @@ def apply_call2_authority_base(
             ]
 
             excluded_ids = (
-                exception_ids | semantic_forbidden_ids | semantic_conflict_ids
+                exception_ids
+                | semantic_forbidden_ids
+                | semantic_conflict_ids
+                | trusted_removed_ids
             )
             forbidden_added_removed = [
                 tag for tag in generated_tags
@@ -7369,6 +7349,10 @@ def apply_call2_authority_base(
             conflicts_removed = [
                 tag for tag in generated_tags
                 if _authority_tag_identity(tag) in semantic_conflict_ids
+            ]
+            existing_worn = [
+                tag for tag in outfit_state["worn"]
+                if _authority_tag_identity(tag) not in excluded_ids
             ]
             remaining_generated = [
                 tag for tag in generated_tags
@@ -7379,6 +7363,7 @@ def apply_call2_authority_base(
             for tag in (
                 mandatory_fixed
                 + mandatory_wardrobe
+                + existing_worn
                 + remaining_generated
                 + semantic_required
             ):
@@ -7389,10 +7374,6 @@ def apply_call2_authority_base(
                 combined.append(tag)
             character["positive"] = ", ".join(combined)
 
-            existing_worn = [
-                tag for tag in outfit_state["worn"]
-                if _authority_tag_identity(tag) not in excluded_ids
-            ]
             wardrobe_authority_ids = {
                 _authority_tag_identity(tag) for tag in wardrobe_authority
             }
@@ -7412,13 +7393,8 @@ def apply_call2_authority_base(
                     or _authority_tag_identity(tag) in exception_ids
                 )
             ]
-            if mandatory_wardrobe and body_state in {"unknown", "nude", "underwear_only"}:
-                outfit_state["body_state"] = (
-                    "partial" if any(
-                        _authority_tag_identity(tag) in exception_ids
-                        for tag in wardrobe_authority
-                    ) else "clothed"
-                )
+            if mandatory_wardrobe and not outfit_state_known:
+                outfit_state["body_state"] = "clothed"
             character["outfit_state"] = outfit_state
 
             audit = {
@@ -8990,7 +8966,7 @@ _CALL_QUEUE_SUBTASK_GROUPS = {
     "CALL2-KEYVIS": ("call2_keyvis", "CALL2 Key Visual"),
     "CALL2-AUTHORITY-AUDIT": (
         "call2_authority_audit",
-        "CALL2 외형·복장 권위 감사",
+        "CALL2 고정 외형 예외 감사",
     ),
     "CALL2-FALLBACK": ("call2", "CALL2 폴백"),
     "CALL2-FIX": ("call2_fix", "CALL2-FIX TOON 교정"),
@@ -13468,7 +13444,7 @@ async def build_from_context(
         bind_visual_base_snapshot(descriptor, candidate_snapshot)
 
     if progress:
-        await progress(49, "call2_authority_audit", "CALL2 일반 장면 외형·복장 권위 감사")
+        await progress(49, "call2_authority_audit", "CALL2 일반 장면 고정 외형 예외 감사")
     # AUDIT에 hairstyle history(누적 timeline + 이번 턴 events)를 전달한다. 서버는
     # 의미 해석 없이 전달만 하고, AUDIT은 literal evidence가 fixed appearance의 정확한
     # 충돌 태그를 직접 변경했는지 판단한다. 없으면 빈 dict로 전달된다.

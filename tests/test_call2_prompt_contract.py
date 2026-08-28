@@ -82,21 +82,21 @@ def test_call2_injection_message_states_items_may_be_empty():
     assert "`items` may be empty and that is expected" in source
 
 
-def test_call2_authority_audit_rejects_associated_accessory_removal():
+def test_call2_authority_audit_excludes_wardrobe_from_its_scope():
     source = PIPELINE_PY.read_text(encoding="utf-8")
 
-    assert "Do not except an accessory merely because it is associated" in source
-    assert "the accessory itself is removed" in source
-    assert "the coherent outfit is replaced" in source
+    assert "Wardrobe, outfit, accessories, coverage, and exposure are fully" in source
+    assert "owned by CALL2 and are outside this audit" in source
+    assert "Never add, remove, restore, or judge them" in source
+    assert 'audit_reasons.append("default_outfit_differs")' not in source
 
 
-def test_call2_authority_audit_allows_contextual_outfit_creation():
+def test_call2_known_outfit_state_bypasses_default_outfit_restore():
     source = PIPELINE_PY.read_text(encoding="utf-8")
 
-    assert "default_outfit is a fallback reference rather than identity" in source
-    assert "scene-appropriate replacement outfit may except" in source
-    assert "preserve any default item that logically remains" in source
-    assert "full narrative, role, activity, occasion, setting, and continuity" in source
+    assert "A known CALL2 outfit_state owns wardrobe as a complete set" in source
+    assert "default outfit is restored only when CALL2 did not provide a usable state" in source
+    assert "wardrobe_authority = [] if outfit_state_known else default_tags" in source
 
 
 def test_call2_fixed_appearance_requires_explicit_narrative_change():
@@ -107,13 +107,12 @@ def test_call2_fixed_appearance_requires_explicit_narrative_change():
     assert "authoritative identity of the already-selected visual profile" in system
     assert "Only a direct, explicit statement in the actual narrative" in system
     assert "active evidence-bearing history event" in thoughts
-    assert "actual narrative or an active hairstyle_history event contains" in source
-    assert "literal evidence of a temporary physical change" in source
+    assert "narrative or active " in source
+    assert "hairstyle_history establishes a temporary physical change" in source
     assert "assigned scene selection controls the visual beat but has no appearance authority" in source
     assert "without turning appearance wording into a temporary replacement" in source
-    assert "generated visual " in source
-    assert "state structurally differs" in source
-    assert "scene-appropriate replacement outfit may except" in source
+    assert "Audit only fixed physical appearance" in source
+    assert "Wardrobe, outfit, accessories, coverage, and exposure" in source
 
 
 def test_call1_dishevelment_does_not_invent_hairstyle_transition():
@@ -129,8 +128,8 @@ def test_call1_dishevelment_does_not_invent_hairstyle_transition():
 def test_call2_authority_audit_never_leaves_hair_color_unspecified():
     source = PIPELINE_PY.read_text(encoding="utf-8")
 
-    assert "fixed hair-color exception is truly established" in source
-    assert "explicit replacement color in required_additions" in source
+    assert "explicit replacement color whenever a fixed" in source
+    assert "hair-color exception is established" in source
     assert "otherwise keep the fixed color" in source
 
 

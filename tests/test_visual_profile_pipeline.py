@@ -719,7 +719,6 @@ def test_authority_repair_uses_descriptor_profile_not_global_default():
         "characters": [{
             "name": "Adachi",
             "positive": "smile",
-            "outfit_state": {"body_state": "clothed", "worn": [], "removed": []},
         }],
     }]
 
@@ -795,15 +794,9 @@ def test_authority_audit_entries_expose_profile_name_for_targeted_mismatches():
         {},
     )
 
-    assert [entry["visual_profile"] for entry in entries] == [
-        "Adachi_Despair",
-        "Adachi_Civilian",
-    ]
+    assert [entry["visual_profile"] for entry in entries] == ["Adachi_Despair"]
     assert all("visual_profile_id" not in entry for entry in entries)
-    assert [entry["visual_profile_label"] for entry in entries] == [
-        "카드 2",
-        "카드 1",
-    ]
+    assert [entry["visual_profile_label"] for entry in entries] == ["카드 2"]
 
 
 def test_profile_embedding_paths_keep_logical_character_name():
