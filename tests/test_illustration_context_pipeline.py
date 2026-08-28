@@ -3228,6 +3228,124 @@ async def test_call2_authority_audit_is_limited_to_character_authority(
     assert not re.search(r"\bCALL[123]\b", combined, re.IGNORECASE)
 
 
+@pytest.mark.asyncio
+async def test_call2_authority_audit_resolves_same_garment_tags_by_meaning(
+    monkeypatch,
+):
+    requests = []
+
+    async def fake_pipeline_call(call_name, messages, *args, **kwargs):
+        assert call_name == "CALL2-AUTHORITY-AUDIT"
+        requests.append("\n".join(
+            str(item.get("content") or "") for item in messages
+        ))
+        return json.dumps({
+            "entries": [{
+                "id": 1,
+                "authority_exceptions": [
+                    "turtleneck sweater",
+                    "white sweater",
+                    "ribbed sweater",
+                    "brown coat",
+                    "open coat",
+                    "blue skirt",
+                    "stud earrings",
+                ],
+                "forbidden_additions": [],
+                "conflicts": [],
+                "required_additions": [
+                    "white shirt",
+                    "collared shirt",
+                    "navy pleated skirt",
+                ],
+            }],
+        })
+
+    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
+    descriptors = [{
+        "kind": "scene",
+        "slot": 62,
+        "anchor_before": (
+            "She removed the outer garment, then entered the bath still wearing "
+            "her school blouse and skirt."
+        ),
+        "scene_brief": "She washes the soaked uniform in the bath.",
+        "characters": [{
+            "name": "Hiyori",
+            "positive": (
+                "girl, brown hair, white shirt, collared shirt, "
+                "navy pleated skirt, wet clothes"
+            ),
+            "outfit_state": {
+                "body_state": "partial",
+                "worn": [
+                    "white shirt", "collared shirt", "navy pleated skirt",
+                ],
+                # CALL2 may name the removed physical garment without repeating
+                # every default tag that described its properties or wearing state.
+                "removed": ["brown coat", "turtleneck sweater", "stud earrings"],
+            },
+        }],
+    }]
+    fixed = {"Hiyori": "girl, brown hair"}
+    defaults = {
+        "Hiyori": [
+            "turtleneck sweater",
+            "white sweater",
+            "ribbed sweater",
+            "brown coat",
+            "open coat",
+            "blue skirt",
+            "pleated skirt",
+            "stud earrings",
+        ],
+    }
+
+    decisions, _raw, status, metrics = await pipeline._run_call2_authority_audit(
+        descriptors=descriptors,
+        fixed_appearance=fixed,
+        default_outfits=defaults,
+        current_context=(
+            "Hiyori leaves the coat outside and enters the bath in only her "
+            "white school blouse, navy pleated skirt, and underwear."
+        ),
+        stream_notify=None,
+    )
+
+    combined = "\n".join(requests)
+    assert status == "ok"
+    assert metrics["valid_decisions"] == 1
+    assert "physical outfit as a coherent whole" in combined
+    assert "not an inventory of independent objects" in combined
+    assert "Never determine exceptions by merely copying" in combined
+    assert "default_outfit_action" not in combined
+    decision = decisions[("scene", 62, "hiyori")]
+    assert set(decision) == {
+        "_audit_status",
+        "authority_exceptions",
+        "forbidden_additions",
+        "conflicts",
+        "required_additions",
+    }
+    assert "brown coat" in decision["authority_exceptions"]
+    assert "open coat" in decision["authority_exceptions"]
+
+    pipeline.apply_call2_authority_base(
+        descriptors,
+        fixed,
+        defaults,
+        decisions,
+        status,
+    )
+    character = descriptors[0]["characters"][0]
+    tags = pipeline._split_top_level_authority_tags(character["positive"])
+    assert "brown coat" not in tags
+    assert "open coat" not in tags
+    assert "white shirt" in tags
+    assert "navy pleated skirt" in tags
+    assert "pleated skirt" in tags
+
+
 def test_prompt_format_migrates_legacy_preset_and_rejects_unknown_value(capsys):
     assert pipeline.merged_toggles({"preset": "tutorial"})["prompt_format"] == "v3"
     assert pipeline.merged_toggles({"preset": "v1"})["prompt_format"] == "v1"

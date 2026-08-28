@@ -170,6 +170,126 @@ async def test_keyvisual_slot_minus_one_serves_gif(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_bridge_lazily_restores_generated_backups_after_metadata_reload(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    """재시작으로 메모리 bytes가 사라져도 backup_name의 이미지를 복원·캐시한다."""
+    session_dir = tmp_path / "sessions"
+    backup_dir = tmp_path / "workflow_backup"
+    backup_dir.mkdir()
+    monkeypatch.setattr(pipeline, "SESSION_DIR", str(session_dir))
+    monkeypatch.setattr(pipeline, "WORKFLOW_BACKUP_DIR", str(backup_dir))
+
+    session_id = "risu_" + ("b" * 64)
+    lookup_key = "b" * 24
+    keyvis_name = "20260828_120000_keyvis"
+    scene_name = "20260828_120001_scene"
+    keyvis_bytes = _build_two_frame_animation("WEBP")
+    scene_bytes = _build_png()
+    (backup_dir / f"{keyvis_name}.webp").write_bytes(keyvis_bytes)
+    (backup_dir / f"{scene_name}.png").write_bytes(scene_bytes)
+    items = [
+        {
+            "kind": "keyvis",
+            "slot": -1,
+            "backup_name": keyvis_name,
+            "raw_positive": "keyvis",
+            "raw_negative": "",
+        },
+        {
+            "kind": "scene",
+            "slot": 0,
+            "backup_name": scene_name,
+            "raw_positive": "scene",
+            "raw_negative": "",
+        },
+    ]
+
+    try:
+        pipeline.create_session(session_id, "context")
+        pipeline.set_session_result(
+            session_id,
+            items,
+            [keyvis_bytes, scene_bytes],
+        )
+        pipeline._SESSIONS.pop(session_id)
+        pipeline._LOOKUP_KEYS.pop(lookup_key, None)
+
+        keyvis_response = await server.handle_api_illustration_context_bridge_image(
+            _MatchRequest({"sid": session_id, "slot": "-1"})
+        )
+        assert pipeline.session_image(session_id, 2) == scene_bytes
+        scene_response = await server.handle_api_illustration_context_bridge_image(
+            _MatchRequest({"sid": session_id, "slot": "0"})
+        )
+
+        assert keyvis_response.status == 200
+        assert keyvis_response.content_type == "image/webp"
+        assert keyvis_response.body == keyvis_bytes
+        assert scene_response.status == 200
+        assert scene_response.content_type == "image/png"
+        assert scene_response.body == scene_bytes
+        assert pipeline._SESSIONS[session_id]["images"] == [
+            keyvis_bytes,
+            scene_bytes,
+        ]
+
+        first_output = capsys.readouterr().out
+        assert "재생성 세션 metadata 복원" in first_output
+        assert first_output.count("백업 이미지 지연 복원:") == 2
+        assert "[ILLUST_CONTEXT:BRIDGE] 이미지 없음" not in first_output
+
+        # 첫 요청 뒤 디스크 원본이 없어져도 같은 프로세스에서는 메모리 캐시를 사용한다.
+        (backup_dir / f"{keyvis_name}.webp").unlink()
+        cached_response = await server.handle_api_illustration_context_bridge_image(
+            _MatchRequest({"sid": session_id, "slot": "-1"})
+        )
+        assert cached_response.status == 200
+        assert cached_response.body == keyvis_bytes
+        assert "백업 이미지 지연 복원" not in capsys.readouterr().out
+    finally:
+        pipeline._SESSIONS.pop(session_id, None)
+        pipeline._LOOKUP_KEYS.pop(lookup_key, None)
+
+
+def test_metadata_restore_rejects_missing_and_unsafe_backup_names(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    """누락 파일과 경로 이탈형 backup_name은 읽지 않고 원인을 출력한다."""
+    session_dir = tmp_path / "sessions"
+    backup_dir = tmp_path / "workflow_backup"
+    backup_dir.mkdir()
+    monkeypatch.setattr(pipeline, "SESSION_DIR", str(session_dir))
+    monkeypatch.setattr(pipeline, "WORKFLOW_BACKUP_DIR", str(backup_dir))
+
+    session_id = "risu_" + ("c" * 64)
+    lookup_key = "c" * 24
+    items = [
+        {"kind": "keyvis", "slot": -1, "backup_name": "missing_backup"},
+        {"kind": "scene", "slot": 0, "backup_name": "../outside"},
+    ]
+    try:
+        pipeline.create_session(session_id, "context")
+        pipeline.set_session_result(session_id, items, [b"old-keyvis", b"old-scene"])
+        pipeline._SESSIONS.pop(session_id)
+        pipeline._LOOKUP_KEYS.pop(lookup_key, None)
+
+        assert pipeline.session_image_by_slot(session_id, -1) is None
+        assert pipeline.session_image_by_slot(session_id, 0) is None
+
+        output = capsys.readouterr().out
+        assert "백업 이미지 지연 복원 실패 - 파일 없음" in output
+        assert "백업 이미지 지연 복원 거부 - 잘못된 backup_name" in output
+    finally:
+        pipeline._SESSIONS.pop(session_id, None)
+        pipeline._LOOKUP_KEYS.pop(lookup_key, None)
+
+
+@pytest.mark.asyncio
 async def test_bridge_serves_animated_webp_and_avif_with_exact_mime(
     tmp_path, monkeypatch
 ):

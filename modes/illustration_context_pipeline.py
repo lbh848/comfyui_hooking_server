@@ -44,6 +44,10 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PROMPTS_DIR = os.path.join(BASE_DIR, "prompts", "lighbd")
 PROMPT_BACKUP_DIR = os.path.join(BASE_DIR, "backups", "prompt_files")
 SESSION_DIR = os.path.join(BASE_DIR, "logs", "illustration_context_sessions")
+WORKFLOW_BACKUP_DIR = os.path.join(BASE_DIR, "workflow_backup")
+
+_BACKUP_IMAGE_EXTENSIONS = (".webp", ".avif", ".png", ".gif")
+_BACKUP_NAME_RE = re.compile(r"[A-Za-z0-9_-]{1,200}")
 
 CONTEXT_PREFIX = "__LB_ILLUST_CONTEXT_V1__"
 RESULT_PREFIX = "__LB_ILLUST_RESULT_V1__"
@@ -1122,6 +1126,77 @@ def session_image(session_id: str, index: int) -> bytes | None:
                     f"[ILLUST_CONTEXT] 원본 에셋 지연 회수 실패: "
                     f"session={session_id}, index={index}"
                 )
+        if image is None:
+            try:
+                slot = int(descriptor.get("slot"))
+            except Exception as e:
+                print(
+                    f"[ILLUST_CONTEXT] 백업 이미지 인덱스 복원 실패 - 슬롯 파싱 오류: "
+                    f"session={session_id}, index={index}, error={e}"
+                )
+                traceback.print_exc()
+            else:
+                image = _load_session_backup_image(session_id, slot, descriptor)
+                if image:
+                    images[index - 1] = image
+    return image
+
+
+def _load_session_backup_image(
+    session_id: str,
+    slot: int,
+    item: dict,
+) -> bytes | None:
+    """지속 metadata의 backup_name으로 생성 이미지를 지연 복원한다."""
+    backup_name = str(item.get("backup_name") or "").strip()
+    if not backup_name:
+        print(
+            f"[ILLUST_CONTEXT] 백업 이미지 지연 복원 불가 - backup_name 없음: "
+            f"session={session_id}, slot={slot}"
+        )
+        return None
+    if _BACKUP_NAME_RE.fullmatch(backup_name) is None:
+        print(
+            f"[ILLUST_CONTEXT] 백업 이미지 지연 복원 거부 - 잘못된 backup_name: "
+            f"session={session_id}, slot={slot}, backup={backup_name!r}"
+        )
+        return None
+
+    candidates = [
+        os.path.join(WORKFLOW_BACKUP_DIR, backup_name + extension)
+        for extension in _BACKUP_IMAGE_EXTENSIONS
+    ]
+    image_path = next((path for path in candidates if os.path.isfile(path)), "")
+    if not image_path:
+        print(
+            f"[ILLUST_CONTEXT] 백업 이미지 지연 복원 실패 - 파일 없음: "
+            f"session={session_id}, slot={slot}, backup={backup_name!r}, "
+            f"dir={WORKFLOW_BACKUP_DIR!r}"
+        )
+        return None
+
+    try:
+        with open(image_path, "rb") as f:
+            image = f.read()
+    except Exception as e:
+        print(
+            f"[ILLUST_CONTEXT] 백업 이미지 지연 복원 실패 - 읽기 오류: "
+            f"session={session_id}, slot={slot}, path={image_path!r}, error={e}"
+        )
+        traceback.print_exc()
+        return None
+    if not image:
+        print(
+            f"[ILLUST_CONTEXT] 백업 이미지 지연 복원 실패 - 빈 파일: "
+            f"session={session_id}, slot={slot}, path={image_path!r}"
+        )
+        return None
+
+    print(
+        f"[ILLUST_CONTEXT] 백업 이미지 지연 복원: "
+        f"session={session_id}, slot={slot}, backup={backup_name!r}, "
+        f"bytes={len(image)}"
+    )
     return image
 
 
@@ -1151,6 +1226,10 @@ def session_image_by_slot(session_id: str, slot: int) -> bytes | None:
                         f"[ILLUST_CONTEXT] 원본 에셋 슬롯 지연 회수 실패: "
                         f"session={session_id}, slot={slot}"
                     )
+            if image is None:
+                image = _load_session_backup_image(session_id, slot, item)
+                if image:
+                    images[index] = image
             return image
     print(f"[ILLUST_CONTEXT] 슬롯 이미지 없음: session={session_id}, slot={slot}")
     return None
@@ -6987,6 +7066,18 @@ async def _run_call2_authority_audit(
         "scene-appropriate replacement outfit may except the default garments that no longer "
         "belong, but preserve any default item that logically remains. Judge a replacement from "
         "the full narrative, role, activity, occasion, setting, and continuity by meaning. "
+        "Understand the physical outfit as a coherent whole before mapping that judgment back "
+        "to tags. The flat default_outfit list is descriptive tag vocabulary, not an inventory "
+        "of independent objects: several tags may describe different properties or wearing "
+        "states of the same physical garment. If that garment is absent or replaced, put every "
+        "default_outfit tag that describes it in authority_exceptions; do not leave one of its "
+        "descriptors active as though it were a separate garment. Conversely, keep every tag "
+        "whose described item or property truly remains in the current outfit. Treat "
+        "generated_outfit_state as a proposed complete logical snapshot, but verify it against "
+        "the natural-language narrative. Never determine exceptions by merely copying its "
+        "removed strings, comparing word overlap, or matching keywords. First resolve what the "
+        "character is physically wearing by meaning, then map that resolved outfit to the exact "
+        "candidate strings required by authority_exceptions. "
         "Do not except an accessory merely because it is associated with one removed garment; "
         "remove it only when the accessory itself is removed or the coherent outfit is replaced. "
         "Put exact generated_positive tags that invent persistent identity or incoherent "
