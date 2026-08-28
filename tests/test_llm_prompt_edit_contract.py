@@ -28,6 +28,44 @@ def test_v3_fallback_matches_natural_language_supplement_contract():
     assert "preferably one short sentence" in template
 
 
+def _assert_plan_describes_executed_scene(template):
+    assert "Finalize the scene_* fields first" in template
+    assert "faithful summary of the edits that are actually present" in template
+    assert "Never claim in plan" in template
+    assert "update every affected occurrence" in template
+
+    output_contract = template.split("## Output", 1)[1]
+    assert output_contract.index('"scene_char"') < output_contract.index('"plan"')
+
+
+def test_v3_plan_is_a_summary_of_the_executed_scene_edit():
+    _assert_plan_describes_executed_scene(llm_prompt_edit._load_user_v3_builtin())
+    _assert_plan_describes_executed_scene(llm_prompt_edit.DEFAULT_USER_V3_TEMPLATE)
+
+
+def test_identity_contract_does_not_preserve_a_causally_affected_pose():
+    bot = {
+        "characters": [
+            {
+                "name": "Hoshino",
+                "gender_tag": "1girl",
+                "face_tags": "short hair, black hair",
+                "eye_tags": "yellow eyes",
+            }
+        ]
+    }
+
+    contract = llm_prompt_edit.character_selection_contract(
+        bot,
+        ["Hoshino"],
+        ["Hoshino"],
+    )
+
+    assert "remain unrelated after the causal audit" in contract
+    assert "identified as contributing to the unwanted result is affected" in contract
+    assert "even when the user's wording does not name it directly" in contract
+
+
 def _assert_causal_system_contract(prompt):
     assert "causal prompt debugger" in prompt
     assert "desired visual outcome" in prompt
