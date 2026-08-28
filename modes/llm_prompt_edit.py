@@ -85,8 +85,12 @@ DEFAULT_USER_V3_TEMPLATE = (
     "2. Treat the user's direction as the desired visual outcome, not as a literal instruction to "
     "append or strengthen the most obvious matching tag.\n"
     "3. Before rewriting, causally audit the direction, visible result, ANIMA tags, SDXL tags, and "
-    "supplement together. Decide which prompt constraints most likely caused the unwanted result "
-    "and which details the final scene must remove, rewrite, merge, or add.\n"
+    "supplement together. In plan, make a concrete root-cause diagnosis and binding edit decisions: "
+    "name the exact current details you will remove or rewrite, state any exact additions, and describe "
+    "the coherent replacement scene. Do not claim that descriptions are duplicated, ambiguous, "
+    "unnecessary, removed, or rewritten without identifying what they are and carrying out that "
+    "operation. The plan is work that the returned scene_* fields must execute, not commentary about "
+    "a hoped-for result.\n"
     "4. Fix the cause before treating the symptom. If pose, action, held-object, interaction, "
     "subject-count, or composition requirements cannot all be true in one image, replace them with "
     "one unambiguous and physically feasible description. When one subject is requested, make every "
@@ -116,18 +120,19 @@ DEFAULT_USER_V3_TEMPLATE = (
     "appearance, or relative position (for example, \"the girl with blue hair\" or \"the girl on "
     "the left\"). Unusual framing and vantage points may be described directly, such as being "
     "viewed through, reflected in, or framed behind something.\n"
-    "13. Finalize the scene_* fields first. Then write the \"plan\" field in Korean as a faithful "
-    "summary of the edits that are actually present in those final fields; write all scene_* fields "
-    "in English. Never claim in plan that a detail was removed, rewritten, merged, or added unless "
-    "the returned scene_* fields actually perform that change.\n\n"
+    "13. Write the \"plan\" field first in Korean, then write all scene_* fields in English by "
+    "executing every edit decision in that plan. Before returning, compare the completed scene_* "
+    "fields with the plan: every claimed removal, rewrite, merge, or addition must be visibly carried "
+    "out, and no affected stale description may remain. If a current detail remains in the final scene, "
+    "do not claim that you removed or replaced it; describe only the operations actually performed.\n\n"
     "## Output (JSON schema - return ONLY a JSON object in this form)\n"
     "{\n"
+    '  "plan": "concrete root-cause diagnosis and binding edit plan that the following scene_* '
+    'fields execute (write in Korean)",\n'
     '  "scene_setup": "background/location/lighting/weather/mood tags, comma+space separated",\n'
     '  "scene_char": "character appearance/pose/expression/outfit tags, comma+space separated",\n'
     '  "scene_supplement": "concise objective natural-language visual description for ANIMA-only '
-    'details, preferably one short sentence, or empty string \\"\\"",\n'
-    '  "plan": "root-cause diagnosis and faithful summary of the correction actually present in scene_* '
-    '(write in Korean)"\n'
+    'details, preferably one short sentence, or empty string \\"\\""\n'
     "}"
 )
 

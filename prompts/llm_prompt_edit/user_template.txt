@@ -10,7 +10,7 @@
 ## Instructions
 1. Look at the provided image (if any) and the tags above to understand the current scene.
 2. Treat the user's direction as the desired visual outcome, not as a literal instruction to append or strengthen the most obvious matching tag.
-3. Before rewriting, causally audit the direction, visible result, ANIMA tags, SDXL tags, and supplement together. Decide which prompt constraints most likely caused the unwanted result and which details the final scene must remove, rewrite, merge, or add.
+3. Before rewriting, causally audit the direction, visible result, ANIMA tags, SDXL tags, and supplement together. In plan, make a concrete root-cause diagnosis and binding edit decisions: name the exact current details you will remove or rewrite, state any exact additions, and describe the coherent replacement scene. Do not claim that descriptions are duplicated, ambiguous, unnecessary, removed, or rewritten without identifying what they are and carrying out that operation. The plan is work that the returned scene_* fields must execute, not commentary about a hoped-for result.
 4. Fix the cause before treating the symptom. If pose, action, held-object, interaction, subject-count, or composition requirements cannot all be true in one image, replace them with one unambiguous and physically feasible description. When one subject is requested, make every remaining pose, limb use, held object, and interaction compatible with that same single subject, and remove leftover multi-subject or multi-shot cues that contradict the requested outcome.
 5. Do not solve a failure merely by repeating, weighting, or synonym-stacking count/focus tags or by adding negative tags while retaining the causal conflict. Count/focus tags may be kept once when useful, but causal cleanup is primary.
 6. Preserve the character's core identity (key appearance traits); focus changes on scene/mood/pose/outfit.
@@ -20,12 +20,12 @@
 10. Write scene_setup and scene_char as English Danbooru-style tags separated by comma+space (", ").
 11. Write scene_supplement in concise, minimal English natural language. Use objective, telegraphic visual description, preferably one short sentence. Do NOT write it as a comma-separated tag list. Return an empty string when tags already express the scene sufficiently.
 12. Do not include character names in scene_supplement. Refer to people by gender, visible appearance, or relative position (for example, "the girl with blue hair" or "the girl on the left"). Unusual framing and vantage points may be described directly, such as being viewed through, reflected in, or framed behind something.
-13. Finalize the scene_* fields first. Then write the "plan" field in Korean as a faithful summary of the edits that are actually present in those final fields; write all scene_* fields in English. Never claim in plan that a detail was removed, rewritten, merged, or added unless the returned scene_* fields actually perform that change.
+13. Write the "plan" field first in Korean, then write all scene_* fields in English by executing every edit decision in that plan. Before returning, compare the completed scene_* fields with the plan: every claimed removal, rewrite, merge, or addition must be visibly carried out, and no affected stale description may remain. If a current detail remains in the final scene, do not claim that you removed or replaced it; describe only the operations actually performed.
 
 ## Output (JSON schema - return ONLY a JSON object in this form)
 {
+  "plan": "concrete root-cause diagnosis and binding edit plan that the following scene_* fields execute (write in Korean)",
   "scene_setup": "background/location/lighting/weather/mood tags, comma+space separated",
   "scene_char": "character appearance/pose/expression/outfit tags, comma+space separated",
-  "scene_supplement": "concise objective natural-language visual description for ANIMA-only details, preferably one short sentence, or empty string \"\"",
-  "plan": "root-cause diagnosis and faithful summary of the correction actually present in scene_* (write in Korean)"
+  "scene_supplement": "concise objective natural-language visual description for ANIMA-only details, preferably one short sentence, or empty string \"\""
 }
