@@ -172,7 +172,7 @@ def test_ref_request_preserves_standard_and_fast_experimental_resolution() -> No
         ("prompt_generation_mode", "all"),
         ("translate_instruction_to_english", "true"),
         ("instruction_language", "ja"),
-        ("refine_version", "v3"),
+        ("refine_version", "v4"),
         ("upscale_model", "unknown"),
         ("upscale_scale", 8),
         ("output_format", "gif"),
@@ -187,6 +187,15 @@ def test_video_generation_defaults_reject_invalid_values(field: str, value: obje
 
     with pytest.raises(ValueError):
         server.normalize_video_generation_defaults(settings)
+
+
+def test_video_generation_defaults_accept_japanese_animation_profile() -> None:
+    settings = copy.deepcopy(server.DEFAULT_VIDEO_GENERATION_DEFAULTS)
+    settings["refine_version"] = "v3"
+
+    normalized = server.normalize_video_generation_defaults(settings)
+
+    assert normalized["refine_version"] == "v3"
 
 
 def test_load_config_inherits_legacy_video_postprocess_defaults(

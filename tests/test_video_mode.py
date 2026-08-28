@@ -1156,6 +1156,65 @@ def test_instruction_direct_prompt_uses_active_prompt_and_supplied_duration() ->
     assert "A static camera or continuous setup is valid" in task_message
 
 
+def test_instruction_anime_prompt_uses_pose_to_pose_timing_contract() -> None:
+    messages = VideoMode._instruction_direct_messages(
+        "i2v",
+        "ko",
+        duration=5,
+        user_input="인물이 편지를 읽다가 눈을 들어 상대를 바라본다",
+        allow_camera_motion=True,
+        allow_background_change=False,
+        refine_version="v3",
+    )
+    system_message = str(messages[0]["content"])
+    task_message = str(messages[1]["content"])
+
+    assert system_message == video_module.INSTRUCTION_ANIME_SYSTEM_PROMPT
+    assert "expressive key poses" in system_message
+    assert "A held drawing is active timing" in system_message
+    assert "Do not continuously interpolate every body part" in system_message
+    assert "do not imitate broken playback or uniform low frame rate" in system_message
+    assert "rather than generic cinematic smoothness" in system_message
+    assert "Selected directing profile: V3 Japanese animation" in task_message
+    assert "Japanese-animation timing, pose, composition, and performance" in task_message
+
+
+@pytest.mark.parametrize("mode,picture_count", [("i2v", 1), ("first_last", 2), ("ref2v", 2)])
+def test_final_h3_prompt_keeps_japanese_animation_profile(
+    mode: str,
+    picture_count: int,
+) -> None:
+    anime_messages = VideoMode._prompt_messages(
+        mode,
+        "인물이 표정을 굳힌 뒤 짧고 선명하게 고개를 든다.",
+        visual_context="visual_context:\nPicture 1: An anime character is seated.",
+        secondary_motion=True,
+        duration=5,
+        picture_count=picture_count,
+        refine_version="v3",
+    )
+    cinematic_messages = VideoMode._prompt_messages(
+        mode,
+        "인물이 표정을 굳힌 뒤 짧고 선명하게 고개를 든다.",
+        visual_context="visual_context:\nPicture 1: An anime character is seated.",
+        secondary_motion=True,
+        duration=5,
+        picture_count=picture_count,
+        refine_version="v2",
+    )
+
+    anime_system = str(anime_messages[0]["content"])
+    anime_task = str(anime_messages[1]["content"])
+    cinematic_system = str(cinematic_messages[0]["content"])
+    assert "Selected Japanese-animation generation contract" in anime_system
+    assert "do not regularize" in anime_system
+    assert "intentional held drawings" in anime_system
+    assert "Do not keep every layer swaying" in anime_system
+    assert "Selected directing profile:\nV3 Japanese animation" in anime_task
+    assert "Do not smooth this profile back" in anime_task
+    assert "Selected Japanese-animation generation contract" not in cinematic_system
+
+
 def test_instruction_direct_prompt_passes_first_last_mode_contracts() -> None:
     user_direction = "free-form transition direction supplied by the user"
     messages = VideoMode._instruction_direct_messages(

@@ -34,6 +34,7 @@ def _video_request(**overrides) -> dict:
         "upscale_scale": 2,
         "output_format": "avif",
         "prompt_generation_mode": "single",
+        "refine_version": "v1",
         "translate_instruction_to_english": False,
         "secondary_motion": False,
     }
@@ -96,6 +97,7 @@ async def test_video_enqueue_passes_confirmed_instruction_to_prompt_queue(
     assert "include_dialogue_context" not in captured["params"]
     assert captured["params"]["visual_context_source"] == "image"
     assert captured["params"]["prompt_generation_mode"] == "single"
+    assert captured["params"]["refine_version"] == "v1"
     assert captured["params"]["translate_instruction_to_english"] is False
     assert captured["params"]["aspect_ratio"] == "16:9"
     assert captured["params"]["quality_level"] == "high"
@@ -699,6 +701,53 @@ async def test_video_instruction_draft_rejects_invalid_option_before_queue(
     assert payload["success"] is False
     assert "boolean" in payload["error"]
     assert called is False
+
+
+@pytest.mark.asyncio
+async def test_video_instruction_v3_uses_existing_direct_queue_and_llm_route(
+    monkeypatch,
+) -> None:
+    captured: dict = {}
+
+    async def fake_add_item(item_type, label, params):
+        captured.update(item_type=item_type, label=label, params=params)
+        future = asyncio.get_running_loop().create_future()
+        future.set_result(
+            {
+                "success": True,
+                "draft": "인물은 강한 키포즈 뒤에 시선을 멈춰 감정을 남긴다.",
+                "language": "ko",
+                "refine_version": "v3",
+                "history_id": "video_instruction_direct:i2v:anime-1",
+                "llm_trace": ["video_instruction_direct:i2v:anime-1"],
+            }
+        )
+        return SimpleNamespace(
+            id="video-anime-id",
+            label=label,
+            completion_future=future,
+        )
+
+    monkeypatch.setattr(server.video_mode, "validate_reference", lambda _reference: None)
+    monkeypatch.setattr(server.queue_manager, "add_item", fake_add_item)
+
+    response = await server.handle_api_video_instruction_direct(
+        _JsonRequest(
+            _draft_request(
+                refine_version="v3",
+                instruction="인물이 편지를 읽다가 상대를 바라본다",
+            )
+        )
+    )
+    payload = json.loads(response.text)
+
+    assert response.status == 200
+    assert payload["success"] is True
+    assert payload["refine_version"] == "v3"
+    assert captured["item_type"] == "video_instruction_direct"
+    assert "일본 애니메이션 연출 계획" in captured["label"]
+    assert captured["params"]["refine_version"] == "v3"
+    assert server.DEFAULT_CONFIG["llm_routing"]["video_prompt_i2v"]["primary"] == "llm1"
 
 
 @pytest.mark.asyncio

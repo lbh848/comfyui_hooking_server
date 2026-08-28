@@ -16044,11 +16044,12 @@
                     <label class="video-secondary-row video-ai-context-option">
                         <span class="video-ai-context-copy">
                             <span class="video-panel-title">입력 다듬기 방식</span>
-                            <span class="video-panel-hint" style="display:block; margin-top:3px;">일반 확장 또는 시네마틱 제작 계획으로 다듬습니다.</span>
+                            <span class="video-panel-hint" style="display:block; margin-top:3px;">일반 확장, 시네마틱 또는 일본 애니메이션 감성의 제작 계획으로 다듬습니다.</span>
                         </span>
                         <select id="video-generation-refine-version" class="video-select">
                             <option value="v1" selected>V1 (일반 다듬기)</option>
                             <option value="v2">V2 (시네마틱 스타일)</option>
+                            <option value="v3">V3 (일본 애니메이션 스타일)</option>
                         </select>
                     </label>
                     <label class="video-secondary-row video-ai-context-option">
@@ -31461,6 +31462,7 @@
                 dialogue: isVideoDialogueContextEnabled(),
                 cameraMotion: isVideoCameraMotionAllowed(),
                 backgroundChange: isVideoBackgroundChangeAllowed(),
+                refineVersion: selectedVideoInstructionRefineVersion(),
                 instruction: document.getElementById('video-generation-instruction')?.value || '',
             });
         }
@@ -31676,7 +31678,7 @@
                 return 'v1';
             }
             const version = String(select.value || '').trim().toLowerCase();
-            if (!['v1', 'v2'].includes(version)) {
+            if (!['v1', 'v2', 'v3'].includes(version)) {
                 console.error('[VIDEO_UI] 지원하지 않는 입력 다듬기 방식입니다. V1을 사용합니다:', select.value);
                 select.value = 'v1';
                 return 'v1';
@@ -31685,9 +31687,10 @@
         }
 
         function requestSelectedVideoInstructionRefine() {
-            return selectedVideoInstructionRefineVersion() === 'v2'
-                ? requestVideoInstructionDirect()
-                : requestVideoInstructionRefine();
+            const refineVersion = selectedVideoInstructionRefineVersion();
+            return refineVersion === 'v1'
+                ? requestVideoInstructionRefine()
+                : requestVideoInstructionDirect(refineVersion);
         }
 
         async function requestVideoInstructionRefine() {
@@ -31804,12 +31807,24 @@
             videoInstructionDirectBusy = false;
         }
 
-        async function requestVideoInstructionDirect() {
+        async function requestVideoInstructionDirect(requestedVersion = selectedVideoInstructionRefineVersion()) {
             if (videoInstructionDraftBusy || videoInstructionRefineBusy || videoInstructionDirectBusy || videoDirectionEditBusy) return;
+            const refineVersionValue = String(requestedVersion || '').trim().toLowerCase();
+            if (!['v2', 'v3'].includes(refineVersionValue)) {
+                console.error('[VIDEO_UI] 제작 계획 다듬기에 지원하지 않는 방식입니다:', requestedVersion);
+                showToast('시네마틱 또는 일본 애니메이션 스타일을 선택해 주세요.', 'error');
+                return;
+            }
+            const styleLabel = refineVersionValue === 'v3'
+                ? 'V3 일본 애니메이션'
+                : 'V2 시네마틱';
+            const styleName = refineVersionValue === 'v3'
+                ? '일본 애니메이션 스타일'
+                : '시네마틱 스타일';
             const instructionInput = document.getElementById('video-generation-instruction');
             const instruction = (instructionInput?.value || '').trim();
             if (!instruction) {
-                showToast('시네마틱 스타일로 다듬을 내용을 먼저 입력란에 적어주세요.', 'warning');
+                showToast(`${styleName}로 다듬을 내용을 먼저 입력란에 적어주세요.`, 'warning');
                 instructionInput?.focus();
                 return;
             }
@@ -31818,13 +31833,13 @@
             const mode = document.getElementById('video-generation-mode')?.value || 'i2v';
             const lastRef = getEffectiveLastVideoReference();
             if (!sourceRef) {
-                console.error('[VIDEO_UI] AI 연출 V2 시네마틱 다듬기 요청 실패: 원본 참조 없음', {sourceKey});
-                showToast('V2 시네마틱 다듬기를 위한 원본 이미지 정보가 없습니다.', 'error');
+                console.error(`[VIDEO_UI] AI 연출 ${styleLabel} 다듬기 요청 실패: 원본 참조 없음`, {sourceKey});
+                showToast(`${styleLabel} 다듬기를 위한 원본 이미지 정보가 없습니다.`, 'error');
                 return;
             }
             if (mode === 'first_last' && !lastRef) {
-                console.error('[VIDEO_UI] AI 연출 V2 시네마틱 다듬기 요청 실패: 마지막 프레임 없음');
-                showToast('V2 시네마틱 다듬기를 위한 마지막 프레임을 선택하세요.', 'warning');
+                console.error(`[VIDEO_UI] AI 연출 ${styleLabel} 다듬기 요청 실패: 마지막 프레임 없음`);
+                showToast(`${styleLabel} 다듬기를 위한 마지막 프레임을 선택하세요.`, 'warning');
                 return;
             }
             const requestId = ++videoInstructionDirectRequestId;
@@ -31842,13 +31857,14 @@
                 button.innerHTML = '<span class="spinner"></span> 다듬는 중';
             }
             clearVideoInstructionRefineUndo();
-            updateVideoInstructionDraftPresentation('V2 시네마틱 스타일로 참조 이미지와 함께 연출을 다듬는 중...');
+            updateVideoInstructionDraftPresentation(`${styleLabel} 스타일로 참조 이미지와 함께 연출을 다듬는 중...`);
             try {
                 const data = await fetchJSON('/api/video/instruction-direct', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({
                         mode,
+                        refine_version: refineVersionValue,
                         workflow_variant: selectedVideoWorkflowVariant(),
                         instruction,
                         source_ref: sourceRef,
@@ -31867,21 +31883,21 @@
                     }),
                 });
                 if (requestId !== videoInstructionDirectRequestId) {
-                    console.error('[VIDEO_UI] 닫히거나 교체된 AI 연출 V2 시네마틱 다듬기 응답 무시:', data);
+                    console.error(`[VIDEO_UI] 닫히거나 교체된 AI 연출 ${styleLabel} 다듬기 응답 무시:`, data);
                     return;
                 }
                 if (!data.success || !String(data.draft || '').trim()) {
-                    throw new Error(data.error || 'AI 연출 V2 시네마틱 다듬기 실패');
+                    throw new Error(data.error || `AI 연출 ${styleLabel} 다듬기 실패`);
                 }
                 if (selectionKey !== videoInstructionDraftSelectionKey()) {
-                    console.error('[VIDEO_UI] 선택 변경 후 도착한 AI 연출 V2 시네마틱 다듬기 미적용:', data);
+                    console.error(`[VIDEO_UI] 선택 변경 후 도착한 AI 연출 ${styleLabel} 다듬기 미적용:`, data);
                     updateVideoInstructionDraftPresentation('선택값이 바뀌어 도착한 결과를 적용하지 않았습니다. 다시 다듬어 주세요.');
-                    showToast('영상화 선택값이 바뀌어 V2 시네마틱 다듬기 결과를 적용하지 않았습니다.', 'warning');
+                    showToast(`영상화 선택값이 바뀌어 ${styleLabel} 다듬기 결과를 적용하지 않았습니다.`, 'warning');
                     return;
                 }
                 const target = document.getElementById('video-generation-instruction');
                 if (!target) {
-                    console.error('[VIDEO_UI] AI 연출 V2 시네마틱 다듬기를 채울 입력란을 찾지 못했습니다.', data);
+                    console.error(`[VIDEO_UI] AI 연출 ${styleLabel} 다듬기를 채울 입력란을 찾지 못했습니다.`, data);
                     throw new Error('영상 지시 입력란을 찾지 못했습니다');
                 }
                 videoInstructionRefineUndoSnapshot = snapshotVideoInstructionProvenance(target.value);
@@ -31891,14 +31907,14 @@
                 showVideoInstructionRefineUndo();
                 target.focus();
                 updateVideoInstructionDraftPresentation(
-                    `V2 시네마틱 다듬기 완료 · 큐 ${data.item_id || ''}. ↩ 원문으로 되돌리기로 원문 복구 가능.`
+                    `${styleLabel} 다듬기 완료 · 큐 ${data.item_id || ''}. ↩ 원문으로 되돌리기로 원문 복구 가능.`
                 );
-                showToast('시네마틱 스타일로 다듬어 입력란에 채웠습니다.', 'success');
+                showToast(`${styleName}로 다듬어 입력란에 채웠습니다.`, 'success');
             } catch (error) {
                 if (requestId !== videoInstructionDirectRequestId) return;
-                console.error('[VIDEO_UI] AI 연출 V2 시네마틱 다듬기 실패:', error, {sourceRef, lastRef, mode, instruction});
-                updateVideoInstructionDraftPresentation(`V2 시네마틱 다듬기 실패: ${error.message || error}`);
-                showToast('AI 연출 V2 시네마틱 다듬기 실패: ' + (error.message || error), 'error');
+                console.error(`[VIDEO_UI] AI 연출 ${styleLabel} 다듬기 실패:`, error, {sourceRef, lastRef, mode, instruction});
+                updateVideoInstructionDraftPresentation(`${styleLabel} 다듬기 실패: ${error.message || error}`);
+                showToast(`AI 연출 ${styleLabel} 다듬기 실패: ` + (error.message || error), 'error');
             } finally {
                 if (requestId === videoInstructionDirectRequestId) {
                     videoInstructionDirectBusy = false;
@@ -32737,8 +32753,11 @@
             const refineVersionSelect = document.getElementById('video-generation-refine-version');
             if (refineVersionSelect) {
                 const refineVersionValue = String(settings.refine_version || 'v1').trim().toLowerCase();
-                if (refineVersionValue === 'v1' || refineVersionValue === 'v2') {
+                if (['v1', 'v2', 'v3'].includes(refineVersionValue)) {
                     refineVersionSelect.value = refineVersionValue;
+                } else {
+                    console.error('[VIDEO_UI] 저장된 입력 다듬기 방식이 올바르지 않습니다:', settings.refine_version);
+                    refineVersionSelect.value = 'v1';
                 }
             }
             language.value = settings.instruction_language;
@@ -33569,6 +33588,7 @@
                         encode_quality: normalizedVideoEncodeQuality(),
                         visual_context_source: visualContextSource,
                         prompt_generation_mode: promptGenerationMode,
+                        refine_version: selectedVideoInstructionRefineVersion(),
                         translate_instruction_to_english: translateInstructionToEnglish,
                         secondary_motion: secondaryMotion,
                         instruction,

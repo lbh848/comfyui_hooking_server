@@ -57,6 +57,8 @@ VIDEO_MODES = frozenset({"i2v", "first_last", "ref2v"})
 VIDEO_WORKFLOW_VARIANTS = frozenset({"standard", "fast"})
 VIDEO_PROMPT_GENERATION_MODES = frozenset({"single", "best_of_three"})
 VIDEO_PROMPT_GENERATION_MODE_DEFAULT = "single"
+VIDEO_REFINE_VERSIONS = frozenset({"v1", "v2", "v3"})
+VIDEO_REFINE_VERSION_DEFAULT = "v1"
 REF2V_MAX_REFERENCE_IMAGES = 3
 H3_PROMPT_CANDIDATE_COUNT = 3
 I2V_WORKFLOW_INPUT_PATH = "soya_video"
@@ -161,6 +163,29 @@ def normalize_video_prompt_generation_mode(value: object) -> str:
         raise ValueError(
             "최종 프롬프트 생성 방식은 single 또는 best_of_three여야 합니다"
         )
+    return normalized
+
+
+def normalize_video_refine_version(
+    value: object,
+    default: str = VIDEO_REFINE_VERSION_DEFAULT,
+) -> str:
+    """Validate the directing/refine profile selected in the video workspace."""
+
+    normalized_default = str(default or VIDEO_REFINE_VERSION_DEFAULT).strip().lower()
+    if normalized_default not in VIDEO_REFINE_VERSIONS:
+        print(
+            "[VIDEO:REFINE_VERSION] 내부 기본값 오류: "
+            f"default={default!r}, allowed={sorted(VIDEO_REFINE_VERSIONS)!r}"
+        )
+        raise ValueError("영상 연출 계획 방식의 내부 기본값이 올바르지 않습니다")
+    normalized = str(value or normalized_default).strip().lower()
+    if normalized not in VIDEO_REFINE_VERSIONS:
+        print(
+            "[VIDEO:REFINE_VERSION] 영상 연출 계획 방식 오류: "
+            f"value={value!r}, allowed={sorted(VIDEO_REFINE_VERSIONS)!r}"
+        )
+        raise ValueError("영상 연출 계획 방식은 v1, v2, v3 중 하나여야 합니다")
     return normalized
 
 I2V_ALIGNMENT = (
@@ -335,6 +360,7 @@ _H3_SECONDARY_MOTION_SEGMENT = (
 def _build_h3_system_prompt(
     secondary_motion: bool,
     duration: object = VIDEO_DEFAULT_DURATION_SECONDS,
+    refine_version: object = VIDEO_REFINE_VERSION_DEFAULT,
 ) -> str:
     """H3 시스템 프롬프트를 조립한다.
 
@@ -348,10 +374,13 @@ def _build_h3_system_prompt(
         if secondary_motion
         else H3_SYSTEM_PROMPT.replace(_H3_SECONDARY_MOTION_SEGMENT, "")
     )
-    return prompt.replace(
-        "one coherent 5-second video",
-        f"one coherent {normalized:g}-second video",
-    ).replace("by 5.00 seconds", f"by {normalized:.2f} seconds")
+    return _apply_h3_refine_style(
+        prompt.replace(
+            "one coherent 5-second video",
+            f"one coherent {normalized:g}-second video",
+        ).replace("by 5.00 seconds", f"by {normalized:.2f} seconds"),
+        refine_version,
+    )
 
 
 REF2V_H3_SYSTEM_PROMPT = """You write production-ready prompts for Reference-to-Video with audio.
@@ -397,6 +426,7 @@ def _build_ref2v_h3_system_prompt(
     secondary_motion: bool,
     duration: object = VIDEO_DEFAULT_DURATION_SECONDS,
     picture_count: int = 1,
+    refine_version: object = VIDEO_REFINE_VERSION_DEFAULT,
 ) -> str:
     normalized = normalize_video_duration(duration)
     if not 1 <= int(picture_count) <= REF2V_MAX_REFERENCE_IMAGES:
@@ -424,7 +454,7 @@ def _build_ref2v_h3_system_prompt(
         if secondary_motion
         else ""
     )
-    return (
+    prompt = (
         REF2V_H3_SYSTEM_PROMPT.replace(
             "one coherent target video",
             f"one coherent {normalized:g}-second target video",
@@ -442,6 +472,7 @@ def _build_ref2v_h3_system_prompt(
         )
         + secondary
     )
+    return _apply_h3_refine_style(prompt, refine_version)
 
 
 VISUAL_CONTEXT_SYSTEM_PROMPT = """You inspect reference images and write a dense, precise factual Visual Context for a later video-prompt writer.
@@ -560,6 +591,47 @@ The audio section uses the same timestamp ranges as the visual timeline. For eac
 The stability section is grouped by the scenes where each risk occurs and is written as positive moving target states: stable identities, clean body separation, curved joint paths, continuous velocity changes, grounded but flexible weight transfer, active grip adjustment, coherent perspective, match-on-action continuity, delayed hair and fabric inertia, stable lighting, and the exact final hold. Stability means preserving anatomy, trajectory, contact, and timing while the body remains alive and responsive. Secondary motion may continue across a beat boundary and settle during the next beat. Convert a supplied negative list into the corresponding desired states.
 
 Before answering, silently compare the finished plan with the whole user direction and correct any missing event, order, number, timeline gap, repeated beat, audio mismatch, missing requested final state or payoff, isolated pose-to-pose jump, simultaneous initiation of the whole body, unnecessary full stop, unjustified cut, cut that discards useful momentum, or abstract transition that names no continuing subject, body part, object, gaze, sound, or state change. Return only the production direction as headed prose with timestamp headings."""
+
+
+ANIME_DIRECTION_STYLE_CONTRACT = """The selected directing language is hand-drawn Japanese animation. Apply this style contract to every preceding planning requirement. Where a preceding preference for naturalistic continuous flow, progressive settling, residual motion, or avoidance of pose holds conflicts with this contract, this contract controls; factual identity, action, contact, spatial, timing, endpoint, and reference-continuity requirements remain binding.
+
+Build the performance around a small number of expressive key poses, clear silhouettes, intentional stillness, and selective movement. Do not continuously interpolate every body part or keep hair, clothing, breathing, the environment, and the camera perpetually drifting merely to prove that the image is alive. Let an action anticipate economically, move decisively through only the in-betweens needed to read its path and contact, hit a strong drawing or expression, and hold long enough for its emotion or meaning to register. A held drawing is active timing, not dead time. Preserve physically necessary travel and handoffs on screen; limited animation never permits teleportation, missing contact, or a broken cause-and-effect chain.
+
+Once a key pose, expression, or requested ending has landed, hold it literally unless the user's event requires another visible change. Do not add generic breathing, eye shimmer, hair flutter, cloth sway, light fluctuation, or background motion merely to avoid absolute stillness. In generation-stability guidance, ask for stable shapes and only the necessary readable transition drawings; do not describe facial or body changes as smooth morphing or generic natural connection.
+
+Use the timing grammar of Japanese television or theatrical animation according to the scene: economical held cels and pose-to-pose acting for dialogue or quiet emotion; brief eye, mouth, hand, hair, cloth, or effect accents while the rest of the composition stays stable; sharp acceleration, compressed in-betweens, smear-like transitional shapes, impact frames, or a short burst of fuller motion only when the complete action and tone justify them. Do not apply every device to every scene, and do not imitate broken playback or uniform low frame rate. Contrast stillness with motion instead of smoothing all beats into one homogeneous glide.
+
+Treat composition and editing as emotional punctuation. Prefer a locked, graphically readable composition when it carries the beat. Use a decisive pan, push, cut, insert, reaction shot, or reframing only at a meaningful change of attention, information, emotion, or impact; do not add constant floating, orbiting, handheld drift, or decorative zoom. Use negative space, foreground layers, silhouette, eyeline, restrained parallax, lighting accents, and sound or purposeful silence to support the feeling without converting the scene into live-action lens language.
+
+Preserve the reference artwork's identity and design while directing it with a 2D Japanese-animation sensibility. Favor clean shape readability, stable facial design, deliberate eye and mouth acting, controlled cel-like shadow changes, and secondary motion that arrives as a chosen delayed accent and then becomes still. Do not force photorealistic weight, lens effects, motion blur, or continuous simulation over the supplied visual style. The result must feel authored shot by shot and pose by pose, with rhythm, omission, and ma serving the user's requested emotion and story rather than generic cinematic smoothness."""
+
+
+INSTRUCTION_ANIME_SYSTEM_PROMPT = (
+    INSTRUCTION_DIRECT_SYSTEM_PROMPT
+    + "\n\nSelected Japanese-animation directing contract:\n"
+    + ANIME_DIRECTION_STYLE_CONTRACT
+)
+
+
+ANIME_H3_STYLE_CONTRACT = """Selected motion and presentation style: hand-drawn Japanese animation. This is a binding generation requirement, not optional mood wording. Preserve all reference, identity, action, contact, spatial, timing, and endpoint constraints above, but do not regularize the requested performance into continuously smooth naturalistic interpolation.
+
+Stage the shot around expressive key poses, clean silhouettes, selective in-betweens, and intentional held drawings. Let quiet or emotional beats keep most of the cel still while only the meaningful feature moves. Let decisive actions use economical anticipation, a fast readable transition, an accented drawing or brief smear-like passage when justified, then a purposeful hold. Keep necessary physical paths, grips, supports, and cause-and-effect visible; stylized timing must not create teleportation or continuity gaps. Contrast stillness with motion and vary cadence according to the scene instead of simulating broken playback or applying a uniformly low frame rate.
+
+When a key pose, expression, or final state lands, keep it truly still unless the user's event calls for another visible change. Do not add breathing, eye shimmer, hair or cloth drift, light fluctuation, or background motion merely to make a held drawing look alive. Describe stability as consistent drawing, contact, and readable necessary transition shapes, never as smooth morphing or generic natural connection.
+
+Secondary motion is selective: use a delayed hair, cloth, eye, mouth, hand, breath, lighting, or effect accent only when it strengthens the beat, then let it settle into graphic stillness. Do not keep every layer swaying, breathing, drifting, or easing at once. Prefer locked, composed framing and emotionally motivated cuts or decisive camera moves over perpetual float, orbit, handheld drift, decorative zoom, photorealistic lens behavior, or blanket motion blur. Preserve the reference art while expressing stable 2D facial design, controlled cel-like shadow shapes, purposeful negative space, and Japanese-animation rhythm and ma. Write these observable timing and staging choices directly into the generated H3 prompt."""
+
+
+def _apply_h3_refine_style(prompt: str, refine_version: object) -> str:
+    """Append the selected style contract without changing the H3 output schema."""
+
+    normalized = normalize_video_refine_version(refine_version)
+    if normalized == "v3":
+        return (
+            f"{prompt}\n\nSelected Japanese-animation generation contract:\n"
+            f"{ANIME_H3_STYLE_CONTRACT}"
+        )
+    return prompt
 
 
 PROMPT_VISUAL_CONTEXT_SYSTEM_PROMPT = """You reconstruct a dense, precise Visual Context for a later video-prompt writer from the positive generation prompt that produced each reference picture.
@@ -2711,10 +2783,27 @@ class VideoMode:
         dialogue_contexts: list[tuple[str, str]] | None = None,
         allow_camera_motion: bool = True,
         allow_background_change: bool = False,
+        refine_version: object = "v2",
     ) -> list[dict]:
         """Build the vision request that expands the user's stated direction."""
 
         normalized_duration = normalize_video_duration(duration)
+        normalized_refine_version = normalize_video_refine_version(
+            refine_version,
+            default="v2",
+        )
+        if normalized_refine_version not in {"v2", "v3"}:
+            print(
+                "[VIDEO:DIRECTION_DIRECT] 제작 계획 방식 오류: "
+                f"refine_version={normalized_refine_version!r}"
+            )
+            raise ValueError("제작 계획 방식은 v2 또는 v3여야 합니다")
+        anime_style = normalized_refine_version == "v3"
+        implementation_detail = (
+            "Add Japanese-animation timing, pose, composition, and performance detail"
+            if anime_style
+            else "Add cinematic implementation detail"
+        )
         language_contract = {
             "ko": "Write the entire direction in natural Korean.",
             "en": "Write the entire direction in natural English.",
@@ -2734,15 +2823,15 @@ class VideoMode:
             task = (
                 "Picture 1 is the exact first frame. Expand the user's authoritative "
                 "direction into a concrete production plan for the next "
-                f"{normalized_duration:g}-second video. Add cinematic implementation "
-                "detail while keeping the requested premise, actions, and progression."
+                f"{normalized_duration:g}-second video. {implementation_detail} "
+                "while keeping the requested premise, actions, and progression."
             )
         elif mode == "first_last":
             task = (
                 "Picture 1 is the exact opening frame and Picture 2 is the exact final "
                 f"frame at {normalized_duration:.2f} seconds. The user wants the continuous "
-                "transition between them expanded into a concrete production plan. Add "
-                "cinematic implementation detail while keeping the requested premise, "
+                "transition between them expanded into a concrete production plan. "
+                f"{implementation_detail} while keeping the requested premise, "
                 "actions, and progression, and arrive at Picture 2 exactly at that time."
             )
         elif mode == "ref2v":
@@ -2778,6 +2867,8 @@ class VideoMode:
         )
         task = (
             f"{task}\n\n"
+            f"Selected directing profile: {'V3 Japanese animation' if anime_style else 'V2 cinematic'}. "
+            "Apply that profile as a binding production language rather than a decorative label.\n"
             "Timeline scale: all timestamps are elapsed seconds starting at 0.00; "
             f"the last timestamp must end at exactly {normalized_duration:.2f} seconds.\n"
             f"Output language: {language_contract}\n"
@@ -2818,7 +2909,14 @@ class VideoMode:
             f'"""\n{seed}\n"""'
         )
         return [
-            {"role": "system", "content": INSTRUCTION_DIRECT_SYSTEM_PROMPT},
+            {
+                "role": "system",
+                "content": (
+                    INSTRUCTION_ANIME_SYSTEM_PROMPT
+                    if anime_style
+                    else INSTRUCTION_DIRECT_SYSTEM_PROMPT
+                ),
+            },
             {"role": "user", "content": task},
         ]
 
@@ -2831,8 +2929,10 @@ class VideoMode:
         secondary_motion: bool = True,
         duration: object = VIDEO_DEFAULT_DURATION_SECONDS,
         picture_count: int = 1,
+        refine_version: object = VIDEO_REFINE_VERSION_DEFAULT,
     ) -> list[dict]:
         normalized_duration = normalize_video_duration(duration)
+        normalized_refine_version = normalize_video_refine_version(refine_version)
         mode_description = {
             "i2v": "Image-to-video using Picture 1 as the exact first frame.",
             "first_last": (
@@ -2855,6 +2955,11 @@ Mode:
 {mode_description}
 
 {direction_context}"""
+        if normalized_refine_version == "v3":
+            user_content += """
+
+Selected directing profile:
+V3 Japanese animation. Preserve the draft's intended anime timing and make its key poses, selective movement, intentional holds, emotionally motivated composition, and contrast between stillness and motion concrete in the final H3 prompt. Do not smooth this profile back into generic continuous cinematic motion."""
         if mode == "i2v":
             user_content += f"""
 
@@ -2900,11 +3005,13 @@ Final protocol audit: reread every exact <Subject N> occurrence against its defi
                         secondary_motion,
                         normalized_duration,
                         picture_count,
+                        normalized_refine_version,
                     )
                     if mode == "ref2v"
                     else _build_h3_system_prompt(
                         secondary_motion,
                         normalized_duration,
+                        normalized_refine_version,
                     )
                 ),
             },
@@ -3401,6 +3508,17 @@ Final protocol audit: reread every exact <Subject N> occurrence against its defi
                 f"item={queue_item_id}, mode={mode!r}"
             )
             raise ValueError("AI 연출 지시 다듬기 모드는 I2V, FLF2V, REF2V 중 하나여야 합니다")
+        refine_version = normalize_video_refine_version(
+            (params or {}).get("refine_version", "v2"),
+            default="v2",
+        )
+        if refine_version not in {"v2", "v3"}:
+            print(
+                "[VIDEO:DIRECTION_DIRECT] 제작 계획 방식 오류: "
+                f"item={queue_item_id}, refine_version={refine_version!r}"
+            )
+            raise ValueError("제작 계획 방식은 v2 또는 v3여야 합니다")
+        anime_style = refine_version == "v3"
         language = str((params or {}).get("language") or "ko").strip().lower()
         if language not in {"ko", "en"}:
             print(
@@ -3471,13 +3589,22 @@ Final protocol audit: reread every exact <Subject N> occurrence against its defi
             dialogue_contexts,
             allow_camera_motion,
             allow_background_change,
+            refine_version,
         )
         task_key = f"video_prompt_{mode}"
-        call_label = {
-            "i2v": "H3 I2V 지시로써 다듬기",
-            "first_last": "H3 FLF2V 지시로써 다듬기",
-            "ref2v": "H3 REF2V 지시로써 다듬기",
-        }[mode]
+        call_label = (
+            {
+                "i2v": "H3 I2V 일본 애니메이션 연출 계획",
+                "first_last": "H3 FLF2V 일본 애니메이션 연출 계획",
+                "ref2v": "H3 REF2V 일본 애니메이션 연출 계획",
+            }[mode]
+            if anime_style
+            else {
+                "i2v": "H3 I2V 지시로써 다듬기",
+                "first_last": "H3 FLF2V 지시로써 다듬기",
+                "ref2v": "H3 REF2V 지시로써 다듬기",
+            }[mode]
+        )
         model_name = llm_service.routing_primary_model(task_key) or ""
         history_id = (
             f"video_instruction_direct:{mode}:"
@@ -3572,6 +3699,7 @@ Final protocol audit: reread every exact <Subject N> occurrence against its defi
             print(
                 "[VIDEO:DIRECTION_DIRECT] 생성 완료: "
                 f"item={queue_item_id}, mode={mode}, language={language}, "
+                f"refine_version={refine_version}, "
                 f"length={len(draft)}, seed_length={len(user_input)}, "
                 f"dialogue_contexts={len(dialogue_contexts)}, "
                 f"camera_motion={allow_camera_motion}, "
@@ -3582,6 +3710,7 @@ Final protocol audit: reread every exact <Subject N> occurrence against its defi
                 "success": True,
                 "draft": draft,
                 "language": language,
+                "refine_version": refine_version,
                 "history_id": history_id,
                 "llm_trace": [history_id],
             }
@@ -3628,6 +3757,12 @@ Final protocol audit: reread every exact <Subject N> occurrence against its defi
             raise ValueError("영상화 모드는 I2V, FLF2V, REF2V 중 하나여야 합니다")
         duration = normalize_video_duration(
             (params or {}).get("duration", VIDEO_DEFAULT_DURATION_SECONDS)
+        )
+        refine_version = normalize_video_refine_version(
+            (params or {}).get(
+                "refine_version",
+                VIDEO_REFINE_VERSION_DEFAULT,
+            )
         )
         visual_context_source = str(
             (params or {}).get("visual_context_source") or "image"
@@ -4018,6 +4153,7 @@ Final protocol audit: reread every exact <Subject N> occurrence against its defi
                 secondary_motion=secondary_motion,
                 duration=duration,
                 picture_count=len(reference_images),
+                refine_version=refine_version,
             )
             compose_primary_slot = llm_service.routing_primary_slot(
                 compose_task_key
@@ -4290,6 +4426,7 @@ Final protocol audit: reread every exact <Subject N> occurrence against its defi
             print(
                 f"[VIDEO:LLM] 최종 프롬프트 준비 완료: item={queue_item_id}, "
                 f"mode={mode}, generation_mode={prompt_generation_mode}, "
+                f"refine_version={refine_version}, "
                 f"selected={selected_candidate}, "
                 f"length={len(response_text)}, elapsed={elapsed:.2f}s"
             )
@@ -4305,6 +4442,7 @@ Final protocol audit: reread every exact <Subject N> occurrence against its defi
                 "visual_context": visual_context,
                 "visual_context_source": visual_context_source,
                 "prompt_generation_mode": prompt_generation_mode,
+                "refine_version": refine_version,
                 "llm_trace": [*trace_ids, history_id],
                 "history_id": history_id,
                 "h3_candidate_count": len(candidates),

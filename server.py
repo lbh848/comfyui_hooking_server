@@ -107,6 +107,8 @@ from modes.video_mode import (
     VIDEO_MODES,
     VIDEO_PROMPT_GENERATION_MODE_DEFAULT,
     VIDEO_PROMPT_GENERATION_MODES,
+    VIDEO_REFINE_VERSION_DEFAULT,
+    VIDEO_REFINE_VERSIONS,
     VIDEO_WORKFLOW_VARIANTS,
     VideoMode,
     backup_clean_source_available,
@@ -115,6 +117,7 @@ from modes.video_mode import (
     normalize_video_duration,
     normalize_video_llm_trace,
     normalize_video_prompt_generation_mode,
+    normalize_video_refine_version,
 )
 from modes.video_postprocess import (
     DEFAULT_VIDEO_POSTPROCESS_CONFIG,
@@ -278,8 +281,8 @@ DEFAULT_VIDEO_GENERATION_DEFAULTS = {
     "include_dialogue_context": True,
     "allow_camera_motion": True,
     "allow_background_change": False,
-    # 입력 다듬기 방식: v1(일반 확장) / v2(시네마틱 제작 계획). 영구 저장된 기본값.
-    "refine_version": "v1",
+    # 입력 다듬기 방식: v1(일반) / v2(시네마틱) / v3(일본 애니메이션). 영구 저장 기본값.
+    "refine_version": VIDEO_REFINE_VERSION_DEFAULT,
     "upscale_model": DEFAULT_VIDEO_POSTPROCESS_CONFIG["model"],
     "upscale_scale": DEFAULT_VIDEO_POSTPROCESS_CONFIG["scale"],
     "output_format": "avif",
@@ -324,7 +327,7 @@ def normalize_video_generation_defaults(raw: object) -> dict:
         "visual_context_source": {"image", "prompt"},
         "prompt_generation_mode": set(VIDEO_PROMPT_GENERATION_MODES),
         "instruction_language": {"ko", "en"},
-        "refine_version": {"v1", "v2"},
+        "refine_version": set(VIDEO_REFINE_VERSIONS),
         "upscale_model": {"none", *VIDEO_UPSCALE_MODELS},
         "output_format": set(VIDEO_OUTPUT_FORMATS),
     }
@@ -13393,6 +13396,23 @@ async def handle_api_video_instruction_direct(request: web.Request) -> web.Respo
                 {"success": False, "error": "지원하지 않는 영상화 모드입니다"},
                 status=400,
             )
+        try:
+            refine_version = normalize_video_refine_version(
+                body.get("refine_version", "v2"),
+                default="v2",
+            )
+            if refine_version not in {"v2", "v3"}:
+                raise ValueError("제작 계획 방식은 v2 또는 v3여야 합니다")
+        except ValueError as exc:
+            print(
+                "[VIDEO:DIRECT:API] 제작 계획 방식 오류: "
+                f"value={body.get('refine_version')!r}, error={exc}"
+            )
+            traceback.print_exc()
+            return web.json_response(
+                {"success": False, "error": str(exc)},
+                status=400,
+            )
         language = str(body.get("language") or "ko").strip().lower()
         if language not in {"ko", "en"}:
             print(
@@ -13544,13 +13564,23 @@ async def handle_api_video_instruction_direct(request: web.Request) -> web.Respo
             "aspect_ratio": aspect_ratio,
             "quality_level": quality_level,
             "language": language,
+            "refine_version": refine_version,
             **boolean_options,
         }
-        label = {
-            "i2v": "H3 I2V 지시로써 다듬기",
-            "first_last": "H3 FLF2V 지시로써 다듬기",
-            "ref2v": "H3 REF2V 지시로써 다듬기",
-        }[mode]
+        anime_style = refine_version == "v3"
+        label = (
+            {
+                "i2v": "H3 I2V 일본 애니메이션 연출 계획",
+                "first_last": "H3 FLF2V 일본 애니메이션 연출 계획",
+                "ref2v": "H3 REF2V 일본 애니메이션 연출 계획",
+            }[mode]
+            if anime_style
+            else {
+                "i2v": "H3 I2V 지시로써 다듬기",
+                "first_last": "H3 FLF2V 지시로써 다듬기",
+                "ref2v": "H3 REF2V 지시로써 다듬기",
+            }[mode]
+        )
         if workflow_variant == "fast":
             label = label.replace("H3 ", "H3 고속 ", 1)
         item = await queue_manager.add_item(
@@ -13561,7 +13591,7 @@ async def handle_api_video_instruction_direct(request: web.Request) -> web.Respo
         print(
             "[VIDEO:DIRECT:API] 큐 등록 후 결과 대기: "
             f"item={item.id}, mode={mode}, variant={workflow_variant}, "
-            f"language={language}, "
+            f"language={language}, refine_version={refine_version}, "
             f"seed_length={len(instruction)}, "
             f"dialogue={boolean_options['include_dialogue_context']}, "
             f"camera_motion={boolean_options['allow_camera_motion']}, "
@@ -13725,6 +13755,26 @@ async def handle_api_video_enqueue(request: web.Request) -> web.Response:
                 f"value={configured_video_defaults!r}"
             )
             configured_video_defaults = {}
+        try:
+            refine_version = normalize_video_refine_version(
+                body.get(
+                    "refine_version",
+                    configured_video_defaults.get(
+                        "refine_version",
+                        VIDEO_REFINE_VERSION_DEFAULT,
+                    ),
+                )
+            )
+        except ValueError as exc:
+            print(
+                "[VIDEO:API] 영상 연출 계획 방식 오류: "
+                f"value={body.get('refine_version')!r}, error={exc}"
+            )
+            traceback.print_exc()
+            return web.json_response(
+                {"success": False, "error": str(exc)},
+                status=400,
+            )
         try:
             prompt_generation_mode = normalize_video_prompt_generation_mode(
                 body.get(
@@ -14024,6 +14074,7 @@ async def handle_api_video_enqueue(request: web.Request) -> web.Response:
             "auto_instruction": False,
             "visual_context_source": visual_context_source,
             "prompt_generation_mode": prompt_generation_mode,
+            "refine_version": refine_version,
             "translate_instruction_to_english": translate_instruction_to_english,
             "secondary_motion": secondary_motion,
             "instruction": instruction,
@@ -14063,6 +14114,7 @@ async def handle_api_video_enqueue(request: web.Request) -> web.Response:
             f"prior_llm_steps={len(instruction_llm_trace)}, "
             f"visual_context_source={visual_context_source}, "
             f"prompt_generation_mode={prompt_generation_mode}, "
+            f"refine_version={refine_version}, "
             f"translate_instruction_to_english={translate_instruction_to_english}, "
             f"upscale={upscale_model or 'none'}x{upscale_scale}, "
             f"format={output_format}, encode_quality={encode_quality}, "
