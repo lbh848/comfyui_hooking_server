@@ -1,6 +1,6 @@
-Resolve registered visual-profile timelines for characters that a preceding CURRENT-character stage has already confirmed.
+Resolve one registered character's visual-profile timeline after a preceding CURRENT-character stage has already confirmed that character.
 
-Every supplied character is authoritatively present in CURRENT and has multiple registered profiles. Do not decide participation, identity, or `in_history`. Copy each supplied canonical `name` verbatim, include every supplied character exactly once, and select only the exact bracketed `profile_ref` values supplied for that character. The server maps bracketed references to internal profile IDs.
+Each call supplies exactly one authoritative CURRENT character with multiple registered profiles. Concentrate on that character alone. Do not decide participation, identity, or `in_history`. Copy the supplied canonical `name` verbatim, include that character exactly once, and select only the exact bracketed `profile_ref` values supplied for that character. The server maps bracketed references to internal profile IDs.
 
 Read the complete CURRENT CONTEXT semantically. Never use keyword matching, substring rules, filename conventions, reference-number meaning, or a hardcoded list of narrative states. PREVIOUSLY TRACKED PROFILE STATE is valid continuity evidence only for the same character. No PAST HISTORY is supplied because past narrative is not profile-selection evidence.
 
@@ -21,6 +21,8 @@ For each supplied character, emit exactly one START event. START is the profile 
 
 After START, emit another event only when CURRENT establishes a completed transition to a different registered profile and the resulting state satisfies that profile's full guide. Put the event at the exact Cxxx segment where the new profile becomes active. Preserve a valid tracked profile when CURRENT establishes no change. When no valid tracked profile exists and CURRENT does not support any non-default guide, use the catalog's declared default. Do not choose the nearest special profile or invent a reference.
 
+Every START or later transition event must include one natural-language `reason`, written entirely in English. The reason is the complete decision explanation, not a generic label. State which actual CURRENT wording, depicted appearance, action, and story event you read; explain how those facts satisfy the selected profile's guide; and explain why any plausible competing profile does not apply. When CURRENT is not English, identify the decisive Cxxx passage and paraphrase its relevant wording and story facts in English; do not mix original-language phrases into `reason`. Refer to the decisive Cxxx passages naturally inside the reason when useful, but do not add separate evidence fields. For a transition, distinguish the segment where change merely begins from the exact segment where the new form becomes active. Do not write empty conclusions such as "the context supports [2]", "conditions are met", or "this is the best match" without the concrete narrative facts that make them true.
+
 If a choice cannot be resolved safely, keep the valid tracked profile or declared default as instructed and describe the ambiguity briefly in `uncertainties`. Before responding, re-check that direct current-form evidence, negation, incomplete transitions, and chronology were not overridden by repeated surrounding state vocabulary.
 
 Return only this JSON shape. Both top-level arrays and both character fields must exist:
@@ -31,7 +33,8 @@ Return only this JSON shape. Both top-level arrays and both character fields mus
       "profile_timeline": [
         {
           "at": "START or one exact Cxxx ID",
-          "profile_ref": "one exact bracketed reference supplied for this character, such as [2]"
+          "profile_ref": "one exact bracketed reference supplied for this character, such as [2]",
+          "reason": "the concrete CURRENT wording and story facts that establish this choice and rule out plausible alternatives"
         }
       ]
     }
@@ -39,4 +42,4 @@ Return only this JSON shape. Both top-level arrays and both character fields mus
   "uncertainties": []
 }
 
-Keep supplied-character order. Within each timeline, put START first and later transitions in chronology order. Do not add `in_history`, profile names, state summaries, confidence, evidence, candidates, analysis, prose, Markdown fences, or extra fields.
+Within the timeline, put START first and later transitions in chronology order. Do not add `in_history`, profile names, separate evidence/counterevidence fields, confidence, candidates, analysis outside `reason`, prose outside the JSON, Markdown fences, or extra fields.

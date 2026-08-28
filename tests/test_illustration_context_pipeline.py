@@ -5506,14 +5506,18 @@ async def test_character_observation_always_precedes_optional_profile_only_call(
                 "uncertainties": [],
             })
         assert call_name == "PROFILE-RESOLVE"
-        assert '# RESOLVED CURRENT MULTI-PROFILE CHARACTERS\n["Hana"]' in prompt
+        assert '# TARGET CURRENT MULTI-PROFILE CHARACTER\n"Hana"' in prompt
         assert "# PAST HISTORY" not in prompt
         assert "Hana transformed form" in prompt
         assert "Bob ordinary form" not in prompt
         return json.dumps({
             "characters": [{
                 "name": "Hana",
-                "profile_timeline": [{"at": "START", "profile_ref": "[2]"}],
+                "profile_timeline": [{
+                    "at": "START",
+                    "profile_ref": "[2]",
+                    "reason": "C001에서 Hana가 변신을 완료해 흰 머리와 흰 갑옷 형태로 등장하므로 [2]다.",
+                }],
             }],
             "uncertainties": [],
         })
@@ -6055,6 +6059,7 @@ async def test_profile_resolution_receives_only_resolved_current_multi_profile_c
                 "profile_timeline": [{
                     "at": "START",
                     "profile_ref": "[1]",
+                    "reason": "C001에서 Adachi가 평범한 인간 상태로 기다리고 변신 사건이 없으므로 [1]이다.",
                 }],
             }],
             "uncertainties": [],
@@ -6082,6 +6087,117 @@ async def test_profile_resolution_receives_only_resolved_current_multi_profile_c
         {"name": "Adachi", "confidence": 1.0},
     ]
     assert parsed["initial_visual_bases"][0]["target_visual_profile_id"] == "civilian"
+
+
+@pytest.mark.asyncio
+async def test_profile_resolution_runs_per_character_in_parallel_and_preserves_reasons(
+    monkeypatch,
+):
+    adachi = cards_to_character_profiles("Adachi", [{
+        "id": "civilian",
+        "aliases": ["Adachi_Civilian"],
+        "selection_guide": "Adachi is an ordinary civilian.",
+        "appearance": ["brown hair"],
+        "default_outfit": ["hoodie"],
+    }, {
+        "id": "changed",
+        "aliases": ["Adachi_Changed"],
+        "selection_guide": "Adachi completed a persistent transformation.",
+        "appearance": ["white hair"],
+        "default_outfit": ["armor"],
+    }])
+    mina = cards_to_character_profiles("Mina", [{
+        "id": "normal",
+        "aliases": ["Mina_Normal"],
+        "selection_guide": "Mina remains in her normal form.",
+        "appearance": ["black hair"],
+        "default_outfit": ["dress"],
+    }, {
+        "id": "awakened",
+        "aliases": ["Mina_Awakened"],
+        "selection_guide": "Mina completed an awakening.",
+        "appearance": ["silver hair"],
+        "default_outfit": ["robe"],
+    }])
+    both_started = asyncio.Event()
+    active = 0
+    max_active = 0
+    prompts = {}
+
+    async def fake_pipeline_call(call_name, messages, _stream_notify, **_kwargs):
+        nonlocal active, max_active
+        assert call_name == "PROFILE-RESOLVE"
+        prompt = "\n".join(message["content"] for message in messages)
+        if '# TARGET CURRENT MULTI-PROFILE CHARACTER\n"Adachi"' in prompt:
+            name = "Adachi"
+            assert "Adachi completed a persistent transformation" in prompt
+            assert "Mina completed an awakening" not in prompt
+        else:
+            name = "Mina"
+            assert '# TARGET CURRENT MULTI-PROFILE CHARACTER\n"Mina"' in prompt
+            assert "Mina completed an awakening" in prompt
+            assert "Adachi completed a persistent transformation" not in prompt
+        prompts[name] = prompt
+        active += 1
+        max_active = max(max_active, active)
+        if active == 2:
+            both_started.set()
+        try:
+            await asyncio.wait_for(both_started.wait(), timeout=1.0)
+            if name == "Adachi":
+                return json.dumps({
+                    "characters": [{
+                        "name": "Adachi",
+                        "profile_timeline": [{
+                            "at": "START",
+                            "profile_ref": "[1]",
+                            "reason": "C001에서 갈색 머리의 일상 모습으로 등장해 [1]이며 변신 완료 묘사는 없다.",
+                        }, {
+                            "at": "C002",
+                            "profile_ref": "[2]",
+                            "reason": "C002에서 변신이 완료되어 흰 머리와 갑옷 형태가 활성화되므로 [2]다.",
+                        }],
+                    }],
+                    "uncertainties": [],
+                })
+            return json.dumps({
+                "characters": [{
+                    "name": "Mina",
+                    "profile_timeline": [{
+                        "at": "START",
+                        "profile_ref": "[1]",
+                        "reason": "C001부터 C002까지 각성 사건 없이 검은 머리의 정상 형태를 유지하므로 [1]이다.",
+                    }],
+                }],
+                "uncertainties": [],
+            })
+        finally:
+            active -= 1
+
+    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
+    current = "Adachi and Mina wait in their ordinary forms.\n\nAdachi completes her transformation."
+    segmented, segments = pipeline._segment_current_context(current)
+    raw, parsed = await pipeline._run_profile_resolution(
+        profile_system="Return the required profile timeline JSON.",
+        segmented_current=segmented,
+        current_context=current,
+        current_segments=segments,
+        candidate_names=["Adachi", "Mina"],
+        previous_state={},
+        visual_profiles={"Adachi": adachi, "Mina": mina},
+        stream_notify=None,
+    )
+
+    assert max_active == 2
+    assert set(prompts) == {"Adachi", "Mina"}
+    assert [item["name"] for item in json.loads(raw)["characters"]] == [
+        "Adachi",
+        "Mina",
+    ]
+    assert parsed["initial_visual_bases"][0]["initial_state"].startswith("C001")
+    assert parsed["visual_base_events"][0]["segment_id"] == "C002"
+    assert "변신이 완료" in parsed["visual_base_events"][0]["visual_change"]
+    assert "candidate_assessments" not in raw
 
 
 @pytest.mark.asyncio
@@ -6127,6 +6243,18 @@ async def test_character_resolution_repairs_only_noncanonical_name_items_and_pre
         prompt = "\n".join(message["content"] for message in messages)
         calls.append((call_name, prompt, kwargs))
         if call_name == "CHARACTER-RESOLVE":
+            assert prompt.rfind(
+                "# FINAL CANONICAL NAME OUTPUT AUTHORITY"
+            ) > prompt.rfind("# FULL CURRENT CONTEXT SEGMENTS")
+            final_authority = prompt.split(
+                "# FINAL CANONICAL NAME OUTPUT AUTHORITY\n",
+                1,
+            )[1]
+            assert json.dumps(
+                ["Doyun", "Shiho", "Aya"],
+                ensure_ascii=False,
+            ) in final_authority
+            assert "localized forms are never valid output values" in final_authority
             return json.dumps({
                 "characters": [{
                     "name": "Doyun",
@@ -6154,10 +6282,16 @@ async def test_character_resolution_repairs_only_noncanonical_name_items_and_pre
         assert '"name": "Invented Similar Girl"' in rejected_section
         assert '"name": "Doyun"' not in rejected_section
         available_section = prompt.split(
-            "# REMAINING AVAILABLE REGISTERED NAMES\n",
+            "# REMAINING AVAILABLE REGISTERED NAMES (ONLY VALID name VALUES)\n",
             1,
-        )[1].split("\n\n# REJECTED CHARACTER ITEMS ONLY", 1)[0]
+        )[1].split("\nCopy every repairs[].name", 1)[0]
         assert json.loads(available_section) == ["Shiho", "Aya"]
+        assert prompt.rfind(
+            "# FINAL CANONICAL NAME REPAIR AUTHORITY"
+        ) > prompt.rfind("# FULL CURRENT CONTEXT SEGMENTS")
+        assert '"invalid_name": "시호"' in prompt
+        assert "known-invalid evidence" in prompt
+        assert "never copy or preserve it" in prompt
         assert "Return compact character profile JSON." not in prompt
         assert "# PREVIOUSLY TRACKED PROFILE STATE" not in prompt
         assert "# REGISTERED PROFILE CATALOG" not in prompt
@@ -6214,6 +6348,96 @@ async def test_character_resolution_repairs_only_noncanonical_name_items_and_pre
     assert any(
         "이미 승인된 캐릭터 중복: 'Doyun'" in warning
         for warning in parsed["validation_warnings"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_character_resolution_repair_recovers_localized_registered_names_only(
+    monkeypatch,
+):
+    canonical_names = ["Yuu", "Hibiki", "Shiho", "Hiyori"]
+    visual_profiles = {
+        name: cards_to_character_profiles(name, [{
+            "id": "default",
+            "aliases": [f"{name}_Default"],
+            "selection_guide": "ordinary appearance",
+            "appearance": ["black hair"],
+            "default_outfit": ["casual clothes"],
+        }])
+        for name in canonical_names
+    }
+    localized_names = ["도윤", "유이", "히비키", "시호", "히요리"]
+    calls = []
+
+    async def fake_pipeline_call(call_name, messages, _stream_notify, **kwargs):
+        prompt = "\n".join(message["content"] for message in messages)
+        calls.append(call_name)
+        if call_name == "CHARACTER-RESOLVE":
+            final_authority = prompt.split(
+                "# FINAL CANONICAL NAME OUTPUT AUTHORITY\n",
+                1,
+            )[1]
+            assert json.dumps(
+                canonical_names,
+                ensure_ascii=False,
+            ) in final_authority
+            return json.dumps({
+                "characters": [
+                    {
+                        "name": name,
+                        "in_history": index < 4,
+                    }
+                    for index, name in enumerate(localized_names)
+                ],
+                "uncertainties": [],
+            }, ensure_ascii=False)
+
+        assert call_name == "CHARACTER-RESOLVE-REPAIR"
+        final_authority = prompt.split(
+            "# FINAL CANONICAL NAME REPAIR AUTHORITY\n",
+            1,
+        )[1]
+        assert json.dumps(
+            canonical_names,
+            ensure_ascii=False,
+        ) in final_authority
+        for name in localized_names:
+            assert f'"invalid_name": "{name}"' in final_authority
+        response = json.dumps({
+            "repairs": [
+                {
+                    "source_index": index,
+                    "name": name,
+                }
+                for index, name in enumerate(canonical_names, start=2)
+            ],
+            "uncertainties": ["source_index 1 is not a registered character"],
+        })
+        valid, reason = kwargs["result_validator"](response)
+        assert valid, reason
+        return response
+
+    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
+    current = "도윤, 유이, 히비키, 시호, 히요리가 현재 장면에 참여한다."
+    segmented, segments = pipeline._segment_current_context(current)
+    raw, parsed = await pipeline._run_character_resolution(
+        character_system="Return registered canonical names only.",
+        segmented_current=segmented,
+        current_context=current,
+        current_segments=segments,
+        history_text="도윤, 유이, 히비키, 시호가 이전 장면에도 참여했다.",
+        candidate_names=canonical_names,
+        visual_profiles=visual_profiles,
+        stream_notify=None,
+    )
+
+    assert calls == ["CHARACTER-RESOLVE", "CHARACTER-RESOLVE-REPAIR"]
+    assert [item["name"] for item in json.loads(raw)["characters"]] == canonical_names
+    assert [item["name"] for item in parsed["current_characters"]] == canonical_names
+    assert parsed["history_characters"] == canonical_names[:3]
+    assert any(
+        "source_index 1 is not a registered character" in uncertainty
+        for uncertainty in parsed["uncertainties"]
     )
 
 
@@ -6328,20 +6552,30 @@ async def test_profile_resolution_repairs_only_unknown_profile_id_character(monk
         prompt = "\n".join(message["content"] for message in messages)
         calls.append((call_name, prompt, kwargs))
         if call_name == "PROFILE-RESOLVE":
+            if '# TARGET CURRENT MULTI-PROFILE CHARACTER\n"Adachi"' in prompt:
+                assert "ordinary human form" in prompt
+                assert "awakened form" not in prompt
+                return json.dumps({
+                    "characters": [{
+                        "name": "Adachi",
+                        "profile_timeline": [{
+                            "at": "START",
+                            "profile_id": "civilian_extra",
+                            "reason": "C001에서 Adachi가 평범한 인간 상태로 기다린다.",
+                        }],
+                    }],
+                    "uncertainties": [],
+                })
+            assert '# TARGET CURRENT MULTI-PROFILE CHARACTER\n"Mina"' in prompt
+            assert "awakened form" in prompt
+            assert "ordinary human form" not in prompt
             return json.dumps({
                 "characters": [{
-                    "name": "Adachi",
-                    "in_history": True,
-                    "profile_timeline": [{
-                        "at": "START",
-                        "profile_id": "civilian_extra",
-                    }],
-                }, {
                     "name": "Mina",
-                    "in_history": False,
                     "profile_timeline": [{
                         "at": "START",
                         "profile_id": "normal",
+                        "reason": "C001에서 Mina에게 각성 사건이 없고 평상 상태로 기다리므로 normal이다.",
                     }],
                 }],
                 "uncertainties": [],
@@ -6358,6 +6592,7 @@ async def test_profile_resolution_repairs_only_unknown_profile_id_character(monk
                 "profile_timeline": [{
                     "at": "START",
                     "profile_id": "civilian",
+                    "reason": "C001에서 Adachi가 변신하지 않은 평범한 인간 상태로 기다리므로 civilian이다.",
                 }],
             }],
             "uncertainties": [],
@@ -6377,10 +6612,8 @@ async def test_profile_resolution_repairs_only_unknown_profile_id_character(monk
         stream_notify=None,
     )
 
-    assert [call[0] for call in calls] == [
-        "PROFILE-RESOLVE",
-        "PROFILE-RESOLVE-REPAIR",
-    ]
+    assert [call[0] for call in calls].count("PROFILE-RESOLVE") == 2
+    assert [call[0] for call in calls].count("PROFILE-RESOLVE-REPAIR") == 1
     assert [item["name"] for item in parsed["current_characters"]] == [
         "Adachi",
         "Mina",
@@ -6424,6 +6657,7 @@ async def test_profile_resolution_failed_repair_uses_previous_start_and_keeps_va
                     }, {
                         "at": "C002",
                         "profile_id": "ordinary",
+                        "reason": "C002에서 Hana가 일상 형태로 돌아왔다고 명시되므로 ordinary다.",
                     }],
                 }],
                 "uncertainties": [],
@@ -6450,13 +6684,13 @@ async def test_profile_resolution_failed_repair_uses_previous_start_and_keeps_va
     )
 
     assert calls == ["PROFILE-RESOLVE", "PROFILE-RESOLVE-REPAIR"]
-    assert parsed["characters"][0]["profile_timeline"] == [{
-        "at": "START",
-        "profile_id": "transformed",
-    }, {
-        "at": "C002",
-        "profile_id": "ordinary",
-    }]
+    timeline = parsed["characters"][0]["profile_timeline"]
+    assert [(event["at"], event["profile_id"]) for event in timeline] == [
+        ("START", "transformed"),
+        ("C002", "ordinary"),
+    ]
+    assert "안전 폴백" in timeline[0]["reason"]
+    assert "C002" in timeline[1]["reason"]
     assert parsed["repair_requests"][0]["character"] == "Hana"
     assert [
         item["target_visual_profile_id"]

@@ -44770,7 +44770,7 @@
                 lines.push('> 최종 사용값은 본문 최하단 **결과 요약(시간순)** 에 정리.');
                 lines.push('');
                 lines.push('1. **CHARACTER-RESOLVE** — 토글과 무관하게 CURRENT 등장인물과 각 인물의 PAST 등장 여부를 항상 결정합니다. 프로필 카탈로그는 받지 않습니다.');
-                lines.push('2. **PROFILE-RESOLVE** — 다중 프로필 추론을 켠 경우에만, 앞 단계가 확정한 CURRENT 다중 프로필 캐릭터의 START 및 이후 변환 프로필을 결정합니다. PAST는 받지 않습니다. 끄면 서버가 등록 기본 프로필을 적용합니다.');
+                lines.push('2. **PROFILE-RESOLVE** — 다중 프로필 추론을 켠 경우에만, 앞 단계가 확정한 CURRENT 다중 프로필 캐릭터를 캐릭터별로 병렬 판정합니다. 각 호출은 한 캐릭터의 START·이후 변환 프로필과 구체적인 판단 reason을 반환합니다. PAST는 받지 않습니다. 끄면 서버가 등록 기본 프로필을 적용합니다.');
                 lines.push('3. **ORIGINAL-ASSET** — 켜진 경우, 확정 프로필을 기준으로 현재 장면에 맞는 등록 원본 에셋과 삽입 슬롯을 선택.');
                 lines.push('4. **CALL1-BACKTRANSLATE** — 최신 CHAR 응답(현재 맥락)을 영어로 역번역. 후속 단계가 상황을 정확히 이해하도록 정규화. (토글 시)');
                 lines.push('5. **CALL1** (enhance) — 앞 단계가 확정한 CURRENT 캐릭터를 기준으로 복장·헤어스타일 변화 사건만 분석해 CALL2에 전달. 지칭어는 문맥상 해석하되 본문을 치환하지 않습니다.');
@@ -45452,7 +45452,7 @@
             { key: 'illustration_call1_backtranslate', label: '삽화 CALL1 역번역',               kind: '텍스트', modality: 'text', group: 'illustration_pipeline' },
             { key: 'illustration_call1',       label: '삽화 CALL1 (복장·헤어)',         kind: 'JSON · 병렬 가능', modality: 'text', group: 'illustration_pipeline', json: true },
             { key: 'illustration_character_resolve', label: '삽화 CURRENT 등장인물 판별', kind: 'JSON · 항상 실행', modality: 'text', group: 'illustration_pipeline', json: true },
-            { key: 'illustration_profile_resolve', label: '삽화 CURRENT 프로필 결정', kind: 'JSON · 토글 실행', modality: 'text', group: 'illustration_pipeline', json: true },
+            { key: 'illustration_profile_resolve', label: '삽화 CURRENT 프로필 결정', kind: 'JSON · 캐릭터별 병렬', modality: 'text', group: 'illustration_pipeline', json: true },
             { key: 'illustration_call2',       label: '삽화 CALL2 (PLAN/DETAIL/KEYVIS)', kind: '텍스트', modality: 'text', group: 'illustration_pipeline' },
             { key: 'illustration_call2_fix',   label: '삽화 CALL2-FIX (TOON 교정)',    kind: '텍스트', modality: 'text', group: 'illustration_pipeline' },
             { key: 'illustration_call3',       label: '삽화 CALL3 (대사 생성)',         kind: '텍스트', modality: 'text', group: 'illustration_pipeline' },
@@ -77459,7 +77459,7 @@
                             <div style="margin-bottom:12px; padding:8px; background:rgba(0,0,0,0.06); border-radius:6px; font-size:0.75rem; color:var(--text2); line-height:1.5;">
                                 CHAT을 받은 서버가 히스토리 연속성/리롤 판정 → CHARACTER-RESOLVE(항상) → PROFILE-RESOLVE(다중 프로필 추론 토글 시) → 원본 에셋 선택/CALL1 역번역·병렬 분석 → CALL2-PLAN과 독립 CALL2-KEYVIS 동시 호출 → CALL2-DETAIL 병렬 생성·최종 병합 → (폴백/파싱 실패 시 기존 CALL2/CALL2-FIX) → CALL3 순서로 실행합니다. 삽화 프롬프트 본문은 config.json이 아니라 아래 개별 txt 파일에 저장됩니다.
                                 1. CHARACTER-RESOLVE는 <strong>character.txt</strong>, 전체 CURRENT와 제한된 PAST를 사용해 CURRENT 등장인물 및 PAST 등장 여부만 항상 결정합니다. 프로필 카탈로그는 받지 않습니다.<br>
-                                2. PROFILE-RESOLVE는 다중 프로필 추론을 켠 경우에만 <strong>profile.txt</strong>, CURRENT, 확정된 CURRENT 다중 프로필 캐릭터의 카탈로그를 사용해 START 및 변환 타임라인을 결정합니다. PAST는 받지 않으며, 토글을 끄면 서버가 등록 기본 프로필을 사용합니다.<br>
+                                2. PROFILE-RESOLVE는 다중 프로필 추론을 켠 경우에만 확정된 CURRENT 다중 프로필 캐릭터를 한 명씩 병렬 호출합니다. 각 호출은 <strong>profile.txt</strong>, 전체 CURRENT, 대상 캐릭터 한 명의 카탈로그만 사용해 START·변환 타임라인과 실제 본문에 근거한 reason을 결정합니다. PAST는 받지 않으며, 토글을 끄면 서버가 등록 기본 프로필을 사용합니다.<br>
                                 3. 원본 에셋 출력이 켜져 있으면 확정 프로필을 받은 선택기가 등록 에셋과 삽입 슬롯을 먼저 정합니다.<br>
                                 4. 역번역이 켜져 있으면 <strong>backtranslate.txt</strong>로 현재 응답만 영어로 병렬 번역하며, 과거 CHAT은 번역하지 않습니다.<br>
                                 5. CALL1은 <strong>enhance.txt</strong>, 저장 히스토리, 확정 등장인물·프로필을 바탕으로 복장 및 헤어스타일 변화 타임라인만 JSON으로 만듭니다. 지칭어는 자연어 문맥으로 해석해 각 사건에 확정 canonical name을 쓰며 본문은 치환하지 않습니다. 병렬 분석을 켜면 segment를 최대 동시 요청 수만큼 균등 분할해 동시에 분석하고 검증된 결과를 하나로 병합합니다.<br>
@@ -78085,7 +78085,7 @@
                 description: '삽화 프롬프트 파이프라인에서 실행할 단계를 설정합니다. 각 Call의 세부 옵션은 해당 Call 탭에서 관리합니다.',
                 fields: [
                     {key: 'illustration_output_mode', label: '출력 모드', type: 'select', help: '일반 삽화(CALL1/2/3 + Comfy), 원본 에셋(업로드 원본 선택), 또는 둘 다를 반환합니다. 원본 에셋 장수·지침은 아래 원본 에셋 출력 섹션에서 설정합니다.', options: [{value: 'illustration', label: '일반 삽화'}, {value: 'original_asset', label: '원본 에셋'}, {value: 'both', label: '일반 삽화 + 원본 에셋'}], onchange: 'onIllustrationOutputModeChange(this)'},
-                    {key: 'profile_resolve_enabled', label: '다중 프로필 추론', type: 'toggle', help: 'CURRENT 등장인물 판별 LLM은 항상 별도로 실행됩니다. 켜면 확정된 CURRENT 다중 프로필 캐릭터만 별도 PROFILE-RESOLVE가 시작 및 변환 타임라인을 추론하고, 끄면 프로필 LLM 호출 없이 등록 기본 프로필을 적용합니다.'},
+                    {key: 'profile_resolve_enabled', label: '다중 프로필 추론', type: 'toggle', help: 'CURRENT 등장인물 판별 LLM은 항상 별도로 실행됩니다. 켜면 확정된 CURRENT 다중 프로필 캐릭터를 캐릭터별 병렬 PROFILE-RESOLVE로 보내 시작·변환 타임라인과 판단 reason을 추론하고, 끄면 프로필 LLM 호출 없이 등록 기본 프로필을 적용합니다.'},
                     {key: 'call1_backtranslate_enabled', label: 'CALL1 역번역', type: 'toggle', help: 'CALL1 컨텍스트 보강 전에 현재 응답을 영어로 역번역합니다.'},
                     {key: 'call1_enabled', label: 'CALL1 복장·헤어 분석', type: 'toggle', help: '앞 단계가 확정한 CURRENT 캐릭터를 기준으로 현재 context의 복장·헤어스타일 변화 사건을 구조화합니다.'},
                     {key: 'call3_enabled', label: 'CALL3 대사 생성', type: 'toggle', help: 'CALL3 대사(speak/manga) 생성을 켭니다. CALL2 파싱 실패 시 CALL2-FIX 교정은 항상 동작합니다.'},

@@ -123,10 +123,12 @@ def test_character_and_profile_prompts_are_separated_before_compact_call1_contra
     assert '"profile_timeline"' in profile_prompt
     assert '"at": "START or one exact Cxxx ID"' in profile_prompt
     assert '"profile_ref"' in profile_prompt
+    assert '"reason"' in profile_prompt
     assert '"profile_id"' not in profile_prompt
     assert "emit exactly one START event" in profile_prompt
     assert "preceding CURRENT-character stage has already confirmed" in profile_prompt
-    assert "include every supplied character exactly once" in profile_prompt
+    assert "supplies exactly one authoritative CURRENT character" in profile_prompt
+    assert "include that character exactly once" in profile_prompt
     assert "Never use keyword matching" in profile_prompt
     assert "authoritative semantic contract" in profile_prompt
     assert "apply all material inclusion, prerequisite, persistence, and exclusion" in profile_prompt
@@ -137,7 +139,11 @@ def test_character_and_profile_prompts_are_separated_before_compact_call1_contra
     assert "Damage, removal, or alteration of an outfit" in profile_prompt
     assert 'such as "wearing [2]" inside candidate `[2]`' in profile_prompt
     assert "Do not choose the nearest special profile" in profile_prompt
-    assert "Do not add `in_history`, profile names, state summaries" in profile_prompt
+    assert "actual CURRENT wording" in profile_prompt
+    assert "plausible competing profile does not apply" in profile_prompt
+    assert "written entirely in English" in profile_prompt
+    assert "do not mix original-language phrases" in profile_prompt
+    assert "separate evidence/counterevidence fields" in profile_prompt
     assert '"profile_events"' not in profile_prompt
     assert "initial_visual_bases" not in profile_prompt
     assert "target_visual_profile_id" not in profile_prompt

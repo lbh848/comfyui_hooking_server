@@ -2860,6 +2860,7 @@ def _materialize_profile_character_records(
                 continue
             segment_id = str(event.get("at") or "").strip().upper()
             profile_id = str(event.get("profile_id") or "").strip()
+            reason = str(event.get("reason") or "").strip()
             profile = profile_by_id(character_profiles, profile_id)
             if not segment_id or not isinstance(profile, dict):
                 print(
@@ -2878,7 +2879,7 @@ def _materialize_profile_character_records(
                 "character": name,
                 "profile": profile_name,
                 "profile_id": profile_id,
-                "state": "",
+                "state": reason,
                 "confidence": 1.0,
             })
             if segment_id == "START":
@@ -2886,9 +2887,9 @@ def _materialize_profile_character_records(
                     "character": name,
                     "target_visual_profile_id": profile_id,
                     "visual_profile_name": profile_name,
-                    "initial_state": "",
+                    "initial_state": reason,
                     "anchor_segment": "START",
-                    "evidence": [],
+                    "evidence": [reason] if reason else [],
                     "confidence": 1.0,
                 })
             else:
@@ -2897,8 +2898,8 @@ def _materialize_profile_character_records(
                     "character": name,
                     "target_visual_profile_id": profile_id,
                     "visual_profile_name": profile_name,
-                    "visual_change": "",
-                    "evidence": "",
+                    "visual_change": reason,
+                    "evidence": reason,
                     "confidence": 1.0,
                 })
 
@@ -3167,7 +3168,19 @@ def parse_profile_resolution(
                         )
                     continue
                 seen_points[at] = profile_id
-                normalized_timeline.append({"at": at, "profile_id": profile_id})
+                reason = str(event.get("reason") or "").strip()
+                if not reason:
+                    warning = (
+                        f"프로필 판단 reason 누락: character={name}, "
+                        f"at={at}, profile_ref={profile_ref or profile_id!r}"
+                    )
+                    warnings.append(warning)
+                    print(f"[ILLUST_CONTEXT:PROFILE_RESOLVE] {warning}")
+                normalized_timeline.append({
+                    "at": at,
+                    "profile_id": profile_id,
+                    "reason": reason,
+                })
 
             normalized_timeline.sort(
                 key=lambda event: (
@@ -3382,7 +3395,14 @@ def _apply_profile_resolution_fallbacks(
             continue
         timeline = [event for event in timeline if event.get("at") != "START"]
         character["profile_timeline"] = [
-            {"at": "START", "profile_id": profile_id},
+            {
+                "at": "START",
+                "profile_id": profile_id,
+                "reason": (
+                    "프로필 응답이 유효한 START를 제공하지 않아 이전 추적 상태 또는 "
+                    "등록 기본 프로필을 안전 폴백으로 적용했다."
+                ),
+            },
             *timeline,
         ]
         reason = "추론 OFF 기본 프로필" if default_only else "교정 실패 안전 폴백"
@@ -8826,7 +8846,7 @@ _CALL_QUEUE_SUBTASK_GROUPS = {
         "character_resolve",
         "CURRENT 등장인물 이름 교정",
     ),
-    "PROFILE-RESOLVE": ("profile_resolve", "CURRENT 프로필 결정"),
+    "PROFILE-RESOLVE": ("profile_resolve", "CURRENT 프로필 캐릭터별 병렬 결정"),
     "PROFILE-RESOLVE-REPAIR": ("profile_resolve", "프로필 오류 항목 교정"),
     "CALL2": ("call2", "CALL2 장면/태그 빌드"),
     "CALL2-PLAN": ("call2_plan", "CALL2 장면 PLAN"),
@@ -10012,8 +10032,8 @@ async def _run_resolution_stage(
     )
     if profile_inference_enabled:
         user_content = (
-            "# RESOLVED CURRENT MULTI-PROFILE CHARACTERS\n"
-            + json.dumps(selected_names, ensure_ascii=False)
+            "# TARGET CURRENT MULTI-PROFILE CHARACTER\n"
+            + json.dumps(selected_names[0], ensure_ascii=False)
             + "\n\n# PREVIOUSLY TRACKED PROFILE STATE\n"
             + json.dumps(tracked_state, ensure_ascii=False, indent=2)
             + "\n\n# REGISTERED PROFILE CATALOG FOR RESOLVED CURRENT CHARACTERS\n"
@@ -10029,6 +10049,19 @@ async def _run_resolution_stage(
             + (history_text or "(empty)")
             + "\n\n# FULL CURRENT CONTEXT SEGMENTS\n"
             + segmented_current
+            + "\n\n# FINAL CANONICAL NAME OUTPUT AUTHORITY\n"
+            "The preceding PAST and CURRENT narrative is identity evidence only. "
+            "Its name spellings, aliases, titles, and localized forms are never valid "
+            "output values. Select the CURRENT participants semantically, then copy every "
+            "characters[].name character-for-character from this exact registered-name "
+            "list and nowhere else:\n"
+            + json.dumps(selected_names, ensure_ascii=False)
+            + "\nBefore returning, compare every characters[].name against that list. "
+            "If a value is not an exact member, replace it with the exact registered name "
+            "when identity is established; otherwise omit the item and add an uncertainty. "
+            "Return only this JSON shape:\n"
+            '{"characters":[{"name":"exact registered name from the list above",'
+            '"in_history":true}],"uncertainties":[]}'
         )
     messages = _normalize_messages([
         {"role": "system", "content": str(profile_system or "").strip()},
@@ -10198,6 +10231,15 @@ async def _run_resolution_stage(
                 + segmented_current
             )
         )
+        repair_targets = [
+            {
+                "source_index": int(issue.get("source_index") or 0),
+                "invalid_name": str(
+                    (issue.get("item") or {}).get("name") or ""
+                ).strip(),
+            }
+            for issue in repairable_name_issues
+        ]
         repair_messages = _normalize_messages([
             {
                 "role": "system",
@@ -10214,6 +10256,9 @@ async def _run_resolution_stage(
                     "or outfit decisions; the server preserves every non-name field from "
                     "the rejected source item. Keep source_index unchanged. Repair an item "
                     "only when the full discourse establishes its exact registered identity. "
+                    "The rejected item's existing name is known-invalid evidence, not a "
+                    "permitted output value; never copy or preserve it unless that exact "
+                    "spelling independently appears in REMAINING AVAILABLE REGISTERED NAMES. "
                     "Never choose a roster character merely from role, appearance, outfit, "
                     "profile, or name resemblance. If the item is an unregistered distinct "
                     "person, refers to an already accepted identity, or remains uncertain, "
@@ -10224,14 +10269,26 @@ async def _run_resolution_stage(
             {
                 "role": "user",
                 "content": (
-                    "# ALREADY ACCEPTED CHARACTER NAMES\n"
-                    + json.dumps(accepted_names, ensure_ascii=False)
-                    + "\n\n# REMAINING AVAILABLE REGISTERED NAMES\n"
-                    + json.dumps(available_names, ensure_ascii=False)
-                    + "\n\n# REJECTED CHARACTER ITEMS ONLY\n"
+                    "# REJECTED CHARACTER ITEMS ONLY\n"
                     + json.dumps(repairable_name_issues, ensure_ascii=False, indent=2)
                     + "\n\n"
                     + repair_context
+                    + "\n\n# FINAL CANONICAL NAME REPAIR AUTHORITY\n"
+                    "The invalid_name values below came from the rejected response. They "
+                    "identify what must be corrected and must not be copied into repairs.\n"
+                    "# REPAIR TARGETS\n"
+                    + json.dumps(repair_targets, ensure_ascii=False, indent=2)
+                    + "\n\n# ALREADY ACCEPTED CHARACTER NAMES (UNAVAILABLE)\n"
+                    + json.dumps(accepted_names, ensure_ascii=False)
+                    + "\n\n# REMAINING AVAILABLE REGISTERED NAMES (ONLY VALID name VALUES)\n"
+                    + json.dumps(available_names, ensure_ascii=False)
+                    + "\nCopy every repairs[].name character-for-character from the "
+                    "REMAINING AVAILABLE REGISTERED NAMES list immediately above. Never "
+                    "translate, transliterate, localize, or reuse an invalid_name. Omit a "
+                    "target when the discourse does not establish which exact remaining "
+                    "registered name it is. Return only:\n"
+                    '{"repairs":[{"source_index":1,"name":"exact remaining registered name"}],'
+                    '"uncertainties":[]}'
                 ),
             },
         ])
@@ -10569,20 +10626,196 @@ async def _run_profile_resolution(
     stream_notify,
     history_ids_sink: list[str] | None = None,
 ) -> tuple[str, dict]:
-    """Optional profile-only stage for resolved CURRENT multi-profile characters."""
-    return await _run_resolution_stage(
-        profile_system=profile_system,
-        segmented_current=segmented_current,
-        current_context=current_context,
-        current_segments=current_segments,
-        history_text="",
-        candidate_names=candidate_names,
-        previous_state=previous_state,
-        visual_profiles=visual_profiles,
-        profile_inference_enabled=True,
-        stream_notify=stream_notify,
-        history_ids_sink=history_ids_sink,
+    """Resolve each CURRENT multi-profile character in an independent parallel job."""
+    selected_profiles = _selected_visual_profiles(
+        visual_profiles,
+        candidate_names,
+        multiple_only=True,
     )
+    if not selected_profiles:
+        print(
+            "[ILLUST_CONTEXT:PROFILE_RESOLVE_PARALLEL] "
+            "판정할 CURRENT 다중 프로필 캐릭터가 없어 호출 건너뜀"
+        )
+        return "", _empty_profile_result()
+
+    jobs = [
+        {
+            "name": name,
+            "profiles": {name: deepcopy(character_profiles)},
+            "weight": max(1, len(current_segments or {})),
+        }
+        for name, character_profiles in selected_profiles.items()
+    ]
+
+    async def invoke(
+        job,
+        _index,
+        _total,
+        _attempt_kind,
+        _stream_observer,
+        _history_id,
+        job_stream_notify,
+    ):
+        name = str(job.get("name") or "").strip()
+        raw, parsed = await _run_resolution_stage(
+            profile_system=profile_system,
+            segmented_current=segmented_current,
+            current_context=current_context,
+            current_segments=current_segments,
+            history_text="",
+            candidate_names=[name],
+            previous_state=previous_state,
+            visual_profiles=job.get("profiles") or {},
+            profile_inference_enabled=True,
+            stream_notify=job_stream_notify,
+            history_ids_sink=history_ids_sink,
+        )
+        return {
+            "name": name,
+            "raw": raw,
+            "parsed": parsed,
+        }
+
+    values_by_index: dict[int, dict] = {}
+    failed_by_index: dict[int, str] = {}
+    try:
+        values = await _run_parallel_pipeline_jobs(
+            jobs,
+            group_id="PROFILE_RESOLVE_PARALLEL",
+            group_label="PROFILE-RESOLVE 캐릭터별 병렬 판정",
+            # 실제 API 동시성은 통합 LLM 큐의 슬롯별 게이트가 최종 제한한다.
+            # 여기서는 모든 캐릭터 작업을 즉시 큐에 올려 불필요한 직렬화를 만들지 않는다.
+            max_concurrency=len(jobs),
+            slow_retry_enabled=False,
+            slow_retry_remaining=1,
+            slow_retry_progress_enabled=False,
+            slow_retry_progress_threshold=50,
+            slow_retry_tps_enabled=False,
+            slow_retry_tps_threshold=1.0,
+            slow_retry_condition_operator="and",
+            stream_notify=stream_notify,
+            invoke=invoke,
+        )
+        values_by_index = {
+            index: value for index, value in enumerate(values, start=1)
+        }
+    except ParallelPipelineJobsError as group_error:
+        values_by_index = dict(group_error.resolved_values)
+        failed_by_index = dict(group_error.failures)
+
+    for index, reason in sorted(failed_by_index.items()):
+        job = jobs[index - 1]
+        name = str(job.get("name") or "").strip()
+        warning = (
+            f"캐릭터별 프로필 판정 최종 실패로 이전 추적 상태 또는 등록 기본 "
+            f"프로필 폴백 적용: character={name}, reason={reason}"
+        )
+        print(f"[ILLUST_CONTEXT:PROFILE_RESOLVE_PARALLEL] {warning}")
+        empty_character_result = _materialize_profile_character_records(
+            [{
+                "name": name,
+                "in_history": False,
+                "profile_timeline": [],
+            }],
+            job.get("profiles") or {},
+            warnings=[warning],
+        )
+        fallback = _apply_profile_resolution_fallbacks(
+            empty_character_result,
+            job.get("profiles") or {},
+            previous_state,
+            default_only=False,
+        )
+        values_by_index[index] = {
+            "name": name,
+            "raw": "",
+            "parsed": fallback,
+        }
+
+    merged_characters: list[dict] = []
+    merged_uncertainties: list[str] = []
+    merged_warnings: list[str] = []
+    merged_repair_requests: list[dict] = []
+    for index, job in enumerate(jobs, start=1):
+        name = str(job.get("name") or "").strip()
+        value = values_by_index.get(index) or {}
+        parsed = value.get("parsed") or _empty_profile_result()
+        character = next((
+            deepcopy(item)
+            for item in parsed.get("characters") or []
+            if isinstance(item, dict)
+            and str(item.get("name") or "").strip().casefold() == name.casefold()
+        ), None)
+        if character is None:
+            warning = (
+                f"캐릭터별 프로필 결과에 대상 항목이 없어 빈 타임라인 병합: "
+                f"character={name}"
+            )
+            print(f"[ILLUST_CONTEXT:PROFILE_RESOLVE_PARALLEL] {warning}")
+            character = {
+                "name": name,
+                "in_history": False,
+                "profile_timeline": [],
+            }
+            merged_warnings.append(warning)
+        merged_characters.append(character)
+        merged_uncertainties.extend(parsed.get("uncertainties") or [])
+        merged_warnings.extend(parsed.get("validation_warnings") or [])
+        merged_repair_requests.extend(parsed.get("repair_requests") or [])
+
+    merged = _materialize_profile_character_records(
+        merged_characters,
+        selected_profiles,
+        uncertainties=merged_uncertainties,
+        warnings=merged_warnings,
+        repair_requests=merged_repair_requests,
+    )
+
+    raw_characters = []
+    for character in merged.get("characters") or []:
+        name = str(character.get("name") or "").strip()
+        character_profiles = _authority_values_for_name(selected_profiles, name)
+        registered_profiles = (
+            list(character_profiles.get("profiles") or [])
+            if isinstance(character_profiles, dict)
+            else []
+        )
+        raw_timeline = []
+        for event in character.get("profile_timeline") or []:
+            profile_id = str(event.get("profile_id") or "").strip()
+            profile_number = next((
+                profile_index
+                for profile_index, profile in enumerate(registered_profiles, start=1)
+                if str(profile.get("id") or "").strip() == profile_id
+            ), 0)
+            if not profile_number:
+                print(
+                    "[ILLUST_CONTEXT:PROFILE_RESOLVE_PARALLEL] "
+                    f"병합 출력용 profile_ref 역매핑 실패: "
+                    f"character={name}, profile_id={profile_id!r}"
+                )
+                continue
+            raw_event = {
+                "at": str(event.get("at") or "").strip().upper(),
+                "profile_ref": f"[{profile_number}]",
+                "reason": str(event.get("reason") or "").strip(),
+            }
+            raw_timeline.append(raw_event)
+        raw_characters.append({
+            "name": name,
+            "profile_timeline": raw_timeline,
+        })
+    raw_output = json.dumps({
+        "characters": raw_characters,
+        "uncertainties": list(merged.get("uncertainties") or []),
+    }, ensure_ascii=False)
+    print(
+        "[ILLUST_CONTEXT:PROFILE_RESOLVE_PARALLEL] 캐릭터별 병렬 판정 병합 완료: "
+        f"characters={[item.get('name') for item in raw_characters]}, "
+        f"failed={sorted(failed_by_index)}"
+    )
+    return raw_output, merged
 
 
 def _merge_character_and_profile_stage_results(
