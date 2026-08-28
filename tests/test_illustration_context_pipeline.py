@@ -5373,6 +5373,44 @@ async def test_profile_resolve_uses_dedicated_route_queue_group_and_lb_history(m
 
 
 @pytest.mark.asyncio
+async def test_character_resolve_uses_dedicated_route_queue_group_and_lb_history(monkeypatch):
+    records = []
+    events = []
+    messages = [{"role": "user", "content": "current characters"}]
+
+    async def fake_call(task_key, actual_messages, **_kwargs):
+        assert task_key == "illustration_character_resolve"
+        assert actual_messages == messages
+        return '{"characters":[],"uncertainties":[]}'
+
+    async def fake_notify(event):
+        events.append(event)
+
+    monkeypatch.setattr(pipeline.llm_service, "callLLMTask", fake_call)
+    monkeypatch.setattr(pipeline.lighbd_service, "_log_lighbd_history", records.append)
+
+    result = await pipeline._call_pipeline_llm(
+        "CHARACTER-RESOLVE",
+        messages,
+        fake_notify,
+        json_mode=True,
+    )
+
+    assert result == '{"characters":[],"uncertainties":[]}'
+    assert records[0]["call_name"] == "CHARACTER-RESOLVE"
+    assert records[0]["task_key"] == "illustration_character_resolve"
+    assert records[0]["status"] == "ok"
+    assert [event["type"] for event in events] == ["start", "done"]
+    assert {
+        event["queue_subtask"]["group_id"] for event in events
+    } == {"character_resolve"}
+    assert (
+        pipeline._CALL_TASK_KEYS["CHARACTER-RESOLVE-REPAIR"]
+        == "illustration_character_resolve"
+    )
+
+
+@pytest.mark.asyncio
 async def test_profile_resolution_toggle_off_still_resolves_characters_and_uses_default(
     monkeypatch,
 ):
@@ -5381,12 +5419,13 @@ async def test_profile_resolution_toggle_off_still_resolves_characters_and_uses_
     async def fake_pipeline_call(call_name, messages, _stream_notify, **kwargs):
         calls.append((call_name, messages, kwargs))
         prompt = "\n".join(message["content"] for message in messages)
-        assert "# PROFILE INFERENCE MODE\nDISABLED" in prompt
+        assert "# COMPLETE REGISTERED CHARACTER ROSTER" in prompt
+        assert "# PAST HISTORY (IDENTITY AND in_history ONLY)" in prompt
+        assert "# REGISTERED PROFILE CATALOG" not in prompt
         return json.dumps({
             "characters": [{
                 "name": "Hana",
                 "in_history": True,
-                "profile_timeline": [],
             }],
             "uncertainties": [],
         })
@@ -5418,7 +5457,7 @@ async def test_profile_resolution_toggle_off_still_resolves_characters_and_uses_
     )
 
     assert len(calls) == 1
-    assert calls[0][0] == "PROFILE-RESOLVE"
+    assert calls[0][0] == "CHARACTER-RESOLVE"
     assert calls[0][2]["json_mode"] is True
     assert json.loads(output)["characters"][0]["name"] == "Hana"
     assert result["current_characters"] == [{"name": "Hana", "confidence": 1.0}]
@@ -5447,6 +5486,76 @@ async def test_profile_resolution_toggle_off_still_resolves_characters_and_uses_
     assert pipeline.merged_toggles({
         "profile_resolve_enabled": False,
     })["profile_resolve_enabled"] is False
+
+
+@pytest.mark.asyncio
+async def test_character_observation_always_precedes_optional_profile_only_call(monkeypatch):
+    calls = []
+
+    async def fake_pipeline_call(call_name, messages, _stream_notify, **kwargs):
+        prompt = "\n".join(message["content"] for message in messages)
+        calls.append((call_name, prompt, kwargs))
+        if call_name == "CHARACTER-RESOLVE":
+            assert "# COMPLETE REGISTERED CHARACTER ROSTER" in prompt
+            assert "# REGISTERED PROFILE CATALOG" not in prompt
+            return json.dumps({
+                "characters": [
+                    {"name": "Hana", "in_history": True},
+                    {"name": "Bob", "in_history": False},
+                ],
+                "uncertainties": [],
+            })
+        assert call_name == "PROFILE-RESOLVE"
+        assert '# RESOLVED CURRENT MULTI-PROFILE CHARACTERS\n["Hana"]' in prompt
+        assert "# PAST HISTORY" not in prompt
+        assert "Hana transformed form" in prompt
+        assert "Bob ordinary form" not in prompt
+        return json.dumps({
+            "characters": [{
+                "name": "Hana",
+                "profile_timeline": [{"at": "START", "profile_ref": "[2]"}],
+            }],
+            "uncertainties": [],
+        })
+
+    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
+    visual_profiles = {
+        "Hana": cards_to_character_profiles("Hana", [{
+            "id": "ordinary",
+            "aliases": ["Hana_Ordinary"],
+            "selection_guide": "Hana ordinary form",
+            "appearance": ["black hair"],
+            "default_outfit": ["blue dress"],
+        }, {
+            "id": "transformed",
+            "aliases": ["Hana_Transformed"],
+            "selection_guide": "Hana transformed form",
+            "appearance": ["white hair"],
+            "default_outfit": ["white armor"],
+        }]),
+        "Bob": cards_to_character_profiles("Bob", [{
+            "id": "ordinary",
+            "aliases": ["Bob_Ordinary"],
+            "selection_guide": "Bob ordinary form",
+            "appearance": ["brown hair"],
+            "default_outfit": ["suit"],
+        }]),
+    }
+
+    _output, result = await pipeline.resolve_profiles_before_generation(
+        payload={"chats": [{"role": "char", "data": "Hana transforms beside Bob."}]},
+        toggles={"profile_resolve_enabled": True},
+        history_plan={
+            "call1_history": [{"role": "char", "data": "old history marker"}],
+            "state_before": {},
+        },
+        visual_profiles=visual_profiles,
+    )
+
+    assert [call[0] for call in calls] == ["CHARACTER-RESOLVE", "PROFILE-RESOLVE"]
+    assert [item["name"] for item in result["current_characters"]] == ["Hana", "Bob"]
+    assert result["history_characters"] == ["Hana"]
+    assert result["initial_visual_bases"][0]["target_visual_profile_id"] == "transformed"
 
 
 @pytest.mark.asyncio
@@ -5904,7 +6013,7 @@ def test_call1_shards_merge_only_wardrobe_and_hairstyle_arrays():
 
 
 @pytest.mark.asyncio
-async def test_profile_resolution_runs_once_before_call1_and_filters_catalog(monkeypatch):
+async def test_profile_resolution_receives_only_resolved_current_multi_profile_catalog(monkeypatch):
     adachi = cards_to_character_profiles("Adachi", [{
         "id": "civilian",
         "aliases": ["Adachi_Civilian"],
@@ -5930,36 +6039,23 @@ async def test_profile_resolution_runs_once_before_call1_and_filters_catalog(mon
     async def fake_pipeline_call(call_name, messages, _stream_notify, **kwargs):
         calls.append((call_name, messages, kwargs))
         prompt = "\n".join(message["content"] for message in messages)
-        assert "# COMPLETE REGISTERED CHARACTER ROSTER" in prompt
+        assert "# RESOLVED CURRENT MULTI-PROFILE CHARACTERS" in prompt
+        assert "# COMPLETE REGISTERED CHARACTER ROSTER" not in prompt
         assert "Adachi_Civilian" not in prompt
         assert "Adachi_Changed" not in prompt
         assert "Bob_Default" not in prompt
         assert "선택 기준: ordinary human form" in prompt
         assert "선택 기준: persistent transformed form" in prompt
-        assert "선택 기준: ordinary form" in prompt
+        assert "선택 기준: ordinary form" not in prompt
         assert "# FULL CURRENT CONTEXT SEGMENTS" in prompt
-        assert (
-            "# PAST HISTORY (IDENTITY AND in_history ONLY; NEVER PROFILE EVIDENCE)"
-            in prompt
-        )
-        assert "# FINAL CONTRACT CHECK" in prompt
-        assert "re-check every chosen `profile_ref`" in prompt
-        assert "complete registered selection guide" in prompt
-        assert "Appearance or outfit is support only when the selection guide" in prompt
-        assert "Never use PAST or another character's state as profile evidence" in prompt
-        assert "self-reference such as `wearing [2]` is only a label" in prompt
+        assert "# PAST HISTORY" not in prompt
         return json.dumps({
             "characters": [{
                 "name": "Adachi",
-                "in_history": False,
                 "profile_timeline": [{
                     "at": "START",
                     "profile_ref": "[1]",
                 }],
-            }, {
-                "name": "Bob",
-                "in_history": False,
-                "profile_timeline": [],
             }],
             "uncertainties": [],
         })
@@ -5972,11 +6068,9 @@ async def test_profile_resolution_runs_once_before_call1_and_filters_catalog(mon
         segmented_current=segmented,
         current_context=current,
         current_segments=segments,
-        history_text="Earlier context.",
-        candidate_names=["Adachi", "Bob"],
+        candidate_names=["Adachi"],
         previous_state={},
         visual_profiles={"Adachi": adachi, "Bob": bob},
-        profile_inference_enabled=True,
         stream_notify=None,
     )
 
@@ -5986,13 +6080,12 @@ async def test_profile_resolution_runs_once_before_call1_and_filters_catalog(mon
     assert json.loads(raw)["characters"][0]["profile_timeline"][0]["profile_ref"] == "[1]"
     assert parsed["current_characters"] == [
         {"name": "Adachi", "confidence": 1.0},
-        {"name": "Bob", "confidence": 1.0},
     ]
     assert parsed["initial_visual_bases"][0]["target_visual_profile_id"] == "civilian"
 
 
 @pytest.mark.asyncio
-async def test_profile_resolution_repairs_only_noncanonical_name_items_and_preserves_valid_items(
+async def test_character_resolution_repairs_only_noncanonical_name_items_and_preserves_valid_items(
     monkeypatch,
 ):
     doyun = cards_to_character_profiles("Doyun", [{
@@ -6033,35 +6126,25 @@ async def test_profile_resolution_repairs_only_noncanonical_name_items_and_prese
     async def fake_pipeline_call(call_name, messages, _stream_notify, **kwargs):
         prompt = "\n".join(message["content"] for message in messages)
         calls.append((call_name, prompt, kwargs))
-        if call_name == "PROFILE-RESOLVE":
+        if call_name == "CHARACTER-RESOLVE":
             return json.dumps({
                 "characters": [{
                     "name": "Doyun",
                     "in_history": True,
-                    "profile_timeline": [],
                 }, {
                     "name": "시호",
                     "in_history": True,
-                    "profile_timeline": [{
-                        "at": "START",
-                        "profile_id": "corrupted",
-                    }],
                 }, {
                     "name": "아야",
                     "in_history": False,
-                    "profile_timeline": [{
-                        "at": "START",
-                        "profile_id": "denial",
-                    }],
                 }, {
                     "name": "Invented Similar Girl",
                     "in_history": False,
-                    "profile_timeline": [],
                 }],
                 "uncertainties": [],
             }, ensure_ascii=False)
 
-        assert call_name == "PROFILE-RESOLVE-REPAIR"
+        assert call_name == "CHARACTER-RESOLVE-REPAIR"
         rejected_section = prompt.split(
             "# REJECTED CHARACTER ITEMS ONLY\n",
             1,
@@ -6101,22 +6184,20 @@ async def test_profile_resolution_repairs_only_noncanonical_name_items_and_prese
     monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
     current = "Doyun finds Shiho and the transformed Aya."
     segmented, segments = pipeline._segment_current_context(current)
-    raw, parsed = await pipeline._run_profile_resolution(
-        profile_system="Return compact character profile JSON.",
+    raw, parsed = await pipeline._run_character_resolution(
+        character_system="Return compact character JSON.",
         segmented_current=segmented,
         current_context=current,
         current_segments=segments,
         history_text="Doyun and Shiho were present earlier.",
         candidate_names=["Doyun", "Shiho", "Aya"],
-        previous_state={},
         visual_profiles={"Doyun": doyun, "Shiho": shiho, "Aya": aya},
-        profile_inference_enabled=True,
         stream_notify=None,
     )
 
     assert [call[0] for call in calls] == [
-        "PROFILE-RESOLVE",
-        "PROFILE-RESOLVE-REPAIR",
+        "CHARACTER-RESOLVE",
+        "CHARACTER-RESOLVE-REPAIR",
     ]
     assert [item["name"] for item in json.loads(raw)["characters"]] == [
         "Doyun",
@@ -6128,10 +6209,8 @@ async def test_profile_resolution_repairs_only_noncanonical_name_items_and_prese
         "Shiho",
         "Aya",
     ]
-    assert {
-        item["character"]: item["target_visual_profile_id"]
-        for item in parsed["initial_visual_bases"]
-    } == {"Shiho": "corrupted", "Aya": "denial"}
+    assert parsed["initial_visual_bases"] == []
+    assert parsed["history_characters"] == ["Doyun", "Shiho"]
     assert any(
         "이미 승인된 캐릭터 중복: 'Doyun'" in warning
         for warning in parsed["validation_warnings"]
@@ -6139,7 +6218,7 @@ async def test_profile_resolution_repairs_only_noncanonical_name_items_and_prese
 
 
 @pytest.mark.asyncio
-async def test_profile_resolution_name_repair_failure_discards_only_rejected_items(
+async def test_character_resolution_name_repair_failure_discards_only_rejected_items(
     monkeypatch,
 ):
     hiyori = cards_to_character_profiles("Hiyori", [{
@@ -6160,16 +6239,14 @@ async def test_profile_resolution_name_repair_failure_discards_only_rejected_ite
 
     async def fake_pipeline_call(call_name, _messages, _stream_notify, **kwargs):
         calls.append(call_name)
-        if call_name == "PROFILE-RESOLVE":
+        if call_name == "CHARACTER-RESOLVE":
             return json.dumps({
                 "characters": [{
                     "name": "Hiyori",
                     "in_history": False,
-                    "profile_timeline": [],
                 }, {
                     "name": "Doyun",
                     "in_history": True,
-                    "profile_timeline": [],
                 }],
                 "uncertainties": [],
             })
@@ -6189,20 +6266,18 @@ async def test_profile_resolution_name_repair_failure_discards_only_rejected_ite
     monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
     current = "Doyun helps Hiyori while Hoshino watches."
     segmented, segments = pipeline._segment_current_context(current)
-    raw, parsed = await pipeline._run_profile_resolution(
-        profile_system="Return compact character profile JSON.",
+    raw, parsed = await pipeline._run_character_resolution(
+        character_system="Return compact character JSON.",
         segmented_current=segmented,
         current_context=current,
         current_segments=segments,
         history_text="Hiyori met Doyun earlier.",
         candidate_names=["Hiyori", "Hoshino"],
-        previous_state={},
         visual_profiles={"Hiyori": hiyori, "Hoshino": hoshino},
-        profile_inference_enabled=True,
         stream_notify=None,
     )
 
-    assert calls == ["PROFILE-RESOLVE", "PROFILE-RESOLVE-REPAIR"]
+    assert calls == ["CHARACTER-RESOLVE", "CHARACTER-RESOLVE-REPAIR"]
     assert [item["name"] for item in json.loads(raw)["characters"]] == [
         "Hiyori",
     ]
@@ -6296,11 +6371,9 @@ async def test_profile_resolution_repairs_only_unknown_profile_id_character(monk
         segmented_current=segmented,
         current_context=current,
         current_segments=segments,
-        history_text="Adachi was here earlier.",
         candidate_names=["Adachi", "Mina"],
         previous_state={},
         visual_profiles={"Adachi": adachi, "Mina": mina},
-        profile_inference_enabled=True,
         stream_notify=None,
     )
 
@@ -6365,7 +6438,6 @@ async def test_profile_resolution_failed_repair_uses_previous_start_and_keeps_va
         segmented_current=segmented,
         current_context=current,
         current_segments=segments,
-        history_text="Hana had transformed.",
         candidate_names=["Hana"],
         previous_state={
             "hana": {
@@ -6374,7 +6446,6 @@ async def test_profile_resolution_failed_repair_uses_previous_start_and_keeps_va
             },
         },
         visual_profiles={"Hana": hana},
-        profile_inference_enabled=True,
         stream_notify=None,
     )
 
@@ -7607,6 +7678,15 @@ async def test_persistent_history_path_uses_compact_call2_and_updates_wardrobe(m
 
     async def fake_call(task_key, messages, **kwargs):
         calls.append((task_key, messages))
+        if task_key == "illustration_character_resolve":
+            request_text = "\n".join(message["content"] for message in messages)
+            assert "# COMPLETE REGISTERED CHARACTER ROSTER" in request_text
+            assert "ordinary persistent form" not in request_text
+            assert "persistent transformed form" not in request_text
+            return json.dumps({
+                "characters": [{"name": "Hana", "in_history": True}],
+                "uncertainties": [],
+            })
         if task_key == "illustration_call1":
             request_text = "\n".join(message["content"] for message in messages)
             assert "generated visual contamination marker" not in request_text
@@ -7634,10 +7714,9 @@ async def test_persistent_history_path_uses_compact_call2_and_updates_wardrobe(m
             return json.dumps({
                 "characters": [{
                     "name": "Hana",
-                    "in_history": True,
                     "profile_timeline": [{
                         "at": "START",
-                        "profile_id": "ordinary",
+                        "profile_ref": "[1]",
                     }],
                 }],
                 "uncertainties": [],
@@ -7736,6 +7815,7 @@ scenes[1]:
     )
 
     assert [task_key for task_key, _messages in calls] == [
+        "illustration_character_resolve",
         "illustration_profile_resolve",
         "illustration_call1",
         "illustration_call2",

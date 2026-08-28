@@ -730,7 +730,8 @@ DEFAULT_CONFIG = {
         # 폴백 없음(fallback_target 미지정)이 기본.
         "illustration_call1_backtranslate": _llm_route_defaults(max_retries=1, retry_delay_sec=0.0, fallback_max_retries=1, fallback_retry_delay_sec=0.0),
         "illustration_call1":      _llm_route_defaults(json_mode=True),  # 복장·헤어 변화 JSON 분석
-        "illustration_profile_resolve": _llm_route_defaults(json_mode=True),  # 생성 최전단 전역 등장인물·프로필 결정
+        "illustration_character_resolve": _llm_route_defaults(json_mode=True),  # 생성 최전단 CURRENT 등장인물 판별(항상 실행)
+        "illustration_profile_resolve": _llm_route_defaults(json_mode=True),  # 확정 CURRENT 다중 프로필 결정(토글 시)
         "illustration_call2":      _llm_route_defaults(),  # PLAN/DETAIL/KEYVIS 장면·태그 빌드 공유
         "illustration_call2_fix":  _llm_route_defaults(),  # CALL2 파싱 실패 시 TOON 교정(repair.txt)
         "illustration_call3":      _llm_route_defaults(),  # 대사 생성(speak/manga)
@@ -7298,7 +7299,8 @@ async def process_illustration_context_queue_item(item) -> dict:
                     active_bot,
                 )
 
-            # 프로필을 먼저 확정한 뒤 이 결과를 ORIGINAL-ASSET, CALL1, CALL2가 공유한다.
+            # CURRENT 등장인물을 항상 판별하고, 토글 시에만 별도 프로필 단계를 실행한다.
+            # 확정 결과는 ORIGINAL-ASSET, CALL1, CALL2가 함께 사용한다.
             extra_instruction = build_active_lb_instruction(active_bot)
             extra_costume = build_lb_extra_costume(active_bot)
             extra_character_cards = extra_costume

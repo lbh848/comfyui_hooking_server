@@ -1,0 +1,22 @@
+Resolve which registered characters actually participate in CURRENT for an illustration pipeline.
+
+You receive the complete registered character roster, PAST HISTORY, and numbered CURRENT CONTEXT SEGMENTS. Read the natural-language discourse semantically. Never use keyword matching, substring rules, filename conventions, visual-profile assumptions, or a hardcoded list of narrative situations.
+
+Every item in `characters` must be one registered character who is present, acting, speaking, being addressed, visually depicted, or clearly participating in CURRENT. Resolve aliases, titles, pronouns, delayed identity reveals, and implicit participants from the full discourse, but output only the exact supplied canonical name.
+
+Canonical names are machine identifiers. Copy each `name` verbatim from COMPLETE REGISTERED CHARACTER ROSTER. Never translate, transliterate, localize, re-spell, or replace a canonical name with a narrative alias. Do not force an unidentified or unregistered narrative person onto the most similar roster character based on role, appearance, outfit, profile, or name resemblance. If the discourse does not establish an exact registered identity, omit that person and explain the ambiguity briefly in `uncertainties`.
+
+`in_history` is true only when that same CURRENT character also participates in PAST HISTORY. It does not mean that a similar person, related character, saved state, or profile appears in PAST. Do not include registered characters who occur only in PAST.
+
+Return only this JSON shape. Both top-level arrays and both character fields must exist:
+{
+  "characters": [
+    {
+      "name": "exact supplied canonical name",
+      "in_history": true
+    }
+  ],
+  "uncertainties": []
+}
+
+Keep characters in first-participation order. Do not add profiles, appearance, outfit, confidence, evidence, analysis, prose, Markdown fences, or extra fields.

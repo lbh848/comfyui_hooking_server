@@ -87,12 +87,15 @@ def _reversion_event():
     }
 
 
-def test_character_profile_prompt_precedes_compact_call1_contract():
+def test_character_and_profile_prompts_are_separated_before_compact_call1_contract():
     call1_prompt = (
         Path(__file__).parents[1] / "prompts" / "lighbd" / "enhance.txt"
     ).read_text(encoding="utf-8")
     profile_prompt = (
         Path(__file__).parents[1] / "prompts" / "lighbd" / "profile.txt"
+    ).read_text(encoding="utf-8")
+    character_prompt = (
+        Path(__file__).parents[1] / "prompts" / "lighbd" / "character.txt"
     ).read_text(encoding="utf-8")
 
     assert "Registered character cards" not in call1_prompt
@@ -106,32 +109,35 @@ def test_character_profile_prompt_precedes_compact_call1_contract():
     assert '"unresolved_references"' not in call1_prompt
     assert '"current_characters"' not in call1_prompt
 
+    assert '"characters"' in character_prompt
+    assert '"in_history"' in character_prompt
+    assert '"profile_timeline"' not in character_prompt
+    assert "complete registered character roster" in character_prompt.casefold()
+    assert "copy each `name` verbatim" in character_prompt.casefold()
+    assert "Never translate, transliterate, localize" in character_prompt
+    assert "Do not force an unidentified or unregistered narrative person" in character_prompt
+    assert "Never use keyword matching" in character_prompt
+
     assert '"characters"' in profile_prompt
-    assert '"in_history"' in profile_prompt
+    assert '"in_history"' not in profile_prompt
     assert '"profile_timeline"' in profile_prompt
     assert '"at": "START or one exact Cxxx ID"' in profile_prompt
     assert '"profile_ref"' in profile_prompt
     assert '"profile_id"' not in profile_prompt
     assert "emit exactly one START event" in profile_prompt
-    assert "complete registered character roster" in profile_prompt
-    assert "copy each `name` verbatim" in profile_prompt
-    assert "Never translate, transliterate, localize" in profile_prompt
-    assert "Do not force an unidentified or unregistered narrative person" in profile_prompt
-    assert "When DISABLED, do not infer profiles" in profile_prompt
+    assert "preceding CURRENT-character stage has already confirmed" in profile_prompt
+    assert "include every supplied character exactly once" in profile_prompt
     assert "Never use keyword matching" in profile_prompt
     assert "authoritative semantic contract" in profile_prompt
-    assert "Apply every material inclusion, prerequisite, persistence, and exclusion" in profile_prompt
+    assert "apply all material inclusion, prerequisite, persistence, and exclusion" in profile_prompt
     assert "Absence of a contradiction is not positive support" in profile_prompt
-    assert "Compare all registered guides for the character before choosing" in profile_prompt
-    assert "Registered profile names, aliases, and internal IDs are deliberately absent" in profile_prompt
-    assert "Appearance or outfit is valid selection evidence only" in profile_prompt
-    assert "PAST HISTORY may be used only to resolve identity" in profile_prompt
-    assert "it is never profile-selection evidence" in profile_prompt
-    assert "Another character's feelings, conflict, actions" in profile_prompt
+    assert "No PAST HISTORY is supplied" in profile_prompt
+    assert "does not by itself establish that the resulting profile transition completed" in profile_prompt
+    assert "not-yet-completed transition preserves the prior active profile" in profile_prompt
+    assert "Damage, removal, or alteration of an outfit" in profile_prompt
     assert 'such as "wearing [2]" inside candidate `[2]`' in profile_prompt
-    assert "independently stated required conditions" in profile_prompt
-    assert "rather than the nearest special profile" in profile_prompt
-    assert "Do not add profile names, state summaries, confidence" in profile_prompt
+    assert "Do not choose the nearest special profile" in profile_prompt
+    assert "Do not add `in_history`, profile names, state summaries" in profile_prompt
     assert '"profile_events"' not in profile_prompt
     assert "initial_visual_bases" not in profile_prompt
     assert "target_visual_profile_id" not in profile_prompt
@@ -139,13 +145,16 @@ def test_character_profile_prompt_precedes_compact_call1_contract():
     assert "Lapis" not in profile_prompt
 
 
-def test_profile_resolve_is_registered_in_routing_and_prompt_editor():
+def test_character_and_profile_resolve_are_registered_in_routing_and_prompt_editor():
     root = Path(__file__).parents[1]
     server_source = (root / "server.py").read_text(encoding="utf-8")
     frontend_source = (root / "frontend" / "index.html").read_text(encoding="utf-8")
 
+    assert '"illustration_character_resolve": _llm_route_defaults(json_mode=True)' in server_source
     assert '"illustration_profile_resolve": _llm_route_defaults(json_mode=True)' in server_source
+    assert "key: 'illustration_character_resolve'" in frontend_source
     assert "key: 'illustration_profile_resolve'" in frontend_source
+    assert 'data-lighbd-prompt="character_resolve"' in frontend_source
     assert 'data-lighbd-prompt="profile_resolve"' in frontend_source
     assert "profile_result" in frontend_source
 

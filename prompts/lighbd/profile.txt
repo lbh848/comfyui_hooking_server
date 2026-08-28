@@ -1,34 +1,33 @@
-Resolve CURRENT character participation and, when enabled, registered visual profiles for an illustration pipeline.
+Resolve registered visual-profile timelines for characters that a preceding CURRENT-character stage has already confirmed.
 
-You receive the complete registered character roster, registered profile catalogs, previously tracked profiles, PAST HISTORY, and numbered CURRENT CONTEXT SEGMENTS. Analyze the full natural-language context semantically. Never use keyword matching, substring rules, filename conventions, or a hardcoded list of narrative states.
+Every supplied character is authoritatively present in CURRENT and has multiple registered profiles. Do not decide participation, identity, or `in_history`. Copy each supplied canonical `name` verbatim, include every supplied character exactly once, and select only the exact bracketed `profile_ref` values supplied for that character. The server maps bracketed references to internal profile IDs.
 
-Every item in `characters` is one registered character who is present, acting, speaking, being addressed, visually depicted, or clearly participating in CURRENT. Resolve aliases, titles, pronouns, delayed identity reveals, and implicit participants from discourse, but output only the exact supplied canonical name. Canonical names are machine identifiers: copy each `name` verbatim from COMPLETE REGISTERED CHARACTER ROSTER. Never translate, transliterate, localize, re-spell, or replace a canonical name with a narrative alias. Do not force an unidentified or unregistered narrative person onto the most similar roster character based on role, appearance, outfit, profile, or name resemblance. If the full discourse does not establish an exact registered identity, omit that person and explain the ambiguity briefly in `uncertainties`. Do not include registered characters who occur only in PAST.
+Read the complete CURRENT CONTEXT semantically. Never use keyword matching, substring rules, filename conventions, reference-number meaning, or a hardcoded list of narrative states. PREVIOUSLY TRACKED PROFILE STATE is valid continuity evidence only for the same character. No PAST HISTORY is supplied because past narrative is not profile-selection evidence.
 
-`in_history` is true only when that same CURRENT character participates in PAST HISTORY. It does not mean that the character merely has a saved profile state.
+The registered selection guide for each profile is the authoritative semantic contract. Compare every guide registered for that character and apply all material inclusion, prerequisite, persistence, and exclusion conditions. A guide describes the mapping; it is not story evidence. Absence of a contradiction is not positive support for a required condition.
 
-PROFILE INFERENCE MODE is supplied by the user message:
-- When ENABLED, fill `profile_timeline` only for CURRENT characters with multiple registered profiles. Select only the exact bracketed `profile_ref` supplied for that character, such as `[1]` or `[2]`. The server maps it to the internal profile ID.
-- When DISABLED, do not infer profiles. Every `profile_timeline` must be empty. The server will apply registered defaults after character resolution.
-- A CURRENT character with one registered profile always has an empty `profile_timeline` because no choice is needed.
+Determine the character's actually active form at first participation and at each later transition. Keep temporal and modal boundaries exact:
+- A completed current-state assertion or an explicitly depicted active form has priority over speculation, prediction, risk, atmosphere, or another observer's interpretation.
+- Being exposed to, threatened by, injured by, contaminated by, drugged by, defeated by, or close to a transformation does not by itself establish that the resulting profile transition completed.
+- An attempted, interrupted, resisted, escaped, imminent, partial, or not-yet-completed transition preserves the prior active profile unless CURRENT independently establishes that the new state became active.
+- Damage, removal, or alteration of an outfit does not by itself change the underlying visual profile. Treat it as wardrobe state layered over the active profile.
+- Mood, genre, injury, defeat, coercion, aura, symptoms, or another character's state cannot substitute for the candidate's required state transition.
 
-The registered selection guide for each profile is the authoritative semantic contract for choosing that profile. Apply every material inclusion, prerequisite, persistence, and exclusion condition in the guide by meaning, using the full narrative context and the previously tracked profile. The guides describe the mapping; they are not themselves story evidence. A condition written in a guide becomes satisfied only when the narrative or valid tracked state establishes it. Absence of a contradiction is not positive support for a condition that the guide requires.
+These are semantic reading rules, not keyword rules. Resolve negation, tense, aspect, uncertainty, narrator knowledge, and chronology from the full natural-language context.
 
-Compare all registered guides for the character before choosing. Silently identify the contextual support for the chosen guide; if that support cannot be identified, do not choose that profile. Registered profile names, aliases, and internal IDs are deliberately absent; bracketed references such as `[1]` and `[2]` have no semantic authority. Never infer state, color, appearance, outfit, role, or story meaning from a reference number. Appearance or outfit is valid selection evidence only when the selection guide itself explicitly states that condition and the narrative or valid tracked state establishes it. Never use visual resemblance or the fact that a profile is the closest available option as evidence. Never use one profile's guide as evidence for itself, and never weaken or ignore a guide because no registered profile perfectly describes the scene. Do not impose a separate universal definition of what may or may not be a profile.
+Appearance or outfit is selection evidence only when the candidate guide explicitly makes it a condition and CURRENT establishes it for that same character. Compare the actual described traits and currently depicted form, not generic resemblance. A guide phrase that merely refers to its own bracketed candidate, such as "wearing [2]" inside candidate `[2]`, is only a label reference and supplies no evidence by itself.
 
-Keep evidence ownership and time scope strict. PAST HISTORY may be used only to resolve identity, aliases, continuity of reference, and `in_history`; it is never profile-selection evidence. A profile condition may be satisfied only by (a) a valid previously tracked profile for that same character or (b) a fact in CURRENT that is semantically about that same character. Another character's feelings, conflict, actions, dialogue, appearance, transformation, or history can never satisfy the candidate character's guide. After deciding `in_history: false`, categorically ignore PAST when choosing that character's profile. Do not match guide vocabulary against unrelated text anywhere in the discourse.
+For each supplied character, emit exactly one START event. START is the profile already active when that character first participates or is depicted in CURRENT. If the first portrayal establishes a non-default form, choose that form at START. A first reveal of an already-active form is START, not a later transition.
 
-A guide phrase that merely refers to its own bracketed candidate, such as "wearing [2]" inside candidate `[2]`, is only a label reference and supplies no state, appearance, or outfit evidence. Use only the guide's independently stated descriptive conditions. If a non-default candidate's independently stated required conditions are not established for that same character, reject it. A generic portrayal does not inherit a special condition from mood, genre, injury, defeat, or another character.
+After START, emit another event only when CURRENT establishes a completed transition to a different registered profile and the resulting state satisfies that profile's full guide. Put the event at the exact Cxxx segment where the new profile becomes active. Preserve a valid tracked profile when CURRENT establishes no change. When no valid tracked profile exists and CURRENT does not support any non-default guide, use the catalog's declared default. Do not choose the nearest special profile or invent a reference.
 
-For each CURRENT multi-profile character in ENABLED mode, emit exactly one START event. START means the profile already active when that character first actually participates or is depicted in CURRENT. If the first portrayal already establishes a non-default form, choose it at START. If CURRENT explicitly depicts a transition from one profile to another, START is the profile before that transition and a later event begins at the exact Cxxx segment containing the transition. A mere first reveal of an already-active form is START, not a Cxxx transition.
+If a choice cannot be resolved safely, keep the valid tracked profile or declared default as instructed and describe the ambiguity briefly in `uncertainties`. Before responding, re-check that direct current-form evidence, negation, incomplete transitions, and chronology were not overridden by repeated surrounding state vocabulary.
 
-After START, emit another event only where CURRENT establishes a transition to a different registered profile and the resulting state satisfies that profile's selection guide for that same character. Preserve the previously tracked profile when CURRENT establishes no change. When no valid previous profile exists and CURRENT does not provide the same-character support required by any non-default guide, use the catalog's declared default rather than the nearest special profile. Do not invent a `profile_ref`. If character identity or profile choice cannot be resolved safely, leave the affected timeline empty or omit the unsupported transition and explain the ambiguity briefly in `uncertainties`.
-
-Return only this JSON shape. Both top-level arrays and all three character fields must exist:
+Return only this JSON shape. Both top-level arrays and both character fields must exist:
 {
   "characters": [
     {
       "name": "exact supplied canonical name",
-      "in_history": true,
       "profile_timeline": [
         {
           "at": "START or one exact Cxxx ID",
@@ -40,4 +39,4 @@ Return only this JSON shape. Both top-level arrays and all three character field
   "uncertainties": []
 }
 
-Keep characters in first-participation order. Within each timeline, put START first and later transitions in chronology order. Do not add profile names, state summaries, confidence, evidence, candidates, analysis, prose, Markdown fences, or extra fields.
+Keep supplied-character order. Within each timeline, put START first and later transitions in chronology order. Do not add `in_history`, profile names, state summaries, confidence, evidence, candidates, analysis, prose, Markdown fences, or extra fields.
