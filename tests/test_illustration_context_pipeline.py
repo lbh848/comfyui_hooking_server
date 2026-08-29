@@ -8854,9 +8854,13 @@ async def test_call2_global_fallback_starts_at_exactly_one_third_failure(monkeyp
 
 
 @pytest.mark.asyncio
-async def test_subtitle_empty_placeholder_becomes_intentional_silence(monkeypatch):
+@pytest.mark.parametrize("placeholder", ["empty", "(empty)"])
+async def test_subtitle_empty_placeholder_becomes_intentional_silence(
+    monkeypatch,
+    placeholder,
+):
     async def fake_pipeline_call(*args, **kwargs):
-        return "[Scene slot=4]\nempty"
+        return f"[Scene slot=4]\n{placeholder}"
 
     monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
     state = await pipeline._build_call3_dialogue_with_recovery(

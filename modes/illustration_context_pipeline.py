@@ -8292,7 +8292,7 @@ def sanitize_descriptor_slots(descriptors: list[dict], target_slotted: str) -> l
     return normalized
 
 
-_CALL3_EMPTY_BODY_PLACEHOLDERS = {"empty", "none", "null", "nil"}
+_CALL3_EMPTY_BODY_PLACEHOLDERS = {"empty", "(empty)", "none", "null", "nil"}
 
 
 def normalize_call3_empty_placeholders(text: str) -> str:
