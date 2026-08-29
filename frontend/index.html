@@ -9473,14 +9473,14 @@
             backdrop-filter: blur(8px);
         }
         .qwen-edit-modal.visible { display: flex; }
-        /* Qwen Edit 모달이 열려 있을 때 LB 위젯/오버레이·하단 큐를 모달(10060) 위로 올린다. */
+        /* Qwen Edit 모달이 열려 있어도 LB 위젯/오버레이는 메모장과 같은 최상위 레이어를 유지한다. */
         body.qwen-edit-open #lighbd-llm-widget,
         body.qwen-edit-open .lighbd-live-overlay,
         body.qwen-edit-open .lighbd-history-overlay,
-        body.qwen-edit-open .lighbd-detail-overlay,
-        body.qwen-edit-open .asset-queue-container {
-            z-index: 10070 !important;
+        body.qwen-edit-open .lighbd-detail-overlay {
+            z-index: 2147483646 !important;
         }
+        body.qwen-edit-open .asset-queue-container { z-index: 10070 !important; }
         .qwen-edit-panel {
             width: min(1480px, 96vw);
             height: min(920px, 94vh);
@@ -15198,8 +15198,8 @@
             backdrop-filter: blur(5px);
             -webkit-backdrop-filter: blur(5px);
         }
-        .lighbd-history-overlay { z-index: 10040; }
-        .lighbd-detail-overlay { z-index: 10060; }
+        .lighbd-history-overlay { z-index: 2147483646; }
+        .lighbd-detail-overlay { z-index: 2147483646; }
         .lighbd-history-shell,
         .lighbd-detail-shell {
             display: flex;
@@ -15270,7 +15270,7 @@
             .lighbd-detail-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
         }
         /* lighbd LLM 라이브 모달 */
-        .lighbd-live-overlay { z-index: 10050; }
+        .lighbd-live-overlay { z-index: 2147483646; }
         .lighbd-live-shell { width: min(1080px, 96vw); height: min(86vh, 820px); }
         .lighbd-live-summary {
             display: flex; gap: 14px; align-items: center; flex-wrap: wrap;
@@ -15698,7 +15698,7 @@
     <div id="toast" class="toast"></div>
 
     <!-- lighbd LLM 스트리밍 위젯: 실행 중에만 표시 (전역 — 모든 탭에서 표시) -->
-    <div id="lighbd-llm-widget" style="position:fixed; right:24px; bottom:100px; z-index:9998; display:none;
+    <div id="lighbd-llm-widget" style="position:fixed; right:24px; bottom:100px; z-index:2147483646; display:none;
             flex-direction:column; gap:6px; padding:10px 12px; width:320px; max-width:calc(100vw - 48px);
             background:rgba(11,17,23,0.88); backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px);
             border:1px solid var(--border); border-radius:12px;
