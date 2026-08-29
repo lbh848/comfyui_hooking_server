@@ -1925,6 +1925,108 @@ scenes: []
     assert [item["kind"] for item in result["items"]] == ["keyvis", "scene"]
 
 
+@pytest.mark.asyncio
+async def test_call2_plan_dictionary_contains_only_resolver_current_characters(monkeypatch):
+    request_by_call = {}
+
+    async def fake_pipeline_call(call_name, messages, *args, **kwargs):
+        request_by_call[call_name] = "\n".join(
+            str(message.get("content") or "") for message in messages
+        )
+        if call_name == "CALL2-PLAN":
+            return json.dumps({
+                "scene_plan": [{
+                    "anchor_segment": "C001",
+                    "characters": ["Hana", "Mira"],
+                    "scene_brief": "Hana and Mira wait while a stranger passes behind them",
+                }],
+            })
+        if call_name.startswith("CALL2-DETAIL 1/1"):
+            return """<lb-xnai>
+scenes[1]:
+  - camera: medium shot
+    characters[2]:
+      - name: Hana
+        positive: girl, black hair, blue dress
+        position: on the left
+        outfit_state:
+          body_state: clothed
+          worn: [blue dress]
+          removed: []
+      - name: Mira
+        positive: girl, silver hair, white coat
+        position: on the right
+        outfit_state:
+          body_state: clothed
+          worn: [white coat]
+          removed: []
+    scene: 2girls, station platform
+    slot: 0
+</lb-xnai>"""
+        if call_name == "CALL2-AUTHORITY-AUDIT":
+            return _authority_audit_response(messages)
+        raise AssertionError(f"unexpected call: {call_name}")
+
+    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
+    await pipeline.build_from_context(
+        {
+            "session_id": "call2_plan_resolver_dictionary_test",
+            "target_slotted": "Hana and Mira wait at the station.\n\n[Slot 0]",
+            "chats": [
+                {"role": "user", "data": "Continue."},
+                {"role": "char", "data": "Hana and Mira wait at the station."},
+            ],
+        },
+        {
+            "call1_enabled": False,
+            "call2_parallel_enabled": True,
+            "call2_parallel_max_concurrency": 1,
+            "call2_parallel_slow_retry_enabled": False,
+            "output_count_min": 1,
+            "output_count_max": 1,
+            "key_visual": False,
+            "call3_enabled": False,
+            "speak_enabled": False,
+        },
+        (
+            "### Hana\n-Appearance\n1girl, black hair\n-default_outfit\nblue dress\n\n"
+            "### Bob\n-Appearance\n1boy, brown hair\n-default_outfit\nblack suit\n\n"
+            "### Mira\n-Appearance\n1girl, silver hair\n-default_outfit\nwhite coat"
+        ),
+        pre_resolved_profile_result={
+            "characters": [],
+            "history_characters": [],
+            "current_characters": [
+                {"name": "Hana", "confidence": 1.0},
+                {"name": "Mira", "confidence": 1.0},
+            ],
+            "uncertainties": [],
+            "profile_events": [],
+            "initial_visual_bases": [],
+            "visual_base_events": [],
+            "repair_requests": [],
+            "validation_warnings": [],
+            "validation_errors": [],
+        },
+    )
+
+    plan_request = request_by_call["CALL2-PLAN"]
+    plan_dictionary = plan_request.split("# CHARACTER DICTIONARY", 1)[1].split(
+        "# GLOBAL ILLUSTRATION SCENE PLAN",
+        1,
+    )[0]
+    assert "### Hana" in plan_dictionary
+    assert "### Mira" in plan_dictionary
+    assert "### Bob" not in plan_dictionary
+
+    detail_request = next(
+        content
+        for name, content in request_by_call.items()
+        if name.startswith("CALL2-DETAIL 1/1")
+    )
+    assert "### Bob" in detail_request
+
+
 def test_complete_call2_validation_rejects_one_shard_as_global_fallback():
     toggles = pipeline.merged_toggles({
         "output_count_min": 3,

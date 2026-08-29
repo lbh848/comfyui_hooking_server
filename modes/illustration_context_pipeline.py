@@ -12324,6 +12324,15 @@ async def build_from_context(
         for item in call1_result.get("current_characters") or []
         if isinstance(item, dict) and str(item.get("name") or "").strip()
     ]
+    resolver_result_available = (
+        isinstance(pre_resolved_profile_result, dict)
+        or bool(visual_profiles)
+    )
+    plan_character_names = (
+        list(resolved_current_names)
+        if resolver_result_available
+        else list(current_character_names)
+    )
     call2_instruction = str(extra_instruction or "").strip()
     call2_reference = str(effective_profile_reference or extra_reference or "")
     selected_states = {}
@@ -12511,7 +12520,30 @@ async def build_from_context(
         append_call2_context({
             "role": "user",
             "content": "# CHARACTER DICTIONARY\n\n" + call2_reference,
-        })
+        }, include_plan=False)
+    plan_character_reference = _filter_character_reference(
+        call2_reference,
+        plan_character_names,
+    )
+    if plan_character_reference.strip():
+        append_call2_context({
+            "role": "user",
+            "content": "# CHARACTER DICTIONARY\n\n" + plan_character_reference,
+        }, include_keyvis=False, include_detail=False)
+        print(
+            f"[ILLUST_CONTEXT:CALL2_PLAN] Resolver CURRENT 캐릭터로 사전 필터링: "
+            f"characters={plan_character_names}"
+        )
+    elif plan_character_names:
+        print(
+            f"[ILLUST_CONTEXT:CALL2_PLAN] Resolver CURRENT 캐릭터의 사전 블록이 없어 "
+            f"CHARACTER DICTIONARY 생략: characters={plan_character_names}"
+        )
+    else:
+        print(
+            "[ILLUST_CONTEXT:CALL2_PLAN] Resolver CURRENT 캐릭터가 비어 "
+            "CHARACTER DICTIONARY 생략"
+        )
     fixed_appearance_content = _fixed_appearance_authority_content(fixed_appearance)
     if fixed_appearance_content:
         append_call2_context({
