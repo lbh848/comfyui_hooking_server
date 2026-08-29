@@ -27,7 +27,10 @@ class ChainPresetMode:
     def _validate_name(self, name):
         if not isinstance(name, str) or not name.strip():
             return False
-        if "/" in name or "\\" in name or ".." in name:
+        clean = name.strip()
+        if len(clean) > 200 or clean != clean.rstrip(". "):
+            return False
+        if ".." in clean or any(char in '<>:"/\\|?*' or ord(char) < 32 for char in clean):
             return False
         return True
 
@@ -68,7 +71,37 @@ class ChainPresetMode:
                     traceback.print_exc()
             raise
 
-    def save_preset(self, name, chains, repeat):
+    def check_new_preset(self, name):
+        """활성·숨김 어디에도 같은 이름이 없는 신규 체인 이름인지 확인한다."""
+        if not self._validate_name(name):
+            print(f"[CHAIN_PRESET] 신규 이름 검사 실패: 잘못된 이름 (name={name!r})")
+            return {"success": False, "error": "잘못된 프리셋 이름입니다"}
+        name = name.strip()
+        active_path = self._preset_path(name)
+        hidden_path = self._preset_path(name, hidden=True)
+        if os.path.exists(active_path):
+            print(
+                f"[CHAIN_PRESET] 신규 이름 충돌: 활성 프리셋 존재 "
+                f"(name={name!r}, path={active_path})"
+            )
+            return {
+                "success": False,
+                "error": "같은 이름의 활성 체인 프리셋이 있습니다. 다른 이름을 입력해주세요.",
+                "conflict_state": "active",
+            }
+        if os.path.exists(hidden_path):
+            print(
+                f"[CHAIN_PRESET] 신규 이름 충돌: 숨김 프리셋 존재 "
+                f"(name={name!r}, path={hidden_path})"
+            )
+            return {
+                "success": False,
+                "error": "같은 이름의 숨김 체인 프리셋이 있습니다. 다른 이름을 입력해주세요.",
+                "conflict_state": "hidden",
+            }
+        return {"success": True, "name": name}
+
+    def save_preset(self, name, chains, repeat, *, overwrite=True):
         if not self._validate_name(name):
             print(f"[CHAIN_PRESET] 저장 실패: 잘못된 프리셋 이름 (name={name!r})")
             return {"success": False, "error": "잘못된 프리셋 이름입니다"}
@@ -96,6 +129,16 @@ class ChainPresetMode:
                 }
 
             if os.path.isfile(filepath):
+                if not overwrite:
+                    print(
+                        f"[CHAIN_PRESET] 신규 저장 실패: 활성 이름 충돌 "
+                        f"(name={name!r}, path={filepath})"
+                    )
+                    return {
+                        "success": False,
+                        "error": "같은 이름의 활성 체인 프리셋이 있습니다. 다른 이름을 입력해주세요.",
+                        "conflict_state": "active",
+                    }
                 self._backup_existing_file(filepath)
 
             data = {

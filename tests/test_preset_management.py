@@ -283,6 +283,28 @@ def test_frontend_preset_import_supports_current_and_selected_fragment_bulk_clas
     assert "pmImportItemFilter = firstUnassigned ? 'unassigned' : 'all';" in source
 
 
+def test_frontend_preset_import_propagates_exact_selected_tags_across_checked_items():
+    source = FRONTEND_HTML.read_text(encoding="utf-8")
+
+    assert "pmiApplyBulkCategory('matching')" in source
+    assert "동일 태그 전체 항목에 적용" in source
+    assert "if (!candidate.selected) return [];" in source
+    assert "exactTexts.has(String(fragment.text || '').trim())" in source
+    assert "item_id: target.item.id" in source
+    assert "pmImportAnalysis.items.forEach(candidate =>" in source
+
+
+def test_frontend_preset_import_can_create_and_open_scene_chain_preset():
+    source = FRONTEND_HTML.read_text(encoding="utf-8")
+
+    assert 'id="pmi-create-chain"' in source
+    assert 'id="pmi-chain-name"' in source
+    assert "function pmiBuildChainRequest" in source
+    assert "chain_preset: pmiBuildChainRequest()" in source
+    assert "function pmiOpenCreatedChain" in source
+    assert "일괄생성에서 체인 열기" in source
+
+
 def test_frontend_preset_import_can_show_only_items_checked_for_import():
     source = FRONTEND_HTML.read_text(encoding="utf-8")
 

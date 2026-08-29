@@ -20094,6 +20094,13 @@
                                             <div class="pmi-actions"><button class="pm-btn pm-btn-quiet" onclick="pmiGoStep(4)">편집으로 돌아가기</button><button class="pm-btn" onclick="pmiValidate()">다시 검증</button><button class="pm-btn pm-btn-primary" id="pmi-commit-btn" onclick="pmiCommit()" disabled>검증 결과 저장</button></div>
                                         </div>
                                         <div id="pmi-save-summary"></div>
+                                        <section class="pm-section" id="pmi-chain-option" style="margin-top:12px;">
+                                            <div class="pm-section-head">
+                                                <div><div class="pm-section-title">에셋 일괄생성 체인</div><div class="pm-section-note" id="pmi-chain-option-note">가져올 씬마다 체인 슬롯을 하나씩 만들고, 씬에서 저장한 프리셋을 자동 연결합니다.</div></div>
+                                                <label class="pm-btn pm-btn-quiet" style="display:flex;align-items:center;gap:7px;"><input id="pmi-create-chain" type="checkbox" checked onchange="pmiSetCreateChain(this.checked)"> 체인 프리셋도 만들기</label>
+                                            </div>
+                                            <div class="pm-field" style="margin-top:10px;"><label>체인 프리셋 이름 <span class="pm-field-hint">같은 이름의 활성·숨김 체인이 있으면 저장하지 않습니다.</span></label><input class="pm-input" id="pmi-chain-name" type="text" placeholder="SDStudio 씬 체인" oninput="pmiSetChainName(this.value)"></div>
+                                        </section>
                                         <div class="pmi-validation-grid" style="margin-top:12px;">
                                             <section class="pm-section"><div class="pm-section-title">검증 메시지</div><div class="pmi-result-list" id="pmi-validation-errors" style="margin-top:10px;"></div></section>
                                             <section class="pm-section"><div class="pm-section-head"><div><div class="pm-section-title">저장 대상·충돌 처리</div><div class="pm-section-note">일괄 선택 후 각 항목을 다시 바꿀 수 있습니다.</div></div><div class="pmi-actions"><button class="pm-btn pm-btn-quiet" onclick="pmiSetAllResolutions('keep')">모두 유지</button><button class="pm-btn" onclick="pmiSetAllResolutions('overwrite')">모두 덮어쓰기</button><button class="pm-btn" onclick="pmiSetAllResolutions('rename')">모두 새 이름</button></div></div><div class="pmi-result-list" id="pmi-validation-records"></div></section>
@@ -99582,6 +99589,9 @@
         let pmImportFragmentSelections = new Map();
         let pmImportBulkCategory = '';
         let pmImportBulkUndo = null;
+        let pmImportCreateChain = true;
+        let pmImportChainName = '';
+        let pmImportCreatedChainName = '';
 
         const PM_CATEGORIES = {
             appearances: '외모',
@@ -100754,6 +100764,8 @@
                 pmImportFragmentSelections = new Map();
                 pmImportBulkCategory = '';
                 pmImportBulkUndo = null;
+                pmImportCreateChain = analysis.items.some(item => item.selected && item.source_kind === 'scene');
+                pmImportChainName = pmiDefaultChainName(analysis.source && analysis.source.name);
                 pmImportSelectedItemId = (analysis.items.find(item => item.selected) || analysis.items[0] || {}).id || '';
                 pmiRenderAnalysisResult();
                 pmiShowStep(2);
@@ -101199,6 +101211,7 @@
                         <span class="pmi-bulk-selection">${selectedFragments.length}/${activeFragments.length}개 선택</span>
                         <select class="pm-input" id="pmi-bulk-category" onchange="pmiSetBulkCategory(this.value)"><option value="">카테고리 선택</option>${bulkCategoryOptions}</select>
                         <button class="pm-btn pm-btn-primary" onclick="pmiApplyBulkCategory('selected')" ${selectedFragments.length ? '' : 'disabled'}>선택 태그에 적용</button>
+                        <button class="pm-btn" onclick="pmiApplyBulkCategory('matching')" ${selectedFragments.length && item.selected ? '' : 'disabled'} title="선택한 태그와 변환 문자열이 정확히 같은 태그를 가져오기 대상으로 체크된 모든 항목에서 찾아 적용합니다.">동일 태그 전체 항목에 적용</button>
                         <button class="pm-btn" onclick="pmiApplyBulkCategory('all')" ${activeFragments.length ? '' : 'disabled'}>현재 프리셋 전체 적용</button>
                         <button class="pm-btn pm-btn-quiet" onclick="pmiUndoBulkCategory()" ${canUndo ? '' : 'disabled'}>되돌리기${canUndo ? ` (${pmImportBulkUndo.changes.length})` : ''}</button>
                     </div>
@@ -101266,7 +101279,7 @@
 
         function pmiApplyBulkCategory(scope) {
             const item = pmiCurrentItem();
-            if (!item || !['selected', 'all'].includes(scope)) {
+            if (!item || !['selected', 'matching', 'all'].includes(scope)) {
                 console.error('[PM_IMPORT] 일괄 분류 범위가 올바르지 않음:', { scope, itemId: item && item.id });
                 return;
             }
@@ -101276,26 +101289,56 @@
                 return;
             }
             const selection = pmiFragmentSelection(item);
-            const targets = item.fragments.filter(fragment => !fragment.excluded && (scope === 'all' || selection.has(fragment.id)));
+            let targets = [];
+            if (scope === 'matching') {
+                if (!item.selected) {
+                    console.warn('[PM_IMPORT] 동일 태그 전역 적용 거부: 현재 항목이 가져오기 대상이 아님', { itemId: item.id });
+                    showToast('현재 프리셋을 먼저 가져오기로 체크해주세요.', 'warning');
+                    return;
+                }
+                const exactTexts = new Set(
+                    item.fragments
+                        .filter(fragment => !fragment.excluded && selection.has(fragment.id))
+                        .map(fragment => String(fragment.text || '').trim())
+                        .filter(Boolean),
+                );
+                targets = pmImportAnalysis.items.flatMap(candidate => {
+                    if (!candidate.selected) return [];
+                    return candidate.fragments
+                        .filter(fragment => !fragment.excluded && exactTexts.has(String(fragment.text || '').trim()))
+                        .map(fragment => ({ item: candidate, fragment }));
+                });
+            } else {
+                targets = item.fragments
+                    .filter(fragment => !fragment.excluded && (scope === 'all' || selection.has(fragment.id)))
+                    .map(fragment => ({ item, fragment }));
+            }
             if (!targets.length) {
                 console.warn('[PM_IMPORT] 일괄 분류 대상 태그가 없음:', { itemId: item.id, scope });
                 showToast('일괄 분류할 태그를 선택해주세요.', 'warning');
                 return;
             }
             const changes = targets
-                .filter(fragment => fragment.category !== pmImportBulkCategory)
-                .map(fragment => ({ fragment_id: fragment.id, previous_category: fragment.category }));
+                .filter(target => target.fragment.category !== pmImportBulkCategory)
+                .map(target => ({
+                    item_id: target.item.id,
+                    fragment_id: target.fragment.id,
+                    previous_category: target.fragment.category,
+                }));
             if (!changes.length) {
                 console.info('[PM_IMPORT] 일괄 분류 생략: 모든 대상이 이미 같은 카테고리임', { itemId: item.id, scope, category: pmImportBulkCategory });
                 showToast('선택한 태그가 이미 해당 카테고리로 분류되어 있습니다.', 'info');
                 return;
             }
-            const targetIds = new Set(changes.map(change => change.fragment_id));
-            item.fragments.forEach(fragment => {
-                if (targetIds.has(fragment.id)) fragment.category = pmImportBulkCategory;
+            const targetIds = new Set(changes.map(change => `${change.item_id}\0${change.fragment_id}`));
+            pmImportAnalysis.items.forEach(candidate => {
+                candidate.fragments.forEach(fragment => {
+                    if (targetIds.has(`${candidate.id}\0${fragment.id}`)) fragment.category = pmImportBulkCategory;
+                });
             });
             pmImportBulkUndo = {
                 item_id: item.id,
+                scope,
                 target_category: pmImportBulkCategory,
                 changes,
             };
@@ -101303,7 +101346,9 @@
             pmiRenderItemList();
             pmiRenderItemEditor();
             const label = PM_IMPORT_CATEGORIES[pmImportBulkCategory] || pmImportBulkCategory;
-            showToast(`${changes.length}개 태그를 '${label}' 카테고리로 분류했습니다.`, 'success');
+            const changedItems = new Set(changes.map(change => change.item_id)).size;
+            const scopeNote = scope === 'matching' ? ` · ${changedItems}개 항목` : '';
+            showToast(`${changes.length}개 태그를 '${label}' 카테고리로 분류했습니다${scopeNote}.`, 'success');
         }
 
         function pmiUndoBulkCategory() {
@@ -101314,12 +101359,15 @@
                 showToast('되돌릴 일괄 분류 작업이 없습니다.', 'warning');
                 return;
             }
-            const previousById = new Map(undo.changes.map(change => [change.fragment_id, change.previous_category]));
+            const previousById = new Map(undo.changes.map(change => [`${change.item_id || undo.item_id}\0${change.fragment_id}`, change.previous_category]));
             let restored = 0;
-            item.fragments.forEach(fragment => {
-                if (!previousById.has(fragment.id)) return;
-                fragment.category = previousById.get(fragment.id);
-                restored++;
+            pmImportAnalysis.items.forEach(candidate => {
+                candidate.fragments.forEach(fragment => {
+                    const key = `${candidate.id}\0${fragment.id}`;
+                    if (!previousById.has(key)) return;
+                    fragment.category = previousById.get(key);
+                    restored++;
+                });
             });
             pmImportBulkUndo = null;
             pmiInvalidateValidation();
@@ -101467,6 +101515,61 @@
             };
         }
 
+        function pmiDefaultChainName(projectName) {
+            const safeProject = String(projectName || 'SDStudio')
+                .replace(/[\\/:*?"<>|]/g, '-')
+                .replace(/\.\.+/g, '-')
+                .trim() || 'SDStudio';
+            return `SDstudio-${safeProject}-씬 체인`;
+        }
+
+        function pmiSelectedSceneCount() {
+            if (!pmImportAnalysis) return 0;
+            return pmImportAnalysis.items.filter(item => item.selected && item.source_kind === 'scene').length;
+        }
+
+        function pmiBuildChainRequest() {
+            const sceneCount = pmiSelectedSceneCount();
+            return {
+                enabled: pmImportCreateChain && sceneCount > 0,
+                name: pmImportChainName.trim(),
+            };
+        }
+
+        function pmiSetCreateChain(checked) {
+            pmImportCreateChain = !!checked;
+            pmiInvalidateValidation();
+            pmiRenderChainOption();
+        }
+
+        function pmiSetChainName(value) {
+            pmImportChainName = value;
+            pmiInvalidateValidation();
+        }
+
+        function pmiRenderChainOption() {
+            const checkbox = document.getElementById('pmi-create-chain');
+            const nameInput = document.getElementById('pmi-chain-name');
+            const note = document.getElementById('pmi-chain-option-note');
+            if (!checkbox || !nameInput || !note) return;
+            const sceneCount = pmiSelectedSceneCount();
+            const available = sceneCount > 0 && !pmImportCommitted;
+            checkbox.checked = pmImportCreateChain && sceneCount > 0;
+            checkbox.disabled = !available;
+            nameInput.value = pmImportChainName;
+            nameInput.disabled = !available || !checkbox.checked;
+            const chainValidation = pmImportValidation && pmImportValidation.chain_preset;
+            if (!sceneCount) {
+                note.textContent = '가져오기로 체크된 SDStudio 씬이 없어 체인을 만들 수 없습니다.';
+            } else if (chainValidation && chainValidation.enabled && !chainValidation.success) {
+                note.textContent = `체인 검증 실패: ${chainValidation.error}`;
+            } else if (chainValidation && chainValidation.enabled && chainValidation.success) {
+                note.textContent = `${chainValidation.slot_count}개 씬 슬롯을 만들 준비가 되었습니다.`;
+            } else {
+                note.textContent = `${sceneCount}개 씬을 같은 순서의 체인 슬롯으로 만들고, 가져온 ANIMA 프리셋을 자동 연결합니다.`;
+            }
+        }
+
         async function pmiValidateAndOpen() {
             if (!pmImportAnalysis || pmImportBusy) return;
             pmiShowStep(5);
@@ -101481,7 +101584,7 @@
             try {
                 pmImportValidation = await pmiRequest(
                     '/api/asset_mode/preset_import/validate',
-                    { draft: pmiBuildDraft() },
+                    { draft: pmiBuildDraft(), chain_preset: pmiBuildChainRequest() },
                     [422],
                 );
                 pmiRenderValidation();
@@ -101510,6 +101613,7 @@
             const errorsTarget = document.getElementById('pmi-validation-errors');
             const recordsTarget = document.getElementById('pmi-validation-records');
             const commitButton = document.getElementById('pmi-commit-btn');
+            pmiRenderChainOption();
             if (!pmImportValidation) {
                 summaryTarget.innerHTML = '<div class="pmi-info-box">검증을 실행하면 누락, 미분류, 이름 충돌과 저장 대상을 표시합니다.</div>';
                 errorsTarget.innerHTML = '<div class="pm-empty">아직 검증하지 않았습니다.</div>';
@@ -101581,13 +101685,25 @@
                 const result = await pmiRequest('/api/asset_mode/preset_import/commit', {
                     draft: pmiBuildDraft(),
                     resolutions: pmiCollectResolutions(),
+                    chain_preset: pmiBuildChainRequest(),
                 });
                 pmImportCommitted = true;
-                document.getElementById('pmi-save-summary').innerHTML = `<div class="pmi-info-box"><strong>${result.target_count}개 프리셋 레코드를 저장했습니다.</strong><br>매니페스트 ID: ${pmEscapeHtml(result.manifest_id)} · 기존 데이터는 프로그램의 asset_data/backup 폴더에 백업되었습니다.<div class="pmi-actions" style="margin-top:10px;"><button class="pm-btn pm-btn-primary" onclick="pmiResetImport(true)">새 파일 가져오기</button><button class="pm-btn" onclick="pmSwitchView('manage')">프리셋 편집에서 확인</button></div></div>`;
+                const chainResult = result.chain_preset;
+                pmImportCreatedChainName = chainResult && chainResult.success ? chainResult.name : '';
+                const chainSummary = !chainResult
+                    ? ''
+                    : (chainResult.success
+                        ? `<br><strong>체인 프리셋 '${pmEscapeHtml(chainResult.name)}'</strong> · ${chainResult.slot_count}개 슬롯 생성${chainResult.hidden_omitted_count ? ` · 숨김 프리셋 연결 ${chainResult.hidden_omitted_count}개 제외` : ''}`
+                        : `<br><span style="color:var(--error);">태그 프리셋은 저장했지만 체인 저장에 실패했습니다: ${pmEscapeHtml(chainResult.error || '알 수 없는 오류')}</span>`);
+                const openChainButton = pmImportCreatedChainName
+                    ? '<button class="pm-btn pm-btn-primary" onclick="pmiOpenCreatedChain()">일괄생성에서 체인 열기</button>'
+                    : '';
+                document.getElementById('pmi-save-summary').innerHTML = `<div class="pmi-info-box"><strong>${result.target_count}개 프리셋 레코드를 저장했습니다.</strong><br>매니페스트 ID: ${pmEscapeHtml(result.manifest_id)} · 기존 데이터는 프로그램의 asset_data/backup 폴더에 백업되었습니다.${chainSummary}<div class="pmi-actions" style="margin-top:10px;">${openChainButton}<button class="pm-btn" onclick="pmiResetImport(true)">새 파일 가져오기</button><button class="pm-btn" onclick="pmSwitchView('manage')">프리셋 편집에서 확인</button></div></div>`;
                 const errorsTarget = document.getElementById('pmi-validation-errors');
                 if (errorsTarget) errorsTarget.innerHTML = '<div class="pmi-info-box">저장이 완료되었습니다.</div>';
                 await pmLoadData();
-                showToast('프리셋 가져오기가 완료되었습니다.', 'success');
+                pmiRenderChainOption();
+                showToast(chainResult && !chainResult.success ? '프리셋은 저장했지만 체인 저장에 실패했습니다.' : '프리셋 가져오기가 완료되었습니다.', chainResult && !chainResult.success ? 'warning' : 'success');
             } catch (error) {
                 console.error('[PM_IMPORT] 최종 저장 실패:', error);
                 document.getElementById('pmi-save-summary').innerHTML = `<div class="pmi-error-box">${pmEscapeHtml(error.message)}<br>저장에 실패했으며 서버가 기존 파일로 롤백을 시도했습니다.</div>`;
@@ -101596,6 +101712,30 @@
             } finally {
                 pmImportBusy = false;
                 button.textContent = '검증 결과 저장';
+            }
+        }
+
+        async function pmiOpenCreatedChain() {
+            const name = pmImportCreatedChainName;
+            if (!name) {
+                console.error('[PM_IMPORT_CHAIN] 열 체인 프리셋 이름이 없습니다.');
+                showToast('열 체인 프리셋을 찾지 못했습니다.', 'error');
+                return;
+            }
+            try {
+                switchTab('batch');
+                await refreshBatchPresetSelect();
+                const select = document.getElementById('batch-preset-select');
+                select.value = name;
+                if (select.value !== name) {
+                    console.error('[PM_IMPORT_CHAIN] 생성한 체인이 목록에 없음:', { name });
+                    showToast(`체인 '${name}'을 목록에서 찾지 못했습니다.`, 'error');
+                    return;
+                }
+                await loadBatchPreset();
+            } catch (error) {
+                console.error('[PM_IMPORT_CHAIN] 생성한 체인 열기 실패:', { name, error });
+                showToast(`체인 열기 실패: ${error.message}`, 'error');
             }
         }
 
@@ -101611,6 +101751,9 @@
             pmImportFragmentSelections = new Map();
             pmImportBulkCategory = '';
             pmImportBulkUndo = null;
+            pmImportCreateChain = true;
+            pmImportChainName = '';
+            pmImportCreatedChainName = '';
             const input = document.getElementById('pmi-file-input');
             if (input) input.value = '';
             document.getElementById('pmi-file-name').textContent = '선택한 파일 없음';

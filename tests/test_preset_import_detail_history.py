@@ -5,6 +5,7 @@ import pytest
 
 import server
 from modes import preset_importer
+from modes.chain_preset_mode import ChainPresetMode
 
 
 class _JsonRequest:
@@ -189,3 +190,84 @@ async def test_llm_classification_records_full_input_and_raw_output(monkeypatch)
     assert record["completion_tokens"] == 45
     assert record["output"] == raw
     assert len(record["input"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_commit_can_create_scene_chain_preset_with_imported_anima_fields(
+    monkeypatch, tmp_path
+):
+    asset_dir = tmp_path / "asset_data"
+    chain_dir = tmp_path / "chain_presets"
+    asset_dir.mkdir()
+    monkeypatch.setattr(preset_importer, "TAGS_FILE", str(asset_dir / "tags.json"))
+    monkeypatch.setattr(preset_importer, "HIDDEN_TAGS_FILE", str(asset_dir / "hidden.json"))
+    monkeypatch.setattr(preset_importer, "MANIFEST_FILE", str(asset_dir / "manifest.json"))
+    monkeypatch.setattr(preset_importer, "BACKUP_DIR", str(asset_dir / "backup"))
+    chain_mode = ChainPresetMode(
+        preset_dir=str(chain_dir),
+        backup_dir=str(tmp_path / "developer_backups"),
+    )
+    monkeypatch.setattr(server, "chain_preset_mode", chain_mode)
+    monkeypatch.setattr(server.asset_mode, "get_tags", lambda: {})
+    monkeypatch.setattr(server.asset_mode, "load_hidden_tags", lambda: {})
+    monkeypatch.setattr(server.asset_mode, "_tags", {})
+    monkeypatch.setattr(server.asset_mode, "_tags_loaded", True)
+
+    analysis = preset_importer.analyze_document("source.json", {
+        "name": "체인 통합",
+        "version": 1,
+        "library": {},
+        "scenes": {
+            "scene": {
+                "name": "미소 장면",
+                "slots": [[{"prompt": "smile, cowboy shot"}]],
+            },
+        },
+        "presets": {},
+    })
+    item = analysis["items"][0]
+    draft = {
+        "import_id": analysis["import_id"],
+        "items": [{
+            "id": item["id"],
+            "selected": True,
+            "target_name": item["target_name"],
+            "fragments": [
+                {
+                    **fragment,
+                    "category": (
+                        "expressions"
+                        if fragment["text"] == "smile"
+                        else "composition_presets"
+                    ),
+                }
+                for fragment in item["fragments"]
+            ],
+        }],
+    }
+    chain_request = {"enabled": True, "name": "체인 통합 자동"}
+
+    validation_response = await server.handle_api_preset_import_validate(
+        _JsonRequest({"draft": draft, "chain_preset": chain_request})
+    )
+    validation = json.loads(validation_response.text)
+    assert validation_response.status == 200
+    assert validation["chain_preset"]["success"] is True
+    assert validation["chain_preset"]["slot_count"] == 1
+
+    commit_response = await server.handle_api_preset_import_commit(
+        _JsonRequest({
+            "draft": draft,
+            "resolutions": [],
+            "chain_preset": chain_request,
+        })
+    )
+    result = json.loads(commit_response.text)
+
+    assert commit_response.status == 200
+    assert result["chain_preset"]["success"] is True
+    assert result["chain_preset"]["slot_count"] == 1
+    saved = chain_mode.load_preset("체인 통합 자동")
+    assert saved["chains"][0]["expression"] == item["target_name"]
+    assert saved["chains"][0]["composition_preset"] == item["target_name"]
+    assert saved["chains"][0]["anima_quality_preset"] == ""

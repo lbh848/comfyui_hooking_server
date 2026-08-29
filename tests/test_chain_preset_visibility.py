@@ -91,6 +91,26 @@ def test_overwrite_backs_up_existing_chain_before_atomic_save(tmp_path):
     assert mode.load_preset("백업 체인")["chains"] == [{"version": 2}]
 
 
+def test_new_only_save_rejects_active_collision_without_backup_or_overwrite(tmp_path):
+    mode = _mode(tmp_path)
+    assert mode.save_preset("자동 생성 체인", [{"version": 1}], 1)["success"] is True
+
+    availability = mode.check_new_preset("자동 생성 체인")
+    result = mode.save_preset(
+        "자동 생성 체인",
+        [{"version": 2}],
+        1,
+        overwrite=False,
+    )
+
+    assert availability["success"] is False
+    assert availability["conflict_state"] == "active"
+    assert result["success"] is False
+    assert result["conflict_state"] == "active"
+    assert mode.load_preset("자동 생성 체인")["chains"] == [{"version": 1}]
+    assert not list((tmp_path / "요구사항").glob("chain_preset_before_overwrite_*"))
+
+
 def test_backup_failure_stops_chain_overwrite(tmp_path, monkeypatch):
     mode = _mode(tmp_path)
     assert mode.save_preset("보호 체인", [{"version": 1}], 1)["success"] is True

@@ -289,3 +289,72 @@ def test_commit_requires_resolution_for_each_real_conflict(tmp_path, monkeypatch
 
     with pytest.raises(preset_importer.PresetImportError, match="충돌 해결값"):
         preset_importer.commit_draft(draft, [], active, {})
+
+
+def test_scene_chain_slots_follow_scene_order_and_connect_anima_fields():
+    analysis = preset_importer.analyze_document("source.json", _source_document())
+    draft = _assign_all_fragments(analysis)
+    scene_items = [item for item in draft["items"] if item["id"].startswith("scene-")]
+    for item in scene_items:
+        for fragment in item["fragments"]:
+            text = fragment["text"]
+            if text == "blue eyes":
+                fragment["category"] = "appearances"
+            elif text == "smile":
+                fragment["category"] = "expressions"
+            else:
+                fragment["category"] = "composition_presets"
+
+    validation = preset_importer.validate_draft(draft, {}, {})
+    assert validation["success"] is True
+    targets = [
+        {
+            "item_id": record["item_id"],
+            "source_kind": record["source_kind"],
+            "category": record["category"],
+            "target_name": record["name"],
+            "target_state": "active",
+        }
+        for record in validation["records"]
+    ]
+    # 최종 충돌 해결로 카테고리별 이름이 달라져도 실제 저장명을 연결해야 한다.
+    first_expression = next(
+        target for target in targets
+        if target["item_id"] == scene_items[0]["id"]
+        and target["category"] == "expressions"
+    )
+    first_expression["target_name"] += "_이름변경"
+
+    plan = preset_importer.build_scene_chain_slots(draft, targets)
+
+    assert plan["slot_count"] == 2
+    assert len(plan["chains"]) == 2
+    assert plan["chains"][0]["appearance"] == scene_items[0]["target_name"]
+    assert plan["chains"][0]["expression"].endswith("_이름변경")
+    assert plan["chains"][0]["composition_preset"] == scene_items[0]["target_name"]
+    assert plan["chains"][0]["anima_quality_preset"] == ""
+    assert all("기본 스타일" not in slot["composition_preset"] for slot in plan["chains"])
+
+
+def test_scene_chain_slots_leave_hidden_kept_presets_unlinked():
+    analysis = preset_importer.analyze_document("source.json", _source_document())
+    draft = _assign_all_fragments(analysis)
+    validation = preset_importer.validate_draft(draft, {}, {})
+    scene_record = next(
+        record for record in validation["records"] if record["source_kind"] == "scene"
+    )
+    targets = [{
+        "item_id": scene_record["item_id"],
+        "source_kind": "scene",
+        "category": scene_record["category"],
+        "target_name": scene_record["name"],
+        "target_state": "hidden",
+    }]
+    for item in draft["items"]:
+        item["selected"] = item["id"] == scene_record["item_id"]
+
+    plan = preset_importer.build_scene_chain_slots(draft, targets)
+
+    assert plan["slot_count"] == 1
+    assert plan["hidden_omitted_count"] == 1
+    assert plan["chains"][0]["composition_preset"] == ""

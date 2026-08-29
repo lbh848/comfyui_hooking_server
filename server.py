@@ -20639,6 +20639,73 @@ async def handle_api_asset_mode_hidden_tags_get(request: web.Request) -> web.Res
 _PRESET_IMPORT_COMMIT_LOCK = asyncio.Lock()
 
 
+def _validate_preset_import_chain_request(body: dict, validation: dict) -> dict:
+    request = body.get("chain_preset")
+    if request is None:
+        return {"enabled": False, "success": True, "name": "", "slot_count": 0}
+    if not isinstance(request, dict):
+        print(
+            "[PRESET_IMPORT_CHAIN] 요청 형식 오류: "
+            f"type={type(request).__name__}, value={request!r}"
+        )
+        return {
+            "enabled": True,
+            "success": False,
+            "name": "",
+            "slot_count": 0,
+            "error": "체인 프리셋 생성 옵션 형식이 올바르지 않습니다.",
+        }
+    enabled = request.get("enabled") is True
+    if not enabled:
+        return {"enabled": False, "success": True, "name": "", "slot_count": 0}
+
+    name = request.get("name")
+    if not isinstance(name, str) or not name.strip():
+        print(f"[PRESET_IMPORT_CHAIN] 체인 이름 누락: name={name!r}")
+        return {
+            "enabled": True,
+            "success": False,
+            "name": "",
+            "slot_count": 0,
+            "error": "생성할 체인 프리셋 이름을 입력해주세요.",
+        }
+    name = name.strip()
+    scene_item_ids = {
+        record.get("item_id")
+        for record in validation.get("records", [])
+        if isinstance(record, dict) and record.get("source_kind") == "scene"
+    }
+    scene_item_ids.discard(None)
+    if not scene_item_ids:
+        print(
+            "[PRESET_IMPORT_CHAIN] 체인 생성 대상 씬 없음: "
+            f"import_id={validation.get('import_id', '')!r}"
+        )
+        return {
+            "enabled": True,
+            "success": False,
+            "name": name,
+            "slot_count": 0,
+            "error": "체인으로 만들도록 선택한 SDStudio 씬이 없습니다.",
+        }
+    availability = chain_preset_mode.check_new_preset(name)
+    if not availability.get("success"):
+        return {
+            "enabled": True,
+            "success": False,
+            "name": name,
+            "slot_count": len(scene_item_ids),
+            "error": availability.get("error", "체인 프리셋 이름을 사용할 수 없습니다."),
+            "conflict_state": availability.get("conflict_state", ""),
+        }
+    return {
+        "enabled": True,
+        "success": True,
+        "name": name,
+        "slot_count": len(scene_item_ids),
+    }
+
+
 def _preset_import_document_diagnostic(filename: Any, document: Any) -> dict:
     """프리셋 원문 전체를 복제하지 않고 구조 분석에 필요한 진단값만 만든다."""
     diagnostic: dict[str, Any] = {
@@ -21063,6 +21130,14 @@ async def handle_api_preset_import_validate(request: web.Request) -> web.Respons
             asset_mode.get_tags(),
             asset_mode.load_hidden_tags(),
         )
+        chain_validation = _validate_preset_import_chain_request(body, result)
+        result["chain_preset"] = chain_validation
+        if chain_validation["enabled"] and not chain_validation["success"]:
+            result["errors"].append({
+                "code": "chain_preset_invalid",
+                "message": chain_validation["error"],
+            })
+            result["success"] = False
         if not result["success"]:
             print(
                 "[PRESET_IMPORT_API] 초안 검증 거부: "
@@ -21085,16 +21160,61 @@ async def handle_api_preset_import_commit(request: web.Request) -> web.Response:
         async with _PRESET_IMPORT_COMMIT_LOCK:
             # 기존 프리셋 편집 API도 이벤트 루프에서 동기 저장하므로, 이 짧은
             # 트랜잭션 역시 이벤트 루프에서 끝내야 중간에 다른 저장이 끼지 않는다.
+            active_tags = asset_mode.get_tags()
+            hidden_tags = asset_mode.load_hidden_tags()
+            draft = body.get("draft")
+            prevalidation = preset_importer.validate_draft(
+                draft,
+                active_tags,
+                hidden_tags,
+            )
+            chain_validation = _validate_preset_import_chain_request(body, prevalidation)
+            if (
+                prevalidation.get("success")
+                and chain_validation["enabled"]
+                and not chain_validation["success"]
+            ):
+                print(
+                    "[PRESET_IMPORT_CHAIN] 커밋 전 체인 검증 실패: "
+                    f"name={chain_validation.get('name')!r}, "
+                    f"error={chain_validation.get('error')!r}"
+                )
+                raise preset_importer.PresetImportError(chain_validation["error"])
             result = preset_importer.commit_draft(
-                body.get("draft"),
+                draft,
                 body.get("resolutions", []),
-                asset_mode.get_tags(),
-                asset_mode.load_hidden_tags(),
+                active_tags,
+                hidden_tags,
             )
             # commit_draft가 디스크에 저장한 것과 실행 중 캐시를 즉시 일치시킨다.
             asset_mode._tags = result.pop("active_tags")
             asset_mode._tags_loaded = True
             result.pop("hidden_tags", None)
+            if chain_validation["enabled"]:
+                chain_plan = preset_importer.build_scene_chain_slots(
+                    draft,
+                    result.get("targets", []),
+                )
+                chain_save = chain_preset_mode.save_preset(
+                    name=chain_validation["name"],
+                    chains=chain_plan["chains"],
+                    repeat=1,
+                    overwrite=False,
+                )
+                result["chain_preset"] = {
+                    "enabled": True,
+                    "success": chain_save.get("success") is True,
+                    "name": chain_validation["name"],
+                    "slot_count": chain_plan["slot_count"],
+                    "hidden_omitted_count": chain_plan["hidden_omitted_count"],
+                    "error": chain_save.get("error", ""),
+                }
+                if not chain_save.get("success"):
+                    print(
+                        "[PRESET_IMPORT_CHAIN] 태그 저장 후 체인 저장 실패: "
+                        f"name={chain_validation['name']!r}, "
+                        f"slots={chain_plan['slot_count']}, error={chain_save.get('error')!r}"
+                    )
         return web.json_response(result)
     except preset_importer.PresetImportError as exc:
         return _preset_import_error_response("저장", exc, status=422)

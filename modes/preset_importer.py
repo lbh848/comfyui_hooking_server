@@ -51,6 +51,20 @@ PRESET_LLM_CATEGORIES = (
     "unassigned",
 )
 
+# SDStudio 임포트의 대상 어댑터는 ANIMA다. 씬별로 생성된 카테고리
+# 프리셋을 에셋 일괄생성 슬롯의 대응 필드에 연결할 때 사용하는 최소 매핑이다.
+# 태그 문구를 보고 추론하지 않고, 사용자가 확정한 카테고리만 그대로 옮긴다.
+SCENE_CHAIN_FIELD_BY_CATEGORY = {
+    "appearances": "appearance",
+    "outfits": "outfit",
+    "expressions": "expression",
+    "composition_presets": "composition_preset",
+    "artist_presets": "anima_artist_preset",
+    "quality_presets": "anima_quality_preset",
+    "negative_presets": "anima_negative_preset",
+    "character_negative_presets": "character_negative_preset",
+}
+
 MAX_VARIANTS_PER_GROUP = 500
 MAX_TOTAL_ITEMS = 5000
 MAX_CLASSIFY_FRAGMENTS = 30
@@ -1540,6 +1554,102 @@ def _load_manifest() -> dict:
     return data
 
 
+def build_scene_chain_slots(draft: Any, targets: Any) -> dict:
+    """커밋 결과의 활성 프리셋을 SDStudio 씬 순서대로 체인 슬롯에 연결한다."""
+    if not isinstance(draft, dict) or not isinstance(draft.get("items"), list):
+        print(
+            "[PRESET_IMPORT_CHAIN] 체인 구성 실패: 초안 items 형식 오류 "
+            f"draft_type={type(draft).__name__}"
+        )
+        raise PresetImportError("체인을 만들 가져오기 초안 형식이 올바르지 않습니다.")
+    if not isinstance(targets, list):
+        print(
+            "[PRESET_IMPORT_CHAIN] 체인 구성 실패: targets 형식 오류 "
+            f"type={type(targets).__name__}"
+        )
+        raise PresetImportError("체인을 만들 프리셋 저장 결과 형식이 올바르지 않습니다.")
+
+    targets_by_item: dict[str, list[dict]] = {}
+    for target in targets:
+        if not isinstance(target, dict) or not isinstance(target.get("item_id"), str):
+            print(f"[PRESET_IMPORT_CHAIN] 잘못된 저장 대상 건너뜀: target={target!r}")
+            continue
+        targets_by_item.setdefault(target["item_id"], []).append(target)
+
+    chains: list[dict] = []
+    omitted_hidden: list[dict] = []
+    for draft_item in draft["items"]:
+        if not isinstance(draft_item, dict) or draft_item.get("selected") is not True:
+            continue
+        item_id = draft_item.get("id")
+        item_targets = targets_by_item.get(item_id, [])
+        if not item_targets:
+            print(
+                "[PRESET_IMPORT_CHAIN] 선택 항목의 저장 대상 없음, 체인 제외: "
+                f"item_id={item_id!r}"
+            )
+            continue
+        source_kind = item_targets[0].get("source_kind")
+        if source_kind != "scene":
+            continue
+
+        slot = {
+            "character": "",
+            "appearance": "",
+            "outfit": "",
+            "expression": "",
+            "composition_preset": "",
+            "quality_preset": "",
+            "character_negative_preset": "",
+            "negative_preset": "",
+            "artist_preset": "",
+            "anima_artist_preset": "",
+            "anima_quality_preset": "",
+            "anima_negative_preset": "",
+            "natural_language_preset": "",
+            "natural_language": "",
+            "seed": -1,
+        }
+        for target in item_targets:
+            field = SCENE_CHAIN_FIELD_BY_CATEGORY.get(target.get("category"))
+            if not field:
+                continue
+            if target.get("target_state") != "active":
+                omitted = {
+                    "item_id": item_id,
+                    "category": target.get("category", ""),
+                    "target_name": target.get("target_name", ""),
+                    "target_state": target.get("target_state", ""),
+                }
+                omitted_hidden.append(omitted)
+                print(
+                    "[PRESET_IMPORT_CHAIN] 숨김 프리셋 연결 제외: "
+                    f"item_id={item_id!r}, category={omitted['category']!r}, "
+                    f"name={omitted['target_name']!r}"
+                )
+                continue
+            target_name = target.get("target_name")
+            if not isinstance(target_name, str) or not target_name.strip():
+                print(
+                    "[PRESET_IMPORT_CHAIN] 활성 저장 대상 이름 누락: "
+                    f"item_id={item_id!r}, target={target!r}"
+                )
+                raise PresetImportError("체인에 연결할 프리셋 이름이 비어 있습니다.")
+            slot[field] = target_name.strip()
+        chains.append(slot)
+
+    print(
+        "[PRESET_IMPORT_CHAIN] 씬 체인 구성 완료: "
+        f"slots={len(chains)}, hidden_omitted={len(omitted_hidden)}"
+    )
+    return {
+        "chains": chains,
+        "slot_count": len(chains),
+        "hidden_omitted_count": len(omitted_hidden),
+        "hidden_omitted": omitted_hidden,
+    }
+
+
 def _write_json_temp(path: str, data: dict) -> str:
     directory = os.path.dirname(path)
     os.makedirs(directory, exist_ok=True)
@@ -1760,6 +1870,8 @@ def commit_draft(
         targets.append({
             "record_id": record["id"],
             "item_id": record["item_id"],
+            "group_id": record["group_id"],
+            "source_kind": record["source_kind"],
             "category": category,
             "source_name": name,
             "target_name": target_name,
