@@ -6,7 +6,7 @@ import json
 import os
 import sys
 import traceback
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from .crypto import WorkflowPackError, create_workflow_pack
 from .manifest import InstallManifest, load_install_manifest
@@ -41,25 +41,24 @@ def collect_workflow_bindings(
 
     manifest = manifest or load_install_manifest()
     required = list(manifest.workflows["required_bindings"])
+    required_set = set(required)
     binding_keys = required
     if include_optional:
         binding_keys = required + list(
             manifest.workflows.get("optional_bindings", [])
         )
-    excluded = {
-        str(name).casefold()
-        for name in manifest.workflows.get("excluded_filenames", [])
-    }
     bindings: dict[str, Path] = {}
     for key in binding_keys:
         raw_path = _get_dotted(config, key)
         if not isinstance(raw_path, str) or not raw_path.strip():
+            if key not in required_set:
+                print(
+                    "[COMFY_INSTALL][PACK] 선택 워크플로우 경로가 비어 있어 "
+                    f"팩에서 제외: key={key}"
+                )
+                continue
             raise WorkflowPackError(f"config.json 워크플로우 경로가 비었습니다: {key}")
         path = Path(raw_path).resolve()
-        if path.name.casefold() in excluded:
-            raise WorkflowPackError(
-                f"배포 제외 워크플로우가 포함되었습니다: key={key}, file={path.name}"
-            )
         if not path.is_file():
             raise WorkflowPackError(
                 f"워크플로우 파일이 없습니다: key={key}, path={path}"
@@ -69,52 +68,103 @@ def collect_workflow_bindings(
     return bindings
 
 
-def build_workflow_items(
-    bindings: dict[str, Path],
-    release_version: str,
-    manifest: InstallManifest,
-) -> list[dict]:
-    releases = manifest.workflows["release_dependencies"]
-    fixed_entries = releases.get(release_version)
-    if not isinstance(fixed_entries, list):
+def _workflow_string_values(value: object):
+    if isinstance(value, str):
+        yield value.replace("\\", "/").strip().casefold()
+    elif isinstance(value, dict):
+        for nested in value.values():
+            yield from _workflow_string_values(nested)
+    elif isinstance(value, list):
+        for nested in value:
+            yield from _workflow_string_values(nested)
+
+
+def _workflow_model_ids(source: Path, manifest: InstallManifest) -> list[str]:
+    try:
+        workflow = json.loads(source.read_text(encoding="utf-8"))
+    except Exception as exc:
+        print(
+            "[COMFY_INSTALL][PACK] 모델 의존성 분석용 워크플로우 읽기 실패: "
+            f"path={source}, error={exc}"
+        )
+        traceback.print_exc()
         raise WorkflowPackError(
-            "고정 모델 목록이 등록되지 않은 워크플로우 배포 버전입니다: "
-            f"{release_version}"
+            f"워크플로우 JSON을 읽을 수 없습니다: {source}"
+        ) from exc
+    if not isinstance(workflow, dict):
+        raise WorkflowPackError(
+            f"워크플로우 최상위 값이 객체가 아닙니다: {source}"
         )
 
+    values = set(_workflow_string_values(workflow))
+    matched: list[str] = []
+    for model in manifest.models:
+        relative = str(model["relative_path"]).replace("\\", "/").casefold()
+        without_models = (
+            relative[len("models/") :]
+            if relative.startswith("models/")
+            else relative
+        )
+        basename = PurePosixPath(relative).name
+        candidates = {relative, without_models, basename}
+        if any(
+            value in candidates
+            or any(value.endswith(f"/{candidate}") for candidate in candidates)
+            for value in values
+        ):
+            matched.append(str(model["id"]))
+    return sorted(matched)
+
+
+def build_workflow_items(
+    bindings: dict[str, Path],
+    manifest: InstallManifest,
+) -> list[dict]:
     grouped: dict[Path, list[str]] = {}
     for binding_key, source in bindings.items():
         grouped.setdefault(source.resolve(), []).append(binding_key)
-    fixed_by_bindings = {
-        frozenset(str(value) for value in entry["bindings"]): entry
-        for entry in fixed_entries
-    }
     items: list[dict] = []
     for source, item_bindings in grouped.items():
-        fixed = fixed_by_bindings.get(frozenset(item_bindings))
-        if fixed is None:
-            raise WorkflowPackError(
-                "워크플로우 파일 묶음과 고정 모델 명세가 일치하지 않습니다: "
-                f"bindings={sorted(item_bindings)}, file={source}"
-            )
+        sorted_bindings = sorted(item_bindings)
         items.append(
             {
-                "id": str(fixed["id"]),
+                "id": sorted_bindings[0],
                 "name": source.name,
                 "archive_name": f"workflows/{source.name}",
-                "bindings": sorted(item_bindings),
-                "model_ids": sorted(str(value) for value in fixed["model_ids"]),
+                "bindings": sorted_bindings,
+                "model_ids": _workflow_model_ids(source, manifest),
             }
         )
-    expected_item_ids = {str(entry["id"]) for entry in fixed_entries}
-    actual_item_ids = {str(item["id"]) for item in items}
-    if actual_item_ids != expected_item_ids:
-        raise WorkflowPackError(
-            "워크플로우 팩 항목이 릴리스 명세와 다릅니다: "
-            f"missing={sorted(expected_item_ids - actual_item_ids)}, "
-            f"extra={sorted(actual_item_ids - expected_item_ids)}"
-        )
     return sorted(items, key=lambda item: item["id"])
+
+
+def pack_install_manifest(
+    manifest: InstallManifest,
+    workflow_items: list[dict],
+    release_version: str,
+) -> dict:
+    data = json.loads(json.dumps(manifest.data, ensure_ascii=False))
+    workflows = data.get("workflows")
+    if isinstance(workflows, dict):
+        workflows.pop("release_dependencies", None)
+        workflows["release_version"] = release_version
+        workflows["required_bindings"] = sorted(
+            {
+                str(binding)
+                for item in workflow_items
+                for binding in item["bindings"]
+            }
+        )
+        workflows["optional_bindings"] = []
+        workflows["items"] = [
+            {
+                "id": str(item["id"]),
+                "bindings": list(item["bindings"]),
+                "model_ids": list(item["model_ids"]),
+            }
+            for item in workflow_items
+        ]
+    return data
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -125,11 +175,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", required=True)
     parser.add_argument(
         "--release-version",
-        default="",
-        help=(
-            "배포 버전(v1, v2 ...). 생략하면 매니페스트의 최신 버전을 "
-            "사용합니다."
-        ),
+        default="v1",
+        help="팩에 표시할 배포 버전(v1, v2 ...). 사전 등록은 필요 없습니다.",
     )
     parser.add_argument(
         "--key-env",
@@ -140,17 +187,14 @@ def main(argv: list[str] | None = None) -> int:
     try:
         config_path = Path(args.config).resolve()
         manifest = load_install_manifest()
-        release_version = (
-            args.release_version.strip()
-            or manifest.latest_workflow_release
-        )
+        release_version = args.release_version.strip()
         bindings = collect_workflow_bindings(
             config_path,
             manifest,
             include_optional=True,
         )
         workflow_items = build_workflow_items(
-            bindings, release_version, manifest
+            bindings, manifest
         )
         if args.key_env:
             key = os.environ.get(args.key_env, "")
@@ -169,6 +213,11 @@ def main(argv: list[str] | None = None) -> int:
             key,
             release_version=release_version,
             workflow_items=workflow_items,
+            install_manifest=pack_install_manifest(
+                manifest,
+                workflow_items,
+                release_version,
+            ),
         )
         key = ""
         print(

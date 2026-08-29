@@ -10,10 +10,11 @@ from types import SimpleNamespace
 import pytest
 
 import comfy_installer.service as service_module
+from comfy_installer.crypto import create_workflow_pack
 from comfy_installer.e2e import ComfyE2EError
-from comfy_installer.crypto import ExtractedWorkflowPack
 from comfy_installer.manifest import ManifestError, load_install_manifest
 from comfy_installer.operations import uv_python_path
+from comfy_installer.pack_cli import pack_install_manifest
 from comfy_installer.service import (
     ComfyInstallerService,
     _E2E_PHASES,
@@ -90,8 +91,9 @@ def test_e2e_catalog_uses_distribution_originals_without_runtime_receipt(
     workflow = release_root / "debug.json"
     workflow.write_text('{"nodes": []}\n', encoding="utf-8")
     state = {
-        "schema_version": 2,
+        "schema_version": 3,
         "release_version": "v1",
+        "install_manifest": service.manifest.data,
         "items": [
             {
                 "id": "debug_workflow_source_path",
@@ -367,32 +369,78 @@ def test_runtime_e2e_keeps_fixture_promotion_for_legacy_workflow(
     assert len(promotion_calls) == 1
 
 
-@pytest.mark.parametrize("release_version", ["v1", "v2"])
-def test_pack_validation_uses_release_specific_bindings(
-    tmp_path: Path, release_version: str
+def test_pack_install_needs_no_registered_release_and_replaces_manifest(
+    tmp_path: Path,
 ) -> None:
     config = tmp_path / "config.json"
     config.write_text("{}\n", encoding="utf-8")
+    original_manifest = load_install_manifest()
+    manifest_path = (
+        tmp_path / "comfy_installer" / "resources" / "install_manifest.json"
+    )
+    manifest_path.parent.mkdir(parents=True)
+    original_payload = (
+        json.dumps(original_manifest.data, ensure_ascii=False, indent=2) + "\n"
+    ).encode("utf-8")
+    manifest_path.write_bytes(original_payload)
+    active_manifest = load_install_manifest(manifest_path)
+
+    bindings: dict[str, Path] = {}
+    workflow_items: list[dict] = []
+    for index, entry in enumerate(
+        original_manifest.workflows["release_dependencies"]["v1"],
+        start=1,
+    ):
+        workflow = tmp_path / f"workflow-{index}.json"
+        workflow.write_text("{}\n", encoding="utf-8")
+        item_bindings = [str(value) for value in entry["bindings"]]
+        for binding in item_bindings:
+            bindings[binding] = workflow
+        workflow_items.append(
+            {
+                "id": str(entry["id"]),
+                "name": workflow.name,
+                "archive_name": f"workflows/{workflow.name}",
+                "bindings": item_bindings,
+                "model_ids": [str(value) for value in entry["model_ids"]],
+            }
+        )
+    bundled_manifest = pack_install_manifest(
+        active_manifest,
+        workflow_items,
+        "v99",
+    )
+    pack = tmp_path / "workflows-v99.soyawfp"
+    create_workflow_pack(
+        bindings,
+        pack,
+        "pack-key",
+        release_version="v99",
+        workflow_items=workflow_items,
+        install_manifest=bundled_manifest,
+    )
+
     service = ComfyInstallerService(
         project_root=tmp_path,
         config_path=config,
         requirements_dir=tmp_path / "requirements",
+        manifest=active_manifest,
     )
-    bindings: dict[str, str] = {}
-    release = service.manifest.workflows["release_dependencies"][release_version]
-    for index, entry in enumerate(release):
-        path = str(tmp_path / f"workflow-{index}.json")
-        for binding in entry["bindings"]:
-            bindings[binding] = path
-    extracted = ExtractedWorkflowPack(
-        target_dir=tmp_path,
-        workflow_bindings=bindings,
-        workflow_hashes={},
-        pack_sha256="0" * 64,
-        release_version=release_version,
+    result = service.unpack_workflow_pack(
+        workflow_pack=pack,
+        workflow_key="pack-key",
     )
 
-    service._validate_extracted_pack(extracted)
+    applied = json.loads(manifest_path.read_text(encoding="utf-8"))
+    backup_path = Path(result["install_manifest"]["backup_path"])
+    assert result["unpacked"]["release_version"] == "v99"
+    assert applied == bundled_manifest
+    assert "release_dependencies" not in applied["workflows"]
+    assert applied["workflows"]["release_version"] == "v99"
+    assert backup_path.parent == (
+        tmp_path / "backups" / "comfy_installer" / "manifests"
+    )
+    assert backup_path.read_bytes() == original_payload
 
 
 def test_service_status_never_contains_credentials(tmp_path: Path) -> None:
@@ -554,8 +602,6 @@ def test_library_covers_every_distributed_config_workflow_binding() -> None:
     assert library_bindings - config_bindings == set()
     assert config_bindings - library_bindings == {
         "outfit_workflow_source_path",
-        "video_workflow_source_paths.ref2v",
-        "video_workflow_source_paths.ref2v_fast",
     }
 
 

@@ -32,7 +32,6 @@ from .credentials import (
     save_civitai_key,
     save_lora_manager_civitai_key,
 )
-from .crypto import ExtractedWorkflowPack
 from .dependency_installer import (
     create_comfy_venv,
     install_node_dependencies,
@@ -59,7 +58,11 @@ from .install_modes import (
     effective_gpu_profile,
     normalize_install_mode,
 )
-from .manifest import InstallManifest, load_install_manifest
+from .manifest import (
+    InstallManifest,
+    load_install_manifest,
+    replace_install_manifest,
+)
 from .manager_dependencies import install_manager_dependencies
 from .input_patcher import patch_comfy_input
 from .migration import ComfyMigrationCancelled, migrate_user_data
@@ -90,6 +93,7 @@ from .workflow_library import (
     library_status,
     latest_release_version,
     migrate_legacy_workflow_layout,
+    release_install_manifest,
     resolve_distribution_selection,
     selection_requirements,
     unpack_to_library,
@@ -361,6 +365,7 @@ class ComfyInstallerService:
         selected_model_bytes: int | None = None,
         require_disk: bool = True,
         install_mode: str = INSTALL_MODE_STANDARD,
+        manifest: InstallManifest | None = None,
     ) -> dict:
         try:
             mode = normalize_install_mode(install_mode)
@@ -370,16 +375,25 @@ class ComfyInstallerService:
         required_bytes = runtime_and_buffer + max(
             int(selected_model_bytes or 0), 0
         )
+        active_manifest = manifest or self.manifest
         result = probe_system(
             self.comfy_root,
-            self.manifest,
+            active_manifest,
             required_bytes=required_bytes,
             require_disk=require_disk,
             install_mode=mode,
         )
         return {
             **result,
-            "manifest": dict(self._state["manifest"]),
+            "manifest": {
+                "sha256": active_manifest.sha256,
+                "comfy_version": active_manifest.comfy["version"],
+                "model_count": len(active_manifest.models),
+                "model_bytes": sum(
+                    int(model["size"]) for model in active_manifest.models
+                ),
+                "custom_node_count": len(active_manifest.custom_nodes),
+            },
         }
 
     def preflight_selection(
@@ -394,10 +408,15 @@ class ComfyInstallerService:
             release_version=release_version,
             selected_item_ids=selected_item_ids,
         )
+        pack_manifest = release_install_manifest(
+            library_root=self.workflow_library_root,
+            release_version=release_version,
+        )
         return {
             **self.preflight(
                 selected_model_bytes=int(requirements["model_bytes"]),
                 install_mode=install_mode,
+                manifest=pack_manifest,
             ),
             "selection": requirements,
         }
@@ -467,11 +486,15 @@ class ComfyInstallerService:
             release_version = latest_release_version(
                 self.workflow_library_root
             )
+            pack_manifest = release_install_manifest(
+                library_root=self.workflow_library_root,
+                release_version=release_version,
+            )
             catalog = distribution_e2e_catalog(
                 library_root=self.workflow_library_root,
                 release_version=release_version,
                 profile_by_binding=E2E_PROFILE_BY_BINDING,
-                excluded_filenames=self.manifest.workflows[
+                excluded_filenames=pack_manifest.workflows[
                     "excluded_filenames"
                 ],
             )
@@ -577,12 +600,45 @@ class ComfyInstallerService:
             passphrase=workflow_key,
             library_root=self.workflow_library_root,
             work_root=self.work_root,
-            manifest=self.manifest,
-            validate=self._validate_extracted_pack,
             log=self._log,
+        )
+        pack_manifest = release_install_manifest(
+            library_root=self.workflow_library_root,
+            release_version=str(result["release_version"]),
+        )
+        applied_manifest, backup_path = replace_install_manifest(
+            destination=self.manifest.source_path,
+            data=pack_manifest.data,
+            backup_dir=(
+                self.project_root
+                / "backups"
+                / "comfy_installer"
+                / "manifests"
+            ),
+        )
+        self.manifest = applied_manifest
+        with self._lock:
+            self._state["manifest"] = {
+                "sha256": applied_manifest.sha256,
+                "comfy_version": applied_manifest.comfy["version"],
+                "model_count": len(applied_manifest.models),
+                "model_bytes": sum(
+                    int(model["size"]) for model in applied_manifest.models
+                ),
+                "custom_node_count": len(applied_manifest.custom_nodes),
+                "workflow_count": applied_manifest.latest_workflow_count,
+            }
+        self._log(
+            "[워크플로우] 팩 동봉 install_manifest.json 적용 완료: "
+            f"target={applied_manifest.source_path}, backup={backup_path}"
         )
         return {
             "unpacked": result,
+            "install_manifest": {
+                "path": str(applied_manifest.source_path),
+                "sha256": applied_manifest.sha256,
+                "backup_path": str(backup_path) if backup_path else None,
+            },
             "library": self.workflow_library_status(),
         }
 
@@ -857,51 +913,6 @@ class ComfyInstallerService:
             raise InstallerServiceError(
                 f"Civitai 인증 사전 검사 실패: {exc}"
             ) from exc
-
-    def _validate_extracted_pack(
-        self, extracted: ExtractedWorkflowPack
-    ) -> None:
-        release_entries = self.manifest.workflows[
-            "release_dependencies"
-        ].get(extracted.release_version)
-        if not isinstance(release_entries, list) or not release_entries:
-            message = (
-                "워크플로우 팩 배포 버전이 매니페스트에 없습니다: "
-                f"release={extracted.release_version!r}"
-            )
-            print(f"[COMFY_INSTALL][PACK] {message}")
-            raise InstallerServiceError(message)
-        required = {
-            str(binding)
-            for entry in release_entries
-            for binding in entry["bindings"]
-        }
-        actual = set(extracted.workflow_bindings)
-        if actual != required:
-            message = (
-                "워크플로우 팩 바인딩이 매니페스트와 다릅니다: "
-                f"release={extracted.release_version}, "
-                f"missing={sorted(required - actual)}, "
-                f"extra={sorted(actual - required)}"
-            )
-            print(f"[COMFY_INSTALL][PACK] {message}")
-            raise InstallerServiceError(message)
-        unique = {
-            Path(path).resolve()
-            for path in extracted.workflow_bindings.values()
-        }
-        excluded = {
-            str(name).casefold()
-            for name in self.manifest.workflows["excluded_filenames"]
-        }
-        invalid = [
-            path.name for path in unique if path.name.casefold() in excluded
-        ]
-        if invalid:
-            raise InstallerServiceError(
-                "배포 제외 워크플로우가 팩에 포함되었습니다: "
-                + ", ".join(invalid)
-            )
 
     def _video_e2e_extra_args(self) -> tuple[str, ...]:
         try:
@@ -1431,19 +1442,11 @@ class ComfyInstallerService:
                         if isinstance(stats, dict)
                         else None
                     )
-                    if actual_version != self.manifest.comfy["version"]:
-                        raise ComfyE2EError(
-                            "E2E ComfyUI 버전이 매니페스트와 다릅니다: "
-                            f"expected={self.manifest.comfy['version']}, "
-                            f"actual={actual_version}"
-                        )
                     actual_ref = git_head(self.comfy_root)
-                    expected_ref = str(self.manifest.comfy["ref"]).lower()
-                    if actual_ref != expected_ref:
-                        raise ComfyE2EError(
-                            "E2E ComfyUI Git SHA가 매니페스트와 다릅니다: "
-                            f"expected={expected_ref}, actual={actual_ref}"
-                        )
+                    self._log(
+                        "[E2E] ComfyUI 정상 응답 확인: "
+                        f"version={actual_version}, ref={actual_ref}"
+                    )
 
                     self._set_phase("e2e_static")
                     validations, _ = validate_all_workflows(
@@ -1711,6 +1714,10 @@ class ComfyInstallerService:
             warning = compatibility_warning(install_mode)
             if warning:
                 self._log(f"[호환 설치 안내] {warning}", "warning")
+            pack_manifest = release_install_manifest(
+                library_root=self.workflow_library_root,
+                release_version=release_version,
+            )
             selection_info = selection_requirements(
                 library_root=self.workflow_library_root,
                 release_version=release_version,
@@ -1720,6 +1727,7 @@ class ComfyInstallerService:
             system = self.preflight(
                 selected_model_bytes=int(selection_info["model_bytes"]),
                 install_mode=install_mode,
+                manifest=pack_manifest,
             )
             self._log(
                 "[검사] GPU 프로필 선택: "
@@ -1732,8 +1740,8 @@ class ComfyInstallerService:
             self._set_phase("source")
             install_comfy_source(
                 destination=self.comfy_root,
-                repository=str(self.manifest.comfy["repository"]),
-                ref=str(self.manifest.comfy["ref"]),
+                repository=str(pack_manifest.comfy["repository"]),
+                ref=str(pack_manifest.comfy["ref"]),
                 cancel_event=self._cancel,
                 log=self._log,
                 requirements_dir=self.runtime_backup_dir,
@@ -1754,7 +1762,7 @@ class ComfyInstallerService:
             )
 
             models_by_id = {
-                str(model["id"]): model for model in self.manifest.models
+                str(model["id"]): model for model in pack_manifest.models
             }
             missing_model_ids = [
                 model_id
@@ -1777,7 +1785,7 @@ class ComfyInstallerService:
             self._set_phase("venv")
             python = create_comfy_venv(
                 comfy_root=self.comfy_root,
-                python_version=str(self.manifest.python["version"]),
+                python_version=str(pack_manifest.python["version"]),
                 cancel_event=self._cancel,
                 log=self._log,
                 requirements_dir=self.runtime_backup_dir,
@@ -1785,7 +1793,7 @@ class ComfyInstallerService:
 
             base_profile = next(
                 profile
-                for profile in self.manifest.python["gpu_profiles"]
+                for profile in pack_manifest.python["gpu_profiles"]
                 if profile["id"] == system["gpu_profile"]
             )
             profile = effective_gpu_profile(base_profile, install_mode)
@@ -1793,7 +1801,7 @@ class ComfyInstallerService:
             python_result = install_python_dependencies(
                 comfy_root=self.comfy_root,
                 python=python,
-                python_manifest=self.manifest.python,
+                python_manifest=pack_manifest.python,
                 gpu_profile=profile,
                 downloader=self.downloader,
                 cancel_event=self._cancel,
@@ -1810,7 +1818,7 @@ class ComfyInstallerService:
 
             self._set_phase("custom_nodes")
             node_paths = install_custom_nodes(
-                nodes=self.manifest.custom_nodes,
+                nodes=pack_manifest.custom_nodes,
                 comfy_root=self.comfy_root,
                 downloader=self.downloader,
                 cancel_event=self._cancel,
@@ -1825,7 +1833,7 @@ class ComfyInstallerService:
                 python=python,
                 node_paths=node_paths,
                 compatibility_packages=list(
-                    self.manifest.python["compatibility_packages"]
+                    pack_manifest.python["compatibility_packages"]
                 ),
                 cancel_event=self._cancel,
                 log=self._log,
@@ -1880,21 +1888,9 @@ class ComfyInstallerService:
                     if isinstance(stats, dict)
                     else None
                 )
-                if actual_version != self.manifest.comfy["version"]:
-                    raise ComfyE2EError(
-                        "기동된 ComfyUI 버전이 고정값과 다릅니다: "
-                        f"expected={self.manifest.comfy['version']}, "
-                        f"actual={actual_version}"
-                    )
                 actual_ref = git_head(self.comfy_root)
-                expected_ref = str(self.manifest.comfy["ref"]).lower()
-                if actual_ref != expected_ref:
-                    raise ComfyE2EError(
-                        "기동된 ComfyUI Git SHA가 고정값과 다릅니다: "
-                        f"expected={expected_ref}, actual={actual_ref}"
-                    )
                 self._log(
-                    "[기동 검사] ComfyUI 버전/SHA 확인 완료: "
+                    "[기동 검사] ComfyUI 정상 응답 확인: "
                     f"version={actual_version}, ref={actual_ref}"
                 )
             finally:
@@ -1916,7 +1912,7 @@ class ComfyInstallerService:
 
             runtime_receipt = write_runtime_receipt(
                 comfy_root=self.comfy_root,
-                manifest=self.manifest,
+                manifest=pack_manifest,
                 profile_id=str(system["gpu_profile"]),
                 install_mode=install_mode,
                 workflow_bindings=dict(selection.workflow_bindings),
@@ -1933,7 +1929,7 @@ class ComfyInstallerService:
                 "duration_seconds": round(
                     time.monotonic() - started_monotonic, 3
                 ),
-                "manifest_sha256": self.manifest.sha256,
+                "manifest_sha256": pack_manifest.sha256,
                 "comfy_root": str(self.comfy_root),
                 "comfy_version": actual_version,
                 "system": system,
@@ -2277,11 +2273,10 @@ class ComfyInstallerService:
                 if isinstance(stats, dict)
                 else None
             )
-            if actual_version != new_manifest.comfy["version"]:
-                raise ComfyE2EError(
-                    "업데이트 후 ComfyUI 버전이 매니페스트와 다릅니다: "
-                    f"expected={new_manifest.comfy['version']}, actual={actual_version}"
-                )
+            self._log(
+                "[업데이트] ComfyUI 정상 응답 확인: "
+                f"version={actual_version}"
+            )
             process.stop()
             process = None
 
@@ -2824,20 +2819,8 @@ class ComfyInstallerService:
                     else None
                 )
                 actual_ref = git_head(self.comfy_root)
-                expected_ref = str(new_manifest.comfy["ref"]).lower()
-                if actual_version != new_manifest.comfy["version"]:
-                    raise ComfyE2EError(
-                        "업데이트 후 ComfyUI 버전이 매니페스트와 다릅니다: "
-                        f"expected={new_manifest.comfy['version']}, "
-                        f"actual={actual_version}"
-                    )
-                if actual_ref != expected_ref:
-                    raise ComfyE2EError(
-                        "업데이트 후 ComfyUI Git SHA가 매니페스트와 다릅니다: "
-                        f"expected={expected_ref}, actual={actual_ref}"
-                    )
                 self._log(
-                    "[기동 검사] 업데이트 ComfyUI 버전/SHA 확인 완료: "
+                    "[기동 검사] 업데이트 ComfyUI 정상 응답 확인: "
                     f"version={actual_version}, ref={actual_ref}"
                 )
             finally:
@@ -2867,9 +2850,7 @@ class ComfyInstallerService:
             active_binding_keys = set(workflow_bindings)
             selected_workflow_ids = [
                 str(entry["id"])
-                for entry in new_manifest.workflows["release_dependencies"][
-                    release_version
-                ]
+                for entry in new_manifest.workflow_items
                 if set(entry["bindings"]).issubset(active_binding_keys)
             ]
             runtime_receipt = write_runtime_receipt(

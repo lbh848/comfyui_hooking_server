@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import traceback
+from pathlib import Path
 from typing import Any, Mapping
+
 
 def load_manifest(project_root: str | Path) -> dict[str, Any]:
     path = Path(project_root) / "comfy_installer" / "resources" / "install_manifest.json"
@@ -13,7 +14,11 @@ def load_manifest(project_root: str | Path) -> dict[str, Any]:
 
 def workflow_catalog(project_root: str | Path) -> list[dict[str, Any]]:
     manifest = load_manifest(project_root)
-    releases = manifest.get("workflows", {}).get("release_dependencies", {}).get("v1", [])
+    workflows = manifest.get("workflows", {})
+    releases = workflows.get("items")
+    if not isinstance(releases, list):
+        legacy = workflows.get("release_dependencies", {})
+        releases = legacy.get("v1", []) if isinstance(legacy, dict) else []
     result: list[dict[str, Any]] = []
     for release in releases:
         result.append(

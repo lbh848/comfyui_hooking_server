@@ -10,6 +10,7 @@ import pytest
 import comfy_installer.workflow_library as workflow_library
 from comfy_installer.crypto import create_workflow_pack
 from comfy_installer.manifest import InstallManifest, load_install_manifest
+from comfy_installer.pack_cli import pack_install_manifest
 from comfy_installer.workflow_library import (
     DISTRIBUTION_LIBRARY_DIRNAME,
     LEGACY_DISTRIBUTION_LIBRARY_DIRNAME,
@@ -23,6 +24,7 @@ from comfy_installer.workflow_library import (
     latest_release_version,
     library_status,
     migrate_legacy_workflow_layout,
+    release_install_manifest,
     selection_requirements,
     unpack_to_library,
 )
@@ -50,6 +52,7 @@ def _release_pack(
     manifest: InstallManifest,
     filename_overrides: dict[str, str] | None = None,
     content_overrides: dict[str, str] | None = None,
+    release_version: str = "v1",
 ) -> dict[str, Path]:
     source_root.mkdir(parents=True)
     filenames = filename_overrides or {}
@@ -80,8 +83,13 @@ def _release_pack(
         bindings,
         pack_path,
         "pack-key",
-        release_version="v1",
+        release_version=release_version,
         workflow_items=workflow_items,
+        install_manifest=pack_install_manifest(
+            manifest,
+            workflow_items,
+            release_version,
+        ),
     )
     return files_by_id
 
@@ -253,6 +261,11 @@ def test_versioned_library_never_overwrites_edited_user_copy(tmp_path: Path) -> 
         "pack-key",
         release_version="v1",
         workflow_items=workflow_items,
+        install_manifest=pack_install_manifest(
+            manifest,
+            workflow_items,
+            "v1",
+        ),
     )
     library_root = tmp_path / "library"
     unpacked = unpack_to_library(
@@ -260,7 +273,6 @@ def test_versioned_library_never_overwrites_edited_user_copy(tmp_path: Path) -> 
         passphrase="pack-key",
         library_root=library_root,
         work_root=tmp_path / "work",
-        manifest=manifest,
     )
     assert Path(unpacked["directory"]).parent.name == DISTRIBUTION_LIBRARY_DIRNAME
     original_files = [
@@ -335,7 +347,6 @@ def test_same_release_hotfix_reuses_adds_and_replaces_without_removing_old_files
             passphrase="pack-key",
             library_root=library_root,
             work_root=work_root,
-            manifest=manifest,
         )
         release_root = Path(first["directory"])
         old_renamed_path = release_root / first_files[renamed_id].name
@@ -362,7 +373,6 @@ def test_same_release_hotfix_reuses_adds_and_replaces_without_removing_old_files
             passphrase="pack-key",
             library_root=library_root,
             work_root=work_root,
-            manifest=manifest,
             log=logs.append,
         )
 
@@ -423,7 +433,6 @@ def test_same_release_hotfix_rolls_back_files_and_state_on_commit_failure(
             passphrase="pack-key",
             library_root=library_root,
             work_root=work_root,
-            manifest=manifest,
         )
         release_root = Path(first["directory"])
         old_renamed_path = release_root / first_files[renamed_id].name
@@ -467,7 +476,6 @@ def test_same_release_hotfix_rolls_back_files_and_state_on_commit_failure(
                 passphrase="pack-key",
                 library_root=library_root,
                 work_root=work_root,
-                manifest=manifest,
             )
 
         assert failed is True

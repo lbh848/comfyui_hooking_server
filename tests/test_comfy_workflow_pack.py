@@ -9,6 +9,8 @@ from comfy_installer.crypto import (
     create_workflow_pack,
     extract_workflow_pack,
 )
+from comfy_installer.manifest import load_install_manifest
+from comfy_installer.pack_cli import build_workflow_items, pack_install_manifest
 
 
 def _write_workflow(path: Path, node_id: str) -> None:
@@ -131,3 +133,52 @@ def test_workflow_pack_rejects_invalid_workflow_json(tmp_path):
             tmp_path / "bad.soyawfp",
             "key",
         )
+
+
+def test_pack_embeds_install_manifest_and_needs_no_registered_release(tmp_path):
+    manifest = load_install_manifest()
+    model = manifest.models[0]
+    workflow = tmp_path / "future-workflow.json"
+    workflow.write_text(
+        json.dumps(
+            {
+                "1": {
+                    "class_type": "ModelLoader",
+                    "inputs": {
+                        "model_name": Path(model["relative_path"]).name,
+                    },
+                }
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    bindings = {"future_workflow_source_path": workflow}
+    items = build_workflow_items(bindings, manifest)
+    bundled_manifest = pack_install_manifest(manifest, items, "v99")
+    pack = tmp_path / "workflows-v99.soyawfp"
+
+    created = create_workflow_pack(
+        bindings,
+        pack,
+        "right",
+        release_version="v99",
+        workflow_items=items,
+        install_manifest=bundled_manifest,
+    )
+    extracted = extract_workflow_pack(pack, tmp_path / "restored", "right")
+
+    assert "v99" not in manifest.workflows["release_dependencies"]
+    assert created["install_manifest_embedded"] is True
+    assert extracted.release_version == "v99"
+    assert extracted.install_manifest == bundled_manifest
+    assert extracted.install_manifest["workflows"]["release_version"] == "v99"
+    assert "release_dependencies" not in extracted.install_manifest["workflows"]
+    assert extracted.install_manifest["workflows"]["items"] == [
+        {
+            "id": items[0]["id"],
+            "bindings": items[0]["bindings"],
+            "model_ids": items[0]["model_ids"],
+        }
+    ]
+    assert extracted.workflow_items[0]["model_ids"] == [model["id"]]

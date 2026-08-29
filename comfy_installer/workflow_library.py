@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Callable, Iterable, Mapping
 
 from .crypto import ExtractedWorkflowPack, extract_workflow_pack
-from .manifest import InstallManifest
+from .manifest import InstallManifest, load_install_manifest_data
 
 
 class WorkflowLibraryError(RuntimeError):
@@ -423,44 +423,19 @@ def _catalog_for_extracted(
     manifest: InstallManifest,
 ) -> list[dict]:
     models_by_id = {str(model["id"]): model for model in manifest.models}
-    raw_releases = manifest.workflows.get("release_dependencies", {})
-    fixed_entries = raw_releases.get(extracted.release_version)
-    if not isinstance(fixed_entries, list):
-        raise WorkflowLibraryError(
-            "고정 모델 목록이 등록되지 않은 워크플로우 배포 버전입니다: "
-            f"{extracted.release_version}"
-        )
-    fixed_by_id = {str(entry["id"]): entry for entry in fixed_entries}
     catalog: list[dict] = []
-    seen_ids: set[str] = set()
     for item in extracted.workflow_items:
         item_id = str(item["id"])
-        fixed = fixed_by_id.get(item_id)
-        if fixed is None:
-            raise WorkflowLibraryError(
-                f"배포 명세에 없는 워크플로우가 팩에 포함되었습니다: {item_id}"
-            )
         item_bindings = sorted(str(value) for value in item["bindings"])
-        fixed_bindings = sorted(str(value) for value in fixed["bindings"])
-        if item_bindings != fixed_bindings:
-            raise WorkflowLibraryError(
-                "워크플로우 설정 바인딩이 고정 배포 명세와 다릅니다: "
-                f"item={item_id}"
-            )
-        model_ids = tuple(sorted(str(value) for value in fixed["model_ids"]))
-        if "model_ids" in item:
-            embedded_model_ids = sorted(str(value) for value in item["model_ids"])
-            if embedded_model_ids != list(model_ids):
-                raise WorkflowLibraryError(
-                    "팩의 모델 목록이 고정 배포 명세와 다릅니다: "
-                    f"item={item_id}, release={extracted.release_version}"
-                )
+        model_ids = tuple(
+            sorted(str(value) for value in item.get("model_ids", []))
+        )
         unknown_models = [
             model_id for model_id in model_ids if model_id not in models_by_id
         ]
         if unknown_models:
             raise WorkflowLibraryError(
-                "고정 배포 명세에 등록되지 않은 모델 ID가 있습니다: "
+                "팩 동봉 설치 매니페스트에 없는 모델 ID가 있습니다: "
                 f"item={item_id}, models={unknown_models}"
             )
         archive_name = str(item["archive_name"])
@@ -487,12 +462,6 @@ def _catalog_for_extracted(
                 "model_count": len(model_ids),
                 "model_bytes": model_bytes,
             }
-        )
-        seen_ids.add(item_id)
-    missing_ids = sorted(set(fixed_by_id) - seen_ids)
-    if missing_ids:
-        raise WorkflowLibraryError(
-            "팩에 고정 배포 워크플로우가 빠져 있습니다: " + ", ".join(missing_ids)
         )
     return sorted(catalog, key=lambda item: item["name"].casefold())
 
@@ -731,8 +700,6 @@ def unpack_to_library(
     passphrase: str,
     library_root: str | os.PathLike[str],
     work_root: str | os.PathLike[str],
-    manifest: InstallManifest,
-    validate: Callable[[ExtractedWorkflowPack], None] | None = None,
     log: LogCallback | None = None,
 ) -> dict:
     work = Path(work_root).resolve() / "workflow-unpack"
@@ -743,16 +710,21 @@ def unpack_to_library(
     try:
         work.mkdir(parents=True, exist_ok=True)
         extracted = extract_workflow_pack(pack_path, stage, passphrase)
-        if validate is not None:
-            validate(extracted)
+        if extracted.install_manifest is None:
+            raise WorkflowLibraryError(
+                "워크플로우 팩에 install_manifest.json이 동봉되지 않았습니다."
+            )
+        pack_manifest = load_install_manifest_data(extracted.install_manifest)
         release = extracted.release_version
         if not _RELEASE_RE.fullmatch(release):
             raise WorkflowLibraryError(f"잘못된 워크플로우 배포 버전입니다: {release}")
-        catalog = _catalog_for_extracted(extracted, manifest)
+        catalog = _catalog_for_extracted(extracted, pack_manifest)
         state = {
-            "schema_version": 2,
+            "schema_version": 3,
             "release_version": release,
             "pack_sha256": extracted.pack_sha256,
+            "install_manifest_sha256": pack_manifest.sha256,
+            "install_manifest": pack_manifest.data,
             "workflow_count": len(catalog),
             "binding_count": len(extracted.workflow_bindings),
             "items": catalog,
@@ -795,8 +767,13 @@ def unpack_to_library(
                 "[워크플로우] 배포 원본 읽기 전용 보호 완료: "
                 f"{destination}"
             )
+        public_state = {
+            key: value
+            for key, value in state.items()
+            if key != "install_manifest"
+        }
         return {
-            **state,
+            **public_state,
             "directory": str(destination),
             "read_only": True,
         }
@@ -835,6 +812,26 @@ def _load_release(library_root: Path, release_version: str) -> tuple[Path, dict]
             f"워크플로우 팩 폴더와 상태 버전이 다릅니다: {root}"
         )
     return root, state
+
+
+def release_install_manifest(
+    *,
+    library_root: str | os.PathLike[str],
+    release_version: str,
+) -> InstallManifest:
+    _, state = _load_release(Path(library_root).resolve(), release_version)
+    embedded = state.get("install_manifest")
+    if isinstance(embedded, dict):
+        return load_install_manifest_data(
+            embedded,
+            source_name=(
+                f"<workflow-library>/{release_version}/install_manifest.json"
+            ),
+        )
+    raise WorkflowLibraryError(
+        "워크플로우 팩에 install_manifest.json이 없습니다: "
+        f"release={release_version}"
+    )
 
 
 def distribution_e2e_catalog(
@@ -1330,7 +1327,12 @@ def library_status(
                 continue
             try:
                 state = _read_json_object(state_path, "워크플로우 팩 상태")
-                releases.append({**state, "directory": str(child)})
+                public_state = {
+                    key: value
+                    for key, value in state.items()
+                    if key != "install_manifest"
+                }
+                releases.append({**public_state, "directory": str(child)})
             except WorkflowLibraryError as exc:
                 print(
                     "[COMFY_INSTALL][WORKFLOW_LIBRARY] 손상된 배포 버전 제외: "

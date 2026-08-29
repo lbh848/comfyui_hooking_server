@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime
 import hashlib
 import json
 import os
@@ -48,14 +49,24 @@ class InstallManifest:
 
     @property
     def latest_workflow_release(self) -> str:
+        release = self.workflows.get("release_version")
+        if isinstance(release, str) and re.fullmatch(r"v[1-9][0-9]*", release):
+            return release
         releases = self.workflows["release_dependencies"]
         return max(releases, key=lambda value: int(value[1:]))
 
     @property
     def latest_workflow_count(self) -> int:
-        return len(
-            self.workflows["release_dependencies"][self.latest_workflow_release]
-        )
+        return len(self.workflow_items)
+
+    @property
+    def workflow_items(self) -> list[dict[str, Any]]:
+        items = self.workflows.get("items")
+        if isinstance(items, list):
+            return items
+        return self.workflows["release_dependencies"][
+            self.latest_workflow_release
+        ]
 
     @property
     def validation_profiles(self) -> dict[str, Any]:
@@ -335,8 +346,22 @@ def _validate_manifest(data: dict[str, Any]) -> None:
     known_binding_set = required_binding_set.union(optional_binding_set)
 
     release_dependencies = workflows.get("release_dependencies")
+    self_contained_workflows = not (
+        isinstance(release_dependencies, dict) and release_dependencies
+    )
     if not isinstance(release_dependencies, dict) or not release_dependencies:
-        raise ManifestError("workflows.release_dependencies가 비어 있습니다.")
+        release_version = workflows.get("release_version")
+        workflow_items = workflows.get("items")
+        if (
+            not isinstance(release_version, str)
+            or not re.fullmatch(r"v[1-9][0-9]*", release_version)
+            or not isinstance(workflow_items, list)
+            or not workflow_items
+        ):
+            raise ManifestError(
+                "workflows에는 release_version과 items가 필요합니다."
+            )
+        release_dependencies = {release_version: workflow_items}
     for release_version in release_dependencies:
         if not isinstance(release_version, str) or not re.fullmatch(
             r"v[1-9][0-9]*", release_version
@@ -379,7 +404,7 @@ def _validate_manifest(data: dict[str, Any]) -> None:
                     f"{entry_context}.bindings에 중복 값이 있습니다."
                 )
             unknown_bindings = set(bindings) - known_binding_set
-            if unknown_bindings:
+            if unknown_bindings and not self_contained_workflows:
                 raise ManifestError(
                     f"{entry_context}.bindings에 알 수 없는 설정 키가 있습니다: "
                     f"{sorted(unknown_bindings)}"
@@ -410,7 +435,8 @@ def _validate_manifest(data: dict[str, Any]) -> None:
                     f"{sorted(unknown_models)}"
                 )
         if (
-            release_version == latest_release_version
+            not self_contained_workflows
+            and release_version == latest_release_version
             and covered_bindings != known_binding_set
         ):
             raise ManifestError(
@@ -439,7 +465,7 @@ def _validate_manifest(data: dict[str, Any]) -> None:
             "validation_profiles.minimax_h3.workflow_bindings에 중복 값이 있습니다."
         )
     unknown_h3_bindings = h3_binding_set - known_binding_set
-    if unknown_h3_bindings:
+    if unknown_h3_bindings and not self_contained_workflows:
         raise ManifestError(
             "validation_profiles.minimax_h3.workflow_bindings에 등록되지 않은 "
             f"설정 키가 있습니다: {sorted(unknown_h3_bindings)}"
@@ -587,3 +613,105 @@ def load_install_manifest(
         )
         traceback.print_exc()
         raise ManifestError(f"설치 매니페스트 로드 실패: {exc}") from exc
+
+
+def load_install_manifest_data(
+    data: dict[str, Any],
+    *,
+    source_name: str = "<workflow-pack>/install_manifest.json",
+) -> InstallManifest:
+    """Validate an install manifest bundled inside a workflow pack."""
+
+    try:
+        if not isinstance(data, dict):
+            raise ManifestError(
+                "팩 동봉 install_manifest 최상위 값이 객체가 아닙니다."
+            )
+        raw = json.dumps(
+            data,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        normalized = json.loads(raw.decode("utf-8"))
+        _validate_manifest(normalized)
+        return InstallManifest(
+            source_path=Path(source_name),
+            data=normalized,
+            sha256=hashlib.sha256(raw).hexdigest(),
+        )
+    except ManifestError as exc:
+        print(
+            "[COMFY_INSTALL][MANIFEST] 팩 동봉 설치 매니페스트 검증 실패: "
+            f"source={source_name}, error={exc}"
+        )
+        traceback.print_exc()
+        raise
+    except Exception as exc:
+        print(
+            "[COMFY_INSTALL][MANIFEST] 팩 동봉 설치 매니페스트 로드 실패: "
+            f"source={source_name}, error={exc}"
+        )
+        traceback.print_exc()
+        raise ManifestError(
+            f"팩 동봉 설치 매니페스트 로드 실패: {exc}"
+        ) from exc
+
+
+def replace_install_manifest(
+    *,
+    destination: str | os.PathLike[str],
+    data: dict[str, Any],
+    backup_dir: str | os.PathLike[str],
+) -> tuple[InstallManifest, Path | None]:
+    """Atomically replace the shared manifest with a pack-bundled manifest."""
+
+    target = Path(destination).resolve()
+    backups = Path(backup_dir).resolve()
+    part = target.with_name(f"{target.name}.part")
+    backup_path: Path | None = None
+    try:
+        validated = load_install_manifest_data(
+            data,
+            source_name="<workflow-pack>/install_manifest.json",
+        )
+        payload = (
+            json.dumps(validated.data, ensure_ascii=False, indent=2) + "\n"
+        ).encode("utf-8")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if target.is_file():
+            old_payload = target.read_bytes()
+            backups.mkdir(parents=True, exist_ok=True)
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+            old_hash = hashlib.sha256(old_payload).hexdigest()[:12]
+            backup_path = backups / (
+                f"install_manifest_before_pack_{timestamp}_{old_hash}.json"
+            )
+            with backup_path.open("xb") as stream:
+                stream.write(old_payload)
+                stream.flush()
+                os.fsync(stream.fileno())
+        with part.open("wb") as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(part, target)
+        return load_install_manifest(target), backup_path
+    except Exception as exc:
+        print(
+            "[COMFY_INSTALL][MANIFEST] 팩 동봉 설치 매니페스트 적용 실패: "
+            f"target={target}, backup={backup_path}, error={exc}"
+        )
+        traceback.print_exc()
+        if part.is_file():
+            try:
+                part.unlink()
+            except OSError as cleanup_exc:
+                print(
+                    "[COMFY_INSTALL][MANIFEST] 임시 매니페스트 정리 실패: "
+                    f"path={part}, error={cleanup_exc}"
+                )
+                traceback.print_exc()
+        raise ManifestError(
+            f"팩 동봉 설치 매니페스트 적용 실패: {exc}"
+        ) from exc

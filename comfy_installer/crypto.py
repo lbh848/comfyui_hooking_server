@@ -20,6 +20,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 PACK_MAGIC = b"SOYAWFP1"
 PACK_VERSION = 1
+PACK_INSTALL_MANIFEST_NAME = "install_manifest.json"
 MAX_HEADER_BYTES = 64 * 1024
 ARGON2_TIME_COST = 3
 ARGON2_MEMORY_KIB = 64 * 1024
@@ -39,6 +40,8 @@ class ExtractedWorkflowPack:
     pack_sha256: str
     release_version: str = "v1"
     workflow_items: tuple[dict, ...] = ()
+    install_manifest: dict | None = None
+    install_manifest_sha256: str = ""
 
 
 def _canonical_json(value: object) -> bytes:
@@ -96,6 +99,7 @@ def create_workflow_pack(
     *,
     release_version: str = "v1",
     workflow_items: Sequence[Mapping[str, object]] | None = None,
+    install_manifest: Mapping[str, object] | None = None,
 ) -> dict:
     """워크플로우 파일을 Argon2id + AES-256-GCM 팩으로 묶는다."""
 
@@ -178,12 +182,23 @@ def create_workflow_pack(
             if workflow_items is not None:
                 generated_items = [dict(item) for item in workflow_items]
             inner_manifest = {
-                "schema_version": 2,
+                "schema_version": 3 if install_manifest is not None else 2,
                 "release_version": release_version,
                 "workflow_bindings": bindings,
                 "files": file_manifest,
                 "workflow_items": generated_items,
             }
+            if install_manifest is not None:
+                install_manifest_payload = _canonical_json(dict(install_manifest))
+                archive.writestr(
+                    PACK_INSTALL_MANIFEST_NAME,
+                    install_manifest_payload,
+                )
+                inner_manifest["install_manifest"] = {
+                    "archive_name": PACK_INSTALL_MANIFEST_NAME,
+                    "sha256": _sha256_bytes(install_manifest_payload),
+                    "size": len(install_manifest_payload),
+                }
             archive.writestr("manifest.json", _canonical_json(inner_manifest))
 
         plaintext = zip_buffer.getvalue()
@@ -229,6 +244,7 @@ def create_workflow_pack(
             "workflow_count": len(files),
             "binding_count": len(bindings),
             "release_version": release_version,
+            "install_manifest_embedded": install_manifest is not None,
         }
     except WorkflowPackError:
         raise
@@ -342,7 +358,7 @@ def extract_workflow_pack(
 
             if not isinstance(inner_manifest, dict) or inner_manifest.get(
                 "schema_version"
-            ) not in {1, 2}:
+            ) not in {1, 2, 3}:
                 raise WorkflowPackError("워크플로우 팩 내부 manifest 버전이 잘못되었습니다.")
             bindings = inner_manifest.get("workflow_bindings")
             files = inner_manifest.get("files")
@@ -404,6 +420,59 @@ def extract_workflow_pack(
                     "워크플로우 팩 배포 버전 형식이 잘못되었습니다: "
                     f"{release_version!r}"
                 )
+            embedded_install_manifest: dict | None = None
+            embedded_install_manifest_sha256 = ""
+            raw_install_manifest = inner_manifest.get("install_manifest")
+            if raw_install_manifest is not None:
+                if not isinstance(raw_install_manifest, dict):
+                    raise WorkflowPackError(
+                        "워크플로우 팩 install_manifest 명세가 객체가 아닙니다."
+                    )
+                install_archive_name = _validate_archive_name(
+                    str(raw_install_manifest.get("archive_name", ""))
+                )
+                if install_archive_name != PACK_INSTALL_MANIFEST_NAME:
+                    raise WorkflowPackError(
+                        "워크플로우 팩 install_manifest 경로가 올바르지 않습니다."
+                    )
+                if install_archive_name not in names:
+                    raise WorkflowPackError(
+                        "워크플로우 팩 내부 install_manifest.json이 없습니다."
+                    )
+                install_payload = archive.read(install_archive_name)
+                expected_install_size = raw_install_manifest.get("size")
+                expected_install_hash = str(
+                    raw_install_manifest.get("sha256", "")
+                )
+                embedded_install_manifest_sha256 = _sha256_bytes(install_payload)
+                if (
+                    not isinstance(expected_install_size, int)
+                    or expected_install_size != len(install_payload)
+                    or expected_install_hash != embedded_install_manifest_sha256
+                ):
+                    raise WorkflowPackError(
+                        "워크플로우 팩 install_manifest.json 무결성 검증에 "
+                        "실패했습니다."
+                    )
+                try:
+                    embedded_install_manifest = json.loads(
+                        install_payload.decode("utf-8")
+                    )
+                except Exception as exc:
+                    print(
+                        "[COMFY_INSTALL][PACK] 팩 동봉 install_manifest JSON "
+                        f"읽기 실패: error={exc}"
+                    )
+                    traceback.print_exc()
+                    raise WorkflowPackError(
+                        "워크플로우 팩 install_manifest.json을 읽을 수 없습니다."
+                    ) from exc
+                if not isinstance(embedded_install_manifest, dict):
+                    raise WorkflowPackError(
+                        "워크플로우 팩 install_manifest.json 최상위 값이 "
+                        "객체가 아닙니다."
+                    )
+
             raw_items = inner_manifest.get("workflow_items")
             if raw_items is None:
                 grouped: dict[str, list[str]] = {}
@@ -550,6 +619,8 @@ def extract_workflow_pack(
             pack_sha256=_sha256_file(source),
             release_version=release_version,
             workflow_items=tuple(clean_items),
+            install_manifest=embedded_install_manifest,
+            install_manifest_sha256=embedded_install_manifest_sha256,
         )
     except WorkflowPackError:
         raise
