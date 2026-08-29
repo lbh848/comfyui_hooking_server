@@ -181,4 +181,13 @@ def test_pack_embeds_install_manifest_and_needs_no_registered_release(tmp_path):
             "model_ids": items[0]["model_ids"],
         }
     ]
+    bundled_model_ids = {
+        bundled_model["id"]
+        for bundled_model in extracted.install_manifest["models"]
+    }
+    profile_model_ids = set(
+        manifest.data["validation_profiles"]["minimax_h3"]["model_ids"]
+    )
+    assert bundled_model_ids == {model["id"], *profile_model_ids}
+    assert len(bundled_model_ids) < len(manifest.models)
     assert extracted.workflow_items[0]["model_ids"] == [model["id"]]

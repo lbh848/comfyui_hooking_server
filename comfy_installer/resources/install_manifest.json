@@ -201,6 +201,12 @@
       "source_type": "git",
       "repository": "https://github.com/hpoc766-afk/ComfyUI-Anima-28to40-Lora-Stack.git",
       "ref": "3eab7e594a87e195e471e381ebd8939a163056ce"
+    },
+    {
+      "name": "Skimmed_CFG",
+      "source_type": "git",
+      "repository": "https://github.com/Extraltodeus/Skimmed_CFG.git",
+      "ref": "d83005832ac42783adfd6f4ae96f6ef6406d1a74"
     }
   ],
   "models": [
@@ -553,6 +559,46 @@
       "relative_path": "models/loras/minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors",
       "size": 1956193000,
       "sha256": "5b9ab5ade15d0775676d01a907268a69a1468dc6033b3b0d3ded5502f3ebb84c"
+    },
+    {
+      "id": "anima-screenshot-v5-000009",
+      "url": "https://civitai.com/api/download/models/2903778?fileId=2781738",
+      "auth": "civitai",
+      "relative_path": "models/loras/screenshot_v5-000009.safetensors",
+      "size": 84413176,
+      "sha256": "d55729aee9f1e69004b1e8f494d896a009c4aeb4794837c1af1eea2dc6ea74ee"
+    },
+    {
+      "id": "anima-boldline-v13",
+      "url": "https://civitai.com/api/download/models/3021106?fileId=2899921",
+      "auth": "civitai",
+      "relative_path": "models/loras/anima-boldline-v13.safetensors",
+      "size": 59046920,
+      "sha256": "1e9dd389ae0bdf598dbb6b0149c7fedca7ccb72079dfa6481ec6d2c1fe7d7479"
+    },
+    {
+      "id": "blue-archive-style-b1",
+      "url": "https://civitai.com/api/download/models/2949191?fileId=2828479",
+      "auth": "civitai",
+      "relative_path": "models/loras/BlueArchiveStyleB1.safetensors",
+      "size": 137731072,
+      "sha256": "05eaec899cf03412dea811f9e7820e898056774f8e65fb24e64fed79d99875e7"
+    },
+    {
+      "id": "ix7-style",
+      "url": "https://civitai.com/api/download/models/3119258?fileId=2999526",
+      "auth": "civitai",
+      "relative_path": "models/loras/@ix7.safetensors",
+      "size": 91919200,
+      "sha256": "f7a889a81cd746b8c52a556589507e13799d12377944d726849cfb846f99629e"
+    },
+    {
+      "id": "flat0521-anima-lora",
+      "url": "https://civitai.com/api/download/models/2984489?fileId=2863978",
+      "auth": "civitai",
+      "relative_path": "models/loras/flat0521_anima_lora_comfy.safetensors",
+      "size": 33237056,
+      "sha256": "601b82181af58b98b49ee6b6eeb3b1c2417dc464aeb818a2c41d2685e0ed0727"
     }
   ],
   "workflows": {

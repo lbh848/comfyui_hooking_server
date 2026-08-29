@@ -1083,7 +1083,7 @@ def test_manifest_has_fully_pinned_windows_runtime_and_assets() -> None:
         len(profile["sageattention"]["sha256"]) == 64
         for profile in nvidia.values()
     )
-    assert len(manifest.custom_nodes) == 18
+    assert len(manifest.custom_nodes) == 19
     assert all(
         node["name"] != "ComfyUI-Manager"
         for node in manifest.custom_nodes
@@ -1135,6 +1135,17 @@ def test_manifest_has_fully_pinned_windows_runtime_and_assets() -> None:
     )
     assert anima_lora_remap["ref"] == (
         "3eab7e594a87e195e471e381ebd8939a163056ce"
+    )
+    skimmed_cfg = next(
+        node
+        for node in manifest.custom_nodes
+        if node["name"] == "Skimmed_CFG"
+    )
+    assert skimmed_cfg["repository"] == (
+        "https://github.com/Extraltodeus/Skimmed_CFG.git"
+    )
+    assert skimmed_cfg["ref"] == (
+        "d83005832ac42783adfd6f4ae96f6ef6406d1a74"
     )
     tracking_main_names = {
         node["name"]

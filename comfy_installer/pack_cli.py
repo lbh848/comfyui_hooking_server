@@ -144,6 +144,26 @@ def pack_install_manifest(
     release_version: str,
 ) -> dict:
     data = json.loads(json.dumps(manifest.data, ensure_ascii=False))
+    selected_model_ids = {
+        str(model_id)
+        for item in workflow_items
+        for model_id in item["model_ids"]
+    }
+    validation_profiles = data.get("validation_profiles")
+    if isinstance(validation_profiles, dict):
+        for profile in validation_profiles.values():
+            if isinstance(profile, dict):
+                selected_model_ids.update(
+                    str(model_id)
+                    for model_id in profile.get("model_ids", [])
+                )
+    models = data.get("models")
+    if isinstance(models, list):
+        data["models"] = [
+            model
+            for model in models
+            if str(model.get("id", "")) in selected_model_ids
+        ]
     workflows = data.get("workflows")
     if isinstance(workflows, dict):
         workflows.pop("release_dependencies", None)
