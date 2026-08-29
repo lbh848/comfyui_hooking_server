@@ -2398,6 +2398,12 @@ def routing_primary_slot(task_key: str) -> str:
     return primary
 
 
+def routing_primary_max_concurrency(task_key: str) -> int:
+    """Return the live request limit of the task's configured primary slot."""
+
+    return _llm_max_concurrency(routing_primary_slot(task_key))
+
+
 def routing_primary_model(task_key: str) -> str:
     """task_key 의 primary LLM 모델명 반환(스트림 통계/로그 표시용).
     각 primary 의 전용 모델(llm_model{N})이 비어 있으면 LLM1 모델로 폴백."""

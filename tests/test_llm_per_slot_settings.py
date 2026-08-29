@@ -48,6 +48,22 @@ def _clear_request_gates():
     llm_service._request_gates_by_loop.clear()
 
 
+def test_routing_primary_max_concurrency_reads_selected_slot(monkeypatch):
+    config = _config(
+        llm_routing={
+            "visual_profile_guide": {
+                "primary": "llm3",
+                "fallback": False,
+            }
+        }
+    )
+    monkeypatch.setattr(llm_service, "_current_config", config)
+
+    assert llm_service.routing_primary_max_concurrency(
+        "visual_profile_guide"
+    ) == 3
+
+
 @pytest.mark.asyncio
 async def test_dispatch_enforces_each_slot_limit_independently(monkeypatch):
     monkeypatch.setattr(llm_service, "_current_config", _config())

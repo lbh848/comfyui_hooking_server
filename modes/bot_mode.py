@@ -4402,15 +4402,64 @@ class BotMode:
                         "execution_context": execution_context,
                     }
 
+                guide_batch_size = llm_service.routing_primary_max_concurrency(
+                    VISUAL_GUIDE_TASK_KEY
+                )
+                guide_batch_count = (
+                    (len(character_jobs) + guide_batch_size - 1)
+                    // guide_batch_size
+                )
                 print(
-                    f"[VISUAL_GUIDE:PARALLEL] 캐릭터 분석 병렬 단계 시작: "
+                    f"[VISUAL_GUIDE:PARALLEL] 캐릭터 분석 배치 병렬 단계 시작: "
                     f"bot={bot_name!r}, calls={len(character_jobs)}, "
+                    f"batch_size={guide_batch_size}, batches={guide_batch_count}, "
                     f"queue_item={queue_item.id}"
                 )
-                guide_results_raw = await asyncio.gather(
-                    *(run_character_guide(job) for job in character_jobs),
-                    return_exceptions=True,
-                )
+                guide_results_raw = []
+                for batch_offset in range(
+                    0,
+                    len(character_jobs),
+                    guide_batch_size,
+                ):
+                    remaining_jobs = character_jobs[batch_offset:]
+                    if bool(queue_item._visual_guide_cancel_requested):
+                        print(
+                            f"[VISUAL_GUIDE:CANCEL] 다음 캐릭터 배치 제출 중단: "
+                            f"bot={bot_name!r}, remaining={len(remaining_jobs)}, "
+                            f"queue_item={queue_item.id}"
+                        )
+                        guide_results_raw.extend(
+                            {
+                                **job,
+                                "status": "skipped",
+                                "suggestions": [],
+                            }
+                            for job in remaining_jobs
+                        )
+                        break
+                    batch_jobs = character_jobs[
+                        batch_offset:batch_offset + guide_batch_size
+                    ]
+                    batch_number = (batch_offset // guide_batch_size) + 1
+                    print(
+                        f"[VISUAL_GUIDE:PARALLEL] 캐릭터 분석 배치 제출: "
+                        f"bot={bot_name!r}, batch={batch_number}/"
+                        f"{guide_batch_count}, calls={len(batch_jobs)}, "
+                        f"range={batch_offset + 1}-"
+                        f"{batch_offset + len(batch_jobs)}/{len(character_jobs)}, "
+                        f"queue_item={queue_item.id}"
+                    )
+                    batch_results = await asyncio.gather(
+                        *(run_character_guide(job) for job in batch_jobs),
+                        return_exceptions=True,
+                    )
+                    guide_results_raw.extend(batch_results)
+                    print(
+                        f"[VISUAL_GUIDE:PARALLEL] 캐릭터 분석 배치 완료: "
+                        f"bot={bot_name!r}, batch={batch_number}/"
+                        f"{guide_batch_count}, calls={len(batch_jobs)}, "
+                        f"queue_item={queue_item.id}"
+                    )
                 guide_errors = [
                     result
                     for result in guide_results_raw

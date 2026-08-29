@@ -687,6 +687,11 @@ async def test_visual_guide_runs_parallel_character_stage_then_parallel_appearan
     monkeypatch.setattr(bot_mode, "_load_lb_extra", lambda _bot_name: [])
     monkeypatch.setattr(llm_service, "callLLMTask", fake_text_call)
     monkeypatch.setattr(llm_service, "callLLMVisionTask", fake_vision_call)
+    monkeypatch.setattr(
+        llm_service,
+        "routing_primary_max_concurrency",
+        lambda _task_key: 2,
+    )
     monkeypatch.setattr(lighbd_service, "_log_lighbd_history", detail_records.append)
 
     manager = bot_mode.BotMode()
@@ -742,6 +747,150 @@ async def test_visual_guide_runs_parallel_character_stage_then_parallel_appearan
         "visual_profile_appearance_vision",
         "visual_profile_appearance_vision",
     ]
+
+
+@pytest.mark.asyncio
+async def test_visual_guide_character_stage_submits_strict_batches_of_three(
+    monkeypatch,
+    tmp_path,
+):
+    bot_mode = importlib.import_module("modes.bot_mode")
+    llm_service = importlib.import_module("modes.llm_service")
+    lighbd_service = importlib.import_module("modes.lighbd_service")
+    character_names = ["Riko", "Mina", "Aoi", "Aya", "Chloe", "Hibiki", "Hiyori"]
+    data = _bot_data([])
+    data["bots"][0]["characters"] = [
+        {
+            "name": character,
+            "visual_cards": [
+                _card(
+                    f"card_{index}",
+                    f"카드 {index}",
+                    f"{character}_normal.webp",
+                )
+            ],
+        }
+        for index, character in enumerate(character_names, start=1)
+    ]
+    queue = _InlineLlmQueue()
+    started = []
+    active = 0
+    max_active = 0
+    release_events = {
+        character: asyncio.Event() for character in character_names
+    }
+    finished_events = {
+        character: asyncio.Event() for character in character_names
+    }
+    first_batch_started = asyncio.Event()
+    second_batch_started = asyncio.Event()
+    final_batch_started = asyncio.Event()
+
+    async def fake_call(task_key, _messages, **kwargs):
+        nonlocal active, max_active
+        assert task_key == "visual_profile_guide"
+        context = kwargs["execution_context"]
+        character = context.metadata["character"]
+        started.append(character)
+        active += 1
+        max_active = max(max_active, active)
+        if len(started) == 3:
+            first_batch_started.set()
+        elif len(started) == 6:
+            second_batch_started.set()
+        elif len(started) == 7:
+            final_batch_started.set()
+        await release_events[character].wait()
+        active -= 1
+        finished_events[character].set()
+        raw = json.dumps({
+            "suggestions": [{
+                "target_key": "0",
+                "aliases": [f"{character}_Normal"],
+                "selection_guide": f"{character}의 해당 프로필이 성립할 때 선택한다.",
+                "evidence": f"{character} 프로필 근거",
+                "confidence": "high",
+            }]
+        }, ensure_ascii=False)
+        valid, reason = kwargs["result_validator"](raw)
+        assert valid, reason
+        kwargs["execution_observer"]({
+            "type": "execution_complete",
+            "llm_slot": "llm3",
+            "phase": "primary",
+            "execution_id": context.execution_id,
+        })
+        return raw
+
+    monkeypatch.setattr(bot_mode, "BOT_DIR", str(tmp_path / "bot"))
+    monkeypatch.setattr(bot_mode, "_load_bot_data", lambda: data)
+    monkeypatch.setattr(bot_mode, "_load_lb_extra", lambda _bot_name: [])
+    monkeypatch.setattr(llm_service, "callLLMTask", fake_call)
+    monkeypatch.setattr(
+        llm_service,
+        "routing_primary_max_concurrency",
+        lambda _task_key: 3,
+    )
+    monkeypatch.setattr(lighbd_service, "_log_lighbd_history", lambda _record: None)
+
+    manager = bot_mode.BotMode()
+    manager.set_queue_manager(queue)
+    suggest_task = asyncio.create_task(
+        manager.handle_suggest_character_card_metadata(
+            _JsonRequest({
+                "bot_name": "demo",
+                "targets": [
+                    {
+                        "character": character,
+                        "profile_id": f"card_{index}",
+                    }
+                    for index, character in enumerate(character_names, start=1)
+                ],
+            })
+        )
+    )
+    try:
+        await asyncio.wait_for(first_batch_started.wait(), timeout=2)
+        assert started == character_names[:3]
+
+        for character in character_names[:2]:
+            release_events[character].set()
+            await asyncio.wait_for(finished_events[character].wait(), timeout=2)
+            await asyncio.sleep(0)
+            assert started == character_names[:3]
+
+        release_events[character_names[2]].set()
+        await asyncio.wait_for(second_batch_started.wait(), timeout=2)
+        assert started == character_names[:6]
+
+        for character in character_names[3:5]:
+            release_events[character].set()
+            await asyncio.wait_for(finished_events[character].wait(), timeout=2)
+            await asyncio.sleep(0)
+            assert started == character_names[:6]
+
+        release_events[character_names[5]].set()
+        await asyncio.wait_for(final_batch_started.wait(), timeout=2)
+        assert started == character_names
+
+        release_events[character_names[6]].set()
+        response = await asyncio.wait_for(suggest_task, timeout=2)
+    finally:
+        for event in release_events.values():
+            event.set()
+        if not suggest_task.done():
+            suggest_task.cancel()
+            try:
+                await suggest_task
+            except asyncio.CancelledError:
+                pass
+
+    payload = json.loads(response.text)
+    assert response.status == 200
+    assert payload["success"] is True
+    assert payload["cancelled"] is False
+    assert max_active == 3
+    assert [item["character"] for item in payload["suggestions"]] == character_names
 
 
 @pytest.mark.asyncio
@@ -802,6 +951,11 @@ async def test_visual_guide_cancel_stops_active_parallel_streams_and_skips_appea
     monkeypatch.setattr(bot_mode, "_load_bot_data", lambda: data)
     monkeypatch.setattr(bot_mode, "_load_lb_extra", lambda _bot_name: [])
     monkeypatch.setattr(llm_service, "callLLMTask", fake_call)
+    monkeypatch.setattr(
+        llm_service,
+        "routing_primary_max_concurrency",
+        lambda _task_key: 2,
+    )
     monkeypatch.setattr(llm_service, "request_stream_control", fake_stream_control)
     monkeypatch.setattr(lighbd_service, "_log_lighbd_history", detail_records.append)
 
@@ -907,6 +1061,11 @@ async def test_visual_guide_cancel_waits_for_non_streaming_call_and_keeps_its_re
     monkeypatch.setattr(bot_mode, "_load_bot_data", lambda: data)
     monkeypatch.setattr(bot_mode, "_load_lb_extra", lambda _bot_name: [])
     monkeypatch.setattr(llm_service, "callLLMTask", fake_call)
+    monkeypatch.setattr(
+        llm_service,
+        "routing_primary_max_concurrency",
+        lambda _task_key: 2,
+    )
     monkeypatch.setattr(lighbd_service, "_log_lighbd_history", detail_records.append)
 
     manager = bot_mode.BotMode()
