@@ -14451,7 +14451,12 @@
         .pmi-llm-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 9px; border: 1px solid var(--border); border-radius: 7px; font-size: 0.7rem; }
         .pmi-progress { height: 7px; overflow: hidden; margin: 12px 0 6px; border-radius: 999px; background: color-mix(in srgb, var(--bg) 78%, var(--surface)); }
         .pmi-progress > div { height: 100%; width: 0; border-radius: inherit; background: linear-gradient(90deg, var(--accent), var(--accent2)); transition: width .18s ease; }
-        .pmi-edit-layout { height: calc(100% - 72px); min-height: 460px; display: grid; grid-template-columns: minmax(250px, 330px) minmax(0, 1fr); gap: 12px; }
+        .pmi-edit-tabs { display: flex; align-items: center; gap: 6px; margin: -2px 0 12px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+        .pmi-edit-tab { display: inline-flex; align-items: center; gap: 7px; padding: 8px 12px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--text2); font-size: .72rem; font-weight: 690; cursor: pointer; }
+        .pmi-edit-tab:hover { border-color: var(--border); background: var(--surface2); color: var(--text); }
+        .pmi-edit-tab.active { border-color: color-mix(in srgb, var(--accent) 48%, var(--border)); background: color-mix(in srgb, var(--accent) 12%, var(--surface)); color: var(--accent); }
+        .pmi-edit-tab-count { display: inline-grid; min-width: 20px; height: 20px; padding: 0 5px; place-items: center; border-radius: 999px; background: color-mix(in srgb, var(--error) 12%, var(--surface2)); color: var(--error); font-size: .61rem; }
+        .pmi-edit-layout { height: calc(100% - 116px); min-height: 460px; display: grid; grid-template-columns: minmax(250px, 330px) minmax(0, 1fr); gap: 12px; }
         .pmi-item-nav, .pmi-editor { min-height: 0; border: 1px solid var(--border); border-radius: 11px; background: color-mix(in srgb, var(--surface) 86%, transparent); overflow: hidden; }
         .pmi-item-nav { display: flex; flex-direction: column; }
         .pmi-item-nav-head { display: grid; gap: 8px; padding: 11px; border-bottom: 1px solid var(--border); }
@@ -14482,6 +14487,23 @@
         .pmi-bulk-controls select { min-width: 132px; flex: 1 1 150px; }
         .pmi-bulk-selection { min-width: 62px; color: var(--text2); font-size: .65rem; text-align: center; white-space: nowrap; }
         .pmi-fragments { display: grid; gap: 7px; }
+        .pmi-unassigned-pane { height: calc(100% - 116px); min-height: 460px; display: flex; flex-direction: column; gap: 10px; }
+        .pmi-unassigned-toolbar { display: grid; grid-template-columns: minmax(230px, 1fr) auto auto; align-items: center; gap: 8px; }
+        .pmi-unassigned-summary { color: var(--text2); font-size: .7rem; white-space: nowrap; }
+        .pmi-unassigned-list { min-height: 0; overflow-y: auto; display: grid; align-content: start; gap: 9px; padding-right: 3px; }
+        .pmi-unassigned-card { display: grid; gap: 9px; padding: 11px; border: 1px solid var(--border); border-radius: 10px; background: color-mix(in srgb, var(--surface) 88%, transparent); }
+        .pmi-unassigned-card-head { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(270px, auto); align-items: center; gap: 10px; }
+        .pmi-unassigned-name { min-width: 0; color: var(--text); font: 700 .78rem/1.35 ui-monospace, SFMono-Regular, Consolas, monospace; overflow-wrap: anywhere; }
+        .pmi-unassigned-meta { margin-top: 4px; color: var(--text2); font-size: .64rem; }
+        .pmi-unassigned-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; flex-wrap: wrap; }
+        .pmi-unassigned-actions select { min-width: 132px; }
+        .pmi-unassigned-variants { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; color: var(--text2); font-size: .62rem; }
+        .pmi-unassigned-variant { max-width: 100%; padding: 3px 6px; border: 1px solid var(--border); border-radius: 999px; background: color-mix(in srgb, var(--bg) 68%, transparent); font-family: ui-monospace, SFMono-Regular, Consolas, monospace; overflow-wrap: anywhere; }
+        .pmi-unassigned-occurrences { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 5px; }
+        .pmi-unassigned-occurrence { min-width: 0; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 7px; align-items: start; padding: 7px 8px; border: 1px solid color-mix(in srgb, var(--border) 78%, transparent); border-radius: 7px; background: color-mix(in srgb, var(--bg) 55%, transparent); color: var(--text2); font-size: .65rem; cursor: pointer; }
+        .pmi-unassigned-occurrence input { margin: 2px 0 0; accent-color: var(--accent); }
+        .pmi-unassigned-occurrence strong { display: block; overflow: hidden; color: var(--text); font-size: .68rem; text-overflow: ellipsis; white-space: nowrap; }
+        .pmi-unassigned-occurrence code { display: block; margin-top: 2px; color: var(--text2); font-size: .59rem; white-space: normal; overflow-wrap: anywhere; }
         .pmi-fragment { display: grid; grid-template-columns: auto auto minmax(180px, 1fr) minmax(145px, .38fr) auto; align-items: center; gap: 7px; padding: 8px; border: 1px solid var(--border); border-radius: 8px; background: color-mix(in srgb, var(--surface2) 54%, transparent); }
         .pmi-fragment.excluded { opacity: .52; border-style: dashed; }
         .pmi-fragment input, .pmi-fragment select { width: 100%; min-width: 0; }
@@ -14523,9 +14545,12 @@
             .pmi-step-copy { display: none; }
             .pmi-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
             .pmi-llm-panel, .pmi-edit-layout, .pmi-validation-grid { grid-template-columns: 1fr; }
-            .pmi-edit-layout { height: auto; }
+            .pmi-edit-layout, .pmi-unassigned-pane { height: auto; }
             .pmi-item-nav { min-height: 280px; max-height: 350px; }
             .pmi-editor { min-height: 440px; }
+            .pmi-unassigned-toolbar, .pmi-unassigned-card-head { grid-template-columns: 1fr; }
+            .pmi-unassigned-summary { white-space: normal; }
+            .pmi-unassigned-actions { justify-content: flex-start; }
         }
 
         /* ─── 그림 일괄생성 탭 ─── */
@@ -20115,10 +20140,14 @@
 
                                     <section class="pmi-stage" id="pmi-stage-4" style="display:none;">
                                         <div class="pmi-stage-head">
-                                            <div><div class="pmi-stage-title">항목별 직접 검토·수정</div><div class="pmi-stage-note">이름, 태그 원문, 카테고리, 순서를 모두 수정할 수 있습니다. 원본 태그 제외는 삭제 대신 명시적인 제외 상태로 기록됩니다.</div></div>
+                                            <div><div class="pmi-stage-title">직접 검토·수정</div><div class="pmi-stage-note">항목을 하나씩 편집하거나, 모든 프리셋의 미분류 태그를 같은 태그끼리 모아 한 번에 분류할 수 있습니다.</div></div>
                                             <div class="pmi-actions"><button class="pm-btn pm-btn-quiet" onclick="pmiGoStep(3)">이전</button><button class="pm-btn pm-btn-primary" onclick="pmiValidateAndOpen()">검증 단계로</button></div>
                                         </div>
-                                        <div class="pmi-edit-layout">
+                                        <div class="pmi-edit-tabs" role="tablist" aria-label="직접 편집 방식">
+                                            <button class="pmi-edit-tab active" id="pmi-edit-tab-items" type="button" role="tab" aria-selected="true" aria-controls="pmi-edit-pane-items" onclick="pmiSetEditSubtab('items')">항목별 직접 검토·수정</button>
+                                            <button class="pmi-edit-tab" id="pmi-edit-tab-unassigned" type="button" role="tab" aria-selected="false" aria-controls="pmi-edit-pane-unassigned" onclick="pmiSetEditSubtab('unassigned')">미분류 태그 모아보기 <span class="pmi-edit-tab-count" id="pmi-unassigned-tab-count">0</span></button>
+                                        </div>
+                                        <div class="pmi-edit-layout" id="pmi-edit-pane-items" role="tabpanel" aria-labelledby="pmi-edit-tab-items">
                                             <aside class="pmi-item-nav">
                                                 <div class="pmi-item-nav-head">
                                                     <input class="pm-input" id="pmi-item-search" type="search" placeholder="항목 이름 검색" oninput="pmiRenderItemList()">
@@ -20128,6 +20157,15 @@
                                                 <div class="pmi-item-list" id="pmi-item-list"></div>
                                             </aside>
                                             <main class="pmi-editor" id="pmi-item-editor"><div class="pm-empty">왼쪽에서 항목을 선택하세요.</div></main>
+                                        </div>
+                                        <div class="pmi-unassigned-pane" id="pmi-edit-pane-unassigned" role="tabpanel" aria-labelledby="pmi-edit-tab-unassigned" style="display:none;">
+                                            <div class="pmi-unassigned-toolbar">
+                                                <input class="pm-input" id="pmi-unassigned-search" type="search" placeholder="태그 또는 프리셋 이름 검색" oninput="pmiSetUnassignedQuery(this.value)">
+                                                <div class="pmi-unassigned-summary" id="pmi-unassigned-summary">미분류 태그를 집계하고 있습니다.</div>
+                                                <button class="pm-btn pm-btn-quiet" id="pmi-unassigned-undo" type="button" onclick="pmiUndoBulkCategory()" disabled>마지막 일괄 분류 되돌리기</button>
+                                            </div>
+                                            <div class="pmi-info-box">숫자 가중치만 다른 단일 태그는 하나로 묶습니다. 쉼표가 포함된 가중치 묶음은 내부 태그로 쪼개지 않고 묶음 자체를 별도 태그로 유지합니다. 아래 체크를 끄면 해당 프리셋에는 적용하지 않습니다.</div>
+                                            <div class="pmi-unassigned-list" id="pmi-unassigned-list"></div>
                                         </div>
                                     </section>
 
@@ -41360,6 +41398,11 @@
                         types: ['character_maker'],
                         label: '캐릭터 메이커',
                         description: '초안·피드백 LLM 수정',
+                    },
+                    {
+                        types: ['preset_import_classify'],
+                        label: '프리셋 가져오기 분류',
+                        description: 'SD Studio 프리셋 태그를 30개 단위로 의미 분류',
                     },
                     {
                         types: ['instance_lora_prompt_refine'],
@@ -93124,6 +93167,7 @@
             video_first_last: 'H3 FLF2V',
             video_postprocess: '영상 후처리',
             character_maker: '캐릭터 메이커',
+            preset_import_classify: '프리셋 가져오기 분류',
             tag_analysis: '태그분석',
             auto_match_batch: '배치매칭',
             regenerate: '재생성',
@@ -99803,6 +99847,11 @@
         let pmImportFragmentSelections = new Map();
         let pmImportBulkCategory = '';
         let pmImportBulkUndo = null;
+        let pmImportEditSubtab = 'items';
+        let pmImportUnassignedQuery = '';
+        let pmImportUnassignedSelections = new Map();
+        let pmImportUnassignedCategories = new Map();
+        let pmImportUnassignedRenderedGroups = [];
         let pmImportCreateChain = true;
         let pmImportChainName = '';
         let pmImportCreatedChainName = '';
@@ -100978,6 +101027,11 @@
                 pmImportFragmentSelections = new Map();
                 pmImportBulkCategory = '';
                 pmImportBulkUndo = null;
+                pmImportEditSubtab = 'items';
+                pmImportUnassignedQuery = '';
+                pmImportUnassignedSelections = new Map();
+                pmImportUnassignedCategories = new Map();
+                pmImportUnassignedRenderedGroups = [];
                 pmImportCreateChain = analysis.items.some(item => item.selected && item.source_kind === 'scene');
                 pmImportChainName = pmiDefaultChainName(analysis.source && analysis.source.name);
                 pmImportSelectedItemId = (analysis.items.find(item => item.selected) || analysis.items[0] || {}).id || '';
@@ -101067,10 +101121,7 @@
             if (pmImportStep === 1) pmiRenderAnalysisResult();
             if (pmImportStep === 2) pmiRenderScope();
             if (pmImportStep === 3) pmiRenderLlmStage();
-            if (pmImportStep === 4) {
-                pmiRenderItemList();
-                pmiRenderItemEditor();
-            }
+            if (pmImportStep === 4) pmiRenderEditStage();
             if (pmImportStep === 5) pmiRenderValidation();
         }
 
@@ -101182,6 +101233,32 @@
             pmiRenderLlmStage();
         }
 
+        function pmiLlmParallelLimit(config) {
+            const routing = config?.llm_routing?.preset_import_classify || {};
+            const primary = String(routing.primary || 'llm1').trim().toLowerCase();
+            const slotNumber = Number(primary.slice(3));
+            if (!primary.startsWith('llm') || !LLM_SLOTS.includes(slotNumber)) {
+                console.error('[PM_IMPORT] LLM 라우팅 슬롯을 확인할 수 없어 병렬 수 1을 사용합니다.', {
+                    primary,
+                    routing,
+                });
+                return 1;
+            }
+            const suffix = slotNumber === 1 ? '' : String(slotNumber);
+            const configKey = `llm_max_concurrency${suffix}`;
+            const rawLimit = config?.[configKey] ?? 1;
+            const limit = Number(rawLimit);
+            if (!Number.isInteger(limit) || limit < 1 || limit > 20) {
+                console.error('[PM_IMPORT] LLM 최대 동시 요청 수가 올바르지 않아 1을 사용합니다.', {
+                    primary,
+                    configKey,
+                    value: rawLimit,
+                });
+                return 1;
+            }
+            return limit;
+        }
+
         async function pmiStartLlm() {
             if (!pmImportAnalysis || pmImportBusy) return;
             const items = pmiSelectedItems().filter(item => item.llm_selected && item.fragments.some(fragment => fragment.llm_eligible));
@@ -101195,6 +101272,8 @@
             if (hasPriorEdits && !confirm('기존 LLM 또는 수동 카테고리 선택을 새 분석 결과로 바꿀까요? 태그 원문은 바뀌지 않습니다.')) return;
 
             pmImportBulkUndo = null;
+            pmImportUnassignedSelections = new Map();
+            pmImportUnassignedCategories = new Map();
             pmImportBusy = true;
             const button = document.getElementById('pmi-llm-btn');
             button.disabled = true;
@@ -101216,42 +101295,87 @@
             }
             let completed = 0;
             let completedFragments = 0;
+            let settled = 0;
             try {
-                for (const chunk of chunks) {
-                    const chunkFragmentCount = chunk.reduce((count, target) => count + target.fragment_ids.length, 0);
-                    status.textContent = `${completed + 1}/${chunks.length} 배치 · 태그 ${chunkFragmentCount}개를 문맥과 함께 분석하는 중...`;
-                    const result = await pmiRequest('/api/asset_mode/preset_import/classify', {
-                        import_id: pmImportAnalysis.import_id,
-                        targets: chunk,
-                    });
-                    for (const [itemId, assignments] of Object.entries(result.assignments || {})) {
-                        const item = pmImportAnalysis.items.find(candidate => candidate.id === itemId);
-                        if (!item) {
-                            console.error('[PM_IMPORT] LLM 응답의 항목을 찾지 못함:', itemId);
-                            continue;
-                        }
-                        for (const [fragmentId, category] of Object.entries(assignments || {})) {
-                            const fragment = item.fragments.find(candidate => candidate.id === fragmentId);
-                            if (!fragment) {
-                                console.error('[PM_IMPORT] LLM 응답의 태그 조각을 찾지 못함:', { itemId, fragmentId });
-                                continue;
+                let config = currentConfig;
+                if (!config || typeof config !== 'object' || !Object.keys(config).length) {
+                    try {
+                        config = await loadCurrentConfig();
+                    } catch (configError) {
+                        console.error('[PM_IMPORT] LLM 병렬 수 설정 로드 실패, 1개씩 처리합니다.', configError);
+                        config = {};
+                    }
+                }
+                const parallelLimit = Math.min(pmiLlmParallelLimit(config), chunks.length);
+                let nextChunkIndex = 0;
+                let running = 0;
+                const failures = [];
+
+                const runNextChunk = async () => {
+                    while (true) {
+                        const chunkIndex = nextChunkIndex++;
+                        if (chunkIndex >= chunks.length) return;
+                        const chunk = chunks[chunkIndex];
+                        const chunkFragmentCount = chunk.reduce((count, target) => count + target.fragment_ids.length, 0);
+                        running++;
+                        status.textContent = `${settled}/${chunks.length} 배치 완료 · ${running}개 실행 중 · 최대 ${parallelLimit}개 병렬`;
+                        try {
+                            const result = await pmiRequest('/api/asset_mode/preset_import/classify', {
+                                import_id: pmImportAnalysis.import_id,
+                                targets: chunk,
+                            });
+                            for (const [itemId, assignments] of Object.entries(result.assignments || {})) {
+                                const item = pmImportAnalysis.items.find(candidate => candidate.id === itemId);
+                                if (!item) {
+                                    console.error('[PM_IMPORT] LLM 응답의 항목을 찾지 못함:', itemId);
+                                    continue;
+                                }
+                                for (const [fragmentId, category] of Object.entries(assignments || {})) {
+                                    const fragment = item.fragments.find(candidate => candidate.id === fragmentId);
+                                    if (!fragment) {
+                                        console.error('[PM_IMPORT] LLM 응답의 태그 조각을 찾지 못함:', { itemId, fragmentId });
+                                        continue;
+                                    }
+                                    fragment.llm_category = category;
+                                    fragment.category = category;
+                                }
                             }
-                            fragment.llm_category = category;
-                            fragment.category = category;
+                            completed++;
+                            completedFragments += chunkFragmentCount;
+                        } catch (error) {
+                            failures.push({ chunkIndex, error });
+                            console.error('[PM_IMPORT] LLM 병렬 배치 실패:', {
+                                batch: chunkIndex + 1,
+                                total: chunks.length,
+                                error,
+                            });
+                        } finally {
+                            running--;
+                            settled++;
+                            progress.style.width = `${Math.round(settled / chunks.length * 100)}%`;
+                            status.textContent = `${settled}/${chunks.length} 배치 완료 · ${running}개 실행 중 · 최대 ${parallelLimit}개 병렬`;
+                            pmiRenderLlmStage();
                         }
                     }
-                    completed++;
-                    completedFragments += chunkFragmentCount;
-                    progress.style.width = `${Math.round(completed / chunks.length * 100)}%`;
-                    pmiRenderLlmStage();
+                };
+
+                await Promise.all(Array.from({ length: parallelLimit }, () => runNextChunk()));
+                if (failures.length) {
+                    const firstError = failures[0].error;
+                    const error = new Error(
+                        `${failures.length}개 배치가 실패했습니다. ${firstError?.message || firstError || ''}`.trim()
+                    );
+                    error.failedBatchCount = failures.length;
+                    throw error;
                 }
                 pmImportValidation = null;
-                status.textContent = `${items.length}개 항목 · ${completedFragments}개 태그 조각의 분류가 끝났습니다.`;
+                status.textContent = `${items.length}개 항목 · ${completedFragments}개 태그 조각의 병렬 분류가 끝났습니다.`;
                 detail.innerHTML = `LLM 결과가 적용되었습니다. 미분류 항목과 제안 결과를 직접 검토하세요.<div class="pmi-actions" style="margin-top:10px;"><button class="pm-btn pm-btn-primary" onclick="pmiGoStep(4)">직접 편집으로 이동</button></div>`;
                 showToast('LLM 분류가 완료되었습니다. 결과를 직접 검토해주세요.', 'success');
             } catch (error) {
                 console.error('[PM_IMPORT] LLM 분류 실패:', { completed, chunks: chunks.length, error });
-                status.textContent = `${completed}/${chunks.length} 배치 완료 후 중단되었습니다.`;
+                const failedCount = Number(error?.failedBatchCount || 0);
+                status.textContent = `${completed}/${chunks.length} 배치 성공${failedCount ? ` · ${failedCount}개 실패` : ''}`;
                 detail.innerHTML = `<div class="pmi-error-box">${pmEscapeHtml(error.message)}<br>완료된 배치 결과는 유지되며 직접 편집할 수 있습니다.<div class="pmi-actions" style="margin-top:9px;justify-content:flex-start;"><button class="pm-btn" onclick="openLighbdHistoryModal()">LLM 로그 자세히 열기</button></div></div>`;
                 showToast(error.message, 'error');
             } finally {
@@ -101271,7 +101395,282 @@
             const firstUnassigned = pmiSelectedItems().find(item => pmiItemHasUnassigned(item));
             pmImportItemFilter = firstUnassigned ? 'unassigned' : 'all';
             pmImportSelectedItemId = (firstUnassigned || pmiSelectedItems()[0]).id;
+            pmImportEditSubtab = firstUnassigned ? 'unassigned' : 'items';
             pmiShowStep(4);
+        }
+
+        function pmiUnassignedTagIdentity(value) {
+            const original = String(value == null ? '' : value).trim();
+            const weightedMatch = original.match(/^\(\s*([\s\S]*?)\s*:\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+))\s*\)$/);
+            const normalized = (weightedMatch ? weightedMatch[1] : original).trim().replace(/\s+/g, ' ');
+            const isSet = Boolean(weightedMatch && normalized.includes(','));
+            const alreadyWrapped = normalized.startsWith('(') && normalized.endsWith(')');
+            return {
+                key: normalized.toLocaleLowerCase(),
+                label: normalized ? (isSet && !alreadyWrapped ? `(${normalized})` : normalized) : '(빈 태그)',
+                weighted: Boolean(weightedMatch),
+                set: isSet,
+            };
+        }
+
+        function pmiCollectUnassignedGroups(items = []) {
+            const groups = new Map();
+            items.forEach((item, itemIndex) => {
+                if (!item || !item.selected || !Array.isArray(item.fragments)) return;
+                item.fragments.forEach((fragment, fragmentIndex) => {
+                    if (!fragment || fragment.excluded || fragment.category !== 'unassigned') return;
+                    const identity = pmiUnassignedTagIdentity(fragment.text);
+                    let group = groups.get(identity.key);
+                    if (!group) {
+                        group = {
+                            key: identity.key,
+                            label: identity.label,
+                            weighted: identity.weighted,
+                            set: identity.set,
+                            occurrences: [],
+                            variants: new Set(),
+                            itemIds: new Set(),
+                        };
+                        groups.set(identity.key, group);
+                    }
+                    group.weighted = group.weighted || identity.weighted;
+                    group.set = group.set || identity.set;
+                    group.itemIds.add(item.id);
+                    group.variants.add(String(fragment.text || '').trim() || '(빈 태그)');
+                    group.occurrences.push({ item, itemIndex, fragment, fragmentIndex });
+                });
+            });
+            return Array.from(groups.values())
+                .map(group => ({
+                    ...group,
+                    variants: Array.from(group.variants),
+                    presetCount: group.itemIds.size,
+                }))
+                .sort((left, right) => left.label.localeCompare(right.label, 'ko'));
+        }
+
+        function pmiRenderEditStage() {
+            if (!pmImportAnalysis) return;
+            const activeTab = ['items', 'unassigned'].includes(pmImportEditSubtab)
+                ? pmImportEditSubtab
+                : 'items';
+            pmImportEditSubtab = activeTab;
+            const itemTab = document.getElementById('pmi-edit-tab-items');
+            const unassignedTab = document.getElementById('pmi-edit-tab-unassigned');
+            const itemPane = document.getElementById('pmi-edit-pane-items');
+            const unassignedPane = document.getElementById('pmi-edit-pane-unassigned');
+            [
+                [itemTab, activeTab === 'items'],
+                [unassignedTab, activeTab === 'unassigned'],
+            ].forEach(([tab, active]) => {
+                if (!tab) return;
+                tab.classList.toggle('active', active);
+                tab.setAttribute('aria-selected', active ? 'true' : 'false');
+            });
+            if (itemPane) itemPane.style.display = activeTab === 'items' ? '' : 'none';
+            if (unassignedPane) unassignedPane.style.display = activeTab === 'unassigned' ? '' : 'none';
+
+            const unassignedCount = pmiCollectUnassignedGroups(pmImportAnalysis.items)
+                .reduce((total, group) => total + group.occurrences.length, 0);
+            const countBadge = document.getElementById('pmi-unassigned-tab-count');
+            if (countBadge) countBadge.textContent = String(unassignedCount);
+            if (activeTab === 'items') {
+                pmiRenderItemList();
+                pmiRenderItemEditor();
+            } else {
+                pmiRenderUnassignedReview();
+            }
+        }
+
+        function pmiSetEditSubtab(tab) {
+            if (!['items', 'unassigned'].includes(tab)) {
+                console.error('[PM_IMPORT] 직접 편집 서브탭이 올바르지 않음:', { tab });
+                return;
+            }
+            pmImportEditSubtab = tab;
+            pmiRenderEditStage();
+        }
+
+        function pmiUnassignedOccurrenceKey(occurrence) {
+            return `${occurrence.item.id}\0${occurrence.fragment.id}`;
+        }
+
+        function pmiUnassignedSelection(group) {
+            const available = new Set(group.occurrences.map(pmiUnassignedOccurrenceKey));
+            let selection = pmImportUnassignedSelections.get(group.key);
+            if (!selection) {
+                selection = new Set(available);
+                pmImportUnassignedSelections.set(group.key, selection);
+            } else {
+                for (const key of selection) {
+                    if (!available.has(key)) selection.delete(key);
+                }
+            }
+            return selection;
+        }
+
+        function pmiSetUnassignedQuery(value) {
+            pmImportUnassignedQuery = String(value || '');
+            pmiRenderUnassignedReview();
+        }
+
+        function pmiRenderUnassignedReview() {
+            if (!pmImportAnalysis) return;
+            const allGroups = pmiCollectUnassignedGroups(pmImportAnalysis.items);
+            const occurrenceCount = allGroups.reduce((total, group) => total + group.occurrences.length, 0);
+            const presetIds = new Set(allGroups.flatMap(group => group.occurrences.map(occurrence => occurrence.item.id)));
+            const query = pmImportUnassignedQuery.trim().toLocaleLowerCase();
+            const visibleGroups = allGroups.filter(group => {
+                if (!query) return true;
+                const haystack = [
+                    group.label,
+                    ...group.variants,
+                    ...group.occurrences.flatMap(occurrence => [occurrence.item.target_name, occurrence.item.source_name]),
+                ].join(' ').toLocaleLowerCase();
+                return haystack.includes(query);
+            });
+            pmImportUnassignedRenderedGroups = visibleGroups;
+
+            const search = document.getElementById('pmi-unassigned-search');
+            if (search && search.value !== pmImportUnassignedQuery) search.value = pmImportUnassignedQuery;
+            const summary = document.getElementById('pmi-unassigned-summary');
+            if (summary) summary.textContent = `미분류 ${occurrenceCount}개 · 같은 태그 ${allGroups.length}묶음 · 프리셋 ${presetIds.size}개`;
+            const countBadge = document.getElementById('pmi-unassigned-tab-count');
+            if (countBadge) countBadge.textContent = String(occurrenceCount);
+            const undoButton = document.getElementById('pmi-unassigned-undo');
+            if (undoButton) {
+                undoButton.disabled = !pmImportBulkUndo;
+                undoButton.textContent = pmImportBulkUndo
+                    ? `마지막 일괄 분류 되돌리기 (${pmImportBulkUndo.changes.length})`
+                    : '마지막 일괄 분류 되돌리기';
+            }
+
+            const target = document.getElementById('pmi-unassigned-list');
+            if (!target) {
+                console.error('[PM_IMPORT] 미분류 태그 목록 컨테이너를 찾지 못함');
+                return;
+            }
+            if (!visibleGroups.length) {
+                target.innerHTML = allGroups.length
+                    ? '<div class="pm-empty">검색 조건에 맞는 미분류 태그가 없습니다.</div>'
+                    : '<div class="pm-empty">가져오기로 체크한 프리셋에 미분류 태그가 없습니다.</div>';
+                return;
+            }
+
+            const categoryEntries = Object.entries(PM_IMPORT_CATEGORIES)
+                .filter(([key]) => key !== 'unassigned');
+            target.innerHTML = visibleGroups.map((group, groupIndex) => {
+                const selection = pmiUnassignedSelection(group);
+                const selectedCount = group.occurrences.filter(occurrence => selection.has(pmiUnassignedOccurrenceKey(occurrence))).length;
+                const category = pmImportUnassignedCategories.get(group.key) || '';
+                const options = categoryEntries.map(([key, label]) => `<option value="${key}" ${key === category ? 'selected' : ''}>${label}</option>`).join('');
+                const kindNote = group.set
+                    ? '가중치 묶음 · 하나의 태그로 유지'
+                    : (group.weighted ? '가중치 표기 통합' : '동일 표기 통합');
+                const variants = group.variants.map(variant => `<span class="pmi-unassigned-variant">${pmEscapeHtml(variant)}</span>`).join('');
+                const occurrences = group.occurrences.map((occurrence, occurrenceIndex) => {
+                    const checked = selection.has(pmiUnassignedOccurrenceKey(occurrence));
+                    const presetName = occurrence.item.target_name || occurrence.item.source_name || occurrence.item.id;
+                    return `<label class="pmi-unassigned-occurrence">
+                        <input type="checkbox" ${checked ? 'checked' : ''} onchange="pmiToggleUnassignedOccurrence(${groupIndex}, ${occurrenceIndex}, this.checked)">
+                        <span><strong title="${pmEscapeHtml(presetName)}">${pmEscapeHtml(presetName)}</strong><code>${pmEscapeHtml(occurrence.fragment.text || '(빈 태그)')}</code></span>
+                    </label>`;
+                }).join('');
+                return `<section class="pmi-unassigned-card">
+                    <div class="pmi-unassigned-card-head">
+                        <div><div class="pmi-unassigned-name">${pmEscapeHtml(group.label)}</div><div class="pmi-unassigned-meta">${kindNote} · ${group.occurrences.length}개 위치 · ${group.presetCount}개 프리셋 · ${selectedCount}개 적용 선택</div></div>
+                        <div class="pmi-unassigned-actions">
+                            <button class="pm-btn pm-btn-quiet" type="button" onclick="pmiSetUnassignedGroupSelection(${groupIndex}, 'all')">모두 선택</button>
+                            <button class="pm-btn pm-btn-quiet" type="button" onclick="pmiSetUnassignedGroupSelection(${groupIndex}, 'none')">선택 해제</button>
+                            <select class="pm-input" onchange="pmiSetUnassignedCategory(${groupIndex}, this.value)"><option value="">카테고리 선택</option>${options}</select>
+                            <button class="pm-btn pm-btn-primary" type="button" onclick="pmiApplyUnassignedGroup(${groupIndex})" ${selectedCount && category ? '' : 'disabled'}>선택 위치에 적용</button>
+                        </div>
+                    </div>
+                    <div class="pmi-unassigned-variants"><span>실제 표기</span>${variants}</div>
+                    <div class="pmi-unassigned-occurrences">${occurrences}</div>
+                </section>`;
+            }).join('');
+        }
+
+        function pmiUnassignedRenderedGroup(groupIndex) {
+            const group = pmImportUnassignedRenderedGroups[groupIndex];
+            if (!group) console.error('[PM_IMPORT] 미분류 태그 묶음을 찾지 못함:', { groupIndex });
+            return group;
+        }
+
+        function pmiSetUnassignedGroupSelection(groupIndex, mode) {
+            const group = pmiUnassignedRenderedGroup(groupIndex);
+            if (!group || !['all', 'none'].includes(mode)) {
+                console.error('[PM_IMPORT] 미분류 태그 선택 범위가 올바르지 않음:', { groupIndex, mode });
+                return;
+            }
+            const selection = pmiUnassignedSelection(group);
+            selection.clear();
+            if (mode === 'all') group.occurrences.forEach(occurrence => selection.add(pmiUnassignedOccurrenceKey(occurrence)));
+            pmiRenderUnassignedReview();
+        }
+
+        function pmiToggleUnassignedOccurrence(groupIndex, occurrenceIndex, checked) {
+            const group = pmiUnassignedRenderedGroup(groupIndex);
+            const occurrence = group && group.occurrences[occurrenceIndex];
+            if (!group || !occurrence) {
+                console.error('[PM_IMPORT] 미분류 태그 위치를 찾지 못함:', { groupIndex, occurrenceIndex });
+                return;
+            }
+            const selection = pmiUnassignedSelection(group);
+            const key = pmiUnassignedOccurrenceKey(occurrence);
+            if (checked) selection.add(key);
+            else selection.delete(key);
+            pmiRenderUnassignedReview();
+        }
+
+        function pmiSetUnassignedCategory(groupIndex, category) {
+            const group = pmiUnassignedRenderedGroup(groupIndex);
+            if (!group || (category && (category === 'unassigned' || !Object.prototype.hasOwnProperty.call(PM_IMPORT_CATEGORIES, category)))) {
+                console.error('[PM_IMPORT] 미분류 태그 적용 카테고리가 올바르지 않음:', { groupIndex, category });
+                return;
+            }
+            if (category) pmImportUnassignedCategories.set(group.key, category);
+            else pmImportUnassignedCategories.delete(group.key);
+            pmiRenderUnassignedReview();
+        }
+
+        function pmiApplyUnassignedGroup(groupIndex) {
+            const group = pmiUnassignedRenderedGroup(groupIndex);
+            if (!group) return;
+            const category = pmImportUnassignedCategories.get(group.key) || '';
+            if (!category || category === 'unassigned' || !Object.prototype.hasOwnProperty.call(PM_IMPORT_CATEGORIES, category)) {
+                console.warn('[PM_IMPORT] 미분류 태그 적용 카테고리를 선택하지 않음:', { groupKey: group.key, category });
+                showToast('먼저 적용할 카테고리를 선택해주세요.', 'warning');
+                return;
+            }
+            const selection = pmiUnassignedSelection(group);
+            const targets = group.occurrences.filter(occurrence => selection.has(pmiUnassignedOccurrenceKey(occurrence)));
+            if (!targets.length) {
+                console.warn('[PM_IMPORT] 미분류 태그 일괄 적용 위치가 없음:', { groupKey: group.key });
+                showToast('적용할 프리셋 위치를 하나 이상 선택해주세요.', 'warning');
+                return;
+            }
+            const changes = targets.map(occurrence => ({
+                item_id: occurrence.item.id,
+                fragment_id: occurrence.fragment.id,
+                previous_category: occurrence.fragment.category,
+            }));
+            targets.forEach(occurrence => { occurrence.fragment.category = category; });
+            pmImportBulkUndo = {
+                item_id: changes[0].item_id,
+                scope: 'unassigned_group',
+                group_key: group.key,
+                target_category: category,
+                changes,
+            };
+            pmImportUnassignedSelections.delete(group.key);
+            pmImportUnassignedCategories.delete(group.key);
+            pmiInvalidateValidation();
+            pmiRenderEditStage();
+            const label = PM_IMPORT_CATEGORIES[category] || category;
+            const changedItems = new Set(changes.map(change => change.item_id)).size;
+            showToast(`${group.label} · ${changes.length}개 위치(${changedItems}개 프리셋)를 '${label}' 카테고리로 분류했습니다.`, 'success');
         }
 
         function pmiBaselineItem(itemId) {
@@ -101317,6 +101716,10 @@
 
         function pmiRenderItemList() {
             if (!pmImportAnalysis) return;
+            const unassignedCount = pmiCollectUnassignedGroups(pmImportAnalysis.items)
+                .reduce((total, group) => total + group.occurrences.length, 0);
+            const countBadge = document.getElementById('pmi-unassigned-tab-count');
+            if (countBadge) countBadge.textContent = String(unassignedCount);
             const scopedItems = pmImportSelectedOnly
                 ? pmImportAnalysis.items.filter(item => item.selected)
                 : pmImportAnalysis.items;
@@ -101425,7 +101828,7 @@
                         <span class="pmi-bulk-selection">${selectedFragments.length}/${activeFragments.length}개 선택</span>
                         <select class="pm-input" id="pmi-bulk-category" onchange="pmiSetBulkCategory(this.value)"><option value="">카테고리 선택</option>${bulkCategoryOptions}</select>
                         <button class="pm-btn pm-btn-primary" onclick="pmiApplyBulkCategory('selected')" ${selectedFragments.length ? '' : 'disabled'}>선택 태그에 적용</button>
-                        <button class="pm-btn" onclick="pmiApplyBulkCategory('matching')" ${selectedFragments.length && item.selected ? '' : 'disabled'} title="선택한 태그와 변환 문자열이 정확히 같은 태그를 가져오기 대상으로 체크된 모든 항목에서 찾아 적용합니다.">동일 태그 전체 항목에 적용</button>
+                        <button class="pm-btn" onclick="pmiApplyBulkCategory('matching')" ${selectedFragments.length && item.selected ? '' : 'disabled'} title="선택한 태그와 숫자 가중치만 다른 같은 태그를 가져오기 대상으로 체크된 모든 항목에서 찾아 적용합니다.">동일 태그 전체 항목에 적용</button>
                         <button class="pm-btn" onclick="pmiApplyBulkCategory('all')" ${activeFragments.length ? '' : 'disabled'}>현재 프리셋 전체 적용</button>
                         <button class="pm-btn pm-btn-quiet" onclick="pmiUndoBulkCategory()" ${canUndo ? '' : 'disabled'}>되돌리기${canUndo ? ` (${pmImportBulkUndo.changes.length})` : ''}</button>
                     </div>
@@ -101510,16 +101913,16 @@
                     showToast('현재 프리셋을 먼저 가져오기로 체크해주세요.', 'warning');
                     return;
                 }
-                const exactTexts = new Set(
+                const normalizedKeys = new Set(
                     item.fragments
                         .filter(fragment => !fragment.excluded && selection.has(fragment.id))
-                        .map(fragment => String(fragment.text || '').trim())
+                        .map(fragment => pmiUnassignedTagIdentity(fragment.text).key)
                         .filter(Boolean),
                 );
                 targets = pmImportAnalysis.items.flatMap(candidate => {
                     if (!candidate.selected) return [];
                     return candidate.fragments
-                        .filter(fragment => !fragment.excluded && exactTexts.has(String(fragment.text || '').trim()))
+                        .filter(fragment => !fragment.excluded && normalizedKeys.has(pmiUnassignedTagIdentity(fragment.text).key))
                         .map(fragment => ({ item: candidate, fragment }));
                 });
             } else {
@@ -101585,8 +101988,7 @@
             });
             pmImportBulkUndo = null;
             pmiInvalidateValidation();
-            pmiRenderItemList();
-            pmiRenderItemEditor();
+            if (pmImportStep === 4) pmiRenderEditStage();
             showToast(`${restored}개 태그의 이전 분류를 복원했습니다.`, 'success');
         }
 
@@ -101965,6 +102367,11 @@
             pmImportFragmentSelections = new Map();
             pmImportBulkCategory = '';
             pmImportBulkUndo = null;
+            pmImportEditSubtab = 'items';
+            pmImportUnassignedQuery = '';
+            pmImportUnassignedSelections = new Map();
+            pmImportUnassignedCategories = new Map();
+            pmImportUnassignedRenderedGroups = [];
             pmImportCreateChain = true;
             pmImportChainName = '';
             pmImportCreatedChainName = '';

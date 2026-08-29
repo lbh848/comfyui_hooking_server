@@ -265,6 +265,10 @@ def test_frontend_has_stagewise_hybrid_import_and_manual_fragment_editor():
     assert "key: 'preset_import_classify'" in source
     assert "index += 30" in source
     assert "targets: chunk" in source
+    assert "function pmiLlmParallelLimit" in source
+    assert "llm_max_concurrency${suffix}" in source
+    assert "Promise.all(Array.from({ length: parallelLimit }" in source
+    assert "types: ['preset_import_classify']" in source
     assert "ANIMA 변환 전체 프롬프트" in source
     assert "소수 첫째 자리 반올림" in source
     assert "LLM 로그 자세히 열기" in source
@@ -283,13 +287,13 @@ def test_frontend_preset_import_supports_current_and_selected_fragment_bulk_clas
     assert "pmImportItemFilter = firstUnassigned ? 'unassigned' : 'all';" in source
 
 
-def test_frontend_preset_import_propagates_exact_selected_tags_across_checked_items():
+def test_frontend_preset_import_propagates_weight_normalized_tags_across_checked_items():
     source = FRONTEND_HTML.read_text(encoding="utf-8")
 
     assert "pmiApplyBulkCategory('matching')" in source
     assert "동일 태그 전체 항목에 적용" in source
     assert "if (!candidate.selected) return [];" in source
-    assert "exactTexts.has(String(fragment.text || '').trim())" in source
+    assert "normalizedKeys.has(pmiUnassignedTagIdentity(fragment.text).key)" in source
     assert "item_id: target.item.id" in source
     assert "pmImportAnalysis.items.forEach(candidate =>" in source
 

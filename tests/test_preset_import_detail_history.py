@@ -1,3 +1,4 @@
+import asyncio
 import json
 from types import SimpleNamespace
 
@@ -119,6 +120,7 @@ async def test_browser_json_failure_can_be_written_to_llm_detail(monkeypatch):
 @pytest.mark.asyncio
 async def test_llm_classification_records_full_input_and_raw_output(monkeypatch):
     captured = []
+    queued = []
     monkeypatch.setattr(
         server.lighbd_service,
         "_log_lighbd_history",
@@ -169,7 +171,26 @@ async def test_llm_classification_records_full_input_and_raw_output(monkeypatch)
             final_slot="llm1",
         )
 
+    async def fake_add_item(item_type, label, params, **kwargs):
+        future = asyncio.get_running_loop().create_future()
+        queue_item = SimpleNamespace(
+            id="preset-import-queue-item",
+            completion_future=future,
+        )
+        queued.append({
+            "item_type": item_type,
+            "label": label,
+            "params": params,
+        })
+        try:
+            result = await kwargs["runtime_handler"](queue_item)
+            future.set_result(result)
+        except Exception as exc:
+            future.set_exception(RuntimeError(str(exc)))
+        return queue_item
+
     monkeypatch.setattr(server.llm_service, "callLLMTaskResult", fake_call)
+    monkeypatch.setattr(server.queue_manager, "add_item", fake_add_item)
     response = await server.handle_api_preset_import_classify(_JsonRequest({
         "import_id": analysis["import_id"],
         "targets": [{
@@ -190,6 +211,88 @@ async def test_llm_classification_records_full_input_and_raw_output(monkeypatch)
     assert record["completion_tokens"] == 45
     assert record["output"] == raw
     assert len(record["input"]) == 2
+    assert record["queue_item_id"] == "preset-import-queue-item"
+    assert queued == [{
+        "item_type": "preset_import_classify",
+        "label": f"프리셋 임포트 LLM 분류 · {len(fragments)}개 태그",
+        "params": {
+            "import_id": analysis["import_id"],
+            "item_count": 1,
+            "fragment_count": len(fragments),
+        },
+    }]
+
+
+@pytest.mark.asyncio
+async def test_llm_classification_queue_failure_is_recorded(monkeypatch):
+    captured = []
+    queued_types = []
+    monkeypatch.setattr(
+        server.lighbd_service,
+        "_log_lighbd_history",
+        lambda record: captured.append(record),
+    )
+    analysis = preset_importer.analyze_document("source.json", {
+        "name": "detail-classify-failure",
+        "version": 1,
+        "library": {},
+        "scenes": {
+            "scene": {
+                "name": "scene",
+                "slots": [[{"prompt": "smile"}]],
+            },
+        },
+        "presets": {},
+    })
+    item = analysis["items"][0]
+    fragments = [
+        fragment for fragment in item["fragments"] if fragment["llm_eligible"]
+    ]
+
+    async def fake_call(*_args, **_kwargs):
+        return SimpleNamespace(
+            accepted=False,
+            raw_response="not-json",
+            text="not-json",
+            reason="LLM 응답 JSON 형식 오류",
+            exception=None,
+            final_phase="fallback",
+            final_slot="llm4",
+        )
+
+    async def fake_add_item(item_type, _label, _params, **kwargs):
+        queued_types.append(item_type)
+        future = asyncio.get_running_loop().create_future()
+        queue_item = SimpleNamespace(
+            id="preset-import-failed-item",
+            completion_future=future,
+        )
+        try:
+            await kwargs["runtime_handler"](queue_item)
+        except Exception as exc:
+            future.set_exception(RuntimeError(str(exc)))
+        return queue_item
+
+    monkeypatch.setattr(server.llm_service, "callLLMTaskResult", fake_call)
+    monkeypatch.setattr(server.queue_manager, "add_item", fake_add_item)
+    response = await server.handle_api_preset_import_classify(_JsonRequest({
+        "import_id": analysis["import_id"],
+        "targets": [{
+            "item_id": item["id"],
+            "fragment_ids": [fragment["id"] for fragment in fragments],
+        }],
+    }))
+    payload = json.loads(response.text)
+
+    assert response.status == 422
+    assert payload["detail_logged"] is True
+    assert queued_types == ["preset_import_classify"]
+    assert len(captured) == 1
+    record = captured[0]
+    assert record["status"] == "error"
+    assert record["task_key"] == "preset_import_classify"
+    assert record["queue_item_id"] == "preset-import-failed-item"
+    assert "LLM 응답 JSON 형식 오류" in record["error"]
 
 
 @pytest.mark.asyncio

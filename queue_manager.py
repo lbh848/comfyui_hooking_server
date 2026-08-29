@@ -61,6 +61,7 @@ GPU_QUEUE_PRIORITY_TYPES = (
 )
 LLM_QUEUE_PRIORITY_TYPES = (
     "character_maker",
+    "preset_import_classify",
     "instance_lora_prompt_refine",
     "lora_prompt_review",
     "bot_llm_face_tag_analysis",
@@ -216,6 +217,7 @@ LLM_TYPES = frozenset({
     "bot_lb_extra_refine",          # 비전 LLM 기반 프로필 카드 Appearance/기본 복장 정제
     "visual_profile_guide",         # 이미지 출력 지침 기반 캐릭터 카드 선택 기준 작성
     "character_maker",              # 캐릭터 메이커 draft/feedback LLM 수정 (revise)
+    "preset_import_classify",        # SDStudio 프리셋 태그 의미 분류
     "qwen_edit_translate",          # Qwen Edit 지시문 영어 번역
     "video_instruction_draft",      # H3 I2V/FLF2V/REF2V 편집용 AI 연출 초안
     "video_instruction_refine",     # H3 I2V/FLF2V/REF2V 사용자 입력 다듬기
@@ -279,7 +281,7 @@ def video_postprocess_label(params: dict) -> str:
 @dataclass
 class QueueItem:
     id: str
-    type: str  # illustration | asset_generation | qwen_edit | qwen_edit_translate | asset_lora_training | bot_lora_training | instance_lora_training | instance_lora_analysis | tag_analysis | auto_match_batch | data_patch_utility | instance_lora_prompt_refine | lora_prompt_review
+    type: str  # illustration | asset_generation | qwen_edit | qwen_edit_translate | asset_lora_training | bot_lora_training | instance_lora_training | instance_lora_analysis | tag_analysis | auto_match_batch | data_patch_utility | instance_lora_prompt_refine | lora_prompt_review | preset_import_classify
     label: str
     status: str = "pending"  # pending | waiting(LLM 게이트 대기) | processing | completed | failed | cancelled
     params: dict = field(default_factory=dict)
@@ -2677,6 +2679,7 @@ class QueueManager:
             "illustration_llm_build": self._handle_illustration_llm_build,
             "illustration_easy_edit": self._handle_illustration_easy_edit,
             "illustration_auto_feedback_llm": self._handle_runtime_llm_task,
+            "preset_import_classify": self._handle_runtime_llm_task,
             "character_maker_illustration": self._handle_character_maker_illustration,
             "asset_generation": self._handle_asset_generation,
             "qwen_edit": self._handle_qwen_edit,

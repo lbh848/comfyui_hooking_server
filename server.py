@@ -20949,6 +20949,8 @@ async def handle_api_preset_import_classify(request: web.Request) -> web.Respons
     raw: Any = ""
     usage_sink: dict[str, Any] = {}
     execution_context = None
+    execution_result = None
+    queue_item_id = ""
     detail_input: Any = {"stage": "request_json"}
     try:
         body = await request.json()
@@ -20980,44 +20982,80 @@ async def handle_api_preset_import_classify(request: web.Request) -> web.Respons
             return True, ""
 
         print(
-            "[PRESET_IMPORT_LLM] 분류 호출: "
+            "[PRESET_IMPORT_LLM] 분류 큐 등록: "
             f"import_id={import_id!r}, items={len(payload['items'])}"
         )
-        execution_context = llm_service.create_llm_execution_context(
-            "preset_import_classify",
-            call_name="프리셋 임포트 · LLM 분류",
-            json_mode=True,
-            metadata={"prompt_id": f"preset_import:{import_id}"},
-        )
-        execution_result = await llm_service.callLLMTaskResult(
-            "preset_import_classify",
-            messages,
-            json_mode=True,
-            result_validator=classification_result_validator,
-            metadata_sink=usage_sink,
-            execution_context=execution_context,
-        )
-        raw = (
-            execution_result.raw_response
-            if execution_result.raw_response is not None
-            else execution_result.text
-        )
-        if not execution_result.accepted:
-            failure_reason = (
-                execution_result.reason
-                or (
-                    f"{type(execution_result.exception).__name__}: "
-                    f"{execution_result.exception}"
-                    if execution_result.exception is not None
-                    else "LLM 분류 응답 검증에 실패했습니다."
+
+        async def run_queued_classification(queue_item):
+            nonlocal execution_context, execution_result, raw
+            execution_context = llm_service.create_llm_execution_context(
+                "preset_import_classify",
+                call_name="프리셋 임포트 · LLM 분류",
+                json_mode=True,
+                metadata={
+                    "prompt_id": f"preset_import:{import_id}",
+                    "queue_item_id": queue_item.id,
+                },
+            )
+            execution_result = await llm_service.callLLMTaskResult(
+                "preset_import_classify",
+                messages,
+                json_mode=True,
+                result_validator=classification_result_validator,
+                metadata_sink=usage_sink,
+                execution_context=execution_context,
+            )
+            raw = (
+                execution_result.raw_response
+                if execution_result.raw_response is not None
+                else execution_result.text
+            )
+            if not execution_result.accepted:
+                failure_reason = (
+                    execution_result.reason
+                    or (
+                        f"{type(execution_result.exception).__name__}: "
+                        f"{execution_result.exception}"
+                        if execution_result.exception is not None
+                        else "LLM 분류 응답 검증에 실패했습니다."
+                    )
                 )
-            )
-            print(
-                "[PRESET_IMPORT_LLM] 최종 실행 실패: "
-                f"import_id={import_id!r}, phase={execution_result.final_phase}, "
-                f"slot={execution_result.final_slot}, reason={failure_reason}"
-            )
-            raise preset_importer.PresetImportError(failure_reason)
+                print(
+                    "[PRESET_IMPORT_LLM] 최종 실행 실패: "
+                    f"import_id={import_id!r}, queue_item={queue_item.id}, "
+                    f"phase={execution_result.final_phase}, "
+                    f"slot={execution_result.final_slot}, reason={failure_reason}"
+                )
+                raise preset_importer.PresetImportError(failure_reason)
+            return {
+                "success": True,
+                "import_id": import_id,
+                "fragment_count": payload["target_fragment_count"],
+            }
+
+        queue_item = await queue_manager.add_item(
+            "preset_import_classify",
+            (
+                "프리셋 임포트 LLM 분류 · "
+                f"{payload['target_fragment_count']}개 태그"
+            ),
+            {
+                "import_id": import_id,
+                "item_count": len(payload["items"]),
+                "fragment_count": payload["target_fragment_count"],
+            },
+            runtime_handler=run_queued_classification,
+        )
+        queue_item_id = queue_item.id
+        try:
+            await queue_item.completion_future
+        except RuntimeError as queue_error:
+            if execution_result is not None and not execution_result.accepted:
+                raise preset_importer.PresetImportError(
+                    execution_result.reason or str(queue_error)
+                ) from queue_error
+            raise
+
         parsed = accepted.get("parsed")
         if parsed is None:
             parsed = llm_prompt_edit.parse_llm_json(raw)
@@ -21046,6 +21084,7 @@ async def handle_api_preset_import_classify(request: web.Request) -> web.Respons
             "model": llm_service.routing_primary_model("preset_import_classify"),
             "llm_slot": execution_result.final_slot,
             "phase": execution_result.final_phase,
+            "queue_item_id": queue_item_id,
             "prompt_tokens": int(usage_sink.get("prompt_tokens") or 0),
             "completion_tokens": int(usage_sink.get("completion_tokens") or 0),
             "tps": float(usage_sink.get("tps") or 0.0),
@@ -21075,6 +21114,8 @@ async def handle_api_preset_import_classify(request: web.Request) -> web.Respons
             "completion_tokens": int(usage_sink.get("completion_tokens") or 0),
             "tps": float(usage_sink.get("tps") or 0.0),
         }
+        if queue_item_id:
+            detail_extra["queue_item_id"] = queue_item_id
         if execution_context is not None:
             detail_extra.update({
                 "history_id": execution_context.execution_id,
@@ -21101,6 +21142,8 @@ async def handle_api_preset_import_classify(request: web.Request) -> web.Respons
             "completion_tokens": int(usage_sink.get("completion_tokens") or 0),
             "tps": float(usage_sink.get("tps") or 0.0),
         }
+        if queue_item_id:
+            detail_extra["queue_item_id"] = queue_item_id
         if execution_context is not None:
             detail_extra.update({
                 "history_id": execution_context.execution_id,

@@ -1166,6 +1166,29 @@ async def test_character_maker_item_lands_in_llm_lane():
 
 
 @pytest.mark.asyncio
+async def test_preset_import_classification_runs_in_llm_lane():
+    manager = QueueManager()
+    manager.get_config = lambda: {}
+    item = _item(
+        "preset_import_classify",
+        {"import_id": "import-1", "fragment_count": 30},
+    )
+
+    async def runtime_handler(queue_item):
+        return {"success": True, "queue_item_id": queue_item.id}
+
+    item._runtime_handler = runtime_handler
+    manager.items = [item]
+
+    assert "preset_import_classify" in LLM_TYPES
+    assert manager.get_status()["items"][0]["execution_area"] == "llm"
+    assert await manager._execute_item(item) == {
+        "success": True,
+        "queue_item_id": item.id,
+    }
+
+
+@pytest.mark.asyncio
 async def test_character_maker_illustration_uses_selected_provider_lane_and_keeps_bytes_off_result():
     manager = QueueManager()
     observed = {}
