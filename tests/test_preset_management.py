@@ -229,6 +229,10 @@ def test_frontend_uses_unified_preset_workspace_and_explicit_save_action():
     assert "_attachTagChipTooltip(chip, value)" in source
     assert "_attachTagChipTooltip(chip, tag)" in source
     assert "replace(/_/g, ' ').replace(/\\s+/g, ' ')" in source
+    assert "function pmiNormalizeTargetName(value)" in source
+    assert "target_name: pmiNormalizeTargetName(item.target_name)" in source
+    assert "new_name: rename ? pmiNormalizeTargetName(rename.value) : ''" in source
+    assert "composition_presets: '구도 및 기타'" in source
     assert 'id="pm-view-batch"' not in source
     assert 'id="pm-view-trace"' not in source
 

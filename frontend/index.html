@@ -99887,7 +99887,7 @@
         };
         const PM_IMPORT_CATEGORIES = {
             expressions: '표정',
-            composition_presets: '구도',
+            composition_presets: '구도 및 기타',
             appearances: '외모',
             outfits: '복장',
             artist_presets: '아티스트',
@@ -101822,7 +101822,7 @@
                 </div>`;
             }).join('') || '<div class="pm-empty">태그 조각이 없습니다. 아래에서 직접 추가할 수 있습니다.</div>';
             editor.innerHTML = `<div class="pmi-editor-top"><div><div class="pm-section-title">${pmEscapeHtml(item.source_name)}</div><div class="pm-section-note">${item.source_kind === 'scene' ? `씬 변형 ${item.variant_index + 1}` : pmEscapeHtml(item.workflow_type || '생성 프리셋')}</div></div><div class="pmi-actions"><label class="pm-btn pm-btn-quiet" style="display:flex;align-items:center;gap:6px;"><input type="checkbox" ${item.selected ? 'checked' : ''} onchange="pmiToggleEditorItem(${itemIndex}, this.checked)"> 가져오기</label><button class="pm-btn pm-btn-quiet" onclick="pmiResetCurrentItem()">항목 초기화</button></div></div>
-                <div class="pm-field"><label>저장할 프리셋 이름 <span class="pm-field-hint">카테고리별 동일 이름으로 저장</span></label><input type="text" value="${pmEscapeHtml(item.target_name)}" oninput="pmiUpdateTargetName(this.value)"></div>
+                <div class="pm-field"><label>저장할 프리셋 이름 <span class="pm-field-hint">카테고리별 동일 이름으로 저장 · /는 -로 자동 변환</span></label><input type="text" value="${pmEscapeHtml(item.target_name)}" oninput="pmiUpdateTargetName(this.value, this)"></div>
                 <label style="font-size:.72rem;font-weight:650;">NAI 원본 전체 프롬프트</label><div class="pmi-source">${pmEscapeHtml(item.source_prompt || '(비어 있음)')}</div>
                 <label style="font-size:.72rem;font-weight:650;">ANIMA 변환 전체 프롬프트 · weight 최대 ±1.5 · 소수 첫째 자리 반올림</label><div class="pmi-source">${pmEscapeHtml(item.target_prompt || '(비어 있음)')}</div>
                 ${item.warnings && item.warnings.length ? `<div class="pmi-warning-box" style="margin-bottom:10px;">${item.warnings.map(warning => pmEscapeHtml(warning.message)).join('<br>')}</div>` : ''}
@@ -102024,10 +102024,16 @@
             pmiRenderItemEditor();
         }
 
-        function pmiUpdateTargetName(value) {
+        function pmiNormalizeTargetName(value) {
+            return String(value || '').replace(/\//g, '-');
+        }
+
+        function pmiUpdateTargetName(value, input) {
             const item = pmiCurrentItem();
             if (!item) return;
-            item.target_name = value;
+            const normalized = pmiNormalizeTargetName(value);
+            item.target_name = normalized;
+            if (input && input.value !== normalized) input.value = normalized;
             pmiInvalidateValidation();
             pmiRenderItemList();
         }
@@ -102126,7 +102132,7 @@
                 items: pmImportAnalysis.items.map(item => ({
                     id: item.id,
                     selected: !!item.selected,
-                    target_name: item.target_name,
+                    target_name: pmiNormalizeTargetName(item.target_name),
                     fragments: item.fragments.map(fragment => ({
                         id: fragment.id,
                         text: fragment.text,
@@ -102266,7 +102272,7 @@
                     return `<div class="pmi-result-row"><span class="pmi-badge ${record.status === 'same' ? '' : 'llm'}">${label}</span><div style="margin-top:5px;font-weight:650;">${pmEscapeHtml(PM_IMPORT_CATEGORIES[record.category] || record.category)} / ${pmEscapeHtml(record.name)}</div><div style="margin-top:4px;color:var(--text2);">${preview}</div></div>`;
                 }
                 const suggested = `${record.name}_가져오기`;
-                return `<div class="pmi-conflict" data-record-id="${record.id}"><div><span class="pmi-badge user">${conflict.state === 'hidden' ? '숨김 충돌' : '활성 충돌'}</span><div style="margin-top:5px;font-weight:650;">${pmEscapeHtml(PM_IMPORT_CATEGORIES[record.category] || record.category)} / ${pmEscapeHtml(record.name)}</div><div style="margin-top:4px;color:var(--text2);">가져올 값: ${preview}</div></div><div class="pmi-conflict-controls"><select class="pm-input" id="pmi-resolution-${record.id}" onchange="pmiResolutionChanged('${record.id}')"><option value="keep">기존 값 유지</option><option value="overwrite">가져온 값으로 덮어쓰기${conflict.state === 'hidden' ? '·활성화' : ''}</option><option value="rename">새 이름으로 추가</option></select><input class="pm-input" id="pmi-rename-${record.id}" value="${pmEscapeHtml(suggested)}" placeholder="새 프리셋 이름" style="display:none;"></div></div>`;
+                return `<div class="pmi-conflict" data-record-id="${record.id}"><div><span class="pmi-badge user">${conflict.state === 'hidden' ? '숨김 충돌' : '활성 충돌'}</span><div style="margin-top:5px;font-weight:650;">${pmEscapeHtml(PM_IMPORT_CATEGORIES[record.category] || record.category)} / ${pmEscapeHtml(record.name)}</div><div style="margin-top:4px;color:var(--text2);">가져올 값: ${preview}</div></div><div class="pmi-conflict-controls"><select class="pm-input" id="pmi-resolution-${record.id}" onchange="pmiResolutionChanged('${record.id}')"><option value="keep">기존 값 유지</option><option value="overwrite">가져온 값으로 덮어쓰기${conflict.state === 'hidden' ? '·활성화' : ''}</option><option value="rename">새 이름으로 추가</option></select><input class="pm-input" id="pmi-rename-${record.id}" value="${pmEscapeHtml(suggested)}" placeholder="새 프리셋 이름" style="display:none;" oninput="this.value = pmiNormalizeTargetName(this.value)"></div></div>`;
             }).join('') : '<div class="pm-empty">생성할 저장 레코드가 없습니다.</div>';
             commitButton.disabled = !result.success || pmImportCommitted;
         }
@@ -102294,7 +102300,7 @@
                 return {
                     record_id: conflict.record_id,
                     choice: select ? select.value : 'keep',
-                    new_name: rename ? rename.value : '',
+                    new_name: rename ? pmiNormalizeTargetName(rename.value) : '',
                 };
             });
         }

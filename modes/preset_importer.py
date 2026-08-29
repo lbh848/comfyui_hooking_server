@@ -449,6 +449,11 @@ def get_analysis_session(import_id: str) -> dict:
         return session
 
 
+def _normalize_target_name(name: str) -> str:
+    """새 SDStudio 임포트 대상 이름에서 경로 구분자로 보일 수 있는 /를 제거한다."""
+    return name.replace("/", "-")
+
+
 def analyze_document(filename: str, document: Any) -> dict:
     """SDStudio 세션 JSON을 쓰기 없이 분석하고 편집 가능한 초안을 반환한다."""
     if not isinstance(document, dict):
@@ -471,7 +476,7 @@ def analyze_document(filename: str, document: Any) -> dict:
 
     import_id = uuid.uuid4().hex
     project_name = name.strip()
-    prefix = f"SDstudio-{project_name}/"
+    prefix = _normalize_target_name(f"SDstudio-{project_name}-")
     piece_map = _library_piece_map(document)
     prompt_chunks = _prompt_chunk_map(document, piece_map)
     groups: list[dict] = []
@@ -653,7 +658,7 @@ def analyze_document(filename: str, document: Any) -> dict:
                         f"씬 '{scene_name}'의 캐릭터별 구조화 프롬프트는 현재 프리셋에 포함하지 않습니다.",
                         item_id=item_id,
                     ))
-                target_name = prefix + scene_name.strip()
+                target_name = _normalize_target_name(prefix + scene_name.strip())
                 if variant_index:
                     target_name += f"_v{variant_index}"
                 item = {
@@ -770,7 +775,7 @@ def analyze_document(filename: str, document: Any) -> dict:
             target_sections.append(f"[{field}] {converted['prompt']}")
             canonical_prompts[field] = converted["canonical"]
             structured_prompts[field] = converted["structured"]
-        target_name = prefix + preset_name.strip()
+        target_name = _normalize_target_name(prefix + preset_name.strip())
         item = {
             "id": item_id,
             "group_id": group_id,
@@ -907,7 +912,7 @@ def analyze_document(filename: str, document: Any) -> dict:
                     group_warnings.append(warning)
             if not fragments and not group_warnings:
                 continue
-            target_name = prefix + shared_name
+            target_name = _normalize_target_name(prefix + shared_name)
             item = {
                 "id": item_id,
                 "group_id": group_id,
@@ -1206,7 +1211,7 @@ def classification_assignments(parsed: dict) -> dict[str, dict[str, str]]:
 def _validate_target_name(name: Any, label: str) -> tuple[str | None, str | None]:
     if not isinstance(name, str) or not name.strip():
         return None, f"{label} 이름이 비어 있습니다."
-    clean = name.strip()
+    clean = _normalize_target_name(name.strip())
     if len(clean) > 240:
         return None, f"{label} 이름이 240자를 초과합니다."
     if any(ord(char) < 32 for char in clean):
@@ -1907,7 +1912,9 @@ def commit_draft(
             "structured_prompts": copy.deepcopy(original.get("structured_prompts", {})),
             "target_adapter": "anima",
             "max_abs_weight": 1.5,
-            "requested_target_name": edited.get("target_name", ""),
+            "requested_target_name": _normalize_target_name(
+                str(edited.get("target_name", "")).strip()
+            ),
             "fragments": [
                 {
                     "id": fragment.get("id"),

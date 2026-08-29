@@ -81,8 +81,8 @@ def test_analyze_preserves_group_boundaries_variants_and_weighted_fragment():
 
     scene_items = [item for item in analysis["items"] if item["source_kind"] == "scene"]
     assert scene_items[0]["group_id"] == scene_items[1]["group_id"]
-    assert scene_items[0]["target_name"].endswith("/표정과 구도")
-    assert scene_items[1]["target_name"].endswith("/표정과 구도_v1")
+    assert scene_items[0]["target_name"].endswith("-표정과 구도")
+    assert scene_items[1]["target_name"].endswith("-표정과 구도_v1")
     assert [fragment["text"] for fragment in scene_items[0]["fragments"]] == [
         "blue eyes",
         "smile",
@@ -96,6 +96,25 @@ def test_analyze_preserves_group_boundaries_variants_and_weighted_fragment():
         "negative_presets",
     ]
     assert all(not fragment["llm_eligible"] for fragment in negative)
+
+
+def test_analyze_replaces_slashes_in_every_new_target_name():
+    document = _source_document()
+    document["name"] = "프로젝트/안전"
+    document["scenes"]["scene-key"]["name"] = "표정/구도"
+    document["presets"]["SDImageGenEasy"][0]["name"] = "기본/스타일"
+
+    analysis = preset_importer.analyze_document("source.json", document)
+
+    assert all("/" not in item["target_name"] for item in analysis["items"])
+    assert any(
+        item["target_name"] == "SDstudio-프로젝트-안전-표정-구도"
+        for item in analysis["items"]
+    )
+    assert any(
+        item["target_name"] == "SDstudio-프로젝트-안전-기본-스타일"
+        for item in analysis["items"]
+    )
 
 
 def test_importer_exposes_exact_nai_weight_and_one_decimal_anima_output():
@@ -228,6 +247,26 @@ def test_validate_requires_explicit_exclusion_instead_of_source_fragment_deletio
     valid = preset_importer.validate_draft(draft, {}, {})
     assert valid["success"] is True
     assert valid["summary"]["excluded_fragment_count"] == 1
+
+
+def test_validate_normalizes_edited_target_name_before_conflict_detection():
+    analysis = preset_importer.analyze_document("source.json", _source_document())
+    draft = _assign_all_fragments(analysis)
+    draft["items"][0]["target_name"] = "직접/수정"
+    active = {"composition_presets": {"직접-수정": ["different"]}}
+
+    validation = preset_importer.validate_draft(draft, active, {})
+
+    assert validation["success"] is True
+    conflict = next(
+        conflict for conflict in validation["conflicts"]
+        if conflict["name"] == "직접-수정"
+    )
+    record = next(
+        record for record in validation["records"]
+        if record["id"] == conflict["record_id"]
+    )
+    assert record["name"] == "직접-수정"
 
 
 def test_commit_backs_up_existing_data_and_writes_separate_manifest(tmp_path, monkeypatch):
