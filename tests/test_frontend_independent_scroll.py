@@ -60,6 +60,19 @@ def test_asset_generation_restores_lv1_main_scroll_container():
     assert "window.scrollTo" not in render
 
 
+def test_asset_generation_refresh_restores_lv2_main_scroll_container():
+    load_images = _function_source(
+        "async function loadAssetImages()",
+        "async function setAssetRepresentative(char, outfit, expr, filename)",
+    )
+
+    assert "const main = document.getElementById('asset-main');" in load_images
+    assert "const savedScroll = main ? main.scrollTop : 0;" in load_images
+    assert "main.scrollTop = savedScroll;" in load_images
+    assert "window.scrollY" not in load_images
+    assert "window.scrollTo" not in load_images
+
+
 def test_asset_upload_restores_lv1_main_scroll_container():
     navigate = _function_source(
         "async function auNavigateToImages(charName, outfit, expression)",

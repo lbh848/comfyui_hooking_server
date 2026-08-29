@@ -92773,7 +92773,11 @@
         function stopAssetGeneration() { stopAssetQueue(); }
 
         async function loadAssetImages() {
-            const savedScroll = window.scrollY;
+            const main = document.getElementById('asset-main');
+            const savedScroll = main ? main.scrollTop : 0;
+            if (!main) {
+                console.error('[ASSET] LV2 스크롤 저장 실패: asset-main 요소가 없습니다.');
+            }
             // 네비게이션 상태 우선, 없으면 사이드바에서 가져옴
             const char = assetNavCharacter || document.getElementById('asset-character-select').value;
             const outfit = assetNavOutfit || getAssetSelectValue('asset-outfit-select');
@@ -92913,9 +92917,13 @@
                     grid.appendChild(card);
                 });
 
-                if (savedScroll > 0) {
+                if (main && savedScroll > 0) {
                     requestAnimationFrame(() => {
-                        window.scrollTo(0, savedScroll);
+                        if (!main.isConnected) {
+                            console.error('[ASSET] LV2 스크롤 복원 실패: asset-main 요소가 DOM에서 분리되었습니다.');
+                            return;
+                        }
+                        main.scrollTop = savedScroll;
                     });
                 }
             } catch (e) {
