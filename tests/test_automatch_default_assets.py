@@ -2,6 +2,7 @@ import json
 import importlib
 import asyncio
 import base64
+import os
 
 from modes.asset_mode import AUTOMATCH_DEFAULT_OUTFIT_DIR, AssetMode
 
@@ -184,7 +185,22 @@ def test_asset_gallery_hides_automatch_default_bucket(monkeypatch, tmp_path):
         "representative": "",
         "image_count": 1,
         "local_path": "",
+        "modified_at": (tmp_path / "alice" / "uniform" / "smile" / "normal.webp").stat().st_mtime,
     }]
+
+
+def test_asset_gallery_modified_at_uses_the_newest_image_in_each_combination(monkeypatch, tmp_path):
+    mode = _mode_with_expressions(monkeypatch, tmp_path)
+    _write_image(tmp_path, "alice", "uniform", "smile", "older.webp")
+    _write_image(tmp_path, "alice", "uniform", "smile", "newer.webp")
+    older = tmp_path / "alice" / "uniform" / "smile" / "older.webp"
+    newer = tmp_path / "alice" / "uniform" / "smile" / "newer.webp"
+    os.utime(older, (100, 100))
+    os.utime(newer, (200, 200))
+
+    gallery = mode.list_character_gallery("alice")
+
+    assert gallery[0]["modified_at"] == 200
 
 
 def test_automatch_manager_lists_all_default_images(monkeypatch, tmp_path):

@@ -2852,6 +2852,10 @@ class AssetMode:
         """캐릭터 폴더의 실제 복장×표정 조합을 스캔하여 반환."""
         char_dir = os.path.join(ASSET_DIR, self._safe_dirname(character))
         if not os.path.isdir(char_dir):
+            print(
+                f"[ASSET_MODE] 캐릭터 갤러리 조회 결과 없음: "
+                f"character={character!r}, path={char_dir!r}, reason=directory_not_found"
+            )
             return []
 
         results = []
@@ -2872,16 +2876,34 @@ class AssetMode:
                     try:
                         with open(rep_path, "r", encoding="utf-8") as f:
                             rep_file = json.load(f).get("filename", "")
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        print(
+                            f"[ASSET_MODE] 대표 이미지 메타데이터 로드 실패: "
+                            f"character={character!r}, outfit={outfit_dir_name!r}, "
+                            f"expression={expr_dir_name!r}, path={rep_path!r}, "
+                            f"error={type(e).__name__}: {e}"
+                        )
+                        traceback.print_exc()
 
                 image_count = 0
+                modified_at = 0.0
                 for fname in os.listdir(expr_path):
                     if fname.startswith("_"):
                         continue
                     ext = os.path.splitext(fname)[1].lower()
                     if ext in ASSET_MEDIA_EXTENSIONS:
                         image_count += 1
+                        media_path = os.path.join(expr_path, fname)
+                        try:
+                            modified_at = max(modified_at, os.path.getmtime(media_path))
+                        except OSError as e:
+                            print(
+                                f"[ASSET_MODE] 갤러리 이미지 수정시각 조회 실패: "
+                                f"character={character!r}, outfit={outfit_dir_name!r}, "
+                                f"expression={expr_dir_name!r}, filename={fname!r}, "
+                                f"error={type(e).__name__}: {e}"
+                            )
+                            traceback.print_exc()
 
                 if image_count > 0:
                     local_path = self.get_image_path(character, outfit_dir_name, expr_dir_name, rep_file) if rep_file else ""
@@ -2900,6 +2922,7 @@ class AssetMode:
                         "representative": rep_file,
                         "image_count": image_count,
                         "local_path": local_path,
+                        "modified_at": modified_at,
                     }
                     if representative_is_animated:
                         gallery_item["representative_is_animated"] = True

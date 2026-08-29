@@ -1383,6 +1383,7 @@ def test_confirm_new_character_creates_folder_card_and_snapshot_presets(
             "representative": "revision.webp",
             "image_count": 1,
             "local_path": str(destination / "revision.webp"),
+            "modified_at": (destination / "revision.webp").stat().st_mtime,
         }
     ]
     assert result["finalized"]["promoted_image"] is True

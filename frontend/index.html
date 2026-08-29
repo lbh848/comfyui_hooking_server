@@ -9231,11 +9231,54 @@
             outline: none;
             border-color: var(--accent);
         }
+        .asset-gallery-controls {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            min-width: 0;
+            margin-left: auto;
+        }
+        .asset-gallery-sort {
+            min-width: 150px;
+            padding: 6px 28px 6px 10px;
+            box-sizing: border-box;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            background: var(--surface2);
+            color: var(--text);
+            font-size: 0.78rem;
+        }
+        .asset-gallery-sort:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+        .asset-gallery-controls .breadcrumb-character-search {
+            width: min(240px, 28vw);
+            margin-left: 0;
+        }
         .character-search-empty {
             display: none;
             padding: 48px 16px;
             text-align: center;
             color: var(--text-secondary);
+        }
+        .asset-gallery-search-empty {
+            grid-column: 1 / -1;
+        }
+        @media (max-width: 760px) {
+            .asset-breadcrumb {
+                flex-wrap: wrap;
+            }
+            .asset-gallery-controls {
+                width: 100%;
+                margin-left: 0;
+            }
+            .asset-gallery-sort,
+            .asset-gallery-controls .breadcrumb-character-search {
+                flex: 1 1 0;
+                width: auto;
+                min-width: 0;
+            }
         }
 
         .asset-loading {
@@ -87739,6 +87782,159 @@
         let auNavExpression = '';
         let auSelectedImages = new Set(); // 선택된 이미지 경로 세트
 
+        const assetGalleryControlState = {
+            asset: { sort: 'representative_missing', query: '' },
+            upload: { sort: 'representative_missing', query: '' },
+        };
+
+        function getAssetGalleryControlState(scope) {
+            const state = assetGalleryControlState[scope];
+            if (!state) {
+                console.error(`[ASSET_GALLERY_CONTROLS] 알 수 없는 화면 범위: ${scope}`);
+                return null;
+            }
+            return state;
+        }
+
+        function buildAssetGalleryControls(scope) {
+            const state = getAssetGalleryControlState(scope);
+            if (!state) return '';
+            const prefix = scope === 'upload' ? 'au' : 'asset';
+            const selected = value => state.sort === value ? ' selected' : '';
+            return `
+                <div class="asset-gallery-controls">
+                    <select id="${prefix}-gallery-sort" class="asset-gallery-sort" aria-label="감정 이미지 정렬" onchange="setAssetGallerySort('${scope}', this.value)">
+                        <option value="representative_missing"${selected('representative_missing')}>대표 이미지 없음</option>
+                        <option value="representative_present"${selected('representative_present')}>대표 이미지 있음</option>
+                        <option value="oldest"${selected('oldest')}>과거순</option>
+                        <option value="newest"${selected('newest')}>최신순</option>
+                        <option value="alphabetical"${selected('alphabetical')}>알파벳순</option>
+                    </select>
+                    <input id="${prefix}-gallery-search" class="breadcrumb-character-search" type="search" autocomplete="off" placeholder="복장·감정 검색" aria-label="복장 및 감정 이미지 검색" oninput="filterAssetGallery('${scope}', this.value)">
+                </div>`;
+        }
+
+        function restoreAssetGallerySearchValue(scope) {
+            const state = getAssetGalleryControlState(scope);
+            if (!state) return;
+            const prefix = scope === 'upload' ? 'au' : 'asset';
+            const search = document.getElementById(`${prefix}-gallery-search`);
+            if (!search) {
+                console.error(`[ASSET_GALLERY_CONTROLS] 검색 입력 복원 실패: ${prefix}-gallery-search 요소가 없습니다.`);
+                return;
+            }
+            search.value = state.query;
+        }
+
+        function setAssetGallerySort(scope, sort) {
+            const state = getAssetGalleryControlState(scope);
+            if (!state) return;
+            const allowed = new Set([
+                'representative_missing',
+                'representative_present',
+                'oldest',
+                'newest',
+                'alphabetical',
+            ]);
+            if (!allowed.has(sort)) {
+                console.error(`[ASSET_GALLERY_CONTROLS] 지원하지 않는 정렬 기준: scope=${scope}, sort=${sort}`);
+                return;
+            }
+            state.sort = sort;
+            applyAssetGalleryControls(scope);
+        }
+
+        function filterAssetGallery(scope, query) {
+            const state = getAssetGalleryControlState(scope);
+            if (!state) return;
+            state.query = String(query || '');
+            applyAssetGalleryControls(scope);
+        }
+
+        function compareAssetGalleryCards(left, right, sort) {
+            const leftName = `${left.dataset.outfit || ''} ${left.dataset.expression || ''}`;
+            const rightName = `${right.dataset.outfit || ''} ${right.dataset.expression || ''}`;
+            const byName = () => leftName.localeCompare(
+                rightName,
+                undefined,
+                { numeric: true, sensitivity: 'base' },
+            );
+            const leftHasRepresentative = left.dataset.hasRepresentative === 'true';
+            const rightHasRepresentative = right.dataset.hasRepresentative === 'true';
+            const leftModifiedAt = Number(left.dataset.modifiedAt) || 0;
+            const rightModifiedAt = Number(right.dataset.modifiedAt) || 0;
+
+            if (sort === 'representative_missing' && leftHasRepresentative !== rightHasRepresentative) {
+                return leftHasRepresentative ? 1 : -1;
+            }
+            if (sort === 'representative_present' && leftHasRepresentative !== rightHasRepresentative) {
+                return leftHasRepresentative ? -1 : 1;
+            }
+            if (sort === 'oldest' && leftModifiedAt !== rightModifiedAt) {
+                return leftModifiedAt - rightModifiedAt;
+            }
+            if (sort === 'newest' && leftModifiedAt !== rightModifiedAt) {
+                return rightModifiedAt - leftModifiedAt;
+            }
+            return byName();
+        }
+
+        function applyAssetGalleryControls(scope) {
+            const state = getAssetGalleryControlState(scope);
+            if (!state) return;
+            const prefix = scope === 'upload' ? 'au' : 'asset';
+            const grid = document.getElementById(`${prefix}-gallery-grid`);
+            if (!grid) {
+                console.error(`[ASSET_GALLERY_CONTROLS] 갤러리 적용 실패: ${prefix}-gallery-grid 요소가 없습니다.`);
+                return;
+            }
+
+            const normalizedQuery = state.query.trim().toLocaleLowerCase();
+            const cards = Array.from(grid.querySelectorAll('.asset-gallery-card'));
+            let visibleCount = 0;
+            cards.forEach(card => {
+                const searchableName = `${card.dataset.outfit || ''} ${card.dataset.expression || ''}`.toLocaleLowerCase();
+                const matches = !normalizedQuery || searchableName.includes(normalizedQuery);
+                card.hidden = !matches;
+                if (matches) visibleCount++;
+            });
+
+            const groups = Array.from(grid.children).filter(child => child.classList.contains('gallery-group-container'));
+            groups.forEach(group => {
+                const groupCards = Array.from(group.children).filter(child => child.classList.contains('asset-gallery-card'));
+                groupCards.sort((left, right) => compareAssetGalleryCards(left, right, state.sort));
+                groupCards.forEach(card => group.appendChild(card));
+                group.hidden = !groupCards.some(card => !card.hidden);
+            });
+
+            const units = Array.from(grid.children).filter(child => (
+                child.classList.contains('asset-gallery-card')
+                || child.classList.contains('gallery-group-container')
+            ));
+            const unitCard = unit => {
+                if (unit.classList.contains('asset-gallery-card')) return unit;
+                const groupCards = Array.from(unit.querySelectorAll('.asset-gallery-card'));
+                return groupCards.find(card => !card.hidden) || groupCards[0] || null;
+            };
+            units.sort((left, right) => {
+                const leftCard = unitCard(left);
+                const rightCard = unitCard(right);
+                if (!leftCard || !rightCard) return 0;
+                return compareAssetGalleryCards(leftCard, rightCard, state.sort);
+            });
+            units.forEach(unit => grid.appendChild(unit));
+
+            let empty = document.getElementById(`${prefix}-gallery-search-empty`);
+            if (!empty) {
+                empty = document.createElement('div');
+                empty.id = `${prefix}-gallery-search-empty`;
+                empty.className = 'character-search-empty asset-gallery-search-empty';
+                empty.textContent = '검색 결과가 없습니다.';
+            }
+            grid.appendChild(empty);
+            empty.style.display = normalizedQuery && visibleCount === 0 ? 'block' : 'none';
+        }
+
         function auShowView(view) {
             document.getElementById('au-loading').style.display = view === 'loading' ? 'flex' : 'none';
             document.getElementById('au-empty-state').style.display = view === 'empty' ? 'block' : 'none';
@@ -87835,6 +88031,8 @@
                     card.className = 'asset-gallery-card';
                     card.dataset.outfit = item.outfit;
                     card.dataset.expression = item.expression;
+                    card.dataset.hasRepresentative = item.representative ? 'true' : 'false';
+                    card.dataset.modifiedAt = String(Number(item.modified_at) || 0);
 
                     let thumbHtml;
                     let thumbUrl = '';
@@ -87862,6 +88060,7 @@
                     grid.appendChild(card);
                 });
                 auShowView('gallery');
+                applyAssetGalleryControls('upload');
             } catch (e) {
                 console.error('[AU] 갤러리 로드 실패:', e);
                 auShowView('empty');
@@ -91016,7 +91215,13 @@
             if (auNavLevel >= 2 && auNavOutfit && auNavExpression) {
                 html += `<span class="bc-sep">/</span><span class="bc-active">${escapeHtml(auNavOutfit)}-${escapeHtml(auNavExpression)}</span>`;
             }
+            if (auNavLevel === 1 && auNavCharacter) {
+                html += buildAssetGalleryControls('upload');
+            }
             bc.innerHTML = html;
+            if (auNavLevel === 1 && auNavCharacter) {
+                restoreAssetGallerySearchValue('upload');
+            }
         }
 
         async function auNavigateBreadcrumb(level) {
@@ -91604,6 +91809,8 @@
                     card.draggable = true;
                     card.dataset.outfit = item.outfit;
                     card.dataset.expression = item.expression;
+                    card.dataset.hasRepresentative = item.representative ? 'true' : 'false';
+                    card.dataset.modifiedAt = String(Number(item.modified_at) || 0);
 
                     // 드래그 시작
                     card.addEventListener('dragstart', e => {
@@ -91756,6 +91963,7 @@
                 });
 
                 showAssetView('gallery');
+                applyAssetGalleryControls('asset');
                 if (savedScroll !== undefined) {
                     const main = document.getElementById('asset-main');
                     if (!main) {
@@ -91899,7 +92107,13 @@
             if (assetNavLevel >= 2 && assetNavOutfit && assetNavExpression) {
                 html += `<span class="bc-sep">/</span><span class="bc-active">${escapeHtml(assetNavOutfit)}-${escapeHtml(assetNavExpression)}</span>`;
             }
+            if (assetNavLevel === 1 && assetNavCharacter) {
+                html += buildAssetGalleryControls('asset');
+            }
             bc.innerHTML = html;
+            if (assetNavLevel === 1 && assetNavCharacter) {
+                restoreAssetGallerySearchValue('asset');
+            }
         }
 
         function updateGenerateBtn() {
