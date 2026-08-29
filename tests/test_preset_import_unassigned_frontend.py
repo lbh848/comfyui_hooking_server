@@ -49,6 +49,57 @@ def test_direct_edit_has_separate_item_and_unassigned_subtabs():
     assert "아래 체크를 끄면 해당 프리셋에는 적용하지 않습니다." in source
 
 
+def test_validation_target_name_edit_updates_every_record_from_same_source_item():
+    source = _frontend_source()
+    normalize_and_editor = source[
+        source.index("function pmiNormalizeTargetName(value)") :
+        source.index("function pmiUpdateFragmentText(index, value)")
+    ]
+    validation_editor = source[
+        source.index("function pmiUpdateValidationTargetName(itemId, value, input)") :
+        source.index("function pmiResolutionChanged(recordId)")
+    ]
+    setup = """
+let pmImportAnalysis = {items: [{id: 'scene-0-item-0', target_name: 'old'}]};
+const linkedInputs = [
+  {dataset: {pmiTargetItem: 'scene-0-item-0'}, value: 'old'},
+  {dataset: {pmiTargetItem: 'scene-0-item-0'}, value: 'old'},
+  {dataset: {pmiTargetItem: 'other-item'}, value: 'other'}
+];
+const document = {querySelectorAll: () => linkedInputs};
+let invalidated = 0;
+let scheduled = 0;
+let rendered = 0;
+function pmiInvalidateValidation() { invalidated += 1; }
+function pmiScheduleValidation() { scheduled += 1; }
+function pmiRenderItemList() { rendered += 1; }
+const editedInput = {value: '새/이름'};
+pmiUpdateValidationTargetName('scene-0-item-0', editedInput.value, editedInput);
+const state = {
+  targetName: pmImportAnalysis.items[0].target_name,
+  editedValue: editedInput.value,
+  linkedValues: linkedInputs.map(input => input.value),
+  invalidated,
+  scheduled,
+  rendered
+};
+"""
+
+    state = _run_node(
+        f"{normalize_and_editor}\n{validation_editor}\n{setup}",
+        "state",
+    )
+
+    assert state == {
+        "targetName": "새-이름",
+        "editedValue": "새-이름",
+        "linkedValues": ["새-이름", "새-이름", "other"],
+        "invalidated": 1,
+        "scheduled": 1,
+        "rendered": 1,
+    }
+
+
 def test_unassigned_identity_ignores_numeric_weight_but_preserves_set_identity():
     helpers = _unassigned_helpers()
     expression = """[

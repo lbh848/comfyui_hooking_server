@@ -99850,6 +99850,8 @@
         let pmImportItemFilter = 'modified';
         let pmImportSelectedOnly = true;
         let pmImportValidation = null;
+        let pmImportValidationTimer = null;
+        let pmImportValidationRevision = 0;
         let pmImportBusy = false;
         let pmImportCommitted = false;
         let pmImportFragmentSelections = new Map();
@@ -102001,10 +102003,41 @@
         }
 
         function pmiInvalidateValidation() {
+            pmImportValidationRevision += 1;
+            if (pmImportValidationTimer !== null) {
+                clearTimeout(pmImportValidationTimer);
+                pmImportValidationTimer = null;
+            }
             pmImportValidation = null;
             pmImportCommitted = false;
             const button = document.getElementById('pmi-commit-btn');
             if (button) button.disabled = true;
+        }
+
+        function pmiScheduleValidation(message) {
+            if (!pmImportAnalysis || pmImportStep !== 5 || pmImportCommitted) return;
+            const summaryTarget = document.getElementById('pmi-save-summary');
+            const errorsTarget = document.getElementById('pmi-validation-errors');
+            if (summaryTarget) summaryTarget.innerHTML = `<div class="pmi-info-box">${pmEscapeHtml(message)} 입력이 끝나면 자동으로 다시 검증합니다.</div>`;
+            if (errorsTarget) errorsTarget.innerHTML = '<div class="pmi-info-box">이전 검증 메시지를 지웠습니다. 변경된 이름을 확인하는 중입니다.</div>';
+            pmiRenderChainOption();
+
+            const selectedItems = pmImportAnalysis.items.filter(item => item.selected);
+            const hasEmptyTargetName = selectedItems.some(item => !String(item.target_name || '').trim());
+            const needsChainName = pmImportCreateChain && pmiSelectedSceneCount() > 0;
+            if (hasEmptyTargetName || (needsChainName && !pmImportChainName.trim())) {
+                if (errorsTarget) errorsTarget.innerHTML = '<div class="pmi-error-box">빈 이름을 모두 입력한 뒤 다시 검증해주세요.</div>';
+                return;
+            }
+
+            pmImportValidationTimer = setTimeout(() => {
+                pmImportValidationTimer = null;
+                if (pmImportBusy) {
+                    pmiScheduleValidation(message);
+                    return;
+                }
+                pmiValidate({ silent: true });
+            }, 450);
         }
 
         function pmiToggleEditorItem(itemIndex, checked) {
@@ -102170,11 +102203,13 @@
             pmImportCreateChain = !!checked;
             pmiInvalidateValidation();
             pmiRenderChainOption();
+            pmiScheduleValidation('체인 생성 옵션이 변경되었습니다.');
         }
 
         function pmiSetChainName(value) {
             pmImportChainName = value;
             pmiInvalidateValidation();
+            pmiScheduleValidation('체인 프리셋 이름이 변경되었습니다.');
         }
 
         function pmiRenderChainOption() {
@@ -102186,7 +102221,7 @@
             const available = sceneCount > 0 && !pmImportCommitted;
             checkbox.checked = pmImportCreateChain && sceneCount > 0;
             checkbox.disabled = !available;
-            nameInput.value = pmImportChainName;
+            if (nameInput.value !== pmImportChainName) nameInput.value = pmImportChainName;
             nameInput.disabled = !available || !checkbox.checked;
             const chainValidation = pmImportValidation && pmImportValidation.chain_preset;
             if (!sceneCount) {
@@ -102206,25 +102241,42 @@
             await pmiValidate();
         }
 
-        async function pmiValidate() {
+        async function pmiValidate(options = {}) {
             if (!pmImportAnalysis || pmImportBusy) return;
+            const silent = options.silent === true;
+            const validationRevision = pmImportValidationRevision;
+            if (pmImportValidationTimer !== null) {
+                clearTimeout(pmImportValidationTimer);
+                pmImportValidationTimer = null;
+            }
             pmImportBusy = true;
             document.getElementById('pmi-commit-btn').disabled = true;
             document.getElementById('pmi-save-summary').innerHTML = '<div class="pmi-info-box">초안과 현재 프리셋 저장소를 대조하는 중...</div>';
             try {
-                pmImportValidation = await pmiRequest(
+                const validation = await pmiRequest(
                     '/api/asset_mode/preset_import/validate',
                     { draft: pmiBuildDraft(), chain_preset: pmiBuildChainRequest() },
                     [422],
                 );
+                if (validationRevision !== pmImportValidationRevision) {
+                    console.info('[PM_IMPORT] 이름 변경 전 검증 응답을 폐기했습니다.', { validationRevision, currentRevision: pmImportValidationRevision });
+                    return;
+                }
+                pmImportValidation = validation;
                 pmiRenderValidation();
-                if (pmImportValidation.success) showToast('최종 검증을 통과했습니다.', 'success');
-                else showToast(`${pmImportValidation.errors.length}개 항목을 수정해주세요.`, 'warning');
+                if (!silent) {
+                    if (pmImportValidation.success) showToast('최종 검증을 통과했습니다.', 'success');
+                    else showToast(`${pmImportValidation.errors.length}개 항목을 수정해주세요.`, 'warning');
+                }
             } catch (error) {
+                if (validationRevision !== pmImportValidationRevision) {
+                    console.info('[PM_IMPORT] 이름 변경 전 검증 오류를 폐기했습니다.', { validationRevision, currentRevision: pmImportValidationRevision });
+                    return;
+                }
                 console.error('[PM_IMPORT] 초안 검증 실패:', error);
                 pmImportValidation = null;
                 document.getElementById('pmi-save-summary').innerHTML = `<div class="pmi-error-box">${pmEscapeHtml(error.message)}</div>`;
-                showToast(error.message, 'error');
+                if (!silent) showToast(error.message, 'error');
             } finally {
                 pmImportBusy = false;
             }
@@ -102267,14 +102319,33 @@
             recordsTarget.innerHTML = result.records.length ? result.records.map(record => {
                 const conflict = conflicts.get(record.id);
                 const preview = record.values.slice(0, 5).map(value => pmEscapeHtml(value)).join(', ') + (record.values.length > 5 ? ` 외 ${record.values.length - 5}개` : '');
+                const categoryLabel = pmEscapeHtml(PM_IMPORT_CATEGORIES[record.category] || record.category);
+                const nameInput = `<input class="pm-input" data-pmi-target-item="${pmEscapeHtml(record.item_id)}" value="${pmEscapeHtml(record.name)}" aria-label="${categoryLabel} 저장 대상 이름" style="margin-top:6px;" oninput="pmiUpdateValidationTargetName(this.dataset.pmiTargetItem, this.value, this)">`;
                 if (!conflict) {
                     const label = record.status === 'same' ? '동일값 유지' : '신규';
-                    return `<div class="pmi-result-row"><span class="pmi-badge ${record.status === 'same' ? '' : 'llm'}">${label}</span><div style="margin-top:5px;font-weight:650;">${pmEscapeHtml(PM_IMPORT_CATEGORIES[record.category] || record.category)} / ${pmEscapeHtml(record.name)}</div><div style="margin-top:4px;color:var(--text2);">${preview}</div></div>`;
+                    return `<div class="pmi-result-row"><span class="pmi-badge ${record.status === 'same' ? '' : 'llm'}">${label}</span><div style="margin-top:5px;font-weight:650;">${categoryLabel}</div>${nameInput}<div style="margin-top:4px;color:var(--text2);">${preview}</div></div>`;
                 }
                 const suggested = `${record.name}_가져오기`;
-                return `<div class="pmi-conflict" data-record-id="${record.id}"><div><span class="pmi-badge user">${conflict.state === 'hidden' ? '숨김 충돌' : '활성 충돌'}</span><div style="margin-top:5px;font-weight:650;">${pmEscapeHtml(PM_IMPORT_CATEGORIES[record.category] || record.category)} / ${pmEscapeHtml(record.name)}</div><div style="margin-top:4px;color:var(--text2);">가져올 값: ${preview}</div></div><div class="pmi-conflict-controls"><select class="pm-input" id="pmi-resolution-${record.id}" onchange="pmiResolutionChanged('${record.id}')"><option value="keep">기존 값 유지</option><option value="overwrite">가져온 값으로 덮어쓰기${conflict.state === 'hidden' ? '·활성화' : ''}</option><option value="rename">새 이름으로 추가</option></select><input class="pm-input" id="pmi-rename-${record.id}" value="${pmEscapeHtml(suggested)}" placeholder="새 프리셋 이름" style="display:none;" oninput="this.value = pmiNormalizeTargetName(this.value)"></div></div>`;
+                return `<div class="pmi-conflict" data-record-id="${record.id}"><div><span class="pmi-badge user">${conflict.state === 'hidden' ? '숨김 충돌' : '활성 충돌'}</span><div style="margin-top:5px;font-weight:650;">${categoryLabel}</div>${nameInput}<div style="margin-top:4px;color:var(--text2);">가져올 값: ${preview}</div></div><div class="pmi-conflict-controls"><select class="pm-input" id="pmi-resolution-${record.id}" onchange="pmiResolutionChanged('${record.id}')"><option value="keep">기존 값 유지</option><option value="overwrite">가져온 값으로 덮어쓰기${conflict.state === 'hidden' ? '·활성화' : ''}</option><option value="rename">새 이름으로 추가</option></select><input class="pm-input" id="pmi-rename-${record.id}" value="${pmEscapeHtml(suggested)}" placeholder="새 프리셋 이름" style="display:none;" oninput="this.value = pmiNormalizeTargetName(this.value)"></div></div>`;
             }).join('') : '<div class="pm-empty">생성할 저장 레코드가 없습니다.</div>';
             commitButton.disabled = !result.success || pmImportCommitted;
+        }
+
+        function pmiUpdateValidationTargetName(itemId, value, input) {
+            const item = pmImportAnalysis && pmImportAnalysis.items.find(candidate => candidate.id === itemId);
+            if (!item) {
+                console.error('[PM_IMPORT] 저장 대상 이름을 변경할 원본 항목이 없습니다.', { itemId, value });
+                return;
+            }
+            const normalized = pmiNormalizeTargetName(value);
+            item.target_name = normalized;
+            if (input && input.value !== normalized) input.value = normalized;
+            document.querySelectorAll('#pmi-validation-records [data-pmi-target-item]').forEach(candidate => {
+                if (candidate.dataset.pmiTargetItem === itemId && candidate.value !== normalized) candidate.value = normalized;
+            });
+            pmiRenderItemList();
+            pmiInvalidateValidation();
+            pmiScheduleValidation('저장 대상 이름이 변경되었습니다.');
         }
 
         function pmiResolutionChanged(recordId) {
@@ -102371,6 +102442,11 @@
 
         function pmiResetImport(force = false) {
             if (!force && pmImportAnalysis && !pmImportCommitted && !confirm('현재 가져오기 분석과 편집 내용을 모두 지울까요?')) return;
+            if (pmImportValidationTimer !== null) {
+                clearTimeout(pmImportValidationTimer);
+                pmImportValidationTimer = null;
+            }
+            pmImportValidationRevision += 1;
             pmImportAnalysis = null;
             pmImportBaseline = null;
             pmImportValidation = null;

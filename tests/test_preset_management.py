@@ -233,6 +233,13 @@ def test_frontend_uses_unified_preset_workspace_and_explicit_save_action():
     assert "target_name: pmiNormalizeTargetName(item.target_name)" in source
     assert "new_name: rename ? pmiNormalizeTargetName(rename.value) : ''" in source
     assert "composition_presets: '구도 및 기타'" in source
+    assert "function pmiScheduleValidation(message)" in source
+    assert "pmiValidate({ silent: true })" in source
+    assert "pmiScheduleValidation('체인 프리셋 이름이 변경되었습니다.')" in source
+    assert "이전 검증 메시지를 지웠습니다. 변경된 이름을 확인하는 중입니다." in source
+    assert 'data-pmi-target-item="${pmEscapeHtml(record.item_id)}"' in source
+    assert "function pmiUpdateValidationTargetName(itemId, value, input)" in source
+    assert "candidate.dataset.pmiTargetItem === itemId" in source
     assert 'id="pm-view-batch"' not in source
     assert 'id="pm-view-trace"' not in source
 
