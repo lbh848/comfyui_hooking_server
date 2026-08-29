@@ -1203,7 +1203,17 @@ def test_frontend_has_thumbnail_review_modal_and_explicit_apply_modes():
     assert "비어 있는 값만 채우기" in frontend
     assert "기존 값도 교체" in frontend
     assert "source_text: state.sourceText" in frontend
-    assert "이 임시 원문은 시스템 프롬프트에 저장되지 않습니다" in frontend
+    assert "LLM이 해석할 에셋 출력 지침 · 임시 입력" in frontend
+    assert 'placeholder="에셋 출력 지침을 넣으세요"' in frontend
+    assert '<details class="visual-guide-source">' not in frontend
+    assert "sourceDetails.open" not in frontend
+    modal_source = frontend[
+        frontend.index("async function openVisualGuideGeneratorModal"):
+        frontend.index("function closeVisualGuideGeneratorModal")
+    ]
+    assert "sourceText: ''" in modal_source
+    assert "/api/bot_mode/system_prompt" not in modal_source
+    assert "임시 입력 · 저장되지 않음" in modal_source
     assert "_handleVisualGuideQueueProgress(data)" in frontend
     assert "_visualGuideMergeSuggestions(liveSuggestions)" in frontend
     assert "detail.phase !== 'visual_profile_guide'" in frontend
@@ -1215,10 +1225,7 @@ def test_frontend_has_thumbnail_review_modal_and_explicit_apply_modes():
     assert "/api/bot_mode/character_cards/suggest_metadata/cancel" in frontend
     assert "/api/bot_mode/character_cards/suggest_metadata" in frontend
     assert "/api/bot_mode/character_cards/apply_metadata" in frontend
-    assert "overlay.onclick" not in frontend[
-        frontend.index("async function openVisualGuideGeneratorModal"):
-        frontend.index("function closeVisualGuideGeneratorModal")
-    ]
+    assert "overlay.onclick" not in modal_source
 
 
 def test_visual_guide_generator_has_one_bot_sidebar_entry_point():

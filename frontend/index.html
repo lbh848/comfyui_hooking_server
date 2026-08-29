@@ -10642,12 +10642,11 @@
             border-radius: 8px;
             background: color-mix(in srgb, var(--surface2) 88%, transparent);
         }
-        .visual-guide-source summary {
-            cursor: pointer;
+        .visual-guide-source-title {
             padding: 8px 10px;
             font-size: 0.73rem;
             color: var(--text2);
-            user-select: none;
+            font-weight: 700;
         }
         .visual-guide-source textarea {
             display: block;
@@ -16459,8 +16458,8 @@
                         </div>
                         <div style="background:rgba(124,58,237,0.08); border:1px solid rgba(139,92,246,0.28); border-radius:8px; padding:10px; margin-top:8px;">
                             <div class="section-title">캐릭터 카드 선택 기준</div>
-                            <div style="font-size:0.67rem; color:var(--text2); line-height:1.35; margin-bottom:6px;">이미지 출력 지침을 읽어 현재 봇의 모든 카드에 별칭과 선택 기준을 제안합니다.</div>
-                            <button id="btn-visual-guide-generator" type="button" onclick="openVisualGuideGeneratorModal()" title="현재 시스템 프롬프트의 이미지 출력 지침을 읽어 모든 카드의 별칭과 선택 기준을 제안합니다."
+                            <div style="font-size:0.67rem; color:var(--text2); line-height:1.35; margin-bottom:6px;">임시 에셋 출력 지침을 읽어 현재 봇의 모든 카드에 별칭과 선택 기준을 제안합니다.</div>
+                            <button id="btn-visual-guide-generator" type="button" onclick="openVisualGuideGeneratorModal()" title="팝업에 입력한 임시 에셋 출력 지침을 읽어 모든 카드의 별칭과 선택 기준을 제안합니다."
                                 style="width:100%; padding:6px 8px; border:1px solid rgba(139,92,246,.45); border-radius:6px; background:rgba(124,58,237,.16); color:var(--text); cursor:pointer; font-size:.75rem; font-weight:700;">✨ 이미지 지침으로 자동 작성</button>
                         </div>
                         <div id="bot-one-click-workflow-group" style="background:linear-gradient(145deg, rgba(14,165,233,0.10), rgba(124,58,237,0.08)); border:1px solid color-mix(in srgb, var(--accent) 35%, var(--border)); border-radius:10px; padding:10px; margin-top:8px;">
@@ -66509,9 +66508,6 @@
             }
             try {
                 await _ensureVisualCardStates(bot);
-                const response = await fetch(`/api/bot_mode/system_prompt?bot_name=${encodeURIComponent(botCurrentBot)}`);
-                const source = await response.json();
-                if (!response.ok) throw new Error(source.error || '시스템 프롬프트 로드 실패');
                 const targets = _collectVisualGuideTargets(focusCharacter, focusProfileId);
                 if (!targets.length) {
                     console.error('[VISUAL_GUIDE] 팝업에 표시할 카드 없음', {bot: botCurrentBot});
@@ -66522,9 +66518,7 @@
                 _visualGuideModalState = {
                     botName: botCurrentBot,
                     targets,
-                    sourceText: String(source.text || ''),
-                    sourcePreset: String(source.preset || ''),
-                    sourceScope: String(source.scope || ''),
+                    sourceText: '',
                     search: '',
                     busy: false,
                     progress: null,
@@ -66544,10 +66538,10 @@
                             <div style="flex:1"></div>
                             <button id="visual-guide-close" type="button" onclick="closeVisualGuideGeneratorModal()" style="border:none;background:transparent;color:var(--text2);font-size:1.35rem;cursor:pointer">✕</button>
                         </div>
-                        <details class="visual-guide-source">
-                            <summary>LLM이 해석할 이미지 출력 지침 원문 확인·임시 편집</summary>
-                            <textarea id="visual-guide-source-text" maxlength="1000000" placeholder="현재 시스템 프롬프트가 비어 있으면 Image Command Instructions 같은 이미지 출력 지침을 여기에 붙여 넣으세요. 이 임시 원문은 시스템 프롬프트에 저장되지 않습니다."></textarea>
-                        </details>
+                        <div class="visual-guide-source">
+                            <div class="visual-guide-source-title">LLM이 해석할 에셋 출력 지침 · 임시 입력</div>
+                            <textarea id="visual-guide-source-text" maxlength="1000000" placeholder="에셋 출력 지침을 넣으세요"></textarea>
+                        </div>
                         <div class="visual-guide-toolbar">
                             <input id="visual-guide-search" type="search" placeholder="캐릭터·카드·파일명 검색" style="min-width:220px;flex:1;max-width:420px;padding:6px 9px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text)">
                             <button type="button" onclick="_visualGuideSetSelection('missing')" style="padding:5px 9px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);cursor:pointer">미작성 선택</button>
@@ -66577,12 +66571,8 @@
                     if (!_visualGuideModalState) return;
                     _visualGuideModalState.sourceText = event.currentTarget.value || '';
                 });
-                if (!_visualGuideModalState.sourceText.trim()) {
-                    const sourceDetails = overlay.querySelector('.visual-guide-source');
-                    if (sourceDetails) sourceDetails.open = true;
-                }
                 document.getElementById('visual-guide-source-label').textContent =
-                    `${_visualGuideModalState.sourceScope || 'unknown'} · ${_visualGuideModalState.sourcePreset || '프리셋 이름 없음'} · 카드 ${targets.length}개`;
+                    `임시 입력 · 저장되지 않음 · 카드 ${targets.length}개`;
                 document.getElementById('visual-guide-search').addEventListener('input', event => {
                     if (!_visualGuideModalState) return;
                     _visualGuideModalState.search = event.target.value || '';
@@ -66977,12 +66967,11 @@
                 return;
             }
             if (!String(state.sourceText || '').trim()) {
-                console.error('[VISUAL_GUIDE] 생성에 사용할 이미지 출력 지침 원문이 비어 있습니다', {
+                console.error('[VISUAL_GUIDE] 생성에 사용할 에셋 출력 지침이 비어 있습니다', {
                     bot: state.botName,
                 });
-                const sourceDetails = document.querySelector('#visual-guide-generator-overlay .visual-guide-source');
-                if (sourceDetails) sourceDetails.open = true;
-                showToast('이미지 출력 지침 원문을 입력하세요.', 'error');
+                document.getElementById('visual-guide-source-text')?.focus();
+                showToast('에셋 출력 지침을 입력하세요.', 'error');
                 return;
             }
             state.busy = true;
