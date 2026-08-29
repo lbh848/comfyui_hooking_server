@@ -618,7 +618,6 @@ DEFAULT_CONFIG = {
     "illustration_context_toggles": {
         "illustration_output_mode": "illustration",
         "original_asset_count": 1,
-        "original_asset_instruction": "",
         "profile_resolve_enabled": True,
         "call1_backtranslate_enabled": False,
         "call1_backtranslate_max_concurrency": 4,
@@ -2232,6 +2231,9 @@ def _capture_illustration_runtime_snapshot(config: dict | None = None) -> dict:
     )
     toggles = illustration_context_pipeline.merged_toggles(
         raw_toggles
+    )
+    toggles["original_asset_instruction"] = bot_mode.get_asset_output_instruction(
+        bot_name
     )
     snapshot = {
         "bot_name": bot_name,
@@ -8398,9 +8400,16 @@ async def handle_api_illustration_context_toggles(request: web.Request) -> web.R
     """서버가 제어하는 삽화 CALL/출력 토글 조회·저장."""
     try:
         if request.method == "GET":
-            toggles = illustration_context_pipeline.merged_toggles(
-                app_config.get("illustration_context_toggles")
+            raw_toggles = copy.deepcopy(
+                app_config.get("illustration_context_toggles") or {}
             )
+            if raw_toggles.pop("original_asset_instruction", None) is not None:
+                print(
+                    "[ILLUST_CONTEXT] 레거시 전역 original_asset_instruction을 "
+                    "조회에서 제외했습니다"
+                )
+            toggles = illustration_context_pipeline.merged_toggles(raw_toggles)
+            toggles.pop("original_asset_instruction", None)
             toggles["prompt_format"] = workflow_profiles.illustration_prompt_format(
                 app_config.get("illustration_workflow_type")
             )
@@ -8412,7 +8421,14 @@ async def handle_api_illustration_context_toggles(request: web.Request) -> web.R
         if not isinstance(raw, dict):
             print(f"[ILLUST_CONTEXT] toggle 저장 body가 잘못됨: {body!r}")
             return web.json_response({"error": "toggles must be object"}, status=400)
+        raw = copy.deepcopy(raw)
+        if raw.pop("original_asset_instruction", None) is not None:
+            print(
+                "[ILLUST_CONTEXT] 레거시 전역 original_asset_instruction 저장 요청을 "
+                "무시했습니다"
+            )
         toggles = illustration_context_pipeline.merged_toggles(raw)
+        toggles.pop("original_asset_instruction", None)
         requested_prompt_format = toggles.get("prompt_format")
         toggles["prompt_format"] = workflow_profiles.illustration_prompt_format(
             app_config.get("illustration_workflow_type")
@@ -26020,6 +26036,14 @@ app.router.add_get("/api/bot_mode/lb_extra", bot_mode.handle_get_lb_extra)
 app.router.add_post("/api/bot_mode/lb_extra", bot_mode.handle_save_lb_extra)
 app.router.add_get("/api/bot_mode/character_cards", bot_mode.handle_get_character_cards)
 app.router.add_post("/api/bot_mode/character_cards", bot_mode.handle_save_character_cards)
+app.router.add_get(
+    "/api/bot_mode/asset_output_instruction",
+    bot_mode.handle_get_asset_output_instruction,
+)
+app.router.add_post(
+    "/api/bot_mode/asset_output_instruction",
+    bot_mode.handle_save_asset_output_instruction,
+)
 app.router.add_post(
     "/api/bot_mode/character_cards/suggest_metadata",
     bot_mode.handle_suggest_character_card_metadata,

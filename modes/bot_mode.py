@@ -79,6 +79,7 @@ RECOMMENDED_POSITIVE_RULES = {
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 FACE_CROP_FOLDER_NAME = "FACE CROP"
+ASSET_OUTPUT_INSTRUCTION_MAX_CHARS = 120_000
 
 
 def get_bot_visual_targets(
@@ -524,46 +525,53 @@ def copy_default() -> dict:
     return copy.deepcopy(DEFAULT_BOT_DATA)
 
 
+def get_bot_asset_output_instruction(
+    bot_name: str,
+    *,
+    data: dict | None = None,
+) -> str:
+    """Return the selected bot's sole asset-output instruction source."""
+    normalized_name = str(bot_name or "").strip()
+    if not normalized_name:
+        print("[ASSET_OUTPUT_INSTRUCTION] 조회 실패: 봇 이름이 비어 있습니다")
+        return ""
+    root = _load_bot_data() if data is None else data
+    bot = next(
+        (
+            item for item in (root.get("bots") or [])
+            if isinstance(item, dict) and item.get("name") == normalized_name
+        ),
+        None,
+    )
+    if bot is None:
+        print(
+            f"[ASSET_OUTPUT_INSTRUCTION] 조회 실패: "
+            f"봇을 찾을 수 없습니다: bot={normalized_name!r}"
+        )
+        return ""
+    instruction = bot.get("asset_output_instruction", "")
+    if not isinstance(instruction, str):
+        print(
+            f"[ASSET_OUTPUT_INSTRUCTION] 저장값 형식 오류: "
+            f"bot={normalized_name!r}, type={type(instruction).__name__}"
+        )
+        return ""
+    if len(instruction) > ASSET_OUTPUT_INSTRUCTION_MAX_CHARS:
+        print(
+            f"[ASSET_OUTPUT_INSTRUCTION] 저장값 길이 초과로 잘라서 사용: "
+            f"bot={normalized_name!r}, chars={len(instruction)}, "
+            f"max={ASSET_OUTPUT_INSTRUCTION_MAX_CHARS}"
+        )
+        return instruction[:ASSET_OUTPUT_INSTRUCTION_MAX_CHARS]
+    return instruction
+
+
 VISUAL_GUIDE_MAX_TARGETS = 120
 VISUAL_GUIDE_TASK_KEY = "visual_profile_guide"
 VISUAL_APPEARANCE_TASK_KEY = "visual_profile_appearance_vision"
 VISUAL_GUIDE_QUEUE_TYPE = "visual_profile_guide"
 VISUAL_GUIDE_MAX_SELECTION_LENGTH = 4000
 VISUAL_APPEARANCE_MAX_CONTEXT_LENGTH = 1200
-
-
-def _selected_bot_system_prompt(data: dict, bot: dict) -> tuple[str, str, str]:
-    """Return the selected prompt text and its preset identity without saving data."""
-    builtin = _load_builtin_presets() or {}
-    local = data.get("system_prompt_presets", {}) or {}
-    _ensure_bot_preset_scope(bot, set(builtin), set(local))
-
-    preset = str(bot.get("system_prompt_preset") or "").strip()
-    scope = str(bot.get("preset_scope") or "local").strip()
-    if scope == "builtin" and (not preset or preset not in builtin):
-        print(
-            f"[VISUAL_GUIDE] builtin 프롬프트 참조 보정: "
-            f"bot={bot.get('name')!r}, preset={preset!r}"
-        )
-        scope = "local"
-    if scope == "local" and (not preset or preset not in local):
-        fallback_preset = "기본" if "기본" in local else (next(iter(local), "") if local else "")
-        print(
-            f"[VISUAL_GUIDE] local 프롬프트 참조 보정: "
-            f"bot={bot.get('name')!r}, preset={preset!r}, fallback={fallback_preset!r}"
-        )
-        preset = fallback_preset
-
-    if scope == "builtin":
-        text = builtin.get(preset, "")
-    else:
-        text = local.get(preset, bot.get("system_prompt", "")) if preset else bot.get("system_prompt", "")
-        if not str(text or "").strip():
-            print(
-                f"[VISUAL_GUIDE] 선택 프롬프트 참조가 유효하지 않음: "
-                f"bot={bot.get('name')!r}, preset={preset!r}, scope={scope!r}"
-            )
-    return str(text or "").strip(), preset, scope
 
 
 def _visual_guide_tag_text(values) -> str:
@@ -1448,7 +1456,11 @@ class BotMode:
             return _json_error("봇 이름이 비어있습니다.")
         if any(b["name"] == name for b in data["bots"]):
             return _json_error(f"이미 존재하는 봇: {name}")
-        data["bots"].append({"name": name, "characters": []})
+        data["bots"].append({
+            "name": name,
+            "asset_output_instruction": "",
+            "characters": [],
+        })
         os.makedirs(os.path.join(BOT_DIR, name), exist_ok=True)
         _save_bot_data(data)
         print(f"[BOT_MODE] 봇 추가: {name}")
@@ -3815,36 +3827,16 @@ class BotMode:
             if bot is None:
                 print(f"[VISUAL_GUIDE:API] 생성할 봇 없음: bot={bot_name!r}")
                 return _json_error(f"봇을 찾을 수 없습니다: {bot_name}", 404)
-            system_prompt, preset, scope = _selected_bot_system_prompt(data, bot)
-            source_override = body.get("source_text")
-            if source_override is not None and not isinstance(source_override, str):
-                print(
-                    f"[VISUAL_GUIDE:API] source_text 형식 오류: "
-                    f"bot={bot_name!r}, type={type(source_override).__name__}"
-                )
-                return _json_error("source_text는 문자열이어야 합니다.")
-            if isinstance(source_override, str):
-                if len(source_override) > 1_000_000:
-                    print(
-                        f"[VISUAL_GUIDE:API] source_text 길이 초과: "
-                        f"bot={bot_name!r}, length={len(source_override)}"
-                    )
-                    return _json_error("이미지 출력 지침은 1,000,000자를 넘을 수 없습니다.")
-                if source_override.strip():
-                    system_prompt = source_override.strip()
-                    preset = "팝업 임시 원문"
-                    scope = "modal"
-                    print(
-                        f"[VISUAL_GUIDE:API] 팝업 임시 원문 사용: "
-                        f"bot={bot_name!r}, length={len(system_prompt)}"
-                    )
+            system_prompt = get_bot_asset_output_instruction(bot_name, data=data).strip()
+            preset = "에셋 출력 지침"
+            scope = "bot"
             if not system_prompt:
                 print(
-                    f"[VISUAL_GUIDE:API] 시스템 프롬프트 비어 있음: "
-                    f"bot={bot_name!r}, preset={preset!r}, scope={scope!r}"
+                    f"[VISUAL_GUIDE:API] 봇별 에셋 출력 지침 비어 있음: "
+                    f"bot={bot_name!r}"
                 )
                 return _json_error(
-                    "현재 봇의 시스템 프롬프트가 비어 있어 선택 기준을 만들 수 없습니다."
+                    "현재 봇의 에셋 출력 지침이 비어 있어 선택 기준을 만들 수 없습니다."
                 )
 
             lb_extra = _load_lb_extra(bot_name) or []
@@ -5154,6 +5146,87 @@ class BotMode:
             return _json_error(str(e))
         except Exception as e:
             print(f"[VISUAL_GUIDE:APPLY] 적용 예외: {e}")
+            traceback.print_exc()
+            return _json_error(str(e), 500)
+
+    # ─── 봇별 에셋 출력 지침 ─────────────────────────────────
+    def get_asset_output_instruction(self, bot_name: str) -> str:
+        """Runtime entry point used when an illustration request is snapshotted."""
+        return get_bot_asset_output_instruction(bot_name)
+
+    async def handle_get_asset_output_instruction(self, request):
+        """GET /api/bot_mode/asset_output_instruction - 봇별 단일 지침 조회."""
+        try:
+            bot_name = str(request.query.get("bot_name") or "").strip()
+            if not bot_name:
+                return _json_error("봇 이름이 비어있습니다.")
+            data = _load_bot_data()
+            bot = next(
+                (item for item in data.get("bots", []) if item.get("name") == bot_name),
+                None,
+            )
+            if bot is None:
+                return _json_error(f"봇을 찾을 수 없습니다: {bot_name}", 404)
+            instruction = get_bot_asset_output_instruction(bot_name, data=data)
+            return _json_ok({
+                "bot_name": bot_name,
+                "instruction": instruction,
+                "length": len(instruction),
+                "max_length": ASSET_OUTPUT_INSTRUCTION_MAX_CHARS,
+            })
+        except Exception as e:
+            print(f"[ASSET_OUTPUT_INSTRUCTION] 조회 실패: {e}")
+            traceback.print_exc()
+            return _json_error(str(e), 500)
+
+    async def handle_save_asset_output_instruction(self, request):
+        """POST /api/bot_mode/asset_output_instruction - 봇별 단일 지침 저장."""
+        try:
+            body = await request.json()
+            if not isinstance(body, dict):
+                return _json_error("요청 본문은 object여야 합니다.")
+            bot_name = str(body.get("bot_name") or "").strip()
+            if not bot_name:
+                return _json_error("봇 이름이 비어있습니다.")
+            instruction = body.get("instruction")
+            if not isinstance(instruction, str):
+                print(
+                    f"[ASSET_OUTPUT_INSTRUCTION] 저장 형식 오류: "
+                    f"bot={bot_name!r}, type={type(instruction).__name__}"
+                )
+                return _json_error("에셋 출력 지침은 문자열이어야 합니다.")
+            if len(instruction) > ASSET_OUTPUT_INSTRUCTION_MAX_CHARS:
+                print(
+                    f"[ASSET_OUTPUT_INSTRUCTION] 저장 길이 초과: "
+                    f"bot={bot_name!r}, chars={len(instruction)}, "
+                    f"max={ASSET_OUTPUT_INSTRUCTION_MAX_CHARS}"
+                )
+                return _json_error(
+                    f"에셋 출력 지침은 {ASSET_OUTPUT_INSTRUCTION_MAX_CHARS:,}자를 넘을 수 없습니다."
+                )
+            async with self._lock:
+                data = _load_bot_data()
+                bot = next(
+                    (item for item in data.get("bots", []) if item.get("name") == bot_name),
+                    None,
+                )
+                if bot is None:
+                    return _json_error(f"봇을 찾을 수 없습니다: {bot_name}", 404)
+                bot["asset_output_instruction"] = instruction
+                _save_bot_data(data)
+            print(
+                f"[ASSET_OUTPUT_INSTRUCTION] 저장 완료: "
+                f"bot={bot_name!r}, chars={len(instruction)}"
+            )
+            return _json_ok({
+                "saved": True,
+                "bot_name": bot_name,
+                "instruction": instruction,
+                "length": len(instruction),
+                "max_length": ASSET_OUTPUT_INSTRUCTION_MAX_CHARS,
+            })
+        except Exception as e:
+            print(f"[ASSET_OUTPUT_INSTRUCTION] 저장 실패: {e}")
             traceback.print_exc()
             return _json_error(str(e), 500)
 

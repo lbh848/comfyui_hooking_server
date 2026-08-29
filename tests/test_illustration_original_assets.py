@@ -1,6 +1,7 @@
 import asyncio
 import json
 import sys
+from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -16,6 +17,15 @@ from modes import illustration_original_assets as original_assets
 def _write_image(path: Path, data: bytes = b"RIFFtestWEBP") -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(data)
+
+
+class _ToggleRequest:
+    def __init__(self, method: str, body: dict | None = None):
+        self.method = method
+        self._body = body or {}
+
+    async def json(self):
+        return deepcopy(self._body)
 
 
 def test_original_asset_index_uses_direct_character_files_and_logical_webp_id(
@@ -587,6 +597,10 @@ def test_original_asset_settings_and_routing_are_registered() -> None:
     assert toggles["original_asset_enabled"] is True
     assert toggles["original_asset_count"] == 30
     assert toggles["original_asset_instruction"] == "rules"
+    assert (
+        "original_asset_instruction"
+        not in server.DEFAULT_CONFIG["illustration_context_toggles"]
+    )
     assert pipeline._CALL_TASK_KEYS["ORIGINAL-ASSET"] == "illustration_original_asset"
     assert (
         pipeline._CALL_TASK_KEYS["ORIGINAL-ASSET-RECOVERY"]
@@ -604,6 +618,70 @@ def test_original_asset_settings_and_routing_are_registered() -> None:
     assert server.DEFAULT_CONFIG["llm_routing"][
         "illustration_original_asset_recovery"
     ]["json_mode"] is True
+
+
+def test_runtime_snapshot_uses_bot_instruction_and_ignores_legacy_global_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = deepcopy(server.DEFAULT_CONFIG)
+    config["bot_selected"] = "sample"
+    config["illustration_context_toggles"] = {
+        "illustration_output_mode": "original_asset",
+        "original_asset_instruction": "legacy global rules",
+    }
+    monkeypatch.setattr(server, "_load_word_rules_snapshot", lambda _bot_name: [])
+    monkeypatch.setattr(
+        server.bot_mode,
+        "get_asset_output_instruction",
+        lambda bot_name: "saved bot-only rules" if bot_name == "sample" else "",
+    )
+
+    snapshot = server._capture_illustration_runtime_snapshot(config)
+
+    assert snapshot["illustration_context_toggles"][
+        "original_asset_instruction"
+    ] == "saved bot-only rules"
+
+
+@pytest.mark.asyncio
+async def test_global_toggle_api_drops_legacy_asset_instruction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = deepcopy(server.DEFAULT_CONFIG)
+    config["illustration_context_toggles"] = {
+        "illustration_output_mode": "both",
+        "original_asset_instruction": "legacy global rules",
+    }
+    saved_configs = []
+    monkeypatch.setattr(server, "app_config", config)
+    monkeypatch.setattr(
+        server,
+        "save_config",
+        lambda value: saved_configs.append(deepcopy(value)),
+    )
+
+    get_response = await server.handle_api_illustration_context_toggles(
+        _ToggleRequest("GET")
+    )
+    get_payload = json.loads(get_response.text)
+    assert get_response.status == 200
+    assert "original_asset_instruction" not in get_payload["toggles"]
+
+    post_response = await server.handle_api_illustration_context_toggles(
+        _ToggleRequest("POST", {
+            "toggles": {
+                "illustration_output_mode": "both",
+                "original_asset_instruction": "attempted legacy overwrite",
+            }
+        })
+    )
+    post_payload = json.loads(post_response.text)
+    assert post_response.status == 200
+    assert "original_asset_instruction" not in post_payload["toggles"]
+    assert (
+        "original_asset_instruction"
+        not in saved_configs[-1]["illustration_context_toggles"]
+    )
 
 
 def test_illustration_output_mode_derives_booleans_and_legacy_fallback() -> None:
@@ -648,7 +726,9 @@ def test_frontend_places_original_asset_tab_after_output_count() -> None:
     assert groups.index("key: 'output_count'") < groups.index("key: 'original_asset'")
     assert "key: 'illustration_output_mode'" in groups
     assert "key: 'original_asset_count'" in groups
-    assert "key: 'original_asset_instruction'" in groups
+    assert "key: 'original_asset_instruction'" not in groups
+    assert "에셋 출력 지침 세팅" in groups
+    assert "기존 전역 에셋 선택 지침은 사용하지 않습니다" in groups
     assert "key: 'illustration_original_asset'" in frontend
     assert "key: 'illustration_original_asset_recovery'" in frontend
 

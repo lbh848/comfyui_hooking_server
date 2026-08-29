@@ -10589,7 +10589,7 @@
             border: 2px solid var(--border); background: var(--surface2);
         }
 
-        /* ─── 이미지 지침 기반 프로필 선택 기준 자동 작성 ─── */
+        /* ─── 봇별 에셋 출력 지침 / 프로필 선택 기준 자동 작성 ─── */
         .visual-guide-overlay {
             position: fixed;
             inset: 0;
@@ -16456,11 +16456,17 @@
                             <div style="font-size:0.67rem; color:var(--text2); line-height:1.35; margin-bottom:6px;">파일명 검색으로 각 캐릭터의 메인 대표 이미지를 한 번에 지정합니다.</div>
                             <button onclick="openRepBatchModal()" style="width:100%; background:var(--accent2); color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">대표 이미지 일괄 설정</button>
                         </div>
+                        <div style="background:linear-gradient(145deg, rgba(14,165,233,0.10), rgba(124,58,237,0.10)); border:1px solid color-mix(in srgb, var(--accent) 32%, var(--border)); border-radius:8px; padding:10px; margin-top:8px;">
+                            <div class="section-title">에셋 출력 지침</div>
+                            <div style="font-size:0.67rem; color:var(--text2); line-height:1.35; margin-bottom:6px;">현재 봇의 카드 선택 기준 자동 작성과 원본 에셋 출력이 함께 사용하는 단일 지침입니다.</div>
+                            <button id="btn-asset-output-instruction-settings" type="button" onclick="openAssetOutputInstructionSettings()"
+                                style="width:100%; padding:6px 8px; border:none; border-radius:6px; background:linear-gradient(90deg,#0284C7,#7C3AED); color:#fff; cursor:pointer; font-size:.75rem; font-weight:700;">에셋 출력 지침 세팅</button>
+                        </div>
                         <div style="background:rgba(124,58,237,0.08); border:1px solid rgba(139,92,246,0.28); border-radius:8px; padding:10px; margin-top:8px;">
                             <div class="section-title">캐릭터 카드 선택 기준</div>
-                            <div style="font-size:0.67rem; color:var(--text2); line-height:1.35; margin-bottom:6px;">임시 에셋 출력 지침을 읽어 현재 봇의 모든 카드에 별칭과 선택 기준을 제안합니다.</div>
-                            <button id="btn-visual-guide-generator" type="button" onclick="openVisualGuideGeneratorModal()" title="팝업에 입력한 임시 에셋 출력 지침을 읽어 모든 카드의 별칭과 선택 기준을 제안합니다."
-                                style="width:100%; padding:6px 8px; border:1px solid rgba(139,92,246,.45); border-radius:6px; background:rgba(124,58,237,.16); color:var(--text); cursor:pointer; font-size:.75rem; font-weight:700;">✨ 이미지 지침으로 자동 작성</button>
+                            <div style="font-size:0.67rem; color:var(--text2); line-height:1.35; margin-bottom:6px;">저장된 봇별 에셋 출력 지침을 읽어 현재 봇의 모든 카드에 별칭과 선택 기준을 제안합니다.</div>
+                            <button id="btn-visual-guide-generator" type="button" onclick="openVisualGuideGeneratorModal()" title="현재 봇에 저장된 에셋 출력 지침을 읽어 모든 카드의 별칭과 선택 기준을 제안합니다."
+                                style="width:100%; padding:6px 8px; border:1px solid rgba(139,92,246,.45); border-radius:6px; background:rgba(124,58,237,.16); color:var(--text); cursor:pointer; font-size:.75rem; font-weight:700;">✨ 에셋 출력 지침으로 자동 작성</button>
                         </div>
                         <div id="bot-one-click-workflow-group" style="background:linear-gradient(145deg, rgba(14,165,233,0.10), rgba(124,58,237,0.08)); border:1px solid color-mix(in srgb, var(--accent) 35%, var(--border)); border-radius:10px; padding:10px; margin-top:8px;">
                             <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:7px;">
@@ -66205,6 +66211,7 @@
         let _visualCardSlots = {};
         let _visualCardFocusSession = null;
         let _visualCardFocusLoading = false;
+        let _assetOutputInstructionModalState = null;
         let _visualGuideModalState = null;
 
         function _vpTagText(values) {
@@ -66439,6 +66446,180 @@
             catch (error) { showToast('작중 별칭 저장 실패: ' + error.message, 'error'); }
         }
 
+        async function _loadBotAssetOutputInstruction(botName) {
+            const response = await fetch(
+                '/api/bot_mode/asset_output_instruction?bot_name=' + encodeURIComponent(botName)
+            );
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok) {
+                throw new Error(data.error || ('HTTP ' + response.status));
+            }
+            if (typeof data.instruction !== 'string') {
+                console.error('[ASSET_OUTPUT_INSTRUCTION] 조회 응답 형식 오류:', data);
+                throw new Error('저장된 에셋 출력 지침 응답이 올바르지 않습니다.');
+            }
+            const bot = (botData?.bots || []).find(item => item.name === botName);
+            if (bot) bot.asset_output_instruction = data.instruction;
+            return data;
+        }
+
+        function _updateAssetOutputInstructionModal() {
+            const state = _assetOutputInstructionModalState;
+            if (!state) return;
+            const editor = document.getElementById('asset-output-instruction-editor');
+            const status = document.getElementById('asset-output-instruction-status');
+            const save = document.getElementById('asset-output-instruction-save');
+            if (!editor || !status || !save) {
+                console.error('[ASSET_OUTPUT_INSTRUCTION] 팝업 컨트롤을 찾을 수 없습니다');
+                return;
+            }
+            const current = editor.value || '';
+            const dirty = current !== state.savedValue;
+            const hasSavedValue = Boolean(String(state.savedValue || '').trim());
+            status.textContent = [
+                hasSavedValue ? '저장 값 불러옴' : '저장 값 없음',
+                `${current.length.toLocaleString()} / ${state.maxLength.toLocaleString()}자`,
+                dirty ? '저장되지 않은 변경 있음' : '최신 상태',
+            ].join(' · ');
+            status.style.color = dirty ? '#FBBF24' : 'var(--text2)';
+            save.disabled = state.busy || !dirty;
+            save.style.opacity = save.disabled ? '.55' : '1';
+            save.style.cursor = state.busy ? 'wait' : (dirty ? 'pointer' : 'default');
+            save.textContent = state.busy ? '저장 중…' : '저장';
+            editor.disabled = state.busy;
+        }
+
+        async function openAssetOutputInstructionSettings() {
+            if (_assetOutputInstructionModalState) {
+                document.getElementById('asset-output-instruction-editor')?.focus();
+                return;
+            }
+            const botName = String(botCurrentBot || '').trim();
+            if (!botName) {
+                console.error('[ASSET_OUTPUT_INSTRUCTION] 팝업 열기 실패: 선택된 봇 없음');
+                showToast('먼저 봇을 선택하세요.', 'error');
+                return;
+            }
+            try {
+                const loaded = await _loadBotAssetOutputInstruction(botName);
+                _assetOutputInstructionModalState = {
+                    botName,
+                    savedValue: loaded.instruction,
+                    maxLength: Number(loaded.max_length) || 120000,
+                    busy: false,
+                };
+                const overlay = document.createElement('div');
+                overlay.id = 'asset-output-instruction-overlay';
+                overlay.className = 'visual-guide-overlay';
+                overlay.innerHTML = `
+                    <div class="visual-guide-modal" role="dialog" aria-modal="true" aria-labelledby="asset-output-instruction-title" style="width:min(980px,94vw);height:min(760px,90vh)">
+                        <div class="visual-guide-header">
+                            <div style="min-width:0">
+                                <div id="asset-output-instruction-title" style="font-weight:800;font-size:1.02rem">에셋 출력 지침 세팅</div>
+                                <div style="margin-top:3px;font-size:.72rem;color:var(--text2)">${escapeHtml(botName)} 전용 · 카드 선택 기준 자동 작성과 원본 에셋 출력에서 함께 사용</div>
+                            </div>
+                            <div style="flex:1"></div>
+                            <button type="button" onclick="closeAssetOutputInstructionSettings()" style="border:none;background:transparent;color:var(--text2);font-size:1.35rem;cursor:pointer">✕</button>
+                        </div>
+                        <div style="flex:1;min-height:0;display:flex;flex-direction:column;padding:16px;gap:9px">
+                            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                                <div style="font-weight:800;font-size:.82rem">저장 값</div>
+                                <div id="asset-output-instruction-status" style="font-size:.7rem;color:var(--text2)"></div>
+                            </div>
+                            <textarea id="asset-output-instruction-editor" maxlength="${Number(loaded.max_length) || 120000}" spellcheck="false" placeholder="Image Command Instructions 등 현재 봇의 에셋 명령과 선택 규칙을 입력하세요."
+                                style="flex:1;min-height:360px;width:100%;box-sizing:border-box;resize:none;padding:13px;border:1px solid var(--border);border-radius:9px;background:var(--surface2);color:var(--text);font-family:monospace;font-size:.78rem;line-height:1.55"></textarea>
+                            <div style="font-size:.7rem;line-height:1.45;color:var(--text2)">이 값만 에셋 지침으로 사용합니다. 기존 전역 생성 설정의 에셋 선택 지침은 읽지 않습니다.</div>
+                        </div>
+                        <div class="visual-guide-footer">
+                            <div style="flex:1"></div>
+                            <button type="button" onclick="closeAssetOutputInstructionSettings()" style="padding:7px 13px;border:1px solid var(--border);border-radius:7px;background:var(--surface2);color:var(--text);cursor:pointer">닫기</button>
+                            <button id="asset-output-instruction-save" type="button" onclick="saveAssetOutputInstructionSettings()" style="padding:7px 16px;border:none;border-radius:7px;background:linear-gradient(90deg,#0284C7,#7C3AED);color:#fff;cursor:pointer;font-weight:800">저장</button>
+                        </div>
+                    </div>`;
+                document.body.appendChild(overlay);
+                const editor = document.getElementById('asset-output-instruction-editor');
+                editor.value = loaded.instruction;
+                editor.addEventListener('input', _updateAssetOutputInstructionModal);
+                _updateAssetOutputInstructionModal();
+                requestAnimationFrame(() => editor.focus());
+            } catch (error) {
+                console.error('[ASSET_OUTPUT_INSTRUCTION] 팝업 준비 실패:', error, {botName});
+                _assetOutputInstructionModalState = null;
+                document.getElementById('asset-output-instruction-overlay')?.remove();
+                showToast('에셋 출력 지침 로드 실패: ' + (error.message || error), 'error');
+            }
+        }
+
+        function closeAssetOutputInstructionSettings(force = false) {
+            const state = _assetOutputInstructionModalState;
+            if (state?.busy && !force) {
+                console.error('[ASSET_OUTPUT_INSTRUCTION] 저장 중 팝업 닫기 거부', {bot: state.botName});
+                showToast('저장이 끝난 뒤 닫을 수 있습니다.', 'info');
+                return;
+            }
+            const current = document.getElementById('asset-output-instruction-editor')?.value || '';
+            if (state && !force && current !== state.savedValue
+                    && !confirm('저장하지 않은 에셋 출력 지침 변경을 버릴까요?')) {
+                return;
+            }
+            const overlay = document.getElementById('asset-output-instruction-overlay');
+            if (!overlay) {
+                console.error('[ASSET_OUTPUT_INSTRUCTION] 닫을 팝업 요소를 찾을 수 없습니다');
+            } else {
+                overlay.remove();
+            }
+            _assetOutputInstructionModalState = null;
+        }
+
+        async function saveAssetOutputInstructionSettings() {
+            const state = _assetOutputInstructionModalState;
+            const editor = document.getElementById('asset-output-instruction-editor');
+            if (!state || !editor || state.busy) {
+                console.error('[ASSET_OUTPUT_INSTRUCTION] 저장 시작 불가', {
+                    hasState: Boolean(state), hasEditor: Boolean(editor), busy: state?.busy,
+                });
+                return;
+            }
+            const instruction = editor.value || '';
+            if (instruction.length > state.maxLength) {
+                console.error('[ASSET_OUTPUT_INSTRUCTION] 입력 길이 초과', {
+                    bot: state.botName, chars: instruction.length, max: state.maxLength,
+                });
+                showToast(`에셋 출력 지침은 ${state.maxLength.toLocaleString()}자를 넘을 수 없습니다.`, 'error');
+                return;
+            }
+            state.busy = true;
+            _updateAssetOutputInstructionModal();
+            try {
+                const response = await fetch('/api/bot_mode/asset_output_instruction', {
+                    method: 'POST',
+                    headers: {'Content-Type':'application/json'},
+                    body: JSON.stringify({bot_name: state.botName, instruction}),
+                });
+                const data = await response.json().catch(() => ({}));
+                if (!response.ok || data.saved !== true) {
+                    throw new Error(data.error || ('HTTP ' + response.status));
+                }
+                state.savedValue = data.instruction;
+                const bot = (botData?.bots || []).find(item => item.name === state.botName);
+                if (bot) bot.asset_output_instruction = data.instruction;
+                showToast(
+                    String(data.instruction || '').trim()
+                        ? '에셋 출력 지침을 저장했습니다.'
+                        : '에셋 출력 지침을 비웠습니다.',
+                    'success',
+                );
+            } catch (error) {
+                console.error('[ASSET_OUTPUT_INSTRUCTION] 저장 실패:', error, {bot: state.botName});
+                showToast('에셋 출력 지침 저장 실패: ' + (error.message || error), 'error');
+            } finally {
+                if (_assetOutputInstructionModalState === state) {
+                    state.busy = false;
+                    _updateAssetOutputInstructionModal();
+                }
+            }
+        }
+
         function _visualGuideTargetIdentity(character, profileId) {
             return `${String(character || '').toLocaleLowerCase()}\u0000${String(profileId || '')}`;
         }
@@ -66500,25 +66681,50 @@
                 showToast('선택 기준 자동 작성 팝업이 이미 열려 있습니다.', 'info');
                 return;
             }
-            const bot = (botData.bots || []).find(item => item.name === botCurrentBot);
+            const botName = String(botCurrentBot || '').trim();
+            const bot = (botData.bots || []).find(item => item.name === botName);
             if (!bot) {
-                console.error('[VISUAL_GUIDE] 팝업 열기 실패: 선택된 봇 없음', {botCurrentBot});
+                console.error('[VISUAL_GUIDE] 팝업 열기 실패: 선택된 봇 없음', {botName});
                 showToast('먼저 봇을 선택하세요.', 'error');
                 return;
             }
             try {
+                const instructionData = await _loadBotAssetOutputInstruction(botName);
+                if (botName !== botCurrentBot) {
+                    console.error('[VISUAL_GUIDE] 지침 로드 중 선택 봇이 변경되었습니다', {
+                        requestedBot: botName,
+                        currentBot: botCurrentBot,
+                    });
+                    showToast('선택 봇이 변경되었습니다. 다시 열어주세요.', 'info');
+                    return;
+                }
+                if (!String(instructionData.instruction || '').trim()) {
+                    console.error('[VISUAL_GUIDE] 저장된 봇별 에셋 출력 지침이 비어 있습니다', {
+                        bot: botName,
+                    });
+                    showToast('먼저 현재 봇의 에셋 출력 지침을 저장하세요.', 'error');
+                    await openAssetOutputInstructionSettings();
+                    return;
+                }
                 await _ensureVisualCardStates(bot);
+                if (botName !== botCurrentBot) {
+                    console.error('[VISUAL_GUIDE] 카드 로드 중 선택 봇이 변경되었습니다', {
+                        requestedBot: botName,
+                        currentBot: botCurrentBot,
+                    });
+                    showToast('선택 봇이 변경되었습니다. 다시 열어주세요.', 'info');
+                    return;
+                }
                 const targets = _collectVisualGuideTargets(focusCharacter, focusProfileId);
                 if (!targets.length) {
-                    console.error('[VISUAL_GUIDE] 팝업에 표시할 카드 없음', {bot: botCurrentBot});
+                    console.error('[VISUAL_GUIDE] 팝업에 표시할 카드 없음', {bot: botName});
                     showToast('자동 작성할 캐릭터 카드가 없습니다.', 'error');
                     return;
                 }
 
                 _visualGuideModalState = {
-                    botName: botCurrentBot,
+                    botName,
                     targets,
-                    sourceText: '',
                     search: '',
                     busy: false,
                     progress: null,
@@ -66539,8 +66745,7 @@
                             <button id="visual-guide-close" type="button" onclick="closeVisualGuideGeneratorModal()" style="border:none;background:transparent;color:var(--text2);font-size:1.35rem;cursor:pointer">✕</button>
                         </div>
                         <div class="visual-guide-source">
-                            <div class="visual-guide-source-title">LLM이 해석할 에셋 출력 지침 · 임시 입력</div>
-                            <textarea id="visual-guide-source-text" maxlength="1000000" placeholder="에셋 출력 지침을 넣으세요"></textarea>
+                            <div class="visual-guide-source-title">현재 봇에 저장된 에셋 출력 지침 ${instructionData.instruction.length.toLocaleString()}자를 사용합니다. 지침 변경은 왼쪽의 ‘에셋 출력 지침 세팅’에서 할 수 있습니다.</div>
                         </div>
                         <div class="visual-guide-toolbar">
                             <input id="visual-guide-search" type="search" placeholder="캐릭터·카드·파일명 검색" style="min-width:220px;flex:1;max-width:420px;padding:6px 9px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text)">
@@ -66565,14 +66770,8 @@
                         </div>
                     </div>`;
                 document.body.appendChild(overlay);
-                const sourceEditor = document.getElementById('visual-guide-source-text');
-                sourceEditor.value = _visualGuideModalState.sourceText;
-                sourceEditor.addEventListener('input', event => {
-                    if (!_visualGuideModalState) return;
-                    _visualGuideModalState.sourceText = event.currentTarget.value || '';
-                });
                 document.getElementById('visual-guide-source-label').textContent =
-                    `임시 입력 · 저장되지 않음 · 카드 ${targets.length}개`;
+                    `${botName} 저장 값 · 카드 ${targets.length}개`;
                 document.getElementById('visual-guide-search').addEventListener('input', event => {
                     if (!_visualGuideModalState) return;
                     _visualGuideModalState.search = event.target.value || '';
@@ -66585,7 +66784,7 @@
                 });
             } catch (error) {
                 console.error('[VISUAL_GUIDE] 팝업 준비 실패', error, {
-                    bot: botCurrentBot,
+                    bot: botName,
                     focusCharacter,
                     focusProfileId,
                 });
@@ -66966,14 +67165,6 @@
                 showToast('한 번에 최대 120개 카드까지 생성할 수 있습니다.', 'error');
                 return;
             }
-            if (!String(state.sourceText || '').trim()) {
-                console.error('[VISUAL_GUIDE] 생성에 사용할 에셋 출력 지침이 비어 있습니다', {
-                    bot: state.botName,
-                });
-                document.getElementById('visual-guide-source-text')?.focus();
-                showToast('에셋 출력 지침을 입력하세요.', 'error');
-                return;
-            }
             state.busy = true;
             state.queueItemId = '';
             state.cancelRequested = false;
@@ -66996,7 +67187,6 @@
                     headers: {'Content-Type':'application/json'},
                     body: JSON.stringify({
                         bot_name: state.botName,
-                        source_text: state.sourceText,
                         targets: selected.map(target => ({
                             character: target.character,
                             profile_id: target.profileId,
@@ -78093,7 +78283,7 @@
                 key: 'pipeline', title: '파이프라인',
                 description: '삽화 프롬프트 파이프라인에서 실행할 단계를 설정합니다. 각 Call의 세부 옵션은 해당 Call 탭에서 관리합니다.',
                 fields: [
-                    {key: 'illustration_output_mode', label: '출력 모드', type: 'select', help: '일반 삽화(CALL1/2/3 + Comfy), 원본 에셋(업로드 원본 선택), 또는 둘 다를 반환합니다. 원본 에셋 장수·지침은 아래 원본 에셋 출력 섹션에서 설정합니다.', options: [{value: 'illustration', label: '일반 삽화'}, {value: 'original_asset', label: '원본 에셋'}, {value: 'both', label: '일반 삽화 + 원본 에셋'}], onchange: 'onIllustrationOutputModeChange(this)'},
+                    {key: 'illustration_output_mode', label: '출력 모드', type: 'select', help: '일반 삽화(CALL1/2/3 + Comfy), 원본 에셋(업로드 원본 선택), 또는 둘 다를 반환합니다. 원본 에셋 장수는 아래 원본 에셋 출력 섹션에서 설정하며, 선택 지침은 현재 봇의 에셋 출력 지침 세팅을 사용합니다.', options: [{value: 'illustration', label: '일반 삽화'}, {value: 'original_asset', label: '원본 에셋'}, {value: 'both', label: '일반 삽화 + 원본 에셋'}], onchange: 'onIllustrationOutputModeChange(this)'},
                     {key: 'profile_resolve_enabled', label: '다중 프로필 추론', type: 'toggle', help: 'CURRENT 등장인물 판별 LLM은 항상 별도로 실행됩니다. 켜면 확정된 CURRENT 다중 프로필 캐릭터를 캐릭터별 병렬 PROFILE-RESOLVE로 보내 시작·변환 타임라인과 판단 reason을 추론하고, 끄면 프로필 LLM 호출 없이 등록 기본 프로필을 적용합니다.'},
                     {key: 'call1_backtranslate_enabled', label: 'CALL1 역번역', type: 'toggle', help: 'CALL1 컨텍스트 보강 전에 현재 응답을 영어로 역번역합니다.'},
                     {key: 'call1_enabled', label: 'CALL1 복장·헤어 분석', type: 'toggle', help: '앞 단계가 확정한 CURRENT 캐릭터를 기준으로 현재 context의 복장·헤어스타일 변화 사건을 구조화합니다.'},
@@ -78113,10 +78303,9 @@
             {
                 key: 'original_asset',
                 title: '원본 에셋 출력',
-                description: '사용자가 입력한 명령 지침과 대화 문맥을 단일 LLM이 읽고, 선택된 봇에 실제 업로드된 원본 파일을 골라 변환 없이 그대로 출력합니다. 전체 파일 목록은 LLM에 전송하지 않습니다. 출력 모드가 원본 에셋 또는 둘 다일 때만 활성화됩니다.',
+                description: '현재 선택된 봇의 ‘에셋 출력 지침 세팅’ 저장값과 대화 문맥을 단일 LLM이 읽고, 실제 업로드된 원본 파일을 골라 변환 없이 그대로 출력합니다. 기존 전역 에셋 선택 지침은 사용하지 않습니다. 전체 파일 목록은 LLM에 전송하지 않습니다. 출력 모드가 원본 에셋 또는 둘 다일 때만 활성화됩니다.',
                 fields: [
                     {key: 'original_asset_count', label: '출력 장수', type: 'number', min: 1, max: 30, help: '원본 에셋 선택 LLM이 이번 응답에서 고를 정확한 장수입니다.', dependsOn: ['original_asset_enabled']},
-                    {key: 'original_asset_instruction', label: '에셋 선택 지침', type: 'textarea', rows: 24, maxLength: 120000, help: 'Image Command Instructions처럼 캐릭터·상태 명령과 적용 규칙을 자유형 텍스트 그대로 붙여 넣습니다.', placeholder: '### Image Command Instructions\n...', stacked: true, dependsOn: ['original_asset_enabled']},
                 ],
             },
             {

@@ -26,6 +26,11 @@ def _bot_data(cards):
         "bots": [
             {
                 "name": "demo",
+                "asset_output_instruction": (
+                    "Arbitrary Picture Grammar\n"
+                    "Riko uses command `portrait:Riko_Prism Heart` only after her first awakening.\n"
+                    "The document deliberately does not use a fixed Image Command heading."
+                ),
                 "system_prompt_preset": "기본",
                 "preset_scope": "local",
                 "characters": [{"name": "Riko", "visual_cards": deepcopy(cards)}],
@@ -47,6 +52,11 @@ class _JsonRequest:
 
     async def json(self):
         return deepcopy(self._body)
+
+
+class _QueryRequest:
+    def __init__(self, query):
+        self.query = dict(query)
 
 
 class _InlineLlmQueue:
@@ -109,6 +119,56 @@ class _InlineLlmQueue:
             )
             item.completion_future.set_result(result)
         return item
+
+
+@pytest.mark.asyncio
+async def test_bot_asset_output_instruction_api_reads_and_saves_one_bot_value(monkeypatch):
+    bot_mode = importlib.import_module("modes.bot_mode")
+    data = _bot_data([])
+    saved = []
+    monkeypatch.setattr(bot_mode, "_load_bot_data", lambda: data)
+    monkeypatch.setattr(bot_mode, "_save_bot_data", lambda value: saved.append(deepcopy(value)))
+    manager = bot_mode.BotMode()
+
+    get_response = await manager.handle_get_asset_output_instruction(
+        _QueryRequest({"bot_name": "demo"})
+    )
+    get_payload = json.loads(get_response.text)
+    assert get_response.status == 200
+    assert get_payload["instruction"].startswith("Arbitrary Picture Grammar")
+    assert get_payload["max_length"] == 120_000
+
+    post_response = await manager.handle_save_asset_output_instruction(
+        _JsonRequest({"bot_name": "demo", "instruction": "new bot-only rules"})
+    )
+    post_payload = json.loads(post_response.text)
+    assert post_response.status == 200
+    assert post_payload["saved"] is True
+    assert post_payload["instruction"] == "new bot-only rules"
+    assert saved[-1]["bots"][0]["asset_output_instruction"] == "new bot-only rules"
+
+
+@pytest.mark.asyncio
+async def test_bot_asset_output_instruction_api_rejects_oversized_value(monkeypatch):
+    bot_mode = importlib.import_module("modes.bot_mode")
+    data = _bot_data([])
+    monkeypatch.setattr(bot_mode, "_load_bot_data", lambda: data)
+    monkeypatch.setattr(
+        bot_mode,
+        "_save_bot_data",
+        lambda _value: pytest.fail("oversized instruction must not be saved"),
+    )
+    manager = bot_mode.BotMode()
+
+    response = await manager.handle_save_asset_output_instruction(
+        _JsonRequest({
+            "bot_name": "demo",
+            "instruction": "x" * (bot_mode.ASSET_OUTPUT_INSTRUCTION_MAX_CHARS + 1),
+        })
+    )
+    payload = json.loads(response.text)
+    assert response.status == 400
+    assert "120,000" in payload["error"]
 
 
 @pytest.mark.asyncio
@@ -898,7 +958,7 @@ async def test_visual_guide_cancel_waits_for_non_streaming_call_and_keeps_its_re
 
 
 @pytest.mark.asyncio
-async def test_suggest_metadata_accepts_unsaved_modal_source_text(monkeypatch):
+async def test_suggest_metadata_uses_saved_bot_instruction_and_ignores_request_override(monkeypatch):
     bot_mode = importlib.import_module("modes.bot_mode")
     llm_service = importlib.import_module("modes.llm_service")
     lighbd_service = importlib.import_module("modes.lighbd_service")
@@ -939,7 +999,7 @@ async def test_suggest_metadata_accepts_unsaved_modal_source_text(monkeypatch):
         _JsonRequest(
             {
                 "bot_name": "demo",
-                "source_text": "Completely different modal-only image grammar: modal-command",
+                "source_text": "request-only text that must never replace the saved bot instruction",
                 "targets": [{"character": "Riko", "profile_id": "card_1"}],
             }
         )
@@ -947,9 +1007,9 @@ async def test_suggest_metadata_accepts_unsaved_modal_source_text(monkeypatch):
     payload = json.loads(response.text)
 
     assert response.status == 200
-    assert payload["source"] == {"preset": "팝업 임시 원문", "scope": "modal"}
-    assert "Completely different modal-only image grammar" in captured["prompt"]
-    assert "Arbitrary Picture Grammar" not in captured["prompt"]
+    assert payload["source"] == {"preset": "에셋 출력 지침", "scope": "bot"}
+    assert "Arbitrary Picture Grammar" in captured["prompt"]
+    assert "request-only text" not in captured["prompt"]
 
 
 @pytest.mark.asyncio
@@ -1202,18 +1262,18 @@ def test_frontend_has_thumbnail_review_modal_and_explicit_apply_modes():
     assert "대표 이미지 외형 분석 실패" in frontend
     assert "비어 있는 값만 채우기" in frontend
     assert "기존 값도 교체" in frontend
-    assert "source_text: state.sourceText" in frontend
-    assert "LLM이 해석할 에셋 출력 지침 · 임시 입력" in frontend
-    assert 'placeholder="에셋 출력 지침을 넣으세요"' in frontend
+    assert "source_text: state.sourceText" not in frontend
+    assert "현재 봇에 저장된 에셋 출력 지침" in frontend
+    assert 'id="visual-guide-source-text"' not in frontend
     assert '<details class="visual-guide-source">' not in frontend
     assert "sourceDetails.open" not in frontend
     modal_source = frontend[
         frontend.index("async function openVisualGuideGeneratorModal"):
         frontend.index("function closeVisualGuideGeneratorModal")
     ]
-    assert "sourceText: ''" in modal_source
+    assert "sourceText: ''" not in modal_source
     assert "/api/bot_mode/system_prompt" not in modal_source
-    assert "임시 입력 · 저장되지 않음" in modal_source
+    assert "저장 값 · 카드" in modal_source
     assert "_handleVisualGuideQueueProgress(data)" in frontend
     assert "_visualGuideMergeSuggestions(liveSuggestions)" in frontend
     assert "detail.phase !== 'visual_profile_guide'" in frontend
@@ -1242,7 +1302,13 @@ def test_visual_guide_generator_has_one_bot_sidebar_entry_point():
     character_cards_end = frontend.index("function renderBotCharLoraList", character_cards_start)
     character_cards = frontend[character_cards_start:character_cards_end]
 
-    assert frontend.count("✨ 이미지 지침으로 자동 작성") == 1
+    assert frontend.count("✨ 에셋 출력 지침으로 자동 작성") == 1
+    assert 'id="btn-asset-output-instruction-settings"' in sidebar
+    assert 'onclick="openAssetOutputInstructionSettings()"' in sidebar
+    assert "async function openAssetOutputInstructionSettings()" in frontend
+    assert "async function saveAssetOutputInstructionSettings()" in frontend
+    assert frontend.count("/api/bot_mode/asset_output_instruction") >= 2
+    assert "기존 전역 생성 설정의 에셋 선택 지침은 읽지 않습니다" in frontend
     assert 'id="btn-visual-guide-generator"' in sidebar
     assert 'onclick="openVisualGuideGeneratorModal()"' in sidebar
     assert "openVisualGuideGeneratorModal(" not in character_cards
