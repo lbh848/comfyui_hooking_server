@@ -197,6 +197,9 @@ def normalize_queue_priority_orders(config: dict) -> tuple[dict[str, int], dict[
             LLM_QUEUE_PRIORITY_TYPES,
             "LLM",
             missing_after={
+                # 새 타입을 선언 순서 자리에 넣는다. 규칙이 없으면 맨 끝에
+                # 붙어, 새 설치(선언 순서)와 기존 설치(맨 끝)가 갈린다.
+                "preset_import_classify": "character_maker",
                 "lora_prompt_review": "instance_lora_prompt_refine",
             },
         ),
