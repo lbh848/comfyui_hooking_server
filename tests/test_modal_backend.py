@@ -3163,7 +3163,11 @@ def test_modal_web_server_is_isolated_from_worker_app() -> None:
     )
     assert '"--enable-cors-header",\n            "*",' in web_source
     assert 'WEB_FAST = os.environ.get("SOYA_MODAL_WEB_FAST", "0") == "1"' in web_source
-    assert 'web_runtime_image = runtime_image.env(' in web_source
+    # 웹 이미지는 작업 App 의 runtime_image 에서 파생되고 WEB_FAST 를 얹는다.
+    # 로컬 소스는 파생이 끝난 뒤 붙이므로(add_local_* 뒤에는 빌드 단계가 올 수
+    # 없다) 한 줄로 이어지지 않는다 — 두 사실을 각각 확인한다.
+    assert "web_runtime_image = with_local_python_sources(" in web_source
+    assert 'runtime_image.env({"SOYA_MODAL_WEB_FAST"' in web_source
     assert 'if web_fast:\n            command.append("--fast")' in web_source
     assert "command.extend(remote_comfy_vram_arguments(vram_mode))" in worker_source
     assert "command.extend(remote_comfy_vram_arguments(vram_mode))" in web_source

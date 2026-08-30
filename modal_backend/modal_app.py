@@ -411,12 +411,34 @@ runtime_image = (
 )
 
 
+# 컨테이너는 함수를 모듈 경로로 import 하므로, 이 모듈이 최상단에서 끌어오는 것이
+# 전부 이미지에 있어야 한다. 진입 패키지(`modal_backend`)는 자동으로 들어가지만
+# 저장소 루트의 최상위 모듈은 들어가지 않는다 — `remote_comfy_vram` 이 빠져
+# 워커 전체가 크래시 루프에 빠진 적이 있다. 자동 포함에 기대지 않고 명시한다.
+LOCAL_PYTHON_SOURCES = ("modal_backend", "remote_comfy_vram")
+
+
+def with_local_python_sources(image: modal.Image) -> modal.Image:
+    """함수에 실제로 물릴 이미지의 **맨 마지막**에 로컬 소스를 붙인다.
+
+    `add_local_*` 뒤에 빌드 단계가 오면 Modal 이 배포를 거부한다. 그래서 공용
+    베이스(`runtime_image`)에 직접 붙이지 않는다 — 웹 App 이 그 위에 `.env()` 를
+    더 얹기 때문이다. 파생이 끝난 이미지마다 이 함수를 마지막에 부른다.
+    """
+
+    return image.add_local_python_source(*LOCAL_PYTHON_SOURCES)
+
+
+# 이 App 의 함수가 쓰는 최종 런타임 이미지.
+worker_runtime_image = with_local_python_sources(runtime_image)
+
+
 # 순수 다운로드 작업이라 GPU 런타임 이미지(수 GB, CUDA/torch)가 필요 없다.
 # 무거운 이미지를 쓰면 파일 하나 받으려고 콜드 스타트에 수 분을 쓴다.
 model_sync_image = (
     modal.Image.debian_slim(python_version="3.12")
     .add_local_file(MANIFEST_LOCAL, "/opt/soya/install_manifest.json", copy=True)
-    .add_local_python_source("modal_backend")
+    .add_local_python_source(*LOCAL_PYTHON_SOURCES)
 )
 
 
@@ -612,7 +634,7 @@ def sync_models_from_source(
 
 
 @app.function(
-    image=runtime_image,
+    image=worker_runtime_image,
     cpu=4.0,
     memory=16_384,
     min_containers=0,
@@ -783,7 +805,7 @@ def _sample_gpu_memory(stop_event, out: dict) -> None:
 
 
 @app.cls(
-    image=runtime_image,
+    image=worker_runtime_image,
     cpu=4.0,
     memory=16_384,
     min_containers=0,
