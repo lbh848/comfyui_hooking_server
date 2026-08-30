@@ -10,6 +10,7 @@ import json
 import os
 import random
 import re
+import shutil
 import time
 import traceback
 import uuid
@@ -31,6 +32,42 @@ from comfy_allocation import (
 from modes import llm_service
 from modes.lora_export_utils import format_lora_export_filename
 
+
+# 원격 첫 컨테이너는 sd-scripts 런타임 부트스트랩까지 이 안에 끝내야 한다.
+LORA_TRAINING_TIMEOUT_SECONDS = 7_200
+
+
+def _cleanup_remote_training_staging(export_dir: str) -> None:
+    """원격 학습용 스테이징 폴더를 지운다. 로컬 공용 폴더는 건드리지 않는다."""
+    normalized = os.path.normpath(str(export_dir or ""))
+    if not normalized or "modal_jobs" not in normalized.split(os.sep):
+        return
+    if not os.path.isdir(normalized):
+        return
+    try:
+        shutil.rmtree(normalized)
+        print(f"[QUEUE-TRAIN] 원격 학습 스테이징 정리: {normalized}")
+    except Exception as exc:
+        # 정리 실패가 학습 결과를 버리게 두지 않는다.
+        print(
+            f"[QUEUE-TRAIN] 스테이징 정리 실패: path={normalized}, "
+            f"error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        return
+    # `modal_jobs` 위로는 올라가지 않는다. `soya_lora` 는 설치기 repatch 가 만드는
+    # 공용 입력 폴더다.
+    parts = normalized.split(os.sep)
+    boundary = os.sep.join(parts[: len(parts) - 1 - parts[::-1].index("modal_jobs") + 1])
+    parent = os.path.dirname(normalized)
+    while parent.startswith(boundary) and os.path.isdir(parent):
+        try:
+            os.rmdir(parent)
+        except OSError:
+            break
+        if parent == boundary:
+            break
+        parent = os.path.dirname(parent)
 
 # priority 0~9는 삽화 요청에 예약한다. illustration/regenerate는 같은 GPU 줄에서
 # FIFO로 실행하고, 나머지 삽화 보조 작업도 사용자 설정 대상과 분리한다.
@@ -3845,13 +3882,16 @@ class QueueManager:
                 ninfo["inputs"]["value"] = negative_text
 
         # 진행률 모니터링 (WebSocket 연결 후 제출하여 경쟁 조건 방지)
-        prompt_id, submit_result = await self._monitor_training_ws(
-            item,
-            wf,
-            "lora_training_progress",
-            modal_input_paths=[export_result["target_dir"]],
-            modal_artifact_prefixes=[lora_save_path],
-        )
+        try:
+            prompt_id, submit_result = await self._monitor_training_ws(
+                item,
+                wf,
+                "lora_training_progress",
+                modal_input_paths=[export_result["target_dir"]],
+                modal_artifact_prefixes=[lora_save_path],
+            )
+        finally:
+            _cleanup_remote_training_staging(export_result["target_dir"])
         print(f"[QUEUE-ASSET_LORA] 완료: prompt_id={prompt_id}")
 
         return {
@@ -4007,19 +4047,22 @@ class QueueManager:
             })
 
         # 모니터링 (WebSocket 연결 후 제출하여 경쟁 조건 방지)
-        prompt_id, submit_result = await self._monitor_training_ws(
-            item, wf,
-            event_type="bot_lora_training_progress",
-            extra_data={
-                "bot_name": bot_name, "project_name": project_name, "character": char_name,
-                "visual_card_id": visual_card_id,
-                "visual_card_label": visual_card_label,
-                "char_index": params.get("char_index", 0),
-                "total_chars": params.get("total_chars", 0),
-            },
-            modal_input_paths=[export_result["target_dir"]],
-            modal_artifact_prefixes=[lora_save_path],
-        )
+        try:
+            prompt_id, submit_result = await self._monitor_training_ws(
+                item, wf,
+                event_type="bot_lora_training_progress",
+                extra_data={
+                    "bot_name": bot_name, "project_name": project_name, "character": char_name,
+                    "visual_card_id": visual_card_id,
+                    "visual_card_label": visual_card_label,
+                    "char_index": params.get("char_index", 0),
+                    "total_chars": params.get("total_chars", 0),
+                },
+                modal_input_paths=[export_result["target_dir"]],
+                modal_artifact_prefixes=[lora_save_path],
+            )
+        finally:
+            _cleanup_remote_training_staging(export_result["target_dir"])
 
         return {"success": True, "character": char_name}
 
@@ -4940,15 +4983,18 @@ class QueueManager:
                 })
 
             # 모니터링 (WebSocket 연결 후 제출하여 경쟁 조건 방지)
-            prompt_id, submit_result = await self._monitor_training_ws(
-                item, wf,
-                event_type="instance_lora_training_progress",
-                extra_data=progress_extra,
-                on_complete=lambda ts_id=primary_id, prof=profile:
-                    add_session_fn(datetime.datetime.now().strftime("%Y%m%d-%H%M%S"), prof),
-                modal_input_paths=[export_dir],
-                modal_artifact_prefixes=[lora_save_path],
-            )
+            try:
+                prompt_id, submit_result = await self._monitor_training_ws(
+                    item, wf,
+                    event_type="instance_lora_training_progress",
+                    extra_data=progress_extra,
+                    on_complete=lambda ts_id=primary_id, prof=profile:
+                        add_session_fn(datetime.datetime.now().strftime("%Y%m%d-%H%M%S"), prof),
+                    modal_input_paths=[export_dir],
+                    modal_artifact_prefixes=[lora_save_path],
+                )
+            finally:
+                _cleanup_remote_training_staging(export_dir)
 
         return {
             "success": True,
@@ -5271,6 +5317,7 @@ class QueueManager:
                     input_paths=modal_input_paths,
                     artifact_prefixes=modal_artifact_prefixes,
                     require_images=False,
+                    timeout_seconds=LORA_TRAINING_TIMEOUT_SECONDS,
                     progress_callback=on_modal_progress,
                 )
                 prompt_id = str(result.get("prompt_id") or "")

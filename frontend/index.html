@@ -41227,7 +41227,12 @@
         function combineLoraLoadPath(baseDir, ...parts) {
             const normalizedBase = String(baseDir || '').trim().replace(/[\\/]+$/, '');
             if (!normalizedBase) return '';
-            return [normalizedBase, ...parts].join('\\');
+            // 경로 구분자는 입력값을 따릅니다. POSIX 환경에서 역슬래시(\\)로 고정할 경우,
+            // "loras\\SOYA_CHAR_LORA"라는 단일 폴더명으로 생성되어 저장은 성공하지만
+            // 실제 LoRA 폴더 경로와 조용히 어긋나는 문제가 발생합니다.
+            const separator =
+                normalizedBase.includes('\\') && !normalizedBase.includes('/') ? '\\' : '/';
+            return [normalizedBase, ...parts].join(separator);
         }
 
         function stripManagedLoraPath(path) {

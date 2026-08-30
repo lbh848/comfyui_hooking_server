@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime
+import functools
 import json
 import os
 import re
@@ -39,6 +40,7 @@ from .lora_inventory import (
     public_lora_catalog,
 )
 from .settings import (
+    MAX_WORKFLOW_TIMEOUT_SECONDS,
     MODAL_GPU_PROFILES,
     MODEL_SOURCE_CLOUD_DIRECT,
     ModalSettings,
@@ -4353,6 +4355,26 @@ class ModalService:
             print("[MODAL_SYNC] LoRA 결과 저장 실패: lora_load_path 설정이 비어 있습니다.")
             raise ValueError("Modal LoRA 결과를 저장할 로컬 LoRA 경로가 비어 있습니다.")
         local_root = Path(local_root_raw).resolve()
+        # 원격 artifact 의 상대 경로는 항상 이 루트 아래를 가리킨다. 종류별 경로가
+        # 밖에 있으면 저장은 성공하는데 피커가 다른 폴더를 읽는다.
+        for scoped_key in (
+            "bot_lora_load_path",
+            "instance_lora_load_path",
+            "style_lora_load_path",
+        ):
+            scoped_raw = str(config.get(scoped_key) or "").strip()
+            if not scoped_raw:
+                continue  # 비어 있으면 lora_load_path 아래로 폴백한다 — 정상이다.
+            scoped = Path(scoped_raw).resolve()
+            if scoped != local_root and local_root not in scoped.parents:
+                print(
+                    "[MODAL_SYNC] LoRA 로드 경로 불일치: "
+                    f"{scoped_key}={scoped} 가 lora_load_path={local_root} 밖입니다."
+                )
+                raise ValueError(
+                    f"{scoped_key} 는 lora_load_path 아래에 있어야 합니다: "
+                    f"{scoped} (lora_load_path={local_root})"
+                )
         local_root.mkdir(parents=True, exist_ok=True)
         stored: list[dict[str, Any]] = []
         for item in artifacts:
@@ -4550,7 +4572,10 @@ class ModalService:
                 "defer_artifacts": deferred_artifacts,
                 "video_job_id": video_job_id,
                 "capture_input_paths": list(capture_input_paths or []),
-                "timeout_seconds": max(30, min(int(timeout_seconds), 3_300)),
+                "timeout_seconds": max(
+                    30,
+                    min(int(timeout_seconds), MAX_WORKFLOW_TIMEOUT_SECONDS),
+                ),
                 "container_start_max_retries": (
                     settings.container_start_max_retries
                 ),
@@ -5174,9 +5199,15 @@ class ModalService:
     def _video_delete_outbox_count(self) -> int:
         return len(self._load_video_delete_outbox())
 
-    def _save_video_delete_outbox(self, items: list[dict[str, Any]]) -> None:
+    def _save_video_delete_outbox(
+        self,
+        items: list[dict[str, Any]],
+        *,
+        backup: bool = True,
+    ) -> None:
+        """영상 삭제 outbox 저장. backup=False 는 재시도 횟수만 갱신할 때 쓴다."""
         target = self._video_delete_outbox_path
-        if target.exists():
+        if backup and target.exists():
             backup_root = self.project_root / "backups" / "modal"
             backup_root.mkdir(parents=True, exist_ok=True)
             stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
@@ -5422,7 +5453,11 @@ class ModalService:
                         if self._video_delete_item_key(queued) == item_key:
                             queued["attempts"] = attempts
                             queued["last_error"] = f"{type(exc).__name__}: {exc}"
-                    await asyncio.to_thread(self._save_video_delete_outbox, current)
+                    await asyncio.to_thread(
+                        functools.partial(
+                            self._save_video_delete_outbox, current, backup=False
+                        )
+                    )
                 retry_seconds = min(60.0, 2.0 ** min(attempts, 6))
                 print(
                     "[MODAL:VIDEO] 원격 MP4 삭제 재시도 대기: "
@@ -5446,9 +5481,15 @@ class ModalService:
     def _delete_outbox_count(self) -> int:
         return len(self._load_delete_outbox())
 
-    def _save_delete_outbox(self, items: list[dict[str, Any]]) -> None:
+    def _save_delete_outbox(
+        self,
+        items: list[dict[str, Any]],
+        *,
+        backup: bool = True,
+    ) -> None:
+        """삭제 outbox 저장. backup=False 는 재시도 횟수만 갱신할 때 쓴다."""
         target = self._delete_outbox_path
-        if target.exists():
+        if backup and target.exists():
             backup_root = self.project_root / "backups" / "modal"
             backup_root.mkdir(parents=True, exist_ok=True)
             stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
@@ -5803,7 +5844,11 @@ class ModalService:
                         if queued_key == item_key:
                             queued["attempts"] = attempts
                             queued["last_error"] = f"{type(exc).__name__}: {exc}"
-                    await asyncio.to_thread(self._save_delete_outbox, current)
+                    await asyncio.to_thread(
+                        functools.partial(
+                            self._save_delete_outbox, current, backup=False
+                        )
+                    )
                 retry_seconds = min(60.0, 2.0 ** min(attempts, 6))
                 print(
                     "[MODAL_SYNC] 원격 LoRA 삭제 재시도 대기: "

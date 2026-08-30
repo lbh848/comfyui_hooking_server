@@ -13,6 +13,10 @@ from remote_comfy_vram import (
 
 _NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$")
 
+# 기본값이 아니라 상한이다. 호출자가 명시할 때만 여기까지 늘어난다.
+# 워커 함수 timeout 보다 작아야 한다 — 워커가 먼저 죽으면 artifact 를 잃는다.
+MAX_WORKFLOW_TIMEOUT_SECONDS = 7_200
+
 MODAL_GPU_PROFILES: dict[str, dict[str, str | int | float]] = {
     "L4": {
         "label": "L4",

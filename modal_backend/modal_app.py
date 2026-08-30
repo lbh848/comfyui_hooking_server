@@ -15,6 +15,7 @@ import modal
 
 from modal_backend.comfy_http import raise_for_comfy_status
 from modal_backend.custom_nodes import LOCAL_COPY_IGNORE_PATTERNS
+from modal_backend.settings import MAX_WORKFLOW_TIMEOUT_SECONDS
 from remote_comfy_vram import (
     normalize_remote_comfy_vram_mode,
     remote_comfy_vram_arguments,
@@ -788,7 +789,8 @@ def _sample_gpu_memory(stop_event, out: dict) -> None:
     min_containers=0,
     max_containers=MAX_CONTAINERS,
     scaledown_window=SCALEDOWN_WINDOW_SECONDS,
-    timeout=3_600,
+    # 워크플로우 상한보다 커야 한다 — 워커가 먼저 죽으면 artifact 를 잃는다.
+    timeout=MAX_WORKFLOW_TIMEOUT_SECONDS + 600,
     startup_timeout=600,
     volumes={
         COMFY_MODELS_MOUNT_PATH: models_volume,
@@ -1014,7 +1016,9 @@ class ComfyWorker:
                 node.setdefault("inputs", {})["server_url"] = (
                     f"http://127.0.0.1:{self.text_output_port}/api/text_output"
                 )
-        timeout_seconds = max(30, min(int(timeout_seconds), 3_300))
+        timeout_seconds = max(
+            30, min(int(timeout_seconds), MAX_WORKFLOW_TIMEOUT_SECONDS)
+        )
         input_root = Path("/root/ComfyUI/input")
         input_root.mkdir(parents=True, exist_ok=True)
 
