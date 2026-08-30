@@ -512,7 +512,40 @@ def sync_models_from_source(
 
     _announce_call_started("sync_models_from_source")
     import hashlib
+    import urllib.parse
     import urllib.request
+
+    class _StripAuthOnCrossHostRedirect(urllib.request.HTTPRedirectHandler):
+        """리다이렉트로 **호스트가 바뀌면** Authorization 을 떼고 따라간다.
+
+        civitai 는 큰 파일을 S3 호환 스토리지의 presigned URL 로 넘긴다. 그때
+        `Authorization: Bearer …` 를 그대로 들고 가면 S3 가 그 헤더를 서명으로
+        해석해 `Missing x-amz-content-sha256` 400 으로 거절한다. 실측: 6.46 GiB
+        체크포인트 하나만 계속 실패했고, 직접 내려주는 작은 LoRA 는 통과했다.
+
+        토큰을 남의 호스트로 보내지 않는 것이 원래 옳기도 하다.
+        """
+
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            new_request = super().redirect_request(
+                req, fp, code, msg, headers, newurl
+            )
+            if new_request is None:
+                return None
+            same_host = (
+                urllib.parse.urlsplit(req.full_url).netloc
+                == urllib.parse.urlsplit(newurl).netloc
+            )
+            if not same_host:
+                new_request.headers = {
+                    key: value
+                    for key, value in new_request.headers.items()
+                    if key.lower() != "authorization"
+                }
+                new_request.unredirected_hdrs.pop("Authorization", None)
+            return new_request
+
+    opener = urllib.request.build_opener(_StripAuthOnCrossHostRedirect)
 
     manifest_path = Path("/opt/soya/install_manifest.json")
     if not manifest_path.is_file():
@@ -577,7 +610,7 @@ def sync_models_from_source(
         received = 0
         started = time.monotonic()
         try:
-            with urllib.request.urlopen(request, timeout=300) as response:
+            with opener.open(request, timeout=300) as response:
                 with staging.open("wb") as handle:
                     while True:
                         chunk = response.read(8 * 1024 * 1024)
