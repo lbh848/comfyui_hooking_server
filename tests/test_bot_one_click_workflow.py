@@ -1,6 +1,7 @@
 from pathlib import Path
 import importlib
 import json
+import os
 import sys
 
 import pytest
@@ -369,9 +370,15 @@ async def test_one_click_safe_stop_cancels_matching_pending_and_rejects_late_ite
 
 
 @pytest.mark.asyncio
-async def test_data_patch_utility_uses_transient_crop_and_backs_up_existing_face(
+async def test_data_patch_utility_uses_transient_crop_and_leaves_no_backup_residue(
     tmp_path, monkeypatch
 ):
+    """FACE 백업은 롤백 전용 임시본이다 — 성공하면 아무것도 남기지 않는다.
+
+    한때 `backups/data_patch/` 에 영구 백업을 쌓았지만, 교체가 성공한 뒤로는
+    되돌릴 일이 없어 잔여물만 늘었다. 지금은 교체 직전 artifact_dir 안에
+    임시로 복사해 두고 성공 시 지운다.
+    """
     import server
     bot_mode = importlib.import_module("modes.bot_mode")
 
@@ -441,8 +448,103 @@ async def test_data_patch_utility_uses_transient_crop_and_backs_up_existing_face
     }
     assert face_path.read_bytes() == b"new-face"
     assert not prompt_path.exists()
-    backups = list((tmp_path / "backups" / "data_patch").glob("*"))
-    assert len(backups) == 1
-    backup_char = backups[0] / "sample-bot" / "alice"
-    assert (backup_char / "_face_image.webp").read_bytes() == b"old-face"
-    assert (backup_char / "_face_image_prompt.json").read_text(encoding="utf-8") == '{"prompt":"old"}'
+    # 영구 백업은 더 만들지 않는다.
+    assert not (tmp_path / "backups" / "data_patch").exists()
+    # 롤백용 임시 백업도 성공 경로에서는 남지 않는다.
+    assert not list(char_dir.glob("_face_backup_*"))
+    # 원자 교체용 임시 파일도 마찬가지다.
+    assert not list(char_dir.glob("_face_image.webp.tmp_*"))
+
+
+@pytest.mark.asyncio
+async def test_data_patch_utility_restores_old_face_when_replace_fails(
+    tmp_path, monkeypatch
+):
+    """교체 도중 실패하면 쓰던 FACE 를 되돌려야 한다.
+
+    임시 백업의 존재 이유가 이것뿐이다. 되돌리기가 동작하지 않으면 백업은
+    성공 경로에서 지워지기만 하는 순수 비용이 된다.
+
+    **실패 지점이 중요하다.** `os.replace` 자체가 실패하면 원본은 손대지 않은
+    상태라 되돌릴 것이 없어, 되돌리기 코드를 지워도 테스트가 통과한다. 실제로
+    되돌리기가 필요한 구간은 교체가 **성공한 뒤** 프롬프트 JSON 삭제가 실패할
+    때다 — 그때 FACE 는 이미 새 것으로 바뀌어 있다.
+    """
+    import server
+    bot_mode = importlib.import_module("modes.bot_mode")
+
+    bot_root = tmp_path / "bot"
+    char_dir = bot_root / "sample-bot" / "alice"
+    char_dir.mkdir(parents=True)
+    face_path = char_dir / "_face_image.webp"
+    prompt_path = char_dir / "_face_image_prompt.json"
+    face_path.write_bytes(b"old-face")
+    prompt_path.write_text('{"prompt":"old"}', encoding="utf-8")
+
+    async def load_workflow():
+        return {"1": {"inputs": {}, "_meta": {"title": "긍정프롬프트"}}}, None
+
+    async def submit_workflow(
+        workflow,
+        task_key,
+        input_paths=None,
+        capture_input_paths=None,
+    ):
+        return b"new-face", None
+
+    monkeypatch.setattr(server, "BASE_DIR", str(tmp_path))
+    monkeypatch.setattr(bot_mode, "BOT_DIR", str(bot_root))
+    monkeypatch.setattr(
+        bot_mode,
+        "_load_bot_data",
+        lambda: {
+            "bots": [
+                {
+                    "name": "sample-bot",
+                    "characters": [{"name": "alice", "rep_images": ["rep.webp"]}],
+                }
+            ]
+        },
+    )
+    monkeypatch.setattr(
+        bot_mode,
+        "_load_patch_settings",
+        lambda _bot_name: {
+            "face_crop_top": 9.0,
+            "face_crop_bottom": 9.0,
+            "emb_target": "둘다",
+        },
+    )
+    monkeypatch.setattr(
+        bot_mode, "build_utility_prompt", lambda *_args, **_kwargs: "utility prompt"
+    )
+    monkeypatch.setattr(server.data_patcher, "_load_utility_workflow", load_workflow)
+    monkeypatch.setattr(server, "submit_workflow_to_comfy", submit_workflow)
+
+    # 교체는 성공시키고, 그 직후 프롬프트 JSON 삭제만 실패시킨다.
+    real_remove = os.remove
+
+    def failing_remove(path, *args, **kwargs):
+        if str(path).endswith("_face_image_prompt.json"):
+            raise OSError("프롬프트 삭제 실패(모의)")
+        return real_remove(path, *args, **kwargs)
+
+    monkeypatch.setattr(server.os, "remove", failing_remove)
+
+    with pytest.raises(OSError):
+        await server._run_data_patch_utility(
+            "sample-bot",
+            "alice",
+            patch_settings={
+                "face_crop_top": 1.4,
+                "face_crop_bottom": 1.2,
+                "emb_target": "대표만",
+            },
+        )
+
+    # 교체는 이미 일어났지만 백업에서 되돌아와 있어야 한다.
+    assert face_path.read_bytes() == b"old-face"
+    assert prompt_path.read_text(encoding="utf-8") == '{"prompt":"old"}'
+    # 실패 경로에서도 임시 파일과 백업은 정리된다.
+    assert not list(char_dir.glob("_face_backup_*"))
+    assert not list(char_dir.glob("_face_image.webp.tmp_*"))
