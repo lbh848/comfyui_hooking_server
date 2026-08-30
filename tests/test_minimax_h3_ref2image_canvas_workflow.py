@@ -2,6 +2,8 @@ import json
 import re
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE_WORKFLOW = (
@@ -25,6 +27,15 @@ COMFY_WORKFLOW = (
     / "SOYA_USER"
     / "실험_이미지_H3_REF2I_T1_v1.json"
 )
+# 실험 산출물(experiments/minimax_h3_ref2image/)은 로컬 전용으로 이관됐고
+# (17cbe82) 파생 워크플로우도 배포 팩에 없다. 둘 다 없는 체크아웃에서는
+# 검증할 대상 자체가 없으므로 실패가 아니라 건너뛴다.
+if not TRACKED_WORKFLOW.is_file() or not SOURCE_WORKFLOW.is_file():
+    pytest.skip(
+        "REF2I 실험 산출물이 없습니다: "
+        f"tracked={TRACKED_WORKFLOW}, source={SOURCE_WORKFLOW}",
+        allow_module_level=True,
+    )
 
 
 def _load(path: Path):

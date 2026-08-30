@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import pytest
 import torch
 
 
@@ -17,6 +18,13 @@ MODULE_PATH = (
     / "soya_minimax_h3_ref2image.py"
 )
 MODULE_NAME = "soya_minimax_h3_ref2image_test"
+# 커스텀 노드는 comfy/ 아래에 설치되고 comfy/ 는 추적하지 않는다. 설치 전
+# 체크아웃에서는 import 가 아니라 **수집**이 죽어 스위트 전체가 중단된다.
+if not MODULE_PATH.is_file():
+    pytest.skip(
+        f"커스텀 노드가 설치되어 있지 않습니다: {MODULE_PATH}",
+        allow_module_level=True,
+    )
 
 
 class FakeNestedTensor:
