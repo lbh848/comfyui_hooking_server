@@ -8,6 +8,7 @@ OpenAI 호환 제공자를 띄우고 LLM1~5 슬롯, 라우팅 재시도/폴백, 
 from __future__ import annotations
 
 import asyncio
+import base64
 import io
 import json
 import re
@@ -202,6 +203,73 @@ async def test_llm1_to_llm5_reach_their_own_openai_compatible_slot(monkeypatch):
     assert [item["authorization"] for item in requests] == [
         f"Bearer test-key-{slot}" for slot in range(1, 6)
     ]
+
+
+@pytest.mark.asyncio
+async def test_vertex_openai_base64_crosses_http_and_sse_boundaries(monkeypatch):
+    plain_response = "vertex-openai-base64-e2e-ok"
+    encoded_response = base64.b64encode(plain_response.encode("utf-8")).decode("ascii")
+    requests: list[dict] = []
+
+    async def completion(request: web.Request) -> web.StreamResponse:
+        body = await request.json()
+        messages = body.get("messages") or []
+        requests.append(
+            {
+                "authorization": request.headers.get("Authorization"),
+                "messages": messages,
+                "response_format": body.get("response_format"),
+                "stream": bool(body.get("stream")),
+            }
+        )
+        assert "Base64-Encoded Instruction Protocol" in messages[0]["content"]
+        assert base64.b64decode(messages[1]["content"]).decode("utf-8") == "실제 HTTP 경계"
+
+        if not body.get("stream"):
+            return web.json_response(
+                {"choices": [{"message": {"content": encoded_response}}]}
+            )
+
+        response = web.StreamResponse(
+            status=200,
+            headers={"Content-Type": "text/event-stream"},
+        )
+        await response.prepare(request)
+        for start in range(0, len(encoded_response), 5):
+            chunk = encoded_response[start:start + 5]
+            payload = {"choices": [{"delta": {"content": chunk}}]}
+            await response.write(f"data: {json.dumps(payload)}\n\n".encode("utf-8"))
+        await response.write(b"data: [DONE]\n\n")
+        await response.write_eof()
+        return response
+
+    provider = web.Application()
+    provider.router.add_post("/v1/chat/completions", completion)
+    async with _running_app(provider) as base_url:
+        cfg = _isolated_config(
+            llm_service="vertex-openai",
+            llm_model="gemini-e2e",
+            llm_url=base_url,
+            llm_gemini_base64=True,
+            llm_stream=False,
+        )
+        monkeypatch.setattr(llm_service, "_current_config", cfg)
+        monkeypatch.setattr(llm_service, "_get_vertex_key_path", lambda: "test-vertex.json")
+
+        async def fake_access_token(_key_path):
+            return "vertex-e2e-token"
+
+        monkeypatch.setattr(llm_service, "_get_vertex_access_token", fake_access_token)
+        messages = [{"role": "user", "content": "실제 HTTP 경계"}]
+        sync_result = await llm_service.callLLM(messages)
+        cfg["llm_stream"] = True
+        stream_result = await llm_service.callLLM(messages)
+
+    assert sync_result == plain_response
+    assert stream_result == plain_response
+    assert [item["stream"] for item in requests] == [False, True]
+    assert all(item["authorization"] == "Bearer vertex-e2e-token" for item in requests)
+    assert all(item["response_format"] is None for item in requests)
 
 
 @pytest.mark.asyncio

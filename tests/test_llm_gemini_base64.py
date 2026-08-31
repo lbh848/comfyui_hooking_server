@@ -1,4 +1,6 @@
+import asyncio
 import base64
+import os
 import sys
 from pathlib import Path
 
@@ -8,6 +10,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import server
 from modes import llm_service
+
+
+BASE64_TRANSPORT_SERVICES = ("gemini", "vertex", "vertex-openai")
 
 
 def _config(**overrides):
@@ -93,11 +98,16 @@ def test_gemini_base64_removes_conflicting_json_response_format(monkeypatch):
     assert "responseSchema" not in generation_config
 
 
+@pytest.mark.parametrize("service", BASE64_TRANSPORT_SERVICES)
 @pytest.mark.asyncio
-async def test_sync_gemini_base64_wraps_request_decodes_response_and_disables_json_mode(
-    monkeypatch,
+async def test_sync_base64_transport_wraps_request_decodes_response_and_disables_json_mode(
+    monkeypatch, service,
 ):
-    monkeypatch.setattr(llm_service, "_current_config", _config())
+    monkeypatch.setattr(
+        llm_service,
+        "_current_config",
+        _config(llm_service=service, llm_model=f"{service}-test"),
+    )
     seen = {}
     plain_response = '{"scenes": [{"id": "한글"}]}'
 
@@ -115,16 +125,16 @@ async def test_sync_gemini_base64_wraps_request_decodes_response_and_disables_js
     try:
         result = await llm_service._dispatch(
             [{"role": "user", "content": "JSON으로 답해"}],
-            "gemini",
-            "gemini-test",
+            service,
+            f"{service}-test",
         )
         assert llm_service._response_format_ctx.get() == {"type": "json_object"}
     finally:
         llm_service._response_format_ctx.reset(outer_token)
 
     assert result == plain_response
-    assert seen["service"] == "gemini"
-    assert seen["model"] == "gemini-test"
+    assert seen["service"] == service
+    assert seen["model"] == f"{service}-test"
     assert seen["response_format"] is None
     assert "Base64-Encoded Instruction Protocol" in seen["messages"][0]["content"]
     assert (
@@ -134,7 +144,7 @@ async def test_sync_gemini_base64_wraps_request_decodes_response_and_disables_js
 
 
 @pytest.mark.asyncio
-async def test_base64_toggle_does_not_modify_non_gemini_service(monkeypatch):
+async def test_base64_toggle_does_not_modify_unsupported_service(monkeypatch):
     monkeypatch.setattr(
         llm_service,
         "_current_config",
@@ -158,20 +168,21 @@ async def test_base64_toggle_does_not_modify_non_gemini_service(monkeypatch):
     assert seen["messages"] is original_messages
 
 
+@pytest.mark.parametrize("service", BASE64_TRANSPORT_SERVICES)
 @pytest.mark.parametrize("slot", range(1, llm_service.LLM_SLOT_COUNT + 1))
 @pytest.mark.asyncio
 async def test_each_llm_slot_uses_its_own_base64_toggle_with_inherited_service(
-    monkeypatch, slot,
+    monkeypatch, slot, service,
 ):
     overrides = {
-        "llm_service": "gemini",
+        "llm_service": service,
         "llm_gemini_base64": slot == 1,
     }
     for configured_slot in range(2, llm_service.LLM_SLOT_COUNT + 1):
         overrides.update(
             {
                 f"llm_service{configured_slot}": "",
-                f"llm_model{configured_slot}": f"gemini-slot-{configured_slot}",
+                f"llm_model{configured_slot}": f"{service}-slot-{configured_slot}",
                 f"llm_gemini_base64{configured_slot}": configured_slot == slot,
                 f"llm_stream{configured_slot}": False,
             }
@@ -195,9 +206,16 @@ async def test_each_llm_slot_uses_its_own_base64_toggle_with_inherited_service(
     assert "Base64-Encoded Instruction Protocol" in seen["messages"][0]["content"]
 
 
+@pytest.mark.parametrize("service", BASE64_TRANSPORT_SERVICES)
 @pytest.mark.asyncio
-async def test_gemini_base64_stream_emits_decoded_deltas_and_done(monkeypatch):
-    monkeypatch.setattr(llm_service, "_current_config", _config())
+async def test_base64_transport_stream_emits_decoded_deltas_and_done(
+    monkeypatch, service,
+):
+    monkeypatch.setattr(
+        llm_service,
+        "_current_config",
+        _config(llm_service=service, llm_model=f"{service}-test"),
+    )
     plain = "스트리밍 Base64 응답입니다."
     encoded = base64.b64encode(plain.encode("utf-8")).decode("ascii")
 
@@ -215,8 +233,8 @@ async def test_gemini_base64_stream_emits_decoded_deltas_and_done(monkeypatch):
         event
         async for event in llm_service._dispatch_stream(
             [{"role": "user", "content": "요청"}],
-            "gemini",
-            "gemini-test",
+            service,
+            f"{service}-test",
         )
     ]
 
@@ -226,6 +244,36 @@ async def test_gemini_base64_stream_emits_decoded_deltas_and_done(monkeypatch):
     assert plain.startswith(decoded_deltas)
     assert events[-1]["type"] == "done"
     assert events[-1]["text"] == plain
+
+
+@pytest.mark.asyncio
+async def test_base64_stream_can_be_closed_from_a_different_async_context(monkeypatch):
+    monkeypatch.setattr(llm_service, "_current_config", _config())
+
+    async def fake_stream_unlimited(messages, service, model):
+        assert llm_service._response_format_ctx.get() is None
+        yield {"type": "start", "service": service, "model": model}
+        yield {"type": "done", "text": base64.b64encode(b"ok").decode("ascii")}
+
+    monkeypatch.setattr(
+        llm_service,
+        "_dispatch_stream_unlimited",
+        fake_stream_unlimited,
+    )
+    outer_token = llm_service._response_format_ctx.set({"type": "json_object"})
+    stream = llm_service._dispatch_stream(
+        [{"role": "user", "content": "요청"}],
+        "vertex",
+        "vertex-test",
+    )
+    try:
+        first_event = await asyncio.create_task(anext(stream))
+        assert first_event["type"] == "start"
+        assert llm_service._response_format_ctx.get() == {"type": "json_object"}
+        await stream.aclose()
+        assert llm_service._response_format_ctx.get() == {"type": "json_object"}
+    finally:
+        llm_service._response_format_ctx.reset(outer_token)
 
 
 def test_frontend_registers_base64_control_for_every_llm_slot():
@@ -238,4 +286,90 @@ def test_frontend_registers_base64_control_for_every_llm_slot():
         assert html.count(f'id="setting-llm-gemini-base64{suffix}"') == 1
         assert html.count(f'id="llm-gemini-base64{suffix}-row"') == 1
     assert "config[`llm_gemini_base64${suffix}`]" in html
-    assert "meta.id === 'gemini'" in html
+    assert "['gemini', 'vertex', 'vertex-openai'].includes(meta.id)" in html
+
+
+@pytest.mark.skipif(
+    os.environ.get("RUN_LIVE_VERTEX_BASE64_E2E") != "1",
+    reason="실제 Vertex 자격증명을 사용하는 명시적 라이브 E2E",
+)
+@pytest.mark.parametrize("stream", [False, True], ids=["sync", "stream"])
+@pytest.mark.parametrize("service", ["vertex", "vertex-openai"])
+@pytest.mark.asyncio
+async def test_live_vertex_base64_round_trip(monkeypatch, tmp_path, service, stream):
+    key_path = llm_service._get_vertex_key_path()
+    if not key_path:
+        pytest.fail("key/vertex.json 또는 사용할 수 있는 Vertex 서비스 계정 JSON이 없습니다")
+
+    if service == "vertex":
+        model = os.environ.get("VERTEX_NATIVE_E2E_MODEL", "gemini-2.5-flash")
+        url = ""
+    else:
+        model = os.environ.get(
+            "VERTEX_OPENAI_E2E_MODEL",
+            "google/gemini-2.5-flash",
+        )
+        url = os.environ.get("VERTEX_OPENAI_E2E_LOCATION", "us-central1")
+
+    isolated_log_dir = tmp_path / "logs"
+    monkeypatch.setattr(llm_service, "LOG_DIR", str(isolated_log_dir))
+    monkeypatch.setattr(
+        llm_service,
+        "HISTORY_PATH",
+        str(isolated_log_dir / "llm_history.jsonl"),
+    )
+    monkeypatch.setattr(
+        llm_service,
+        "HISTORY_BACKUP_DIR",
+        str(tmp_path / "backups"),
+    )
+    monkeypatch.setattr(
+        llm_service,
+        "HISTORY_BACKUP_PATH",
+        str(tmp_path / "backups" / "llm_history.jsonl.bak"),
+    )
+    monkeypatch.setattr(
+        llm_service,
+        "_current_config",
+        _config(
+            llm_service=service,
+            llm_model=model,
+            llm_url=url,
+            llm_gemini_base64=True,
+            llm_stream=stream,
+            llm_stream_idle_timeout_seconds=120,
+        ),
+    )
+    monkeypatch.setattr(llm_service, "_stream_notify_func", None)
+
+    raw_responses: list[str] = []
+    real_decode = llm_service._decode_gemini_base64_response
+
+    def capture_decode(raw_text):
+        raw_responses.append(str(raw_text or ""))
+        return real_decode(raw_text)
+
+    monkeypatch.setattr(
+        llm_service,
+        "_decode_gemini_base64_response",
+        capture_decode,
+    )
+    expected_answer = "585987"
+    result = await llm_service.callLLM(
+        [
+            {
+                "role": "user",
+                "content": (
+                    "Calculate 314159 + 271828. "
+                    "Return only the six ASCII digits of the answer, with no punctuation."
+                ),
+            }
+        ]
+    )
+
+    assert not result.startswith("[LLM 실패]"), result
+    assert result.strip() == expected_answer
+    assert raw_responses, "Base64 응답 복호화 경로가 실행되지 않았습니다"
+    compact = "".join(llm_service._strip_base64_fence(raw_responses[-1]).split())
+    decoded_raw = base64.b64decode(compact, validate=True).decode("utf-8")
+    assert decoded_raw.strip() == expected_answer

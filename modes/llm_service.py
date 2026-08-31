@@ -479,7 +479,7 @@ _current_config = _ContextConfig({
     "llm_max_concurrency": 1,         # LLM1 실제 API 동시 요청 상한
     "llm_stream_idle_timeout_seconds": 90.0,  # 0=비활성, 그 외 10~3600초
     "llm_vision_compress": False,        # LLM1 비전 이미지 webp 압축 전송 (False=PNG 호환)
-    "llm_gemini_base64": False,          # LLM1 Gemini 요청/응답 Base64 래핑
+    "llm_gemini_base64": False,          # LLM1 Gemini/Vertex 요청·응답 Base64 래핑
     "lora_prompt_review_enabled": False, # LoRA 완성 프롬프트 2차 비전 검수
     # 작업별 LLM1/LLM2/LLM3 라우팅과 메인/폴백 재시도 정책(외부 LLM 분기).
     # 실제 기본값은 server.py 의 DEFAULT_CONFIG 에서 update_config 로 내려온다.
@@ -615,9 +615,12 @@ This request uses a reversible UTF-8 Base64 transport for a structured-data pipe
 """
 
 
+_GEMINI_BASE64_SERVICES = frozenset({"gemini", "vertex", "vertex-openai"})
+
+
 def _gemini_base64_enabled(service: str) -> bool:
-    """현재 실제 슬롯에서 native Gemini Base64 전송 토글이 켜졌는지 반환한다."""
-    return service == "gemini" and bool(
+    """현재 슬롯의 Gemini/Vertex Base64 전송 토글이 켜졌는지 반환한다."""
+    return service in _GEMINI_BASE64_SERVICES and bool(
         _current_config.get("llm_gemini_base64", False)
     )
 
@@ -5169,39 +5172,52 @@ async def _dispatch_stream(messages: list, service: str, model: str):
         _encode_gemini_base64_messages(messages) if use_base64 else messages
     )
     decoder = _GeminiBase64StreamDecoder() if use_base64 else None
-    format_token = _response_format_ctx.set(None) if use_base64 else None
 
     async def _iter_events():
-        async for event in _dispatch_stream_unlimited(
+        upstream = _dispatch_stream_unlimited(
             request_messages, service, model
-        ):
-            if decoder is None:
-                yield event
-                continue
-            transformed = dict(event)
-            event_type = transformed.get("type")
-            if event_type == "delta":
-                transformed["text"] = decoder.feed(transformed.get("text", ""))
-            elif event_type == "done":
-                transformed["text"] = decoder.finish(transformed.get("text", ""))
-            yield transformed
+        ).__aiter__()
+        try:
+            while True:
+                # 스트림 generator는 생성/종료 Context가 달라질 수 있다. ContextVar
+                # token을 yield 너머로 들고 가지 않고 각 anext() 안에서 즉시 복원한다.
+                format_token = _response_format_ctx.set(None) if use_base64 else None
+                try:
+                    try:
+                        event = await anext(upstream)
+                    except StopAsyncIteration:
+                        break
+                finally:
+                    if format_token is not None:
+                        _response_format_ctx.reset(format_token)
+
+                if decoder is None:
+                    yield event
+                    continue
+                transformed = dict(event)
+                event_type = transformed.get("type")
+                if event_type == "delta":
+                    transformed["text"] = decoder.feed(transformed.get("text", ""))
+                elif event_type == "done":
+                    transformed["text"] = decoder.finish(transformed.get("text", ""))
+                yield transformed
+        finally:
+            close = getattr(upstream, "aclose", None)
+            if close is not None:
+                await close()
 
     if use_base64:
         _llm_log(
             "[LLM_GEMINI_BASE64] 스트림 요청 인코딩 적용: "
             f"slot={current_slot}, messages={len(messages or [])}"
         )
-    try:
-        if _preacquired_stream_slot_ctx.get() == current_slot:
-            async for event in _iter_events():
-                yield event
-            return
-        async with _limit_llm_request():
-            async for event in _iter_events():
-                yield event
-    finally:
-        if format_token is not None:
-            _response_format_ctx.reset(format_token)
+    if _preacquired_stream_slot_ctx.get() == current_slot:
+        async for event in _iter_events():
+            yield event
+        return
+    async with _limit_llm_request():
+        async for event in _iter_events():
+            yield event
 
 
 async def callLLMStream(messages: list, model: str = None, log_history: bool = True,
