@@ -42263,6 +42263,7 @@
             persistIllustrationWorkflowPaths();
             for (const slot of LLM_SLOTS) {
                 const suffix = llmSlotSuffix(slot);
+                if (isGeminiNativeService(getEffectiveLlmService(slot))) continue;
                 const textarea = document.getElementById(`setting-llm-custom-body${suffix}`);
                 const raw = textarea?.value.trim() || '';
                 if (!raw) continue;
@@ -45161,9 +45162,24 @@
         // LLM 슬롯 목록(프론트 단일 소스). 슬롯 추가 시 이 배열만 늘리면
         // 카탈로그 로드/서비스 변경 토글/설정 저장/라우팅 드롭다운이 자동 확장된다.
         const LLM_SLOTS = [1, 2, 3, 4, 5];
+        const GEMINI_NATIVE_SERVICE_IDS = new Set(['gemini', 'vertex']);
+        const GEMINI_THINKING_LEVELS = new Set(['minimal', 'low', 'medium', 'high']);
+        const DEFAULT_GEMINI_THINKING_LEVEL = 'low';
 
         function llmSlotSuffix(slot) {
             return slot === 1 ? '' : String(slot);
+        }
+
+        function isGeminiNativeService(serviceId) {
+            return GEMINI_NATIVE_SERVICE_IDS.has(String(serviceId || ''));
+        }
+
+        function normalizeGeminiThinkingLevel(value) {
+            const normalized = String(value || '').trim().toLowerCase();
+            if (!normalized) return DEFAULT_GEMINI_THINKING_LEVEL;
+            if (GEMINI_THINKING_LEVELS.has(normalized)) return normalized;
+            console.warn(`[LLM_GEMINI] 지원하지 않는 추론 레벨을 low로 대체합니다: ${normalized}`);
+            return DEFAULT_GEMINI_THINKING_LEVEL;
         }
 
         async function loadLlmServiceCatalog() {
@@ -45257,14 +45273,17 @@
                 const urlRow = document.getElementById(`llm-url${suffix}-row`);
                 const reasoningRow = document.getElementById(`llm-reasoning${suffix}-row`);
                 const customRow = document.getElementById(`llm-custom-body${suffix}-row`);
+                const reasoningPreset = document.getElementById(`setting-llm-reasoning-preset${suffix}`);
                 const geminiBase64Row = document.getElementById(`llm-gemini-base64${suffix}-row`);
                 const pdfPromptRow = document.getElementById(`llm-pdf-prompt${suffix}-row`);
                 const hasOwnService = slot === 1 || !!selected;
                 const genericKey = ['required', 'optional'].includes(meta.api_key);
+                const geminiNative = isGeminiNativeService(meta.id);
                 if (keyRow) keyRow.style.display = hasOwnService && genericKey ? 'flex' : 'none';
                 if (urlRow) urlRow.style.display = hasOwnService && meta.url_override ? 'flex' : 'none';
                 if (reasoningRow) reasoningRow.style.display = 'flex';
-                if (customRow) customRow.style.display = 'flex';
+                if (reasoningPreset) reasoningPreset.style.display = geminiNative ? 'none' : '';
+                if (customRow) customRow.style.display = geminiNative ? 'none' : 'flex';
                 if (geminiBase64Row) {
                     const supportsBase64Transport = ['gemini', 'vertex', 'vertex-openai'].includes(meta.id);
                     geminiBase64Row.style.display = supportsBase64Transport ? 'flex' : 'none';
@@ -45338,21 +45357,33 @@
             const family = inherited
                 ? detectReasoningFamily(document.getElementById('setting-llm-model')?.value || '', document.getElementById('setting-llm-reasoning-preset')?.value || 'auto')
                 : detectReasoningFamily(model, preset || 'auto');
-            const body = parseReasoningBody(slot);
             const baseStyle = 'padding:5px 8px;border-radius:5px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:.78rem;';
             const hiddenEffort = `<input type="hidden" id="setting-llm-reasoning-effort${suffix}" value="">`;
             const badge = `<div style="font-size:.72rem;color:#4dd0e1;">판별: ${family} · 전송 포맷: ${meta.format}</div>`;
+
+            if (isGeminiNativeService(service)) {
+                const level = normalizeGeminiThinkingLevel(oldEffort || configuredEffort);
+                const geminiBadge = `<div style="font-size:.72rem;color:#4dd0e1;">Gemini 전용 · 전송 포맷: ${meta.format}</div>`;
+                container.innerHTML = `${geminiBadge}${reasoningField(
+                    'Thinking Level',
+                    `<select id="setting-llm-reasoning-effort${suffix}" style="${baseStyle}"><option value="minimal">minimal</option><option value="low">low</option><option value="medium">medium</option><option value="high">high</option></select>`,
+                    '기본값 low · Custom Body는 Gemini 전용 경로에서 사용하지 않습니다.',
+                )}`;
+                document.getElementById(`setting-llm-reasoning-effort${suffix}`).value = level;
+                return;
+            }
 
             if (inherited) {
                 container.innerHTML = `${hiddenEffort}<div style="font-size:.75rem;color:var(--text2);">LLM1 설정을 그대로 사용합니다. 별도 BODY를 빌드하려면 프리셋을 선택하세요.</div>`;
                 document.getElementById(`setting-llm-reasoning-effort${suffix}`).value = oldEffort ?? configuredEffort;
                 return;
             }
-            if (meta.format === 'vertex' || meta.format === 'vertex-openai') {
+            if (meta.format === 'vertex-openai') {
                 container.innerHTML = `${hiddenEffort}${badge}<div style="font-size:.75rem;color:#d89a3a;">현재 정상 동작 중인 Vertex 호출 경로를 유지합니다. 이 화면에서 Reasoning BODY를 자동 적용하지 않습니다.</div>`;
                 document.getElementById(`setting-llm-reasoning-effort${suffix}`).value = oldEffort ?? configuredEffort;
                 return;
             }
+            const body = parseReasoningBody(slot);
             if (family === 'none') {
                 container.innerHTML = `${hiddenEffort}${badge}<div style="font-size:.75rem;color:var(--text2);">추가 Reasoning 필드를 만들지 않습니다. BODY 빌드 결과는 빈 object입니다.</div>`;
                 return;
@@ -45363,29 +45394,6 @@
             }
 
             let html = badge;
-            if (meta.format === 'google') {
-                if (family !== 'gemini') {
-                    container.innerHTML = `${hiddenEffort}${badge}<div style="font-size:.75rem;color:#ff9f43;">Google 전송 포맷에서는 gemini 프리셋을 선택하세요.</div>`;
-                    return;
-                }
-                const thinking = body.generationConfig?.thinkingConfig || {};
-                html += hiddenEffort;
-                html += reasoningField('Thinking 모드', `<select id="setting-llm-thinking-mode${suffix}" style="${baseStyle}"><option value="default">모델 기본값</option><option value="enabled">활성화</option></select>`);
-                html += reasoningField('Thinking Level', `<select id="setting-llm-thinking-level${suffix}" style="${baseStyle}"><option value="">미지정</option><option value="minimal">minimal</option><option value="low">low</option><option value="medium">medium</option><option value="high">high</option></select>`);
-                html += reasoningField('Thinking Budget', `<input id="setting-llm-thinking-budget${suffix}" type="number" min="0" step="1" style="${baseStyle}width:120px;" placeholder="미지정">`, 'Level과 동시에 지정하면 Level을 우선합니다.');
-                html += reasoningField('생각 포함', `<input id="setting-llm-include-thoughts${suffix}" type="checkbox">`);
-                container.innerHTML = html;
-                document.getElementById(`setting-llm-thinking-mode${suffix}`).value = Object.keys(thinking).length ? 'enabled' : 'default';
-                const thinkingLevel = thinking.thinkingLevel || oldEffort || configuredEffort || '';
-                document.getElementById(`setting-llm-thinking-level${suffix}`).value = thinkingLevel;
-                document.getElementById(`setting-llm-thinking-budget${suffix}`).value = thinking.thinkingBudget ?? '';
-                document.getElementById(`setting-llm-include-thoughts${suffix}`).checked = thinking.includeThoughts !== false;
-                document.getElementById(`setting-llm-reasoning-effort${suffix}`).value = thinkingLevel;
-                document.getElementById(`setting-llm-thinking-level${suffix}`).addEventListener('change', event => {
-                    document.getElementById(`setting-llm-reasoning-effort${suffix}`).value = event.target.value;
-                });
-                return;
-            }
 
             if (meta.format === 'anthropic') {
                 if (family !== 'claude') {
@@ -45439,12 +45447,17 @@
             const service = getEffectiveLlmService(slot);
             const meta = getLlmServiceMeta(service);
             if (!textarea) return;
+            if (isGeminiNativeService(service)) {
+                console.warn(`[LLM${slot}] Gemini 전용 경로에서는 Custom Body를 사용하지 않습니다.`);
+                showToast('Gemini와 Vertex Gemini는 추론 레벨 드롭다운을 사용하세요.', 'warning');
+                return;
+            }
             if (slot > 1 && !preset) {
                 console.error(`[LLM${slot}] BODY 빌드 거부: LLM1과 동일 프리셋`);
                 showToast(`LLM${slot} 프리셋을 먼저 선택하세요.`, 'warning');
                 return;
             }
-            if (meta.format === 'vertex' || meta.format === 'vertex-openai') {
+            if (meta.format === 'vertex-openai') {
                 console.warn(`[LLM${slot}] Vertex 기존 경로 보호로 BODY 빌드를 건너뜁니다.`);
                 showToast('Vertex의 현재 정상 호출 경로는 변경하지 않습니다.', 'warning');
                 return;

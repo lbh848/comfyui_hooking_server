@@ -81,17 +81,14 @@ def test_gemini_base64_encoder_preserves_roles_and_image_parts():
 
 def test_gemini_base64_removes_conflicting_json_response_format(monkeypatch):
     monkeypatch.setattr(llm_service, "_current_config", _config())
-
-    body = llm_service._build_gemini_request_body(
-        [{"role": "user", "content": "응답"}],
-        "gemini-test",
-        custom_body=(
-            '{"generationConfig": {'
-            '"responseMimeType": "application/json", '
-            '"responseSchema": {"type": "object"}'
-            '}}'
-        ),
-    )
+    token = llm_service._response_format_ctx.set({"type": "json_object"})
+    try:
+        body = llm_service._build_gemini_request_body(
+            [{"role": "user", "content": "응답"}],
+            "gemini-test",
+        )
+    finally:
+        llm_service._response_format_ctx.reset(token)
 
     generation_config = body["generationConfig"]
     assert "responseMimeType" not in generation_config

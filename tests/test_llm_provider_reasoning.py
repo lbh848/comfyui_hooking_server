@@ -95,34 +95,61 @@ def test_custom_body_applies_even_when_reasoning_preset_is_none():
     assert body["top_p"] == 0.8
 
 
-def test_gemini_native_body_uses_generation_config_and_recursive_override(isolated_llm_config):
+@pytest.mark.parametrize("level", ["minimal", "low", "medium", "high"])
+def test_gemini_and_vertex_use_the_same_dedicated_thinking_level(
+    isolated_llm_config,
+    level,
+):
     isolated_llm_config.update(
         {
-            "llm_reasoning_preset": "gemini",
-            "llm_reasoning_effort": "high",
+            "llm_reasoning_preset": "custom",
+            "llm_reasoning_effort": level,
+            "llm_custom_body": '{"thinking": {"type": "disabled"}}',
         }
     )
     messages = [{"role": "user", "content": "hello"}]
     body = llm_service._build_gemini_request_body(
         messages,
         "gemini-3-flash",
-        custom_body=json.dumps(
-            {
-                "contents": [{"role": "user", "parts": [{"text": "wrong"}]}],
-                "generationConfig": {
-                    "topP": 0.9,
-                    "thinkingConfig": {"includeThoughts": False},
-                },
-            }
-        ),
     )
+    vertex_config = llm_service._build_vertex_generate_config("system")
 
     assert body["contents"][0]["parts"][0]["text"] == "hello"
     assert body["generationConfig"]["thinkingConfig"] == {
-        "includeThoughts": False,
-        "thinkingLevel": "high",
+        "thinkingLevel": level.upper(),
     }
-    assert body["generationConfig"]["topP"] == 0.9
+    assert "thinking" not in body
+    assert vertex_config.thinking_config.thinking_level.value == level.upper()
+    assert vertex_config.system_instruction == "system"
+
+
+@pytest.mark.parametrize("configured", ["", "none", "xhigh", "invalid"])
+def test_gemini_thinking_level_defaults_to_low(isolated_llm_config, configured, capsys):
+    isolated_llm_config["llm_reasoning_effort"] = configured
+
+    body = llm_service._build_gemini_request_body(
+        [{"role": "user", "content": "hello"}],
+        "gemini-3-flash",
+    )
+    vertex_config = llm_service._build_vertex_generate_config(None)
+
+    assert body["generationConfig"]["thinkingConfig"] == {"thinkingLevel": "LOW"}
+    assert vertex_config.thinking_config.thinking_level.value == "LOW"
+    if configured:
+        assert "유효하지 않아 low로 대체" in capsys.readouterr().out
+
+
+def test_frontend_blocks_custom_body_for_gemini_native_services_and_defaults_low():
+    source = Path("frontend/index.html").read_text(encoding="utf-8")
+
+    assert "const GEMINI_NATIVE_SERVICE_IDS = new Set(['gemini', 'vertex']);" in source
+    assert "const DEFAULT_GEMINI_THINKING_LEVEL = 'low';" in source
+    assert "customRow.style.display = geminiNative ? 'none' : 'flex'" in source
+    assert "if (isGeminiNativeService(getEffectiveLlmService(slot))) continue;" in source
+    assert (
+        '<option value="minimal">minimal</option><option value="low">low</option>'
+        '<option value="medium">medium</option><option value="high">high</option>'
+    ) in source
 
 
 def test_claude_native_body_uses_adaptive_effort_and_custom_override(isolated_llm_config):

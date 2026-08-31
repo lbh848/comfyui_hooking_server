@@ -406,8 +406,7 @@ async def _call_vertex(messages: list, model: str) -> str:
     _llm_log(f"Vertex 요청(genai): model={actual_model}, parts={len(parts)}" + ("(vision)" if n_img else ""))
 
     try:
-        from google.genai import types
-        config = types.GenerateContentConfig(system_instruction=system_instruction) if system_instruction else None
+        config = _build_vertex_generate_config(system_instruction)
         loop = asyncio.get_event_loop()
         response = await loop.run_in_executor(
             None,
@@ -494,7 +493,7 @@ _current_config = _ContextConfig({
     "llm_reasoning_preset": "auto",   # auto|gpt|gemini|claude|deepseek|kimi|glm|custom|none
     "llm_reasoning_effort": "",       # ""|low|medium|high|none (OpenAI reasoning_effort)
     "llm_reasoning_budget_tokens": 0, # GLM/deepseek thinking budget_tokens
-    "llm_custom_body": "",            # LLM1 JSON object 문자열. 모든 프리셋의 body 에 재귀 병합
+    "llm_custom_body": "",            # LLM1 JSON object 문자열. Gemini/Vertex Gemini 전용 경로는 사용하지 않음
     "llm_temperature": 1.0,
     "llm_max_tokens": 0,              # 0 = 기본값 사용
     "llm_stream": False,              # LLM1 실제 API 스트리밍
@@ -1017,6 +1016,36 @@ def _detect_reasoning_family(model: str, preset: str) -> str:
     return "none"
 
 
+GEMINI_THINKING_LEVELS = frozenset({"minimal", "low", "medium", "high"})
+DEFAULT_GEMINI_THINKING_LEVEL = "low"
+
+
+def _gemini_thinking_level() -> str:
+    """Gemini 전용 thinking level을 반환한다. 비어 있으면 제품 기본값 low를 쓴다."""
+    raw = str(_current_config.get("llm_reasoning_effort", "") or "").strip().lower()
+    if not raw:
+        return DEFAULT_GEMINI_THINKING_LEVEL
+    if raw in GEMINI_THINKING_LEVELS:
+        return raw
+    print(
+        "[LLM_SERVICE] Gemini thinking level 값이 유효하지 않아 low로 대체: "
+        f"입력={raw!r}, 허용값={sorted(GEMINI_THINKING_LEVELS)}"
+    )
+    return DEFAULT_GEMINI_THINKING_LEVEL
+
+
+def _build_vertex_generate_config(system_instruction):
+    """Vertex Gemini SDK용 설정. Custom Body 없이 전용 thinking level만 적용한다."""
+    from google.genai import types
+
+    return types.GenerateContentConfig(
+        system_instruction=system_instruction or None,
+        thinking_config=types.ThinkingConfig(
+            thinking_level=_gemini_thinking_level(),
+        ),
+    )
+
+
 def _deep_merge_body(base: dict, override: dict, protected_keys=None, source: str = "custom body") -> dict:
     """Provider Manager 방식으로 중첩 객체를 재귀 병합한다.
 
@@ -1226,8 +1255,8 @@ def _build_claude_content(content):
     return blocks
 
 
-def _build_gemini_request_body(messages: list, model: str, custom_body: str = "") -> dict:
-    """Provider Manager의 Google 형식에 맞춘 Gemini REST 요청 BODY."""
+def _build_gemini_request_body(messages: list, model: str) -> dict:
+    """Gemini AI Studio REST 요청 BODY. Custom Body는 이 전용 경로에서 사용하지 않는다."""
     system_text = ""
     user_parts = []
     for msg in messages:
@@ -1251,29 +1280,10 @@ def _build_gemini_request_body(messages: list, model: str, custom_body: str = ""
     if max_tokens > 0:
         generation_config["maxOutputTokens"] = max_tokens
 
-    family = _detect_reasoning_family(
-        model,
-        _current_config.get("llm_reasoning_preset", "auto"),
-    )
-    effort = _current_config.get("llm_reasoning_effort", "")
-    budget = int(_current_config.get("llm_reasoning_budget_tokens", 0) or 0)
-    if family == "gemini" and effort and effort != "none":
-        generation_config["thinkingConfig"] = {
-            "includeThoughts": True,
-            "thinkingLevel": effort,
-        }
-    elif family == "gemini" and budget > 0:
-        generation_config["thinkingConfig"] = {
-            "includeThoughts": True,
-            "thinkingBudget": budget,
-        }
+    generation_config["thinkingConfig"] = {
+        "thinkingLevel": _gemini_thinking_level().upper(),
+    }
     body["generationConfig"] = generation_config
-    body = _merge_custom_body(
-        body,
-        custom_body,
-        {"contents", "systemInstruction"},
-        "Gemini custom body",
-    )
 
     if _gemini_base64_enabled("gemini"):
         custom_generation_config = body.get("generationConfig")
@@ -2041,7 +2051,6 @@ async def _call_gemini(messages: list, model: str) -> str:
     body = _build_gemini_request_body(
         messages,
         model,
-        custom_body=_current_config.get("llm_custom_body", ""),
     )
 
     _llm_log(f"gemini 요청: model={model} messages={len(messages)}")
@@ -4926,7 +4935,6 @@ async def _stream_gemini(messages: list, model: str):
     body = _build_gemini_request_body(
         messages,
         model,
-        custom_body=_current_config.get("llm_custom_body", ""),
     )
 
     t0 = time.time()
@@ -5139,8 +5147,7 @@ async def _stream_vertex_sdk(messages: list, model: str):
     _llm_log(f"vertex stream 요청(genai): model={actual_model}, parts={len(parts)}" + ("(vision)" if n_img else ""))
     yield {"type": "start", "service": "vertex", "model": actual_model}
 
-    from google.genai import types
-    config = types.GenerateContentConfig(system_instruction=system_instruction) if system_instruction else None
+    config = _build_vertex_generate_config(system_instruction)
     loop = asyncio.get_event_loop()
 
     def _consume_into_queue(q):
