@@ -2910,6 +2910,60 @@
         details.llm-group:not([open]) > summary::after { transform: rotate(-90deg); }
         details.llm-group[open] > summary { border-bottom: 1px solid var(--border); }
         details.llm-group .setting-row { padding-left: 12px; padding-right: 12px; }
+        .llm-reasoning-setting-row {
+            align-items: flex-start;
+            justify-content: flex-start;
+            gap: 20px;
+        }
+        .llm-reasoning-setting-row > .setting-label {
+            flex: 0 0 190px;
+            min-width: 0;
+        }
+        .llm-reasoning-setting-row > .setting-control {
+            flex: 1 1 0;
+            min-width: 0 !important;
+            margin-left: 0;
+        }
+        .llm-reasoning-field {
+            display: grid;
+            grid-template-columns: 112px minmax(0, 1fr);
+            align-items: center;
+            column-gap: 8px;
+            row-gap: 5px;
+            min-width: 0;
+            color: var(--text2);
+            font-size: .78rem;
+        }
+        .llm-reasoning-field-control {
+            display: flex;
+            align-items: center;
+            min-width: 0;
+        }
+        .llm-reasoning-field-hint {
+            grid-column: 2;
+            min-width: 0;
+            overflow-wrap: anywhere;
+            opacity: .8;
+            font-size: .7rem;
+        }
+        @media (max-width: 760px) {
+            .llm-reasoning-setting-row {
+                flex-direction: column;
+                gap: 8px;
+            }
+            .llm-reasoning-setting-row > .setting-label,
+            .llm-reasoning-setting-row > .setting-control {
+                flex: none;
+                width: 100%;
+            }
+            .llm-reasoning-field {
+                grid-template-columns: 1fr;
+            }
+            .llm-reasoning-field-control,
+            .llm-reasoning-field-hint {
+                grid-column: 1;
+            }
+        }
         .llm-routing-table {
             display: flex;
             flex-direction: column;
@@ -23306,12 +23360,12 @@
                         </div>
                     </div>
 
-                    <div class="setting-row" id="llm-reasoning-row" style="display: flex;">
+                    <div class="setting-row llm-reasoning-setting-row" id="llm-reasoning-row" style="display: flex;">
                         <div class="setting-label">
                             <div class="title">LLM1 Reasoning 설정</div>
                             <div class="desc">프리셋과 서비스 전송 포맷에 맞는 입력 항목이 아래에 표시됩니다.</div>
                         </div>
-                        <div class="setting-control" style="display: flex; flex-direction: column; align-items: stretch; gap: 8px; min-width: 360px;">
+                        <div class="setting-control" style="display: flex; flex-direction: column; align-items: stretch; gap: 8px;">
                             <select id="setting-llm-reasoning-preset" onchange="onReasoningPresetChange()"
                                     style="padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: .85rem;">
                                 <option value="auto">auto (모델명 추론)</option>
@@ -23498,12 +23552,12 @@
                         </div>
                     </div>
 
-                    <div class="setting-row" id="llm-reasoning2-row" style="display: flex;">
+                    <div class="setting-row llm-reasoning-setting-row" id="llm-reasoning2-row" style="display: flex;">
                         <div class="setting-label">
                             <div class="title">LLM2 Reasoning 설정</div>
                             <div class="desc">LLM2 가 LLM1 과 다를 때만. 비워두면 LLM1 reasoning 설정 재사용</div>
                         </div>
-                        <div class="setting-control" style="display: flex; flex-direction: column; align-items: stretch; gap: 8px; min-width: 360px;">
+                        <div class="setting-control" style="display: flex; flex-direction: column; align-items: stretch; gap: 8px;">
                             <select id="setting-llm-reasoning-preset2" onchange="onReasoningPreset2Change()"
                                     style="padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: .85rem;">
                                 <option value="">(LLM1과 동일)</option>
@@ -23568,9 +23622,9 @@
                                    style="width:92px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:.85rem;">
                         </div>
                     </div>
-                    <div class="setting-row" id="llm-reasoning3-row" style="display:flex;">
+                    <div class="setting-row llm-reasoning-setting-row" id="llm-reasoning3-row" style="display:flex;">
                         <div class="setting-label"><div class="title">LLM3 Reasoning 설정</div><div class="desc">비워두면 LLM1 reasoning 설정을 재사용합니다.</div></div>
-                        <div class="setting-control" style="display:flex;flex-direction:column;align-items:stretch;gap:8px;min-width:360px;">
+                        <div class="setting-control" style="display:flex;flex-direction:column;align-items:stretch;gap:8px;">
                             <select id="setting-llm-reasoning-preset3" onchange="onReasoningPreset3Change()" style="padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);">
                                 <option value="">(LLM1과 동일)</option><option value="auto">auto</option><option value="none">none</option><option value="gpt">gpt</option><option value="glm">glm</option><option value="deepseek">deepseek</option><option value="kimi">kimi</option><option value="claude">claude</option><option value="gemini">gemini</option><option value="custom">custom</option>
                             </select>
@@ -23716,12 +23770,12 @@
                                        style="width:92px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:.85rem;">
                             </div>
                         </div>
-                        <div class="setting-row" id="llm-reasoning4-row" style="display: flex;">
+                        <div class="setting-row llm-reasoning-setting-row" id="llm-reasoning4-row" style="display: flex;">
                             <div class="setting-label">
                                 <div class="title">LLM4 Reasoning 설정</div>
                                 <div class="desc">비워두면 LLM1 reasoning 설정을 재사용합니다.</div>
                             </div>
-                            <div class="setting-control" style="display: flex; flex-direction: column; align-items: stretch; gap: 8px; min-width: 360px;">
+                            <div class="setting-control" style="display: flex; flex-direction: column; align-items: stretch; gap: 8px;">
                                 <select id="setting-llm-reasoning-preset4" onchange="onReasoningPreset4Change()"
                                         style="padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: .85rem;">
                                     <option value="">(LLM1과 동일)</option>
@@ -23881,12 +23935,12 @@
                                        style="width:92px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:.85rem;">
                             </div>
                         </div>
-                        <div class="setting-row" id="llm-reasoning5-row" style="display: flex;">
+                        <div class="setting-row llm-reasoning-setting-row" id="llm-reasoning5-row" style="display: flex;">
                             <div class="setting-label">
                                 <div class="title">LLM5 Reasoning 설정</div>
                                 <div class="desc">비워두면 LLM1 reasoning 설정을 재사용합니다.</div>
                             </div>
-                            <div class="setting-control" style="display: flex; flex-direction: column; align-items: stretch; gap: 8px; min-width: 360px;">
+                            <div class="setting-control" style="display: flex; flex-direction: column; align-items: stretch; gap: 8px;">
                                 <select id="setting-llm-reasoning-preset5" onchange="onReasoningPreset5Change()"
                                         style="padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: .85rem;">
                                     <option value="">(LLM1과 동일)</option>
@@ -45340,7 +45394,7 @@
         }
 
         function reasoningField(label, control, hint = '') {
-            return `<label style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:.78rem;color:var(--text2);"><span style="min-width:108px;">${label}</span>${control}${hint ? `<span style="font-size:.7rem;opacity:.8;">${hint}</span>` : ''}</label>`;
+            return `<label class="llm-reasoning-field"><span class="llm-reasoning-field-label">${label}</span><span class="llm-reasoning-field-control">${control}</span>${hint ? `<span class="llm-reasoning-field-hint">${hint}</span>` : ''}</label>`;
         }
 
         function renderReasoningControls(slot) {
