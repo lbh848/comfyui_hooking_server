@@ -1,0 +1,139 @@
+name: macOS package
+
+# 왜 있나: 유지보수자가 macOS 머신을 갖고 있지 않아도 macOS 배포본을 낼 수 있어야
+# 한다. 러너가 대신 만든다. 공개 저장소라 macOS 러너 사용 시간은 무료다.
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    # Apple Silicon 만 만든다. Intel 러너(macos-13)는 큐 대기가 길고, 이 앱을
+    # Intel 맥에서 쓸 이유가 사실상 없다 — 로컬 디퓨전이 불가능해 어차피 원격을
+    # 쓰는데, 그 조건은 arm64 에서도 같다. 필요해지면 matrix 를 되살리면 된다.
+    name: Build arm64
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # build_app.sh 가 `git archive HEAD` 로 페이로드를 만든다.
+          fetch-depth: 1
+
+      - name: Derive version
+        id: version
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            echo "value=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=0.0.0+${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build app bundle
+        run: |
+          chmod +x packaging/macos/build_app.sh
+          packaging/macos/build_app.sh dist "${{ steps.version.outputs.value }}"
+
+      - name: Verify the bundle is launchable
+        run: |
+          set -euo pipefail
+          APP=dist/SoyaComfy.app
+          test -x "$APP/Contents/MacOS/SoyaComfy"        || { echo "실행기에 실행 권한이 없습니다"; exit 1; }
+          test -x "$APP/Contents/Resources/app/run_en.sh" || { echo "run_en.sh 에 실행 권한이 없습니다"; exit 1; }
+          test -f "$APP/Contents/Resources/app/server.py" || { echo "페이로드에 server.py 가 없습니다"; exit 1; }
+          # 사용자 데이터나 작업 산출물이 섞여 들어가지 않았는지.
+          for leaked in config.json key comfy logs models .git; do
+            if [ -e "$APP/Contents/Resources/app/$leaked" ]; then
+              echo "페이로드에 들어가면 안 되는 것이 있습니다: $leaked"; exit 1
+            fi
+          done
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          plutil -lint "$APP/Contents/Info.plist"
+          bash -n "$APP/Contents/MacOS/SoyaComfy"
+
+      - name: Archive
+        run: |
+          # 안내문을 앱 옆에 같이 넣는다. 릴리스 노트만으로는 CI 산출물을
+          # 받은 사람에게 닿지 않고, 받는 사람은 zip 안만 본다.
+          mkdir -p stage/SoyaComfy
+          cp -R dist/SoyaComfy.app stage/SoyaComfy/
+          cp packaging/macos/FIRST_RUN.txt "stage/SoyaComfy/먼저 읽어주세요.txt"
+          # ditto 로 압축해야 번들 메타데이터와 실행 권한이 보존된다.
+          # 그냥 zip 을 쓰면 내려받은 쪽에서 실행 권한이 사라진다.
+          ditto -c -k --sequesterRsrc --keepParent \
+            stage/SoyaComfy \
+            "SoyaComfy-${{ steps.version.outputs.value }}-arm64.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SoyaComfy-arm64
+          path: SoyaComfy-*.zip
+          if-no-files-found: error
+
+  release:
+    name: Attach to release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: SoyaComfy-*
+          merge-multiple: true
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          # gh 는 러너에 기본 설치돼 있습니다. 서드파티 액션을 쓰지 않는 이유는
+          # 저장소 정책이 "GitHub 이 만든 액션만 허용" 이면 거기서 막히기
+          # 때문입니다. 이 워크플로우는 actions/* 셋과 gh 만 씁니다.
+          cat > notes.md <<'NOTES'
+          ## macOS (Apple Silicon)
+
+          zip 안의 **`먼저 읽어주세요.txt`** 에 같은 내용이 더 자세히 있습니다.
+
+          ### 1. 먼저 설치해 주십시오 — 둘 다 없으면 실행되지 않습니다
+
+          ```bash
+          xcode-select --install    # Git
+          brew install ffmpeg       # 영상 후처리에 필요합니다
+          ```
+
+          ### 2. 격리 속성을 지웁니다
+
+          임시(ad-hoc) 서명만 되어 있고 Apple 공증은 받지 않았습니다.
+          응용 프로그램 폴더로 옮기신 뒤 **한 번만** 실행해 주십시오.
+
+          ```bash
+          xattr -dr com.apple.quarantine /Applications/SoyaComfy.app
+          ```
+
+          우클릭 → 열기 는 macOS 15 부터 통하지 않습니다. 위 명령을 쓰시거나,
+          시스템 설정 → 개인정보 보호 및 보안 → "확인 없이 열기" 를 눌러 주십시오.
+
+          ### 3. 실행
+
+          더블클릭하시면 터미널 창이 열리고 준비가 시작됩니다.
+          첫 실행은 5~15분이 걸리고 약 2.3 GB 를 내려받습니다.
+          끝나면 브라우저에서 `http://127.0.0.1:8189/` 가 열립니다.
+
+          작업 폴더는 `~/Library/Application Support/SoyaComfy` 이며,
+          앱을 새 버전으로 바꾸셔도 이 폴더의 사용자 데이터는 유지됩니다.
+
+          ComfyUI 본체는 포함되어 있지 않습니다. 앱을 실행하신 뒤 화면 안의
+          설치 탭에서 따로 설치해 주십시오.
+          NOTES
+          gh release create "$TAG" SoyaComfy-*.zip \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$TAG" \
+            --notes-file notes.md
