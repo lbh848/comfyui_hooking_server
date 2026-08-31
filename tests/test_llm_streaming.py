@@ -1,6 +1,7 @@
 import asyncio
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -1197,6 +1198,7 @@ async def test_idle_timeout_ends_stream_and_preserves_partial_in_error_event(mon
 async def test_openai_compat_finish_reason_ends_without_done_sentinel(monkeypatch):
     config = _test_config()
     monkeypatch.setattr(llm_service, "_current_config", config)
+    monkeypatch.setattr(llm_service, "_OPENAI_POST_FINISH_USAGE_GRACE_SECONDS", 0.01)
     consumed_lines = []
 
     class FakeResponse:
@@ -1216,7 +1218,7 @@ async def test_openai_compat_finish_reason_ends_without_done_sentinel(monkeypatc
             for line in lines:
                 consumed_lines.append(line)
                 yield line
-            raise AssertionError("finish_reason 뒤의 연결 종료를 기다리면 안 됨")
+            await asyncio.Future()
 
     class FakeClient:
         async def __aenter__(self):
@@ -1241,3 +1243,191 @@ async def test_openai_compat_finish_reason_ends_without_done_sentinel(monkeypatc
     assert [event["type"] for event in events] == ["start", "delta", "done"]
     assert events[-1]["text"] == "완료"
     assert len(consumed_lines) == 2
+
+
+@pytest.mark.asyncio
+async def test_openai_compat_collects_usage_chunk_after_finish_reason(monkeypatch):
+    config = _test_config()
+    monkeypatch.setattr(llm_service, "_current_config", config)
+    consumed_lines = []
+
+    class FakeResponse:
+        status_code = 200
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def aiter_lines(self):
+            lines = [
+                'data: {"choices":[{"delta":{"content":"완료"},"finish_reason":null}]}',
+                'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}',
+                'data: {"choices":[],"usage":{"prompt_tokens":321,"completion_tokens":45,"total_tokens":366}}',
+            ]
+            for line in lines:
+                consumed_lines.append(line)
+                yield line
+            raise AssertionError("실제 usage를 수집한 뒤 추가 청크를 기다리면 안 됨")
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        def stream(self, *args, **kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr(llm_service.httpx, "AsyncClient", lambda **kwargs: FakeClient())
+    events = [
+        event
+        async for event in llm_service._stream_openai_compat(
+            [{"role": "user", "content": "hello"}],
+            "model-1",
+            "https://example.invalid/v1/chat/completions",
+        )
+    ]
+
+    assert events[-1]["type"] == "done"
+    assert events[-1]["prompt_tokens"] == 321
+    assert events[-1]["completion_tokens"] == 45
+    assert len(consumed_lines) == 3
+
+
+@pytest.mark.asyncio
+async def test_openai_compat_nonstream_stores_actual_usage(monkeypatch):
+    class FakeResponse:
+        status_code = 200
+        text = ""
+
+        def json(self):
+            return {
+                "choices": [{"message": {"content": "실제 응답"}}],
+                "usage": {
+                    "prompt_tokens": 654,
+                    "completion_tokens": 87,
+                    "total_tokens": 741,
+                },
+            }
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, *args, **kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr(llm_service.httpx, "AsyncClient", lambda **kwargs: FakeClient())
+    sink = {}
+    token = llm_service._usage_sink_ctx.set(sink)
+    try:
+        result = await llm_service._call_openai_compat(
+            [{"role": "user", "content": "hello"}],
+            "model-1",
+            "https://example.invalid/v1/chat/completions",
+        )
+    finally:
+        llm_service._usage_sink_ctx.reset(token)
+
+    assert result == "실제 응답"
+    assert sink == {"prompt_tokens": 654, "completion_tokens": 87}
+
+
+@pytest.mark.asyncio
+async def test_vertex_nonstream_stores_actual_usage(monkeypatch):
+    response = SimpleNamespace(
+        text="Vertex 실제 응답",
+        usage_metadata=SimpleNamespace(
+            prompt_token_count=777,
+            candidates_token_count=88,
+        ),
+    )
+
+    class FakeModels:
+        def generate_content(self, **kwargs):
+            return response
+
+    monkeypatch.setattr(llm_service, "_init_vertex", lambda: None)
+    monkeypatch.setattr(llm_service, "_vertex_initialized", True)
+    monkeypatch.setattr(
+        llm_service,
+        "_vertex_client",
+        SimpleNamespace(models=FakeModels()),
+    )
+    monkeypatch.setattr(llm_service, "_build_genai_contents", lambda messages: (["hello"], None))
+    monkeypatch.setattr(llm_service, "_build_vertex_generate_config", lambda system: {})
+
+    sink = {}
+    token = llm_service._usage_sink_ctx.set(sink)
+    try:
+        result = await llm_service._call_vertex(
+            [{"role": "user", "content": "hello"}],
+            "gemini-test",
+        )
+    finally:
+        llm_service._usage_sink_ctx.reset(token)
+
+    assert result == "Vertex 실제 응답"
+    assert sink == {"prompt_tokens": 777, "completion_tokens": 88}
+
+
+def test_vertex_usage_includes_tool_prompt_and_thought_tokens_for_cost():
+    prompt_tokens, completion_tokens = llm_service._extract_vertex_usage(
+        SimpleNamespace(
+            prompt_token_count=5,
+            tool_use_prompt_token_count=3,
+            candidates_token_count=1,
+            thoughts_token_count=79,
+        )
+    )
+
+    assert prompt_tokens == 8
+    assert completion_tokens == 80
+
+
+@pytest.mark.asyncio
+async def test_vertex_stream_uses_sdk_actual_usage(monkeypatch):
+    stream_events = [
+        SimpleNamespace(text="Vertex ", usage_metadata=None),
+        SimpleNamespace(text="응답", usage_metadata=None),
+        SimpleNamespace(
+            text="",
+            usage_metadata=SimpleNamespace(
+                prompt_token_count=987,
+                candidates_token_count=65,
+            ),
+        ),
+    ]
+
+    class FakeModels:
+        def generate_content_stream(self, **kwargs):
+            return iter(stream_events)
+
+    monkeypatch.setattr(llm_service, "_init_vertex", lambda: None)
+    monkeypatch.setattr(llm_service, "_vertex_initialized", True)
+    monkeypatch.setattr(
+        llm_service,
+        "_vertex_client",
+        SimpleNamespace(models=FakeModels()),
+    )
+    monkeypatch.setattr(llm_service, "_build_genai_contents", lambda messages: (["hello"], None))
+    monkeypatch.setattr(llm_service, "_build_vertex_generate_config", lambda system: {})
+
+    events = [
+        event
+        async for event in llm_service._stream_vertex_sdk(
+            [{"role": "user", "content": "hello"}],
+            "gemini-test",
+        )
+    ]
+
+    assert events[-1]["type"] == "done"
+    assert events[-1]["text"] == "Vertex 응답"
+    assert events[-1]["prompt_tokens"] == 987
+    assert events[-1]["completion_tokens"] == 65

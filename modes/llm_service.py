@@ -412,6 +412,14 @@ async def _call_vertex(messages: list, model: str) -> str:
             None,
             lambda: _vertex_client.models.generate_content(model=actual_model, contents=parts, config=config),
         )
+        prompt_tokens, completion_tokens = _extract_vertex_usage(
+            getattr(response, "usage_metadata", None)
+        )
+        _store_actual_usage_in_sink(
+            prompt_tokens,
+            completion_tokens,
+            provider="vertex",
+        )
         try:
             result_text = response.text or ""
         except Exception:
@@ -1471,6 +1479,125 @@ _stream_observer_ctx: ContextVar = ContextVar("llm_stream_observer", default=Non
 # _stream_metadata_ctx 에는 채워지지 않으므로, 별도 싱크를 통해 done 분기에서 채워 돌려준다.
 _usage_sink_ctx: ContextVar = ContextVar("llm_usage_sink", default=None)
 
+
+def _normalize_actual_usage_count(value, *, provider: str, field: str) -> int | None:
+    """Provider usage 값을 음수가 아닌 정수로 정규화한다."""
+    if value is None:
+        return None
+    try:
+        if isinstance(value, bool):
+            raise TypeError("bool은 토큰 수로 사용할 수 없음")
+        count = int(value)
+    except (TypeError, ValueError) as exc:
+        print(
+            f"[LLM_USAGE] 실제 usage 파싱 실패: provider={provider}, "
+            f"field={field}, value={value!r}, error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        return None
+    if count < 0:
+        print(
+            f"[LLM_USAGE] 실제 usage 음수 값 무시: provider={provider}, "
+            f"field={field}, value={count}"
+        )
+        return None
+    return count
+
+
+def _usage_field(payload, *names):
+    """dict 응답과 SDK 객체 양쪽에서 첫 번째 usage 필드를 읽는다."""
+    if payload is None:
+        return None
+    if isinstance(payload, dict):
+        for name in names:
+            if name in payload and payload[name] is not None:
+                return payload[name]
+        return None
+    for name in names:
+        value = getattr(payload, name, None)
+        if value is not None:
+            return value
+    return None
+
+
+def _extract_openai_usage(usage) -> tuple[int | None, int | None]:
+    """OpenAI Chat Completions/Responses 계열 usage를 공통 내부 필드로 변환한다."""
+    prompt_tokens = _normalize_actual_usage_count(
+        _usage_field(usage, "prompt_tokens", "input_tokens"),
+        provider="openai-compatible",
+        field="prompt_tokens/input_tokens",
+    )
+    completion_tokens = _normalize_actual_usage_count(
+        _usage_field(usage, "completion_tokens", "output_tokens"),
+        provider="openai-compatible",
+        field="completion_tokens/output_tokens",
+    )
+    return prompt_tokens, completion_tokens
+
+
+def _extract_vertex_usage(usage_metadata) -> tuple[int | None, int | None]:
+    """Vertex usageMetadata를 비용 기준의 전체 입력·출력 토큰으로 변환한다."""
+    prompt_tokens = _normalize_actual_usage_count(
+        _usage_field(usage_metadata, "prompt_token_count", "promptTokenCount"),
+        provider="vertex",
+        field="promptTokenCount",
+    )
+    tool_prompt_tokens = _normalize_actual_usage_count(
+        _usage_field(
+            usage_metadata,
+            "tool_use_prompt_token_count",
+            "toolUsePromptTokenCount",
+        ),
+        provider="vertex",
+        field="toolUsePromptTokenCount",
+    )
+    candidate_tokens = _normalize_actual_usage_count(
+        _usage_field(
+            usage_metadata,
+            "candidates_token_count",
+            "candidatesTokenCount",
+        ),
+        provider="vertex",
+        field="candidatesTokenCount",
+    )
+    thought_tokens = _normalize_actual_usage_count(
+        _usage_field(usage_metadata, "thoughts_token_count", "thoughtsTokenCount"),
+        provider="vertex",
+        field="thoughtsTokenCount",
+    )
+    total_input_tokens = (
+        None
+        if prompt_tokens is None and tool_prompt_tokens is None
+        else (prompt_tokens or 0) + (tool_prompt_tokens or 0)
+    )
+    total_output_tokens = (
+        None
+        if candidate_tokens is None and thought_tokens is None
+        else (candidate_tokens or 0) + (thought_tokens or 0)
+    )
+    return total_input_tokens, total_output_tokens
+
+
+def _store_actual_usage_in_sink(
+    prompt_tokens: int | None,
+    completion_tokens: int | None,
+    *,
+    provider: str,
+) -> None:
+    """비스트리밍 provider의 실제 usage를 현재 작업의 상세 로그 싱크에 반영한다."""
+    sink = _usage_sink_ctx.get()
+    if sink is None:
+        return
+    captured = []
+    if prompt_tokens is not None:
+        sink["prompt_tokens"] = prompt_tokens
+        captured.append(f"prompt_tokens={prompt_tokens}")
+    if completion_tokens is not None:
+        sink["completion_tokens"] = completion_tokens
+        captured.append(f"completion_tokens={completion_tokens}")
+    if captured:
+        _llm_log(f"{provider} 실제 usage 수집: {', '.join(captured)}")
+
 # server.py가 등록하는 비동기 프론트엔드 알림 콜백.
 # llm_service가 server를 직접 import하지 않게 하여 순환 import를 피한다.
 _stream_notify_func = None
@@ -1978,6 +2105,14 @@ async def _call_openai_compat(messages: list, model: str, endpoint: str,
             response = await client.post(url, json=body, headers=headers)
             if response.status_code == 200:
                 result = response.json()
+                prompt_tokens, completion_tokens = _extract_openai_usage(
+                    result.get("usage")
+                )
+                _store_actual_usage_in_sink(
+                    prompt_tokens,
+                    completion_tokens,
+                    provider="openai-compatible",
+                )
                 content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
                 _llm_log(f"openai-compat 성공: {len(content)}자")
                 return content
@@ -4669,6 +4804,9 @@ def _fill_usage_sink_fallback(sink: dict | None, result, messages: list) -> None
         sink["prompt_tokens"] = _approx_input_tokens(messages)
 
 
+_OPENAI_POST_FINISH_USAGE_GRACE_SECONDS = 1.0
+
+
 async def _stream_openai_compat(messages: list, model: str, url: str,
                                  api_key: str = "", extra_headers: dict = None,
                                  service: str = "openai-compat",
@@ -4727,7 +4865,25 @@ async def _stream_openai_compat(messages: list, model: str, url: str,
                     yield {"type": "error", "error": f"{service} HTTP {response.status_code}: {err_text}"}
                     return
 
-                async for raw_line in response.aiter_lines():
+                line_iterator = response.aiter_lines().__aiter__()
+                finish_reason_seen = False
+                while True:
+                    try:
+                        if finish_reason_seen:
+                            raw_line = await asyncio.wait_for(
+                                anext(line_iterator),
+                                timeout=_OPENAI_POST_FINISH_USAGE_GRACE_SECONDS,
+                            )
+                        else:
+                            raw_line = await anext(line_iterator)
+                    except StopAsyncIteration:
+                        break
+                    except asyncio.TimeoutError:
+                        _llm_log(
+                            f"{service} stream finish_reason 뒤 usage 대기 만료: "
+                            f"{_OPENAI_POST_FINISH_USAGE_GRACE_SECONDS:g}초"
+                        )
+                        break
                     if not raw_line:
                         continue
                     line = raw_line.strip()
@@ -4741,13 +4897,11 @@ async def _stream_openai_compat(messages: list, model: str, url: str,
                     except json.JSONDecodeError:
                         continue
 
-                    if isinstance(chunk.get("usage"), dict):
-                        ct = chunk["usage"].get("completion_tokens")
-                        if ct:
-                            completion_tokens = ct
-                        pt = chunk["usage"].get("prompt_tokens")
-                        if pt:
-                            prompt_tokens = pt
+                    pt, ct = _extract_openai_usage(chunk.get("usage"))
+                    if ct is not None:
+                        completion_tokens = ct
+                    if pt is not None:
+                        prompt_tokens = pt
 
                     choices = chunk.get("choices") or []
                     if choices:
@@ -4776,12 +4930,23 @@ async def _stream_openai_compat(messages: list, model: str, url: str,
                             yield {"type": "delta", "text": text, "elapsed": elapsed, "ttft": ttft}
                         finish_reason = choice.get("finish_reason")
                         if finish_reason is not None:
+                            finish_reason_seen = True
                             _llm_log(
-                                f"{service} stream finish_reason 종료: "
+                                f"{service} stream finish_reason 수신: "
                                 f"reason={finish_reason}, chars={len(''.join(accumulated))}, "
                                 f"reasoning_chars={len(''.join(reasoning_parts))}"
                             )
-                            break
+                    if (
+                        finish_reason_seen
+                        and completion_tokens is not None
+                        and prompt_tokens is not None
+                    ):
+                        _llm_log(
+                            f"{service} stream 실제 usage 수집 완료: "
+                            f"prompt_tokens={prompt_tokens}, "
+                            f"completion_tokens={completion_tokens}"
+                        )
+                        break
 
         full = "".join(accumulated)
         elapsed = time.time() - t0
@@ -5143,6 +5308,7 @@ async def _stream_vertex_sdk(messages: list, model: str):
     ttft = None
     accumulated = []
     completion_tokens = None
+    prompt_tokens = None
 
     _llm_log(f"vertex stream 요청(genai): model={actual_model}, parts={len(parts)}" + ("(vision)" if n_img else ""))
     yield {"type": "start", "service": "vertex", "model": actual_model}
@@ -5156,6 +5322,11 @@ async def _stream_vertex_sdk(messages: list, model: str):
                 model=actual_model, contents=parts, config=config
             )
             for event in stream:
+                usage = _extract_vertex_usage(
+                    getattr(event, "usage_metadata", None)
+                )
+                if usage[0] is not None or usage[1] is not None:
+                    loop.call_soon_threadsafe(q.put_nowait, ("usage", usage))
                 text = ""
                 try:
                     text = event.text or ""
@@ -5183,6 +5354,13 @@ async def _stream_vertex_sdk(messages: list, model: str):
                 _llm_log(f"vertex stream 예외: {payload}")
                 yield {"type": "error", "error": f"vertex stream 예외: {payload}"}
                 return
+            if kind == "usage":
+                actual_prompt_tokens, actual_completion_tokens = payload
+                if actual_prompt_tokens is not None:
+                    prompt_tokens = actual_prompt_tokens
+                if actual_completion_tokens is not None:
+                    completion_tokens = actual_completion_tokens
+                continue
             # delta
             if ttft is None:
                 ttft = time.time() - t0
@@ -5191,10 +5369,15 @@ async def _stream_vertex_sdk(messages: list, model: str):
 
         full = "".join(accumulated)
         elapsed = time.time() - t0
-        completion_tokens = _approx_tokens(full)
-        prompt_tokens = _approx_input_tokens(messages)
+        if completion_tokens is None:
+            completion_tokens = _approx_tokens(full)
+        if prompt_tokens is None:
+            prompt_tokens = _approx_input_tokens(messages)
         tps = (completion_tokens / elapsed) if elapsed > 0 else 0.0
-        _llm_log(f"vertex stream 완료: {len(full)}자, prompt_tokens={prompt_tokens}, elapsed={elapsed:.2f}s")
+        _llm_log(
+            f"vertex stream 완료: {len(full)}자, tokens={completion_tokens}, "
+            f"prompt_tokens={prompt_tokens}, elapsed={elapsed:.2f}s"
+        )
         yield {
             "type": "done",
             "text": full,
