@@ -45608,14 +45608,64 @@
 
         function llmRouteSlotReady(slotId) {
             if (slotId === 'llm1') return true;
+            return !!llmRouteSlotModelName(slotId);
+        }
+
+        function llmRouteSlotModelName(slotId) {
             const slot = Number(String(slotId).replace('llm', ''));
-            if (!LLM_SLOTS.includes(slot)) return false;
+            if (!LLM_SLOTS.includes(slot)) return '';
             const suffix = llmSlotSuffix(slot);
             const modelInput = document.getElementById(`setting-llm-model${suffix}`);
             const model = modelInput
                 ? modelInput.value
                 : ((currentConfig && currentConfig[`llm_model${suffix}`]) || '');
-            return !!String(model || '').trim();
+            return String(model || '').trim();
+        }
+
+        function updateLlmRouteSelectTitle(select) {
+            if (!select) return;
+            const slotId = select.value;
+            if (slotId === 'none') {
+                select.title = '폴백 사용 안 함';
+                return;
+            }
+            if (!slotId) {
+                select.title = '개별 설정이 혼합되어 있습니다.';
+                return;
+            }
+            const slot = Number(String(slotId).replace('llm', ''));
+            const modelName = llmRouteSlotModelName(slotId);
+            select.title = modelName
+                ? `LLM${slot} 모델: ${modelName}`
+                : `LLM${slot} 모델명 미설정`;
+        }
+
+        function updateLlmRouteSelectOptionLabels(select) {
+            if (!select) return;
+            for (const option of select.options) {
+                const slot = Number(String(option.value).replace('llm', ''));
+                if (!LLM_SLOTS.includes(slot)) continue;
+                const modelName = llmRouteSlotModelName(option.value);
+                option.textContent = `LLM${slot} · ${modelName || '모델명 미설정'}`;
+            }
+        }
+
+        function updateLlmRouteSelectPresentation(select) {
+            updateLlmRouteSelectOptionLabels(select);
+            updateLlmRouteSelectTitle(select);
+        }
+
+        function initializeLlmRouteSelectTooltips(container) {
+            if (!container) {
+                console.error('[LLM_ROUTE] 모델명 툴팁 컨테이너가 없습니다.');
+                return;
+            }
+            for (const select of container.querySelectorAll('select[data-route-slot-select]')) {
+                updateLlmRouteSelectPresentation(select);
+                select.addEventListener('mouseenter', () => updateLlmRouteSelectPresentation(select));
+                select.addEventListener('focus', () => updateLlmRouteSelectPresentation(select));
+                select.addEventListener('change', () => updateLlmRouteSelectPresentation(select));
+            }
         }
 
         function llmRouteResolvedFallback(entry, primary) {
@@ -45777,7 +45827,7 @@
                 html += '<div class="llm-route-easy-paths">';
                 html += '<section class="llm-route-path-panel primary">';
                 html += '<div class="llm-route-path-head"><span class="llm-route-path-title">메인 경로</span>';
-                html += `<select id="llm-route-easy-${modality.key}-primary" aria-label="${modality.label} 메인 LLM">`;
+                html += `<select id="llm-route-easy-${modality.key}-primary" data-route-slot-select aria-label="${modality.label} 메인 LLM">`;
                 if (!primary) html += mixedOption.replace('disabled', 'disabled selected');
                 for (const slotId of routeSlots) {
                     const slot = Number(slotId.replace('llm', ''));
@@ -45790,7 +45840,7 @@
                 html += '</div></section>';
                 html += `<section class="llm-route-path-panel fallback${fallback === 'none' ? ' is-disabled' : ''}">`;
                 html += '<div class="llm-route-path-head"><span class="llm-route-path-title">폴백 경로</span>';
-                html += `<select id="llm-route-easy-${modality.key}-fallback" onchange="updateLlmRouteEasyFallbackState('${modality.key}')" aria-label="${modality.label} 폴백 LLM">`;
+                html += `<select id="llm-route-easy-${modality.key}-fallback" data-route-slot-select onchange="updateLlmRouteEasyFallbackState('${modality.key}')" aria-label="${modality.label} 폴백 LLM">`;
                 if (!fallback) html += mixedOption.replace('disabled', 'disabled selected');
                 html += `<option value="none"${fallback === 'none' ? ' selected' : ''}>없음</option>`;
                 for (const slotId of routeSlots) {
@@ -45818,6 +45868,7 @@
                 html += '</div></article>';
             }
             container.innerHTML = html;
+            initializeLlmRouteSelectTooltips(container);
             for (const modality of LLM_ROUTING_MODALITIES) {
                 updateLlmRouteEasyFallbackState(modality.key);
             }
@@ -45929,6 +45980,11 @@
             const fallbackSelect = document.querySelector(
                 `select[data-route-key="${taskKey}"][data-route-field="fallback_target"]`
             );
+            const primarySelect = document.querySelector(
+                `select[data-route-key="${taskKey}"][data-route-field="primary"]`
+            );
+            updateLlmRouteSelectPresentation(primarySelect);
+            updateLlmRouteSelectPresentation(fallbackSelect);
             const disabled = !fallbackSelect || fallbackSelect.value === 'none';
             const fallbackPanel = document.querySelector(
                 `[data-route-key="${taskKey}"][data-route-role="fallback-panel"]`
@@ -45998,7 +46054,7 @@
 
                     html += '<section class="llm-route-path-panel primary">';
                     html += '<div class="llm-route-path-head"><span class="llm-route-path-title">메인 경로</span>';
-                    html += `<select data-route-key="${t.key}" data-route-field="primary" aria-label="${t.label} 메인 LLM">`;
+                    html += `<select data-route-key="${t.key}" data-route-field="primary" data-route-slot-select aria-label="${t.label} 메인 LLM">`;
                     for (const s of LLM_SLOTS) {
                         const slotId = 'llm' + s;
                         const ready = slotReady[slotId];
@@ -46011,7 +46067,7 @@
 
                     html += `<section class="llm-route-path-panel fallback${fbTarget === 'none' ? ' is-disabled' : ''}" data-route-key="${t.key}" data-route-role="fallback-panel">`;
                     html += '<div class="llm-route-path-head"><span class="llm-route-path-title">폴백 경로</span>';
-                    html += `<select data-route-key="${t.key}" data-route-field="fallback_target" onchange="updateLlmRouteFallbackState('${t.key}')" aria-label="${t.label} 폴백 LLM">`;
+                    html += `<select data-route-key="${t.key}" data-route-field="fallback_target" data-route-slot-select onchange="updateLlmRouteFallbackState('${t.key}')" aria-label="${t.label} 폴백 LLM">`;
                     html += `<option value="none"${fbTarget === 'none' ? ' selected' : ''}>없음</option>`;
                     for (const s of LLM_SLOTS) {
                         const slotId = 'llm' + s;
@@ -46034,6 +46090,7 @@
             }
             html += '<div class="llm-route-tip">💡 메인 재시도를 모두 소진한 뒤 폴백으로 넘어갑니다. JSON 작업은 서비스 호환성 문제가 있을 때 포맷 강제를 끌 수 있습니다.</div>';
             container.innerHTML = html;
+            initializeLlmRouteSelectTooltips(container);
         }
 
         function collectLlmRouting() {

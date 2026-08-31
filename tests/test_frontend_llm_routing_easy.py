@@ -104,3 +104,24 @@ def test_easy_routing_can_update_locked_tasks_only_after_explicit_bulk_apply() -
     assert "llmRoutingEasyAppliedTaskKeys.add(taskControls.task.key)" in frontend
     assert "if (t.locked && !llmRoutingEasyAppliedTaskKeys.has(t.key))" in frontend
     assert "일괄 적용</b> 후 모달 하단의 <b>저장</b>" in frontend
+
+
+def test_llm_route_dropdowns_show_the_selected_slot_model_name_on_hover() -> None:
+    frontend = _frontend()
+
+    assert "function llmRouteSlotModelName(slotId)" in frontend
+    assert "select.title = modelName" in frontend
+    assert "? `LLM${slot} 모델: ${modelName}`" in frontend
+    assert "select.addEventListener('mouseenter', () => updateLlmRouteSelectPresentation(select))" in frontend
+    assert "select.addEventListener('change', () => updateLlmRouteSelectPresentation(select))" in frontend
+    assert frontend.count("data-route-slot-select") == 5
+    assert frontend.count("initializeLlmRouteSelectTooltips(container);") == 2
+
+
+def test_llm_route_dropdown_options_include_each_slot_model_name() -> None:
+    frontend = _frontend()
+
+    assert "function updateLlmRouteSelectOptionLabels(select)" in frontend
+    assert "for (const option of select.options)" in frontend
+    assert "option.textContent = `LLM${slot} · ${modelName || '모델명 미설정'}`" in frontend
+    assert "updateLlmRouteSelectOptionLabels(select);" in frontend
