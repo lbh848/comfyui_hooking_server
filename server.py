@@ -596,25 +596,13 @@ DEFAULT_CONFIG = {
     "outfit_workflow_source_path": "",  # 복장 추출 워크플로우 원본 소스 전체 경로
     "llm_service": "copilot",   # LLM 서비스: copilot / vertex / vertex-openai / openai / openrouter / gemini / claude / lmstudio / ollama / ollama-cloud
     "llm_model": "gpt-4.1",    # LLM 모델명
-    "llm_service2": "",         # LLM2 서비스 (비워두면 LLM1 서비스 사용)
-    "llm_model2": "",           # LLM2 모델명 (폴백, 비어있으면 비활성)
-    "llm_service3": "",         # LLM3 서비스 (삽화 CALL1/2/3, 비워두면 LLM1 서비스 사용)
-    "llm_model3": "",           # LLM3 모델명
-    # 주의: API 키(llm_api_key, llm_api_key2, llm_api_key3)는 config.json 에 저장 안 함.
+    # 주의: 슬롯별 API 키는 config.json 에 저장 안 함.
     # key/llm_keys.json 으로 분리 (handle_api_llm_keys 참조).
     "llm_url": "",              # LLM1 베이스 URL 오버라이드 (OpenAI 호환 서비스, {model} 치환 지원)
-    "llm_url2": "",             # LLM2 베이스 URL 오버라이드 (옵션)
-    "llm_url3": "",             # LLM3 베이스 URL 오버라이드 (옵션)
     "llm_reasoning_preset": "auto",   # auto|none|gpt|glm|deepseek|kimi|claude|gemini|custom
     "llm_reasoning_effort": "",       # low|medium|high (OpenAI reasoning_effort)
     "llm_reasoning_budget_tokens": 0, # GLM/deepseek thinking budget_tokens
     "llm_custom_body": "",            # 모든 프리셋의 요청 body 에 재귀 병합되는 JSON object 문자열
-    "llm_custom_body2": "",           # LLM2 용
-    "llm_custom_body3": "",           # LLM3 용
-    "llm_reasoning_preset2": "auto",  # LLM2 전용 reasoning preset
-    "llm_reasoning_effort2": "",      # LLM2 전용 reasoning effort
-    "llm_reasoning_preset3": "auto",  # LLM3 전용 reasoning preset
-    "llm_reasoning_effort3": "",      # LLM3 전용 reasoning effort
     "illustration_context_toggles": {
         "illustration_output_mode": "illustration",
         "original_asset_count": 1,
@@ -679,14 +667,9 @@ DEFAULT_CONFIG = {
     "llm_temperature": 1.0,
     "llm_max_tokens": 0,              # 0 = 기본값 사용
     "llm_stream": False,              # LLM1 실제 API 스트리밍
-    "llm_stream2": False,             # LLM2 실제 API 스트리밍
-    "llm_stream3": False,             # LLM3 실제 API 스트리밍
     "llm_stream_idle_timeout_seconds": 90.0,  # 0=비활성, 그 외 10~3600초
-    "llm_stream_idle_timeout_seconds2": 90.0,
-    "llm_stream_idle_timeout_seconds3": 90.0,
     "llm_vision_compress": False,        # LLM1 비전 이미지 webp 압축 전송 (False=PNG 호환)
-    "llm_vision_compress2": False,       # LLM2 비전 webp 압축
-    "llm_vision_compress3": False,       # LLM3 비전 webp 압축
+    "llm_gemini_base64": False,          # LLM1 native Gemini Base64 요청/응답 래핑
     "lora_prompt_review_enabled": False, # LoRA 프롬프트 완성 후 선택적 2차 비전 검수
     # 작업별 LLM1/LLM2/LLM3 라우팅 및 메인/폴백 재시도 정책(외부 LLM 분기 탭).
     "llm_routing": {
@@ -795,10 +778,10 @@ DEFAULT_CONFIG = {
     "llm_queue_type_order": dict(DEFAULT_LLM_QUEUE_TYPE_ORDER),
 }
 
-# LLM 슬롯 4..N 의 config 기본값을 단일 소스(llm_service.LLM_SLOT_COUNT)에서 자동 생성.
+# LLM 슬롯 2..N 의 config 기본값을 단일 소스(llm_service.LLM_SLOT_COUNT)에서 자동 생성.
 # DEFAULT_CONFIG 는 저장 화이트리스트의 진실 소스이므로, 여기에 키가 있어야 프론트에서
-# 보낸 llm_service4/llm_model4 ... 값이 config.json 에 저장된다. (슬롯 1~3 은 위 리터럴에 명시.)
-for _slot_n in range(4, llm_service.LLM_SLOT_COUNT + 1):
+# 보낸 llm_service2/llm_model2 ... 값이 config.json 에 저장된다. LLM1만 접미사가 없다.
+for _slot_n in range(2, llm_service.LLM_SLOT_COUNT + 1):
     _suffix = str(_slot_n)
     DEFAULT_CONFIG.update({
         f"llm_service{_suffix}": "",
@@ -811,6 +794,7 @@ for _slot_n in range(4, llm_service.LLM_SLOT_COUNT + 1):
         f"llm_stream_idle_timeout_seconds{_suffix}": 90.0,
         f"llm_max_concurrency{_suffix}": 1,
         f"llm_vision_compress{_suffix}": False,
+        f"llm_gemini_base64{_suffix}": False,
     })
 
 # 워크플로우 백업 최대 보관 수 (기본값, config에서 덮어씀)
@@ -18760,6 +18744,7 @@ async def handle_api_config(request: web.Request) -> web.Response:
                     f"llm_max_concurrency{_sfx}": app_config.get(f"llm_max_concurrency{_sfx}", 1),
                     f"llm_stream_idle_timeout_seconds{_sfx}": app_config.get(f"llm_stream_idle_timeout_seconds{_sfx}", 90.0),
                     f"llm_vision_compress{_sfx}": app_config.get(f"llm_vision_compress{_sfx}", False),
+                    f"llm_gemini_base64{_sfx}": app_config.get(f"llm_gemini_base64{_sfx}", False),
                 })
             llm_service.update_config(_llm_runtime_cfg)
 
@@ -19651,14 +19636,14 @@ async def handle_api_outfit_run_llm(request: web.Request) -> web.Response:
             pass
 
         # LLM 설정 동기화
-        llm_service.update_config({
+        llm_sync_config = {
             "llm_service": app_config.get("llm_service", "copilot"),
             "llm_model": app_config.get("llm_model", "gpt-4.1"),
-            "llm_service2": app_config.get("llm_service2", ""),
-            "llm_model2": app_config.get("llm_model2", ""),
-            "llm_service3": app_config.get("llm_service3", ""),
-            "llm_model3": app_config.get("llm_model3", ""),
-        })
+        }
+        for slot_n in range(2, llm_service.LLM_SLOT_COUNT + 1):
+            llm_sync_config[f"llm_service{slot_n}"] = app_config.get(f"llm_service{slot_n}", "")
+            llm_sync_config[f"llm_model{slot_n}"] = app_config.get(f"llm_model{slot_n}", "")
+        llm_service.update_config(llm_sync_config)
 
         try:
             # 동적으로 프롬프트 모듈 로드
@@ -30543,6 +30528,7 @@ async def on_startup(app):
         "llm_max_concurrency": app_config.get("llm_max_concurrency", 1),
         "llm_stream_idle_timeout_seconds": app_config.get("llm_stream_idle_timeout_seconds", 90.0),
         "llm_vision_compress": app_config.get("llm_vision_compress", False),
+        "llm_gemini_base64": app_config.get("llm_gemini_base64", False),
     }
     for _n in range(2, llm_service.LLM_SLOT_COUNT + 1):
         _s = str(_n)
@@ -30557,6 +30543,7 @@ async def on_startup(app):
             f"llm_max_concurrency{_s}": app_config.get(f"llm_max_concurrency{_s}", 1),
             f"llm_stream_idle_timeout_seconds{_s}": app_config.get(f"llm_stream_idle_timeout_seconds{_s}", 90.0),
             f"llm_vision_compress{_s}": app_config.get(f"llm_vision_compress{_s}", False),
+            f"llm_gemini_base64{_s}": app_config.get(f"llm_gemini_base64{_s}", False),
         })
     _llm_cfg["lora_prompt_review_enabled"] = app_config.get("lora_prompt_review_enabled", False)
     _llm_cfg["llm_routing"] = app_config.get("llm_routing", {})

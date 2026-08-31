@@ -23242,6 +23242,20 @@
                         </div>
                     </div>
 
+                    <div class="setting-row" id="llm-gemini-base64-row" style="display:none;">
+                        <div class="setting-label">
+                            <div class="title">LLM1 Gemini Base64 검열 우회</div>
+                            <div class="desc">Gemini 텍스트 요청과 응답을 UTF-8 Base64로 감쌉니다. 이미지 데이터는 그대로 전송되며 검열 우회를 보장하지는 않습니다.</div>
+                        </div>
+                        <div class="setting-control" style="display:flex; align-items:center; gap:8px;">
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="setting-llm-gemini-base64" onchange="updateLlmGeminiBase64Status(1, this.checked)">
+                                <span class="toggle-slider"></span>
+                            </label>
+                            <span id="setting-llm-gemini-base64-status" class="toggle-status off">OFF</span>
+                        </div>
+                    </div>
+
                     <div class="setting-row">
                         <div class="setting-label">
                             <div class="title">이미지를 webp으로 압축해서 전송</div>
@@ -23406,6 +23420,20 @@
                         </div>
                     </div>
 
+                    <div class="setting-row" id="llm-gemini-base642-row" style="display:none;">
+                        <div class="setting-label">
+                            <div class="title">LLM2 Gemini Base64 검열 우회</div>
+                            <div class="desc">LLM2가 Gemini일 때만 텍스트 요청·응답에 적용되는 독립 토글입니다.</div>
+                        </div>
+                        <div class="setting-control" style="display:flex; align-items:center; gap:8px;">
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="setting-llm-gemini-base642" onchange="updateLlmGeminiBase64Status(2, this.checked)">
+                                <span class="toggle-slider"></span>
+                            </label>
+                            <span id="setting-llm-gemini-base642-status" class="toggle-status off">OFF</span>
+                        </div>
+                    </div>
+
                     <div class="setting-row">
                         <div class="setting-label">
                             <div class="title">이미지를 webp으로 압축해서 전송</div>
@@ -23489,6 +23517,7 @@
                     <div class="setting-row" id="llm-api-key3-row" style="display:none;"><div class="setting-label"><div class="title">LLM3 API 키 (옵션)</div><div class="desc">비워두면 LLM1 키 재사용</div></div><div class="setting-control"><input id="setting-llm-api-key3" type="text" placeholder="sk-..." style="width:300px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-family:monospace;"></div></div>
                     <div class="setting-row" id="llm-url3-row" style="display:none;"><div class="setting-label"><div class="title">LLM3 베이스 URL (옵션)</div><div class="desc">비워두면 LLM1 URL 또는 선택한 서비스의 기본 URL 사용</div></div><div class="setting-control"><input id="setting-llm-url3" type="text" placeholder="https://..." style="width:300px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);"></div></div>
                     <div class="setting-row"><div class="setting-label"><div class="title">LLM3 스트리밍</div><div class="desc">LLM3 요청을 실제 chunk 스트림으로 받고 LLM로그창에 실시간 표시합니다.</div></div><div class="setting-control" style="display:flex;align-items:center;gap:8px;"><label class="toggle-switch"><input type="checkbox" id="setting-llm-stream3" onchange="updateLlmStreamStatus(3, this.checked)"><span class="toggle-slider"></span></label><span id="setting-llm-stream3-status" class="toggle-status off">OFF</span></div></div>
+                    <div class="setting-row" id="llm-gemini-base643-row" style="display:none;"><div class="setting-label"><div class="title">LLM3 Gemini Base64 검열 우회</div><div class="desc">LLM3가 Gemini일 때만 텍스트 요청·응답에 적용되는 독립 토글입니다.</div></div><div class="setting-control" style="display:flex;align-items:center;gap:8px;"><label class="toggle-switch"><input type="checkbox" id="setting-llm-gemini-base643" onchange="updateLlmGeminiBase64Status(3, this.checked)"><span class="toggle-slider"></span></label><span id="setting-llm-gemini-base643-status" class="toggle-status off">OFF</span></div></div>
                     <div class="setting-row"><div class="setting-label"><div class="title">이미지를 webp으로 압축해서 전송</div><div class="desc">토글이 꺼져있다면, 가장 호환성이 좋은 png로 보냅니다.(비전 사용시)</div></div><div class="setting-control" style="display:flex;align-items:center;gap:8px;"><label class="toggle-switch"><input type="checkbox" id="setting-llm-vision-compress3" onchange="updateLlmVisionCompressStatus(3, this.checked)"><span class="toggle-slider"></span></label><span id="setting-llm-vision-compress3-status" class="toggle-status off">OFF</span></div></div>
                     <div class="setting-row">
                         <div class="setting-label">
@@ -23554,6 +23583,19 @@
                                     <option value="ollama">Ollama (로컬)</option>
                                     <option value="ollama-cloud">Ollama Cloud</option>
                                 </select>
+                            </div>
+                        </div>
+                        <div class="setting-row" id="llm-gemini-base644-row" style="display:none;">
+                            <div class="setting-label">
+                                <div class="title">LLM4 Gemini Base64 검열 우회</div>
+                                <div class="desc">LLM4가 Gemini일 때만 텍스트 요청·응답에 적용되는 독립 토글입니다.</div>
+                            </div>
+                            <div class="setting-control" style="display:flex; align-items:center; gap:8px;">
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="setting-llm-gemini-base644" onchange="updateLlmGeminiBase64Status(4, this.checked)">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                                <span id="setting-llm-gemini-base644-status" class="toggle-status off">OFF</span>
                             </div>
                         </div>
                         <div class="setting-row">
@@ -23736,6 +23778,19 @@
                                     <span class="toggle-slider"></span>
                                 </label>
                                 <span id="setting-llm-stream5-status" class="toggle-status off">OFF</span>
+                            </div>
+                        </div>
+                        <div class="setting-row" id="llm-gemini-base645-row" style="display:none;">
+                            <div class="setting-label">
+                                <div class="title">LLM5 Gemini Base64 검열 우회</div>
+                                <div class="desc">LLM5가 Gemini일 때만 텍스트 요청·응답에 적용되는 독립 토글입니다.</div>
+                            </div>
+                            <div class="setting-control" style="display:flex; align-items:center; gap:8px;">
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="setting-llm-gemini-base645" onchange="updateLlmGeminiBase64Status(5, this.checked)">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                                <span id="setting-llm-gemini-base645-status" class="toggle-status off">OFF</span>
                             </div>
                         </div>
                         <div class="setting-row">
@@ -40688,37 +40743,42 @@
             document.getElementById('clamp-value-row').style.display = clampEnabled ? 'flex' : 'none';
             updateClampStatus(clampEnabled);
 
-            // LLM 서비스 설정
-            const llmService = currentConfig.llm_service || 'copilot';
-            document.getElementById('setting-llm-service').value = llmService;
-            document.getElementById('setting-llm-model').value = currentConfig.llm_model || 'gpt-4.1';
-            document.getElementById('setting-llm-stream').checked = !!currentConfig.llm_stream;
-            document.getElementById('setting-llm-stream2').checked = !!currentConfig.llm_stream2;
-            document.getElementById('setting-llm-stream3').checked = !!currentConfig.llm_stream3;
-            updateLlmStreamStatus(1, !!currentConfig.llm_stream);
-            updateLlmStreamStatus(2, !!currentConfig.llm_stream2);
-            updateLlmStreamStatus(3, !!currentConfig.llm_stream3);
-            const _vc1 = document.getElementById('setting-llm-vision-compress');
-            if (_vc1) _vc1.checked = !!currentConfig.llm_vision_compress;
-            const _vc2 = document.getElementById('setting-llm-vision-compress2');
-            if (_vc2) _vc2.checked = !!currentConfig.llm_vision_compress2;
-            const _vc3 = document.getElementById('setting-llm-vision-compress3');
-            if (_vc3) _vc3.checked = !!currentConfig.llm_vision_compress3;
-            const _vc4 = document.getElementById('setting-llm-vision-compress4');
-            if (_vc4) _vc4.checked = !!currentConfig.llm_vision_compress4;
-            const _vc5 = document.getElementById('setting-llm-vision-compress5');
-            if (_vc5) _vc5.checked = !!currentConfig.llm_vision_compress5;
-            updateLlmVisionCompressStatus(1, !!currentConfig.llm_vision_compress);
-            updateLlmVisionCompressStatus(2, !!currentConfig.llm_vision_compress2);
-            updateLlmVisionCompressStatus(3, !!currentConfig.llm_vision_compress3);
-            updateLlmVisionCompressStatus(4, !!currentConfig.llm_vision_compress4);
-            updateLlmVisionCompressStatus(5, !!currentConfig.llm_vision_compress5);
-            const llmUrlEl = document.getElementById('setting-llm-url');
-            if (llmUrlEl) llmUrlEl.value = currentConfig.llm_url || '';
-            const llmUrl2El = document.getElementById('setting-llm-url2');
-            if (llmUrl2El) llmUrl2El.value = currentConfig.llm_url2 || '';
-            const llmUrl3El = document.getElementById('setting-llm-url3');
-            if (llmUrl3El) llmUrl3El.value = currentConfig.llm_url3 || '';
+            // LLM1~N 슬롯 설정. LLM1만 기존 config 계약 때문에 접미사가 없다.
+            for (const slot of LLM_SLOTS) {
+                const suffix = llmSlotSuffix(slot);
+                const el = id => document.getElementById(id);
+                const configValue = (base, fallback) => (
+                    currentConfig[`${base}${suffix}`] ?? fallback
+                );
+                const serviceEl = el(`setting-llm-service${suffix}`);
+                if (serviceEl) serviceEl.value = configValue('llm_service', slot === 1 ? 'copilot' : '');
+                const modelEl = el(`setting-llm-model${suffix}`);
+                if (modelEl) modelEl.value = configValue('llm_model', slot === 1 ? 'gpt-4.1' : '');
+                const streamEnabled = !!configValue('llm_stream', false);
+                const streamEl = el(`setting-llm-stream${suffix}`);
+                if (streamEl) streamEl.checked = streamEnabled;
+                updateLlmStreamStatus(slot, streamEnabled);
+                const visionCompress = !!configValue('llm_vision_compress', false);
+                const visionEl = el(`setting-llm-vision-compress${suffix}`);
+                if (visionEl) visionEl.checked = visionCompress;
+                updateLlmVisionCompressStatus(slot, visionCompress);
+                const geminiBase64 = !!configValue('llm_gemini_base64', false);
+                const geminiBase64El = el(`setting-llm-gemini-base64${suffix}`);
+                if (geminiBase64El) geminiBase64El.checked = geminiBase64;
+                updateLlmGeminiBase64Status(slot, geminiBase64);
+                const urlEl = el(`setting-llm-url${suffix}`);
+                if (urlEl) urlEl.value = configValue('llm_url', '');
+                const concurrencyEl = el(`setting-llm-max-concurrency${suffix}`);
+                if (concurrencyEl) concurrencyEl.value = configValue('llm_max_concurrency', 1);
+                const idleEl = el(`setting-llm-stream-idle-timeout${suffix}`);
+                if (idleEl) idleEl.value = configValue('llm_stream_idle_timeout_seconds', 90);
+                const presetEl = el(`setting-llm-reasoning-preset${suffix}`);
+                if (presetEl) presetEl.value = configValue('llm_reasoning_preset', slot === 1 ? 'auto' : '');
+                const effortEl = el(`setting-llm-reasoning-effort${suffix}`);
+                if (effortEl) effortEl.value = configValue('llm_reasoning_effort', '');
+                const bodyEl = el(`setting-llm-custom-body${suffix}`);
+                if (bodyEl) bodyEl.value = configValue('llm_custom_body', '');
+            }
             const chansubRetriesEl = document.getElementById('setting-chansub-max-retries');
             if (chansubRetriesEl) chansubRetriesEl.value = (currentConfig.chansub_max_retries ?? 2);
             const chansubRetryDelayEl = document.getElementById('setting-chansub-retry-delay');
@@ -40729,65 +40789,6 @@
             const chansubStripQualityTagsEl = document.getElementById('setting-chansub-strip-builtin-quality-tags');
             if (chansubStripQualityTagsEl) chansubStripQualityTagsEl.checked = chansubStripQualityTags;
             updateChansubStripQualityTagsStatus(chansubStripQualityTags);
-            const llmConcEl = document.getElementById('setting-llm-max-concurrency');
-            if (llmConcEl) llmConcEl.value = (currentConfig.llm_max_concurrency ?? 1);
-            const llmConc2El = document.getElementById('setting-llm-max-concurrency2');
-            if (llmConc2El) llmConc2El.value = (currentConfig.llm_max_concurrency2 ?? 1);
-            const llmConc3El = document.getElementById('setting-llm-max-concurrency3');
-            if (llmConc3El) llmConc3El.value = (currentConfig.llm_max_concurrency3 ?? 1);
-            const llmStreamIdleTimeoutEl = document.getElementById('setting-llm-stream-idle-timeout');
-            if (llmStreamIdleTimeoutEl) llmStreamIdleTimeoutEl.value = (currentConfig.llm_stream_idle_timeout_seconds ?? 90);
-            const llmStreamIdleTimeout2El = document.getElementById('setting-llm-stream-idle-timeout2');
-            if (llmStreamIdleTimeout2El) llmStreamIdleTimeout2El.value = (currentConfig.llm_stream_idle_timeout_seconds2 ?? 90);
-            const llmStreamIdleTimeout3El = document.getElementById('setting-llm-stream-idle-timeout3');
-            if (llmStreamIdleTimeout3El) llmStreamIdleTimeout3El.value = (currentConfig.llm_stream_idle_timeout_seconds3 ?? 90);
-            const llmPresetEl = document.getElementById('setting-llm-reasoning-preset');
-            if (llmPresetEl) llmPresetEl.value = currentConfig.llm_reasoning_preset || 'auto';
-            const llmEffortEl = document.getElementById('setting-llm-reasoning-effort');
-            if (llmEffortEl) llmEffortEl.value = currentConfig.llm_reasoning_effort || '';
-            const llmCustomBodyEl = document.getElementById('setting-llm-custom-body');
-            if (llmCustomBodyEl) llmCustomBodyEl.value = currentConfig.llm_custom_body || '';
-            const llmPreset2El = document.getElementById('setting-llm-reasoning-preset2');
-            if (llmPreset2El) llmPreset2El.value = currentConfig.llm_reasoning_preset2 || '';
-            const llmEffort2El = document.getElementById('setting-llm-reasoning-effort2');
-            if (llmEffort2El) llmEffort2El.value = currentConfig.llm_reasoning_effort2 || '';
-            const llmCustomBody2El = document.getElementById('setting-llm-custom-body2');
-            if (llmCustomBody2El) llmCustomBody2El.value = currentConfig.llm_custom_body2 || '';
-            const llmPreset3El = document.getElementById('setting-llm-reasoning-preset3');
-            if (llmPreset3El) llmPreset3El.value = currentConfig.llm_reasoning_preset3 || '';
-            const llmEffort3El = document.getElementById('setting-llm-reasoning-effort3');
-            if (llmEffort3El) llmEffort3El.value = currentConfig.llm_reasoning_effort3 || '';
-            const llmCustomBody3El = document.getElementById('setting-llm-custom-body3');
-            if (llmCustomBody3El) llmCustomBody3El.value = currentConfig.llm_custom_body3 || '';
-            document.getElementById('setting-llm-service2').value = currentConfig.llm_service2 || '';
-            document.getElementById('setting-llm-model2').value = currentConfig.llm_model2 || '';
-            document.getElementById('setting-llm-service3').value = currentConfig.llm_service3 || '';
-            document.getElementById('setting-llm-model3').value = currentConfig.llm_model3 || '';
-            // 슬롯 4/5(및 이후) 공통 필드 적용. 2/3 은 위에서 이미 채웠으므로 스킵.
-            for (const slot of LLM_SLOTS) {
-                if (slot <= 3) continue;
-                const suffix = llmSlotSuffix(slot);
-                const el = id => document.getElementById(id);
-                const streamEl = el(`setting-llm-stream${suffix}`);
-                if (streamEl) streamEl.checked = !!currentConfig[`llm_stream${suffix}`];
-                updateLlmStreamStatus(slot, !!currentConfig[`llm_stream${suffix}`]);
-                const urlEl = el(`setting-llm-url${suffix}`);
-                if (urlEl) urlEl.value = currentConfig[`llm_url${suffix}`] || '';
-                const concEl = el(`setting-llm-max-concurrency${suffix}`);
-                if (concEl) concEl.value = (currentConfig[`llm_max_concurrency${suffix}`] ?? 1);
-                const idleEl = el(`setting-llm-stream-idle-timeout${suffix}`);
-                if (idleEl) idleEl.value = (currentConfig[`llm_stream_idle_timeout_seconds${suffix}`] ?? 90);
-                const presetEl = el(`setting-llm-reasoning-preset${suffix}`);
-                if (presetEl) presetEl.value = currentConfig[`llm_reasoning_preset${suffix}`] || '';
-                const effortEl = el(`setting-llm-reasoning-effort${suffix}`);
-                if (effortEl) effortEl.value = currentConfig[`llm_reasoning_effort${suffix}`] || '';
-                const bodyEl = el(`setting-llm-custom-body${suffix}`);
-                if (bodyEl) bodyEl.value = currentConfig[`llm_custom_body${suffix}`] || '';
-                const svcEl = el(`setting-llm-service${suffix}`);
-                if (svcEl) svcEl.value = currentConfig[`llm_service${suffix}`] || '';
-                const modelEl = el(`setting-llm-model${suffix}`);
-                if (modelEl) modelEl.value = currentConfig[`llm_model${suffix}`] || '';
-            }
             for (const slot of LLM_SLOTS) {
                 renderReasoningControls(slot);
             }
@@ -41961,25 +41962,7 @@
                 backup_max_count: '백업 최대 수',
                 clamp_enabled: '가중치 클램프',
                 clamp_value: '클램프 값',
-                llm_service: 'LLM 서비스',
-                llm_model: 'LLM 모델',
-                llm_service2: 'LLM2 서비스',
-                llm_model2: 'LLM2 모델',
-                llm_service4: 'LLM4 서비스',
-                llm_model4: 'LLM4 모델',
-                llm_service5: 'LLM5 서비스',
-                llm_model5: 'LLM5 모델',
                 lora_prompt_review_enabled: 'LoRA 프롬프트 2차 검수',
-                llm_max_concurrency: 'LLM1 동시 요청 수',
-                llm_max_concurrency2: 'LLM2 동시 요청 수',
-                llm_max_concurrency3: 'LLM3 동시 요청 수',
-                llm_max_concurrency4: 'LLM4 동시 요청 수',
-                llm_max_concurrency5: 'LLM5 동시 요청 수',
-                llm_stream_idle_timeout_seconds: 'LLM1 스트림 무응답 제한',
-                llm_stream_idle_timeout_seconds2: 'LLM2 스트림 무응답 제한',
-                llm_stream_idle_timeout_seconds3: 'LLM3 스트림 무응답 제한',
-                llm_stream_idle_timeout_seconds4: 'LLM4 스트림 무응답 제한',
-                llm_stream_idle_timeout_seconds5: 'LLM5 스트림 무응답 제한',
                 embedding_provider: '임베딩 프로바이더',
                 embedding_url: '임베딩 URL',
                 embedding_api_key: '임베딩 API Key',
@@ -42013,6 +41996,16 @@
                 dwpose_model_cache_dir: '모델 캐시 디렉토리',
                 webp_lossless: '무손실 WebP'
             };
+            for (const slot of LLM_SLOTS) {
+                const suffix = slot === 1 ? '' : String(slot);
+                labels[`llm_service${suffix}`] = `LLM${slot} 서비스`;
+                labels[`llm_model${suffix}`] = `LLM${slot} 모델`;
+                labels[`llm_stream${suffix}`] = `LLM${slot} 스트리밍`;
+                labels[`llm_stream_idle_timeout_seconds${suffix}`] = `LLM${slot} 스트림 무응답 제한`;
+                labels[`llm_max_concurrency${suffix}`] = `LLM${slot} 동시 요청 수`;
+                labels[`llm_vision_compress${suffix}`] = `LLM${slot} 비전 압축`;
+                labels[`llm_gemini_base64${suffix}`] = `LLM${slot} Gemini Base64 우회`;
+            }
             let html = '<table style="width:100%; border-collapse:collapse; font-size:0.82rem;">';
             const hiddenKeys = [];
             for (const [key, val] of Object.entries(config)) {
@@ -42328,32 +42321,6 @@
                 backup_max_count: parseInt(document.getElementById('setting-backup-max-count').value) || 500,
                 clamp_enabled: document.getElementById('setting-clamp-enabled').checked,
                 clamp_value: parseFloat(document.getElementById('setting-clamp-value').value) || 1.2,
-                llm_service: document.getElementById('setting-llm-service').value,
-                llm_model: document.getElementById('setting-llm-model').value,
-                llm_service2: document.getElementById('setting-llm-service2').value,
-                llm_model2: document.getElementById('setting-llm-model2').value,
-                llm_service3: document.getElementById('setting-llm-service3').value,
-                llm_model3: document.getElementById('setting-llm-model3').value,
-                llm_stream: document.getElementById('setting-llm-stream').checked,
-                llm_stream2: document.getElementById('setting-llm-stream2').checked,
-                llm_stream3: document.getElementById('setting-llm-stream3').checked,
-                llm_vision_compress: (document.getElementById('setting-llm-vision-compress') || {}).checked,
-                llm_vision_compress2: (document.getElementById('setting-llm-vision-compress2') || {}).checked,
-                llm_vision_compress3: (document.getElementById('setting-llm-vision-compress3') || {}).checked,
-                llm_vision_compress4: (document.getElementById('setting-llm-vision-compress4') || {}).checked,
-                llm_vision_compress5: (document.getElementById('setting-llm-vision-compress5') || {}).checked,
-                llm_url: (document.getElementById('setting-llm-url') || {}).value || '',
-                llm_url2: (document.getElementById('setting-llm-url2') || {}).value || '',
-                llm_url3: (document.getElementById('setting-llm-url3') || {}).value || '',
-                llm_reasoning_preset: (document.getElementById('setting-llm-reasoning-preset') || {}).value || 'auto',
-                llm_reasoning_effort: (document.getElementById('setting-llm-reasoning-effort') || {}).value || '',
-                llm_custom_body: (document.getElementById('setting-llm-custom-body') || {}).value || '',
-                llm_reasoning_preset2: (document.getElementById('setting-llm-reasoning-preset2') || {}).value || '',
-                llm_reasoning_effort2: (document.getElementById('setting-llm-reasoning-effort2') || {}).value || '',
-                llm_custom_body2: (document.getElementById('setting-llm-custom-body2') || {}).value || '',
-                llm_reasoning_preset3: (document.getElementById('setting-llm-reasoning-preset3') || {}).value || '',
-                llm_reasoning_effort3: (document.getElementById('setting-llm-reasoning-effort3') || {}).value || '',
-                llm_custom_body3: (document.getElementById('setting-llm-custom-body3') || {}).value || '',
                 llm_routing: collectLlmRouting(),
                 lora_prompt_review_enabled: !!document.getElementById('setting-lora-prompt-review-enabled')?.checked,
                 character_maker_rag_enabled: !!document.getElementById('setting-character-maker-rag-enabled')?.checked,
@@ -42413,25 +42380,19 @@
                 debug_workflow_source_path: document.getElementById('setting-debug-workflow-source-path').value,
                 queue_type_order: currentConfig.queue_type_order || {},
                 llm_queue_type_order: currentConfig.llm_queue_type_order || {},
-                llm_max_concurrency: parseInt(document.getElementById('setting-llm-max-concurrency').value) || 1,
-                llm_max_concurrency2: parseInt(document.getElementById('setting-llm-max-concurrency2').value) || 1,
-                llm_max_concurrency3: parseInt(document.getElementById('setting-llm-max-concurrency3').value) || 1,
-                llm_stream_idle_timeout_seconds: Number(document.getElementById('setting-llm-stream-idle-timeout').value),
-                llm_stream_idle_timeout_seconds2: Number(document.getElementById('setting-llm-stream-idle-timeout2').value),
-                llm_stream_idle_timeout_seconds3: Number(document.getElementById('setting-llm-stream-idle-timeout3').value),
             };
 
-            // LLM 슬롯 2..N 의 설정을 단일 소스(LLM_SLOTS)에서 config 객체에 병합한다.
-            // (슬롯 2/3 는 위 리터럴에도 있지만 동일 값으로 덮어쓰므로 무해하다.)
+            // LLM1~N 설정을 단일 소스(LLM_SLOTS)에서 config 객체에 병합한다.
             for (const slot of LLM_SLOTS) {
-                if (slot === 1) continue;
                 const suffix = llmSlotSuffix(slot);
                 const el = id => document.getElementById(id);
                 config[`llm_service${suffix}`] = (el(`setting-llm-service${suffix}`) || {}).value ?? '';
                 config[`llm_model${suffix}`] = (el(`setting-llm-model${suffix}`) || {}).value || '';
                 config[`llm_stream${suffix}`] = !!(el(`setting-llm-stream${suffix}`) || {}).checked;
+                config[`llm_vision_compress${suffix}`] = !!(el(`setting-llm-vision-compress${suffix}`) || {}).checked;
+                config[`llm_gemini_base64${suffix}`] = !!(el(`setting-llm-gemini-base64${suffix}`) || {}).checked;
                 config[`llm_url${suffix}`] = (el(`setting-llm-url${suffix}`) || {}).value || '';
-                config[`llm_reasoning_preset${suffix}`] = (el(`setting-llm-reasoning-preset${suffix}`) || {}).value || '';
+                config[`llm_reasoning_preset${suffix}`] = (el(`setting-llm-reasoning-preset${suffix}`) || {}).value || (slot === 1 ? 'auto' : '');
                 config[`llm_reasoning_effort${suffix}`] = (el(`setting-llm-reasoning-effort${suffix}`) || {}).value || '';
                 config[`llm_custom_body${suffix}`] = (el(`setting-llm-custom-body${suffix}`) || {}).value || '';
                 config[`llm_max_concurrency${suffix}`] = parseInt((el(`setting-llm-max-concurrency${suffix}`) || {}).value) || 1;
@@ -45115,6 +45076,15 @@
             status.classList.toggle('off', !checked);
         }
 
+        function updateLlmGeminiBase64Status(slot, checked) {
+            const suffix = slot === 1 ? '' : String(slot);
+            const status = document.getElementById(`setting-llm-gemini-base64${suffix}-status`);
+            if (!status) return;
+            status.textContent = checked ? 'ON' : 'OFF';
+            status.classList.toggle('on', checked);
+            status.classList.toggle('off', !checked);
+        }
+
         let llmServiceCatalog = [];
         let llmServiceCatalogPromise = null;
 
@@ -45217,12 +45187,14 @@
                 const urlRow = document.getElementById(`llm-url${suffix}-row`);
                 const reasoningRow = document.getElementById(`llm-reasoning${suffix}-row`);
                 const customRow = document.getElementById(`llm-custom-body${suffix}-row`);
+                const geminiBase64Row = document.getElementById(`llm-gemini-base64${suffix}-row`);
                 const hasOwnService = slot === 1 || !!selected;
                 const genericKey = ['required', 'optional'].includes(meta.api_key);
                 if (keyRow) keyRow.style.display = hasOwnService && genericKey ? 'flex' : 'none';
                 if (urlRow) urlRow.style.display = hasOwnService && meta.url_override ? 'flex' : 'none';
                 if (reasoningRow) reasoningRow.style.display = 'flex';
                 if (customRow) customRow.style.display = 'flex';
+                if (geminiBase64Row) geminiBase64Row.style.display = meta.id === 'gemini' ? 'flex' : 'none';
                 renderReasoningControls(slot);
             }
 
