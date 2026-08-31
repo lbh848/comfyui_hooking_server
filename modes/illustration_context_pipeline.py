@@ -8920,8 +8920,8 @@ def _build_character_history(extra_reference: str) -> str:
     return str(extra_reference or "").strip()
 
 
-# 삽화 CALL 이름 → 외부 LLM 분기 task_key. PLAN/DETAIL/KEYVIS는 사용자가 선택한
-# 하나의 illustration_call2 경로를 공유한다. 기본 primary=llm1(server.py 참고).
+# 삽화 CALL 이름 → 외부 LLM 분기 task_key. 기존 illustration_call2는 DETAIL과
+# 단일/폴백/감사 경로에 유지하고 PLAN/KEYVIS만 독립 분리한다(server.py 참고).
 _CALL_TASK_KEYS = {
     "ORIGINAL-ASSET": "illustration_original_asset",
     "ORIGINAL-ASSET-RECOVERY": "illustration_original_asset_recovery",
@@ -8932,8 +8932,8 @@ _CALL_TASK_KEYS = {
     "PROFILE-RESOLVE": "illustration_profile_resolve",
     "PROFILE-RESOLVE-REPAIR": "illustration_profile_resolve",
     "CALL2": "illustration_call2",
-    "CALL2-PLAN": "illustration_call2",
-    "CALL2-KEYVIS": "illustration_call2",
+    "CALL2-PLAN": "illustration_call2_plan",
+    "CALL2-KEYVIS": "illustration_call2_keyvis",
     "CALL2-AUTHORITY-AUDIT": "illustration_call2",
     "CALL2-FALLBACK": "illustration_call2",
     "CALL2-FIX": "illustration_call2_fix",
@@ -8963,6 +8963,7 @@ _CALL_QUEUE_SUBTASK_GROUPS = {
     "PROFILE-RESOLVE-REPAIR": ("profile_resolve", "프로필 오류 항목 교정"),
     "CALL2": ("call2", "CALL2 장면/태그 빌드"),
     "CALL2-PLAN": ("call2_plan", "CALL2 장면 PLAN"),
+    "CALL2-DETAIL": ("call2_detail", "CALL2 장면 DETAIL"),
     "CALL2-KEYVIS": ("call2_keyvis", "CALL2 Key Visual"),
     "CALL2-AUTHORITY-AUDIT": (
         "call2_authority_audit",
@@ -9003,12 +9004,12 @@ async def _call_pipeline_llm(
         task_key = _CALL_TASK_KEYS["CALL1-BACKTRANSLATE"]
     if task_key is None and call_name.startswith("CALL1 "):
         task_key = _CALL_TASK_KEYS["CALL1"]
-    if task_key is None and (
-        call_name.startswith("CALL2-PLAN")
-        or call_name.startswith("CALL2-DETAIL")
-        or call_name.startswith("CALL2-KEYVIS")
-    ):
+    if task_key is None and call_name.startswith("CALL2-PLAN"):
+        task_key = _CALL_TASK_KEYS["CALL2-PLAN"]
+    if task_key is None and call_name.startswith("CALL2-DETAIL"):
         task_key = _CALL_TASK_KEYS["CALL2"]
+    if task_key is None and call_name.startswith("CALL2-KEYVIS"):
+        task_key = _CALL_TASK_KEYS["CALL2-KEYVIS"]
     if task_key is None and call_name.startswith("CALL2-FIX"):
         task_key = _CALL_TASK_KEYS["CALL2-FIX"]
     if task_key is None and call_name.startswith("MULTI-CHAR-MASK"):

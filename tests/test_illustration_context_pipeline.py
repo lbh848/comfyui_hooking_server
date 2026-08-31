@@ -2442,8 +2442,8 @@ async def test_call1_segments_and_call2_plan_keyvis_and_details_run_in_parallel(
             finally:
                 call1_active -= 1
 
-        assert task_key == "illustration_call2"
         if call_name == "CALL2-PLAN":
+            assert task_key == "illustration_call2_plan"
             assert "Follow these steps and output each and all step" not in text
             assert '"keyvis_plan"' not in text
             assert '"plan_id": "S001"' not in text
@@ -2470,6 +2470,7 @@ async def test_call1_segments_and_call2_plan_keyvis_and_details_run_in_parallel(
                 plan_keyvis_active -= 1
 
         if call_name == "CALL2-KEYVIS":
+            assert task_key == "illustration_call2_keyvis"
             assert "# Independent promotional Key Visual task" in text
             assert "# GLOBAL ILLUSTRATION SCENE PLAN" not in text
             assert "# ASSIGNED GLOBAL SCENE PLAN" not in text
@@ -2497,6 +2498,7 @@ scenes: []
             finally:
                 plan_keyvis_active -= 1
 
+        assert task_key == "illustration_call2"
         assert call_name.startswith("CALL2-DETAIL")
         assert "# ASSIGNED GLOBAL SCENE PLAN" in text
         assert "Omit keyvis" in text
@@ -4683,10 +4685,16 @@ async def test_call3_uses_original_narrative_and_only_call2_selected_scene_slots
                 "원문의 둘째 문장.",
                 "Translated second sentence.",
             )
-        if task_key == "illustration_call2":
+        if task_key in {
+            "illustration_call2_plan",
+            "illustration_call2",
+            "illustration_call2_keyvis",
+        }:
             if call_name == "CALL2-AUTHORITY-AUDIT":
+                assert task_key == "illustration_call2"
                 return _authority_audit_response(messages)
             if call_name == "CALL2-PLAN":
+                assert task_key == "illustration_call2_plan"
                 return json.dumps({
                     "scene_plan": [{
                         "anchor_segment": "C001",
@@ -4699,6 +4707,7 @@ async def test_call3_uses_original_narrative_and_only_call2_selected_scene_slots
                     }],
                 })
             if call_name == "CALL2-KEYVIS":
+                assert task_key == "illustration_call2_keyvis"
                 return """<lb-xnai>
 keyvis:
   camera: portrait
@@ -4708,6 +4717,7 @@ keyvis:
   scene: poster key visual
 scenes: []
 </lb-xnai>"""
+            assert task_key == "illustration_call2"
             assert call_name.startswith("CALL2-DETAIL")
             detail_text = "\n".join(
                 str(message.get("content") or "") for message in messages
@@ -4769,7 +4779,9 @@ Hana: (다음은 어떤 장면일까?) #thought_cloud"""
     task_keys = [task_key for task_key, _messages, _kwargs in calls]
     assert task_keys[0] == "illustration_call1_backtranslate"
     assert task_keys[-1] == "illustration_call3"
-    assert task_keys.count("illustration_call2") == 4
+    assert task_keys.count("illustration_call2_plan") == 1
+    assert task_keys.count("illustration_call2_keyvis") == 1
+    assert task_keys.count("illustration_call2") == 2
     assert "CALL2-PLAN" in call_names
     assert "CALL2-KEYVIS" in call_names
     assert sum(name.startswith("CALL2-DETAIL") for name in call_names) == 2
@@ -5120,8 +5132,12 @@ async def test_call2_ready_callback_runs_before_call3_and_receives_generation_ra
 
     async def fake_call(task_key, messages, **kwargs):
         events.append(task_key)
-        if task_key == "illustration_call2":
-            if _call_name(task_key) == "CALL2-AUTHORITY-AUDIT":
+        call_name = _call_name(task_key)
+        if call_name in {"CALL2-PLAN", "CALL2-AUTHORITY-AUDIT"}:
+            if call_name == "CALL2-PLAN":
+                assert task_key == "illustration_call2_plan"
+            else:
+                assert task_key == "illustration_call2"
                 return _authority_audit_response(messages)
             return """<lb-xnai>
 scenes[1]:
@@ -5134,7 +5150,7 @@ scenes[1]:
 </lb-xnai>"""
         assert task_key == "illustration_call3"
         assert events == [
-            "illustration_call2",
+            "illustration_call2_plan",
             "dispatch",
             "illustration_call3",
         ]
@@ -5168,7 +5184,7 @@ scenes[1]:
     )
 
     assert events == [
-        "illustration_call2",
+        "illustration_call2_plan",
         "dispatch",
         "illustration_call3",
     ]
@@ -5287,9 +5303,12 @@ async def test_build_from_context_uses_backtranslated_current_response_only(monk
             if backtranslation_call_count == 1:
                 return f"Bbyakbbyak opens the door.\n\n{token}"
             return f"She looks inside.\n\n{token}\n\nThe room is quiet."
-        assert task_key == "illustration_call2"
-        if _call_name(task_key) == "CALL2-AUTHORITY-AUDIT":
+        call_name = _call_name(task_key)
+        if call_name == "CALL2-AUTHORITY-AUDIT":
+            assert task_key == "illustration_call2"
             return _authority_audit_response(messages)
+        assert call_name == "CALL2-PLAN"
+        assert task_key == "illustration_call2_plan"
         return """<lb-xnai>
 scenes[1]:
   - camera: medium shot
@@ -5333,7 +5352,7 @@ scenes[1]:
     call2_text = "\n".join(
         message["content"]
         for task_key, messages in calls
-        if task_key == "illustration_call2"
+        if task_key in {"illustration_call2_plan", "illustration_call2"}
         and not any(
             "CALL2-AUTHORITY-AUDIT" in str(message.get("content") or "")
             for message in messages
@@ -5930,16 +5949,16 @@ async def test_subtitle_dialogue_uses_dedicated_queue_route_and_lb_history(monke
 
 
 @pytest.mark.asyncio
-async def test_call2_keyvis_shares_route_and_has_distinct_queue_live_history(monkeypatch):
+async def test_call2_keyvis_uses_independent_route_and_has_distinct_queue_live_history(monkeypatch):
     records = []
     events = []
     messages = [{"role": "user", "content": "one key visual"}]
 
     async def fake_call(task_key, actual_messages, **_kwargs):
-        assert task_key == "illustration_call2"
+        assert task_key == "illustration_call2_keyvis"
         assert actual_messages == messages
         metadata = pipeline.llm_service._stream_metadata_ctx.get({})
-        assert metadata["task_key"] == "illustration_call2"
+        assert metadata["task_key"] == "illustration_call2_keyvis"
         assert metadata["call_name"] == "CALL2-KEYVIS"
         assert metadata["execution_id"]
         return "completed key visual"
@@ -5965,7 +5984,7 @@ async def test_call2_keyvis_shares_route_and_has_distinct_queue_live_history(mon
     assert len(records) == 1
     assert records[0]["call_name"] == "CALL2-KEYVIS"
     assert records[0]["prompt_id"] == "illustration_context:CALL2-KEYVIS"
-    assert records[0]["task_key"] == "illustration_call2"
+    assert records[0]["task_key"] == "illustration_call2_keyvis"
     assert records[0]["input"] == messages
     assert records[0]["output"] == "completed key visual"
 
@@ -8372,12 +8391,13 @@ async def test_persistent_call2_only_uses_bounded_history_and_visual_candidate(m
 
     async def fake_call(task_key, messages, **kwargs):
         calls.append((task_key, messages))
-        assert task_key == "illustration_call2"
         call_name = _call_name(task_key)
         if call_name == "CALL2-AUTHORITY-AUDIT":
+            assert task_key == "illustration_call2"
             return _authority_audit_response(messages)
         request_text = "\n".join(message["content"] for message in messages)
         if call_name == "CALL2-PLAN":
+            assert task_key == "illustration_call2_plan"
             assert "bounded past marker" not in request_text
             return json.dumps({
                 "scene_plan": [{
@@ -8386,6 +8406,7 @@ async def test_persistent_call2_only_uses_bounded_history_and_visual_candidate(m
                     "scene_brief": "Hana waits by the current door",
                 }],
             })
+        assert task_key == "illustration_call2"
         assert "bounded past marker" in request_text
         assert "### Hana" in request_text
         assert "She waits by the door." in request_text
@@ -8438,7 +8459,7 @@ scenes[1]:
     )
 
     assert [task_key for task_key, _messages in calls] == [
-        "illustration_call2",
+        "illustration_call2_plan",
         "illustration_call2",
     ]
     assert result["balanced_fallback_used"] is True
@@ -8465,12 +8486,13 @@ async def test_persistent_history_recovers_missing_prior_wardrobe_with_balanced_
                 "wardrobe_events": [],
                 "unresolved_references": [],
             })
-        assert task_key == "illustration_call2"
         call_name = _call_name(task_key)
         if call_name == "CALL2-AUTHORITY-AUDIT":
+            assert task_key == "illustration_call2"
             return _authority_audit_response(messages)
         request_text = "\n".join(message["content"] for message in messages)
         if call_name == "CALL2-PLAN":
+            assert task_key == "illustration_call2_plan"
             assert "past wardrobe recovery marker" not in request_text
             return json.dumps({
                 "scene_plan": [{
@@ -8479,6 +8501,7 @@ async def test_persistent_history_recovers_missing_prior_wardrobe_with_balanced_
                     "scene_brief": "Hana looks outside in the current scene",
                 }],
             })
+        assert task_key == "illustration_call2"
         assert "past wardrobe recovery marker" in request_text
         assert "### Hana" in request_text
         assert "### Bob" in request_text
@@ -8536,7 +8559,7 @@ scenes[1]:
 
     assert [task_key for task_key, _messages in calls] == [
         "illustration_call1",
-        "illustration_call2",
+        "illustration_call2_plan",
         "illustration_call2",
     ]
     assert result["balanced_fallback_used"] is True
@@ -8556,8 +8579,12 @@ async def test_persistent_backtranslation_off_keeps_original_text_across_calls(m
                 "wardrobe_events": [],
                 "hairstyle_events": [],
             })
-        if task_key == "illustration_call2":
-            if _call_name(task_key) == "CALL2-AUTHORITY-AUDIT":
+        call_name = _call_name(task_key)
+        if call_name in {"CALL2-PLAN", "CALL2-AUTHORITY-AUDIT"}:
+            if call_name == "CALL2-PLAN":
+                assert task_key == "illustration_call2_plan"
+            else:
+                assert task_key == "illustration_call2"
                 return _authority_audit_response(messages)
             return """<lb-xnai>
 scenes[1]:
@@ -8638,7 +8665,7 @@ scenes[1]:
 
     assert [task_key for task_key, _messages in calls] == [
         "illustration_call1",
-        "illustration_call2",
+        "illustration_call2_plan",
         "illustration_call3",
     ]
     assert result["balanced_fallback_used"] is False
@@ -8652,11 +8679,13 @@ async def test_persistent_call1_off_keeps_call2_call3_with_separate_bounded_hist
     async def fake_call(task_key, messages, **kwargs):
         calls.append((task_key, messages))
         request_text = "\n".join(message["content"] for message in messages)
-        if task_key == "illustration_call2":
-            call_name = _call_name(task_key)
+        call_name = _call_name(task_key)
+        if task_key in {"illustration_call2_plan", "illustration_call2"}:
             if call_name == "CALL2-AUTHORITY-AUDIT":
+                assert task_key == "illustration_call2"
                 return _authority_audit_response(messages)
             if call_name == "CALL2-PLAN":
+                assert task_key == "illustration_call2_plan"
                 assert "call2 bounded marker" not in request_text
                 assert "call3 bounded marker" not in request_text
                 return json.dumps({
@@ -8666,6 +8695,7 @@ async def test_persistent_call1_off_keeps_call2_call3_with_separate_bounded_hist
                         "scene_brief": "Hana waits by the current door",
                     }],
                 })
+            assert task_key == "illustration_call2"
             assert "call2 bounded marker" in request_text
             assert "call3 bounded marker" not in request_text
             return """<lb-xnai>
@@ -8720,7 +8750,7 @@ scenes[1]:
     )
 
     assert [task_key for task_key, _messages in calls] == [
-        "illustration_call2",
+        "illustration_call2_plan",
         "illustration_call2",
         "illustration_call3",
     ]

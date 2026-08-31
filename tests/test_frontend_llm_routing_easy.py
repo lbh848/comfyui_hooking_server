@@ -33,9 +33,9 @@ def test_every_llm_route_has_an_explicit_text_or_vision_modality() -> None:
     frontend = _frontend()
     entries = _routing_task_entries(frontend)
 
-    assert len(entries) == 36
+    assert len(entries) == 38
     assert all("modality: 'text'" in entry or "modality: 'vision'" in entry for entry in entries)
-    assert sum("modality: 'text'" in entry for entry in entries) == 25
+    assert sum("modality: 'text'" in entry for entry in entries) == 27
     assert sum("modality: 'vision'" in entry for entry in entries) == 11
 
     vision_keys = {

@@ -718,7 +718,9 @@ DEFAULT_CONFIG = {
         "illustration_call1":      _llm_route_defaults(json_mode=True),  # 복장·헤어 변화 JSON 분석
         "illustration_character_resolve": _llm_route_defaults(json_mode=True),  # 생성 최전단 CURRENT 등장인물 판별(항상 실행)
         "illustration_profile_resolve": _llm_route_defaults(json_mode=True),  # 확정 CURRENT 다중 프로필 결정(토글 시)
-        "illustration_call2":      _llm_route_defaults(),  # PLAN/DETAIL/KEYVIS 장면·태그 빌드 공유
+        "illustration_call2_plan": _llm_route_defaults(),  # CALL2 전역 장면 PLAN
+        "illustration_call2":      _llm_route_defaults(),  # CALL2 DETAIL 및 기존 단일/폴백/감사 경로
+        "illustration_call2_keyvis": _llm_route_defaults(),  # CALL2 독립 Key Visual
         "illustration_call2_fix":  _llm_route_defaults(),  # CALL2 파싱 실패 시 TOON 교정(repair.txt)
         "illustration_call3":      _llm_route_defaults(),  # 대사 생성(speak/manga)
         "illustration_call3_subtitle": _llm_route_defaults(),  # 방송 애니 자막 전용 대사 생성
@@ -821,6 +823,10 @@ for _d in [WORKFLOW_DIR, CURRENT_WORK_DIR, WORKFLOW_BACKUP_DIR, LOG_DIR, FRONTEN
 # ─── 설정 파일 관리 ─────────────────────────────────────
 _LLM_RETRY_COUNT_FIELDS = ("max_retries", "fallback_max_retries")
 _LLM_RETRY_DELAY_FIELDS = ("retry_delay_sec", "fallback_retry_delay_sec")
+_CALL2_COMPAT_SPLIT_ROUTE_KEYS = (
+    "illustration_call2_plan",
+    "illustration_call2_keyvis",
+)
 _LEGACY_LLM_RETRY_TASKS = {
     "classify_face_tags": "auto_face_tag_max_retries",
     "refine_lb_extra": "auto_face_tag_max_retries",
@@ -866,8 +872,18 @@ def _merge_llm_routing_config(raw_config: dict) -> dict:
         raw_routing = {}
 
     merged_routing = {}
+    legacy_call2_entry = raw_routing.get("illustration_call2")
     for task_key, default_entry in DEFAULT_CONFIG["llm_routing"].items():
-        raw_entry = raw_routing.get(task_key, {})
+        if (
+            task_key in _CALL2_COMPAT_SPLIT_ROUTE_KEYS
+            and task_key not in raw_routing
+            and isinstance(legacy_call2_entry, dict)
+        ):
+            # 호환 분리: 기존 설치의 CALL2 경로를 PLAN/KEYVIS 초기값으로 상속한다.
+            # 설정 화면에서 각각 저장한 뒤에는 독립 항목이 우선한다.
+            raw_entry = legacy_call2_entry
+        else:
+            raw_entry = raw_routing.get(task_key, {})
         if not isinstance(raw_entry, dict):
             print(
                 f"[CONFIG] llm_routing.{task_key} 로드값이 객체가 아님: "
@@ -927,6 +943,14 @@ def _normalize_llm_routing_for_save(raw_routing) -> dict:
         raise ValueError("llm_routing은 JSON 객체여야 합니다.")
 
     candidate = copy.deepcopy(DEFAULT_CONFIG["llm_routing"])
+    legacy_call2_entry = raw_routing.get("illustration_call2")
+    if isinstance(legacy_call2_entry, dict):
+        for task_key in _CALL2_COMPAT_SPLIT_ROUTE_KEYS:
+            if task_key in raw_routing:
+                continue
+            inherited = copy.deepcopy(candidate[task_key])
+            inherited.update(legacy_call2_entry)
+            candidate[task_key] = inherited
     for task_key, raw_entry in raw_routing.items():
         if not isinstance(task_key, str) or not task_key.strip():
             raise ValueError(f"LLM 작업 키가 유효하지 않습니다: {task_key!r}")
