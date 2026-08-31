@@ -23256,6 +23256,20 @@
                         </div>
                     </div>
 
+                    <div class="setting-row" id="llm-pdf-prompt-row" style="display:none;">
+                        <div class="setting-label">
+                            <div class="title">LLM1 대화 PDF 토큰 절약</div>
+                            <div class="desc">Gemini·Vertex 대화 전체를 1pt·낮은 해상도의 네이티브 텍스트 PDF로 보내고 이미지는 별도 첨부합니다. Base64도 켜면 PDF 본문까지 가역 인코딩하며, 매우 긴 인코딩 문서는 제공자 안전 필터에 차단될 수 있습니다.</div>
+                        </div>
+                        <div class="setting-control" style="display:flex; align-items:center; gap:8px;">
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="setting-llm-pdf-prompt" onchange="updateLlmPdfPromptStatus(1, this.checked)">
+                                <span class="toggle-slider"></span>
+                            </label>
+                            <span id="setting-llm-pdf-prompt-status" class="toggle-status off">OFF</span>
+                        </div>
+                    </div>
+
                     <div class="setting-row">
                         <div class="setting-label">
                             <div class="title">이미지를 webp으로 압축해서 전송</div>
@@ -23434,6 +23448,20 @@
                         </div>
                     </div>
 
+                    <div class="setting-row" id="llm-pdf-prompt2-row" style="display:none;">
+                        <div class="setting-label">
+                            <div class="title">LLM2 대화 PDF 토큰 절약</div>
+                            <div class="desc">LLM2가 Gemini·Vertex일 때 대화를 1pt·낮은 해상도 PDF로 보내고 이미지는 별도 첨부합니다. Base64 동시 사용 시 긴 인코딩 문서는 제공자 안전 필터에 차단될 수 있습니다.</div>
+                        </div>
+                        <div class="setting-control" style="display:flex; align-items:center; gap:8px;">
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="setting-llm-pdf-prompt2" onchange="updateLlmPdfPromptStatus(2, this.checked)">
+                                <span class="toggle-slider"></span>
+                            </label>
+                            <span id="setting-llm-pdf-prompt2-status" class="toggle-status off">OFF</span>
+                        </div>
+                    </div>
+
                     <div class="setting-row">
                         <div class="setting-label">
                             <div class="title">이미지를 webp으로 압축해서 전송</div>
@@ -23518,6 +23546,7 @@
                     <div class="setting-row" id="llm-url3-row" style="display:none;"><div class="setting-label"><div class="title">LLM3 베이스 URL (옵션)</div><div class="desc">비워두면 LLM1 URL 또는 선택한 서비스의 기본 URL 사용</div></div><div class="setting-control"><input id="setting-llm-url3" type="text" placeholder="https://..." style="width:300px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);"></div></div>
                     <div class="setting-row"><div class="setting-label"><div class="title">LLM3 스트리밍</div><div class="desc">LLM3 요청을 실제 chunk 스트림으로 받고 LLM로그창에 실시간 표시합니다.</div></div><div class="setting-control" style="display:flex;align-items:center;gap:8px;"><label class="toggle-switch"><input type="checkbox" id="setting-llm-stream3" onchange="updateLlmStreamStatus(3, this.checked)"><span class="toggle-slider"></span></label><span id="setting-llm-stream3-status" class="toggle-status off">OFF</span></div></div>
                     <div class="setting-row" id="llm-gemini-base643-row" style="display:none;"><div class="setting-label"><div class="title">LLM3 Gemini/Vertex Base64 검열 우회</div><div class="desc">LLM3가 Gemini 또는 Vertex 계열일 때 텍스트 요청·응답에 적용되는 독립 토글입니다.</div></div><div class="setting-control" style="display:flex;align-items:center;gap:8px;"><label class="toggle-switch"><input type="checkbox" id="setting-llm-gemini-base643" onchange="updateLlmGeminiBase64Status(3, this.checked)"><span class="toggle-slider"></span></label><span id="setting-llm-gemini-base643-status" class="toggle-status off">OFF</span></div></div>
+                    <div class="setting-row" id="llm-pdf-prompt3-row" style="display:none;"><div class="setting-label"><div class="title">LLM3 대화 PDF 토큰 절약</div><div class="desc">Gemini·Vertex 대화를 1pt·낮은 해상도 PDF로 보내고 이미지는 별도 첨부합니다. Base64 동시 사용 시 긴 인코딩 문서는 제공자 안전 필터에 차단될 수 있습니다.</div></div><div class="setting-control" style="display:flex;align-items:center;gap:8px;"><label class="toggle-switch"><input type="checkbox" id="setting-llm-pdf-prompt3" onchange="updateLlmPdfPromptStatus(3, this.checked)"><span class="toggle-slider"></span></label><span id="setting-llm-pdf-prompt3-status" class="toggle-status off">OFF</span></div></div>
                     <div class="setting-row"><div class="setting-label"><div class="title">이미지를 webp으로 압축해서 전송</div><div class="desc">토글이 꺼져있다면, 가장 호환성이 좋은 png로 보냅니다.(비전 사용시)</div></div><div class="setting-control" style="display:flex;align-items:center;gap:8px;"><label class="toggle-switch"><input type="checkbox" id="setting-llm-vision-compress3" onchange="updateLlmVisionCompressStatus(3, this.checked)"><span class="toggle-slider"></span></label><span id="setting-llm-vision-compress3-status" class="toggle-status off">OFF</span></div></div>
                     <div class="setting-row">
                         <div class="setting-label">
@@ -23596,6 +23625,19 @@
                                     <span class="toggle-slider"></span>
                                 </label>
                                 <span id="setting-llm-gemini-base644-status" class="toggle-status off">OFF</span>
+                            </div>
+                        </div>
+                        <div class="setting-row" id="llm-pdf-prompt4-row" style="display:none;">
+                            <div class="setting-label">
+                                <div class="title">LLM4 대화 PDF 토큰 절약</div>
+                                <div class="desc">Gemini·Vertex 대화를 1pt·낮은 해상도 PDF로 보내고 이미지는 별도 첨부합니다. Base64 동시 사용 시 긴 인코딩 문서는 제공자 안전 필터에 차단될 수 있습니다.</div>
+                            </div>
+                            <div class="setting-control" style="display:flex; align-items:center; gap:8px;">
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="setting-llm-pdf-prompt4" onchange="updateLlmPdfPromptStatus(4, this.checked)">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                                <span id="setting-llm-pdf-prompt4-status" class="toggle-status off">OFF</span>
                             </div>
                         </div>
                         <div class="setting-row">
@@ -23791,6 +23833,19 @@
                                     <span class="toggle-slider"></span>
                                 </label>
                                 <span id="setting-llm-gemini-base645-status" class="toggle-status off">OFF</span>
+                            </div>
+                        </div>
+                        <div class="setting-row" id="llm-pdf-prompt5-row" style="display:none;">
+                            <div class="setting-label">
+                                <div class="title">LLM5 대화 PDF 토큰 절약</div>
+                                <div class="desc">Gemini·Vertex 대화를 1pt·낮은 해상도 PDF로 보내고 이미지는 별도 첨부합니다. Base64 동시 사용 시 긴 인코딩 문서는 제공자 안전 필터에 차단될 수 있습니다.</div>
+                            </div>
+                            <div class="setting-control" style="display:flex; align-items:center; gap:8px;">
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="setting-llm-pdf-prompt5" onchange="updateLlmPdfPromptStatus(5, this.checked)">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                                <span id="setting-llm-pdf-prompt5-status" class="toggle-status off">OFF</span>
                             </div>
                         </div>
                         <div class="setting-row">
@@ -40766,6 +40821,10 @@
                 const geminiBase64El = el(`setting-llm-gemini-base64${suffix}`);
                 if (geminiBase64El) geminiBase64El.checked = geminiBase64;
                 updateLlmGeminiBase64Status(slot, geminiBase64);
+                const pdfPrompt = !!configValue('llm_pdf_prompt', false);
+                const pdfPromptEl = el(`setting-llm-pdf-prompt${suffix}`);
+                if (pdfPromptEl) pdfPromptEl.checked = pdfPrompt;
+                updateLlmPdfPromptStatus(slot, pdfPrompt);
                 const urlEl = el(`setting-llm-url${suffix}`);
                 if (urlEl) urlEl.value = configValue('llm_url', '');
                 const concurrencyEl = el(`setting-llm-max-concurrency${suffix}`);
@@ -42005,6 +42064,7 @@
                 labels[`llm_max_concurrency${suffix}`] = `LLM${slot} 동시 요청 수`;
                 labels[`llm_vision_compress${suffix}`] = `LLM${slot} 비전 압축`;
                 labels[`llm_gemini_base64${suffix}`] = `LLM${slot} Gemini/Vertex Base64 우회`;
+                labels[`llm_pdf_prompt${suffix}`] = `LLM${slot} Gemini/Vertex 대화 PDF`;
             }
             let html = '<table style="width:100%; border-collapse:collapse; font-size:0.82rem;">';
             const hiddenKeys = [];
@@ -42391,6 +42451,7 @@
                 config[`llm_stream${suffix}`] = !!(el(`setting-llm-stream${suffix}`) || {}).checked;
                 config[`llm_vision_compress${suffix}`] = !!(el(`setting-llm-vision-compress${suffix}`) || {}).checked;
                 config[`llm_gemini_base64${suffix}`] = !!(el(`setting-llm-gemini-base64${suffix}`) || {}).checked;
+                config[`llm_pdf_prompt${suffix}`] = !!(el(`setting-llm-pdf-prompt${suffix}`) || {}).checked;
                 config[`llm_url${suffix}`] = (el(`setting-llm-url${suffix}`) || {}).value || '';
                 config[`llm_reasoning_preset${suffix}`] = (el(`setting-llm-reasoning-preset${suffix}`) || {}).value || (slot === 1 ? 'auto' : '');
                 config[`llm_reasoning_effort${suffix}`] = (el(`setting-llm-reasoning-effort${suffix}`) || {}).value || '';
@@ -45085,6 +45146,15 @@
             status.classList.toggle('off', !checked);
         }
 
+        function updateLlmPdfPromptStatus(slot, checked) {
+            const suffix = slot === 1 ? '' : String(slot);
+            const status = document.getElementById(`setting-llm-pdf-prompt${suffix}-status`);
+            if (!status) return;
+            status.textContent = checked ? 'ON' : 'OFF';
+            status.classList.toggle('on', checked);
+            status.classList.toggle('off', !checked);
+        }
+
         let llmServiceCatalog = [];
         let llmServiceCatalogPromise = null;
 
@@ -45188,6 +45258,7 @@
                 const reasoningRow = document.getElementById(`llm-reasoning${suffix}-row`);
                 const customRow = document.getElementById(`llm-custom-body${suffix}-row`);
                 const geminiBase64Row = document.getElementById(`llm-gemini-base64${suffix}-row`);
+                const pdfPromptRow = document.getElementById(`llm-pdf-prompt${suffix}-row`);
                 const hasOwnService = slot === 1 || !!selected;
                 const genericKey = ['required', 'optional'].includes(meta.api_key);
                 if (keyRow) keyRow.style.display = hasOwnService && genericKey ? 'flex' : 'none';
@@ -45197,6 +45268,10 @@
                 if (geminiBase64Row) {
                     const supportsBase64Transport = ['gemini', 'vertex', 'vertex-openai'].includes(meta.id);
                     geminiBase64Row.style.display = supportsBase64Transport ? 'flex' : 'none';
+                }
+                if (pdfPromptRow) {
+                    const supportsPdfPrompt = ['gemini', 'vertex'].includes(meta.id);
+                    pdfPromptRow.style.display = supportsPdfPrompt ? 'flex' : 'none';
                 }
                 renderReasoningControls(slot);
             }

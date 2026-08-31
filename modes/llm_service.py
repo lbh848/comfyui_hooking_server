@@ -30,6 +30,12 @@ import aiohttp
 import httpx
 from typing import Any, Optional
 
+from modes.llm_pdf_prompt import (
+    PDF_MEDIA_RESOLUTION,
+    PDF_MIME_TYPE,
+    prepare_pdf_prompt_messages,
+)
+
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 KEY_DIR = os.path.join(BASE_DIR, "key")
 LOG_DIR = os.path.join(BASE_DIR, "logs")
@@ -412,6 +418,22 @@ async def _call_vertex(messages: list, model: str) -> str:
         except Exception:
             result_text = ""
             _llm_log(f"Vertex 응답 text 추출 실패(후보 없음/차단 가능): {traceback.format_exc()}")
+        if not result_text:
+            candidates = getattr(response, "candidates", None)
+            candidate = candidates[0] if candidates else None
+            finish_reason = getattr(candidate, "finish_reason", None)
+            safety_ratings = getattr(candidate, "safety_ratings", None)
+            prompt_feedback = getattr(response, "prompt_feedback", None)
+            print(
+                "[LLM_VERTEX] 응답 텍스트 비어 있음: "
+                f"model={actual_model}, finish_reason={finish_reason}, "
+                f"safety_ratings={safety_ratings}, prompt_feedback={prompt_feedback}, "
+                f"response={response!r}"
+            )
+            return (
+                "[LLM 실패] Vertex 응답이 비어 있습니다: "
+                f"finish_reason={finish_reason}"
+            )
         _llm_log(f"Vertex 성공: {len(result_text)}자")
         return result_text
     except Exception as e:
@@ -480,6 +502,7 @@ _current_config = _ContextConfig({
     "llm_stream_idle_timeout_seconds": 90.0,  # 0=비활성, 그 외 10~3600초
     "llm_vision_compress": False,        # LLM1 비전 이미지 webp 압축 전송 (False=PNG 호환)
     "llm_gemini_base64": False,          # LLM1 Gemini/Vertex 요청·응답 Base64 래핑
+    "llm_pdf_prompt": False,              # LLM1 Gemini/Vertex 대화 transcript PDF 전송
     "lora_prompt_review_enabled": False, # LoRA 완성 프롬프트 2차 비전 검수
     # 작업별 LLM1/LLM2/LLM3 라우팅과 메인/폴백 재시도 정책(외부 LLM 분기).
     # 실제 기본값은 server.py 의 DEFAULT_CONFIG 에서 update_config 로 내려온다.
@@ -503,6 +526,7 @@ for _slot_n in range(2, LLM_SLOT_COUNT + 1):
         f"llm_stream_idle_timeout_seconds{_suffix}": 90.0,
         f"llm_vision_compress{_suffix}": False,
         f"llm_gemini_base64{_suffix}": False,
+        f"llm_pdf_prompt{_suffix}": False,
     })
 
 
@@ -602,6 +626,9 @@ def _slot_config_overrides(slot: str) -> dict:
     overrides["llm_gemini_base64"] = bool(
         _base_config_get(f"llm_gemini_base64{suffix}", False)
     )
+    overrides["llm_pdf_prompt"] = bool(
+        _base_config_get(f"llm_pdf_prompt{suffix}", False)
+    )
     return overrides
 
 
@@ -614,8 +641,19 @@ This request uses a reversible UTF-8 Base64 transport for a structured-data pipe
 4. Output only that Base64 block, without Markdown fences, labels, explanations, or other text.
 """
 
+_GEMINI_PDF_BASE64_PROTOCOL = """### PDF Base64 Data Transport Protocol
+This request transports a role-labelled conversation transcript as reversible UTF-8 Base64 data inside the attached PDF.
+
+1. Decode each textual message after this protocol as an independent UTF-8 Base64 block while preserving its role and order.
+2. Extract the PDF's embedded native text exactly, decode that complete text as one UTF-8 Base64 block, and use the decoded role-labelled transcript as the conversation context.
+3. Image parts are not encoded. Match them to the numbered image references in the decoded transcript in attachment order.
+4. Compose the response normally, then UTF-8 Base64-encode the complete response as one block.
+5. Output only that Base64 block without Markdown fences, labels, or other text.
+"""
+
 
 _GEMINI_BASE64_SERVICES = frozenset({"gemini", "vertex", "vertex-openai"})
+_GEMINI_PDF_SERVICES = frozenset({"gemini", "vertex"})
 
 
 def _gemini_base64_enabled(service: str) -> bool:
@@ -623,6 +661,35 @@ def _gemini_base64_enabled(service: str) -> bool:
     return service in _GEMINI_BASE64_SERVICES and bool(
         _current_config.get("llm_gemini_base64", False)
     )
+
+
+def _gemini_pdf_enabled(service: str) -> bool:
+    """현재 슬롯에서 native Gemini/Vertex transcript PDF를 사용할지 반환한다."""
+    return service in _GEMINI_PDF_SERVICES and bool(
+        _current_config.get("llm_pdf_prompt", False)
+    )
+
+
+def _prepare_gemini_pdf_messages(messages: list, service: str) -> list:
+    """PDF 토글 조합에 맞춰 transcript와 별도 이미지 파트를 만든다."""
+    if not _gemini_pdf_enabled(service):
+        return messages
+    use_base64 = _gemini_base64_enabled(service)
+    transformed, metadata = prepare_pdf_prompt_messages(
+        messages,
+        encode_transcript=use_base64,
+    )
+    _llm_log(
+        "[LLM_PDF_PROMPT] 요청 변환 완료: "
+        f"slot={_normalize_llm_slot(_llm_slot_ctx.get())}, "
+        f"service={service}, pages={metadata['page_count']}, "
+        f"font_pt=1, resolution={PDF_MEDIA_RESOLUTION}, "
+        f"transcript_chars={metadata['transcript_chars']}, "
+        f"encoded_chars={metadata['encoded_chars']}, "
+        f"pdf_bytes={metadata['pdf_bytes']}, images={metadata['image_count']}, "
+        f"base64_transcript={metadata['base64_transcript']}"
+    )
+    return transformed
 
 
 def _base64_encode_text(text: str) -> str:
@@ -651,8 +718,12 @@ def _base64_encode_message_content(content):
     return encoded_parts
 
 
-def _encode_gemini_base64_messages(messages: list) -> list:
-    encoded_messages = [{"role": "system", "content": _GEMINI_BASE64_PROTOCOL}]
+def _encode_gemini_base64_messages(
+    messages: list,
+    *,
+    protocol: str = _GEMINI_BASE64_PROTOCOL,
+) -> list:
+    encoded_messages = [{"role": "system", "content": protocol}]
     for message in messages or []:
         if not isinstance(message, dict):
             print(
@@ -1091,7 +1162,7 @@ def _msg_text(content) -> str:
 
 
 def _build_gemini_parts(content) -> list:
-    """OpenAI content list → Gemini parts. 단순 str이면 텍스트 part 1개."""
+    """OpenAI content list → Gemini parts. 텍스트·이미지·inline 파일 지원."""
     if isinstance(content, str):
         return [{"text": content}]
     parts = []
@@ -1105,7 +1176,35 @@ def _build_gemini_parts(content) -> list:
                 mime, b64 = _parse_data_url(url)
                 if b64:
                     parts.append({"inline_data": {"mime_type": mime, "data": b64}})
+            elif t == "file":
+                file_data = (p.get("file") or {}).get("file_data", "")
+                mime, b64 = _parse_data_url(file_data)
+                if b64:
+                    parts.append({"inline_data": {"mime_type": mime, "data": b64}})
+                else:
+                    print(
+                        "[LLM_PDF_PROMPT] Gemini inline 파일 변환 실패: "
+                        f"mime={mime!r}, has_data={bool(file_data)}"
+                    )
     return parts
+
+
+def _messages_have_inline_pdf(messages: list) -> bool:
+    """내부 메시지에 data URL PDF 파일 파트가 있는지 구조로 확인한다."""
+    for message in messages or []:
+        if not isinstance(message, dict):
+            continue
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+        for part in content:
+            if not isinstance(part, dict) or part.get("type") != "file":
+                continue
+            file_data = (part.get("file") or {}).get("file_data", "")
+            mime, b64 = _parse_data_url(file_data)
+            if mime == PDF_MIME_TYPE and bool(b64):
+                return True
+    return False
 
 
 def _build_claude_content(content):
@@ -1146,6 +1245,8 @@ def _build_gemini_request_body(messages: list, model: str, custom_body: str = ""
     generation_config = {
         "temperature": float(_current_config.get("llm_temperature", 1.0) or 1.0),
     }
+    if _messages_have_inline_pdf(messages):
+        generation_config["mediaResolution"] = PDF_MEDIA_RESOLUTION
     max_tokens = int(_current_config.get("llm_max_tokens", 0) or 0)
     if max_tokens > 0:
         generation_config["maxOutputTokens"] = max_tokens
@@ -1260,7 +1361,7 @@ def _build_genai_contents(messages: list):
 
     role=='system' 은 system_instruction(str) 으로 분리하고,
     나머지(user/model)는 types.Part 리스트로 평탄화.
-    content 가 str 이면 텍스트 Part, list 이면 text/image_url 파트를 변환.
+    content 가 str 이면 텍스트 Part, list 이면 text/image_url/file 파트를 변환.
     """
     from google.genai import types
     import base64 as _b64
@@ -1298,6 +1399,33 @@ def _build_genai_contents(messages: list):
                         parts.append(types.Part.from_bytes(data=raw, mime_type=mime))
                     except Exception:
                         _llm_log(f"vertex(genai) 이미지 파트 변환 실패: mime={mime}")
+                        traceback.print_exc()
+                elif t == "file":
+                    file_data = (p.get("file") or {}).get("file_data", "")
+                    mime, b64 = _parse_data_url(file_data)
+                    if not b64:
+                        print(
+                            "[LLM_PDF_PROMPT] Vertex inline 파일 변환 실패: "
+                            f"mime={mime!r}, has_data={bool(file_data)}"
+                        )
+                        continue
+                    try:
+                        raw = _b64.b64decode(b64)
+                        parts.append(
+                            types.Part.from_bytes(
+                                data=raw,
+                                mime_type=mime,
+                                media_resolution=(
+                                    PDF_MEDIA_RESOLUTION
+                                    if mime == PDF_MIME_TYPE
+                                    else None
+                                ),
+                            )
+                        )
+                    except Exception:
+                        _llm_log(
+                            f"vertex(genai) inline 파일 파트 변환 실패: mime={mime}"
+                        )
                         traceback.print_exc()
     system_instruction = "\n\n".join(system_chunks) if system_chunks else None
     return parts, system_instruction
@@ -1923,8 +2051,29 @@ async def _call_gemini(messages: list, model: str) -> str:
             response = await client.post(url, json=body, headers={"Content-Type": "application/json"})
             if response.status_code == 200:
                 data = response.json()
-                parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+                candidates = data.get("candidates") or []
+                candidate = candidates[0] if candidates else {}
+                parts = candidate.get("content", {}).get("parts", [])
                 content = "".join(p.get("text", "") for p in parts)
+                if not content:
+                    finish_reason = candidate.get("finishReason") or "없음"
+                    prompt_feedback = data.get("promptFeedback") or {}
+                    diagnostic = json.dumps(
+                        {
+                            "finish_reason": finish_reason,
+                            "safety_ratings": candidate.get("safetyRatings") or [],
+                            "prompt_feedback": prompt_feedback,
+                        },
+                        ensure_ascii=False,
+                    )
+                    print(
+                        "[LLM_GEMINI] 응답 텍스트 비어 있음: "
+                        f"model={model} status={response.status_code} diagnostic={diagnostic[:2000]}"
+                    )
+                    return (
+                        "[LLM 실패] Gemini 응답이 비어 있습니다: "
+                        f"finish_reason={finish_reason}"
+                    )
                 _llm_log(f"gemini 성공: {len(content)}자")
                 return content
             error_text = response.text[:500]
@@ -2020,8 +2169,28 @@ async def _dispatch_unlimited(messages: list, service: str, model: str) -> str:
 async def _dispatch(messages: list, service: str, model: str) -> str:
     """현재 LLM 슬롯의 실제 API 동시 요청 상한을 적용해 호출한다."""
     use_base64 = _gemini_base64_enabled(service)
+    try:
+        pdf_messages = _prepare_gemini_pdf_messages(messages, service)
+    except Exception as e:
+        print(
+            "[LLM_PDF_PROMPT] 동기 요청 PDF 변환 실패: "
+            f"slot={_normalize_llm_slot(_llm_slot_ctx.get())}, "
+            f"service={service}, model={model}, "
+            f"messages={len(messages or [])}, error={type(e).__name__}: {e}"
+        )
+        traceback.print_exc()
+        return f"[LLM 실패] PDF 프롬프트 변환 오류: {e}"
     request_messages = (
-        _encode_gemini_base64_messages(messages) if use_base64 else messages
+        _encode_gemini_base64_messages(
+            pdf_messages,
+            protocol=(
+                _GEMINI_PDF_BASE64_PROTOCOL
+                if _gemini_pdf_enabled(service)
+                else _GEMINI_BASE64_PROTOCOL
+            ),
+        )
+        if use_base64
+        else pdf_messages
     )
     format_token = _response_format_ctx.set(None) if use_base64 else None
     if use_base64:
@@ -5168,8 +5337,31 @@ async def _dispatch_stream(messages: list, service: str, model: str):
     """현재 LLM 슬롯의 상한을 스트림이 끝날 때까지 점유하며 이벤트를 전달한다."""
     current_slot = _normalize_llm_slot(_llm_slot_ctx.get())
     use_base64 = _gemini_base64_enabled(service)
+    try:
+        pdf_messages = _prepare_gemini_pdf_messages(messages, service)
+    except Exception as e:
+        print(
+            "[LLM_PDF_PROMPT] 스트림 요청 PDF 변환 실패: "
+            f"slot={current_slot}, service={service}, model={model}, "
+            f"messages={len(messages or [])}, error={type(e).__name__}: {e}"
+        )
+        traceback.print_exc()
+        yield {
+            "type": "error",
+            "error": f"PDF 프롬프트 변환 오류: {e}",
+        }
+        return
     request_messages = (
-        _encode_gemini_base64_messages(messages) if use_base64 else messages
+        _encode_gemini_base64_messages(
+            pdf_messages,
+            protocol=(
+                _GEMINI_PDF_BASE64_PROTOCOL
+                if _gemini_pdf_enabled(service)
+                else _GEMINI_BASE64_PROTOCOL
+            ),
+        )
+        if use_base64
+        else pdf_messages
     )
     decoder = _GeminiBase64StreamDecoder() if use_base64 else None
 

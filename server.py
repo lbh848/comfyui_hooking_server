@@ -670,6 +670,7 @@ DEFAULT_CONFIG = {
     "llm_stream_idle_timeout_seconds": 90.0,  # 0=비활성, 그 외 10~3600초
     "llm_vision_compress": False,        # LLM1 비전 이미지 webp 압축 전송 (False=PNG 호환)
     "llm_gemini_base64": False,          # LLM1 Gemini/Vertex Base64 요청·응답 래핑
+    "llm_pdf_prompt": False,              # LLM1 Gemini/Vertex 대화 transcript PDF 전송
     "lora_prompt_review_enabled": False, # LoRA 프롬프트 완성 후 선택적 2차 비전 검수
     # 작업별 LLM1/LLM2/LLM3 라우팅 및 메인/폴백 재시도 정책(외부 LLM 분기 탭).
     "llm_routing": {
@@ -795,6 +796,7 @@ for _slot_n in range(2, llm_service.LLM_SLOT_COUNT + 1):
         f"llm_max_concurrency{_suffix}": 1,
         f"llm_vision_compress{_suffix}": False,
         f"llm_gemini_base64{_suffix}": False,
+        f"llm_pdf_prompt{_suffix}": False,
     })
 
 # 워크플로우 백업 최대 보관 수 (기본값, config에서 덮어씀)
@@ -18745,6 +18747,7 @@ async def handle_api_config(request: web.Request) -> web.Response:
                     f"llm_stream_idle_timeout_seconds{_sfx}": app_config.get(f"llm_stream_idle_timeout_seconds{_sfx}", 90.0),
                     f"llm_vision_compress{_sfx}": app_config.get(f"llm_vision_compress{_sfx}", False),
                     f"llm_gemini_base64{_sfx}": app_config.get(f"llm_gemini_base64{_sfx}", False),
+                    f"llm_pdf_prompt{_sfx}": app_config.get(f"llm_pdf_prompt{_sfx}", False),
                 })
             llm_service.update_config(_llm_runtime_cfg)
 
@@ -30529,6 +30532,7 @@ async def on_startup(app):
         "llm_stream_idle_timeout_seconds": app_config.get("llm_stream_idle_timeout_seconds", 90.0),
         "llm_vision_compress": app_config.get("llm_vision_compress", False),
         "llm_gemini_base64": app_config.get("llm_gemini_base64", False),
+        "llm_pdf_prompt": app_config.get("llm_pdf_prompt", False),
     }
     for _n in range(2, llm_service.LLM_SLOT_COUNT + 1):
         _s = str(_n)
@@ -30544,6 +30548,7 @@ async def on_startup(app):
             f"llm_stream_idle_timeout_seconds{_s}": app_config.get(f"llm_stream_idle_timeout_seconds{_s}", 90.0),
             f"llm_vision_compress{_s}": app_config.get(f"llm_vision_compress{_s}", False),
             f"llm_gemini_base64{_s}": app_config.get(f"llm_gemini_base64{_s}", False),
+            f"llm_pdf_prompt{_s}": app_config.get(f"llm_pdf_prompt{_s}", False),
         })
     _llm_cfg["lora_prompt_review_enabled"] = app_config.get("lora_prompt_review_enabled", False)
     _llm_cfg["llm_routing"] = app_config.get("llm_routing", {})
