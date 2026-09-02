@@ -464,8 +464,16 @@ def _file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _create_tracked_backup_path(root: Path) -> Path:
-    backup_root = root / _TRACKED_BACKUP_ROOT_NAME
+def _create_tracked_backup_path(
+    root: Path,
+    *,
+    backup_root: Path | None = None,
+) -> Path:
+    backup_root = (
+        backup_root.resolve()
+        if backup_root is not None
+        else root / _TRACKED_BACKUP_ROOT_NAME
+    )
     if backup_root.is_symlink():
         print(
             "[COMFY_INSTALL][UPDATE] 영구 백업 루트가 심볼릭 링크여서 거부: "
@@ -501,9 +509,16 @@ def _backup_and_restore_tracked_changes(
     changes: list[str],
     head: str,
     log: LogCallback | None,
+    backup_root: Path | None = None,
+    log_label: str = "후킹 서버 업데이트",
 ) -> _TrackedChangesBackup:
+    def emit(message: str) -> None:
+        print(f"[COMFY_INSTALL][UPDATE] {message}")
+        if log:
+            log(f"[{log_label}] {message}")
+
     if not changes:
-        _emit("영구 백업할 Git 추적 파일의 로컬 수정 없음", log)
+        emit("영구 백업할 Git 추적 파일의 로컬 수정 없음")
         return _TrackedChangesBackup(path=None, entries=(), patch_path=None)
 
     backup_path: Path | None = None
@@ -519,13 +534,15 @@ def _backup_and_restore_tracked_changes(
                 "Git 추적 변경 파일 목록을 확인하지 못해 업데이트를 중단합니다."
             )
 
-        backup_path = _create_tracked_backup_path(root)
+        backup_path = _create_tracked_backup_path(
+            root,
+            backup_root=backup_root,
+        )
         files_root = backup_path / "files"
         files_root.mkdir()
-        _emit(
+        emit(
             "Git 추적 파일의 로컬 수정 영구 백업 시작: "
-            f"count={len(entries)}, path={backup_path}",
-            log,
+            f"count={len(entries)}, path={backup_path}"
         )
 
         file_records: list[dict[str, object]] = []
@@ -559,7 +576,7 @@ def _backup_and_restore_tracked_changes(
                         "link_target": link_target,
                     }
                 )
-                _emit(f"수정된 추적 심볼릭 링크 백업: {relative.as_posix()}", log)
+                emit(f"수정된 추적 심볼릭 링크 백업: {relative.as_posix()}")
                 continue
             if source.is_dir():
                 print(
@@ -601,7 +618,7 @@ def _backup_and_restore_tracked_changes(
                     "sha256": backup_hash,
                 }
             )
-            _emit(f"수정된 추적 파일 백업: {relative.as_posix()}", log)
+            emit(f"수정된 추적 파일 백업: {relative.as_posix()}")
 
         patch_bytes = _run_git_capture(root, "diff", "--binary", "--full-index", "HEAD", "--")
         patch_text = patch_bytes.decode("utf-8")
@@ -616,6 +633,7 @@ def _backup_and_restore_tracked_changes(
                 timespec="seconds"
             ),
             "project_root": str(root),
+            "repository_root": str(root),
             "head": head,
             "files_root": "files",
             "patch_file": patch_path.name,
@@ -655,10 +673,9 @@ def _backup_and_restore_tracked_changes(
                 "로컬 수정은 백업했지만 Git 원본 복구가 완료되지 않았습니다. "
                 f"백업 위치: {backup_path}"
             )
-        _emit(
+        emit(
             "Git 추적 파일 원본 복구 완료; 수정본은 자동 복구하지 않음: "
-            f"count={len(entries)}, path={backup_path}",
-            log,
+            f"count={len(entries)}, path={backup_path}"
         )
         return _TrackedChangesBackup(
             path=backup_path,
@@ -682,6 +699,55 @@ def _backup_and_restore_tracked_changes(
 def _git_value(root: Path, *arguments: str) -> str:
     lines = run_command(["git", *arguments], cwd=root)
     return lines[-1].strip() if lines else ""
+
+
+def backup_and_restore_tracked_changes(
+    *,
+    repository_root: str | os.PathLike[str],
+    backup_root: str | os.PathLike[str] | None = None,
+    log: LogCallback | None = None,
+    log_label: str = "Git 업데이트",
+) -> dict[str, object] | None:
+    """영구 백업 후 한 Git 저장소의 추적 변경을 HEAD 상태로 되돌린다."""
+
+    root = Path(repository_root).resolve()
+    if not (root / ".git").is_dir():
+        print(
+            "[COMFY_INSTALL][UPDATE] 추적 변경 백업 대상 Git 저장소 없음: "
+            f"root={root}"
+        )
+        raise HookingServerUpdateError(
+            f"추적 변경을 백업할 Git 저장소가 없습니다: {root}"
+        )
+    changes = run_command(
+        ["git", "status", "--porcelain", "--untracked-files=no"],
+        cwd=root,
+    )
+    if not changes:
+        return None
+    head = _git_value(root, "rev-parse", "HEAD").lower()
+    saved = _backup_and_restore_tracked_changes(
+        root,
+        changes=changes,
+        head=head,
+        log=log,
+        backup_root=(
+            Path(backup_root).resolve() if backup_root is not None else None
+        ),
+        log_label=log_label,
+    )
+    if saved.path is None:
+        return None
+    return {
+        "path": str(saved.path),
+        "files_root": str(saved.path / "files"),
+        "patch_path": str(saved.patch_path),
+        "entries": [entry.as_posix() for entry in saved.entries],
+        "automatic_restore": False,
+        "repository_root": str(root),
+        "head": head,
+        "git_status": changes,
+    }
 
 
 def _normalize_repository(value: str) -> str:

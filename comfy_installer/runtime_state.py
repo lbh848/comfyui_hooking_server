@@ -19,6 +19,7 @@ from .manager_dependencies import (
     installed_manager_versions,
 )
 from .manifest import InstallManifest
+from .updater import backup_and_restore_tracked_changes
 
 
 class RuntimeStateError(RuntimeError):
@@ -27,15 +28,6 @@ class RuntimeStateError(RuntimeError):
 
 LogCallback = Callable[[str], None]
 RECEIPT_SCHEMA_VERSION = 1
-_COMFY_SERVER = Path("server.py")
-_COMFY_SERVER_PATCH_MARKER = (
-    "# comfy-installer: keep system_stats available when GPU telemetry fails"
-)
-_INSTANT_LORA_NODE_NAME = "comfyui-instant-lora_v_soya"
-_INSTANT_LORA_RUNTIME = Path("src") / "runtime.py"
-_INSTANT_LORA_PATCH_MARKER = (
-    "# comfy-installer: use the project-managed Python 3.12 runtime"
-)
 _REUSE_IF_SAME_ORIGIN = "reuse_if_same_origin"
 
 
@@ -208,103 +200,6 @@ def git_head(path: str | os.PathLike[str]) -> str | None:
 
 def _normalize_git_repository(repository: str) -> str:
     return repository.rstrip("/").removesuffix(".git").casefold()
-
-
-def _capture_managed_comfy_patch(path: Path) -> str | None:
-    status = _git_value(path, "status", "--porcelain", "--untracked-files=no")
-    if not status:
-        return None
-    expected_status = f"M {_COMFY_SERVER.as_posix()}"
-    normalized = [line.strip() for line in status.splitlines() if line.strip()]
-    server_path = path / _COMFY_SERVER
-    if (
-        normalized != [expected_status]
-        or not server_path.is_file()
-        or _COMFY_SERVER_PATCH_MARKER
-        not in server_path.read_text(encoding="utf-8")
-    ):
-        raise RuntimeStateError(
-            "ComfyUI에 설치기 소유가 아닌 추적 변경이 있어 승격하지 "
-            "않습니다: "
-            + ", ".join(normalized[:10])
-        )
-    try:
-        completed = subprocess.run(
-            ["git", "diff", "--binary", "--", _COMFY_SERVER.as_posix()],
-            cwd=path,
-            check=True,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-        )
-        patch = completed.stdout
-        if not patch.strip():
-            raise RuntimeStateError("ComfyUI 관리 패치 diff가 비어 있습니다.")
-        return patch
-    except RuntimeStateError:
-        raise
-    except Exception as exc:
-        print(
-            "[COMFY_INSTALL][RUNTIME_STATE] 설치기 소유 ComfyUI 패치 "
-            f"캡처 실패: path={path}, error={exc}"
-        )
-        traceback.print_exc()
-        raise RuntimeStateError(
-            "ComfyUI 관리 패치를 보관하지 못했습니다."
-        ) from exc
-
-
-def _capture_managed_custom_node_patch(
-    path: Path,
-    *,
-    name: str,
-) -> str | None:
-    status = _git_value(path, "status", "--porcelain", "--untracked-files=no")
-    if not status:
-        return None
-    expected_status = f"M {_INSTANT_LORA_RUNTIME.as_posix()}"
-    normalized = [line.strip() for line in status.splitlines() if line.strip()]
-    runtime_path = path / _INSTANT_LORA_RUNTIME
-    if (
-        name != _INSTANT_LORA_NODE_NAME
-        or normalized != [expected_status]
-        or not runtime_path.is_file()
-        or _INSTANT_LORA_PATCH_MARKER
-        not in runtime_path.read_text(encoding="utf-8")
-    ):
-        raise RuntimeStateError(
-            f"커스텀 노드 {name}에 설치기 소유가 아닌 추적 변경이 있어 "
-            "승격하지 않습니다: "
-            + ", ".join(normalized[:10])
-        )
-    try:
-        completed = subprocess.run(
-            ["git", "diff", "--binary", "--", _INSTANT_LORA_RUNTIME.as_posix()],
-            cwd=path,
-            check=True,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-        )
-        patch = completed.stdout
-        if not patch.strip():
-            raise RuntimeStateError(
-                f"커스텀 노드 {name} 관리 패치 diff가 비어 있습니다."
-            )
-        return patch
-    except RuntimeStateError:
-        raise
-    except Exception as exc:
-        print(
-            "[COMFY_INSTALL][RUNTIME_STATE] 설치기 소유 노드 패치 캡처 실패: "
-            f"name={name}, path={path}, error={exc}"
-        )
-        traceback.print_exc()
-        raise RuntimeStateError(
-            f"커스텀 노드 {name} 관리 패치를 보관하지 못했습니다."
-        ) from exc
 
 
 def receipt_path(comfy_root: str | os.PathLike[str]) -> Path:
@@ -633,22 +528,14 @@ def create_runtime_transaction(
     root = Path(comfy_root).resolve()
     transaction_id = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_") + uuid.uuid4().hex[:8]
     transaction_root = root / ".installer-state" / "transactions" / transaction_id
+    tracked_backup_root = root.parent / "update_backup"
     venv = root / ".venv"
     venv_backup = transaction_root / "venv"
+    cleaned_worktrees: list[tuple[Path, str, str]] = []
     try:
         if not (root / ".git").is_dir():
             raise RuntimeStateError(f"ComfyUI Git 저장소가 없습니다: {root}")
-        managed_comfy_patch = _capture_managed_comfy_patch(root)
         node_state = collect_custom_node_state(root, manifest.custom_nodes)
-        for name, state in node_state.items():
-            path = Path(str(state["path"]))
-            if state.get("source_type") == "git" and path.is_dir():
-                managed_patch = _capture_managed_custom_node_patch(
-                    path,
-                    name=name,
-                )
-                if managed_patch is not None:
-                    state["managed_worktree_patch"] = managed_patch
         transaction_root.mkdir(parents=True, exist_ok=False)
         database = _backup_comfy_database(root, transaction_root)
         if venv.is_dir():
@@ -656,13 +543,49 @@ def create_runtime_transaction(
                 log(f"[트랜잭션] Comfy .venv 백업 시작: {venv_backup}")
             shutil.copytree(venv, venv_backup, symlinks=True)
         receipt = load_runtime_receipt(root)
+
+        comfy_tracked_backup = backup_and_restore_tracked_changes(
+            repository_root=root,
+            backup_root=tracked_backup_root,
+            log=log,
+            log_label="ComfyUI 추적 변경 백업",
+        )
+        comfy_worktree_patch = None
+        if comfy_tracked_backup is not None:
+            comfy_worktree_patch = Path(
+                str(comfy_tracked_backup["patch_path"])
+            ).read_text(encoding="utf-8")
+            cleaned_worktrees.append((root, comfy_worktree_patch, "ComfyUI"))
+
+        for name, state in node_state.items():
+            path = Path(str(state["path"]))
+            if state.get("source_type") != "git" or not path.is_dir():
+                continue
+            tracked_backup = backup_and_restore_tracked_changes(
+                repository_root=path,
+                backup_root=tracked_backup_root,
+                log=log,
+                log_label=f"커스텀 노드 {name} 추적 변경 백업",
+            )
+            if tracked_backup is None:
+                continue
+            worktree_patch = Path(str(tracked_backup["patch_path"])).read_text(
+                encoding="utf-8"
+            )
+            state["worktree_patch"] = worktree_patch
+            state["tracked_changes_backup"] = tracked_backup
+            cleaned_worktrees.append(
+                (path, worktree_patch, f"커스텀 노드 {name}")
+            )
+
         snapshot = {
-            "schema_version": 2,
+            "schema_version": 3,
             "transaction_id": transaction_id,
             "created_at": _now_iso(),
             "comfy_root": str(root),
             "comfy_ref": git_head(root),
-            "comfy_managed_worktree_patch": managed_comfy_patch,
+            "comfy_worktree_patch": comfy_worktree_patch,
+            "comfy_tracked_changes_backup": comfy_tracked_backup,
             "custom_nodes": node_state,
             "config_backup": config_backup,
             "receipt": receipt,
@@ -673,14 +596,31 @@ def create_runtime_transaction(
         if log:
             log(f"[트랜잭션] 승격 전 상태 보관 완료: {transaction_id}")
         return snapshot
-    except RuntimeStateError:
-        raise
     except Exception as exc:
+        restore_errors: list[str] = []
+        for path, patch, label in reversed(cleaned_worktrees):
+            try:
+                _restore_worktree_patch(path, patch, label=label)
+            except Exception as restore_exc:
+                print(
+                    "[COMFY_INSTALL][RUNTIME_STATE] 트랜잭션 생성 실패 후 추적 "
+                    "변경 복원 실패: "
+                    f"label={label}, path={path}, error={restore_exc}"
+                )
+                traceback.print_exc()
+                restore_errors.append(f"{label}: {restore_exc}")
         print(
             "[COMFY_INSTALL][RUNTIME_STATE] 트랜잭션 생성 실패: "
             f"root={transaction_root}, error={exc}"
         )
         traceback.print_exc()
+        if restore_errors:
+            raise RuntimeStateError(
+                "승격 트랜잭션 생성과 추적 변경 복원이 모두 실패했습니다: "
+                + "; ".join(restore_errors)
+            ) from exc
+        if isinstance(exc, RuntimeStateError):
+            raise
         raise RuntimeStateError(f"승격 트랜잭션 생성 실패: {exc}") from exc
 
 
@@ -727,7 +667,7 @@ def _remove_tree_force_writable(path: Path) -> None:
     shutil.rmtree(path, onexc=make_writable_and_retry)
 
 
-def _restore_managed_worktree_patch(
+def _restore_worktree_patch(
     path: Path,
     patch: str,
     *,
@@ -746,18 +686,18 @@ def _restore_managed_worktree_patch(
         )
         if completed.stderr.strip() and "warning" not in completed.stderr.lower():
             raise RuntimeStateError(
-                f"{label} 관리 패치 복원 중 예상하지 못한 stderr: "
+                f"{label} 추적 변경 복원 중 예상하지 못한 stderr: "
                 f"{completed.stderr.strip()}"
             )
     except RuntimeStateError:
         raise
     except Exception as exc:
         print(
-            "[COMFY_INSTALL][RUNTIME_STATE] 설치기 소유 노드 패치 복원 실패: "
+            "[COMFY_INSTALL][RUNTIME_STATE] Git 추적 변경 복원 실패: "
             f"label={label}, path={path}, error={exc}"
         )
         traceback.print_exc()
-        raise RuntimeStateError(f"{label} 관리 패치 복원 실패") from exc
+        raise RuntimeStateError(f"{label} 추적 변경 복원 실패") from exc
 
 
 def rollback_runtime_transaction(
@@ -784,14 +724,16 @@ def rollback_runtime_transaction(
         if comfy_ref:
             _checkout_exact(root, comfy_ref, "ComfyUI")
             result["restored"].append("comfy_ref")
-            managed_comfy_patch = snapshot.get("comfy_managed_worktree_patch")
-            if isinstance(managed_comfy_patch, str) and managed_comfy_patch:
-                _restore_managed_worktree_patch(
+            comfy_worktree_patch = snapshot.get("comfy_worktree_patch")
+            if not comfy_worktree_patch:
+                comfy_worktree_patch = snapshot.get("comfy_managed_worktree_patch")
+            if isinstance(comfy_worktree_patch, str) and comfy_worktree_patch:
+                _restore_worktree_patch(
                     root,
-                    managed_comfy_patch,
+                    comfy_worktree_patch,
                     label="ComfyUI",
                 )
-                result["restored"].append("comfy_managed_patch")
+                result["restored"].append("comfy_worktree_patch")
         for name, state in dict(snapshot.get("custom_nodes") or {}).items():
             if not isinstance(state, dict):
                 continue
@@ -821,15 +763,17 @@ def rollback_runtime_transaction(
             if node_ref and node_path.is_dir():
                 _checkout_exact(node_path, node_ref, f"커스텀 노드 {name}")
                 result["restored"].append(f"custom_node:{name}")
-                managed_patch = state.get("managed_worktree_patch")
-                if isinstance(managed_patch, str) and managed_patch:
-                    _restore_managed_worktree_patch(
+                worktree_patch = state.get("worktree_patch")
+                if not worktree_patch:
+                    worktree_patch = state.get("managed_worktree_patch")
+                if isinstance(worktree_patch, str) and worktree_patch:
+                    _restore_worktree_patch(
                         node_path,
-                        managed_patch,
+                        worktree_patch,
                         label=f"커스텀 노드 {name}",
                     )
                     result["restored"].append(
-                        f"custom_node_managed_patch:{name}"
+                        f"custom_node_worktree_patch:{name}"
                     )
 
         venv = root / ".venv"

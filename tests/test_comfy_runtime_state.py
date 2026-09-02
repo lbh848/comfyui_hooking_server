@@ -7,8 +7,12 @@ import stat
 import subprocess
 from pathlib import Path
 
+import pytest
+
+import comfy_installer.runtime_state as runtime_state_module
 from comfy_installer.manifest import InstallManifest
 from comfy_installer.runtime_state import (
+    RuntimeStateError,
     create_runtime_transaction,
     inspect_runtime,
     load_runtime_receipt,
@@ -357,21 +361,17 @@ def test_transaction_restores_git_venv_receipt_and_config(tmp_path: Path) -> Non
     assert not newly_installed.exists()
 
 
-def test_transaction_preserves_only_the_installer_owned_instant_lora_patch(
+def test_transaction_backs_up_and_restores_any_custom_node_tracked_change(
     tmp_path: Path,
 ) -> None:
     comfy = tmp_path / "comfy"
     comfy_ref = _init_repo(comfy)
     (comfy / ".venv").mkdir()
-    node = comfy / "custom_nodes" / "comfyui-instant-lora_v_soya"
-    node_ref = _init_repo(node, "src/runtime.py")
-    runtime = node / "src" / "runtime.py"
-    original = runtime.read_text(encoding="utf-8")
-    patched = (
-        original
-        + "# comfy-installer: use the project-managed Python 3.12 runtime\n"
-    )
-    runtime.write_text(patched, encoding="utf-8")
+    node = comfy / "custom_nodes" / "third-party-node"
+    node_ref = _init_repo(node, "nodes.py")
+    source = node / "nodes.py"
+    changed = "user-local-change\n"
+    source.write_text(changed, encoding="utf-8")
     manifest = InstallManifest(
         source_path=tmp_path / "manifest.json",
         data={
@@ -387,9 +387,9 @@ def test_transaction_preserves_only_the_installer_owned_instant_lora_patch(
             },
             "custom_nodes": [
                 {
-                    "name": "comfyui-instant-lora_v_soya",
+                    "name": "third-party-node",
                     "source_type": "git",
-                    "repository": "https://example.invalid/instant-lora.git",
+                    "repository": "https://example.invalid/third-party-node.git",
                     "tracking_branch": "main",
                 }
             ],
@@ -405,11 +405,14 @@ def test_transaction_preserves_only_the_installer_owned_instant_lora_patch(
         config_backup={},
     )
 
-    saved_node = snapshot["custom_nodes"]["comfyui-instant-lora_v_soya"]
+    saved_node = snapshot["custom_nodes"]["third-party-node"]
     assert saved_node["head"] == node_ref
-    assert "managed_worktree_patch" in saved_node
-    _git(node, "checkout", "--", "src/runtime.py")
-    _commit(node, "src/runtime.py", "upstream-new\n")
+    assert "worktree_patch" in saved_node
+    backup_path = Path(saved_node["tracked_changes_backup"]["path"])
+    assert backup_path.parent == tmp_path / "update_backup"
+    assert (backup_path / "files" / "nodes.py").read_text(encoding="utf-8") == changed
+    assert _git(node, "status", "--porcelain", "--untracked-files=no") == ""
+    _commit(node, "nodes.py", "upstream-new\n")
 
     result = rollback_runtime_transaction(
         comfy_root=comfy,
@@ -418,14 +421,14 @@ def test_transaction_preserves_only_the_installer_owned_instant_lora_patch(
     )
 
     assert result["status"] == "succeeded"
-    assert runtime.read_text(encoding="utf-8") == patched
+    assert source.read_text(encoding="utf-8") == changed
     assert _git(node, "rev-parse", "HEAD").lower() == node_ref
     assert _git(node, "status", "--porcelain", "--untracked-files=no") == (
-        "M src/runtime.py"
+        "M nodes.py"
     )
 
 
-def test_transaction_preserves_installer_owned_comfy_patch(
+def test_transaction_backs_up_and_restores_any_comfy_tracked_change(
     tmp_path: Path,
 ) -> None:
     comfy = tmp_path / "comfy"
@@ -433,11 +436,8 @@ def test_transaction_preserves_installer_owned_comfy_patch(
     (comfy / ".venv").mkdir()
     server = comfy / "server.py"
     original = server.read_text(encoding="utf-8")
-    patched = (
-        original
-        + "# comfy-installer: keep system_stats available when GPU telemetry fails\n"
-    )
-    server.write_text(patched, encoding="utf-8")
+    changed = original + "user-local-change\n"
+    server.write_text(changed, encoding="utf-8")
     manifest = InstallManifest(
         source_path=tmp_path / "manifest.json",
         data={
@@ -465,8 +465,11 @@ def test_transaction_preserves_installer_owned_comfy_patch(
     )
 
     assert snapshot["comfy_ref"] == comfy_ref
-    assert "comfy_managed_worktree_patch" in snapshot
-    _git(comfy, "checkout", "--", "server.py")
+    assert "comfy_worktree_patch" in snapshot
+    backup_path = Path(snapshot["comfy_tracked_changes_backup"]["path"])
+    assert backup_path.parent == tmp_path / "update_backup"
+    assert (backup_path / "files" / "server.py").read_text(encoding="utf-8") == changed
+    assert _git(comfy, "status", "--porcelain", "--untracked-files=no") == ""
     _commit(comfy, "server.py", "upstream-new\n")
 
     result = rollback_runtime_transaction(
@@ -476,8 +479,129 @@ def test_transaction_preserves_installer_owned_comfy_patch(
     )
 
     assert result["status"] == "succeeded"
-    assert server.read_text(encoding="utf-8") == patched
+    assert server.read_text(encoding="utf-8") == changed
     assert _git(comfy, "rev-parse", "HEAD").lower() == comfy_ref
     assert _git(comfy, "status", "--porcelain", "--untracked-files=no") == (
         "M server.py"
     )
+
+
+def test_transaction_backs_up_teacache_installer_patch_without_rejecting_it(
+    tmp_path: Path,
+) -> None:
+    comfy = tmp_path / "comfy"
+    comfy_ref = _init_repo(comfy)
+    (comfy / ".venv").mkdir()
+    node_name = "ComfyUI-MiniMaxH3-TeaCache"
+    node = comfy / "custom_nodes" / node_name
+    node_ref = _init_repo(node, "nodes.py")
+    source = node / "nodes.py"
+    patched = (
+        source.read_text(encoding="utf-8")
+        + "# comfy-installer: reset TeaCache state for every sampling run\n"
+    )
+    source.write_text(patched, encoding="utf-8")
+    manifest = InstallManifest(
+        source_path=tmp_path / "manifest.json",
+        data={
+            "comfy": {
+                "version": "0.31.0",
+                "repository": "https://example.invalid/ComfyUI.git",
+                "ref": comfy_ref,
+            },
+            "python": {
+                "version": "3.12.11",
+                "compatibility_packages": [],
+                "gpu_profiles": [],
+            },
+            "custom_nodes": [
+                {
+                    "name": node_name,
+                    "source_type": "git",
+                    "repository": "https://example.invalid/teacache.git",
+                    "ref": node_ref,
+                }
+            ],
+            "models": [],
+            "workflows": {},
+        },
+        sha256="manifest-sha",
+    )
+
+    snapshot = create_runtime_transaction(
+        comfy_root=comfy,
+        manifest=manifest,
+        config_backup={},
+    )
+
+    saved_node = snapshot["custom_nodes"][node_name]
+    backup_path = Path(saved_node["tracked_changes_backup"]["path"])
+    assert (backup_path / "files" / "nodes.py").read_text(
+        encoding="utf-8"
+    ) == patched
+    assert _git(node, "status", "--porcelain", "--untracked-files=no") == ""
+
+    result = rollback_runtime_transaction(
+        comfy_root=comfy,
+        snapshot=snapshot,
+        restore_config=lambda _path: {"ok": True},
+    )
+
+    assert result["status"] == "succeeded"
+    assert source.read_text(encoding="utf-8") == patched
+    assert _git(node, "status", "--porcelain", "--untracked-files=no") == (
+        "M nodes.py"
+    )
+
+
+def test_transaction_creation_failure_restores_changes_after_backup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    comfy = tmp_path / "comfy"
+    comfy_ref = _init_repo(comfy)
+    (comfy / ".venv").mkdir()
+    tracked = comfy / "tracked.txt"
+    changed = "user-local-change\n"
+    tracked.write_text(changed, encoding="utf-8")
+    manifest = InstallManifest(
+        source_path=tmp_path / "manifest.json",
+        data={
+            "comfy": {
+                "version": "0.31.0",
+                "repository": "https://example.invalid/ComfyUI.git",
+                "ref": comfy_ref,
+            },
+            "python": {
+                "version": "3.12.11",
+                "compatibility_packages": [],
+                "gpu_profiles": [],
+            },
+            "custom_nodes": [],
+            "models": [],
+            "workflows": {},
+        },
+        sha256="manifest-sha",
+    )
+
+    def fail_snapshot(path: Path, _value: dict) -> None:
+        if path.name == "snapshot.json":
+            raise OSError("simulated snapshot failure")
+        raise AssertionError(f"unexpected write: {path}")
+
+    monkeypatch.setattr(runtime_state_module, "_write_json_atomic", fail_snapshot)
+
+    with pytest.raises(RuntimeStateError, match="승격 트랜잭션 생성 실패"):
+        create_runtime_transaction(
+            comfy_root=comfy,
+            manifest=manifest,
+            config_backup={},
+        )
+
+    assert tracked.read_text(encoding="utf-8") == changed
+    assert _git(comfy, "status", "--porcelain", "--untracked-files=no") == (
+        "M tracked.txt"
+    )
+    backups = list((tmp_path / "update_backup").glob("*/files/tracked.txt"))
+    assert len(backups) == 1
+    assert backups[0].read_text(encoding="utf-8") == changed
