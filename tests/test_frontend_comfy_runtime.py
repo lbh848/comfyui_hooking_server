@@ -274,10 +274,21 @@ def test_remote_vram_mode_selectors_are_provider_specific_and_default_high() -> 
 
     for select in (modal_select, vast_select):
         assert '<option value="highvram" selected>' in select
-        for mode in ("normalvram", "lowvram", "novram", "auto"):
+        for mode in ("lowvram", "novram", "auto"):
             assert f'<option value="{mode}">' in select
+        assert 'value="normalvram"' not in select
+        assert '<option value="auto">기본/자동 · DynamicVRAM</option>' in select
     assert "vast_vram_mode: vastVramMode" in FRONTEND
     assert "currentConfig.vast_vram_mode || 'highvram'" in FRONTEND
+
+
+def test_local_vram_mode_selector_hides_removed_normal_and_labels_dynamic_default() -> None:
+    select_start = FRONTEND.index('id="comfy-runtime-vram-mode"')
+    select_end = FRONTEND.index("</select>", select_start)
+    select = FRONTEND[select_start:select_end]
+
+    assert 'value="normalvram"' not in select
+    assert '<option value="auto">기본/자동 · DynamicVRAM</option>' in select
 
 
 def test_modal_web_start_stays_locked_until_server_state_acknowledges_request() -> None:

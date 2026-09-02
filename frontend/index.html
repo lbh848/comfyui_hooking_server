@@ -22623,9 +22623,8 @@
                                 <label class="comfy-runtime-option" for="comfy-runtime-vram-mode">
                                     <span class="comfy-runtime-option-label">VRAM 모드</span>
                                     <select id="comfy-runtime-vram-mode">
-                                        <option value="auto">자동 (권장)</option>
+                                        <option value="auto">기본/자동 · DynamicVRAM</option>
                                         <option value="highvram">High VRAM</option>
-                                        <option value="normalvram">Normal VRAM</option>
                                         <option value="lowvram">Low VRAM</option>
                                         <option value="novram">No VRAM</option>
                                     </select>
@@ -22788,10 +22787,9 @@
                                     <span><span class="comfy-runtime-option-label">VRAM 모드</span><span class="comfy-runtime-option-note">워커·웹 공통 · 기본 HIGH_VRAM</span></span>
                                     <select id="modal-runtime-vram-mode" onchange="modalSyncRuntimeControls('runtime')">
                                         <option value="highvram" selected>HIGH_VRAM · --highvram</option>
-                                        <option value="normalvram">NORMAL_VRAM · --normalvram</option>
                                         <option value="lowvram">LOW_VRAM · --lowvram</option>
                                         <option value="novram">NO_VRAM · --novram</option>
-                                        <option value="auto">AUTO · 모드 인자 없음</option>
+                                        <option value="auto">기본/자동 · DynamicVRAM</option>
                                     </select>
                                 </label>
                                 <div class="comfy-runtime-option read-only-state">
@@ -24284,10 +24282,9 @@
                             <div class="setting-control">
                                 <select id="setting-vast-vram-mode">
                                     <option value="highvram" selected>HIGH_VRAM · --highvram</option>
-                                    <option value="normalvram">NORMAL_VRAM · --normalvram</option>
                                     <option value="lowvram">LOW_VRAM · --lowvram</option>
                                     <option value="novram">NO_VRAM · --novram</option>
-                                    <option value="auto">AUTO · 모드 인자 없음</option>
+                                    <option value="auto">기본/자동 · DynamicVRAM</option>
                                 </select>
                             </div>
                         </div>
