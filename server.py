@@ -2474,6 +2474,14 @@ def convert_image_for_client(raw_bytes: bytes, prompt_data: dict, fmt=None, qual
     if fmt.lower() == "original":
         return _embed_png_metadata(raw_bytes, prompt_data), "image/png"
 
+    if (
+        fmt.lower() == "webp"
+        and raw_bytes[:4] == b"RIFF"
+        and raw_bytes[8:12] == b"WEBP"
+    ):
+        print(f"[IMG] webp 원본 통과: {len(raw_bytes):,}B (재인코딩 생략)")
+        return raw_bytes, "image/webp"
+
     try:
         img = Image.open(BytesIO(raw_bytes))
     except Exception as e:
@@ -10324,21 +10332,21 @@ async def handle_prompt(request: web.Request) -> web.Response:
 async def handle_history(request: web.Request) -> web.Response:
     prompt_id = request.match_info.get("prompt_id", "")
 
-    def build_entry(pid, entry):
+    def build_entry(pid, entry, *, include_workflow: bool = True):
         img_list = entry.get("outputs", {}).get("images", [])
         save_node = entry.get("save_node_id")
         node_outputs = {}
         if save_node:
             node_outputs[str(save_node)] = {"images": img_list}
         return {
-            "prompt": [0, pid, entry["prompt"], {}, []],
+            "prompt": [0, pid, entry["prompt"] if include_workflow else {}, {}, []],
             "outputs": node_outputs,
             "status": {"status_str": "success", "completed": True, "messages": []},
         }
 
     if not prompt_id:
         res = {
-            pid: build_entry(pid, e)
+            pid: build_entry(pid, e, include_workflow=False)
             for pid, e in prompts.items()
             if e["status"] == "completed"
         }
@@ -20000,8 +20008,14 @@ async def log_middleware(request, handler):
 
 @web.middleware
 async def cors_middleware(request, handler):
-    """lighbd V3 plugin 용 CORS. /api/lighbd/* 경로에만 적용."""
-    if request.path.startswith(("/api/lighbd/", "/api/illustration_context/")):
+    """브리지 API와 Risu가 호출하는 ComfyUI 호환 조회 경로에 CORS를 적용한다."""
+    cors_enabled = (
+        request.path.startswith(("/api/lighbd/", "/api/illustration_context/"))
+        or request.path == "/history"
+        or request.path.startswith("/history/")
+        or request.path == "/view"
+    )
+    if cors_enabled:
         origin = request.headers.get("Origin", "*")
         # Preflight
         if request.method == "OPTIONS":
