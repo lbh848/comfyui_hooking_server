@@ -2298,6 +2298,19 @@ def _take_prompt_runtime_snapshot(prompt_id: str) -> dict:
     return snapshot
 
 
+def _require_active_illustration_bot(bot_name: str, *, context: str) -> str:
+    """프롬프트 조립이 필요한 삽화 요청에서 활성 봇을 강제한다."""
+    normalized = str(bot_name or "").strip()
+    if normalized:
+        return normalized
+    error = "삽화를 생성하려면 먼저 활성 봇을 선택해야 합니다."
+    print(
+        f"[ILLUST:BOT] 활성 봇 검증 실패: context={context!r}, "
+        f"bot={normalized!r}, error={error}"
+    )
+    raise RuntimeError(error)
+
+
 def apply_word_replacements(
     positive: str,
     negative: str,
@@ -5096,6 +5109,16 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
         # 프롬프트 추출
         positive = extract_prompts_by_title(incoming_prompt, "긍정프롬프트") or ""
         negative = extract_prompts_by_title(incoming_prompt, "부정프롬프트") or ""
+        prebuilt_v1 = llm_prompt_edit.detect_v1_format(positive)
+        if not prebuilt_v1:
+            bot_name = _require_active_illustration_bot(
+                runtime_snapshot.get("bot_name"),
+                context=f"prompt:{prompt_id}",
+            )
+        else:
+            # 이미 [ILXL]/[UPSCALE]까지 조립된 레거시 V1은 빌더 입력이 아니므로
+            # 선택 봇이 없어도 기존 호환 경로로 그대로 통과시킨다.
+            bot_name = str(runtime_snapshot.get("bot_name") or "")
 
         # 가중치 클램프 적용
         if runtime_snapshot.get("clamp_enabled", False):
@@ -5108,7 +5131,6 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                 print(f"[CLAMP] 가중치 클램프 적용 (clamp={clamp_val})")
 
         # 단어 기반 규칙 적용 / 삽화 모드 프롬프트 빌딩
-        bot_name = str(runtime_snapshot.get("bot_name") or "")
         illustration_workflow_type = workflow_profiles.normalize_illustration_workflow_type(
             runtime_snapshot.get("illustration_workflow_type")
             or app_config.get("illustration_workflow_type")
@@ -5195,7 +5217,7 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
             not bot_name
             or illustration_provider != "comfy"
             or prompt_format != "v3"
-            or llm_prompt_edit.detect_v1_format(positive)
+            or prebuilt_v1
         ):
             error = (
                 "다중 캐릭터 Regional 프롬프트 조건이 맞지 않습니다: "
@@ -5204,7 +5226,7 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
             )
             print(f"[MULTI_CHAR:PROMPT] {error}")
             raise RuntimeError(error)
-        if bot_name and not llm_prompt_edit.detect_v1_format(positive):
+        if bot_name and not prebuilt_v1:
             # 삽화 빌딩 분기: V3([NAME]/[SETUP]/[CHAR]/[SUPPLEMENT]) 입력만 처리.
             # V1([ILXL]/[UPSCALE]) 입력은 illust 빌딩을 타지 않고 밑 else 에서 통과시킨다.
             builder = IllustPromptBuilder()
@@ -5706,16 +5728,11 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                     error = f"다중 캐릭터 프롬프트를 조립할 봇을 찾지 못했습니다: {bot_name!r}"
                     print(f"[MULTI_CHAR:PROMPT] {error}")
                     raise RuntimeError(error)
-                print(f"[ILLUST] 봇을 찾을 수 없음: {bot_name}, RAW 선처리 결과를 사용")
-                positive = word_replaced_raw
-                negative = apply_word_replacements(
-                    "",
-                    negative,
-                    bot_name,
-                    word_rules_snapshot,
-                )[1]
+                error = f"선택된 활성 봇 설정을 찾을 수 없습니다: {bot_name!r}"
+                print(f"[ILLUST:BOT] {error}")
+                raise RuntimeError(error)
         else:
-            # V1(ILXL/UPSCALE) 통과 또는 bot 미선택: illust 빌딩 없이 단어 치환만 적용
+            # 이미 완성된 V1(ILXL/UPSCALE)은 삽화 빌딩 없이 단어 치환만 적용한다.
             if bot_name:
                 positive, negative = apply_word_replacements(
                     positive,
@@ -7272,6 +7289,11 @@ async def process_illustration_context_queue_item(item) -> dict:
             return None, f"후처리 실패 - {e}", False
 
     try:
+        if illustration_enabled or original_asset_enabled:
+            active_bot = _require_active_illustration_bot(
+                active_bot,
+                context=f"illustration_context:{session_id or original_prompt_id}",
+            )
         if invalid_output_configuration:
             raise RuntimeError("일반 삽화 또는 원본 에셋 출력을 하나 이상 켜야 합니다")
         if not original_prompt_id or original_prompt_id not in prompts:

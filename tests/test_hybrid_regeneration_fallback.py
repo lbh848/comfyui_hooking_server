@@ -87,7 +87,7 @@ async def test_process_prompt_requires_explicit_hybrid_mode_for_bound_provider(
 
     def fake_extract(_prompt, title):
         if title == "긍정프롬프트":
-            return "[Positive]\nscene\n\n[ILXL]\nscene"
+            return "[Positive]\nscene\n\n[ILXL]\nscene\n\n[UPSCALE]\nscene"
         return "negative"
 
     async def fake_generate(positive, negative, **kwargs):

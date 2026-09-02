@@ -12,6 +12,21 @@ import server
 from modes import illustration_context_pipeline as pipeline
 
 
+def _prebuilt_v1_prompt() -> dict:
+    return {
+        "positive": {
+            "_meta": {"title": "긍정프롬프트"},
+            "inputs": {
+                "value": "quality tags\n[ILXL]\nscene tags\n[UPSCALE]\nupscale tags"
+            },
+        },
+        "negative": {
+            "_meta": {"title": "부정프롬프트"},
+            "inputs": {"value": "low quality"},
+        },
+    }
+
+
 @pytest.mark.asyncio
 async def test_process_prompt_raises_when_provider_returns_no_image(monkeypatch):
     prompt_id = "provider-failure-test"
@@ -32,7 +47,7 @@ async def test_process_prompt_raises_when_provider_returns_no_image(monkeypatch)
 
     try:
         with pytest.raises(RuntimeError, match="remote server unavailable"):
-            await server.process_prompt(prompt_id, {}, {})
+            await server.process_prompt(prompt_id, _prebuilt_v1_prompt(), {})
         assert server.prompts[prompt_id]["status"] == "completed"
         assert server.prompts[prompt_id]["outputs"] == {"images": []}
         assert server.prompts[prompt_id]["image_bytes"] is None
@@ -65,7 +80,7 @@ async def test_process_prompt_defers_publication_and_backup_for_call3(monkeypatc
     try:
         await server.process_prompt(
             prompt_id,
-            {},
+            _prebuilt_v1_prompt(),
             {
                 "illustration_defer_postprocess": True,
                 "illustration_provider": "comfy",
@@ -77,7 +92,9 @@ async def test_process_prompt_defers_publication_and_backup_for_call3(monkeypatc
         assert entry["image_bytes"] is None
         assert entry["_deferred_image_bytes"] == b"raw-image"
         assert entry["_deferred_finalize"]["provider"] == "comfy"
-        assert entry["_deferred_finalize"]["positive"] == ""
+        assert entry["_deferred_finalize"]["positive"] == (
+            "quality tags\n[ILXL]\nscene tags\n[UPSCALE]\nupscale tags"
+        )
     finally:
         server.prompts.pop(prompt_id, None)
 
@@ -131,7 +148,9 @@ async def test_process_prompt_uses_queued_runtime_snapshot(monkeypatch):
     }
 
     def fake_extract(_prompt, title):
-        return "(lighting:2.0)" if title == "긍정프롬프트" else ""
+        if title == "긍정프롬프트":
+            return "(lighting:2.0)\n[ILXL]\nscene\n[UPSCALE]\nscene"
+        return ""
 
     async def fake_generate(positive, negative, **kwargs):
         captured["positive"] = positive
@@ -150,12 +169,118 @@ async def test_process_prompt_uses_queued_runtime_snapshot(monkeypatch):
         )
 
         assert captured == {
-            "positive": "(lighting:1.2)",
+            "positive": "(lighting:1.2)\n[ILXL]\nscene\n[UPSCALE]\nscene",
             "provider": "comfy",
         }
         assert "_illustration_runtime_snapshot" not in server.prompts[prompt_id]
         assert server.prompts[prompt_id]["_deferred_finalize"]["word_rules"] == []
     finally:
+        server.prompts.pop(prompt_id, None)
+
+
+@pytest.mark.asyncio
+async def test_process_prompt_rejects_raw_prompt_without_active_bot(monkeypatch):
+    prompt_id = "missing-active-bot-test"
+    generated = False
+    server.prompts[prompt_id] = {
+        "status": "running",
+        "prompt": {},
+        "outputs": {},
+        "filename": None,
+        "save_node_id": "9",
+        "image_bytes": None,
+        "_illustration_runtime_snapshot": {
+            "bot_name": "",
+            "provider": "comfy",
+            "illustration_workflow_type": "v3_anima",
+            "chansub_workflow_type": "anima",
+            "clamp_enabled": False,
+            "clamp_value": 1.2,
+            "word_rules": [],
+        },
+    }
+
+    def fake_extract(_prompt, title):
+        if title == "긍정프롬프트":
+            return "[NAME]\nAlice\n[SETUP]\nroom\n[CHAR]\n1girl\n[SUPPLEMENT]\nstanding"
+        return ""
+
+    async def fail_if_generated(*args, **kwargs):
+        nonlocal generated
+        generated = True
+        raise AssertionError("활성 봇 검증 실패 후에는 GPU 생성을 호출하면 안 됩니다")
+
+    monkeypatch.setattr(server, "extract_prompts_by_title", fake_extract)
+    monkeypatch.setattr(server, "generate_image_with_prompt", fail_if_generated)
+
+    try:
+        with pytest.raises(RuntimeError, match="활성 봇을 선택"):
+            await server.process_prompt(prompt_id, {}, {})
+        assert generated is False
+        assert server.prompts[prompt_id]["status"] == "completed"
+        assert server.prompts[prompt_id]["outputs"] == {"images": []}
+    finally:
+        server.prompts.pop(prompt_id, None)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("workflow_type", ["v1", "v3_anima"])
+async def test_context_queue_rejects_missing_active_bot_before_prompt_build(
+    tmp_path, monkeypatch, workflow_type
+):
+    monkeypatch.setattr(pipeline, "SESSION_DIR", str(tmp_path / "sessions"))
+    session_id = "risu_" + ("z" * 64)
+    prompt_id = f"missing-bot-context-{workflow_type}"
+    pipeline.create_session(session_id, "")
+    server.prompts[prompt_id] = {
+        "status": "running",
+        "prompt": {},
+        "outputs": {},
+        "filename": None,
+        "save_node_id": "9",
+        "image_bytes": None,
+    }
+    built = False
+
+    async def fail_if_built(*args, **kwargs):
+        nonlocal built
+        built = True
+        raise AssertionError("활성 봇 검증 실패 후에는 프롬프트를 빌드하면 안 됩니다")
+
+    async def ignore_notify(*args, **kwargs):
+        return None
+
+    monkeypatch.setitem(server.app_config, "bot_selected", "")
+    monkeypatch.setitem(
+        server.app_config,
+        "illustration_workflow_type",
+        workflow_type,
+    )
+    monkeypatch.setitem(
+        server.app_config,
+        "illustration_context_toggles",
+        {"illustration_enabled": True, "original_asset_enabled": False},
+    )
+    monkeypatch.setattr(pipeline, "build_from_context", fail_if_built)
+    monkeypatch.setattr(server, "notify_frontend", ignore_notify)
+
+    item = SimpleNamespace(params={
+        "prompt_id": prompt_id,
+        "payload": {"session_id": session_id, "chats": []},
+        "prompt_data": {},
+        "raw_body": {},
+    })
+
+    try:
+        with pytest.raises(RuntimeError, match="활성 봇을 선택"):
+            await server.process_illustration_context_queue_item(item)
+        assert built is False
+        assert server.prompts[prompt_id]["status"] == "completed"
+        assert server.prompts[prompt_id]["outputs"] == {"images": []}
+        assert pipeline.get_session(session_id)["status"] == "error"
+    finally:
+        pipeline._SESSIONS.pop(session_id, None)
+        pipeline._LOOKUP_KEYS.pop("z" * 24, None)
         server.prompts.pop(prompt_id, None)
 
 
@@ -482,7 +607,7 @@ async def test_context_queue_keeps_generating_until_call3_returns(tmp_path, monk
         ] = 1
         return None
 
-    monkeypatch.setitem(server.app_config, "bot_selected", "")
+    monkeypatch.setitem(server.app_config, "bot_selected", "context-test-bot")
     monkeypatch.setitem(server.app_config, "illustration_provider", "comfy")
     monkeypatch.setitem(
         server.app_config,
@@ -624,7 +749,7 @@ async def test_context_queue_reuses_immediately_enqueued_keyvis_without_duplicat
     async def ignore_progress(*args, **kwargs):
         return None
 
-    monkeypatch.setitem(server.app_config, "bot_selected", "")
+    monkeypatch.setitem(server.app_config, "bot_selected", "context-test-bot")
     monkeypatch.setitem(server.app_config, "illustration_provider", "comfy")
     monkeypatch.setitem(
         server.app_config,
@@ -759,7 +884,7 @@ async def test_context_queue_defers_multi_character_scene_until_layout_is_ready(
     async def ignore_progress(*args, **kwargs):
         return None
 
-    monkeypatch.setitem(server.app_config, "bot_selected", "")
+    monkeypatch.setitem(server.app_config, "bot_selected", "context-test-bot")
     monkeypatch.setitem(server.app_config, "illustration_provider", "comfy")
     monkeypatch.setitem(server.app_config, "illustration_context_toggles", {"prompt_format": "v3"})
     monkeypatch.setattr(pipeline, "build_from_context", fake_build)
@@ -860,7 +985,7 @@ async def test_context_queue_enqueues_multi_character_scene_without_mask_when_di
     async def ignore_progress(*args, **kwargs):
         return None
 
-    monkeypatch.setitem(server.app_config, "bot_selected", "")
+    monkeypatch.setitem(server.app_config, "bot_selected", "context-test-bot")
     monkeypatch.setitem(server.app_config, "illustration_provider", "comfy")
     monkeypatch.setitem(
         server.app_config,
@@ -949,6 +1074,12 @@ async def test_context_queue_retries_at_tail_and_returns_partial_success(
     async def ignore_progress(*args, **kwargs):
         return None
 
+    monkeypatch.setitem(server.app_config, "bot_selected", "context-test-bot")
+    monkeypatch.setitem(
+        server.app_config,
+        "illustration_context_toggles",
+        {"illustration_enabled": True, "original_asset_enabled": False},
+    )
     monkeypatch.setattr(server.queue_manager, "add_item", fake_add_item)
     monkeypatch.setattr(server.queue_manager, "_notify_progress", ignore_progress)
     monkeypatch.setattr(server, "set_prompt_by_title", lambda *args, **kwargs: True)
