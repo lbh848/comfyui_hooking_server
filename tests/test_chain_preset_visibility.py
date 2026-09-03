@@ -152,3 +152,36 @@ def test_frontend_hidden_manager_connects_chain_visibility_api():
     assert 'app.router.add_get("/api/chain_presets/manage"' in server_source
     assert 'app.router.add_post("/api/chain_presets/hide"' in server_source
     assert 'app.router.add_post("/api/chain_presets/restore"' in server_source
+
+
+def test_chain_share_round_trip_includes_artist_and_anima_presets():
+    source = FRONTEND_HTML.read_text(encoding="utf-8")
+    export_source = source.split("async function exportChainShare()", 1)[1].split(
+        "// ── 체인 가져오기 충돌 감지/해결", 1
+    )[0]
+    import_source = source.split("const IMPORT_TAG_CATEGORIES", 1)[1].split(
+        "async function importSavePose", 1
+    )[0]
+
+    assert "if (slot.artist_preset) usedArtists.add(slot.artist_preset);" in export_source
+    assert "if (slot.anima_artist_preset) usedArtists.add(slot.anima_artist_preset);" in export_source
+    assert "if (slot.anima_quality_preset) usedQual.add(slot.anima_quality_preset);" in export_source
+    assert "if (slot.anima_negative_preset) usedNeg.add(slot.anima_negative_preset);" in export_source
+    assert "artist_presets: {}" in export_source
+    assert "tags.artist_presets[name] = assetTags.artist_presets[name] || []" in export_source
+    for field in (
+        "artist_preset",
+        "anima_artist_preset",
+        "anima_quality_preset",
+        "anima_negative_preset",
+    ):
+        assert f"{field}: c.{field} || ''" in export_source
+
+    assert "'artist_presets'" in import_source
+    assert "cat === 'artist_presets'" in import_source
+    assert "assetTagAction('save_artist_preset'" in import_source
+    assert "assetTagAction('delete_artist_preset'" in import_source
+    assert "artist_preset: mapTagField(tagNameMap.artist_presets, c.artist_preset)" in import_source
+    assert "anima_artist_preset: mapTagField(tagNameMap.artist_presets, c.anima_artist_preset)" in import_source
+    assert "anima_quality_preset: mapTagField(tagNameMap.quality_presets, c.anima_quality_preset)" in import_source
+    assert "anima_negative_preset: mapTagField(tagNameMap.negative_presets, c.anima_negative_preset)" in import_source

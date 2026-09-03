@@ -99348,17 +99348,21 @@
 
             // 1) 사용 중인 이름 수집
             const usedApps = new Set(), usedOutfits = new Set(), usedExprs = new Set();
-            const usedQual = new Set(), usedComp = new Set(), usedNeg = new Set(), usedCNeg = new Set();
+            const usedArtists = new Set(), usedQual = new Set(), usedComp = new Set(), usedNeg = new Set(), usedCNeg = new Set();
             const usedChars = new Set(), usedPoseIds = new Set();
 
             batchChains.forEach(slot => {
                 if (slot.appearance) usedApps.add(slot.appearance);
                 if (slot.outfit) usedOutfits.add(slot.outfit);
                 if (slot.expression) usedExprs.add(slot.expression);
+                if (slot.artist_preset) usedArtists.add(slot.artist_preset);
+                if (slot.anima_artist_preset) usedArtists.add(slot.anima_artist_preset);
                 if (slot.quality_preset) usedQual.add(slot.quality_preset);
+                if (slot.anima_quality_preset) usedQual.add(slot.anima_quality_preset);
                 if (slot.composition_preset) usedComp.add(slot.composition_preset);
                 if (slot.character_negative_preset) usedCNeg.add(slot.character_negative_preset);
                 if (slot.negative_preset) usedNeg.add(slot.negative_preset);
+                if (slot.anima_negative_preset) usedNeg.add(slot.anima_negative_preset);
                 if (slot.character) usedChars.add(slot.character);
                 if (slot.pose_enabled && slot.pose_id) usedPoseIds.add(slot.pose_id);
             });
@@ -99366,13 +99370,14 @@
             // 2) 태그 데이터 추출
             const tags = {
                 appearances: {}, outfits: {}, expressions: {},
-                quality_presets: {}, composition_presets: {}, negative_presets: {},
+                artist_presets: {}, quality_presets: {}, composition_presets: {}, negative_presets: {},
                 character_negative_presets: {},
                 characters: {}
             };
             usedApps.forEach(name => { tags.appearances[name] = assetTags.appearances[name] || []; });
             usedOutfits.forEach(name => { tags.outfits[name] = assetTags.outfits[name] || []; });
             usedExprs.forEach(name => { tags.expressions[name] = assetTags.expressions[name] || []; });
+            usedArtists.forEach(name => { tags.artist_presets[name] = assetTags.artist_presets[name] || []; });
             usedQual.forEach(name => { tags.quality_presets[name] = assetTags.quality_presets[name] || []; });
             usedComp.forEach(name => { tags.composition_presets[name] = assetTags.composition_presets[name] || []; });
             usedNeg.forEach(name => { tags.negative_presets[name] = assetTags.negative_presets[name] || []; });
@@ -99399,7 +99404,9 @@
                 const o = {
                     character: c.character || '', appearance: c.appearance || '', outfit: c.outfit || '',
                     expression: c.expression || '', composition_preset: c.composition_preset || '',
-                    quality_preset: c.quality_preset || '', negative_preset: c.negative_preset || '',
+                    artist_preset: c.artist_preset || '', quality_preset: c.quality_preset || '', negative_preset: c.negative_preset || '',
+                    anima_artist_preset: c.anima_artist_preset || '', anima_quality_preset: c.anima_quality_preset || '',
+                    anima_negative_preset: c.anima_negative_preset || '',
                     ref_enabled: !!c.ref_enabled, ref_strength: c.ref_strength || 0.55,
                     style_ref_enabled: !!c.style_ref_enabled, style_ref_strength: c.style_ref_strength || 0.55,
                     pose_enabled: !!c.pose_enabled, pose_id: c.pose_id || '',
@@ -99435,10 +99442,10 @@
         // ── 체인 가져오기 충돌 감지/해결 ──
         let _pendingImportData = null;
 
-        const IMPORT_TAG_CATEGORIES = ['appearances', 'outfits', 'expressions', 'quality_presets', 'composition_presets', 'negative_presets', 'character_negative_presets', 'characters'];
+        const IMPORT_TAG_CATEGORIES = ['appearances', 'outfits', 'expressions', 'artist_presets', 'quality_presets', 'composition_presets', 'negative_presets', 'character_negative_presets', 'characters'];
         const IMPORT_TAG_LABELS = {
             appearances: '외모', outfits: '복장', expressions: '표정',
-            quality_presets: '품질 프리셋', composition_presets: '구도 프리셋',
+            artist_presets: '아티스트 프리셋', quality_presets: '품질 프리셋', composition_presets: '구도 프리셋',
             negative_presets: '부정 프리셋', character_negative_presets: '캐릭터 부정 프리셋', characters: '캐릭터'
         };
 
@@ -99747,9 +99754,13 @@
                 outfit: mapTagField(tagNameMap.outfits, c.outfit),
                 expression: mapTagField(tagNameMap.expressions, c.expression),
                 composition_preset: mapTagField(tagNameMap.composition_presets, c.composition_preset),
+                artist_preset: mapTagField(tagNameMap.artist_presets, c.artist_preset),
                 quality_preset: mapTagField(tagNameMap.quality_presets, c.quality_preset),
                 character_negative_preset: mapTagField(tagNameMap.character_negative_presets, c.character_negative_preset),
                 negative_preset: mapTagField(tagNameMap.negative_presets, c.negative_preset),
+                anima_artist_preset: mapTagField(tagNameMap.artist_presets, c.anima_artist_preset),
+                anima_quality_preset: mapTagField(tagNameMap.quality_presets, c.anima_quality_preset),
+                anima_negative_preset: mapTagField(tagNameMap.negative_presets, c.anima_negative_preset),
                 ref_enabled: !!c.ref_enabled,
                 ref_strength: c.ref_strength || 0.55,
                 ref_images: c.ref_images || (c.ref_image ? [{name: c.ref_image, local_path: ''}] : []),
@@ -99800,6 +99811,8 @@
                 for (const tag of (importedData || [])) {
                     await assetTagAction('add_expression_tag', { name, value: tag });
                 }
+            } else if (cat === 'artist_presets') {
+                await assetTagAction('save_artist_preset', { name, tags: importedData || [] });
             } else if (cat === 'quality_presets') {
                 await assetTagAction('save_quality_preset', { name, tags: importedData || [] });
             } else if (cat === 'composition_presets') {
@@ -99820,6 +99833,8 @@
                 await assetTagAction('remove_outfit', { name });
             } else if (cat === 'expressions') {
                 await assetTagAction('remove_expression', { name });
+            } else if (cat === 'artist_presets') {
+                await assetTagAction('delete_artist_preset', { name });
             } else if (cat === 'quality_presets') {
                 await assetTagAction('delete_quality_preset', { name });
             } else if (cat === 'composition_presets') {
