@@ -1864,6 +1864,149 @@ def test_workflow_assets_resolve_direct_soya_cache_inputs(tmp_path: Path) -> Non
     ]
 
 
+def test_workflow_assets_skip_cache_for_asset_mode_ipa_node(tmp_path: Path) -> None:
+    """에셋 워크플로우의 자리표시자 캐시 입력이 원격 제출을 막지 않아야 한다.
+
+    SoyaIPAPatchMaker_mdsoya 는 character_names 에 asset_mode 가 있으면 캐시 입력을
+    읽지 않는다. 배포 에셋 워크플로우가 그 입력에 JSON 이 아닌 문자열을 연결해 두는
+    이유이며, 사전 검사도 같은 조건에서 건너뛰어야 한다.
+    """
+
+    input_root = tmp_path / "input"
+    input_root.mkdir()
+    positive = "\n".join(
+        [
+            "[ANIMA]",
+            "1girl, solo",
+            "[CHAR_LIST]",
+            "asset_mode",
+            "[END]",
+        ]
+    )
+    workflow = {
+        "9": {"class_type": "PrimitiveStringMultiline", "inputs": {"value": positive}},
+        "377": {
+            "class_type": "SoyaAssetV2PromptParser_mdsoya",
+            "inputs": {"text": ["9", 0]},
+        },
+        "439": {"class_type": "PrimitiveStringMultiline", "inputs": {"value": "dummmy"}},
+        "435": {
+            "class_type": "SoyaIPAPatchMaker_mdsoya",
+            "inputs": {
+                "character_names": ["377", 6],
+                "embed_cache_data": ["439", 0],
+                "ipa_cache_data": ["439", 0],
+            },
+        },
+    }
+
+    assert resolve_input_files(workflow, {"comfy_input_dir": str(input_root)}) == []
+
+
+def test_workflow_assets_skip_cache_for_inline_asset_mode_names(tmp_path: Path) -> None:
+    """character_names 가 위젯 문자열로 직접 들어와도 같은 가드가 걸린다."""
+
+    input_root = tmp_path / "input"
+    input_root.mkdir()
+    workflow = {
+        "435": {
+            "class_type": "SoyaIPAPatchMaker_mdsoya",
+            "inputs": {
+                "character_names": "asset_mode",
+                "embed_cache_data": "dummmy",
+            },
+        }
+    }
+
+    assert resolve_input_files(workflow, {"comfy_input_dir": str(input_root)}) == []
+
+
+def test_workflow_assets_keep_cache_requirement_for_named_characters(
+    tmp_path: Path,
+) -> None:
+    """에셋 가드가 삽화 경로의 필수 캐시 검사를 무력화하면 안 된다."""
+
+    input_root = tmp_path / "input"
+    input_root.mkdir()
+    positive = "\n".join(
+        [
+            "[CHAR_LIST]",
+            "alice, bob",
+            "[CACHE_PATH]",
+            json.dumps(
+                {"list": [{"emb_path": "soya_bot/sample_bot/alice/cache.pt"}]}
+            ),
+        ]
+    )
+    workflow = {
+        "9": {"class_type": "PrimitiveStringMultiline", "inputs": {"value": positive}},
+        "909": {"class_type": "SoyaPromptParser_mdsoya", "inputs": {"text": ["9", 0]}},
+        "458": {
+            "class_type": "SoyaIPAPatchMaker_mdsoya",
+            "inputs": {
+                "character_names": ["909", 6],
+                "embed_cache_data": ["909", 8],
+            },
+        },
+    }
+
+    with pytest.raises(FileNotFoundError):
+        resolve_input_files(workflow, {"comfy_input_dir": str(input_root)})
+
+
+
+def test_workflow_assets_stage_face_embed_reference_directory(tmp_path: Path) -> None:
+    """참조 이미지 폴더는 FACE-ID를 꺼도 원격에 올라가야 한다.
+
+    SoyaFaceEmbedCache_mdsoya 는 path 폴더를 무조건 연다. build_prompts 가
+    FACE_ID_DIR 기본값을 써넣으므로, 올리지 않으면 원격이 Directory not found 로
+    죽는다.
+    """
+
+    input_root = tmp_path / "input"
+    fallback = input_root / "soya_char_ref" / "fallback"
+    fallback.mkdir(parents=True)
+    (fallback / "ref.webp").write_bytes(b"reference-image")
+    positive = "\n".join(
+        ["[FACE_ID_ACTIVATE]", "false", "[FACE_ID_DIR]", "soya_char_ref/fallback"]
+    )
+    workflow = {
+        "9": {"class_type": "PrimitiveStringMultiline", "inputs": {"value": positive}},
+        "267": {
+            "class_type": "SoyaFaceEmbedCache_mdsoya",
+            "inputs": {"path": ["9", 0]},
+        },
+    }
+
+    inputs = resolve_input_files(workflow, {"comfy_input_dir": str(input_root)})
+
+    assert inputs == [
+        {
+            "source_path": str(fallback / "ref.webp"),
+            "remote_name": "soya_char_ref/fallback/ref.webp",
+        }
+    ]
+
+
+def test_workflow_assets_ignore_non_path_reference_strings(tmp_path: Path) -> None:
+    """링크를 거슬러 오르다 잡히는 정규식·모드 문자열은 폴더로 오인하지 않는다."""
+
+    input_root = tmp_path / "input"
+    input_root.mkdir()
+    workflow = {
+        "9": {
+            "class_type": "PrimitiveStringMultiline",
+            "inputs": {"value": r"(?<=\[FACE_ID_DIR\]\n)[\s\S]+?(?=\s*\[STYLE_ACTIVATE\])"},
+        },
+        "267": {
+            "class_type": "SoyaFaceEmbedCache_mdsoya",
+            "inputs": {"path": ["9", 0]},
+        },
+    }
+
+    assert resolve_input_files(workflow, {"comfy_input_dir": str(input_root)}) == []
+
+
 def test_workflow_assets_reject_missing_soya_cache_before_remote_call(
     tmp_path: Path,
 ) -> None:
@@ -3020,7 +3163,11 @@ def test_modal_web_server_is_isolated_from_worker_app() -> None:
     )
     assert '"--enable-cors-header",\n            "*",' in web_source
     assert 'WEB_FAST = os.environ.get("SOYA_MODAL_WEB_FAST", "0") == "1"' in web_source
-    assert 'web_runtime_image = runtime_image.env(' in web_source
+    # 웹 이미지는 작업 App 의 runtime_image 에서 파생되고 WEB_FAST 를 얹는다.
+    # 로컬 소스는 파생이 끝난 뒤 붙이므로(add_local_* 뒤에는 빌드 단계가 올 수
+    # 없다) 한 줄로 이어지지 않는다 — 두 사실을 각각 확인한다.
+    assert "web_runtime_image = with_local_python_sources(" in web_source
+    assert 'runtime_image.env({"SOYA_MODAL_WEB_FAST"' in web_source
     assert 'if web_fast:\n            command.append("--fast")' in web_source
     assert "command.extend(remote_comfy_vram_arguments(vram_mode))" in worker_source
     assert "command.extend(remote_comfy_vram_arguments(vram_mode))" in web_source
@@ -3081,7 +3228,11 @@ def test_modal_runtime_uses_published_multigpu_container_image() -> None:
     assert "--no-build-isolation" not in source
     assert "torch.version.cuda == '12.8'" in source
     assert "pv.Version(m.version('sageattention')).base_version" in source
-    assert "modal.Image.debian_slim" not in source
+    # GPU 런타임 이미지가 즉석 debian_slim 으로 대체되면 CUDA/torch/sageattention 을
+    # 잃는다. 다만 파일 전체에서 문자열을 금지하면 GPU가 필요 없는 함수(모델 직접
+    # 다운로드 등)까지 막히므로, runtime_image 정의 블록에 한정해 검사한다.
+    _runtime_block = source[source.index("runtime_image = ("):source.index("model_sync_image = (")]
+    assert "modal.Image.debian_slim" not in _runtime_block
     assert source.index("modal.Image.from_registry(RUNTIME_IMAGE_REF)") < source.index(
         '"python /opt/soya/image_install.py"'
     )
@@ -3443,3 +3594,94 @@ async def test_managed_workflow_run_rejects_missing_remote_workflow(
 
     with pytest.raises(FileNotFoundError, match="동기화되지 않았습니다"):
         await service.start_workflow_run(workflow.name)
+
+
+def _stale_check_service(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    remote_sha256: str,
+) -> tuple[ModalService, Path]:
+    """start_workflow_run 이 원격 sha256 을 그대로 돌려받도록 세팅한다."""
+    project_root, user_root = _modal_test_project(tmp_path)
+    workflow = user_root / "stale-check.json"
+    workflow.write_text(
+        '{"1":{"class_type":"EmptyLatentImage","inputs":{}}}',
+        encoding="utf-8",
+    )
+    service = ModalService(project_root, lambda: {"modal_enabled": True})
+
+    async def connected(_settings: ModalSettings) -> bool:
+        return True
+
+    async def client_action(
+        _settings: ModalSettings,
+        action: str,
+        *,
+        timeout: float,
+        **payload,
+    ) -> dict:
+        assert action == "read_workflow"
+        return {
+            "name": workflow.name,
+            "sha256": remote_sha256,
+            "workflow": {"1": {"class_type": "EmptyLatentImage", "inputs": {}}},
+        }
+
+    async def noop_run(*_args, **_kwargs) -> None:
+        return None
+
+    monkeypatch.setattr(service, "account_connected", connected)
+    monkeypatch.setattr(service, "_run_client_action", client_action)
+    # 실제 실행은 이 테스트의 관심사가 아니다. 시작 시점의 상태만 본다.
+    monkeypatch.setattr(service, "_run_saved_workflow", noop_run)
+    return service, workflow
+
+
+@pytest.mark.asyncio
+async def test_workflow_run_flags_stale_remote_copy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """원격 사본이 로컬과 다르면 실행 상태에 그 사실이 드러나야 한다.
+
+    실행은 Volume 의 원격 사본으로 한다. 로컬 JSON 을 고쳐도 재동기화
+    전에는 반영되지 않는데, 예전에는 아무 표시 없이 옛 사본으로 돌아
+    원인을 찾기 어려웠다(실제로 실행 한 번을 통째로 날렸다).
+    """
+    service, workflow = _stale_check_service(
+        tmp_path, monkeypatch, remote_sha256="b" * 64
+    )
+    local_sha256 = hashlib.sha256(workflow.read_bytes()).hexdigest()
+    assert local_sha256 != "b" * 64
+
+    state = await service.start_workflow_run(workflow.name)
+
+    assert state["workflow_stale"] is True
+    assert state["local_sha256"] == local_sha256
+    assert state["remote_sha256"] == "b" * 64
+    assert "재동기화" in state["message"]
+
+
+@pytest.mark.asyncio
+async def test_workflow_run_does_not_warn_when_remote_matches_local(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """동기화가 맞으면 경고를 달지 않는다(거짓 경고 방지)."""
+    project_root, user_root = _modal_test_project(tmp_path)
+    probe = user_root / "stale-check.json"
+    probe.write_text(
+        '{"1":{"class_type":"EmptyLatentImage","inputs":{}}}',
+        encoding="utf-8",
+    )
+    matching = hashlib.sha256(probe.read_bytes()).hexdigest()
+
+    service, workflow = _stale_check_service(
+        tmp_path / "second", monkeypatch, remote_sha256=matching
+    )
+    state = await service.start_workflow_run(workflow.name)
+
+    assert state["workflow_stale"] is False
+    assert state["local_sha256"] == matching
+    assert "재동기화" not in state["message"]

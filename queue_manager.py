@@ -10,6 +10,7 @@ import json
 import os
 import random
 import re
+import shutil
 import time
 import traceback
 import uuid
@@ -31,6 +32,42 @@ from comfy_allocation import (
 from modes import llm_service
 from modes.lora_export_utils import format_lora_export_filename
 
+
+# 원격 첫 컨테이너는 sd-scripts 런타임 부트스트랩까지 이 안에 끝내야 한다.
+LORA_TRAINING_TIMEOUT_SECONDS = 7_200
+
+
+def _cleanup_remote_training_staging(export_dir: str) -> None:
+    """원격 학습용 스테이징 폴더를 지운다. 로컬 공용 폴더는 건드리지 않는다."""
+    normalized = os.path.normpath(str(export_dir or ""))
+    if not normalized or "modal_jobs" not in normalized.split(os.sep):
+        return
+    if not os.path.isdir(normalized):
+        return
+    try:
+        shutil.rmtree(normalized)
+        print(f"[QUEUE-TRAIN] 원격 학습 스테이징 정리: {normalized}")
+    except Exception as exc:
+        # 정리 실패가 학습 결과를 버리게 두지 않는다.
+        print(
+            f"[QUEUE-TRAIN] 스테이징 정리 실패: path={normalized}, "
+            f"error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        return
+    # `modal_jobs` 위로는 올라가지 않는다. `soya_lora` 는 설치기 repatch 가 만드는
+    # 공용 입력 폴더다.
+    parts = normalized.split(os.sep)
+    boundary = os.sep.join(parts[: len(parts) - 1 - parts[::-1].index("modal_jobs") + 1])
+    parent = os.path.dirname(normalized)
+    while parent.startswith(boundary) and os.path.isdir(parent):
+        try:
+            os.rmdir(parent)
+        except OSError:
+            break
+        if parent == boundary:
+            break
+        parent = os.path.dirname(parent)
 
 # priority 0~9는 삽화 요청에 예약한다. illustration/regenerate는 같은 GPU 줄에서
 # FIFO로 실행하고, 나머지 삽화 보조 작업도 사용자 설정 대상과 분리한다.
@@ -823,13 +860,22 @@ class QueueManager:
             "bot_lora_training": "bot_lora_training",
             "instance_lora_training": "instance_lora",
             "instance_lora_analysis": "instance_lora",
+            # 얼굴 추출은 인스턴스 LoRA 의 선행 단계지만 배분 키가 따로 있다.
+            # 빠뜨리면 레인 판정이 건너뛰어져 배분 설정이 조용히 무시된다.
+            "instance_lora_face_extract": "face_extract",
+            "data_patch_utility": "utility_debug",
         }
         mapped = mapping.get(item.type)
         if mapped:
             return mapped
-        if item.type == "tag_analysis" and isinstance(item.params, dict):
-            if str(item.params.get("source") or "") in ("instance_lora", "style_lora"):
+        if item.type == "tag_analysis":
+            # LoRA 계열 태그 분석은 학습과 같은 대상에서 돌아야 한다.
+            if isinstance(item.params, dict) and str(
+                item.params.get("source") or ""
+            ) in ("instance_lora", "style_lora"):
                 return "instance_lora"
+            # None 을 돌려주면 레인 판정이 건너뛰어져 배분 설정이 조용히 무시된다.
+            return "tag_analysis"
         return None
 
     def _comfy_execution_policy(
@@ -3836,13 +3882,16 @@ class QueueManager:
                 ninfo["inputs"]["value"] = negative_text
 
         # 진행률 모니터링 (WebSocket 연결 후 제출하여 경쟁 조건 방지)
-        prompt_id, submit_result = await self._monitor_training_ws(
-            item,
-            wf,
-            "lora_training_progress",
-            modal_input_paths=[export_result["target_dir"]],
-            modal_artifact_prefixes=[lora_save_path],
-        )
+        try:
+            prompt_id, submit_result = await self._monitor_training_ws(
+                item,
+                wf,
+                "lora_training_progress",
+                modal_input_paths=[export_result["target_dir"]],
+                modal_artifact_prefixes=[lora_save_path],
+            )
+        finally:
+            _cleanup_remote_training_staging(export_result["target_dir"])
         print(f"[QUEUE-ASSET_LORA] 완료: prompt_id={prompt_id}")
 
         return {
@@ -3998,19 +4047,22 @@ class QueueManager:
             })
 
         # 모니터링 (WebSocket 연결 후 제출하여 경쟁 조건 방지)
-        prompt_id, submit_result = await self._monitor_training_ws(
-            item, wf,
-            event_type="bot_lora_training_progress",
-            extra_data={
-                "bot_name": bot_name, "project_name": project_name, "character": char_name,
-                "visual_card_id": visual_card_id,
-                "visual_card_label": visual_card_label,
-                "char_index": params.get("char_index", 0),
-                "total_chars": params.get("total_chars", 0),
-            },
-            modal_input_paths=[export_result["target_dir"]],
-            modal_artifact_prefixes=[lora_save_path],
-        )
+        try:
+            prompt_id, submit_result = await self._monitor_training_ws(
+                item, wf,
+                event_type="bot_lora_training_progress",
+                extra_data={
+                    "bot_name": bot_name, "project_name": project_name, "character": char_name,
+                    "visual_card_id": visual_card_id,
+                    "visual_card_label": visual_card_label,
+                    "char_index": params.get("char_index", 0),
+                    "total_chars": params.get("total_chars", 0),
+                },
+                modal_input_paths=[export_result["target_dir"]],
+                modal_artifact_prefixes=[lora_save_path],
+            )
+        finally:
+            _cleanup_remote_training_staging(export_result["target_dir"])
 
         return {"success": True, "character": char_name}
 
@@ -4139,43 +4191,90 @@ class QueueManager:
             elif title == "부정프롬프트":
                 ninfo["inputs"]["value"] = ""
 
-        # 실행 & 대기 (server.py generate_image_with_prompt 패턴 참조)
-        extract_prompt_id, submit_result = await self._monitor_training_ws(
-            item, wf,
-            event_type="instance_lora_face_extract_progress",
-            extra_data={"lora_id": lora_id},
-        )
-        print(f"[INSTANCE_LORA:FACE_EXTRACT] 워크플로우 완료: prompt_id={extract_prompt_id}")
-
-        # history에서 출력 이미지 가져오기 (server.py 라인 1033-1052 패턴)
-        extract_port = int(submit_result.get("_comfy_port"))
-        history = await self.fetch_real_history(extract_prompt_id, port=extract_port)
-        real_entry = history.get(extract_prompt_id, {})
-        real_outputs = real_entry.get("outputs", {})
-
-        print(f"[INSTANCE_LORA:FACE_EXTRACT] history keys={list(real_outputs.keys())}")
-        for nid_key, nout_val in real_outputs.items():
-            print(f"[INSTANCE_LORA:FACE_EXTRACT]   node {nid_key}: {list(nout_val.keys())}")
-
+        # 실행 & 대기
+        #
+        # 원격에는 /history 포트가 없으므로 실행 결과에 동봉돼 오는 images 를
+        # 쓴다. 회수 수단이 다를 뿐 산출물은 같다.
+        execution_target = str(CURRENT_COMFY_EXECUTION_TARGET.get() or "")
         face_cropped_bytes = None
-        for nid_key, nout_val in real_outputs.items():
-            if "images" in nout_val:
-                imgs = nout_val["images"]
-                if imgs:
-                    first = imgs[0]
-                    print(f"[INSTANCE_LORA:FACE_EXTRACT] 출력 이미지: {first}")
-                    face_cropped_bytes = await self.fetch_real_image(
-                        first["filename"],
-                        first.get("subfolder", ""),
-                        first.get("type", "output"),
-                        port=extract_port,
-                    )
-                    break
+        # 아래 실패 진단에서 쓰는 값. 로컬 분기에서만 채워지므로 여기서 미리
+        # 둔다 — 없으면 원격 분기의 실패가 NameError 로 바뀌어, 정작 원인을
+        # 봐야 할 순간에 원인이 가려진다.
+        real_outputs: dict = {}
+        if execution_target in REMOTE_COMFY_TARGETS:
+            provider_label = (
+                "Modal" if execution_target == MODAL_COMFY_TARGET else "Vast"
+            )
+            run_remote_workflow = (
+                self.run_modal_workflow
+                if execution_target == MODAL_COMFY_TARGET
+                else self.run_vast_workflow
+            )
+            if not callable(run_remote_workflow):
+                print(
+                    f"[INSTANCE_LORA:FACE_EXTRACT:{provider_label.upper()}] "
+                    f"원격 워크플로우 콜백이 없습니다: item={item.id}"
+                )
+                raise RuntimeError(
+                    f"{provider_label} 원격 실행 콜백이 연결되지 않았습니다"
+                )
+            result = await run_remote_workflow(
+                wf,
+                input_paths=[export_dir],
+                require_images=True,
+            )
+            extract_prompt_id = str(result.get("prompt_id") or "")
+            images = list(result.get("images") or [])
+            if not images:
+                print(
+                    f"[INSTANCE_LORA:FACE_EXTRACT:{provider_label.upper()}] "
+                    f"결과 이미지 없음: item={item.id}, prompt_id={extract_prompt_id!r}"
+                )
+                raise ValueError(f"{provider_label} 얼굴 추출 결과 이미지가 없습니다")
+            face_cropped_bytes = images[0].get("bytes")
+            print(
+                f"[INSTANCE_LORA:FACE_EXTRACT:{provider_label.upper()}] 완료: "
+                f"prompt_id={extract_prompt_id}, images={len(images)}, "
+                f"bytes={len(face_cropped_bytes or b'')}"
+            )
+        else:
+            extract_prompt_id, submit_result = await self._monitor_training_ws(
+                item, wf,
+                event_type="instance_lora_face_extract_progress",
+                extra_data={"lora_id": lora_id},
+            )
+            print(f"[INSTANCE_LORA:FACE_EXTRACT] 워크플로우 완료: prompt_id={extract_prompt_id}")
+
+            # history에서 출력 이미지 가져오기 (server.py 라인 1033-1052 패턴)
+            extract_port = int(submit_result.get("_comfy_port"))
+            history = await self.fetch_real_history(extract_prompt_id, port=extract_port)
+            real_entry = history.get(extract_prompt_id, {})
+            real_outputs = real_entry.get("outputs", {})
+
+            print(f"[INSTANCE_LORA:FACE_EXTRACT] history keys={list(real_outputs.keys())}")
+            for nid_key, nout_val in real_outputs.items():
+                print(f"[INSTANCE_LORA:FACE_EXTRACT]   node {nid_key}: {list(nout_val.keys())}")
+
+            for nid_key, nout_val in real_outputs.items():
+                if "images" in nout_val:
+                    imgs = nout_val["images"]
+                    if imgs:
+                        first = imgs[0]
+                        print(f"[INSTANCE_LORA:FACE_EXTRACT] 출력 이미지: {first}")
+                        face_cropped_bytes = await self.fetch_real_image(
+                            first["filename"],
+                            first.get("subfolder", ""),
+                            first.get("type", "output"),
+                            port=extract_port,
+                        )
+                        break
 
         if not face_cropped_bytes:
             raise ValueError(
                 f"추출 결과 이미지를 찾을 수 없음 "
-                f"(prompt_id={extract_prompt_id}, outputs_keys={list(real_outputs.keys())})"
+                f"(target={execution_target or 'local'}, "
+                f"prompt_id={extract_prompt_id}, "
+                f"outputs_keys={list(real_outputs.keys())})"
             )
 
         # 추출된 얼굴을 인스턴스 로라에 저장
@@ -4884,15 +4983,18 @@ class QueueManager:
                 })
 
             # 모니터링 (WebSocket 연결 후 제출하여 경쟁 조건 방지)
-            prompt_id, submit_result = await self._monitor_training_ws(
-                item, wf,
-                event_type="instance_lora_training_progress",
-                extra_data=progress_extra,
-                on_complete=lambda ts_id=primary_id, prof=profile:
-                    add_session_fn(datetime.datetime.now().strftime("%Y%m%d-%H%M%S"), prof),
-                modal_input_paths=[export_dir],
-                modal_artifact_prefixes=[lora_save_path],
-            )
+            try:
+                prompt_id, submit_result = await self._monitor_training_ws(
+                    item, wf,
+                    event_type="instance_lora_training_progress",
+                    extra_data=progress_extra,
+                    on_complete=lambda ts_id=primary_id, prof=profile:
+                        add_session_fn(datetime.datetime.now().strftime("%Y%m%d-%H%M%S"), prof),
+                    modal_input_paths=[export_dir],
+                    modal_artifact_prefixes=[lora_save_path],
+                )
+            finally:
+                _cleanup_remote_training_staging(export_dir)
 
         return {
             "success": True,
@@ -5215,6 +5317,7 @@ class QueueManager:
                     input_paths=modal_input_paths,
                     artifact_prefixes=modal_artifact_prefixes,
                     require_images=False,
+                    timeout_seconds=LORA_TRAINING_TIMEOUT_SECONDS,
                     progress_callback=on_modal_progress,
                 )
                 prompt_id = str(result.get("prompt_id") or "")
@@ -5291,6 +5394,7 @@ class QueueManager:
             "bot_lora_training": "bot_lora_training",
             "instance_lora_training": "instance_lora",
             "instance_lora_face_extract": "face_extract",
+            "data_patch_utility": "utility_debug",
         }
         task_key = task_key_by_type.get(item.type)
         if not task_key:

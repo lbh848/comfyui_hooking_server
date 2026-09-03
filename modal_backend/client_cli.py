@@ -355,6 +355,31 @@ def _read_payload() -> dict:
     return payload
 
 
+def sync_models_direct(payload: dict) -> dict:
+    """워커의 sync_models_from_source 를 호출해 저장소→Volume 직접 동기화를 시킨다.
+
+    로컬 파일을 올리지 않으므로 batch_upload 경로를 타지 않는다. 인증 토큰은
+    워커의 Modal Secret 에서 읽으므로 여기서 넘기지 않는다.
+    """
+
+    model_ids = payload.get("model_ids") or []
+    if not isinstance(model_ids, list) or not all(isinstance(x, str) for x in model_ids):
+        raise ValueError("model_ids는 문자열 배열이어야 합니다.")
+    _emit_install_progress(
+        "phase",
+        label=f"저장소에서 모델 {len(model_ids)}개 직접 다운로드",
+    )
+    fn = _remote_function(payload, "sync_models_from_source")
+    result = fn.remote(model_ids)
+    for item in (result or {}).get("results", []):
+        _emit_install_progress(
+            "item",
+            name=str(item.get("path") or item.get("id") or ""),
+            state=str(item.get("state") or ""),
+        )
+    return result
+
+
 def install(payload: dict) -> dict:
     app_name = str(payload["app_name"])
     environment = str(payload["environment"])
@@ -641,6 +666,175 @@ def _sync_files(
         skipped_files=skipped,
     )
     return {"uploaded": len(uploads), "skipped": skipped}
+
+
+def _list_volume_files(
+    volume: modal.Volume,
+    *,
+    label: str,
+    skip_paths: frozenset[str],
+) -> list[dict]:
+    """볼륨의 파일을 (경로, 크기, mtime)으로 나열한다.
+
+    cloud_direct 에서는 로컬에 사본이 없어 사용자가 볼륨 내용을 확인할 방법이
+    없다. 인페인팅에서 겪은 ``lllite_name: '...' not in []`` 류를 진단하려면
+    "무엇이 볼륨에 있나"를 볼 수 있어야 한다.
+    """
+
+    try:
+        entries = volume.listdir("/", recursive=True)
+    except (FileNotFoundError, modal.exception.NotFoundError):
+        return []
+    except Exception as exc:
+        print(
+            f"[MODAL_CLIENT] 원격 {label} 목록 조회 실패: "
+            f"error={type(exc).__name__}: {exc}",
+            file=sys.stderr,
+        )
+        traceback.print_exc(file=sys.stderr)
+        raise
+
+    files: list[dict] = []
+    metadata_count = 0
+    for entry in entries:
+        entry_type = str(getattr(getattr(entry, "type", None), "name", "") or "")
+        if entry_type and entry_type != "FILE":
+            continue
+        relative = str(getattr(entry, "path", "") or "").replace("\\", "/").lstrip("/")
+        if not relative or f"/{relative}" in skip_paths:
+            continue
+        try:
+            safe_path = _safe_remote_path(relative)
+        except ValueError as exc:
+            print(
+                f"[MODAL_CLIENT] 안전하지 않은 원격 {label} 항목 제외: "
+                f"path={relative!r}, error={exc}",
+                file=sys.stderr,
+            )
+            continue
+        # LoRA Manager 가 모델 옆에 두는 메타데이터다. 매니페스트에 없는 게
+        # 정상이므로 '고아'로 세면 진단 화면이 잡음으로 덮인다(실측 6건 중 5건).
+        if _is_lora_manager_metadata(safe_path):
+            metadata_count += 1
+            continue
+        files.append(
+            {
+                "path": safe_path,
+                "size": max(0, int(getattr(entry, "size", 0) or 0)),
+                "mtime": int(getattr(entry, "mtime", 0) or 0),
+            }
+        )
+    if metadata_count:
+        # stdout 은 JSON 결과 전용 채널이다. 진단은 반드시 stderr 로 보낸다.
+        print(
+            f"[MODAL_CLIENT] 원격 {label} 메타데이터 {metadata_count}개는 "
+            "목록에서 제외했습니다(LoRA Manager 부속 파일).",
+            file=sys.stderr,
+        )
+    files.sort(key=lambda item: item["path"].casefold())
+    return files
+
+
+def list_models(payload: dict) -> dict:
+    """models·loras 볼륨의 파일 목록 (원격 인벤토리).
+
+    두 볼륨을 함께 본다 — 이 앱은 LoRA 를 별도 볼륨에 두고, 그 라우팅을 틀리면
+    업로드는 성공하는데 ComfyUI 목록에는 안 뜨는 조용한 실패가 된다.
+    """
+
+    app_name = str(payload["app_name"])
+    environment = str(payload["environment"])
+    models_volume = modal.Volume.from_name(
+        f"{app_name}-models",
+        environment_name=environment,
+        create_if_missing=False,
+    )
+    loras_volume = modal.Volume.from_name(
+        f"{app_name}-loras",
+        environment_name=environment,
+        create_if_missing=False,
+    )
+    models = _list_volume_files(
+        models_volume,
+        label="모델",
+        skip_paths=frozenset({MODEL_SYNC_MANIFEST_PATH}),
+    )
+    loras = _list_volume_files(
+        loras_volume,
+        label="LoRA",
+        skip_paths=frozenset({LORA_SYNC_MANIFEST_PATH}),
+    )
+    return {
+        "models": models,
+        "loras": loras,
+        "model_bytes": sum(int(item["size"]) for item in models),
+        "lora_bytes": sum(int(item["size"]) for item in loras),
+    }
+
+
+def delete_model_paths(payload: dict) -> dict:
+    """지정한 원격 모델/LoRA 파일을 볼륨에서 지운다.
+
+    무엇을 지울지는 **호출자가 정한다.** 이 함수는 경로 안전성만 강제한다.
+    '고아를 알아서 지우는' 동작을 여기에 두지 않는 이유는, 매니페스트 밖 파일에
+    사용자의 개인 LoRA 가 섞여 있기 때문이다(MODEL_SYNC_DIRECTION.md §4.7 C3).
+    """
+
+    raw_models = payload.get("model_paths") or []
+    raw_loras = payload.get("lora_paths") or []
+    if not isinstance(raw_models, list) or not isinstance(raw_loras, list):
+        raise TypeError("삭제 대상 경로는 배열이어야 합니다.")
+    if not raw_models and not raw_loras:
+        print("[MODAL_CLIENT] 삭제할 원격 모델 목록이 비어 있습니다.", file=sys.stderr)
+        raise ValueError("삭제할 원격 모델이 없습니다.")
+
+    app_name = str(payload["app_name"])
+    environment = str(payload["environment"])
+    results: dict[str, list[str]] = {"deleted_models": [], "deleted_loras": []}
+
+    def _purge(volume: modal.Volume, paths: list, label: str, bucket: str) -> None:
+        for raw in dict.fromkeys(str(value) for value in paths):
+            safe = _safe_remote_path(raw)
+            try:
+                volume.remove_file(f"/{safe}", recursive=False)
+                results[bucket].append(safe)
+            except (FileNotFoundError, modal.exception.NotFoundError):
+                print(f"[MODAL_CLIENT] 원격 {label} 삭제 대상 없음: {safe}", file=sys.stderr)
+            except Exception as exc:
+                print(
+                    f"[MODAL_CLIENT] 원격 {label} 삭제 실패: path={safe}, "
+                    f"error={type(exc).__name__}: {exc}",
+                    file=sys.stderr,
+                )
+                traceback.print_exc(file=sys.stderr)
+                raise
+
+    if raw_models:
+        _purge(
+            modal.Volume.from_name(
+                f"{app_name}-models",
+                environment_name=environment,
+                create_if_missing=False,
+            ),
+            raw_models,
+            "모델",
+            "deleted_models",
+        )
+    if raw_loras:
+        _purge(
+            modal.Volume.from_name(
+                f"{app_name}-loras",
+                environment_name=environment,
+                create_if_missing=False,
+            ),
+            raw_loras,
+            "LoRA",
+            "deleted_loras",
+        )
+    return {
+        **results,
+        "deleted": len(results["deleted_models"]) + len(results["deleted_loras"]),
+    }
 
 
 def _sync_environment(payload: dict) -> dict:
@@ -962,6 +1156,7 @@ def generate(payload: dict) -> dict:
         bool(payload.get("require_images", True)),
         bool(payload.get("defer_artifacts", False)),
         payload.get("video_job_id"),
+        list(payload.get("capture_input_paths") or []),
     )
     try:
         remote_result = _wait_for_call_with_start_retry_limit(
@@ -997,6 +1192,26 @@ def generate(payload: dict) -> dict:
         )
     if bool(payload.get("require_images", True)) and not outputs:
         raise RuntimeError("Modal ComfyUI가 출력 이미지를 반환하지 않았습니다.")
+    # 워커가 Comfy input 폴더에서 회수해 온 파일을 디스크로 내린다.
+    captured = []
+    captured_root = output_dir / "captured"
+    for item in remote_result.get("captured_inputs") or []:
+        relative = Path(str(item.get("remote_name") or ""))
+        if relative.is_absolute() or not relative.parts or ".." in relative.parts:
+            raise ValueError(
+                f"Modal이 안전하지 않은 회수 경로를 반환했습니다: {relative!s}"
+            )
+        target = captured_root / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(item["bytes"])
+        captured.append(
+            {
+                "path": str(target),
+                "remote_name": relative.as_posix(),
+                "size": int(item.get("size") or target.stat().st_size),
+                "sha256": str(item.get("sha256") or ""),
+            }
+        )
     artifacts = []
     artifact_root = output_dir / "artifacts"
     for artifact in remote_result.get("artifacts") or []:
@@ -1089,6 +1304,7 @@ def generate(payload: dict) -> dict:
         "artifacts": artifacts,
         "video_artifacts": video_artifacts,
         "text_outputs": list(remote_result.get("text_outputs") or []),
+        "captured_inputs": captured,
     }
 
 
@@ -1935,10 +2151,16 @@ def main() -> int:
     try:
         payload = _read_payload()
         action = str(payload.get("action") or "")
-        if action == "install":
+        if action == "sync_models_direct":
+            result = sync_models_direct(payload)
+        elif action == "install":
             result = install(payload)
         elif action == "list_workflows":
             result = list_workflows(payload)
+        elif action == "list_models":
+            result = list_models(payload)
+        elif action == "delete_model_paths":
+            result = delete_model_paths(payload)
         elif action == "read_workflow":
             result = read_workflow(payload)
         elif action == "generate":

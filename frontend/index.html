@@ -22895,12 +22895,15 @@
                                 <div class="comfy-installer-actions" style="margin-top:10px;">
                                     <button type="button" class="comfy-installer-btn primary" id="modal-installer-start-btn" onclick="modalInstallerStart()">선택 워크플로우·모델 동기화</button>
                                     <button type="button" class="comfy-installer-btn" id="modal-runtime-workflow-query-btn" onclick="modalRuntimeQueryWorkflows()">워크플로우 동기화 조회</button>
+                                    <button type="button" class="comfy-installer-btn" id="modal-model-inventory-btn" onclick="modalQueryModelInventory()">Remote 모델 Inventory</button>
                                     <button type="button" class="comfy-installer-btn" id="modal-lora-sync-open-btn" onclick="modalOpenLoraSync()">LoRA 동기화</button>
                                     <button type="button" class="comfy-installer-btn" id="modal-runtime-redeploy-btn" onclick="modalRuntimeRedeploy()">앱·Custom Node 재배포</button>
                                     <button type="button" class="comfy-installer-btn" onclick="modalInstallerLoadCatalog()">목록 새로고침</button>
                                 </div>
                                 <p class="comfy-installer-note" id="modal-installer-selection-summary" style="margin-top:8px;">선택 없음</p>
                                 <p class="comfy-installer-note" id="modal-runtime-workflow-query-status" style="margin-top:6px;">조회하면 로컬과 원격 워크플로우의 SHA-256 동기화 상태를 표시합니다.</p>
+                                <p class="comfy-installer-note" id="modal-model-inventory-status" style="margin-top:6px;">모델 다운로드 경로가 'Cloud Direct'로 설정된 경우 로컬에 사본이 생성되지 않으므로, Modal Volume의 내용을 이곳에서 확인합니다.</p>
+                                <div id="modal-model-inventory-list" class="comfy-workflow-list" style="margin-top:6px; max-height:220px; overflow:auto;" hidden></div>
                                 <p class="comfy-installer-note" id="modal-runtime-deployment-status" style="margin-top:6px;">앱 재배포는 작업 App과 웹 App의 코드·Custom Node 환경만 갱신하며, 동기화된 워크플로우·모델은 건드리지 않습니다.</p>
                                 <div class="modal-install-progress modal-deploy-progress" id="modal-deploy-progress" data-state="idle" hidden>
                                     <div class="modal-install-progress-head">
@@ -24224,6 +24227,18 @@
                         </div>
                         <div class="setting-row">
                             <div class="setting-label">
+                                모델 다운로드 경로
+                                <div class="desc">현재 PC에서 이미지를 생성하지 않는다면 <b>Cloud Direct</b>를 권장합니다. 모델을 로컬 디스크를 거치지 않고, 원격 저장소에서 Modal Volume으로 직접 다운로드합니다.</div>
+                            </div>
+                            <div class="setting-control">
+                                <select id="setting-modal-model-source" style="padding:6px 10px; border-radius:6px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:.85rem;">
+                                    <option value="local_first">Local First (기본값) — 로컬 다운로드 후 업로드</option>
+                                    <option value="cloud_direct">Cloud Direct — 원격 저장소에서 Modal로 직접 다운로드</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-label">
                                 <div class="title">무료 크레딧 기준</div>
                                 <div class="desc">월 $30를 기준으로 예상 사용 시간을 표시합니다. 실제 청구 정보는 Modal에서 조회합니다.</div>
                             </div>
@@ -25356,6 +25371,7 @@
                             <div class="comfy-installer-actions">
                                 <button type="button" class="comfy-installer-btn primary" id="comfy-installer-start-btn" onclick="comfyInstallerStart('standard')">새로 설치</button>
                                 <button type="button" class="comfy-installer-btn" id="comfy-installer-compat-start-btn" onclick="comfyInstallerStart('nvidia_compatibility')">호환 설치</button>
+                                <button type="button" class="comfy-installer-btn" id="comfy-installer-cloud-start-btn" onclick="comfyInstallerStart('cloud_only')" title="로컬 GPU 없이 Modal Worker를 통해 생성 작업을 수행합니다. 모델은 원격 저장소에서 Modal Volume으로 직접 다운로드되며, 로컬 환경에는 원격으로 보낼 수 없는 작업용 모델만 다운로드됩니다.">Cloud-Only 설치</button>
                                 <button type="button" class="comfy-installer-btn" id="comfy-installer-update-btn" onclick="comfyInstallerStartUpdate()">업데이트</button>
                                 <button type="button" class="comfy-installer-btn" id="comfy-installer-e2e-btn" onclick="comfyInstallerOpenE2EModal()">E2E 검사</button>
                                 <button type="button" class="comfy-installer-btn danger" id="comfy-installer-cancel-btn" onclick="comfyInstallerCancel()" disabled>안전하게 중단</button>
@@ -37746,8 +37762,15 @@
             modelBytesById.forEach(value => { modelBytes += value; });
             const summary = document.getElementById('comfy-installer-selection-summary');
             if (summary) {
+                // 모델 다운로드 경로가 'cloud_direct'인 경우, 해당 수치가 실제 로컬 다운로드 용량과 일치하지 않습니다.
+                // 정확한 분할 용량은 서버 측 사전 검사를 통해 계산됩니다.
+                const cloudDirectNote = (typeof currentConfig !== 'undefined'
+                    && currentConfig
+                    && currentConfig.modal_model_source === 'cloud_direct')
+                    ? ' · 모델 다운로드 경로: Cloud Direct — 로컬 작업용 모델만 다운로드됩니다 (사전 검사 시 확인 가능)'
+                    : '';
                 summary.textContent = release
-                    ? `워크플로우 ${items.length}/${(release.items || []).length}개 · 필요 모델 ${modelIds.size}개 · 약 ${comfyInstallerFormatBytes(modelBytes)}`
+                    ? `Workflow ${items.length}/${(release.items || []).length}개 · 필요 모델 ${modelIds.size}개 · 약 ${comfyInstallerFormatBytes(modelBytes)}${cloudDirectNote}`
                     : '팩을 먼저 풀어주세요.';
             }
         }
@@ -37986,10 +38009,27 @@
                     `${comfyInstallerFormatBytes((probe.disk || {}).free)} 남음`;
                 const manifest = probe.manifest || {};
                 const selection = probe.selection || null;
+                // 다운로드 경로가 'cloud_direct'일 때 로컬 다운로드 용량과 Worker 직접 다운로드 용량이 분리됩니다.
+                // 설치기와 동일한 규칙을 적용하기 위해 프론트엔드에서 재계산하지 않고 서버의 계산값을 사용합니다.
+                const cloudDirect = selection && selection.model_source === 'cloud_direct';
                 document.getElementById('comfy-installer-size').textContent = selection
-                    ? `${Number((selection.model_ids || []).length)} 선택 모델 · ${comfyInstallerFormatBytes(selection.model_bytes || 0)}`
+                    ? (cloudDirect
+                        ? `로컬 ${Number((selection.local_model_ids || []).length)}개 · ${comfyInstallerFormatBytes(selection.local_model_bytes || 0)} (원격 직접 ${Number(selection.remote_model_count || 0)}개 · ${comfyInstallerFormatBytes(selection.remote_model_bytes || 0)})`
+                        : `${Number((selection.model_ids || []).length)} 선택 모델 · ${comfyInstallerFormatBytes(selection.model_bytes || 0)}`)
                     : `${manifest.model_count || 36} 전체 모델 · ${comfyInstallerFormatBytes(manifest.model_bytes || 0)}`;
                 const diskEnough = (probe.disk || {}).enough;
+                // Cloud-Only로 추정되는 환경일 경우 'Cloud Direct' 경로 사용을 권장합니다 (자동 변경하지 않음).
+                const acquisition = probe.model_acquisition || {};
+                if (acquisition.recommend_cloud_direct) {
+                    const skipGiB = comfyInstallerFormatBytes(
+                        Math.max(0, Number((selection || {}).remote_model_bytes || 0)));
+                    comfyInstallerSetError('');
+                    const hint = document.getElementById('comfy-installer-selection-summary');
+                    if (hint) {
+                        hint.textContent = `${hint.textContent} · 현재 PC는 Cloud-Only 환경으로 보입니다. 설정 → Modal에서 모델 다운로드 경로를 'Cloud Direct'로 변경하시면 로컬 다운로드 용량을 줄일 수 있습니다.`;
+                    }
+                    console.info('[COMFY_INSTALL] Cloud-Only 구성 감지 · 절감 가능 용량:', skipGiB);
+                }
                 if (note) {
                     const probeCommon =
                         `드라이버 CUDA 상한 ${driverCuda || '-'} · ${probe.uv || 'uv 확인'} · ${probe.git || 'Git 확인'}`;
@@ -38054,6 +38094,7 @@
             const progress = data.progress || {};
             const startButton = document.getElementById('comfy-installer-start-btn');
             const compatibilityStartButton = document.getElementById('comfy-installer-compat-start-btn');
+            const cloudOnlyStartButton = document.getElementById('comfy-installer-cloud-start-btn');
             const updateButton = document.getElementById('comfy-installer-update-btn');
             const e2eButton = document.getElementById('comfy-installer-e2e-btn');
             const sageEnableButton = document.getElementById('comfy-installer-sage-enable-btn');
@@ -38142,6 +38183,7 @@
             const running = state === 'running';
             if (startButton) startButton.disabled = running;
             if (compatibilityStartButton) compatibilityStartButton.disabled = running;
+            if (cloudOnlyStartButton) cloudOnlyStartButton.disabled = running;
             if (updateButton) updateButton.disabled = running;
             if (e2eButton) e2eButton.disabled = running;
             if (sageEnableButton) sageEnableButton.disabled = running || comfyInstallerPatchSageModeBusy;
@@ -38235,19 +38277,27 @@
             if (!releaseVersion) { showToast('먼저 워크플로우 팩을 풀어주세요', 'warning'); return; }
             if (!selectedItemIds.length) { showToast('가져올 워크플로우를 하나 이상 선택하세요', 'warning'); return; }
             const compatibilityMode = installMode === 'nvidia_compatibility';
+            const cloudOnlyMode = installMode === 'cloud_only';
             if (compatibilityMode && !window.confirm(
                 'NVIDIA 호환 설치를 시작할까요?\n\n' +
                 'RTX 2070/2080 같은 Turing(sm75)부터 지원하기 위해 SageAttention과 전용 Triton을 설치하지 않습니다.\n' +
                 '설치 후 사용하는 워크플로우에서 SageAttention 노드를 제거하거나 disabled로 설정해야 합니다.'
             )) return;
+            // 과금 방식이 변경되는 선택이므로 반드시 사용자 확인을 거칩니다.
+            if (cloudOnlyMode && !window.confirm(
+                'Cloud-Only 방식으로 설치하시겠습니까?\n\n' +
+                '원격으로 보낼 수 있는 모든 작업이 Modal Worker에 할당되며, 모델 다운로드 경로가 ' +
+                '"Cloud Direct"로 변경됩니다. Modal 연동 기능도 함께 활성화됩니다.\n' +
+                '로컬 환경에는 원격으로 처리할 수 없는 작업에 필요한 모델만 다운로드됩니다.\n\n' +
+                '기존의 작업 배분 설정은 덮어씌워지며, GPU 사용량에 따라 Modal 요금이 발생합니다.'
+            )) return;
             if (!(await comfyInstallerSaveCivitaiKey(true))) return;
             if (!(await comfyInstallerRunPreflight(true, true, installMode))) return;
 
-            const startButton = document.getElementById(
-                compatibilityMode
-                    ? 'comfy-installer-compat-start-btn'
-                    : 'comfy-installer-start-btn'
-            );
+            let startButtonId = 'comfy-installer-start-btn';
+            if (compatibilityMode) startButtonId = 'comfy-installer-compat-start-btn';
+            else if (cloudOnlyMode) startButtonId = 'comfy-installer-cloud-start-btn';
+            const startButton = document.getElementById(startButtonId);
             let accepted = false;
             if (startButton) startButton.disabled = true;
             comfyInstallerSetError('');
@@ -38265,12 +38315,10 @@
                 });
                 accepted = true;
                 comfyInstallerRenderStatus(started);
-                showToast(
-                    compatibilityMode
-                        ? 'ComfyUI NVIDIA 호환 설치를 시작했습니다'
-                        : 'ComfyUI 설치를 시작했습니다',
-                    'success'
-                );
+                let startedMessage = 'ComfyUI 설치를 시작합니다.';
+                if (compatibilityMode) startedMessage = 'ComfyUI NVIDIA 호환 설치를 시작합니다.';
+                else if (cloudOnlyMode) startedMessage = 'ComfyUI Cloud-Only 설치를 시작합니다.';
+                showToast(startedMessage, 'success');
                 clearTimeout(comfyInstallerPollTimer);
                 comfyInstallerPollTimer = setTimeout(() => comfyInstallerRefreshStatus(false), 500);
             } catch (error) {
@@ -40202,7 +40250,7 @@
                 },
                 different: {
                     label: '내용 다름',
-                    detail: 'SHA-256이 다릅니다. 다시 동기화하세요.',
+                    detail: 'SHA-256 해시가 일치하지 않습니다. 실행은 Modal Volume의 원격 사본을 기준으로 이루어지므로, 다시 동기화하기 전까지 로컬 수정 사항은 반영되지 않습니다.',
                 },
                 missing: {
                     label: 'Modal에 없음',
@@ -40443,6 +40491,46 @@
                 console.error('[MODAL_RUNTIME] 원격 워크플로우 조회 실패:', error);
                 if (status) status.textContent = '원격 조회 실패: ' + (error.message || error);
                 showToast('Modal 원격 워크플로우 조회 실패: ' + (error.message || error), 'error');
+            } finally {
+                if (button) button.disabled = false;
+            }
+        }
+
+        async function modalQueryModelInventory() {
+            const button = document.getElementById('modal-model-inventory-btn');
+            const status = document.getElementById('modal-model-inventory-status');
+            const list = document.getElementById('modal-model-inventory-list');
+            if (button) button.disabled = true;
+            if (status) status.textContent = 'Modal Volume의 Model 및 LoRA 목록을 조회 중입니다...';
+            try {
+                const data = await fetchJSON('/api/modal/models');
+                const summary = data.summary || {};
+                const items = Array.isArray(data.items) ? data.items : [];
+                const orphans = Array.isArray(data.orphans) ? data.orphans : [];
+                // 진단 목적이므로 결손 및 크기 불일치 항목을 정상 항목보다 먼저 노출합니다.
+                const problems = items.filter(item => item.state === 'missing' || !item.size_match);
+                const rows = [...problems, ...orphans];
+                if (list) {
+                    list.hidden = false;
+                    list.innerHTML = rows.length ? rows.map(item => {
+                        const label = item.state === 'orphan'
+                            ? 'Orphan (Manifest 누락)'
+                            : (item.state === 'missing' ? 'Remote 누락' : '용량 불일치');
+                        const name = escapeHtml(String(item.id || item.path || ''));
+                        const path = escapeHtml(String(item.path || ''));
+                        const kind = item.kind === 'lora' ? 'loras Volume' : 'models Volume';
+                        return `<div class="comfy-workflow-user-file"><strong>${name}</strong><small>${label} · ${kind} · ${path}</small></div>`;
+                    }).join('') : '<div class="comfy-workflow-empty">Manifest 데이터와 Volume 내용이 모두 일치합니다.</div>';
+                }
+                const totalGiB = ((Number(summary.model_bytes || 0) + Number(summary.lora_bytes || 0)) / (1024 ** 3)).toFixed(2);
+                if (status) {
+                    status.textContent = `기대 ${Number(summary.expected || 0)}개 · 존재 ${Number(summary.present || 0)}개 · 누락 ${Number(summary.missing || 0)}개 · 용량 불일치 ${Number(summary.size_mismatch || 0)}개 · Orphan ${Number(summary.orphans || 0)}개 · Volume 크기 ${totalGiB} GiB (저장 공간에 따른 과금이 발생합니다)`;
+                }
+                showToast('Remote 모델 Inventory를 조회했습니다.', 'success');
+            } catch (error) {
+                console.error('[MODAL_RUNTIME] Remote 모델 Inventory 조회 실패:', error);
+                if (status) status.textContent = 'Remote 모델 Inventory 조회 실패: ' + (error.message || error);
+                showToast('Remote 모델 Inventory 조회 실패: ' + (error.message || error), 'error');
             } finally {
                 if (button) button.disabled = false;
             }
@@ -40766,6 +40854,8 @@
             if (modalEnvironmentEl) modalEnvironmentEl.value = currentConfig.modal_environment || 'main';
             const modalDeploymentEl = document.getElementById('setting-modal-deployment-name');
             if (modalDeploymentEl) modalDeploymentEl.value = currentConfig.modal_deployment_name || 'soya-comfy-worker';
+            const modalModelSourceEl = document.getElementById('setting-modal-model-source');
+            if (modalModelSourceEl) modalModelSourceEl.value = currentConfig.modal_model_source || 'local_first';
             modalSetGpuSelectValue(
                 'modal-runtime-worker-gpu',
                 currentConfig.modal_worker_gpu || currentConfig.modal_gpu || 'L4',
@@ -41246,7 +41336,12 @@
         function combineLoraLoadPath(baseDir, ...parts) {
             const normalizedBase = String(baseDir || '').trim().replace(/[\\/]+$/, '');
             if (!normalizedBase) return '';
-            return [normalizedBase, ...parts].join('\\');
+            // 경로 구분자는 입력값을 따릅니다. POSIX 환경에서 역슬래시(\\)로 고정할 경우,
+            // "loras\\SOYA_CHAR_LORA"라는 단일 폴더명으로 생성되어 저장은 성공하지만
+            // 실제 LoRA 폴더 경로와 조용히 어긋나는 문제가 발생합니다.
+            const separator =
+                normalizedBase.includes('\\') && !normalizedBase.includes('/') ? '\\' : '/';
+            return [normalizedBase, ...parts].join(separator);
         }
 
         function stripManagedLoraPath(path) {
@@ -42382,6 +42477,7 @@
                 modal_profile: document.getElementById('setting-modal-profile')?.value.trim() || 'soya-comfy',
                 modal_environment: document.getElementById('setting-modal-environment')?.value.trim() || 'main',
                 modal_deployment_name: document.getElementById('setting-modal-deployment-name')?.value.trim() || 'soya-comfy-worker',
+                modal_model_source: document.getElementById('setting-modal-model-source')?.value === 'cloud_direct' ? 'cloud_direct' : 'local_first',
                 modal_gpu: modalWorkerGpu,
                 modal_worker_gpu: modalWorkerGpu,
                 modal_web_gpu: modalWebGpu,

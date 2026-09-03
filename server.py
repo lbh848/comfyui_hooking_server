@@ -1,4 +1,4 @@
-﻿import asyncio
+import asyncio
 import io
 import json
 import os
@@ -16,6 +16,7 @@ import webbrowser
 import traceback
 import base64
 import shutil
+import socket
 import mimetypes
 from contextvars import ContextVar
 from typing import Any
@@ -203,11 +204,13 @@ from comfy_runtime import (
     register_comfy_runtime_routes,
 )
 from comfy_allocation import (
+    COMFY_TASK_DEFINITIONS,
     CURRENT_COMFY_EXECUTION_TARGET,
     DEFAULT_COMFY_TASK_ALLOCATIONS,
     DEFAULT_COMFY_TASK_MODAL_PARALLEL,
     DEFAULT_COMFY_TASK_VAST_PARALLEL,
     MODAL_COMFY_TARGET,
+    MODAL_SUPPORTED_COMFY_TASK_KEYS,
     NONLOCAL_COMFY_TARGETS,
     REMOTE_COMFY_TARGETS,
     VAST_COMFY_TARGET,
@@ -536,6 +539,8 @@ DEFAULT_CONFIG = {
     # modal_gpu는 이전 config.json과 API 호출의 작업 워커 alias로 유지한다.
     "modal_gpu": "L4",
     "modal_worker_gpu": "L4",
+    # 모델 취득 경로: local_first(저장소→로컬→업로드, 기본) | cloud_direct(저장소→Modal 볼륨 직접)
+    "modal_model_source": "local_first",
     "modal_web_gpu": "L4",
     "modal_vram_mode": "highvram",
     "modal_max_concurrency": 2,
@@ -1343,6 +1348,33 @@ def resolve_comfy_port(task_key: str) -> int:
     return resolve_comfy_instance(task_key)[1]
 
 
+def effective_execution_target(task_key: str) -> str:
+    """실행 대상(로컬/modal/vast). 큐 밖이라 컨텍스트가 비면 작업 배분을 본다."""
+    execution_target = str(CURRENT_COMFY_EXECUTION_TARGET.get() or "")
+    if execution_target:
+        return execution_target
+    try:
+        configured = normalize_comfy_task_allocations(
+            app_config.get("comfy_task_allocations"),
+            legacy_illustration_port=app_config.get("comfyui_port_illustration"),
+        ).get(task_key)
+    except Exception as exc:
+        print(
+            "[COMFY_ALLOCATION] 작업 배분 조회 실패, 로컬로 진행: "
+            f"task={task_key}, error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        return ""
+    configured = str(configured or "")
+    if configured in REMOTE_COMFY_TARGETS:
+        print(
+            "[COMFY_ALLOCATION] 실행 컨텍스트 없음 → 설정 배분 사용: "
+            f"task={task_key}, target={configured}"
+        )
+        return configured
+    return ""
+
+
 # ─── 복장 추출 모드 초기화 (함수 의존성 없는 부분만) ───
 outfit_mode.enabled = app_config.get("outfit_mode_enabled", False)
 outfit_mode.outfit_workflow_source_path = app_config.get("outfit_workflow_source_path", "")
@@ -1849,7 +1881,7 @@ async def convert_workflow_via_endpoint(
                 print(f"[WORKFLOW] ✓ 변환 완료: {len(api_format)} 노드")
                 return api_format, None
 
-    execution_target = str(CURRENT_COMFY_EXECUTION_TARGET.get() or "")
+    execution_target = effective_execution_target(task_key)
     if execution_target in REMOTE_COMFY_TARGETS:
         provider_label = (
             "Modal" if execution_target == MODAL_COMFY_TARGET else "Vast"
@@ -1903,8 +1935,20 @@ async def convert_workflow_via_endpoint(
     try:
         return await convert_via_local_comfy()
     except aiohttp.ClientError as e:
-        print(f"[WORKFLOW] ✗ 연결 실패: {e}")
-        return None, str(e)
+        # 제출 경로(:submit_workflow_to_comfy)와 같은 한국어 안내를 쓴다. 변환이
+        # 제출보다 먼저 실행되므로, 여기서 aiohttp 영문 원문을 그대로 흘리면
+        # 사용자가 처음 만나는 오류가 가장 불친절한 것이 된다.
+        try:
+            failed_port = resolve_comfy_port(task_key)
+        except Exception:
+            failed_port = app_config.get("comfyui_port", REAL_COMFY_PORT)
+        print(
+            f"[WORKFLOW] ✗ 연결 실패: task={task_key}, "
+            f"port={failed_port}, error={type(e).__name__}: {e}"
+        )
+        return None, _comfy_connection_error_message(
+            REAL_COMFY_HOST, failed_port, e, task_key=task_key
+        )
 
 
 async def convert_workflow_local_first_with_modal_fallback(
@@ -3058,16 +3102,191 @@ def get_illust_port():
     return resolve_comfy_port("illustration")
 
 
-def _comfy_connection_error_message(host: str, port: int, exc: BaseException | None = None) -> str:
+def _comfy_connection_error_message(
+    host: str,
+    port: int,
+    exc: BaseException | None = None,
+    *,
+    task_key: str | None = None,
+) -> str:
     """ComfyUI 연결 실패(미실행/연결거부)를 사용자에게 알리는 메시지를 반환한다.
 
     aiohttp 예외를 그대로 노출하면 "Cannot connect to host ..." 같은 영문 원문이
     토스트에 뜨므로 host:port와 점검 안내를 포함한 한국어 메시지로 바꾼다.
-    토스트/큐 에러 표시에 그대로 쓰인다."""
+    토스트/큐 에러 표시에 그대로 쓰인다.
+
+    task_key를 주면 안내가 배분을 반영한다. 원격 실행이 가능한 작업인데 로컬로
+    배분돼 있으면 "ComfyUI를 켜라"는 안내만으로는 부족하다 — 로컬 ComfyUI가 아예
+    없는 Modal 전용 구성(macOS 등)에서는 켤 대상 자체가 없기 때문이다."""
     detail = f" ({type(exc).__name__})" if exc is not None else ""
+    hint = "ComfyUI가 실행 중인지 확인하세요."
+    try:
+        if task_key and task_key in MODAL_SUPPORTED_COMFY_TASK_KEYS:
+            hint = (
+                "이 작업은 원격 실행을 지원합니다. 로컬 ComfyUI를 켜거나, "
+                "설정 → Comfy 런타임에서 배분을 MODAL로 바꾸세요."
+            )
+    except Exception as hint_exc:
+        # 안내 문구 생성이 오류 경로를 깨뜨리면 안 된다.
+        print(f"[COMFY_ALLOCATION] 연결 오류 안내 생성 실패: {type(hint_exc).__name__}: {hint_exc}")
     return (
-        f"ComfyUI 서버에 연결할 수 없습니다 ({host}:{port}). "
-        f"ComfyUI가 실행 중인지 확인하세요." + detail
+        f"ComfyUI 서버에 연결할 수 없습니다 ({host}:{port}). " + hint + detail
+    )
+
+
+def _comfy_allocation_preflight() -> list[dict]:
+    """배분된 로컬 Comfy 인스턴스가 실제로 응답하는지 기동 시 점검한다.
+
+    로컬 ComfyUI가 없는 구성(Modal 전용, macOS 등)에서는 배분이 기본값(로컬 1)
+    그대로 남아 있기 쉽고, 그러면 해당 기능은 눌러야만 실패를 알 수 있다.
+    기동 시 한 번 알려주면 진단 시간이 크게 줄어든다. 진단 전용이라 실패해도
+    서버 기동을 막지 않는다.
+    """
+
+    findings: list[dict] = []
+    try:
+        allocations = normalize_comfy_task_allocations(
+            app_config.get("comfy_task_allocations"),
+            legacy_illustration_port=app_config.get("comfyui_port_illustration"),
+        )
+    except Exception as exc:
+        print(f"[COMFY_PREFLIGHT] 배분 조회 실패, 점검 생략: {type(exc).__name__}: {exc}")
+        return findings
+
+    reachable: dict[int, bool] = {}
+
+    def _alive(port: int) -> bool:
+        if port not in reachable:
+            probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            probe.settimeout(0.25)
+            try:
+                reachable[port] = probe.connect_ex((REAL_COMFY_HOST, port)) == 0
+            except OSError:
+                reachable[port] = False
+            finally:
+                probe.close()
+        return reachable[port]
+
+    for task_key, label, _description in COMFY_TASK_DEFINITIONS:
+        target = allocations.get(task_key)
+        if target in REMOTE_COMFY_TARGETS:
+            continue
+        try:
+            port = resolve_comfy_port(task_key)
+        except Exception:
+            continue
+        if _alive(port):
+            continue
+        findings.append(
+            {
+                "task": task_key,
+                "label": label,
+                "instance": target,
+                "port": port,
+                "remote_capable": task_key in MODAL_SUPPORTED_COMFY_TASK_KEYS,
+            }
+        )
+    return findings
+
+
+def _log_comfy_allocation_preflight(settle_seconds: float = 0.0) -> None:
+    """자동 시작된 인스턴스가 포트를 잡을 때까지 잠깐 기다린 뒤 점검한다."""
+
+    try:
+        findings = _comfy_allocation_preflight()
+        if findings and settle_seconds > 0:
+            deadline = time.monotonic() + settle_seconds
+            while findings and time.monotonic() < deadline:
+                time.sleep(1.0)
+                findings = _comfy_allocation_preflight()
+    except Exception as exc:
+        print(f"[COMFY_PREFLIGHT] 점검 실패: {type(exc).__name__}: {exc}")
+        traceback.print_exc()
+        return
+    if not findings:
+        print("[COMFY_PREFLIGHT] 모든 작업이 응답 가능한 대상에 배분되어 있습니다.")
+        # 인스턴스가 살아 있어도 모델이 없으면 실행은 실패한다. 둘은 별개 점검이다.
+        _log_local_model_preflight()
+        return
+    remote_capable = [item for item in findings if item["remote_capable"]]
+    print(
+        f"[COMFY_PREFLIGHT] ⚠ 응답하지 않는 로컬 ComfyUI에 배분된 작업 {len(findings)}건 "
+        "— 실행하면 즉시 실패합니다."
+    )
+    for item in findings:
+        suffix = " (원격 실행 지원 — MODAL로 바꿀 수 있음)" if item["remote_capable"] else ""
+        print(
+            f"[COMFY_PREFLIGHT]   - {item['label']}({item['task']}): "
+            f"Comfy #{item['instance']} {REAL_COMFY_HOST}:{item['port']} 무응답{suffix}"
+        )
+    if remote_capable:
+        print(
+            f"[COMFY_PREFLIGHT] 그중 {len(remote_capable)}건은 설정 → Comfy 런타임에서 "
+            "배분을 MODAL로 바꾸면 바로 동작합니다."
+        )
+    _log_local_model_preflight()
+
+
+def _local_model_preflight() -> list[dict]:
+    """로컬 실행 작업이 쓰는 모델이 실제로 로컬에 있는지 점검한다.
+
+    모델 취득 경로가 cloud_direct 면 설치기는 원격 위임분을 로컬에 받지 않는다.
+    그 상태에서 작업 배분을 원격 → 로컬로 되돌리면 그 작업이 쓰는 모델이 로컬에
+    없는 상태가 성립한다. 지금 그 실패는 ComfyUI 안에서 `... not in []` 로 나타나
+    원인을 알기 어렵다. 진단 전용이라 실패해도 기동을 막지 않는다.
+    """
+
+    try:
+        from comfy_installer.manifest import load_install_manifest
+        from comfy_installer.model_scope import local_model_gaps, tasks_needing_model
+
+        manifest = load_install_manifest()
+        allocations = normalize_comfy_task_allocations(
+            app_config.get("comfy_task_allocations"),
+            legacy_illustration_port=app_config.get("comfyui_port_illustration"),
+        )
+        gaps = local_model_gaps(
+            models=manifest.models,
+            workflows=manifest.workflows,
+            allocations=allocations,
+            config=app_config,
+            comfy_root=os.path.join(os.path.dirname(os.path.abspath(__file__)), "comfy"),
+        )
+        return [
+            {
+                **gap,
+                "tasks": tasks_needing_model(
+                    manifest.workflows, allocations, gap["id"]
+                ),
+            }
+            for gap in gaps
+        ]
+    except Exception as exc:
+        print(
+            "[COMFY_PREFLIGHT] 로컬 모델 점검 생략: "
+            f"{type(exc).__name__}: {exc}"
+        )
+        return []
+
+
+def _log_local_model_preflight() -> None:
+    gaps = _local_model_preflight()
+    if not gaps:
+        return
+    total = sum(int(item.get("size") or 0) for item in gaps)
+    print(
+        f"[COMFY_PREFLIGHT] ⚠ 로컬 실행 작업이 쓰는 모델 {len(gaps)}건이 로컬에 "
+        f"없습니다 ({total / 1024**3:.2f} GiB) — 해당 작업은 실행 시 실패합니다."
+    )
+    for item in gaps:
+        tasks = ", ".join(item.get("tasks") or ()) or "-"
+        print(
+            f"[COMFY_PREFLIGHT]   - {item['id']}: {item['relative_path']} "
+            f"(필요 작업: {tasks})"
+        )
+    print(
+        "[COMFY_PREFLIGHT] 해당 작업을 MODAL로 배분하거나, 설치기에서 "
+        "모델을 내려받으세요."
     )
 
 
@@ -3421,7 +3640,7 @@ async def generate_image_with_prompt(
         print(f"[GEN] 공급자 선택 실패: {message}")
         return None, message
 
-    execution_target = CURRENT_COMFY_EXECUTION_TARGET.get()
+    execution_target = effective_execution_target(comfy_task_key)
     if execution_target in REMOTE_COMFY_TARGETS:
         provider_label = (
             "Modal" if execution_target == MODAL_COMFY_TARGET else "Vast"
@@ -3680,9 +3899,10 @@ async def submit_workflow_to_comfy(
     *,
     task_key: str = "asset_generation",
     input_paths: list[str] | tuple[str, ...] | None = None,
+    capture_input_paths: list[str] | tuple[str, ...] | None = None,
 ) -> tuple[bytes | None, str | dict]:
     """임의의 API 워크플로우를 ComfyUI에 제출하고 이미지를 반환한다."""
-    execution_target = str(CURRENT_COMFY_EXECUTION_TARGET.get() or "")
+    execution_target = effective_execution_target(task_key)
     if execution_target in REMOTE_COMFY_TARGETS:
         provider_label = (
             "Modal" if execution_target == MODAL_COMFY_TARGET else "Vast"
@@ -3692,6 +3912,8 @@ async def submit_workflow_to_comfy(
                 await progress_callback(0, 1)
             service = remote_comfy_service_for_target(execution_target)
             generate_kwargs = {"input_paths": input_paths}
+            if capture_input_paths:
+                generate_kwargs["capture_input_paths"] = list(capture_input_paths)
 
             # Modal/Vast 공용: 원격 구조화 진행 이벤트를 기존 이미지 진행
             # 콜백 형식으로 바꿔 전달한다(Vast가 먼저 쓰던 정규화를 재사용).
@@ -3828,7 +4050,7 @@ async def submit_video_workflow_to_comfy(
 ) -> tuple[bytes | None, dict | str]:
     """Run H3 on the allocated Comfy target and return its verified temporary MP4."""
 
-    execution_target = str(CURRENT_COMFY_EXECUTION_TARGET.get() or "")
+    execution_target = effective_execution_target(task_key)
     if execution_target in REMOTE_COMFY_TARGETS:
         provider_label = (
             "Modal" if execution_target == MODAL_COMFY_TARGET else "Vast"
@@ -4519,12 +4741,63 @@ async def _run_data_patch_utility(
         if title == "긍정프롬프트":
             ninfo["inputs"]["value"] = prompt_text
 
-    img_bytes, submit_err = await submit_workflow_to_comfy(
+    # 유틸리티 워크플로우는 이미지 말고 **파일**도 만든다: 캐릭터 폴더 안의
+    # cache.pt(CLIP 임베딩) 와 cache.ipadpt(InsightFace). 이 둘이 없으면 등록
+    # 캐릭터 삽화가 전부 막히므로(G1) 원격 실행에서도 반드시 회수해야 한다.
+    #
+    # 로컬은 노드가 곧바로 Comfy input 폴더에 쓰므로 할 일이 없다. 원격은
+    # 컨테이너가 사라지면 같이 사라지니, 실행 입력으로 캐릭터 폴더를 올리고
+    # (LoadImagesFromPath_mdsoya 가 그 폴더를 읽는다) 실행 뒤 두 파일을 회수해
+    # 같은 상대 경로로 로컬에 복원한다.
+    relative_char_dir = f"soya_bot/{bot_name}/{char_name}"
+    capture_paths = [
+        f"{relative_char_dir}/cache.pt",
+        f"{relative_char_dir}/cache.ipadpt",
+    ]
+    comfy_input_dir = str(app_config.get("comfy_input_dir") or "").strip()
+    local_char_dir = (
+        os.path.join(comfy_input_dir, "soya_bot", bot_name, char_name)
+        if comfy_input_dir
+        else ""
+    )
+    utility_input_paths = (
+        [local_char_dir] if local_char_dir and os.path.isdir(local_char_dir) else None
+    )
+
+    img_bytes, submit_meta = await submit_workflow_to_comfy(
         wf,
         task_key="utility_debug",
+        input_paths=utility_input_paths,
+        capture_input_paths=capture_paths,
     )
-    if submit_err or not img_bytes:
-        raise RuntimeError(f"{char_name}: {submit_err or '이미지 없음'}")
+    if not img_bytes:
+        raise RuntimeError(f"{char_name}: {submit_meta or '이미지 없음'}")
+
+    # 원격 실행이었으면 회수한 캐시를 로컬 input 폴더에 되돌려 놓는다.
+    captured = []
+    if isinstance(submit_meta, dict):
+        for provider_result in submit_meta.values():
+            if isinstance(provider_result, dict):
+                captured.extend(provider_result.get("captured_inputs") or [])
+    for entry in captured:
+        relative = str(entry.get("remote_name") or "").strip()
+        payload_bytes = entry.get("bytes")
+        if not relative or not payload_bytes or not comfy_input_dir:
+            continue
+        parts = [part for part in relative.split("/") if part not in ("", ".")]
+        if not parts or ".." in parts:
+            print(f"[DATA_PATCH_UTILITY] 안전하지 않은 회수 경로 무시: {relative!r}")
+            continue
+        target = os.path.join(comfy_input_dir, *parts)
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        temp_target = f"{target}.tmp_{uuid.uuid4().hex}"
+        with open(temp_target, "wb") as cache_file:
+            cache_file.write(payload_bytes)
+        os.replace(temp_target, target)
+        print(
+            f"[DATA_PATCH_UTILITY] 원격 캐시 회수 저장: {relative} "
+            f"({len(payload_bytes):,} bytes)"
+        )
 
     # 새 결과를 같은 폴더의 임시 파일로 먼저 완성한 뒤 원자적으로 교체한다.
     # 교체 직전 기존 FACE를 임시 백업해 두고, 성공하면 백업을 지우고
@@ -30542,6 +30815,9 @@ async def on_startup(app):
             f"error={type(e).__name__}: {e}"
         )
         traceback.print_exc()
+    # 배분 점검은 자동 시작 '뒤'에 해야 한다. 앞서 하면 이제 막 뜨는 인스턴스를
+    # 무응답으로 오보한다. 기동 직후에는 아직 포트를 못 잡았을 수 있어 잠깐 기다린다.
+    await asyncio.to_thread(_log_comfy_allocation_preflight, settle_seconds=20.0)
     try:
         await asyncio.to_thread(
             autostart_video_engine,

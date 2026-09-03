@@ -9,12 +9,13 @@ import subprocess
 import time
 import traceback
 import uuid
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import modal
 
 from modal_backend.comfy_http import raise_for_comfy_status
 from modal_backend.custom_nodes import LOCAL_COPY_IGNORE_PATTERNS
+from modal_backend.settings import MAX_WORKFLOW_TIMEOUT_SECONDS
 from remote_comfy_vram import (
     normalize_remote_comfy_vram_mode,
     remote_comfy_vram_arguments,
@@ -25,11 +26,17 @@ MAX_CONTAINERS = int(os.environ.get("SOYA_MODAL_MAX_CONTAINERS", "2"))
 SCALEDOWN_WINDOW_SECONDS = int(os.environ.get("SOYA_MODAL_SCALEDOWN_WINDOW", "15"))
 if not 1 <= MAX_CONTAINERS <= 10:
     raise ValueError("SOYA_MODAL_MAX_CONTAINERS는 1~10 사이여야 합니다.")
+# SoyaTextSender_mdsoya 가 하드코딩해 둔 수신 포트. 노드를 고치지 않고
+# 컨테이너 쪽에서 같은 포트를 열어 맞춘다.
+SOYA_TEXT_SENDER_PORT = 8189
+
 if not 2 <= SCALEDOWN_WINDOW_SECONDS <= 1200:
     raise ValueError("SOYA_MODAL_SCALEDOWN_WINDOW는 2~1200초 사이여야 합니다.")
 MANIFEST_LOCAL = Path(__file__).parents[1] / "comfy_installer" / "resources" / "install_manifest.json"
 IMAGE_INSTALL_LOCAL = Path(__file__).with_name("image_install.py")
 COMFY_MODELS_MOUNT_PATH = "/root/ComfyUI/models"
+# 저장소 인증 토큰을 담는 Modal Secret 이름 (키: CIVITAI_TOKEN)
+MODEL_SOURCE_SECRET_NAME = os.environ.get("SOYA_MODAL_MODEL_SECRET", "soya-civitai")
 TORCH_VERSION = "2.11.0"
 SAGEATTENTION_VERSION = "2.2.0"
 RUNTIME_IMAGE_REF = (
@@ -404,8 +411,263 @@ runtime_image = (
 )
 
 
+# 컨테이너는 함수를 모듈 경로로 import 하므로, 이 모듈이 최상단에서 끌어오는 것이
+# 전부 이미지에 있어야 한다. 진입 패키지(`modal_backend`)는 자동으로 들어가지만
+# 저장소 루트의 최상위 모듈은 들어가지 않는다 — `remote_comfy_vram` 이 빠져
+# 워커 전체가 크래시 루프에 빠진 적이 있다. 자동 포함에 기대지 않고 명시한다.
+LOCAL_PYTHON_SOURCES = ("modal_backend", "remote_comfy_vram")
+
+
+def with_local_python_sources(image: modal.Image) -> modal.Image:
+    """함수에 실제로 물릴 이미지의 **맨 마지막**에 로컬 소스를 붙인다.
+
+    `add_local_*` 뒤에 빌드 단계가 오면 Modal 이 배포를 거부한다. 그래서 공용
+    베이스(`runtime_image`)에 직접 붙이지 않는다 — 웹 App 이 그 위에 `.env()` 를
+    더 얹기 때문이다. 파생이 끝난 이미지마다 이 함수를 마지막에 부른다.
+    """
+
+    return image.add_local_python_source(*LOCAL_PYTHON_SOURCES)
+
+
+# 이 App 의 함수가 쓰는 최종 런타임 이미지.
+worker_runtime_image = with_local_python_sources(runtime_image)
+
+
+# 순수 다운로드 작업이라 GPU 런타임 이미지(수 GB, CUDA/torch)가 필요 없다.
+# 무거운 이미지를 쓰면 파일 하나 받으려고 콜드 스타트에 수 분을 쓴다.
+model_sync_image = (
+    modal.Image.debian_slim(python_version="3.12")
+    .add_local_file(MANIFEST_LOCAL, "/opt/soya/install_manifest.json", copy=True)
+    .add_local_python_source(*LOCAL_PYTHON_SOURCES)
+)
+
+
+def volume_target_path(
+    models_root: Path, loras_root: Path, relative_path: str
+) -> tuple[Path, str]:
+    """매니페스트 상대 경로를 (대상 파일, 종류) 로 바꾼다.
+
+    Volume 이 models 폴더 자체를 마운트하므로 선두 "models/" 를 벗긴다. LoRA 는
+    models 가 아니라 별도 loras Volume 에 들어간다(workflow_assets 의 kind 분리와
+    같은 규칙) — 틀리면 파일은 올라가지만 ComfyUI 가 LoRA 목록에서 못 찾는다.
+    매니페스트는 외부 데이터라 Volume 밖으로 나가는 경로는 거부한다.
+    """
+    parts = PurePosixPath(relative_path).parts
+    if parts and parts[0].casefold() == "models":
+        parts = parts[1:]
+    if not parts:
+        raise ValueError(f"모델 상대 경로가 비어 있습니다: {relative_path!r}")
+    if parts[0].casefold() == "loras":
+        root, parts, kind = loras_root, parts[1:], "lora"
+        if not parts:
+            raise ValueError(f"LoRA 상대 경로가 비어 있습니다: {relative_path!r}")
+    else:
+        root, kind = models_root, "model"
+    target = root.joinpath(*parts).resolve()
+    if root != target and root not in target.parents:
+        raise ValueError(f"Volume 밖의 경로는 쓸 수 없습니다: {relative_path!r}")
+    return target, kind
+
+
+# 저장소 인증 토큰은 호출 인자가 아니라 Secret 으로 주입한다. 인자로 넘기면
+# 호출 기록·트레이스에 남을 수 있다. Secret 이 없는 환경도 있으므로 조회 실패는
+# 배포를 막지 않고, 인증이 필요한 항목만 auth_required 로 보고된다.
+MODEL_SYNC_SECRETS = []
+try:
+    MODEL_SYNC_SECRETS.append(modal.Secret.from_name(MODEL_SOURCE_SECRET_NAME))
+except Exception as exc:  # pragma: no cover - 배포 환경에 Secret 이 없을 때
+    print(
+        f"[MODAL_MODEL_SYNC] Secret 미등록({MODEL_SOURCE_SECRET_NAME}) — "
+        f"인증 필요한 모델은 건너뜁니다: {type(exc).__name__}: {exc}"
+    )
+
+
 @app.function(
-    image=runtime_image,
+    image=model_sync_image,
+    cpu=2.0,
+    memory=4_096,
+    min_containers=0,
+    max_containers=MAX_CONTAINERS,
+    scaledown_window=SCALEDOWN_WINDOW_SECONDS,
+    timeout=3_600,
+    volumes={COMFY_MODELS_MOUNT_PATH: models_volume, "/loras": loras_volume},
+    secrets=MODEL_SYNC_SECRETS,
+)
+def sync_models_from_source(
+    model_ids: list[str],
+    auth_tokens: dict | None = None,
+) -> dict:
+    """매니페스트의 저장소 URL에서 모델 Volume으로 **직접** 내려받는다.
+
+    기존 경로는 "저장소 → 로컬 디스크 → batch_upload → Volume" 이라 클라우드에서만
+    생성하는 사용자도 같은 바이트를 두 번 옮기고 쓰지 않을 사본을 로컬에 남긴다.
+    이 함수는 로컬을 건너뛰고 워커가 직접 받는다.
+
+    매니페스트는 이미지에 포함돼 있어(`/opt/soya/install_manifest.json`) 별도 전송이
+    필요 없다. 무결성은 매니페스트에 고정된 sha256으로 검증하며, 불일치 시 받은
+    파일을 지우고 실패로 처리한다 — 손상본이 Volume에 남는 쪽이 더 위험하다.
+
+    auth_tokens: {"civitai": "<token>"} 형태. 인증이 필요한 항목에만 쓴다.
+    """
+
+    _announce_call_started("sync_models_from_source")
+    import hashlib
+    import urllib.parse
+    import urllib.request
+
+    class _StripAuthOnCrossHostRedirect(urllib.request.HTTPRedirectHandler):
+        """리다이렉트로 **호스트가 바뀌면** Authorization 을 떼고 따라간다.
+
+        civitai 는 큰 파일을 S3 호환 스토리지의 presigned URL 로 넘긴다. 그때
+        `Authorization: Bearer …` 를 그대로 들고 가면 S3 가 그 헤더를 서명으로
+        해석해 `Missing x-amz-content-sha256` 400 으로 거절한다. 실측: 6.46 GiB
+        체크포인트 하나만 계속 실패했고, 직접 내려주는 작은 LoRA 는 통과했다.
+
+        토큰을 남의 호스트로 보내지 않는 것이 원래 옳기도 하다.
+        """
+
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            new_request = super().redirect_request(
+                req, fp, code, msg, headers, newurl
+            )
+            if new_request is None:
+                return None
+            same_host = (
+                urllib.parse.urlsplit(req.full_url).netloc
+                == urllib.parse.urlsplit(newurl).netloc
+            )
+            if not same_host:
+                new_request.headers = {
+                    key: value
+                    for key, value in new_request.headers.items()
+                    if key.lower() != "authorization"
+                }
+                new_request.unredirected_hdrs.pop("Authorization", None)
+            return new_request
+
+    opener = urllib.request.build_opener(_StripAuthOnCrossHostRedirect)
+
+    manifest_path = Path("/opt/soya/install_manifest.json")
+    if not manifest_path.is_file():
+        raise FileNotFoundError(f"워커 이미지에 매니페스트가 없습니다: {manifest_path}")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    by_id = {str(entry.get("id")): entry for entry in manifest.get("models", [])}
+
+    models_root = Path(COMFY_MODELS_MOUNT_PATH).resolve()
+    loras_root = Path("/loras").resolve()
+    # Secret 으로 주입된 환경변수를 우선하고, 명시 인자는 보조 수단으로만 둔다.
+    tokens = dict(auth_tokens) if isinstance(auth_tokens, dict) else {}
+    env_civitai = os.environ.get("CIVITAI_TOKEN", "").strip()
+    if env_civitai:
+        tokens.setdefault("civitai", env_civitai)
+        print("[MODAL_MODEL_SYNC] Secret 에서 civitai 토큰을 읽었습니다.", flush=True)
+    results: list[dict] = []
+    downloaded_bytes = 0
+
+    def _target_for(relative_path: str) -> tuple[Path, str]:
+        return volume_target_path(models_root, loras_root, relative_path)
+
+    def _sha256(path: Path) -> str:
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            while chunk := handle.read(8 * 1024 * 1024):
+                digest.update(chunk)
+        return digest.hexdigest()
+
+    for model_id in model_ids:
+        entry = by_id.get(str(model_id))
+        if entry is None:
+            results.append({"id": model_id, "state": "unknown_id"})
+            print(f"[MODAL_MODEL_SYNC] 매니페스트에 없는 모델 id: {model_id!r}", flush=True)
+            continue
+
+        relative_path = str(entry.get("relative_path") or "")
+        expected = str(entry.get("sha256") or "").strip().lower()
+        url = str(entry.get("url") or "")
+        target, kind = _target_for(relative_path)
+
+        if target.is_file() and expected and _sha256(target) == expected:
+            results.append({"id": model_id, "state": "already_present", "path": relative_path, "kind": kind})
+            print(f"[MODAL_MODEL_SYNC] 이미 있음(해시 일치): {relative_path}", flush=True)
+            continue
+
+        request = urllib.request.Request(url, headers={"User-Agent": "soya-comfy-worker"})
+        auth_kind = str(entry.get("auth") or "").strip().lower()
+        if auth_kind:
+            token = str(tokens.get(auth_kind) or "").strip()
+            if not token:
+                results.append({"id": model_id, "state": "auth_required", "auth": auth_kind})
+                print(
+                    f"[MODAL_MODEL_SYNC] 인증 토큰 없음: id={model_id}, auth={auth_kind}",
+                    flush=True,
+                )
+                continue
+            request.add_header("Authorization", f"Bearer {token}")
+
+        target.parent.mkdir(parents=True, exist_ok=True)
+        staging = target.with_name(target.name + ".partial")
+        digest = hashlib.sha256()
+        received = 0
+        started = time.monotonic()
+        try:
+            with opener.open(request, timeout=300) as response:
+                with staging.open("wb") as handle:
+                    while True:
+                        chunk = response.read(8 * 1024 * 1024)
+                        if not chunk:
+                            break
+                        handle.write(chunk)
+                        digest.update(chunk)
+                        received += len(chunk)
+            actual = digest.hexdigest()
+            if expected and actual != expected:
+                staging.unlink(missing_ok=True)
+                results.append(
+                    {"id": model_id, "state": "sha256_mismatch",
+                     "expected": expected, "actual": actual}
+                )
+                print(
+                    "[MODAL_MODEL_SYNC] sha256 불일치로 폐기: "
+                    f"id={model_id}, expected={expected[:16]}…, actual={actual[:16]}…",
+                    flush=True,
+                )
+                continue
+            staging.replace(target)
+            downloaded_bytes += received
+            elapsed = time.monotonic() - started
+            results.append(
+                {"id": model_id, "state": "downloaded", "path": relative_path,
+                 "kind": kind, "bytes": received, "seconds": round(elapsed, 1),
+                 "sha256": actual}
+            )
+            print(
+                f"[MODAL_MODEL_SYNC] 다운로드 완료: {relative_path} "
+                f"{received:,}B {elapsed:.1f}s sha256={actual[:16]}…",
+                flush=True,
+            )
+        except Exception as exc:
+            staging.unlink(missing_ok=True)
+            results.append({"id": model_id, "state": "failed",
+                            "error": f"{type(exc).__name__}: {exc}"})
+            print(
+                f"[MODAL_MODEL_SYNC] 다운로드 실패: id={model_id}, "
+                f"error={type(exc).__name__}: {exc}",
+                flush=True,
+            )
+            traceback.print_exc()
+
+    models_volume.commit()
+    loras_volume.commit()
+    print(
+        f"[MODAL_MODEL_SYNC] Volume commit 완료: 항목 {len(results)}개, "
+        f"신규 {downloaded_bytes:,} bytes",
+        flush=True,
+    )
+    return {"results": results, "downloaded_bytes": downloaded_bytes}
+
+
+@app.function(
+    image=worker_runtime_image,
     cpu=4.0,
     memory=16_384,
     min_containers=0,
@@ -540,14 +802,50 @@ def _write_extra_model_paths() -> Path:
     return target
 
 
+def _sample_gpu_memory(stop_event, out: dict) -> None:
+    """생성 중 GPU 메모리 사용량을 표집해 최댓값을 남긴다.
+
+    ComfyUI 는 워커 안에서 **별도 프로세스**로 돈다(`main.py` subprocess). 그래서
+    워커 프로세스의 torch 통계로는 실제 사용량을 볼 수 없고, nvidia-smi 로 장치
+    전체를 봐야 한다. 표집 실패는 무시한다 — 계측이 생성을 망치면 안 된다.
+    """
+
+    import subprocess
+
+    peak = 0
+    while not stop_event.is_set():
+        try:
+            probe = subprocess.run(
+                [
+                    "nvidia-smi",
+                    "--query-gpu=memory.used,memory.total",
+                    "--format=csv,noheader,nounits",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            first = (probe.stdout or "").strip().splitlines()[0]
+            used_text, total_text = first.split(",")[:2]
+            used = int(used_text.strip())
+            peak = max(peak, used)
+            # 매 표집마다 갱신한다. 예외 경로로 빠져나가도 값이 남는다.
+            out["peak_mib"] = peak
+            out["total_mib"] = int(total_text.strip())
+        except Exception:
+            pass
+        stop_event.wait(1.0)
+
+
 @app.cls(
-    image=runtime_image,
+    image=worker_runtime_image,
     cpu=4.0,
     memory=16_384,
     min_containers=0,
     max_containers=MAX_CONTAINERS,
     scaledown_window=SCALEDOWN_WINDOW_SECONDS,
-    timeout=3_600,
+    # 워크플로우 상한보다 커야 한다 — 워커가 먼저 죽으면 artifact 를 잃는다.
+    timeout=MAX_WORKFLOW_TIMEOUT_SECONDS + 600,
     startup_timeout=600,
     volumes={
         COMFY_MODELS_MOUNT_PATH: models_volume,
@@ -609,10 +907,25 @@ class ComfyWorker:
             def log_message(self, _format: str, *_args) -> None:
                 return
 
-        self.text_output_server = ThreadingHTTPServer(
-            ("127.0.0.1", 0),
-            TextOutputHandler,
-        )
+        # 노드가 하드코딩한 포트라 임의 포트로 열면 아무도 받지 못하고,
+        # 전송 실패는 노드가 삼켜서 결과만 빈 채로 끝난다.
+        try:
+            self.text_output_server = ThreadingHTTPServer(
+                ("127.0.0.1", SOYA_TEXT_SENDER_PORT),
+                TextOutputHandler,
+            )
+        except OSError as exc:
+            print(
+                "[MODAL_COMFY] 텍스트 출력 포트 바인딩 실패, 임의 포트로 대체합니다. "
+                f"port={SOYA_TEXT_SENDER_PORT}, error={type(exc).__name__}: {exc}. "
+                "SoyaTextSender 는 하드코딩된 포트로만 보내므로 이 경우 텍스트 결과를 "
+                "받지 못합니다.",
+                flush=True,
+            )
+            self.text_output_server = ThreadingHTTPServer(
+                ("127.0.0.1", 0),
+                TextOutputHandler,
+            )
         self.text_output_port = int(self.text_output_server.server_address[1])
         self.text_output_thread = threading.Thread(
             target=self.text_output_server.serve_forever,
@@ -728,6 +1041,7 @@ class ComfyWorker:
         require_images: bool = True,
         defer_artifacts: bool = False,
         video_job_id: str | None = None,
+        capture_input_paths: list[str] | None = None,
     ) -> dict:
         _announce_call_started("generate")
         import hashlib
@@ -735,6 +1049,18 @@ class ComfyWorker:
 
         if not isinstance(workflow, dict) or not workflow:
             raise ValueError("ComfyUI API workflow JSON 객체가 필요합니다.")
+
+        import threading
+
+        vram_stats: dict = {}
+        vram_stop = threading.Event()
+        vram_thread = threading.Thread(
+            target=_sample_gpu_memory,
+            args=(vram_stop, vram_stats),
+            name="modal-vram-sampler",
+            daemon=True,
+        )
+        vram_thread.start()
         workflow = json.loads(json.dumps(workflow, ensure_ascii=False))
         self.text_outputs = []
         for node in workflow.values():
@@ -745,7 +1071,9 @@ class ComfyWorker:
                 node.setdefault("inputs", {})["server_url"] = (
                     f"http://127.0.0.1:{self.text_output_port}/api/text_output"
                 )
-        timeout_seconds = max(30, min(int(timeout_seconds), 3_300))
+        timeout_seconds = max(
+            30, min(int(timeout_seconds), MAX_WORKFLOW_TIMEOUT_SECONDS)
+        )
         input_root = Path("/root/ComfyUI/input")
         input_root.mkdir(parents=True, exist_ok=True)
 
@@ -797,6 +1125,52 @@ class ComfyWorker:
                     )
 
         staged_input_paths: list[Path] = []
+        captured_inputs: list[dict] = []
+
+        def collect_captured_inputs() -> None:
+            """워크플로우가 Comfy input 폴더에 써 놓고 간 파일을 회수한다.
+
+            **cleanup_staged_inputs() 보다 반드시 먼저** 불려야 한다. 회수 대상과
+            업로드한 입력이 같은 경로일 수 있어서(예: 캐릭터 폴더의 cache.pt 를
+            올렸다가 워크플로우가 같은 자리에 다시 쓴다), 정리를 먼저 하면 방금
+            만들어진 결과까지 지워지고 빈손으로 돌아간다.
+            """
+
+            for raw_name in capture_input_paths or []:
+                normalized = str(raw_name or "").strip().replace("\\", "/")
+                relative = Path(normalized)
+                if (
+                    not normalized
+                    or relative.is_absolute()
+                    or ".." in relative.parts
+                ):
+                    raise ValueError(
+                        f"안전하지 않은 회수 대상 경로입니다: {raw_name!r}"
+                    )
+                candidate = input_root.joinpath(*relative.parts).resolve()
+                if input_root != candidate and input_root not in candidate.parents:
+                    raise ValueError(
+                        f"ComfyUI input 밖의 경로는 회수할 수 없습니다: {raw_name!r}"
+                    )
+                if not candidate.is_file():
+                    print(
+                        "[MODAL_COMFY:CAPTURE] 회수 대상 파일이 생성되지 않았습니다: "
+                        f"{relative.as_posix()}"
+                    )
+                    continue
+                payload_bytes = candidate.read_bytes()
+                captured_inputs.append(
+                    {
+                        "remote_name": relative.as_posix(),
+                        "bytes": payload_bytes,
+                        "size": len(payload_bytes),
+                        "sha256": hashlib.sha256(payload_bytes).hexdigest(),
+                    }
+                )
+                print(
+                    "[MODAL_COMFY:CAPTURE] 회수: "
+                    f"{relative.as_posix()} ({len(payload_bytes):,} bytes)"
+                )
 
         def cleanup_staged_inputs() -> None:
             for target in reversed(staged_input_paths):
@@ -856,6 +1230,7 @@ class ComfyWorker:
                     emit_progress,
                 )
             )
+            collect_captured_inputs()
         finally:
             cleanup_staged_inputs()
 
@@ -1080,10 +1455,19 @@ class ComfyWorker:
                     "ComfyUI 학습은 완료됐지만 새로 생성되거나 변경된 LoRA 결과가 없습니다: "
                     f"prompt_id={prompt_id}"
                 )
+        vram_stop.set()
+        vram_thread.join(timeout=5)
+        if vram_stats.get("peak_mib"):
+            print(
+                "[MODAL_COMFY:VRAM] 생성 중 GPU 메모리 최대 사용량: "
+                f"{vram_stats['peak_mib']:,} MiB / {vram_stats.get('total_mib', 0):,} MiB"
+            )
         return {
             "prompt_id": prompt_id,
             "images": images,
             "artifacts": artifacts,
             "video_artifacts": video_artifacts,
             "text_outputs": list(self.text_outputs),
+            "captured_inputs": captured_inputs,
+            "peak_vram": dict(vram_stats),
         }

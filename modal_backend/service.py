@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime
+import functools
 import json
 import os
 import re
@@ -27,13 +28,23 @@ from .custom_nodes import (
     inventory_custom_nodes,
     public_custom_node_inventory,
 )
-from .manifest import list_soya_user_workflows, plan_from_soya_user_names
+from .manifest import (
+    load_manifest,
+    list_soya_user_workflows,
+    model_ids_for_workflow_files,
+    plan_from_soya_user_names,
+)
 from .lora_inventory import (
     build_local_lora_catalog,
     merge_remote_lora_catalog,
     public_lora_catalog,
 )
-from .settings import MODAL_GPU_PROFILES, ModalSettings
+from .settings import (
+    MAX_WORKFLOW_TIMEOUT_SECONDS,
+    MODAL_GPU_PROFILES,
+    MODEL_SOURCE_CLOUD_DIRECT,
+    ModalSettings,
+)
 from .workflow_assets import (
     build_local_model_index,
     resolve_explicit_input_files,
@@ -211,6 +222,53 @@ def cost_summary(settings: ModalSettings) -> dict[str, Any]:
             "region_multiplier": 1.0,
         },
     }
+
+
+MODEL_REFERENCE_SUFFIXES = (
+    ".safetensors",
+    ".ckpt",
+    ".pt",
+    ".pth",
+    ".bin",
+    ".onnx",
+    ".gguf",
+)
+
+
+def normalize_remote_model_separators(workflow: dict[str, Any]) -> int:
+    """워크플로우의 모델 참조에서 역슬래시를 슬래시로 바꾼다 (원격 실행 전용).
+
+    배포 워크플로우는 Windows 에서 작성돼 하위 폴더 모델 이름이
+    ``v19\\Qwen-Rapid-AIO-NSFW-v19.safetensors`` 처럼 역슬래시로 들어 있다.
+    Windows 로컬 ComfyUI 에서는 그대로 맞지만, **워커는 언제나 Linux** 라
+    ``v19/Qwen-...`` 로 나열되어 제출이 거부된다:
+
+        ckpt_name: 'v19\\Qwen-...' not in ['v19/Qwen-...']   (HTTP 400)
+
+    즉 이건 macOS 문제가 아니다 — **Windows 사용자가 Modal 로 돌려도 똑같이 막힌다.**
+    모델 확장자로 끝나는 문자열만 바꾸므로 프롬프트 같은 일반 텍스트는 건드리지 않는다.
+    (업로드 쪽 workflow_assets 는 이미 같은 정규화를 하고 있었다 — 제출 쪽만 빠져 있었다.)
+    """
+
+    changed = 0
+
+    def walk(node: Any) -> Any:
+        nonlocal changed
+        if isinstance(node, dict):
+            return {key: walk(value) for key, value in node.items()}
+        if isinstance(node, list):
+            return [walk(value) for value in node]
+        if isinstance(node, str) and "\\" in node:
+            if node.casefold().endswith(MODEL_REFERENCE_SUFFIXES):
+                changed += 1
+                return node.replace("\\", "/")
+        return node
+
+    normalized = walk(workflow)
+    if changed:
+        workflow.clear()
+        workflow.update(normalized)
+    return changed
 
 
 class ModalService:
@@ -1083,7 +1141,13 @@ class ModalService:
     ) -> dict[str, Any]:
         # 생성·변환·설치 등 쓰기 작업은 호출마다 반드시 독립 실행한다. 상태 UI가
         # 사용하는 읽기 전용 명령만 동일 payload 기준 single-flight로 합친다.
-        shared_actions = {"runtime_stats", "web_status", "runtime_logs", "list_loras"}
+        shared_actions = {
+            "runtime_stats",
+            "web_status",
+            "runtime_logs",
+            "list_loras",
+            "list_models",
+        }
         if action not in shared_actions:
             return await self._run_client_action_once(
                 settings,
@@ -2875,13 +2939,76 @@ class ModalService:
             raise ValueError("Modal에 동기화할 사용자 워크플로우가 없습니다.")
         return workflows
 
+    _EMPTY_ASSETS = {
+        "model_files": [],
+        "lora_files": [],
+        "model_count": 0,
+        "size_bytes": 0,
+        "size_gib": 0.0,
+    }
+
+    def _filter_manifest_provided_assets(self, assets: dict[str, Any]) -> dict[str, Any]:
+        """매니페스트가 제공하는 파일을 업로드 목록에서 뺀다 (cloud_direct 전용).
+
+        그 파일들은 워커가 저장소에서 직접 받으므로 올릴 이유가 없다. 남는 것은
+        저장소 URL이 없는 사용자 파일뿐이고, 그건 로컬이 유일한 원본이라 올려야 한다.
+        """
+
+        try:
+            manifest = load_manifest(self.project_root)
+            covered = {
+                str(entry.get("relative_path") or "").split("models/", 1)[-1]
+                for entry in manifest.get("models", [])
+            }
+        except Exception as exc:
+            print(
+                "[MODAL_SYNC] 매니페스트 조회 실패, 로컬 자산을 그대로 올립니다: "
+                f"{type(exc).__name__}: {exc}"
+            )
+            return assets
+
+        def keep(item: dict[str, Any], prefix: str) -> bool:
+            remote = str(item.get("remote_path") or "")
+            return f"{prefix}{remote}" not in covered
+
+        models = [i for i in assets.get("model_files", []) if keep(i, "")]
+        loras = [i for i in assets.get("lora_files", []) if keep(i, "loras/")]
+        dropped = (
+            len(assets.get("model_files", [])) - len(models)
+            + len(assets.get("lora_files", [])) - len(loras)
+        )
+        size_bytes = sum(int(i.get("size") or 0) for i in models + loras)
+        print(
+            "[MODAL_SYNC] cloud_direct 업로드 대상 정리: "
+            f"저장소 제공 {dropped}개 제외, 사용자 파일 {len(models) + len(loras)}개 유지"
+        )
+        return {
+            "model_files": models,
+            "lora_files": loras,
+            "model_count": len(models) + len(loras),
+            "size_bytes": size_bytes,
+            "size_gib": round(size_bytes / 1024**3, 2),
+        }
+
     async def _resolve_local_workflow_assets(
         self,
         workflows: list[dict[str, Any]],
+        *,
+        allow_missing_local: bool = False,
     ) -> dict[str, Any]:
         async with self._model_sync_lock:
             def resolve() -> dict[str, Any]:
-                model_index = build_local_model_index(self.project_root / "comfy")
+                try:
+                    model_index = build_local_model_index(self.project_root / "comfy")
+                except FileNotFoundError:
+                    if not allow_missing_local:
+                        raise
+                    # 클라우드 전용 구성은 로컬 models 폴더가 아예 없을 수 있다.
+                    print(
+                        "[MODAL_SYNC] 로컬 models 폴더 없음 — cloud_direct 이므로 "
+                        "업로드할 사용자 파일이 없는 것으로 처리합니다."
+                    )
+                    return dict(ModalService._EMPTY_ASSETS)
                 return resolve_workflow_model_files(
                     workflows,
                     model_index,
@@ -3038,6 +3165,120 @@ class ModalService:
                 cache_age_seconds=0.0,
             )
 
+    async def cleanup_remote_models(
+        self,
+        *,
+        model_paths: list[str] | None = None,
+        lora_paths: list[str] | None = None,
+        dry_run: bool = True,
+    ) -> dict[str, Any]:
+        """원격 볼륨의 고아 파일을 지운다. 기본은 dry-run 이다.
+
+        세 겹으로 막는다. 원격은 사용자가 눈으로 확인할 수 없어서, 잘못 지우면
+        복구 수단이 로컬 사본뿐인데 cloud_direct 에서는 그 사본조차 없다.
+
+          1. 호출자가 경로를 **명시**해야 한다. '고아 전체 삭제'는 제공하지 않는다.
+          2. 현재 인벤토리에서 **고아로 분류된 것**만 지울 수 있다. 매니페스트가
+             아는 파일은 어떤 경우에도 삭제 대상이 되지 않는다.
+          3. **로컬에 같은 파일이 있으면 거부**한다. 매니페스트 밖 + 로컬 존재는
+             사용자의 개인 파일이라는 뜻이고(C3), 그건 로컬이 유일 원본이다.
+        """
+
+        settings = ModalSettings.from_mapping(self.get_config())
+        if not settings.enabled:
+            raise RuntimeError("Modal이 꺼져 있습니다.")
+
+        requested_models = [str(value).strip() for value in (model_paths or []) if str(value).strip()]
+        requested_loras = [str(value).strip() for value in (lora_paths or []) if str(value).strip()]
+        if not requested_models and not requested_loras:
+            raise ValueError("삭제할 원격 모델 경로를 지정하세요.")
+
+        inventory = await self.model_inventory()
+        orphan_models = {
+            str(item["path"]) for item in inventory["orphans"] if item["kind"] == "model"
+        }
+        orphan_loras = {
+            str(item["path"]) for item in inventory["orphans"] if item["kind"] == "lora"
+        }
+
+        rejected: list[dict[str, str]] = []
+        approved_models: list[str] = []
+        approved_loras: list[str] = []
+        comfy_models_root = self.project_root / "comfy" / "models"
+
+        def _check(path: str, orphans: set[str], kind: str) -> bool:
+            if path not in orphans:
+                rejected.append(
+                    {"path": path, "kind": kind, "reason": "매니페스트가 아는 파일이거나 원격에 없습니다."}
+                )
+                return False
+            local = (
+                comfy_models_root / ("loras/" + path if kind == "lora" else path)
+            )
+            if local.is_file():
+                rejected.append(
+                    {
+                        "path": path,
+                        "kind": kind,
+                        "reason": "로컬에 같은 파일이 있습니다 — 사용자 파일로 보이므로 지우지 않습니다.",
+                    }
+                )
+                return False
+            return True
+
+        for path in requested_models:
+            if _check(path, orphan_models, "model"):
+                approved_models.append(path)
+        for path in requested_loras:
+            if _check(path, orphan_loras, "lora"):
+                approved_loras.append(path)
+
+        result: dict[str, Any] = {
+            "dry_run": bool(dry_run),
+            "approved_models": approved_models,
+            "approved_loras": approved_loras,
+            "rejected": rejected,
+            "deleted": 0,
+        }
+        print(
+            "[MODAL_INVENTORY] 원격 정리 요청: "
+            f"승인 {len(approved_models) + len(approved_loras)}건 · "
+            f"거부 {len(rejected)}건 · dry_run={dry_run}"
+        )
+        if dry_run or not (approved_models or approved_loras):
+            return result
+
+        response = await self._run_client_action(
+            settings,
+            "delete_model_paths",
+            timeout=600,
+            model_paths=approved_models,
+            lora_paths=approved_loras,
+        )
+        result["deleted"] = int(response.get("deleted") or 0)
+        result["deleted_models"] = response.get("deleted_models") or []
+        result["deleted_loras"] = response.get("deleted_loras") or []
+        return result
+
+    async def volume_storage(self) -> dict[str, Any]:
+        """볼륨 저장 용량. 저장만으로도 과금되는데 로컬 디스크와 달리 체감되지 않는다.
+
+        비용 조회는 UI 가 주기적으로 부르므로 여기에 볼륨 나열을 끼워 넣지 않는다.
+        필요할 때만(?volumes=1) 따로 조회한다.
+        """
+
+        inventory = await self.model_inventory()
+        summary = inventory.get("summary") or {}
+        model_bytes = int(summary.get("model_bytes") or 0)
+        lora_bytes = int(summary.get("lora_bytes") or 0)
+        return {
+            "model_bytes": model_bytes,
+            "lora_bytes": lora_bytes,
+            "total_bytes": model_bytes + lora_bytes,
+            "total_gib": round((model_bytes + lora_bytes) / 1024**3, 2),
+            "orphan_count": int(summary.get("orphans") or 0),
+        }
+
     async def billing(self, *, force_refresh: bool = False) -> dict[str, Any]:
         settings = ModalSettings.from_mapping(self.get_config())
         if not settings.enabled:
@@ -3056,6 +3297,179 @@ class ModalService:
             settings,
             force_refresh=force_refresh,
         )
+
+    def _expected_remote_models(self) -> dict[str, dict[str, Any]]:
+        """매니페스트가 정의한 '원격에 있어야 할' 파일 (볼륨 기준 상대경로 → 모델).
+
+        매니페스트의 relative_path 는 ``models/...`` 로 시작한다. models 볼륨은
+        ``/root/ComfyUI/models`` 에 붙으므로 그 선두를 벗기고, LoRA 는 별도
+        볼륨(``/loras``)이라 ``loras/`` 까지 벗긴다 — 이 라우팅을 틀리면
+        업로드는 성공하는데 ComfyUI 목록에는 안 뜨는 조용한 실패가 된다.
+        """
+
+        expected: dict[str, dict[str, Any]] = {}
+        try:
+            manifest = load_manifest(self.project_root)
+        except Exception as exc:
+            print(
+                "[MODAL_INVENTORY] 매니페스트 조회 실패, 기대 목록 없이 진행합니다: "
+                f"{type(exc).__name__}: {exc}"
+            )
+            return expected
+        for entry in manifest.get("models", []) or []:
+            relative = str(entry.get("relative_path") or "").strip()
+            if not relative:
+                continue
+            volume_path = relative.split("models/", 1)[-1]
+            kind = "lora" if volume_path.startswith("loras/") else "model"
+            key = volume_path[len("loras/"):] if kind == "lora" else volume_path
+            expected[f"{kind}:{key}"] = {
+                "id": str(entry.get("id") or ""),
+                "kind": kind,
+                "path": key,
+                "size": int(entry.get("size") or 0),
+                "auth": entry.get("auth"),
+            }
+        return expected
+
+    async def model_inventory(self) -> dict[str, Any]:
+        """원격 볼륨의 모델 인벤토리 (모델 단위).
+
+        cloud_direct 에서는 로컬에 사본이 없어 사용자가 볼륨을 확인할 방법이
+        없다. 워크플로우 단위 조회(/api/modal/workflows/remote)로는 모델 하나가
+        빠진 것을 알 수 없어, 인페인팅에서 겪은 ``... not in []`` 류를 진단할 수
+        없었다.
+        """
+
+        settings = ModalSettings.from_mapping(self.get_config())
+        if not settings.enabled:
+            raise RuntimeError("Modal이 꺼져 있습니다.")
+        remote = await self._run_client_action(
+            settings,
+            "list_models",
+            timeout=180,
+        )
+        present: dict[str, dict[str, Any]] = {}
+        for item in remote.get("models") or []:
+            present[f"model:{item['path']}"] = {**item, "kind": "model"}
+        for item in remote.get("loras") or []:
+            present[f"lora:{item['path']}"] = {**item, "kind": "lora"}
+
+        expected = self._expected_remote_models()
+        items: list[dict[str, Any]] = []
+        for key, meta in sorted(expected.items()):
+            found = present.get(key)
+            items.append(
+                {
+                    **meta,
+                    "state": "present" if found else "missing",
+                    "remote_size": int(found["size"]) if found else 0,
+                    # 크기가 다르면 다른 파일이다. 매니페스트 sha256 검증은
+                    # 워커가 받을 때 하므로 여기서는 값싼 크기 대조만 한다.
+                    "size_match": bool(found and int(found["size"]) == int(meta["size"])),
+                }
+            )
+        orphans = [
+            {**value, "state": "orphan", "id": ""}
+            for key, value in sorted(present.items())
+            if key not in expected
+        ]
+        summary = {
+            "expected": len(expected),
+            "present": sum(1 for item in items if item["state"] == "present"),
+            "missing": sum(1 for item in items if item["state"] == "missing"),
+            "size_mismatch": sum(
+                1
+                for item in items
+                if item["state"] == "present" and not item["size_match"]
+            ),
+            "orphans": len(orphans),
+            "model_bytes": int(remote.get("model_bytes") or 0),
+            "lora_bytes": int(remote.get("lora_bytes") or 0),
+        }
+        print(
+            "[MODAL_INVENTORY] 원격 모델 인벤토리: "
+            f"기대 {summary['expected']}개 · 존재 {summary['present']}개 · "
+            f"결손 {summary['missing']}개 · 고아 {summary['orphans']}개 · "
+            f"{(summary['model_bytes'] + summary['lora_bytes']) / 1024**3:.2f} GiB"
+        )
+        return {
+            "items": items,
+            "orphans": orphans,
+            "summary": summary,
+            "model_source": settings.model_source,
+        }
+
+    async def _sync_models_direct(
+        self,
+        settings: ModalSettings,
+        workflow_ids: list[str],
+    ) -> None:
+        """워커가 저장소에서 Modal Volume 으로 모델을 직접 받게 한다 (cloud_direct).
+
+        로컬 디스크를 거치지 않으므로 로컬에서 생성하지 않는 구성에서 같은 바이트를
+        두 번 옮기지 않는다. 무결성은 워커가 매니페스트 sha256 으로 검증한다.
+        """
+
+        model_ids = await asyncio.to_thread(
+            model_ids_for_workflow_files,
+            self.project_root,
+            list(workflow_ids),
+        )
+        if not model_ids:
+            self._append_install_log("system", "cloud_direct: 필요한 모델이 없습니다.")
+            return
+        self._set_install_phase(
+            "upload",
+            f"저장소에서 Modal Volume 으로 모델 {len(model_ids)}개를 직접 받는 중입니다.",
+            progress_mode="indeterminate",
+        )
+        self._append_install_log(
+            "system",
+            f"cloud_direct 직접 다운로드 시작: 모델 {len(model_ids)}개",
+        )
+        client_payload = {
+            "action": "sync_models_direct",
+            "app_name": settings.deployment_name,
+            "environment": settings.environment,
+            "model_ids": model_ids,
+        }
+        code, stdout, _stderr = await self._run_command(
+            [sys.executable, "-m", "modal_backend.client_cli"],
+            env=self._subprocess_env(settings.profile),
+            stdin_payload=client_payload,
+            timeout=86_400,
+            output_callback=self._handle_install_client_output,
+        )
+        if code != 0:
+            raise RuntimeError("Modal 원격 모델 직접 다운로드에 실패했습니다.")
+        response = json.loads(stdout)
+        if not response.get("ok"):
+            raise RuntimeError(str(response.get("error") or "원격 모델 다운로드 실패"))
+        results = (response.get("result") or {}).get("results") or []
+        downloaded = [r for r in results if r.get("state") == "downloaded"]
+        present = [r for r in results if r.get("state") == "already_present"]
+        problems = [
+            r for r in results
+            if r.get("state") not in {"downloaded", "already_present"}
+        ]
+        summary = (
+            f"cloud_direct 완료: 신규 {len(downloaded)}개 · 기존 {len(present)}개"
+        )
+        if problems:
+            summary += f" · 문제 {len(problems)}개"
+        self._append_install_log("system", summary)
+        for item in problems:
+            self._append_install_log(
+                "system",
+                f"⚠ 모델 처리 실패: id={item.get('id')}, state={item.get('state')}"
+                + (f", error={item.get('error')}" if item.get("error") else ""),
+            )
+        if problems:
+            raise RuntimeError(
+                f"원격 모델 {len(problems)}개를 확보하지 못했습니다: "
+                + ", ".join(str(item.get("id")) for item in problems[:5])
+            )
 
     async def start_install(self, selected_names: list[str]) -> dict[str, Any]:
         settings = ModalSettings.from_mapping(self.get_config())
@@ -3112,7 +3526,27 @@ class ModalService:
                 self._load_workflow_files,
                 plan["workflow_files"],
             )
-            assets = await self._resolve_local_workflow_assets(workflows)
+            cloud_direct = settings.model_source == MODEL_SOURCE_CLOUD_DIRECT
+            if cloud_direct:
+                # 매니페스트에 있는 모델은 워커가 저장소에서 직접 받는다.
+                # 그러나 매니페스트 **밖**의 파일(사용자가 직접 넣은 LoRA·체크포인트)은
+                # 저장소 URL이 없어 로컬이 유일한 원본이다 — 반드시 올려야 한다.
+                # 이걸 빠뜨리면 업로드도 오류도 없이 조용히 사라진다.
+                assets = await self._resolve_local_workflow_assets(
+                    workflows,
+                    allow_missing_local=True,
+                )
+                assets = await asyncio.to_thread(
+                    self._filter_manifest_provided_assets,
+                    assets,
+                )
+                self._append_install_log(
+                    "system",
+                    "모델 취득 경로: cloud_direct — 매니페스트 모델은 저장소에서 직접, "
+                    f"매니페스트 밖 로컬 파일 {assets['model_count']}개만 업로드합니다.",
+                )
+            else:
+                assets = await self._resolve_local_workflow_assets(workflows)
             plan.update(assets)
             workflow_bytes = sum(
                 Path(str(item["source_path"])).stat().st_size
@@ -3180,6 +3614,8 @@ class ModalService:
             response = json.loads(stdout)
             if not response.get("ok"):
                 raise RuntimeError(str(response.get("error") or "Modal 원격 동기화 실패"))
+            if cloud_direct:
+                await self._sync_models_direct(settings, plan["workflow_ids"])
             progress = dict(self._install_state.get("progress") or {})
             progress.update(
                 mode="complete",
@@ -3747,16 +4183,47 @@ class ModalService:
             settings,
             normalized_id,
         )
+        # 실행은 항상 Volume 의 원격 사본으로 한다. 로컬 JSON 을 고쳐도
+        # 재동기화(/api/modal/install) 전에는 반영되지 않는데, 지금까지는
+        # 아무 표시 없이 옛 사본으로 돌아 원인을 찾기 어려웠다.
+        # 그래서 실행 전에 로컬 파일 해시와 비교해 상태에 남긴다.
+        local_source = Path(plan["workflow_files"][0]["source_path"])
+        local_sha256 = ""
+        stale = False
+        try:
+            local_sha256 = await asyncio.to_thread(self._sha256_file, local_source)
+            stale = bool(local_sha256) and bool(remote_sha256) and local_sha256 != remote_sha256
+        except Exception as exc:
+            # 해시 비교는 진단용이다. 실패해도 실행을 막지 않는다.
+            print(
+                "[MODAL] 로컬 워크플로우 해시 계산 실패(동기화 비교 생략): "
+                f"path={local_source}, error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+        if stale:
+            print(
+                "[MODAL] ⚠ 원격 워크플로우가 로컬과 다릅니다 — 옛 사본으로 실행됩니다: "
+                f"workflow={normalized_id}, local_sha256={local_sha256[:12]}, "
+                f"remote_sha256={remote_sha256[:12]}. "
+                "최신 내용으로 실행하려면 워크플로우를 다시 동기화하세요."
+            )
         job_id = uuid.uuid4().hex
         now = datetime.datetime.now(datetime.timezone.utc).isoformat()
         state = {
             "job_id": job_id,
             "workflow_id": normalized_id,
-            "source_name": Path(plan["workflow_files"][0]["source_path"]).name,
+            "source_name": local_source.name,
             "remote_sha256": remote_sha256,
+            "local_sha256": local_sha256,
+            "workflow_stale": stale,
             "state": "queued",
             "phase": "queued",
-            "message": "Modal 워크플로우 실행을 준비하고 있습니다.",
+            "message": (
+                "⚠ 원격 사본이 로컬 파일과 다릅니다. 옛 사본으로 실행합니다 — "
+                "재동기화가 필요할 수 있습니다."
+                if stale
+                else "Modal 워크플로우 실행을 준비하고 있습니다."
+            ),
             "created_at": now,
             "result_available": False,
         }
@@ -3888,6 +4355,26 @@ class ModalService:
             print("[MODAL_SYNC] LoRA 결과 저장 실패: lora_load_path 설정이 비어 있습니다.")
             raise ValueError("Modal LoRA 결과를 저장할 로컬 LoRA 경로가 비어 있습니다.")
         local_root = Path(local_root_raw).resolve()
+        # 원격 artifact 의 상대 경로는 항상 이 루트 아래를 가리킨다. 종류별 경로가
+        # 밖에 있으면 저장은 성공하는데 피커가 다른 폴더를 읽는다.
+        for scoped_key in (
+            "bot_lora_load_path",
+            "instance_lora_load_path",
+            "style_lora_load_path",
+        ):
+            scoped_raw = str(config.get(scoped_key) or "").strip()
+            if not scoped_raw:
+                continue  # 비어 있으면 lora_load_path 아래로 폴백한다 — 정상이다.
+            scoped = Path(scoped_raw).resolve()
+            if scoped != local_root and local_root not in scoped.parents:
+                print(
+                    "[MODAL_SYNC] LoRA 로드 경로 불일치: "
+                    f"{scoped_key}={scoped} 가 lora_load_path={local_root} 밖입니다."
+                )
+                raise ValueError(
+                    f"{scoped_key} 는 lora_load_path 아래에 있어야 합니다: "
+                    f"{scoped} (lora_load_path={local_root})"
+                )
         local_root.mkdir(parents=True, exist_ok=True)
         stored: list[dict[str, Any]] = []
         for item in artifacts:
@@ -3983,6 +4470,7 @@ class ModalService:
         artifact_prefixes: list[str] | tuple[str, ...] | None = None,
         require_images: bool = True,
         video_job_id: str | None = None,
+        capture_input_paths: list[str] | tuple[str, ...] | None = None,
         progress_callback: Callable[[dict[str, Any]], Any] | None = None,
     ) -> dict[str, Any]:
         config = self.get_config()
@@ -3996,6 +4484,15 @@ class ModalService:
                 f"Modal 계정이 연결되지 않았습니다. profile={settings.profile}"
             )
             raise RuntimeError("Modal 계정이 연결되어 있지 않습니다.")
+        # 워커는 Linux 다. Windows 에서 작성된 워크플로우의 역슬래시 모델 경로를
+        # 그대로 보내면 ComfyUI 가 목록에 없다며 400 으로 거부한다.
+        separator_fixes = normalize_remote_model_separators(workflow)
+        if separator_fixes:
+            print(
+                "[MODAL] 원격 제출 전 모델 경로 구분자 정규화: "
+                f"{separator_fixes}건 (\\ → /)"
+            )
+
         # 모델/LoRA 동기화는 수동 install에서만 수행한다. 실행 경로에서는 로컬
         # 모델 색인 스캔과 해시 계산을 건너뛰고 입력 파일 해석만 한다.
         workflow_input_files, explicit_input_files = await asyncio.gather(
@@ -4074,7 +4571,11 @@ class ModalService:
                 "require_images": bool(require_images),
                 "defer_artifacts": deferred_artifacts,
                 "video_job_id": video_job_id,
-                "timeout_seconds": max(30, min(int(timeout_seconds), 3_300)),
+                "capture_input_paths": list(capture_input_paths or []),
+                "timeout_seconds": max(
+                    30,
+                    min(int(timeout_seconds), MAX_WORKFLOW_TIMEOUT_SECONDS),
+                ),
                 "container_start_max_retries": (
                     settings.container_start_max_retries
                 ),
@@ -4198,6 +4699,17 @@ class ModalService:
                 "deferred_artifacts": raw_artifacts if deferred_artifacts else [],
                 "video_artifacts": video_artifacts,
                 "text_outputs": list(result.get("text_outputs") or []),
+                # 워커가 Comfy input 폴더에서 회수해 온 파일. 임시 output_dir 이
+                # 이 블록을 벗어나면 사라지므로 여기서 바이트로 읽어 넘긴다.
+                "captured_inputs": [
+                    {
+                        "remote_name": str(item.get("remote_name") or ""),
+                        "bytes": Path(str(item["path"])).read_bytes(),
+                        "size": int(item.get("size") or 0),
+                        "sha256": str(item.get("sha256") or ""),
+                    }
+                    for item in (result.get("captured_inputs") or [])
+                ],
             }
 
     @staticmethod
@@ -4642,12 +5154,14 @@ class ModalService:
         *,
         timeout_seconds: int = 3_300,
         input_paths: list[str] | tuple[str, ...] | None = None,
+        capture_input_paths: list[str] | tuple[str, ...] | None = None,
         progress_callback: Callable[[dict[str, Any]], Any] | None = None,
     ) -> tuple[bytes, dict[str, Any]]:
         result = await self.run_workflow(
             workflow,
             timeout_seconds=timeout_seconds,
             input_paths=input_paths,
+            capture_input_paths=capture_input_paths,
             require_images=True,
             progress_callback=progress_callback,
         )
@@ -4661,6 +5175,7 @@ class ModalService:
             "model_sync": result.get("model_sync") or {},
             "lora_sync": result.get("lora_sync") or {},
             "content_type": first.get("content_type"),
+            "captured_inputs": list(result.get("captured_inputs") or []),
         }
 
     def _load_video_delete_outbox(self) -> list[dict[str, Any]]:
@@ -4684,9 +5199,15 @@ class ModalService:
     def _video_delete_outbox_count(self) -> int:
         return len(self._load_video_delete_outbox())
 
-    def _save_video_delete_outbox(self, items: list[dict[str, Any]]) -> None:
+    def _save_video_delete_outbox(
+        self,
+        items: list[dict[str, Any]],
+        *,
+        backup: bool = True,
+    ) -> None:
+        """영상 삭제 outbox 저장. backup=False 는 재시도 횟수만 갱신할 때 쓴다."""
         target = self._video_delete_outbox_path
-        if target.exists():
+        if backup and target.exists():
             backup_root = self.project_root / "backups" / "modal"
             backup_root.mkdir(parents=True, exist_ok=True)
             stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
@@ -4932,7 +5453,11 @@ class ModalService:
                         if self._video_delete_item_key(queued) == item_key:
                             queued["attempts"] = attempts
                             queued["last_error"] = f"{type(exc).__name__}: {exc}"
-                    await asyncio.to_thread(self._save_video_delete_outbox, current)
+                    await asyncio.to_thread(
+                        functools.partial(
+                            self._save_video_delete_outbox, current, backup=False
+                        )
+                    )
                 retry_seconds = min(60.0, 2.0 ** min(attempts, 6))
                 print(
                     "[MODAL:VIDEO] 원격 MP4 삭제 재시도 대기: "
@@ -4956,9 +5481,15 @@ class ModalService:
     def _delete_outbox_count(self) -> int:
         return len(self._load_delete_outbox())
 
-    def _save_delete_outbox(self, items: list[dict[str, Any]]) -> None:
+    def _save_delete_outbox(
+        self,
+        items: list[dict[str, Any]],
+        *,
+        backup: bool = True,
+    ) -> None:
+        """삭제 outbox 저장. backup=False 는 재시도 횟수만 갱신할 때 쓴다."""
         target = self._delete_outbox_path
-        if target.exists():
+        if backup and target.exists():
             backup_root = self.project_root / "backups" / "modal"
             backup_root.mkdir(parents=True, exist_ok=True)
             stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
@@ -5313,7 +5844,11 @@ class ModalService:
                         if queued_key == item_key:
                             queued["attempts"] = attempts
                             queued["last_error"] = f"{type(exc).__name__}: {exc}"
-                    await asyncio.to_thread(self._save_delete_outbox, current)
+                    await asyncio.to_thread(
+                        functools.partial(
+                            self._save_delete_outbox, current, backup=False
+                        )
+                    )
                 retry_seconds = min(60.0, 2.0 ** min(attempts, 6))
                 print(
                     "[MODAL_SYNC] 원격 LoRA 삭제 재시도 대기: "
