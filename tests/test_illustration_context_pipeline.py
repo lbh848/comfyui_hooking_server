@@ -9104,28 +9104,125 @@ async def test_call2_global_fallback_starts_at_exactly_one_third_failure(monkeyp
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("placeholder", ["empty", "(empty)"])
-async def test_subtitle_empty_placeholder_becomes_intentional_silence(
-    monkeypatch,
-    placeholder,
+@pytest.mark.parametrize("call_name", ["CALL3", "CALL3-SUBTITLE"])
+@pytest.mark.parametrize("invalid_line", [
+    "(비어 있음)",
+    "(표시할 대사가 없습니다)",
+    "empty",
+    "(empty)",
+    "대사 없음",
+    "(생각: 조금 더 기다리자.)",
+    '"이름 없는 대사"',
+    ': "화자 누락"',
+    'Hana:',
+    'Hana: ""',
+])
+async def test_call3_unnamed_or_empty_dialogue_becomes_silent_without_correction(
+    monkeypatch, capsys, call_name, invalid_line,
 ):
-    async def fake_pipeline_call(*args, **kwargs):
-        return f"[Scene slot=4]\n{placeholder}"
+    calls = []
+    original = f"[Scene slot=4]\n{invalid_line}"
+
+    async def fake_pipeline_call(name, *args, **kwargs):
+        calls.append(name)
+        return original
 
     monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
     state = await pipeline._build_call3_dialogue_with_recovery(
-        [{"role": "system", "content": "Write subtitle dialogue."}],
+        [{"role": "system", "content": "Write character dialogue."}],
         [4],
         "Hana",
         "한국어",
-        call_name="CALL3-SUBTITLE",
-        correction_call_name="CALL3-SUBTITLE-CORRECTION",
+        call_name=call_name,
+        correction_call_name=f"{call_name}-CORRECTION",
     )
 
+    assert calls == [call_name]
+    assert state["initial_output"] == original
     assert state["output"] == "[Scene slot=4]"
     assert state["correction_used"] is False
     assert state["silent_slots"] == [4]
     assert pipeline.parse_speak_output(state["output"]) == {}
+    log = capsys.readouterr().out
+    assert "이름: 대사/생각 형식이 아닌 줄 무시" in log
+    assert invalid_line in log
+
+
+@pytest.mark.parametrize("dialogue, speaker, body, kind", [
+    ('Hiyori: "비어 있음"', "Hiyori", "비어 있음", "speech"),
+    ('Kai: (아무것도 없군.)', "Kai", "아무것도 없군.", "thought"),
+    ('민수: “잠깐만요.” #whisper', "민수", "잠깐만요.", "speech"),
+    ('Guest Speaker: "The sign says: empty."', "Guest Speaker", "The sign says: empty.", "speech"),
+    ('Ren: (여기서 기다리자.) #thought_cloud', "Ren", "여기서 기다리자.", "thought"),
+])
+def test_call3_preserves_named_dialogue_and_renderer_meaning(dialogue, speaker, body, kind):
+    source = f"[Scene slot=8] {dialogue}\n"
+    assert pipeline.normalize_call3_dialogue_output(source) == source
+    parsed = pipeline.parse_speak_output(source)
+    assert parsed == {8: dialogue}
+    segments = pipeline.postprocess.parse_speak(parsed[8], strip_emotion=True)
+    assert [(item["speaker"], item["text"], item["type"]) for item in segments] == [
+        (speaker, body, kind),
+    ]
+
+
+def test_call3_ignores_unnamed_header_tails_before_counting_dialogue_entries():
+    source = '''[Scene slot=3] (비어 있음)
+이 장면에는 자막이 없습니다.
+Alice: "First"
+(잠시 망설인다.)
+Bob: "Second"
+Alice: "Third"
+[Scene slot=4] (이름 없는 독백)'''
+    assert pipeline.parse_speak_output(source, max_entries_per_scene=2) == {
+        3: 'Alice: "First"\nBob: "Second"',
+    }
+
+
+def test_call3_partial_recovery_discards_unnamed_lines_and_preserves_scene_headers():
+    recovered, metadata = pipeline.recover_call3_partial_output(
+        '''[Scene slot=4] (비어 있음)
+[Scene slot=7]
+(대사 없음)
+Mina: (여기서 기다리자.) #thought_cloud''',
+        [4, 7, 11],
+        "Mina",
+        "한국어",
+    )
+    assert recovered == '''[Scene slot=4]
+
+[Scene slot=7]
+Mina: (여기서 기다리자.) #thought_cloud
+
+[Scene slot=11]'''
+    assert metadata["silent_slots"] == [4, 11]
+    assert metadata["populated_slots"] == [7]
+
+
+@pytest.mark.asyncio
+async def test_call3_correction_also_ignores_unnamed_dialogue(monkeypatch):
+    calls = []
+
+    async def fake_pipeline_call(call_name, messages, stream_notify=None, **kwargs):
+        calls.append(call_name)
+        if call_name == "CALL3-SUBTITLE":
+            return '[Scene slot=4]\nNora: "기다려."'
+        result = '[Scene slot=7] (표시할 대사가 없습니다)'
+        assert kwargs["result_validator"](result) == (True, "")
+        return result
+
+    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
+    state = await pipeline._build_call3_dialogue_with_recovery(
+        [{"role": "user", "content": "selected scenes"}],
+        [4, 7],
+        "Nora",
+        "한국어",
+        call_name="CALL3-SUBTITLE",
+        correction_call_name="CALL3-SUBTITLE-CORRECTION",
+    )
+    assert calls == ["CALL3-SUBTITLE", "CALL3-SUBTITLE-CORRECTION"]
+    assert state["output"] == '[Scene slot=4]\nNora: "기다려."\n\n[Scene slot=7]'
+    assert state["silent_slots"] == [7]
 
 
 @pytest.mark.asyncio

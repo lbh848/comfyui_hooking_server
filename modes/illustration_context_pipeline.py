@@ -8368,40 +8368,38 @@ def sanitize_descriptor_slots(descriptors: list[dict], target_slotted: str) -> l
     return normalized
 
 
-_CALL3_EMPTY_BODY_PLACEHOLDERS = {"empty", "(empty)", "none", "null", "nil"}
-
-
-def normalize_call3_empty_placeholders(text: str) -> str:
-    """Turn exact placeholder-only Scene bodies into intentional silence."""
+def normalize_call3_dialogue_output(text: str) -> str:
+    """Keep Scene headers and named speech/thought entries the renderer can read."""
     output_lines: list[str] = []
     current_slot: int | None = None
-    removed: list[tuple[int, str]] = []
+    removed: list[tuple[int | None, str]] = []
     for raw_line in str(text or "").splitlines():
-        header = re.match(
-            r"(?i)^(?P<prefix>\s*\[Scene\s+slot\s*=\s*(?P<slot>-?\d+)\])"
-            r"(?P<spacing>\s*)(?P<tail>.*)$",
-            raw_line,
-        )
+        header = _CALL3_SCENE_ENTRY_RE.match(raw_line)
         if header:
             current_slot = int(header.group("slot"))
-            tail = header.group("tail").strip()
-            if tail.casefold() in _CALL3_EMPTY_BODY_PLACEHOLDERS:
-                removed.append((current_slot, tail))
-                output_lines.append(header.group("prefix"))
-            else:
-                output_lines.append(raw_line)
+            entry_text = header.group("tail").strip()
+        else:
+            entry_text = raw_line.strip()
+        if not entry_text:
+            output_lines.append(raw_line)
             continue
-        stripped = raw_line.strip()
-        if (
-            current_slot is not None
-            and stripped.casefold() in _CALL3_EMPTY_BODY_PLACEHOLDERS
+
+        segments = postprocess.parse_speak(entry_text, strip_emotion=True)
+        if current_slot is not None and segments and all(
+            str(segment.get("speaker") or "").strip()
+            and str(segment.get("text") or "").strip()
+            for segment in segments
         ):
-            removed.append((current_slot, stripped))
+            output_lines.append(raw_line)
             continue
-        output_lines.append(raw_line)
+
+        removed.append((current_slot, entry_text))
+        if header:
+            output_lines.append(header.group("header"))
     if removed:
         print(
-            "[ILLUST_CONTEXT:CALL3] 빈 대사 placeholder를 무대사로 정규화: "
+            "[ILLUST_CONTEXT:CALL3] 이름: 대사/생각 형식이 아닌 줄 무시 "
+            "(Scene 또는 발화자/본문 누락): "
             f"removed={removed}"
         )
     normalized = "\n".join(output_lines)
@@ -8415,7 +8413,7 @@ def parse_speak_output(text: str, max_entries_per_scene: int | None = None) -> d
     result: dict[int, list[str]] = {}
     current = None
     dropped: dict[int, int] = {}
-    for line in normalize_call3_empty_placeholders(text).splitlines():
+    for line in normalize_call3_dialogue_output(text).splitlines():
         match = re.match(r"\s*\[Scene\s+slot\s*=\s*(-?\d+)\]\s*(.*)", line, re.I)
         if match:
             current = int(match.group(1))
@@ -8748,7 +8746,7 @@ def recover_call3_partial_output(
     유출된 경우에는 기존 엔트리 단위 제거기를 적용한다.
     """
     expected = list(dict.fromkeys(int(slot) for slot in expected_slots))
-    source = str(text or "")
+    source = normalize_call3_dialogue_output(text)
     removed_entries = []
     if (
         source
@@ -9391,7 +9389,7 @@ async def _build_call3_dialogue_with_recovery(
         return state
 
     state["initial_output"] = initial_output
-    normalized_initial_output = normalize_call3_empty_placeholders(initial_output)
+    normalized_initial_output = normalize_call3_dialogue_output(initial_output)
     call3_valid, call3_failure_reason = validate_call3_output_contract(
         normalized_initial_output,
         selected_slots,
@@ -9505,13 +9503,13 @@ async def _build_call3_dialogue_with_recovery(
             _normalize_messages(retry_messages),
             stream_notify,
             result_validator=lambda result: validate_call3_output_contract(
-                normalize_call3_empty_placeholders(result),
+                normalize_call3_dialogue_output(result),
                 repair_slots,
                 character_names,
                 speak_language,
             ),
         )
-        corrected_output = normalize_call3_empty_placeholders(corrected_output)
+        corrected_output = normalize_call3_dialogue_output(corrected_output)
         merged_output = _merge_call3_slot_repairs(
             baseline_output,
             corrected_output,
