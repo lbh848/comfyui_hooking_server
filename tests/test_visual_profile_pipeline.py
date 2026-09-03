@@ -139,6 +139,11 @@ def test_character_and_profile_prompts_are_separated_before_compact_call1_contra
     assert "does not by itself establish that the resulting profile transition completed" in profile_prompt
     assert "not-yet-completed transition preserves the prior active profile" in profile_prompt
     assert "Damage, removal, or alteration of an outfit" in profile_prompt
+    assert "Treat ordinary wardrobe changes as state layered over the active profile" in profile_prompt
+    assert "completed entry into or release of a registered visual form" in profile_prompt
+    assert "do not reduce it to wardrobe merely because clothing participates" in profile_prompt
+    assert "Do not infer a transition from garment motion alone" in profile_prompt
+    assert "does not, by itself, negate an otherwise completed visible release" in profile_prompt
     assert 'such as "wearing [2]" inside candidate `[2]`' in profile_prompt
     assert "Do not choose the nearest special profile" in profile_prompt
     assert "actual CURRENT wording" in profile_prompt
