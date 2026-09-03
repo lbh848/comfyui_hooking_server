@@ -33116,6 +33116,7 @@
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({
+                        _origin: 'saveVideoGenerationDefaults',
                         video_generation_defaults: collected.defaults,
                         video_secondary_motion: collected.secondaryMotion,
                     }),
@@ -34022,7 +34023,7 @@
                 const result = await fetchJSON('/api/config', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({video_postprocess: videoPostprocess}),
+                    body: JSON.stringify({_origin: 'saveVideoPostprocessWorkerCount', video_postprocess: videoPostprocess}),
                 });
                 if (!result?.success || !result.config) {
                     throw new Error(result?.error || '설정 저장 응답이 올바르지 않습니다.');
@@ -37216,6 +37217,7 @@
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
+                        _origin: 'videoEngineSaveRuntimeSettings',
                         video_engine_port: port,
                         video_engine_project_path: projectPath,
                         video_engine_auto_start: autoStart,
@@ -40728,7 +40730,15 @@
         }
 
         // ─── 설정 모달 ───
-        async function openSettingsModal() {
+        // Form이 실제 설정값으로 채워졌는지 여부를 확인합니다.
+        // saveSettings()는 DOM 전체를 읽어오기 때문에, Form이 초기화되기 전에 저장하면
+        // Workflow 경로, comfy_task_allocations 등 수십 개의 키가 HTML 기본값으로 덮어씌워져
+        // 기존 설정이 유실될 수 있습니다.
+        let settingsFormPopulated = false;
+
+        // Modal을 열지 않고 저장하는 경우(예: Modal Runtime의 '설정 저장·적용')를 대비해,
+        // 저장 전 반드시 Form을 현재 값으로 채우도록 처리합니다.
+        async function populateSettingsForm() {
             // 현재 설정 로드
             try {
                 currentConfig = await loadCurrentConfig(true);
@@ -41127,6 +41137,11 @@
                 || stripManagedLoraPath(styleLoraLoadPath);
             document.getElementById('setting-lora-load-path').value = basePath || loraLoadPath;
 
+            settingsFormPopulated = true;
+        }
+
+        async function openSettingsModal() {
+            await populateSettingsForm();
             document.getElementById('settings-modal').classList.add('visible');
             // 큐 우선순위 리스트 렌더링
             renderQueueTypeList();
@@ -42309,6 +42324,12 @@
         }
 
         async function saveSettings() {
+            // Form이 채워지지 않은 상태로 저장하면 HTML 기본값이 저장됩니다.
+            // Modal을 열지 않고 저장하는 경로가 실제로 존재하므로, 저장 전 Form을 채웁니다.
+            if (!settingsFormPopulated) {
+                console.warn('[SETTINGS] Form이 채워지지 않은 상태에서 저장이 요청되었습니다. 현재 설정으로 Form을 먼저 채웁니다.');
+                await populateSettingsForm();
+            }
             persistIllustrationWorkflowPaths();
             for (const slot of LLM_SLOTS) {
                 const suffix = llmSlotSuffix(slot);
@@ -42363,6 +42384,7 @@
                 return false;
             }
             const config = {
+                _origin: 'saveSettings',
                 data_saving_mode: currentConfig.data_saving_mode || false,
                 memo_enabled: document.getElementById('setting-memo-enabled').checked,
                 comfyui_port: parseInt(document.getElementById('setting-comfyui-port').value) || 8188,
@@ -64047,7 +64069,7 @@
                 const resp = await fetch('/api/config', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({debug_mode_enabled: checked})
+                    body: JSON.stringify({_origin: 'onDebugModeToggle', debug_mode_enabled: checked})
                 });
                 if (!resp.ok) {
                     document.getElementById('debug-mode-toggle').checked = !checked;
@@ -64082,7 +64104,7 @@
                 const resp = await fetch('/api/config', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({postprocess_enabled: checked})
+                    body: JSON.stringify({_origin: 'onPostprocessToggle', postprocess_enabled: checked})
                 });
                 if (!resp.ok) {
                     const txt = await resp.text().catch(() => '');
@@ -66040,7 +66062,7 @@
                 await fetch('/api/config', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({bot_selected: botCurrentBot || ''})
+                    body: JSON.stringify({_origin: 'saveBotSelected', bot_selected: botCurrentBot || ''})
                 });
             } catch (e) {
                 console.error('[BOT] 선택 봇 저장 실패:', e);
@@ -86216,7 +86238,7 @@
                 const result = await fetchJSON('/api/config', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({video_postprocess: videoPostprocess}),
+                    body: JSON.stringify({_origin: 'saveNmVideoPostprocessSettings', video_postprocess: videoPostprocess}),
                 });
                 if (!result?.success || !result.config) {
                     console.error('[ASSET_EXPORT_VIDEO_UI] 전역 설정 저장 응답 오류:', result);

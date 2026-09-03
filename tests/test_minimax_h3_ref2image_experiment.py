@@ -9,6 +9,13 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 EXPERIMENT_DIR = ROOT / "experiments" / "minimax_h3_ref2image"
 MODULE_PATH = EXPERIMENT_DIR / "run_probe.py"
+# 실험 산출물은 로컬 전용으로 이관되어(17cbe82) 저장소에 없다. 없으면
+# 수집 단계에서 죽어 스위트 전체가 중단되므로 모듈 단위로 건너뛴다.
+if not MODULE_PATH.is_file():
+    pytest.skip(
+        f"실험 산출물이 없습니다: {MODULE_PATH}",
+        allow_module_level=True,
+    )
 SPEC = importlib.util.spec_from_file_location("minimax_h3_ref2image_probe", MODULE_PATH)
 assert SPEC is not None and SPEC.loader is not None
 MODULE = importlib.util.module_from_spec(SPEC)

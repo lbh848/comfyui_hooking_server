@@ -541,6 +541,10 @@ async def test_llm_test_endpoint_surfaces_stream_and_single_failures(monkeypatch
                 "stream": False,
             },
         )
+        # 본문은 반드시 블록 안에서 읽는다. SSE 응답은 완전히 버퍼링되지
+        # 않아, 서버와 ClientSession 이 닫힌 뒤에 읽으면
+        # "Connection closed" 로 간헐 실패한다.
+        single_body = await single_response.text()
         stream_response = await client.post(
             f"{base_url}/api/llm/test_stream",
             json={
@@ -549,9 +553,10 @@ async def test_llm_test_endpoint_surfaces_stream_and_single_failures(monkeypatch
                 "stream": True,
             },
         )
+        stream_body = await stream_response.text()
 
-    single_events = _parse_sse(await single_response.text())
-    stream_events = _parse_sse(await stream_response.text())
+    single_events = _parse_sse(single_body)
+    stream_events = _parse_sse(stream_body)
     assert single_events[-1] == (
         "error",
         {"error": "[LLM 실패] provider single body"},

@@ -574,9 +574,13 @@ class QwenEditMode:
         params["mask_path"] = f"{QWEN_EDIT_INPUT_SUBDIR}/{safe_job_id}"
         return qwen_root
 
-    def cleanup_staged_request(self, params: dict) -> None:
+    def cleanup_staged_request(self, params: dict, config: dict | None = None) -> None:
         job_id = str((params or {}).get("job_id") or "")
         removed = self._pending_inputs.pop(job_id, None) if job_id else None
+        # 디스크 스테이징도 함께 지운다. 예전에는 메모리 dict 만 비워서
+        # comfy/input/qwen_edit/<job> 이 남았고, 다음 실행의 _reset_shared_input_dir
+        # 가 지울 때까지 직전 1건이 계속 디스크에 있었다.
+        self._cleanup_staged_dir(job_id, config)
         if removed is None:
             print(
                 "[QWEN_EDIT] 큐 메모리 입력 정리 스킵: 항목 없음 "
@@ -588,6 +592,47 @@ class QwenEditMode:
             f"job={job_id}, source_bytes={len(removed.get('source', b''))}, "
             f"mask_bytes={len(removed.get('mask', b''))}"
         )
+
+    def _cleanup_staged_dir(self, job_id: str, config: dict | None) -> None:
+        """작업별 입력 폴더를 지운다. 정리 실패가 작업 실패가 되면 안 된다."""
+
+        if not job_id or not isinstance(config, dict):
+            return
+        safe_job_id = "".join(
+            char for char in job_id if char.isalnum() or char in ("-", "_")
+        )
+        if not safe_job_id:
+            return
+        configured = str(config.get("comfy_input_dir") or "").strip()
+        if not configured:
+            return
+        try:
+            comfy_input_dir = os.path.realpath(configured)
+            if not os.path.isdir(comfy_input_dir):
+                return
+            target = os.path.realpath(
+                os.path.join(comfy_input_dir, QWEN_EDIT_INPUT_SUBDIR, safe_job_id)
+            )
+            # 배치 때와 같은 경로 검증을 다시 한다 — 지우는 쪽이 더 위험하다.
+            if (
+                os.path.commonpath((comfy_input_dir, target)) != comfy_input_dir
+                or os.path.basename(os.path.dirname(target)) != QWEN_EDIT_INPUT_SUBDIR
+                or os.path.basename(target) != safe_job_id
+            ):
+                print(
+                    "[QWEN_EDIT] 스테이징 정리 경로 거부: "
+                    f"input={comfy_input_dir!r}, target={target!r}"
+                )
+                return
+            if os.path.isdir(target) and not os.path.islink(target):
+                shutil.rmtree(target)
+                print(f"[QWEN_EDIT] 스테이징 폴더 정리 완료: job={job_id}, path={target!r}")
+        except Exception as exc:
+            print(
+                "[QWEN_EDIT] 스테이징 폴더 정리 실패(무시): "
+                f"job={job_id}, error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
 
     async def _notify(self, event_type: str, data: dict):
         if not callable(self.notify_frontend_func):

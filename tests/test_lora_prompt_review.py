@@ -391,8 +391,8 @@ def test_backend_registers_default_route_detail_and_queue_order():
     assert LLM_QUEUE_PRIORITY_TYPES.index("lora_prompt_review") == (
         LLM_QUEUE_PRIORITY_TYPES.index("instance_lora_prompt_refine") + 1
     )
-    assert server.DEFAULT_CONFIG["llm_queue_type_order"]["instance_lora_prompt_refine"] == 11
-    assert server.DEFAULT_CONFIG["llm_queue_type_order"]["lora_prompt_review"] == 12
+    assert server.DEFAULT_CONFIG["llm_queue_type_order"]["instance_lora_prompt_refine"] == 12
+    assert server.DEFAULT_CONFIG["llm_queue_type_order"]["lora_prompt_review"] == 13
 
     # 업데이트 전의 완전한 LLM 순서 설정에는 새 검수 타입만 없다. 로드시 맨 끝이
     # 아니라 1차 정제 직후에 자동 삽입되어야 한다.
@@ -408,8 +408,8 @@ def test_backend_registers_default_route_detail_and_queue_order():
         }
     )
     assert list(migrated_llm_order) == list(LLM_QUEUE_PRIORITY_TYPES)
-    assert migrated_llm_order["instance_lora_prompt_refine"] == 11
-    assert migrated_llm_order["lora_prompt_review"] == 12
+    assert migrated_llm_order["instance_lora_prompt_refine"] == 12
+    assert migrated_llm_order["lora_prompt_review"] == 13
     server_source = Path("server.py").read_text(encoding="utf-8")
     assert '"instance_lora_prompt_refine", "lora_prompt_review"' in server_source
 

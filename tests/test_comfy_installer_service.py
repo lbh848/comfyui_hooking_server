@@ -1055,6 +1055,9 @@ def test_manifest_has_fully_pinned_windows_runtime_and_assets() -> None:
     assert manifest.python["version"] == "3.12.11"
     assert manifest.python["compatibility_packages"] == [
         "numpy==1.26.4",
+        # onnx(>=insightface 의존) 가 ml_dtypes>=0.5.4 를 요구하는데, 상한이 없으면
+        # 리졸버가 0.6.0 을 골라 numpy>=2.0.0 을 선언해 위 numpy 고정과 충돌한다.
+        # 0.5.4 는 py3.12 에서 numpy>=1.26.0 만 요구해 둘을 동시에 만족한다.
         "ml-dtypes==0.5.4",
         "scipy==1.14.1",
         "tifffile==2024.9.20",

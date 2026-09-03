@@ -2,6 +2,8 @@ import json
 import re
 from pathlib import Path
 
+import pytest
+
 from queue_manager import GPU_QUEUE_PRIORITY_TYPES, LLM_QUEUE_PRIORITY_TYPES
 
 
@@ -195,7 +197,12 @@ def test_queue_priority_controls_move_multi_type_groups_as_one_unit():
 
 
 def test_checked_in_config_has_complete_separate_priority_maps():
-    config = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
+    # config.json 은 더 이상 추적되지 않는다(aa41682 "config 덮어씌워짐 방지").
+    # 새로 받은 체크아웃에는 아예 없으므로, 없으면 실패가 아니라 건너뛴다.
+    config_path = ROOT / "config.json"
+    if not config_path.is_file():
+        pytest.skip(f"로컬 config.json 이 없습니다: {config_path}")
+    config = json.loads(config_path.read_text(encoding="utf-8"))
     gpu_order = config["queue_type_order"]
     llm_order = config["llm_queue_type_order"]
 
