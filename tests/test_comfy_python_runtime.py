@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
 from threading import Event
@@ -19,6 +20,22 @@ from comfy_installer.python_runtime import (
     ensure_managed_python,
     repair_relocated_managed_venv,
 )
+
+
+# uv 가 만드는 배치는 OS 마다 다르다. Windows 만 적어 두면 그 외 OS 에서는
+# 프로덕션의 인터프리터 탐색이 한 번도 시험되지 않는다.
+MANAGED_TAG = "windows-x86_64" if os.name == "nt" else "macos-aarch64"
+
+
+def _managed_python(install_root: Path) -> Path:
+    base = install_root / f"cpython-3.12.11-{MANAGED_TAG}-none"
+    return base / "python.exe" if os.name == "nt" else base / "bin" / "python"
+
+
+def _venv_python(venv_root: Path) -> Path:
+    if os.name == "nt":
+        return venv_root / "Scripts" / "python.exe"
+    return venv_root / "bin" / "python"
 
 
 def test_manager_bootstrap_installs_missing_system_git_before_uv_sync() -> None:
@@ -48,7 +65,7 @@ def test_managed_python_install_is_forced_into_comfy_directory(
         commands.append(command)
         if command[:3] == ["uv", "python", "install"]:
             install_root = Path(command[command.index("--install-dir") + 1])
-            python = install_root / "cpython-3.12.11-windows-x86_64-none" / "python.exe"
+            python = _managed_python(install_root)
             python.parent.mkdir(parents=True)
             python.write_bytes(b"python")
             return ["installed"]
@@ -94,12 +111,7 @@ def test_create_venv_uses_explicit_managed_python_and_relocatable_mode(
 ) -> None:
     comfy_root = tmp_path / "comfy"
     comfy_root.mkdir()
-    managed_python = (
-        comfy_root
-        / ".python-runtime"
-        / "cpython-3.12.11-windows-x86_64-none"
-        / "python.exe"
-    )
+    managed_python = _managed_python(comfy_root / ".python-runtime")
     managed_python.parent.mkdir(parents=True)
     managed_python.write_bytes(b"python")
     commands: list[list[str]] = []
@@ -114,7 +126,7 @@ def test_create_venv_uses_explicit_managed_python_and_relocatable_mode(
         commands.append(command)
         if command[:2] == ["uv", "venv"]:
             venv_root = Path(command[2])
-            python = venv_root / "Scripts" / "python.exe"
+            python = _venv_python(venv_root)
             python.parent.mkdir(parents=True)
             python.write_bytes(b"venv-python")
             (venv_root / "pyvenv.cfg").write_text(
@@ -140,7 +152,7 @@ def test_create_venv_uses_explicit_managed_python_and_relocatable_mode(
     assert command[:2] == ["uv", "venv"]
     assert command[command.index("--python") + 1] == str(managed_python.resolve())
     assert "--relocatable" in command
-    assert python == comfy_root / ".venv" / "Scripts" / "python.exe"
+    assert python == _venv_python(comfy_root / ".venv")
     config = runtime_module.read_pyvenv_config(comfy_root / ".venv" / "pyvenv.cfg")
     assert config[MANAGED_PYTHON_MARKER] == managed_python.relative_to(comfy_root).as_posix()
     assert config["home"] == str(managed_python.parent.resolve())
@@ -151,7 +163,7 @@ def test_existing_external_venv_is_rejected_without_legacy_migration(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     comfy_root = tmp_path / "comfy"
-    venv_python = comfy_root / ".venv" / "Scripts" / "python.exe"
+    venv_python = _venv_python(comfy_root / ".venv")
     venv_python.parent.mkdir(parents=True)
     venv_python.write_bytes(b"venv-python")
     (comfy_root / ".venv" / "pyvenv.cfg").write_text(
@@ -159,12 +171,7 @@ def test_existing_external_venv_is_rejected_without_legacy_migration(
         "version_info = 3.12.11\n",
         encoding="utf-8",
     )
-    managed_python = (
-        comfy_root
-        / ".python-runtime"
-        / "cpython-3.12.11-windows-x86_64-none"
-        / "python.exe"
-    )
+    managed_python = _managed_python(comfy_root / ".python-runtime")
     managed_python.parent.mkdir(parents=True)
     managed_python.write_bytes(b"python")
     monkeypatch.setattr(
@@ -188,15 +195,10 @@ def test_repair_relocated_venv_uses_relative_marker_and_backs_up(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     comfy_root = tmp_path / "moved" / "comfy"
-    managed_python = (
-        comfy_root
-        / ".python-runtime"
-        / "cpython-3.12.11-windows-x86_64-none"
-        / "python.exe"
-    )
+    managed_python = _managed_python(comfy_root / ".python-runtime")
     managed_python.parent.mkdir(parents=True)
     managed_python.write_bytes(b"python")
-    venv_python = comfy_root / ".venv" / "Scripts" / "python.exe"
+    venv_python = _venv_python(comfy_root / ".venv")
     venv_python.parent.mkdir(parents=True)
     venv_python.write_bytes(b"venv-python")
     marker = managed_python.relative_to(comfy_root).as_posix()

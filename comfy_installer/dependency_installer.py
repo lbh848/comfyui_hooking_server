@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import platform
 import traceback
 from pathlib import Path
 from threading import Event
@@ -49,6 +50,13 @@ def _uv_pip(
         log=log,
         timeout=timeout,
     )
+
+
+def _wheel_matches_platform(wheel: dict) -> bool:
+    declared = wheel.get("platforms")
+    if not declared:
+        return True
+    return platform.system() in {str(value) for value in declared}
 
 
 def create_comfy_venv(
@@ -198,6 +206,13 @@ def install_python_dependencies(
         wheel_cache.mkdir(parents=True, exist_ok=True)
         preinstalled: list[str] = []
         for wheel in python_manifest.get("preinstall_wheels", []):
+            if not _wheel_matches_platform(wheel):
+                if log:
+                    log(
+                        "[Python] 다른 플랫폼 대상이라 사전 휠을 건너뜁니다: "
+                        f"{wheel.get('filename')}"
+                    )
+                continue
             wheel_path = wheel_cache / str(wheel["filename"])
             downloader.download(
                 url=str(wheel["url"]),
@@ -461,25 +476,17 @@ def install_node_dependencies(
         ) from exc
 
 
-def verify_isolated_runtime(
+def runtime_probe_script(
     *,
-    comfy_root: Path,
-    python: Path,
-    gpu_profile: dict,
-    cancel_event: Event,
-    log: LogCallback | None,
-) -> dict:
-    requires_nvidia = gpu_profile.get("kind") == "nvidia"
-    requires_sageattention = bool(
-        gpu_profile.get(
-            "sageattention_required",
-            requires_nvidia and gpu_profile.get("sageattention"),
-        )
-    )
-    requires_triton = bool(gpu_profile.get("triton_package"))
-    probe_script = "\n".join(
+    requires_nvidia: bool,
+    requires_triton: bool,
+    requires_sageattention: bool,
+) -> str:
+    """독립 환경 검증 프로브 스크립트."""
+
+    return "\n".join(
         (
-            "import json,site,sys,traceback,torch,numpy,cv2,onnxruntime,insightface",
+            "import json,os,site,sys,traceback,torch,numpy,cv2,onnxruntime,insightface",
             f"requires_nvidia={requires_nvidia!r}",
             f"requires_triton={requires_triton!r}",
             f"requires_sageattention={requires_sageattention!r}",
@@ -528,7 +535,36 @@ def verify_isolated_runtime(
             "else:",
             "    result['gpu_acceleration_validation']='skipped: CPU profile'",
             "print(json.dumps(result,ensure_ascii=False))",
+            # onnxruntime 텔레메트리 스레드가 업로드 중인 채로 인터프리터 종료와
+            # 겹치면 SIGSEGV 가 난다. 정리할 상태가 없는 일회성 프로브라 종료
+            # 경로를 건너뛴다 — 진짜 문제는 여기 오기 전에 예외로 드러난다.
+            "sys.stdout.flush()",
+            "sys.stderr.flush()",
+            "os._exit(0)",
         )
+    )
+
+
+def verify_isolated_runtime(
+    *,
+    comfy_root: Path,
+    python: Path,
+    gpu_profile: dict,
+    cancel_event: Event,
+    log: LogCallback | None,
+) -> dict:
+    requires_nvidia = gpu_profile.get("kind") == "nvidia"
+    requires_sageattention = bool(
+        gpu_profile.get(
+            "sageattention_required",
+            requires_nvidia and gpu_profile.get("sageattention"),
+        )
+    )
+    requires_triton = bool(gpu_profile.get("triton_package"))
+    probe_script = runtime_probe_script(
+        requires_nvidia=requires_nvidia,
+        requires_triton=requires_triton,
+        requires_sageattention=requires_sageattention,
     )
     try:
         lines = run_command(

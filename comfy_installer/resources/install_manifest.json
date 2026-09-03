@@ -21,6 +21,7 @@
         "id": "insightface-0.7.3-win-py312",
         "url": "https://raw.githubusercontent.com/Gourieff/Assets/606558ed08f16b99a29ef30b0df0b4622164c524/Insightface/insightface-0.7.3-cp312-cp312-win_amd64.whl",
         "filename": "insightface-0.7.3-cp312-cp312-win_amd64.whl",
+        "platforms": ["Windows"],
         "size": 872768,
         "sha256": "4e58a504433ba5a500d48328689e7d6c69873165653ded7553ce804beb8723db"
       }
