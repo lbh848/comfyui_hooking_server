@@ -25,7 +25,11 @@ def installed_providers():
 
 
 def auto_device_key():
-    """자동 장치 우선순위: CUDA > DirectML > CPU."""
+    """자동 장치 우선순위: CUDA > DirectML > CPU.
+
+    CoreML 은 자동 선택에 넣지 않는다. 미지원 연산 폴백과 FP16 수치 차이가 있어
+    기존 결과가 조용히 달라질 수 있으므로 UI 에서 명시적으로 고를 때만 쓴다.
+    """
     providers = installed_providers()
     if "CUDAExecutionProvider" in providers:
         return "cuda0"
@@ -52,6 +56,12 @@ def list_devices():
             "key": "dml0",
             "label": "DirectML · GPU (Windows)",
             "provider": "DmlExecutionProvider",
+        })
+    if "CoreMLExecutionProvider" in providers:
+        devices.append({
+            "key": "coreml0",
+            "label": "CoreML · GPU/ANE (macOS)",
+            "provider": "CoreMLExecutionProvider",
         })
     return devices
 
@@ -130,6 +140,9 @@ def providers_for(device_key):
             print(f"[ONNX_EXECUTION] DirectML 장치 번호 변환 실패({key!r}), device_id=0 사용")
             device_id = 0
         return [("DmlExecutionProvider", {"device_id": device_id})]
+    if key.startswith("coreml"):
+        # CoreML EP 가 처리하지 못하는 연산은 CPU 로 떨어져야 하므로 CPU 를 함께 둔다.
+        return ["CoreMLExecutionProvider", "CPUExecutionProvider"]
     print(f"[ONNX_EXECUTION] 알 수 없는 장치 키({key!r}), CPU 사용")
     return ["CPUExecutionProvider"]
 
@@ -144,14 +157,21 @@ def session_cache_key(model_path, device_key=AUTO_DEVICE, cpu_threads=0):
 
 
 def session_uses_gpu(session):
-    """실제 세션 provider 목록에 CUDA 또는 DirectML이 있는지 확인한다."""
+    """실제 세션 provider 목록에 CUDA/DirectML/CoreML 가속기가 있는지 확인한다."""
     try:
         providers = set(session.get_providers())
     except Exception as e:
         print(f"[ONNX_EXECUTION] 활성 provider 조회 실패: {e}")
         traceback.print_exc()
         return False
-    return bool({"CUDAExecutionProvider", "DmlExecutionProvider"} & providers)
+    return bool(
+        {
+            "CUDAExecutionProvider",
+            "DmlExecutionProvider",
+            "CoreMLExecutionProvider",
+        }
+        & providers
+    )
 
 
 def cache_session(cache, key, session, *, log_prefix="ONNX", max_entries=4):
