@@ -1709,6 +1709,9 @@ async def test_independent_call2_keyvis_returns_one_object_and_rejects_scenes(mo
     assert "# Independent promotional Key Visual task" in combined
     assert "# ASSIGNED GLOBAL SCENE PLAN" not in combined
     assert "Output exactly one keyvis object and no scene objects" in combined
+    assert "keep one minimal fragment anchor exactly once in scene" in combined
+    assert "never copy the partner's body, pose, or action into a named character positive" in combined
+    assert "Use a contact-point close-up for anything broader than hands or forearms" in combined
 
     leaked_scene_output = keyvis_output.replace(
         "scenes: []",
@@ -3157,13 +3160,13 @@ def test_call2_macro_render_has_no_risu_macros():
     )
 
     assert "{{" not in rendered
-    assert "Limit characters to max 2" in rendered
+    assert "Limit identifiable characters to max 2" in rendered
     assert "### hana" in rendered
     assert 'focus on the character(s): "hana"' in rendered
     assert "Prefer cinematic lighting." in rendered
-    assert "Count, group, and focus tags" in rendered
+    assert "Emit count and focus tags exactly once" in rendered
     assert "belong only in `scene`" in rendered
-    assert "keep exactly one visible head and one visible face" in rendered
+    assert "show at most one visible face" in rendered
     assert "Choose exactly one head orientation and one eye direction" in rendered
     assert "positive: 1girl" not in rendered
 
@@ -3328,7 +3331,8 @@ async def test_call2_authority_audit_is_limited_to_character_authority(
     assert "camera_replacement" not in combined
     assert "scene_additions" not in combined
     assert "Do not rewrite the scene, camera, composition, dialogue" in combined
-    assert "Audit only fixed physical appearance" in combined
+    assert "Audit fixed physical appearance and per-image visibility" in combined
+    assert "visibility_omissions" in combined
     assert "Wardrobe, outfit, accessories, coverage, and exposure" in combined
     assert '"default_outfit"' not in combined
     assert '"generated_outfit_state"' not in combined
@@ -7500,9 +7504,11 @@ def test_call2_authority_base_restores_fixed_and_trusts_known_outfit():
         ],
         "missing_wardrobe_added": [],
         "authority_exceptions": [],
+        "visibility_omissions": [],
         "forbidden_added_removed": [],
         "conflicts_removed": [],
         "rejected_exceptions": [],
+        "rejected_visibility_omissions": [],
         "semantic_status": "not_needed",
     }]
 
@@ -7548,12 +7554,124 @@ def test_call2_authority_base_allows_audited_explicit_fixed_exception():
     assert "hair rings" not in tags
     assert "hair between eyes" in tags
     assert "hair intakes" in tags
-    assert "detached sleeves" in tags
+    assert "detached sleeves" not in tags
     assert "white choker" not in tags
     assert "authority_exceptions" not in character
     assert audits[0]["conflicts_removed"] == []
     assert audits[0]["rejected_exceptions"] == ["invented omission"]
     assert audits[0]["semantic_status"] == "ok"
+
+
+def test_call2_visibility_omission_is_not_reinserted_into_positive():
+    descriptors = [{
+        "kind": "scene",
+        "slot": 8,
+        "camera": "upper body, from above",
+        "scene": (
+            "1girl, female focus, cropped male torso entering from the lower edge"
+        ),
+        "supplement": (
+            "The connected torso covers the girl's chest and lower body while "
+            "their shoulders remain in contact."
+        ),
+        "characters": [{
+            "name": "Shiho",
+            "positive": "girl, grey hair, purple eyes, black capelet, arms around partner",
+            "outfit_state": {
+                "body_state": "clothed",
+                "worn": [
+                    "black leotard", "black capelet", "showgirl skirt",
+                    "o-ring thigh strap", "black pantyhose",
+                ],
+                "removed": [],
+            },
+        }],
+    }]
+    fixed = {
+        "Shiho": "1girl, grey hair, purple eyes, small breasts, pubic tattoo",
+    }
+    defaults = {
+        "Shiho": [
+            "black leotard", "black capelet", "showgirl skirt",
+            "o-ring thigh strap", "black pantyhose",
+        ],
+    }
+    entries, entry_keys = pipeline._call2_authority_audit_entries(
+        descriptors,
+        fixed,
+        defaults,
+    )
+    decisions, reason = pipeline._parse_call2_authority_audit_output(
+        json.dumps({
+            "entries": [{
+                "id": 1,
+                "authority_exceptions": [],
+                "visibility_omissions": ["small breasts", "pubic tattoo"],
+                "forbidden_additions": [],
+                "conflicts": [],
+                "required_additions": [],
+            }],
+        }),
+        entries,
+        entry_keys,
+    )
+
+    assert reason == ""
+    audits = pipeline.apply_call2_authority_base(
+        descriptors,
+        fixed,
+        defaults,
+        decisions,
+        "ok",
+    )
+    character = descriptors[0]["characters"][0]
+    tags = pipeline._split_top_level_authority_tags(character["positive"])
+    assert "grey hair" in tags
+    assert "purple eyes" in tags
+    assert "small breasts" not in tags
+    assert "pubic tattoo" not in tags
+    assert "showgirl skirt" not in tags
+    assert "o-ring thigh strap" not in tags
+    assert "black pantyhose" not in tags
+    assert character["outfit_state"]["worn"] == [
+        "black leotard", "black capelet", "showgirl skirt",
+        "o-ring thigh strap", "black pantyhose",
+    ]
+    assert audits[0]["visibility_omissions"] == [
+        "small breasts", "pubic tattoo",
+    ]
+    assert audits[0]["missing_fixed_added"] == []
+
+
+def test_call2_known_outfit_state_does_not_force_hidden_worn_tags_visible():
+    descriptors = [{
+        "kind": "scene",
+        "slot": 9,
+        "characters": [{
+            "name": "Shiho",
+            "positive": "girl, grey hair, purple eyes, black capelet",
+            "outfit_state": {
+                "body_state": "clothed",
+                "worn": ["black capelet", "showgirl skirt", "black pantyhose"],
+                "removed": [],
+            },
+        }],
+    }]
+
+    pipeline.apply_call2_authority_base(
+        descriptors,
+        {"Shiho": "1girl, grey hair, purple eyes"},
+        {"Shiho": ["black capelet", "showgirl skirt", "black pantyhose"]},
+    )
+
+    character = descriptors[0]["characters"][0]
+    tags = pipeline._split_top_level_authority_tags(character["positive"])
+    assert "black capelet" in tags
+    assert "showgirl skirt" not in tags
+    assert "black pantyhose" not in tags
+    assert character["outfit_state"]["worn"] == [
+        "black capelet", "showgirl skirt", "black pantyhose",
+    ]
 
 
 def test_call2_audit_keeps_fixed_hair_without_explicit_change():

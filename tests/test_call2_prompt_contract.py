@@ -1,3 +1,4 @@
+import json
 import re
 from pathlib import Path
 
@@ -6,7 +7,9 @@ ROOT = Path(__file__).resolve().parents[1]
 CALL1_ENHANCE = ROOT / "prompts" / "lighbd" / "enhance.txt"
 CALL2_SYSTEM = ROOT / "prompts" / "lighbd" / "system.txt"
 CALL2_THOUGHTS = ROOT / "prompts" / "lighbd" / "thoughts.txt"
+CALL2_PRESET = ROOT / "prompts" / "lighbd" / "preset.txt"
 PIPELINE_PY = ROOT / "modes" / "illustration_context_pipeline.py"
+BUILTIN_PRESETS = ROOT / "prompts" / "bot_system_prompt" / "presets.json"
 
 
 def test_model_facing_prompt_files_do_not_assign_internal_call_stage_roles():
@@ -111,7 +114,7 @@ def test_call2_fixed_appearance_requires_explicit_narrative_change():
     assert "hairstyle_history establishes a temporary physical change" in source
     assert "assigned scene selection controls the visual beat but has no appearance authority" in source
     assert "without turning appearance wording into a temporary replacement" in source
-    assert "Audit only fixed physical appearance" in source
+    assert "Audit fixed physical appearance and per-image visibility" in source
     assert "Wardrobe, outfit, accessories, coverage, and exposure" in source
 
 
@@ -138,13 +141,13 @@ def test_call2_builds_one_coherent_explicit_bundle_without_tag_dictionary():
     thoughts = CALL2_THOUGHTS.read_text(encoding="utf-8")
 
     assert "Coherent Explicit Scene Bundle" in system
-    assert "at least five complementary, story-supported visual details" in system
-    assert "not from a fixed palette" in system
+    assert "one minimal scene-specific bundle" in system
+    assert "not from a fixed palette or quota" in system
     assert "Do not consult or simulate an external tag dictionary" in system
-    assert "camera whose framing actually contains every body part" in system
+    assert "camera whose framing contains the body portions" in system
     assert "source#`/`target#` counterparts symmetrical" in system
-    assert "silently assemble and cross-check a coherent scene-specific bundle" in thoughts
-    assert "never invent a new act, anatomy, intensity, or garment state" in thoughts
+    assert "silently assemble and cross-check one minimal coherent scene-specific bundle" in thoughts
+    assert "never invent a new act, anatomy, intensity, garment state" in thoughts
 
 
 def test_call2_plan_handoff_stays_natural_and_schema_remains_compact():
@@ -164,7 +167,7 @@ def test_call2_prioritizes_character_state_over_environment_detail():
     thoughts = CALL2_THOUGHTS.read_text(encoding="utf-8")
 
     assert "Character rendering is the priority" in system
-    assert "current pose, action, clothing or exposure state" in system
+    assert "current pose, action, visible clothing or exposure state" in system
     assert "Establish the visible characters first" in thoughts
     assert "Environment is last priority" in system
 
@@ -213,20 +216,116 @@ def test_call2_supplement_does_not_repeat_existing_tags():
     thoughts = CALL2_THOUGHTS.read_text(encoding="utf-8")
 
     assert "Do not restate character appearance" in system
-    assert "leave it empty when the tags are sufficient" in system
-    assert "supplement does not repeat details already expressed by tags" in thoughts
+    assert "at most two short complete sentences" in system
+    assert "Leave it empty when the tags are sufficient" in system
+    assert "supplement may use up to two short sentences" in thoughts
 
 
-def test_call2_prompt_forbids_duplicate_character_items_in_solo_scenes():
+def test_call2_prompt_separates_named_roster_from_anonymous_fragment():
     system = CALL2_SYSTEM.read_text(encoding="utf-8")
     source = PIPELINE_PY.read_text(encoding="utf-8")
 
-    assert "exact unique canonical roster" in system
+    assert "exact unique canonical roster of named, identity-managed character entries" in system
     assert "Never repeat the same canonical name within one image" in system
-    assert "physically exactly one `characters[]` item" in system
-    assert "declared `characters[n]` count must equal the physical number" in system
-    assert "exact unique canonical roster" in source
+    assert "must not receive an invented `characters[]` entry or a second complete-person count" in system
+    assert "do not add `1boy` or any person-focus/solo tag" in system
+    assert "exact unique canonical roster of named, identity-managed" in source
     assert "never repeat the same " in source
     assert "canonical name within one scene" in source
-    assert "physically emit exactly one characters[] list item" in source
-    assert "declared characters[n] count must equal the physical number" in source
+    assert "does not require a second complete-person count tag" in source
+    assert "do not add `1boy` or any person-focus" in source
+    assert "must never expand into a complete second person" in source
+
+
+def test_call2_prompt_keeps_cropped_partner_out_of_focused_character_positive():
+    system = CALL2_SYSTEM.read_text(encoding="utf-8")
+    source = PIPELINE_PY.read_text(encoding="utf-8")
+
+    assert "does not require a second `1girl` or `1boy` count tag" in system
+    assert "omit person-focus tags including `solo`, `solo focus`, `female focus`, and `male focus`" in system
+    assert "never place them in the focused named character's `positive`" in system
+    assert "Keep an anonymous, unnamed, or unregistered cropped partner's body parts" in system
+    assert "never in the named girl's " in source
+    assert '"positive. The declared characters[n] count' in source
+
+
+def test_single_v5_preserves_v4_and_keeps_partner_as_connected_fragment():
+    presets = json.loads(BUILTIN_PRESETS.read_text(encoding="utf-8"))
+
+    assert "배포_1차 싱글 V4" in presets
+    v5 = presets["배포_1차 싱글 V5"]
+    assert "exactly one identifiable named character as the subject" in v5
+    assert "does not mean full-body, fully exposed, unobstructed" in v5
+    assert "Do not use keyword matching" in v5
+    assert "does not add a second `1girl` or `1boy` count" in v5
+    assert "Do not add `1boy` merely because the forearms are visible" in v5
+    assert "omit every person-focus tag" in v5
+    assert "including `solo`, `solo focus`, `female focus`, and `male focus`" in v5
+    assert "Never put the partner's body parts or actions in the named subject's `positive`" in v5
+    assert "do not expand the fragment into a whole man" in v5
+    assert "may naturally occlude large portions of the named subject" in v5
+    assert "back or side of the head may enter only when contact with that head" in v5
+    assert "At most one face is visible" in v5
+    assert "a zero-face contact crop is allowed" in v5
+    assert "do not combine `legs together` with thighs framing" in v5
+    assert "body-part whitelist" in v5
+    assert "No weights or negative tags are invented" in v5
+    assert "`1girl, 1boy, female focus`" not in v5
+    assert "ALLOWED fragment tags" not in v5
+    assert "MANDATORY negative field" not in v5
+
+
+def test_call2_negative_does_not_block_intentional_partial_body_framing():
+    negative = CALL2_PRESET.read_text(encoding="utf-8").split("[Negative]", 1)[1]
+
+    tags = {tag.strip().casefold() for tag in negative.split(",")}
+    assert "cropped" not in tags
+    assert "head out of frame" not in tags
+
+
+def test_interaction_contract_does_not_invent_secondary_limb_contact():
+    thoughts = CALL2_THOUGHTS.read_text(encoding="utf-8")
+    source = PIPELINE_PY.read_text(encoding="utf-8")
+    presets = json.loads(BUILTIN_PRESETS.read_text(encoding="utf-8"))
+    v5 = presets["배포_1차 싱글 V5"]
+
+    assert "contact by one body region does not authorize a second embrace" in thoughts
+    assert "contact point or action for an unmentioned limb" in source
+    assert "contact by one body region does not authorize a second embrace" in v5
+
+
+def test_anima_fragment_uses_one_broad_anchor_and_natural_language_geometry():
+    system = CALL2_SYSTEM.read_text(encoding="utf-8")
+    thoughts = CALL2_THOUGHTS.read_text(encoding="utf-8")
+    source = PIPELINE_PY.read_text(encoding="utf-8")
+    presets = json.loads(BUILTIN_PRESETS.read_text(encoding="utf-8"))
+    v5 = presets["배포_1차 싱글 V5"]
+
+    assert "anchor an anonymous fragment exactly once in `scene` with one short, familiar body-region" in system
+    assert "prefer `cropped male lower body`" in system
+    assert "do not atomize the same connected fragment" in thoughts
+    assert "do not atomize one connected fragment into a comma chain" in source
+    assert "never change a third-person camera to POV" in source
+    assert "`cropped male upper torso` is too broad" in system
+    assert "use a contact-point `close-up`" in system
+    assert "semantically inspect every phrase in each named character positive" in source
+    assert "express the partner fragment exactly once with one familiar region/composition phrase" in v5
+    assert "over atomizing one connected fragment into a comma chain" in v5
+    assert "use a contact-point close-up instead of portrait, cowboy-shot, or full-body framing" in v5
+    assert "semantically inspect every phrase in each named character positive" in v5
+
+
+def test_call2_visibility_contract_does_not_force_hidden_character_details():
+    system = CALL2_SYSTEM.read_text(encoding="utf-8")
+    thoughts = CALL2_THOUGHTS.read_text(encoding="utf-8")
+    source = PIPELINE_PY.read_text(encoding="utf-8")
+
+    assert "fully outside the frame or fully hidden by natural occlusion may be omitted" in system
+    assert "Do not widen the camera, move an interacting body aside" in system
+    assert "Keep every non-conflicting garment and accessory" in system
+    assert "in `outfit_state`" in system
+    assert "Put a garment or accessory in `positive` only when it is visible" in system
+    assert "a wholly cropped or naturally hidden feature may be absent" in thoughts
+    assert "put only visible or coverage-defining garments in " in source
+    assert '"positive. Never advance state' in source
+    assert "visibility_omissions" in source

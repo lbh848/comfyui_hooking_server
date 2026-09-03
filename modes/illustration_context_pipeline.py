@@ -1734,12 +1734,15 @@ def _fixed_appearance_authority_content(fixed_appearance: dict[str, str]) -> str
         "# AUTHORITATIVE FIXED APPEARANCE\n"
         "For each named character, this server-extracted map is the only authority for "
         "persistent identity for the already-selected visual profile and is a complete authoritative "
-        "base, not a menu. Copy every supplied tag exactly by default. Only a direct explicit statement "
+        "base, not a menu. Use each supplied tag when its physical feature is visible or materially "
+        "helps render the visible portion. A trait that is wholly outside the frame or naturally hidden "
+        "by another body or object may be omitted from positive without changing identity. Never invent "
+        "a replacement or alter the camera, pose, or occluding interaction merely to expose it. Only a direct explicit statement "
         "in the actual narrative, or an active evidence-bearing history event derived from such a "
         "statement, may temporarily replace the exact fixed tag it physically contradicts. Keep every "
-        "other fixed tag. The assigned scene selection, scene_brief, mood, role, activity, setting, generated tags, "
+        "other visible fixed tag. The assigned scene selection, scene_brief, mood, role, activity, setting, generated tags, "
         "generated references, visual plausibility, and contextual inference never establish an appearance "
-        "exception. Cropping, framing, occlusion, brevity, and model preference are not exceptions either. "
+        "change. Cropping, framing, and occlusion are visibility decisions, not appearance exceptions. "
         "Narrative may control pose, action, expression, gaze, visibility, and other compatible temporary "
         "state. `closed eyes` is a visibility/expression state, not a fixed-appearance exception. "
         "Authoritative wardrobe state controls temporary attire because wardrobe is not fixed appearance. "
@@ -6880,9 +6883,9 @@ def _parse_call2_authority_audit_output(
             continue
         observed_ids.add(entry_id)
         candidate = candidates[entry_id]
-        # This audit owns fixed-appearance exceptions only. Wardrobe is already
-        # resolved by CALL2's complete outfit_state and is never an authority
-        # exception candidate here.
+        # This audit owns fixed-appearance changes and per-image visibility
+        # omissions only. Wardrobe is already resolved by CALL2's complete
+        # outfit_state and is never an authority-exception candidate here.
         authority_by_id = {
             _authority_tag_identity(tag): tag
             for tag in candidate["fixed_appearance"]
@@ -6893,11 +6896,17 @@ def _parse_call2_authority_audit_output(
             for tag in candidate["generated_positive"]
             if _authority_tag_identity(tag)
         }
+        missing_authority_by_id = {
+            identity: tag
+            for identity, tag in authority_by_id.items()
+            if identity not in generated_by_id
+        }
 
         normalized_fields: dict[str, object] = {"_audit_status": "ok"}
         entry_error = ""
         for field, allowed in (
             ("authority_exceptions", authority_by_id),
+            ("visibility_omissions", missing_authority_by_id),
             ("forbidden_additions", generated_by_id),
             ("conflicts", generated_by_id),
         ):
@@ -7012,21 +7021,27 @@ async def _run_call2_authority_audit(
             "degraded_entries": 0,
         }
 
-    # This is intentionally a fixed-appearance-only audit. Wardrobe is owned by
-    # CALL2's complete outfit_state; scene composition, camera, dialogue, and
-    # environment remain owned by their existing stages.
+    # This is intentionally a fixed-appearance and per-image visibility audit.
+    # Wardrobe is owned by CALL2's complete outfit_state; scene composition,
+    # camera, dialogue, and environment remain owned by their existing stages.
     system_prompt = (
-        "Audit only fixed physical appearance for the supplied illustration-character "
+        "Audit fixed physical appearance and per-image visibility for the supplied illustration-character "
         "entries. Each entry is independent. Read the current narrative, bounded scene "
         "context, and hairstyle history by meaning and chronology; never decide from "
         "hard-coded keywords. Wardrobe, outfit, accessories, coverage, and exposure are fully "
         "owned by CALL2 and are outside this audit. Never add, remove, restore, or judge them. "
         "Do not rewrite the scene, camera, composition, dialogue, action, expression, or "
-        "complete character prompt. fixed_appearance is mandatory identity for the already "
-        "selected profile. Keep every fixed tag unless the narrative or active "
+        "complete character prompt. fixed_appearance is authoritative identity for the already "
+        "selected profile. Keep a fixed tag when its corresponding physical feature is visible "
+        "or materially helps render the visible portion. Put an exact missing fixed tag in "
+        "visibility_omissions only when the bounded camera, body overlap, and contact geometry "
+        "make that feature wholly outside the frame or naturally hidden. This is not an identity "
+        "change: never invent a substitute, and never widen or rearrange the composition merely "
+        "to expose it. Do not approve omission of a visible feature merely for brevity. Apart from "
+        "true visibility omissions, keep every fixed tag unless the narrative or active "
         "hairstyle_history establishes a temporary physical change that directly contradicts "
-        "it. Cropping, occlusion, mood, activity, scene_brief, generated tags, and visual "
-        "plausibility are not evidence. Put an exact supplied fixed_appearance tag in "
+        "it. Mood, activity, scene_brief, generated tags, and visual plausibility are not evidence "
+        "of a physical identity change. Put an exact supplied fixed_appearance tag in "
         "authority_exceptions only when that physical exception is established. Use "
         "required_additions to state the explicit replacement color whenever a fixed "
         "hair-color exception is established; otherwise keep the fixed color. Use "
@@ -7035,7 +7050,7 @@ async def _run_call2_authority_audit(
         "Use required_additions only for the smallest visible physical replacement needed to "
         "express an approved exception. Copy candidate strings exactly when a field requires "
         "an existing candidate. Return compact JSON only, with one object for every supplied id: "
-        '{"entries":[{"id":1,"authority_exceptions":[],"forbidden_additions":[],"conflicts":[],"required_additions":[]}]}.'
+        '{"entries":[{"id":1,"authority_exceptions":[],"visibility_omissions":[],"forbidden_additions":[],"conflicts":[],"required_additions":[]}]}.'
     )
     messages = [{"role": "system", "content": system_prompt}, {
         "role": "user",
@@ -7133,9 +7148,11 @@ def apply_call2_authority_base(
     semantic_decisions: dict[tuple[str, int, str], dict] | None = None,
     semantic_status: str = "not_run",
 ) -> list[dict]:
-    """Restore fixed appearance and use CALL2's complete wardrobe snapshot.
+    """Preserve fixed identity and CALL2's complete logical wardrobe snapshot.
 
-    Only the separate semantic audit may approve fixed-appearance exceptions.
+    Only the separate semantic audit may approve fixed-appearance changes or
+    visibility omissions. A known outfit_state stays complete for continuity,
+    while positive retains only the wardrobe tags CALL2 judged image-visible.
     A known CALL2 outfit_state owns wardrobe as a complete set. The profile
     default outfit is restored only when CALL2 did not provide a usable state.
     This function compares only server-provided tag-set membership; it does not
@@ -7237,11 +7254,36 @@ def apply_call2_authority_base(
             exception_ids = {
                 _authority_tag_identity(tag) for tag in valid_exceptions
             }
+            valid_visibility_omissions: list[str] = []
+            rejected_visibility_omissions: list[str] = []
+            seen_visibility_omissions: set[str] = set()
+            requested_visibility_omissions = list(
+                semantic_decision.get("visibility_omissions") or []
+            )
+            for raw_omission in requested_visibility_omissions:
+                omission = str(raw_omission or "").strip()
+                identity = _authority_tag_identity(omission)
+                if not identity or identity not in allowed_authority:
+                    rejected_visibility_omissions.append(omission)
+                    continue
+                if identity in seen_visibility_omissions:
+                    continue
+                seen_visibility_omissions.add(identity)
+                valid_visibility_omissions.append(allowed_authority[identity])
+            visibility_omission_ids = {
+                _authority_tag_identity(tag) for tag in valid_visibility_omissions
+            }
             if rejected_exceptions:
                 print(
                     f"[ILLUST_CONTEXT:CALL2_AUTHORITY] 기준 밖 authority_exceptions 거부: "
                     f"kind={kind}, slot={slot}, character={name}, "
                     f"rejected={rejected_exceptions}"
+                )
+            if rejected_visibility_omissions:
+                print(
+                    f"[ILLUST_CONTEXT:CALL2_AUTHORITY] 기준 밖 visibility_omissions 거부: "
+                    f"kind={kind}, slot={slot}, character={name}, "
+                    f"rejected={rejected_visibility_omissions}"
                 )
             # Keep semantic decisions in the top-level audit only. Do not expand
             # DETAIL/Call3/generated RAW character schemas with audit metadata.
@@ -7324,7 +7366,9 @@ def apply_call2_authority_base(
                 semantic_required.append(required)
             mandatory_fixed = [
                 tag for tag in fixed_tags
-                if _authority_tag_identity(tag) not in exception_ids
+                if _authority_tag_identity(tag) not in (
+                    exception_ids | visibility_omission_ids
+                )
             ]
             mandatory_wardrobe = list(wardrobe_authority)
             missing_fixed = [
@@ -7338,6 +7382,7 @@ def apply_call2_authority_base(
 
             excluded_ids = (
                 exception_ids
+                | visibility_omission_ids
                 | semantic_forbidden_ids
                 | semantic_conflict_ids
                 | trusted_removed_ids
@@ -7363,7 +7408,6 @@ def apply_call2_authority_base(
             for tag in (
                 mandatory_fixed
                 + mandatory_wardrobe
-                + existing_worn
                 + remaining_generated
                 + semantic_required
             ):
@@ -7404,9 +7448,11 @@ def apply_call2_authority_base(
                 "missing_fixed_added": missing_fixed,
                 "missing_wardrobe_added": missing_wardrobe,
                 "authority_exceptions": valid_exceptions,
+                "visibility_omissions": valid_visibility_omissions,
                 "forbidden_added_removed": forbidden_added_removed,
                 "conflicts_removed": conflicts_removed,
                 "rejected_exceptions": rejected_exceptions,
+                "rejected_visibility_omissions": rejected_visibility_omissions,
                 "semantic_status": entry_semantic_status,
             }
             if selected_profile_id:
@@ -7479,17 +7525,24 @@ async def _run_call2_keyvis(
             "action, expression, composition, and compatible temporary visual state. Replace an exact "
             "conflicting fixed appearance tag only when the actual narrative directly and explicitly states "
             "that temporary change; never infer it from the Key Visual concept. Rebuild each named character "
-            "from the complete fixed appearance by default. Treat the supplied current "
+            "from the visible applicable portion of fixed appearance. A fully cropped or naturally occluded "
+            "trait may be absent from positive without changing identity, and the composition must never be "
+            "widened or rearranged merely to display it. Treat the supplied current "
             "wardrobe as continuity and default_outfit as a fallback reference, not fixed identity. If the full "
             "Key Visual concept calls for different attire, design one coherent context-appropriate outfit by "
             "meaning and replace the fallback as a set; do not keyword-match or mix incompatible default garments "
-            "into it. A separate server audit validates the contextual replacement while keeping every fixed "
-            "appearance tag mandatory unless directly contradicted by an explicit narrative change. Generated visual references "
+            "into it. Keep complete logical wardrobe continuity in outfit_state while positive contains only "
+            "visible or coverage-defining garments. A separate server audit preserves fixed identity while "
+            "allowing true visibility omissions and only an explicit narrative change to replace a fixed trait. Generated visual references "
             "are intentionally absent and must not be reconstructed as identity facts. "
             "Before returning, silently verify that the composition is one physically possible image and "
             "that its camera can actually show every story-essential action, contact, exposure, displaced "
             "garment, and visible anatomy. Treat explicit content as a coherent scene-specific detail bundle, "
             "not as one isolated tag, while adding nothing the story does not support. "
+            "If the Key Visual includes an anonymous interaction fragment, keep one minimal fragment anchor exactly once in scene "
+            "and never copy the partner's body, pose, or action into a named character positive. The fragment adds no complete-person "
+            "count or person-focus tag. Use a contact-point close-up for anything broader than hands or forearms, allow zero visible "
+            "faces, and place exact frame-edge continuity, overlap, and contact only in supplement. "
             "This override "
             "supersedes every global scene-count, slot-selection, and combined keyvis/scene requirement. "
             "Every characters[] entry must include its exact canonical name even when cropped or partially "
@@ -7720,7 +7773,10 @@ async def _run_parallel_call2_details(
                 "When continuity_note is present, read that natural-language chronology by meaning and "
                 "treat it as authority for the affected character's current wardrobe, coverage, and "
                 "exposure; coarse operation/body-state hints or a stale snapshot must never simplify, "
-                "euphemize, or contradict it. Include every fixed-appearance tag by default. Replace only the "
+                "euphemize, or contradict it. Use fixed appearance as authoritative identity, but put only "
+                "traits belonging to visible or materially render-relevant portions in positive. A trait fully "
+                "outside the frame or naturally occluded by another body may be omitted without changing identity; "
+                "never widen or rearrange the composition merely to expose it. Replace only the "
                 "exact tag directly contradicted by an explicit current-narrative statement or active "
                 "evidence-bearing history event; the assigned scene selection controls the visual beat but has no appearance authority. "
                 "Use the complete default outfit "
@@ -7728,17 +7784,37 @@ async def _run_parallel_call2_details(
                 "When different attire is contextually appropriate, design one coherent outfit by meaning and "
                 "replace the default as a set even if no sentence lists every garment; never keyword-match or "
                 "carry incompatible default pieces into it. A separate server audit validates the contextual "
-                "outfit and keeps fixed identity mandatory. Never advance state beyond the assigned scene. "
+                "outfit and preserves fixed identity. Record the complete resolved wardrobe in outfit_state, "
+                "including garments outside the frame, but put only visible or coverage-defining garments in "
+                "positive. Never advance state beyond the assigned scene. "
                 + detail_background_instruction
                 + "Never repeat scene-wide environment, "
                 "lighting, weather, time, character-count, or shared background-prop tags in characters[].positive. "
-                "Treat each assigned plan's characters list as its exact unique canonical roster. Emit exactly one "
-                "characters[] item for each listed name, in the supplied order, and no extra item; never repeat the same "
-                "canonical name within one scene. When the assigned scene has one named girl and uses `1girl` with "
-                "`solo` or `solo focus`, physically emit exactly one characters[] list item and never append a second "
-                "minimal `positive: girl` item for the same person. Keep anonymous or unnamed cropped body parts from "
-                "another person only in scene and supplement rather than inventing or duplicating a named character. "
-                "The declared characters[n] count must equal the physical number of list items; stop the array after n. "
+                "Treat each assigned plan's characters list as its exact unique canonical roster of named, identity-managed "
+                "entries. Emit exactly one characters[] item for each listed name, "
+                "in the supplied order, and no extra item; never repeat the same canonical name within one scene. Keep an "
+                "anonymous, unnamed, or unregistered cropped interaction partner out of characters[] rather than inventing "
+                "an identity. An anonymous interaction fragment does not require a second complete-person count tag. "
+                "A plan with one named girl and only a cropped anonymous male fragment must emit characters[1] and may use "
+                "`scene: 1girl, cropped male torso entering from the frame edge`; do not add `1boy` or any person-focus "
+                "tag such as `solo`, `solo focus`, `female focus`, or `male focus`. Put the cropped partner's smallest coherent visible body portion, crop boundary, pose, "
+                "and action in scene and the precise spatial/contact relationship in supplement, never in the named girl's "
+                "positive. The declared characters[n] count must equal only the physical number of emitted list items and "
+                "stop the array after n. The fragment must stay connected to the implied off-frame body, may naturally "
+                "occlude the named subject, and must never expand into a complete second person. Do not invent an additional "
+                "contact point or action for an unmentioned limb merely because it resembles the described interaction. "
+                "Show at most one face in a fragment interaction, and only the named subject's face; a tight contact-point "
+                "or lower-body crop may show no face when that keeps the partner partial and the interaction readable. For "
+                "Anima-facing scene tags, anchor the anonymous fragment exactly once with one short familiar region or composition "
+                "phrase such as `cropped male lower body`, then state exact frame-edge continuity and contact in supplement; "
+                "do not atomize one connected fragment into a comma chain of neighboring anatomical regions or choose an anchor "
+                "broader than the intended visible amount. For a fragment broader than a hand or forearm, use a genuine contact-point "
+                "close-up rather than portrait, cowboy-shot, or full-body framing, even if the named subject's face is cropped. "
+                "Examples guide phrasing rather than semantic choice, and never change a third-person camera to POV just to use a familiar tag. "
+                "Before return, semantically inspect every phrase in each named character positive and remove any phrase whose body, "
+                "pose, or action belongs to the anonymous partner, leaving the fragment only once in scene or supplement. For "
+                "complex contact geometry, supplement may use up to two short complete natural-language sentences: first "
+                "establish the visible fragment and its frame-edge continuation, then the exact contact, overlap, or occlusion. "
                 "Do not reduce a "
                 "story-essential explicit state to an ambiguous isolated tag or crop it out. "
                 "When a plan has characters: [], preserve characters: [] and express anonymous people "
