@@ -53,6 +53,9 @@ BOT_LORA_FIELDS = (
     "loras_group",
     "face_loras",
 )
+PATCH_EXCLUDED_PRESETS = {
+    "expressions": frozenset({"simple smile"}),
+}
 
 
 @dataclass(frozen=True)
@@ -157,7 +160,15 @@ def _build_presets() -> tuple[dict, dict[str, int]]:
                 f"활성과 숨김에 동시에 존재하는 프리셋이 있습니다: "
                 f"category={category}, names={sorted(overlap)[:10]}"
             )
-        presets[category] = copy.deepcopy(active)
+        included = copy.deepcopy(active)
+        for name in sorted(PATCH_EXCLUDED_PRESETS.get(category, ())):
+            if name in included:
+                included.pop(name)
+                print(
+                    "[PATCH_BUILD] 배포 제외 프리셋 생략: "
+                    f"category={category}, name={name!r}"
+                )
+        presets[category] = included
 
     if set(presets) != {"characters", *PRESET_CATEGORIES}:
         raise RuntimeError(
@@ -349,6 +360,7 @@ def _collect_entries() -> tuple[list[PatchEntry], dict]:
             "character_negative_presets",
             "bot_patch_prompts",
             "bot_lora_connections",
+            "preset:expressions/simple smile",
         ],
     }
     return entries, contents
