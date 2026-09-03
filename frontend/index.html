@@ -74883,20 +74883,45 @@
         }
 
         // ─── 봇 CRUD ──────────────────────────────
-        // 한글(Hangul Syllables / 호환 자모 / 확장) 포함 여부 실시간 체크용 정규식
-        const _BOT_NAME_KOREAN_RE = /[가-힣ᄀ-ᇿ㄰-㆏ꥠ-꥿ힰ-퟿]/;
+        // 봇/캐릭터 이름은 LoRA 경로에서도 변환 없이 유지되는 문자만 허용한다.
+        const _BOT_STORAGE_NAME_RE = /^[A-Za-z0-9_.-]+$/;
+        const _BOT_STORAGE_NAME_ALLOWED_TEXT = '영문 대소문자, 숫자, 밑줄(_), 하이픈(-), 마침표(.)';
+        const _BOT_WINDOWS_RESERVED_NAMES = new Set([
+            'CON', 'PRN', 'AUX', 'NUL',
+            ...Array.from({length: 9}, (_, i) => `COM${i + 1}`),
+            ...Array.from({length: 9}, (_, i) => `LPT${i + 1}`)
+        ]);
+
+        function getBotStorageNameError(value, label = '이름') {
+            if (typeof value !== 'string') return `${label}은(는) 문자열이어야 합니다.`;
+            if (!value) return `${label}을(를) 입력하세요.`;
+            if (!_BOT_STORAGE_NAME_RE.test(value)) {
+                const invalid = [...new Set(Array.from(value).filter(ch => !/[A-Za-z0-9_.-]/.test(ch)))];
+                const descriptions = invalid.map(ch => ch === ' ' ? '공백' : JSON.stringify(ch));
+                return `${label}에 사용할 수 없는 문자가 있습니다: ${descriptions.join(', ') || '허용되지 않은 문자'}. 사용 가능: ${_BOT_STORAGE_NAME_ALLOWED_TEXT}.`;
+            }
+            if (value === '.' || value === '..' || value.endsWith('.')) {
+                return `${label}은(는) 마침표로만 구성하거나 마침표로 끝낼 수 없습니다.`;
+            }
+            if (_BOT_WINDOWS_RESERVED_NAMES.has(value.split('.', 1)[0].toUpperCase())) {
+                return `${label}에 Windows 예약 이름 "${value}"을(를) 사용할 수 없습니다.`;
+            }
+            return '';
+        }
 
         function closeBotNameModal() {
             const m = document.getElementById('bot-name-modal');
             if (m) m.style.display = 'none';
         }
 
-        // 범용 이름 입력 모달 — 한글 입력 시 즉시 차단 + 경고.
-        // opts: { title, placeholder, confirmText, onConfirm(name) }
+        // 범용 이름 입력 모달 — 저장 경로에서 달라질 이름을 즉시 차단하고 사유 표시.
+        // opts: { title, placeholder, initialValue, nameLabel, confirmText, onConfirm(name) }
         function openBotNameModal(opts) {
             const o = Object.assign({
                 title: '이름 입력',
                 placeholder: '',
+                initialValue: '',
+                nameLabel: '이름',
                 confirmText: '확인',
                 onConfirm: () => {}
             }, opts || {});
@@ -74919,7 +74944,7 @@
                             style="width:100%; box-sizing:border-box; padding:8px 10px; font-size:0.9rem; border:1px solid var(--border); border-radius:6px; background:var(--surface2); color:var(--text); font-family:monospace;">
                         <div id="bot-name-warning" style="margin-top:8px; font-size:0.75rem; color:#ff6b6b; line-height:1.4; display:none;"></div>
                         <div style="margin-top:6px; font-size:0.7rem; color:var(--text2); line-height:1.4;">
-                            영어/숫자/기호만 가능 (공백, 한글 불가)
+                            사용 가능: ${escapeHtml(_BOT_STORAGE_NAME_ALLOWED_TEXT)}
                         </div>
                     </div>
                     <div style="padding:12px 18px; border-top:1px solid var(--border); display:flex; gap:8px; justify-content:flex-end;">
@@ -74933,6 +74958,7 @@
             const warning = document.getElementById('bot-name-warning');
             const confirmBtn = document.getElementById('bot-name-confirm');
             const onConfirm = o.onConfirm;
+            input.value = o.initialValue || '';
 
             function applyState(disabled, warnText) {
                 confirmBtn.disabled = disabled;
@@ -74947,14 +74973,8 @@
             }
 
             function validate() {
-                const v = input.value;
-                if (_BOT_NAME_KOREAN_RE.test(v)) {
-                    applyState(true, '⚠ 한글은 사용할 수 없습니다. 영어/숫자/기호로만 입력하세요.');
-                } else if (!v.trim()) {
-                    applyState(true, '');
-                } else {
-                    applyState(false, '');
-                }
+                const error = getBotStorageNameError(input.value, o.nameLabel);
+                applyState(!!error, error ? '⚠ ' + error : '');
             }
 
             input.addEventListener('input', validate);
@@ -74962,7 +74982,7 @@
                 if (e.key === 'Enter') {
                     e.preventDefault();
                     if (!confirmBtn.disabled) {
-                        const name = input.value.trim();
+                        const name = input.value;
                         closeBotNameModal();
                         onConfirm(name);
                     }
@@ -74972,7 +74992,7 @@
             });
             confirmBtn.addEventListener('click', () => {
                 if (confirmBtn.disabled) return;
-                const name = input.value.trim();
+                const name = input.value;
                 closeBotNameModal();
                 onConfirm(name);
             });
@@ -74985,6 +75005,7 @@
             openBotNameModal({
                 title: '봇 이름 입력',
                 placeholder: '예: my_bot',
+                nameLabel: '봇 이름',
                 confirmText: '추가',
                 onConfirm: async (name) => {
                     try {
@@ -75212,9 +75233,12 @@
             confirmModal.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.7); z-index:10001; display:flex; align-items:center; justify-content:center;';
 
             const rowsHtml = charsData.map(ch => `
-                <div style="display:flex; align-items:center; gap:8px; padding:6px 0; border-bottom:1px solid var(--border);">
-                    <span style="font-size:0.8rem; color:var(--text2); min-width:20px;">${charsData.indexOf(ch)+1}.</span>
-                    <input type="text" class="import-name-input" data-original="${escAttr(ch.name)}" value="${escAttr(ch.name)}" style="flex:1; font-size:0.85rem; background:var(--surface); border:1px solid var(--border); border-radius:4px; padding:4px 8px; color:var(--text);">
+                <div class="import-name-row" style="padding:6px 0; border-bottom:1px solid var(--border);">
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <span style="font-size:0.8rem; color:var(--text2); min-width:20px;">${charsData.indexOf(ch)+1}.</span>
+                        <input type="text" class="import-name-input" data-original="${escAttr(ch.name)}" value="${escAttr(ch.name)}" style="flex:1; font-size:0.85rem; background:var(--surface); border:1px solid var(--border); border-radius:4px; padding:4px 8px; color:var(--text);">
+                    </div>
+                    <div class="import-name-warning" style="display:none; margin:4px 0 0 28px; color:var(--error); font-size:0.72rem; line-height:1.4;"></div>
                 </div>
             `).join('');
 
@@ -75223,7 +75247,7 @@
                     <h3 style="margin:0;">캐릭터 가져오기</h3>
                     <button onclick="document.getElementById('bot-asset-char-confirm').style.display='none'" style="background:none; border:none; color:var(--text); font-size:1.2rem; cursor:pointer;">&times;</button>
                 </div>
-                <div style="padding:12px 20px; font-size:0.75rem; color:var(--text2);">가져올 캐릭터의 이름을 확인하고 필요하면 수정하세요.</div>
+                <div style="padding:12px 20px; font-size:0.75rem; color:var(--text2);">가져올 캐릭터의 이름을 확인하고 필요하면 수정하세요.<br>사용 가능: ${escapeHtml(_BOT_STORAGE_NAME_ALLOWED_TEXT)}</div>
                 <div style="padding:8px 20px; overflow-y:auto; flex:1;">${rowsHtml}</div>
                 <div style="padding:12px 20px; border-top:1px solid var(--border); display:flex; justify-content:flex-end; gap:8px;">
                     <button onclick="document.getElementById('bot-asset-char-confirm').style.display='none'" style="padding:8px 16px; border-radius:6px; border:1px solid var(--border); background:var(--surface2); color:var(--text); cursor:pointer;">취소</button>
@@ -75231,14 +75255,38 @@
                 </div>
             </div>`;
 
-            document.getElementById('btn-do-import').onclick = async () => {
+            const importButton = document.getElementById('btn-do-import');
+            const importInputs = [...document.querySelectorAll('#bot-asset-char-confirm .import-name-input')];
+            function validateImportNames() {
+                let hasError = false;
+                for (const input of importInputs) {
+                    const error = getBotStorageNameError(input.value, '캐릭터 이름');
+                    const warning = input.closest('.import-name-row')?.querySelector('.import-name-warning');
+                    input.style.borderColor = error ? 'var(--error)' : 'var(--border)';
+                    if (warning) {
+                        warning.textContent = error ? '⚠ ' + error : '';
+                        warning.style.display = error ? '' : 'none';
+                    }
+                    if (error) hasError = true;
+                }
+                importButton.disabled = hasError;
+                importButton.style.opacity = hasError ? '0.5' : '';
+                importButton.style.cursor = hasError ? 'not-allowed' : 'pointer';
+                return !hasError;
+            }
+            importInputs.forEach(input => input.addEventListener('input', validateImportNames));
+            validateImportNames();
+
+            importButton.onclick = async () => {
+                if (!validateImportNames()) return;
                 // 이름 편집 적용
-                document.querySelectorAll('#bot-asset-char-confirm .import-name-input').forEach(inp => {
+                importInputs.forEach(inp => {
                     const orig = inp.dataset.original;
-                    const renamed = inp.value.trim();
-                    if (renamed && renamed !== orig) {
-                        const charInfo = charsData.find(ch => ch.name === orig);
-                        if (charInfo) charInfo.import_name = renamed;
+                    const renamed = inp.value;
+                    const charInfo = charsData.find(ch => ch.name === orig);
+                    if (charInfo) {
+                        if (renamed !== orig) charInfo.import_name = renamed;
+                        else delete charInfo.import_name;
                     }
                 });
 
@@ -75275,23 +75323,29 @@
         // ─── 캐릭터 CRUD ──────────────────────────────
         async function addBotCharacter() {
             if (!botCurrentBot) return;
-            const name = prompt('캐릭터 이름을 입력하세요:');
-            if (!name || !name.trim()) return;
-            try {
-                const resp = await fetch('/api/bot_mode/action', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({action: 'add_character', bot_name: botCurrentBot, char_name: name.trim()})
-                });
-                const data = await resp.json();
-                if (data.error) { alert(data.error); return; }
-                botData.bots = data.bots;
-                renderBotCharacters();
-                showToast(`캐릭터 "${name.trim()}" 추가됨`);
-            } catch (e) {
-                console.error('[BOT] 캐릭터 추가 실패:', e);
-                alert('캐릭터 추가 실패');
-            }
+            openBotNameModal({
+                title: '캐릭터 이름 입력',
+                placeholder: '예: character_01',
+                nameLabel: '캐릭터 이름',
+                confirmText: '추가',
+                onConfirm: async (name) => {
+                    try {
+                        const resp = await fetch('/api/bot_mode/action', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({action: 'add_character', bot_name: botCurrentBot, char_name: name})
+                        });
+                        const data = await resp.json();
+                        if (data.error) { showToast('캐릭터 추가 실패: ' + data.error, 'error'); return; }
+                        botData.bots = data.bots;
+                        renderBotCharacters();
+                        showToast(`캐릭터 "${name}" 추가됨`);
+                    } catch (e) {
+                        console.error('[BOT] 캐릭터 추가 실패:', e);
+                        showToast('캐릭터 추가 실패: ' + (e.message || String(e)), 'error');
+                    }
+                }
+            });
         }
 
         // ─── 캐릭터 일괄추가 ─────────────────────────
@@ -75452,6 +75506,11 @@
             if (filenames.length === 0) {
                 preview.innerHTML = '<span style="color:var(--text2);">파일을 선택하면 여기에 추출된 캐릭터명이 표시됩니다.</span>';
                 confirmBtn.textContent = '일괄추가 (0)';
+                confirmBtn.disabled = true;
+                confirmBtn.style.opacity = '0.5';
+                confirmBtn.style.cursor = 'not-allowed';
+                window._botBatchNewNames = [];
+                window._botBatchValidationErrors = [];
                 return;
             }
             const existing = new Set(((botData.bots || []).find(b => b.name === botCurrentBot)?.characters || []).map(c => c.name));
@@ -75459,26 +75518,40 @@
             const details = [];
             for (const fn of filenames) {
                 const name = botBatchApplyRules(fn);
-                if (name) {
+                const validationError = getBotStorageNameError(name, '캐릭터 이름');
+                if (!validationError) {
                     names.add(name);
-                    const isDup = existing.has(name);
-                    details.push({ filename: fn, name, isDup });
                 }
+                const isDup = !validationError && existing.has(name);
+                details.push({ filename: fn, name, isDup, validationError });
             }
             preview.innerHTML = details.map(d =>
-                `<div style="display:flex; justify-content:space-between; padding:2px 0; ${d.isDup ? 'opacity:0.5; text-decoration:line-through;' : ''}">
-                    <span>${escHtml(d.filename)}</span>
-                    <span style="color:${d.isDup ? 'var(--text2)' : 'var(--accent)'};">→ ${escHtml(d.name)}${d.isDup ? ' (이미 존재)' : ''}</span>
+                `<div style="padding:3px 0; ${d.isDup ? 'opacity:0.5; text-decoration:line-through;' : ''}">
+                    <div style="display:flex; justify-content:space-between; gap:8px;">
+                        <span>${escHtml(d.filename)}</span>
+                        <span style="color:${d.validationError ? 'var(--error)' : d.isDup ? 'var(--text2)' : 'var(--accent)'};">→ ${escHtml(d.name || '(빈 이름)')}${d.isDup ? ' (이미 존재)' : ''}</span>
+                    </div>
+                    ${d.validationError ? `<div style="margin-top:2px; color:var(--error);">⚠ ${escHtml(d.validationError)}</div>` : ''}
                 </div>`
             ).join('');
             const newCount = Array.from(names).filter(n => !existing.has(n)).length;
+            const validationErrors = details.filter(d => d.validationError);
             confirmBtn.textContent = `일괄추가 (${newCount})`;
             window._botBatchNewNames = Array.from(names).filter(n => !existing.has(n));
+            window._botBatchValidationErrors = validationErrors;
+            confirmBtn.disabled = validationErrors.length > 0;
+            confirmBtn.style.opacity = validationErrors.length ? '0.5' : '';
+            confirmBtn.style.cursor = validationErrors.length ? 'not-allowed' : 'pointer';
         }
 
         async function confirmBotBatchAdd() {
             const names = window._botBatchNewNames || [];
             const fileMap = window._botBatchFileMap || [];
+            const validationErrors = window._botBatchValidationErrors || [];
+            if (validationErrors.length) {
+                showToast('모달의 캐릭터 이름 거절 사유를 먼저 해결하세요.', 'error');
+                return;
+            }
             if (names.length === 0 && fileMap.length === 0) { alert('추가할 캐릭터가 없습니다.'); return; }
 
             const totalSteps = names.length + fileMap.length;
@@ -75568,38 +75641,45 @@
 
         async function renameBotCharacter(charName) {
             if (!botCurrentBot || !charName) return;
-            const newName = prompt('새 캐릭터 이름:', charName);
-            if (!newName || !newName.trim() || newName.trim() === charName) return;
-            try {
-                const resp = await fetch('/api/bot_mode/action', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({action: 'rename_character', bot_name: botCurrentBot, old_name: charName, new_name: newName.trim()})
-                });
-                const data = await resp.json();
-                if (data.error) { alert(data.error); return; }
-                botData.bots = data.bots;
-                if (botCurrentChar === charName) {
-                    botCurrentChar = newName.trim();
-                    const titleEl = document.getElementById('bot-detail-title');
-                    if (titleEl) titleEl.textContent = newName.trim();
-                    const uploadBtn = document.getElementById('btn-detail-upload');
-                    const importBtn = document.getElementById('btn-detail-import');
-                    const renameBtn = document.getElementById('btn-detail-rename');
-                    const deleteBtn = document.getElementById('btn-detail-delete');
-                    if (uploadBtn) uploadBtn.onclick = () => openBotImageUpload(newName.trim());
-                    if (importBtn) importBtn.onclick = () => openBotAssetImport(newName.trim());
-                    if (renameBtn) renameBtn.onclick = () => renameBotCharacter(newName.trim());
-                    if (deleteBtn) deleteBtn.onclick = () => removeBotCharacter(newName.trim());
-                } else {
-                    renderBotCharacters();
+            openBotNameModal({
+                title: '캐릭터 이름 변경',
+                initialValue: charName,
+                nameLabel: '새 캐릭터 이름',
+                confirmText: '변경',
+                onConfirm: async (newName) => {
+                    if (newName === charName) return;
+                    try {
+                        const resp = await fetch('/api/bot_mode/action', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({action: 'rename_character', bot_name: botCurrentBot, old_name: charName, new_name: newName})
+                        });
+                        const data = await resp.json();
+                        if (data.error) { showToast('이름 변경 실패: ' + data.error, 'error'); return; }
+                        botData.bots = data.bots;
+                        if (botCurrentChar === charName) {
+                            botCurrentChar = newName;
+                            const titleEl = document.getElementById('bot-detail-title');
+                            if (titleEl) titleEl.textContent = newName;
+                            const uploadBtn = document.getElementById('btn-detail-upload');
+                            const importBtn = document.getElementById('btn-detail-import');
+                            const renameBtn = document.getElementById('btn-detail-rename');
+                            const deleteBtn = document.getElementById('btn-detail-delete');
+                            if (uploadBtn) uploadBtn.onclick = () => openBotImageUpload(newName);
+                            if (importBtn) importBtn.onclick = () => openBotAssetImport(newName);
+                            if (renameBtn) renameBtn.onclick = () => renameBotCharacter(newName);
+                            if (deleteBtn) deleteBtn.onclick = () => removeBotCharacter(newName);
+                        } else {
+                            renderBotCharacters();
+                        }
+                        updateBotBreadcrumb();
+                        showToast('캐릭터 이름 변경됨');
+                    } catch (e) {
+                        console.error('[BOT] 캐릭터 이름 변경 실패:', e);
+                        showToast('캐릭터 이름 변경 실패: ' + (e.message || String(e)), 'error');
+                    }
                 }
-                updateBotBreadcrumb();
-                showToast('캐릭터 이름 변경됨');
-            } catch (e) {
-                console.error('[BOT] 캐릭터 이름 변경 실패:', e);
-                alert('캐릭터 이름 변경 실패');
-            }
+            });
         }
 
         async function moveRepImage(charName, filename, direction) {

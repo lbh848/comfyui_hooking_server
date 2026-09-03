@@ -80,6 +80,41 @@ RECOMMENDED_POSITIVE_RULES = {
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 FACE_CROP_FOLDER_NAME = "FACE CROP"
 ASSET_OUTPUT_INSTRUCTION_MAX_CHARS = 120_000
+BOT_STORAGE_NAME_ALLOWED_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+$")
+BOT_STORAGE_NAME_ALLOWED_TEXT = "영문 대소문자, 숫자, 밑줄(_), 하이픈(-), 마침표(.)"
+_WINDOWS_RESERVED_FILE_STEMS = {
+    "CON", "PRN", "AUX", "NUL",
+    *(f"COM{index}" for index in range(1, 10)),
+    *(f"LPT{index}" for index in range(1, 10)),
+}
+
+
+def validate_bot_storage_name(value, label: str = "이름") -> str | None:
+    """봇/캐릭터 이름이 모든 관련 저장 경로에서 그대로 유지되는지 검사한다."""
+    if not isinstance(value, str):
+        return f"{label}은(는) 문자열이어야 합니다."
+    if not value:
+        return f"{label}이(가) 비어있습니다."
+    if not BOT_STORAGE_NAME_ALLOWED_PATTERN.fullmatch(value):
+        invalid_chars = []
+        for char in value:
+            if re.fullmatch(r"[A-Za-z0-9_.-]", char) or char in invalid_chars:
+                continue
+            invalid_chars.append(char)
+        descriptions = [
+            "공백" if char == " " else repr(char)
+            for char in invalid_chars
+        ]
+        invalid_text = ", ".join(descriptions) or "허용되지 않은 문자"
+        return (
+            f"{label}에 사용할 수 없는 문자가 있습니다: {invalid_text}. "
+            f"사용 가능: {BOT_STORAGE_NAME_ALLOWED_TEXT}."
+        )
+    if value in {".", ".."} or value.endswith("."):
+        return f"{label}은(는) 마침표로만 구성하거나 마침표로 끝낼 수 없습니다."
+    if value.split(".", 1)[0].upper() in _WINDOWS_RESERVED_FILE_STEMS:
+        return f"{label}에 Windows 예약 이름 {value!r}을(를) 사용할 수 없습니다."
+    return None
 
 
 def get_bot_visual_targets(
@@ -1451,9 +1486,14 @@ class BotMode:
             return _json_error(str(e))
 
     async def _add_bot(self, data, body):
-        name = body.get("name", "").strip()
-        if not name:
-            return _json_error("봇 이름이 비어있습니다.")
+        name = body.get("name", "")
+        validation_error = validate_bot_storage_name(name, "봇 이름")
+        if validation_error:
+            print(
+                "[BOT_MODE] 봇 추가 이름 거부: "
+                f"name={name!r}, reason={validation_error}"
+            )
+            return _json_error(validation_error)
         if any(b["name"] == name for b in data["bots"]):
             return _json_error(f"이미 존재하는 봇: {name}")
         data["bots"].append({
@@ -1499,9 +1539,17 @@ class BotMode:
 
     async def _add_character(self, data, body):
         bot_name = body.get("bot_name", "").strip()
-        char_name = body.get("char_name", "").strip()
-        if not bot_name or not char_name:
-            return _json_error("봇 또는 캐릭터 이름이 비어있습니다.")
+        char_name = body.get("char_name", "")
+        validation_error = validate_bot_storage_name(char_name, "캐릭터 이름")
+        if validation_error:
+            print(
+                "[BOT_MODE] 캐릭터 추가 이름 거부: "
+                f"bot={bot_name!r}, name={char_name!r}, reason={validation_error}"
+            )
+            return _json_error(validation_error)
+        if not bot_name:
+            print("[BOT_MODE] 캐릭터 추가 실패: 봇 이름이 비어있음")
+            return _json_error("봇 이름이 비어있습니다.")
         bot = next((b for b in data["bots"] if b["name"] == bot_name), None)
         if not bot:
             return _json_error(f"봇을 찾을 수 없음: {bot_name}")
@@ -1534,8 +1582,20 @@ class BotMode:
     async def _rename_character(self, data, body):
         bot_name = body.get("bot_name", "").strip()
         old_name = body.get("old_name", "").strip()
-        new_name = body.get("new_name", "").strip()
-        if not bot_name or not old_name or not new_name:
+        new_name = body.get("new_name", "")
+        validation_error = validate_bot_storage_name(new_name, "새 캐릭터 이름")
+        if validation_error:
+            print(
+                "[BOT_MODE] 캐릭터 이름 변경 거부: "
+                f"bot={bot_name!r}, old={old_name!r}, new={new_name!r}, "
+                f"reason={validation_error}"
+            )
+            return _json_error(validation_error)
+        if not bot_name or not old_name:
+            print(
+                "[BOT_MODE] 캐릭터 이름 변경 실패: "
+                f"bot={bot_name!r}, old={old_name!r}, 필수 값이 비어있음"
+            )
             return _json_error("필수 값이 비어있습니다.")
         bot = next((b for b in data["bots"] if b["name"] == bot_name), None)
         if not bot:
@@ -2770,12 +2830,37 @@ class BotMode:
             if not bot_name or not characters:
                 return _json_error("봇 이름과 캐릭터 목록이 필요합니다.")
 
+            validated_characters = []
+            for index, char_info in enumerate(characters):
+                if not isinstance(char_info, dict):
+                    msg = f"가져오기 항목 {index + 1}의 형식이 올바르지 않습니다."
+                    print(f"[BOT_MODE] 에셋 캐릭터 가져오기 거부: {msg}")
+                    return _json_error(msg)
+                original_name = str(char_info.get("name", ""))
+                requested_name = char_info.get("import_name", "")
+                char_name = requested_name if requested_name else original_name
+                validation_error = validate_bot_storage_name(
+                    char_name, f"가져오기 캐릭터 이름 {index + 1}"
+                )
+                if validation_error:
+                    print(
+                        "[BOT_MODE] 에셋 캐릭터 가져오기 이름 거부: "
+                        f"bot={bot_name!r}, original={original_name!r}, "
+                        f"name={char_name!r}, reason={validation_error}"
+                    )
+                    return _json_error(validation_error)
+                validated_characters.append(
+                    (char_info, original_name, char_name)
+                )
+
             imported = []
-            for char_info in characters:
-                original_name = char_info.get("name", "").strip()
-                char_name = char_info.get("import_name", "").strip() or original_name
+            for char_info, original_name, char_name in validated_characters:
                 rep_images = char_info.get("rep_images", [])
-                if not char_name or not rep_images:
+                if not rep_images:
+                    print(
+                        "[BOT_MODE] 에셋 캐릭터 가져오기 건너뜀: "
+                        f"character={char_name!r}, 대표 이미지가 비어있음"
+                    )
                     continue
 
                 # 캐릭터 생성 (없으면)
