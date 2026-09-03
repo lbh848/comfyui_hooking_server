@@ -64,9 +64,15 @@ def test_tailscale_status_uses_tunnel_subprocess_loop(monkeypatch):
     async def fake_communicate(ts, *args, timeout):
         loop_names.append(type(asyncio.get_running_loop()).__name__)
         assert ts == "tailscale-test"
-        assert args == ("funnel", "status")
+        assert args == ("serve", "status", "--json")
         assert timeout == 10.0
-        return b"https://fixed-name.example.ts.net:443\n", b"", 0
+        return (
+            b'{"TCP":{"8189":{"HTTPS":true}},'
+            b'"Web":{"fixed-name.example.ts.net:8189":'
+            b'{"Handlers":{"/":{"Proxy":"http://127.0.0.1:8189"}}}}}',
+            b"",
+            0,
+        )
 
     monkeypatch.setattr(server, "_tailscale_bin", lambda: "tailscale-test")
     monkeypatch.setattr(
@@ -76,13 +82,14 @@ def test_tailscale_status_uses_tunnel_subprocess_loop(monkeypatch):
     )
 
     async def call_from_server_loop():
-        return await server._tailscale_funnel_state()
+        return await server._tailscale_serve_state()
 
     try:
-        active, url = _run_with_selector(call_from_server_loop())
+        active, url, conflict = _run_with_selector(call_from_server_loop())
     finally:
         worker.close()
 
     assert active is True
-    assert url == "https://fixed-name.example.ts.net"
+    assert url == "https://fixed-name.example.ts.net:8189"
+    assert conflict is None
     assert loop_names == ["ProactorEventLoop"]

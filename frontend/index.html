@@ -25598,7 +25598,7 @@
                 <div class="share-status" id="share-status"></div>
 
                 <div class="share-issue-block">
-                    <div class="share-row-label">고정 주소 <span class="share-row-sub">Tailscale Funnel (매번 같은 주소, 재발급 불필요)</span></div>
+                    <div class="share-row-label">고정 주소 <span class="share-row-sub">Tailscale Serve (같은 tailnet 전용, HTTPS :8189)</span></div>
                     <div class="share-issue-row">
                         <div class="share-url-box empty" id="ts-url-box">발급 전</div>
                         <button class="share-btn primary" id="ts-issue-btn" onclick="issueTailscale()">주소 발급</button>
@@ -28968,7 +28968,7 @@
         // ─── 터널 공유 (공유 모달) ──────────────────────────
         let tunnelActive = false;
         let tunnelUrl = null;
-        // Tailscale Funnel (고정 주소) — Cloudflare 터널과 독립적으로 동작
+        // Tailscale Serve (tailnet 고정 주소) — Cloudflare 터널과 독립적으로 동작
         let tsActive = false;
         let tsUrl = null;
 
@@ -29142,8 +29142,8 @@
             _renderShareState();
         }
 
-        // ─── Tailscale Funnel (고정 주소) ───────────────────
-        // Cloudflare 터널과 독립. 고정 주소라 재발급 버튼은 없고 발급/복사/해지만 둔다.
+        // ─── Tailscale Serve (tailnet 고정 주소) ─────────────
+        // 이 매니저는 HTTPS 8189 -> 로컬 8189 매핑만 생성하고 종료한다.
         function _renderTailscaleState() {
             const box = document.getElementById('ts-url-box');
             const issueBtn = document.getElementById('ts-issue-btn');
@@ -29169,28 +29169,16 @@
             }
         }
 
-        function _setTailscaleStatus(msg, isError, enableUrl) {
+        function _setTailscaleStatus(msg, isError) {
             const el = document.getElementById('ts-status');
             if (!el) return;
             if (!msg) { el.textContent = ''; el.style.color = isError ? 'var(--error)' : 'var(--text2)'; return; }
-            // HTML 이스케이프. 활성화 URL은 ?node= 가 현재 기기 고정이므로 서버가 런타임에
-            // 추출한 funnel_enable_url 을 버튼으로 노출한다.
+            // 오류에 URL이 포함된 경우에만 안전하게 링크로 표시한다.
             const esc = msg.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-            let html;
-            if (enableUrl) {
-                // 버튼으로 대체하므로 본문에서 URL 토큰은 제거
-                const stripped = esc.replace(/https:\/\/[^\s]+/g, '').replace(/\s+$/g, '');
-                const safeUrl = enableUrl.replace(/'/g, '&#39;');
-                html = stripped + '<br>'
-                    + '<button class="share-btn primary" style="margin-top:8px"'
-                    + ' onclick="window.open(\'' + safeUrl + '\', \'_blank\', \'noopener\')">'
-                    + 'Funnel 활성화 하기 ↗</button>';
-            } else {
-                html = esc.replace(
-                    /(https:\/\/[^\s]+)/g,
-                    '<a href="$1" target="_blank" rel="noopener noreferrer" style="color:var(--accent);text-decoration:underline">$1</a>'
-                );
-            }
+            const html = esc.replace(
+                /(https:\/\/[^\s]+)/g,
+                '<a href="$1" target="_blank" rel="noopener noreferrer" style="color:var(--accent);text-decoration:underline">$1</a>'
+            );
             el.innerHTML = html;
             el.style.whiteSpace = 'pre-wrap';
             el.style.color = isError ? 'var(--error)' : 'var(--text2)';
@@ -29206,9 +29194,15 @@
                     tsActive = false;
                     tsUrl = null;
                 }
+                if (res.error) {
+                    _setTailscaleStatus(res.error, true);
+                } else {
+                    _setTailscaleStatus('');
+                }
             } catch (e) {
                 tsActive = false;
                 tsUrl = null;
+                _setTailscaleStatus('Tailscale 상태 조회 실패: ' + (e && e.message || e), true);
             }
             _renderTailscaleState();
             // 가이드 자리 주소 후보에 Tailscale URL도 포함되므로 같이 갱신
@@ -29218,11 +29212,11 @@
         async function issueTailscale() {
             const issueBtn = document.getElementById('ts-issue-btn');
             if (issueBtn) { issueBtn.disabled = true; issueBtn.textContent = '발급 중...'; }
-            _setTailscaleStatus('Tailscale Funnel 설정 중... (최대 20초)');
+            _setTailscaleStatus('Tailscale Serve HTTPS :8189 설정 중... (최대 20초)');
             try {
                 const res = await fetch('/api/tailscale/start', {method:'POST'});
                 const data = await res.json();
-                if (data && data.url) {
+                if (res.ok && data && data.url) {
                     tsActive = true;
                     tsUrl = data.url;
                     _renderTailscaleState();
@@ -29230,15 +29224,12 @@
                     _setTailscaleStatus('고정 주소가 발급되었습니다.');
                     showToast('Tailscale 고정 주소가 발급되었습니다!', 'success');
                 } else {
-                    const err = new Error((data && data.error) || 'Tailscale Funnel 시작 실패');
-                    err.funnel_enable_url = data && data.funnel_enable_url;
-                    throw err;
+                    throw new Error((data && data.error) || 'Tailscale Serve 시작 실패');
                 }
             } catch (e) {
                 _setTailscaleStatus(
                     '고정 주소 발급 실패: ' + (e && e.message || e),
-                    true,
-                    e && e.funnel_enable_url
+                    true
                 );
                 showToast('Tailscale 발급 실패: ' + (e && e.message || e), 'error');
             } finally {
@@ -29259,16 +29250,23 @@
         async function stopTailscale() {
             const stopBtn = document.getElementById('ts-stop-btn');
             if (stopBtn) { stopBtn.disabled = true; stopBtn.textContent = '종료 중...'; }
-            _setTailscaleStatus('Funnel 해지 중...');
-            try { await fetch('/api/tailscale/stop', {method:'POST'}); } catch(e) {
+            _setTailscaleStatus('Serve HTTPS :8189 연결 종료 중...');
+            try {
+                const res = await fetch('/api/tailscale/stop', {method:'POST'});
+                const data = await res.json();
+                if (!res.ok || (data && data.status === 'error')) {
+                    throw new Error((data && data.error) || 'Tailscale Serve 종료 실패');
+                }
+                tsActive = false;
+                tsUrl = null;
+                _renderTailscaleState();
+                _renderShareState();
+                _setTailscaleStatus('Serve HTTPS :8189 연결이 종료되었습니다.');
+                showToast('Tailscale Serve :8189 연결을 종료했습니다.', 'info');
+            } catch(e) {
                 _setTailscaleStatus('해지 실패: ' + (e && e.message || e), true);
+                showToast('Tailscale 종료 실패: ' + (e && e.message || e), 'error');
             }
-            tsActive = false;
-            tsUrl = null;
-            _renderTailscaleState();
-            _renderShareState();
-            _setTailscaleStatus('Funnel 연결이 해지되었습니다.');
-            showToast('Tailscale Funnel을 해지했습니다.', 'info');
             if (stopBtn) { stopBtn.textContent = '연결 종료'; }
             _renderTailscaleState();
         }
