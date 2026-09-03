@@ -28,6 +28,13 @@ def test_settings_has_comfy_installer_tab_and_key_inputs() -> None:
     assert ">PatchSageAttention 일괄 비활성화</button>" in FRONTEND
     assert 'id="comfy-installer-e2e-modal"' in FRONTEND
     assert 'id="comfy-installer-compat-start-btn"' in FRONTEND
+    assert "<strong>설치 / 누락 설치</strong>는" in FRONTEND
+    assert (
+        'id="comfy-installer-start-btn" '
+        "onclick=\"comfyInstallerStart('standard')\">설치 / 누락 설치</button>"
+        in FRONTEND
+    )
+    assert "<strong>새로 설치</strong>" not in FRONTEND
     assert 'id="comfy-installer-migrate-btn"' in FRONTEND
     assert 'id="comfy-installer-retarget-config-btn"' in FRONTEND
     assert ">문제 해결</h3>" in FRONTEND
