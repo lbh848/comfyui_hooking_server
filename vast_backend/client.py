@@ -49,6 +49,26 @@ def _rate_limit_delay(raw: str, attempt: int) -> float:
 class VastApiError(RuntimeError):
     """Vast API 오류를 직렬화 가능한 형태로 감싼 예외."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        http_status: int | None = None,
+        response_content_type: str = "",
+    ) -> None:
+        super().__init__(message)
+        self.http_status = http_status
+        self.response_content_type = str(response_content_type or "")
+
+    @property
+    def is_transient_gateway_rejection(self) -> bool:
+        """인증 API까지 도달하지 못한 HTML 403 응답인지 확인한다."""
+        media_type = self.response_content_type.partition(";")[0].strip().lower()
+        return self.http_status == 403 and media_type in {
+            "text/html",
+            "application/xhtml+xml",
+        }
+
 
 # 생성 API runtype 화이트리스트(공식 문서 기준). _direct 계열만 인스턴스에
 # 포트를 직접 프로비저닝하고, 나머지는 Vast 프록시를 경유한다.
@@ -132,13 +152,17 @@ class VastClient:
                         await asyncio.sleep(wait)
                         continue
                     if resp.status >= 400:
+                        response_content_type = resp.headers.get("Content-Type", "")
                         print(
                             f"[VAST_API] 요청 실패: {method} /api/{api_version}{path} "
-                            f"http={resp.status} body={raw[:500]}"
+                            f"http={resp.status} content_type={response_content_type!r} "
+                            f"body={raw[:500]}"
                         )
                         raise VastApiError(
                             f"Vast API 요청 실패 ({method} /api/{api_version}{path}): "
-                            f"HTTP {resp.status} {raw[:300]}"
+                            f"HTTP {resp.status} {raw[:300]}",
+                            http_status=resp.status,
+                            response_content_type=response_content_type,
                         )
                     try:
                         data = json.loads(raw) if raw else None

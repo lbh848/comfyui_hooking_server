@@ -32,6 +32,7 @@ from vast_backend.preflight import (
 )
 from vast_backend.service import (
     ACCOUNT_STATUS_CACHE_SECONDS,
+    ACCOUNT_STATUS_ERROR_BACKOFF_SECONDS,
     MAX_BUILD_COST_USD,
     MIN_RUNTIME_CUDA_VERSION,
     MODELS_DONE_FLAG,
@@ -836,7 +837,7 @@ async def test_vast_instance_status_concurrent_callers_share_one_api_request(
 
 
 @pytest.mark.asyncio
-async def test_vast_account_status_uses_sixty_second_cache(
+async def test_vast_account_status_uses_five_minute_cache(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     service = VastService(tmp_path, lambda: {"vast_api_key": "test-key"})
@@ -863,6 +864,89 @@ async def test_vast_account_status_uses_sixty_second_cache(
     service._account_status_cache = (time.monotonic() - 1, payload)
     await service.account_status()
     assert api_calls == 2
+
+
+@pytest.mark.asyncio
+async def test_vast_account_status_backs_off_and_does_not_invalidate_key_for_html_403(
+    tmp_path: Path,
+) -> None:
+    service = VastService(tmp_path, lambda: {"vast_api_key": "test-key"})
+    should_fail = True
+    api_calls = 0
+
+    class FakeClient:
+        async def account(self) -> dict[str, Any]:
+            nonlocal api_calls
+            api_calls += 1
+            if should_fail:
+                raise VastApiError(
+                    "HTTP 403 Forbidden",
+                    http_status=403,
+                    response_content_type="text/html; charset=utf-8",
+                )
+            return {"username": "tester", "credit": 8.5}
+
+    service._client = FakeClient()  # type: ignore[assignment]
+
+    for failure_count, expected_delay in enumerate(
+        (*ACCOUNT_STATUS_ERROR_BACKOFF_SECONDS, 300), start=1
+    ):
+        result = await service.account_status()
+        expires_at, payload = service._account_status_cache or (0.0, {})
+        remaining = expires_at - time.monotonic()
+
+        assert result["ok"] is False
+        assert result["api_key_valid"] is None
+        assert f"{expected_delay}초 후" in result["error"]
+        assert expected_delay - 1 <= remaining <= expected_delay
+        assert service._account_status_failure_count == failure_count
+        assert payload == result
+
+        service._account_status_cache = (time.monotonic() - 1, payload)
+
+    should_fail = False
+    recovered = await service.account_status()
+
+    assert recovered["ok"] is True
+    assert recovered["api_key_valid"] is True
+    assert service._account_status_failure_count == 0
+    assert api_calls == 5
+
+
+@pytest.mark.asyncio
+async def test_vast_client_preserves_html_403_response_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = VastClient("test-key")
+
+    class FakeResponse:
+        status = 403
+        headers = {"Content-Type": "text/html; charset=utf-8"}
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args: Any) -> None:
+            return None
+
+        async def text(self) -> str:
+            return "<html><title>403 Forbidden</title></html>"
+
+    class FakeSession:
+        def request(self, *_args: Any, **_kwargs: Any) -> FakeResponse:
+            return FakeResponse()
+
+    async def fake_ensure_session() -> FakeSession:
+        return FakeSession()
+
+    monkeypatch.setattr(client, "_ensure_session", fake_ensure_session)
+
+    with pytest.raises(VastApiError) as raised:
+        await client.account()
+
+    assert raised.value.http_status == 403
+    assert raised.value.response_content_type == "text/html; charset=utf-8"
+    assert raised.value.is_transient_gateway_rejection is True
 
 
 def test_vast_rate_limit_backoff_is_exponential_and_jittered(

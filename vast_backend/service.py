@@ -79,8 +79,10 @@ SSH_KEY_REATTACH_SETTLE_SECONDS = 5
 WATCHDOG_STATUS_MAX_AGE_SECONDS = 25
 RECOVERY_HEALTH_ATTEMPTS = 12
 RECOVERY_HEALTH_POLL_SECONDS = 5
-ACCOUNT_STATUS_CACHE_SECONDS = 60
-ACCOUNT_STATUS_ERROR_CACHE_SECONDS = 15
+# 계정/잔액은 작업 진행 상태가 아니므로 자주 조회하지 않는다. 화면의 5초 갱신은
+# 이 캐시를 읽고, 실제 /users/current/ 호출은 정상일 때 5분에 한 번만 수행한다.
+ACCOUNT_STATUS_CACHE_SECONDS = 300
+ACCOUNT_STATUS_ERROR_BACKOFF_SECONDS = (60, 120, 300)
 IMAGE_PULL_POLL_SECONDS = 20
 IMAGE_PULL_LOG_TAIL = 1000
 ACTUAL_TRANSFER_WINDOW_SECONDS = 30
@@ -141,6 +143,7 @@ class VastService:
         ] = {}
         self._account_status_lock = asyncio.Lock()
         self._account_status_cache: tuple[float, dict[str, Any]] | None = None
+        self._account_status_failure_count = 0
         self._image_pull_lock = asyncio.Lock()
         self._image_pull_last_poll_monotonic = 0.0
         self._image_manifest_cache: dict[str, dict[str, Any]] = {}
@@ -1551,6 +1554,7 @@ class VastService:
         self._client = None
         self._instance_status_cache.clear()
         self._account_status_cache = None
+        self._account_status_failure_count = 0
         self._image_manifest_cache.clear()
         self._image_pull_last_poll_monotonic = 0.0
 
@@ -1619,16 +1623,37 @@ class VastService:
                     "balance_usd": data.get("credit") or 0.0,
                     "api_key_valid": True,
                 }
+                self._account_status_failure_count = 0
                 ttl = ACCOUNT_STATUS_CACHE_SECONDS
             except VastApiError as exc:
                 _log(f"계정 확인 실패: {exc}")
                 traceback.print_exc()
+                self._account_status_failure_count += 1
+                backoff_index = min(
+                    self._account_status_failure_count - 1,
+                    len(ACCOUNT_STATUS_ERROR_BACKOFF_SECONDS) - 1,
+                )
+                ttl = ACCOUNT_STATUS_ERROR_BACKOFF_SECONDS[backoff_index]
+                transient_gateway_rejection = exc.is_transient_gateway_rejection
+                if transient_gateway_rejection:
+                    error_message = (
+                        "Vast 게이트웨이가 계정 조회를 일시적으로 거부했습니다. "
+                        f"{ttl}초 후 다시 확인합니다."
+                    )
+                else:
+                    error_message = str(exc)
                 result = {
                     "ok": False,
-                    "error": str(exc),
-                    "api_key_valid": False,
+                    "error": error_message,
+                    # HTML 403은 Vast 인증 애플리케이션에 도달하기 전 응답이므로
+                    # 저장된 API 키가 잘못되었다는 근거로 사용하지 않는다.
+                    "api_key_valid": None if transient_gateway_rejection else False,
                 }
-                ttl = ACCOUNT_STATUS_ERROR_CACHE_SECONDS
+                _log(
+                    "계정 확인 재시도 예약: "
+                    f"failure_count={self._account_status_failure_count}, "
+                    f"delay={ttl}s, transient_gateway={transient_gateway_rejection}"
+                )
             self._account_status_cache = (time.monotonic() + ttl, result)
             return dict(result)
 
