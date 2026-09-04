@@ -144,7 +144,7 @@ def test_call2_builds_one_coherent_explicit_bundle_without_tag_dictionary():
     assert "one minimal scene-specific bundle" in system
     assert "not from a fixed palette or quota" in system
     assert "Do not consult or simulate an external tag dictionary" in system
-    assert "camera whose framing contains the body portions" in system
+    assert "camera whose framing contains the one directly visible fact" in system
     assert "source#`/`target#` counterparts symmetrical" in system
     assert "silently assemble and cross-check one minimal coherent scene-specific bundle" in thoughts
     assert "never invent a new act, anatomy, intensity, garment state" in thoughts
@@ -160,6 +160,32 @@ def test_call2_plan_handoff_stays_natural_and_schema_remains_compact():
     assert "required_additions" in source
     assert "camera_replacement" not in source
     assert "Do not rewrite the scene, camera, composition, dialogue" in source
+
+
+def test_call2_plan_uses_active_single_focus_instruction_as_renderability_envelope():
+    source = PIPELINE_PY.read_text(encoding="utf-8")
+
+    assert "ACTIVE BOT IMAGE INSTRUCTIONS as a binding renderability envelope" in source
+    assert "anonymous-partner, face-visibility, and crop limits" in source
+    assert "requires more of another participant than the active instruction permits" in source
+    assert "whose only content is an invisible internal state" in source
+
+
+def test_call2_plan_preserves_requested_count_with_distinct_visible_slices():
+    source = PIPELINE_PY.read_text(encoding="utf-8")
+
+    assert "The requested scene count remains binding" in source
+    assert "materially different directly visible instants or emphases" in source
+    assert "invisible, metaphorical, or consequence-only filler" in source
+    assert "visible pose, action, reaction, gesture, spatial relationship, or environment" in source
+
+
+def test_call2_plan_keeps_concrete_environment_and_aftermath_opposite_cases():
+    source = PIPELINE_PY.read_text(encoding="utf-8")
+
+    assert "environment, aftermath, or secondary effect is selectable only when" in source
+    assert "it is itself the narrative's concrete visual subject" in source
+    assert "never use it as a substitute for an omitted causal interaction" in source
 
 
 def test_call2_prioritizes_character_state_over_environment_detail():
@@ -307,7 +333,8 @@ def test_anima_fragment_uses_one_broad_anchor_and_natural_language_geometry():
     assert "do not atomize one connected fragment into a comma chain" in source
     assert "never change a third-person camera to POV" in source
     assert "`cropped male upper torso` is too broad" in system
-    assert "use a contact-point `close-up`" in system
+    assert "use a genuinely tight crop" in system
+    assert "either the interaction geometry or the named subject's visible reaction" in system
     assert "semantically inspect every phrase in each named character positive" in source
     assert "express the partner fragment exactly once with one familiar region/composition phrase" in v5
     assert "over atomizing one connected fragment into a comma chain" in v5
@@ -329,3 +356,21 @@ def test_call2_visibility_contract_does_not_force_hidden_character_details():
     assert "put only visible or coverage-defining garments in " in source
     assert '"positive. Never advance state' in source
     assert "visibility_omissions" in source
+
+
+def test_call2_detail_prioritizes_one_visible_fact_and_natural_occlusion():
+    system = CALL2_SYSTEM.read_text(encoding="utf-8")
+    thoughts = CALL2_THOUGHTS.read_text(encoding="utf-8")
+    source = PIPELINE_PY.read_text(encoding="utf-8")
+
+    assert "one primary visual fact" in system
+    assert "Preserve all natural overlap and occlusion" in system
+    assert "never pull hips, thighs, or torsos apart" in system
+    assert "never force both distant regions into one close-up" in thoughts
+    assert "Fixed appearance is identity authority, not a quota of features to display" in source
+    assert "Do not turn " in source
+    assert "an internal sensation, thought, metaphor, or secondary consequence" in source
+    assert "Never combine flush or sealed body contact" in source
+    assert "contact point centered" not in system
+    assert "contact point centered" not in thoughts
+    assert "contact point centered" not in source

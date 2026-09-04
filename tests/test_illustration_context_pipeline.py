@@ -1869,6 +1869,10 @@ scenes: []
     assert "# ACTIVE BOT IMAGE INSTRUCTIONS" in plan_request
     assert "ACTIVE BOT INSTRUCTION MARKER" in plan_request
     assert "### Nested instruction heading" in plan_request
+    assert "binding renderability envelope during selection" in plan_request
+    assert "requested scene count remains binding" in plan_request
+    assert "materially different directly visible instants" in plan_request
+    assert "invisible, metaphorical, or consequence-only filler" in plan_request
     assert "# CHARACTER DICTIONARY" in plan_request
     assert "### Hana" in plan_request
     assert "### Bob" not in plan_request
@@ -3171,7 +3175,7 @@ def test_call2_macro_render_has_no_risu_macros():
     assert "positive: 1girl" not in rendered
 
 
-def test_call2_physical_visibility_audit_renders_general_and_explicit_contracts():
+def test_call2_physical_visibility_renders_general_and_explicit_contracts():
     prompts = pipeline.load_prompt_files()
     explicit = pipeline.render_call2_prompt(
         prompts["call2_system"],
@@ -3187,25 +3191,26 @@ def test_call2_physical_visibility_audit_renders_general_and_explicit_contracts(
     )
 
     for rendered in (explicit, non_explicit):
-        assert "Physical Body Construction and Visibility Audit" in rendered
+        assert "Physical Body Construction and Visibility" in rendered
         assert "construct the depicted instant in physical order" in rendered
         assert "A crop defines the image boundary; it is not a covering object" in rendered
-        assert "trace an unobstructed line of sight from the camera" in rendered
-        assert "foreground mass that hides the very structure or contact" in rendered
+        assert "Preserve all natural overlap and occlusion" in rendered
+        assert "single visible fact" in rendered
         assert "smallest sufficient connected body region" in rendered
         assert "every visible limb and body part has one clear owner" in rendered
         assert "{{" not in rendered
 
-    assert "In an explicit adult scene, external genital anatomy" in explicit
-    assert "uncovered adult male pelvis inside the frame" in explicit
+    assert "In an explicit scene, external genital anatomy" in explicit
+    assert "uncovered male pelvis inside the frame" in explicit
+    assert "only when the established view actually exposes it" in explicit
     assert "place `penis` with that anonymous fragment in `scene`" in explicit
     assert "never place it in a named woman's `positive`" in explicit
-    assert "contact point as its focus" in explicit
-    assert "`contact point centered`" in explicit
-    assert "conditional visibility pattern, not a fixed NSFW palette" in explicit
+    assert "Do not combine flush or sealed body contact" in explicit
+    assert "keep the lower contact off-frame or naturally hidden" in explicit
+    assert "contact point centered" not in explicit
     assert "owner-predicate pair" in explicit
-    assert "In an explicit adult scene, external genital anatomy" not in non_explicit
-    assert "uncovered adult male pelvis inside the frame" not in non_explicit
+    assert "In an explicit scene, external genital anatomy" not in non_explicit
+    assert "uncovered male pelvis inside the frame" not in non_explicit
     assert "Reconstruct visibility in physical order" in explicit_thoughts
     assert "no inside-frame structure is silently omitted" in explicit_thoughts
     assert "no covered or off-frame structure is forced into view" in explicit_thoughts
@@ -3353,19 +3358,21 @@ async def test_call2_detail_worker_receives_physical_construction_order(monkeypa
     assert call_name.startswith("CALL2-DETAIL")
     assert "coherent skeletons and joints" in combined
     assert "clothing/object coverage" in combined
-    assert "body-to-body contact and occlusion, then camera crop" in combined
+    assert "body-to-body contact and natural occlusion, then camera crop" in combined
     assert "Treat the crop only as a boundary" in combined
     assert "smallest sufficient connected body region" in combined
     assert "smallest coherent visible body portion" not in combined
     assert "do not force covered, off-frame, or physically occluded anatomy" in combined
-    assert "Trace a camera sightline to every required visible structure and contact" in combined
-    assert "state its unobstructed near-to-far depth order in supplement" in combined
-    assert "scene must include the anonymous fragment, its owned visible anatomy" in combined
-    assert "contact point centered" in combined
-    assert "must never expose covered, off-frame, or intentionally hidden anatomy" in combined
+    assert "one primary visual fact" in combined
+    assert "Never combine flush or sealed body contact" in combined
+    assert "entire junction to remain unobstructed" in combined
+    assert "contact point centered" not in combined
+    assert "unobstructed near-to-far depth order" not in combined
     assert "owner-predicate pair" in combined
     assert "A visible penis belonging to a cropped anonymous male" in combined
     assert "never in a named woman's positive" in combined
+    assert "Fixed appearance is identity authority, not a quota of features to display" in combined
+    assert "face-, hair-, eye-, and expression-specific traits wholly outside the frame" in combined
 
 
 @pytest.mark.asyncio
@@ -3404,7 +3411,8 @@ async def test_call2_detail_worker_hides_explicit_physics_when_nsfw_off(monkeypa
     assert len(requests) == 1
     combined = requests[0]
     assert "coherent skeletons and joints" in combined
-    assert "camera sightline to every required visible structure and contact" in combined
+    assert "body-to-body contact and natural occlusion" in combined
+    assert "one primary visual fact" in combined
     assert "genital focus" not in combined
     assert "visible penis" not in combined
     assert "named woman's positive" not in combined

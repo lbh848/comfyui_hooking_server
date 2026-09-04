@@ -7741,14 +7741,14 @@ async def _run_parallel_call2_details(
             explicit_physics_instruction = ""
             if toggles.get("nsfw"):
                 explicit_physics_instruction = (
-                    "When established adult genital contact is the required visible fact and is not deliberately "
-                    "occluded, camera must identify that contact as the focus (for example, genital focus) rather "
-                    "than generic close-up alone; scene must include the anonymous fragment, its owned visible "
-                    "anatomy, the exact action, and contact point centered; supplement must explicitly keep relevant "
-                    "nearer body volumes outside the camera sightline. This conditional pattern must never expose "
-                    "covered, off-frame, or intentionally hidden anatomy. A visible penis belonging to a cropped "
-                    "anonymous male must be placed in scene, with its exact contact in supplement, never in a named "
-                    "woman's positive. "
+                    "When established genital contact is the primary visible fact, use a physically feasible tight "
+                    "view that makes the participants' alignment and action readable while preserving natural "
+                    "overlap and occlusion. Never combine flush or sealed body contact with a demand for the entire "
+                    "junction to remain unobstructed, and never pull bodies apart merely to expose it. Include only "
+                    "the anatomy the chosen view really reveals. A visible penis belonging to a cropped anonymous "
+                    "male must be placed in scene, with its exact contact in supplement, never in a named woman's "
+                    "positive. If the named subject's face or reaction is primary, keep lower contact naturally "
+                    "occluded or off-frame instead of forcing both distant regions into one close-up. "
                 )
             base = deepcopy(call2_context_messages)
             if base and base[0].get("role") == "system":
@@ -7800,6 +7800,14 @@ async def _run_parallel_call2_details(
                 "including garments outside the frame, but put only visible or coverage-defining garments in "
                 "positive. Never advance state beyond the assigned scene. "
                 + detail_background_instruction
+                + "Resolve all competing details in this order: the assigned directly visible moment; one physically "
+                "possible pose with continuous bodies and joints; natural contact, overlap, and occlusion; a camera "
+                "that shows one primary visual fact; only then visible identity traits and environment. Do not turn "
+                "an internal sensation, thought, metaphor, or secondary consequence into newly exposed anatomy, a "
+                "new contact, or a body deformation. Derive every character positive after choosing the crop: a "
+                "lower-body, hand, or other detail crop omits face-, hair-, eye-, and expression-specific traits wholly "
+                "outside the frame, while a face/reaction composition does not force distant lower-body contact into "
+                "the image. Fixed appearance is identity authority, not a quota of features to display. "
                 + "Never repeat scene-wide environment, "
                 "lighting, weather, time, character-count, or shared background-prop tags in characters[].positive. "
                 "Treat each assigned plan's characters list as its exact unique canonical roster of named, identity-managed "
@@ -7827,9 +7835,9 @@ async def _run_parallel_call2_details(
                 "pose, or action belongs to the anonymous partner, leaving the fragment only once in scene or supplement. For "
                 "complex contact geometry, supplement may use up to two short complete natural-language sentences: first "
                 "establish the visible fragment and its frame-edge continuation, then the exact contact, overlap, or occlusion. "
-                "Before finalizing any field, reconstruct the instant in physical order: coherent skeletons and joints, continuous body volumes, clothing/object coverage, body-to-body contact and occlusion, then camera crop. Treat the crop only as a boundary. Do not silently omit an uncovered anatomical structure that remains inside the frame; do not force covered, off-frame, or physically occluded anatomy into view. Trace a camera sightline to every required visible structure and contact. If a nearer hip, buttock, thigh, torso, limb, garment, or prop crosses it unintentionally, change camera azimuth/elevation or the physically valid pose; never let the cropped participant become a foreground mass that hides its own action-defining structure. Make the required contact the compositional focus and state its unobstructed near-to-far depth order in supplement. "
+                "Before finalizing any field, reconstruct the instant in physical order: coherent skeletons and joints, continuous body volumes, clothing/object coverage, body-to-body contact and natural occlusion, then camera crop. Treat the crop only as a boundary. Do not silently omit an uncovered anatomical structure that remains inside the frame; do not force covered, off-frame, or physically occluded anatomy into view. Preserve nearer hips, thighs, torsos, limbs, garments, and props wherever the pose naturally places them. Change camera azimuth/elevation or a physically valid pose only when the assigned scene's one primary visible fact would otherwise be unreadable, never merely to expose every structure or contact surface. "
                 + explicit_physics_instruction
-                + "Read every anatomy, pose, and action phrase as an owner-predicate pair. Anything belonging to an anonymous fragment must stay in scene or supplement and must never enter a named character's positive. Every visible limb and body part must have one unambiguous owner, and the chosen fragment must preserve every action-defining structure and contact point. Do not reduce a "
+                + "Read every anatomy, pose, and action phrase as an owner-predicate pair. Anything belonging to an anonymous fragment must stay in scene or supplement and must never enter a named character's positive. Every visible limb and body part must have one unambiguous owner, and the chosen fragment must preserve the connected body chain and alignment needed for the action. Do not reduce a "
                 "story-essential explicit state to an ambiguous isolated tag or crop it out. "
                 "When a plan has characters: [], preserve characters: [] and express anonymous people "
                 "only through scene tags and supplement. "
@@ -13015,11 +13023,15 @@ async def build_from_context(
                     "Do not output Danbooru tags, camera fields, outfit lists, plan_id, source_segments, slots, analysis, or prose outside JSON.",
                     "Plan narrative scene beats only. You are not an appearance, wardrobe, or Key Visual authority.",
                     "Do not copy, restate, infer, or invent hair arrangement, hair/eye/body/species traits, or any other persistent appearance in scene_brief; the later image-detail task receives the complete fixed appearance separately. Preserve only the visible action or expression, such as narrowing the eyes, without turning appearance wording into a temporary replacement.",
-                    "Treat consecutive paragraphs sharing one time, location, and ongoing action as one visual beat; select at most one scene from that beat.",
+                    "When supplied, treat # ACTIVE BOT IMAGE INSTRUCTIONS as a binding renderability envelope during selection, not merely styling for the later detail task. Respect its subject-focus, identifiable-character, anonymous-partner, face-visibility, and crop limits before choosing any anchor.",
+                    "Select an anchor only when its story-essential visible fact can be shown coherently inside that active renderability envelope. Do not choose a moment whose meaning requires more of another participant than the active instruction permits, or whose only content is an invisible internal state.",
+                    "Normally treat consecutive paragraphs sharing one time, location, and ongoing action as one visual beat. When distinct major beats can satisfy the requested count, select at most one scene from each.",
                     "An existing <img ...> block already occupies its visual beat, so select a different beat.",
                     "Choose each anchor by semantic context and common sense, never by keyword matching.",
                     "Write scene_brief as natural language, not a field menu or tag list. Preserve the central visible action and its ongoing physical state without euphemism.",
                     "When exposure, displaced clothing, intimate contact, or another state is essential to the selected beat, state the participants, relative positions, contact/action, and visible consequence naturally enough for one physically possible image.",
+                    "Every scene_brief must describe a directly visible external instant that is independently understandable. A thought, internal sensation, metaphor, abstract silhouette, environment, aftermath, or secondary effect is selectable only when it is itself the narrative's concrete visual subject or accompanies an established visible subject, action, gesture, reaction, or spatial change; never use it as a substitute for an omitted causal interaction.",
+                    "The requested scene count remains binding. If distinct major beats are fewer than the requested count, select materially different directly visible instants or emphases from different anchors within a sustained event instead of using invisible, metaphorical, or consequence-only filler. Each such scene must differ in visible pose, action, reaction, gesture, spatial relationship, or environment while remaining valid under the active image instructions.",
                     "Across selected scenes, prefer meaningful visual progression; do not select near-identical stages of one action merely to fill the requested count.",
                 ]
                 focus = str(toggles.get("focus") or "").strip()
