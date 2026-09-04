@@ -1712,6 +1712,19 @@ async def test_independent_call2_keyvis_returns_one_object_and_rejects_scenes(mo
     assert "keep one minimal fragment anchor exactly once in scene" in combined
     assert "never copy the partner's body, pose, or action into a named character positive" in combined
     assert "Use a contact-point close-up for anything broader than hands or forearms" in combined
+    assert (
+        "Expected anatomy derived from an already established, uncovered body region "
+        "inside the frame is not invented story content"
+    ) in combined
+    assert (
+        "`nude`, `topless`, `bottomless`, and similar terms describe coverage state"
+    ) in combined
+    assert (
+        "A focal tag does not erase other uncovered anatomy that remains inside the same frame"
+    ) in combined
+    assert (
+        "Never force anatomy that is cropped, covered, naturally occluded, or hidden by the established view"
+    ) in combined
 
     leaked_scene_output = keyvis_output.replace(
         "scenes: []",
