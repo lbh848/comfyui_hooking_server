@@ -374,3 +374,30 @@ def test_call2_detail_prioritizes_one_visible_fact_and_natural_occlusion():
     assert "contact point centered" not in system
     assert "contact point centered" not in thoughts
     assert "contact point centered" not in source
+
+
+def test_call2_plan_and_detail_repair_disconnected_closeup_regions():
+    system = CALL2_SYSTEM.read_text(encoding="utf-8")
+    thoughts = CALL2_THOUGHTS.read_text(encoding="utf-8")
+    source = PIPELINE_PY.read_text(encoding="utf-8")
+
+    # Actual failure shape: a feet/ankle close-up must not retain remote head details.
+    assert "one contiguous visible region along a coherent body chain" in system
+    assert "A close-up of feet and ankle hems therefore omits the face, headwear, and head motion" in system
+    assert "remove descriptors belonging wholly to remote regions" in thoughts
+    assert "a close-up of feet and ankle hems omits face, headwear, and head motion" in source
+
+    # Isomorphic failures use the same spatial rule rather than body-part keywords.
+    assert "the same principle applies to any other pair of distant regions" in system
+    assert "These examples express spatial reasoning, not keyword rules" in source
+    assert "never compress or contort a body to keep disconnected focal regions" in source
+
+    # Opposite case: coherent wide framing remains valid and does not lose useful detail.
+    assert "A naturally wider full-body composition may retain headwear, face, hands, and feet" in system
+    assert "a wider full-body view may show them together" in thoughts
+    assert "such a wider full-body view may retain headwear and feet" in source
+
+    # DETAIL may repair geometry but must not change the selected event or requested item.
+    assert "not as camera, crop, pose-geometry, or simultaneous-feature authority" in source
+    assert "preserve the slot, event, roster, and primary fact but repair the camera and crop" in source
+    assert "unless the assigned narrative itself establishes that pose" in source

@@ -7810,7 +7810,16 @@ async def _run_parallel_call2_details(
                 + detail_background_instruction
                 + "Resolve all competing details in this order: the assigned directly visible moment; one physically "
                 "possible pose with continuous bodies and joints; natural contact, overlap, and occlusion; a camera "
-                "that shows one primary visual fact; only then visible identity traits and environment. Do not turn "
+                "that shows one primary visual fact; only then visible identity traits and environment. "
+                "Treat the assigned scene_brief as authority for its anchored event, participants, and central visible "
+                "fact, not as camera, crop, pose-geometry, or simultaneous-feature authority. If its suggested framing "
+                "spans disconnected distant body regions or cannot coexist with continuous joints in the stated pose, "
+                "preserve the slot, event, roster, and primary fact but repair the camera and crop and omit nonessential "
+                "details outside that view; do not copy the contradiction into tags or supplement. A close-up of feet "
+                "and ankle hems omits face, headwear, and head motion. If both distant regions are story-essential, use "
+                "a wider physically coherent view instead; such a wider full-body view may retain headwear and feet. "
+                "Never invent sitting, crouching, extreme joint flexion, or bodily contortion merely to retain remote "
+                "details unless the assigned narrative itself establishes that pose. Do not turn "
                 "an internal sensation, thought, metaphor, or secondary consequence into newly exposed anatomy, a "
                 "new contact, or a body deformation. Derive every character positive after choosing the crop: a "
                 "lower-body, hand, or other detail crop omits face-, hair-, eye-, and expression-specific traits wholly "
@@ -13037,6 +13046,7 @@ async def build_from_context(
                     "An existing <img ...> block already occupies its visual beat, so select a different beat.",
                     "Choose each anchor by semantic context and common sense, never by keyword matching.",
                     "Write scene_brief as natural language, not a field menu or tag list. Preserve the central visible action and its ongoing physical state without euphemism.",
+                    "Before committing a scene_brief, choose a plausible pose and a framing that contains one contiguous visible region around its primary fact. A close-up or body-part detail must not also require a remote body region merely to preserve identity, attire, expression, or secondary motion; never compress or contort a body to keep disconnected focal regions. If both distant regions are essential, describe a wider physically coherent view instead. For example, a close-up of feet and ankle hems omits face, headwear, and head motion, while a genuinely wider full-body view may retain headwear and feet when its pose and joints are coherent. These examples express spatial reasoning, not keyword rules.",
                     "When exposure, displaced clothing, intimate contact, or another state is essential to the selected beat, state the participants, relative positions, contact/action, and visible consequence naturally enough for one physically possible image.",
                     "Every scene_brief must describe a directly visible external instant that is independently understandable. A thought, internal sensation, metaphor, abstract silhouette, environment, aftermath, or secondary effect is selectable only when it is itself the narrative's concrete visual subject or accompanies an established visible subject, action, gesture, reaction, or spatial change; never use it as a substitute for an omitted causal interaction.",
                     "The requested scene count remains binding. If distinct major beats are fewer than the requested count, select materially different directly visible instants or emphases from different anchors within a sustained event instead of using invisible, metaphorical, or consequence-only filler. Each such scene must differ in visible pose, action, reaction, gesture, spatial relationship, or environment while remaining valid under the active image instructions.",

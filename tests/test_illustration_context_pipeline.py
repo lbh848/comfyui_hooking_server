@@ -1886,6 +1886,9 @@ scenes: []
     assert "requested scene count remains binding" in plan_request
     assert "materially different directly visible instants" in plan_request
     assert "invisible, metaphorical, or consequence-only filler" in plan_request
+    assert "one contiguous visible region around its primary fact" in plan_request
+    assert "a close-up of feet and ankle hems omits face, headwear, and head motion" in plan_request
+    assert "genuinely wider full-body view may retain headwear and feet" in plan_request
     assert "# CHARACTER DICTIONARY" in plan_request
     assert "### Hana" in plan_request
     assert "### Bob" not in plan_request
@@ -1937,6 +1940,9 @@ scenes: []
     assert "# TRACKED WARDROBE CONTINUITY AND DEFAULT REFERENCE" in detail_request
     assert "# SPARSE CURRENT WARDROBE CHANGE HISTORY" in detail_request
     assert "# CLASSIFIED LAST VISUAL REFERENCE" in detail_request
+    assert "not as camera, crop, pose-geometry, or simultaneous-feature authority" in detail_request
+    assert "preserve the slot, event, roster, and primary fact but repair the camera and crop" in detail_request
+    assert "Never invent sitting, crouching, extreme joint flexion, or bodily contortion" in detail_request
     assert "nested generated visual marker" not in detail_request
     assert "dedicated last visual marker" in detail_request
     assert "timeline event marker" in detail_request
