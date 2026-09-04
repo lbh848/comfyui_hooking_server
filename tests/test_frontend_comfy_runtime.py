@@ -42,6 +42,7 @@ def test_runtime_has_three_instance_tabs_controls_and_raw_terminal() -> None:
         'id="comfy-runtime-disable-dynamic-vram"',
         'id="comfy-runtime-vram-mode"',
         'id="comfy-runtime-cuda-device"',
+        'id="comfy-runtime-extra-args"',
         'id="comfy-runtime-auto-start"',
         'id="comfy-runtime-start"',
         'id="comfy-runtime-free-memory"',
@@ -73,6 +74,11 @@ def test_runtime_frontend_uses_dedicated_process_apis_and_persists_profiles() ->
     assert "fast: false" in FRONTEND
     assert "disable_dynamic_vram: false" in FRONTEND
     assert "disable_dynamic_vram: source.disable_dynamic_vram === true" in FRONTEND
+    assert "extra_args: ''" in FRONTEND
+    assert "typeof source.extra_args === 'string' ? source.extra_args.trim() : ''" in FRONTEND
+    assert "document.getElementById('comfy-runtime-extra-args')?.value || ''" in FRONTEND
+    assert "if (extraArgs) extraArgs.value = profile.extra_args" in FRONTEND
+    assert "공백이 있는 값은 큰따옴표로 감싸세요" in FRONTEND
     assert "'3': comfyRuntimeNormalizeProfile(comfyRuntimeProfiles[3])" in FRONTEND
     assert "vram_mode: 'auto'" in FRONTEND
     assert "async function comfyRuntimeFreeMemory()" in FRONTEND

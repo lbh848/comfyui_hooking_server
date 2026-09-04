@@ -5,6 +5,7 @@ import codecs
 import copy
 import datetime
 import os
+import shlex
 import signal
 import socket
 import subprocess
@@ -26,6 +27,24 @@ from comfy_installer.python_runtime import (
 
 VALID_VRAM_MODES = {"auto", "highvram", "normalvram", "lowvram", "novram"}
 COMFY_INSTANCE_IDS = (1, 2, 3)
+MANAGED_COMFY_ARGUMENTS = frozenset(
+    {
+        "--auto-launch",
+        "--cuda-device",
+        "--disable-auto-launch",
+        "--disable-dynamic-vram",
+        "--enable-cors-header",
+        "--enable-dynamic-vram",
+        "--enable-manager",
+        "--fast",
+        "--highvram",
+        "--listen",
+        "--lowvram",
+        "--normalvram",
+        "--novram",
+        "--port",
+    }
+)
 DEFAULT_COMFY_LAUNCH_PROFILE: dict[str, Any] = {
     "auto_start": False,
     "enable_cors": True,
@@ -34,6 +53,7 @@ DEFAULT_COMFY_LAUNCH_PROFILE: dict[str, Any] = {
     "disable_dynamic_vram": False,
     "vram_mode": "auto",
     "cuda_device": None,
+    "extra_args": "",
 }
 DEFAULT_COMFY_LAUNCH_PROFILES: dict[str, dict[str, Any]] = {
     str(instance_id): copy.deepcopy(DEFAULT_COMFY_LAUNCH_PROFILE)
@@ -51,6 +71,99 @@ class ComfyRuntimeValidationError(ComfyRuntimeError):
 
 class ComfyRuntimeApiError(ComfyRuntimeError):
     """실행 중인 ComfyUI API 호출 실패."""
+
+
+def _split_windows_command_line(value: str) -> tuple[str, ...]:
+    """Split user-entered arguments using Windows command-line quoting rules."""
+
+    arguments: list[str] = []
+    length = len(value)
+    index = 0
+    while index < length:
+        while index < length and value[index].isspace():
+            index += 1
+        if index >= length:
+            break
+
+        argument: list[str] = []
+        in_quotes = False
+        while index < length:
+            character = value[index]
+            if character.isspace() and not in_quotes:
+                break
+            if character == "\\":
+                slash_start = index
+                while index < length and value[index] == "\\":
+                    index += 1
+                slash_count = index - slash_start
+                if index < length and value[index] == '"':
+                    argument.extend("\\" * (slash_count // 2))
+                    if slash_count % 2:
+                        argument.append('"')
+                        index += 1
+                    elif in_quotes and index + 1 < length and value[index + 1] == '"':
+                        argument.append('"')
+                        index += 2
+                    else:
+                        in_quotes = not in_quotes
+                        index += 1
+                else:
+                    argument.extend("\\" * slash_count)
+                continue
+            if character == '"':
+                if in_quotes and index + 1 < length and value[index + 1] == '"':
+                    argument.append('"')
+                    index += 2
+                else:
+                    in_quotes = not in_quotes
+                    index += 1
+                continue
+            argument.append(character)
+            index += 1
+
+        if in_quotes:
+            raise ComfyRuntimeValidationError(
+                "ComfyUI 추가 실행 인자의 큰따옴표가 닫히지 않았습니다."
+            )
+        arguments.append("".join(argument))
+
+    return tuple(arguments)
+
+
+def parse_comfy_extra_args(value: str) -> tuple[str, ...]:
+    """Parse free-form Comfy arguments while protecting manager-owned options."""
+
+    if not value.strip():
+        return ()
+    if "\x00" in value:
+        raise ComfyRuntimeValidationError(
+            "ComfyUI 추가 실행 인자에는 NUL 문자를 사용할 수 없습니다."
+        )
+    try:
+        if os.name == "nt":
+            arguments = _split_windows_command_line(value)
+        else:
+            arguments = tuple(shlex.split(value, posix=True))
+    except ComfyRuntimeValidationError:
+        raise
+    except ValueError as exc:
+        raise ComfyRuntimeValidationError(
+            f"ComfyUI 추가 실행 인자를 해석할 수 없습니다: {exc}"
+        ) from exc
+
+    conflicts = sorted(
+        {
+            argument.partition("=")[0]
+            for argument in arguments
+            if argument.partition("=")[0] in MANAGED_COMFY_ARGUMENTS
+        }
+    )
+    if conflicts:
+        raise ComfyRuntimeValidationError(
+            "추가 실행 인자에는 매니저가 관리하는 옵션을 사용할 수 없습니다: "
+            + ", ".join(conflicts)
+        )
+    return arguments
 
 
 def normalize_comfy_launch_profile(value: Any) -> dict[str, Any]:
@@ -98,6 +211,13 @@ def normalize_comfy_launch_profile(value: Any) -> dict[str, Any]:
             )
         profile["cuda_device"] = parsed_device
 
+    extra_args = value.get("extra_args", profile["extra_args"])
+    if not isinstance(extra_args, str):
+        raise ComfyRuntimeValidationError("추가 실행 인자는 문자열이어야 합니다.")
+    extra_args = extra_args.strip()
+    parse_comfy_extra_args(extra_args)
+    profile["extra_args"] = extra_args
+
     return profile
 
 
@@ -125,6 +245,7 @@ def comfy_launch_profile_extra_args(value: Any) -> tuple[str, ...]:
         arguments.append("--disable-dynamic-vram")
     if profile["fast"]:
         arguments.append("--fast")
+    arguments.extend(parse_comfy_extra_args(profile["extra_args"]))
     return tuple(arguments)
 
 

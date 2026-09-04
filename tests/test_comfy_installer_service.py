@@ -158,6 +158,7 @@ def test_video_e2e_uses_only_comfy_three_profile_arguments(
                         "vram_mode": "lowvram",
                         "disable_dynamic_vram": True,
                         "fast": True,
+                        "extra_args": "--fp32-vae --reserve-vram 1",
                     },
                 }
             }
@@ -176,6 +177,9 @@ def test_video_e2e_uses_only_comfy_three_profile_arguments(
         "--lowvram",
         "--disable-dynamic-vram",
         "--fast",
+        "--fp32-vae",
+        "--reserve-vram",
+        "1",
     )
 
 

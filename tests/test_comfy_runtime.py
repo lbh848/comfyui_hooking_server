@@ -15,6 +15,7 @@ from comfy_runtime import (
     comfy_launch_profile_extra_args,
     normalize_comfy_launch_profile,
     normalize_comfy_launch_profiles,
+    parse_comfy_extra_args,
     register_comfy_runtime_routes,
 )
 
@@ -52,7 +53,46 @@ def test_launch_profile_defaults_enable_network_options() -> None:
         "disable_dynamic_vram": False,
         "vram_mode": "auto",
         "cuda_device": None,
+        "extra_args": "",
     }
+
+
+def test_profile_parses_free_form_extra_arguments() -> None:
+    profile = normalize_comfy_launch_profile(
+        {"extra_args": '  --fp32-vae --reserve-vram "1.5"  '}
+    )
+
+    assert profile["extra_args"] == '--fp32-vae --reserve-vram "1.5"'
+    assert parse_comfy_extra_args(profile["extra_args"]) == (
+        "--fp32-vae",
+        "--reserve-vram",
+        "1.5",
+    )
+    assert comfy_launch_profile_extra_args(profile)[-3:] == (
+        "--fp32-vae",
+        "--reserve-vram",
+        "1.5",
+    )
+
+
+@pytest.mark.parametrize(
+    "extra_args",
+    (
+        "--port 9999",
+        "--listen=127.0.0.1",
+        "--cuda-device 2",
+        "--disable-dynamic-vram",
+        "--fast fp8_matrix_mult",
+    ),
+)
+def test_profile_rejects_extra_arguments_managed_by_runtime(extra_args: str) -> None:
+    with pytest.raises(ComfyRuntimeValidationError, match="매니저가 관리"):
+        normalize_comfy_launch_profile({"extra_args": extra_args})
+
+
+def test_profile_rejects_malformed_extra_arguments() -> None:
+    with pytest.raises(ComfyRuntimeValidationError, match="큰따옴표|해석"):
+        normalize_comfy_launch_profile({"extra_args": '--fp32-vae "unfinished'})
 
 
 def test_build_command_uses_supported_comfy_arguments(tmp_path: Path) -> None:
@@ -87,10 +127,33 @@ def test_build_command_uses_supported_comfy_arguments(tmp_path: Path) -> None:
     assert command[-1] == "--fast"
 
 
+def test_build_command_appends_user_extra_arguments_without_a_shell(
+    tmp_path: Path,
+) -> None:
+    manager = ComfyRuntimeManager(tmp_path)
+
+    command, _, profile = manager.build_command(
+        port=8188,
+        profile={
+            "extra_args": '--fp32-vae --extra-model-paths-config "D:\\AI Models\\extra.yaml"'
+        },
+    )
+
+    assert profile["extra_args"].startswith("--fp32-vae")
+    assert command[-3:] == [
+        "--fp32-vae",
+        "--extra-model-paths-config",
+        "D:\\AI Models\\extra.yaml",
+    ]
+
+
 def test_launch_profiles_keep_three_instances_independent() -> None:
     profiles = normalize_comfy_launch_profiles(
         {
-            "1": {"disable_dynamic_vram": True},
+            "1": {
+                "disable_dynamic_vram": True,
+                "extra_args": "--fp32-vae",
+            },
             "2": {"vram_mode": "lowvram"},
             "3": {"cuda_device": 0},
         }
@@ -98,7 +161,9 @@ def test_launch_profiles_keep_three_instances_independent() -> None:
 
     assert tuple(profiles) == ("1", "2", "3")
     assert profiles["1"]["disable_dynamic_vram"] is True
+    assert profiles["1"]["extra_args"] == "--fp32-vae"
     assert profiles["2"]["disable_dynamic_vram"] is False
+    assert profiles["2"]["extra_args"] == ""
     assert profiles["2"]["vram_mode"] == "lowvram"
     assert profiles["3"]["cuda_device"] == 0
     assert profiles["3"]["vram_mode"] == "auto"
@@ -112,6 +177,7 @@ def test_launch_profiles_keep_three_instances_independent() -> None:
         {"disable_dynamic_vram": "yes"},
         {"vram_mode": "unknown"},
         {"cuda_device": -1},
+        {"extra_args": ["--fp32-vae"]},
     ),
 )
 def test_launch_profile_rejects_invalid_values(profile: dict) -> None:

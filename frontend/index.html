@@ -6324,7 +6324,8 @@
             white-space: nowrap;
         }
         .comfy-runtime-option select,
-        .comfy-runtime-option input[type="number"] {
+        .comfy-runtime-option input[type="number"],
+        .comfy-runtime-option input[type="text"] {
             width: 100%;
             margin-top: 5px;
             padding: 6px 7px;
@@ -6337,7 +6338,12 @@
             font-size: .7rem;
         }
         .comfy-runtime-option select:focus,
-        .comfy-runtime-option input[type="number"]:focus { border-color: var(--accent); }
+        .comfy-runtime-option input[type="number"]:focus,
+        .comfy-runtime-option input[type="text"]:focus { border-color: var(--accent); }
+        .comfy-runtime-option.extra-args { grid-column: 1 / -1; }
+        .comfy-runtime-option.extra-args input {
+            font-family: Consolas, "Cascadia Mono", monospace;
+        }
         .comfy-runtime-fast-warning {
             display: none;
             margin-top: 8px;
@@ -22633,6 +22639,11 @@
                                     <span class="comfy-runtime-option-label">GPU 번호</span>
                                     <input type="number" id="comfy-runtime-cuda-device" min="0" step="1" placeholder="자동">
                                 </label>
+                                <label class="comfy-runtime-option extra-args" for="comfy-runtime-extra-args">
+                                    <span class="comfy-runtime-option-label">추가 실행 인자</span>
+                                    <span class="comfy-runtime-option-note">예: --fp32-vae --reserve-vram 1 · 공백이 있는 값은 큰따옴표로 감싸세요.</span>
+                                    <input type="text" id="comfy-runtime-extra-args" placeholder="--fp32-vae" autocomplete="off" spellcheck="false">
+                                </label>
                             </div>
                             <div class="comfy-runtime-fast-warning" id="comfy-runtime-fast-warning">
                                 ComfyUI가 실험적이며 품질을 저하시킬 수 있는 최적화를 모두 활성화합니다. 충돌이나 결과 변화가 있으면 해제하세요.
@@ -36428,6 +36439,7 @@
             disable_dynamic_vram: false,
             vram_mode: 'auto',
             cuda_device: null,
+            extra_args: '',
         });
         const COMFY_TASK_DEFINITIONS = Object.freeze([
             { key: 'illustration', label: '삽화', description: '일반 삽화 생성 요청', modalSupported: true },
@@ -36765,6 +36777,7 @@
                 disable_dynamic_vram: source.disable_dynamic_vram === true,
                 vram_mode: vramMode,
                 cuda_device: Number.isInteger(cudaNumber) && cudaNumber >= 0 ? cudaNumber : null,
+                extra_args: typeof source.extra_args === 'string' ? source.extra_args.trim() : '',
             };
         }
 
@@ -36791,6 +36804,7 @@
                 disable_dynamic_vram: !!document.getElementById('comfy-runtime-disable-dynamic-vram')?.checked,
                 vram_mode: document.getElementById('comfy-runtime-vram-mode')?.value || 'auto',
                 cuda_device: cudaRaw,
+                extra_args: document.getElementById('comfy-runtime-extra-args')?.value || '',
             });
         }
 
@@ -36804,6 +36818,7 @@
             const disableDynamicVram = document.getElementById('comfy-runtime-disable-dynamic-vram');
             const vram = document.getElementById('comfy-runtime-vram-mode');
             const cuda = document.getElementById('comfy-runtime-cuda-device');
+            const extraArgs = document.getElementById('comfy-runtime-extra-args');
             if (autoStart) autoStart.checked = profile.auto_start;
             if (cors) cors.checked = profile.enable_cors;
             if (listen) listen.checked = profile.listen_all;
@@ -36811,6 +36826,7 @@
             if (disableDynamicVram) disableDynamicVram.checked = profile.disable_dynamic_vram;
             if (vram) vram.value = profile.vram_mode;
             if (cuda) cuda.value = profile.cuda_device === null ? '' : String(profile.cuda_device);
+            if (extraArgs) extraArgs.value = profile.extra_args;
             comfyRuntimeUpdateFastWarning();
         }
 
