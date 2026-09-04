@@ -7738,6 +7738,18 @@ async def _run_parallel_call2_details(
             req_min = max(1, min(per_worker_min, request_count))
             req_max = max(req_min, min(per_worker_max, request_count))
             req_rule = render_output_count_rule(req_min, req_max)
+            explicit_physics_instruction = ""
+            if toggles.get("nsfw"):
+                explicit_physics_instruction = (
+                    "When established adult genital contact is the required visible fact and is not deliberately "
+                    "occluded, camera must identify that contact as the focus (for example, genital focus) rather "
+                    "than generic close-up alone; scene must include the anonymous fragment, its owned visible "
+                    "anatomy, the exact action, and contact point centered; supplement must explicitly keep relevant "
+                    "nearer body volumes outside the camera sightline. This conditional pattern must never expose "
+                    "covered, off-frame, or intentionally hidden anatomy. A visible penis belonging to a cropped "
+                    "anonymous male must be placed in scene, with its exact contact in supplement, never in a named "
+                    "woman's positive. "
+                )
             base = deepcopy(call2_context_messages)
             if base and base[0].get("role") == "system":
                 base[0]["content"] = str(base[0].get("content") or "") + (
@@ -7797,7 +7809,7 @@ async def _run_parallel_call2_details(
                 "an identity. An anonymous interaction fragment does not require a second complete-person count tag. "
                 "A plan with one named girl and only a cropped anonymous male fragment must emit characters[1] and may use "
                 "`scene: 1girl, cropped male torso entering from the frame edge`; do not add `1boy` or any person-focus "
-                "tag such as `solo`, `solo focus`, `female focus`, or `male focus`. Put the cropped partner's smallest coherent visible body portion, crop boundary, pose, "
+                "tag such as `solo`, `solo focus`, `female focus`, or `male focus`. Put the cropped partner's smallest sufficient connected body region, crop boundary, pose, "
                 "and action in scene and the precise spatial/contact relationship in supplement, never in the named girl's "
                 "positive. The declared characters[n] count must equal only the physical number of emitted list items and "
                 "stop the array after n. The fragment must stay connected to the implied off-frame body, may naturally "
@@ -7815,7 +7827,9 @@ async def _run_parallel_call2_details(
                 "pose, or action belongs to the anonymous partner, leaving the fragment only once in scene or supplement. For "
                 "complex contact geometry, supplement may use up to two short complete natural-language sentences: first "
                 "establish the visible fragment and its frame-edge continuation, then the exact contact, overlap, or occlusion. "
-                "Do not reduce a "
+                "Before finalizing any field, reconstruct the instant in physical order: coherent skeletons and joints, continuous body volumes, clothing/object coverage, body-to-body contact and occlusion, then camera crop. Treat the crop only as a boundary. Do not silently omit an uncovered anatomical structure that remains inside the frame; do not force covered, off-frame, or physically occluded anatomy into view. Trace a camera sightline to every required visible structure and contact. If a nearer hip, buttock, thigh, torso, limb, garment, or prop crosses it unintentionally, change camera azimuth/elevation or the physically valid pose; never let the cropped participant become a foreground mass that hides its own action-defining structure. Make the required contact the compositional focus and state its unobstructed near-to-far depth order in supplement. "
+                + explicit_physics_instruction
+                + "Read every anatomy, pose, and action phrase as an owner-predicate pair. Anything belonging to an anonymous fragment must stay in scene or supplement and must never enter a named character's positive. Every visible limb and body part must have one unambiguous owner, and the chosen fragment must preserve every action-defining structure and contact point. Do not reduce a "
                 "story-essential explicit state to an ambiguous isolated tag or crop it out. "
                 "When a plan has characters: [], preserve characters: [] and express anonymous people "
                 "only through scene tags and supplement. "

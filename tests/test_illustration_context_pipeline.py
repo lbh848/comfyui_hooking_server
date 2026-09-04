@@ -3171,6 +3171,47 @@ def test_call2_macro_render_has_no_risu_macros():
     assert "positive: 1girl" not in rendered
 
 
+def test_call2_physical_visibility_audit_renders_general_and_explicit_contracts():
+    prompts = pipeline.load_prompt_files()
+    explicit = pipeline.render_call2_prompt(
+        prompts["call2_system"],
+        pipeline.merged_toggles({"nsfw": True}),
+    )
+    non_explicit = pipeline.render_call2_prompt(
+        prompts["call2_system"],
+        pipeline.merged_toggles({"nsfw": False}),
+    )
+    explicit_thoughts = pipeline.render_call2_prompt(
+        prompts["call2_thoughts"],
+        pipeline.merged_toggles({"nsfw": True}),
+    )
+
+    for rendered in (explicit, non_explicit):
+        assert "Physical Body Construction and Visibility Audit" in rendered
+        assert "construct the depicted instant in physical order" in rendered
+        assert "A crop defines the image boundary; it is not a covering object" in rendered
+        assert "trace an unobstructed line of sight from the camera" in rendered
+        assert "foreground mass that hides the very structure or contact" in rendered
+        assert "smallest sufficient connected body region" in rendered
+        assert "every visible limb and body part has one clear owner" in rendered
+        assert "{{" not in rendered
+
+    assert "In an explicit adult scene, external genital anatomy" in explicit
+    assert "uncovered adult male pelvis inside the frame" in explicit
+    assert "place `penis` with that anonymous fragment in `scene`" in explicit
+    assert "never place it in a named woman's `positive`" in explicit
+    assert "contact point as its focus" in explicit
+    assert "`contact point centered`" in explicit
+    assert "conditional visibility pattern, not a fixed NSFW palette" in explicit
+    assert "owner-predicate pair" in explicit
+    assert "In an explicit adult scene, external genital anatomy" not in non_explicit
+    assert "uncovered adult male pelvis inside the frame" not in non_explicit
+    assert "Reconstruct visibility in physical order" in explicit_thoughts
+    assert "no inside-frame structure is silently omitted" in explicit_thoughts
+    assert "no covered or off-frame structure is forced into view" in explicit_thoughts
+    assert "{{" not in explicit_thoughts
+
+
 def test_call2_background_description_toggle_renders_both_modes():
     prompts = pipeline.load_prompt_files()
     minimal_toggles = pipeline.merged_toggles({
@@ -3271,6 +3312,102 @@ async def test_call2_detail_background_toggle_reaches_worker_instruction(
     assert expected in combined
     assert unexpected not in combined
     assert "Never repeat scene-wide environment" in combined
+
+
+@pytest.mark.asyncio
+async def test_call2_detail_worker_receives_physical_construction_order(monkeypatch):
+    requests = []
+
+    async def fake_pipeline_call(call_name, messages, *args, **kwargs):
+        requests.append((
+            call_name,
+            "\n".join(str(item.get("content") or "") for item in messages),
+        ))
+        return _toon_for_slots([4])
+
+    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
+    await pipeline._run_parallel_call2_details(
+        scene_plan=[{
+            "plan_id": "S001",
+            "slot": 4,
+            "anchor_segment": "C001",
+            "source_segments": ["C001"],
+            "characters": ["Mira"],
+            "scene_brief": (
+                "Adult Mira and an adult partner share a close physical interaction."
+            ),
+        }],
+        call2_context_messages=[{"role": "system", "content": "Build detail."}],
+        call2_format="Return TOON.",
+        toggles=pipeline.merged_toggles({
+            "nsfw": True,
+            "key_visual": False,
+            "call2_parallel_max_concurrency": 1,
+            "call2_parallel_slow_retry_enabled": False,
+        }),
+        stream_notify=None,
+    )
+
+    assert len(requests) == 1
+    call_name, combined = requests[0]
+    assert call_name.startswith("CALL2-DETAIL")
+    assert "coherent skeletons and joints" in combined
+    assert "clothing/object coverage" in combined
+    assert "body-to-body contact and occlusion, then camera crop" in combined
+    assert "Treat the crop only as a boundary" in combined
+    assert "smallest sufficient connected body region" in combined
+    assert "smallest coherent visible body portion" not in combined
+    assert "do not force covered, off-frame, or physically occluded anatomy" in combined
+    assert "Trace a camera sightline to every required visible structure and contact" in combined
+    assert "state its unobstructed near-to-far depth order in supplement" in combined
+    assert "scene must include the anonymous fragment, its owned visible anatomy" in combined
+    assert "contact point centered" in combined
+    assert "must never expose covered, off-frame, or intentionally hidden anatomy" in combined
+    assert "owner-predicate pair" in combined
+    assert "A visible penis belonging to a cropped anonymous male" in combined
+    assert "never in a named woman's positive" in combined
+
+
+@pytest.mark.asyncio
+async def test_call2_detail_worker_hides_explicit_physics_when_nsfw_off(monkeypatch):
+    requests = []
+
+    async def fake_pipeline_call(call_name, messages, *args, **kwargs):
+        requests.append(
+            "\n".join(str(item.get("content") or "") for item in messages)
+        )
+        return _toon_for_slots([4])
+
+    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
+    await pipeline._run_parallel_call2_details(
+        scene_plan=[{
+            "plan_id": "S001",
+            "slot": 4,
+            "anchor_segment": "C001",
+            "source_segments": ["C001"],
+            "characters": ["Hana"],
+            "scene_brief": (
+                "Adult Hana repairs a watch while an assistant's forearms steady it."
+            ),
+        }],
+        call2_context_messages=[{"role": "system", "content": "Build detail."}],
+        call2_format="Return TOON.",
+        toggles=pipeline.merged_toggles({
+            "nsfw": False,
+            "key_visual": False,
+            "call2_parallel_max_concurrency": 1,
+            "call2_parallel_slow_retry_enabled": False,
+        }),
+        stream_notify=None,
+    )
+
+    assert len(requests) == 1
+    combined = requests[0]
+    assert "coherent skeletons and joints" in combined
+    assert "camera sightline to every required visible structure and contact" in combined
+    assert "genital focus" not in combined
+    assert "visible penis" not in combined
+    assert "named woman's positive" not in combined
 
 
 @pytest.mark.asyncio
