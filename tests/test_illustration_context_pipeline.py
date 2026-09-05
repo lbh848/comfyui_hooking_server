@@ -1895,10 +1895,10 @@ scenes: []
     assert "# AUTHORITATIVE FIXED APPEARANCE" not in plan_request
     assert "# AUTHORITATIVE WARDROBE CONTINUITY STATE" not in plan_request
     assert "# CURRENT WARDROBE EVENT TIMELINE" not in plan_request
-    assert "# CLASSIFIED LAST VISUAL REFERENCE" not in plan_request
+    assert "# CLASSIFIED LAST VISUAL REFERENCE" in plan_request
     assert "nested generated visual marker" not in plan_request
-    assert "dedicated last visual marker" not in plan_request
-    assert "timeline event marker" not in plan_request
+    assert "dedicated last visual marker" in plan_request
+    assert "timeline event marker" in plan_request
 
     keyvis_request = request_by_call["CALL2-KEYVIS"]
     assert "### Key Visual" in keyvis_request
@@ -2154,13 +2154,12 @@ async def test_call2_parallel_failure_is_named_fallback_and_logs_reason(
 
 
 @pytest.mark.asyncio
-async def test_call2_plan_failure_cancels_hanging_independent_keyvis(monkeypatch):
+async def test_call2_plan_failure_does_not_start_keyvis_without_shared_resolution(monkeypatch):
     keyvis_started = asyncio.Event()
     keyvis_cancelled = asyncio.Event()
 
     async def fake_pipeline_call(call_name, messages, *args, **kwargs):
         if call_name == "CALL2-PLAN":
-            await asyncio.wait_for(keyvis_started.wait(), timeout=1)
             return "not valid plan json"
         if call_name == "CALL2-KEYVIS":
             keyvis_started.set()
@@ -2208,7 +2207,8 @@ async def test_call2_plan_failure_cancels_hanging_independent_keyvis(monkeypatch
         backtranslate_names="Hana",
     )
 
-    await asyncio.wait_for(keyvis_cancelled.wait(), timeout=1)
+    assert not keyvis_started.is_set()
+    assert not keyvis_cancelled.is_set()
     assert result["call2_fallback_stage"] == "CALL2-PLAN"
     assert [item["kind"] for item in result["items"]] == ["keyvis", "scene"]
 
@@ -2425,7 +2425,7 @@ async def test_parallel_job_tail_hedge_uses_shared_concurrency_and_duplicate_win
 
 
 @pytest.mark.asyncio
-async def test_call1_segments_and_call2_plan_keyvis_and_details_run_in_parallel(monkeypatch):
+async def test_call1_parallel_then_shared_plan_then_parallel_keyvis_and_details(monkeypatch):
     paragraphs = [f"Hana paragraph {index}." for index in range(10)]
     narrative = "\n\n".join(paragraphs)
     target_slotted = pipeline.insert_slots(narrative)
@@ -2480,7 +2480,7 @@ async def test_call1_segments_and_call2_plan_keyvis_and_details_run_in_parallel(
             plan_keyvis_max_active = max(plan_keyvis_max_active, plan_keyvis_active)
             plan_started.set()
             try:
-                await asyncio.wait_for(keyvis_started.wait(), timeout=1)
+                assert not keyvis_started.is_set()
                 await asyncio.sleep(0.01)
                 return json.dumps({
                     "scene_plan": [
@@ -2488,6 +2488,7 @@ async def test_call1_segments_and_call2_plan_keyvis_and_details_run_in_parallel(
                             "anchor_segment": f"C{slot + 1:03d}",
                             "characters": ["Hana"],
                             "scene_brief": f"Hana scene {slot}",
+                            "continuity_note": "Hana wears the same blue dress with short sleeves and a round neckline.",
                         }
                         for slot in range(9)
                     ],
@@ -2498,6 +2499,7 @@ async def test_call1_segments_and_call2_plan_keyvis_and_details_run_in_parallel(
         if call_name == "CALL2-KEYVIS":
             assert task_key == "illustration_call2_keyvis"
             assert "# Independent promotional Key Visual task" in text
+            assert "Hana wears the same blue dress with short sleeves and a round neckline." in text
             assert "# GLOBAL ILLUSTRATION SCENE PLAN" not in text
             assert "# ASSIGNED GLOBAL SCENE PLAN" not in text
             plan_keyvis_active += 1
@@ -2535,6 +2537,10 @@ scenes: []
         )
         assert plan_match
         plans = json.loads(plan_match.group(1))
+        assert all(
+            "Hana wears the same blue dress with short sleeves and a round neckline."
+            in plan["continuity_note"] for plan in plans
+        )
         detail_active += 1
         detail_max_active = max(detail_max_active, detail_active)
         try:
@@ -2577,7 +2583,7 @@ scenes: []
     )
 
     assert call1_max_active == 3
-    assert plan_keyvis_max_active == 2
+    assert plan_keyvis_max_active == 1
     assert detail_max_active == 3
     assert len(result["call2_detail_outputs"]) == 3
     assert len(result["items"]) == 10

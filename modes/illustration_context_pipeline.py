@@ -1870,9 +1870,12 @@ def _classified_visual_reference_content(
         "# CLASSIFIED LAST VISUAL REFERENCE\n"
         "The server, not the model, has classified this generated reference.\n"
         f"{type_rule}\n\n"
-        "AUTHORITATIVE FIXED APPEARANCE and each assigned wardrobe_snapshot always override "
+        "AUTHORITATIVE FIXED APPEARANCE and story-grounded continuity_note always override "
         "this payload. The generated positive_tags below are never a persistent identity source "
-        "and never a wardrobe authority. Do not promote, complete, or repeat an appearance tag "
+        "and never evidence that clothing was changed. For a verified CONTINUITY reference only, "
+        "the planner may retain its garment design details when the story establishes that the "
+        "same outfit continues; story-grounded worn/carried/removed state always wins. "
+        "Do not promote, complete, or repeat an appearance tag "
         "unless it is independently supported by AUTHORITATIVE FIXED APPEARANCE.\n\n"
         "# SERVER REFERENCE CLASSIFICATION\n"
         + json.dumps(metadata, ensure_ascii=False, indent=2)
@@ -2248,9 +2251,14 @@ def parse_call1_analysis(
         raw["current_characters"] = list(
             resolved_characters.get("current_characters") or []
         )
-        raw["unresolved_references"] = list(
-            resolved_characters.get("uncertainties") or []
-        )
+        # Resolver commentary includes deliberate exclusions (unregistered people,
+        # hypothetical mentions). It is not a failed identity resolution.
+        raw["unresolved_references"] = []
+        if resolved_characters.get("uncertainties"):
+            print(
+                "[ILLUST_CONTEXT:CALL1] 선행 캐릭터 선택의 설명을 실패로 승격하지 않음: "
+                f"notes={resolved_characters['uncertainties']}"
+            )
     canonical = _canonical_name_map(character_names)
     warnings = []
     fallback_errors = []
@@ -4580,8 +4588,8 @@ def _visual_base_authority_note(snapshot: dict[str, dict]) -> str:
             "active evidence-bearing history event may temporarily replace the exact fixed tag it "
             "physically contradicts; scene-selection wording and generated material never may. "
             f"Its default-outfit reference is: {outfit}. This outfit is a fallback "
-            "reference, not fixed identity: preserve it when it fits, but design a "
-            "different coherent outfit when the full scene context calls for one."
+            "reference, not fixed identity. Apply the shared continuity_note first; "
+            "use this fallback only for wardrobe not resolved by story continuity."
         )
     if not statements:
         return ""
@@ -4589,8 +4597,8 @@ def _visual_base_authority_note(snapshot: dict[str, dict]) -> str:
         "For this exact scene, these server-selected visual profiles override the default "
         "appearance profile for the same logical character. Do not choose another profile. "
         "Fixed appearance is mandatory except for an exact explicitly stated temporary change; each default outfit below is a reference fallback. "
-        "Apply later natural-language wardrobe continuity first, then use scene-appropriate "
-        "attire when the full context calls for it.\n"
+        "Apply the natural-language wardrobe continuity first. Do not redesign an already "
+        "resolved outfit when translating it for this scene.\n"
         + "\n".join(statements)
     )
 
@@ -4725,7 +4733,16 @@ def bind_scene_plan_wardrobes(
         authority_note = _visual_base_authority_note(scene_visual_bases)
         if authority_note:
             plan["visual_base_authority"] = authority_note
-        if continuity_note:
+        planned_continuity = str(plan.get("continuity_note") or "").strip()
+        if planned_continuity:
+            plan["continuity_note"] = (
+                "Shared wardrobe resolution for this story instant:\n"
+                + planned_continuity
+                + ("\n\nLiteral story evidence (overrides any conflicting design detail):\n"
+                   + continuity_note if continuity_note else "")
+            )
+            plan["_continuity_characters"] = list(plan_names)
+        elif continuity_note:
             plan["continuity_note"] = continuity_note
             # Internal parser guidance only. It is deliberately omitted from the
             # LLM payload so the actual inter-LLM handoff stays natural-language.
@@ -6123,6 +6140,7 @@ def parse_call2_plan(
             "characters": normalized_characters,
             "planned_outfits": planned_outfits,
             "scene_brief": scene_brief,
+            "continuity_note": str(item.get("continuity_note") or "").strip(),
         })
 
     if not scene_plan:
@@ -6415,7 +6433,7 @@ def _parse_call2_detail_output(
                 if conflict:
                     print(
                         f"[ILLUST_CONTEXT:CALL2_DETAIL] 참고 복장과 다른 contextual 후보를 "
-                        f"권위 감사로 전달: slot={slot}, character={expected_name}, "
+                        f"그대로 보존: slot={slot}, character={expected_name}, "
                         f"reference={expected_outfit}, actual={_normalize_outfit_state(actual_outfit)}, "
                         f"difference={conflict}"
                     )
@@ -6426,10 +6444,9 @@ def _parse_call2_detail_output(
                         f"slot={slot}, character={expected_name}, "
                         f"reference={expected_outfit}, actual={normalized_actual}"
                     )
-                # default_outfit/추적 스냅샷은 참고·연속성 기준이다. DETAIL이 문맥에
-                # 맞는 다른 복장을 구성했다면 권위 감사가 의미를 검증할 수 있도록
-                # 알려진 실제 출력을 보존한다. 여기서 스냅샷으로 덮으면 감사 전에
-                # 새 복장 정보가 유실된다.
+                # The stored tag baseline can be stale after natural-language events.
+                # Preserve DETAIL's shared-continuity resolution; the fixed-appearance
+                # audit does not judge wardrobe, and this parser does not infer it.
                 character["outfit_state"] = (
                     deepcopy(normalized_actual)
                     if _outfit_state_is_known(normalized_actual) or (
@@ -6606,7 +6623,7 @@ def _parse_call2_detail_partial(
             if conflict:
                 print(
                     f"[ILLUST_CONTEXT:CALL2_DETAIL_PARTIAL] 참고 복장과 다른 contextual "
-                    f"후보를 권위 감사로 전달: slot={slot}, character={expected_name}, "
+                    f"후보를 그대로 보존: slot={slot}, character={expected_name}, "
                     f"reference={expected_outfit}, actual={_normalize_outfit_state(actual_outfit)}, "
                     f"difference={conflict}"
                 )
@@ -6617,8 +6634,7 @@ def _parse_call2_detail_partial(
                     f"slot={slot}, character={expected_name}, "
                     f"reference={expected_outfit}, actual={normalized_actual}"
                 )
-            # strict 경로와 동일하게 알려진 contextual outfit resolution을 audit
-            # 전까지 보존한다. 기본 복장은 참고값이므로 여기서 강제 복원하지 않는다.
+            # Preserve usable shared wardrobe resolution over the stale baseline.
             character["outfit_state"] = (
                 deepcopy(normalized_actual)
                 if _outfit_state_is_known(normalized_actual) or (
@@ -7497,7 +7513,7 @@ async def _run_call2_keyvis(
     toggles: dict,
     stream_notify,
 ) -> tuple[dict, str]:
-    """Generate one independent Key Visual descriptor without a PLAN dependency."""
+    """Generate a promotional composition using supplied shared wardrobe continuity."""
     messages = deepcopy(call2_context_messages)
     allowed = [
         str(name or "").strip()
@@ -7528,10 +7544,11 @@ async def _run_call2_keyvis(
             "from the visible applicable portion of fixed appearance. A fully cropped or naturally occluded "
             "trait may be absent from positive without changing identity, and the composition must never be "
             "widened or rearranged merely to display it. Treat the supplied current "
-            "wardrobe as continuity and default_outfit as a fallback reference, not fixed identity. If the full "
-            "Key Visual concept calls for different attire, design one coherent context-appropriate outfit by "
-            "meaning and replace the fallback as a set; do not keyword-match or mix incompatible default garments "
-            "into it. Keep complete logical wardrobe continuity in outfit_state while positive contains only "
+            "wardrobe as continuity and default_outfit as a fallback reference, not fixed identity. "
+            "When shared wardrobe resolutions are supplied, choose the story time represented by your "
+            "concept and keep that time's same garment design and worn/carried state. Promotional framing "
+            "does not itself change clothing. Otherwise resolve wardrobe from the story by meaning. "
+            "Keep complete logical wardrobe continuity in outfit_state while positive contains only "
             "visible or coverage-defining garments. A separate server audit preserves fixed identity while "
             "allowing true visibility omissions and only an explicit narrative change to replace a fixed trait. Generated visual references "
             "are intentionally absent and must not be reconstructed as identity facts. "
@@ -7799,12 +7816,20 @@ async def _run_parallel_call2_details(
                 "never widen or rearrange the composition merely to expose it. Replace only the "
                 "exact tag directly contradicted by an explicit current-narrative statement or active "
                 "evidence-bearing history event; the assigned scene selection controls the visual beat but has no appearance authority. "
-                "Use the complete default outfit "
+                "When continuity_note supplies a shared wardrobe resolution, translate that same outfit "
+                "into outfit_state and the visible prompt without redesigning it for this batch. "
+                "Keep neckline, sleeve shape, length, material, fastenings, and accessories consistent "
+                "where visible. A carried garment belongs to the scene's objects, not worn; when visible, "
+                "use scene and supplement to express its support and location as one object, keeping the "
+                "named character's clothing tags about what is actually worn. The same arm may support "
+                "an object while its hand acts if the selected pose permits it; do not invent another arm "
+                "or contact to display the object. An off-frame garment stays in logical state without constraining "
+                "the pose or crop. Use the complete default outfit "
                 "only as fallback when the tracked wardrobe and full scene do not call for something different. "
-                "When different attire is contextually appropriate, design one coherent outfit by meaning and "
-                "replace the default as a set even if no sentence lists every garment; never keyword-match or "
-                "carry incompatible default pieces into it. A separate server audit validates the contextual "
-                "outfit and preserves fixed identity. Record the complete resolved wardrobe in outfit_state, "
+                "Only when no shared resolution is supplied, resolve missing wardrobe from the full story "
+                "by meaning; never keyword-match or carry incompatible default pieces into it. "
+                "The separate server audit handles fixed appearance only. Complete wardrobe consistency "
+                "here, across outfit_state, positive, and supplement. Record the complete resolved wardrobe in outfit_state, "
                 "including garments outside the frame, but put only visible or coverage-defining garments in "
                 "positive. Never advance state beyond the assigned scene. "
                 + detail_background_instruction
@@ -12674,13 +12699,14 @@ async def build_from_context(
                 "role": "user",
                 "content": (
                     "# TRACKED WARDROBE CONTINUITY AND DEFAULT REFERENCE\n"
-                    "This contains the current tracked wardrobe initialized from the default reference "
-                    "plus prior sparse deltas. Preserve real continuity, but do not treat default_outfit "
-                    "as fixed identity. When the assigned scene clearly calls for a different coherent "
-                    "outfit, replace the fallback as a set by meaning; camera absence alone never means removal.\n\n"
+                    "The stored garment tags are a reference baseline, not a resolved current outfit. "
+                    "Natural-language wardrobe_timeline events may supersede those tags without updating "
+                    "the stored list. Reconstruct the active outfit from story evidence in chronological "
+                    "order; a return to an earlier outfit means that established outfit, not necessarily "
+                    "the profile default. Camera absence alone never means removal.\n\n"
                     + json.dumps(projected_states, ensure_ascii=False, indent=2)
                 ),
-            }, include_plan=False)
+            })
         if wardrobe_events:
             append_call2_context({
                 "role": "user",
@@ -12695,7 +12721,7 @@ async def build_from_context(
                     "outfit even when it does not enumerate every garment.\n\n"
                     + json.dumps(wardrobe_events, ensure_ascii=False, indent=2)
                 ),
-            }, include_plan=False)
+            })
         # hairstyle history: selected_states의 누적 timeline + 이번 턴 CALL1 이벤트를 합쳐
         # CALL2에 전달한다(서버는 의미 해석 없이 전달만). persistence가 이 기능의 핵심이다.
         hairstyle_history: dict[str, list] = {}
@@ -12740,7 +12766,7 @@ async def build_from_context(
             append_call2_context({
                 "role": "user",
                 "content": classified_visual_reference,
-            }, include_plan=False, include_keyvis=False)
+            }, include_keyvis=False)
         if balanced_fallback:
             fallback_text = _history_messages_text(
                 persistent_history.get("call2_fallback_history") or []
@@ -13038,14 +13064,18 @@ async def build_from_context(
                     "Only after that global identity pass, select binding moments and assign each selected scene's canonical character roster. Never decide a scene roster from its anchor segment alone.",
                     "Reason silently and return only the compact JSON requested by the user message.",
                     "Do not output Danbooru tags, camera fields, outfit lists, plan_id, source_segments, slots, analysis, or prose outside JSON.",
-                    "Plan narrative scene beats only. You are not an appearance, wardrobe, or Key Visual authority.",
+                    "Select narrative scene beats and resolve their shared wardrobe continuity once for all detail workers. You have no fixed-appearance or camera authority.",
+                    "In continuity_note, write a concise natural-language account of each named character's complete active outfit and carried garments at this exact instant. Resolve the story, prior wardrobe events, profile fallback, and prior visual design together by meaning. Story evidence overrides a stale stored garment list or generated reference. An unchanged garment remains the same physical garment across scenes, not a fresh design opportunity.",
+                    "For the same continuous outfit, repeat the same concise garment design wording in every applicable continuity_note. Preserve established color, material, sleeves, neckline, length, closures, and accessories; fill an unspecified visually important detail only once when needed to render that outfit, then share that choice. Keep this compact, not a catalog of invented decorations. Distinguish wearing a garment from holding it, carrying it on an arm, or placing it on furniture. Several descriptions of one garment do not create separate objects.",
+                    "The shared description retains underlying garments and their established details even when an outer layer currently hides them; describe visibility later in DETAIL. Keep established accessories in that logical outfit until the story changes them. Do not shorten later notes by silently dropping part of the outfit. Keep hair, eyes, body traits, expression, camera, and partner pose out of continuity_note; their existing authorities and scene_brief already carry those meanings.",
+                    "A real change of clothing, a flashback, or a different story time may require a different outfit. Resolve each scene at its own narrative time. Intending to change or entering a changing place does not establish the finished replacement. Wardrobe continuity must not constrain camera, pose, natural occlusion, anonymous-partner visibility, or scene count. Do not add a contact or action to keep carried clothing in view.",
                     "Do not copy, restate, infer, or invent hair arrangement, hair/eye/body/species traits, or any other persistent appearance in scene_brief; the later image-detail task receives the complete fixed appearance separately. Preserve only the visible action or expression, such as narrowing the eyes, without turning appearance wording into a temporary replacement.",
                     "When supplied, treat # ACTIVE BOT IMAGE INSTRUCTIONS as a binding renderability envelope during selection, not merely styling for the later detail task. Respect its subject-focus, identifiable-character, anonymous-partner, face-visibility, and crop limits before choosing any anchor.",
                     "Select an anchor only when its story-essential visible fact can be shown coherently inside that active renderability envelope. Do not choose a moment whose meaning requires more of another participant than the active instruction permits, or whose only content is an invisible internal state.",
                     "Normally treat consecutive paragraphs sharing one time, location, and ongoing action as one visual beat. When distinct major beats can satisfy the requested count, select at most one scene from each.",
                     "An existing <img ...> block already occupies its visual beat, so select a different beat.",
                     "Choose each anchor by semantic context and common sense, never by keyword matching.",
-                    "Write scene_brief as natural language, not a field menu or tag list. Preserve the central visible action and its ongoing physical state without euphemism.",
+                    "Write scene_brief as natural language, not a field menu or tag list. Preserve the central visible action and its ongoing physical state without euphemism. Choose one instant within a sequence of motions rather than asking one image to show successive hand or arm positions at once. Preserve genuinely simultaneous actions when their hands, joints, and supported objects can coexist naturally; use another selected instant for a later motion when useful, keeping the requested scene count.",
                     "Before committing a scene_brief, choose a plausible pose and a framing that contains one contiguous visible region around its primary fact. A close-up or body-part detail must not also require a remote body region merely to preserve identity, attire, expression, or secondary motion; never compress or contort a body to keep disconnected focal regions. If both distant regions are essential, describe a wider physically coherent view instead. For example, a close-up of feet and ankle hems omits face, headwear, and head motion, while a genuinely wider full-body view may retain headwear and feet when its pose and joints are coherent. These examples express spatial reasoning, not keyword rules.",
                     "When exposure, displaced clothing, intimate contact, or another state is essential to the selected beat, state the participants, relative positions, contact/action, and visible consequence naturally enough for one physically possible image.",
                     "Every scene_brief must describe a directly visible external instant that is independently understandable. A thought, internal sensation, metaphor, abstract silhouette, environment, aftermath, or secondary effect is selectable only when it is itself the narrative's concrete visual subject or accompanies an established visible subject, action, gesture, reaction, or spatial change; never use it as a substitute for an omitted causal interaction.",
@@ -13095,14 +13125,16 @@ async def build_from_context(
                     "    {\n"
                     '      "anchor_segment": "C001",\n'
                     '      "characters": ["canonical name"],\n'
-                    '      "scene_brief": "objective visual moment to expand"\n'
+                    '      "scene_brief": "objective visual moment to expand",\n'
+                    '      "continuity_note": "shared active wardrobe and carried-clothing description for this instant"\n'
                     "    }\n"
                     "  ]\n"
                     "}\n\n"
                     "anchor_segment must be one exact Cxxx ID from the server map. Do not copy a full "
                     "outfit inventory into scene_brief, but never omit a transient wardrobe, coverage, "
                     "contact, or exposure state that defines the selected visual moment; describe that "
-                    "state in ordinary natural language. The server separately carries the upstream wardrobe "
+                    "state in ordinary natural language. Use continuity_note for the shared wardrobe resolution; "
+                    "keep scene_brief focused on the selected action. The server separately carries the upstream wardrobe "
                     "analyzer's literal change wording into the scene-detail task. characters must contain every tracked character intended to "
                     "appear in that image, in canonical-name form. Determine that roster from the full narrative, not just the anchor text. "
                     "If the anchor refers to a character indirectly by an alias, role, title, pronoun, initially unidentified reference, "
@@ -13142,7 +13174,26 @@ async def build_from_context(
                 ),
                 name="call2-plan",
             )
+            call2_plan_output = await plan_task
+            parsed_plan, plan_reason = parse_call2_plan(
+                call2_plan_output,
+                plan_toggles,
+                original_slotted,
+                segment_slot_map=call2_segment_slots,
+            )
+            if parsed_plan is None:
+                raise ValueError(plan_reason or "CALL2-PLAN 파싱 실패")
             if toggles.get("key_visual"):
+                shared_notes = "\n\n".join(
+                    str(plan.get("continuity_note") or "").strip()
+                    for plan in parsed_plan.get("scene_plan") or []
+                    if str(plan.get("continuity_note") or "").strip()
+                )
+                if shared_notes:
+                    call2_keyvis_context_messages.append({
+                        "role": "user",
+                        "content": "# SHARED STORY WARDROBE RESOLUTIONS\n" + shared_notes,
+                    })
                 keyvis_allowed_names = list(current_character_names)
                 if not keyvis_allowed_names:
                     keyvis_allowed_names = [
@@ -13163,18 +13214,9 @@ async def build_from_context(
                     name="call2-keyvis",
                 )
             print(
-                "[ILLUST_CONTEXT:CALL2_PARALLEL] 독립 LLM 동시 시작: "
-                f"plan=1, keyvis={1 if keyvis_task else 0}"
+                "[ILLUST_CONTEXT:CALL2_PARALLEL] 공유 복장 PLAN 완료, DETAIL/KEYVIS 병렬 준비: "
+                f"keyvis={1 if keyvis_task else 0}"
             )
-            call2_plan_output = await plan_task
-            parsed_plan, plan_reason = parse_call2_plan(
-                call2_plan_output,
-                plan_toggles,
-                original_slotted,
-                segment_slot_map=call2_segment_slots,
-            )
-            if parsed_plan is None:
-                raise ValueError(plan_reason or "CALL2-PLAN 파싱 실패")
             if parsed_plan["mode"] == "legacy":
                 descriptors = list(parsed_plan.get("descriptors") or [])
                 if keyvis_task is not None:
