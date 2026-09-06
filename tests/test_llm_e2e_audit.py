@@ -208,7 +208,7 @@ async def test_llm1_to_llm10_reach_their_own_openai_compatible_slot(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_vertex_openai_base64_input_plain_response_crosses_http_and_sse_boundaries(
+async def test_vertex_openai_base64_round_trip_crosses_http_and_sse_boundaries(
     monkeypatch,
 ):
     plain_response = "vertex-openai-base64-input-e2e-ok"
@@ -225,13 +225,14 @@ async def test_vertex_openai_base64_input_plain_response_crosses_http_and_sse_bo
                 "stream": bool(body.get("stream")),
             }
         )
-        assert "Base64-Encoded Input Protocol" in messages[0]["content"]
-        assert "Do not Base64-encode the response" in messages[0]["content"]
+        assert "Base64-Encoded Instruction Protocol" in messages[0]["content"]
+        assert "UTF-8 Base64-encode the complete response" in messages[0]["content"]
         assert base64.b64decode(messages[1]["content"]).decode("utf-8") == "실제 HTTP 경계"
 
+        encoded_response = base64.b64encode(plain_response.encode("utf-8")).decode("ascii")
         if not body.get("stream"):
             return web.json_response(
-                {"choices": [{"message": {"content": plain_response}}]}
+                {"choices": [{"message": {"content": encoded_response}}]}
             )
 
         response = web.StreamResponse(
@@ -239,8 +240,8 @@ async def test_vertex_openai_base64_input_plain_response_crosses_http_and_sse_bo
             headers={"Content-Type": "text/event-stream"},
         )
         await response.prepare(request)
-        for start in range(0, len(plain_response), 5):
-            chunk = plain_response[start:start + 5]
+        for start in range(0, len(encoded_response), 5):
+            chunk = encoded_response[start:start + 5]
             payload = {"choices": [{"delta": {"content": chunk}}]}
             await response.write(f"data: {json.dumps(payload)}\n\n".encode("utf-8"))
         await response.write(b"data: [DONE]\n\n")

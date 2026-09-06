@@ -1081,6 +1081,27 @@ def test_call2_detail_partial_keeps_good_slots_and_reports_missing():
     assert kept[2]["plan_id"] == "S002"
 
 
+def test_call2_detail_partial_combines_independent_scene_documents():
+    """장면별 Base64 복호화 결과인 여러 단일 문서를 한 shard로 부분 보존한다."""
+    toggles = pipeline.merged_toggles({"key_visual": False})
+    text = "\n\n".join([_toon_for_slots([1]), _toon_for_slots([2])])
+
+    kept, missing, discarded, hard = pipeline._parse_call2_detail_partial(
+        text,
+        toggles,
+        [1, 2, 3],
+        ["S001", "S002", "S003"],
+        "SCENE-UNIT-TEST",
+        None,
+        None,
+    )
+
+    assert sorted(kept) == [1, 2]
+    assert missing == [3]
+    assert discarded == []
+    assert hard == ""
+
+
 def test_call2_detail_partial_marks_character_discard_as_not_missing(capsys):
     """캐릭터 불일치로 폐기된 슬롯은 missing이 아니라 discarded로 분류(재시도 무의미)."""
     toggles = pipeline.merged_toggles({"key_visual": False})
@@ -5861,6 +5882,10 @@ async def test_pipeline_failure_history_preserves_provider_termination_details(m
     messages = [{"role": "user", "content": "scene"}]
 
     async def fake_call(_task_key, _actual_messages, **kwargs):
+        assert (
+            pipeline.llm_service._gemini_base64_response_mode_ctx.get()
+            == pipeline.llm_service.GEMINI_BASE64_RESPONSE_ILLUSTRATION_SCENES
+        )
         observer = kwargs["execution_observer"]
         await observer({
             "type": "attempt_start",
@@ -5897,6 +5922,11 @@ async def test_pipeline_failure_history_preserves_provider_termination_details(m
 
     with pytest.raises(RuntimeError, match="illustration_call2 forced 재시도 소진"):
         await pipeline._call_pipeline_llm("CALL2-DETAIL 1/1 [FULL c1/6]", messages)
+
+    assert (
+        pipeline.llm_service._gemini_base64_response_mode_ctx.get()
+        == pipeline.llm_service.GEMINI_BASE64_RESPONSE_WHOLE
+    )
 
     assert len(records) == 2
     attempt_record, terminal_record = records

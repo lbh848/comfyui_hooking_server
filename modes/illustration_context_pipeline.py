@@ -6296,6 +6296,35 @@ def _match_call2_detail_characters(
     )
 
 
+def _parse_call2_detail_documents(
+    text: str,
+    toggles: dict,
+    source: str,
+) -> list[dict]:
+    """CALL2-DETAIL의 완성된 단일 장면 문서를 모두 파싱한다.
+
+    장면별 Base64 응답은 복호화 후 여러 개의 독립 `<lb-xnai>` 문서가
+    이어진 형태가 된다. 문서가 하나뿐이면 기존 전체 텍스트 파싱을 유지하고,
+    둘 이상이면 완성된 문서 단위로 각각 파싱해 뒤쪽 슬롯이 유실되지 않게 한다.
+    """
+    complete_documents = re.findall(
+        r"<lb[-_]xnai[^>]*>[\s\S]*?</lb[-_]xnai>",
+        text or "",
+        re.I,
+    )
+    if len(complete_documents) <= 1:
+        return parse_toon_plan(text, toggles, source)
+
+    parsed_descriptors: list[dict] = []
+    for document_index, document in enumerate(complete_documents, start=1):
+        parsed_descriptors.extend(parse_toon_plan(
+            document,
+            toggles,
+            f"{source}-UNIT-{document_index}",
+        ))
+    return parsed_descriptors
+
+
 def _parse_call2_detail_output(
     text: str,
     toggles: dict,
@@ -6314,7 +6343,11 @@ def _parse_call2_detail_output(
         "output_count_min": len(assigned_slots),
         "output_count_max": len(assigned_slots),
     })
-    parsed_descriptors = parse_toon_plan(text, local_toggles, source)
+    parsed_descriptors = _parse_call2_detail_documents(
+        text,
+        local_toggles,
+        source,
+    )
     descriptors = [
         item
         for item in parsed_descriptors
@@ -6495,7 +6528,11 @@ def _parse_call2_detail_partial(
         "output_count_min": len(assigned_slots),
         "output_count_max": len(assigned_slots),
     })
-    parsed_descriptors = parse_toon_plan(text, local_toggles, source)
+    parsed_descriptors = _parse_call2_detail_documents(
+        text,
+        local_toggles,
+        source,
+    )
     scene_descriptors = [
         item
         for item in parsed_descriptors
@@ -9360,9 +9397,20 @@ async def _call_pipeline_llm(
             "execution_id": execution_id,
             "parent_execution_id": parent_execution_id,
         })
+        base64_response_mode_token = None
+        if call_name.startswith("CALL2-DETAIL"):
+            base64_response_mode_token = (
+                llm_service._gemini_base64_response_mode_ctx.set(
+                    llm_service.GEMINI_BASE64_RESPONSE_ILLUSTRATION_SCENES
+                )
+            )
         try:
             result = await llm_service.callLLMTask(task_key, messages, **call_kwargs)
         finally:
+            if base64_response_mode_token is not None:
+                llm_service._gemini_base64_response_mode_ctx.reset(
+                    base64_response_mode_token
+                )
             llm_service._stream_metadata_ctx.reset(stream_metadata_token)
         if not result or str(result).startswith("[LLM 실패]"):
             print(f"[ILLUST_CONTEXT:{call_name}] LLM 호출 실패: {result}")
