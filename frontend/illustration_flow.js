@@ -1,6 +1,6 @@
 /* Live execution graph; prompt bodies are fetched only when a port is opened. */
 (() => {
-    let flow = null, modal, detailModal, selected = null, detailRequest = 0;
+    let flow = null, flowBackdrop, modal, detailModal, selected = null, detailRequest = 0;
     let scale = 1, previousFocus = null;
     const labels = {waiting: '대기', processing: '처리 중', completed: '완료', failed: '실패', cancelled: '취소', skipped: '생략'};
     const colors = {waiting: '#94a3b8', processing: '#60a5fa', completed: '#4ade80', failed: '#fb7185', cancelled: '#fbbf24', skipped: '#a78bfa'};
@@ -38,8 +38,10 @@
         if (modal) return;
         const style = element('style');
         style.textContent = `
-            .if-modal{position:fixed;inset:0;margin:auto;box-sizing:border-box;overflow:hidden;color:var(--text,#e2e8f0);background:var(--bg2,#111827);border:1px solid #64748b66;border-radius:16px;padding:0;width:min(1240px,94vw);max-width:96vw;max-height:calc(100dvh - 32px);box-shadow:0 24px 90px #0009;font:14px/1.5 system-ui,sans-serif}
-            .if-modal::backdrop{background:#020617b3;backdrop-filter:blur(3px)}
+            .if-layer-backdrop{position:fixed;inset:0;z-index:2147483643;background:#020617b3;backdrop-filter:blur(3px)}
+            .if-layer-backdrop[hidden]{display:none}
+            .if-modal{position:fixed;inset:0;z-index:2147483644;margin:auto;box-sizing:border-box;overflow:hidden;color:var(--text,#e2e8f0);background:var(--bg2,#111827);border:1px solid #64748b66;border-radius:16px;padding:0;width:min(1240px,94vw);max-width:96vw;max-height:calc(100dvh - 32px);box-shadow:0 24px 90px #0009;font:14px/1.5 system-ui,sans-serif}
+            .if-detail{z-index:2147483645}
             .if-header{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:18px 22px;border-bottom:1px solid #64748b44}
             .if-header h2{font-size:19px;margin:0}.if-subtitle{font-size:12px;color:var(--text2,#94a3b8);margin-top:4px;overflow-wrap:anywhere}
             .if-actions,.if-legend,.if-legend-group{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.if-button{border:1px solid #64748b66;border-radius:8px;background:transparent;color:inherit;padding:6px 11px;cursor:pointer}.if-button:hover{background:#64748b33}.if-button:focus-visible,.if-port:focus-visible{outline:3px solid #60a5fa;outline-offset:3px}
@@ -55,6 +57,7 @@
             @media(max-width:650px){.if-header{align-items:flex-start;padding:14px}.if-actions{justify-content:flex-end}.if-header h2{font-size:16px}.if-meta{grid-template-columns:80px 1fr}}
         `;
         document.head.append(style);
+        flowBackdrop = element('div', 'if-layer-backdrop'); flowBackdrop.hidden = true;
         modal = element('dialog', 'if-modal'); modal.id = 'illustration-flow-modal';
         modal.setAttribute('aria-labelledby', 'if-title');
         const header = element('header', 'if-header'), titleBox = element('div');
@@ -75,7 +78,7 @@
         Object.entries(executorLabels).forEach(([key, label]) => {const s = element('span', 'if-legend-item', label); s.style.setProperty('--node-tint', executorColors[key]); executorLegend.append(s);});
         legend.append(statusLegend, executorLegend);
         modal.append(header, legend, element('div', 'if-viewport'), element('footer', 'if-footer', '출력 ●에 마우스를 올리면 요약, 클릭하면 모델·폴백·입력·출력을 확인할 수 있습니다.'));
-        modal.addEventListener('close', () => { hideTooltip(); rehomeToast(); previousFocus?.focus(); });
+        modal.addEventListener('close', () => { hideTooltip(); flowBackdrop.hidden = true; rehomeToast(); previousFocus?.focus(); });
         let ticker;
         modal.addEventListener('close', () => clearInterval(ticker));
         modal.addEventListener('if-open', () => {
@@ -93,9 +96,10 @@
         const dh = element('header', 'if-header'); dh.append(element('h2', '', '처리 단계 상세'), button('닫기', () => detailModal.close()));
         detailModal.append(dh, element('div', 'if-detail-body'));
         detailModal.addEventListener('close', () => { selected = null; detailRequest++; rehomeToast(); });
-        document.body.append(modal, detailModal);
+        document.body.append(flowBackdrop, modal, detailModal);
         [modal, detailModal].forEach(dialog => dialog.addEventListener('keydown', event => {
-            if (event.key === 'Escape' || event.key === 'Tab') event.stopPropagation();
+            if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); dialog.close(); }
+            else if (event.key === 'Tab') event.stopPropagation();
         }));
     }
     function updateZoomDisplay() {
@@ -193,47 +197,24 @@
 
         // A logical stage owns one column. Retries/partial repairs in the same
         // layout_group stack vertically instead of consuming another column.
-        // All illustration queue items and their generation stage likewise share
-        // one image column, even when an early image started before a later audit.
-        nodes.forEach(n => {
+        // Illustration queue items share one column, while their actual generation
+        // stage uses the next logical column. Early images still align with later queue items.
+        const insertionOrder = new Map(nodes.map((n, index) => [n.id, index]));
+        const orderedNodes = [...nodes].sort((a, b) => {
+            const orderA = Number.isFinite(Number(a.layout_order)) ? Number(a.layout_order) : 0;
+            const orderB = Number.isFinite(Number(b.layout_order)) ? Number(b.layout_order) : 0;
+            return orderA - orderB || insertionOrder.get(a.id) - insertionOrder.get(b.id);
+        });
+        orderedNodes.forEach(n => {
             const depth = groupDepth(layoutGroup(n));
             const lane = layers.get(depth) || 0;
             layers.set(depth, lane + 1);
             positions.set(n.id, {depth, x: rootColumnX + depth * 290, y: 32 + lane * 136});
         });
 
-        // A fork should read visually as a fork, not as a main line plus a side branch.
-        // Center each parent between its direct children after all lanes are known.
-        // This is dependency-driven and intentionally does not depend on CALL names.
-        const childrenByParent = new Map();
-        nodes.forEach(n => (n.dependencies || []).forEach(parentId => {
-            const children = childrenByParent.get(parentId) || [];
-            children.push(n.id);
-            childrenByParent.set(parentId, children);
-        }));
-        const depths = [...new Set([...positions.values()].map(p => p.depth))].sort((a, b) => b - a);
-        depths.forEach(depth => {
-            const candidates = nodes
-                .filter(n => positions.get(n.id)?.depth === depth)
-                .map(n => {
-                    const p = positions.get(n.id);
-                    const children = (childrenByParent.get(n.id) || [])
-                        .map(id => positions.get(id))
-                        .filter(child => child && child.depth > p.depth);
-                    if (children.length < 2) return {id: n.id, desiredY: p.y};
-                    const top = Math.min(...children.map(child => child.y));
-                    const bottom = Math.max(...children.map(child => child.y));
-                    return {id: n.id, desiredY: (top + bottom) / 2};
-                })
-                .sort((a, b) => a.desiredY - b.desiredY);
-            let previousY = -Infinity;
-            candidates.forEach(candidate => {
-                const p = positions.get(candidate.id);
-                const y = Math.max(candidate.desiredY, previousY + 136);
-                positions.set(candidate.id, {...p, y});
-                previousY = y;
-            });
-        });
+        // Keep every logical column top-aligned. Nodes retain their insertion order
+        // and stack downward from the same top offset; dependency edges never move
+        // a parent or child vertically after the initial column placement.
         const width = Math.max(650, ...[...positions.values()].map(p => p.x + 270));
         const height = Math.max(350, ...[...positions.values()].map(p => p.y + 140));
         const space = element('div', 'if-space'), canvas = element('div', 'if-canvas');
@@ -280,7 +261,7 @@
         const isNew = flow?.id !== next.id;
         flow = next;
         if (isNew && detailModal?.open) detailModal.close();
-        if (autoOpen && isNew) {init(); previousFocus = document.activeElement; if (!modal.open) {modal.showModal(); modal.dispatchEvent(new Event('if-open'));}}
+        if (autoOpen && isNew) {init(); previousFocus = document.activeElement; if (!modal.open) {flowBackdrop.hidden = false; modal.show(); modal.dispatchEvent(new Event('if-open'));}}
         render();
         if (selected && detailModal?.open) openDetail(selected, true);
     }
@@ -288,7 +269,7 @@
         const runId = flow?.id; if (!runId) return;
         selected = nodeId; const request = ++detailRequest;
         hideTooltip();
-        if (!detailModal.open) detailModal.showModal();
+        if (!detailModal.open) detailModal.show();
         rehomeToast();
         const body = detailModal.querySelector('.if-detail-body');
         if (!updating) body.replaceChildren(element('p', '', '상세 정보를 불러오는 중…'));
@@ -324,5 +305,5 @@
     window.receiveIllustrationFlow = receive;
     window.rehomeIllustrationToast = rehomeToast;
     window.refreshIllustrationFlow = refresh;
-    window.openIllustrationFlow = async () => {init(); previousFocus = document.activeElement; if (!modal.open) {modal.showModal(); modal.dispatchEvent(new Event('if-open'));} render(); await refresh();};
+    window.openIllustrationFlow = async () => {init(); previousFocus = document.activeElement; if (!modal.open) {flowBackdrop.hidden = false; modal.show(); modal.dispatchEvent(new Event('if-open'));} render(); await refresh();};
 })();

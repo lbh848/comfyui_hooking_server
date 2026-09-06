@@ -9090,6 +9090,12 @@ _CALL_TASK_KEYS = {
 # 직렬 변화 분석/프로필 결정/CALL2/2-FIX/3 호출을 큐 서브태스크로 표시하기 위한 그룹 정의.
 # 역번역(CALL1-BACKTRANSLATE)/다중캐릭터마스크(MULTI-CHAR-MASK)는 병렬 청크용 wrapper가
 # index/total을 직접 주입하므로 여기서 제외한다.
+_CALL_LAYOUT_ORDER = {
+    "call3": -100,
+    "call3_correction": -90,
+}
+
+
 _CALL_QUEUE_SUBTASK_GROUPS = {
     "ORIGINAL-ASSET": ("original_asset", "원본 에셋 선택"),
     "ORIGINAL-ASSET-RECOVERY": (
@@ -9184,6 +9190,11 @@ async def _call_pipeline_llm(
         model=model,
         service=service,
         layout_group=(queue_subtask_group[0] if queue_subtask_group else task_key),
+        layout_order=(
+            _CALL_LAYOUT_ORDER.get(queue_subtask_group[0], 0)
+            if queue_subtask_group
+            else 0
+        ),
     )
     history_record = {
         "ts": datetime.datetime.now().isoformat(timespec="seconds"),

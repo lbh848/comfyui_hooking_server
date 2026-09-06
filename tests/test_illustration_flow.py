@@ -12,7 +12,15 @@ import illustration_flow as flow
 
 def test_flow_dialog_is_pinned_to_viewport_center():
     source = (Path(__file__).resolve().parents[1] / "frontend" / "illustration_flow.js").read_text(encoding="utf-8")
-    assert ".if-modal{position:fixed;inset:0;margin:auto;" in source
+    assert ".if-modal{position:fixed;inset:0;z-index:2147483644;margin:auto;" in source
+
+
+def test_flow_stays_below_memo_and_llm_layers():
+    source = (Path(__file__).resolve().parents[1] / "frontend" / "illustration_flow.js").read_text(encoding="utf-8")
+    assert ".if-layer-backdrop{position:fixed;inset:0;z-index:2147483643;" in source
+    assert ".if-detail{z-index:2147483645}" in source
+    assert "showModal()" not in source
+    assert "flowBackdrop.hidden = false; modal.show();" in source
 
 
 def test_flow_zoom_has_feedback_before_any_request():
@@ -35,7 +43,7 @@ def test_flow_layout_keeps_logical_stage_retries_and_images_in_one_column():
     assert "String(n.layout_group || n.id)" in source
     assert "if (parentGroup !== group) dependencies.add(parentGroup)" in source
     assert "Retries/partial repairs in the same" in source
-    assert "one image column" in source
+    assert "actual generation" in source
 
 
 def test_pipeline_assigns_distinct_layout_groups_to_detail_and_authority_audit():
@@ -47,20 +55,31 @@ def test_pipeline_assigns_distinct_layout_groups_to_detail_and_authority_audit()
     assert "layout_group=(queue_subtask_group[0] if queue_subtask_group else task_key)" in source
 
 
-def test_image_queue_and_generation_stage_share_one_layout_group():
+def test_image_queue_and_generation_stage_use_separate_layout_groups():
     root = Path(__file__).resolve().parents[1]
     flow_source = (root / "illustration_flow.py").read_text(encoding="utf-8")
     server_source = (root / "server.py").read_text(encoding="utf-8")
     assert 'layout_group=None if is_root else "illustration_images"' in flow_source
-    assert 'layout_group="illustration_images"' in server_source
+    assert 'layout_group="illustration_generation"' in server_source
 
 
-def test_flow_layout_centers_fork_parent_between_parallel_children():
+def test_flow_layout_honors_semantic_order_within_a_column():
+    root = Path(__file__).resolve().parents[1]
+    source = (root / "frontend" / "illustration_flow.js").read_text(encoding="utf-8")
+    pipeline_source = (root / "modes" / "illustration_context_pipeline.py").read_text(encoding="utf-8")
+    assert "const orderedNodes = [...nodes].sort((a, b) =>" in source
+    assert "Number(a.layout_order)" in source
+    assert '"call3": -100' in pipeline_source
+    assert '"call3_correction": -90' in pipeline_source
+    assert "layout_order=(" in pipeline_source
+
+
+def test_flow_layout_keeps_each_column_top_aligned():
     source = (Path(__file__).resolve().parents[1] / "frontend" / "illustration_flow.js").read_text(encoding="utf-8")
-    assert "const childrenByParent = new Map();" in source
-    assert "children.length < 2" in source
-    assert "desiredY: (top + bottom) / 2" in source
-    assert "intentionally does not depend on CALL names" in source
+    assert "y: 32 + lane * 136" in source
+    assert "Keep every logical column top-aligned" in source
+    assert "const childrenByParent = new Map();" not in source
+    assert "desiredY: (top + bottom) / 2" not in source
 
 
 def test_flow_nodes_use_executor_colored_backgrounds():
@@ -83,7 +102,7 @@ def test_flow_detail_falls_back_to_error_and_latest_raw_response():
 async def test_flow_nodes_can_share_explicit_layout_group():
     job = item(); flow.queue_added(job)
 
-    @flow.stage("image stage", layout_group="illustration_images")
+    @flow.stage("image stage", layout_group="illustration_generation")
     async def image_stage():
         return True
 
@@ -103,7 +122,7 @@ async def test_flow_nodes_can_share_explicit_layout_group():
     graph = flow.snapshot()
     nodes = {n["label"]: n for n in graph["nodes"]}
     assert nodes["image child"]["layout_group"] == "illustration_images"
-    assert nodes["image stage"]["layout_group"] == "illustration_images"
+    assert nodes["image stage"]["layout_group"] == "illustration_generation"
 
 
 @pytest.mark.asyncio
