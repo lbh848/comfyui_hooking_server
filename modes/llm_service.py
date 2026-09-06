@@ -12,6 +12,7 @@ customprompt/ 폴더의 스크립트에서 callLLM 함수를 import하여 사용
 """
 
 import asyncio
+import illustration_flow
 import base64
 import codecs
 import datetime
@@ -964,6 +965,7 @@ async def _fire_queue_gate_acquired() -> None:
     한 항목에서 여러 LLM 호출/병렬 시도가 게이트를 잡아도 안전하다.
     콜백 실패가 실제 LLM 호출을 막아서는 안 되므로 예외는 로그만 남긴다.
     """
+    illustration_flow.llm_metadata(status="processing")
     cb = _llm_queue_gate_acquired_ctx.get()
     if cb is None:
         return

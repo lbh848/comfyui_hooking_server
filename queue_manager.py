@@ -4,6 +4,7 @@
 """
 
 import asyncio
+import illustration_flow
 import copy
 import datetime
 import json
@@ -611,6 +612,7 @@ class QueueManager:
                     await self._notify_queue_updated()
                 asyncio.ensure_future(self._deferred_prune(item))
                 return item
+        illustration_flow.queue_added(item)
         self.items.append(item)
         self._resort_pending()
         print(f"[QUEUE] 항목 추가: type={item_type}, label={label}, id={item.id}, priority={priority}, 대기={len([i for i in self.items if i.status == 'pending'])}")
@@ -1350,6 +1352,7 @@ class QueueManager:
         return False
 
     async def _notify_queue_updated(self):
+        illustration_flow.queue_sync(self.items)
         if self.notify_frontend:
             await self.notify_frontend("queue_updated", self.get_status())
 
@@ -2665,6 +2668,7 @@ class QueueManager:
             print(f"[QUEUE:LLM_WORKER] 워커 {wid} 치명적 예외")
             traceback.print_exc()
 
+    @illustration_flow.queue_execution
     async def _execute_item(self, item: QueueItem) -> dict:
         # tag_analysis는 source별 분기 — 6개 일괄 소스는 이미지별 분할(1항목=1이미지) 핸들러,
         # auto_match/bot_single은 결과 반환형이므로 기존 루프 핸들러 유지.

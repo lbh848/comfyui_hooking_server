@@ -15754,6 +15754,7 @@
                         <span class="lock-icon">🔓</span>
                     </button>
                 </div>
+                <button type="button" id="illustration-flow-btn" class="control-btn" onclick="openIllustrationFlow()"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="9" width="5" height="6" rx="1"></rect><rect x="17" y="2" width="5" height="6" rx="1"></rect><rect x="17" y="16" width="5" height="6" rx="1"></rect><path d="M7 12h5V5h5M12 12v7h5"></path></svg><span class="control-label">삽화 흐름 보기</span></button>
                 <button type="button" class="control-btn" onclick="openModeLogModal()">
                     <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5h11M9 12h11M9 19h11"></path><path d="M4 5h.01M4 12h.01M4 19h.01"></path></svg>
                     <span class="control-label">모드 로그</span>
@@ -26309,6 +26310,7 @@
         </div>
     </div>
 
+    <script src="/illustration_flow.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
     <script>
@@ -29456,6 +29458,7 @@
 
                     switch (msg.type) {
                         case 'connection_ready': {
+                            refreshIllustrationFlow();
                             if (!msg.data || !msg.data.client_id) {
                                 throw new Error('connection_ready에 client_id가 없습니다.');
                             }
@@ -29648,6 +29651,12 @@
                             handleQwenEditWsEvent(msg.type, msg.data);
                             break;
                         // 통합 큐 이벤트
+                        case 'illustration_flow':
+                            receiveIllustrationFlow(msg.data, true);
+                            break;
+                        case 'illustration_warning':
+                            showToast(msg.data.message, 'warning');
+                            break;
                         case 'queue_updated':
                             handleQueueUpdated(msg.data);
                             break;
@@ -42797,6 +42806,7 @@
 
         // ─── 토스트 알림 ───
         function showToast(message, type, duration = 5000) {
+            rehomeIllustrationToast();
             const toast = document.getElementById('toast');
             toast.textContent = message;
             toast.className = 'toast visible ' + type;

@@ -8,6 +8,7 @@ RisuAI는 Comfy history에 이미지가 여러 장 있어도 첫 장만 소비�
 from __future__ import annotations
 
 import asyncio
+import illustration_flow
 import contextvars
 import hashlib
 import json
@@ -8290,7 +8291,7 @@ async def _run_call2_character_mismatch_fixes(
             traceback.print_exc()
             return None, "", slot
 
-    results = await asyncio.gather(*(
+    results = await illustration_flow.gather(*(
         repair_one(index, candidate)
         for index, candidate in enumerate(candidates, start=1)
     ))
@@ -9125,6 +9126,7 @@ _CALL_QUEUE_SUBTASK_GROUPS = {
 }
 
 
+@illustration_flow.llm_call
 async def _call_pipeline_llm(
     call_name: str,
     messages: list[dict],
@@ -9181,6 +9183,7 @@ async def _call_pipeline_llm(
         or ""
     )
     service = llm_service.routing_primary_service(task_key) or ""
+    illustration_flow.llm_metadata(execution_id=execution_id, task_key=task_key, model=model, service=service)
     history_record = {
         "ts": datetime.datetime.now().isoformat(timespec="seconds"),
         "prompt_id": f"illustration_context:{call_name}",
@@ -9234,6 +9237,13 @@ async def _call_pipeline_llm(
         성공 레코드의 'LLM 실행 연결 정보'를 채운다(폴백 슬롯 포함).
         attempt_failure: 버려지는 실패 응답을 별도 error 레코드로 남긴다.
         """
+        slot = event.get("slot") or event.get("llm_slot") or "llm1"
+        suffix = llm_service._slot_suffix(slot)
+        illustration_flow.llm_attempt(
+            event,
+            llm_service._base_config_get(f"llm_model{suffix}", "") or model,
+            llm_service._base_config_get(f"llm_service{suffix}", "") or service,
+        )
         etype = str(event.get("type") or "")
         if etype == "attempt_success":
             success_meta.clear()
@@ -9629,6 +9639,7 @@ class ParallelPipelineJobsError(RuntimeError):
         self.failures = dict(failures)
 
 
+@illustration_flow.collect_branches
 async def _run_parallel_pipeline_jobs(
     jobs: list[dict],
     *,
@@ -9792,7 +9803,7 @@ async def _run_parallel_pipeline_jobs(
     failed: dict[int, str] = {}
 
     def start_attempt(index: int, attempt_kind: str) -> None:
-        task = asyncio.create_task(run_attempt(index, attempt_kind))
+        task = illustration_flow.create_task(run_attempt(index, attempt_kind), flow_label=f"{group_label} {index} · {attempt_kind}")
         pending.add(task)
         task_metadata[task] = (index, attempt_kind)
         states[index]["tasks"].add(task)
@@ -9944,14 +9955,14 @@ async def _run_parallel_pipeline_jobs(
         print(f"[ILLUST_CONTEXT:{group_id}] 병렬 조정 상위 작업 취소: pending={len(pending)}")
         for task in pending:
             task.cancel()
-        await asyncio.gather(*pending, return_exceptions=True)
+        await illustration_flow.gather(*pending, return_exceptions=True)
         raise
     except Exception as e:
         print(f"[ILLUST_CONTEXT:{group_id}] 병렬 조정 예외: {e}")
         traceback.print_exc()
         for task in pending:
             task.cancel()
-        await asyncio.gather(*pending, return_exceptions=True)
+        await illustration_flow.gather(*pending, return_exceptions=True)
         raise
 
     history_updates = {}
@@ -11281,6 +11292,7 @@ def _parse_multi_char_layout_response(
     )
 
 
+@illustration_flow.collect_branches
 async def calculate_multi_char_layouts(
     descriptors: list[dict],
     prompt_template: str,
@@ -11423,12 +11435,13 @@ async def calculate_multi_char_layouts(
             )
             traceback.print_exc()
 
-    await asyncio.gather(*(
+    await illustration_flow.gather(*(
         calculate_one(index, descriptor, characters)
         for index, (descriptor, characters) in enumerate(targets, start=1)
     ))
 
 
+@illustration_flow.collect_branches
 async def backtranslate_current_context(
     source: str,
     prompt: str,
@@ -11724,8 +11737,9 @@ async def backtranslate_current_context(
     resolved: dict[int, dict] = {}
 
     def start_attempt(index: int, attempt_kind: str) -> None:
-        task = asyncio.create_task(
-            run_translation_attempt(index, chunks[index - 1], attempt_kind)
+        task = illustration_flow.create_task(
+            run_translation_attempt(index, chunks[index - 1], attempt_kind),
+            flow_label=f"CALL1 역번역 {index} · {attempt_kind}",
         )
         pending.add(task)
         task_metadata[task] = (index, attempt_kind)
@@ -11969,14 +11983,14 @@ async def backtranslate_current_context(
         )
         for task in pending:
             task.cancel()
-        await asyncio.gather(*pending, return_exceptions=True)
+        await illustration_flow.gather(*pending, return_exceptions=True)
         raise
     except Exception as e:
         print(f"[ILLUST_CONTEXT:BACKTRANSLATE] 병렬 역번역 조정 예외: {e}")
         traceback.print_exc()
         for task in pending:
             task.cancel()
-        await asyncio.gather(*pending, return_exceptions=True)
+        await illustration_flow.gather(*pending, return_exceptions=True)
         raise
 
     history_updates = {}
@@ -12979,7 +12993,7 @@ async def build_from_context(
         task: asyncio.Task,
         total_count: int,
     ) -> tuple[dict, str]:
-        descriptor, raw_output = await task
+        descriptor, raw_output = await illustration_flow.join(task)
         return await finalize_independent_keyvis(descriptor, raw_output, total_count)
 
     if toggles.get("call2_parallel_enabled"):
@@ -12996,7 +13010,7 @@ async def build_from_context(
                 print(f"[ILLUST_CONTEXT:CALL2_PARALLEL] 진행 중 {label} 취소")
                 task.cancel()
             try:
-                await task
+                await illustration_flow.join(task)
             except asyncio.CancelledError:
                 if was_pending:
                     print(f"[ILLUST_CONTEXT:CALL2_PARALLEL] {label} 취소 완료")
@@ -13170,7 +13184,7 @@ async def build_from_context(
                 f"messages={len(normalized_plan_messages)}, "
                 f"chars={sum(len(str(item.get('content') or '')) for item in normalized_plan_messages)}"
             )
-            plan_task = asyncio.create_task(
+            plan_task = illustration_flow.create_task(
                 _call_pipeline_llm(
                     "CALL2-PLAN",
                     normalized_plan_messages,
@@ -13180,7 +13194,7 @@ async def build_from_context(
                 ),
                 name="call2-plan",
             )
-            call2_plan_output = await plan_task
+            call2_plan_output = await illustration_flow.join(plan_task)
             parsed_plan, plan_reason = parse_call2_plan(
                 call2_plan_output,
                 plan_toggles,
@@ -13210,7 +13224,7 @@ async def build_from_context(
                         )
                         if match.group(1).strip()
                     ]
-                keyvis_task = asyncio.create_task(
+                keyvis_task = illustration_flow.create_task(
                     _run_call2_keyvis(
                         call2_context_messages=call2_keyvis_context_messages,
                         allowed_character_names=keyvis_allowed_names,
@@ -13273,14 +13287,14 @@ async def build_from_context(
                         f"CALL2 상세 장면 {len(parsed_plan['scene_plan'])}개 병렬 생성",
                     )
                 if keyvis_task is not None:
-                    keyvis_finalize_task = asyncio.create_task(
+                    keyvis_finalize_task = illustration_flow.create_task(
                         await_and_finalize_independent_keyvis(
                             keyvis_task,
                             1 + len(parsed_plan["scene_plan"]),
                         ),
                         name="call2-keyvis-finalize",
                     )
-                detail_task = asyncio.create_task(
+                detail_task = illustration_flow.create_task(
                     _run_parallel_call2_details(
                         scene_plan=list(parsed_plan["scene_plan"]),
                         call2_context_messages=call2_context_messages,
@@ -13292,7 +13306,7 @@ async def build_from_context(
                     name="call2-details",
                 )
                 if keyvis_finalize_task is not None:
-                    detail_result, keyvis_result = await asyncio.gather(
+                    detail_result, keyvis_result = await illustration_flow.gather(
                         detail_task,
                         keyvis_finalize_task,
                         return_exceptions=True,
@@ -13324,7 +13338,7 @@ async def build_from_context(
                         call2_detail_outputs,
                         call2_detail_failed_slots,
                         call2_character_mismatch_candidates,
-                    ) = await detail_task
+                    ) = await illustration_flow.join(detail_task)
                 if call2_character_mismatch_candidates:
                     if progress:
                         await progress(

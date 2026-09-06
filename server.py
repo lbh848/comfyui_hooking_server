@@ -90,6 +90,7 @@ logging.basicConfig(level=logging.INFO, format='[%(name)s] %(message)s')
 # aiohttp.access (매 요청마다 찍히는 HTTP access 로그) 도배 방지
 logging.getLogger("aiohttp.access").setLevel(logging.WARNING)
 from modes import llm_service
+import illustration_flow
 from modes import lighbd_service
 from modes import llm_prompt_edit
 from modes import illustration_camera
@@ -1690,6 +1691,7 @@ async def notify_bot_selected_changed(selected: str) -> None:
 
 
 llm_service.set_stream_notify_func(_notify_llm_stream_event)
+illustration_flow.configure(notify_frontend)
 llm_service.set_manual_parallel_history_func(_record_manual_parallel_race)
 
 current_original_workflow = None   # 원본 워크플로우 (ComfyUI 드래그앤드롭용)
@@ -2308,6 +2310,17 @@ def _require_active_illustration_bot(bot_name: str, *, context: str) -> str:
         f"[ILLUST:BOT] 활성 봇 검증 실패: context={context!r}, "
         f"bot={normalized!r}, error={error}"
     )
+    async def warn():
+        try:
+            await notify_frontend("illustration_warning", {"message": error, "context": context})
+        except Exception as exc:
+            print(f"[ILLUST:BOT] 경고 알림 실패: context={context!r}, error={exc}")
+            traceback.print_exc()
+    try:
+        asyncio.get_running_loop().create_task(warn())
+    except RuntimeError:
+        print(f"[ILLUST:BOT] 경고 전달 불가: 실행 중인 이벤트 루프 없음, context={context!r}")
+        traceback.print_exc()
     raise RuntimeError(error)
 
 
@@ -3365,6 +3378,7 @@ async def fetch_real_image(
 
 
 # ─── 이미지 생성 공통 로직 ────────────────────────────────
+@illustration_flow.stage("이미지 생성")
 async def generate_image_with_prompt(
     positive: str,
     negative: str,
@@ -4971,6 +4985,7 @@ def _resolve_deferred_speak_text(prompt_id: str, descriptor: dict) -> str:
         return original_speak
 
 
+@illustration_flow.stage("이미지 후처리")
 async def _finalize_deferred_illustration_prompt(prompt_id: str, speak_text: str) -> bytes:
     """CALL3와 병렬 생성된 원본을 후처리·백업한 뒤에만 공개 상태로 전환한다."""
     entry = prompts.get(prompt_id)
@@ -7241,6 +7256,7 @@ async def process_illustration_context_queue_item(item) -> dict:
     async def _await_child(child_id, child_item, slot_label):
         try:
             await child_item.completion_future
+            illustration_flow.merge([child_item])
             child_prompt = prompts.get(child_id, {})
             image_bytes = (
                 child_prompt.get("_deferred_image_bytes")
@@ -7983,6 +7999,20 @@ async def process_illustration_context_queue_item(item) -> dict:
             prompts[original_prompt_id]["outputs"] = {"images": []}
         await stream_notify({"type": "error", "call_name": "PIPELINE", "error": str(e)})
         raise
+
+
+async def handle_illustration_flow(request: web.Request) -> web.Response:
+    node_id = request.query.get("node")
+    if node_id:
+        node = illustration_flow.detail(request.query.get("run", ""), node_id)
+        return web.json_response({"node": node}, status=200 if node else 404,
+                                 headers={"Cache-Control": "no-store"})
+    return web.json_response({"flow": illustration_flow.snapshot()}, headers={"Cache-Control": "no-store"})
+
+
+async def handle_illustration_flow_script(request: web.Request) -> web.Response:
+    return web.FileResponse(os.path.join(FRONTEND_DIR, "illustration_flow.js"),
+                            headers={"Cache-Control": "no-cache"})
 
 
 async def handle_get_illust_logs(request: web.Request) -> web.Response:
@@ -20196,6 +20226,8 @@ app.router.add_post("/api/restore_manual_draw", handle_api_restore_manual_draw)
 app.router.add_get("/api/restore_manual/characters", handle_api_restore_manual_characters)
 # 프론트엔드
 app.router.add_get("/api/frontend_ws", handle_frontend_ws)
+app.router.add_get("/api/illustration_flow", handle_illustration_flow)
+app.router.add_get("/illustration_flow.js", handle_illustration_flow_script)
 app.router.add_get("/api/config", handle_api_config)
 app.router.add_post("/api/config", handle_api_config)
 modal_service = register_modal_routes(
