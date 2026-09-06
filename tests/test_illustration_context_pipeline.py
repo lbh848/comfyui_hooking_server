@@ -1886,9 +1886,11 @@ scenes: []
     assert "requested scene count remains binding" in plan_request
     assert "materially different directly visible instants" in plan_request
     assert "invisible, metaphorical, or consequence-only filler" in plan_request
-    assert "one contiguous visible region around its primary fact" in plan_request
-    assert "a close-up of feet and ankle hems omits face, headwear, and head motion" in plan_request
-    assert "genuinely wider full-body view may retain headwear and feet" in plan_request
+    assert "primary visible action and a compatible whole-body situation" in plan_request
+    assert "meaningful simultaneous contacts" in plan_request
+    assert "DETAIL will choose the camera and visible overlap" in plan_request
+    assert "what bears the weight" in plan_request
+    assert "Do not make the scene easier by replacing its action" in plan_request
     assert "# CHARACTER DICTIONARY" in plan_request
     assert "### Hana" in plan_request
     assert "### Bob" not in plan_request
@@ -1943,6 +1945,14 @@ scenes: []
     assert "not as camera, crop, pose-geometry, or simultaneous-feature authority" in detail_request
     assert "preserve the slot, event, roster, and primary fact but repair the camera and crop" in detail_request
     assert "Never invent sitting, crouching, extreme joint flexion, or bodily contortion" in detail_request
+    assert "the interaction or weakening its contact, motion, or expression" in detail_request
+    assert "Choose camera azimuth, elevation, and distance together" in detail_request
+    assert "none is a default" in detail_request
+    assert "foreshortening, close contact, and dynamic poses are valid" in detail_request
+    assert "preserving the original interaction rather than simplifying it away" in detail_request
+    assert "severe foreshortening" not in detail_request
+    assert "Keep remote ongoing contact as context rather than demanding" not in detail_request
+    assert "do not confuse screen direction with anatomical side" in detail_request
     assert "nested generated visual marker" not in detail_request
     assert "dedicated last visual marker" in detail_request
     assert "timeline event marker" in detail_request

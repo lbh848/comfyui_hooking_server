@@ -7835,14 +7835,19 @@ async def _run_parallel_call2_details(
                 + detail_background_instruction
                 + "Resolve all competing details in this order: the assigned directly visible moment; one physically "
                 "possible pose with continuous bodies and joints; natural contact, overlap, and occlusion; a camera "
-                "that shows one primary visual fact; only then visible identity traits and environment. "
+                "that makes its one primary visual fact legible; only then visible identity traits and environment. "
+                "Choose camera azimuth, elevation, and distance together to convey the original action "
+                "and its intensity with readable body connections; none is a default. Natural overlap, "
+                "foreshortening, close contact, and dynamic poses are valid, not defects to avoid. "
+                "Use supplement for the spatial relation that makes the chosen view understandable. "
                 "Treat the assigned scene_brief as authority for its anchored event, participants, and central visible "
                 "fact, not as camera, crop, pose-geometry, or simultaneous-feature authority. If its suggested framing "
                 "spans disconnected distant body regions or cannot coexist with continuous joints in the stated pose, "
-                "preserve the slot, event, roster, and primary fact but repair the camera and crop and omit nonessential "
-                "details outside that view; do not copy the contradiction into tags or supplement. A close-up of feet "
-                "and ankle hems omits face, headwear, and head motion. If both distant regions are story-essential, use "
-                "a wider physically coherent view instead; such a wider full-body view may retain headwear and feet. "
+                "preserve the slot, event, roster, and primary fact but repair the camera and crop within "
+                "the active partner-visibility limits. Repairing geometry does not authorize changing "
+                "the interaction or weakening its contact, motion, or expression. Preserve who acts on whom "
+                "and what supports the weight; do not replace the action with a quieter pose or reaction. "
+                "Resolve relative placement from context; do not confuse screen direction with anatomical side. "
                 "Never invent sitting, crouching, extreme joint flexion, or bodily contortion merely to retain remote "
                 "details unless the assigned narrative itself establishes that pose. Do not turn "
                 "an internal sensation, thought, metaphor, or secondary consequence into newly exposed anatomy, a "
@@ -7873,10 +7878,11 @@ async def _run_parallel_call2_details(
                 "broader than the intended visible amount. For a fragment broader than a hand or forearm, use a genuine contact-point "
                 "close-up rather than portrait, cowboy-shot, or full-body framing, even if the named subject's face is cropped. "
                 "Examples guide phrasing rather than semantic choice, and never change a third-person camera to POV just to use a familiar tag. "
-                "Before return, semantically inspect every phrase in each named character positive and remove any phrase whose body, "
-                "pose, or action belongs to the anonymous partner, leaving the fragment only once in scene or supplement. For "
-                "complex contact geometry, supplement may use up to two short complete natural-language sentences: first "
-                "establish the visible fragment and its frame-edge continuation, then the exact contact, overlap, or occlusion. "
+                "Before return, keep camera, scene, character positives, and supplement consistent about "
+                "the same actors, acting limbs, and contact. The anonymous partner's body and actions "
+                "belong in scene or supplement, not a named character's positive. For complex contact, "
+                "use up to two short natural-language sentences for approach direction, actual contact, "
+                "and natural overlap, preserving the original interaction rather than simplifying it away. "
                 "Before finalizing any field, reconstruct the instant in physical order: coherent skeletons and joints, continuous body volumes, clothing/object coverage, body-to-body contact and natural occlusion, then camera crop. Treat the crop only as a boundary. Do not silently omit an uncovered anatomical structure that remains inside the frame; do not force covered, off-frame, or physically occluded anatomy into view. Preserve nearer hips, thighs, torsos, limbs, garments, and props wherever the pose naturally places them. Change camera azimuth/elevation or a physically valid pose only when the assigned scene's one primary visible fact would otherwise be unreadable, never merely to expose every structure or contact surface. "
                 + explicit_physics_instruction
                 + "Read every anatomy, pose, and action phrase as an owner-predicate pair. Anything belonging to an anonymous fragment must stay in scene or supplement and must never enter a named character's positive. Every visible limb and body part must have one unambiguous owner, and the chosen fragment must preserve the connected body chain and alignment needed for the action. Do not reduce a "
@@ -13076,7 +13082,7 @@ async def build_from_context(
                     "An existing <img ...> block already occupies its visual beat, so select a different beat.",
                     "Choose each anchor by semantic context and common sense, never by keyword matching.",
                     "Write scene_brief as natural language, not a field menu or tag list. Preserve the central visible action and its ongoing physical state without euphemism. Choose one instant within a sequence of motions rather than asking one image to show successive hand or arm positions at once. Preserve genuinely simultaneous actions when their hands, joints, and supported objects can coexist naturally; use another selected instant for a later motion when useful, keeping the requested scene count.",
-                    "Before committing a scene_brief, choose a plausible pose and a framing that contains one contiguous visible region around its primary fact. A close-up or body-part detail must not also require a remote body region merely to preserve identity, attire, expression, or secondary motion; never compress or contort a body to keep disconnected focal regions. If both distant regions are essential, describe a wider physically coherent view instead. For example, a close-up of feet and ankle hems omits face, headwear, and head motion, while a genuinely wider full-body view may retain headwear and feet when its pose and joints are coherent. These examples express spatial reasoning, not keyword rules.",
+                    "Your scene_brief chooses the primary visible action and a compatible whole-body situation. Preserve the passage's action, intensity, expression, and meaningful simultaneous contacts, including what bears the weight. Resolve who acts on whom from full context. Do not make the scene easier by replacing its action with a quiet reaction or merely nearby hands. DETAIL will choose the camera and visible overlap within the active partner-visibility limits; describe the event faithfully rather than prescribing a crop.",
                     "When exposure, displaced clothing, intimate contact, or another state is essential to the selected beat, state the participants, relative positions, contact/action, and visible consequence naturally enough for one physically possible image.",
                     "Every scene_brief must describe a directly visible external instant that is independently understandable. A thought, internal sensation, metaphor, abstract silhouette, environment, aftermath, or secondary effect is selectable only when it is itself the narrative's concrete visual subject or accompanies an established visible subject, action, gesture, reaction, or spatial change; never use it as a substitute for an omitted causal interaction.",
                     "The requested scene count remains binding. If distinct major beats are fewer than the requested count, select materially different directly visible instants or emphases from different anchors within a sustained event instead of using invisible, metaphorical, or consequence-only filler. Each such scene must differ in visible pose, action, reaction, gesture, spatial relationship, or environment while remaining valid under the active image instructions.",
