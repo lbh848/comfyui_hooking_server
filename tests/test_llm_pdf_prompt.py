@@ -204,7 +204,7 @@ async def test_pdf_and_base64_compose_before_native_dispatch(monkeypatch, servic
 
     async def fake_dispatch_unlimited(messages, service, model):
         seen["messages"] = messages
-        return base64.b64encode("은하우체국".encode("utf-8")).decode("ascii")
+        return "은하우체국"
 
     monkeypatch.setattr(
         llm_service, "_dispatch_unlimited", fake_dispatch_unlimited
@@ -215,7 +215,8 @@ async def test_pdf_and_base64_compose_before_native_dispatch(monkeypatch, servic
 
     assert result == "은하우체국"
     request_messages = seen["messages"]
-    assert "PDF Base64 Data Transport Protocol" in request_messages[0]["content"]
+    assert "PDF Base64 Input Transport Protocol" in request_messages[0]["content"]
+    assert "Do not Base64-encode the response" in request_messages[0]["content"]
     decoded_bootstrap = base64.b64decode(request_messages[1]["content"]).decode(
         "utf-8"
     )
@@ -261,13 +262,12 @@ async def test_stream_uses_pdf_and_base64_composition(monkeypatch):
         _config(llm_pdf_prompt=True, llm_gemini_base64=True),
     )
     expected = "스트림 성공"
-    encoded = base64.b64encode(expected.encode("utf-8")).decode("ascii")
 
     async def fake_stream_unlimited(messages, service, model):
         assert messages[2]["content"][0]["type"] == "file"
         yield {"type": "start", "service": service, "model": model}
-        yield {"type": "delta", "text": encoded}
-        yield {"type": "done", "text": encoded}
+        yield {"type": "delta", "text": expected}
+        yield {"type": "done", "text": expected}
 
     monkeypatch.setattr(
         llm_service, "_dispatch_stream_unlimited", fake_stream_unlimited

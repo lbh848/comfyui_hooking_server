@@ -67,7 +67,8 @@ def test_gemini_base64_encoder_preserves_roles_and_image_parts():
     encoded = llm_service._encode_gemini_base64_messages(messages)
 
     assert encoded[0]["role"] == "system"
-    assert "Base64-Encoded Instruction Protocol" in encoded[0]["content"]
+    assert "Base64-Encoded Input Protocol" in encoded[0]["content"]
+    assert "Do not Base64-encode the response" in encoded[0]["content"]
     assert encoded[1]["role"] == "system"
     assert base64.b64decode(encoded[1]["content"]).decode("utf-8") == "시스템 지시"
     assert encoded[2]["role"] == "user"
@@ -79,7 +80,7 @@ def test_gemini_base64_encoder_preserves_roles_and_image_parts():
     assert encoded[2]["content"][1] is not image_part
 
 
-def test_gemini_base64_removes_conflicting_json_response_format(monkeypatch):
+def test_gemini_base64_input_keeps_json_response_format(monkeypatch):
     monkeypatch.setattr(llm_service, "_current_config", _config())
     token = llm_service._response_format_ctx.set({"type": "json_object"})
     try:
@@ -91,13 +92,13 @@ def test_gemini_base64_removes_conflicting_json_response_format(monkeypatch):
         llm_service._response_format_ctx.reset(token)
 
     generation_config = body["generationConfig"]
-    assert "responseMimeType" not in generation_config
+    assert generation_config["responseMimeType"] == "application/json"
     assert "responseSchema" not in generation_config
 
 
 @pytest.mark.parametrize("service", BASE64_TRANSPORT_SERVICES)
 @pytest.mark.asyncio
-async def test_sync_base64_transport_wraps_request_decodes_response_and_disables_json_mode(
+async def test_sync_base64_transport_wraps_request_and_keeps_plain_response(
     monkeypatch, service,
 ):
     monkeypatch.setattr(
@@ -113,7 +114,7 @@ async def test_sync_base64_transport_wraps_request_decodes_response_and_disables
         seen["service"] = service
         seen["model"] = model
         seen["response_format"] = llm_service._response_format_ctx.get()
-        return base64.b64encode(plain_response.encode("utf-8")).decode("ascii")
+        return plain_response
 
     monkeypatch.setattr(
         llm_service, "_dispatch_unlimited", fake_dispatch_unlimited
@@ -132,12 +133,37 @@ async def test_sync_base64_transport_wraps_request_decodes_response_and_disables
     assert result == plain_response
     assert seen["service"] == service
     assert seen["model"] == f"{service}-test"
-    assert seen["response_format"] is None
-    assert "Base64-Encoded Instruction Protocol" in seen["messages"][0]["content"]
+    assert seen["response_format"] == {"type": "json_object"}
+    assert "Base64-Encoded Input Protocol" in seen["messages"][0]["content"]
     assert (
         base64.b64decode(seen["messages"][1]["content"]).decode("utf-8")
         == "JSON으로 답해"
     )
+
+
+@pytest.mark.parametrize("service", BASE64_TRANSPORT_SERVICES)
+@pytest.mark.asyncio
+async def test_base64_looking_plain_response_is_not_decoded(monkeypatch, service):
+    monkeypatch.setattr(
+        llm_service,
+        "_current_config",
+        _config(llm_service=service, llm_model=f"{service}-test"),
+    )
+
+    async def fake_dispatch_unlimited(messages, service, model):
+        return "YWJj"
+
+    monkeypatch.setattr(
+        llm_service, "_dispatch_unlimited", fake_dispatch_unlimited
+    )
+
+    result = await llm_service._dispatch(
+        [{"role": "user", "content": "원문 그대로 답해"}],
+        service,
+        f"{service}-test",
+    )
+
+    assert result == "YWJj"
 
 
 @pytest.mark.asyncio
@@ -190,7 +216,7 @@ async def test_each_llm_slot_uses_its_own_base64_toggle_with_inherited_service(
     async def fake_dispatch_unlimited(messages, service, model):
         seen["messages"] = messages
         seen["slot"] = llm_service._llm_slot_ctx.get()
-        return base64.b64encode(f"slot {slot}".encode("utf-8")).decode("ascii")
+        return f"slot {slot}"
 
     monkeypatch.setattr(
         llm_service, "_dispatch_unlimited", fake_dispatch_unlimited
@@ -200,12 +226,12 @@ async def test_each_llm_slot_uses_its_own_base64_toggle_with_inherited_service(
 
     assert result == f"slot {slot}"
     assert seen["slot"] == f"llm{slot}"
-    assert "Base64-Encoded Instruction Protocol" in seen["messages"][0]["content"]
+    assert "Base64-Encoded Input Protocol" in seen["messages"][0]["content"]
 
 
 @pytest.mark.parametrize("service", BASE64_TRANSPORT_SERVICES)
 @pytest.mark.asyncio
-async def test_base64_transport_stream_emits_decoded_deltas_and_done(
+async def test_base64_transport_stream_passes_plain_deltas_and_done(
     monkeypatch, service,
 ):
     monkeypatch.setattr(
@@ -214,14 +240,12 @@ async def test_base64_transport_stream_emits_decoded_deltas_and_done(
         _config(llm_service=service, llm_model=f"{service}-test"),
     )
     plain = "스트리밍 Base64 응답입니다."
-    encoded = base64.b64encode(plain.encode("utf-8")).decode("ascii")
-
     async def fake_stream_unlimited(messages, service, model):
-        assert "Base64-Encoded Instruction Protocol" in messages[0]["content"]
+        assert "Base64-Encoded Input Protocol" in messages[0]["content"]
         yield {"type": "start", "service": service, "model": model}
-        for start in range(0, len(encoded), 5):
-            yield {"type": "delta", "text": encoded[start:start + 5]}
-        yield {"type": "done", "text": encoded, "completion_tokens": 10}
+        for start in range(0, len(plain), 5):
+            yield {"type": "delta", "text": plain[start:start + 5]}
+        yield {"type": "done", "text": plain, "completion_tokens": 10}
 
     monkeypatch.setattr(
         llm_service, "_dispatch_stream_unlimited", fake_stream_unlimited
@@ -235,10 +259,10 @@ async def test_base64_transport_stream_emits_decoded_deltas_and_done(
         )
     ]
 
-    decoded_deltas = "".join(
+    plain_deltas = "".join(
         event.get("text", "") for event in events if event["type"] == "delta"
     )
-    assert plain.startswith(decoded_deltas)
+    assert plain_deltas == plain
     assert events[-1]["type"] == "done"
     assert events[-1]["text"] == plain
 
@@ -248,9 +272,9 @@ async def test_base64_stream_can_be_closed_from_a_different_async_context(monkey
     monkeypatch.setattr(llm_service, "_current_config", _config())
 
     async def fake_stream_unlimited(messages, service, model):
-        assert llm_service._response_format_ctx.get() is None
+        assert llm_service._response_format_ctx.get() == {"type": "json_object"}
         yield {"type": "start", "service": service, "model": model}
-        yield {"type": "done", "text": base64.b64encode(b"ok").decode("ascii")}
+        yield {"type": "done", "text": "ok"}
 
     monkeypatch.setattr(
         llm_service,
@@ -284,6 +308,8 @@ def test_frontend_registers_base64_control_for_every_llm_slot():
         assert html.count(f'id="llm-gemini-base64{suffix}-row"') == 1
     assert "config[`llm_gemini_base64${suffix}`]" in html
     assert "['gemini', 'vertex', 'vertex-openai'].includes(meta.id)" in html
+    assert "텍스트 요청만 UTF-8 Base64로 감쌉니다" in html
+    assert "응답은 안정적인 파싱을 위해 원문 UTF-8로 받으며" in html
 
 
 @pytest.mark.skipif(
@@ -339,18 +365,6 @@ async def test_live_vertex_base64_round_trip(monkeypatch, tmp_path, service, str
     )
     monkeypatch.setattr(llm_service, "_stream_notify_func", None)
 
-    raw_responses: list[str] = []
-    real_decode = llm_service._decode_gemini_base64_response
-
-    def capture_decode(raw_text):
-        raw_responses.append(str(raw_text or ""))
-        return real_decode(raw_text)
-
-    monkeypatch.setattr(
-        llm_service,
-        "_decode_gemini_base64_response",
-        capture_decode,
-    )
     expected_answer = "585987"
     result = await llm_service.callLLM(
         [
@@ -366,7 +380,3 @@ async def test_live_vertex_base64_round_trip(monkeypatch, tmp_path, service, str
 
     assert not result.startswith("[LLM 실패]"), result
     assert result.strip() == expected_answer
-    assert raw_responses, "Base64 응답 복호화 경로가 실행되지 않았습니다"
-    compact = "".join(llm_service._strip_base64_fence(raw_responses[-1]).split())
-    decoded_raw = base64.b64decode(compact, validate=True).decode("utf-8")
-    assert decoded_raw.strip() == expected_answer
