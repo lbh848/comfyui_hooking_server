@@ -9048,7 +9048,7 @@ async def handle_api_llm_test_stream(request: web.Request) -> web.StreamResponse
     body: {"messages": [...], "model": "...", "stream": true, "target": "llm1"|"llm2"|"llm3"}
     응답: text/event-stream. 이벤트: start / delta / done / error.
     stream=False 면 단발 호출 후 done 이벤트 1개만 전송.
-    image_b64 가 있으면 비전 호출. target(llm1/llm2/llm3) 에 따라 해당 LLM 설정으로 호출.
+    image_b64 가 있으면 비전 호출. target(llm1..llm10) 에 따라 해당 LLM 설정으로 호출.
     """
     try:
         body = await request.json()
@@ -9102,9 +9102,14 @@ async def handle_api_llm_test_stream(request: web.Request) -> web.StreamResponse
         "llm3": (llm_service.callLLM3, llm_service.callLLMVision3),
         "llm4": (llm_service.callLLM4, llm_service.callLLMVision4),
         "llm5": (llm_service.callLLM5, llm_service.callLLMVision5),
+        "llm6": (llm_service.callLLM6, llm_service.callLLMVision6),
+        "llm7": (llm_service.callLLM7, llm_service.callLLMVision7),
+        "llm8": (llm_service.callLLM8, llm_service.callLLMVision8),
+        "llm9": (llm_service.callLLM9, llm_service.callLLMVision9),
+        "llm10": (llm_service.callLLM10, llm_service.callLLMVision10),
     }
     cfg = llm_service.get_config()
-    _suffix = "" if target == "llm1" else target[-1]
+    _suffix = "" if target == "llm1" else target[3:]
     cur_service = cfg.get(f"llm_service{_suffix}") or cfg.get("llm_service", "")
     cur_model_key = f"llm_model{_suffix}"
     fn_single, fn_vision_single = _slot_fns.get(
@@ -26083,7 +26088,7 @@ async def handle_api_character_maker_capabilities(
             route = routing.get(task_key, {}) or {}
             slot = route.get("primary", "llm1")
             # slot(llm1..llmN) -> llm_service{N} 키. LLM_SLOT_IDS 외 값은 llm_service 로 폴백.
-            _slot_suffix = "" if slot == "llm1" else (slot[-1] if slot in llm_service.LLM_SLOT_IDS else "")
+            _slot_suffix = "" if slot == "llm1" else (slot[3:] if slot in llm_service.LLM_SLOT_IDS else "")
             service_key = f"llm_service{_slot_suffix}"
             service_name = str(
                 llm_config.get(service_key)

@@ -114,6 +114,8 @@ def test_llm_route_dropdowns_show_the_selected_slot_model_name_on_hover() -> Non
     assert "? `LLM${slot} 모델: ${modelName}`" in frontend
     assert "select.addEventListener('mouseenter', () => updateLlmRouteSelectPresentation(select))" in frontend
     assert "select.addEventListener('change', () => updateLlmRouteSelectPresentation(select))" in frontend
+    # The attribute appears in five shared routing-control templates. Each
+    # template populates its options dynamically from LLM_SLOTS.
     assert frontend.count("data-route-slot-select") == 5
     assert frontend.count("initializeLlmRouteSelectTooltips(container);") == 2
 

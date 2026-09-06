@@ -23984,6 +23984,831 @@
                         </div>
                     </details>
 
+                    <details class="llm-group">
+                        <summary>LLM6 연결 설정</summary>
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="title">LLM6 서비스 선택</div>
+                                <div class="desc">비워두면 LLM1 서비스 사용</div>
+                            </div>
+                            <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
+                                <select id="setting-llm-service6" onchange="onLlmServiceChange()"
+                                        style="padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: .85rem;">
+                                    <option value="">(LLM1과 동일)</option>
+                                    <option value="copilot">Copilot</option>
+                                    <option value="vertex">Vertex Gemini</option>
+                                    <option value="vertex-openai">Vertex OpenAI</option>
+                                    <option value="openai">OpenAI</option>
+                                    <option value="openrouter">OpenRouter</option>
+                                    <option value="gemini">Gemini (AI Studio)</option>
+                                    <option value="claude">Claude</option>
+                                    <option value="lmstudio">LM Studio (로컬)</option>
+                                    <option value="ollama">Ollama (로컬)</option>
+                                    <option value="ollama-cloud">Ollama Cloud</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="title">LLM6 모델명</div>
+                                <div class="desc">LLM6로 사용할 모델명</div>
+                            </div>
+                            <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
+                                <input type="text" id="setting-llm-model6" placeholder="예: gpt-4.1" oninput="renderReasoningControls(6)"
+                                       style="width: 220px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text);">
+                            </div>
+                        </div>
+                        <div class="setting-row" id="llm-api-key6-row" style="display: none;">
+                            <div class="setting-label">
+                                <div class="title">LLM6 API 키 (옵션)</div>
+                                <div class="desc">비워두면 LLM1 키 재사용</div>
+                            </div>
+                            <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
+                                <input type="text" id="setting-llm-api-key6" placeholder="sk-..."
+                                       style="width: 300px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-family: monospace;">
+                            </div>
+                        </div>
+                        <div class="setting-row" id="llm-url6-row" style="display: none;">
+                            <div class="setting-label">
+                                <div class="title">LLM6 베이스 URL (옵션)</div>
+                                <div class="desc">비워두면 LLM1 URL 또는 선택한 서비스의 기본 URL 사용</div>
+                            </div>
+                            <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
+                                <input type="text" id="setting-llm-url6" placeholder="https://..."
+                                       style="width: 300px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text);">
+                            </div>
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="title">LLM6 스트리밍</div>
+                                <div class="desc">LLM6 요청을 실제 chunk 스트림으로 받고 LLM로그창에 실시간 표시합니다.</div>
+                            </div>
+                            <div class="setting-control" style="display:flex; align-items:center; gap:8px;">
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="setting-llm-stream6" onchange="updateLlmStreamStatus(6, this.checked)">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                                <span id="setting-llm-stream6-status" class="toggle-status off">OFF</span>
+                            </div>
+                        </div>
+                        <div class="setting-row" id="llm-gemini-base646-row" style="display:none;">
+                            <div class="setting-label">
+                                <div class="title">LLM6 Gemini/Vertex Base64 검열 우회</div>
+                                <div class="desc">LLM6가 Gemini 또는 Vertex 계열일 때 텍스트 요청·응답에 적용되는 독립 토글입니다.<br><a href="https://arca.live/b/characterai/176675290" target="_blank" rel="noopener noreferrer" style="color:#4dd0e1;">원본 프로젝트: https://arca.live/b/characterai/176675290</a></div>
+                            </div>
+                            <div class="setting-control" style="display:flex; align-items:center; gap:8px;">
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="setting-llm-gemini-base646" onchange="updateLlmGeminiBase64Status(6, this.checked)">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                                <span id="setting-llm-gemini-base646-status" class="toggle-status off">OFF</span>
+                            </div>
+                        </div>
+                        <div class="setting-row" id="llm-pdf-prompt6-row" style="display:none;">
+                            <div class="setting-label">
+                                <div class="title">LLM6 대화 PDF 토큰 절약</div>
+                                <div class="desc">Gemini·Vertex 대화를 1pt·낮은 해상도 PDF로 보내고 이미지는 별도 첨부합니다. Base64 동시 사용 시 긴 인코딩 문서는 제공자 안전 필터에 차단될 수 있습니다.<br><a href="https://arca.live/b/characterai/181021175" target="_blank" rel="noopener noreferrer" style="color:#4dd0e1;">원본 프로젝트: https://arca.live/b/characterai/181021175</a></div>
+                            </div>
+                            <div class="setting-control" style="display:flex; align-items:center; gap:8px;">
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="setting-llm-pdf-prompt6" onchange="updateLlmPdfPromptStatus(6, this.checked)">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                                <span id="setting-llm-pdf-prompt6-status" class="toggle-status off">OFF</span>
+                            </div>
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="title">이미지를 webp으로 압축해서 전송</div>
+                                <div class="desc">토글이 꺼져있다면, 가장 호환성이 좋은 png로 보냅니다.(비전 사용시)</div>
+                            </div>
+                            <div class="setting-control" style="display:flex; align-items:center; gap:8px;">
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="setting-llm-vision-compress6" onchange="updateLlmVisionCompressStatus(6, this.checked)">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                                <span id="setting-llm-vision-compress6-status" class="toggle-status off">OFF</span>
+                            </div>
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="title">LLM6 동시 요청 수</div>
+                                <div class="desc">LLM6에서 동시에 실행할 실제 API 요청 상한입니다. 다른 슬롯과 독립적으로 적용됩니다.</div>
+                            </div>
+                            <div class="setting-control">
+                                <input type="number" id="setting-llm-max-concurrency6" min="1" max="20" step="1"
+                                       style="width:80px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:.85rem;">
+                            </div>
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="title">LLM6 스트림 무응답 제한(초)</div>
+                                <div class="desc">LLM6 스트림에만 적용됩니다. 0은 비활성화, 그 외에는 10~3600초입니다.</div>
+                            </div>
+                            <div class="setting-control">
+                                <input type="number" id="setting-llm-stream-idle-timeout6" min="0" max="3600" step="1"
+                                       style="width:92px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:.85rem;">
+                            </div>
+                        </div>
+                        <div class="setting-row llm-reasoning-setting-row" id="llm-reasoning6-row" style="display: flex;">
+                            <div class="setting-label">
+                                <div class="title">LLM6 Reasoning 설정</div>
+                                <div class="desc">비워두면 LLM1 reasoning 설정을 재사용합니다.</div>
+                            </div>
+                            <div class="setting-control" style="display: flex; flex-direction: column; align-items: stretch; gap: 8px;">
+                                <select id="setting-llm-reasoning-preset6" onchange="renderReasoningControls(6)"
+                                        style="padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: .85rem;">
+                                    <option value="">(LLM1과 동일)</option>
+                                    <option value="auto">auto</option>
+                                    <option value="none">none</option>
+                                    <option value="gpt">gpt</option>
+                                    <option value="glm">glm</option>
+                                    <option value="deepseek">deepseek</option>
+                                    <option value="kimi">kimi</option>
+                                    <option value="claude">claude</option>
+                                    <option value="gemini">gemini</option>
+                                    <option value="custom">custom</option>
+                                </select>
+                                <div id="llm-reasoning6-dynamic"></div>
+                            </div>
+                        </div>
+                        <div class="setting-row" id="llm-custom-body6-row" style="display: flex; flex-direction: column; align-items: stretch;">
+                            <div style="display:flex; justify-content:space-between; gap:10px; align-items:flex-start; margin-bottom:8px;">
+                                <div class="setting-label">
+                                    <div class="title">LLM6 Custom Body (JSON)</div>
+                                    <div class="desc">비어 있으면 LLM1 BODY를 재사용하며, 값이 있으면 LLM6 요청에 재귀 병합합니다.</div>
+                                </div>
+                                <div style="display:flex; gap:6px; flex-shrink:0;">
+                                    <button type="button" onclick="buildReasoningBody(6)" style="padding:6px 10px; border-radius:6px; border:1px solid #00BCD4; background:rgba(0,188,212,.14); color:var(--text); cursor:pointer;">BODY 빌드</button>
+                                    <button type="button" onclick="formatCustomBody(6)" style="padding:6px 10px; border-radius:6px; border:1px solid var(--border); background:var(--surface2); color:var(--text); cursor:pointer;">JSON 정리</button>
+                                </div>
+                            </div>
+                            <textarea id="setting-llm-custom-body6" placeholder="{ ... }"
+                                      style="width: 100%; min-height: 120px; padding: 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-family: monospace; font-size: .8rem;"></textarea>
+                            <div id="llm-custom-body6-status" style="margin-top:6px; font-size:.75rem; color:var(--text2);"></div>
+                        </div>
+                    </details>
+
+                    <details class="llm-group">
+                        <summary>LLM7 연결 설정</summary>
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="title">LLM7 서비스 선택</div>
+                                <div class="desc">비워두면 LLM1 서비스 사용</div>
+                            </div>
+                            <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
+                                <select id="setting-llm-service7" onchange="onLlmServiceChange()"
+                                        style="padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: .85rem;">
+                                    <option value="">(LLM1과 동일)</option>
+                                    <option value="copilot">Copilot</option>
+                                    <option value="vertex">Vertex Gemini</option>
+                                    <option value="vertex-openai">Vertex OpenAI</option>
+                                    <option value="openai">OpenAI</option>
+                                    <option value="openrouter">OpenRouter</option>
+                                    <option value="gemini">Gemini (AI Studio)</option>
+                                    <option value="claude">Claude</option>
+                                    <option value="lmstudio">LM Studio (로컬)</option>
+                                    <option value="ollama">Ollama (로컬)</option>
+                                    <option value="ollama-cloud">Ollama Cloud</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="title">LLM7 모델명</div>
+                                <div class="desc">LLM7로 사용할 모델명</div>
+                            </div>
+                            <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
+                                <input type="text" id="setting-llm-model7" placeholder="예: gpt-4.1" oninput="renderReasoningControls(7)"
+                                       style="width: 220px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text);">
+                            </div>
+                        </div>
+                        <div class="setting-row" id="llm-api-key7-row" style="display: none;">
+                            <div class="setting-label">
+                                <div class="title">LLM7 API 키 (옵션)</div>
+                                <div class="desc">비워두면 LLM1 키 재사용</div>
+                            </div>
+                            <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
+                                <input type="text" id="setting-llm-api-key7" placeholder="sk-..."
+                                       style="width: 300px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-family: monospace;">
+                            </div>
+                        </div>
+                        <div class="setting-row" id="llm-url7-row" style="display: none;">
+                            <div class="setting-label">
+                                <div class="title">LLM7 베이스 URL (옵션)</div>
+                                <div class="desc">비워두면 LLM1 URL 또는 선택한 서비스의 기본 URL 사용</div>
+                            </div>
+                            <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
+                                <input type="text" id="setting-llm-url7" placeholder="https://..."
+                                       style="width: 300px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text);">
+                            </div>
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="title">LLM7 스트리밍</div>
+                                <div class="desc">LLM7 요청을 실제 chunk 스트림으로 받고 LLM로그창에 실시간 표시합니다.</div>
+                            </div>
+                            <div class="setting-control" style="display:flex; align-items:center; gap:8px;">
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="setting-llm-stream7" onchange="updateLlmStreamStatus(7, this.checked)">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                                <span id="setting-llm-stream7-status" class="toggle-status off">OFF</span>
+                            </div>
+                        </div>
+                        <div class="setting-row" id="llm-gemini-base647-row" style="display:none;">
+                            <div class="setting-label">
+                                <div class="title">LLM7 Gemini/Vertex Base64 검열 우회</div>
+                                <div class="desc">LLM7가 Gemini 또는 Vertex 계열일 때 텍스트 요청·응답에 적용되는 독립 토글입니다.<br><a href="https://arca.live/b/characterai/176675290" target="_blank" rel="noopener noreferrer" style="color:#4dd0e1;">원본 프로젝트: https://arca.live/b/characterai/176675290</a></div>
+                            </div>
+                            <div class="setting-control" style="display:flex; align-items:center; gap:8px;">
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="setting-llm-gemini-base647" onchange="updateLlmGeminiBase64Status(7, this.checked)">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                                <span id="setting-llm-gemini-base647-status" class="toggle-status off">OFF</span>
+                            </div>
+                        </div>
+                        <div class="setting-row" id="llm-pdf-prompt7-row" style="display:none;">
+                            <div class="setting-label">
+                                <div class="title">LLM7 대화 PDF 토큰 절약</div>
+                                <div class="desc">Gemini·Vertex 대화를 1pt·낮은 해상도 PDF로 보내고 이미지는 별도 첨부합니다. Base64 동시 사용 시 긴 인코딩 문서는 제공자 안전 필터에 차단될 수 있습니다.<br><a href="https://arca.live/b/characterai/181021175" target="_blank" rel="noopener noreferrer" style="color:#4dd0e1;">원본 프로젝트: https://arca.live/b/characterai/181021175</a></div>
+                            </div>
+                            <div class="setting-control" style="display:flex; align-items:center; gap:8px;">
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="setting-llm-pdf-prompt7" onchange="updateLlmPdfPromptStatus(7, this.checked)">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                                <span id="setting-llm-pdf-prompt7-status" class="toggle-status off">OFF</span>
+                            </div>
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="title">이미지를 webp으로 압축해서 전송</div>
+                                <div class="desc">토글이 꺼져있다면, 가장 호환성이 좋은 png로 보냅니다.(비전 사용시)</div>
+                            </div>
+                            <div class="setting-control" style="display:flex; align-items:center; gap:8px;">
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="setting-llm-vision-compress7" onchange="updateLlmVisionCompressStatus(7, this.checked)">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                                <span id="setting-llm-vision-compress7-status" class="toggle-status off">OFF</span>
+                            </div>
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="title">LLM7 동시 요청 수</div>
+                                <div class="desc">LLM7에서 동시에 실행할 실제 API 요청 상한입니다. 다른 슬롯과 독립적으로 적용됩니다.</div>
+                            </div>
+                            <div class="setting-control">
+                                <input type="number" id="setting-llm-max-concurrency7" min="1" max="20" step="1"
+                                       style="width:80px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:.85rem;">
+                            </div>
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="title">LLM7 스트림 무응답 제한(초)</div>
+                                <div class="desc">LLM7 스트림에만 적용됩니다. 0은 비활성화, 그 외에는 10~3600초입니다.</div>
+                            </div>
+                            <div class="setting-control">
+                                <input type="number" id="setting-llm-stream-idle-timeout7" min="0" max="3600" step="1"
+                                       style="width:92px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:.85rem;">
+                            </div>
+                        </div>
+                        <div class="setting-row llm-reasoning-setting-row" id="llm-reasoning7-row" style="display: flex;">
+                            <div class="setting-label">
+                                <div class="title">LLM7 Reasoning 설정</div>
+                                <div class="desc">비워두면 LLM1 reasoning 설정을 재사용합니다.</div>
+                            </div>
+                            <div class="setting-control" style="display: flex; flex-direction: column; align-items: stretch; gap: 8px;">
+                                <select id="setting-llm-reasoning-preset7" onchange="renderReasoningControls(7)"
+                                        style="padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: .85rem;">
+                                    <option value="">(LLM1과 동일)</option>
+                                    <option value="auto">auto</option>
+                                    <option value="none">none</option>
+                                    <option value="gpt">gpt</option>
+                                    <option value="glm">glm</option>
+                                    <option value="deepseek">deepseek</option>
+                                    <option value="kimi">kimi</option>
+                                    <option value="claude">claude</option>
+                                    <option value="gemini">gemini</option>
+                                    <option value="custom">custom</option>
+                                </select>
+                                <div id="llm-reasoning7-dynamic"></div>
+                            </div>
+                        </div>
+                        <div class="setting-row" id="llm-custom-body7-row" style="display: flex; flex-direction: column; align-items: stretch;">
+                            <div style="display:flex; justify-content:space-between; gap:10px; align-items:flex-start; margin-bottom:8px;">
+                                <div class="setting-label">
+                                    <div class="title">LLM7 Custom Body (JSON)</div>
+                                    <div class="desc">비어 있으면 LLM1 BODY를 재사용하며, 값이 있으면 LLM7 요청에 재귀 병합합니다.</div>
+                                </div>
+                                <div style="display:flex; gap:6px; flex-shrink:0;">
+                                    <button type="button" onclick="buildReasoningBody(7)" style="padding:6px 10px; border-radius:6px; border:1px solid #00BCD4; background:rgba(0,188,212,.14); color:var(--text); cursor:pointer;">BODY 빌드</button>
+                                    <button type="button" onclick="formatCustomBody(7)" style="padding:6px 10px; border-radius:6px; border:1px solid var(--border); background:var(--surface2); color:var(--text); cursor:pointer;">JSON 정리</button>
+                                </div>
+                            </div>
+                            <textarea id="setting-llm-custom-body7" placeholder="{ ... }"
+                                      style="width: 100%; min-height: 120px; padding: 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-family: monospace; font-size: .8rem;"></textarea>
+                            <div id="llm-custom-body7-status" style="margin-top:6px; font-size:.75rem; color:var(--text2);"></div>
+                        </div>
+                    </details>
+
+                    <details class="llm-group">
+                        <summary>LLM8 연결 설정</summary>
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="title">LLM8 서비스 선택</div>
+                                <div class="desc">비워두면 LLM1 서비스 사용</div>
+                            </div>
+                            <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
+                                <select id="setting-llm-service8" onchange="onLlmServiceChange()"
+                                        style="padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: .85rem;">
+                                    <option value="">(LLM1과 동일)</option>
+                                    <option value="copilot">Copilot</option>
+                                    <option value="vertex">Vertex Gemini</option>
+                                    <option value="vertex-openai">Vertex OpenAI</option>
+                                    <option value="openai">OpenAI</option>
+                                    <option value="openrouter">OpenRouter</option>
+                                    <option value="gemini">Gemini (AI Studio)</option>
+                                    <option value="claude">Claude</option>
+                                    <option value="lmstudio">LM Studio (로컬)</option>
+                                    <option value="ollama">Ollama (로컬)</option>
+                                    <option value="ollama-cloud">Ollama Cloud</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="title">LLM8 모델명</div>
+                                <div class="desc">LLM8로 사용할 모델명</div>
+                            </div>
+                            <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
+                                <input type="text" id="setting-llm-model8" placeholder="예: gpt-4.1" oninput="renderReasoningControls(8)"
+                                       style="width: 220px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text);">
+                            </div>
+                        </div>
+                        <div class="setting-row" id="llm-api-key8-row" style="display: none;">
+                            <div class="setting-label">
+                                <div class="title">LLM8 API 키 (옵션)</div>
+                                <div class="desc">비워두면 LLM1 키 재사용</div>
+                            </div>
+                            <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
+                                <input type="text" id="setting-llm-api-key8" placeholder="sk-..."
+                                       style="width: 300px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-family: monospace;">
+                            </div>
+                        </div>
+                        <div class="setting-row" id="llm-url8-row" style="display: none;">
+                            <div class="setting-label">
+                                <div class="title">LLM8 베이스 URL (옵션)</div>
+                                <div class="desc">비워두면 LLM1 URL 또는 선택한 서비스의 기본 URL 사용</div>
+                            </div>
+                            <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
+                                <input type="text" id="setting-llm-url8" placeholder="https://..."
+                                       style="width: 300px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text);">
+                            </div>
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="title">LLM8 스트리밍</div>
+                                <div class="desc">LLM8 요청을 실제 chunk 스트림으로 받고 LLM로그창에 실시간 표시합니다.</div>
+                            </div>
+                            <div class="setting-control" style="display:flex; align-items:center; gap:8px;">
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="setting-llm-stream8" onchange="updateLlmStreamStatus(8, this.checked)">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                                <span id="setting-llm-stream8-status" class="toggle-status off">OFF</span>
+                            </div>
+                        </div>
+                        <div class="setting-row" id="llm-gemini-base648-row" style="display:none;">
+                            <div class="setting-label">
+                                <div class="title">LLM8 Gemini/Vertex Base64 검열 우회</div>
+                                <div class="desc">LLM8가 Gemini 또는 Vertex 계열일 때 텍스트 요청·응답에 적용되는 독립 토글입니다.<br><a href="https://arca.live/b/characterai/176675290" target="_blank" rel="noopener noreferrer" style="color:#4dd0e1;">원본 프로젝트: https://arca.live/b/characterai/176675290</a></div>
+                            </div>
+                            <div class="setting-control" style="display:flex; align-items:center; gap:8px;">
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="setting-llm-gemini-base648" onchange="updateLlmGeminiBase64Status(8, this.checked)">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                                <span id="setting-llm-gemini-base648-status" class="toggle-status off">OFF</span>
+                            </div>
+                        </div>
+                        <div class="setting-row" id="llm-pdf-prompt8-row" style="display:none;">
+                            <div class="setting-label">
+                                <div class="title">LLM8 대화 PDF 토큰 절약</div>
+                                <div class="desc">Gemini·Vertex 대화를 1pt·낮은 해상도 PDF로 보내고 이미지는 별도 첨부합니다. Base64 동시 사용 시 긴 인코딩 문서는 제공자 안전 필터에 차단될 수 있습니다.<br><a href="https://arca.live/b/characterai/181021175" target="_blank" rel="noopener noreferrer" style="color:#4dd0e1;">원본 프로젝트: https://arca.live/b/characterai/181021175</a></div>
+                            </div>
+                            <div class="setting-control" style="display:flex; align-items:center; gap:8px;">
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="setting-llm-pdf-prompt8" onchange="updateLlmPdfPromptStatus(8, this.checked)">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                                <span id="setting-llm-pdf-prompt8-status" class="toggle-status off">OFF</span>
+                            </div>
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="title">이미지를 webp으로 압축해서 전송</div>
+                                <div class="desc">토글이 꺼져있다면, 가장 호환성이 좋은 png로 보냅니다.(비전 사용시)</div>
+                            </div>
+                            <div class="setting-control" style="display:flex; align-items:center; gap:8px;">
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="setting-llm-vision-compress8" onchange="updateLlmVisionCompressStatus(8, this.checked)">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                                <span id="setting-llm-vision-compress8-status" class="toggle-status off">OFF</span>
+                            </div>
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="title">LLM8 동시 요청 수</div>
+                                <div class="desc">LLM8에서 동시에 실행할 실제 API 요청 상한입니다. 다른 슬롯과 독립적으로 적용됩니다.</div>
+                            </div>
+                            <div class="setting-control">
+                                <input type="number" id="setting-llm-max-concurrency8" min="1" max="20" step="1"
+                                       style="width:80px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:.85rem;">
+                            </div>
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="title">LLM8 스트림 무응답 제한(초)</div>
+                                <div class="desc">LLM8 스트림에만 적용됩니다. 0은 비활성화, 그 외에는 10~3600초입니다.</div>
+                            </div>
+                            <div class="setting-control">
+                                <input type="number" id="setting-llm-stream-idle-timeout8" min="0" max="3600" step="1"
+                                       style="width:92px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:.85rem;">
+                            </div>
+                        </div>
+                        <div class="setting-row llm-reasoning-setting-row" id="llm-reasoning8-row" style="display: flex;">
+                            <div class="setting-label">
+                                <div class="title">LLM8 Reasoning 설정</div>
+                                <div class="desc">비워두면 LLM1 reasoning 설정을 재사용합니다.</div>
+                            </div>
+                            <div class="setting-control" style="display: flex; flex-direction: column; align-items: stretch; gap: 8px;">
+                                <select id="setting-llm-reasoning-preset8" onchange="renderReasoningControls(8)"
+                                        style="padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: .85rem;">
+                                    <option value="">(LLM1과 동일)</option>
+                                    <option value="auto">auto</option>
+                                    <option value="none">none</option>
+                                    <option value="gpt">gpt</option>
+                                    <option value="glm">glm</option>
+                                    <option value="deepseek">deepseek</option>
+                                    <option value="kimi">kimi</option>
+                                    <option value="claude">claude</option>
+                                    <option value="gemini">gemini</option>
+                                    <option value="custom">custom</option>
+                                </select>
+                                <div id="llm-reasoning8-dynamic"></div>
+                            </div>
+                        </div>
+                        <div class="setting-row" id="llm-custom-body8-row" style="display: flex; flex-direction: column; align-items: stretch;">
+                            <div style="display:flex; justify-content:space-between; gap:10px; align-items:flex-start; margin-bottom:8px;">
+                                <div class="setting-label">
+                                    <div class="title">LLM8 Custom Body (JSON)</div>
+                                    <div class="desc">비어 있으면 LLM1 BODY를 재사용하며, 값이 있으면 LLM8 요청에 재귀 병합합니다.</div>
+                                </div>
+                                <div style="display:flex; gap:6px; flex-shrink:0;">
+                                    <button type="button" onclick="buildReasoningBody(8)" style="padding:6px 10px; border-radius:6px; border:1px solid #00BCD4; background:rgba(0,188,212,.14); color:var(--text); cursor:pointer;">BODY 빌드</button>
+                                    <button type="button" onclick="formatCustomBody(8)" style="padding:6px 10px; border-radius:6px; border:1px solid var(--border); background:var(--surface2); color:var(--text); cursor:pointer;">JSON 정리</button>
+                                </div>
+                            </div>
+                            <textarea id="setting-llm-custom-body8" placeholder="{ ... }"
+                                      style="width: 100%; min-height: 120px; padding: 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-family: monospace; font-size: .8rem;"></textarea>
+                            <div id="llm-custom-body8-status" style="margin-top:6px; font-size:.75rem; color:var(--text2);"></div>
+                        </div>
+                    </details>
+
+                    <details class="llm-group">
+                        <summary>LLM9 연결 설정</summary>
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="title">LLM9 서비스 선택</div>
+                                <div class="desc">비워두면 LLM1 서비스 사용</div>
+                            </div>
+                            <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
+                                <select id="setting-llm-service9" onchange="onLlmServiceChange()"
+                                        style="padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: .85rem;">
+                                    <option value="">(LLM1과 동일)</option>
+                                    <option value="copilot">Copilot</option>
+                                    <option value="vertex">Vertex Gemini</option>
+                                    <option value="vertex-openai">Vertex OpenAI</option>
+                                    <option value="openai">OpenAI</option>
+                                    <option value="openrouter">OpenRouter</option>
+                                    <option value="gemini">Gemini (AI Studio)</option>
+                                    <option value="claude">Claude</option>
+                                    <option value="lmstudio">LM Studio (로컬)</option>
+                                    <option value="ollama">Ollama (로컬)</option>
+                                    <option value="ollama-cloud">Ollama Cloud</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="title">LLM9 모델명</div>
+                                <div class="desc">LLM9로 사용할 모델명</div>
+                            </div>
+                            <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
+                                <input type="text" id="setting-llm-model9" placeholder="예: gpt-4.1" oninput="renderReasoningControls(9)"
+                                       style="width: 220px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text);">
+                            </div>
+                        </div>
+                        <div class="setting-row" id="llm-api-key9-row" style="display: none;">
+                            <div class="setting-label">
+                                <div class="title">LLM9 API 키 (옵션)</div>
+                                <div class="desc">비워두면 LLM1 키 재사용</div>
+                            </div>
+                            <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
+                                <input type="text" id="setting-llm-api-key9" placeholder="sk-..."
+                                       style="width: 300px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-family: monospace;">
+                            </div>
+                        </div>
+                        <div class="setting-row" id="llm-url9-row" style="display: none;">
+                            <div class="setting-label">
+                                <div class="title">LLM9 베이스 URL (옵션)</div>
+                                <div class="desc">비워두면 LLM1 URL 또는 선택한 서비스의 기본 URL 사용</div>
+                            </div>
+                            <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
+                                <input type="text" id="setting-llm-url9" placeholder="https://..."
+                                       style="width: 300px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text);">
+                            </div>
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="title">LLM9 스트리밍</div>
+                                <div class="desc">LLM9 요청을 실제 chunk 스트림으로 받고 LLM로그창에 실시간 표시합니다.</div>
+                            </div>
+                            <div class="setting-control" style="display:flex; align-items:center; gap:8px;">
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="setting-llm-stream9" onchange="updateLlmStreamStatus(9, this.checked)">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                                <span id="setting-llm-stream9-status" class="toggle-status off">OFF</span>
+                            </div>
+                        </div>
+                        <div class="setting-row" id="llm-gemini-base649-row" style="display:none;">
+                            <div class="setting-label">
+                                <div class="title">LLM9 Gemini/Vertex Base64 검열 우회</div>
+                                <div class="desc">LLM9가 Gemini 또는 Vertex 계열일 때 텍스트 요청·응답에 적용되는 독립 토글입니다.<br><a href="https://arca.live/b/characterai/176675290" target="_blank" rel="noopener noreferrer" style="color:#4dd0e1;">원본 프로젝트: https://arca.live/b/characterai/176675290</a></div>
+                            </div>
+                            <div class="setting-control" style="display:flex; align-items:center; gap:8px;">
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="setting-llm-gemini-base649" onchange="updateLlmGeminiBase64Status(9, this.checked)">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                                <span id="setting-llm-gemini-base649-status" class="toggle-status off">OFF</span>
+                            </div>
+                        </div>
+                        <div class="setting-row" id="llm-pdf-prompt9-row" style="display:none;">
+                            <div class="setting-label">
+                                <div class="title">LLM9 대화 PDF 토큰 절약</div>
+                                <div class="desc">Gemini·Vertex 대화를 1pt·낮은 해상도 PDF로 보내고 이미지는 별도 첨부합니다. Base64 동시 사용 시 긴 인코딩 문서는 제공자 안전 필터에 차단될 수 있습니다.<br><a href="https://arca.live/b/characterai/181021175" target="_blank" rel="noopener noreferrer" style="color:#4dd0e1;">원본 프로젝트: https://arca.live/b/characterai/181021175</a></div>
+                            </div>
+                            <div class="setting-control" style="display:flex; align-items:center; gap:8px;">
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="setting-llm-pdf-prompt9" onchange="updateLlmPdfPromptStatus(9, this.checked)">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                                <span id="setting-llm-pdf-prompt9-status" class="toggle-status off">OFF</span>
+                            </div>
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="title">이미지를 webp으로 압축해서 전송</div>
+                                <div class="desc">토글이 꺼져있다면, 가장 호환성이 좋은 png로 보냅니다.(비전 사용시)</div>
+                            </div>
+                            <div class="setting-control" style="display:flex; align-items:center; gap:8px;">
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="setting-llm-vision-compress9" onchange="updateLlmVisionCompressStatus(9, this.checked)">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                                <span id="setting-llm-vision-compress9-status" class="toggle-status off">OFF</span>
+                            </div>
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="title">LLM9 동시 요청 수</div>
+                                <div class="desc">LLM9에서 동시에 실행할 실제 API 요청 상한입니다. 다른 슬롯과 독립적으로 적용됩니다.</div>
+                            </div>
+                            <div class="setting-control">
+                                <input type="number" id="setting-llm-max-concurrency9" min="1" max="20" step="1"
+                                       style="width:80px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:.85rem;">
+                            </div>
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="title">LLM9 스트림 무응답 제한(초)</div>
+                                <div class="desc">LLM9 스트림에만 적용됩니다. 0은 비활성화, 그 외에는 10~3600초입니다.</div>
+                            </div>
+                            <div class="setting-control">
+                                <input type="number" id="setting-llm-stream-idle-timeout9" min="0" max="3600" step="1"
+                                       style="width:92px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:.85rem;">
+                            </div>
+                        </div>
+                        <div class="setting-row llm-reasoning-setting-row" id="llm-reasoning9-row" style="display: flex;">
+                            <div class="setting-label">
+                                <div class="title">LLM9 Reasoning 설정</div>
+                                <div class="desc">비워두면 LLM1 reasoning 설정을 재사용합니다.</div>
+                            </div>
+                            <div class="setting-control" style="display: flex; flex-direction: column; align-items: stretch; gap: 8px;">
+                                <select id="setting-llm-reasoning-preset9" onchange="renderReasoningControls(9)"
+                                        style="padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: .85rem;">
+                                    <option value="">(LLM1과 동일)</option>
+                                    <option value="auto">auto</option>
+                                    <option value="none">none</option>
+                                    <option value="gpt">gpt</option>
+                                    <option value="glm">glm</option>
+                                    <option value="deepseek">deepseek</option>
+                                    <option value="kimi">kimi</option>
+                                    <option value="claude">claude</option>
+                                    <option value="gemini">gemini</option>
+                                    <option value="custom">custom</option>
+                                </select>
+                                <div id="llm-reasoning9-dynamic"></div>
+                            </div>
+                        </div>
+                        <div class="setting-row" id="llm-custom-body9-row" style="display: flex; flex-direction: column; align-items: stretch;">
+                            <div style="display:flex; justify-content:space-between; gap:10px; align-items:flex-start; margin-bottom:8px;">
+                                <div class="setting-label">
+                                    <div class="title">LLM9 Custom Body (JSON)</div>
+                                    <div class="desc">비어 있으면 LLM1 BODY를 재사용하며, 값이 있으면 LLM9 요청에 재귀 병합합니다.</div>
+                                </div>
+                                <div style="display:flex; gap:6px; flex-shrink:0;">
+                                    <button type="button" onclick="buildReasoningBody(9)" style="padding:6px 10px; border-radius:6px; border:1px solid #00BCD4; background:rgba(0,188,212,.14); color:var(--text); cursor:pointer;">BODY 빌드</button>
+                                    <button type="button" onclick="formatCustomBody(9)" style="padding:6px 10px; border-radius:6px; border:1px solid var(--border); background:var(--surface2); color:var(--text); cursor:pointer;">JSON 정리</button>
+                                </div>
+                            </div>
+                            <textarea id="setting-llm-custom-body9" placeholder="{ ... }"
+                                      style="width: 100%; min-height: 120px; padding: 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-family: monospace; font-size: .8rem;"></textarea>
+                            <div id="llm-custom-body9-status" style="margin-top:6px; font-size:.75rem; color:var(--text2);"></div>
+                        </div>
+                    </details>
+
+                    <details class="llm-group">
+                        <summary>LLM10 연결 설정</summary>
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="title">LLM10 서비스 선택</div>
+                                <div class="desc">비워두면 LLM1 서비스 사용</div>
+                            </div>
+                            <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
+                                <select id="setting-llm-service10" onchange="onLlmServiceChange()"
+                                        style="padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: .85rem;">
+                                    <option value="">(LLM1과 동일)</option>
+                                    <option value="copilot">Copilot</option>
+                                    <option value="vertex">Vertex Gemini</option>
+                                    <option value="vertex-openai">Vertex OpenAI</option>
+                                    <option value="openai">OpenAI</option>
+                                    <option value="openrouter">OpenRouter</option>
+                                    <option value="gemini">Gemini (AI Studio)</option>
+                                    <option value="claude">Claude</option>
+                                    <option value="lmstudio">LM Studio (로컬)</option>
+                                    <option value="ollama">Ollama (로컬)</option>
+                                    <option value="ollama-cloud">Ollama Cloud</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="title">LLM10 모델명</div>
+                                <div class="desc">LLM10로 사용할 모델명</div>
+                            </div>
+                            <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
+                                <input type="text" id="setting-llm-model10" placeholder="예: gpt-4.1" oninput="renderReasoningControls(10)"
+                                       style="width: 220px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text);">
+                            </div>
+                        </div>
+                        <div class="setting-row" id="llm-api-key10-row" style="display: none;">
+                            <div class="setting-label">
+                                <div class="title">LLM10 API 키 (옵션)</div>
+                                <div class="desc">비워두면 LLM1 키 재사용</div>
+                            </div>
+                            <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
+                                <input type="text" id="setting-llm-api-key10" placeholder="sk-..."
+                                       style="width: 300px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-family: monospace;">
+                            </div>
+                        </div>
+                        <div class="setting-row" id="llm-url10-row" style="display: none;">
+                            <div class="setting-label">
+                                <div class="title">LLM10 베이스 URL (옵션)</div>
+                                <div class="desc">비워두면 LLM1 URL 또는 선택한 서비스의 기본 URL 사용</div>
+                            </div>
+                            <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
+                                <input type="text" id="setting-llm-url10" placeholder="https://..."
+                                       style="width: 300px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text);">
+                            </div>
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="title">LLM10 스트리밍</div>
+                                <div class="desc">LLM10 요청을 실제 chunk 스트림으로 받고 LLM로그창에 실시간 표시합니다.</div>
+                            </div>
+                            <div class="setting-control" style="display:flex; align-items:center; gap:8px;">
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="setting-llm-stream10" onchange="updateLlmStreamStatus(10, this.checked)">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                                <span id="setting-llm-stream10-status" class="toggle-status off">OFF</span>
+                            </div>
+                        </div>
+                        <div class="setting-row" id="llm-gemini-base6410-row" style="display:none;">
+                            <div class="setting-label">
+                                <div class="title">LLM10 Gemini/Vertex Base64 검열 우회</div>
+                                <div class="desc">LLM10가 Gemini 또는 Vertex 계열일 때 텍스트 요청·응답에 적용되는 독립 토글입니다.<br><a href="https://arca.live/b/characterai/176675290" target="_blank" rel="noopener noreferrer" style="color:#4dd0e1;">원본 프로젝트: https://arca.live/b/characterai/176675290</a></div>
+                            </div>
+                            <div class="setting-control" style="display:flex; align-items:center; gap:8px;">
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="setting-llm-gemini-base6410" onchange="updateLlmGeminiBase64Status(10, this.checked)">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                                <span id="setting-llm-gemini-base6410-status" class="toggle-status off">OFF</span>
+                            </div>
+                        </div>
+                        <div class="setting-row" id="llm-pdf-prompt10-row" style="display:none;">
+                            <div class="setting-label">
+                                <div class="title">LLM10 대화 PDF 토큰 절약</div>
+                                <div class="desc">Gemini·Vertex 대화를 1pt·낮은 해상도 PDF로 보내고 이미지는 별도 첨부합니다. Base64 동시 사용 시 긴 인코딩 문서는 제공자 안전 필터에 차단될 수 있습니다.<br><a href="https://arca.live/b/characterai/181021175" target="_blank" rel="noopener noreferrer" style="color:#4dd0e1;">원본 프로젝트: https://arca.live/b/characterai/181021175</a></div>
+                            </div>
+                            <div class="setting-control" style="display:flex; align-items:center; gap:8px;">
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="setting-llm-pdf-prompt10" onchange="updateLlmPdfPromptStatus(10, this.checked)">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                                <span id="setting-llm-pdf-prompt10-status" class="toggle-status off">OFF</span>
+                            </div>
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="title">이미지를 webp으로 압축해서 전송</div>
+                                <div class="desc">토글이 꺼져있다면, 가장 호환성이 좋은 png로 보냅니다.(비전 사용시)</div>
+                            </div>
+                            <div class="setting-control" style="display:flex; align-items:center; gap:8px;">
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="setting-llm-vision-compress10" onchange="updateLlmVisionCompressStatus(10, this.checked)">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                                <span id="setting-llm-vision-compress10-status" class="toggle-status off">OFF</span>
+                            </div>
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="title">LLM10 동시 요청 수</div>
+                                <div class="desc">LLM10에서 동시에 실행할 실제 API 요청 상한입니다. 다른 슬롯과 독립적으로 적용됩니다.</div>
+                            </div>
+                            <div class="setting-control">
+                                <input type="number" id="setting-llm-max-concurrency10" min="1" max="20" step="1"
+                                       style="width:80px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:.85rem;">
+                            </div>
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="title">LLM10 스트림 무응답 제한(초)</div>
+                                <div class="desc">LLM10 스트림에만 적용됩니다. 0은 비활성화, 그 외에는 10~3600초입니다.</div>
+                            </div>
+                            <div class="setting-control">
+                                <input type="number" id="setting-llm-stream-idle-timeout10" min="0" max="3600" step="1"
+                                       style="width:92px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:.85rem;">
+                            </div>
+                        </div>
+                        <div class="setting-row llm-reasoning-setting-row" id="llm-reasoning10-row" style="display: flex;">
+                            <div class="setting-label">
+                                <div class="title">LLM10 Reasoning 설정</div>
+                                <div class="desc">비워두면 LLM1 reasoning 설정을 재사용합니다.</div>
+                            </div>
+                            <div class="setting-control" style="display: flex; flex-direction: column; align-items: stretch; gap: 8px;">
+                                <select id="setting-llm-reasoning-preset10" onchange="renderReasoningControls(10)"
+                                        style="padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: .85rem;">
+                                    <option value="">(LLM1과 동일)</option>
+                                    <option value="auto">auto</option>
+                                    <option value="none">none</option>
+                                    <option value="gpt">gpt</option>
+                                    <option value="glm">glm</option>
+                                    <option value="deepseek">deepseek</option>
+                                    <option value="kimi">kimi</option>
+                                    <option value="claude">claude</option>
+                                    <option value="gemini">gemini</option>
+                                    <option value="custom">custom</option>
+                                </select>
+                                <div id="llm-reasoning10-dynamic"></div>
+                            </div>
+                        </div>
+                        <div class="setting-row" id="llm-custom-body10-row" style="display: flex; flex-direction: column; align-items: stretch;">
+                            <div style="display:flex; justify-content:space-between; gap:10px; align-items:flex-start; margin-bottom:8px;">
+                                <div class="setting-label">
+                                    <div class="title">LLM10 Custom Body (JSON)</div>
+                                    <div class="desc">비어 있으면 LLM1 BODY를 재사용하며, 값이 있으면 LLM10 요청에 재귀 병합합니다.</div>
+                                </div>
+                                <div style="display:flex; gap:6px; flex-shrink:0;">
+                                    <button type="button" onclick="buildReasoningBody(10)" style="padding:6px 10px; border-radius:6px; border:1px solid #00BCD4; background:rgba(0,188,212,.14); color:var(--text); cursor:pointer;">BODY 빌드</button>
+                                    <button type="button" onclick="formatCustomBody(10)" style="padding:6px 10px; border-radius:6px; border:1px solid var(--border); background:var(--surface2); color:var(--text); cursor:pointer;">JSON 정리</button>
+                                </div>
+                            </div>
+                            <textarea id="setting-llm-custom-body10" placeholder="{ ... }"
+                                      style="width: 100%; min-height: 120px; padding: 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-family: monospace; font-size: .8rem;"></textarea>
+                            <div id="llm-custom-body10-status" style="margin-top:6px; font-size:.75rem; color:var(--text2);"></div>
+                        </div>
+                    </details>
+
                     </div>
 
                     <div class="external-api-group">
@@ -24002,10 +24827,15 @@
                                         <option value="llm3">LLM3</option>
                                         <option value="llm4">LLM4</option>
                                         <option value="llm5">LLM5</option>
+                                        <option value="llm6">LLM6</option>
+                                        <option value="llm7">LLM7</option>
+                                        <option value="llm8">LLM8</option>
+                                        <option value="llm9">LLM9</option>
+                                        <option value="llm10">LLM10</option>
                                     </select>
                                 </label>
                             </div>
-                            <div class="desc">선택한 LLM(LLM1/LLM2/LLM3) 설정으로 호출. 결과가 chunk 단위로 누적되고 통계가 실시간 표시됨. logs/llm_history.jsonl 에 20개까지 저장</div>
+                            <div class="desc">선택한 LLM(LLM1~LLM10) 설정으로 호출. 결과가 chunk 단위로 누적되고 통계가 실시간 표시됨. logs/llm_history.jsonl 에 20개까지 저장</div>
                         </div>
                         <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap;">
                             <textarea id="llm-test-input" placeholder="테스트용 프롬프트 (user 메시지)"
@@ -45236,7 +46066,7 @@
 
         // LLM 슬롯 목록(프론트 단일 소스). 슬롯 추가 시 이 배열만 늘리면
         // 카탈로그 로드/서비스 변경 토글/설정 저장/라우팅 드롭다운이 자동 확장된다.
-        const LLM_SLOTS = [1, 2, 3, 4, 5];
+        const LLM_SLOTS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
         const GEMINI_NATIVE_SERVICE_IDS = new Set(['gemini', 'vertex']);
         const GEMINI_THINKING_LEVELS = new Set(['minimal', 'low', 'medium', 'high']);
         const DEFAULT_GEMINI_THINKING_LEVEL = 'low';

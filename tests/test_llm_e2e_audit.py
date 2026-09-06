@@ -1,7 +1,7 @@
 """LLM 시스템의 실제 HTTP 경계를 포함한 격리형 E2E 감사 테스트.
 
 외부 API나 운영 config/history를 건드리지 않는다. 테스트 안에서만 로컬
-OpenAI 호환 제공자를 띄우고 LLM1~5 슬롯, 라우팅 재시도/폴백, 테스트 SSE
+OpenAI 호환 제공자를 띄우고 LLM1~10 슬롯, 라우팅 재시도/폴백, 테스트 SSE
 엔드포인트를 검증한다.
 """
 
@@ -34,6 +34,11 @@ from modes import (
 )
 
 _REAL_NOTIFY_FRONTEND = server.notify_frontend
+LLM_SLOT_NUMBERS = tuple(range(1, 11))
+
+
+def _slot_suffix(number: int) -> str:
+    return "" if number == 1 else str(number)
 
 
 def _parse_sse(raw: str) -> list[tuple[str, dict]]:
@@ -84,7 +89,7 @@ def _isolated_config(**overrides) -> llm_service._ContextConfig:
             "llm_routing": {},
         }
     )
-    for slot in range(2, llm_service.LLM_SLOT_COUNT + 1):
+    for slot in LLM_SLOT_NUMBERS[1:]:
         values.update(
             {
                 f"llm_service{slot}": "openai",
@@ -162,7 +167,7 @@ def _clear_llm_runtime_state(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_llm1_to_llm5_reach_their_own_openai_compatible_slot(monkeypatch):
+async def test_llm1_to_llm10_reach_their_own_openai_compatible_slot(monkeypatch):
     requests: list[dict] = []
 
     async def completion(request: web.Request) -> web.Response:
@@ -182,26 +187,23 @@ async def test_llm1_to_llm5_reach_their_own_openai_compatible_slot(monkeypatch):
     provider.router.add_post("/v1/chat/completions", completion)
     async with _running_app(provider) as base_url:
         cfg = _isolated_config(llm_url=base_url)
-        for slot in range(2, llm_service.LLM_SLOT_COUNT + 1):
+        for slot in LLM_SLOT_NUMBERS[1:]:
             cfg[f"llm_url{slot}"] = base_url
         monkeypatch.setattr(llm_service, "_current_config", cfg)
 
         messages = [{"role": "user", "content": "slot smoke"}]
         calls = [
-            llm_service.callLLM,
-            llm_service.callLLM2,
-            llm_service.callLLM3,
-            llm_service.callLLM4,
-            llm_service.callLLM5,
+            getattr(llm_service, f"callLLM{_slot_suffix(slot)}")
+            for slot in LLM_SLOT_NUMBERS
         ]
         results = [await call(messages) for call in calls]
 
-    assert results == [f"ok:slot-{slot}" for slot in range(1, 6)]
+    assert results == [f"ok:slot-{slot}" for slot in LLM_SLOT_NUMBERS]
     assert [item["model"] for item in requests] == [
-        f"slot-{slot}" for slot in range(1, 6)
+        f"slot-{slot}" for slot in LLM_SLOT_NUMBERS
     ]
     assert [item["authorization"] for item in requests] == [
-        f"Bearer test-key-{slot}" for slot in range(1, 6)
+        f"Bearer test-key-{slot}" for slot in LLM_SLOT_NUMBERS
     ]
 
 
@@ -400,7 +402,7 @@ async def test_blank_success_body_is_retried_and_becomes_explicit_failure(monkey
 
 
 @pytest.mark.asyncio
-async def test_llm_test_sse_endpoint_dispatches_all_five_targets(monkeypatch):
+async def test_llm_test_sse_endpoint_dispatches_all_ten_targets(monkeypatch):
     cfg = _isolated_config()
     monkeypatch.setattr(llm_service, "get_config", lambda: cfg.copy())
 
@@ -415,7 +417,7 @@ async def test_llm_test_sse_endpoint_dispatches_all_five_targets(monkeypatch):
     ):
         assert messages == [{"role": "user", "content": "endpoint smoke"}]
         assert json_mode is True
-        slot_number = int(slot[-1])
+        slot_number = int(slot[3:])
         stream_id = f"tracked-{slot}"
         await stream_observer({
             "type": "stream_open",
@@ -445,8 +447,8 @@ async def test_llm_test_sse_endpoint_dispatches_all_five_targets(monkeypatch):
         tracked_stream,
     )
 
-    for slot in range(1, llm_service.LLM_SLOT_COUNT + 1):
-        suffix = "" if slot == 1 else str(slot)
+    for slot in LLM_SLOT_NUMBERS:
+        suffix = _slot_suffix(slot)
 
         async def single(
             messages,
@@ -455,7 +457,10 @@ async def test_llm_test_sse_endpoint_dispatches_all_five_targets(monkeypatch):
             _slot=slot,
             **_kwargs,
         ):
-            assert messages == [{"role": "user", "content": "endpoint smoke"}]
+            assert messages in (
+                [{"role": "user", "content": "endpoint smoke"}],
+                [{"role": "user", "content": "endpoint vision"}],
+            )
             return f"single:{_slot}:json={json_mode}"
 
         monkeypatch.setattr(llm_service, f"callLLM{suffix}", single)
@@ -464,7 +469,7 @@ async def test_llm_test_sse_endpoint_dispatches_all_five_targets(monkeypatch):
     app = web.Application()
     app.router.add_post("/api/llm/test_stream", server.handle_api_llm_test_stream)
     async with _running_app(app) as base_url, ClientSession() as client:
-        for slot in range(1, llm_service.LLM_SLOT_COUNT + 1):
+        for slot in LLM_SLOT_NUMBERS:
             for use_stream in (False, True):
                 response = await client.post(
                     f"{base_url}/api/llm/test_stream",
@@ -488,6 +493,24 @@ async def test_llm_test_sse_endpoint_dispatches_all_five_targets(monkeypatch):
                     else f"single:{slot}:json=True"
                 )
                 assert done["text"] == expected
+
+            vision_response = await client.post(
+                f"{base_url}/api/llm/test_stream",
+                json={
+                    "messages": [
+                        {"role": "user", "content": "endpoint smoke"}
+                    ],
+                    "target": f"llm{slot}",
+                    "stream": False,
+                    "image_b64": "AA==",
+                    "image_mime": "image/png",
+                    "json_mode": True,
+                },
+            )
+            assert vision_response.status == 200
+            vision_events = _parse_sse(await vision_response.text())
+            assert vision_events[-1][0] == "done"
+            assert vision_events[-1][1]["text"] == f"single:{slot}:json=True"
 
 
 @pytest.mark.asyncio
@@ -631,16 +654,27 @@ async def test_llm_test_endpoint_records_lb_detail(monkeypatch):
             f"{base_url}/api/llm/test_stream",
             json={
                 "messages": [{"role": "user", "content": "history"}],
-                "target": "llm1",
+                "target": "llm10",
                 "stream": True,
             },
         )
         await response.read()
 
     assert history_records
-    assert history_records[-1]["output"] == "history-ok"
-    assert history_records[-1]["execution_id"]
-    assert history_records[-1]["history_id"] == history_records[-1]["execution_id"]
+    record = history_records[-1]
+    assert record["task_key"] == "llm_test"
+    assert record["call_name"] == "LLM TEST"
+    assert record["llm_slot"] == "llm10"
+    assert record["service"] == "openai"
+    assert record["model"] == "slot-10"
+    assert record["input"] == [{"role": "user", "content": "history"}]
+    assert record["output"] == "history-ok"
+    assert record["status"] == "ok"
+    assert record["prompt_tokens"] > 0
+    assert record["completion_tokens"] > 0
+    assert record["elapsed"] >= 0
+    assert record["execution_id"]
+    assert record["history_id"] == record["execution_id"]
 
 
 @pytest.mark.asyncio

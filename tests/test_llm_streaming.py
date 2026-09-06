@@ -9,22 +9,20 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from modes import llm_service
 
+LLM_SLOT_NUMBERS = tuple(range(1, 11))
+
 
 def _test_config():
     config = llm_service.get_config()
-    config.update({
-        "llm_service": "openai",
-        "llm_model": "model-1",
-        "llm_service2": "openai",
-        "llm_model2": "model-2",
-        "llm_service3": "openai",
-        "llm_model3": "model-3",
-        "llm_stream": False,
-        "llm_stream2": False,
-        "llm_stream3": False,
-        "llm_stream_idle_timeout_seconds": 90,
-        "llm_routing": {},
-    })
+    for number in LLM_SLOT_NUMBERS:
+        suffix = "" if number == 1 else str(number)
+        config.update({
+            f"llm_service{suffix}": "openai",
+            f"llm_model{suffix}": f"model-{number}",
+            f"llm_stream{suffix}": False,
+            f"llm_stream_idle_timeout_seconds{suffix}": 90,
+        })
+    config["llm_routing"] = {}
     return config
 
 
@@ -45,16 +43,15 @@ async def _fake_stream(messages, service, model):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("slot", "toggle_key", "call_name"),
-    [
-        ("llm1", "llm_stream", "callLLM"),
-        ("llm2", "llm_stream2", "callLLM2"),
-        ("llm3", "llm_stream3", "callLLM3"),
-    ],
+    "number", LLM_SLOT_NUMBERS,
 )
 async def test_each_llm_toggle_uses_real_stream_and_forwards_deltas(
-    monkeypatch, slot, toggle_key, call_name
+    monkeypatch, number
 ):
+    slot = f"llm{number}"
+    suffix = "" if number == 1 else str(number)
+    toggle_key = f"llm_stream{suffix}"
+    call_name = f"callLLM{suffix}"
     config = _test_config()
     config[toggle_key] = True
     monkeypatch.setattr(llm_service, "_current_config", config)
@@ -593,13 +590,10 @@ async def _wait_for_active_streams(predicate):
 async def test_active_streams_respect_each_actual_slot_limit(monkeypatch):
     config = _test_config()
     limits = {
-        "llm1": 1,
-        "llm2": 2,
-        "llm3": 3,
-        "llm4": 2,
-        "llm5": 1,
+        f"llm{number}": (number % 3) + 1
+        for number in LLM_SLOT_NUMBERS
     }
-    for number in range(1, llm_service.LLM_SLOT_COUNT + 1):
+    for number in LLM_SLOT_NUMBERS:
         suffix = "" if number == 1 else str(number)
         config[f"llm_service{suffix}"] = "openai"
         config[f"llm_model{suffix}"] = f"model-{number}"

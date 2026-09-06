@@ -155,7 +155,7 @@ def test_frontend_blocks_custom_body_for_gemini_native_services_and_defaults_low
 def test_frontend_reasoning_rows_share_responsive_layout():
     source = Path("frontend/index.html").read_text(encoding="utf-8")
 
-    assert source.count('class="setting-row llm-reasoning-setting-row"') == 5
+    assert source.count('class="setting-row llm-reasoning-setting-row"') == llm_service.LLM_SLOT_COUNT
     assert ".llm-reasoning-setting-row > .setting-label" in source
     assert "flex: 0 0 190px;" in source
     assert ".llm-reasoning-setting-row > .setting-control" in source

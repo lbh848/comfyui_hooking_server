@@ -468,7 +468,7 @@ async def test_lb_extra_refine_uses_the_selected_cards_representative_image(
         captured["image"] = base64.b64decode(kwargs["image_b64"])
         kwargs["on_attempt_failure"]({
             "phase": "primary",
-            "slot": "llm1",
+            "slot": "llm10",
             "attempt": 1,
             "total_attempts": 2,
             "attempt_id": "attempt-1",
@@ -481,7 +481,7 @@ async def test_lb_extra_refine_uses_the_selected_cards_representative_image(
             "execution_id": "execution-1",
             "parent_execution_id": "",
             "phase": "primary",
-            "llm_slot": "llm1",
+            "llm_slot": "llm10",
         })
         return '{"appearance":["white hair"],"outfit":["black armor"]}'
 
@@ -498,7 +498,16 @@ async def test_lb_extra_refine_uses_the_selected_cards_representative_image(
     )
     monkeypatch.setattr(llm_service, "routing_primary_service", lambda _task: "test")
     monkeypatch.setattr(llm_service, "supports_vision", lambda _service: True)
-    monkeypatch.setattr(llm_service, "get_config", lambda: {"llm_model": "test-model"})
+    monkeypatch.setattr(
+        llm_service,
+        "get_config",
+        lambda: {
+            "llm_service": "fallback-service",
+            "llm_model": "fallback-model",
+            "llm_service10": "slot-10-service",
+            "llm_model10": "slot-10-model",
+        },
+    )
     monkeypatch.setattr(llm_service, "callLLMVisionTask", fake_vision_call)
     monkeypatch.setattr(lighbd_service, "_log_lighbd_history", history.append)
     monkeypatch.setattr(server_module, "notify_frontend", fake_notify)
@@ -522,6 +531,9 @@ async def test_lb_extra_refine_uses_the_selected_cards_representative_image(
     assert all(entry["call_name"] == "lb_extra_profile_refine" for entry in history)
     assert history[0]["attempt_id"] == "attempt-1"
     assert history[1]["execution_id"] == "execution-1"
+    assert all(entry["llm_slot"] == "llm10" for entry in history)
+    assert all(entry["service"] == "slot-10-service" for entry in history)
+    assert all(entry["model"] == "slot-10-model" for entry in history)
 
 
 @pytest.mark.asyncio

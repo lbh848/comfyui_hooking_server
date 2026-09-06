@@ -9,34 +9,28 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from modes import llm_service
 from queue_manager import QueueManager
 
+LLM_SLOT_NUMBERS = tuple(range(1, 11))
+
+
+def _slot_key(base: str, number: int) -> str:
+    return base if number == 1 else f"{base}{number}"
+
 
 def _config(**overrides):
     values = llm_service.get_config()
-    values.update(
-        {
-            "llm_service": "openai",
-            "llm_model": "model-1",
-            "llm_service2": "openai",
-            "llm_model2": "model-2",
-            "llm_service3": "openai",
-            "llm_model3": "model-3",
-            "llm_api_key": "key-1",
-            "llm_api_key2": "key-2",
-            "llm_api_key3": "key-3",
-            "llm_url": "https://llm1.example",
-            "llm_url2": "https://llm2.example",
-            "llm_url3": "https://llm3.example",
-            "llm_stream": False,
-            "llm_stream2": False,
-            "llm_stream3": False,
-            "llm_max_concurrency": 1,
-            "llm_max_concurrency2": 2,
-            "llm_max_concurrency3": 3,
-            "llm_stream_idle_timeout_seconds": 11,
-            "llm_stream_idle_timeout_seconds2": 22,
-            "llm_stream_idle_timeout_seconds3": 33,
-        }
-    )
+    for number in LLM_SLOT_NUMBERS:
+        suffix = "" if number == 1 else str(number)
+        values.update(
+            {
+                f"llm_service{suffix}": "openai",
+                f"llm_model{suffix}": f"model-{number}",
+                f"llm_api_key{suffix}": f"key-{number}",
+                f"llm_url{suffix}": f"https://llm{number}.example",
+                f"llm_stream{suffix}": False,
+                f"llm_max_concurrency{suffix}": number,
+                f"llm_stream_idle_timeout_seconds{suffix}": number + 10,
+            }
+        )
     values.update(overrides)
     return llm_service._ContextConfig(values)
 
@@ -67,8 +61,8 @@ def test_routing_primary_max_concurrency_reads_selected_slot(monkeypatch):
 @pytest.mark.asyncio
 async def test_dispatch_enforces_each_slot_limit_independently(monkeypatch):
     monkeypatch.setattr(llm_service, "_current_config", _config())
-    active = {"llm1": 0, "llm2": 0, "llm3": 0}
-    maximum = {"llm1": 0, "llm2": 0, "llm3": 0}
+    active = {f"llm{number}": 0 for number in LLM_SLOT_NUMBERS}
+    maximum = {f"llm{number}": 0 for number in LLM_SLOT_NUMBERS}
 
     async def fake_openai(messages, model):
         slot = llm_service._llm_slot_ctx.get()
@@ -88,15 +82,20 @@ async def test_dispatch_enforces_each_slot_limit_independently(monkeypatch):
             llm_service._llm_slot_ctx.reset(token)
 
     results = await asyncio.gather(
-        *(invoke("llm1") for _ in range(4)),
-        *(invoke("llm2") for _ in range(4)),
-        *(invoke("llm3") for _ in range(4)),
+        *(
+            invoke(f"llm{number}")
+            for number in LLM_SLOT_NUMBERS
+            for _ in range(number + 1)
+        ),
     )
 
-    assert results.count("llm1") == 4
-    assert results.count("llm2") == 4
-    assert results.count("llm3") == 4
-    assert maximum == {"llm1": 1, "llm2": 2, "llm3": 3}
+    assert all(
+        results.count(f"llm{number}") == number + 1
+        for number in LLM_SLOT_NUMBERS
+    )
+    assert maximum == {
+        f"llm{number}": number for number in LLM_SLOT_NUMBERS
+    }
 
 
 @pytest.mark.asyncio
@@ -160,32 +159,33 @@ async def test_llm2_request_overlay_does_not_pollute_llm1(monkeypatch):
     assert llm_service._current_config.get("llm_url") == "https://llm1.example"
 
 
-def test_stream_timeout_is_resolved_per_slot(monkeypatch):
+@pytest.mark.parametrize("number", LLM_SLOT_NUMBERS)
+def test_stream_timeout_is_resolved_per_slot(monkeypatch, number):
     monkeypatch.setattr(llm_service, "_current_config", _config())
+    slot = f"llm{number}"
 
-    assert llm_service._stream_idle_timeout_seconds("llm1") == 11
-    assert llm_service._stream_idle_timeout_seconds("llm2") == 22
-    assert llm_service._stream_idle_timeout_seconds("llm3") == 33
+    assert llm_service._stream_idle_timeout_seconds(slot) == number + 10
 
-    token = llm_service._llm_slot_ctx.set("llm2")
+    token = llm_service._llm_slot_ctx.set(slot)
     try:
-        assert llm_service._stream_http_timeout().read == 22
+        assert llm_service._stream_http_timeout().read == number + 10
     finally:
         llm_service._llm_slot_ctx.reset(token)
 
 
 def test_queue_worker_capacity_sums_only_configured_slots():
     manager = QueueManager()
-    manager.get_config = lambda: {
-        "llm_model": "model-1",
-        "llm_model2": "model-2",
-        "llm_model3": "",
-        "llm_max_concurrency": 2,
-        "llm_max_concurrency2": 4,
-        "llm_max_concurrency3": 9,
-    }
+    config = {}
+    configured = {1, 2, 4, 5, 6, 7, 8, 9, 10}
+    for number in LLM_SLOT_NUMBERS:
+        suffix = "" if number == 1 else str(number)
+        config[f"llm_model{suffix}"] = (
+            f"model-{number}" if number in configured else ""
+        )
+        config[f"llm_max_concurrency{suffix}"] = number
+    manager.get_config = lambda: config
 
-    assert manager._target_llm_workers() == 6
+    assert manager._target_llm_workers() == sum(configured)
 
 
 def test_frontend_has_independent_controls_for_all_slots():
@@ -194,17 +194,19 @@ def test_frontend_has_independent_controls_for_all_slots():
     ).read_text(encoding="utf-8")
 
     # 슬롯 수는 백엔드 단일 소스(llm_service.LLM_SLOT_COUNT)와 같아야 한다.
-    for n in range(1, llm_service.LLM_SLOT_COUNT + 1):
+    for n in LLM_SLOT_NUMBERS:
         suffix = "" if n == 1 else str(n)
         assert html.count(f'id="setting-llm-max-concurrency{suffix}"') == 1
         assert html.count(f'id="setting-llm-stream-idle-timeout{suffix}"') == 1
 
 
 def test_llm_slot_count_and_ids_match_backend():
-    # 슬롯 단일 소스가 프론트/백엔드/큐 매니저에서 일관되게 5개인지 확인.
-    assert llm_service.LLM_SLOT_COUNT == 5
-    assert llm_service.LLM_SLOT_IDS == ("llm1", "llm2", "llm3", "llm4", "llm5")
+    # 슬롯 단일 소스가 프론트/백엔드/큐 매니저에서 일관되게 10개인지 확인.
+    assert llm_service.LLM_SLOT_COUNT == 10
+    assert llm_service.LLM_SLOT_IDS == tuple(
+        f"llm{number}" for number in LLM_SLOT_NUMBERS
+    )
     html = (
         Path(__file__).resolve().parents[1] / "frontend" / "index.html"
     ).read_text(encoding="utf-8")
-    assert "const LLM_SLOTS = [1, 2, 3, 4, 5];" in html
+    assert "constLLM_SLOTS=[1,2,3,4,5,6,7,8,9,10];" in html.replace(" ", "")

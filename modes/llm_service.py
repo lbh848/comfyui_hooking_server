@@ -156,7 +156,7 @@ COPILOT_KEY = _load_copilot_key()
 # 슬롯 수. 슬롯별 config 키(llm_service{N}, llm_model{N}, ...)·라우팅 화이트리스트·
 # 마스킹 키·워커 수 산정이 모두 이 값에서 파생된다. 슬롯을 추가하려면 이 값만 올리면
 # 각 설정 경로가 range() 로 자동 확장된다.
-LLM_SLOT_COUNT = 5
+LLM_SLOT_COUNT = 10
 LLM_SLOT_IDS = tuple(f"llm{i}" for i in range(1, LLM_SLOT_COUNT + 1))
 
 
@@ -592,8 +592,19 @@ def _normalize_llm_slot(slot: str | None) -> str:
 
 
 def _slot_suffix(slot: str | None) -> str:
+    """Return the config-key suffix for a normalized LLM slot.
+
+    LLM1 keeps the historical unsuffixed config keys.  The remaining slots
+    use their complete numeric suffix; taking only the last character would
+    route LLM10 to the LLM0 keys.
+    """
     normalized = _normalize_llm_slot(slot)
-    return "" if normalized == "llm1" else normalized[-1]
+    return "" if normalized == "llm1" else normalized[3:]
+
+
+def _slot_number(slot: str | None) -> str:
+    """Return the display/call number for a normalized LLM slot."""
+    return _normalize_llm_slot(slot)[3:]
 
 
 def _base_config_get(key: str, default=None):
@@ -2965,7 +2976,7 @@ async def callLLMTaskResult(
     ②실패분만(fallback) 교대 루프가 단계별로 지정 슬롯 1회씩만 부르도록 쓴다.
     기본 None 이면 기존 primary×N→fallback×M 동작을 그대로 유지한다.
 
-    config["llm_routing"][task_key] 의 primary(llm1/llm2/llm3) 에 따라 메인 LLM 호출 후,
+    config["llm_routing"][task_key] 의 primary(llm1..llm10) 에 따라 메인 LLM 호출 후,
     작업별 설정에 따라 메인 LLM을 재시도한 뒤, 실패하면 폴백 LLM도 별도 정책으로
     재시도한다. result_validator가 있으면 형식/내용 검증 실패도 같은 정책을 적용한다.
     """
@@ -3003,7 +3014,7 @@ async def callLLMTaskResult(
         observer_token = _stream_observer_ctx.set(stream_observer)
         sink_token = _usage_sink_ctx.set(metadata_sink) if metadata_sink is not None else None
         try:
-            stream_key = "llm_stream" if slot == "llm1" else f"llm_stream{slot[-1]}"
+            stream_key = "llm_stream" if slot == "llm1" else f"llm_stream{_slot_suffix(slot)}"
             await _emit_request_stream_observer({
                 "type": "request_mode",
                 "task_key": task_key,
@@ -3286,7 +3297,7 @@ async def callLLMVisionTaskResult(
     """
     작업별 라우팅 비전 LLM 호출의 공통 내부 결과를 반환한다.
 
-    config["llm_routing"][task_key] 의 primary(llm1/llm2/llm3) 에 따라 메인 비전 LLM 호출 후,
+    config["llm_routing"][task_key] 의 primary(llm1..llm10) 에 따라 메인 비전 LLM 호출 후,
     작업별 설정에 따라 메인 비전 LLM을 재시도한 뒤, 실패하면 폴백 비전 LLM도 별도
     정책으로 재시도한다. result_validator가 있으면 형식/내용 검증 실패도 포함한다.
 
@@ -3311,6 +3322,11 @@ async def callLLMVisionTaskResult(
         "llm3": callLLMVision3,
         "llm4": callLLMVision4,
         "llm5": callLLMVision5,
+        "llm6": callLLMVision6,
+        "llm7": callLLMVision7,
+        "llm8": callLLMVision8,
+        "llm9": callLLMVision9,
+        "llm10": callLLMVision10,
     }
 
     async def _invoke(slot: str) -> str:
@@ -3334,7 +3350,7 @@ async def callLLMVisionTaskResult(
         observer_token = _stream_observer_ctx.set(stream_observer)
         sink_token = _usage_sink_ctx.set(metadata_sink) if metadata_sink is not None else None
         try:
-            stream_key = "llm_stream" if slot == "llm1" else f"llm_stream{slot[-1]}"
+            stream_key = "llm_stream" if slot == "llm1" else f"llm_stream{_slot_suffix(slot)}"
             await _emit_request_stream_observer({
                 "type": "request_mode",
                 "task_key": task_key,
@@ -5793,13 +5809,18 @@ async def callLLMVision3Stream(messages: list, image_b64: str = None, image_mime
 
 
 async def _call_llm_slot_text(slot, messages, model=None, json_mode=False):
-    """슬롯 번호로 텍스트 LLM 호출(callLLM2/3 패턴의 일반화). callLLM4/5 가 사용."""
+    """슬롯 번호로 텍스트 LLM 호출(callLLM2/3 패턴의 일반화)."""
     slot = _normalize_llm_slot(slot)
     suffix = _slot_suffix(slot)
     service = _base_config_get(f"llm_service{suffix}") or _base_config_get("llm_service")
     use_model = model or _base_config_get(f"llm_model{suffix}")
     if not use_model:
-        return f"[LLM 실패] LLM{slot[-1]} 모델명이 설정되지 않았습니다"
+        error = f"[LLM 실패] LLM{_slot_number(slot)} 모델명이 설정되지 않았습니다"
+        print(
+            f"[LLM_SLOT_TEXT] 호출 실패: slot={slot}, service={service!r}, "
+            f"json_mode={json_mode}, input={messages!r}, error={error}"
+        )
+        return error
     config_token = _request_config_override_ctx.set(_slot_config_overrides(slot))
     slot_token = _llm_slot_ctx.set(slot)
     token = _response_format_ctx.set({"type": "json_object"}) if json_mode else None
@@ -5822,7 +5843,12 @@ async def _call_llm_slot_text_stream(slot, messages, model=None, log_history=Tru
     service = _base_config_get(f"llm_service{suffix}") or _base_config_get("llm_service")
     use_model = model or _base_config_get(f"llm_model{suffix}")
     if not use_model:
-        yield {"type": "error", "error": f"[LLM 실패] LLM{slot[-1]} 모델명이 설정되지 않았습니다"}
+        error = f"[LLM 실패] LLM{_slot_number(slot)} 모델명이 설정되지 않았습니다"
+        print(
+            f"[LLM_SLOT_STREAM] 호출 실패: slot={slot}, service={service!r}, "
+            f"json_mode={json_mode}, input={messages!r}, error={error}"
+        )
+        yield {"type": "error", "error": error}
         return
 
     final_text = ""
@@ -5865,17 +5891,29 @@ async def _call_llm_slot_text_stream(slot, messages, model=None, log_history=Tru
 
 async def _call_llm_slot_vision(slot, messages, image_b64=None, image_mime="image/webp",
                                 model=None, json_mode=False, images=None):
-    """슬롯 번호로 비전 LLM 호출(callLLMVision2/3 일반화). callLLMVision4/5 가 사용."""
+    """슬롯 번호로 비전 LLM 호출(callLLMVision2/3 일반화)."""
     slot = _normalize_llm_slot(slot)
     suffix = _slot_suffix(slot)
     service = _base_config_get(f"llm_service{suffix}") or _base_config_get("llm_service")
     if not supports_vision(service):
-        return (f"[LLM 실패] LLM{slot[-1]} 서비스({service})가 비전(이미지 입력)을 지원하지 않습니다. "
-                "OpenAI 호환/Gemini/Claude 등 비전 지원 서비스를 선택하세요.")
+        error = (f"[LLM 실패] LLM{_slot_number(slot)} 서비스({service})가 비전(이미지 입력)을 지원하지 않습니다. "
+                 "OpenAI 호환/Gemini/Claude 등 비전 지원 서비스를 선택하세요.")
+        print(
+            f"[LLM_SLOT_VISION] 호출 실패: slot={slot}, service={service!r}, "
+            f"image_mime={image_mime!r}, image_count={len(images) if images else int(bool(image_b64))}, "
+            f"input={messages!r}, error={error}"
+        )
+        return error
 
     use_model = model or _base_config_get(f"llm_model{suffix}")
     if not use_model:
-        return f"[LLM 실패] LLM{slot[-1]} 모델명이 설정되지 않았습니다"
+        error = f"[LLM 실패] LLM{_slot_number(slot)} 모델명이 설정되지 않았습니다"
+        print(
+            f"[LLM_SLOT_VISION] 호출 실패: slot={slot}, service={service!r}, "
+            f"image_mime={image_mime!r}, image_count={len(images) if images else int(bool(image_b64))}, "
+            f"input={messages!r}, error={error}"
+        )
+        return error
 
     # 비전 이미지 정규화(_prepare_vision_messages → _normalize_vision_image)가 슬롯별
     # llm_vision_compress{N} 값을 읽도록, 정규화 이전에 슬롯 오버라이드를 건다.
@@ -5888,9 +5926,14 @@ async def _call_llm_slot_vision(slot, messages, image_b64=None, image_mime="imag
                 messages, image_b64, image_mime, images
             )
         except ValueError as e:
+            print(
+                f"[LLM_SLOT_VISION] 이미지 준비 실패: slot={slot}, service={service!r}, "
+                f"model={use_model!r}, image_mime={image_mime!r}, input={messages!r}, error={e}"
+            )
+            traceback.print_exc()
             return f"[LLM 실패] {e}"
 
-        _llm_log(f"callLLMVision{slot[-1]}: service={service} model={use_model} mime={log_mime} img_b64_len={log_len} json_mode={json_mode}")
+        _llm_log(f"callLLMVision{_slot_number(slot)}: service={service} model={use_model} mime={log_mime} img_b64_len={log_len} json_mode={json_mode}")
         if bool(_base_config_get(f"llm_stream{suffix}", False)):
             return await _stream_call_to_text(new_messages, service, use_model, slot)
         return await _dispatch(new_messages, service, use_model)
@@ -5909,15 +5952,32 @@ async def _call_llm_slot_vision_stream(slot, messages, image_b64=None, image_mim
     suffix = _slot_suffix(slot)
     service = _base_config_get(f"llm_service{suffix}") or _base_config_get("llm_service")
     if not supports_vision(service):
-        yield {"type": "error", "error": f"[LLM 실패] LLM{slot[-1]} 서비스({service})가 비전(이미지 입력)을 지원하지 않습니다. "
-                                          "OpenAI 호환/Gemini/Claude 등 비전 지원 서비스를 선택하세요."}
+        error = (f"[LLM 실패] LLM{_slot_number(slot)} 서비스({service})가 비전(이미지 입력)을 지원하지 않습니다. "
+                 "OpenAI 호환/Gemini/Claude 등 비전 지원 서비스를 선택하세요.")
+        print(
+            f"[LLM_SLOT_VISION_STREAM] 호출 실패: slot={slot}, service={service!r}, "
+            f"image_mime={image_mime!r}, image_count={len(images) if images else int(bool(image_b64))}, "
+            f"input={messages!r}, error={error}"
+        )
+        yield {"type": "error", "error": error}
         return
     use_model = model or _base_config_get(f"llm_model{suffix}")
     if not use_model:
-        yield {"type": "error", "error": f"[LLM 실패] LLM{slot[-1]} 모델명이 설정되지 않았습니다"}
+        error = f"[LLM 실패] LLM{_slot_number(slot)} 모델명이 설정되지 않았습니다"
+        print(
+            f"[LLM_SLOT_VISION_STREAM] 호출 실패: slot={slot}, service={service!r}, "
+            f"image_mime={image_mime!r}, image_count={len(images) if images else int(bool(image_b64))}, "
+            f"input={messages!r}, error={error}"
+        )
+        yield {"type": "error", "error": error}
         return
     if not images and not image_b64:
-        yield {"type": "error", "error": f"callLLMVision{slot[-1]}Stream: image_b64 가 비어 있습니다."}
+        error = f"callLLMVision{_slot_number(slot)}Stream: image_b64 가 비어 있습니다."
+        print(
+            f"[LLM_SLOT_VISION_STREAM] 호출 실패: slot={slot}, service={service!r}, "
+            f"model={use_model!r}, image_mime={image_mime!r}, input={messages!r}, error={error}"
+        )
+        yield {"type": "error", "error": error}
         return
 
     # 비전 이미지 정규화가 슬롯별 llm_vision_compress{N} 값을 읽도록 정규화 이전에 슬롯
@@ -5930,17 +5990,22 @@ async def _call_llm_slot_vision_stream(slot, messages, image_b64=None, image_mim
                 messages, image_b64, image_mime, images
             )
         except ValueError as e:
+            print(
+                f"[LLM_SLOT_VISION_STREAM] 이미지 준비 실패: slot={slot}, service={service!r}, "
+                f"model={use_model!r}, image_mime={image_mime!r}, input={messages!r}, error={e}"
+            )
+            traceback.print_exc()
             yield {"type": "error", "error": str(e)}
             return
 
-        _llm_log(f"callLLMVision{slot[-1]}Stream: service={service} model={use_model} mime={log_mime} img_b64_len={log_len} json_mode={json_mode}")
+        _llm_log(f"callLLMVision{_slot_number(slot)}Stream: service={service} model={use_model} mime={log_mime} img_b64_len={log_len} json_mode={json_mode}")
         async for ev in _call_llm_slot_text_stream(slot, new_messages, model=use_model, log_history=log_history, json_mode=json_mode):
             yield ev
     finally:
         _request_config_override_ctx.reset(config_token)
 
 
-# ─── LLM4 / LLM5 공개 진입점(얇은 래퍼) ──────────────────────
+# ─── LLM4~LLM10 공개 진입점(얇은 래퍼) ──────────────────────
 
 
 async def callLLM4(messages: list, model: str = None, json_mode: bool = False) -> str:
@@ -5951,6 +6016,31 @@ async def callLLM4(messages: list, model: str = None, json_mode: bool = False) -
 async def callLLM5(messages: list, model: str = None, json_mode: bool = False) -> str:
     """LLM5 텍스트 호출. llm_service5 가 비어 있으면 LLM1 서비스/키/URL 재사용."""
     return await _call_llm_slot_text("llm5", messages, model=model, json_mode=json_mode)
+
+
+async def callLLM6(messages: list, model: str = None, json_mode: bool = False) -> str:
+    """LLM6 텍스트 호출. llm_service6 가 비어 있으면 LLM1 서비스/키/URL 재사용."""
+    return await _call_llm_slot_text("llm6", messages, model=model, json_mode=json_mode)
+
+
+async def callLLM7(messages: list, model: str = None, json_mode: bool = False) -> str:
+    """LLM7 텍스트 호출. llm_service7 가 비어 있으면 LLM1 서비스/키/URL 재사용."""
+    return await _call_llm_slot_text("llm7", messages, model=model, json_mode=json_mode)
+
+
+async def callLLM8(messages: list, model: str = None, json_mode: bool = False) -> str:
+    """LLM8 텍스트 호출. llm_service8 가 비어 있으면 LLM1 서비스/키/URL 재사용."""
+    return await _call_llm_slot_text("llm8", messages, model=model, json_mode=json_mode)
+
+
+async def callLLM9(messages: list, model: str = None, json_mode: bool = False) -> str:
+    """LLM9 텍스트 호출. llm_service9 가 비어 있으면 LLM1 서비스/키/URL 재사용."""
+    return await _call_llm_slot_text("llm9", messages, model=model, json_mode=json_mode)
+
+
+async def callLLM10(messages: list, model: str = None, json_mode: bool = False) -> str:
+    """LLM10 텍스트 호출. llm_service10 가 비어 있으면 LLM1 서비스/키/URL 재사용."""
+    return await _call_llm_slot_text("llm10", messages, model=model, json_mode=json_mode)
 
 
 async def callLLM4Stream(messages: list, model: str = None, log_history: bool = True,
@@ -5964,6 +6054,41 @@ async def callLLM5Stream(messages: list, model: str = None, log_history: bool = 
                          json_mode: bool = False):
     """LLM5 스트리밍 호출. delta/done/error 이벤트를 yield한다."""
     async for ev in _call_llm_slot_text_stream("llm5", messages, model=model, log_history=log_history, json_mode=json_mode):
+        yield ev
+
+
+async def callLLM6Stream(messages: list, model: str = None, log_history: bool = True,
+                         json_mode: bool = False):
+    """LLM6 스트리밍 호출. delta/done/error 이벤트를 yield한다."""
+    async for ev in _call_llm_slot_text_stream("llm6", messages, model=model, log_history=log_history, json_mode=json_mode):
+        yield ev
+
+
+async def callLLM7Stream(messages: list, model: str = None, log_history: bool = True,
+                         json_mode: bool = False):
+    """LLM7 스트리밍 호출. delta/done/error 이벤트를 yield한다."""
+    async for ev in _call_llm_slot_text_stream("llm7", messages, model=model, log_history=log_history, json_mode=json_mode):
+        yield ev
+
+
+async def callLLM8Stream(messages: list, model: str = None, log_history: bool = True,
+                         json_mode: bool = False):
+    """LLM8 스트리밍 호출. delta/done/error 이벤트를 yield한다."""
+    async for ev in _call_llm_slot_text_stream("llm8", messages, model=model, log_history=log_history, json_mode=json_mode):
+        yield ev
+
+
+async def callLLM9Stream(messages: list, model: str = None, log_history: bool = True,
+                         json_mode: bool = False):
+    """LLM9 스트리밍 호출. delta/done/error 이벤트를 yield한다."""
+    async for ev in _call_llm_slot_text_stream("llm9", messages, model=model, log_history=log_history, json_mode=json_mode):
+        yield ev
+
+
+async def callLLM10Stream(messages: list, model: str = None, log_history: bool = True,
+                          json_mode: bool = False):
+    """LLM10 스트리밍 호출. delta/done/error 이벤트를 yield한다."""
+    async for ev in _call_llm_slot_text_stream("llm10", messages, model=model, log_history=log_history, json_mode=json_mode):
         yield ev
 
 
@@ -5981,6 +6106,41 @@ async def callLLMVision5(messages: list, image_b64: str = None, image_mime: str 
                                        model=model, json_mode=json_mode, images=images)
 
 
+async def callLLMVision6(messages: list, image_b64: str = None, image_mime: str = "image/webp",
+                         model: str = None, json_mode: bool = False, images: list = None) -> str:
+    """LLM6 비전(이미지 입력) 호출. images(다중) 지원."""
+    return await _call_llm_slot_vision("llm6", messages, image_b64, image_mime,
+                                       model=model, json_mode=json_mode, images=images)
+
+
+async def callLLMVision7(messages: list, image_b64: str = None, image_mime: str = "image/webp",
+                         model: str = None, json_mode: bool = False, images: list = None) -> str:
+    """LLM7 비전(이미지 입력) 호출. images(다중) 지원."""
+    return await _call_llm_slot_vision("llm7", messages, image_b64, image_mime,
+                                       model=model, json_mode=json_mode, images=images)
+
+
+async def callLLMVision8(messages: list, image_b64: str = None, image_mime: str = "image/webp",
+                         model: str = None, json_mode: bool = False, images: list = None) -> str:
+    """LLM8 비전(이미지 입력) 호출. images(다중) 지원."""
+    return await _call_llm_slot_vision("llm8", messages, image_b64, image_mime,
+                                       model=model, json_mode=json_mode, images=images)
+
+
+async def callLLMVision9(messages: list, image_b64: str = None, image_mime: str = "image/webp",
+                         model: str = None, json_mode: bool = False, images: list = None) -> str:
+    """LLM9 비전(이미지 입력) 호출. images(다중) 지원."""
+    return await _call_llm_slot_vision("llm9", messages, image_b64, image_mime,
+                                       model=model, json_mode=json_mode, images=images)
+
+
+async def callLLMVision10(messages: list, image_b64: str = None, image_mime: str = "image/webp",
+                          model: str = None, json_mode: bool = False, images: list = None) -> str:
+    """LLM10 비전(이미지 입력) 호출. images(다중) 지원."""
+    return await _call_llm_slot_vision("llm10", messages, image_b64, image_mime,
+                                       model=model, json_mode=json_mode, images=images)
+
+
 async def callLLMVision4Stream(messages: list, image_b64: str = None, image_mime: str = "image/webp",
                                 model: str = None, log_history: bool = True,
                                 json_mode: bool = False, images: list = None):
@@ -5995,5 +6155,50 @@ async def callLLMVision5Stream(messages: list, image_b64: str = None, image_mime
                                 json_mode: bool = False, images: list = None):
     """LLM5 비전 스트리밍 호출. delta/done/error 이벤트를 yield한다."""
     async for ev in _call_llm_slot_vision_stream("llm5", messages, image_b64, image_mime,
+                                                 model=model, log_history=log_history, json_mode=json_mode, images=images):
+        yield ev
+
+
+async def callLLMVision6Stream(messages: list, image_b64: str = None, image_mime: str = "image/webp",
+                               model: str = None, log_history: bool = True,
+                               json_mode: bool = False, images: list = None):
+    """LLM6 비전 스트리밍 호출. delta/done/error 이벤트를 yield한다."""
+    async for ev in _call_llm_slot_vision_stream("llm6", messages, image_b64, image_mime,
+                                                 model=model, log_history=log_history, json_mode=json_mode, images=images):
+        yield ev
+
+
+async def callLLMVision7Stream(messages: list, image_b64: str = None, image_mime: str = "image/webp",
+                               model: str = None, log_history: bool = True,
+                               json_mode: bool = False, images: list = None):
+    """LLM7 비전 스트리밍 호출. delta/done/error 이벤트를 yield한다."""
+    async for ev in _call_llm_slot_vision_stream("llm7", messages, image_b64, image_mime,
+                                                 model=model, log_history=log_history, json_mode=json_mode, images=images):
+        yield ev
+
+
+async def callLLMVision8Stream(messages: list, image_b64: str = None, image_mime: str = "image/webp",
+                               model: str = None, log_history: bool = True,
+                               json_mode: bool = False, images: list = None):
+    """LLM8 비전 스트리밍 호출. delta/done/error 이벤트를 yield한다."""
+    async for ev in _call_llm_slot_vision_stream("llm8", messages, image_b64, image_mime,
+                                                 model=model, log_history=log_history, json_mode=json_mode, images=images):
+        yield ev
+
+
+async def callLLMVision9Stream(messages: list, image_b64: str = None, image_mime: str = "image/webp",
+                               model: str = None, log_history: bool = True,
+                               json_mode: bool = False, images: list = None):
+    """LLM9 비전 스트리밍 호출. delta/done/error 이벤트를 yield한다."""
+    async for ev in _call_llm_slot_vision_stream("llm9", messages, image_b64, image_mime,
+                                                 model=model, log_history=log_history, json_mode=json_mode, images=images):
+        yield ev
+
+
+async def callLLMVision10Stream(messages: list, image_b64: str = None, image_mime: str = "image/webp",
+                                model: str = None, log_history: bool = True,
+                                json_mode: bool = False, images: list = None):
+    """LLM10 비전 스트리밍 호출. delta/done/error 이벤트를 yield한다."""
+    async for ev in _call_llm_slot_vision_stream("llm10", messages, image_b64, image_mime,
                                                  model=model, log_history=log_history, json_mode=json_mode, images=images):
         yield ev

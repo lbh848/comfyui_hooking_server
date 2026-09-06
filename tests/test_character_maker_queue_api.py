@@ -53,6 +53,58 @@ class FakeCharacterMaker:
         }
 
 
+@pytest.mark.asyncio
+async def test_character_maker_capabilities_resolves_llm10_service(monkeypatch):
+    import server
+
+    monkeypatch.setitem(
+        server.app_config,
+        "llm_routing",
+        {
+            "character_maker_draft": {"primary": "llm6"},
+            "character_maker_feedback": {"primary": "llm10"},
+        },
+    )
+    monkeypatch.setattr(
+        server.llm_service,
+        "get_config",
+        lambda: {
+            "llm_service": "fallback-service",
+            "llm_service6": "slot-6-service",
+            "llm_service10": "slot-10-service",
+        },
+    )
+    monkeypatch.setattr(
+        server.llm_service,
+        "supports_vision",
+        lambda service: service == "slot-10-service",
+    )
+
+    app = web.Application()
+    app.router.add_get(
+        "/api/character_maker/capabilities",
+        server.handle_api_character_maker_capabilities,
+    )
+    client = TestClient(TestServer(app))
+    await client.start_server()
+    try:
+        response = await client.get("/api/character_maker/capabilities")
+        payload = await response.json()
+    finally:
+        await client.close()
+
+    assert response.status == 200
+    assert payload["success"] is True
+    assert payload["routes"]["draft"]["slot"] == "llm6"
+    assert payload["routes"]["draft"]["service"] == "slot-6-service"
+    assert payload["routes"]["draft"]["vision_ready"] is False
+    assert payload["vision"] == {
+        "ready": True,
+        "slot": "llm10",
+        "service": "slot-10-service",
+    }
+
+
 async def _request_generation(
     server,
     monkeypatch,

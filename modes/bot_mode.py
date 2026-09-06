@@ -7957,7 +7957,7 @@ async def run_lb_extra_refine(
     execution_complete = {}
 
     def _history_slot_config(slot: str) -> tuple[str, str]:
-        suffix = "" if slot in ("", "llm1") else slot[-1]
+        suffix = "" if slot in ("", "llm1") else slot[3:]
         service_key = f"llm_service{suffix}" if suffix else "llm_service"
         model_key = f"llm_model{suffix}" if suffix else "llm_model"
         actual_service = str(cfg.get(service_key) or cfg.get("llm_service") or service or "")

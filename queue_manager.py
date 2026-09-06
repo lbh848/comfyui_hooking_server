@@ -208,7 +208,7 @@ def normalize_queue_priority_orders(config: dict) -> tuple[dict[str, int], dict[
 # 별도 워커풀(설정된 LLM 슬롯별 동시 요청 상한의 합)에서 처리한다.
 # 실제 API 동시성은 llm_service의 슬롯별 게이트가 최종 제한한다.
 LLM_TYPES = frozenset({
-    "llm_test",                    # 설정 화면 LLM1~5 연결 테스트
+    "llm_test",                    # 설정 화면 LLM1~10 연결 테스트
     "illustration_llm_build",       # CHAT -> CALL1/2/3 -> 다중 삽화 큐 생성
     "illustration_easy_edit",       # 저장 슬롯 -> 기존 편하게 수정 LLM -> 수정 재생성
     "illustration_auto_feedback_llm", # 편하게 수정 오토피드백의 프롬프트 수정/비전 검수
