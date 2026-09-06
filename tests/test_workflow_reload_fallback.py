@@ -254,3 +254,97 @@ def test_manual_draw_header_has_execution_path_help() -> None:
 
     assert 'aria-label="삽화 수동 그리기 실행 경로 도움말"' in source
     assert "로컬 변환이 불가능하면 Modal로 폴백합니다." in source
+
+
+class _StartupConvertWriter:
+    def __init__(self) -> None:
+        self.closed = False
+
+    def close(self) -> None:
+        self.closed = True
+
+
+@pytest.mark.asyncio
+async def test_startup_convert_waits_for_autostarted_comfy(monkeypatch) -> None:
+    import server
+
+    attempts = 0
+    update_calls: list[bool] = []
+    writer = _StartupConvertWriter()
+
+    class _Runtime:
+        def is_running(self, *, instance_id: int) -> bool:
+            assert instance_id == 1
+            return True
+
+    async def open_connection(host: str, port: int):
+        nonlocal attempts
+        attempts += 1
+        assert host == server.REAL_COMFY_HOST
+        assert port == 8188
+        if attempts == 1:
+            raise OSError("not ready")
+        return object(), writer
+
+    async def no_sleep(_seconds: float) -> None:
+        return None
+
+    async def update_workflow_if_needed(*, allow_convert: bool = True) -> bool:
+        update_calls.append(allow_convert)
+        return allow_convert
+
+    monkeypatch.setattr(server, "comfy_runtime_manager", _Runtime())
+    monkeypatch.setattr(server.asyncio, "open_connection", open_connection)
+    monkeypatch.setattr(server.asyncio, "sleep", no_sleep)
+    monkeypatch.setattr(server, "update_workflow_if_needed", update_workflow_if_needed)
+    monkeypatch.setitem(server.app_config, "comfy_task_allocations", {"illustration": 1})
+
+    await server._update_workflow_after_comfy_autostart({1: {"port": 8188}})
+
+    assert attempts == 2
+    assert update_calls == [False, True]
+    assert writer.closed is True
+
+
+@pytest.mark.asyncio
+async def test_startup_convert_skips_when_illustration_comfy_not_autostarted(
+    monkeypatch,
+) -> None:
+    import server
+
+    async def unexpected_open_connection(*_args, **_kwargs):
+        raise AssertionError("자동 시작되지 않은 Comfy에 연결하면 안 됩니다.")
+
+    update_calls: list[bool] = []
+
+    async def cache_only_update(*, allow_convert: bool = True) -> bool:
+        update_calls.append(allow_convert)
+        return False
+
+    monkeypatch.setattr(server.asyncio, "open_connection", unexpected_open_connection)
+    monkeypatch.setattr(server, "update_workflow_if_needed", cache_only_update)
+    monkeypatch.setitem(server.app_config, "comfy_task_allocations", {"illustration": 1})
+
+    await server._update_workflow_after_comfy_autostart({})
+
+    assert update_calls == [False]
+
+
+@pytest.mark.asyncio
+async def test_update_workflow_can_load_without_calling_comfy(monkeypatch, tmp_path) -> None:
+    import server
+
+    workflow = tmp_path / "workflow.json"
+    workflow.write_text('{"nodes": [], "links": []}', encoding="utf-8")
+
+    async def unexpected_convert(*_args, **_kwargs):
+        raise AssertionError("allow_convert=False에서 Comfy 변환을 호출하면 안 됩니다.")
+
+    monkeypatch.setattr(server, "get_workflow_file", lambda _workflow_type: str(workflow))
+    monkeypatch.setattr(server, "compute_file_hash", lambda _path: "new-hash")
+    monkeypatch.setattr(server, "load_stored_hash", lambda: "old-hash")
+    monkeypatch.setattr(server, "convert_workflow_via_endpoint", unexpected_convert)
+
+    converted = await server.update_workflow_if_needed(allow_convert=False)
+
+    assert converted is False

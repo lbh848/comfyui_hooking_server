@@ -1999,6 +1999,7 @@ async def update_workflow_if_needed(
     workflow_type: str | None = None,
     *,
     local_first_modal_fallback: bool = False,
+    allow_convert: bool = True,
 ) -> bool:
     """워크플로우 해시를 비교하고, 필요하면 API 형식으로 변환한다."""
     global current_original_workflow, current_api_workflow, current_conversion_info
@@ -2043,6 +2044,12 @@ async def update_workflow_if_needed(
         }
         print(f"[WORKFLOW] 이미 API 형식 — 변환 불필요 ({len(wf_data)} 노드)")
     else:
+        if not allow_convert:
+            print(
+                "[WORKFLOW] 변환 보류: "
+                f"현재 단계에서는 {os.path.basename(wf_file)} Comfy 변환을 실행하지 않습니다."
+            )
+            return False
         if local_first_modal_fallback:
             api_wf, error = await convert_workflow_local_first_with_modal_fallback(
                 wf_data,
@@ -30533,6 +30540,76 @@ def _backup_data_on_startup():
                 pass
 
 
+async def _update_workflow_after_comfy_autostart(started_instances: dict[int, dict[str, Any]]) -> None:
+    try:
+        if await update_workflow_if_needed(allow_convert=False):
+            return
+
+        allocations = normalize_comfy_task_allocations(
+            app_config.get("comfy_task_allocations"),
+            legacy_illustration_port=app_config.get("comfyui_port_illustration"),
+        )
+        configured = allocations.get("illustration")
+        instance_id = 1 if configured in NONLOCAL_COMFY_TARGETS else int(configured)
+        started = started_instances.get(instance_id)
+        if not started:
+            print(
+                "[WORKFLOW] 시작 자동 변환 생략: "
+                f"Comfy #{instance_id}가 자동 시작되지 않았습니다."
+            )
+            return
+
+        port = int(started["port"])
+        manager = comfy_runtime_manager
+        if manager is None:
+            print("[WORKFLOW] 시작 자동 변환 중단: Comfy 런타임 매니저가 없습니다.")
+            return
+
+        print(
+            f"[WORKFLOW] 시작 자동 변환 대기: Comfy #{instance_id}, "
+            f"host={REAL_COMFY_HOST}, port={port}"
+        )
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + 300.0
+        while manager.is_running(instance_id=instance_id) and loop.time() < deadline:
+            try:
+                _reader, writer = await asyncio.wait_for(
+                    asyncio.open_connection(REAL_COMFY_HOST, port),
+                    timeout=1.0,
+                )
+            except (OSError, asyncio.TimeoutError):
+                await asyncio.sleep(0.25)
+                continue
+
+            writer.close()
+            print(
+                f"[WORKFLOW] Comfy #{instance_id} 준비 완료 — 시작 자동 변환을 실행합니다."
+            )
+            if not await update_workflow_if_needed():
+                print(
+                    "[WORKFLOW] 시작 자동 변환 실패: "
+                    f"instance=Comfy #{instance_id}, port={port}"
+                )
+            return
+
+        if manager.is_running(instance_id=instance_id):
+            print(
+                "[WORKFLOW] 시작 자동 변환 준비 대기 시간 초과: "
+                f"instance=Comfy #{instance_id}, host={REAL_COMFY_HOST}, port={port}, timeout=300s"
+            )
+        else:
+            print(
+                "[WORKFLOW] 시작 자동 변환 중단: "
+                f"Comfy #{instance_id} 프로세스가 준비 전에 종료되었습니다."
+            )
+    except Exception as e:
+        print(
+            "[WORKFLOW] 시작 자동 변환 예외: "
+            f"started={started_instances!r}, error={type(e).__name__}: {e}"
+        )
+        traceback.print_exc()
+
+
 async def on_startup(app):
     await asyncio.to_thread(clear_runtime_temp, BASE_DIR)
     print("[INFO] 워크플로우 초기 로드...")
@@ -30562,8 +30639,9 @@ async def on_startup(app):
         )
         traceback.print_exc()
     asyncio.create_task(_ws_heartbeat())
+    started_comfy_instances: dict[int, dict[str, Any]] = {}
     try:
-        await asyncio.to_thread(
+        started_comfy_instances = await asyncio.to_thread(
             autostart_comfy_instances,
             comfy_runtime_manager,
             profiles=app_config.get("comfy_launch_profiles"),
@@ -30579,6 +30657,20 @@ async def on_startup(app):
             f"error={type(e).__name__}: {e}"
         )
         traceback.print_exc()
+    if started_comfy_instances:
+        asyncio.create_task(
+            _update_workflow_after_comfy_autostart(started_comfy_instances)
+        )
+    else:
+        print("[WORKFLOW] 시작 자동 변환 생략: 자동 시작 Comfy가 없습니다.")
+        try:
+            await update_workflow_if_needed(allow_convert=False)
+        except Exception as e:
+            print(
+                "[WORKFLOW] 시작 시 캐시 로드 실패: "
+                f"error={type(e).__name__}: {e}"
+            )
+            traceback.print_exc()
     try:
         await asyncio.to_thread(
             autostart_video_engine,
@@ -30597,10 +30689,6 @@ async def on_startup(app):
             f"error={type(e).__name__}: {e}"
         )
         traceback.print_exc()
-    try:
-        await update_workflow_if_needed()
-    except Exception as e:
-        print(f"[WARN] 초기 워크플로우 로드 실패: {e}")
     # 자동완성 CSV 로드
     autocomplete_service.load_all_csv()
     # LLM 서비스 설정 초기화. 슬롯 1 + 공통 키는 리터럴로, 슬롯 2..N 은 단일 소스에서 자동 생성.
