@@ -61,7 +61,6 @@ def test_illustration_routes_follow_runtime_call_order() -> None:
         "illustration_call2",
         "illustration_call2_fix",
         "illustration_call3",
-        "illustration_call3_subtitle",
         "illustration_multi_char_mask",
     ]
 

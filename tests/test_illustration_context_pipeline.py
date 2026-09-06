@@ -4490,17 +4490,17 @@ async def test_subtitle_correction_prompt_hides_internal_stage_names(monkeypatch
         [4],
         "Hana",
         "한국어",
-        call_name="CALL3-SUBTITLE",
-        correction_call_name="CALL3-SUBTITLE-CORRECTION",
+        call_name="CALL3",
+        correction_call_name="CALL3-CORRECTION",
     )
 
     assert result["output"] == '[Scene slot=4]\nHana: "다시 만났네."'
     assert [item[0] for item in calls] == [
-        "CALL3-SUBTITLE",
-        "CALL3-SUBTITLE-CORRECTION",
+        "CALL3",
+        "CALL3-CORRECTION",
     ]
     correction_input = json.dumps(calls[1][1], ensure_ascii=False)
-    assert "subtitle dialogue output 선택 slot 불일치" in correction_input
+    assert "dialogue output 선택 slot 불일치" in correction_input
     assert not re.search(r"\bCALL[123]\b", correction_input, re.IGNORECASE)
 
 
@@ -6094,17 +6094,17 @@ async def test_character_observation_always_precedes_optional_profile_only_call(
 
 
 @pytest.mark.asyncio
-async def test_subtitle_dialogue_uses_dedicated_queue_route_and_lb_history(monkeypatch):
+async def test_subtitle_dialogue_reuses_call3_route_and_lb_history(monkeypatch):
     records = []
     events = []
     messages = [{"role": "user", "content": "subtitle scene"}]
 
     async def fake_call(task_key, actual_messages, **_kwargs):
-        assert task_key == "illustration_call3_subtitle"
+        assert task_key == "illustration_call3"
         assert actual_messages == messages
         metadata = pipeline.llm_service._stream_metadata_ctx.get({})
-        assert metadata["task_key"] == "illustration_call3_subtitle"
-        assert metadata["call_name"] == "CALL3-SUBTITLE"
+        assert metadata["task_key"] == "illustration_call3"
+        assert metadata["call_name"] == "CALL3"
         assert metadata["execution_id"]
         return '[Scene slot=7]\nHana: "지금 갈게."'
 
@@ -6115,7 +6115,7 @@ async def test_subtitle_dialogue_uses_dedicated_queue_route_and_lb_history(monke
     monkeypatch.setattr(pipeline.lighbd_service, "_log_lighbd_history", records.append)
 
     result = await pipeline._call_pipeline_llm(
-        "CALL3-SUBTITLE",
+        "CALL3",
         messages,
         fake_notify,
     )
@@ -6124,8 +6124,8 @@ async def test_subtitle_dialogue_uses_dedicated_queue_route_and_lb_history(monke
     assert [event["type"] for event in events] == ["start", "done"]
     assert {event["queue_subtask"]["group_id"] for event in events} == {"call3"}
     assert len(records) == 1
-    assert records[0]["call_name"] == "CALL3-SUBTITLE"
-    assert records[0]["task_key"] == "illustration_call3_subtitle"
+    assert records[0]["call_name"] == "CALL3"
+    assert records[0]["task_key"] == "illustration_call3"
     assert records[0]["input"] == messages
     assert records[0]["output"] == result
     assert records[0]["status"] == "ok"
@@ -9284,7 +9284,6 @@ async def test_call2_global_fallback_starts_at_exactly_one_third_failure(monkeyp
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("call_name", ["CALL3", "CALL3-SUBTITLE"])
 @pytest.mark.parametrize("invalid_line", [
     "(비어 있음)",
     "(표시할 대사가 없습니다)",
@@ -9298,9 +9297,10 @@ async def test_call2_global_fallback_starts_at_exactly_one_third_failure(monkeyp
     'Hana: ""',
 ])
 async def test_call3_unnamed_or_empty_dialogue_becomes_silent_without_correction(
-    monkeypatch, capsys, call_name, invalid_line,
+    monkeypatch, capsys, invalid_line,
 ):
     calls = []
+    call_name = "CALL3"
     original = f"[Scene slot=4]\n{invalid_line}"
 
     async def fake_pipeline_call(name, *args, **kwargs):
@@ -9385,7 +9385,7 @@ async def test_call3_correction_also_ignores_unnamed_dialogue(monkeypatch):
 
     async def fake_pipeline_call(call_name, messages, stream_notify=None, **kwargs):
         calls.append(call_name)
-        if call_name == "CALL3-SUBTITLE":
+        if call_name == "CALL3":
             return '[Scene slot=4]\nNora: "기다려."'
         result = '[Scene slot=7] (표시할 대사가 없습니다)'
         assert kwargs["result_validator"](result) == (True, "")
@@ -9397,10 +9397,10 @@ async def test_call3_correction_also_ignores_unnamed_dialogue(monkeypatch):
         [4, 7],
         "Nora",
         "한국어",
-        call_name="CALL3-SUBTITLE",
-        correction_call_name="CALL3-SUBTITLE-CORRECTION",
+        call_name="CALL3",
+        correction_call_name="CALL3-CORRECTION",
     )
-    assert calls == ["CALL3-SUBTITLE", "CALL3-SUBTITLE-CORRECTION"]
+    assert calls == ["CALL3", "CALL3-CORRECTION"]
     assert state["output"] == '[Scene slot=4]\nNora: "기다려."\n\n[Scene slot=7]'
     assert state["silent_slots"] == [7]
 

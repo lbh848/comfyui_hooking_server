@@ -22,6 +22,13 @@ def test_flow_zoom_has_feedback_before_any_request():
     assert "updateZoomDisplay(); render();" in source
 
 
+def test_flow_layout_reserves_columns_in_pipeline_order():
+    source = (Path(__file__).resolve().parents[1] / "frontend" / "illustration_flow.js").read_text(encoding="utf-8")
+    assert "label.startsWith('CALL1-BACKTRANSLATE')" in source
+    assert "positions.set(n.id, {depth: 0, x: compactColumnX" in source
+    assert "const depth = n.kind === 'request' ? 1 : Math.max(2, dependencyDepth);" in source
+
+
 @pytest.fixture(autouse=True)
 def isolated_flow(monkeypatch):
     monkeypatch.setattr(flow, "_latest", None)

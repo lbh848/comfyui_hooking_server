@@ -234,15 +234,17 @@ def test_get_subtitle_settings_honors_global_and_bot_toggles(monkeypatch):
     assert forced["font_size"] == 61
 
 
-def test_subtitle_mode_is_registered_in_backend_frontend_and_routes():
+def test_subtitle_mode_reuses_call3_route_and_is_registered_in_frontend():
     server_source = (PROJECT_ROOT / "server.py").read_text(encoding="utf-8")
     frontend_source = (PROJECT_ROOT / "frontend" / "index.html").read_text(
         encoding="utf-8"
     )
 
-    assert '"illustration_call3_subtitle": _llm_route_defaults()' in server_source
+    assert '"illustration_call3":      _llm_route_defaults()' in server_source
+    assert "illustration_call3_subtitle" not in server_source
     assert server_source.count('"/api/bot_mode/postprocess_subtitle"') == 2
-    assert "key: 'illustration_call3_subtitle'" in frontend_source
+    assert "key: 'illustration_call3_subtitle'" not in frontend_source
+    assert "삽화 CALL3 (대사·애니 자막)" in frontend_source
     assert "switchPostprocessTab('subtitle')" in frontend_source
     assert "call3_prompt_mode: 'subtitle'" not in frontend_source
     assert "subtitle: 'subtitle'" in frontend_source

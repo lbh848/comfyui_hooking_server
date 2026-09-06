@@ -723,8 +723,7 @@ DEFAULT_CONFIG = {
         "illustration_call2":      _llm_route_defaults(),  # CALL2 DETAIL 및 기존 단일/폴백/감사 경로
         "illustration_call2_keyvis": _llm_route_defaults(),  # CALL2 독립 Key Visual
         "illustration_call2_fix":  _llm_route_defaults(),  # CALL2 파싱 실패 시 TOON 교정(repair.txt)
-        "illustration_call3":      _llm_route_defaults(),  # 대사 생성(speak/manga)
-        "illustration_call3_subtitle": _llm_route_defaults(),  # 방송 애니 자막 전용 대사 생성
+        "illustration_call3":      _llm_route_defaults(),  # 대사 생성(speak/manga/subtitle)
         "illustration_original_asset": _llm_route_defaults(json_mode=True),  # 업로드 원본 에셋 단일 선택
         "illustration_original_asset_recovery": _llm_route_defaults(json_mode=True),  # 실패한 원본 에셋을 실제 유사 후보 중 재선택
         "illustration_multi_char_mask": _llm_route_defaults(json_mode=True),  # CALL3 뒤 캐릭터별 정규화 영역 계산

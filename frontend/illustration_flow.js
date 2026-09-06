@@ -121,12 +121,13 @@
             return label === 'CHARACTER-RESOLVE' || label.startsWith('CHARACTER-RESOLVE-') ||
                 label === 'PROFILE-RESOLVE' || label.startsWith('PROFILE-RESOLVE-') ||
                 label === 'ORIGINAL-ASSET' || label.startsWith('ORIGINAL-ASSET-') ||
+                label.startsWith('CALL1-BACKTRANSLATE') ||
                 label === 'CALL1' || /^CALL1 \d+\/\d+(?:\s|$)/.test(label);
         };
         const isCompactColumnNode = n => isCompactColumnLabel(n.label) || isCompactColumnLabel(n.call_name);
-        // The early resolve/asset/CALL1 stages share one vertical column. Their dependency
-        // edges remain intact; only the visual layout is compacted so they do not consume
-        // one horizontal column each.
+        // The early resolve/asset/CALL1 stages share column 1, the root prompt-generation
+        // request stays in column 2, and downstream work starts at column 3. Dependency
+        // edges remain intact; only the visual layout is compacted.
         nodes.forEach(n => {
             const dependencyDepth = Math.max(0, ...(n.dependencies || []).map(id => (positions.get(id)?.depth ?? -1) + 1));
             if (isCompactColumnNode(n)) {
@@ -134,7 +135,7 @@
                 compactColumnLane += 1;
                 return;
             }
-            const depth = Math.max(1, dependencyDepth);
+            const depth = n.kind === 'request' ? 1 : Math.max(2, dependencyDepth);
             const lane = layers.get(depth) || 0; layers.set(depth, lane + 1);
             positions.set(n.id, {depth, x: 36 + depth * 290, y: 32 + lane * 136});
         });

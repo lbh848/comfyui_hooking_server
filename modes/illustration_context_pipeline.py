@@ -9084,8 +9084,6 @@ _CALL_TASK_KEYS = {
     "CALL2-FIX": "illustration_call2_fix",
     "CALL3": "illustration_call3",
     "CALL3-CORRECTION": "illustration_call3",
-    "CALL3-SUBTITLE": "illustration_call3_subtitle",
-    "CALL3-SUBTITLE-CORRECTION": "illustration_call3_subtitle",
     "MULTI-CHAR-MASK": "illustration_multi_char_mask",
 }
 
@@ -9118,11 +9116,6 @@ _CALL_QUEUE_SUBTASK_GROUPS = {
     "CALL2-FIX": ("call2_fix", "CALL2-FIX TOON 교정"),
     "CALL3": ("call3", "CALL3 대사 빌드"),
     "CALL3-CORRECTION": ("call3_correction", "CALL3 슬롯/언어 교정"),
-    "CALL3-SUBTITLE": ("call3", "CALL3 애니 자막 빌드"),
-    "CALL3-SUBTITLE-CORRECTION": (
-        "call3_correction",
-        "CALL3 애니 자막 슬롯/언어 교정",
-    ),
 }
 
 
@@ -9523,11 +9516,7 @@ async def _build_call3_dialogue_with_recovery(
     state["dropped_dialogue_entries"] = removed_entries
     # 검증/로그에는 내부 호출명을 유지하되 교정 LLM에는 실패 내용만 전달한다.
     # CALL 번호는 서버 라우팅 명칭일 뿐 모델의 역할 설명이 아니다.
-    failure_role = (
-        "subtitle dialogue output"
-        if call_name == "CALL3-SUBTITLE"
-        else "dialogue output"
-    )
+    failure_role = "dialogue output"
     model_failure_reason = re.sub(
         r"\bCALL[1235](?:-[A-Z-]+)?\b",
         failure_role,
@@ -13881,12 +13870,8 @@ async def build_from_context(
             extra_names,
             speak_language,
             stream_notify,
-            "CALL3-SUBTITLE" if call3_prompt_mode == "subtitle" else "CALL3",
-            (
-                "CALL3-SUBTITLE-CORRECTION"
-                if call3_prompt_mode == "subtitle"
-                else "CALL3-CORRECTION"
-            ),
+            "CALL3",
+            "CALL3-CORRECTION",
         )
         call3_output = str(call3_state["output"] or "")
         call3_initial_output = str(call3_state["initial_output"] or "")
