@@ -23361,8 +23361,8 @@
 
                     <div class="setting-row">
                         <div class="setting-label">
-                            <div class="title">LLM 최대 출력 토큰 (전체 슬롯 공통)</div>
-                            <div class="desc">모든 LLM 슬롯과 제공자의 요청당 출력 상한입니다. Gemini/Vertex는 생각 토큰도 이 한도에 포함될 수 있습니다. 0은 공급자 기본값을 사용합니다.</div>
+                            <div class="title">LLM1 최대 출력 토큰</div>
+                            <div class="desc">LLM1 요청에만 적용되는 출력 상한입니다. 다른 LLM 슬롯과 공유하지 않습니다. Gemini/Vertex는 생각 토큰도 이 한도에 포함될 수 있으며, 0은 공급자 기본값을 사용합니다.</div>
                         </div>
                         <div class="setting-control">
                             <input type="number" id="setting-llm-max-tokens" min="0" step="1" value="10000"
@@ -23562,7 +23562,18 @@
                         </div>
                     </div>
 
-                    <div class="setting-row">
+                                        <div class="setting-row">
+                        <div class="setting-label">
+                            <div class="title">LLM2 최대 출력 토큰</div>
+                            <div class="desc">LLM2 요청에만 적용됩니다. 다른 슬롯 값을 상속하지 않으며, 0은 공급자 기본값을 사용합니다.</div>
+                        </div>
+                        <div class="setting-control">
+                            <input type="number" id="setting-llm-max-tokens2" min="0" step="1" value="0"
+                                   style="width:110px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:.85rem;">
+                        </div>
+                    </div>
+
+<div class="setting-row">
                         <div class="setting-label">
                             <div class="title">LLM2 스트림 무응답 제한(초)</div>
                             <div class="desc">LLM2 스트림에만 적용됩니다. 0은 비활성화, 그 외에는 10~3600초입니다.</div>
@@ -23633,7 +23644,18 @@
                                    style="width:80px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:.85rem;">
                         </div>
                     </div>
-                    <div class="setting-row">
+                                        <div class="setting-row">
+                        <div class="setting-label">
+                            <div class="title">LLM3 최대 출력 토큰</div>
+                            <div class="desc">LLM3 요청에만 적용됩니다. 다른 슬롯 값을 상속하지 않으며, 0은 공급자 기본값을 사용합니다.</div>
+                        </div>
+                        <div class="setting-control">
+                            <input type="number" id="setting-llm-max-tokens3" min="0" step="1" value="0"
+                                   style="width:110px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:.85rem;">
+                        </div>
+                    </div>
+
+<div class="setting-row">
                         <div class="setting-label">
                             <div class="title">LLM3 스트림 무응답 제한(초)</div>
                             <div class="desc">LLM3 스트림에만 적용됩니다. 0은 비활성화, 그 외에는 10~3600초입니다.</div>
@@ -23781,7 +23803,18 @@
                                        style="width:80px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:.85rem;">
                             </div>
                         </div>
-                        <div class="setting-row">
+                                            <div class="setting-row">
+                        <div class="setting-label">
+                            <div class="title">LLM4 최대 출력 토큰</div>
+                            <div class="desc">LLM4 요청에만 적용됩니다. 다른 슬롯 값을 상속하지 않으며, 0은 공급자 기본값을 사용합니다.</div>
+                        </div>
+                        <div class="setting-control">
+                            <input type="number" id="setting-llm-max-tokens4" min="0" step="1" value="0"
+                                   style="width:110px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:.85rem;">
+                        </div>
+                    </div>
+
+<div class="setting-row">
                             <div class="setting-label">
                                 <div class="title">LLM4 스트림 무응답 제한(초)</div>
                                 <div class="desc">LLM4 스트림에만 적용됩니다. 0은 비활성화, 그 외에는 10~3600초입니다.</div>
@@ -23946,7 +23979,18 @@
                                        style="width:80px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:.85rem;">
                             </div>
                         </div>
-                        <div class="setting-row">
+                                            <div class="setting-row">
+                        <div class="setting-label">
+                            <div class="title">LLM5 최대 출력 토큰</div>
+                            <div class="desc">LLM5 요청에만 적용됩니다. 다른 슬롯 값을 상속하지 않으며, 0은 공급자 기본값을 사용합니다.</div>
+                        </div>
+                        <div class="setting-control">
+                            <input type="number" id="setting-llm-max-tokens5" min="0" step="1" value="0"
+                                   style="width:110px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:.85rem;">
+                        </div>
+                    </div>
+
+<div class="setting-row">
                             <div class="setting-label">
                                 <div class="title">LLM5 스트림 무응답 제한(초)</div>
                                 <div class="desc">LLM5 스트림에만 적용됩니다. 0은 비활성화, 그 외에는 10~3600초입니다.</div>
@@ -24111,7 +24155,18 @@
                                        style="width:80px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:.85rem;">
                             </div>
                         </div>
-                        <div class="setting-row">
+                                            <div class="setting-row">
+                        <div class="setting-label">
+                            <div class="title">LLM6 최대 출력 토큰</div>
+                            <div class="desc">LLM6 요청에만 적용됩니다. 다른 슬롯 값을 상속하지 않으며, 0은 공급자 기본값을 사용합니다.</div>
+                        </div>
+                        <div class="setting-control">
+                            <input type="number" id="setting-llm-max-tokens6" min="0" step="1" value="0"
+                                   style="width:110px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:.85rem;">
+                        </div>
+                    </div>
+
+<div class="setting-row">
                             <div class="setting-label">
                                 <div class="title">LLM6 스트림 무응답 제한(초)</div>
                                 <div class="desc">LLM6 스트림에만 적용됩니다. 0은 비활성화, 그 외에는 10~3600초입니다.</div>
@@ -24276,7 +24331,18 @@
                                        style="width:80px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:.85rem;">
                             </div>
                         </div>
-                        <div class="setting-row">
+                                            <div class="setting-row">
+                        <div class="setting-label">
+                            <div class="title">LLM7 최대 출력 토큰</div>
+                            <div class="desc">LLM7 요청에만 적용됩니다. 다른 슬롯 값을 상속하지 않으며, 0은 공급자 기본값을 사용합니다.</div>
+                        </div>
+                        <div class="setting-control">
+                            <input type="number" id="setting-llm-max-tokens7" min="0" step="1" value="0"
+                                   style="width:110px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:.85rem;">
+                        </div>
+                    </div>
+
+<div class="setting-row">
                             <div class="setting-label">
                                 <div class="title">LLM7 스트림 무응답 제한(초)</div>
                                 <div class="desc">LLM7 스트림에만 적용됩니다. 0은 비활성화, 그 외에는 10~3600초입니다.</div>
@@ -24441,7 +24507,18 @@
                                        style="width:80px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:.85rem;">
                             </div>
                         </div>
-                        <div class="setting-row">
+                                            <div class="setting-row">
+                        <div class="setting-label">
+                            <div class="title">LLM8 최대 출력 토큰</div>
+                            <div class="desc">LLM8 요청에만 적용됩니다. 다른 슬롯 값을 상속하지 않으며, 0은 공급자 기본값을 사용합니다.</div>
+                        </div>
+                        <div class="setting-control">
+                            <input type="number" id="setting-llm-max-tokens8" min="0" step="1" value="0"
+                                   style="width:110px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:.85rem;">
+                        </div>
+                    </div>
+
+<div class="setting-row">
                             <div class="setting-label">
                                 <div class="title">LLM8 스트림 무응답 제한(초)</div>
                                 <div class="desc">LLM8 스트림에만 적용됩니다. 0은 비활성화, 그 외에는 10~3600초입니다.</div>
@@ -24606,7 +24683,18 @@
                                        style="width:80px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:.85rem;">
                             </div>
                         </div>
-                        <div class="setting-row">
+                                            <div class="setting-row">
+                        <div class="setting-label">
+                            <div class="title">LLM9 최대 출력 토큰</div>
+                            <div class="desc">LLM9 요청에만 적용됩니다. 다른 슬롯 값을 상속하지 않으며, 0은 공급자 기본값을 사용합니다.</div>
+                        </div>
+                        <div class="setting-control">
+                            <input type="number" id="setting-llm-max-tokens9" min="0" step="1" value="0"
+                                   style="width:110px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:.85rem;">
+                        </div>
+                    </div>
+
+<div class="setting-row">
                             <div class="setting-label">
                                 <div class="title">LLM9 스트림 무응답 제한(초)</div>
                                 <div class="desc">LLM9 스트림에만 적용됩니다. 0은 비활성화, 그 외에는 10~3600초입니다.</div>
@@ -24771,7 +24859,18 @@
                                        style="width:80px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:.85rem;">
                             </div>
                         </div>
-                        <div class="setting-row">
+                                            <div class="setting-row">
+                        <div class="setting-label">
+                            <div class="title">LLM10 최대 출력 토큰</div>
+                            <div class="desc">LLM10 요청에만 적용됩니다. 다른 슬롯 값을 상속하지 않으며, 0은 공급자 기본값을 사용합니다.</div>
+                        </div>
+                        <div class="setting-control">
+                            <input type="number" id="setting-llm-max-tokens10" min="0" step="1" value="0"
+                                   style="width:110px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:.85rem;">
+                        </div>
+                    </div>
+
+<div class="setting-row">
                             <div class="setting-label">
                                 <div class="title">LLM10 스트림 무응답 제한(초)</div>
                                 <div class="desc">LLM10 스트림에만 적용됩니다. 0은 비활성화, 그 외에는 10~3600초입니다.</div>
@@ -41713,11 +41812,6 @@
             document.getElementById('clamp-value-row').style.display = clampEnabled ? 'flex' : 'none';
             updateClampStatus(clampEnabled);
 
-            const maxOutputTokensEl = document.getElementById('setting-llm-max-tokens');
-            if (maxOutputTokensEl) {
-                maxOutputTokensEl.value = currentConfig.llm_max_tokens ?? 10000;
-            }
-
             // LLM1~N 슬롯 설정. LLM1만 기존 config 계약 때문에 접미사가 없다.
             for (const slot of LLM_SLOTS) {
                 const suffix = llmSlotSuffix(slot);
@@ -41747,6 +41841,8 @@
                 updateLlmPdfPromptStatus(slot, pdfPrompt);
                 const urlEl = el(`setting-llm-url${suffix}`);
                 if (urlEl) urlEl.value = configValue('llm_url', '');
+                const maxTokensEl = el(`setting-llm-max-tokens${suffix}`);
+                if (maxTokensEl) maxTokensEl.value = configValue('llm_max_tokens', slot === 1 ? 10000 : 0);
                 const concurrencyEl = el(`setting-llm-max-concurrency${suffix}`);
                 if (concurrencyEl) concurrencyEl.value = configValue('llm_max_concurrency', 1);
                 const idleEl = el(`setting-llm-stream-idle-timeout${suffix}`);
@@ -42973,7 +43069,6 @@
                 dwpose_det_model: 'DWPose 탐지 모델',
                 dwpose_pose_model: 'DWPose 포즈 모델',
                 dwpose_model_cache_dir: '모델 캐시 디렉토리',
-                llm_max_tokens: 'LLM 최대 출력 토큰',
                 webp_lossless: '무손실 WebP'
             };
             for (const slot of LLM_SLOTS) {
@@ -43304,13 +43399,6 @@
                 backup_max_count: parseInt(document.getElementById('setting-backup-max-count').value) || 500,
                 clamp_enabled: document.getElementById('setting-clamp-enabled').checked,
                 clamp_value: parseFloat(document.getElementById('setting-clamp-value').value) || 1.2,
-                llm_max_tokens: (() => {
-                    const parsed = Number.parseInt(
-                        document.getElementById('setting-llm-max-tokens')?.value || '',
-                        10,
-                    );
-                    return Number.isInteger(parsed) && parsed >= 0 ? parsed : 10000;
-                })(),
                 llm_routing: collectLlmRouting(),
                 lora_prompt_review_enabled: !!document.getElementById('setting-lora-prompt-review-enabled')?.checked,
                 character_maker_rag_enabled: !!document.getElementById('setting-character-maker-rag-enabled')?.checked,
@@ -43386,6 +43474,8 @@
                 config[`llm_reasoning_preset${suffix}`] = (el(`setting-llm-reasoning-preset${suffix}`) || {}).value || (slot === 1 ? 'auto' : '');
                 config[`llm_reasoning_effort${suffix}`] = (el(`setting-llm-reasoning-effort${suffix}`) || {}).value || '';
                 config[`llm_custom_body${suffix}`] = (el(`setting-llm-custom-body${suffix}`) || {}).value || '';
+                const maxTokens = Number.parseInt((el(`setting-llm-max-tokens${suffix}`) || {}).value, 10);
+                config[`llm_max_tokens${suffix}`] = Number.isInteger(maxTokens) && maxTokens >= 0 ? maxTokens : 0;
                 config[`llm_max_concurrency${suffix}`] = parseInt((el(`setting-llm-max-concurrency${suffix}`) || {}).value) || 1;
                 config[`llm_stream_idle_timeout_seconds${suffix}`] = Number((el(`setting-llm-stream-idle-timeout${suffix}`) || {}).value);
             }

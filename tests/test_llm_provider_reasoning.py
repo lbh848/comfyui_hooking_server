@@ -139,41 +139,56 @@ def test_gemini_thinking_level_defaults_to_low(isolated_llm_config, configured, 
         assert "유효하지 않아 low로 대체" in capsys.readouterr().out
 
 
-def test_shared_max_output_tokens_reaches_gemini_and_vertex(isolated_llm_config):
-    isolated_llm_config["llm_max_tokens"] = 10000
+def test_max_output_tokens_are_independent_per_slot(isolated_llm_config):
+    isolated_llm_config["llm_max_tokens"] = 20000
+    isolated_llm_config["llm_max_tokens2"] = 7000
+
+    assert llm_service._slot_config_overrides("llm2")["llm_max_tokens"] == 7000
+    isolated_llm_config.pop("llm_max_tokens2", None)
+    assert llm_service._slot_config_overrides("llm2")["llm_max_tokens"] == 0
+    assert isolated_llm_config["llm_max_tokens"] == 20000
+    assert llm_service.slot_max_output_tokens("llm1") == 20000
+    assert llm_service.slot_max_output_tokens("llm2") == 0
+
+
+def test_slot_max_output_tokens_reach_gemini_and_vertex(isolated_llm_config, monkeypatch):
+    isolated_llm_config["llm_max_tokens"] = 20000
+    isolated_llm_config["llm_max_tokens2"] = 7000
     messages = [{"role": "user", "content": "hello"}]
 
-    gemini_body = llm_service._build_gemini_request_body(
-        messages,
-        "gemini-3-flash",
+    monkeypatch.setattr(
+        llm_service,
+        "_current_config",
+        llm_service._ContextConfig(isolated_llm_config),
     )
-    vertex_config = llm_service._build_vertex_generate_config(None)
-
-    assert gemini_body["generationConfig"]["maxOutputTokens"] == 10000
-    assert vertex_config.max_output_tokens == 10000
-
-    isolated_llm_config["llm_max_tokens"] = 0
-    gemini_default_body = llm_service._build_gemini_request_body(
-        messages,
-        "gemini-3-flash",
+    token = llm_service._request_config_override_ctx.set(
+        llm_service._slot_config_overrides("llm2")
     )
-    vertex_default_config = llm_service._build_vertex_generate_config(None)
-    assert "maxOutputTokens" not in gemini_default_body["generationConfig"]
-    assert vertex_default_config.max_output_tokens is None
+    slot_token = llm_service._llm_slot_ctx.set("llm2")
+    try:
+        gemini_body = llm_service._build_gemini_request_body(messages, "gemini-3-flash")
+        vertex_config = llm_service._build_vertex_generate_config(None)
+    finally:
+        llm_service._llm_slot_ctx.reset(slot_token)
+        llm_service._request_config_override_ctx.reset(token)
+
+    assert gemini_body["generationConfig"]["maxOutputTokens"] == 7000
+    assert vertex_config.max_output_tokens == 7000
 
 
-def test_default_max_output_tokens_and_frontend_editor_are_10000():
-    config = json.loads(Path("config.json").read_text(encoding="utf-8"))
+def test_frontend_exposes_independent_max_output_tokens_for_every_slot():
     source = Path("frontend/index.html").read_text(encoding="utf-8")
     server_source = Path("server.py").read_text(encoding="utf-8")
 
     assert llm_service.DEFAULT_LLM_MAX_OUTPUT_TOKENS == 10000
-    assert config["llm_max_tokens"] == 10000
-    assert 'id="setting-llm-max-tokens"' in source
-    assert "currentConfig.llm_max_tokens ?? 10000" in source
-    assert "llm_max_tokens: (() =>" in source
+    for slot in range(1, llm_service.LLM_SLOT_COUNT + 1):
+        suffix = "" if slot == 1 else str(slot)
+        assert f'id="setting-llm-max-tokens{suffix}"' in source
+        assert f'LLM{slot} 최대 출력 토큰' in source
+    assert "전체 슬롯 공통" not in source
+    assert "config[`llm_max_tokens${suffix}`]" in source
+    assert 'f"llm_max_tokens{_suffix}": 0' in server_source
     assert "종료 사유" in source
-    assert '"llm_max_tokens": llm_service.DEFAULT_LLM_MAX_OUTPUT_TOKENS' in server_source
 
 
 def test_frontend_blocks_custom_body_for_gemini_native_services_and_defaults_low():

@@ -9257,7 +9257,9 @@ async def _call_pipeline_llm(
         "attempt_id": "",
         "finish_reason": "",
         "finish_message": "",
-        "max_output_tokens": llm_service._configured_max_output_tokens(),
+        "max_output_tokens": llm_service.slot_max_output_tokens(
+            llm_service.routing_primary_slot(task_key)
+        ),
     }
     history_logged = False
     terminal_notified = False

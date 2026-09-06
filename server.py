@@ -794,6 +794,7 @@ for _slot_n in range(2, llm_service.LLM_SLOT_COUNT + 1):
         f"llm_reasoning_preset{_suffix}": "auto",
         f"llm_reasoning_effort{_suffix}": "",
         f"llm_stream{_suffix}": False,
+        f"llm_max_tokens{_suffix}": 0,
         f"llm_stream_idle_timeout_seconds{_suffix}": 90.0,
         f"llm_max_concurrency{_suffix}": 1,
         f"llm_vision_compress{_suffix}": False,
@@ -18832,10 +18833,6 @@ async def handle_api_config(request: web.Request) -> web.Response:
             _llm_runtime_cfg = {
                 "llm_reasoning_budget_tokens": app_config.get("llm_reasoning_budget_tokens", 0),
                 "llm_temperature": app_config.get("llm_temperature", 1.0),
-                "llm_max_tokens": app_config.get(
-                    "llm_max_tokens",
-                    llm_service.DEFAULT_LLM_MAX_OUTPUT_TOKENS,
-                ),
                 "lora_prompt_review_enabled": app_config.get("lora_prompt_review_enabled", False),
                 "llm_routing": app_config.get("llm_routing", {}),
             }
@@ -18849,6 +18846,10 @@ async def handle_api_config(request: web.Request) -> web.Response:
                     f"llm_reasoning_effort{_sfx}": app_config.get(f"llm_reasoning_effort{_sfx}", ""),
                     f"llm_custom_body{_sfx}": app_config.get(f"llm_custom_body{_sfx}", ""),
                     f"llm_stream{_sfx}": app_config.get(f"llm_stream{_sfx}", False),
+                    f"llm_max_tokens{_sfx}": app_config.get(
+                        f"llm_max_tokens{_sfx}",
+                        llm_service.DEFAULT_LLM_MAX_OUTPUT_TOKENS if _slot_n == 1 else 0,
+                    ),
                     f"llm_max_concurrency{_sfx}": app_config.get(f"llm_max_concurrency{_sfx}", 1),
                     f"llm_stream_idle_timeout_seconds{_sfx}": app_config.get(f"llm_stream_idle_timeout_seconds{_sfx}", 90.0),
                     f"llm_vision_compress{_sfx}": app_config.get(f"llm_vision_compress{_sfx}", False),
@@ -30732,6 +30733,7 @@ async def on_startup(app):
             f"llm_reasoning_effort{_s}": app_config.get(f"llm_reasoning_effort{_s}", ""),
             f"llm_custom_body{_s}": app_config.get(f"llm_custom_body{_s}", ""),
             f"llm_stream{_s}": app_config.get(f"llm_stream{_s}", False),
+            f"llm_max_tokens{_s}": app_config.get(f"llm_max_tokens{_s}", 0),
             f"llm_max_concurrency{_s}": app_config.get(f"llm_max_concurrency{_s}", 1),
             f"llm_stream_idle_timeout_seconds{_s}": app_config.get(f"llm_stream_idle_timeout_seconds{_s}", 90.0),
             f"llm_vision_compress{_s}": app_config.get(f"llm_vision_compress{_s}", False),

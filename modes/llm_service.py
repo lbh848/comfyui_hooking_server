@@ -538,6 +538,7 @@ for _slot_n in range(2, LLM_SLOT_COUNT + 1):
         f"llm_reasoning_effort{_suffix}": "",
         f"llm_custom_body{_suffix}": "",
         f"llm_stream{_suffix}": False,
+        f"llm_max_tokens{_suffix}": 0,
         f"llm_max_concurrency{_suffix}": 1,
         f"llm_stream_idle_timeout_seconds{_suffix}": 90.0,
         f"llm_vision_compress{_suffix}": False,
@@ -646,6 +647,12 @@ def _slot_config_overrides(slot: str) -> dict:
             if slot_value
             else _base_config_get(base_key, base_default)
         )
+    # 최대 출력 토큰도 per-slot 완전 독립. 슬롯 값이 없거나 0이면
+    # provider 기본값을 사용하며 LLM1 값을 상속하지 않는다.
+    overrides["llm_max_tokens"] = _base_config_get(
+        f"llm_max_tokens{suffix}",
+        0,
+    )
     # bool 토글은 per-slot 완전 독립(전역/LLM1 상속 없음).
     overrides["llm_vision_compress"] = bool(
         _base_config_get(f"llm_vision_compress{suffix}", False)
@@ -1229,35 +1236,59 @@ def _gemini_thinking_level() -> str:
     return DEFAULT_GEMINI_THINKING_LEVEL
 
 
-def _configured_max_output_tokens() -> int:
-    """Return the shared provider output cap; zero keeps provider defaults."""
-    raw = _current_config.get(
-        "llm_max_tokens",
-        DEFAULT_LLM_MAX_OUTPUT_TOKENS,
-    )
+def slot_max_output_tokens(slot: str) -> int:
+    """Return only the named slot's configured output cap; never inherit another slot."""
+    normalized = _normalize_llm_slot(slot)
+    suffix = _slot_suffix(normalized)
+    key = f"llm_max_tokens{suffix}"
+    default = DEFAULT_LLM_MAX_OUTPUT_TOKENS if normalized == "llm1" else 0
+    raw = _base_config_get(key, default)
     try:
         if isinstance(raw, bool):
             raise TypeError("bool은 최대 출력 토큰 수로 사용할 수 없음")
         value = int(raw)
     except (TypeError, ValueError) as exc:
         print(
-            "[LLM_LIMIT] 최대 출력 토큰 수 파싱 실패, 기본값 사용: "
-            f"value={raw!r}, default={DEFAULT_LLM_MAX_OUTPUT_TOKENS}, "
+            "[LLM_LIMIT] 슬롯별 최대 출력 토큰 수 파싱 실패, provider 기본값 사용: "
+            f"slot={normalized}, value={raw!r}, error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        return 0
+    if value < 0:
+        print(
+            "[LLM_LIMIT] 슬롯별 최대 출력 토큰 수 음수 값 거부, provider 기본값 사용: "
+            f"slot={normalized}, value={value}"
+        )
+        return 0
+    return value
+
+
+def _configured_max_output_tokens() -> int:
+    """Return the current request slot's output cap; zero keeps provider defaults."""
+    raw = _current_config.get("llm_max_tokens", 0)
+    try:
+        if isinstance(raw, bool):
+            raise TypeError("bool은 최대 출력 토큰 수로 사용할 수 없음")
+        value = int(raw)
+    except (TypeError, ValueError) as exc:
+        print(
+            "[LLM_LIMIT] 슬롯별 최대 출력 토큰 수 파싱 실패, provider 기본값 사용: "
+            f"slot={_llm_slot_ctx.get()}, value={raw!r}, "
             f"error={type(exc).__name__}: {exc}"
         )
         traceback.print_exc()
-        return DEFAULT_LLM_MAX_OUTPUT_TOKENS
+        return 0
     if value < 0:
         print(
-            "[LLM_LIMIT] 최대 출력 토큰 수 음수 값 거부, 기본값 사용: "
-            f"value={value}, default={DEFAULT_LLM_MAX_OUTPUT_TOKENS}"
+            "[LLM_LIMIT] 슬롯별 최대 출력 토큰 수 음수 값 거부, provider 기본값 사용: "
+            f"slot={_llm_slot_ctx.get()}, value={value}"
         )
-        return DEFAULT_LLM_MAX_OUTPUT_TOKENS
+        return 0
     return value
 
 
 def _build_vertex_generate_config(system_instruction):
-    """Vertex Gemini SDK용 설정. 공통 출력 한도와 전용 thinking level을 적용한다."""
+    """Vertex Gemini SDK용 설정. 현재 슬롯 출력 한도와 전용 thinking level을 적용한다."""
     from google.genai import types
 
     fields = {
