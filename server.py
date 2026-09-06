@@ -6977,6 +6977,7 @@ async def process_illustration_context_queue_item(item) -> dict:
         "failures": [],
         "requested_count": 0,
     }
+    original_asset_task = None
     history_plan = None
     history_finalize_attempted = False
     # build_from_context 완료 후 MULTI-CHAR-MASK~CALL3 의 LLM 호출 id 목록으로 채워진다.
@@ -7400,7 +7401,8 @@ async def process_illustration_context_queue_item(item) -> dict:
                 effective_visual_profiles,
             )
         pipeline_payload = payload
-        if original_asset_enabled:
+
+        async def _run_original_asset_selection():
             reserve_slot_count = 0
             preused_slots: set[int] = set()
             if illustration_enabled and payload.get("protocol") != "prompt_batch_v1":
@@ -7420,13 +7422,8 @@ async def process_illustration_context_queue_item(item) -> dict:
                         )
                         traceback.print_exc()
                         raise
-            await progress(
-                2,
-                "original_asset",
-                f"원본 에셋 {illust_toggles['original_asset_count']}장 선택",
-            )
             try:
-                original_asset_result = await _select_original_asset_outputs(
+                return await _select_original_asset_outputs(
                     payload=payload,
                     toggles=illust_toggles,
                     active_bot=active_bot,
@@ -7447,7 +7444,7 @@ async def process_illustration_context_queue_item(item) -> dict:
                     f"session={session_id}, bot={active_bot!r}, error={e}"
                 )
                 traceback.print_exc()
-                original_asset_result = {
+                return {
                     "items": [],
                     "images": [],
                     "failures": [
@@ -7457,30 +7454,58 @@ async def process_illustration_context_queue_item(item) -> dict:
                     "requested_count": int(illust_toggles["original_asset_count"]),
                     "target_slotted": str(payload.get("target_slotted") or ""),
                 }
+
+        async def _join_original_asset_before_call2(current_slotted: str) -> str:
+            nonlocal original_asset_result
+            if original_asset_task is None:
+                return current_slotted
+            try:
+                original_asset_result = await original_asset_task
+            finally:
+                # 현재 CALL1 frontier + ORIGINAL-ASSET branch 끝점을 함께 보존한다.
+                # 다음 CALL2 노드는 두 선행 작업 모두를 dependency로 갖는다.
+                illustration_flow.merge([original_asset_task])
             reserved_slots = {
                 int(descriptor["slot"])
                 for descriptor in original_asset_result["items"]
             }
-            if illustration_enabled and reserved_slots:
-                pipeline_payload = copy.deepcopy(payload)
-                original_slotted = str(
-                    original_asset_result.get("target_slotted")
-                    or payload.get("target_slotted")
-                    or ""
-                )
-                filtered_slotted = original_slotted
-                for slot in sorted(reserved_slots):
-                    filtered_slotted = re.sub(
-                        rf"\[Slot\s+{slot}\]",
-                        "",
-                        filtered_slotted,
-                    )
-                pipeline_payload["target_slotted"] = filtered_slotted
+            if not reserved_slots:
                 print(
-                    f"[ILLUST_ORIGINAL_ASSET] 일반 삽화에서 원본 선택 슬롯 예약: "
-                    f"session={session_id}, slots={sorted(reserved_slots)}, "
-                    f"remaining={len(illustration_context_pipeline.candidate_slots(filtered_slotted))}"
+                    f"[ILLUST_ORIGINAL_ASSET] CALL2 전 예약 슬롯 없음: "
+                    f"session={session_id}"
                 )
+                return current_slotted
+            filtered_slotted = str(current_slotted or "")
+            for slot in sorted(reserved_slots):
+                filtered_slotted = re.sub(
+                    rf"\[Slot\s+{slot}\]",
+                    "",
+                    filtered_slotted,
+                )
+            print(
+                f"[ILLUST_ORIGINAL_ASSET] CALL1과 병렬 선택 완료 · CALL2 슬롯 예약 반영: "
+                f"session={session_id}, slots={sorted(reserved_slots)}, "
+                f"remaining={len(illustration_context_pipeline.candidate_slots(filtered_slotted))}"
+            )
+            return filtered_slotted
+
+        if original_asset_enabled:
+            await progress(
+                2,
+                "original_asset",
+                f"원본 에셋 {illust_toggles['original_asset_count']}장 선택",
+            )
+            if illustration_enabled and payload.get("protocol") != "prompt_batch_v1":
+                original_asset_task = illustration_flow.create_task(
+                    _run_original_asset_selection()
+                )
+                print(
+                    f"[ILLUST_ORIGINAL_ASSET] CALL1과 병렬 선택 시작: "
+                    f"session={session_id}, requested={illust_toggles['original_asset_count']}"
+                )
+            else:
+                # 일반 삽화/CALL1 경로가 없으면 합류점도 없으므로 즉시 기다린다.
+                original_asset_result = await _run_original_asset_selection()
         else:
             print(
                 f"[ILLUST_ORIGINAL_ASSET] 토글로 비활성화됨: session={session_id}"
@@ -7645,6 +7670,11 @@ async def process_illustration_context_queue_item(item) -> dict:
                     visual_profiles=effective_visual_profiles,
                     pre_resolved_profile_output=profile_output,
                     pre_resolved_profile_result=profile_result,
+                    before_call2=(
+                        _join_original_asset_before_call2
+                        if original_asset_task is not None
+                        else None
+                    ),
                 )
             else:
                 print(
@@ -8014,6 +8044,14 @@ async def process_illustration_context_queue_item(item) -> dict:
             prompts[original_prompt_id]["outputs"] = {"images": []}
         await stream_notify({"type": "error", "call_name": "PIPELINE", "error": str(e)})
         raise
+    finally:
+        if original_asset_task is not None and not original_asset_task.done():
+            print(
+                f"[ILLUST_ORIGINAL_ASSET] 상위 파이프라인 종료로 미합류 작업 취소: "
+                f"session={session_id}"
+            )
+            original_asset_task.cancel()
+            await asyncio.gather(original_asset_task, return_exceptions=True)
 
 
 async def handle_illustration_flow(request: web.Request) -> web.Response:

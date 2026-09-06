@@ -12257,6 +12257,7 @@ async def build_from_context(
     visual_profiles: dict[str, dict] | None = None,
     pre_resolved_profile_output: str = "",
     pre_resolved_profile_result: dict | None = None,
+    before_call2=None,
 ) -> dict:
     toggles = merged_toggles(toggles)
     prompts = load_prompt_files()
@@ -12595,6 +12596,27 @@ async def build_from_context(
         # 일반 CALL1에는 슬롯을 노출하지 않는다. CALL1이 반환한 Position 범위를
         # 서버가 보관한 슬롯 본문에 투영해 [Slot N]과 [Position]을 함께 보존한다.
         slotted = _merge_call1_output_into_slotted(slotted, call1_output)
+
+    # CALL1과 독립적으로 진행 가능한 외부 작업(현재는 ORIGINAL-ASSET)을 여기서
+    # 합류시킨다. callback은 CALL1 결과가 반영된 slotted를 받아 CALL2가 사용할
+    # 최종 슬롯 본문을 반환한다. 이 경계 전에는 CALL1이 외부 작업을 기다리지 않는다.
+    if before_call2 is not None:
+        try:
+            joined_slotted = await before_call2(slotted)
+        except asyncio.CancelledError:
+            print("[ILLUST_CONTEXT:CALL2_BARRIER] CALL2 전 병렬 작업 합류 취소")
+            raise
+        except Exception as e:
+            print(f"[ILLUST_CONTEXT:CALL2_BARRIER] CALL2 전 병렬 작업 합류 실패: {e}")
+            traceback.print_exc()
+            raise
+        if joined_slotted is not None:
+            slotted = str(joined_slotted)
+        print(
+            f"[ILLUST_CONTEXT:CALL2_BARRIER] 병렬 선행 작업 합류 완료: "
+            f"slots={candidate_slots(slotted)}"
+        )
+
     if progress:
         await progress(30, "call2", "CALL2 장면/태그 빌드")
     current_character_names = [

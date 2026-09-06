@@ -895,6 +895,8 @@ async def test_mixed_output_reserves_original_asset_slot_before_regular_build(
     }
     child_ids = []
     stage_order = []
+    asset_started = asyncio.Event()
+    asset_release = asyncio.Event()
     resolved_profile_output = '{"profile_events":[]}'
     resolved_profile_result = {
         "profile_events": [],
@@ -929,10 +931,13 @@ async def test_mixed_output_reserves_original_asset_slot_before_regular_build(
         return resolved_profile_output, resolved_profile_result
 
     async def fake_select(**kwargs):
-        stage_order.append("asset")
-        assert stage_order == ["profile", "asset"]
+        stage_order.append("asset_start")
+        asset_started.set()
+        assert "call1_start" in stage_order
         assert kwargs["reserve_slot_count"] == 1
         assert kwargs["profile_authority"] == "selected profile authority"
+        await asset_release.wait()
+        stage_order.append("asset_done")
         return {
             "items": [original_descriptor],
             "images": [original_bytes],
@@ -942,12 +947,26 @@ async def test_mixed_output_reserves_original_asset_slot_before_regular_build(
         }
 
     async def fake_build(build_payload, *_args, **kwargs):
-        stage_order.append("build")
-        assert stage_order == ["profile", "asset", "build"]
-        assert "[Slot 0]" not in build_payload["target_slotted"]
-        assert "[Slot 1]" in build_payload["target_slotted"]
+        # build_from_context enters CALL1 immediately; ORIGINAL-ASSET must not be joined yet.
+        stage_order.append("call1_start")
+        assert build_payload["target_slotted"].count("[Slot") == 2
         assert kwargs["pre_resolved_profile_output"] == resolved_profile_output
         assert kwargs["pre_resolved_profile_result"] == resolved_profile_result
+        await asyncio.wait_for(asset_started.wait(), timeout=1.0)
+        assert "asset_done" not in stage_order
+        stage_order.append("call1_done")
+
+        barrier = asyncio.create_task(
+            kwargs["before_call2"](build_payload["target_slotted"])
+        )
+        await asyncio.sleep(0)
+        assert not barrier.done(), "CALL2 barrier must wait for ORIGINAL-ASSET"
+        asset_release.set()
+        filtered_slotted = await barrier
+        stage_order.append("call2")
+        assert "[Slot 0]" not in filtered_slotted
+        assert "[Slot 1]" in filtered_slotted
+
         await kwargs["on_call2_ready"]({
             "context": "context",
             "prompt_format": "v3",
@@ -1016,10 +1035,39 @@ async def test_mixed_output_reserves_original_asset_slot_before_regular_build(
             "scene",
         ]
         assert session["images"] == [original_bytes, generated_bytes]
-        assert stage_order == ["profile", "asset", "build"]
+        assert stage_order == [
+            "profile",
+            "call1_start",
+            "asset_start",
+            "call1_done",
+            "asset_done",
+            "call2",
+        ]
     finally:
         pipeline._SESSIONS.pop(session_id, None)
         pipeline._LOOKUP_KEYS.pop(lookup_key, None)
         server.prompts.pop(prompt_id, None)
         for child_id in child_ids:
             server.prompts.pop(child_id, None)
+
+
+
+def test_original_asset_parallel_branch_is_toggle_gated() -> None:
+    source = Path(server.__file__).read_text(encoding="utf-8")
+    assert "if original_asset_enabled:" in source
+    assert "original_asset_task = illustration_flow.create_task(" in source
+    assert "if original_asset_task is not None" in source
+    assert "else None" in source
+    assert (
+        source.index("if original_asset_enabled:")
+        < source.index("original_asset_task = illustration_flow.create_task(")
+        < source.index("before_call2=(")
+    )
+
+
+def test_call2_barrier_is_after_call1_and_before_call2_progress() -> None:
+    source = Path(pipeline.__file__).read_text(encoding="utf-8")
+    call1 = source.index('call1_output = await _call_pipeline_llm(')
+    barrier = source.index("if before_call2 is not None:")
+    call2 = source.index('await progress(30, "call2", "CALL2 장면/태그 빌드")')
+    assert call1 < barrier < call2
