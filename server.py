@@ -7404,33 +7404,15 @@ async def process_illustration_context_queue_item(item) -> dict:
             )
         pipeline_payload = payload
 
-        async def _run_original_asset_selection():
-            reserve_slot_count = 0
-            preused_slots: set[int] = set()
-            if illustration_enabled and payload.get("protocol") != "prompt_batch_v1":
-                reserve_slot_count = (
-                    int(illust_toggles.get("output_count_min") or 1)
-                    if str(illust_toggles.get("scene_mode") or "manual") == "manual"
-                    else 1
-                )
-            elif illustration_enabled:
-                for descriptor in payload.get("items") or []:
-                    try:
-                        preused_slots.add(int(descriptor.get("slot")))
-                    except Exception as e:
-                        print(
-                            f"[ILLUST_ORIGINAL_ASSET] 확정 프롬프트 slot 파싱 실패: "
-                            f"session={session_id}, descriptor={descriptor!r}, error={e}"
-                        )
-                        traceback.print_exc()
-                        raise
+        async def _run_original_asset_selection(used_slots: set[int] | None = None):
+            preused_slots = set(used_slots or set())
             try:
                 return await _select_original_asset_outputs(
                     payload=payload,
                     toggles=illust_toggles,
                     active_bot=active_bot,
                     used_slots=preused_slots,
-                    reserve_slot_count=reserve_slot_count,
+                    reserve_slot_count=0,
                     stream_notify=stream_notify,
                     llm_trace=llm_trace,
                     profile_authority=profile_authority,
@@ -7443,7 +7425,8 @@ async def process_illustration_context_queue_item(item) -> dict:
             except Exception as e:
                 print(
                     f"[ILLUST_ORIGINAL_ASSET] 원본 에셋 선택 최종 실패: "
-                    f"session={session_id}, bot={active_bot!r}, error={e}"
+                    f"session={session_id}, bot={active_bot!r}, "
+                    f"used_slots={sorted(preused_slots)}, error={e}"
                 )
                 traceback.print_exc()
                 return {
@@ -7457,57 +7440,48 @@ async def process_illustration_context_queue_item(item) -> dict:
                     "target_slotted": str(payload.get("target_slotted") or ""),
                 }
 
-        async def _join_original_asset_before_call2(current_slotted: str) -> str:
-            nonlocal original_asset_result
-            if original_asset_task is None:
-                return current_slotted
-            try:
-                original_asset_result = await original_asset_task
-            finally:
-                # 현재 CALL1 frontier + ORIGINAL-ASSET branch 끝점을 함께 보존한다.
-                # 다음 CALL2 노드는 두 선행 작업 모두를 dependency로 갖는다.
-                illustration_flow.merge([original_asset_task])
-            reserved_slots = {
-                int(descriptor["slot"])
-                for descriptor in original_asset_result["items"]
-            }
-            if not reserved_slots:
-                print(
-                    f"[ILLUST_ORIGINAL_ASSET] CALL2 전 예약 슬롯 없음: "
-                    f"session={session_id}"
-                )
-                return current_slotted
-            filtered_slotted = str(current_slotted or "")
-            for slot in sorted(reserved_slots):
-                filtered_slotted = re.sub(
-                    rf"\[Slot\s+{slot}\]",
-                    "",
-                    filtered_slotted,
-                )
-            print(
-                f"[ILLUST_ORIGINAL_ASSET] CALL1과 병렬 선택 완료 · CALL2 슬롯 예약 반영: "
-                f"session={session_id}, slots={sorted(reserved_slots)}, "
-                f"remaining={len(illustration_context_pipeline.candidate_slots(filtered_slotted))}"
-            )
-            return filtered_slotted
+        def _prompt_batch_regular_slots() -> set[int]:
+            slots: set[int] = set()
+            for descriptor in payload.get("items") or []:
+                try:
+                    slots.add(int(descriptor.get("slot")))
+                except Exception as e:
+                    print(
+                        f"[ILLUST_ORIGINAL_ASSET] 확정 프롬프트 slot 파싱 실패: "
+                        f"session={session_id}, descriptor={descriptor!r}, error={e}"
+                    )
+                    traceback.print_exc()
+                    raise
+            return slots
 
         if original_asset_enabled:
-            await progress(
-                2,
-                "original_asset",
-                f"원본 에셋 {illust_toggles['original_asset_count']}장 선택",
-            )
-            if illustration_enabled and payload.get("protocol") != "prompt_batch_v1":
-                original_asset_task = illustration_flow.create_task(
-                    _run_original_asset_selection()
+            if not illustration_enabled:
+                await progress(
+                    2,
+                    "original_asset",
+                    f"원본 에셋 {illust_toggles['original_asset_count']}장 자유 선택",
                 )
+                original_asset_result = await _run_original_asset_selection(set())
                 print(
-                    f"[ILLUST_ORIGINAL_ASSET] CALL1과 병렬 선택 시작: "
+                    f"[ILLUST_ORIGINAL_ASSET] ASSET-only 자유 선택 완료: "
                     f"session={session_id}, requested={illust_toggles['original_asset_count']}"
                 )
+            elif payload.get("protocol") == "prompt_batch_v1":
+                # prompt_batch_v1에는 CALL2-PLAN이 없으므로 이미 확정된 일반 프롬프트
+                # slot을 일반 삽화 권위로 취급하고 남은 slot에서만 에셋을 고른다.
+                prompt_batch_slots = _prompt_batch_regular_slots()
+                original_asset_result = await _run_original_asset_selection(
+                    prompt_batch_slots
+                )
+                print(
+                    f"[ILLUST_ORIGINAL_ASSET] 확정 프롬프트 slot 우선 선택 완료: "
+                    f"session={session_id}, used_slots={sorted(prompt_batch_slots)}"
+                )
             else:
-                # 일반 삽화/CALL1 경로가 없으면 합류점도 없으므로 즉시 기다린다.
-                original_asset_result = await _run_original_asset_selection()
+                print(
+                    f"[ILLUST_ORIGINAL_ASSET] 일반 삽화 PLAN slot 확정 대기: "
+                    f"session={session_id}, requested={illust_toggles['original_asset_count']}"
+                )
         else:
             print(
                 f"[ILLUST_ORIGINAL_ASSET] 토글로 비활성화됨: session={session_id}"
@@ -7609,6 +7583,23 @@ async def process_illustration_context_queue_item(item) -> dict:
                     f"provider={illustration_provider_snapshot}"
                 )
 
+            async def _on_call2_plan_ready(plan_built: dict):
+                nonlocal original_asset_task
+                if not original_asset_enabled or original_asset_task is not None:
+                    return
+                used_slots = {
+                    int(slot) for slot in (plan_built.get("scene_slots") or [])
+                }
+                original_asset_task = illustration_flow.create_task(
+                    _run_original_asset_selection(used_slots),
+                    name="original-asset-after-plan",
+                )
+                print(
+                    f"[ILLUST_ORIGINAL_ASSET] CALL2-PLAN 직후 선택 시작: "
+                    f"session={session_id}, illustration_slots={sorted(used_slots)}, "
+                    f"requested={illust_toggles['original_asset_count']}"
+                )
+
             async def _on_call2_ready(call2_built: dict):
                 nonlocal child_pairs, early_dispatch, early_descriptor_slots
                 preliminary_items = call2_built.get("items") or []
@@ -7660,6 +7651,9 @@ async def process_illustration_context_queue_item(item) -> dict:
                     extra_character_cards,
                     progress=progress,
                     stream_notify=stream_notify,
+                    on_call2_plan_ready=(
+                        _on_call2_plan_ready if original_asset_enabled else None
+                    ),
                     on_call2_ready=_on_call2_ready,
                     on_keyvis_ready=_on_keyvis_ready,
                     extra_instruction=extra_instruction,
@@ -7672,11 +7666,6 @@ async def process_illustration_context_queue_item(item) -> dict:
                     visual_profiles=effective_visual_profiles,
                     pre_resolved_profile_output=profile_output,
                     pre_resolved_profile_result=profile_result,
-                    before_call2=(
-                        _join_original_asset_before_call2
-                        if original_asset_task is not None
-                        else None
-                    ),
                 )
             else:
                 print(
@@ -7715,6 +7704,27 @@ async def process_illustration_context_queue_item(item) -> dict:
                 history_finalize_attempted = True
                 illustration_chat_history.finalize_history(history_plan, built)
             raw_items = built.get("items") or []
+            if (
+                original_asset_enabled
+                and illustration_enabled
+                and payload.get("protocol") != "prompt_batch_v1"
+                and original_asset_task is None
+                and raw_items
+            ):
+                fallback_used_slots = {
+                    int(entry["slot"])
+                    for entry in raw_items
+                    if isinstance(entry, dict) and entry.get("slot") is not None
+                    and str(entry.get("kind") or "") == "scene"
+                }
+                original_asset_task = illustration_flow.create_task(
+                    _run_original_asset_selection(fallback_used_slots),
+                    name="original-asset-after-call2",
+                )
+                print(
+                    f"[ILLUST_ORIGINAL_ASSET] PLAN 콜백 없는 경로에서 CALL2 slot 확정 후 선택 시작: "
+                    f"session={session_id}, illustration_slots={sorted(fallback_used_slots)}"
+                )
             if illustration_enabled and not raw_items:
                 print(f"[ILLUST_CONTEXT] 생성할 장면이 없음: session={session_id}")
                 raise RuntimeError("CALL 결과에 생성할 장면이 없습니다")
@@ -7960,6 +7970,16 @@ async def process_illustration_context_queue_item(item) -> dict:
                         task.cancel()
                 if retry_tasks:
                     await asyncio.gather(*retry_tasks, return_exceptions=True)
+
+        if original_asset_task is not None:
+            try:
+                original_asset_result = await illustration_flow.join(original_asset_task)
+                print(
+                    f"[ILLUST_ORIGINAL_ASSET] 최종 결과 병합 준비 완료: "
+                    f"session={session_id}, items={len(original_asset_result.get('items') or [])}"
+                )
+            finally:
+                original_asset_task = None
 
         successful_items = []
         successful_images = []

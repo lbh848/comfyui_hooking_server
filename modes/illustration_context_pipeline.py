@@ -12245,6 +12245,7 @@ async def build_from_context(
     extra_reference: str,
     progress=None,
     stream_notify=None,
+    on_call2_plan_ready=None,
     on_call2_ready=None,
     on_keyvis_ready=None,
     extra_instruction: str = "",
@@ -12257,7 +12258,6 @@ async def build_from_context(
     visual_profiles: dict[str, dict] | None = None,
     pre_resolved_profile_output: str = "",
     pre_resolved_profile_result: dict | None = None,
-    before_call2=None,
 ) -> dict:
     toggles = merged_toggles(toggles)
     prompts = load_prompt_files()
@@ -12597,25 +12597,9 @@ async def build_from_context(
         # 서버가 보관한 슬롯 본문에 투영해 [Slot N]과 [Position]을 함께 보존한다.
         slotted = _merge_call1_output_into_slotted(slotted, call1_output)
 
-    # CALL1과 독립적으로 진행 가능한 외부 작업(현재는 ORIGINAL-ASSET)을 여기서
-    # 합류시킨다. callback은 CALL1 결과가 반영된 slotted를 받아 CALL2가 사용할
-    # 최종 슬롯 본문을 반환한다. 이 경계 전에는 CALL1이 외부 작업을 기다리지 않는다.
-    if before_call2 is not None:
-        try:
-            joined_slotted = await before_call2(slotted)
-        except asyncio.CancelledError:
-            print("[ILLUST_CONTEXT:CALL2_BARRIER] CALL2 전 병렬 작업 합류 취소")
-            raise
-        except Exception as e:
-            print(f"[ILLUST_CONTEXT:CALL2_BARRIER] CALL2 전 병렬 작업 합류 실패: {e}")
-            traceback.print_exc()
-            raise
-        if joined_slotted is not None:
-            slotted = str(joined_slotted)
-        print(
-            f"[ILLUST_CONTEXT:CALL2_BARRIER] 병렬 선행 작업 합류 완료: "
-            f"slots={candidate_slots(slotted)}"
-        )
+    # ORIGINAL-ASSET은 일반 삽화보다 slot 우선순위가 낮다. 일반 삽화가 켜진
+    # 경로에서는 CALL2-PLAN이 먼저 slot을 확정하고, 서버가 PLAN 직후 남은 slot만
+    # ORIGINAL-ASSET 후보로 넘긴다. 따라서 이 지점에는 에셋 대기 장벽이 없다.
 
     if progress:
         await progress(30, "call2", "CALL2 장면/태그 빌드")
@@ -13344,6 +13328,36 @@ async def build_from_context(
             )
             if parsed_plan is None:
                 raise ValueError(plan_reason or "CALL2-PLAN 파싱 실패")
+
+            if parsed_plan.get("mode") == "legacy":
+                planned_scene_slots = [
+                    int(item["slot"])
+                    for item in parsed_plan.get("descriptors") or []
+                    if str(item.get("kind") or "") == "scene"
+                    and item.get("slot") is not None
+                ]
+            else:
+                planned_scene_slots = [
+                    int(item["slot"])
+                    for item in parsed_plan.get("scene_plan") or []
+                    if item.get("slot") is not None
+                ]
+            if on_call2_plan_ready is not None:
+                try:
+                    await on_call2_plan_ready({
+                        "session_id": payload["session_id"],
+                        "mode": str(parsed_plan.get("mode") or ""),
+                        "scene_slots": planned_scene_slots,
+                        "target_slotted": original_slotted,
+                    })
+                except Exception as e:
+                    print(
+                        f"[ILLUST_CONTEXT:CALL2_PLAN] PLAN 확정 콜백 실패: "
+                        f"slots={planned_scene_slots}, error={e}"
+                    )
+                    traceback.print_exc()
+                    raise
+
             if toggles.get("key_visual"):
                 shared_notes = "\n\n".join(
                     str(plan.get("continuity_note") or "").strip()

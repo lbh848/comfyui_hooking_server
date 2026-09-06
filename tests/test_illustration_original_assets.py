@@ -781,7 +781,9 @@ async def test_asset_only_queue_skips_regular_pipeline_and_comfy(
         },
     )
 
-    async def fake_select(**_kwargs):
+    async def fake_select(**kwargs):
+        assert kwargs["used_slots"] == set()
+        assert kwargs["reserve_slot_count"] == 0
         return {
             "items": [descriptor],
             "images": [image_bytes],
@@ -854,7 +856,7 @@ async def test_asset_only_queue_skips_regular_pipeline_and_comfy(
 
 
 @pytest.mark.asyncio
-async def test_mixed_output_reserves_original_asset_slot_before_regular_build(
+async def test_mixed_output_starts_original_asset_after_plan_using_remaining_slots(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -933,8 +935,8 @@ async def test_mixed_output_reserves_original_asset_slot_before_regular_build(
     async def fake_select(**kwargs):
         stage_order.append("asset_start")
         asset_started.set()
-        assert "call1_start" in stage_order
-        assert kwargs["reserve_slot_count"] == 1
+        assert kwargs["used_slots"] == {1}
+        assert kwargs["reserve_slot_count"] == 0
         assert kwargs["profile_authority"] == "selected profile authority"
         await asset_release.wait()
         stage_order.append("asset_done")
@@ -947,31 +949,32 @@ async def test_mixed_output_reserves_original_asset_slot_before_regular_build(
         }
 
     async def fake_build(build_payload, *_args, **kwargs):
-        # build_from_context enters CALL1 immediately; ORIGINAL-ASSET must not be joined yet.
         stage_order.append("call1_start")
         assert build_payload["target_slotted"].count("[Slot") == 2
         assert kwargs["pre_resolved_profile_output"] == resolved_profile_output
         assert kwargs["pre_resolved_profile_result"] == resolved_profile_result
-        await asyncio.wait_for(asset_started.wait(), timeout=1.0)
-        assert "asset_done" not in stage_order
+        assert "before_call2" not in kwargs
+        assert not asset_started.is_set(), "ORIGINAL-ASSET must not start before PLAN"
         stage_order.append("call1_done")
 
-        barrier = asyncio.create_task(
-            kwargs["before_call2"](build_payload["target_slotted"])
-        )
-        await asyncio.sleep(0)
-        assert not barrier.done(), "CALL2 barrier must wait for ORIGINAL-ASSET"
-        asset_release.set()
-        filtered_slotted = await barrier
-        stage_order.append("call2")
-        assert "[Slot 0]" not in filtered_slotted
-        assert "[Slot 1]" in filtered_slotted
+        await kwargs["on_call2_plan_ready"]({
+            "session_id": session_id,
+            "mode": "plan",
+            "scene_slots": [1],
+            "target_slotted": build_payload["target_slotted"],
+        })
+        await asyncio.wait_for(asset_started.wait(), timeout=1.0)
+        assert "asset_done" not in stage_order
+        stage_order.append("call2_after_plan")
 
+        # CALL2 may continue while ORIGINAL-ASSET is still running.
         await kwargs["on_call2_ready"]({
             "context": "context",
             "prompt_format": "v3",
             "items": [generated_descriptor],
         })
+        assert "asset_done" not in stage_order
+        asset_release.set()
         return {
             "context": "context",
             "prompt_format": "v3",
@@ -1038,10 +1041,10 @@ async def test_mixed_output_reserves_original_asset_slot_before_regular_build(
         assert stage_order == [
             "profile",
             "call1_start",
-            "asset_start",
             "call1_done",
+            "asset_start",
+            "call2_after_plan",
             "asset_done",
-            "call2",
         ]
     finally:
         pipeline._SESSIONS.pop(session_id, None)
@@ -1051,23 +1054,28 @@ async def test_mixed_output_reserves_original_asset_slot_before_regular_build(
             server.prompts.pop(child_id, None)
 
 
+def test_original_asset_plan_priority_has_no_call2_barrier() -> None:
+    server_source = Path(server.__file__).read_text(encoding="utf-8")
+    pipeline_source = Path(pipeline.__file__).read_text(encoding="utf-8")
 
-def test_original_asset_parallel_branch_is_toggle_gated() -> None:
+    assert "before_call2" not in server_source
+    assert "before_call2" not in pipeline_source
+    assert "on_call2_plan_ready=None" in pipeline_source
+    assert "CALL2-PLAN 직후 선택 시작" in server_source
+    assert "_run_original_asset_selection(used_slots)" in server_source
+
+    plan_join = pipeline_source.index("call2_plan_output = await illustration_flow.join(plan_task)")
+    plan_parse = pipeline_source.index("parsed_plan, plan_reason = parse_call2_plan(", plan_join)
+    plan_callback = pipeline_source.index("await on_call2_plan_ready({", plan_parse)
+    detail_stage = pipeline_source.index('parallel_stage = "CALL2-DETAIL"', plan_callback)
+    assert plan_join < plan_parse < plan_callback < detail_stage
+
+
+def test_asset_only_path_is_free_and_mixed_path_waits_for_plan_slots() -> None:
     source = Path(server.__file__).read_text(encoding="utf-8")
-    assert "if original_asset_enabled:" in source
-    assert "original_asset_task = illustration_flow.create_task(" in source
-    assert "if original_asset_task is not None" in source
-    assert "else None" in source
-    assert (
-        source.index("if original_asset_enabled:")
-        < source.index("original_asset_task = illustration_flow.create_task(")
-        < source.index("before_call2=(")
-    )
-
-
-def test_call2_barrier_is_after_call1_and_before_call2_progress() -> None:
-    source = Path(pipeline.__file__).read_text(encoding="utf-8")
-    call1 = source.index('call1_output = await _call_pipeline_llm(')
-    barrier = source.index("if before_call2 is not None:")
-    call2 = source.index('await progress(30, "call2", "CALL2 장면/태그 빌드")')
-    assert call1 < barrier < call2
+    asset_only = source.index("if not illustration_enabled:")
+    free_select = source.index("_run_original_asset_selection(set())", asset_only)
+    plan_wait = source.index("일반 삽화 PLAN slot 확정 대기", free_select)
+    plan_callback = source.index("async def _on_call2_plan_ready", plan_wait)
+    plan_select = source.index("_run_original_asset_selection(used_slots)", plan_callback)
+    assert asset_only < free_select < plan_wait < plan_callback < plan_select
