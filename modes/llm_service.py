@@ -39,6 +39,7 @@ from modes.llm_pdf_prompt import (
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 KEY_DIR = os.path.join(BASE_DIR, "key")
 LOG_DIR = os.path.join(BASE_DIR, "logs")
+DEFAULT_LLM_MAX_OUTPUT_TOKENS = 10000
 
 
 # Provider Manager 1.9.2 의 providers.json 에 정의된 OpenAI 호환 프리셋.
@@ -412,6 +413,7 @@ async def _call_vertex(messages: list, model: str) -> str:
             None,
             lambda: _vertex_client.models.generate_content(model=actual_model, contents=parts, config=config),
         )
+        finish_reason, finish_message = _extract_vertex_finish_details(response)
         prompt_tokens, completion_tokens = _extract_vertex_usage(
             getattr(response, "usage_metadata", None)
         )
@@ -419,6 +421,9 @@ async def _call_vertex(messages: list, model: str) -> str:
             prompt_tokens,
             completion_tokens,
             provider="vertex",
+            finish_reason=finish_reason,
+            finish_message=finish_message,
+            max_output_tokens=_configured_max_output_tokens(),
         )
         try:
             result_text = response.text or ""
@@ -428,7 +433,6 @@ async def _call_vertex(messages: list, model: str) -> str:
         if not result_text:
             candidates = getattr(response, "candidates", None)
             candidate = candidates[0] if candidates else None
-            finish_reason = getattr(candidate, "finish_reason", None)
             safety_ratings = getattr(candidate, "safety_ratings", None)
             prompt_feedback = getattr(response, "prompt_feedback", None)
             print(
@@ -441,7 +445,10 @@ async def _call_vertex(messages: list, model: str) -> str:
                 "[LLM 실패] Vertex 응답이 비어 있습니다: "
                 f"finish_reason={finish_reason}"
             )
-        _llm_log(f"Vertex 성공: {len(result_text)}자")
+        _llm_log(
+            f"Vertex 성공: {len(result_text)}자, "
+            f"finish_reason={finish_reason or '없음'}"
+        )
         return result_text
     except Exception as e:
         error_msg = str(e)
@@ -503,7 +510,7 @@ _current_config = _ContextConfig({
     "llm_reasoning_budget_tokens": 0, # GLM/deepseek thinking budget_tokens
     "llm_custom_body": "",            # LLM1 JSON object 문자열. Gemini/Vertex Gemini 전용 경로는 사용하지 않음
     "llm_temperature": 1.0,
-    "llm_max_tokens": 0,              # 0 = 기본값 사용
+    "llm_max_tokens": DEFAULT_LLM_MAX_OUTPUT_TOKENS,  # 0 = 공급자 기본값 사용
     "llm_stream": False,              # LLM1 실제 API 스트리밍
     "llm_max_concurrency": 1,         # LLM1 실제 API 동시 요청 상한
     "llm_stream_idle_timeout_seconds": 90.0,  # 0=비활성, 그 외 10~3600초
@@ -955,16 +962,47 @@ def _gemini_thinking_level() -> str:
     return DEFAULT_GEMINI_THINKING_LEVEL
 
 
+def _configured_max_output_tokens() -> int:
+    """Return the shared provider output cap; zero keeps provider defaults."""
+    raw = _current_config.get(
+        "llm_max_tokens",
+        DEFAULT_LLM_MAX_OUTPUT_TOKENS,
+    )
+    try:
+        if isinstance(raw, bool):
+            raise TypeError("bool은 최대 출력 토큰 수로 사용할 수 없음")
+        value = int(raw)
+    except (TypeError, ValueError) as exc:
+        print(
+            "[LLM_LIMIT] 최대 출력 토큰 수 파싱 실패, 기본값 사용: "
+            f"value={raw!r}, default={DEFAULT_LLM_MAX_OUTPUT_TOKENS}, "
+            f"error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        return DEFAULT_LLM_MAX_OUTPUT_TOKENS
+    if value < 0:
+        print(
+            "[LLM_LIMIT] 최대 출력 토큰 수 음수 값 거부, 기본값 사용: "
+            f"value={value}, default={DEFAULT_LLM_MAX_OUTPUT_TOKENS}"
+        )
+        return DEFAULT_LLM_MAX_OUTPUT_TOKENS
+    return value
+
+
 def _build_vertex_generate_config(system_instruction):
-    """Vertex Gemini SDK용 설정. Custom Body 없이 전용 thinking level만 적용한다."""
+    """Vertex Gemini SDK용 설정. 공통 출력 한도와 전용 thinking level을 적용한다."""
     from google.genai import types
 
-    return types.GenerateContentConfig(
-        system_instruction=system_instruction or None,
-        thinking_config=types.ThinkingConfig(
+    fields = {
+        "system_instruction": system_instruction or None,
+        "thinking_config": types.ThinkingConfig(
             thinking_level=_gemini_thinking_level(),
         ),
-    )
+    }
+    max_output_tokens = _configured_max_output_tokens()
+    if max_output_tokens > 0:
+        fields["max_output_tokens"] = max_output_tokens
+    return types.GenerateContentConfig(**fields)
 
 
 def _deep_merge_body(base: dict, override: dict, protected_keys=None, source: str = "custom body") -> dict:
@@ -1479,11 +1517,29 @@ def _extract_vertex_usage(usage_metadata) -> tuple[int | None, int | None]:
     return total_input_tokens, total_output_tokens
 
 
+def _extract_vertex_finish_details(response_or_event) -> tuple[str, str]:
+    """Read the first Vertex candidate's terminal reason from SDK objects or dicts."""
+    candidates = _usage_field(response_or_event, "candidates") or []
+    candidate = candidates[0] if candidates else None
+    if candidate is None:
+        return "", ""
+    raw_reason = _usage_field(candidate, "finish_reason", "finishReason")
+    reason_value = getattr(raw_reason, "value", raw_reason)
+    reason = str(reason_value or "").strip()
+    message = str(
+        _usage_field(candidate, "finish_message", "finishMessage") or ""
+    ).strip()
+    return reason, message
+
+
 def _store_actual_usage_in_sink(
     prompt_tokens: int | None,
     completion_tokens: int | None,
     *,
     provider: str,
+    finish_reason: str = "",
+    finish_message: str = "",
+    max_output_tokens: int | None = None,
 ) -> None:
     """비스트리밍 provider의 실제 usage를 현재 작업의 상세 로그 싱크에 반영한다."""
     sink = _usage_sink_ctx.get()
@@ -1496,6 +1552,14 @@ def _store_actual_usage_in_sink(
     if completion_tokens is not None:
         sink["completion_tokens"] = completion_tokens
         captured.append(f"completion_tokens={completion_tokens}")
+    if finish_reason:
+        sink["finish_reason"] = finish_reason
+        captured.append(f"finish_reason={finish_reason}")
+    if finish_message:
+        sink["finish_message"] = finish_message
+    if max_output_tokens is not None:
+        sink["max_output_tokens"] = max_output_tokens
+        captured.append(f"max_output_tokens={max_output_tokens}")
     if captured:
         _llm_log(f"{provider} 실제 usage 수집: {', '.join(captured)}")
 
@@ -3697,7 +3761,16 @@ def _apply_stream_outcome_usage(outcome: dict) -> None:
         sink["error"] = str(outcome.get("error") or "")
     else:
         sink.pop("error", None)
-    for key in ("completion_tokens", "prompt_tokens", "elapsed", "tps", "ttft"):
+    for key in (
+        "completion_tokens",
+        "prompt_tokens",
+        "elapsed",
+        "tps",
+        "ttft",
+        "finish_reason",
+        "finish_message",
+        "max_output_tokens",
+    ):
         if snapshot.get(key) is not None:
             sink[key] = snapshot[key]
 
@@ -4143,6 +4216,9 @@ async def _consume_stream_attempt(
                     ("elapsed", "elapsed"),
                     ("tps", "tps"),
                     ("ttft", "ttft"),
+                    ("finish_reason", "finish_reason"),
+                    ("finish_message", "finish_message"),
+                    ("max_output_tokens", "max_output_tokens"),
                 ):
                     if event.get(source_key) is not None:
                         record[target_key] = event[source_key]
@@ -5209,8 +5285,15 @@ async def _stream_vertex_sdk(messages: list, model: str):
     accumulated = []
     completion_tokens = None
     prompt_tokens = None
+    finish_reason = ""
+    finish_message = ""
+    max_output_tokens = _configured_max_output_tokens()
 
-    _llm_log(f"vertex stream 요청(genai): model={actual_model}, parts={len(parts)}" + ("(vision)" if n_img else ""))
+    _llm_log(
+        f"vertex stream 요청(genai): model={actual_model}, parts={len(parts)}, "
+        f"max_output_tokens={max_output_tokens or 'provider-default'}"
+        + ("(vision)" if n_img else "")
+    )
     yield {"type": "start", "service": "vertex", "model": actual_model}
 
     config = _build_vertex_generate_config(system_instruction)
@@ -5227,6 +5310,9 @@ async def _stream_vertex_sdk(messages: list, model: str):
                 )
                 if usage[0] is not None or usage[1] is not None:
                     loop.call_soon_threadsafe(q.put_nowait, ("usage", usage))
+                finish = _extract_vertex_finish_details(event)
+                if finish[0] or finish[1]:
+                    loop.call_soon_threadsafe(q.put_nowait, ("finish", finish))
                 text = ""
                 try:
                     text = event.text or ""
@@ -5261,6 +5347,9 @@ async def _stream_vertex_sdk(messages: list, model: str):
                 if actual_completion_tokens is not None:
                     completion_tokens = actual_completion_tokens
                 continue
+            if kind == "finish":
+                finish_reason, finish_message = payload
+                continue
             # delta
             if ttft is None:
                 ttft = time.time() - t0
@@ -5276,7 +5365,9 @@ async def _stream_vertex_sdk(messages: list, model: str):
         tps = (completion_tokens / elapsed) if elapsed > 0 else 0.0
         _llm_log(
             f"vertex stream 완료: {len(full)}자, tokens={completion_tokens}, "
-            f"prompt_tokens={prompt_tokens}, elapsed={elapsed:.2f}s"
+            f"prompt_tokens={prompt_tokens}, finish_reason={finish_reason or '없음'}, "
+            f"max_output_tokens={max_output_tokens or 'provider-default'}, "
+            f"elapsed={elapsed:.2f}s"
         )
         yield {
             "type": "done",
@@ -5286,6 +5377,9 @@ async def _stream_vertex_sdk(messages: list, model: str):
             "elapsed": elapsed,
             "tps": tps,
             "ttft": ttft,
+            "finish_reason": finish_reason,
+            "finish_message": finish_message,
+            "max_output_tokens": max_output_tokens,
         }
     except asyncio.TimeoutError:
         idle_timeout = _stream_idle_timeout_seconds()

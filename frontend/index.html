@@ -23361,6 +23361,17 @@
 
                     <div class="setting-row">
                         <div class="setting-label">
+                            <div class="title">LLM 최대 출력 토큰 (전체 슬롯 공통)</div>
+                            <div class="desc">모든 LLM 슬롯과 제공자의 요청당 출력 상한입니다. Gemini/Vertex는 생각 토큰도 이 한도에 포함될 수 있습니다. 0은 공급자 기본값을 사용합니다.</div>
+                        </div>
+                        <div class="setting-control">
+                            <input type="number" id="setting-llm-max-tokens" min="0" step="1" value="10000"
+                                   style="width:110px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:.85rem;">
+                        </div>
+                    </div>
+
+                    <div class="setting-row">
+                        <div class="setting-label">
                             <div class="title">LLM1 스트림 무응답 제한(초)</div>
                             <div class="desc">LLM1 스트림에서 새 이벤트가 이 시간 동안 오지 않으면 연결을 정리합니다. 0은 비활성화, 그 외에는 10~3600초입니다.</div>
                         </div>
@@ -41702,6 +41713,11 @@
             document.getElementById('clamp-value-row').style.display = clampEnabled ? 'flex' : 'none';
             updateClampStatus(clampEnabled);
 
+            const maxOutputTokensEl = document.getElementById('setting-llm-max-tokens');
+            if (maxOutputTokensEl) {
+                maxOutputTokensEl.value = currentConfig.llm_max_tokens ?? 10000;
+            }
+
             // LLM1~N 슬롯 설정. LLM1만 기존 config 계약 때문에 접미사가 없다.
             for (const slot of LLM_SLOTS) {
                 const suffix = llmSlotSuffix(slot);
@@ -42957,6 +42973,7 @@
                 dwpose_det_model: 'DWPose 탐지 모델',
                 dwpose_pose_model: 'DWPose 포즈 모델',
                 dwpose_model_cache_dir: '모델 캐시 디렉토리',
+                llm_max_tokens: 'LLM 최대 출력 토큰',
                 webp_lossless: '무손실 WebP'
             };
             for (const slot of LLM_SLOTS) {
@@ -43286,6 +43303,13 @@
                 backup_max_count: parseInt(document.getElementById('setting-backup-max-count').value) || 500,
                 clamp_enabled: document.getElementById('setting-clamp-enabled').checked,
                 clamp_value: parseFloat(document.getElementById('setting-clamp-value').value) || 1.2,
+                llm_max_tokens: (() => {
+                    const parsed = Number.parseInt(
+                        document.getElementById('setting-llm-max-tokens')?.value || '',
+                        10,
+                    );
+                    return Number.isInteger(parsed) && parsed >= 0 ? parsed : 10000;
+                })(),
                 llm_routing: collectLlmRouting(),
                 lora_prompt_review_enabled: !!document.getElementById('setting-lora-prompt-review-enabled')?.checked,
                 character_maker_rag_enabled: !!document.getElementById('setting-character-maker-rag-enabled')?.checked,
@@ -45439,7 +45463,10 @@
 부모 실행 ID: ${escapeHtml(record.parent_execution_id || '(없음)')}
 시도 ID: ${escapeHtml(record.attempt_id || '(최종 결과)')}
 라우팅: ${escapeHtml(record.phase || '-')} / ${escapeHtml(record.llm_slot || '-')}
-시도: ${escapeHtml(record.attempt ? `${record.attempt}/${record.total_attempts || '?'}` : '-')}</pre>
+시도: ${escapeHtml(record.attempt ? `${record.attempt}/${record.total_attempts || '?'}` : '-')}
+요청 출력 한도: ${escapeHtml(record.max_output_tokens == null ? '-' : String(record.max_output_tokens))}
+종료 사유: ${escapeHtml(record.finish_reason || '-')}
+종료 상세: ${escapeHtml(record.finish_message || '-')}</pre>
                         </section>`
                 : '';
 
@@ -45463,6 +45490,8 @@
                         <div class="lighbd-detail-stat"><span>경과 시간</span><strong>${escapeHtml(String(record.elapsed ?? 0))}s</strong></div>
                         <div class="lighbd-detail-stat"><span>처리 속도</span><strong>${escapeHtml(String(record.tps ?? 0))} t/s</strong></div>
                         <div class="lighbd-detail-stat"><span>TTFT</span><strong>${escapeHtml(ttft)}</strong></div>
+                        <div class="lighbd-detail-stat"><span>요청 출력 한도</span><strong>${escapeHtml(record.max_output_tokens == null ? '-' : String(record.max_output_tokens))}</strong></div>
+                        <div class="lighbd-detail-stat"><span>종료 사유</span><strong>${escapeHtml(record.finish_reason || '-')}</strong></div>
                     </div>
                     <div class="lighbd-detail-body">
                         <section class="lighbd-detail-section">
@@ -45751,7 +45780,15 @@
             const errorText = record.error || '';
             const rawOutput = record.output || '';
             const callName = record.call_name || record.task_key || 'LLM 호출';
-            const stats = `입력 ${record.prompt_tokens ?? 0} · 출력 ${record.completion_tokens ?? 0} · ${record.elapsed ?? 0}s · ${record.tps ?? 0} t/s`;
+            const stats = `입력 ${record.prompt_tokens ?? 0} · 출력 ${record.completion_tokens ?? 0} · 한도 ${record.max_output_tokens ?? '-'} · 종료 ${record.finish_reason || '-'} · ${record.elapsed ?? 0}s · ${record.tps ?? 0} t/s`;
+            const providerSection = (record.finish_reason || record.finish_message || record.max_output_tokens != null)
+                ? `<section class="lighbd-detail-section" style="border:none; border-top:1px solid var(--border); border-radius:0;">
+                            <div class="lighbd-detail-section-title">응답 종료 정보</div>
+                            <pre class="lighbd-detail-content">요청 출력 한도: ${escapeHtml(record.max_output_tokens == null ? '-' : String(record.max_output_tokens))}
+종료 사유: ${escapeHtml(record.finish_reason || '-')}
+종료 상세: ${escapeHtml(record.finish_message || '-')}</pre>
+                        </section>`
+                : '';
             const outputSection = isError
                 ? `<section class="lighbd-detail-section" style="border:none; border-top:1px solid var(--border); border-radius:0;">
                             <div class="lighbd-detail-section-title">오류 내용</div>
@@ -45778,6 +45815,7 @@
                         <div class="lighbd-detail-section-title">입력 전체</div>
                         <pre class="lighbd-detail-content">${escapeHtml(inputText)}</pre>
                     </section>
+                    ${providerSection}
                     ${outputSection}
                 </div>`;
         }
@@ -45846,6 +45884,9 @@
                 if (r.model) lines.push(`- 모델: ${r.model}`);
                 if (r.phase || r.llm_slot) lines.push(`- 라우팅: ${r.phase || '-'} / ${r.llm_slot || '-'}`);
                 lines.push(`- 입력 토큰: ${r.prompt_tokens ?? 0} · 출력 토큰: ${r.completion_tokens ?? 0}`);
+                lines.push(`- 요청 출력 한도: ${r.max_output_tokens ?? '-'}`);
+                if (r.finish_reason) lines.push(`- 종료 사유: ${r.finish_reason}`);
+                if (r.finish_message) lines.push(`- 종료 상세: ${r.finish_message}`);
                 lines.push(`- 경과: ${r.elapsed ?? 0}s · ${r.tps ?? 0} t/s`);
                 if (r.execution_id) lines.push(`- 실행 ID: \`${r.execution_id}\``);
                 if (r.attempt_id) lines.push(`- 시도 ID: \`${r.attempt_id}\``);

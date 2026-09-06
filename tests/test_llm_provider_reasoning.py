@@ -139,6 +139,43 @@ def test_gemini_thinking_level_defaults_to_low(isolated_llm_config, configured, 
         assert "유효하지 않아 low로 대체" in capsys.readouterr().out
 
 
+def test_shared_max_output_tokens_reaches_gemini_and_vertex(isolated_llm_config):
+    isolated_llm_config["llm_max_tokens"] = 10000
+    messages = [{"role": "user", "content": "hello"}]
+
+    gemini_body = llm_service._build_gemini_request_body(
+        messages,
+        "gemini-3-flash",
+    )
+    vertex_config = llm_service._build_vertex_generate_config(None)
+
+    assert gemini_body["generationConfig"]["maxOutputTokens"] == 10000
+    assert vertex_config.max_output_tokens == 10000
+
+    isolated_llm_config["llm_max_tokens"] = 0
+    gemini_default_body = llm_service._build_gemini_request_body(
+        messages,
+        "gemini-3-flash",
+    )
+    vertex_default_config = llm_service._build_vertex_generate_config(None)
+    assert "maxOutputTokens" not in gemini_default_body["generationConfig"]
+    assert vertex_default_config.max_output_tokens is None
+
+
+def test_default_max_output_tokens_and_frontend_editor_are_10000():
+    config = json.loads(Path("config.json").read_text(encoding="utf-8"))
+    source = Path("frontend/index.html").read_text(encoding="utf-8")
+    server_source = Path("server.py").read_text(encoding="utf-8")
+
+    assert llm_service.DEFAULT_LLM_MAX_OUTPUT_TOKENS == 10000
+    assert config["llm_max_tokens"] == 10000
+    assert 'id="setting-llm-max-tokens"' in source
+    assert "currentConfig.llm_max_tokens ?? 10000" in source
+    assert "llm_max_tokens: (() =>" in source
+    assert "종료 사유" in source
+    assert '"llm_max_tokens": llm_service.DEFAULT_LLM_MAX_OUTPUT_TOKENS' in server_source
+
+
 def test_frontend_blocks_custom_body_for_gemini_native_services_and_defaults_low():
     source = Path("frontend/index.html").read_text(encoding="utf-8")
 

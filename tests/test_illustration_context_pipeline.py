@@ -5796,6 +5796,31 @@ async def test_pipeline_llm_records_success_in_lighbd_history(monkeypatch):
         assert task_key == "illustration_call1"
         assert actual_messages == messages
         call_kwargs.update(kwargs)
+        await kwargs["execution_observer"]({
+            "type": "attempt_start",
+            "phase": "primary",
+            "slot": "llm1",
+            "attempt": 1,
+            "total_attempts": 1,
+            "attempt_id": "attempt-success",
+        })
+        kwargs["metadata_sink"].update({
+            "prompt_tokens": 654,
+            "completion_tokens": 87,
+            "tps": 348.0,
+            "ttft": 0.12,
+            "finish_reason": "STOP",
+            "finish_message": "Natural stop",
+            "max_output_tokens": 10000,
+        })
+        await kwargs["execution_observer"]({
+            "type": "attempt_success",
+            "phase": "primary",
+            "slot": "llm1",
+            "attempt": 1,
+            "total_attempts": 1,
+            "attempt_id": "attempt-success",
+        })
         return "completed output"
 
     async def fake_notify(event):
@@ -5818,9 +5843,71 @@ async def test_pipeline_llm_records_success_in_lighbd_history(monkeypatch):
     assert records[0]["history_id"] == records[0]["execution_id"]
     assert call_kwargs["execution_id"] == records[0]["execution_id"]
     assert callable(call_kwargs["execution_observer"])
+    assert call_kwargs["metadata_sink"]["finish_reason"] == "STOP"
+    assert records[0]["prompt_tokens"] == 654
+    assert records[0]["completion_tokens"] == 87
+    assert records[0]["finish_reason"] == "STOP"
+    assert records[0]["finish_message"] == "Natural stop"
+    assert records[0]["max_output_tokens"] == 10000
+    assert events[-1]["finish_reason"] == "STOP"
     assert {event["execution_id"] for event in events} == {
         records[0]["execution_id"]
     }
+
+
+@pytest.mark.asyncio
+async def test_pipeline_failure_history_preserves_provider_termination_details(monkeypatch):
+    records = []
+    messages = [{"role": "user", "content": "scene"}]
+
+    async def fake_call(_task_key, _actual_messages, **kwargs):
+        observer = kwargs["execution_observer"]
+        await observer({
+            "type": "attempt_start",
+            "phase": "forced",
+            "slot": "llm1",
+            "attempt": 1,
+            "total_attempts": 1,
+            "attempt_id": "attempt-max-tokens",
+        })
+        kwargs["metadata_sink"].update({
+            "prompt_tokens": 815,
+            "completion_tokens": 3254,
+            "elapsed": 23.1,
+            "tps": 140.9,
+            "ttft": 0.4,
+            "finish_reason": "MAX_TOKENS",
+            "finish_message": "Maximum output tokens reached",
+            "max_output_tokens": 10000,
+        })
+        await observer({
+            "type": "attempt_failure",
+            "phase": "forced",
+            "slot": "llm1",
+            "attempt": 1,
+            "total_attempts": 1,
+            "attempt_id": "attempt-max-tokens",
+            "reason": "CALL2-DETAIL 파싱된 장면 없음",
+            "raw_response": "<lb-xnai>\nscenes[12]:\n  - scene: partial",
+        })
+        return "[LLM 실패] illustration_call2 forced 재시도 소진"
+
+    monkeypatch.setattr(pipeline.llm_service, "callLLMTask", fake_call)
+    monkeypatch.setattr(pipeline.lighbd_service, "_log_lighbd_history", records.append)
+
+    with pytest.raises(RuntimeError, match="illustration_call2 forced 재시도 소진"):
+        await pipeline._call_pipeline_llm("CALL2-DETAIL 1/1 [FULL c1/6]", messages)
+
+    assert len(records) == 2
+    attempt_record, terminal_record = records
+    assert attempt_record["output"].endswith("scene: partial")
+    assert attempt_record["finish_reason"] == "MAX_TOKENS"
+    assert attempt_record["finish_message"] == "Maximum output tokens reached"
+    assert attempt_record["max_output_tokens"] == 10000
+    assert attempt_record["prompt_tokens"] == 815
+    assert attempt_record["completion_tokens"] == 3254
+    assert terminal_record["finish_reason"] == "MAX_TOKENS"
+    assert terminal_record["max_output_tokens"] == 10000
 
 
 @pytest.mark.asyncio

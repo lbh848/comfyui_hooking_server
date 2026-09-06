@@ -9207,10 +9207,31 @@ async def _call_pipeline_llm(
         "attempt": 0,
         "total_attempts": 0,
         "attempt_id": "",
+        "finish_reason": "",
+        "finish_message": "",
+        "max_output_tokens": llm_service._configured_max_output_tokens(),
     }
     history_logged = False
     terminal_notified = False
     success_meta: dict = {}
+    provider_metadata: dict = {}
+    provider_detail_keys = (
+        "completion_tokens",
+        "prompt_tokens",
+        "elapsed",
+        "tps",
+        "ttft",
+        "finish_reason",
+        "finish_message",
+        "max_output_tokens",
+    )
+
+    def _provider_details() -> dict:
+        return {
+            key: provider_metadata[key]
+            for key in provider_detail_keys
+            if key in provider_metadata and provider_metadata[key] is not None
+        }
 
     async def _notify(event: dict):
         # stream_notify 이벤트에 큐 서브태스크 그룹을 주입한다.
@@ -9238,14 +9259,20 @@ async def _call_pipeline_llm(
         성공 레코드의 'LLM 실행 연결 정보'를 채운다(폴백 슬롯 포함).
         attempt_failure: 버려지는 실패 응답을 별도 error 레코드로 남긴다.
         """
-        slot = event.get("slot") or event.get("llm_slot") or "llm1"
+        etype = str(event.get("type") or "")
+        if etype == "attempt_start":
+            provider_metadata.clear()
+        recorded_event = dict(event)
+        if etype in {"attempt_success", "attempt_failure", "execution_complete"}:
+            recorded_event.update(_provider_details())
+        slot = recorded_event.get("slot") or recorded_event.get("llm_slot") or "llm1"
         suffix = llm_service._slot_suffix(slot)
         illustration_flow.llm_attempt(
-            event,
+            recorded_event,
             llm_service._base_config_get(f"llm_model{suffix}", "") or model,
             llm_service._base_config_get(f"llm_service{suffix}", "") or service,
         )
-        etype = str(event.get("type") or "")
+        event = recorded_event
         if etype == "attempt_success":
             success_meta.clear()
             success_meta.update({
@@ -9281,6 +9308,7 @@ async def _call_pipeline_llm(
             "status": "error",
             "error": reason,
         })
+        failure_record.update(_provider_details())
         print(
             f"[ILLUST_CONTEXT:{call_name}] LLM 시도 실패 기록: "
             f"phase={failure_record['phase']}, slot={failure_record['llm_slot']}, "
@@ -9306,6 +9334,7 @@ async def _call_pipeline_llm(
         call_kwargs["execution_id"] = execution_id
         call_kwargs["parent_execution_id"] = parent_execution_id
         call_kwargs["execution_observer"] = _record_execution_event
+        call_kwargs["metadata_sink"] = provider_metadata
         if result_validator is not None:
             call_kwargs["result_validator"] = result_validator
         if json_mode:
@@ -9331,8 +9360,26 @@ async def _call_pipeline_llm(
                 terminal_notified = True
             raise RuntimeError(str(result or f"빈 {call_name} 응답"))
         elapsed = time.time() - started
-        tokens = max(1, len(str(result)) // 3)
-        prompt_tokens = llm_service._approx_input_tokens(messages)
+        tokens = int(
+            provider_metadata.get("completion_tokens")
+            if provider_metadata.get("completion_tokens") is not None
+            else max(1, len(str(result)) // 3)
+        )
+        prompt_tokens = int(
+            provider_metadata.get("prompt_tokens")
+            if provider_metadata.get("prompt_tokens") is not None
+            else llm_service._approx_input_tokens(messages)
+        )
+        tps = float(
+            provider_metadata.get("tps")
+            if provider_metadata.get("tps") is not None
+            else (tokens / elapsed if elapsed > 0 else 0.0)
+        )
+        ttft = float(
+            provider_metadata.get("ttft")
+            if provider_metadata.get("ttft") is not None
+            else elapsed
+        )
         if stream_notify:
             await _notify({
                 "type": "done",
@@ -9342,8 +9389,14 @@ async def _call_pipeline_llm(
                 "completion_tokens": tokens,
                 "prompt_tokens": prompt_tokens,
                 "elapsed": elapsed,
-                "tps": tokens / elapsed if elapsed > 0 else 0.0,
-                "ttft": elapsed,
+                "tps": tps,
+                "ttft": ttft,
+                "finish_reason": provider_metadata.get("finish_reason", ""),
+                "finish_message": provider_metadata.get("finish_message", ""),
+                "max_output_tokens": provider_metadata.get(
+                    "max_output_tokens",
+                    history_record["max_output_tokens"],
+                ),
             })
             terminal_notified = True
         history_record.update({
@@ -9351,14 +9404,20 @@ async def _call_pipeline_llm(
             "completion_tokens": tokens,
             "prompt_tokens": prompt_tokens,
             "elapsed": round(elapsed, 3),
-            "tps": round(tokens / elapsed, 1) if elapsed > 0 else 0.0,
-            "ttft": round(elapsed, 3),
+            "tps": round(tps, 1),
+            "ttft": round(ttft, 3),
             "status": "ok",
             "phase": success_meta.get("phase", ""),
             "llm_slot": success_meta.get("llm_slot", ""),
             "attempt": success_meta.get("attempt", 0),
             "total_attempts": success_meta.get("total_attempts", 0),
             "attempt_id": success_meta.get("attempt_id", ""),
+            "finish_reason": provider_metadata.get("finish_reason", ""),
+            "finish_message": provider_metadata.get("finish_message", ""),
+            "max_output_tokens": provider_metadata.get(
+                "max_output_tokens",
+                history_record["max_output_tokens"],
+            ),
         })
         lighbd_service._log_lighbd_history(history_record)
         history_logged = True
@@ -9385,6 +9444,7 @@ async def _call_pipeline_llm(
                 "status": "cancelled",
                 "error": "선착순 경주에서 패배해 취소됨",
             })
+            history_record.update(_provider_details())
             lighbd_service._log_lighbd_history(history_record)
             history_logged = True
         print(
@@ -9414,6 +9474,7 @@ async def _call_pipeline_llm(
                 "status": "error",
                 "error": str(e),
             })
+            history_record.update(_provider_details())
             lighbd_service._log_lighbd_history(history_record)
         print(f"[ILLUST_CONTEXT:{call_name}] 호출 예외: {e}")
         traceback.print_exc()

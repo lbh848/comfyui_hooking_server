@@ -666,7 +666,7 @@ DEFAULT_CONFIG = {
         "compat_character_prompt": "separate",
     },
     "llm_temperature": 1.0,
-    "llm_max_tokens": 0,              # 0 = 기본값 사용
+    "llm_max_tokens": llm_service.DEFAULT_LLM_MAX_OUTPUT_TOKENS,  # 0 = 공급자 기본값 사용
     "llm_stream": False,              # LLM1 실제 API 스트리밍
     "llm_stream_idle_timeout_seconds": 90.0,  # 0=비활성, 그 외 10~3600초
     "llm_vision_compress": False,        # LLM1 비전 이미지 webp 압축 전송 (False=PNG 호환)
@@ -18832,7 +18832,10 @@ async def handle_api_config(request: web.Request) -> web.Response:
             _llm_runtime_cfg = {
                 "llm_reasoning_budget_tokens": app_config.get("llm_reasoning_budget_tokens", 0),
                 "llm_temperature": app_config.get("llm_temperature", 1.0),
-                "llm_max_tokens": app_config.get("llm_max_tokens", 0),
+                "llm_max_tokens": app_config.get(
+                    "llm_max_tokens",
+                    llm_service.DEFAULT_LLM_MAX_OUTPUT_TOKENS,
+                ),
                 "lora_prompt_review_enabled": app_config.get("lora_prompt_review_enabled", False),
                 "llm_routing": app_config.get("llm_routing", {}),
             }
@@ -30708,7 +30711,10 @@ async def on_startup(app):
         "llm_custom_body": app_config.get("llm_custom_body", ""),
         "llm_reasoning_budget_tokens": app_config.get("llm_reasoning_budget_tokens", 0),
         "llm_temperature": app_config.get("llm_temperature", 1.0),
-        "llm_max_tokens": app_config.get("llm_max_tokens", 0),
+        "llm_max_tokens": app_config.get(
+            "llm_max_tokens",
+            llm_service.DEFAULT_LLM_MAX_OUTPUT_TOKENS,
+        ),
         "llm_stream": app_config.get("llm_stream", False),
         "llm_max_concurrency": app_config.get("llm_max_concurrency", 1),
         "llm_stream_idle_timeout_seconds": app_config.get("llm_stream_idle_timeout_seconds", 90.0),

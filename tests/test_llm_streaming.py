@@ -1337,6 +1337,10 @@ async def test_openai_compat_nonstream_stores_actual_usage(monkeypatch):
 async def test_vertex_nonstream_stores_actual_usage(monkeypatch):
     response = SimpleNamespace(
         text="Vertex 실제 응답",
+        candidates=[SimpleNamespace(
+            finish_reason=SimpleNamespace(value="STOP"),
+            finish_message="Natural stop",
+        )],
         usage_metadata=SimpleNamespace(
             prompt_token_count=777,
             candidates_token_count=88,
@@ -1356,6 +1360,9 @@ async def test_vertex_nonstream_stores_actual_usage(monkeypatch):
     )
     monkeypatch.setattr(llm_service, "_build_genai_contents", lambda messages: (["hello"], None))
     monkeypatch.setattr(llm_service, "_build_vertex_generate_config", lambda system: {})
+    config = _test_config()
+    config["llm_max_tokens"] = 10000
+    monkeypatch.setattr(llm_service, "_current_config", config)
 
     sink = {}
     token = llm_service._usage_sink_ctx.set(sink)
@@ -1368,7 +1375,13 @@ async def test_vertex_nonstream_stores_actual_usage(monkeypatch):
         llm_service._usage_sink_ctx.reset(token)
 
     assert result == "Vertex 실제 응답"
-    assert sink == {"prompt_tokens": 777, "completion_tokens": 88}
+    assert sink == {
+        "prompt_tokens": 777,
+        "completion_tokens": 88,
+        "finish_reason": "STOP",
+        "finish_message": "Natural stop",
+        "max_output_tokens": 10000,
+    }
 
 
 def test_vertex_usage_includes_tool_prompt_and_thought_tokens_for_cost():
@@ -1396,6 +1409,10 @@ async def test_vertex_stream_uses_sdk_actual_usage(monkeypatch):
                 prompt_token_count=987,
                 candidates_token_count=65,
             ),
+            candidates=[SimpleNamespace(
+                finish_reason=SimpleNamespace(value="MAX_TOKENS"),
+                finish_message="Maximum output tokens reached",
+            )],
         ),
     ]
 
@@ -1412,6 +1429,9 @@ async def test_vertex_stream_uses_sdk_actual_usage(monkeypatch):
     )
     monkeypatch.setattr(llm_service, "_build_genai_contents", lambda messages: (["hello"], None))
     monkeypatch.setattr(llm_service, "_build_vertex_generate_config", lambda system: {})
+    config = _test_config()
+    config["llm_max_tokens"] = 10000
+    monkeypatch.setattr(llm_service, "_current_config", config)
 
     events = [
         event
@@ -1425,3 +1445,6 @@ async def test_vertex_stream_uses_sdk_actual_usage(monkeypatch):
     assert events[-1]["text"] == "Vertex 응답"
     assert events[-1]["prompt_tokens"] == 987
     assert events[-1]["completion_tokens"] == 65
+    assert events[-1]["finish_reason"] == "MAX_TOKENS"
+    assert events[-1]["finish_message"] == "Maximum output tokens reached"
+    assert events[-1]["max_output_tokens"] == 10000
