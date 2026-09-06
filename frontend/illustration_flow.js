@@ -113,9 +113,28 @@
         }
         modal.querySelector('.if-subtitle').textContent = `${flow.label} · ${labels[flow.status] || flow.status} · ${new Date(flow.created_at * 1000).toLocaleString()}`;
         const nodes = flow.nodes || [], positions = new Map(), layers = new Map();
-        // Creation order is topological: dependencies exist before their consumer.
+        const compactColumnStart = 36;
+        const compactColumnX = compactColumnStart;
+        let compactColumnLane = 0;
+        const isCompactColumnLabel = value => {
+            const label = String(value || '');
+            return label === 'CHARACTER-RESOLVE' || label.startsWith('CHARACTER-RESOLVE-') ||
+                label === 'PROFILE-RESOLVE' || label.startsWith('PROFILE-RESOLVE-') ||
+                label === 'ORIGINAL-ASSET' || label.startsWith('ORIGINAL-ASSET-') ||
+                label === 'CALL1' || /^CALL1 \d+\/\d+(?:\s|$)/.test(label);
+        };
+        const isCompactColumnNode = n => isCompactColumnLabel(n.label) || isCompactColumnLabel(n.call_name);
+        // The early resolve/asset/CALL1 stages share one vertical column. Their dependency
+        // edges remain intact; only the visual layout is compacted so they do not consume
+        // one horizontal column each.
         nodes.forEach(n => {
-            const depth = Math.max(0, ...(n.dependencies || []).map(id => (positions.get(id)?.depth ?? -1) + 1));
+            const dependencyDepth = Math.max(0, ...(n.dependencies || []).map(id => (positions.get(id)?.depth ?? -1) + 1));
+            if (isCompactColumnNode(n)) {
+                positions.set(n.id, {depth: 0, x: compactColumnX, y: 32 + compactColumnLane * 136});
+                compactColumnLane += 1;
+                return;
+            }
+            const depth = Math.max(1, dependencyDepth);
             const lane = layers.get(depth) || 0; layers.set(depth, lane + 1);
             positions.set(n.id, {depth, x: 36 + depth * 290, y: 32 + lane * 136});
         });
