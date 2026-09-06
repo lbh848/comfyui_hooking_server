@@ -139,9 +139,9 @@
         }
         modal.querySelector('.if-subtitle').textContent = `${flow.label} · ${labels[flow.status] || flow.status} · ${new Date(flow.created_at * 1000).toLocaleString()}`;
         const nodes = flow.nodes || [], positions = new Map(), layers = new Map();
-        const compactColumnStart = 36;
-        const compactColumnX = compactColumnStart;
-        let compactColumnLane = 0;
+        const rootColumnX = 36;
+        const compactColumnX = rootColumnX + 290;
+        const nodeById = new Map(nodes.map(n => [n.id, n]));
         const isCompactColumnLabel = value => {
             const label = String(value || '');
             return label === 'CHARACTER-RESOLVE' || label.startsWith('CHARACTER-RESOLVE-') ||
@@ -151,19 +151,88 @@
                 label === 'CALL1' || /^CALL1 \d+\/\d+(?:\s|$)/.test(label);
         };
         const isCompactColumnNode = n => isCompactColumnLabel(n.label) || isCompactColumnLabel(n.call_name);
-        // The early resolve/asset/CALL1 stages share column 1, the root prompt-generation
-        // request stays in column 2, and downstream work starts at column 3. Dependency
-        // edges remain intact; only the visual layout is compacted.
+        const layoutGroup = n => isCompactColumnNode(n) ? '__early_compact__' : String(n.layout_group || n.id);
+        const membersByGroup = new Map();
         nodes.forEach(n => {
-            const dependencyDepth = Math.max(0, ...(n.dependencies || []).map(id => (positions.get(id)?.depth ?? -1) + 1));
-            if (isCompactColumnNode(n)) {
-                positions.set(n.id, {depth: 0, x: compactColumnX, y: 32 + compactColumnLane * 136});
-                compactColumnLane += 1;
-                return;
+            const group = layoutGroup(n);
+            const members = membersByGroup.get(group) || [];
+            members.push(n);
+            membersByGroup.set(group, members);
+        });
+        const dependenciesByGroup = new Map();
+        nodes.forEach(n => {
+            const group = layoutGroup(n);
+            const dependencies = dependenciesByGroup.get(group) || new Set();
+            (n.dependencies || []).forEach(parentId => {
+                const parent = nodeById.get(parentId);
+                if (!parent) return;
+                const parentGroup = layoutGroup(parent);
+                if (parentGroup !== group) dependencies.add(parentGroup);
+            });
+            dependenciesByGroup.set(group, dependencies);
+        });
+        const depthByGroup = new Map();
+        const resolvingGroups = new Set();
+        const groupDepth = group => {
+            if (depthByGroup.has(group)) return depthByGroup.get(group);
+            if (group === '__early_compact__') {depthByGroup.set(group, 1); return 1;}
+            const members = membersByGroup.get(group) || [];
+            if (members.some(n => n.kind === 'request')) {depthByGroup.set(group, 0); return 0;}
+            if (resolvingGroups.has(group)) {
+                console.error('[ILLUST_FLOW] layout_group dependency cycle', group);
+                return 2;
             }
-            const depth = n.kind === 'request' ? 1 : Math.max(2, dependencyDepth);
-            const lane = layers.get(depth) || 0; layers.set(depth, lane + 1);
-            positions.set(n.id, {depth, x: 36 + depth * 290, y: 32 + lane * 136});
+            resolvingGroups.add(group);
+            const dependencies = [...(dependenciesByGroup.get(group) || [])];
+            const depth = Math.max(2, ...dependencies.map(parentGroup => groupDepth(parentGroup) + 1));
+            resolvingGroups.delete(group);
+            depthByGroup.set(group, depth);
+            return depth;
+        };
+        [...membersByGroup.keys()].forEach(groupDepth);
+
+        // A logical stage owns one column. Retries/partial repairs in the same
+        // layout_group stack vertically instead of consuming another column.
+        // All illustration queue items and their generation stage likewise share
+        // one image column, even when an early image started before a later audit.
+        nodes.forEach(n => {
+            const depth = groupDepth(layoutGroup(n));
+            const lane = layers.get(depth) || 0;
+            layers.set(depth, lane + 1);
+            positions.set(n.id, {depth, x: rootColumnX + depth * 290, y: 32 + lane * 136});
+        });
+
+        // A fork should read visually as a fork, not as a main line plus a side branch.
+        // Center each parent between its direct children after all lanes are known.
+        // This is dependency-driven and intentionally does not depend on CALL names.
+        const childrenByParent = new Map();
+        nodes.forEach(n => (n.dependencies || []).forEach(parentId => {
+            const children = childrenByParent.get(parentId) || [];
+            children.push(n.id);
+            childrenByParent.set(parentId, children);
+        }));
+        const depths = [...new Set([...positions.values()].map(p => p.depth))].sort((a, b) => b - a);
+        depths.forEach(depth => {
+            const candidates = nodes
+                .filter(n => positions.get(n.id)?.depth === depth)
+                .map(n => {
+                    const p = positions.get(n.id);
+                    const children = (childrenByParent.get(n.id) || [])
+                        .map(id => positions.get(id))
+                        .filter(child => child && child.depth > p.depth);
+                    if (children.length < 2) return {id: n.id, desiredY: p.y};
+                    const top = Math.min(...children.map(child => child.y));
+                    const bottom = Math.max(...children.map(child => child.y));
+                    return {id: n.id, desiredY: (top + bottom) / 2};
+                })
+                .sort((a, b) => a.desiredY - b.desiredY);
+            let previousY = -Infinity;
+            candidates.forEach(candidate => {
+                const p = positions.get(candidate.id);
+                const y = Math.max(candidate.desiredY, previousY + 136);
+                positions.set(candidate.id, {...p, y});
+                previousY = y;
+            });
         });
         const width = Math.max(650, ...[...positions.values()].map(p => p.x + 270));
         const height = Math.max(350, ...[...positions.values()].map(p => p.y + 140));

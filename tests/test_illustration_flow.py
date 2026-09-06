@@ -25,8 +25,42 @@ def test_flow_zoom_has_feedback_before_any_request():
 def test_flow_layout_reserves_columns_in_pipeline_order():
     source = (Path(__file__).resolve().parents[1] / "frontend" / "illustration_flow.js").read_text(encoding="utf-8")
     assert "label.startsWith('CALL1-BACKTRANSLATE')" in source
-    assert "positions.set(n.id, {depth: 0, x: compactColumnX" in source
-    assert "const depth = n.kind === 'request' ? 1 : Math.max(2, dependencyDepth);" in source
+    assert "const compactColumnX = rootColumnX + 290;" in source
+    assert "const layoutGroup = n => isCompactColumnNode(n) ? '__early_compact__'" in source
+    assert "if (group === '__early_compact__')" in source
+
+
+def test_flow_layout_keeps_logical_stage_retries_and_images_in_one_column():
+    source = (Path(__file__).resolve().parents[1] / "frontend" / "illustration_flow.js").read_text(encoding="utf-8")
+    assert "String(n.layout_group || n.id)" in source
+    assert "if (parentGroup !== group) dependencies.add(parentGroup)" in source
+    assert "Retries/partial repairs in the same" in source
+    assert "one image column" in source
+
+
+def test_pipeline_assigns_distinct_layout_groups_to_detail_and_authority_audit():
+    root = Path(__file__).resolve().parents[1]
+    source = (root / "modes" / "illustration_context_pipeline.py").read_text(encoding="utf-8")
+    assert '"CALL2-DETAIL": ("call2_detail",' in source
+    assert '"CALL2-AUTHORITY-AUDIT": (' in source
+    assert '"call2_authority_audit",' in source
+    assert "layout_group=(queue_subtask_group[0] if queue_subtask_group else task_key)" in source
+
+
+def test_image_queue_and_generation_stage_share_one_layout_group():
+    root = Path(__file__).resolve().parents[1]
+    flow_source = (root / "illustration_flow.py").read_text(encoding="utf-8")
+    server_source = (root / "server.py").read_text(encoding="utf-8")
+    assert 'layout_group=None if is_root else "illustration_images"' in flow_source
+    assert 'layout_group="illustration_images"' in server_source
+
+
+def test_flow_layout_centers_fork_parent_between_parallel_children():
+    source = (Path(__file__).resolve().parents[1] / "frontend" / "illustration_flow.js").read_text(encoding="utf-8")
+    assert "const childrenByParent = new Map();" in source
+    assert "children.length < 2" in source
+    assert "desiredY: (top + bottom) / 2" in source
+    assert "intentionally does not depend on CALL names" in source
 
 
 def test_flow_nodes_use_executor_colored_backgrounds():
@@ -43,6 +77,33 @@ def test_flow_detail_falls_back_to_error_and_latest_raw_response():
     assert "attempts[index].raw_response" in source
     assert "fallback.error = n.error" in source
     assert "const output = detailOutput(n);" in source
+
+
+@pytest.mark.asyncio
+async def test_flow_nodes_can_share_explicit_layout_group():
+    job = item(); flow.queue_added(job)
+
+    @flow.stage("image stage", layout_group="illustration_images")
+    async def image_stage():
+        return True
+
+    async def work():
+        child = item("image child", "illustration")
+        child.params = {"provider": "comfy"}
+        flow.queue_added(child)
+        async def child_work():
+            await image_stage()
+            return {}
+        child.handler = child_work
+        await Runner().execute(child)
+        return {}
+
+    job.handler = work
+    await Runner().execute(job)
+    graph = flow.snapshot()
+    nodes = {n["label"]: n for n in graph["nodes"]}
+    assert nodes["image child"]["layout_group"] == "illustration_images"
+    assert nodes["image stage"]["layout_group"] == "illustration_images"
 
 
 @pytest.mark.asyncio

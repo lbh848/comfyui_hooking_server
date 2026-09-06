@@ -9176,7 +9176,15 @@ async def _call_pipeline_llm(
         or ""
     )
     service = llm_service.routing_primary_service(task_key) or ""
-    illustration_flow.llm_metadata(execution_id=execution_id, task_key=task_key, model=model, service=service)
+    base_call_name = call_name.split()[0] if call_name else ""
+    queue_subtask_group = _CALL_QUEUE_SUBTASK_GROUPS.get(base_call_name)
+    illustration_flow.llm_metadata(
+        execution_id=execution_id,
+        task_key=task_key,
+        model=model,
+        service=service,
+        layout_group=(queue_subtask_group[0] if queue_subtask_group else task_key),
+    )
     history_record = {
         "ts": datetime.datetime.now().isoformat(timespec="seconds"),
         "prompt_id": f"illustration_context:{call_name}",

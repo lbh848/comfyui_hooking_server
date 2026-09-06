@@ -119,7 +119,7 @@ def _failure_output(node, error, default="작업 실패"):
     return output
 
 
-def stage(label, *, executor="process"):
+def stage(label, *, executor="process", layout_group=None):
     """Record executable non-LLM stages, retaining only displayable data."""
     def decorate(fn):
         signature = inspect.signature(fn)
@@ -145,6 +145,7 @@ def stage(label, *, executor="process"):
                 dependencies=_frontier.get(),
                 kind="stage",
                 executor=resolved_executor,
+                layout_group=layout_group,
                 input=serializable(inputs),
                 status="processing",
                 started_at=time.time(),
@@ -190,9 +191,20 @@ def queue_added(item):
         _latest = run
     provider = str((item.params or {}).get("provider") or "comfy").strip().lower()
     executor = "process" if is_root else ("comfy" if provider == "comfy" else "process")
-    node_id = add_node(run, item.label, dependencies=() if is_root else _frontier.get(),
-                       node_id=item.id, kind="request" if is_root else "image", executor=executor,
-                       input={k: item.params[k] for k in ("payload", "prompt_data", "provider") if k in item.params})
+    node_id = add_node(
+        run,
+        item.label,
+        dependencies=() if is_root else _frontier.get(),
+        node_id=item.id,
+        kind="request" if is_root else "image",
+        executor=executor,
+        layout_group=None if is_root else "illustration_images",
+        input={
+            k: item.params[k]
+            for k in ("payload", "prompt_data", "provider")
+            if k in item.params
+        },
+    )
     item._illustration_flow = (run, node_id, is_root)
 
 

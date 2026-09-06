@@ -3391,6 +3391,7 @@ async def fetch_real_image(
         if str(inputs.get("provider") or "comfy").strip().lower() == "comfy"
         else "process"
     ),
+    layout_group="illustration_images",
 )
 async def generate_image_with_prompt(
     positive: str,
