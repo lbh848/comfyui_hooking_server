@@ -29,6 +29,68 @@ def test_flow_layout_reserves_columns_in_pipeline_order():
     assert "const depth = n.kind === 'request' ? 1 : Math.max(2, dependencyDepth);" in source
 
 
+def test_flow_nodes_use_executor_colored_backgrounds():
+    source = (Path(__file__).resolve().parents[1] / "frontend" / "illustration_flow.js").read_text(encoding="utf-8")
+    assert "const executorColors = {llm:" in source
+    assert "background:color-mix(in srgb,var(--bg2,#172033) 68%,var(--node-tint,#94a3b8) 32%)" in source
+    assert "card.style.setProperty('--node-tint', executorColors[executor] || executorColors.process)" in source
+    assert "처리 주체" in source
+
+
+def test_flow_detail_falls_back_to_error_and_latest_raw_response():
+    source = (Path(__file__).resolve().parents[1] / "frontend" / "illustration_flow.js").read_text(encoding="utf-8")
+    assert "function detailOutput(n)" in source
+    assert "attempts[index].raw_response" in source
+    assert "fallback.error = n.error" in source
+    assert "const output = detailOutput(n);" in source
+
+
+@pytest.mark.asyncio
+async def test_stage_executor_can_follow_actual_provider():
+    job = item(); flow.queue_added(job)
+
+    @flow.stage(
+        "provider stage",
+        executor=lambda inputs: "comfy" if inputs.get("provider") == "comfy" else "process",
+    )
+    async def provider_stage(provider="comfy"):
+        return provider
+
+    async def work():
+        await provider_stage("comfy")
+        await provider_stage("chansub")
+        return {}
+
+    job.handler = work
+    await Runner().execute(job)
+    nodes = [n for n in flow.snapshot()["nodes"] if n["label"] == "provider stage"]
+    assert [n["executor"] for n in nodes] == ["comfy", "process"]
+
+
+@pytest.mark.asyncio
+async def test_llm_and_image_queue_nodes_expose_executor_metadata():
+    job = item(); flow.queue_added(job)
+
+    async def work():
+        await llm("plan", [])
+        child = item("slot", "illustration")
+        child.params = {"provider": "comfy"}
+        flow.queue_added(child)
+        child.handler = lambda: None
+        async def child_work():
+            return {}
+        child.handler = child_work
+        await Runner().execute(child)
+        return {}
+
+    job.handler = work
+    await Runner().execute(job)
+    nodes = {n["label"]: n for n in flow.snapshot()["nodes"]}
+    assert nodes["plan"]["executor"] == "llm"
+    assert nodes["slot"]["executor"] == "comfy"
+    assert nodes[job.label]["executor"] == "process"
+
+
 @pytest.fixture(autouse=True)
 def isolated_flow(monkeypatch):
     monkeypatch.setattr(flow, "_latest", None)
@@ -188,6 +250,61 @@ async def test_real_pipeline_fallback_metadata_and_raw_responses(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_failed_llm_exposes_error_and_undecoded_raw_response():
+    damaged_base64 = "YWJjA"
+
+    @flow.llm_call
+    async def failing_llm(name, messages):
+        flow.llm_metadata(status="processing", model="test-model")
+        flow.llm_attempt(
+            {"type": "attempt_failure", "phase": "primary", "slot": "llm1",
+             "raw_response": damaged_base64, "reason": "response parse failed"},
+            "test-model",
+            "test-service",
+        )
+        raise RuntimeError("response parse failed")
+
+    job = item(); flow.queue_added(job)
+
+    async def work():
+        await failing_llm("CALL2-DETAIL", [{"role": "user", "content": "test"}])
+
+    job.handler = work
+    with pytest.raises(RuntimeError, match="response parse failed"):
+        await Runner().execute(job)
+
+    graph = flow.snapshot()
+    node = next(n for n in graph["nodes"] if n["label"] == "CALL2-DETAIL")
+    details = flow.detail(graph["id"], node["id"])
+    assert details["status"] == "failed"
+    assert details["output"] == {
+        "error": "response parse failed",
+        "raw_response": damaged_base64,
+    }
+
+
+@pytest.mark.asyncio
+async def test_failed_non_llm_stage_exposes_error_as_output():
+    @flow.stage("different failing stage")
+    async def failing_stage(value):
+        raise ValueError(f"cannot process {value}")
+
+    job = item(); flow.queue_added(job)
+
+    async def work():
+        await failing_stage("scene")
+
+    job.handler = work
+    with pytest.raises(ValueError, match="cannot process scene"):
+        await Runner().execute(job)
+
+    graph = flow.snapshot()
+    node = next(n for n in graph["nodes"] if n["label"] == "different failing stage")
+    details = flow.detail(graph["id"], node["id"])
+    assert details["output"] == {"error": "cannot process scene"}
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("bot", ["", "   ", None])
 async def test_missing_bot_emits_warning(monkeypatch, bot):
     import server
@@ -220,10 +337,14 @@ async def test_terminal_failure_and_cancelled_queue():
     with pytest.raises(RuntimeError):
         await Runner().execute(job)
     assert flow.snapshot()["status"] == "failed"
+    failed_graph = flow.snapshot()
+    assert flow.detail(failed_graph["id"], job.id)["output"] == {"error": "execution failed"}
     cancelled = item("cancelled"); flow.queue_added(cancelled)
     cancelled.status = "cancelled"
     flow.queue_sync([cancelled])
     assert flow.snapshot()["status"] == "cancelled"
+    cancelled_graph = flow.snapshot()
+    assert flow.detail(cancelled_graph["id"], cancelled.id)["output"] == {"error": "작업 취소"}
 
 
 @pytest.mark.asyncio
@@ -255,6 +376,7 @@ async def test_cancel_before_parallel_task_starts():
     await Runner().execute(job)
     node = next(n for n in flow.snapshot()["nodes"] if n["label"] == "queued")
     assert node["status"] == "cancelled"
+    assert flow.detail(flow.snapshot()["id"], node["id"])["output"] == {"error": "대기 작업 취소"}
 
 
 @pytest.mark.asyncio

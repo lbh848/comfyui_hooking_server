@@ -4,6 +4,9 @@
     let scale = 1, previousFocus = null;
     const labels = {waiting: '대기', processing: '처리 중', completed: '완료', failed: '실패', cancelled: '취소', skipped: '생략'};
     const colors = {waiting: '#94a3b8', processing: '#60a5fa', completed: '#4ade80', failed: '#fb7185', cancelled: '#fbbf24', skipped: '#a78bfa'};
+    const executorLabels = {llm: 'LLM', comfy: 'Comfy', process: '기타 프로세스'};
+    const executorColors = {llm: '#a78bfa', comfy: '#22d3ee', process: '#94a3b8'};
+    const nodeExecutor = n => n.executor || (n.kind === 'llm' ? 'llm' : 'process');
     const element = (tag, className, text) => {
         const el = document.createElement(tag);
         if (className) el.className = className;
@@ -11,6 +14,22 @@
         return el;
     };
     const stringify = value => typeof value === 'string' ? value : JSON.stringify(value ?? '', null, 2);
+    const hasDetailValue = value => value !== null && value !== undefined && (typeof value !== 'string' || value.trim() !== '');
+    function detailOutput(n) {
+        if (hasDetailValue(n.output)) return n.output;
+        const attempts = Array.isArray(n.attempts) ? n.attempts : [];
+        let latestRawResponse;
+        for (let index = attempts.length - 1; index >= 0; index -= 1) {
+            if (attempts[index] && hasDetailValue(attempts[index].raw_response)) {
+                latestRawResponse = attempts[index].raw_response;
+                break;
+            }
+        }
+        const fallback = {};
+        if (hasDetailValue(n.error)) fallback.error = n.error;
+        if (hasDetailValue(latestRawResponse)) fallback.raw_response = latestRawResponse;
+        return Object.keys(fallback).length ? fallback : '';
+    }
     const elapsed = n => n.started_at ? `${Math.max(0, (n.ended_at || Date.now() / 1000) - n.started_at).toFixed(1)}초` : n.ended_at ? '처리 종료' : '실행 대기';
     function button(text, action) {
         const b = element('button', 'if-button', text); b.type = 'button'; b.onclick = action; return b;
@@ -23,13 +42,13 @@
             .if-modal::backdrop{background:#020617b3;backdrop-filter:blur(3px)}
             .if-header{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:18px 22px;border-bottom:1px solid #64748b44}
             .if-header h2{font-size:19px;margin:0}.if-subtitle{font-size:12px;color:var(--text2,#94a3b8);margin-top:4px;overflow-wrap:anywhere}
-            .if-actions,.if-legend{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.if-button{border:1px solid #64748b66;border-radius:8px;background:transparent;color:inherit;padding:6px 11px;cursor:pointer}.if-button:hover{background:#64748b33}.if-button:focus-visible,.if-port:focus-visible{outline:3px solid #60a5fa;outline-offset:3px}
-            .if-legend{padding:10px 22px;gap:15px;font-size:12px;border-bottom:1px solid #64748b33}.if-legend span::before{content:'●';color:var(--state);margin-right:5px}
+            .if-actions,.if-legend,.if-legend-group{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.if-button{border:1px solid #64748b66;border-radius:8px;background:transparent;color:inherit;padding:6px 11px;cursor:pointer}.if-button:hover{background:#64748b33}.if-button:focus-visible,.if-port:focus-visible{outline:3px solid #60a5fa;outline-offset:3px}
+            .if-legend{padding:10px 22px;gap:18px;font-size:12px;border-bottom:1px solid #64748b33}.if-legend-group{gap:12px}.if-legend-label{color:var(--text2,#94a3b8);font-weight:650}.if-legend-status .if-legend-item::before{content:'●';color:var(--state);margin-right:5px}.if-legend-executor .if-legend-item::before{content:'';display:inline-block;width:13px;height:13px;border-radius:4px;background:color-mix(in srgb,var(--bg2,#172033) 68%,var(--node-tint) 32%);border:1px solid var(--node-tint);margin-right:6px;vertical-align:-2px}
             .if-viewport{height:min(65vh,660px);overflow:auto;background-color:var(--bg,#0b1220);background-image:radial-gradient(#94a3b822 1px,transparent 1px);background-size:20px 20px;padding:0;position:relative}
             .if-space{position:relative}.if-canvas{position:relative;transform-origin:0 0}.if-edges{position:absolute;inset:0;overflow:visible;pointer-events:none}
-            .if-node{position:absolute;box-sizing:border-box;width:222px;height:98px;border:1px solid #64748b77;border-left:4px solid var(--state);border-radius:11px;background:var(--bg2,#172033);padding:12px 22px 10px 13px;box-shadow:0 4px 15px #0002}
+            .if-node{position:absolute;box-sizing:border-box;width:222px;height:98px;border:1px solid #64748b77;border-left:4px solid var(--state);border-radius:11px;background:color-mix(in srgb,var(--bg2,#172033) 68%,var(--node-tint,#94a3b8) 32%);padding:12px 22px 10px 13px;box-shadow:0 4px 15px #0002}
             .if-node[data-status=processing]{box-shadow:0 0 0 2px #60a5fa33,0 0 22px #60a5fa22}.if-node-title{font-weight:650;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.if-node-state{color:var(--state);font-size:12px;margin-top:6px}.if-node-model{font-size:11px;color:var(--text2,#94a3b8);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-            .if-port{position:absolute;right:-9px;top:39px;width:18px;height:18px;border-radius:50%;border:3px solid var(--bg2,#172033);background:var(--state);cursor:pointer;padding:0;box-shadow:0 0 0 1px var(--state)}
+            .if-port{position:absolute;right:-9px;top:39px;width:18px;height:18px;border-radius:50%;border:3px solid color-mix(in srgb,var(--bg2,#172033) 68%,var(--node-tint,#94a3b8) 32%);background:var(--state);cursor:pointer;padding:0;box-shadow:0 0 0 1px var(--state)}
             .if-tooltip{position:fixed;z-index:3;max-width:330px;padding:10px 13px;border-radius:9px;background:#0f172a;color:#e2e8f0;border:1px solid #64748b;box-shadow:0 8px 30px #0006;white-space:pre-wrap;pointer-events:none;font-size:12px}
             .if-empty{padding:80px 24px;text-align:center;color:var(--text2,#94a3b8)}.if-empty small{display:block;margin-top:8px}.if-footer{padding:10px 22px;font-size:12px;color:var(--text2,#94a3b8)}
             .if-detail{width:min(900px,94vw)}.if-detail-body{padding:18px 22px;max-height:70vh;overflow:auto}.if-detail-body h3{font-size:14px;margin:18px 0 8px}.if-detail-body pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#64748b14;padding:14px;border-radius:8px;font:12px/1.65 ui-monospace,monospace;margin:0;max-height:340px;overflow:auto}.if-detail-body summary{cursor:pointer;padding:8px 0}.if-meta{display:grid;grid-template-columns:110px 1fr;gap:7px 14px;overflow-wrap:anywhere}.if-meta dt{color:var(--text2,#94a3b8)}.if-meta dd{margin:0}
@@ -48,7 +67,13 @@
         actions.append(button('−', () => zoom(-0.15)), button('+', () => zoom(0.15)), resetZoom, button('닫기', () => modal.close()));
         header.append(titleBox, actions);
         const legend = element('div', 'if-legend');
-        Object.entries(labels).forEach(([key, label]) => {const s = element('span', '', label); s.style.setProperty('--state', colors[key]); legend.append(s);});
+        const statusLegend = element('div', 'if-legend-group if-legend-status');
+        statusLegend.append(element('span', 'if-legend-label', '상태'));
+        Object.entries(labels).forEach(([key, label]) => {const s = element('span', 'if-legend-item', label); s.style.setProperty('--state', colors[key]); statusLegend.append(s);});
+        const executorLegend = element('div', 'if-legend-group if-legend-executor');
+        executorLegend.append(element('span', 'if-legend-label', '처리 주체'));
+        Object.entries(executorLabels).forEach(([key, label]) => {const s = element('span', 'if-legend-item', label); s.style.setProperty('--node-tint', executorColors[key]); executorLegend.append(s);});
+        legend.append(statusLegend, executorLegend);
         modal.append(header, legend, element('div', 'if-viewport'), element('footer', 'if-footer', '출력 ●에 마우스를 올리면 요약, 클릭하면 모델·폴백·입력·출력을 확인할 수 있습니다.'));
         modal.addEventListener('close', () => { hideTooltip(); rehomeToast(); previousFocus?.focus(); });
         let ticker;
@@ -92,7 +117,8 @@
     function hideTooltip() {modal?.querySelector('.if-tooltip')?.remove();}
     function tooltip(n, port) {
         hideTooltip();
-        const tip = element('div', 'if-tooltip', `${n.label}\n${labels[n.status] || n.status} · ${elapsed(n)}\n${n.model || (n.kind === 'llm' ? '모델 배정 대기' : '서버 처리')}\n${n.phase === 'fallback' ? '폴백 사용 · ' : ''}${n.error || n.summary || '클릭하여 상세 보기'}`);
+        const executor = nodeExecutor(n);
+        const tip = element('div', 'if-tooltip', `${n.label}\n${executorLabels[executor] || executor} · ${labels[n.status] || n.status} · ${elapsed(n)}\n${n.model || (executor === 'llm' ? '모델 배정 대기' : executor === 'comfy' ? 'ComfyUI' : '서버 처리')}\n${n.phase === 'fallback' ? '폴백 사용 · ' : ''}${n.error || n.summary || '클릭하여 상세 보기'}`);
         tip.setAttribute('role', 'tooltip'); modal.append(tip);
         const r = port.getBoundingClientRect();
         tip.style.left = `${Math.max(8, Math.min(innerWidth - tip.offsetWidth - 12, r.left - 80))}px`;
@@ -156,11 +182,11 @@
         }));
         canvas.append(svg);
         nodes.forEach(n => {
-            const p = positions.get(n.id), card = element('article', 'if-node');
-            card.dataset.status = n.status; card.dataset.nodeId = n.id; card.style.setProperty('--state', colors[n.status] || colors.waiting);
+            const p = positions.get(n.id), card = element('article', 'if-node'), executor = nodeExecutor(n);
+            card.dataset.status = n.status; card.dataset.nodeId = n.id; card.dataset.executor = executor; card.style.setProperty('--state', colors[n.status] || colors.waiting); card.style.setProperty('--node-tint', executorColors[executor] || executorColors.process);
             card.style.left = `${p.x}px`; card.style.top = `${p.y}px`;
             const title = element('div', 'if-node-title', n.label); title.title = n.label;
-            card.append(title, element('div', 'if-node-state', `${labels[n.status] || n.status} · ${elapsed(n)}`), element('div', 'if-node-model', n.model || (n.kind === 'llm' ? 'LLM' : '서버 처리')));
+            card.append(title, element('div', 'if-node-state', `${labels[n.status] || n.status} · ${elapsed(n)}`), element('div', 'if-node-model', n.model || (executor === 'llm' ? 'LLM' : executor === 'comfy' ? 'ComfyUI' : '서버 처리')));
             const port = button('', () => openDetail(n.id)); port.className = 'if-port'; port.dataset.nodeId = n.id;
             port.setAttribute('aria-label', `${n.label} 출력 상세`);
             port.onmouseenter = port.onfocus = () => tooltip(n, port); port.onmouseleave = port.onblur = hideTooltip;
@@ -206,7 +232,8 @@
             const opened = [...body.querySelectorAll('details')].map(d => d.open);
             body.replaceChildren(); detailModal.querySelector('h2').textContent = n.label;
             const meta = element('dl', 'if-meta');
-            Object.entries({'상태': labels[n.status] || n.status, '모델': n.model || '해당 없음 / 배정 대기', '서비스': n.service || '—', 'LLM 슬롯': n.llm_slot || '—', '라우팅': n.phase || '—', '처리 시간': elapsed(n), '실행 ID': n.execution_id || n.id, '오류': n.error || '없음'}).forEach(([key,value]) => meta.append(element('dt', '', key), element('dd', '', value)));
+            const executor = nodeExecutor(n);
+            Object.entries({'상태': labels[n.status] || n.status, '처리 주체': executorLabels[executor] || executor, '모델': n.model || '해당 없음 / 배정 대기', '서비스': n.service || '—', 'LLM 슬롯': n.llm_slot || '—', '라우팅': n.phase || '—', '처리 시간': elapsed(n), '실행 ID': n.execution_id || n.id, '오류': n.error || '없음'}).forEach(([key,value]) => meta.append(element('dt', '', key), element('dd', '', value)));
             body.append(meta);
             const attempts = n.attempts || [];
             body.append(element('h3', '', `호출·폴백 이력 (${attempts.filter(a => a.type === 'attempt_start').length}회 시도)`));
@@ -215,7 +242,13 @@
                 const d = element('details'); d.open = opened[index] || false;
                 d.append(element('summary', '', `${a.phase === 'fallback' ? '폴백' : '주 경로'} · ${a.model || '모델 미확정'} · ${a.slot || a.llm_slot || ''} · ${a.type}`), element('pre', '', stringify(a))); body.append(d);
             });
-            for (const [title, value] of [['입력', n.input], ['출력', n.output]]) body.append(element('h3', '', title), element('pre', '', stringify(value) || '아직 출력이 없습니다.'));
+            const output = detailOutput(n);
+            for (const [title, value] of [['입력', n.input], ['출력', output]]) {
+                const emptyText = title === '출력' && ['failed', 'cancelled'].includes(n.status)
+                    ? '실패했지만 기록된 오류나 응답이 없습니다.'
+                    : '아직 출력이 없습니다.';
+                body.append(element('h3', '', title), element('pre', '', stringify(value) || emptyText));
+            }
             body.scrollTop = scroll;
         } catch (error) {console.error('[ILLUST_FLOW] 상세 조회 실패:', error); if (request === detailRequest) body.replaceChildren(element('p', '', error.message));}
     }

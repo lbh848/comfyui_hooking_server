@@ -670,7 +670,7 @@ DEFAULT_CONFIG = {
     "llm_stream": False,              # LLM1 실제 API 스트리밍
     "llm_stream_idle_timeout_seconds": 90.0,  # 0=비활성, 그 외 10~3600초
     "llm_vision_compress": False,        # LLM1 비전 이미지 webp 압축 전송 (False=PNG 호환)
-    "llm_gemini_base64": False,          # LLM1 Gemini/Vertex Base64 요청·응답 래핑
+    "llm_gemini_base64": False,          # LLM1 Gemini/Vertex Base64 요청 래핑
     "llm_pdf_prompt": False,              # LLM1 Gemini/Vertex 대화 transcript PDF 전송
     "lora_prompt_review_enabled": False, # LoRA 프롬프트 완성 후 선택적 2차 비전 검수
     # 작업별 LLM1/LLM2/LLM3 라우팅 및 메인/폴백 재시도 정책(외부 LLM 분기 탭).
@@ -3384,7 +3384,14 @@ async def fetch_real_image(
 
 
 # ─── 이미지 생성 공통 로직 ────────────────────────────────
-@illustration_flow.stage("이미지 생성")
+@illustration_flow.stage(
+    "이미지 생성",
+    executor=lambda inputs: (
+        "comfy"
+        if str(inputs.get("provider") or "comfy").strip().lower() == "comfy"
+        else "process"
+    ),
+)
 async def generate_image_with_prompt(
     positive: str,
     negative: str,
