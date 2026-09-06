@@ -37,6 +37,7 @@ def test_flow_exposes_stop_button_and_cancel_endpoint():
     assert "stopButton = button('중단', cancelCurrentFlow);" in source
     assert "fetch('/api/illustration_flow/cancel'" in source
     assert "flow?.cancel_requested" in source
+    assert "!terminal && cancelling ? '중단 중…' : '중단'" in source
     assert 'app.router.add_post("/api/illustration_flow/cancel", handle_illustration_flow_cancel)' in server_source
 
 def test_flow_layout_reserves_columns_in_pipeline_order():
@@ -509,7 +510,7 @@ async def test_cancel_request_marks_flow_and_late_children_cancelled():
 
 
 @pytest.mark.asyncio
-async def test_queue_manager_cancels_active_flow_item_without_cancelling_worker(monkeypatch):
+async def test_queue_manager_allows_active_image_to_finish_after_flow_cancel(monkeypatch):
     import queue_manager as queue_module
 
     manager = queue_module.QueueManager()
@@ -524,22 +525,59 @@ async def test_queue_manager_cancels_active_flow_item_without_cancelling_worker(
     flow.queue_added(job)
     manager.items.append(job)
     entered = asyncio.Event()
+    release = asyncio.Event()
 
-    async def execute(_item):
+    async def execute(_self, _item):
         entered.set()
-        await asyncio.Event().wait()
+        await release.wait()
+        return {"success": True, "image": "finished"}
 
-    monkeypatch.setattr(manager, "_execute_item", execute)
+    wrapped = flow.queue_execution(execute).__get__(manager, type(manager))
+    monkeypatch.setattr(manager, "_execute_item", wrapped)
     running = asyncio.create_task(manager._run_item_pipeline(job, is_gpu=False))
     await entered.wait()
+
     result = await manager.cancel_illustration_flow(flow.snapshot()["id"])
+
+    assert result["active_finishing"] == 1
+    assert result["active_cancelled"] == 0
+    assert running.done() is False
+    assert job.completion_future.done() is False
+
+    release.set()
     await asyncio.wait_for(running, timeout=1)
 
-    assert result["active_cancelled"] == 1
-    assert job.status == "cancelled"
+    assert job.status == "completed"
     assert running.cancelled() is False
     assert flow.snapshot()["status"] == "cancelled"
-    assert isinstance(job.completion_future.exception(), RuntimeError)
+    assert job.completion_future.result() == {"success": True, "image": "finished"}
+
+
+@pytest.mark.asyncio
+async def test_cancel_request_interrupts_active_llm_immediately():
+    job = item("llm-root")
+    flow.queue_added(job)
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def work():
+        await llm("CALL2-DETAIL", [], entered=entered, release=release)
+        return {"success": True}
+
+    job.handler = work
+    running = asyncio.create_task(Runner().execute(job))
+    await entered.wait()
+    run_id = flow.snapshot()["id"]
+
+    assert flow.request_cancel(run_id) is True
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(running, timeout=1)
+
+    graph = flow.snapshot()
+    assert graph["status"] == "cancelled"
+    node = next(n for n in graph["nodes"] if n["label"] == "CALL2-DETAIL")
+    assert node["status"] == "cancelled"
+    assert "중단" in node["error"] or "취소" in node["error"]
 
 
 @pytest.mark.asyncio

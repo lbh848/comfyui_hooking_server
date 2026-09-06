@@ -753,20 +753,30 @@ class QueueManager:
         reason = "사용자가 삽화 처리 흐름을 중단했습니다"
         pending_cancelled = 0
         active_cancelled = 0
+        active_finishing = 0
+        image_types = {"illustration", "character_maker_illustration"}
         for item in self.items:
             binding = getattr(item, "_illustration_flow", None)
             if not binding or binding[0].get("id") != normalized:
                 continue
             execution_task = getattr(item, "_illustration_execution_task", None)
             if execution_task is not None and not execution_task.done():
-                item._illustration_cancel_requested = True
-                item._illustration_cancel_reason = reason
-                execution_task.cancel()
-                active_cancelled += 1
-                print(
-                    f"[QUEUE:ILLUST_FLOW] 실행 중 항목 중단 요청: "
-                    f"run={normalized}, item={item.id}, status={item.status}"
-                )
+                if item.type in image_types:
+                    active_finishing += 1
+                    print(
+                        f"[QUEUE:ILLUST_FLOW] 실행 중 이미지 마무리 허용: "
+                        f"run={normalized}, item={item.id}, type={item.type}, "
+                        f"status={item.status}"
+                    )
+                else:
+                    item._illustration_cancel_requested = True
+                    item._illustration_cancel_reason = reason
+                    active_cancelled += 1
+                    print(
+                        f"[QUEUE:ILLUST_FLOW] 실행 중 비이미지 항목 협조 중단 요청: "
+                        f"run={normalized}, item={item.id}, type={item.type}, "
+                        f"status={item.status}"
+                    )
                 continue
             if item.status in ("pending", "waiting"):
                 item.status = "cancelled"
@@ -791,6 +801,7 @@ class QueueManager:
             "found": True,
             "pending_cancelled": pending_cancelled,
             "active_cancelled": active_cancelled,
+            "active_finishing": active_finishing,
         }
 
     async def cancel_one_click_run(self, run_id: str) -> int:
@@ -3383,14 +3394,25 @@ class QueueManager:
         finally:
             if warm_lease_task is not None:
                 lease_token: str | None = None
-                try:
-                    lease_token = await warm_lease_task
-                except Exception as exc:
+                if illustration_flow.cancel_requested() and not warm_lease_task.done():
                     print(
-                        "[QUEUE:MODAL_WARM] 예열 lease 작업 회수 실패: "
-                        f"item={item.id}, error={type(exc).__name__}: {exc}"
+                        "[QUEUE:MODAL_WARM] 삽화 흐름 중단으로 미완료 예열 취소: "
+                        f"item={item.id}"
                     )
-                    traceback.print_exc()
+                    warm_lease_task.cancel()
+                warm_result = await asyncio.gather(
+                    warm_lease_task,
+                    return_exceptions=True,
+                )
+                resolved = warm_result[0] if warm_result else None
+                if isinstance(resolved, BaseException):
+                    if not isinstance(resolved, asyncio.CancelledError):
+                        print(
+                            "[QUEUE:MODAL_WARM] 예열 lease 작업 회수 실패: "
+                            f"item={item.id}, error={type(resolved).__name__}: {resolved}"
+                        )
+                else:
+                    lease_token = resolved
                 if lease_token:
                     try:
                         await self.release_modal_warm_lease(

@@ -111,7 +111,7 @@
         const terminal = ['completed', 'failed', 'cancelled', 'skipped'].includes(flow?.status);
         const cancelling = Boolean(flow?.cancel_requested) || flow?.status === 'cancelling';
         stopButton.disabled = !flow || terminal || cancelling;
-        stopButton.textContent = cancelling ? '중단 중…' : '중단';
+        stopButton.textContent = !terminal && cancelling ? '중단 중…' : '중단';
     }
     async function cancelCurrentFlow() {
         const runId = flow?.id;

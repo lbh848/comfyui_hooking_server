@@ -6864,6 +6864,10 @@ async def _process_illustration_asset_reroll_queue_item(item) -> dict:
             f"[ILLUST_ORIGINAL_ASSET:REROLL] 작업 취소: "
             f"session={session_id}, prompt_id={prompt_id}"
         )
+        if prompt_id in prompts:
+            prompts[prompt_id]["status"] = "completed"
+            prompts[prompt_id]["outputs"] = {"images": []}
+            prompts[prompt_id]["image_bytes"] = None
         if session is not None and session_snapshot is not None:
             session.clear()
             session.update(copy.deepcopy(session_snapshot))
@@ -6969,6 +6973,7 @@ async def process_illustration_context_queue_item(item) -> dict:
 
     child_pairs = []
     all_child_pairs = []
+    child_descriptors = {}
     early_descriptor_slots = []
     early_dispatch = False
     early_keyvis_pair = None
@@ -7168,6 +7173,7 @@ async def process_illustration_context_queue_item(item) -> dict:
         queue_priority=None,
         llm_trace=None,
     ):
+        illustration_flow.raise_if_cancel_requested()
         child_provider = illustration_provider_snapshot
         hybrid_prompt_formats = None
         if child_provider == "hybrid":
@@ -7262,6 +7268,7 @@ async def process_illustration_context_queue_item(item) -> dict:
             raise
         pair = (child_id, child_item)
         all_child_pairs.append(pair)
+        child_descriptors[child_id] = copy.deepcopy(descriptor)
         print(
             f"[ILLUST_CONTEXT] 하위 이미지 분배: slot={descriptor.get('slot')}, "
             f"index={slot_index}/{total_count}, provider={child_provider}, "
@@ -7329,6 +7336,121 @@ async def process_illustration_context_queue_item(item) -> dict:
             traceback.print_exc()
             _discard_deferred_illustration_prompt(child_id, f"후처리 실패 - {e}")
             return None, f"후처리 실패 - {e}", False
+
+    async def _finish_cancelled_context(reason: str) -> None:
+        nonlocal history_finalize_attempted, original_asset_result
+        print(
+            f"[ILLUST_CONTEXT] 중단 정리 시작: session={session_id}, "
+            f"children={len(all_child_pairs)}"
+        )
+        if history_plan is not None and not history_finalize_attempted:
+            history_finalize_attempted = True
+            try:
+                illustration_chat_history.finalize_history(history_plan, None, reason)
+            except Exception as history_error:
+                print(
+                    f"[ILLUST_HISTORY] 중단 파이프라인 원문 저장 실패: "
+                    f"session={session_id}, error={history_error}"
+                )
+                traceback.print_exc()
+
+        successful_items = []
+        successful_images = []
+        failures = []
+        for child_id, child_item in list(all_child_pairs):
+            status = str(getattr(child_item, "status", "") or "")
+            descriptor = copy.deepcopy(child_descriptors.get(child_id) or {})
+            if status not in {"processing", "completed"}:
+                _discard_deferred_illustration_prompt(child_id, reason)
+                continue
+            try:
+                image_bytes, fail_reason, cancelled = await _collect_final_child(
+                    child_id, child_item, descriptor
+                )
+            except Exception as child_error:
+                print(
+                    f"[ILLUST_CONTEXT] 중단 중 실행 이미지 회수 실패: "
+                    f"child={child_id}, status={status}, error={child_error}"
+                )
+                traceback.print_exc()
+                image_bytes = None
+                fail_reason = str(child_error)
+                cancelled = False
+            if image_bytes and not cancelled:
+                descriptor["animated"] = _detect_illustration_bridge_image_animation(
+                    image_bytes
+                )
+                successful_items.append(descriptor)
+                successful_images.append(image_bytes)
+            else:
+                _discard_deferred_illustration_prompt(child_id, reason)
+                if descriptor:
+                    failures.append({
+                        "slot": descriptor.get("slot"),
+                        "error": fail_reason or reason,
+                    })
+
+        if original_asset_task is not None and original_asset_task.done():
+            try:
+                resolved_asset = original_asset_task.result()
+                if isinstance(resolved_asset, dict):
+                    original_asset_result = resolved_asset
+            except BaseException as asset_error:
+                if not isinstance(asset_error, asyncio.CancelledError):
+                    print(
+                        f"[ILLUST_ORIGINAL_ASSET] 중단 시 완료 결과 회수 실패: "
+                        f"session={session_id}, error={asset_error}"
+                    )
+
+        successful_items.extend(original_asset_result.get("items") or [])
+        successful_images.extend(original_asset_result.get("images") or [])
+        failures.extend(original_asset_result.get("failures") or [])
+        requested_total = (
+            max(len(raw_items), len(child_descriptors))
+            + int(original_asset_result.get("requested_count") or 0)
+        )
+        if successful_images:
+            try:
+                await _publish_session_results(
+                    successful_items,
+                    successful_images,
+                    max(1, requested_total),
+                    failures,
+                )
+            except Exception as publish_error:
+                print(
+                    f"[ILLUST_CONTEXT] 중단 부분 결과 게시 실패: "
+                    f"session={session_id}, error={publish_error}"
+                )
+                traceback.print_exc()
+                illustration_context_pipeline.set_session_error(session_id, reason)
+                if original_prompt_id in prompts:
+                    prompts[original_prompt_id]["status"] = "completed"
+                    prompts[original_prompt_id]["outputs"] = {"images": []}
+                    prompts[original_prompt_id]["image_bytes"] = None
+        else:
+            illustration_context_pipeline.set_session_error(session_id, reason)
+            if original_prompt_id in prompts:
+                prompts[original_prompt_id]["status"] = "completed"
+                prompts[original_prompt_id]["outputs"] = {"images": []}
+                prompts[original_prompt_id]["image_bytes"] = None
+
+        try:
+            await stream_notify({
+                "type": "cancelled",
+                "call_name": "PIPELINE",
+                "error": reason,
+            })
+        except Exception as notify_error:
+            print(
+                f"[ILLUST_CONTEXT] 중단 알림 실패: session={session_id}, "
+                f"error={notify_error}"
+            )
+            traceback.print_exc()
+        print(
+            f"[ILLUST_CONTEXT] 중단 정리 완료: session={session_id}, "
+            f"returned_images={len(successful_images)}"
+        )
 
     try:
         if illustration_enabled or original_asset_enabled:
@@ -7402,9 +7524,11 @@ async def process_illustration_context_queue_item(item) -> dict:
                 profile_result,
                 effective_visual_profiles,
             )
+            illustration_flow.raise_if_cancel_requested()
         pipeline_payload = payload
 
         async def _run_original_asset_selection(used_slots: set[int] | None = None):
+            illustration_flow.raise_if_cancel_requested()
             preused_slots = set(used_slots or set())
             try:
                 return await _select_original_asset_outputs(
@@ -7536,6 +7660,7 @@ async def process_illustration_context_queue_item(item) -> dict:
 
             async def _on_keyvis_ready(keyvis_built: dict):
                 nonlocal early_dispatch, early_keyvis_pair
+                illustration_flow.raise_if_cancel_requested()
                 keyvis_items = keyvis_built.get("items") or []
                 if len(keyvis_items) != 1:
                     print(
@@ -7585,6 +7710,7 @@ async def process_illustration_context_queue_item(item) -> dict:
 
             async def _on_call2_plan_ready(plan_built: dict):
                 nonlocal original_asset_task
+                illustration_flow.raise_if_cancel_requested()
                 if not original_asset_enabled or original_asset_task is not None:
                     return
                 used_slots = {
@@ -7602,6 +7728,7 @@ async def process_illustration_context_queue_item(item) -> dict:
 
             async def _on_call2_ready(call2_built: dict):
                 nonlocal child_pairs, early_dispatch, early_descriptor_slots
+                illustration_flow.raise_if_cancel_requested()
                 preliminary_items = call2_built.get("items") or []
                 if not preliminary_items:
                     print(f"[ILLUST_CONTEXT] CALL2 조기 등록 장면이 비어 있음: session={session_id}")
@@ -7667,6 +7794,7 @@ async def process_illustration_context_queue_item(item) -> dict:
                     pre_resolved_profile_output=profile_output,
                     pre_resolved_profile_result=profile_result,
                 )
+                illustration_flow.raise_if_cancel_requested()
             else:
                 print(
                     f"[ILLUST_CONTEXT] 일반 삽화 출력 토글로 CALL1/2/3·Comfy 생성 생략: "
@@ -7746,6 +7874,7 @@ async def process_illustration_context_queue_item(item) -> dict:
                 _cid = _pair[0]
                 if _cid in prompts and isinstance(raw_items[_i], dict):
                     prompts[_cid]["_llm_final_result"] = _build_llm_final_result(raw_items[_i])
+                    child_descriptors[_cid] = copy.deepcopy(raw_items[_i])
             if early_descriptor_slots != final_slots:
                 print(
                     f"[ILLUST_CONTEXT] 조기 등록/최종 슬롯 순서 불일치: "
@@ -7755,6 +7884,7 @@ async def process_illustration_context_queue_item(item) -> dict:
 
             # CALL3 뒤 레이아웃 계산이 끝난 다중 장면만 priority=1로 등록한다.
             # 레이아웃 실패는 다른 슬롯을 취소하지 않고 해당 자리의 최종 실패로 남긴다.
+            illustration_flow.raise_if_cancel_requested()
             for index, pair in enumerate(child_pairs, start=1):
                 if pair is not None:
                     continue
@@ -7796,6 +7926,7 @@ async def process_illustration_context_queue_item(item) -> dict:
             raise RuntimeError("일반 삽화와 원본 에셋 결과가 모두 비어 있습니다")
 
         if not early_dispatch:
+            illustration_flow.raise_if_cancel_requested()
             await progress(70, "enqueue", f"이미지 {len(raw_items)}장 큐 등록", 0, len(raw_items))
             for index, descriptor in enumerate(raw_items, start=1):
                 child_pairs.append(await _enqueue_child(
@@ -7865,7 +7996,14 @@ async def process_illustration_context_queue_item(item) -> dict:
             for finished in asyncio.as_completed(first_pass_tasks):
                 idx, image_bytes, fail_reason, cancelled = await finished
                 if cancelled:
-                    # 사용자가 직접 큐를 취소한 경우 - 재시도/폴백 없이 세션 전체를 취소한다.
+                    if illustration_flow.cancel_requested():
+                        failures.append({
+                            "slot": raw_items[idx].get("slot"),
+                            "error": fail_reason or "사용자가 삽화 처리 흐름을 중단했습니다",
+                        })
+                        completed += 1
+                        continue
+                    # 개별 큐를 직접 취소한 경우 - 재시도/폴백 없이 세션 전체를 취소한다.
                     for task in first_pass_tasks:
                         if not task.done():
                             task.cancel()
@@ -7896,6 +8034,7 @@ async def process_illustration_context_queue_item(item) -> dict:
                 await asyncio.gather(*first_pass_tasks, return_exceptions=True)
 
         # ─── 2차: 1차 실패 슬롯을 새 하위 큐 아이템으로 1회 재등록(이미지 교체 시도).
+        illustration_flow.raise_if_cancel_requested()
         if to_retry:
             print(f"[ILLUST_CONTEXT] 1차 실패 {len(to_retry)}건 재시도 시작: session={session_id}")
             await progress(
@@ -7971,6 +8110,7 @@ async def process_illustration_context_queue_item(item) -> dict:
                 if retry_tasks:
                     await asyncio.gather(*retry_tasks, return_exceptions=True)
 
+        illustration_flow.raise_if_cancel_requested()
         if original_asset_task is not None:
             try:
                 original_asset_result = await illustration_flow.join(original_asset_task)
@@ -8007,12 +8147,17 @@ async def process_illustration_context_queue_item(item) -> dict:
         successful_images.extend(original_asset_result["images"])
         failures.extend(original_asset_result["failures"])
         requested_total = total + int(original_asset_result["requested_count"])
+        illustration_flow.raise_if_cancel_requested()
         return await _publish_session_results(
             successful_items,
             successful_images,
             requested_total,
             failures,
         )
+    except asyncio.CancelledError:
+        reason = "사용자가 삽화 처리 흐름을 중단했습니다"
+        await _finish_cancelled_context(reason)
+        raise
     except Exception as e:
         print(f"[ILLUST_CONTEXT] 세션 처리 실패: session={session_id}, error={e}")
         traceback.print_exc()
@@ -16766,10 +16911,16 @@ async def process_illustration_easy_edit_queue_item(item) -> dict:
                 f"reason={identity_capability.get('reason') or '지원하지 않는 형식'}"
             )
 
-        edit_response = await handle_api_llm_edit_prompt(
-            None,
-            _body=edit_body,
-        )
+        llm_registration = illustration_flow.register_active_llm_task()
+        try:
+            illustration_flow.raise_if_cancel_requested()
+            edit_response = await handle_api_llm_edit_prompt(
+                None,
+                _body=edit_body,
+            )
+        finally:
+            illustration_flow.unregister_active_llm_task(llm_registration)
+        illustration_flow.raise_if_cancel_requested()
         edited = _internal_json_response_payload(edit_response, "편하게 수정")
         modified_positive = str(edited.get("positive") or "")
         modified_negative = str(edited.get("negative") or "")
@@ -16824,6 +16975,23 @@ async def process_illustration_easy_edit_queue_item(item) -> dict:
             "slot": slot,
             "backup_name": new_backup_name,
         }
+    except asyncio.CancelledError:
+        reason = "사용자가 삽화 처리 흐름을 중단했습니다"
+        print(
+            f"[ILLUST_CONTEXT:EDIT] 사용자 중단: session={session_id}, slot={slot}, "
+            f"prompt_id={original_prompt_id}"
+        )
+        illustration_context_pipeline.set_session_regenerate_error(
+            session_id,
+            slot,
+            reason,
+        )
+        prompt_entry = prompts.get(original_prompt_id)
+        if isinstance(prompt_entry, dict):
+            prompt_entry["status"] = "completed"
+            prompt_entry["outputs"] = {"images": []}
+            prompt_entry["image_bytes"] = None
+        raise
     except Exception as exc:
         print(
             f"[ILLUST_CONTEXT:EDIT] 실패: session={session_id}, slot={slot}, "

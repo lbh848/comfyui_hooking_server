@@ -28,7 +28,7 @@ def snapshot(run=None):
     run = run or _latest
     if run is None:
         return None
-    return {key: copy.deepcopy(value) for key, value in run.items() if key not in {"nodes", "publish_pending"}} | {
+    return {key: copy.deepcopy(value) for key, value in run.items() if key not in {"nodes", "publish_pending", "_active_llm_tasks"}} | {
         "nodes": [{k: copy.deepcopy(v) for k, v in node.items()
                    if k not in {"input", "output", "attempts"}} for node in run["nodes"].values()]
     }
@@ -57,9 +57,49 @@ def request_cancel(run_id):
         return False
     _latest["cancel_requested"] = True
     _latest["status"] = "cancelling"
-    print(f"[ILLUST_FLOW] 사용자 중단 요청 등록: run={normalized}")
+    active_llm_tasks = [
+        task
+        for task in list(_latest.get("_active_llm_tasks") or ())
+        if task is not None and not task.done()
+    ]
+    for task in active_llm_tasks:
+        task.cancel()
+    print(
+        f"[ILLUST_FLOW] 사용자 중단 요청 등록: run={normalized}, "
+        f"active_llm_cancelled={len(active_llm_tasks)}"
+    )
     changed(_latest)
     return True
+
+
+def cancel_requested(run=None):
+    current = run if run is not None else _run.get()
+    return bool(current and current.get("cancel_requested"))
+
+
+def raise_if_cancel_requested(run=None):
+    if cancel_requested(run):
+        raise asyncio.CancelledError("사용자가 삽화 처리 흐름을 중단했습니다")
+
+
+def register_active_llm_task(task=None):
+    run = _run.get()
+    if run is None:
+        return None
+    task = task or asyncio.current_task()
+    if task is None:
+        return None
+    run.setdefault("_active_llm_tasks", set()).add(task)
+    return run, task
+
+
+def unregister_active_llm_task(registration):
+    if not registration:
+        return
+    run, task = registration
+    active = run.get("_active_llm_tasks")
+    if active is not None:
+        active.discard(task)
 
 
 def changed(run):
@@ -209,7 +249,8 @@ def queue_added(item):
     if is_root:
         run = {"id": uuid.uuid4().hex, "label": item.label, "status": "waiting",
                "cancel_requested": False, "created_at": time.time(),
-               "updated_at": time.time(), "revision": 0, "nodes": {}}
+               "updated_at": time.time(), "revision": 0, "nodes": {},
+               "_active_llm_tasks": set()}
         _latest = run
     provider = str((item.params or {}).get("provider") or "comfy").strip().lower()
     executor = "process" if is_root else ("comfy" if provider == "comfy" else "process")
@@ -293,11 +334,16 @@ def queue_execution(fn):
         try:
             result = await fn(self, item)
             failed = isinstance(result, dict) and result.get("success") is False
-            status = "failed" if failed else "completed"
+            cancelled = bool(root and run.get("cancel_requested"))
+            status = "cancelled" if cancelled else ("failed" if failed else "completed")
             if failed:
                 print(f"[ILLUST_FLOW] 큐 결과 실패: node={node_id}, result={result}")
             update(run, node_id, status=status, output=serializable(result),
-                   error=str(result.get("error") or "작업 실패") if failed else "")
+                   error=(
+                       "사용자가 삽화 처리 흐름을 중단했습니다"
+                       if cancelled
+                       else str(result.get("error") or "작업 실패") if failed else ""
+                   ))
             if root:
                 depended = {d for n in run["nodes"].values() for d in n["dependencies"]}
                 leaves = [n for n in run["nodes"] if n not in depended]
@@ -343,7 +389,9 @@ def llm_call(fn):
         else:
             node_id = add_node(run, call_name, dependencies=_frontier.get(), kind="llm", executor="llm", input=messages)
         token = _node.set(node_id)
+        registration = register_active_llm_task()
         try:
+            raise_if_cancel_requested(run)
             result = await fn(call_name, messages, *args, **kwargs)
             update(run, node_id, status="completed", output=result, summary=str(result)[:220])
             return result
@@ -359,6 +407,7 @@ def llm_call(fn):
                    output=_failure_output(run["nodes"][node_id], reason))
             raise
         finally:
+            unregister_active_llm_task(registration)
             _node.reset(token)
             _frontier.set((node_id,))
     return wrapped
