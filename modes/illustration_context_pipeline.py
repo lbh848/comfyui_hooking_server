@@ -9274,6 +9274,8 @@ async def _call_pipeline_llm(
         "finish_reason",
         "finish_message",
         "max_output_tokens",
+        "pdf_tokens_before",
+        "pdf_pages_after",
     )
 
     def _provider_details() -> dict:

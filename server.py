@@ -8085,6 +8085,28 @@ async def handle_illustration_flow(request: web.Request) -> web.Response:
     return web.json_response({"flow": illustration_flow.snapshot()}, headers={"Cache-Control": "no-store"})
 
 
+async def handle_illustration_flow_cancel(request: web.Request) -> web.Response:
+    try:
+        body = await request.json()
+        run_id = str((body or {}).get("run") or "").strip()
+        if not run_id:
+            print(f"[ILLUST_FLOW] 중단 API 실패: body={body!r}")
+            return web.json_response({"success": False, "error": "run id가 필요합니다"}, status=400)
+        result = await queue_manager.cancel_illustration_flow(run_id)
+        if not result.get("found"):
+            print(f"[ILLUST_FLOW] 중단 API 대상 없음: run={run_id}")
+            return web.json_response({"success": False, "error": "실행 중인 흐름을 찾을 수 없습니다"}, status=404)
+        return web.json_response({
+            "success": True,
+            **result,
+            "flow": illustration_flow.snapshot(),
+        }, headers={"Cache-Control": "no-store"})
+    except Exception as exc:
+        print(f"[ILLUST_FLOW] 중단 API 실패: error={type(exc).__name__}: {exc}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(exc)}, status=500)
+
+
 async def handle_illustration_flow_script(request: web.Request) -> web.Response:
     return web.FileResponse(os.path.join(FRONTEND_DIR, "illustration_flow.js"),
                             headers={"Cache-Control": "no-cache"})
@@ -9279,6 +9301,9 @@ async def handle_api_llm_test_stream(request: web.Request) -> web.StreamResponse
                 history_record["ttft"] = round(
                     float(event_data.get("ttft")), 3
                 )
+            for key in ("pdf_tokens_before", "pdf_pages_after"):
+                if event_data.get(key) is not None:
+                    history_record[key] = int(event_data[key])
         elif event_type in ("error", "cancelled"):
             terminal_error = str(
                 event_data.get("error")
@@ -9423,6 +9448,8 @@ async def handle_api_llm_test_stream(request: web.Request) -> web.StreamResponse
                             "elapsed": elapsed,
                             "tps": tps,
                             "ttft": tracked_usage.get("ttft"),
+                            "pdf_tokens_before": tracked_usage.get("pdf_tokens_before"),
+                            "pdf_pages_after": tracked_usage.get("pdf_pages_after"),
                         },
                         notify_live=False,
                     )
@@ -20310,6 +20337,7 @@ app.router.add_get("/api/restore_manual/characters", handle_api_restore_manual_c
 # 프론트엔드
 app.router.add_get("/api/frontend_ws", handle_frontend_ws)
 app.router.add_get("/api/illustration_flow", handle_illustration_flow)
+app.router.add_post("/api/illustration_flow/cancel", handle_illustration_flow_cancel)
 app.router.add_get("/illustration_flow.js", handle_illustration_flow_script)
 app.router.add_get("/api/config", handle_api_config)
 app.router.add_post("/api/config", handle_api_config)

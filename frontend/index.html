@@ -45453,6 +45453,16 @@
             return { label: 'OK', background: 'rgba(76,175,80,0.18)', color: '#5cd5a0', isError: false };
         }
 
+        function _formatLighbdInputTokens(record) {
+            const promptTokens = record?.prompt_tokens ?? 0;
+            const pages = record?.pdf_pages_after;
+            if (pages == null) return `입력 ${promptTokens}`;
+            const before = record?.pdf_tokens_before == null
+                ? '측정 실패'
+                : Number(record.pdf_tokens_before).toLocaleString('ko-KR');
+            return `입력 ${promptTokens} (PDF 변환전: ${before} · 변환후: ${pages}장)`;
+        }
+
         function renderLighbdHistoryList(records) {
             const list = document.getElementById('lighbd-history-list');
             if (!list) return;
@@ -45467,7 +45477,7 @@
                 const statusMeta = getLighbdHistoryStatusMeta(r.status);
                 const isError = statusMeta.isError;
                 const outputText = r.output || '';
-                const stats = `입력 ${r.prompt_tokens ?? 0} · 출력 ${r.completion_tokens ?? 0} · ${r.elapsed ?? 0}s · ${r.tps ?? 0} t/s` + (r.ttft ? ` · TTFT ${r.ttft}s` : '');
+                const stats = `${_formatLighbdInputTokens(r)} · 출력 ${r.completion_tokens ?? 0} · ${r.elapsed ?? 0}s · ${r.tps ?? 0} t/s` + (r.ttft ? ` · TTFT ${r.ttft}s` : '');
                 const callBadge = r.call_name
                     ? `<span style="font-size:0.7rem; padding:1px 6px; border-radius:3px; background:rgba(0,188,212,0.16); color:#4dd0e1; font-weight:600;">${escapeHtml(r.call_name)}</span>`
                     : '';
@@ -45576,7 +45586,7 @@
                         <button class="lighbd-modal-close" onclick="closeLighbdHistoryDetail()" aria-label="닫기">✕</button>
                     </div>
                     <div class="lighbd-detail-stats">
-                        <div class="lighbd-detail-stat"><span>입력 토큰</span><strong>${escapeHtml(String(record.prompt_tokens ?? 0))}</strong></div>
+                        <div class="lighbd-detail-stat"><span>입력 토큰</span><strong>${escapeHtml(_formatLighbdInputTokens(record).replace(/^입력\s*/, ''))}</strong></div>
                         <div class="lighbd-detail-stat"><span>완료 토큰</span><strong>${escapeHtml(String(record.completion_tokens ?? 0))}</strong></div>
                         <div class="lighbd-detail-stat"><span>경과 시간</span><strong>${escapeHtml(String(record.elapsed ?? 0))}s</strong></div>
                         <div class="lighbd-detail-stat"><span>처리 속도</span><strong>${escapeHtml(String(record.tps ?? 0))} t/s</strong></div>
@@ -45871,7 +45881,7 @@
             const errorText = record.error || '';
             const rawOutput = record.output || '';
             const callName = record.call_name || record.task_key || 'LLM 호출';
-            const stats = `입력 ${record.prompt_tokens ?? 0} · 출력 ${record.completion_tokens ?? 0} · 한도 ${record.max_output_tokens ?? '-'} · 종료 ${record.finish_reason || '-'} · ${record.elapsed ?? 0}s · ${record.tps ?? 0} t/s`;
+            const stats = `${_formatLighbdInputTokens(record)} · 출력 ${record.completion_tokens ?? 0} · 한도 ${record.max_output_tokens ?? '-'} · 종료 ${record.finish_reason || '-'} · ${record.elapsed ?? 0}s · ${record.tps ?? 0} t/s`;
             const providerSection = (record.finish_reason || record.finish_message || record.max_output_tokens != null)
                 ? `<section class="lighbd-detail-section" style="border:none; border-top:1px solid var(--border); border-radius:0;">
                             <div class="lighbd-detail-section-title">응답 종료 정보</div>
@@ -45974,7 +45984,10 @@
                 lines.push(`- 상태: ${status}`);
                 if (r.model) lines.push(`- 모델: ${r.model}`);
                 if (r.phase || r.llm_slot) lines.push(`- 라우팅: ${r.phase || '-'} / ${r.llm_slot || '-'}`);
-                lines.push(`- 입력 토큰: ${r.prompt_tokens ?? 0} · 출력 토큰: ${r.completion_tokens ?? 0}`);
+                const pdfTokenSuffix = r.pdf_pages_after == null
+                    ? ''
+                    : ` (PDF 변환전: ${r.pdf_tokens_before == null ? '측정 실패' : Number(r.pdf_tokens_before).toLocaleString('ko-KR')} · 변환후: ${r.pdf_pages_after}장)`;
+                lines.push(`- 입력 토큰: ${r.prompt_tokens ?? 0}${pdfTokenSuffix} · 출력 토큰: ${r.completion_tokens ?? 0}`);
                 lines.push(`- 요청 출력 한도: ${r.max_output_tokens ?? '-'}`);
                 if (r.finish_reason) lines.push(`- 종료 사유: ${r.finish_reason}`);
                 if (r.finish_message) lines.push(`- 종료 상세: ${r.finish_message}`);

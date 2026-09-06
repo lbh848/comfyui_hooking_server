@@ -741,10 +741,10 @@ def _gemini_base64_protocol(service: str) -> str:
     return protocol
 
 
-def _prepare_gemini_pdf_messages(messages: list, service: str) -> list:
+def _prepare_gemini_pdf_messages(messages: list, service: str) -> tuple[list, dict]:
     """PDF 토글 조합에 맞춰 transcript와 별도 이미지 파트를 만든다."""
     if not _gemini_pdf_enabled(service):
-        return messages
+        return messages, {}
     use_base64 = _gemini_base64_enabled(service)
     transformed, metadata = prepare_pdf_prompt_messages(
         messages,
@@ -760,7 +760,163 @@ def _prepare_gemini_pdf_messages(messages: list, service: str) -> list:
         f"pdf_bytes={metadata['pdf_bytes']}, images={metadata['image_count']}, "
         f"base64_transcript={metadata['base64_transcript']}"
     )
-    return transformed
+    return transformed, metadata
+
+
+def _build_genai_count_contents(messages: list):
+    """원본 대화의 role/미디어를 보존한 google-genai countTokens 입력을 만든다."""
+    from google.genai import types
+    import base64 as _b64
+
+    contents = []
+    system_chunks = []
+    for message in messages or []:
+        if not isinstance(message, dict):
+            continue
+        role = str(message.get("role") or "user")
+        content = message.get("content", "")
+        if role == "system":
+            text = content if isinstance(content, str) else _msg_text(content)
+            if text:
+                system_chunks.append(text)
+            continue
+
+        parts = []
+        if isinstance(content, str):
+            if content:
+                parts.append(types.Part.from_text(text=content))
+        elif isinstance(content, list):
+            for part in content:
+                if not isinstance(part, dict):
+                    continue
+                part_type = part.get("type")
+                if part_type == "text":
+                    text = part.get("text", "")
+                    if text:
+                        parts.append(types.Part.from_text(text=text))
+                elif part_type == "image_url":
+                    url = (part.get("image_url") or {}).get("url", "")
+                    mime, b64 = _parse_data_url(url)
+                    if b64:
+                        parts.append(
+                            types.Part.from_bytes(
+                                data=_b64.b64decode(b64),
+                                mime_type=mime,
+                            )
+                        )
+                elif part_type == "file":
+                    file_data = (part.get("file") or {}).get("file_data", "")
+                    mime, b64 = _parse_data_url(file_data)
+                    if b64:
+                        parts.append(
+                            types.Part.from_bytes(
+                                data=_b64.b64decode(b64),
+                                mime_type=mime,
+                            )
+                        )
+        if parts:
+            contents.append(
+                types.Content(
+                    role="model" if role == "assistant" else "user",
+                    parts=parts,
+                )
+            )
+
+    system_instruction = "\n\n".join(system_chunks) if system_chunks else None
+    return contents, system_instruction
+
+
+async def _count_gemini_original_tokens(
+    messages: list,
+    service: str,
+    model: str,
+) -> int | None:
+    """PDF 변환 전 원본 입력을 native Gemini tokenizer로 계측한다."""
+    started = time.time()
+    try:
+        if service == "vertex":
+            _init_vertex()
+            if not _vertex_initialized or _vertex_client is None:
+                raise RuntimeError("Vertex AI 초기화 실패")
+            from google.genai import types
+
+            contents, system_instruction = _build_genai_count_contents(messages)
+            count_config = (
+                types.CountTokensConfig(system_instruction=system_instruction)
+                if system_instruction
+                else None
+            )
+            actual_model = model.split("/")[0]
+            response = await _vertex_client.aio.models.count_tokens(
+                model=actual_model,
+                contents=contents,
+                config=count_config,
+            )
+            total_tokens = _normalize_actual_usage_count(
+                getattr(response, "total_tokens", None),
+                provider="vertex-countTokens",
+                field="totalTokens",
+            )
+        elif service == "gemini":
+            api_key = _current_config.get("llm_api_key", "")
+            if not api_key:
+                raise RuntimeError("gemini: llm_api_key 없음")
+            base = (
+                _current_config.get("llm_url")
+                or "https://generativelanguage.googleapis.com"
+            )
+            url = (
+                f"{base.rstrip('/')}/v1beta/models/{model}:countTokens?key={api_key}"
+            )
+            generate_request = _build_gemini_request_body(messages, model)
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                response = await client.post(
+                    url,
+                    json={"generateContentRequest": generate_request},
+                    headers={"Content-Type": "application/json"},
+                )
+            if response.status_code != 200:
+                raise RuntimeError(
+                    f"Gemini countTokens {response.status_code}: {response.text[:500]}"
+                )
+            total_tokens = _normalize_actual_usage_count(
+                response.json().get("totalTokens"),
+                provider="gemini-countTokens",
+                field="totalTokens",
+            )
+        else:
+            return None
+
+        _llm_log(
+            "[LLM_PDF_PROMPT] 변환 전 countTokens 완료: "
+            f"service={service}, model={model}, tokens={total_tokens}, "
+            f"elapsed={time.time() - started:.2f}s"
+        )
+        return total_tokens
+    except Exception as e:
+        print(
+            "[LLM_PDF_PROMPT] 변환 전 countTokens 실패: "
+            f"service={service}, model={model}, messages={len(messages or [])}, "
+            f"error={type(e).__name__}: {e}"
+        )
+        traceback.print_exc()
+        return None
+
+
+def _store_pdf_prompt_metrics(
+    pdf_metadata: dict,
+    pdf_tokens_before: int | None,
+) -> dict:
+    """PDF 계측값을 현재 provider usage sink에 기록하고 이벤트용 dict를 반환한다."""
+    if not pdf_metadata:
+        return {}
+    metrics = {"pdf_pages_after": int(pdf_metadata.get("page_count") or 0)}
+    if pdf_tokens_before is not None:
+        metrics["pdf_tokens_before"] = int(pdf_tokens_before)
+    sink = _usage_sink_ctx.get()
+    if sink is not None:
+        sink.update(metrics)
+    return metrics
 
 
 def _base64_encode_text(text: str) -> str:
@@ -2577,7 +2733,7 @@ async def _dispatch(messages: list, service: str, model: str) -> str:
     """현재 LLM 슬롯의 실제 API 동시 요청 상한을 적용해 호출한다."""
     use_base64 = _gemini_base64_enabled(service)
     try:
-        pdf_messages = _prepare_gemini_pdf_messages(messages, service)
+        pdf_messages, pdf_metadata = _prepare_gemini_pdf_messages(messages, service)
     except Exception as e:
         print(
             "[LLM_PDF_PROMPT] 동기 요청 PDF 변환 실패: "
@@ -2604,7 +2760,22 @@ async def _dispatch(messages: list, service: str, model: str) -> str:
         )
     try:
         async with _limit_llm_request():
-            result = await _dispatch_unlimited(request_messages, service, model)
+            count_task = (
+                asyncio.create_task(
+                    _count_gemini_original_tokens(messages, service, model)
+                )
+                if pdf_metadata
+                else None
+            )
+            try:
+                result = await _dispatch_unlimited(request_messages, service, model)
+            finally:
+                if count_task is not None:
+                    pdf_tokens_before = await count_task
+                    _store_pdf_prompt_metrics(
+                        pdf_metadata,
+                        pdf_tokens_before,
+                    )
         return _decode_gemini_base64_response(result) if use_base64 else result
     finally:
         if format_token is not None:
@@ -4070,6 +4241,8 @@ def _apply_stream_outcome_usage(outcome: dict) -> None:
         "finish_reason",
         "finish_message",
         "max_output_tokens",
+        "pdf_tokens_before",
+        "pdf_pages_after",
     ):
         if snapshot.get(key) is not None:
             sink[key] = snapshot[key]
@@ -4519,6 +4692,8 @@ async def _consume_stream_attempt(
                     ("finish_reason", "finish_reason"),
                     ("finish_message", "finish_message"),
                     ("max_output_tokens", "max_output_tokens"),
+                    ("pdf_tokens_before", "pdf_tokens_before"),
+                    ("pdf_pages_after", "pdf_pages_after"),
                 ):
                     if event.get(source_key) is not None:
                         record[target_key] = event[source_key]
@@ -5822,7 +5997,7 @@ async def _dispatch_stream(messages: list, service: str, model: str):
     current_slot = _normalize_llm_slot(_llm_slot_ctx.get())
     use_base64 = _gemini_base64_enabled(service)
     try:
-        pdf_messages = _prepare_gemini_pdf_messages(messages, service)
+        pdf_messages, pdf_metadata = _prepare_gemini_pdf_messages(messages, service)
     except Exception as e:
         print(
             "[LLM_PDF_PROMPT] 스트림 요청 PDF 변환 실패: "
@@ -5846,6 +6021,27 @@ async def _dispatch_stream(messages: list, service: str, model: str):
     decoder = _GeminiBase64StreamDecoder() if use_base64 else None
 
     async def _iter_events():
+        count_task = (
+            asyncio.create_task(
+                _count_gemini_original_tokens(messages, service, model)
+            )
+            if pdf_metadata
+            else None
+        )
+        metrics = None
+
+        async def _metrics():
+            nonlocal metrics
+            if metrics is None:
+                pdf_tokens_before = (
+                    await count_task if count_task is not None else None
+                )
+                metrics = _store_pdf_prompt_metrics(
+                    pdf_metadata,
+                    pdf_tokens_before,
+                )
+            return metrics
+
         upstream = _dispatch_stream_unlimited(
             request_messages, service, model
         ).__aiter__()
@@ -5864,17 +6060,23 @@ async def _dispatch_stream(messages: list, service: str, model: str):
                     if format_token is not None:
                         _response_format_ctx.reset(format_token)
 
-                if decoder is None:
-                    yield event
-                    continue
                 transformed = dict(event)
                 event_type = transformed.get("type")
-                if event_type == "delta":
-                    transformed["text"] = decoder.feed(transformed.get("text", ""))
-                elif event_type == "done":
-                    transformed["text"] = decoder.finish(transformed.get("text", ""))
+                if decoder is not None:
+                    if event_type == "delta":
+                        transformed["text"] = decoder.feed(
+                            transformed.get("text", "")
+                        )
+                    elif event_type == "done":
+                        transformed["text"] = decoder.finish(
+                            transformed.get("text", "")
+                        )
+                if event_type in {"done", "error"}:
+                    transformed.update(await _metrics())
                 yield transformed
         finally:
+            if count_task is not None and metrics is None:
+                await _metrics()
             close = getattr(upstream, "aclose", None)
             if close is not None:
                 await close()

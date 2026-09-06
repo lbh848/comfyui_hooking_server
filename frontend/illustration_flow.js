@@ -1,9 +1,9 @@
 /* Live execution graph; prompt bodies are fetched only when a port is opened. */
 (() => {
-    let flow = null, flowBackdrop, modal, detailModal, selected = null, detailRequest = 0;
+    let flow = null, flowBackdrop, modal, detailModal, stopButton, selected = null, detailRequest = 0;
     let scale = 1, previousFocus = null;
-    const labels = {waiting: '대기', processing: '처리 중', completed: '완료', failed: '실패', cancelled: '취소', skipped: '생략'};
-    const colors = {waiting: '#94a3b8', processing: '#60a5fa', completed: '#4ade80', failed: '#fb7185', cancelled: '#fbbf24', skipped: '#a78bfa'};
+    const labels = {waiting: '대기', processing: '처리 중', cancelling: '중단 중', completed: '완료', failed: '실패', cancelled: '취소', skipped: '생략'};
+    const colors = {waiting: '#94a3b8', processing: '#60a5fa', cancelling: '#f59e0b', completed: '#4ade80', failed: '#fb7185', cancelled: '#fbbf24', skipped: '#a78bfa'};
     const executorLabels = {llm: 'LLM', comfy: 'Comfy', process: '기타 프로세스'};
     const executorColors = {llm: '#a78bfa', comfy: '#22d3ee', process: '#94a3b8'};
     const nodeExecutor = n => n.executor || (n.kind === 'llm' ? 'llm' : 'process');
@@ -44,7 +44,7 @@
             .if-detail{z-index:2147483645}
             .if-header{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:18px 22px;border-bottom:1px solid #64748b44}
             .if-header h2{font-size:19px;margin:0}.if-subtitle{font-size:12px;color:var(--text2,#94a3b8);margin-top:4px;overflow-wrap:anywhere}
-            .if-actions,.if-legend,.if-legend-group{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.if-button{border:1px solid #64748b66;border-radius:8px;background:transparent;color:inherit;padding:6px 11px;cursor:pointer}.if-button:hover{background:#64748b33}.if-button:focus-visible,.if-port:focus-visible{outline:3px solid #60a5fa;outline-offset:3px}
+            .if-actions,.if-legend,.if-legend-group{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.if-button{border:1px solid #64748b66;border-radius:8px;background:transparent;color:inherit;padding:6px 11px;cursor:pointer}.if-button:hover{background:#64748b33}.if-button:disabled{opacity:.45;cursor:not-allowed}.if-button-danger{border-color:#fb718580;color:#fecdd3}.if-button-danger:not(:disabled):hover{background:#fb71851f}.if-button:focus-visible,.if-port:focus-visible{outline:3px solid #60a5fa;outline-offset:3px}
             .if-legend{padding:10px 22px;gap:18px;font-size:12px;border-bottom:1px solid #64748b33}.if-legend-group{gap:12px}.if-legend-label{color:var(--text2,#94a3b8);font-weight:650}.if-legend-status .if-legend-item::before{content:'●';color:var(--state);margin-right:5px}.if-legend-executor .if-legend-item::before{content:'';display:inline-block;width:13px;height:13px;border-radius:4px;background:color-mix(in srgb,var(--bg2,#172033) 68%,var(--node-tint) 32%);border:1px solid var(--node-tint);margin-right:6px;vertical-align:-2px}
             .if-viewport{height:min(65vh,660px);overflow:auto;background-color:var(--bg,#0b1220);background-image:radial-gradient(#94a3b822 1px,transparent 1px);background-size:20px 20px;padding:0;position:relative}
             .if-space{position:relative}.if-canvas{position:relative;transform-origin:0 0}.if-edges{position:absolute;inset:0;overflow:visible;pointer-events:none}
@@ -64,10 +64,14 @@
         const title = element('h2', '', '삽화 처리 흐름'); title.id = 'if-title';
         titleBox.append(title, element('div', 'if-subtitle', '최신 요청의 실행 상태'));
         const actions = element('div', 'if-actions');
+        stopButton = button('중단', cancelCurrentFlow);
+        stopButton.classList.add('if-button-danger');
+        stopButton.id = 'if-stop';
+        stopButton.title = '현재 삽화 처리 흐름만 중단합니다.';
         const resetZoom = button('100%', () => {scale = 1; updateZoomDisplay(); render();});
         resetZoom.id = 'if-zoom-reset';
         resetZoom.title = '현재 확대 비율을 100%로 되돌립니다.';
-        actions.append(button('−', () => zoom(-0.15)), button('+', () => zoom(0.15)), resetZoom, button('닫기', () => modal.close()));
+        actions.append(stopButton, button('−', () => zoom(-0.15)), button('+', () => zoom(0.15)), resetZoom, button('닫기', () => modal.close()));
         header.append(titleBox, actions);
         const legend = element('div', 'if-legend');
         const statusLegend = element('div', 'if-legend-group if-legend-status');
@@ -102,6 +106,37 @@
             else if (event.key === 'Tab') event.stopPropagation();
         }));
     }
+    function updateStopButton() {
+        if (!stopButton) return;
+        const terminal = ['completed', 'failed', 'cancelled', 'skipped'].includes(flow?.status);
+        const cancelling = Boolean(flow?.cancel_requested) || flow?.status === 'cancelling';
+        stopButton.disabled = !flow || terminal || cancelling;
+        stopButton.textContent = cancelling ? '중단 중…' : '중단';
+    }
+    async function cancelCurrentFlow() {
+        const runId = flow?.id;
+        if (!runId || stopButton?.disabled) return;
+        if (!window.confirm('현재 삽화 처리 흐름을 중단하시겠습니까?')) return;
+        stopButton.disabled = true;
+        stopButton.textContent = '중단 중…';
+        try {
+            const response = await fetch('/api/illustration_flow/cancel', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({run: runId}),
+            });
+            const payload = await response.json().catch(() => ({}));
+            if (!response.ok || !payload.success) throw Error(payload.error || `중단 요청 실패 (${response.status})`);
+            if (payload.flow && payload.flow.id === runId) receive(payload.flow, false);
+            else await refresh();
+            showToast('삽화 처리 흐름 중단을 요청했습니다.', 'success');
+        } catch (error) {
+            console.error('[ILLUST_FLOW] 중단 요청 실패:', error);
+            showToast(error.message || '삽화 처리 흐름 중단에 실패했습니다.', 'error');
+        } finally {
+            updateStopButton();
+        }
+    }
     function updateZoomDisplay() {
         const resetZoom = modal?.querySelector('#if-zoom-reset');
         if (!resetZoom) return;
@@ -129,6 +164,7 @@
         tip.style.top = `${Math.max(8, Math.min(innerHeight - tip.offsetHeight - 12, r.bottom + 10))}px`;
     }
     function render() {
+        updateStopButton();
         if (!modal?.open) return;
         hideTooltip();
         const viewport = modal.querySelector('.if-viewport');
@@ -144,18 +180,26 @@
         modal.querySelector('.if-subtitle').textContent = `${flow.label} · ${labels[flow.status] || flow.status} · ${new Date(flow.created_at * 1000).toLocaleString()}`;
         const nodes = flow.nodes || [], positions = new Map(), layers = new Map();
         const rootColumnX = 36;
-        const compactColumnX = rootColumnX + 290;
         const nodeById = new Map(nodes.map(n => [n.id, n]));
         const isCompactColumnLabel = value => {
             const label = String(value || '');
             return label === 'CHARACTER-RESOLVE' || label.startsWith('CHARACTER-RESOLVE-') ||
                 label === 'PROFILE-RESOLVE' || label.startsWith('PROFILE-RESOLVE-') ||
-                label === 'ORIGINAL-ASSET' || label.startsWith('ORIGINAL-ASSET-') ||
                 label.startsWith('CALL1-BACKTRANSLATE') ||
                 label === 'CALL1' || /^CALL1 \d+\/\d+(?:\s|$)/.test(label);
         };
+        const isPlanAssetColumnLabel = value => {
+            const label = String(value || '');
+            return label === 'CALL2-PLAN' || label.startsWith('CALL2-PLAN-') ||
+                label === 'ORIGINAL-ASSET' || label.startsWith('ORIGINAL-ASSET-');
+        };
         const isCompactColumnNode = n => isCompactColumnLabel(n.label) || isCompactColumnLabel(n.call_name);
-        const layoutGroup = n => isCompactColumnNode(n) ? '__early_compact__' : String(n.layout_group || n.id);
+        const isPlanAssetColumnNode = n => isPlanAssetColumnLabel(n.label) || isPlanAssetColumnLabel(n.call_name);
+        const layoutGroup = n => isCompactColumnNode(n)
+            ? '__early_compact__'
+            : isPlanAssetColumnNode(n)
+                ? '__call2_plan_asset__'
+                : String(n.layout_group || n.id);
         const membersByGroup = new Map();
         nodes.forEach(n => {
             const group = layoutGroup(n);

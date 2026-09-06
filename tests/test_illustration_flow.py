@@ -30,11 +30,23 @@ def test_flow_zoom_has_feedback_before_any_request():
     assert "updateZoomDisplay(); render();" in source
 
 
+def test_flow_exposes_stop_button_and_cancel_endpoint():
+    root = Path(__file__).resolve().parents[1]
+    source = (root / "frontend" / "illustration_flow.js").read_text(encoding="utf-8")
+    server_source = (root / "server.py").read_text(encoding="utf-8-sig")
+    assert "stopButton = button('중단', cancelCurrentFlow);" in source
+    assert "fetch('/api/illustration_flow/cancel'" in source
+    assert "flow?.cancel_requested" in source
+    assert 'app.router.add_post("/api/illustration_flow/cancel", handle_illustration_flow_cancel)' in server_source
+
 def test_flow_layout_reserves_columns_in_pipeline_order():
     source = (Path(__file__).resolve().parents[1] / "frontend" / "illustration_flow.js").read_text(encoding="utf-8")
     assert "label.startsWith('CALL1-BACKTRANSLATE')" in source
-    assert "const compactColumnX = rootColumnX + 290;" in source
-    assert "const layoutGroup = n => isCompactColumnNode(n) ? '__early_compact__'" in source
+    assert "const isPlanAssetColumnLabel = value =>" in source
+    assert "label === 'CALL2-PLAN'" in source
+    assert "label === 'ORIGINAL-ASSET'" in source
+    assert "? '__early_compact__'" in source
+    assert "? '__call2_plan_asset__'" in source
     assert "if (group === '__early_compact__')" in source
 
 
@@ -471,3 +483,89 @@ async def test_queue_returned_failure_updates_request_node():
     request = next(n for n in graph["nodes"] if n["id"] == job.id)
     assert request["status"] == "failed"
     assert request["error"] == "provider unavailable"
+
+
+@pytest.mark.asyncio
+async def test_cancel_request_marks_flow_and_late_children_cancelled():
+    job = item()
+    flow.queue_added(job)
+    graph = flow.snapshot()
+    assert flow.request_cancel(graph["id"]) is True
+    assert flow.snapshot()["status"] == "cancelling"
+    assert flow.snapshot()["cancel_requested"] is True
+
+    token = flow._run.set(flow._latest)
+    try:
+        child = item("late child", "illustration")
+        flow.queue_added(child)
+    finally:
+        flow._run.reset(token)
+
+    assert child.status == "cancelled"
+    assert getattr(child, "_illustration_cancelled_on_add", False) is True
+    detail = flow.detail(graph["id"], child.id)
+    assert detail["status"] == "cancelled"
+    assert "중단" in detail["error"]
+
+
+@pytest.mark.asyncio
+async def test_queue_manager_cancels_active_flow_item_without_cancelling_worker(monkeypatch):
+    import queue_manager as queue_module
+
+    manager = queue_module.QueueManager()
+    job = queue_module.QueueItem(
+        id="active-flow",
+        type="illustration",
+        label="active-flow",
+        params={},
+    )
+    job.completion_future = asyncio.get_running_loop().create_future()
+    job.completion_future.add_done_callback(manager._mark_completion_future_observed)
+    flow.queue_added(job)
+    manager.items.append(job)
+    entered = asyncio.Event()
+
+    async def execute(_item):
+        entered.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(manager, "_execute_item", execute)
+    running = asyncio.create_task(manager._run_item_pipeline(job, is_gpu=False))
+    await entered.wait()
+    result = await manager.cancel_illustration_flow(flow.snapshot()["id"])
+    await asyncio.wait_for(running, timeout=1)
+
+    assert result["active_cancelled"] == 1
+    assert job.status == "cancelled"
+    assert running.cancelled() is False
+    assert flow.snapshot()["status"] == "cancelled"
+    assert isinstance(job.completion_future.exception(), RuntimeError)
+
+
+@pytest.mark.asyncio
+async def test_queue_manager_rejects_late_child_added_after_flow_cancel():
+    import queue_manager as queue_module
+
+    manager = queue_module.QueueManager()
+    root = item("root")
+    flow.queue_added(root)
+    run = flow._latest
+    assert flow.request_cancel(run["id"]) is True
+
+    token = flow._run.set(run)
+    try:
+        child = await manager.add_item(
+            "illustration",
+            "late queue child",
+            {"provider": "comfy"},
+        )
+    finally:
+        flow._run.reset(token)
+
+    assert child.status == "cancelled"
+    assert child in manager.items
+    assert child.completion_future.done()
+    assert isinstance(child.completion_future.exception(), RuntimeError)
+    detail = flow.detail(run["id"], child.id)
+    assert detail["status"] == "cancelled"
+    assert "중단" in detail["error"]

@@ -613,6 +613,18 @@ class QueueManager:
                 asyncio.ensure_future(self._deferred_prune(item))
                 return item
         illustration_flow.queue_added(item)
+        if getattr(item, "_illustration_cancelled_on_add", False):
+            self.items.append(item)
+            self._cleanup_item_resources(item)
+            self._settle_future(item)
+            print(
+                "[QUEUE:ILLUST_FLOW] 중단된 실행의 하위 항목 등록 취소: "
+                f"type={item_type}, id={item.id}, label={label}"
+            )
+            if not skip_notify:
+                await self._notify_queue_updated()
+            asyncio.ensure_future(self._deferred_prune(item))
+            return item
         self.items.append(item)
         self._resort_pending()
         print(f"[QUEUE] 항목 추가: type={item_type}, label={label}, id={item.id}, priority={priority}, 대기={len([i for i in self.items if i.status == 'pending'])}")
@@ -728,6 +740,58 @@ class QueueManager:
                     return True
                 return False
         return False
+
+    async def cancel_illustration_flow(self, run_id: str) -> dict:
+        """삽화 처리 흐름 하나만 중단한다. 워커는 유지하고 해당 실행 Task만 취소한다."""
+        normalized = str(run_id or "").strip()
+        if not normalized:
+            print(f"[QUEUE:ILLUST_FLOW] 중단 실패: run_id={run_id!r}")
+            raise ValueError("illustration flow run id가 필요합니다")
+        if not illustration_flow.request_cancel(normalized):
+            return {"found": False, "pending_cancelled": 0, "active_cancelled": 0}
+
+        reason = "사용자가 삽화 처리 흐름을 중단했습니다"
+        pending_cancelled = 0
+        active_cancelled = 0
+        for item in self.items:
+            binding = getattr(item, "_illustration_flow", None)
+            if not binding or binding[0].get("id") != normalized:
+                continue
+            execution_task = getattr(item, "_illustration_execution_task", None)
+            if execution_task is not None and not execution_task.done():
+                item._illustration_cancel_requested = True
+                item._illustration_cancel_reason = reason
+                execution_task.cancel()
+                active_cancelled += 1
+                print(
+                    f"[QUEUE:ILLUST_FLOW] 실행 중 항목 중단 요청: "
+                    f"run={normalized}, item={item.id}, status={item.status}"
+                )
+                continue
+            if item.status in ("pending", "waiting"):
+                item.status = "cancelled"
+                item.error = reason
+                item.completed_at = time.time()
+                self._cleanup_item_resources(item)
+                self._settle_future(item)
+                pending_cancelled += 1
+                print(
+                    f"[QUEUE:ILLUST_FLOW] 대기 항목 중단: "
+                    f"run={normalized}, item={item.id}, label={item.label}"
+                )
+
+        await self._notify_queue_updated()
+        asyncio.ensure_future(self._process_loop())
+        self._llm_wakeup.set()
+        self._external_wakeup.set()
+        self._modal_wakeup.set()
+        self._vast_wakeup.set()
+        self._video_postprocess_wakeup.set()
+        return {
+            "found": True,
+            "pending_cancelled": pending_cancelled,
+            "active_cancelled": active_cancelled,
+        }
 
     async def cancel_one_click_run(self, run_id: str) -> int:
         """원클릭 실행이 만든 pending 항목만 취소하고 토큰을 등록한다.
@@ -1610,22 +1674,51 @@ class QueueManager:
                     str(execution_target or "local"),
                     item,
                 )
-            result = await self._execute_item(item)
-            item.result = result
-            if getattr(item, "_runtime_cancelled", False):
-                item.status = "cancelled"
-                item.error = str(
-                    getattr(item, "_runtime_cancel_reason", "")
-                    or "사용자가 작업을 중단했습니다"
+            illustration_execution_task = None
+            cancelled_by_flow = False
+            if getattr(item, "_illustration_flow", None):
+                illustration_execution_task = asyncio.create_task(
+                    self._execute_item(item),
+                    name=f"illustration-flow-item-{item.id}",
                 )
-                print(
-                    f"[QUEUE] 런타임 작업 중단: id={item.id}, "
-                    f"type={item.type}, reason={item.error}"
-                )
+                item._illustration_execution_task = illustration_execution_task
+                try:
+                    result = await illustration_execution_task
+                except asyncio.CancelledError:
+                    if not getattr(item, "_illustration_cancel_requested", False):
+                        raise
+                    cancelled_by_flow = True
+                    item.result = None
+                    item.status = "cancelled"
+                    item.error = str(
+                        getattr(item, "_illustration_cancel_reason", "")
+                        or "사용자가 삽화 처리 흐름을 중단했습니다"
+                    )
+                    print(
+                        f"[QUEUE:ILLUST_FLOW] 실행 항목 중단 완료: "
+                        f"id={item.id}, type={item.type}, reason={item.error}"
+                    )
+                finally:
+                    if getattr(item, "_illustration_execution_task", None) is illustration_execution_task:
+                        delattr(item, "_illustration_execution_task")
             else:
-                item.status = "completed"
-                item.progress = 100.0
-                print(f"[QUEUE] 처리 완료: id={item.id}")
+                result = await self._execute_item(item)
+            if not cancelled_by_flow:
+                item.result = result
+                if getattr(item, "_runtime_cancelled", False):
+                    item.status = "cancelled"
+                    item.error = str(
+                        getattr(item, "_runtime_cancel_reason", "")
+                        or "사용자가 작업을 중단했습니다"
+                    )
+                    print(
+                        f"[QUEUE] 런타임 작업 중단: id={item.id}, "
+                        f"type={item.type}, reason={item.error}"
+                    )
+                else:
+                    item.status = "completed"
+                    item.progress = 100.0
+                    print(f"[QUEUE] 처리 완료: id={item.id}")
         except Exception as e:
             item.status = "failed"
             item.error = str(e)

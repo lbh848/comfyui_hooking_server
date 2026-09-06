@@ -6,6 +6,7 @@ import struct
 import sys
 import zlib
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -284,6 +285,153 @@ async def test_stream_uses_pdf_and_base64_composition(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_pdf_original_count_runs_in_parallel_with_generation(monkeypatch):
+    monkeypatch.setattr(llm_service, "_current_config", _config())
+    generation_started = asyncio.Event()
+    count_started = asyncio.Event()
+    release_count = asyncio.Event()
+
+    async def fake_count(messages, service, model):
+        count_started.set()
+        await generation_started.wait()
+        await release_count.wait()
+        return 34567
+
+    async def fake_dispatch_unlimited(messages, service, model):
+        generation_started.set()
+        await count_started.wait()
+        assert messages[-1]["content"][0]["type"] == "file"
+        release_count.set()
+        return "ok"
+
+    monkeypatch.setattr(
+        llm_service, "_count_gemini_original_tokens", fake_count
+    )
+    monkeypatch.setattr(
+        llm_service, "_dispatch_unlimited", fake_dispatch_unlimited
+    )
+
+    sink = {}
+    sink_token = llm_service._usage_sink_ctx.set(sink)
+    try:
+        result = await llm_service._dispatch(
+            _sample_messages(), "vertex", "gemini-test"
+        )
+    finally:
+        llm_service._usage_sink_ctx.reset(sink_token)
+
+    assert result == "ok"
+    assert sink["pdf_tokens_before"] == 34567
+    assert sink["pdf_pages_after"] == 1
+
+
+@pytest.mark.asyncio
+async def test_pdf_original_count_runs_in_parallel_with_stream(monkeypatch):
+    monkeypatch.setattr(llm_service, "_current_config", _config())
+    generation_started = asyncio.Event()
+    count_started = asyncio.Event()
+
+    async def fake_count(messages, service, model):
+        count_started.set()
+        await generation_started.wait()
+        return 45678
+
+    async def fake_stream_unlimited(messages, service, model):
+        generation_started.set()
+        await count_started.wait()
+        yield {"type": "start", "service": service, "model": model}
+        yield {
+            "type": "done",
+            "text": "ok",
+            "completion_tokens": 2,
+            "prompt_tokens": 900,
+        }
+
+    monkeypatch.setattr(
+        llm_service, "_count_gemini_original_tokens", fake_count
+    )
+    monkeypatch.setattr(
+        llm_service, "_dispatch_stream_unlimited", fake_stream_unlimited
+    )
+
+    events = [
+        event
+        async for event in llm_service._dispatch_stream(
+            _sample_messages(), "vertex", "gemini-test"
+        )
+    ]
+
+    assert events[-1]["type"] == "done"
+    assert events[-1]["prompt_tokens"] == 900
+    assert events[-1]["pdf_tokens_before"] == 45678
+    assert events[-1]["pdf_pages_after"] == 1
+
+
+@pytest.mark.asyncio
+async def test_vertex_original_count_uses_native_count_tokens(monkeypatch):
+    seen = {}
+
+    class FakeModels:
+        async def count_tokens(self, **kwargs):
+            seen.update(kwargs)
+            return SimpleNamespace(total_tokens=12345)
+
+    monkeypatch.setattr(llm_service, "_init_vertex", lambda: None)
+    monkeypatch.setattr(llm_service, "_vertex_initialized", True)
+    monkeypatch.setattr(
+        llm_service,
+        "_vertex_client",
+        SimpleNamespace(aio=SimpleNamespace(models=FakeModels())),
+    )
+
+    total = await llm_service._count_gemini_original_tokens(
+        _sample_messages(include_image=False),
+        "vertex",
+        "gemini-test",
+    )
+
+    assert total == 12345
+    assert seen["model"] == "gemini-test"
+    assert [content.role for content in seen["contents"]] == [
+        "user",
+        "model",
+        "user",
+    ]
+    assert seen["config"].system_instruction == "맥락 전체를 읽고 정확히 답하세요."
+
+
+@pytest.mark.asyncio
+async def test_pdf_count_failure_does_not_fail_generation(monkeypatch):
+    monkeypatch.setattr(llm_service, "_current_config", _config())
+
+    async def fake_count(messages, service, model):
+        return None
+
+    async def fake_dispatch_unlimited(messages, service, model):
+        return "generated"
+
+    monkeypatch.setattr(
+        llm_service, "_count_gemini_original_tokens", fake_count
+    )
+    monkeypatch.setattr(
+        llm_service, "_dispatch_unlimited", fake_dispatch_unlimited
+    )
+
+    sink = {}
+    sink_token = llm_service._usage_sink_ctx.set(sink)
+    try:
+        result = await llm_service._dispatch(
+            _sample_messages(), "vertex", "gemini-test"
+        )
+    finally:
+        llm_service._usage_sink_ctx.reset(sink_token)
+
+    assert result == "generated"
+    assert "pdf_tokens_before" not in sink
+    assert sink["pdf_pages_after"] == 1
+
+
+@pytest.mark.asyncio
 async def test_pdf_conversion_failure_is_logged_and_fails_closed(monkeypatch, capsys):
     monkeypatch.setattr(llm_service, "_current_config", _config())
 
@@ -314,6 +462,9 @@ def test_frontend_registers_pdf_control_for_every_llm_slot():
         assert html.count(f'id="llm-pdf-prompt{suffix}-row"') == 1
     assert "config[`llm_pdf_prompt${suffix}`]" in html
     assert "['gemini', 'vertex'].includes(meta.id)" in html
+    assert "function _formatLighbdInputTokens(record)" in html
+    assert "PDF 변환전:" in html
+    assert "변환후: ${pages}장" in html
 
 
 @pytest.mark.skipif(

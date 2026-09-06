@@ -41,6 +41,27 @@ def detail(run_id, node_id):
     return None
 
 
+def request_cancel(run_id):
+    normalized = str(run_id or "").strip()
+    if not normalized:
+        print(f"[ILLUST_FLOW] 중단 요청 실패: run_id={run_id!r}")
+        return False
+    if _latest is None or _latest["id"] != normalized:
+        print(f"[ILLUST_FLOW] 중단할 실행 없음: run={normalized}")
+        return False
+    if _latest["status"] in TERMINAL:
+        print(
+            f"[ILLUST_FLOW] 이미 종료된 실행 중단 생략: "
+            f"run={normalized}, status={_latest['status']}"
+        )
+        return False
+    _latest["cancel_requested"] = True
+    _latest["status"] = "cancelling"
+    print(f"[ILLUST_FLOW] 사용자 중단 요청 등록: run={normalized}")
+    changed(_latest)
+    return True
+
+
 def changed(run):
     run["revision"] += 1
     run["updated_at"] = time.time()
@@ -187,7 +208,8 @@ def queue_added(item):
     is_root = run is None
     if is_root:
         run = {"id": uuid.uuid4().hex, "label": item.label, "status": "waiting",
-               "created_at": time.time(), "updated_at": time.time(), "revision": 0, "nodes": {}}
+               "cancel_requested": False, "created_at": time.time(),
+               "updated_at": time.time(), "revision": 0, "nodes": {}}
         _latest = run
     provider = str((item.params or {}).get("provider") or "comfy").strip().lower()
     executor = "process" if is_root else ("comfy" if provider == "comfy" else "process")
@@ -206,6 +228,20 @@ def queue_added(item):
         },
     )
     item._illustration_flow = (run, node_id, is_root)
+    if not is_root and run.get("cancel_requested"):
+        reason = "사용자가 삽화 처리 흐름을 중단했습니다"
+        item.status = "cancelled"
+        item.completed_at = time.time()
+        item.error = reason
+        item._illustration_cancelled_on_add = True
+        print(
+            f"[ILLUST_FLOW] 중단된 실행의 늦은 큐 등록 취소: "
+            f"run={run['id']}, item={item.id}, label={item.label}"
+        )
+        update(
+            run, node_id, status="cancelled", error=reason,
+            output=_failure_output(run["nodes"][node_id], reason, "작업 취소"),
+        )
 
 
 def queue_sync(items):
