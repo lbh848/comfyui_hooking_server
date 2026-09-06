@@ -31,7 +31,7 @@
             .if-node[data-status=processing]{box-shadow:0 0 0 2px #60a5fa33,0 0 22px #60a5fa22}.if-node-title{font-weight:650;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.if-node-state{color:var(--state);font-size:12px;margin-top:6px}.if-node-model{font-size:11px;color:var(--text2,#94a3b8);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
             .if-port{position:absolute;right:-9px;top:39px;width:18px;height:18px;border-radius:50%;border:3px solid var(--bg2,#172033);background:var(--state);cursor:pointer;padding:0;box-shadow:0 0 0 1px var(--state)}
             .if-tooltip{position:fixed;z-index:3;max-width:330px;padding:10px 13px;border-radius:9px;background:#0f172a;color:#e2e8f0;border:1px solid #64748b;box-shadow:0 8px 30px #0006;white-space:pre-wrap;pointer-events:none;font-size:12px}
-            .if-empty{padding:80px 24px;text-align:center;color:var(--text2,#94a3b8)}.if-footer{padding:10px 22px;font-size:12px;color:var(--text2,#94a3b8)}
+            .if-empty{padding:80px 24px;text-align:center;color:var(--text2,#94a3b8)}.if-empty small{display:block;margin-top:8px}.if-footer{padding:10px 22px;font-size:12px;color:var(--text2,#94a3b8)}
             .if-detail{width:min(900px,94vw)}.if-detail-body{padding:18px 22px;max-height:70vh;overflow:auto}.if-detail-body h3{font-size:14px;margin:18px 0 8px}.if-detail-body pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#64748b14;padding:14px;border-radius:8px;font:12px/1.65 ui-monospace,monospace;margin:0;max-height:340px;overflow:auto}.if-detail-body summary{cursor:pointer;padding:8px 0}.if-meta{display:grid;grid-template-columns:110px 1fr;gap:7px 14px;overflow-wrap:anywhere}.if-meta dt{color:var(--text2,#94a3b8)}.if-meta dd{margin:0}
             @media(max-width:650px){.if-header{align-items:flex-start;padding:14px}.if-actions{justify-content:flex-end}.if-header h2{font-size:16px}.if-meta{grid-template-columns:80px 1fr}}
         `;
@@ -42,7 +42,10 @@
         const title = element('h2', '', '삽화 처리 흐름'); title.id = 'if-title';
         titleBox.append(title, element('div', 'if-subtitle', '최신 요청의 실행 상태'));
         const actions = element('div', 'if-actions');
-        actions.append(button('−', () => zoom(-0.15)), button('+', () => zoom(0.15)), button('100%', () => {scale = 1; render();}), button('닫기', () => modal.close()));
+        const resetZoom = button('100%', () => {scale = 1; updateZoomDisplay(); render();});
+        resetZoom.id = 'if-zoom-reset';
+        resetZoom.title = '현재 확대 비율을 100%로 되돌립니다.';
+        actions.append(button('−', () => zoom(-0.15)), button('+', () => zoom(0.15)), resetZoom, button('닫기', () => modal.close()));
         header.append(titleBox, actions);
         const legend = element('div', 'if-legend');
         Object.entries(labels).forEach(([key, label]) => {const s = element('span', '', label); s.style.setProperty('--state', colors[key]); legend.append(s);});
@@ -70,7 +73,14 @@
             if (event.key === 'Escape' || event.key === 'Tab') event.stopPropagation();
         }));
     }
-    function zoom(delta) {scale = Math.max(0.4, Math.min(1.75, scale + delta)); render();}
+    function updateZoomDisplay() {
+        const resetZoom = modal?.querySelector('#if-zoom-reset');
+        if (!resetZoom) return;
+        const percentage = `${Math.round(scale * 100)}%`;
+        resetZoom.textContent = percentage;
+        resetZoom.setAttribute('aria-label', `현재 확대 비율 ${percentage}. 클릭하면 100%로 되돌립니다.`);
+    }
+    function zoom(delta) {scale = Math.max(0.4, Math.min(1.75, scale + delta)); updateZoomDisplay(); render();}
     let toastHome;
     function rehomeToast() {
         const toast = document.getElementById('toast');
@@ -95,7 +105,12 @@
         const scroll = [viewport.scrollLeft, viewport.scrollTop];
         const focusedNode = document.activeElement?.dataset?.nodeId;
         viewport.replaceChildren();
-        if (!flow) {viewport.append(element('div', 'if-empty', '아직 삽화 요청이 없습니다. 요청이 들어오면 여기에 처리 흐름이 표시됩니다.')); return;}
+        if (!flow) {
+            const empty = element('div', 'if-empty', '아직 삽화 요청이 없습니다. 요청이 들어오면 여기에 처리 흐름이 표시됩니다.');
+            empty.append(element('small', '', `현재 확대 비율 ${Math.round(scale * 100)}% — 지금 조절한 비율은 다음 그래프에도 적용됩니다.`));
+            viewport.append(empty);
+            return;
+        }
         modal.querySelector('.if-subtitle').textContent = `${flow.label} · ${labels[flow.status] || flow.status} · ${new Date(flow.created_at * 1000).toLocaleString()}`;
         const nodes = flow.nodes || [], positions = new Map(), layers = new Map();
         // Creation order is topological: dependencies exist before their consumer.

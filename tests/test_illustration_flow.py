@@ -15,6 +15,13 @@ def test_flow_dialog_is_pinned_to_viewport_center():
     assert ".if-modal{position:fixed;inset:0;margin:auto;" in source
 
 
+def test_flow_zoom_has_feedback_before_any_request():
+    source = (Path(__file__).resolve().parents[1] / "frontend" / "illustration_flow.js").read_text(encoding="utf-8")
+    assert "function updateZoomDisplay()" in source
+    assert "현재 확대 비율 ${Math.round(scale * 100)}%" in source
+    assert "updateZoomDisplay(); render();" in source
+
+
 @pytest.fixture(autouse=True)
 def isolated_flow(monkeypatch):
     monkeypatch.setattr(flow, "_latest", None)
