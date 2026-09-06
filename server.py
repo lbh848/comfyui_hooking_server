@@ -720,8 +720,9 @@ DEFAULT_CONFIG = {
         "illustration_character_resolve": _llm_route_defaults(json_mode=True),  # 생성 최전단 CURRENT 등장인물 판별(항상 실행)
         "illustration_profile_resolve": _llm_route_defaults(json_mode=True),  # 확정 CURRENT 다중 프로필 결정(토글 시)
         "illustration_call2_plan": _llm_route_defaults(),  # CALL2 전역 장면 PLAN
-        "illustration_call2":      _llm_route_defaults(),  # CALL2 DETAIL 및 기존 단일/폴백/감사 경로
+        "illustration_call2":      _llm_route_defaults(),  # CALL2 DETAIL 및 기존 단일/폴백 경로
         "illustration_call2_keyvis": _llm_route_defaults(),  # CALL2 독립 Key Visual
+        "illustration_call2_authority_audit": _llm_route_defaults(json_mode=True),  # CALL2 고정 외형 예외 감사
         "illustration_call2_fix":  _llm_route_defaults(),  # CALL2 파싱 실패 시 TOON 교정(repair.txt)
         "illustration_call3":      _llm_route_defaults(),  # 대사 생성(speak/manga/subtitle)
         "illustration_original_asset": _llm_route_defaults(json_mode=True),  # 업로드 원본 에셋 단일 선택
@@ -827,6 +828,7 @@ _LLM_RETRY_DELAY_FIELDS = ("retry_delay_sec", "fallback_retry_delay_sec")
 _CALL2_COMPAT_SPLIT_ROUTE_KEYS = (
     "illustration_call2_plan",
     "illustration_call2_keyvis",
+    "illustration_call2_authority_audit",
 )
 _LEGACY_LLM_RETRY_TASKS = {
     "classify_face_tags": "auto_face_tag_max_retries",
@@ -880,7 +882,7 @@ def _merge_llm_routing_config(raw_config: dict) -> dict:
             and task_key not in raw_routing
             and isinstance(legacy_call2_entry, dict)
         ):
-            # 호환 분리: 기존 설치의 CALL2 경로를 PLAN/KEYVIS 초기값으로 상속한다.
+            # 호환 분리: 기존 설치의 CALL2 경로를 분리 작업의 초기값으로 상속한다.
             # 설정 화면에서 각각 저장한 뒤에는 독립 항목이 우선한다.
             raw_entry = legacy_call2_entry
         else:

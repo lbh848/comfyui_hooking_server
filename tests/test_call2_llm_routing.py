@@ -17,6 +17,8 @@ def test_call2_split_routes_are_registered_in_backend_defaults() -> None:
     assert "illustration_call2_plan" in routing
     assert "illustration_call2" in routing
     assert "illustration_call2_keyvis" in routing
+    assert "illustration_call2_authority_audit" in routing
+    assert routing["illustration_call2_authority_audit"]["json_mode"] is True
 
 
 def test_call2_split_routes_are_registered_in_frontend_settings() -> None:
@@ -27,9 +29,11 @@ def test_call2_split_routes_are_registered_in_frontend_settings() -> None:
     assert "{ key: 'illustration_call2_plan'" in frontend
     assert "{ key: 'illustration_call2'," in frontend
     assert "{ key: 'illustration_call2_keyvis'" in frontend
+    assert "{ key: 'illustration_call2_authority_audit'" in frontend
     assert "삽화 CALL2-PLAN" in frontend
     assert "삽화 CALL2-DETAIL" in frontend
     assert "삽화 CALL2-KEYVIS" in frontend
+    assert "삽화 CALL2-AUTHORITY-AUDIT" in frontend
 
 
 def test_illustration_routes_follow_runtime_call_order() -> None:
@@ -59,6 +63,7 @@ def test_illustration_routes_follow_runtime_call_order() -> None:
         "illustration_call2_plan",
         "illustration_call2_keyvis",
         "illustration_call2",
+        "illustration_call2_authority_audit",
         "illustration_call2_fix",
         "illustration_call3",
         "illustration_multi_char_mask",
@@ -83,8 +88,12 @@ def test_call2_split_routes_inherit_legacy_detail_route_when_missing() -> None:
     assert merged["illustration_call2"] == legacy_route
     assert merged["illustration_call2_plan"] == legacy_route
     assert merged["illustration_call2_keyvis"] == legacy_route
+    assert merged["illustration_call2_authority_audit"]["primary"] == legacy_route["primary"]
+    assert merged["illustration_call2_authority_audit"]["fallback"] == legacy_route["fallback"]
+    assert merged["illustration_call2_authority_audit"]["json_mode"] is True
     assert merged["illustration_call2_plan"] is not merged["illustration_call2"]
     assert merged["illustration_call2_keyvis"] is not merged["illustration_call2"]
+    assert merged["illustration_call2_authority_audit"] is not merged["illustration_call2"]
 
 
 def test_explicit_call2_split_route_overrides_legacy_inheritance() -> None:
@@ -92,6 +101,11 @@ def test_explicit_call2_split_route_overrides_legacy_inheritance() -> None:
         "llm_routing": {
             "illustration_call2": {"primary": "llm2", "max_retries": 4},
             "illustration_call2_plan": {"primary": "llm3", "max_retries": 1},
+            "illustration_call2_authority_audit": {
+                "primary": "llm5",
+                "max_retries": 0,
+                "json_mode": True,
+            },
         },
     })
 
@@ -100,6 +114,8 @@ def test_explicit_call2_split_route_overrides_legacy_inheritance() -> None:
     assert merged["illustration_call2_plan"]["max_retries"] == 1
     assert merged["illustration_call2_keyvis"]["primary"] == "llm2"
     assert merged["illustration_call2_keyvis"]["max_retries"] == 4
+    assert merged["illustration_call2_authority_audit"]["primary"] == "llm5"
+    assert merged["illustration_call2_authority_audit"]["max_retries"] == 0
 
 
 def test_legacy_only_save_payload_preserves_call2_split_inheritance() -> None:
@@ -117,6 +133,9 @@ def test_legacy_only_save_payload_preserves_call2_split_inheritance() -> None:
 
     assert normalized["illustration_call2_plan"] == normalized["illustration_call2"]
     assert normalized["illustration_call2_keyvis"] == normalized["illustration_call2"]
+    assert normalized["illustration_call2_authority_audit"]["primary"] == "llm2"
+    assert normalized["illustration_call2_authority_audit"]["fallback"] is True
+    assert normalized["illustration_call2_authority_audit"]["json_mode"] is True
 
 
 @pytest.mark.asyncio
@@ -124,8 +143,22 @@ def test_legacy_only_save_payload_preserves_call2_split_inheritance() -> None:
     ("call_name", "expected_task_key", "expected_group_id"),
     [
         ("CALL2-PLAN", "illustration_call2_plan", "call2_plan"),
-        ("CALL2-DETAIL 1/2", "illustration_call2", "call2_detail"),
+        (
+            "CALL2-DETAIL 1/1 [FULL c1/6]",
+            "illustration_call2",
+            "call2_detail",
+        ),
+        (
+            "CALL2-DETAIL 2/3 [PARTIAL c2/6]",
+            "illustration_call2",
+            "call2_detail",
+        ),
         ("CALL2-KEYVIS", "illustration_call2_keyvis", "call2_keyvis"),
+        (
+            "CALL2-AUTHORITY-AUDIT",
+            "illustration_call2_authority_audit",
+            "call2_authority_audit",
+        ),
     ],
 )
 async def test_call2_split_routes_reach_queue_and_history(

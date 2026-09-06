@@ -9103,7 +9103,7 @@ def _build_character_history(extra_reference: str) -> str:
 
 
 # 삽화 CALL 이름 → 외부 LLM 분기 task_key. 기존 illustration_call2는 DETAIL과
-# 단일/폴백/감사 경로에 유지하고 PLAN/KEYVIS만 독립 분리한다(server.py 참고).
+# 단일/폴백 경로에 유지하고 PLAN/KEYVIS/AUTHORITY-AUDIT는 독립 분리한다.
 _CALL_TASK_KEYS = {
     "ORIGINAL-ASSET": "illustration_original_asset",
     "ORIGINAL-ASSET-RECOVERY": "illustration_original_asset_recovery",
@@ -9116,7 +9116,7 @@ _CALL_TASK_KEYS = {
     "CALL2": "illustration_call2",
     "CALL2-PLAN": "illustration_call2_plan",
     "CALL2-KEYVIS": "illustration_call2_keyvis",
-    "CALL2-AUTHORITY-AUDIT": "illustration_call2",
+    "CALL2-AUTHORITY-AUDIT": "illustration_call2_authority_audit",
     "CALL2-FALLBACK": "illustration_call2",
     "CALL2-FIX": "illustration_call2_fix",
     "CALL3": "illustration_call3",
