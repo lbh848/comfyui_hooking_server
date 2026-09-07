@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import copy
 import io
 import json
 import re
@@ -86,6 +87,7 @@ def _isolated_config(**overrides) -> llm_service._ContextConfig:
             "llm_stream": False,
             "llm_max_concurrency": 2,
             "llm_stream_idle_timeout_seconds": 90,
+            "llm_custom_headers": "",
             "llm_routing": {},
         }
     )
@@ -99,6 +101,7 @@ def _isolated_config(**overrides) -> llm_service._ContextConfig:
                 f"llm_stream{slot}": False,
                 f"llm_max_concurrency{slot}": 2,
                 f"llm_stream_idle_timeout_seconds{slot}": 90,
+                f"llm_custom_headers{slot}": "",
             }
         )
     values.update(overrides)
@@ -167,6 +170,73 @@ def _clear_llm_runtime_state(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("value", "message"),
+    [
+        ('["x-opencode-session"]', "JSON object"),
+        ('{"x-opencode-session":123}', "문자열"),
+        (None, "JSON 문자열"),
+    ],
+)
+async def test_config_api_rejects_invalid_custom_headers_without_saving(
+    monkeypatch,
+    value,
+    message,
+):
+    saved = []
+
+    class Request:
+        method = "POST"
+
+        async def json(self):
+            return {"llm_custom_headers2": value}
+
+    monkeypatch.setattr(server, "save_config", lambda config: saved.append(config))
+
+    response = await server.handle_api_config(Request())
+
+    assert response.status == 400
+    assert message in json.loads(response.text)["error"]
+    assert saved == []
+
+
+@pytest.mark.asyncio
+async def test_config_api_saves_and_applies_custom_headers_per_slot(monkeypatch):
+    config = copy.deepcopy(server.app_config)
+    saved = []
+    runtime_updates = []
+    raw_headers = json.dumps(
+        {"x-opencode-session": "slot-two-session", "X-Soya-Client": "slot-2"}
+    )
+
+    class Request:
+        method = "POST"
+
+        async def json(self):
+            return {"llm_custom_headers2": raw_headers}
+
+    monkeypatch.setattr(server, "app_config", config)
+    monkeypatch.setattr(
+        server,
+        "save_config",
+        lambda value: saved.append(copy.deepcopy(value)),
+    )
+    monkeypatch.setattr(
+        server.llm_service,
+        "update_config",
+        lambda value: runtime_updates.append(copy.deepcopy(value)),
+    )
+    monkeypatch.setattr(server.embedding_service, "update_config", lambda _value: None)
+
+    response = await server.handle_api_config(Request())
+
+    assert response.status == 200
+    assert saved[-1]["llm_custom_headers2"] == raw_headers
+    assert runtime_updates[-1]["llm_custom_headers2"] == raw_headers
+    assert json.loads(response.text)["config"]["llm_custom_headers2"] == raw_headers
+
+
+@pytest.mark.asyncio
 async def test_llm1_to_llm10_reach_their_own_openai_compatible_slot(monkeypatch):
     requests: list[dict] = []
 
@@ -176,6 +246,8 @@ async def test_llm1_to_llm10_reach_their_own_openai_compatible_slot(monkeypatch)
             {
                 "model": body.get("model"),
                 "authorization": request.headers.get("Authorization"),
+                "session": request.headers.get("x-opencode-session"),
+                "client": request.headers.get("X-Soya-Client"),
             }
         )
         model = str(body.get("model") or "")
@@ -187,8 +259,17 @@ async def test_llm1_to_llm10_reach_their_own_openai_compatible_slot(monkeypatch)
     provider.router.add_post("/v1/chat/completions", completion)
     async with _running_app(provider) as base_url:
         cfg = _isolated_config(llm_url=base_url)
+        cfg["llm_custom_headers"] = json.dumps(
+            {"x-opencode-session": "session-1", "X-Soya-Client": "slot-1"}
+        )
         for slot in LLM_SLOT_NUMBERS[1:]:
             cfg[f"llm_url{slot}"] = base_url
+            cfg[f"llm_custom_headers{slot}"] = json.dumps(
+                {
+                    "x-opencode-session": f"session-{slot}",
+                    "X-Soya-Client": f"slot-{slot}",
+                }
+            )
         monkeypatch.setattr(llm_service, "_current_config", cfg)
 
         messages = [{"role": "user", "content": "slot smoke"}]
@@ -205,6 +286,50 @@ async def test_llm1_to_llm10_reach_their_own_openai_compatible_slot(monkeypatch)
     assert [item["authorization"] for item in requests] == [
         f"Bearer test-key-{slot}" for slot in LLM_SLOT_NUMBERS
     ]
+    assert [item["session"] for item in requests] == [
+        f"session-{slot}" for slot in LLM_SLOT_NUMBERS
+    ]
+    assert [item["client"] for item in requests] == [
+        f"slot-{slot}" for slot in LLM_SLOT_NUMBERS
+    ]
+
+
+@pytest.mark.asyncio
+async def test_opencode_go_preset_sends_configured_session_header(monkeypatch):
+    captured = {}
+
+    async def completion(request: web.Request) -> web.Response:
+        captured["session"] = request.headers.get("x-opencode-session")
+        captured["user_agent"] = request.headers.get("User-Agent")
+        body = await request.json()
+        return web.json_response(
+            {"choices": [{"message": {"content": f"ok:{body.get('model')}"}}]}
+        )
+
+    provider = web.Application()
+    provider.router.add_post("/v1/chat/completions", completion)
+    async with _running_app(provider) as base_url:
+        cfg = _isolated_config(
+            llm_service="opencode-go",
+            llm_url=base_url,
+            llm_custom_headers=json.dumps(
+                {
+                    "x-opencode-session": "opencode-session",
+                    "User-Agent": "soya-opencode-test/1.0",
+                }
+            ),
+        )
+        monkeypatch.setattr(llm_service, "_current_config", cfg)
+
+        result = await llm_service.callLLM(
+            [{"role": "user", "content": "provider preset smoke"}]
+        )
+
+    assert result == "ok:slot-1"
+    assert captured == {
+        "session": "opencode-session",
+        "user_agent": "soya-opencode-test/1.0",
+    }
 
 
 @pytest.mark.asyncio

@@ -41813,6 +41813,7 @@
             updateClampStatus(clampEnabled);
 
             // LLM1~N 슬롯 설정. LLM1만 기존 config 계약 때문에 접미사가 없다.
+            ensureLlmCustomHeaderFields();
             for (const slot of LLM_SLOTS) {
                 const suffix = llmSlotSuffix(slot);
                 const el = id => document.getElementById(id);
@@ -41853,6 +41854,8 @@
                 if (effortEl) effortEl.value = configValue('llm_reasoning_effort', '');
                 const bodyEl = el(`setting-llm-custom-body${suffix}`);
                 if (bodyEl) bodyEl.value = configValue('llm_custom_body', '');
+                const headersEl = el(`setting-llm-custom-headers${suffix}`);
+                if (headersEl) headersEl.value = configValue('llm_custom_headers', '');
             }
             const chansubRetriesEl = document.getElementById('setting-chansub-max-retries');
             if (chansubRetriesEl) chansubRetriesEl.value = (currentConfig.chansub_max_retries ?? 2);
@@ -43082,6 +43085,7 @@
                 labels[`llm_vision_compress${suffix}`] = `LLM${slot} 비전 압축`;
                 labels[`llm_gemini_base64${suffix}`] = `LLM${slot} Gemini/Vertex Base64 입력`;
                 labels[`llm_pdf_prompt${suffix}`] = `LLM${slot} Gemini/Vertex 대화 PDF`;
+                labels[`llm_custom_headers${suffix}`] = `LLM${slot} Custom Headers`;
             }
             let html = '<table style="width:100%; border-collapse:collapse; font-size:0.82rem;">';
             const hiddenKeys = [];
@@ -43089,7 +43093,8 @@
                 if (hiddenKeys.includes(key)) continue;
                 const label = labels[key] || key;
                 let displayVal = val;
-                if (typeof val === 'boolean') displayVal = val ? '<span style="color:#4caf50;">ON</span>' : '<span style="color:#999;">OFF</span>';
+                if (/^llm_custom_headers\d*$/.test(key) && typeof val === 'string' && val) displayVal = '<span style="color:#4caf50;">(설정됨)</span>';
+                else if (typeof val === 'boolean') displayVal = val ? '<span style="color:#4caf50;">ON</span>' : '<span style="color:#999;">OFF</span>';
                 else if (typeof val === 'string' && val === '') displayVal = '<span style="color:#999;">(비어있음)</span>';
                 else if (typeof val === 'string' && val.length > 80) displayVal = val.substring(0, 77) + '...';
                 html += `<tr style="border-bottom:1px solid var(--border);"><td style="padding:4px 8px; color:var(--text2); white-space:nowrap;">${label}</td><td style="padding:4px 8px; word-break:break-all;">${displayVal}</td></tr>`;
@@ -43300,6 +43305,33 @@
                     return;
                 }
             }
+            for (const slot of LLM_SLOTS) {
+                const suffix = llmSlotSuffix(slot);
+                const textarea = document.getElementById(`setting-llm-custom-headers${suffix}`);
+                const raw = textarea?.value.trim() || '';
+                if (!raw) continue;
+                try {
+                    const parsed = JSON.parse(raw);
+                    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+                        throw new Error('JSON object 형식이 아닙니다.');
+                    }
+                    for (const [name, value] of Object.entries(parsed)) {
+                        if (!name.trim()) throw new Error('헤더 이름은 비워둘 수 없습니다.');
+                        if (typeof value !== 'string') {
+                            throw new Error(`${name} 값은 문자열이어야 합니다.`);
+                        }
+                    }
+                } catch (error) {
+                    console.error(`[LLM${slot}] 설정 저장 중 Custom Headers 검증 실패:`, error);
+                    const status = document.getElementById(`llm-custom-headers${suffix}-status`);
+                    if (status) {
+                        status.textContent = `JSON 오류: ${error.message}`;
+                        status.style.color = '#ff6b6b';
+                    }
+                    showToast(`LLM${slot} Custom Headers JSON을 먼저 수정하세요.`, 'error');
+                    return;
+                }
+            }
             const modalStartRetries = Number.parseInt(
                 document.getElementById('modal-runtime-container-start-max-retries')?.value,
                 10,
@@ -43474,6 +43506,7 @@
                 config[`llm_reasoning_preset${suffix}`] = (el(`setting-llm-reasoning-preset${suffix}`) || {}).value || (slot === 1 ? 'auto' : '');
                 config[`llm_reasoning_effort${suffix}`] = (el(`setting-llm-reasoning-effort${suffix}`) || {}).value || '';
                 config[`llm_custom_body${suffix}`] = (el(`setting-llm-custom-body${suffix}`) || {}).value || '';
+                config[`llm_custom_headers${suffix}`] = (el(`setting-llm-custom-headers${suffix}`) || {}).value || '';
                 const maxTokens = Number.parseInt((el(`setting-llm-max-tokens${suffix}`) || {}).value, 10);
                 config[`llm_max_tokens${suffix}`] = Number.isInteger(maxTokens) && maxTokens >= 0 ? maxTokens : 0;
                 config[`llm_max_concurrency${suffix}`] = parseInt((el(`setting-llm-max-concurrency${suffix}`) || {}).value) || 1;
@@ -46220,6 +46253,34 @@
             return slot === 1 ? '' : String(slot);
         }
 
+        function ensureLlmCustomHeaderFields() {
+            for (const slot of LLM_SLOTS) {
+                const suffix = llmSlotSuffix(slot);
+                if (document.getElementById(`llm-custom-headers${suffix}-row`)) continue;
+                const bodyRow = document.getElementById(`llm-custom-body${suffix}-row`);
+                if (!bodyRow) {
+                    console.error(`[LLM${slot}] Custom Headers 입력칸 생성 실패: Custom Body 행을 찾지 못했습니다.`);
+                    continue;
+                }
+                const row = document.createElement('div');
+                row.className = 'setting-row';
+                row.id = `llm-custom-headers${suffix}-row`;
+                row.style.cssText = 'display:flex;flex-direction:column;align-items:stretch;';
+                row.innerHTML = `
+                    <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;margin-bottom:8px;">
+                        <div class="setting-label">
+                            <div class="title">LLM${slot} Custom Headers (JSON)</div>
+                            <div class="desc">OpenAI 호환 HTTP 요청에만 적용됩니다. 슬롯별 독립 설정이며 비워두면 추가 헤더를 보내지 않습니다.</div>
+                        </div>
+                        <button type="button" onclick="formatCustomHeaders(${slot})" style="padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);cursor:pointer;flex-shrink:0;">JSON 정리</button>
+                    </div>
+                    <textarea id="setting-llm-custom-headers${suffix}" placeholder='{\n  "x-opencode-session": "stable-session-id",\n  "User-Agent": "soya-comfy-manager/1.0"\n}' style="width:100%;min-height:90px;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-family:monospace;font-size:.8rem;"></textarea>
+                    <div style="margin-top:6px;font-size:.72rem;color:var(--text2);">Content-Type, 스트리밍 Accept, API 키 Authorization은 서버 런타임 값이 우선합니다.</div>
+                    <div id="llm-custom-headers${suffix}-status" style="margin-top:4px;font-size:.75rem;color:var(--text2);"></div>`;
+                bodyRow.insertAdjacentElement('afterend', row);
+            }
+        }
+
         function isGeminiNativeService(serviceId) {
             return GEMINI_NATIVE_SERVICE_IDS.has(String(serviceId || ''));
         }
@@ -46315,6 +46376,7 @@
         }
 
         function onLlmServiceChange() {
+            ensureLlmCustomHeaderFields();
             for (const slot of LLM_SLOTS) {
                 const suffix = llmSlotSuffix(slot);
                 const selected = document.getElementById(`setting-llm-service${suffix}`)?.value || '';
@@ -46323,6 +46385,7 @@
                 const urlRow = document.getElementById(`llm-url${suffix}-row`);
                 const reasoningRow = document.getElementById(`llm-reasoning${suffix}-row`);
                 const customRow = document.getElementById(`llm-custom-body${suffix}-row`);
+                const customHeadersRow = document.getElementById(`llm-custom-headers${suffix}-row`);
                 const reasoningPreset = document.getElementById(`setting-llm-reasoning-preset${suffix}`);
                 const geminiBase64Row = document.getElementById(`llm-gemini-base64${suffix}-row`);
                 const pdfPromptRow = document.getElementById(`llm-pdf-prompt${suffix}-row`);
@@ -46334,6 +46397,13 @@
                 if (reasoningRow) reasoningRow.style.display = 'flex';
                 if (reasoningPreset) reasoningPreset.style.display = geminiNative ? 'none' : '';
                 if (customRow) customRow.style.display = geminiNative ? 'none' : 'flex';
+                if (customHeadersRow) {
+                    const supportsCustomHeaders = (
+                        ['openai', 'vertex-openai'].includes(meta.format)
+                        && meta.id !== 'copilot'
+                    );
+                    customHeadersRow.style.display = supportsCustomHeaders ? 'flex' : 'none';
+                }
                 if (geminiBase64Row) {
                     const supportsBase64Transport = ['gemini', 'vertex', 'vertex-openai'].includes(meta.id);
                     geminiBase64Row.style.display = supportsBase64Transport ? 'flex' : 'none';
@@ -46599,6 +46669,49 @@
                     status.style.color = '#ff6b6b';
                 }
                 showToast(`LLM${slot} Custom Body JSON 오류: ${error.message}`, 'error');
+            }
+        }
+
+        function formatCustomHeaders(slot) {
+            const suffix = llmSlotSuffix(slot);
+            const textarea = document.getElementById(`setting-llm-custom-headers${suffix}`);
+            const status = document.getElementById(`llm-custom-headers${suffix}-status`);
+            if (!textarea) {
+                console.error(`[LLM${slot}] Custom Headers JSON 정리 실패: 입력칸을 찾지 못했습니다.`);
+                return;
+            }
+            const raw = textarea.value.trim();
+            if (!raw) {
+                textarea.value = '{}';
+                if (status) {
+                    status.textContent = '추가 헤더가 없는 JSON object로 정리했습니다.';
+                    status.style.color = '#5cd5a0';
+                }
+                return;
+            }
+            try {
+                const parsed = JSON.parse(raw);
+                if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+                    throw new Error('JSON object 형식이 아닙니다.');
+                }
+                for (const [name, value] of Object.entries(parsed)) {
+                    if (!name.trim()) throw new Error('헤더 이름은 비워둘 수 없습니다.');
+                    if (typeof value !== 'string') {
+                        throw new Error(`${name} 값은 문자열이어야 합니다.`);
+                    }
+                }
+                textarea.value = JSON.stringify(parsed, null, 2);
+                if (status) {
+                    status.textContent = '유효한 Custom Headers JSON object입니다.';
+                    status.style.color = '#5cd5a0';
+                }
+            } catch (error) {
+                console.error(`[LLM${slot}] Custom Headers JSON 정리 실패:`, error);
+                if (status) {
+                    status.textContent = `JSON 오류: ${error.message}`;
+                    status.style.color = '#ff6b6b';
+                }
+                showToast(`LLM${slot} Custom Headers JSON 오류: ${error.message}`, 'error');
             }
         }
 

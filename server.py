@@ -604,6 +604,7 @@ DEFAULT_CONFIG = {
     "llm_reasoning_effort": "",       # low|medium|high (OpenAI reasoning_effort)
     "llm_reasoning_budget_tokens": 0, # GLM/deepseek thinking budget_tokens
     "llm_custom_body": "",            # 모든 프리셋의 요청 body 에 재귀 병합되는 JSON object 문자열
+    "llm_custom_headers": "",         # LLM1 OpenAI 호환 요청에 병합할 HTTP header JSON object 문자열
     "illustration_context_toggles": {
         "illustration_output_mode": "illustration",
         "original_asset_count": 1,
@@ -792,6 +793,7 @@ for _slot_n in range(2, llm_service.LLM_SLOT_COUNT + 1):
         f"llm_model{_suffix}": "",
         f"llm_url{_suffix}": "",
         f"llm_custom_body{_suffix}": "",
+        f"llm_custom_headers{_suffix}": "",
         f"llm_reasoning_preset{_suffix}": "auto",
         f"llm_reasoning_effort{_suffix}": "",
         f"llm_stream{_suffix}": False,
@@ -18327,6 +18329,34 @@ async def handle_api_config(request: web.Request) -> web.Response:
                         status=400,
                     )
 
+            for _slot_n in range(1, llm_service.LLM_SLOT_COUNT + 1):
+                custom_headers_key = (
+                    "llm_custom_headers"
+                    if _slot_n == 1
+                    else f"llm_custom_headers{_slot_n}"
+                )
+                if custom_headers_key not in body:
+                    continue
+                raw_custom_headers = body.get(custom_headers_key)
+                try:
+                    llm_service.parse_custom_headers(raw_custom_headers)
+                except (TypeError, ValueError) as e:
+                    raw_length = (
+                        len(raw_custom_headers)
+                        if isinstance(raw_custom_headers, str)
+                        else None
+                    )
+                    print(
+                        f"[CONFIG] {custom_headers_key} 저장 거부: "
+                        f"input=<redacted {raw_length} chars>, state=validate, "
+                        f"error={type(e).__name__}: {e}"
+                    )
+                    traceback.print_exc()
+                    return web.json_response(
+                        {"error": f"{custom_headers_key} 오류: {e}"},
+                        status=400,
+                    )
+
             if "llm_routing" in body:
                 try:
                     body["llm_routing"] = _normalize_llm_routing_for_save(
@@ -19100,6 +19130,7 @@ async def handle_api_config(request: web.Request) -> web.Response:
                     f"llm_reasoning_preset{_sfx}": app_config.get(f"llm_reasoning_preset{_sfx}", "auto"),
                     f"llm_reasoning_effort{_sfx}": app_config.get(f"llm_reasoning_effort{_sfx}", ""),
                     f"llm_custom_body{_sfx}": app_config.get(f"llm_custom_body{_sfx}", ""),
+                    f"llm_custom_headers{_sfx}": app_config.get(f"llm_custom_headers{_sfx}", ""),
                     f"llm_stream{_sfx}": app_config.get(f"llm_stream{_sfx}", False),
                     f"llm_max_tokens{_sfx}": app_config.get(
                         f"llm_max_tokens{_sfx}",
@@ -30966,6 +30997,7 @@ async def on_startup(app):
         "llm_reasoning_preset": app_config.get("llm_reasoning_preset", "auto"),
         "llm_reasoning_effort": app_config.get("llm_reasoning_effort", ""),
         "llm_custom_body": app_config.get("llm_custom_body", ""),
+        "llm_custom_headers": app_config.get("llm_custom_headers", ""),
         "llm_reasoning_budget_tokens": app_config.get("llm_reasoning_budget_tokens", 0),
         "llm_temperature": app_config.get("llm_temperature", 1.0),
         "llm_max_tokens": app_config.get(
@@ -30988,6 +31020,7 @@ async def on_startup(app):
             f"llm_reasoning_preset{_s}": app_config.get(f"llm_reasoning_preset{_s}", "auto"),
             f"llm_reasoning_effort{_s}": app_config.get(f"llm_reasoning_effort{_s}", ""),
             f"llm_custom_body{_s}": app_config.get(f"llm_custom_body{_s}", ""),
+            f"llm_custom_headers{_s}": app_config.get(f"llm_custom_headers{_s}", ""),
             f"llm_stream{_s}": app_config.get(f"llm_stream{_s}", False),
             f"llm_max_tokens{_s}": app_config.get(f"llm_max_tokens{_s}", 0),
             f"llm_max_concurrency{_s}": app_config.get(f"llm_max_concurrency{_s}", 1),

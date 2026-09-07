@@ -21,6 +21,7 @@ def _test_config():
             f"llm_model{suffix}": f"model-{number}",
             f"llm_stream{suffix}": False,
             f"llm_stream_idle_timeout_seconds{suffix}": 90,
+            f"llm_custom_headers{suffix}": "",
         })
     config["llm_routing"] = {}
     return config
@@ -1191,9 +1192,14 @@ async def test_idle_timeout_ends_stream_and_preserves_partial_in_error_event(mon
 @pytest.mark.asyncio
 async def test_openai_compat_finish_reason_ends_without_done_sentinel(monkeypatch):
     config = _test_config()
+    config["llm_custom_headers"] = (
+        '{"x-opencode-session":"stream-session",'
+        '"User-Agent":"soya-stream-test/1.0"}'
+    )
     monkeypatch.setattr(llm_service, "_current_config", config)
     monkeypatch.setattr(llm_service, "_OPENAI_POST_FINISH_USAGE_GRACE_SECONDS", 0.01)
     consumed_lines = []
+    request_headers = {}
 
     class FakeResponse:
         status_code = 200
@@ -1222,6 +1228,7 @@ async def test_openai_compat_finish_reason_ends_without_done_sentinel(monkeypatc
             return False
 
         def stream(self, *args, **kwargs):
+            request_headers.update(kwargs.get("headers") or {})
             return FakeResponse()
 
     monkeypatch.setattr(llm_service.httpx, "AsyncClient", lambda **kwargs: FakeClient())
@@ -1231,12 +1238,17 @@ async def test_openai_compat_finish_reason_ends_without_done_sentinel(monkeypatc
             [{"role": "user", "content": "hello"}],
             "model-1",
             "https://example.invalid/v1/chat/completions",
+            api_key="stream-key",
         )
     ]
 
     assert [event["type"] for event in events] == ["start", "delta", "done"]
     assert events[-1]["text"] == "완료"
     assert len(consumed_lines) == 2
+    assert request_headers["x-opencode-session"] == "stream-session"
+    assert request_headers["User-Agent"] == "soya-stream-test/1.0"
+    assert request_headers["Accept"] == "text/event-stream"
+    assert request_headers["Authorization"] == "Bearer stream-key"
 
 
 @pytest.mark.asyncio

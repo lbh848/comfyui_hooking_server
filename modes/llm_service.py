@@ -166,7 +166,8 @@ LLM_SLOT_IDS = tuple(f"llm{i}" for i in range(1, LLM_SLOT_COUNT + 1))
 
 # API 키는 메모리에만 존재해야 하므로 로그(파일/stdout)에 절대 평문 노출 금지.
 _REDACTED_KEYS = {
-    *(f"llm_api_key{n}" for n in range(1, LLM_SLOT_COUNT + 1)),
+    *(f"llm_api_key{'' if n == 1 else n}" for n in range(1, LLM_SLOT_COUNT + 1)),
+    *(f"llm_custom_headers{'' if n == 1 else n}" for n in range(1, LLM_SLOT_COUNT + 1)),
     "api_key", "apikey",
     "token", "access_token", "authorization", "x-api-key",
     "key", "secret", "password",
@@ -206,9 +207,22 @@ def _redact_in_text(msg):
     candidates = []
     try:
         for n in range(1, LLM_SLOT_COUNT + 1):
-            v = _current_config.get(f"llm_api_key{n}", "")
+            suffix = "" if n == 1 else str(n)
+            v = _current_config.get(f"llm_api_key{suffix}", "")
             if isinstance(v, str) and len(v) >= 8:
                 candidates.append(v)
+            raw_headers = _current_config.get(f"llm_custom_headers{suffix}", "")
+            if isinstance(raw_headers, str) and raw_headers.strip():
+                try:
+                    parsed_headers = json.loads(raw_headers)
+                except Exception:
+                    parsed_headers = {}
+                if isinstance(parsed_headers, dict):
+                    candidates.extend(
+                        value
+                        for value in parsed_headers.values()
+                        if isinstance(value, str) and len(value) >= 8
+                    )
     except Exception:
         pass
     if isinstance(COPILOT_KEY, str) and len(COPILOT_KEY) >= 8:
@@ -511,6 +525,7 @@ _current_config = _ContextConfig({
     "llm_reasoning_effort": "",       # ""|low|medium|high|none (OpenAI reasoning_effort)
     "llm_reasoning_budget_tokens": 0, # GLM/deepseek thinking budget_tokens
     "llm_custom_body": "",            # LLM1 JSON object 문자열. Gemini/Vertex Gemini 전용 경로는 사용하지 않음
+    "llm_custom_headers": "",         # LLM1 OpenAI 호환 요청에 병합할 HTTP header JSON object 문자열
     "llm_temperature": 1.0,
     "llm_max_tokens": DEFAULT_LLM_MAX_OUTPUT_TOKENS,  # 0 = 공급자 기본값 사용
     "llm_stream": False,              # LLM1 실제 API 스트리밍
@@ -537,6 +552,7 @@ for _slot_n in range(2, LLM_SLOT_COUNT + 1):
         f"llm_reasoning_preset{_suffix}": "auto",
         f"llm_reasoning_effort{_suffix}": "",
         f"llm_custom_body{_suffix}": "",
+        f"llm_custom_headers{_suffix}": "",
         f"llm_stream{_suffix}": False,
         f"llm_max_tokens{_suffix}": 0,
         f"llm_max_concurrency{_suffix}": 1,
@@ -622,7 +638,7 @@ def _base_config_get(key: str, default=None):
 
 
 def _slot_config_overrides(slot: str) -> dict:
-    """LLM2~5 전용 연결 설정을 요청별 LLM1 조회 키로 투영한다.
+    """LLM2~N 전용 연결 설정을 요청별 LLM1 조회 키로 투영한다.
 
     llm_vision_compress(비전 webp 압축 토글)만 예외: 전역(LLM1) 상속을 하지 않고
     슬롯 bool 값을 그대로 따른다 — False 도 유효한 '끄기' 값이므로 truthiness 폴백이
@@ -647,6 +663,12 @@ def _slot_config_overrides(slot: str) -> dict:
             if slot_value
             else _base_config_get(base_key, base_default)
         )
+    # 커스텀 헤더는 빈 값도 해당 슬롯의 명시적인 "추가 헤더 없음"이다.
+    # 다른 연결 정보의 레거시 상속 규칙과 달리 LLM1 헤더를 재사용하지 않는다.
+    overrides["llm_custom_headers"] = _base_config_get(
+        f"llm_custom_headers{suffix}",
+        "",
+    )
     # 최대 출력 토큰도 per-slot 완전 독립. 슬롯 값이 없거나 0이면
     # provider 기본값을 사용하며 LLM1 값을 상속하지 않는다.
     overrides["llm_max_tokens"] = _base_config_get(
@@ -2484,6 +2506,76 @@ async def _get_vertex_access_token(key_path: str) -> str:
 
 # ─── 신규 provider 구현 ────────────────────────────────────
 
+def parse_custom_headers(raw_headers: Any) -> dict[str, str]:
+    """슬롯별 Custom Headers JSON을 HTTP 전송 가능한 문자열 맵으로 변환한다."""
+    if raw_headers == "":
+        return {}
+    if not isinstance(raw_headers, str):
+        raise TypeError("Custom Headers는 JSON 문자열이어야 합니다.")
+    if not raw_headers.strip():
+        return {}
+    try:
+        parsed = json.loads(raw_headers)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Custom Headers JSON 오류: {exc}") from exc
+    if not isinstance(parsed, dict):
+        raise ValueError("Custom Headers는 JSON object여야 합니다.")
+
+    normalized: dict[str, str] = {}
+    for raw_name, raw_value in parsed.items():
+        if not isinstance(raw_name, str) or not raw_name.strip():
+            raise ValueError("Custom Headers의 헤더 이름은 비어 있지 않은 문자열이어야 합니다.")
+        if not isinstance(raw_value, str):
+            raise ValueError(
+                f"Custom Headers의 {raw_name!r} 값은 문자열이어야 합니다."
+            )
+        normalized[raw_name.strip()] = raw_value
+    return normalized
+
+
+def _set_header_case_insensitive(headers: dict[str, str], name: str, value: str) -> None:
+    """동일 헤더의 대소문자 변형을 제거하고 한 값만 남긴다."""
+    lowered = name.lower()
+    for existing in list(headers):
+        if existing.lower() == lowered:
+            del headers[existing]
+    headers[name] = value
+
+
+def _build_openai_compat_headers(
+    *,
+    api_key: str = "",
+    extra_headers: dict | None = None,
+    streaming: bool = False,
+) -> dict[str, str]:
+    """공급자 기본값과 현재 슬롯의 Custom Headers를 안전한 우선순위로 합친다."""
+    raw_headers = _current_config.get("llm_custom_headers", "")
+    try:
+        custom_headers = parse_custom_headers(raw_headers)
+    except (TypeError, ValueError) as exc:
+        raw_length = len(raw_headers) if isinstance(raw_headers, str) else None
+        print(
+            "[LLM_HEADERS] Custom Headers 적용 실패: "
+            f"slot={_normalize_llm_slot(_llm_slot_ctx.get())}, "
+            f"input=<redacted {raw_length} chars>, state=build_headers, "
+            f"error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        raise
+
+    headers: dict[str, str] = {}
+    if extra_headers:
+        headers.update({str(name): str(value) for name, value in extra_headers.items()})
+    headers.update(custom_headers)
+
+    # HTTP 전송 계약에 필수인 값은 Custom Headers가 실수로 깨뜨리지 못하게 한다.
+    _set_header_case_insensitive(headers, "Content-Type", "application/json")
+    if streaming:
+        _set_header_case_insensitive(headers, "Accept", "text/event-stream")
+    if api_key:
+        _set_header_case_insensitive(headers, "Authorization", f"Bearer {api_key}")
+    return headers
+
 async def _call_openai_compat(messages: list, model: str, endpoint: str,
                               api_key: str = "", extra_headers: dict = None,
                               default_body: dict = None,
@@ -2511,11 +2603,13 @@ async def _call_openai_compat(messages: list, model: str, endpoint: str,
         legacy_custom_only=legacy_custom_only,
     )
 
-    headers = {"Content-Type": "application/json"}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
-    if extra_headers:
-        headers.update(extra_headers)
+    try:
+        headers = _build_openai_compat_headers(
+            api_key=api_key,
+            extra_headers=extra_headers,
+        )
+    except (TypeError, ValueError) as exc:
+        return f"[LLM 실패] openai-compat Custom Headers 오류: {exc}"
 
     _llm_log(f"openai-compat 요청: url={url} model={model} family={reasoning_family} messages={len(messages)}")
 
@@ -5290,11 +5384,15 @@ async def _stream_openai_compat(messages: list, model: str, url: str,
     if "max_completion_tokens" in body and reasoning_family not in ("glm", "deepseek", "kimi"):
         body["stream_options"] = {"include_usage": True}
 
-    headers = {"Content-Type": "application/json", "Accept": "text/event-stream"}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
-    if extra_headers:
-        headers.update(extra_headers)
+    try:
+        headers = _build_openai_compat_headers(
+            api_key=api_key,
+            extra_headers=extra_headers,
+            streaming=True,
+        )
+    except (TypeError, ValueError) as exc:
+        yield {"type": "error", "error": f"{service} Custom Headers 오류: {exc}"}
+        return
 
     t0 = time.time()
     ttft = None

@@ -21,6 +21,7 @@ def isolated_llm_config(monkeypatch):
             "llm_reasoning_effort": "",
             "llm_reasoning_budget_tokens": 0,
             "llm_custom_body": "",
+            "llm_custom_headers": "",
             "llm_temperature": 1.0,
             "llm_max_tokens": 0,
         }
@@ -38,6 +39,68 @@ def test_service_catalog_contains_provider_manager_presets_and_preserves_ollama_
     assert llm_service.PROVIDER_MANAGER_SERVICES["z-ai"]["endpoint"] == (
         "https://api.z.ai/api/paas/v4/chat/completions"
     )
+
+
+def test_custom_headers_require_json_object_with_string_values():
+    assert llm_service.parse_custom_headers(
+        '{"x-opencode-session":"session-123", "User-Agent":"soya-test/1.0"}'
+    ) == {
+        "x-opencode-session": "session-123",
+        "User-Agent": "soya-test/1.0",
+    }
+
+    with pytest.raises(ValueError, match="JSON object"):
+        llm_service.parse_custom_headers('["x-opencode-session"]')
+    with pytest.raises(ValueError, match="문자열"):
+        llm_service.parse_custom_headers('{"x-opencode-session":123}')
+    with pytest.raises(TypeError, match="JSON 문자열"):
+        llm_service.parse_custom_headers(None)
+
+
+def test_custom_headers_preserve_runtime_transport_and_auth_headers(
+    isolated_llm_config,
+):
+    isolated_llm_config["llm_custom_headers"] = json.dumps(
+        {
+            "x-opencode-session": "session-123",
+            "User-Agent": "soya-test/1.0",
+            "content-type": "text/plain",
+            "accept": "application/json",
+            "authorization": "Custom credential",
+        }
+    )
+
+    headers = llm_service._build_openai_compat_headers(
+        api_key="api-key",
+        extra_headers={"X-Provider": "provider-default"},
+        streaming=True,
+    )
+
+    assert headers["x-opencode-session"] == "session-123"
+    assert headers["User-Agent"] == "soya-test/1.0"
+    assert headers["X-Provider"] == "provider-default"
+    assert headers["Content-Type"] == "application/json"
+    assert headers["Accept"] == "text/event-stream"
+    assert headers["Authorization"] == "Bearer api-key"
+    assert not any(
+        name in headers
+        for name in ("content-type", "accept", "authorization")
+    )
+
+
+def test_llm2_empty_custom_headers_do_not_inherit_llm1(isolated_llm_config):
+    isolated_llm_config["llm_custom_headers"] = '{"X-Slot":"llm1"}'
+    isolated_llm_config["llm_custom_headers2"] = ""
+
+    assert llm_service._slot_config_overrides("llm2")["llm_custom_headers"] == ""
+
+
+def test_custom_header_config_is_redacted_from_setting_logs():
+    raw = '{"Authorization":"secret-token-value"}'
+
+    assert llm_service._redact_dict({"llm_custom_headers": raw}) == {
+        "llm_custom_headers": f"<redacted {len(raw)} chars>"
+    }
 
 
 def test_openai_custom_body_always_deep_merges_and_protects_runtime_fields():

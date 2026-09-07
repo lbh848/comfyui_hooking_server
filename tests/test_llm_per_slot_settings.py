@@ -200,6 +200,29 @@ def test_frontend_has_independent_controls_for_all_slots():
         assert html.count(f'id="setting-llm-stream-idle-timeout{suffix}"') == 1
 
 
+def test_frontend_and_backend_wire_independent_custom_headers_for_all_slots():
+    html = (
+        Path(__file__).resolve().parents[1] / "frontend" / "index.html"
+    ).read_text(encoding="utf-8")
+    server_source = (
+        Path(__file__).resolve().parents[1] / "server.py"
+    ).read_text(encoding="utf-8")
+
+    assert "function ensureLlmCustomHeaderFields()" in html
+    assert "setting-llm-custom-headers${suffix}" in html
+    assert "config[`llm_custom_headers${suffix}`]" in html
+    assert "configValue('llm_custom_headers', '')" in html
+    assert "function formatCustomHeaders(slot)" in html
+    assert '"llm_custom_headers": ""' in server_source
+    assert 'f"llm_custom_headers{_suffix}": ""' in server_source
+    assert "llm_custom_headers{_sfx}" in server_source
+
+    config = llm_service.get_config()
+    for number in LLM_SLOT_NUMBERS:
+        suffix = "" if number == 1 else str(number)
+        assert f"llm_custom_headers{suffix}" in config
+
+
 def test_llm_slot_count_and_ids_match_backend():
     # 슬롯 단일 소스가 프론트/백엔드/큐 매니저에서 일관되게 10개인지 확인.
     assert llm_service.LLM_SLOT_COUNT == 10
