@@ -20,6 +20,7 @@ from modal_backend.modal_app import (
     loras_volume,
     models_volume,
     runtime_image,
+    with_local_python_sources,
     workflows_volume,
 )
 from modal_backend.settings import normalize_modal_gpu
@@ -46,8 +47,10 @@ except Exception as exc:
     raise
 WEB_WORKFLOW_MOUNT_PATH = "/root/ComfyUI/user/default/workflows/SOYA_USER"
 WEB_FAST = os.environ.get("SOYA_MODAL_WEB_FAST", "0") == "1"
-web_runtime_image = runtime_image.env(
-    {"SOYA_MODAL_WEB_FAST": "1" if WEB_FAST else "0"}
+# 로컬 소스는 파생이 **끝난 뒤** 붙인다. `.env()` 같은 빌드 단계가 `add_local_*`
+# 뒤에 오면 Modal 이 배포를 거부한다.
+web_runtime_image = with_local_python_sources(
+    runtime_image.env({"SOYA_MODAL_WEB_FAST": "1" if WEB_FAST else "0"})
 )
 WEB_SCALEDOWN_WINDOW_SECONDS = int(
     os.environ.get("SOYA_MODAL_WEB_SCALEDOWN_WINDOW", "300")

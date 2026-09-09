@@ -6,10 +6,17 @@ from typing import Any
 
 INSTALL_MODE_STANDARD = "standard"
 INSTALL_MODE_NVIDIA_COMPATIBILITY = "nvidia_compatibility"
+# 클라우드 전용 설치. 로컬에서 모델 추론을 하지 않는다.
+#
+# 왜 별도 모드인가: "클라우드 전용" 은 감지로 정할 수 없다. GPU 가 없다는 사실은
+# 클라우드를 쓸 이유는 되지만 근거는 아니다 — 로컬 CPU 로 돌릴 생각일 수도 있다.
+# 반대로 GPU 가 있어도 전부 원격에 맡기고 싶을 수 있다. 그래서 사용자가 고른다.
+INSTALL_MODE_CLOUD_ONLY = "cloud_only"
 SUPPORTED_INSTALL_MODES = frozenset(
     {
         INSTALL_MODE_STANDARD,
         INSTALL_MODE_NVIDIA_COMPATIBILITY,
+        INSTALL_MODE_CLOUD_ONLY,
     }
 )
 
@@ -39,6 +46,14 @@ def effective_gpu_profile(
     mode = normalize_install_mode(install_mode)
     effective = copy.deepcopy(profile)
     effective["install_mode"] = mode
+    if mode == INSTALL_MODE_CLOUD_ONLY:
+        # 로컬 추론이 없으므로 SageAttention·Triton 을 설치할 이유가 없다.
+        # 호환 설치와 달리 최소 compute capability 도 두지 않는다 — 로컬 GPU 가
+        # 아예 없는 구성이 정상이라, 하한을 두면 정상 구성이 막힌다.
+        effective["sageattention_required"] = False
+        effective.pop("sageattention", None)
+        effective.pop("triton_package", None)
+        return effective
     if mode == INSTALL_MODE_STANDARD or effective.get("kind") != "nvidia":
         return effective
 

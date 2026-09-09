@@ -496,6 +496,18 @@ class VideoEngineRuntimeManager:
             )
             return self.status(after=0)
 
+    def _signal_process_group(
+        self, process: subprocess.Popen[bytes], sig: int
+    ) -> None:
+        """자식 프로세스 그룹에 시그널을 보낸다(POSIX).
+
+        start() 가 start_new_session=True 로 띄우므로 자식의 pgid 는 pid 와 같다.
+        별도 메서드로 분리한 이유는 **테스트가 실제 OS 를 건드리지 않게** 하려는
+        것이다. 가짜 프로세스의 pid 로 killpg 를 부르면 그 번호를 쓰는 무관한
+        프로세스 그룹에 시그널이 날아간다.
+        """
+        os.killpg(process.pid, sig)
+
     def _force_stop(self, process: subprocess.Popen[bytes]) -> None:
         state = self._state
         with state.lock:
@@ -504,7 +516,7 @@ class VideoEngineRuntimeManager:
             self._terminate_windows_job(job_handle)
             return
         if os.name != "nt":
-            os.killpg(process.pid, signal.SIGKILL)
+            self._signal_process_group(process, signal.SIGKILL)
             return
         process.kill()
 
@@ -528,7 +540,7 @@ class VideoEngineRuntimeManager:
                 if os.name == "nt":
                     process.send_signal(signal.CTRL_BREAK_EVENT)
                 else:
-                    os.killpg(process.pid, signal.SIGINT)
+                    self._signal_process_group(process, signal.SIGINT)
                 graceful_signal_sent = True
             except Exception as exc:
                 print(

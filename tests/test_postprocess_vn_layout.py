@@ -415,8 +415,15 @@ class PostprocessVnLayoutTests(unittest.TestCase):
 
 
     def test_devil_gradient_bottom_is_darkest(self):
-        """소악마(devil) 패널은 하단이 완전 어둡(255), 상단이 50%(128) 그라데이션.
-        따라서 opacity=100일 때 패널 하단이 상단보다 어두워야 한다."""
+        """소악마(devil) 패널은 상단(10,8,12)→하단(0,0,0) 세로 그라데이션이다.
+        따라서 opacity=100일 때 패널 하단이 상단보다 어두워야 한다.
+
+        측정은 반드시 '패널 내부의 텍스트 없는 좌측 열'에서만 해야 한다.
+        - 좌측 x<8 은 content_x(=x1+pad) 왼쪽이라 본문/이름/악센트 바가 닿지 않는다.
+        - 패널 아래쪽에는 원본 배경(60,60,90 → L=63)이 그대로 남아 있어,
+          고정 crop 을 쓰면 그라데이션이 아니라 배경을 재는 사고가 난다.
+        그래서 패널 세로 범위를 픽셀에서 직접 찾아낸 뒤 비교한다.
+        """
         from PIL import ImageStat
         rendered = Image.open(io.BytesIO(compose_postprocess(
             _image_bytes(),
@@ -425,13 +432,27 @@ class PostprocessVnLayoutTests(unittest.TestCase):
                       face_enabled=False, opacity=100),
         ))).convert("RGB")
         w, h = rendered.size
-        left_stripe = (0, 0, 40, h)  # 외곽선 없는 좌측 깨끗한 그라데이션 영역
-        top_band = rendered.crop((0, h - 100, 40, h - 80)).convert("L")
-        bot_band = rendered.crop((0, h - 25, 40, h)).convert("L")
-        top_mean = ImageStat.Stat(top_band).mean[0]
-        bot_mean = ImageStat.Stat(bot_band).mean[0]
+
+        # 텍스트가 절대 닿지 않는 좌측 열만 사용한다.
+        stripe = rendered.crop((0, 0, 8, h)).convert("L")
+        background_l = 63  # _image_bytes() 기본색 (60,60,90) 의 L 값
+        row_means = [
+            ImageStat.Stat(stripe.crop((0, y, 8, y + 1))).mean[0]
+            for y in range(h)
+        ]
+        # 패널은 배경보다 확연히 어둡다. 배경으로 남은 행을 제외해 패널 범위를 얻는다.
+        panel_rows = [y for y, m in enumerate(row_means) if m < background_l - 20]
+        self.assertTrue(panel_rows, "devil 패널을 찾지 못했습니다")
+        panel_top, panel_bottom = panel_rows[0], panel_rows[-1]
+        panel_h = panel_bottom - panel_top + 1
+        self.assertGreater(panel_h, 40, f"패널이 너무 얇아 그라데이션 측정 불가: {panel_h}px")
+
+        band = max(4, panel_h // 5)
+        top_mean = sum(row_means[panel_top:panel_top + band]) / band
+        bot_mean = sum(row_means[panel_bottom - band + 1:panel_bottom + 1]) / band
         self.assertLess(bot_mean, top_mean,
-                        f"devil 하단({bot_mean})이 상단({top_mean})보다 어두워야 함")
+                        f"devil 하단({bot_mean})이 상단({top_mean})보다 어두워야 함 "
+                        f"(패널 y={panel_top}~{panel_bottom})")
 
     def test_devil_opacity_scales_gradient_uniformly(self):
         """사용자 opacity는 devil 그라데이션 전체에 동등 곱해져 하단도 옅어진다."""

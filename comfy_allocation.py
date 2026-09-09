@@ -43,6 +43,14 @@ DEFAULT_COMFY_TASK_ALLOCATIONS = {key: 1 for key in COMFY_TASK_KEYS}
 MODAL_COMFY_TARGET = "modal"
 VAST_COMFY_TARGET = "vast"
 VIDEO_ENGINE_COMFY_TARGET = "video_engine"
+# 원격에서 실행할 수 있는 작업.
+#
+# 기준은 "GPU 가 필요한가" 가 아니라 **결과를 원격에서 회수할 길이 있는가** 다.
+# 컨테이너 파일시스템은 휘발성이라, 결과는 이미지 바이트·text_outputs·볼륨
+# artifact 중 하나로 돌아와야 한다. 그러지 못하면 실행이 성공해도 쓸모가 없다.
+#
+# outfit 만 빠져 있다. 워크플로우가 배포되지 않아(매니페스트 excluded_filenames)
+# 요구사항조차 알 수 없다. 바인딩이 없어 로컬 모델을 요구하지도 않는다.
 MODAL_SUPPORTED_COMFY_TASK_KEYS = frozenset(
     {
         "illustration",
@@ -53,6 +61,9 @@ MODAL_SUPPORTED_COMFY_TASK_KEYS = frozenset(
         "bot_lora_training",
         "instance_lora",
         "video_generation",
+        "tag_analysis",
+        "utility_debug",
+        "face_extract",
     }
 )
 VAST_SUPPORTED_COMFY_TASK_KEYS = MODAL_SUPPORTED_COMFY_TASK_KEYS
@@ -63,6 +74,194 @@ NONLOCAL_COMFY_TARGETS = frozenset(
 )
 DEFAULT_COMFY_TASK_MODAL_PARALLEL = {key: False for key in COMFY_TASK_KEYS}
 DEFAULT_COMFY_TASK_VAST_PARALLEL = {key: False for key in COMFY_TASK_KEYS}
+
+# 클라우드 전용 구성의 기본 배분.
+#
+# **표가 아니라 유도값이다.** MODAL_SUPPORTED_COMFY_TASK_KEYS 를 그대로 따라가므로
+# 위 집합에 키가 하나 늘면(예: face_extract 실측 후) 이 기본값도 같이 따라온다.
+# 두 곳을 손으로 맞추면 반드시 어긋난다 — 실제로 배분 키와 작업 키 매핑이
+# 어긋나 설정이 조용히 무시된 전례가 있다.
+#
+# 원격 미지원 작업은 로컬(1)로 남는다. "클라우드 전용" 은 원격에 보낼 수 있는
+# 것을 전부 보낸다는 뜻이지, 보낼 수 없는 것까지 보낸다는 뜻이 아니다.
+CLOUD_ONLY_DEFAULT_COMFY_TASK_ALLOCATIONS = {
+    key: (MODAL_COMFY_TARGET if key in MODAL_SUPPORTED_COMFY_TASK_KEYS else 1)
+    for key in COMFY_TASK_KEYS
+}
+# 클라우드 전용에서는 모델도 저장소 → 원격 볼륨으로 직접 받는다.
+# 로컬에서 실행할 작업이 (거의) 없는데 로컬로 먼저 받는 것은 의미가 없다.
+CLOUD_ONLY_DEFAULT_MODEL_SOURCE = "cloud_direct"
+
+
+def default_comfy_task_allocations(*, cloud_only: bool = False) -> dict[str, Any]:
+    """설치 구성에 맞는 기본 배분을 돌려준다.
+
+    ``cloud_only`` 는 **판정이 아니라 선언**이어야 한다. cloud_only_assessment()
+    는 배분이 이미 전부 원격일 때 참이 되므로, 그 값으로 배분의 기본값을 정하면
+    순환이다(전부 원격이어야 참 → 참이어야 전부 원격). 그래서 이 함수는 호출자가
+    "클라우드 전용으로 설치한다" 고 선언한 경우에만 원격 기본값을 준다.
+
+    이미 저장된 설정을 바꾸지 않는다. 기본값은 값이 **없을 때** 쓰는 것이고,
+    있는 값을 덮으면 사용자가 고른 과금 경로를 말없이 바꾸는 셈이 된다.
+    """
+
+    source = (
+        CLOUD_ONLY_DEFAULT_COMFY_TASK_ALLOCATIONS
+        if cloud_only
+        else DEFAULT_COMFY_TASK_ALLOCATIONS
+    )
+    return dict(source)
+
+# 작업 종류 ↔ 설치 매니페스트 워크플로우 바인딩 id.
+#
+# 왜 필요한가: 모델을 저장소에서 원격 볼륨으로 직접 받는 구성에서 설치기가
+# "로컬에서 실제로 실행되는 작업이 쓰는 모델만" 받으려면, 작업에서 워크플로우
+# 바인딩을 거쳐 매니페스트 model_ids 로 내려가는 길이 필요하다. 그 길이 없었다.
+#
+# 왜 표인가: 파일명이나 작업 이름에서 추론하면 워크플로우 팩이 바뀔 때 조용히
+# 어긋난다. 매니페스트의 모든 바인딩이 이 표 또는 UNMAPPED_WORKFLOW_BINDINGS 에
+# 있어야 한다는 사실은 테스트로 강제한다.
+#
+# 하나의 바인딩이 여러 작업에 걸릴 수 있다(LoRA 학습 3종이 같은 워크플로우를
+# 공유한다). 그래서 "한 작업이라도 로컬이면 그 바인딩은 로컬 필요"로 합집합을
+# 취한다 — 부족한 쪽보다 남는 쪽이 안전하다.
+COMFY_TASK_WORKFLOW_BINDINGS: dict[str, tuple[str, ...]] = {
+    # 삽화·재생성은 같은 워크플로우 계열을 탄다
+    # (queue_manager.py:3233·3296 → generate_image_with_prompt →
+    #  server.py:1324 get_comfy_workflow_source_path).
+    "illustration": (
+        "comfy_workflow_source_path",
+        "illustration_workflow_source_paths.v1",
+        "illustration_workflow_source_paths.v3",
+        "illustration_workflow_source_paths.v3_anima",
+    ),
+    "restore_regenerate": (
+        "comfy_workflow_source_path",
+        "illustration_workflow_source_paths.v1",
+        "illustration_workflow_source_paths.v3",
+        "illustration_workflow_source_paths.v3_anima",
+    ),
+    "asset_generation": (
+        "asset_workflow_source_path",
+        "anima_asset_workflow_source_path",
+        "anima_only_asset_workflow_source_path",
+    ),
+    # EDIT 계열 = Qwen Edit + ANIMA Inpainting (COMFY_TASK_DEFINITIONS 참고).
+    "qwen_edit": (
+        "qwen_edit_workflow_source_path",
+        "anima_inpainting_workflow_source_path",
+    ),
+    "tag_analysis": (
+        "tag_analysis_workflow_source_path",
+        "asset_tag_analysis_workflow_source_path",
+    ),
+    # 복장 추출 워크플로우는 배포되지 않는다(설치기 excluded_filenames).
+    # 매니페스트에 대응 바인딩이 없어 빈 튜플이 정답이다.
+    "outfit": (),
+    # lora_training_* 는 에셋·봇·인스턴스 학습이 공유한다
+    # (queue_manager.py:3691·3815·4694).
+    "asset_lora_training": (
+        "lora_training_workflow_source_paths.anima",
+        "lora_training_workflow_source_paths.sdxl",
+    ),
+    "bot_lora_training": (
+        "lora_training_workflow_source_paths.anima",
+        "lora_training_workflow_source_paths.sdxl",
+    ),
+    "instance_lora": (
+        "lora_training_workflow_source_paths.anima",
+        "lora_training_workflow_source_paths.sdxl",
+        "style_lora_training_workflow_source_paths.anima",
+        "style_lora_training_workflow_source_paths.sdxl",
+    ),
+    "face_extract": ("face_extract_workflow_source_path",),
+    "utility_debug": (
+        "utility_workflow_source_path",
+        "debug_workflow_source_path",
+    ),
+    "video_generation": (
+        "video_workflow_source_paths.i2v",
+        "video_workflow_source_paths.first_last",
+        "video_workflow_source_paths.ref2v",
+        "video_workflow_source_paths.i2v_fast",
+        "video_workflow_source_paths.first_last_fast",
+        "video_workflow_source_paths.ref2v_fast",
+    ),
+}
+
+# 매니페스트에 있으나 어떤 작업에도 매이지 않는 바인딩.
+# 지금은 없다. 새 워크플로우가 추가됐는데 어느 작업이 쓰는지 아직 모를 때
+# 여기에 넣으면 커버리지 테스트는 통과하되 기록은 남는다.
+UNMAPPED_WORKFLOW_BINDINGS: frozenset[str] = frozenset()
+
+
+def is_remote_allocation(value: Any) -> bool:
+    """배분 값이 원격 대상(modal/vast)인지."""
+
+    return isinstance(value, str) and value.strip().lower() in REMOTE_COMFY_TARGETS
+
+
+def local_comfy_task_keys(allocations: Any) -> tuple[str, ...]:
+    """원격이 아닌 대상에 배분된 작업 키들.
+
+    키가 없으면 로컬로 본다 — DEFAULT_COMFY_TASK_ALLOCATIONS 가 로컬 인스턴스이고,
+    모르는 것을 원격으로 가정하면 필요한 모델을 안 받게 되기 때문이다.
+    """
+
+    source = allocations if isinstance(allocations, dict) else {}
+    return tuple(
+        key
+        for key in COMFY_TASK_KEYS
+        if not is_remote_allocation(source.get(key))
+    )
+
+
+def local_required_binding_ids(allocations: Any) -> frozenset[str]:
+    """로컬에서 실행되는 작업들이 쓰는 워크플로우 바인딩 id 집합."""
+
+    bindings: set[str] = set()
+    for key in local_comfy_task_keys(allocations):
+        bindings.update(COMFY_TASK_WORKFLOW_BINDINGS.get(key, ()))
+    return frozenset(bindings)
+
+
+def cloud_only_assessment(
+    *,
+    nvidia_available: Any,
+    allocations: Any,
+) -> dict[str, Any]:
+    """이 머신이 '클라우드 전용' 구성인지 판정한다.
+
+    두 조건을 **모두** 만족할 때만 참이다:
+      1. 로컬 가속 GPU 가 없다 (설치기 system_probe 의 nvidia.available)
+      2. 원격 실행이 가능한 작업이 **전부** 원격에 배분돼 있다
+
+    하나만으로는 부족하다. GPU 가 없어도 사용자가 로컬 CPU 로 돌릴 생각일 수
+    있고, 전부 원격이어도 GPU 가 있으면 언제든 되돌릴 수 있다.
+
+    판정은 **권고용**이다. 이 값으로 설정을 자동으로 바꾸지 않는다 — 모델 취득
+    경로가 바뀌면 무엇을 받고 무엇에 과금되는지가 달라지므로 사용자가 골라야 한다.
+
+    이 값으로 기본 배분을 정하려 들면 순환이다: 조건 2가 "배분이 전부 원격"
+    이므로, 전부 원격이어야 참이 되고 참이어야 전부 원격이 된다. 클라우드 전용
+    구성을 **선언**하는 통로는 따로 있다 — 설치 모드 ``cloud_only`` 와
+    CLOUD_ONLY_DEFAULT_COMFY_TASK_ALLOCATIONS. 이 함수는 그 선언이 실제로
+    반영됐는지 사후에 확인하는 쪽으로만 쓴다.
+    """
+
+    source = allocations if isinstance(allocations, dict) else {}
+    remote_capable = sorted(MODAL_SUPPORTED_COMFY_TASK_KEYS)
+    local_capable = [
+        key for key in remote_capable if not is_remote_allocation(source.get(key))
+    ]
+    has_gpu = bool(nvidia_available)
+    return {
+        "cloud_only": (not has_gpu) and not local_capable,
+        "nvidia_available": has_gpu,
+        "remote_capable_total": len(remote_capable),
+        "remote_capable_assigned_remote": len(remote_capable) - len(local_capable),
+        "locally_assigned_remote_capable_tasks": local_capable,
+    }
 
 # 큐 워커가 claim한 실행 대상을 하위 모드와 server.py의 공통 제출 함수까지 전달한다.
 # asyncio Task별 값이 분리되어 로컬 Comfy와 여러 Modal 워커가 동시에 실행돼도 섞이지 않는다.

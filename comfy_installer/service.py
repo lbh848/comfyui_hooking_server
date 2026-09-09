@@ -51,7 +51,9 @@ from .e2e import (
     promote_generated_fixture,
     validate_all_workflows,
 )
+from comfy_allocation import CLOUD_ONLY_DEFAULT_COMFY_TASK_ALLOCATIONS
 from .install_modes import (
+    INSTALL_MODE_CLOUD_ONLY,
     INSTALL_MODE_NVIDIA_COMPATIBILITY,
     INSTALL_MODE_STANDARD,
     compatibility_warning,
@@ -67,6 +69,12 @@ from .manager_dependencies import install_manager_dependencies
 from .input_patcher import patch_comfy_input
 from .migration import ComfyMigrationCancelled, migrate_user_data
 from .model_installer import install_models
+from .model_scope import (
+    MODEL_SOURCE_CLOUD_DIRECT,
+    MODEL_SOURCE_LOCAL_FIRST,
+    ModelScope,
+    scope_models,
+)
 from .node_installer import install_custom_nodes, update_custom_nodes
 from .node_compatibility import validate_instant_lora_export_order
 from .operations import uv_python_path
@@ -394,7 +402,42 @@ class ComfyInstallerService:
                 ),
                 "custom_node_count": len(active_manifest.custom_nodes),
             },
+            "model_acquisition": self._model_acquisition_advice(result),
         }
+
+    def _model_acquisition_advice(self, probe: dict) -> dict[str, Any]:
+        """클라우드 전용으로 보이는 머신에 모델 취득 경로를 권고한다.
+
+        설정을 자동으로 바꾸지 않는다 — 무엇을 받고 무엇에 과금되는지가 달라지는
+        선택이라 사용자가 해야 한다. 신호만 준다.
+        """
+
+        try:
+            from comfy_allocation import cloud_only_assessment
+
+            config = self._read_config()
+            assessment = cloud_only_assessment(
+                nvidia_available=(probe.get("nvidia") or {}).get("available"),
+                allocations=config.get("comfy_task_allocations"),
+            )
+            current = str(config.get("modal_model_source") or "").strip().lower()
+            if current not in {MODEL_SOURCE_LOCAL_FIRST, MODEL_SOURCE_CLOUD_DIRECT}:
+                current = MODEL_SOURCE_LOCAL_FIRST
+            recommend = (
+                assessment["cloud_only"] and current == MODEL_SOURCE_LOCAL_FIRST
+            )
+            return {
+                **assessment,
+                "model_source": current,
+                "recommend_cloud_direct": recommend,
+            }
+        except Exception as exc:
+            print(
+                "[COMFY_INSTALL][SERVICE] 모델 취득 경로 권고 계산 실패: "
+                f"{type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            return {}
 
     def preflight_selection(
         self,
@@ -412,13 +455,35 @@ class ComfyInstallerService:
             library_root=self.workflow_library_root,
             release_version=release_version,
         )
+        # UI 가 설치 전에 보는 디스크 요구량도 실제 다운로드분 기준이어야 한다.
+        # 여기와 _run_install 이 다르면 "통과했는데 설치가 막힌다"가 된다.
+        # 모델 출처는 팩 동봉 매니페스트다 — _run_install 과 같은 것을 봐야 한다.
+        models_by_id = {
+            str(model["id"]): model for model in pack_manifest.models
+        }
+        scope = self._scope_selected_models(
+            [
+                models_by_id[model_id]
+                for model_id in requirements["model_ids"]
+                if model_id in models_by_id
+            ],
+            install_mode=install_mode,
+            manifest=pack_manifest,
+        )
         return {
             **self.preflight(
-                selected_model_bytes=int(requirements["model_bytes"]),
+                selected_model_bytes=int(scope.keep_bytes),
                 install_mode=install_mode,
                 manifest=pack_manifest,
             ),
-            "selection": requirements,
+            "selection": {
+                **requirements,
+                "model_source": scope.model_source,
+                "local_model_ids": [str(m["id"]) for m in scope.keep],
+                "local_model_bytes": int(scope.keep_bytes),
+                "remote_model_count": len(scope.skipped),
+                "remote_model_bytes": int(scope.skipped_bytes),
+            },
         }
 
     def workflow_library_status(self) -> dict:
@@ -913,6 +978,73 @@ class ComfyInstallerService:
             raise InstallerServiceError(
                 f"Civitai 인증 사전 검사 실패: {exc}"
             ) from exc
+
+    def _read_config(self) -> dict[str, Any]:
+        """config.json 을 읽는다. 없거나 깨졌으면 빈 dict."""
+
+        try:
+            if not self.config_path.is_file():
+                return {}
+            raw = json.loads(self.config_path.read_text(encoding="utf-8"))
+            return raw if isinstance(raw, dict) else {}
+        except Exception as exc:
+            print(
+                "[COMFY_INSTALL][SERVICE] config.json 읽기 실패: "
+                f"config={self.config_path}, error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            return {}
+
+    def _scope_selected_models(
+        self,
+        models: list[dict[str, Any]],
+        *,
+        install_mode: str = INSTALL_MODE_STANDARD,
+        manifest: InstallManifest | None = None,
+    ) -> ModelScope:
+        """설치기가 실제로 로컬에 받을 모델을 정한다.
+
+        ``cloud_direct`` 에서는 로컬에서 실행되는 작업이 쓰는 모델만 남기고,
+        나머지는 워커가 저장소에서 볼륨으로 직접 받도록 넘긴다. 설정을 읽지
+        못하면 ``local_first`` 로 본다 — 모르는 상태에서 다운로드를 건너뛰면
+        나중에 조용히 실패하기 때문이다.
+
+        ``install_mode`` 를 받는 이유는 **순서** 때문이다. 설치는 모델을 먼저 받고
+        (`models` 단계) 설정을 나중에 적용한다(`config` 단계). 그래서 클라우드 전용
+        설치가 config.json 에만 반영되면, 정작 다운로드를 정하는 이 시점에는 아직
+        옛 설정(local_first · 전부 로컬)이 보인다 — 모델을 전부 로컬로 받아 놓고
+        그 다음에 "클라우드 전용" 이라고 적는 꼴이 된다. 선언된 설치 모드를 직접
+        보게 해서 그 창을 없앤다.
+
+        ``manifest`` 는 바인딩→모델 대응을 읽을 매니페스트다. 팩이 자기완결형이
+        된 뒤로 ``models`` 는 팩 동봉 매니페스트에서 오므로, 워크플로우 바인딩도
+        **같은 매니페스트**에서 읽어야 한다. 저장소 매니페스트와 섞으면 팩 버전이
+        다를 때 바인딩이 어긋나, 로컬에 필요한 모델을 조용히 건너뛴다.
+        """
+
+        config = self._read_config()
+        active_manifest = manifest or self.manifest
+        if str(install_mode) == INSTALL_MODE_CLOUD_ONLY:
+            return scope_models(
+                models,
+                workflows=active_manifest.workflows,
+                allocations=CLOUD_ONLY_DEFAULT_COMFY_TASK_ALLOCATIONS,
+                model_source=MODEL_SOURCE_CLOUD_DIRECT,
+            )
+        raw_source = str(config.get("modal_model_source") or "").strip().lower()
+        if raw_source not in {MODEL_SOURCE_LOCAL_FIRST, MODEL_SOURCE_CLOUD_DIRECT}:
+            if raw_source:
+                print(
+                    "[COMFY_INSTALL][SERVICE] 알 수 없는 modal_model_source, "
+                    f"local_first 로 처리합니다: value={raw_source!r}"
+                )
+            raw_source = MODEL_SOURCE_LOCAL_FIRST
+        return scope_models(
+            models,
+            workflows=active_manifest.workflows,
+            allocations=config.get("comfy_task_allocations"),
+            model_source=raw_source,
+        )
 
     def _video_e2e_extra_args(self) -> tuple[str, ...]:
         try:
@@ -1723,9 +1855,24 @@ class ComfyInstallerService:
                 release_version=release_version,
                 selected_item_ids=selected_item_ids,
             )
+            models_by_id = {
+                str(model["id"]): model for model in pack_manifest.models
+            }
+            # 디스크 요구량은 "실제로 로컬에 받을 것" 기준이어야 한다.
+            # cloud_direct 에서 매니페스트 전체를 요구하면 정작 받을 것보다
+            # 100 GiB 넘게 과대 산정돼 멀쩡한 머신이 프리플라이트에서 막힌다.
+            preflight_scope = self._scope_selected_models(
+                [
+                    models_by_id[model_id]
+                    for model_id in selection_info["model_ids"]
+                    if model_id in models_by_id
+                ],
+                install_mode=install_mode,
+                manifest=pack_manifest,
+            )
             self._set_phase("preflight")
             system = self.preflight(
-                selected_model_bytes=int(selection_info["model_bytes"]),
+                selected_model_bytes=int(preflight_scope.keep_bytes),
                 install_mode=install_mode,
                 manifest=pack_manifest,
             )
@@ -1733,9 +1880,11 @@ class ComfyInstallerService:
                 "[검사] GPU 프로필 선택: "
                 f"{system['gpu_profile']}, "
                 f"free={system['disk']['free'] / 1024**3:.2f} GiB, "
-                f"selected_models={len(selection_info['model_ids'])}, "
+                f"selected_models={len(preflight_scope.keep)}, "
                 f"required={system['disk']['required'] / 1024**3:.2f} GiB"
             )
+            if preflight_scope.filtered:
+                self._log(preflight_scope.summary())
 
             self._set_phase("source")
             install_comfy_source(
@@ -1761,9 +1910,6 @@ class ComfyInstallerService:
                 f"selected={len(selection.selected_item_ids)}"
             )
 
-            models_by_id = {
-                str(model["id"]): model for model in pack_manifest.models
-            }
             missing_model_ids = [
                 model_id
                 for model_id in selection.model_ids
@@ -1774,12 +1920,18 @@ class ComfyInstallerService:
                     "선택 워크플로우 모델이 설치 매니페스트에 없습니다: "
                     + ", ".join(missing_model_ids)
                 )
-            selected_models = [
-                models_by_id[model_id] for model_id in selection.model_ids
-            ]
+            model_scope = self._scope_selected_models(
+                [models_by_id[model_id] for model_id in selection.model_ids],
+                install_mode=install_mode,
+                manifest=pack_manifest,
+            )
+            selected_models = list(model_scope.keep)
+            self._log(model_scope.summary())
 
             self._set_phase("credentials")
             civitai_key = self.get_civitai_key()
+            # 검증 대상은 "로컬에 받을 모델"뿐이다. 워커가 직접 받는 인증 모델은
+            # Modal Secret 을 쓰므로 로컬 키를 요구하면 안 된다.
             self._validate_civitai_access(civitai_key, selected_models)
 
             self._set_phase("venv")
@@ -1900,6 +2052,10 @@ class ComfyInstallerService:
 
             self._set_phase("config")
             workflow_base_dir = self._embedded_workflow_base_dir()
+            # 설치 모드를 넘긴다. 클라우드 전용 설치는 여기서 배분과 모델 취득
+            # 경로까지 적용된다 — 워크플로우 업데이트 경로에는 넘기지 않는다.
+            # 설치는 구성을 선언하는 행위지만 업데이트는 아니라서, 업데이트가
+            # 사용자의 이후 변경을 되돌리면 안 된다.
             config_update = apply_installed_config(
                 config_path=self.config_path,
                 requirements_dir=self.config_backup_dir,
@@ -1908,6 +2064,7 @@ class ComfyInstallerService:
                 required_bindings=selection.workflow_bindings.keys(),
                 default_workflow_bindings=None,
                 workflow_base_dir=workflow_base_dir,
+                install_mode=install_mode,
             )
 
             runtime_receipt = write_runtime_receipt(

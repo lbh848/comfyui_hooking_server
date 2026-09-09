@@ -116,7 +116,9 @@ class ComfyProcess:
         verify_manager: bool = True,
     ) -> None:
         self.comfy_root = comfy_root.resolve()
-        self.python = python.resolve()
+        # 인터프리터 심볼릭 링크는 따라가지 않는다(operations.uv_python_path 와
+        # 같은 규칙). 따라가면 venv 밖 인터프리터를 실행하게 된다.
+        self.python = python.parent.resolve() / python.name
         self.cancel_event = cancel_event
         self.log = log
         self.port = port or find_free_local_port()

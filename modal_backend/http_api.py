@@ -193,12 +193,55 @@ def register_modal_routes(
             traceback.print_exc()
             return web.json_response({"ok": False, "error": str(exc)}, status=500)
 
+    async def models(request: web.Request) -> web.Response:
+        try:
+            return web.json_response(await service.model_inventory())
+        except (ValueError, RuntimeError, FileNotFoundError) as exc:
+            print(
+                "[MODAL_API] 원격 모델 인벤토리 요청 실패: "
+                f"{type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            return web.json_response({"ok": False, "error": str(exc)}, status=400)
+        except Exception as exc:
+            print(
+                "[MODAL_API] 원격 모델 인벤토리 예외: "
+                f"{type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            return web.json_response({"ok": False, "error": str(exc)}, status=500)
+
+    async def models_cleanup(request: web.Request) -> web.Response:
+        try:
+            body = await request.json()
+            if not isinstance(body, dict):
+                raise ValueError("요청 본문은 객체여야 합니다.")
+            # 기본은 dry-run 이다. 지우려면 호출자가 명시해야 한다.
+            dry_run = bool(body.get("dry_run", True))
+            return web.json_response(
+                await service.cleanup_remote_models(
+                    model_paths=body.get("model_paths") or [],
+                    lora_paths=body.get("lora_paths") or [],
+                    dry_run=dry_run,
+                )
+            )
+        except (ValueError, TypeError, RuntimeError, FileNotFoundError) as exc:
+            print(f"[MODAL_API] 원격 모델 정리 요청 실패: {type(exc).__name__}: {exc}")
+            traceback.print_exc()
+            return web.json_response({"ok": False, "error": str(exc)}, status=400)
+        except Exception as exc:
+            print(f"[MODAL_API] 원격 모델 정리 예외: {type(exc).__name__}: {exc}")
+            traceback.print_exc()
+            return web.json_response({"ok": False, "error": str(exc)}, status=500)
+
     async def billing(request: web.Request) -> web.Response:
         try:
             force_refresh = request.query.get("refresh", "").strip() in {"1", "true"}
-            return web.json_response(
-                await service.billing(force_refresh=force_refresh)
-            )
+            payload = await service.billing(force_refresh=force_refresh)
+            # 볼륨 나열은 값이 비싸다. 주기 폴링에 끼워 넣지 않고 명시 요청일 때만 붙인다.
+            if request.query.get("volumes", "").strip() in {"1", "true"}:
+                payload = {**payload, "volume_storage": await service.volume_storage()}
+            return web.json_response(payload)
         except RuntimeError as exc:
             print(f"[MODAL_API] 비용 조회 요청 실패: {exc}")
             traceback.print_exc()
@@ -361,6 +404,8 @@ def register_modal_routes(
     app.router.add_get("/api/modal/custom-nodes", custom_nodes)
     app.router.add_post("/api/modal/redeploy", redeploy)
     app.router.add_post("/api/modal/custom-nodes/sync", sync_custom_nodes)
+    app.router.add_get("/api/modal/models", models)
+    app.router.add_post("/api/modal/models/cleanup", models_cleanup)
     app.router.add_get("/api/modal/billing", billing)
     app.router.add_post("/api/modal/install", install)
     app.router.add_post("/api/modal/autoscaler", apply_autoscaler)

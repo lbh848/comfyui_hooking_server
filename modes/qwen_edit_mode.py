@@ -17,6 +17,10 @@ from typing import Awaitable, Callable, Optional
 
 from PIL import Image
 
+from comfy_allocation import (
+    CURRENT_COMFY_EXECUTION_TARGET,
+    REMOTE_COMFY_TARGETS,
+)
 from modes import llm_service
 from modes.lighbd_service import _log_lighbd_history
 
@@ -49,7 +53,7 @@ class QwenEditMode:
         self.convert_workflow_func: Optional[Callable[..., Awaitable]] = None
         self.submit_workflow_func: Optional[Callable[..., Awaitable]] = None
         self.notify_frontend_func: Optional[Callable[..., Awaitable]] = None
-        self._pending_inputs: dict[str, dict[str, bytes]] = {}
+        self._pending_inputs: dict[str, dict] = {}
 
     @staticmethod
     def _safe_number(raw, name: str, cast, minimum, maximum):
@@ -550,6 +554,8 @@ class QwenEditMode:
             )
             raise RuntimeError("Qwen Edit 입력 폴더가 Comfy input 밖을 가리킵니다")
         os.makedirs(qwen_root, exist_ok=True)
+        pending["staged_dir"] = qwen_root
+        pending["input_root"] = comfy_input_dir
         source_target = os.path.join(qwen_root, "source.png")
         mask_target = os.path.join(qwen_root, "mask.png")
         try:
@@ -574,9 +580,13 @@ class QwenEditMode:
         params["mask_path"] = f"{QWEN_EDIT_INPUT_SUBDIR}/{safe_job_id}"
         return qwen_root
 
-    def cleanup_staged_request(self, params: dict) -> None:
+    def cleanup_staged_request(self, params: dict, config: dict | None = None) -> None:
         job_id = str((params or {}).get("job_id") or "")
         removed = self._pending_inputs.pop(job_id, None) if job_id else None
+        # 디스크 스테이징도 함께 지운다. 예전에는 메모리 dict 만 비워서
+        # comfy/input/qwen_edit/<job> 이 남았고, 다음 실행의 _reset_shared_input_dir
+        # 가 지울 때까지 직전 1건이 계속 디스크에 있었다.
+        self._cleanup_staged_dir(job_id, removed)
         if removed is None:
             print(
                 "[QWEN_EDIT] 큐 메모리 입력 정리 스킵: 항목 없음 "
@@ -588,6 +598,30 @@ class QwenEditMode:
             f"job={job_id}, source_bytes={len(removed.get('source', b''))}, "
             f"mask_bytes={len(removed.get('mask', b''))}"
         )
+
+    def _cleanup_staged_dir(self, job_id: str, pending: dict | None) -> None:
+        """Remove only the directory recorded when this job staged its inputs."""
+        if not pending or not pending.get("staged_dir"):
+            print(f"[QWEN_EDIT] Staging cleanup skipped: no staged directory, job={job_id!r}")
+            return
+        try:
+            target = str(pending["staged_dir"])
+            input_root = str(pending["input_root"])
+            safe_job_id = "".join(c for c in job_id if c.isalnum() or c in ("-", "_"))
+            expected = os.path.join(input_root, QWEN_EDIT_INPUT_SUBDIR, safe_job_id)
+            if (not safe_job_id or os.path.normcase(target) != os.path.normcase(expected)
+                    or os.path.realpath(target) != target or os.path.islink(target)
+                    or os.path.commonpath((input_root, target)) != input_root):
+                print(f"[QWEN_EDIT] Staging cleanup path rejected: job={job_id!r}, target={target!r}")
+                return
+            if not os.path.isdir(target):
+                print(f"[QWEN_EDIT] Staging cleanup skipped: missing folder {target!r}")
+                return
+            shutil.rmtree(target)
+            print(f"[QWEN_EDIT] Staging cleanup completed: job={job_id}, path={target!r}")
+        except Exception as exc:
+            print(f"[QWEN_EDIT] Staging cleanup failed: job={job_id!r}, error={exc}")
+            traceback.print_exc()
 
     async def _notify(self, event_type: str, data: dict):
         if not callable(self.notify_frontend_func):
@@ -1140,8 +1174,20 @@ class QwenEditMode:
             or config.get("asset_edit_tool", EDIT_TOOL_QWEN)
         )
         params["edit_tool"] = edit_tool
+        # 원격 실행이면 모델은 워커의 Volume 에 있다. 로컬 파일을 요구하면
+        # cloud_direct 구성에서 실행 자체가 막힌다 — 모델이 원격에 멀쩡히 있는데도
+        # "다운로드가 완료되지 않았습니다" 로 실패한다.
+        # (같은 판정을 asset_tool_mode.py:335 가 이미 쓴다.)
+        execution_target = str(CURRENT_COMFY_EXECUTION_TARGET.get() or "")
         required_model_path = self._required_model_path(config, edit_tool)
-        if not os.path.isfile(required_model_path):
+        if execution_target in REMOTE_COMFY_TARGETS:
+            if not os.path.isfile(required_model_path):
+                print(
+                    "[EDIT_TOOL] 로컬 모델 없음 — 원격 실행이므로 계속합니다: "
+                    f"tool={edit_tool}, target={execution_target}, "
+                    f"expected={required_model_path!r}"
+                )
+        elif not os.path.isfile(required_model_path):
             print(
                 "[EDIT_TOOL] 필수 모델 캐시 미스: "
                 f"tool={edit_tool}, expected={required_model_path!r}, "

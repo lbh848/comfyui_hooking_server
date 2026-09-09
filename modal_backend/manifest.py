@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 import traceback
 from pathlib import Path
 from typing import Any, Mapping
@@ -59,6 +61,95 @@ def _require_user_workflow(
             f"Modal은 {user_root} 안의 워크플로우만 사용할 수 있습니다."
         ) from exc
     return path
+
+
+def _workflow_model_catalog(project_root, workflow_filenames):
+    """Resolve installed copies against their own release and embedded manifest."""
+    from comfy_installer.model_scope import binding_model_ids
+    from modal_backend.workflow_assets import _workflow_string_values
+
+    root = Path(project_root)
+    manifest = load_manifest(root)
+    base_models = {str(m["id"]): m for m in manifest.get("models", [])}
+    packs = []
+    distribution = root / "comfy_workflow_library" / "SOYA_DISTRIBUTION"
+    for pack_path in sorted(distribution.glob("*/.soya-pack.json")):
+        try:
+            pack = json.loads(pack_path.read_text(encoding="utf-8"))
+            packs.append((pack_path.parent.name, pack))
+        except Exception as exc:
+            print(f"[MODAL] Cannot read workflow pack: path={pack_path}, error={exc}")
+            traceback.print_exc()
+            raise
+
+    selected = {}
+    for filename in dict.fromkeys(workflow_filenames):
+        name = Path(str(filename)).name
+        user_file = _soya_user_root(root) / name
+        digest = ""
+        workflow = {}
+        if user_file.is_file():
+            user_file = _require_user_workflow(root, name, str(user_file))
+            payload = user_file.read_bytes()
+            digest = hashlib.sha256(payload).hexdigest()
+            try:
+                workflow = json.loads(payload)
+            except Exception as exc:
+                print(f"[MODAL] Cannot parse selected workflow: file={name}, error={exc}")
+                traceback.print_exc()
+                raise
+        matches = []
+        for release, pack in packs:
+            for item in pack.get("items", []):
+                original = str(item.get("filename") or "")
+                copy_stem = re.escape(Path(original).stem + "__" + release)
+                named_copy = bool(re.fullmatch(copy_stem + r"(?:_[0-9]+)?", Path(name).stem))
+                same_hash = bool(digest and digest == str(item.get("sha256") or "").lower())
+                rank = (4 if named_copy else 0) + (2 if same_hash else 0) + (1 if name == original else 0)
+                if rank:
+                    matches.append((rank, pack, item))
+        catalog = dict(base_models)
+        model_ids = set()
+        if matches:
+            best = max(rank for rank, _, _ in matches)
+            for rank, pack, item in matches:
+                if rank != best:
+                    continue
+                embedded = pack.get("install_manifest") or manifest
+                catalog.update({str(m["id"]): m for m in embedded.get("models", [])})
+                ids = item.get("model_ids")
+                if ids is None:
+                    ids = binding_model_ids(embedded.get("workflows", {}), item.get("bindings", []))
+                model_ids.update(str(value) for value in ids)
+        else:
+            print(f"[MODAL] No pack entry for {name}; checking actual model references.")
+        # Edited copies may reference additional models. Match actual file references,
+        # using the same normalized path vocabulary as the local upload resolver.
+        references = {v.replace(chr(92), "/").casefold() for v in _workflow_string_values(workflow)}
+        for model_id, model in catalog.items():
+            relative = str(model.get("relative_path") or "").replace(chr(92), "/")
+            parts = Path(relative).parts
+            aliases = {relative.casefold(), Path(relative).name.casefold()}
+            if parts and parts[0] == "models":
+                aliases.add("/".join(parts[1:]).casefold())
+                aliases.add("/".join(parts[2:]).casefold())
+            if relative and references.intersection(aliases):
+                model_ids.add(model_id)
+        for model_id in sorted(model_ids):
+            if model_id not in catalog:
+                print(f"[MODAL] Missing model download metadata: workflow={name}, id={model_id}")
+                raise ValueError(f"Model download metadata is missing: {model_id} ({name})")
+            selected[model_id] = catalog[model_id]
+    print(f"[MODAL] cloud_direct: workflows={len(workflow_filenames)}, models={len(selected)}")
+    return list(selected.values())
+
+
+def model_entries_for_workflow_files(project_root, workflow_filenames):
+    return _workflow_model_catalog(project_root, workflow_filenames)
+
+
+def model_ids_for_workflow_files(project_root, workflow_filenames):
+    return [str(entry["id"]) for entry in _workflow_model_catalog(project_root, workflow_filenames)]
 
 
 def selected_install_plan(

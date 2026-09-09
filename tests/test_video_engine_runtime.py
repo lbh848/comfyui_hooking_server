@@ -149,6 +149,12 @@ def test_stop_only_terminates_the_process_owned_by_manager(tmp_path: Path) -> No
     )
     manager._port_is_in_use = lambda _port: False  # type: ignore[method-assign]
     manager._create_windows_job = lambda _process: None  # type: ignore[method-assign]
+    # POSIX 종료 경로는 os.killpg 로 **실제 OS** 에 시그널을 보낸다. 가짜
+    # 프로세스의 pid(44321)를 그대로 넘기면 그 번호를 쓰는 무관한 프로세스
+    # 그룹이 죽을 수 있다. 시그널을 가짜 프로세스로 돌려 기록만 남긴다.
+    manager._signal_process_group = (  # type: ignore[method-assign]
+        lambda proc, sig: proc.send_signal(sig)
+    )
 
     started = manager.start(project_path=str(project), port=8093)
     assert started["running"] is True

@@ -74,6 +74,14 @@ class _FakeFaceSession:
         return [self.output]
 
 
+GOLDEN_FONT = "malgun.ttf"
+
+
+def _system_font_is(filename: str) -> bool:
+    """기본 경로가 실제로 그 폰트를 잡는지."""
+    return str(getattr(load_font(48), "path", "") or "").lower().endswith(filename)
+
+
 class BubblePlacementTest(unittest.TestCase):
     def test_all_low_confidence_faces_use_unanchored_fallback_without_tails(self):
         matched = [
@@ -382,6 +390,12 @@ class BubblePlacementTest(unittest.TestCase):
         self.assertTrue(all(0.35 <= (b[2] - b[0]) / (b[3] - b[1]) <= 2.86 for b in boxes))
 
     def test_layout_onnx_selects_font_wrap_ratio_and_shape(self):
+        # 아래 값은 Windows malgun.ttf 메트릭에서만 나온다. 다른 시스템 폰트가
+        # 잡히면 글자 크기와 줄 나눔이 달라진다(Apple SD 고딕은 58/5줄).
+        # 저장소가 폰트를 배포하지 않아 입력을 고정할 수 없으므로, 그 폰트가
+        # 잡힌 환경에서만 돌린다. 폰트와 무관한 성질은 아래 테스트가 본다.
+        if not _system_font_is(GOLDEN_FONT):
+            self.skipTest(f"골든값은 {GOLDEN_FONT} 메트릭 기준이다")
         selected, _ = choose_layout(
             "잠깐… 이게 정말 맞는 선택일까? 조금 더 생각해 보자…",
             (1056, 1536),
@@ -394,6 +408,21 @@ class BubblePlacementTest(unittest.TestCase):
         self.assertEqual(
             selected.lines,
             ("잠깐…", "이게 정말 맞는 선택일까?", "조금 더 생각해 보자…"),
+        )
+
+    def test_layout_holds_regardless_of_system_font(self):
+        text = "잠깐… 이게 정말 맞는 선택일까? 조금 더 생각해 보자…"
+        selected, _ = choose_layout(text, (1056, 1536))
+
+        self.assertTrue(selected.fits)
+        self.assertEqual(selected.shape, "cloud")
+        self.assertGreater(len(selected.lines), 1)
+        self.assertLessEqual(len(selected.lines), 7)
+        self.assertGreater(selected.bubble_width, 0)
+        self.assertGreater(selected.bubble_height, 0)
+        # 줄 나눔이 글자를 잃거나 만들지 않는다.
+        self.assertEqual(
+            "".join(selected.lines).replace(" ", ""), text.replace(" ", "")
         )
 
     def test_scaled_layout_nearly_doubles_font_and_reflows(self):

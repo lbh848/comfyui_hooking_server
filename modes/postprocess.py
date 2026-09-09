@@ -199,13 +199,20 @@ def _select_vn_theme(settings: dict, speaker_count: int) -> tuple:
         selected = settings.get("theme_single", legacy_base)
     return _resolve_vn_theme(selected)
 
-# Windows 폰트 후보
+# 시스템 폰트 후보 (Windows → macOS → Linux 순으로 존재하는 첫 항목을 쓴다)
 _FONT_CANDIDATES = [
     "C:/Windows/Fonts/malgun.ttf",
     "C:/Windows/Fonts/malgunbd.ttf",
     "C:/Windows/Fonts/NanumGothic.ttf",
     "C:/Windows/Fonts/seguiemj.ttf",
     "C:/Windows/Fonts/arial.ttf",
+    "/System/Library/Fonts/AppleSDGothicNeo.ttc",
+    "/System/Library/Fonts/Supplemental/AppleGothic.ttf",
+    "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+    "/System/Library/Fonts/Apple Color Emoji.ttc",
+    "/System/Library/Fonts/Supplemental/Arial.ttf",
+    "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
 ]
 
 

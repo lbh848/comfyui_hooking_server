@@ -1,6 +1,7 @@
 import importlib.util
 from pathlib import Path
 
+import pytest
 import torch
 
 
@@ -12,6 +13,13 @@ MODULE_PATH = (
     / "comfyui-soya-custom-nodes"
     / "soya_optional_image_by_name.py"
 )
+# 커스텀 노드는 comfy/ 아래에 설치되고 comfy/ 는 추적하지 않는다. 설치 전
+# 체크아웃에서는 import 가 아니라 **수집**이 죽어 스위트 전체가 중단된다.
+if not MODULE_PATH.is_file():
+    pytest.skip(
+        f"커스텀 노드가 설치되어 있지 않습니다: {MODULE_PATH}",
+        allow_module_level=True,
+    )
 SPEC = importlib.util.spec_from_file_location("soya_optional_image_by_name", MODULE_PATH)
 assert SPEC is not None and SPEC.loader is not None
 MODULE = importlib.util.module_from_spec(SPEC)

@@ -252,7 +252,7 @@ def test_manual_draw_header_has_execution_path_help() -> None:
         encoding="utf-8"
     )
 
-    assert 'aria-label="삽화 수동 그리기 실행 경로 도움말"' in source
+    assert 'aria-label="삽화 워크플로우 가져오기 실행 경로 도움말"' in source
     assert "로컬 변환이 불가능하면 Modal로 폴백합니다." in source
 
 

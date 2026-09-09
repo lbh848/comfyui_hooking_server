@@ -23,6 +23,8 @@ class SystemProbeError(RuntimeError):
 
 
 MINIMUM_UV_VERSION = (0, 11, 8)
+# Linux 는 검증하지 않아 제외한다.
+SUPPORTED_INSTALL_PLATFORMS = frozenset({"Windows", "Darwin"})
 _NUMERIC_VERSION_RE = re.compile(r"^[0-9]+(?:\.[0-9]+){0,3}$")
 
 
@@ -349,9 +351,11 @@ def probe_system(
 ) -> dict[str, Any]:
     try:
         mode = normalize_install_mode(install_mode)
-        if platform.system() != "Windows":
+        if platform.system() not in SUPPORTED_INSTALL_PLATFORMS:
             raise SystemProbeError(
-                f"현재 설치기는 Windows만 지원합니다: {platform.system()}"
+                "현재 설치기가 지원하지 않는 OS입니다: "
+                f"{platform.system()} (지원: "
+                f"{', '.join(sorted(SUPPORTED_INSTALL_PLATFORMS))})"
             )
         root = Path(install_root).resolve()
         disk_anchor = root if root.exists() else root.parent

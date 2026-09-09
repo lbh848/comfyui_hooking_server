@@ -361,9 +361,11 @@ class AssetToolMode:
                     f"configured={comfy_input_dir!r}"
                 )
                 return {"success": False, "error": "Comfy input 폴더가 유효하지 않습니다"}
-            remote_input_folder = f"{execution_target}_tag_analysis"
-            input_dir = os.path.join(comfy_input_dir, remote_input_folder)
-            os.makedirs(input_dir, exist_ok=True)
+            # input **루트**에 둔다. SoyaRefImageLoader 의 콤보 목록은 최상위
+            # 파일로만 만들어져, 하위 폴더면 제출이 거부된다(value_not_in_list).
+            # 파일명에 난수 접미사가 있어 루트에서도 충돌하지 않는다.
+            remote_input_folder = ""
+            input_dir = comfy_input_dir
             input_path = os.path.join(input_dir, filename)
             try:
                 with open(input_path, "wb") as image_file:
@@ -388,6 +390,8 @@ class AssetToolMode:
                 if ninfo.get("_meta", {}).get("title", "") == "분석이미지로드":
                     ninfo.setdefault("inputs", {})["image"] = (
                         f"{remote_input_folder}/{filename}"
+                        if remote_input_folder
+                        else filename
                     )
                     image_injected = True
             if not image_injected:

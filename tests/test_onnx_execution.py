@@ -44,7 +44,13 @@ class OnnxExecutionTests(unittest.TestCase):
     def test_cpu_session_receives_selected_intra_op_thread_count(self):
         fake_session = Mock()
         fake_session.get_providers.return_value = ["CPUExecutionProvider"]
+        # 선택값은 논리 프로세서 수로 제한된다. 코어 수를 고정하지 않으면
+        # 12코어 미만인 머신에서는 클램프된 값이 나와 실패한다.
         with patch.object(
+            onnx_execution,
+            "logical_cpu_count",
+            return_value=16,
+        ), patch.object(
             onnx_execution,
             "installed_providers",
             return_value={"CPUExecutionProvider"},
