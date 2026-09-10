@@ -29,6 +29,17 @@ def test_external_llm_routing_has_easy_and_detail_subtabs() -> None:
     assert "비전 요구 작업" in frontend
 
 
+def test_developer_settings_is_the_first_llm_routing_group() -> None:
+    frontend = _frontend()
+    groups_start = frontend.index("const LLM_ROUTING_GROUPS = [")
+    groups_end = frontend.index("const LLM_ROUTING_TASKS = [", groups_start)
+    groups_block = frontend[groups_start:groups_end]
+
+    assert groups_block.index("key: 'developer_settings'") < groups_block.index("key: 'outfit_workflow'")
+    assert "label: '개발자 설정'" in groups_block
+    assert "description: '프로그램 개선용'" in groups_block
+
+
 def test_every_llm_route_has_an_explicit_text_or_vision_modality() -> None:
     frontend = _frontend()
     entries = _routing_task_entries(frontend)
