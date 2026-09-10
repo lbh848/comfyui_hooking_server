@@ -1,7 +1,10 @@
 /* Live execution graph; prompt bodies are fetched only when a port is opened. */
 (() => {
-    let flow = null, flowBackdrop, modal, detailModal, stopButton, selected = null, detailRequest = 0;
+    let flow = null, flowBackdrop, modal, detailModal, developerModal, stopButton, developerButton;
+    let selected = null, detailRequest = 0, developerPreviousFocus = null;
+    let qualityInspectionEnabled = false, qualityInspectionRequest = 0;
     let scale = 1, previousFocus = null;
+    const qualityInspectionSettingsUrl = '/api/illustration_quality_inspection/settings';
     const labels = {waiting: '대기', processing: '처리 중', cancelling: '중단 중', completed: '완료', failed: '실패', cancelled: '취소', skipped: '생략'};
     const colors = {waiting: '#94a3b8', processing: '#60a5fa', cancelling: '#f59e0b', completed: '#4ade80', failed: '#fb7185', cancelled: '#fbbf24', skipped: '#a78bfa'};
     const executorLabels = {llm: 'LLM', comfy: 'Comfy', process: '기타 프로세스'};
@@ -42,9 +45,11 @@
             .if-layer-backdrop[hidden]{display:none}
             .if-modal{position:fixed;inset:0;z-index:2147483644;margin:auto;box-sizing:border-box;overflow:hidden;color:var(--text,#e2e8f0);background:var(--bg2,#111827);border:1px solid #64748b66;border-radius:16px;padding:0;width:min(1240px,94vw);max-width:96vw;max-height:calc(100dvh - 32px);box-shadow:0 24px 90px #0009;font:14px/1.5 system-ui,sans-serif}
             .if-detail{z-index:2147483645}
+            .if-developer{z-index:2147483646;width:min(620px,94vw)}
             .if-header{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:18px 22px;border-bottom:1px solid #64748b44}
-            .if-header h2{font-size:19px;margin:0}.if-subtitle{font-size:12px;color:var(--text2,#94a3b8);margin-top:4px;overflow-wrap:anywhere}
+            .if-header h2{font-size:19px;margin:0}.if-title-row{display:flex;align-items:center;gap:9px;flex-wrap:wrap}.if-subtitle{font-size:12px;color:var(--text2,#94a3b8);margin-top:4px;overflow-wrap:anywhere}
             .if-actions,.if-legend,.if-legend-group{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.if-button{border:1px solid #64748b66;border-radius:8px;background:transparent;color:inherit;padding:6px 11px;cursor:pointer}.if-button:hover{background:#64748b33}.if-button:disabled{opacity:.45;cursor:not-allowed}.if-button-danger{border-color:#fb718580;color:#fecdd3}.if-button-danger:not(:disabled):hover{background:#fb71851f}.if-button:focus-visible,.if-port:focus-visible{outline:3px solid #60a5fa;outline-offset:3px}
+            .if-developer-button{border-color:#c084fc99;color:#e9d5ff}.if-developer-button:hover{background:#c084fc1f}
             .if-legend{padding:10px 22px;gap:18px;font-size:12px;border-bottom:1px solid #64748b33}.if-legend-group{gap:12px}.if-legend-label{color:var(--text2,#94a3b8);font-weight:650}.if-legend-status .if-legend-item::before{content:'●';color:var(--state);margin-right:5px}.if-legend-executor .if-legend-item::before{content:'';display:inline-block;width:13px;height:13px;border-radius:4px;background:color-mix(in srgb,var(--bg2,#172033) 68%,var(--node-tint) 32%);border:1px solid var(--node-tint);margin-right:6px;vertical-align:-2px}
             .if-viewport{height:min(65vh,660px);overflow:auto;background-color:var(--bg,#0b1220);background-image:radial-gradient(#94a3b822 1px,transparent 1px);background-size:20px 20px;padding:0;position:relative}
             .if-space{position:relative}.if-canvas{position:relative;transform-origin:0 0}.if-edges{position:absolute;inset:0;overflow:visible;pointer-events:none}
@@ -54,6 +59,7 @@
             .if-tooltip{position:fixed;z-index:3;max-width:330px;padding:10px 13px;border-radius:9px;background:#0f172a;color:#e2e8f0;border:1px solid #64748b;box-shadow:0 8px 30px #0006;white-space:pre-wrap;pointer-events:none;font-size:12px}
             .if-empty{padding:80px 24px;text-align:center;color:var(--text2,#94a3b8)}.if-empty small{display:block;margin-top:8px}.if-footer{padding:10px 22px;font-size:12px;color:var(--text2,#94a3b8)}
             .if-detail{width:min(900px,94vw)}.if-detail-body{padding:18px 22px;max-height:70vh;overflow:auto}.if-detail-body h3{font-size:14px;margin:18px 0 8px}.if-detail-body pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#64748b14;padding:14px;border-radius:8px;font:12px/1.65 ui-monospace,monospace;margin:0;max-height:340px;overflow:auto}.if-detail-body summary{cursor:pointer;padding:8px 0}.if-meta{display:grid;grid-template-columns:110px 1fr;gap:7px 14px;overflow-wrap:anywhere}.if-meta dt{color:var(--text2,#94a3b8)}.if-meta dd{margin:0}
+            .if-developer-body{padding:20px 22px;max-height:70vh;overflow:auto}.if-quality-card{border:1px solid #64748b55;border-radius:10px;padding:15px;background:#64748b12}.if-quality-toggle{display:flex;align-items:center;gap:10px;font-weight:700;cursor:pointer}.if-quality-toggle input{width:18px;height:18px;accent-color:#c084fc}.if-quality-copy{margin:9px 0 0;color:var(--text2,#94a3b8);font-size:12px;line-height:1.65}.if-quality-status{margin-top:12px;min-height:1.4em;color:var(--text2,#94a3b8);font-size:12px}.if-developer-footer{display:flex;justify-content:flex-end;padding:12px 22px;border-top:1px solid #64748b44}
             @media(max-width:650px){.if-header{align-items:flex-start;padding:14px}.if-actions{justify-content:flex-end}.if-header h2{font-size:16px}.if-meta{grid-template-columns:80px 1fr}}
         `;
         document.head.append(style);
@@ -61,8 +67,14 @@
         modal = element('dialog', 'if-modal'); modal.id = 'illustration-flow-modal';
         modal.setAttribute('aria-labelledby', 'if-title');
         const header = element('header', 'if-header'), titleBox = element('div');
+        const titleRow = element('div', 'if-title-row');
         const title = element('h2', '', '삽화 처리 흐름'); title.id = 'if-title';
-        titleBox.append(title, element('div', 'if-subtitle', '최신 요청의 실행 상태'));
+        developerButton = button('개발자 모드', openDeveloperMode);
+        developerButton.classList.add('if-developer-button');
+        developerButton.id = 'if-developer-mode';
+        developerButton.title = '삽화 생성 이미지 자동 검사 설정';
+        titleRow.append(title, developerButton);
+        titleBox.append(titleRow, element('div', 'if-subtitle', '최신 요청의 실행 상태'));
         const actions = element('div', 'if-actions');
         stopButton = button('중단', cancelCurrentFlow);
         stopButton.classList.add('if-button-danger');
@@ -82,7 +94,13 @@
         Object.entries(executorLabels).forEach(([key, label]) => {const s = element('span', 'if-legend-item', label); s.style.setProperty('--node-tint', executorColors[key]); executorLegend.append(s);});
         legend.append(statusLegend, executorLegend);
         modal.append(header, legend, element('div', 'if-viewport'), element('footer', 'if-footer', '출력 ●에 마우스를 올리면 요약, 클릭하면 모델·폴백·입력·출력을 확인할 수 있습니다.'));
-        modal.addEventListener('close', () => { hideTooltip(); flowBackdrop.hidden = true; rehomeToast(); previousFocus?.focus(); });
+        modal.addEventListener('close', () => {
+            hideTooltip();
+            if (developerModal?.open) developerModal.close();
+            flowBackdrop.hidden = true;
+            rehomeToast();
+            previousFocus?.focus();
+        });
         let ticker;
         modal.addEventListener('close', () => clearInterval(ticker));
         modal.addEventListener('if-open', () => {
@@ -100,8 +118,44 @@
         const dh = element('header', 'if-header'); dh.append(element('h2', '', '처리 단계 상세'), button('닫기', () => detailModal.close()));
         detailModal.append(dh, element('div', 'if-detail-body'));
         detailModal.addEventListener('close', () => { selected = null; detailRequest++; rehomeToast(); });
-        document.body.append(flowBackdrop, modal, detailModal);
-        [modal, detailModal].forEach(dialog => dialog.addEventListener('keydown', event => {
+
+        developerModal = element('dialog', 'if-modal if-developer');
+        developerModal.id = 'illustration-quality-settings-modal';
+        developerModal.setAttribute('aria-labelledby', 'if-quality-title');
+        const developerHeader = element('header', 'if-header');
+        const developerTitle = element('h2', '', '개발자 모드');
+        developerTitle.id = 'if-quality-title';
+        const developerTitleBox = element('div');
+        developerTitleBox.append(developerTitle);
+        developerHeader.append(developerTitleBox);
+        developerHeader.append(button('닫기', () => developerModal.close()));
+        const developerBody = element('div', 'if-developer-body');
+        const qualityCard = element('section', 'if-quality-card');
+        const qualityLabel = element('label', 'if-quality-toggle');
+        const qualityCheckbox = document.createElement('input');
+        qualityCheckbox.type = 'checkbox';
+        qualityCheckbox.id = 'if-quality-inspection-enabled';
+        qualityCheckbox.checked = false;
+        qualityCheckbox.addEventListener('change', event => {
+            void saveQualityInspectionSetting(Boolean(event.currentTarget.checked));
+        });
+        qualityLabel.append(qualityCheckbox, element('span', '', '생성 이미지 자동 검사 (ON/OFF)'));
+        qualityCard.append(qualityLabel, element('p', 'if-quality-copy', '기본값은 꺼짐입니다. 켜면 생성 이미지마다 문제 중심의 영어 피드백을 남기고, 전체 이미지의 복장·스토리 일관성을 함께 검토합니다. 손 문제는 평가하지 않습니다. 검사 기록은 LLM 로그에만 저장되며, LLM 흐름과 LB Details에서 볼 수 있습니다.'));
+        const qualityStatus = element('div', 'if-quality-status', '꺼짐 · 검사 기록은 LLM 로그에만 저장되며, LLM 흐름과 LB Details에서 볼 수 있습니다.');
+        qualityStatus.id = 'if-quality-inspection-status';
+        qualityCard.append(qualityStatus);
+        developerBody.append(qualityCard);
+        const developerFooter = element('footer', 'if-developer-footer');
+        developerFooter.append(button('닫기', () => developerModal.close()));
+        developerModal.append(developerHeader, developerBody, developerFooter);
+        developerModal.addEventListener('close', () => {
+            qualityInspectionRequest += 1;
+            rehomeToast();
+            developerPreviousFocus?.focus();
+            developerPreviousFocus = null;
+        });
+        document.body.append(flowBackdrop, modal, detailModal, developerModal);
+        [modal, detailModal, developerModal].forEach(dialog => dialog.addEventListener('keydown', event => {
             if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); dialog.close(); }
             else if (event.key === 'Tab') event.stopPropagation();
         }));
@@ -112,6 +166,98 @@
         const cancelling = Boolean(flow?.cancel_requested) || flow?.status === 'cancelling';
         stopButton.disabled = !flow || terminal || cancelling;
         stopButton.textContent = !terminal && cancelling ? '중단 중…' : '중단';
+    }
+    function qualityInspectionToast(message, type = 'info') {
+        if (typeof showToast === 'function') showToast(message, type);
+        else console.error(`[ILLUST_FLOW] 토스트 표시 불가: ${message}`);
+    }
+    function setQualityInspectionStatus(message, tone = '') {
+        const status = developerModal?.querySelector('#if-quality-inspection-status');
+        if (!status) return;
+        status.textContent = message;
+        status.style.color = tone === 'error'
+            ? '#fecdd3'
+            : tone === 'success'
+                ? '#bbf7d0'
+                : '';
+    }
+    async function loadQualityInspectionSettings() {
+        const checkbox = developerModal?.querySelector('#if-quality-inspection-enabled');
+        if (!checkbox) return;
+        const request = ++qualityInspectionRequest;
+        checkbox.disabled = true;
+        setQualityInspectionStatus('설정을 불러오는 중…');
+        try {
+            const response = await fetch(qualityInspectionSettingsUrl, {cache: 'no-store'});
+            const payload = await response.json().catch(() => ({}));
+            if (!response.ok) throw Error(payload.error || `설정 조회 실패 (${response.status})`);
+            if (typeof payload.enabled !== 'boolean') {
+                throw Error('설정 조회 응답에 enabled 값이 없습니다.');
+            }
+            if (request !== qualityInspectionRequest || !developerModal?.open) return;
+            qualityInspectionEnabled = payload.enabled;
+            checkbox.checked = qualityInspectionEnabled;
+            setQualityInspectionStatus(qualityInspectionEnabled
+                ? '켜짐 · 다음 삽화 생성부터 자동 검사를 요청합니다.'
+                : '꺼짐 · 검사 기록은 LLM 로그에만 저장되며, LLM 흐름과 LB Details에서 볼 수 있습니다.');
+        } catch (error) {
+            console.error('[ILLUST_QUALITY] 설정 조회 실패:', error);
+            if (request !== qualityInspectionRequest || !developerModal?.open) return;
+            checkbox.checked = qualityInspectionEnabled;
+            setQualityInspectionStatus(`설정 조회 실패: ${error.message || error}`, 'error');
+            qualityInspectionToast(`삽화 품질 검사 설정 조회 실패: ${error.message || error}`, 'error');
+        } finally {
+            if (request === qualityInspectionRequest && developerModal?.open) checkbox.disabled = false;
+        }
+    }
+    async function saveQualityInspectionSetting(nextValue) {
+        const checkbox = developerModal?.querySelector('#if-quality-inspection-enabled');
+        if (!checkbox) return;
+        const previousValue = qualityInspectionEnabled;
+        const request = ++qualityInspectionRequest;
+        qualityInspectionEnabled = Boolean(nextValue);
+        checkbox.disabled = true;
+        setQualityInspectionStatus('설정을 저장하는 중…');
+        try {
+            const response = await fetch(qualityInspectionSettingsUrl, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({enabled: qualityInspectionEnabled}),
+            });
+            const payload = await response.json().catch(() => ({}));
+            if (!response.ok) throw Error(payload.error || `설정 저장 실패 (${response.status})`);
+            if (typeof payload.enabled !== 'boolean') {
+                throw Error('설정 저장 응답에 enabled 값이 없습니다.');
+            }
+            if (request !== qualityInspectionRequest || !developerModal?.open) return;
+            qualityInspectionEnabled = payload.enabled;
+            checkbox.checked = qualityInspectionEnabled;
+            setQualityInspectionStatus(qualityInspectionEnabled
+                ? '켜짐 · 다음 삽화 생성부터 자동 검사를 요청합니다.'
+                : '꺼짐 · 검사 기록은 LLM 로그에만 저장되며, LLM 흐름과 LB Details에서 볼 수 있습니다.', 'success');
+            qualityInspectionToast(`삽화 품질 자동 검사 ${qualityInspectionEnabled ? '켜짐' : '꺼짐'}`, 'success');
+        } catch (error) {
+            console.error('[ILLUST_QUALITY] 설정 저장 실패:', {nextValue, error});
+            if (request !== qualityInspectionRequest || !developerModal?.open) return;
+            qualityInspectionEnabled = previousValue;
+            checkbox.checked = previousValue;
+            setQualityInspectionStatus(`저장 실패 · ${previousValue ? '켜짐' : '꺼짐'}으로 되돌렸습니다.`, 'error');
+            qualityInspectionToast(`삽화 품질 검사 설정 저장 실패: ${error.message || error}`, 'error');
+        } finally {
+            if (request === qualityInspectionRequest && developerModal?.open) checkbox.disabled = false;
+        }
+    }
+    function openDeveloperMode() {
+        init();
+        if (!developerModal.open) {
+            developerPreviousFocus = document.activeElement;
+            const checkbox = developerModal.querySelector('#if-quality-inspection-enabled');
+            checkbox.checked = qualityInspectionEnabled;
+            developerModal.show();
+            rehomeToast();
+            checkbox.focus({preventScroll: true});
+        }
+        void loadQualityInspectionSettings();
     }
     async function cancelCurrentFlow() {
         const runId = flow?.id;
@@ -150,7 +296,13 @@
         const toast = document.getElementById('toast');
         if (!toast) return;
         toastHome ||= toast.parentElement;
-        const host = detailModal?.open ? detailModal : modal?.open ? modal : toastHome;
+        const host = developerModal?.open
+            ? developerModal
+            : detailModal?.open
+                ? detailModal
+                : modal?.open
+                    ? modal
+                    : toastHome;
         if (toast.parentElement !== host) host.append(toast);
     }
     function hideTooltip() {modal?.querySelector('.if-tooltip')?.remove();}
@@ -349,5 +501,6 @@
     window.receiveIllustrationFlow = receive;
     window.rehomeIllustrationToast = rehomeToast;
     window.refreshIllustrationFlow = refresh;
+    window.openIllustrationFlowDeveloperMode = openDeveloperMode;
     window.openIllustrationFlow = async () => {init(); previousFocus = document.activeElement; if (!modal.open) {flowBackdrop.hidden = false; modal.show(); modal.dispatchEvent(new Event('if-open'));} render(); await refresh();};
 })();

@@ -72,7 +72,7 @@ def test_image_queue_and_generation_stage_use_separate_layout_groups():
     root = Path(__file__).resolve().parents[1]
     flow_source = (root / "illustration_flow.py").read_text(encoding="utf-8")
     server_source = (root / "server.py").read_text(encoding="utf-8")
-    assert 'layout_group=None if is_root else "illustration_images"' in flow_source
+    assert 'layout_group=None if is_root or is_review else "illustration_images"' in flow_source
     assert 'layout_group="illustration_generation"' in server_source
 
 

@@ -3,6 +3,7 @@ from pathlib import Path
 
 
 FRONTEND_PATH = Path(__file__).resolve().parents[1] / "frontend" / "index.html"
+SERVER_PATH = Path(__file__).resolve().parents[1] / "server.py"
 
 
 def _frontend() -> str:
@@ -39,15 +40,25 @@ def test_developer_settings_is_the_first_llm_routing_group() -> None:
     assert "label: '개발자 설정'" in groups_block
     assert "description: '프로그램 개선용'" in groups_block
 
+    tasks = _routing_task_entries(frontend)
+    assert "key: 'illustration_quality_inspection'" in tasks[0]
+    assert "label: '삽화 품질 자동 검사'" in tasks[0]
+    assert "modality: 'vision'" in tasks[0]
+    assert "group: 'developer_settings'" in tasks[0]
+    assert "json: true" in tasks[0]
+
+    server = SERVER_PATH.read_text(encoding="utf-8")
+    assert '"illustration_quality_inspection": _llm_route_defaults(json_mode=True)' in server
+
 
 def test_every_llm_route_has_an_explicit_text_or_vision_modality() -> None:
     frontend = _frontend()
     entries = _routing_task_entries(frontend)
 
-    assert len(entries) == 38
+    assert len(entries) == 39
     assert all("modality: 'text'" in entry or "modality: 'vision'" in entry for entry in entries)
     assert sum("modality: 'text'" in entry for entry in entries) == 27
-    assert sum("modality: 'vision'" in entry for entry in entries) == 11
+    assert sum("modality: 'vision'" in entry for entry in entries) == 12
 
     vision_keys = {
         re.search(r"key: '([^']+)'", entry).group(1)
@@ -55,6 +66,7 @@ def test_every_llm_route_has_an_explicit_text_or_vision_modality() -> None:
         if "modality: 'vision'" in entry
     }
     assert vision_keys == {
+        "illustration_quality_inspection",
         "classify_face_tags",
         "refine_lb_extra",
         "refine_lora_prompt",
@@ -82,6 +94,7 @@ def test_easy_routing_bulk_applies_json_on_or_off_only_to_json_tasks() -> None:
         if "json: true" in entry
     }
     assert json_keys == {
+        "illustration_quality_inspection",
         "lora_prompt_review",
         "asset_name_mapping_auto_fix",
         "asset_name_mapping_full",

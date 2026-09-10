@@ -65,6 +65,85 @@ def test_multi_char_history_has_independent_retention_budget(tmp_path, monkeypat
     assert (tmp_path / "logs" / "backups" / "lighbd_history.jsonl.bak").is_file()
 
 
+def test_real_append_retains_general_quality_inspection_and_multi_char_caps(
+    tmp_path,
+    monkeypatch,
+):
+    history_path = tmp_path / "logs" / "lighbd_history.jsonl"
+    monkeypatch.setattr(lighbd_service, "LIGHBD_HISTORY_PATH", str(history_path))
+    monkeypatch.setattr(lighbd_service, "BASE_DIR", str(tmp_path))
+    monkeypatch.setattr(lighbd_service, "LOG_DIR", str(tmp_path / "logs"))
+
+    class _StepDateTime:
+        _counter = 0
+
+        @classmethod
+        def now(cls, tz=None):
+            cls._counter += 1
+            return _dt.datetime(2024, 1, 1) + _dt.timedelta(seconds=cls._counter)
+
+    monkeypatch.setattr(
+        lighbd_service,
+        "datetime",
+        types.SimpleNamespace(datetime=_StepDateTime),
+    )
+
+    assert lighbd_service.LIGHBD_GENERAL_HISTORY_MAX == 300
+    assert lighbd_service.LIGHBD_MULTI_CHAR_HISTORY_MAX == 100
+    assert lighbd_service.LIGHBD_HISTORY_MAX == 400
+
+    # Keep 301 general records and 101 multi-character records in the file so
+    # the append path must trim each bucket independently.
+    for index in range(1, 302):
+        general_task_key = (
+            "illustration_quality_inspection"
+            if index == 101
+            else "illustration_call1"
+        )
+        lighbd_service._log_lighbd_history(
+            {
+                "prompt_id": f"general-{index}",
+                "task_key": general_task_key,
+            }
+        )
+        if index <= 101:
+            lighbd_service._log_lighbd_history(
+                {
+                    "prompt_id": f"multi-{index}",
+                    "task_key": "illustration_multi_char_mask",
+                }
+            )
+
+    saved = lighbd_service._load_lighbd_history()
+    general = [
+        record
+        for record in saved
+        if record.get("task_key") != "illustration_multi_char_mask"
+    ]
+    multi_char = [
+        record
+        for record in saved
+        if record.get("task_key") == "illustration_multi_char_mask"
+    ]
+
+    assert len(saved) == 400
+    assert len(general) == 300
+    assert len(multi_char) == 100
+    assert general[0]["prompt_id"] == "general-2"
+    assert general[-1]["prompt_id"] == "general-301"
+    assert multi_char[0]["prompt_id"] == "multi-2"
+    assert multi_char[-1]["prompt_id"] == "multi-101"
+    quality_records = [
+        record
+        for record in general
+        if record.get("task_key") == "illustration_quality_inspection"
+    ]
+    assert [record["prompt_id"] for record in quality_records] == ["general-101"]
+    assert "general-1" not in {record["prompt_id"] for record in saved}
+    assert "multi-1" not in {record["prompt_id"] for record in saved}
+    assert (tmp_path / "logs" / "backups" / "lighbd_history.jsonl.bak").is_file()
+
+
 @pytest.mark.asyncio
 async def test_manual_parallel_race_records_winner_and_discarded_without_ok_duplicate(
     tmp_path,

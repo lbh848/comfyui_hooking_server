@@ -16,6 +16,7 @@ _reserved = contextvars.ContextVar("illustration_flow_reserved", default=None)
 _latest = None
 _notify = None
 ROOT_TYPES = {"illustration", "illustration_llm_build", "illustration_easy_edit", "character_maker_illustration"}
+BACKGROUND_LLM_TYPES = {"illustration_quality_inspection"}
 TERMINAL = {"completed", "failed", "cancelled", "skipped"}
 
 
@@ -63,7 +64,7 @@ def request_cancel(run_id):
         if task is not None and not task.done()
     ]
     for task in active_llm_tasks:
-        task.cancel()
+        task.cancel("사용자가 삽화 처리 흐름을 중단했습니다")
     print(
         f"[ILLUST_FLOW] 사용자 중단 요청 등록: run={normalized}, "
         f"active_llm_cancelled={len(active_llm_tasks)}"
@@ -241,9 +242,8 @@ def queue_added(item):
     run = _run.get()
     if run is None and item.type not in ROOT_TYPES:
         return
-    # Other LLM queue types keep their existing tracking; only illustration jobs
-    # become image/request nodes. Leaf LLM calls are recorded at the call boundary.
-    if item.type not in ROOT_TYPES:
+    # Reviews belong to the originating flow, but cannot start a new image flow.
+    if item.type not in ROOT_TYPES | BACKGROUND_LLM_TYPES:
         return
     is_root = run is None
     if is_root:
@@ -253,18 +253,20 @@ def queue_added(item):
                "_active_llm_tasks": set()}
         _latest = run
     provider = str((item.params or {}).get("provider") or "comfy").strip().lower()
-    executor = "process" if is_root else ("comfy" if provider == "comfy" else "process")
+    is_review = item.type in BACKGROUND_LLM_TYPES
+    executor = "llm" if is_review else ("process" if is_root else ("comfy" if provider == "comfy" else "process"))
     node_id = add_node(
         run,
         item.label,
         dependencies=() if is_root else _frontier.get(),
         node_id=item.id,
-        kind="request" if is_root else "image",
+        kind="llm" if is_review else ("request" if is_root else "image"),
+        task_key=item.type,
         executor=executor,
-        layout_group=None if is_root else "illustration_images",
+        layout_group=None if is_root or is_review else "illustration_images",
         input={
             k: item.params[k]
-            for k in ("payload", "prompt_data", "provider")
+            for k in ("payload", "prompt_data", "provider", "session_id", "slots")
             if k in item.params
         },
     )
@@ -324,9 +326,10 @@ def queue_execution(fn):
                 for var, token in zip((_run, _frontier, _node, _reserved, _branches), tokens):
                     var.reset(token)
         run, node_id, root = binding
-        tokens = (_run.set(run), _frontier.set((node_id,)), _node.set(None), _reserved.set(None), _branches.set(None))
+        is_review = item.type in BACKGROUND_LLM_TYPES
+        tokens = (_run.set(run), _frontier.set((node_id,)), _node.set(node_id if is_review else None), _reserved.set(None), _branches.set(None))
         provider = str((item.params or {}).get("provider") or "comfy").strip().lower()
-        executor = "process" if root else ("comfy" if provider == "comfy" else "process")
+        executor = "llm" if is_review else ("process" if root else ("comfy" if provider == "comfy" else "process"))
         update(run, node_id, status="processing", summary="큐에서 실행 시작", executor=executor)
         if root:
             run["status"] = "processing"
@@ -345,8 +348,13 @@ def queue_execution(fn):
                        else str(result.get("error") or "작업 실패") if failed else ""
                    ))
             if root:
-                depended = {d for n in run["nodes"].values() for d in n["dependencies"]}
-                leaves = [n for n in run["nodes"] if n not in depended]
+                # Images are delivered independently of the background review.
+                delivery_nodes = {
+                    key: value for key, value in run["nodes"].items()
+                    if value.get("task_key") not in BACKGROUND_LLM_TYPES
+                }
+                depended = {d for n in delivery_nodes.values() for d in n["dependencies"]}
+                leaves = [n for n in delivery_nodes if n not in depended]
                 add_node(run, "결과 반환", dependencies=leaves, status=status,
                          ended_at=time.time(), kind="result", executor="process", output=serializable(result))
                 run["status"] = status

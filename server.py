@@ -95,6 +95,7 @@ import illustration_flow
 from modes import lighbd_service
 from modes import llm_prompt_edit
 from modes import illustration_camera
+from modes import illustration_quality_inspection
 from modes import autocomplete_service
 from modes import asset_tool_mode
 from modes.qwen_edit_mode import QwenEditMode
@@ -679,8 +680,10 @@ DEFAULT_CONFIG = {
     "llm_gemini_base64": False,          # LLM1 Gemini/Vertex Base64 요청 래핑
     "llm_pdf_prompt": False,              # LLM1 Gemini/Vertex 대화 transcript PDF 전송
     "lora_prompt_review_enabled": False, # LoRA 프롬프트 완성 후 선택적 2차 비전 검수
+    "illustration_quality_inspection_enabled": False,
     # 작업별 LLM1/LLM2/LLM3 라우팅 및 메인/폴백 재시도 정책(외부 LLM 분기 탭).
     "llm_routing": {
+        "illustration_quality_inspection": _llm_route_defaults(json_mode=True),
         "extract_outfit":          _llm_route_defaults(fallback=True),
         "enhance_outfit":          _llm_route_defaults(fallback=True),
         "restore_workflow":        _llm_route_defaults(fallback=True),
@@ -2355,6 +2358,9 @@ def _capture_illustration_runtime_snapshot(config: dict | None = None) -> dict:
     )
     snapshot = {
         "bot_name": bot_name,
+        "illustration_quality_inspection_enabled": bool(
+            config_snapshot.get("illustration_quality_inspection_enabled", False)
+        ),
         "provider": provider,
         "illustration_workflow_type": illustration_workflow_type,
         "chansub_workflow_type": chansub_workflow_type,
@@ -5433,6 +5439,7 @@ def _discard_deferred_illustration_prompt(prompt_id: str, reason: str) -> None:
     if not isinstance(entry, dict):
         print(f"[ILLUST_CONTEXT:POSTPROCESS] 보류 이미지 폐기 스킵 - prompt 없음: {prompt_id}")
         return
+    entry.pop("_quality_inspection_source", None)
     if "_deferred_image_bytes" not in entry and "_deferred_finalize" not in entry:
         if entry.get("status") == "running":
             entry["status"] = "completed"
@@ -6157,6 +6164,16 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
             ] = copy.deepcopy(node_errors)
 
         print(f"[INFO] 이미지 수신 완료: {len(img_bytes):,} bytes ({elapsed_time:.1f}s)")
+
+        # Keep the generated pixels and actual prompts before captions/composition.
+        # The session collector consumes this transient snapshot; it is never metadata.
+        if (
+            runtime_snapshot.get("illustration_quality_inspection_enabled", False)
+            and raw_body.get("illustration_context_session_id")
+        ):
+            prompts[prompt_id]["_quality_inspection_source"] = {
+                "image_bytes": img_bytes, "positive": positive, "negative": negative,
+            }
 
         # 백업 저장 (WebP + 원본 워크플로우 JSON + 변환정보)
         _backup_bot_name = bot_name if bot_name else ""
@@ -7257,6 +7274,52 @@ async def _process_illustration_asset_reroll_queue_item(item) -> dict:
         raise
 
 
+async def _enqueue_illustration_quality_inspection(
+    *, session_id: str, context: str, entries: list[dict],
+) -> None:
+    """Queue a review after image publication, without awaiting the vision API."""
+    if not entries or not str(context or "").strip():
+        print(
+            f"[ILLUST_INSPECTION] 검사 입력 부족으로 생략: session={session_id}, "
+            f"images={len(entries)}, context_length={len(str(context or ''))}"
+        )
+        return
+    snapshot_entries = copy.deepcopy(entries)
+    run = illustration_flow._run.get()
+    flow_run_id = str(run.get("id") or "") if run else ""
+
+    async def inspect(queue_item):
+        try:
+            return await illustration_quality_inspection.execute_inspection(
+                queue_item, session_id=session_id, context=context,
+                entries=snapshot_entries, flow_run_id=flow_run_id,
+            )
+        finally:
+            snapshot_entries.clear()
+
+    try:
+        queued = await queue_manager.add_item(
+            illustration_quality_inspection.TASK_KEY,
+            f"생성 이미지 자동 검사 · {len(entries)}장",
+            {"session_id": session_id, "slots": [entry["slot"] for entry in entries]},
+            priority=0, runtime_handler=inspect,
+        )
+        # Also release pixels when a waiting inspection is cancelled before its
+        # runtime handler runs. QueueManager observes completion errors itself.
+        queued.completion_future.add_done_callback(lambda _future: snapshot_entries.clear())
+        print(
+            f"[ILLUST_INSPECTION] 자동 검사 큐 등록: session={session_id}, "
+            f"queue={queued.id}, images={len(entries)}"
+        )
+    except Exception as exc:
+        snapshot_entries.clear()
+        print(
+            f"[ILLUST_INSPECTION] 검사 큐 등록 실패: session={session_id}, "
+            f"slots={[entry['slot'] for entry in entries]}, error={exc}"
+        )
+        traceback.print_exc()
+
+
 async def process_illustration_context_queue_item(item) -> dict:
     """CALL2 뒤 이미지 큐와 CALL3를 병렬 실행하고 후처리 합류까지 기다린다."""
     params = item.params or {}
@@ -7300,10 +7363,13 @@ async def process_illustration_context_queue_item(item) -> dict:
     child_pairs = []
     all_child_pairs = []
     child_descriptors = {}
+    inspection_entries = {}
+    inspection_enabled = bool(runtime_snapshot.get("illustration_quality_inspection_enabled", False))
     early_descriptor_slots = []
     early_dispatch = False
     early_keyvis_pair = None
     raw_items = []
+    built = {}
     original_asset_result = {
         "items": [],
         "images": [],
@@ -7479,6 +7545,30 @@ async def process_illustration_context_queue_item(item) -> dict:
             f"success={len(sorted_images)}/{requested_count}, failed={failure_count}, "
             f"original_assets={sum(1 for item in sorted_items if item.get('kind') == 'original_asset')}"
         )
+        if inspection_enabled and not illustration_flow.cancel_requested():
+            # Only successfully published slots, in narrative order. Retried/failed
+            # images and uploaded original assets must not enter this review.
+            entries = [
+                inspection_entries[int(descriptor["slot"])]
+                for descriptor in sorted_items
+                if str(descriptor.get("kind") or "") != "original_asset"
+                and int(descriptor["slot"]) in inspection_entries
+            ]
+            await _enqueue_illustration_quality_inspection(
+                session_id=session_id,
+                # CALL1 can enhance/backtranslate built.context. Judge the images
+                # against the original chat so upstream hallucinations stay visible.
+                context=str(
+                    illustration_context_pipeline.context_text(payload.get("chats") or [])
+                    or built.get("context") or ""
+                ),
+                entries=entries,
+            )
+        else:
+            print(
+                f"[ILLUST_INSPECTION] 자동 검사 생략: session={session_id}, "
+                f"enabled={inspection_enabled}, cancelled={illustration_flow.cancel_requested()}"
+            )
         return {
             "success": True,
             "session_id": session_id,
@@ -7641,9 +7731,36 @@ async def process_illustration_context_queue_item(item) -> dict:
         if not image_bytes or cancelled:
             return image_bytes, fail_reason, cancelled
         child_prompt = prompts.get(child_id, {})
+        inspection_source = child_prompt.pop("_quality_inspection_source", None)
+        if inspection_enabled and not inspection_source:
+            state = child_prompt.get("_deferred_finalize") or {}
+            if state:
+                inspection_source = {
+                    "image_bytes": image_bytes,
+                    "positive": str(state.get("positive") or ""),
+                    "negative": str(state.get("negative") or ""),
+                }
+
+        def remember_inspection_source():
+            if not inspection_enabled:
+                return
+            if not inspection_source:
+                print(
+                    f"[ILLUST_INSPECTION] 생성 원본 스냅샷 없음: "
+                    f"session={session_id}, child={child_id}, slot={slot_label}"
+                )
+                return
+            inspection_entries[int(slot_label)] = {
+                **inspection_source,
+                "slot": int(slot_label), "prompt_id": child_id,
+                "backup_name": str(descriptor.get("backup_name") or ""),
+                "descriptor": copy.deepcopy(descriptor),
+            }
+
         if "_deferred_finalize" not in child_prompt:
             if child_prompt.get("backup_name"):
                 descriptor["backup_name"] = str(child_prompt["backup_name"])
+            remember_inspection_source()
             return image_bytes, "", False
         try:
             final_image = await _finalize_deferred_illustration_prompt(
@@ -7653,6 +7770,7 @@ async def process_illustration_context_queue_item(item) -> dict:
             finalized_prompt = prompts.get(child_id, {})
             if finalized_prompt.get("backup_name"):
                 descriptor["backup_name"] = str(finalized_prompt["backup_name"])
+            remember_inspection_source()
             return final_image, "", False
         except Exception as e:
             print(
@@ -7943,7 +8061,7 @@ async def process_illustration_context_queue_item(item) -> dict:
                 raise RuntimeError("모듈 확정 프롬프트 배치가 비어 있습니다")
             built = {
                 "items": raw_items,
-                "context": "",
+                "context": str(payload.get("context") or raw_body.get("illustration_context") or ""),
                 "prompt_format": "risu_module_prompt_batch_v1",
             }
             await progress(
@@ -8538,6 +8656,8 @@ async def process_illustration_context_queue_item(item) -> dict:
         await stream_notify({"type": "error", "call_name": "PIPELINE", "error": str(e)})
         raise
     finally:
+        for child_id, _child_item in all_child_pairs:
+            (prompts.get(child_id) or {}).pop("_quality_inspection_source", None)
         if original_asset_task is not None and not original_asset_task.done():
             print(
                 f"[ILLUST_ORIGINAL_ASSET] 상위 파이프라인 종료로 미합류 작업 취소: "
@@ -8545,6 +8665,30 @@ async def process_illustration_context_queue_item(item) -> dict:
             )
             original_asset_task.cancel()
             await asyncio.gather(original_asset_task, return_exceptions=True)
+
+
+async def handle_illustration_quality_inspection_settings(request: web.Request) -> web.Response:
+    key = "illustration_quality_inspection_enabled"
+    if request.method == "GET":
+        return web.json_response({"enabled": bool(app_config.get(key, False))})
+    try:
+        body = await request.json()
+        if not isinstance(body, dict) or not isinstance(body.get("enabled"), bool):
+            print(f"[ILLUST_INSPECTION] 설정 저장 실패: enabled는 boolean 필요, input={body!r}")
+            return web.json_response({"error": "enabled는 true/false여야 합니다."}, status=400)
+        candidate = copy.deepcopy(app_config)
+        candidate[key] = body["enabled"]
+        token = CONFIG_SAVE_ORIGIN.set("illustration_quality_inspection/settings")
+        try:
+            save_config(candidate)
+        finally:
+            CONFIG_SAVE_ORIGIN.reset(token)
+        app_config[key] = body["enabled"]
+        return web.json_response({"enabled": app_config[key]})
+    except Exception as exc:
+        print(f"[ILLUST_INSPECTION] 설정 저장 실패: error={exc}")
+        traceback.print_exc()
+        return web.json_response({"error": str(exc)}, status=500)
 
 
 async def handle_illustration_flow(request: web.Request) -> web.Response:
@@ -9200,7 +9344,7 @@ async def handle_api_lighbd_enqueue(request: web.Request) -> web.Response:
 
 
 async def handle_api_lighbd_history(request: web.Request) -> web.Response:
-    """GET /api/lighbd/history - 일반 최근 100개와 다중 분리 최근 100개 반환.
+    """GET /api/lighbd/history - 일반 최근 300개와 다중 분리 최근 100개 반환.
 
     자세히 보기 모달 데이터 소스. 각 레코드: ts, prompt_id, input(messages),
     output(plan), completion_tokens, elapsed, tps, status.
@@ -12552,7 +12696,14 @@ async def handle_api_backups(request: web.Request) -> web.Response:
 
     # 페이지네이션 적용
     files = files[offset:offset + limit]
-    
+
+    inspection_backups = {
+        str(image.get("backup_name") or "")
+        for record in lighbd_service._load_lighbd_history()
+        if record.get("task_key") == illustration_quality_inspection.TASK_KEY
+        for image in (record.get("inspection_images") or [])
+        if isinstance(image, dict)
+    }
     backups = []
     for f in files:
         base, ext = os.path.splitext(os.path.basename(f))  # ext: 실제 파일 확장자 (.webp / .avif)
@@ -12658,7 +12809,7 @@ async def handle_api_backups(request: web.Request) -> web.Response:
             "conversion_info": info,
             "mtime": os.path.getmtime(f),
             "is_scheduled": is_scheduled,
-            "has_llm_trace": bool(info.get("llm_trace")),
+            "has_llm_trace": bool(info.get("llm_trace")) or base in inspection_backups,
         })
     return web.json_response({
         "backups": backups,
@@ -12674,6 +12825,7 @@ def _load_llm_trace_records(
     *,
     log_prefix: str,
     context: str,
+    inspection_backup_name: str = "",
 ) -> tuple[list[str], list[dict], list[str]]:
     """Return ordered LLM history records for persisted trace ids."""
     if not isinstance(trace_ids_raw, list):
@@ -12682,10 +12834,10 @@ def _load_llm_trace_records(
                 f"[{log_prefix}] llm_trace 형식 오류: "
                 f"context={context}, type={type(trace_ids_raw).__name__}"
             )
-        return [], [], []
+        trace_ids_raw = []
 
     trace_ids = [str(item) for item in trace_ids_raw if str(item).strip()]
-    if not trace_ids:
+    if not trace_ids and not inspection_backup_name:
         return [], [], []
 
     trace_set = set(trace_ids)
@@ -12713,8 +12865,20 @@ def _load_llm_trace_records(
                         traceback.print_exc()
                         continue
                     history_id = str(record.get("history_id") or "")
-                    if history_id and history_id in trace_set:
+                    inspection_match = bool(
+                        inspection_backup_name
+                        and record.get("task_key") == illustration_quality_inspection.TASK_KEY
+                        and any(
+                            isinstance(image, dict)
+                            and image.get("backup_name") == inspection_backup_name
+                            for image in (record.get("inspection_images") or [])
+                        )
+                    )
+                    if history_id and (history_id in trace_set or inspection_match):
                         records_by_id[history_id] = record
+                        if inspection_match and history_id not in trace_set:
+                            trace_ids.append(history_id)
+                            trace_set.add(history_id)
         except Exception as error:
             print(
                 f"[{log_prefix}] history 읽기 실패: "
@@ -12858,8 +13022,13 @@ async def handle_api_backup_llm_trace(request: web.Request) -> web.Response:
             ),
         }
 
-        trace_ids_raw = info.get("llm_trace") or []
-        if not isinstance(trace_ids_raw, list) or not trace_ids_raw:
+        trace_ids, found, missing = _load_llm_trace_records(
+            info.get("llm_trace") or [],
+            log_prefix="BACKUP:LLM_TRACE",
+            context=f"name={name}",
+            inspection_backup_name=name,
+        )
+        if not trace_ids:
             return web.json_response({
                 "name": name,
                 "trace_ids": [],
@@ -12871,11 +13040,6 @@ async def handle_api_backup_llm_trace(request: web.Request) -> web.Response:
                 ),
                 **extras,
             })
-        trace_ids, found, missing = _load_llm_trace_records(
-            trace_ids_raw,
-            log_prefix="BACKUP:LLM_TRACE",
-            context=f"name={name}",
-        )
         note = ""
         if missing:
             note = (
@@ -20895,6 +21059,8 @@ app.router.add_get("/api/restore_manual/characters", handle_api_restore_manual_c
 # 프론트엔드
 app.router.add_get("/api/frontend_ws", handle_frontend_ws)
 app.router.add_get("/api/illustration_flow", handle_illustration_flow)
+app.router.add_get("/api/illustration_quality_inspection/settings", handle_illustration_quality_inspection_settings)
+app.router.add_post("/api/illustration_quality_inspection/settings", handle_illustration_quality_inspection_settings)
 app.router.add_post("/api/illustration_flow/cancel", handle_illustration_flow_cancel)
 app.router.add_get("/illustration_flow.js", handle_illustration_flow_script)
 app.router.add_get("/api/config", handle_api_config)

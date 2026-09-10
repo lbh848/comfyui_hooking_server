@@ -8687,12 +8687,12 @@ async def test_persistent_history_path_uses_compact_call2_and_updates_wardrobe(m
                 }],
                 "uncertainties": [],
             })
-        assert task_key == "illustration_call2"
-        if _call_name(task_key) == "CALL2-AUTHORITY-AUDIT":
+        if task_key == "illustration_call2_authority_audit":
             return _authority_audit_response(
                 messages,
                 authority_exceptions=["blue dress"],
             )
+        assert task_key == "illustration_call2"
         request_text = "\n".join(message["content"] for message in messages)
         assert "very old fallback history" not in request_text
         assert "# PRESELECTED PROFILE AUTHORITY" in request_text
@@ -8785,7 +8785,7 @@ scenes[1]:
         "illustration_profile_resolve",
         "illustration_call1",
         "illustration_call2",
-        "illustration_call2",
+        "illustration_call2_authority_audit",
     ]
     assert result["balanced_fallback_used"] is False
     assert result["reference_provenance"]["turn_relation"] == "PRIOR_COMMITTED_TURN"

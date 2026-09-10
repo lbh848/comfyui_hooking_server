@@ -81,6 +81,7 @@ RESERVED_ILLUSTRATION_TYPE_ORDER = {
     "illustration_llm_build": 1,
     "illustration_easy_edit": 2,
     "illustration_auto_feedback_llm": 2,
+    "illustration_quality_inspection": 2,
     "restore_manual": 3,
 }
 
@@ -253,6 +254,7 @@ LLM_TYPES = frozenset({
     "illustration_llm_build",       # CHAT -> CALL1/2/3 -> 다중 삽화 큐 생성
     "illustration_easy_edit",       # 저장 슬롯 -> 기존 편하게 수정 LLM -> 수정 재생성
     "illustration_auto_feedback_llm", # 편하게 수정 오토피드백의 프롬프트 수정/비전 검수
+    "illustration_quality_inspection", # 완성된 삽화 묶음의 원문 대비 품질 검사
     "instance_lora_prompt_refine",  # 태그 정제 / test_setup (instance·style·bot·asset 전부 LLM 호출)
     "lora_prompt_review",           # 1차 정제 + 설정된 route의 선택적 2차 비전 검수
     "bot_llm_face_tag_analysis",    # 비전 LLM 기반 얼굴/눈 태그 자동 분류
@@ -2840,6 +2842,7 @@ class QueueManager:
             "illustration_llm_build": self._handle_illustration_llm_build,
             "illustration_easy_edit": self._handle_illustration_easy_edit,
             "illustration_auto_feedback_llm": self._handle_runtime_llm_task,
+            "illustration_quality_inspection": self._handle_runtime_llm_task,
             "preset_import_classify": self._handle_runtime_llm_task,
             "character_maker_illustration": self._handle_character_maker_illustration,
             "asset_generation": self._handle_asset_generation,
