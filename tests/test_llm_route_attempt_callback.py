@@ -5,7 +5,11 @@
 호출하지 않으며, (3) async 콜백을 await 하고, (4) 콜백 예외가 라우팅 흐름을 망가뜨리지
 않는지 확인한다.
 """
+import base64
+import io
+
 import pytest
+from PIL import Image
 
 from modes import llm_service
 from modes.llm_service import (
@@ -220,6 +224,106 @@ async def test_vision_uses_same_execution_result_shape(monkeypatch):
         "attempt_success",
         "execution_complete",
     ]
+
+
+@pytest.mark.asyncio
+async def test_vision_task_encodes_raw_bytes_inside_shared_transport(monkeypatch):
+    monkeypatch.setattr(llm_service, "_current_config", {"llm_routing": {}})
+    monkeypatch.setattr(llm_service, "_routing_for", lambda _task: ("llm1", None))
+    monkeypatch.setattr(
+        llm_service,
+        "_routing_retry_policy",
+        lambda _task: {
+            "max_retries": 0,
+            "retry_delay_sec": 0.0,
+            "fallback_max_retries": 0,
+            "fallback_retry_delay_sec": 0.0,
+        },
+    )
+    captured = {}
+
+    async def vision(_messages, image_b64, image_mime, **_kwargs):
+        captured["image_b64"] = image_b64
+        captured["image_mime"] = image_mime
+        return "vision ok"
+
+    monkeypatch.setattr(llm_service, "callLLMVision", vision)
+    raw = b"shared-vision-transport-image"
+    result = await llm_service.callLLMVisionTaskResult(
+        "vision_task",
+        [{"role": "user", "content": "look"}],
+        image_bytes=raw,
+        image_mime="application/octet-stream",
+    )
+
+    assert result.accepted is True
+    assert base64.b64decode(captured["image_b64"]) == raw
+    assert captured["image_mime"] == "application/octet-stream"
+
+
+def test_vision_webp_compression_toggle_applies_to_png_input(monkeypatch):
+    output = io.BytesIO()
+    image = Image.new("RGB", (320, 240), (20, 80, 140))
+    image.save(output, format="PNG")
+    image.close()
+    png_bytes = output.getvalue()
+    png_b64 = base64.b64encode(png_bytes).decode("ascii")
+
+    monkeypatch.setattr(
+        llm_service,
+        "_current_config",
+        llm_service._ContextConfig({"llm_vision_compress": True}),
+    )
+    compressed_b64, compressed_mime = llm_service._normalize_vision_image(
+        png_b64, "image/png"
+    )
+    assert compressed_mime == "image/webp"
+    with Image.open(io.BytesIO(base64.b64decode(compressed_b64))) as compressed:
+        assert compressed.format == "WEBP"
+        assert compressed.size == (320, 240)
+
+    llm_service._current_config["llm_vision_compress"] = False
+    compatible_b64, compatible_mime = llm_service._normalize_vision_image(
+        png_b64, "image/png"
+    )
+    assert compatible_b64 == png_b64
+    assert compatible_mime == "image/png"
+
+
+@pytest.mark.asyncio
+async def test_llm2_vision_preparation_uses_only_llm2_compression_setting(monkeypatch):
+    output = io.BytesIO()
+    image = Image.new("RGB", (64, 64), (120, 40, 10))
+    image.save(output, format="PNG")
+    image.close()
+    png_b64 = base64.b64encode(output.getvalue()).decode("ascii")
+    config = llm_service._ContextConfig({
+        "llm_service": "openai",
+        "llm_model": "model-one",
+        "llm_vision_compress": True,
+        "llm_service2": "openai",
+        "llm_model2": "model-two",
+        "llm_vision_compress2": False,
+        "llm_stream2": False,
+    })
+    monkeypatch.setattr(llm_service, "_current_config", config)
+    captured = {}
+
+    async def dispatch(messages, _service, _model):
+        content = messages[-1]["content"]
+        image_url = next(part["image_url"]["url"] for part in content if part.get("type") == "image_url")
+        captured["url"] = image_url
+        return "ok"
+
+    monkeypatch.setattr(llm_service, "_dispatch", dispatch)
+    result = await llm_service.callLLMVision2(
+        [{"role": "user", "content": "look"}],
+        image_b64=png_b64,
+        image_mime="image/png",
+    )
+
+    assert result == "ok"
+    assert captured["url"].startswith("data:image/png;base64,")
 
 
 @pytest.mark.asyncio

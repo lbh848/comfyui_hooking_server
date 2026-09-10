@@ -266,7 +266,7 @@ def queue_added(item):
         layout_group=None if is_root or is_review else "illustration_images",
         input={
             k: item.params[k]
-            for k in ("payload", "prompt_data", "provider", "session_id", "slots")
+            for k in ("payload", "prompt_data", "provider", "scope", "session_id", "slots")
             if k in item.params
         },
     )

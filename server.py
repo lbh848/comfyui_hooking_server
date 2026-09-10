@@ -1315,6 +1315,16 @@ except Exception as e:
 # 전역 설정 로드
 app_config = load_config()
 
+# 생성 이미지 자동 검사는 배포 설정과 분리된 개발자용 실행 상태다.
+# 이전 실행에서 어떤 값이 저장되어 있어도 새 서버 프로세스는 항상 OFF로 시작한다.
+_illustration_quality_inspection_runtime_enabled = False
+
+
+def _reset_illustration_quality_inspection_runtime() -> None:
+    global _illustration_quality_inspection_runtime_enabled
+    _illustration_quality_inspection_runtime_enabled = False
+    print("[ILLUST_INSPECTION] 서버 시작: 생성 이미지 자동 검사 OFF")
+
 # ComfyUI 포트: config → 환경변수 → 기본값(8188) 순서
 REAL_COMFY_PORT = int(app_config.get("comfyui_port", os.environ.get("REAL_COMFY_PORT", "8188")))
 # 삽화 전용 포트: None이면 메인 포트(REAL_COMFY_PORT) 사용
@@ -2359,7 +2369,7 @@ def _capture_illustration_runtime_snapshot(config: dict | None = None) -> dict:
     snapshot = {
         "bot_name": bot_name,
         "illustration_quality_inspection_enabled": bool(
-            config_snapshot.get("illustration_quality_inspection_enabled", False)
+            _illustration_quality_inspection_runtime_enabled
         ),
         "provider": provider,
         "illustration_workflow_type": illustration_workflow_type,
@@ -7275,33 +7285,88 @@ async def _process_illustration_asset_reroll_queue_item(item) -> dict:
 
 
 async def _enqueue_illustration_quality_inspection(
-    *, session_id: str, context: str, entries: list[dict],
-) -> None:
-    """Queue a review after image publication, without awaiting the vision API."""
+    *,
+    scope: str,
+    session_id: str,
+    context: str,
+    entries: list[dict],
+    dependencies: list[Any] | None = None,
+) -> Any | None:
+    """Queue one image review or one completed-set review without blocking delivery."""
     if not entries or not str(context or "").strip():
         print(
             f"[ILLUST_INSPECTION] 검사 입력 부족으로 생략: session={session_id}, "
             f"images={len(entries)}, context_length={len(str(context or ''))}"
         )
-        return
+        return None
     snapshot_entries = copy.deepcopy(entries)
+    dependency_items = list(dependencies or [])
     run = illustration_flow._run.get()
     flow_run_id = str(run.get("id") or "") if run else ""
 
     async def inspect(queue_item):
         try:
+            individual_results: list[dict[str, Any]] = []
+            if scope == illustration_quality_inspection.OVERALL_SCOPE:
+                futures: list[asyncio.Future] = []
+                future_items: list[Any] = []
+                for dependency in dependency_items:
+                    future = getattr(dependency, "completion_future", None)
+                    if isinstance(future, asyncio.Future):
+                        futures.append(future)
+                        future_items.append(dependency)
+                    else:
+                        print(
+                            f"[ILLUST_INSPECTION] 개별 검사 완료 Future 없음: "
+                            f"session={session_id}, queue={getattr(dependency, 'id', '')!r}, "
+                            f"state={getattr(dependency, 'status', '')!r}"
+                        )
+                if futures:
+                    outcomes = await asyncio.gather(*futures, return_exceptions=True)
+                    for dependency, outcome in zip(future_items, outcomes):
+                        if isinstance(outcome, BaseException):
+                            print(
+                                f"[ILLUST_INSPECTION] 전체 검사에서 개별 검사 결과 제외: "
+                                f"session={session_id}, queue={getattr(dependency, 'id', '')!r}, "
+                                f"state={getattr(dependency, 'status', '')!r}, "
+                                f"error={type(outcome).__name__}: {outcome}"
+                            )
+                            traceback.print_exception(
+                                type(outcome), outcome, outcome.__traceback__
+                            )
+                        elif isinstance(outcome, dict):
+                            individual_results.append(outcome)
+                        else:
+                            print(
+                                f"[ILLUST_INSPECTION] 개별 검사 결과 형식 불일치로 제외: "
+                                f"session={session_id}, queue={getattr(dependency, 'id', '')!r}, "
+                                f"state={getattr(dependency, 'status', '')!r}, "
+                                f"result={outcome!r}"
+                            )
             return await illustration_quality_inspection.execute_inspection(
-                queue_item, session_id=session_id, context=context,
-                entries=snapshot_entries, flow_run_id=flow_run_id,
+                queue_item,
+                scope=scope,
+                session_id=session_id,
+                context=context,
+                entries=snapshot_entries,
+                flow_run_id=flow_run_id,
+                individual_results=individual_results,
             )
         finally:
             snapshot_entries.clear()
 
     try:
+        slots = [entry["slot"] for entry in entries]
+        if scope == illustration_quality_inspection.IMAGE_SCOPE:
+            label = f"생성 이미지 자동 검사 · slot {slots[0]}"
+        elif scope == illustration_quality_inspection.OVERALL_SCOPE:
+            label = f"생성 이미지 전체 품질 검사 · {len(entries)}장"
+        else:
+            raise ValueError(f"지원하지 않는 삽화 검사 범위: {scope!r}")
         queued = await queue_manager.add_item(
             illustration_quality_inspection.TASK_KEY,
-            f"생성 이미지 자동 검사 · {len(entries)}장",
-            {"session_id": session_id, "slots": [entry["slot"] for entry in entries]},
+            label,
+            {"scope": scope, "session_id": session_id, "slots": slots},
             priority=0, runtime_handler=inspect,
         )
         # Also release pixels when a waiting inspection is cancelled before its
@@ -7309,15 +7374,17 @@ async def _enqueue_illustration_quality_inspection(
         queued.completion_future.add_done_callback(lambda _future: snapshot_entries.clear())
         print(
             f"[ILLUST_INSPECTION] 자동 검사 큐 등록: session={session_id}, "
-            f"queue={queued.id}, images={len(entries)}"
+            f"queue={queued.id}, scope={scope}, images={len(entries)}"
         )
+        return queued
     except Exception as exc:
         snapshot_entries.clear()
         print(
             f"[ILLUST_INSPECTION] 검사 큐 등록 실패: session={session_id}, "
-            f"slots={[entry['slot'] for entry in entries]}, error={exc}"
+            f"scope={scope!r}, slots={[entry['slot'] for entry in entries]}, error={exc}"
         )
         traceback.print_exc()
+        return None
 
 
 async def process_illustration_context_queue_item(item) -> dict:
@@ -7364,6 +7431,7 @@ async def process_illustration_context_queue_item(item) -> dict:
     all_child_pairs = []
     child_descriptors = {}
     inspection_entries = {}
+    inspection_queue_items: dict[int, Any] = {}
     inspection_enabled = bool(runtime_snapshot.get("illustration_quality_inspection_enabled", False))
     early_descriptor_slots = []
     early_dispatch = False
@@ -7382,6 +7450,15 @@ async def process_illustration_context_queue_item(item) -> dict:
     # build_from_context 완료 후 MULTI-CHAR-MASK~CALL3 의 LLM 호출 id 목록으로 채워진다.
     # prompt_batch_v1 등 build_from_context 를 거치지 않는 경로는 빈 목록(버튼 비활성).
     llm_trace = []
+
+    def _quality_inspection_context() -> str:
+        # CALL1 can enhance/backtranslate built.context. Judge generated pixels
+        # against the original chat so upstream hallucinations stay visible.
+        return str(
+            illustration_context_pipeline.context_text(payload.get("chats") or [])
+            or built.get("context")
+            or ""
+        )
 
     def _child_llm_trace(base_trace, descriptor: dict) -> list:
         # 공통 LLM 호출 trace + 이 백업(자기 slot)의 MULTI-CHAR-MASK history_id.
@@ -7554,15 +7631,17 @@ async def process_illustration_context_queue_item(item) -> dict:
                 if str(descriptor.get("kind") or "") != "original_asset"
                 and int(descriptor["slot"]) in inspection_entries
             ]
+            dependencies = [
+                inspection_queue_items[int(entry["slot"])]
+                for entry in entries
+                if int(entry["slot"]) in inspection_queue_items
+            ]
             await _enqueue_illustration_quality_inspection(
+                scope=illustration_quality_inspection.OVERALL_SCOPE,
                 session_id=session_id,
-                # CALL1 can enhance/backtranslate built.context. Judge the images
-                # against the original chat so upstream hallucinations stay visible.
-                context=str(
-                    illustration_context_pipeline.context_text(payload.get("chats") or [])
-                    or built.get("context") or ""
-                ),
+                context=_quality_inspection_context(),
                 entries=entries,
+                dependencies=dependencies,
             )
         else:
             print(
@@ -7741,7 +7820,7 @@ async def process_illustration_context_queue_item(item) -> dict:
                     "negative": str(state.get("negative") or ""),
                 }
 
-        def remember_inspection_source():
+        async def remember_inspection_source():
             if not inspection_enabled:
                 return
             if not inspection_source:
@@ -7750,17 +7829,27 @@ async def process_illustration_context_queue_item(item) -> dict:
                     f"session={session_id}, child={child_id}, slot={slot_label}"
                 )
                 return
-            inspection_entries[int(slot_label)] = {
+            slot_number = int(slot_label)
+            entry = {
                 **inspection_source,
-                "slot": int(slot_label), "prompt_id": child_id,
+                "slot": slot_number, "prompt_id": child_id,
                 "backup_name": str(descriptor.get("backup_name") or ""),
                 "descriptor": copy.deepcopy(descriptor),
             }
+            inspection_entries[slot_number] = entry
+            queued = await _enqueue_illustration_quality_inspection(
+                scope=illustration_quality_inspection.IMAGE_SCOPE,
+                session_id=session_id,
+                context=_quality_inspection_context(),
+                entries=[entry],
+            )
+            if queued is not None:
+                inspection_queue_items[slot_number] = queued
 
         if "_deferred_finalize" not in child_prompt:
             if child_prompt.get("backup_name"):
                 descriptor["backup_name"] = str(child_prompt["backup_name"])
-            remember_inspection_source()
+            await remember_inspection_source()
             return image_bytes, "", False
         try:
             final_image = await _finalize_deferred_illustration_prompt(
@@ -7770,7 +7859,7 @@ async def process_illustration_context_queue_item(item) -> dict:
             finalized_prompt = prompts.get(child_id, {})
             if finalized_prompt.get("backup_name"):
                 descriptor["backup_name"] = str(finalized_prompt["backup_name"])
-            remember_inspection_source()
+            await remember_inspection_source()
             return final_image, "", False
         except Exception as e:
             print(
@@ -8668,25 +8757,35 @@ async def process_illustration_context_queue_item(item) -> dict:
 
 
 async def handle_illustration_quality_inspection_settings(request: web.Request) -> web.Response:
-    key = "illustration_quality_inspection_enabled"
+    global _illustration_quality_inspection_runtime_enabled
     if request.method == "GET":
-        return web.json_response({"enabled": bool(app_config.get(key, False))})
+        return web.json_response({
+            "enabled": bool(_illustration_quality_inspection_runtime_enabled)
+        })
+    body = None
     try:
         body = await request.json()
         if not isinstance(body, dict) or not isinstance(body.get("enabled"), bool):
-            print(f"[ILLUST_INSPECTION] 설정 저장 실패: enabled는 boolean 필요, input={body!r}")
+            print(
+                "[ILLUST_INSPECTION] 실행 상태 변경 실패: enabled는 boolean 필요, "
+                f"input={body!r}, "
+                f"state={_illustration_quality_inspection_runtime_enabled}"
+            )
             return web.json_response({"error": "enabled는 true/false여야 합니다."}, status=400)
-        candidate = copy.deepcopy(app_config)
-        candidate[key] = body["enabled"]
-        token = CONFIG_SAVE_ORIGIN.set("illustration_quality_inspection/settings")
-        try:
-            save_config(candidate)
-        finally:
-            CONFIG_SAVE_ORIGIN.reset(token)
-        app_config[key] = body["enabled"]
-        return web.json_response({"enabled": app_config[key]})
+        _illustration_quality_inspection_runtime_enabled = body["enabled"]
+        print(
+            "[ILLUST_INSPECTION] 생성 이미지 자동 검사 실행 상태 변경: "
+            f"enabled={_illustration_quality_inspection_runtime_enabled}"
+        )
+        return web.json_response({
+            "enabled": _illustration_quality_inspection_runtime_enabled
+        })
     except Exception as exc:
-        print(f"[ILLUST_INSPECTION] 설정 저장 실패: error={exc}")
+        print(
+            "[ILLUST_INSPECTION] 실행 상태 변경 실패: "
+            f"input={body!r}, state={_illustration_quality_inspection_runtime_enabled}, "
+            f"error={type(exc).__name__}: {exc}"
+        )
         traceback.print_exc()
         return web.json_response({"error": str(exc)}, status=500)
 
@@ -31482,6 +31581,7 @@ async def _update_workflow_after_comfy_autostart(started_instances: dict[int, di
 
 
 async def on_startup(app):
+    _reset_illustration_quality_inspection_runtime()
     await asyncio.to_thread(clear_runtime_temp, BASE_DIR)
     print("[INFO] 워크플로우 초기 로드...")
     # 백그라운드 스레드에서 notify_frontend 호출을 위해 메인 루프 참조 보관

@@ -2306,19 +2306,11 @@ def _normalize_vision_image(image_b64: str, image_mime: str) -> tuple:
         img = Image.open(io.BytesIO(raw))
         try:
             fmt = (img.format or "").upper()
-            # 네이티브 포맷이면 재인코딩 없이 통과 (단, 실제 포맷에 맞게 mime 보정)
-            if fmt == "PNG":
-                return image_b64, "image/png"
-            if fmt in ("JPEG", "JPG"):
-                return image_b64, "image/jpeg"
-            # GIF는 투명 프레임 보존을 위해 네이티브 통과
-            if fmt == "GIF":
-                return image_b64, "image/gif"
-            # webp 압축 전송 토글(llm_vision_compress)이 켜져 있으면 원본 픽셀을
-            # 유지한 채 WEBP 품질 압축만 해서 보낸다. PNG 재인코딩을 거치지 않는다
-            # (비전 컨텍스트 폭발 방지). WEBP 미지원 프로바이더는 토글 OFF로 PNG 사용.
+            # 슬롯별 webp 압축 전송 토글은 입력 포맷과 무관하게 적용한다.
+            # 과거에는 PNG/JPEG를 먼저 반환해서 토글을 켜도 압축되지 않았다.
+            # GIF는 프레임 손실을 막기 위해 예외적으로 원본을 유지한다.
             compress_webp = bool(_current_config.get("llm_vision_compress", False))
-            if compress_webp:
+            if compress_webp and fmt != "GIF":
                 # 이미 WEBP면 재압축 손실을 막기 위해 그대로 통과.
                 if fmt == "WEBP":
                     return image_b64, "image/webp"
@@ -2330,6 +2322,13 @@ def _normalize_vision_image(image_b64: str, image_mime: str) -> tuple:
                 _llm_log(f"_normalize_vision_image: webp 압축 {fmt}/{image_mime} -> image/webp "
                          f"({len(raw)}B -> {len(out.getvalue())}B)")
                 return new_b64, "image/webp"
+            # 네이티브 포맷이면 재인코딩 없이 통과 (단, 실제 포맷에 맞게 mime 보정)
+            if fmt == "PNG":
+                return image_b64, "image/png"
+            if fmt in ("JPEG", "JPG"):
+                return image_b64, "image/jpeg"
+            if fmt == "GIF":
+                return image_b64, "image/gif"
             # WEBP / AVIF / HEIF / BMP / TIFF / 미식별 등 → PNG 재인코딩
             # (WEBP는 Cerebras 등 webp 미지원 비전 프로바이더 호환을 위해 PNG로)
             img.load()
@@ -3719,21 +3718,25 @@ async def callLLMVision2(messages: list, image_b64: str = None, image_mime: str 
     if not use_model:
         return "[LLM 실패] LLM2 모델명이 설정되지 않았습니다"
 
-    # 비전 messages 빌드는 요청별 설정 오버레이 전/후와 무관하다.
-    try:
-        new_messages, log_mime, log_len = _prepare_vision_messages(
-            messages, image_b64, image_mime, images
-        )
-    except ValueError as e:
-        return f"[LLM 실패] {e}"
-
-    _llm_log(f"callLLMVision2: service={service} model={use_model} mime={log_mime} img_b64_len={log_len} json_mode={json_mode}")
     config_token = _request_config_override_ctx.set(
         _slot_config_overrides("llm2")
     )
     slot_token = _llm_slot_ctx.set("llm2")
     token = _response_format_ctx.set({"type": "json_object"}) if json_mode else None
     try:
+        try:
+            new_messages, log_mime, log_len = _prepare_vision_messages(
+                messages, image_b64, image_mime, images
+            )
+        except ValueError as e:
+            print(
+                f"[LLM2_VISION] 이미지 준비 실패: mime={image_mime!r}, "
+                f"image_count={len(images) if images else int(bool(image_b64))}, "
+                f"input={messages!r}, error={e}"
+            )
+            traceback.print_exc()
+            return f"[LLM 실패] {e}"
+        _llm_log(f"callLLMVision2: service={service} model={use_model} mime={log_mime} img_b64_len={log_len} json_mode={json_mode}")
         if bool(_current_config.get("llm_stream2", False)):
             return await _stream_call_to_text(new_messages, service, use_model, "llm2")
         return await _dispatch(new_messages, service, use_model)
@@ -3763,21 +3766,25 @@ async def callLLMVision3(messages: list, image_b64: str = None, image_mime: str 
     if not use_model:
         return "[LLM 실패] LLM3 모델명이 설정되지 않았습니다"
 
-    # 비전 messages 빌드는 요청별 설정 오버레이 전/후와 무관하다.
-    try:
-        new_messages, log_mime, log_len = _prepare_vision_messages(
-            messages, image_b64, image_mime, images
-        )
-    except ValueError as e:
-        return f"[LLM 실패] {e}"
-
-    _llm_log(f"callLLMVision3: service={service} model={use_model} mime={log_mime} img_b64_len={log_len} json_mode={json_mode}")
     config_token = _request_config_override_ctx.set(
         _slot_config_overrides("llm3")
     )
     slot_token = _llm_slot_ctx.set("llm3")
     token = _response_format_ctx.set({"type": "json_object"}) if json_mode else None
     try:
+        try:
+            new_messages, log_mime, log_len = _prepare_vision_messages(
+                messages, image_b64, image_mime, images
+            )
+        except ValueError as e:
+            print(
+                f"[LLM3_VISION] 이미지 준비 실패: mime={image_mime!r}, "
+                f"image_count={len(images) if images else int(bool(image_b64))}, "
+                f"input={messages!r}, error={e}"
+            )
+            traceback.print_exc()
+            return f"[LLM 실패] {e}"
+        _llm_log(f"callLLMVision3: service={service} model={use_model} mime={log_mime} img_b64_len={log_len} json_mode={json_mode}")
         if bool(_current_config.get("llm_stream3", False)):
             return await _stream_call_to_text(new_messages, service, use_model, "llm3")
         return await _dispatch(new_messages, service, use_model)
@@ -3804,6 +3811,7 @@ async def callLLMVisionTaskResult(
     execution_id: str = "",
     parent_execution_id: str = "",
     execution_observer=None,
+    image_bytes: bytes | bytearray | memoryview | None = None,
 ) -> LLMExecutionResult:
     """
     작업별 라우팅 비전 LLM 호출의 공통 내부 결과를 반환한다.
@@ -3812,8 +3820,33 @@ async def callLLMVisionTaskResult(
     작업별 설정에 따라 메인 비전 LLM을 재시도한 뒤, 실패하면 폴백 비전 LLM도 별도
     정책으로 재시도한다. result_validator가 있으면 형식/내용 검증 실패도 포함한다.
 
+    image_bytes는 호출자가 원본 바이트를 공용 비전 전송 경로에 맡길 때 사용한다.
+    이 함수가 JSON 전송 직전에 Base64로 바꾸며, 실제 포맷 정규화와 슬롯별 WebP
+    압축 여부는 기존 _prepare_vision_messages 경로에서 결정한다.
+
     images(다중) 가 주어지면 단일 image_b64 대신 격자 합성 없이 각각 별도 이미지로 전송한다.
     """
+    if image_bytes is not None:
+        try:
+            if image_b64 or images:
+                raise ValueError(
+                    "image_bytes cannot be combined with image_b64 or images"
+                )
+            if not isinstance(image_bytes, (bytes, bytearray, memoryview)):
+                raise TypeError("image_bytes must be bytes-like")
+            raw_image_bytes = bytes(image_bytes)
+            if not raw_image_bytes:
+                raise ValueError("image_bytes is empty")
+            image_b64 = base64.b64encode(raw_image_bytes).decode("ascii")
+        except Exception as exc:
+            print(
+                "[LLM_VISION] 원본 이미지 전송 준비 실패: "
+                f"task={task_key!r}, image_bytes_type={type(image_bytes).__name__}, "
+                f"image_b64_present={bool(image_b64)}, images_count={len(images) if images else 0}, "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            raise
     primary, fb_target = _routing_for(task_key)
     # 라우팅 엔트리에 json_mode 가 명시되어 있으면 그 값 우선(edit_illustration_prompt 토글).
     # 없으면 caller 가 넘긴 json_mode 사용(기존 동작 보존).
@@ -3991,6 +4024,7 @@ async def callLLMVisionTask(
     execution_id: str = "",
     parent_execution_id: str = "",
     execution_observer=None,
+    image_bytes: bytes | bytearray | memoryview | None = None,
 ) -> str:
     """기존 문자열 계약을 유지하는 작업별 비전 LLM 공개 함수."""
     execution_result = await callLLMVisionTaskResult(
@@ -4002,6 +4036,7 @@ async def callLLMVisionTask(
         json_mode=json_mode,
         result_validator=result_validator,
         images=images,
+        image_bytes=image_bytes,
         stream_observer=stream_observer,
         metadata_sink=metadata_sink,
         on_attempt_failure=on_attempt_failure,
@@ -6323,17 +6358,29 @@ async def callLLMVision2Stream(messages: list, image_b64: str = None, image_mime
         yield {"type": "error", "error": "callLLMVision2Stream: image_b64 가 비어 있습니다."}
         return
 
+    config_token = _request_config_override_ctx.set(
+        _slot_config_overrides("llm2")
+    )
     try:
-        new_messages, log_mime, log_len = _prepare_vision_messages(
-            messages, image_b64, image_mime, images
-        )
-    except ValueError as e:
-        yield {"type": "error", "error": str(e)}
-        return
+        try:
+            new_messages, log_mime, log_len = _prepare_vision_messages(
+                messages, image_b64, image_mime, images
+            )
+        except ValueError as e:
+            print(
+                f"[LLM2_VISION_STREAM] 이미지 준비 실패: mime={image_mime!r}, "
+                f"image_count={len(images) if images else int(bool(image_b64))}, "
+                f"input={messages!r}, error={e}"
+            )
+            traceback.print_exc()
+            yield {"type": "error", "error": str(e)}
+            return
 
-    _llm_log(f"callLLMVision2Stream: service={service} model={use_model} mime={log_mime} img_b64_len={log_len} json_mode={json_mode}")
-    async for ev in callLLM2Stream(new_messages, model=use_model, log_history=log_history, json_mode=json_mode):
-        yield ev
+        _llm_log(f"callLLMVision2Stream: service={service} model={use_model} mime={log_mime} img_b64_len={log_len} json_mode={json_mode}")
+        async for ev in callLLM2Stream(new_messages, model=use_model, log_history=log_history, json_mode=json_mode):
+            yield ev
+    finally:
+        _request_config_override_ctx.reset(config_token)
 
 
 async def callLLMVision3Stream(messages: list, image_b64: str = None, image_mime: str = "image/webp",
@@ -6360,17 +6407,29 @@ async def callLLMVision3Stream(messages: list, image_b64: str = None, image_mime
         yield {"type": "error", "error": "callLLMVision3Stream: image_b64 가 비어 있습니다."}
         return
 
+    config_token = _request_config_override_ctx.set(
+        _slot_config_overrides("llm3")
+    )
     try:
-        new_messages, log_mime, log_len = _prepare_vision_messages(
-            messages, image_b64, image_mime, images
-        )
-    except ValueError as e:
-        yield {"type": "error", "error": str(e)}
-        return
+        try:
+            new_messages, log_mime, log_len = _prepare_vision_messages(
+                messages, image_b64, image_mime, images
+            )
+        except ValueError as e:
+            print(
+                f"[LLM3_VISION_STREAM] 이미지 준비 실패: mime={image_mime!r}, "
+                f"image_count={len(images) if images else int(bool(image_b64))}, "
+                f"input={messages!r}, error={e}"
+            )
+            traceback.print_exc()
+            yield {"type": "error", "error": str(e)}
+            return
 
-    _llm_log(f"callLLMVision3Stream: service={service} model={use_model} mime={log_mime} img_b64_len={log_len} json_mode={json_mode}")
-    async for ev in callLLM3Stream(new_messages, model=use_model, log_history=log_history, json_mode=json_mode):
-        yield ev
+        _llm_log(f"callLLMVision3Stream: service={service} model={use_model} mime={log_mime} img_b64_len={log_len} json_mode={json_mode}")
+        async for ev in callLLM3Stream(new_messages, model=use_model, log_history=log_history, json_mode=json_mode):
+            yield ev
+    finally:
+        _request_config_override_ctx.reset(config_token)
 
 
 # ─── LLM 슬롯 일반화 헬퍼(LLM4/5 및 이후 슬롯) ───────────────

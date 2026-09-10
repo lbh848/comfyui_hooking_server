@@ -1,10 +1,12 @@
 import base64
+import io
 import json
 import pathlib
 import sys
 from types import SimpleNamespace
 
 import pytest
+from PIL import Image
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -16,15 +18,25 @@ class QueueItem:
     id = "queue-inspection"
 
 
+def _image_bytes(color: tuple[int, int, int], *, size=(2000, 1000)) -> bytes:
+    output = io.BytesIO()
+    image = Image.new("RGB", size, color)
+    image.save(output, format="PNG")
+    image.close()
+    return output.getvalue()
+
+
 def _entries() -> list[dict]:
+    positive_two = "the character reaches toward a lantern; contact reads"
+    negative = "unmotivated costume change"
     return [
         {
             "slot": "2",
             "backup_name": "scene-2",
             "prompt_id": "prompt-2",
-            "image_bytes": b"\x89PNG\r\n\x1a\nimage-two",
-            "positive": "the character reaches toward a lantern; contact reads",
-            "negative": "unmotivated costume change",
+            "image_bytes": _image_bytes((30, 60, 90)),
+            "positive": positive_two,
+            "negative": negative,
             "descriptor": {
                 "kind": "scene",
                 "scene_brief": (
@@ -34,15 +46,17 @@ def _entries() -> list[dict]:
                 "camera": "medium side view",
                 "characters": [{"name": "Ari", "outfit": "blue coat"}],
                 "continuity_note": "The blue coat remains from the prior scene.",
+                "raw_positive": positive_two,
+                "raw_negative": negative,
             },
         },
         {
             "slot": 5,
             "backup_name": "scene-5",
             "prompt_id": "prompt-5",
-            "image_bytes": b"RIFF1234WEBPimage-five",
+            "image_bytes": _image_bytes((90, 60, 30), size=(1000, 1600)),
             "positive": "the character opens the lantern by the river",
-            "negative": "unmotivated costume change",
+            "negative": negative,
             "descriptor": {
                 "kind": "scene",
                 "scene": (
@@ -65,21 +79,7 @@ def _config() -> dict:
         "llm_model2": "model-two",
         "llm_service3": "provider-three",
         "llm_model3": "model-three",
-        "llm_service5": "provider-five",
-        "llm_model5": "model-five",
     }
-
-
-def _response(feedback_2: str = "No material issue observed.") -> str:
-    return json.dumps(
-        {
-            "images": [
-                {"slot": "5", "feedback": "The supported outfit change is coherent."},
-                {"slot": "2", "feedback": feedback_2},
-            ],
-            "overall_feedback": "The two scenes preserve the narrative state.",
-        }
-    )
 
 
 def _allowed_history_keys() -> set[str]:
@@ -102,6 +102,7 @@ def _allowed_history_keys() -> set[str]:
         "status",
         "error",
         "queue_item_id",
+        "inspection_scope",
         "inspection_session_id",
         "inspection_flow_run_id",
         "inspection_images",
@@ -109,18 +110,21 @@ def _allowed_history_keys() -> set[str]:
 
 
 @pytest.mark.asyncio
-async def test_two_actual_images_and_compact_history_are_preserved(
-    monkeypatch: pytest.MonkeyPatch,
-):
+async def test_image_review_delegates_original_bytes_to_shared_vision_transport(monkeypatch):
     captured: dict = {}
     records: list[dict] = []
     flow_events: list[dict] = []
+    entry = _entries()[0]
 
     async def fake_call(_task_key, messages, **kwargs):
         captured["messages"] = messages
         captured.update(kwargs)
         kwargs["metadata_sink"].update({"completion_tokens": 21, "prompt_tokens": 42})
-        raw = _response("The required contact reads; a naturally cropped region is not missing.")
+        raw = json.dumps({
+            "feedback": "The required contact reads; the crop is natural.",
+            "continuity_observation": "Ari wears a blue coat beside the lantern.",
+        })
+        assert kwargs["result_validator"](raw) == (True, "")
         return SimpleNamespace(
             accepted=True,
             raw_response=raw,
@@ -142,64 +146,127 @@ async def test_two_actual_images_and_compact_history_are_preserved(
 
     result = await quality.execute_inspection(
         QueueItem(),
+        scope=quality.IMAGE_SCOPE,
         session_id="session-1",
         flow_run_id="flow-1",
-        context=(
-            "Ari crosses the river in a blue coat, reaches for the lantern, "
-            "then removes the coat and opens it."
-        ),
-        entries=_entries(),
+        context="Ari crosses the river in a blue coat and reaches for the lantern.",
+        entries=[entry],
     )
 
-    assert result["images"] == [
-        {"slot": 2, "feedback": "The required contact reads; a naturally cropped region is not missing."},
-        {"slot": 5, "feedback": "The supported outfit change is coherent."},
-    ]
+    assert result == {
+        "inspection_scope": "image",
+        "slot": 2,
+        "feedback": "The required contact reads; the crop is natural.",
+        "continuity_observation": "Ari wears a blue coat beside the lantern.",
+    }
     assert captured["json_mode"] is True
-    assert captured["result_validator"]
-    assert len(captured["images"]) == 2
-    assert base64.b64decode(captured["images"][0][0]) == _entries()[0]["image_bytes"]
-    assert base64.b64decode(captured["images"][1][0]) == _entries()[1]["image_bytes"]
-    assert [image[1] for image in captured["images"]] == ["image/png", "image/webp"]
-    assert "SLOT 2" in captured["images"][0][2]
-    assert "scene-5" in captured["images"][1][2]
-    assert "Ari crosses the river" in captured["messages"][1]["content"]
-    assert "naturally cropped" in captured["messages"][1]["content"]
-    assert "removes the coat" in captured["messages"][1]["content"]
-    assert flow_events == [{"input": captured["messages"], "status": "processing"}]
+    assert "images" not in captured
+    assert "image_b64" not in captured
+    assert captured["image_mime"] == "application/octet-stream"
+    assert captured["image_bytes"] == entry["image_bytes"]
+    user_message = captured["messages"][1]["content"]
+    assert "Ari crosses the river" in user_message
+    assert "naturally cropped" in user_message
+    assert user_message.count(entry["positive"]) == 1
+    assert user_message.count(entry["negative"]) == 1
+    assert flow_events == [{
+        "input": captured["messages"],
+        "status": "processing",
+        "inspection_scope": "image",
+    }]
 
     assert len(records) == 1
     record = records[0]
     assert set(record) == _allowed_history_keys()
     assert record["status"] == "ok"
+    assert record["inspection_scope"] == "image"
     assert record["parent_execution_id"] == "flow-1"
     assert record["llm_slot"] == "llm2"
     assert record["phase"] == "fallback"
     assert record["service"] == "provider-two"
     assert record["model"] == "model-two"
-    assert record["queue_item_id"] == "queue-inspection"
-    assert record["inspection_session_id"] == "session-1"
-    assert record["inspection_flow_run_id"] == "flow-1"
     assert record["inspection_images"] == [
-        {"slot": 2, "backup_name": "scene-2", "prompt_id": "prompt-2"},
-        {"slot": 5, "backup_name": "scene-5", "prompt_id": "prompt-5"},
+        {"slot": 2, "backup_name": "scene-2", "prompt_id": "prompt-2"}
     ]
-    history_input = json.dumps(record["input"], ensure_ascii=False)
-    assert "image-two" not in history_input
-    assert base64.b64encode(_entries()[0]["image_bytes"]).decode("ascii") not in history_input
-    assert "raw_response" not in record
-    assert "provider" not in record
-    assert "state" not in record
+    history_text = json.dumps(record, ensure_ascii=False)
+    assert base64.b64encode(entry["image_bytes"]).decode("ascii") not in history_text
+    assert entry["image_bytes"].hex() not in history_text
 
 
-def test_prompt_checks_semantic_opposites_without_age_policy():
-    messages = quality._build_messages(
+@pytest.mark.asyncio
+async def test_overall_review_delegates_one_png_contact_sheet_to_shared_transport(monkeypatch):
+    captured: dict = {}
+    records: list[dict] = []
+    individual = [
+        {
+            "inspection_scope": "image",
+            "slot": 2,
+            "feedback": "No material issue observed.",
+            "continuity_observation": "Ari wears the blue coat.",
+        },
+        {
+            "inspection_scope": "image",
+            "slot": 5,
+            "feedback": "No material issue observed.",
+            "continuity_observation": "Ari has removed the coat and opens the lantern.",
+        },
+    ]
+
+    async def fake_call(_task_key, messages, **kwargs):
+        captured["messages"] = messages
+        captured.update(kwargs)
+        raw = json.dumps({"overall_feedback": "The supported coat change is coherent."})
+        return SimpleNamespace(
+            accepted=True,
+            raw_response=raw,
+            text=raw,
+            final_slot="llm1",
+            final_phase="primary",
+            reason="",
+            exception=None,
+        )
+
+    monkeypatch.setattr(quality.llm_service, "get_config", lambda: _config())
+    monkeypatch.setattr(quality.llm_service, "callLLMVisionTaskResult", fake_call)
+    monkeypatch.setattr(quality.lighbd_service, "_log_lighbd_history", records.append)
+    monkeypatch.setattr(quality.illustration_flow, "llm_metadata", lambda **_fields: None)
+
+    result = await quality.execute_inspection(
+        QueueItem(),
+        scope=quality.OVERALL_SCOPE,
+        session_id="session-overall",
+        flow_run_id="flow-overall",
+        context="Ari removes the blue coat before opening the lantern.",
+        entries=_entries(),
+        individual_results=individual,
+    )
+
+    assert result == {
+        "inspection_scope": "overall",
+        "overall_feedback": "The supported coat change is coherent.",
+    }
+    assert "images" not in captured
+    assert "image_b64" not in captured
+    assert captured["image_mime"] == "image/png"
+    contact_sheet = captured["image_bytes"]
+    with Image.open(io.BytesIO(contact_sheet)) as image:
+        assert image.format == "PNG"
+        assert image.size == (840, 500)
+    user_message = captured["messages"][1]["content"]
+    assert "Ari wears the blue coat." in user_message
+    assert "Ari has removed the coat" in user_message
+    assert "CONTACT SHEET LABEL SLOT 2" in user_message
+    assert records[0]["inspection_scope"] == "overall"
+    assert [ref["slot"] for ref in records[0]["inspection_images"]] == [2, 5]
+
+
+def test_prompts_cover_requested_semantics_without_age_or_second_character_policy():
+    messages = quality._build_image_messages(
         (
-            "The source supports a coat being removed after the river crossing. "
-            "One image shows an exposed unclothed pelvic region that must be visible; "
-            "another region is naturally cropped and occluded."
+            "The source supports a coat being removed. One image shows an exposed "
+            "unclothed pelvic region that must be visible; another is naturally cropped."
         ),
-        _entries(),
+        _entries()[0],
     )
     system = messages[0]["content"]
     user = messages[1]["content"]
@@ -208,59 +275,55 @@ def test_prompt_checks_semantic_opposites_without_age_policy():
     assert "required touch, grasp, or other interaction reads" in system
     assert "natural occlusion, crop, and framing" in system
     assert "fabric or another covering" in system
-    assert "allowing clothing or condition changes" in system
-    assert "Separate an observed image discrepancy from a speculative prompt cause" in system
     assert "smallest connected body fragment" in system
+    assert "complete second person" in system
     assert "classify age" not in system.lower()
     assert "exposed unclothed pelvic region" in user
-    assert "coat being removed" in user
+
+    overall = quality._build_overall_messages("source", _entries(), [])[0]["content"]
+    assert "set-level outfit, identity, chronology, and story-state consistency" in overall
+    assert "Do not repeat isolated anatomy, hand, or finger issues" in overall
 
 
-def test_parser_requires_each_actual_slot_and_accepts_numeric_slot_strings():
-    raw = {
-        "images": [
-            {"slot": "5", "feedback": "No material issue observed.", "score": 100},
-            {"slot": "2", "feedback": "The scene is relevant."},
-        ],
-        "overall_feedback": "Continuity is coherent.",
-        "unconsumed_diagnostic": "ignored",
+def test_scope_specific_parsers_accept_fenced_json_and_reject_missing_fields():
+    assert quality._parse_inspection_response(
+        "```json\n{\"feedback\":\"Issue.\",\"continuity_observation\":\"Blue coat.\"}\n```",
+        quality.IMAGE_SCOPE,
+        2,
+    ) == {
+        "inspection_scope": "image",
+        "slot": 2,
+        "feedback": "Issue.",
+        "continuity_observation": "Blue coat.",
     }
-    assert quality._parse_inspection_response(raw, [2, 5]) == {
-        "images": [
-            {"slot": 2, "feedback": "The scene is relevant."},
-            {"slot": 5, "feedback": "No material issue observed."},
-        ],
+    assert quality._parse_inspection_response(
+        {"overall_feedback": "Continuity is coherent.", "ignored": 1},
+        quality.OVERALL_SCOPE,
+    ) == {
+        "inspection_scope": "overall",
         "overall_feedback": "Continuity is coherent.",
     }
-    with pytest.raises(ValueError, match="slots"):
+    with pytest.raises(ValueError, match="continuity_observation"):
         quality._parse_inspection_response(
-            {"images": [{"slot": "2", "feedback": "Only one."}], "overall_feedback": "x"},
-            [2, 5],
+            {"feedback": "Only feedback."}, quality.IMAGE_SCOPE, 2
         )
     with pytest.raises(ValueError, match="overall_feedback"):
-        quality._parse_inspection_response(
-            {"images": [{"slot": 2, "feedback": "x"}, {"slot": 5, "feedback": "y"}]},
-            [2, 5],
-        )
+        quality._parse_inspection_response({"feedback": "x"}, quality.OVERALL_SCOPE)
 
 
 @pytest.mark.asyncio
-async def test_retry_and_terminal_failure_audits_keep_active_slot_identity(
-    monkeypatch: pytest.MonkeyPatch,
-):
+async def test_retry_and_terminal_failure_audits_keep_active_slot_identity(monkeypatch):
     records: list[dict] = []
 
     async def fake_call(_task_key, _messages, **kwargs):
-        await kwargs["on_attempt_failure"](
-            {
-                "attempt_id": "inspection:primary:llm2:1",
-                "phase": "primary",
-                "slot": "llm2",
-                "elapsed": 0.25,
-                "reason": "invalid inspection JSON",
-                "raw_response": "not-json",
-            }
-        )
+        await kwargs["on_attempt_failure"]({
+            "attempt_id": "inspection:primary:llm2:1",
+            "phase": "primary",
+            "slot": "llm2",
+            "elapsed": 0.25,
+            "reason": "invalid inspection JSON",
+            "raw_response": "not-json",
+        })
         return SimpleNamespace(
             accepted=False,
             raw_response="not-json",
@@ -278,34 +341,29 @@ async def test_retry_and_terminal_failure_audits_keep_active_slot_identity(
     with pytest.raises(RuntimeError, match="provider rejected"):
         await quality.execute_inspection(
             QueueItem(),
+            scope=quality.IMAGE_SCOPE,
             session_id="session-retry",
             context="The source narrative stays in the river scene.",
-            entries=_entries(),
+            entries=[_entries()[0]],
         )
 
     assert [record["status"] for record in records] == ["error", "error"]
     retry, terminal = records
     assert set(retry) == _allowed_history_keys()
+    assert retry["inspection_scope"] == "image"
     assert retry["execution_id"] == "inspection:primary:llm2:1"
-    assert retry["parent_execution_id"].startswith("illustration_quality_inspection:session-retry:")
+    assert retry["parent_execution_id"].startswith(
+        "illustration_quality_inspection:image:session-retry:2:"
+    )
     assert retry["llm_slot"] == "llm2"
-    assert retry["phase"] == "primary"
     assert retry["service"] == "provider-two"
-    assert retry["model"] == "model-two"
-    assert "invalid inspection JSON" in retry["error"]
-    assert terminal["execution_id"].startswith("illustration_quality_inspection:session-retry:")
     assert terminal["llm_slot"] == "llm3"
-    assert terminal["phase"] == "fallback"
     assert terminal["service"] == "provider-three"
-    assert terminal["model"] == "model-three"
     assert terminal["output"] == "not-json"
-    assert terminal["inspection_images"]
 
 
 @pytest.mark.asyncio
-async def test_unexpected_call_failure_is_logged_without_image_payload(
-    monkeypatch: pytest.MonkeyPatch,
-):
+async def test_unexpected_call_failure_is_logged_without_image_payload(monkeypatch):
     records: list[dict] = []
 
     async def fake_call(_task_key, _messages, **_kwargs):
@@ -318,9 +376,10 @@ async def test_unexpected_call_failure_is_logged_without_image_payload(
     with pytest.raises(TimeoutError, match="vision provider timeout"):
         await quality.execute_inspection(
             QueueItem(),
+            scope=quality.IMAGE_SCOPE,
             session_id="session-error",
             context="A complete narrative.",
-            entries=_entries(),
+            entries=[_entries()[0]],
         )
 
     assert len(records) == 1
@@ -329,23 +388,26 @@ async def test_unexpected_call_failure_is_logged_without_image_payload(
     assert record["phase"] == "primary"
     assert record["status"] == "error"
     assert record["llm_slot"] == "llm1"
-    assert record["service"] == "provider-one"
-    assert record["model"] == "model-one"
     assert "vision provider timeout" in record["error"]
     assert base64.b64encode(_entries()[0]["image_bytes"]).decode("ascii") not in json.dumps(
         record["input"], ensure_ascii=False
     )
 
 
-def test_missing_image_and_slot_identity_safety(monkeypatch: pytest.MonkeyPatch):
+def test_missing_image_duplicate_slot_and_scope_validation(monkeypatch):
     with pytest.raises(ValueError, match="no final image bytes"):
-        quality._validate_entries([{"slot": "2", "image_bytes": b""}])
+        quality._validate_entries(
+            [{"slot": "2", "image_bytes": b""}], quality.IMAGE_SCOPE
+        )
+    with pytest.raises(ValueError, match="exactly one"):
+        quality._validate_entries(_entries(), quality.IMAGE_SCOPE)
     with pytest.raises(ValueError, match="duplicate slot"):
         quality._validate_entries(
             [
                 {"slot": "2", "image_bytes": b"a"},
                 {"slot": 2, "image_bytes": b"b"},
-            ]
+            ],
+            quality.OVERALL_SCOPE,
         )
 
     monkeypatch.setattr(

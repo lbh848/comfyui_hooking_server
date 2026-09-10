@@ -12,11 +12,12 @@ def test_flow_has_adjacent_developer_mode_and_nested_quality_settings_modal() ->
     assert "developerModal.id = 'illustration-quality-settings-modal';" in FLOW
     assert "qualityCheckbox.id = 'if-quality-inspection-enabled';" in FLOW
     assert "qualityCheckbox.checked = false;" in FLOW
+    assert "서버를 켤 때마다 꺼진 상태로 시작합니다." in FLOW
     assert "손 문제는 평가하지 않습니다." in FLOW
     assert "검사 기록은 LLM 로그에만 저장되며, LLM 흐름과 LB Details에서 볼 수 있습니다." in FLOW
 
 
-def test_quality_setting_uses_dedicated_async_endpoint_and_rolls_back_on_save_failure() -> None:
+def test_quality_setting_uses_dedicated_async_endpoint_and_rolls_back_on_change_failure() -> None:
     assert "const qualityInspectionSettingsUrl = '/api/illustration_quality_inspection/settings';" in FLOW
     assert "await fetch(qualityInspectionSettingsUrl, {cache: 'no-store'});" in FLOW
     assert "method: 'POST'" in FLOW
@@ -24,7 +25,7 @@ def test_quality_setting_uses_dedicated_async_endpoint_and_rolls_back_on_save_fa
     assert "if (typeof payload.enabled !== 'boolean')" in FLOW
     assert "qualityInspectionEnabled = previousValue;" in FLOW
     assert "checkbox.checked = previousValue;" in FLOW
-    assert "저장 실패 · ${previousValue ? '켜짐' : '꺼짐'}으로 되돌렸습니다." in FLOW
+    assert "변경 실패 · ${previousValue ? '켜짐' : '꺼짐'}으로 되돌렸습니다." in FLOW
 
 
 def test_quality_modal_restores_focus_handles_escape_and_rehomes_toast() -> None:
@@ -39,11 +40,16 @@ def test_quality_modal_restores_focus_handles_escape_and_rehomes_toast() -> None
 def test_quality_records_render_structured_english_sections_and_preserve_raw_json() -> None:
     assert "function _parseIllustrationQualityInspectionOutput(record)" in FRONTEND
     assert "record?.task_key !== 'illustration_quality_inspection'" in FRONTEND
+    assert "if (scope === 'image')" in FRONTEND
+    assert "if (scope === 'overall')" in FRONTEND
+    assert "continuity_observation: String(parsed?.continuity_observation || '').trim()" in FRONTEND
     assert "Image-specific feedback (English)" in FRONTEND
     assert "Overall outfit/story consistency (English)" in FRONTEND
     assert "LLM raw output (JSON)" in FRONTEND
     assert "const rawOutputText = _formatLighbdHistoryContent(r.output || '');" in FRONTEND
     assert "lines.push(rawOutputText || '-');" in FRONTEND
+    assert "각 이미지 백업 직후 한 장씩" in FRONTEND
+    assert "축소 연락처 시트" in FRONTEND
 
 
 def test_quality_task_registration_remains_visible_to_the_existing_routing_ui() -> None:

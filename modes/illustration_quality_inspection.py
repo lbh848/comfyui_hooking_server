@@ -1,15 +1,15 @@
-"""Vision based quality inspection for a completed illustration batch.
+"""Queued vision review for generated illustrations.
 
-The queue owns image publication and passes this module an immutable snapshot.
-This module owns the text prompt, the routed vision call, and the compact LB
-Details audit record. Image bytes are sent to the vision provider only; audit
-records keep text context and image references.
+Each generated image is reviewed as soon as its final backup is available. A
+separate contact-sheet review compares the completed set. Image bytes are sent
+to the configured vision provider only; LB Details keeps text and backup refs.
 """
 
 from __future__ import annotations
 
-import base64
+import io
 import json
+import math
 import re
 import time
 import traceback
@@ -21,20 +21,44 @@ from modes import lighbd_service, llm_service
 
 
 TASK_KEY = "illustration_quality_inspection"
-CALL_NAME = "Illustration quality inspection"
+IMAGE_SCOPE = "image"
+OVERALL_SCOPE = "overall"
+IMAGE_CALL_NAME = "Illustration image quality inspection"
+OVERALL_CALL_NAME = "Illustration set quality inspection"
 
 
-_SYSTEM_PROMPT = """You inspect final generated illustration images against the complete source narrative and the supplied final prompts. The source narrative is authoritative for story meaning when it differs from selected-scene context; the image is authoritative for what is visibly present. Final prompts are evidence for diagnosing a discrepancy, not instructions to rewrite the story. Inspect every supplied image independently and then compare the set.
+_IMAGE_SYSTEM_PROMPT = """You inspect one final generated illustration against the source narrative, its selected-scene context, and its actual final prompts. The source narrative is authoritative for story meaning when it differs from selected-scene context; the image is authoritative for what is visibly present. The final prompts are evidence for diagnosing a discrepancy, not instructions to rewrite the story.
 
-Write short, concrete, issue-focused feedback in English. For each image, check whether the visible interaction and action match the narrative and whether required contact reads; whether physically required visible anatomy is coherent; whether gross anatomy is missing in a visible unobscured region; whether body parts connect impossibly; whether fabric or another covering hides something the source requires to be visible without narrative support; and whether the scene is relevant. Distinguish natural occlusion, crop, and framing from a real omission. Do not call a naturally occluded part missing. Do not evaluate hand or finger rendering or finger count. Still evaluate whether a required touch, grasp, or other interaction reads from the visible action and contact, without hand-level criticism.
+Write short, concrete, issue-focused feedback in English. Check whether the visible interaction and action match the narrative and whether required contact reads; whether physically required visible anatomy is coherent; whether gross anatomy is missing in a visible unobscured region; whether body parts connect impossibly; whether fabric or another covering hides something the source requires to be visible without narrative support; and whether the scene is relevant. Distinguish natural occlusion, crop, and framing from a real omission. Do not call a naturally occluded part missing. Do not evaluate hand or finger rendering or finger count. Still evaluate whether a required touch, grasp, or other interaction reads from the visible action and contact, without hand-level criticism.
 
-Across images, check outfit, identity, and story-state continuity while allowing clothing or condition changes supported by the narrative. A supported outfit change is not an error. Separate an observed image discrepancy from a speculative prompt cause. Do not claim that changing a prompt guarantees a fix, and do not rewrite prompts or perform automatic edits.
+Check this image's visible outfit, identity, and story state against the narrative. Allow clothing or condition changes supported by the narrative. A supported outfit change is not an error. Separate an observed discrepancy from a speculative prompt cause. Do not claim that changing a prompt guarantees a fix, and do not rewrite prompts or perform automatic edits.
 
 Respect intentional cropping and single-subject framing in the supplied scene and prompt. When an interaction partner is represented as an anonymous extra, judge whether the smallest connected body fragment entering from a frame edge makes the requested contact readable. Do not demand a complete second person, face, identity, silhouette, or second-person count tag. Do not solve a contact issue by inventing another character.
 
 Return JSON only, with exactly this machine-consumed shape:
-{"images":[{"slot":1,"feedback":"short feedback"}],"overall_feedback":"short comparison and continuity feedback"}
-There must be one image entry for every supplied slot, with the same integer slot values. If no material issue is visible, use a short sentence such as "No material issue observed." Do not add scores, labels, or extra required fields."""
+{"feedback":"short problem-focused feedback","continuity_observation":"short factual description of the visible outfit, identity cues, and story state for comparison with the other images"}
+If a material image-specific issue is visible, state the issue directly and do not begin with "No material issue observed." If no material issue is visible, use only "No material issue observed." for feedback. The continuity observation must still state the visible facts. Do not add scores or extra fields."""
+
+
+_OVERALL_SYSTEM_PROMPT = """You inspect a labeled contact sheet of final illustrations against the source narrative, selected-scene records, and the completed image-by-image observations. Judge only set-level outfit, identity, chronology, and story-state consistency. Allow clothing or condition changes supported by the narrative. A supported change is not an error. Treat the source narrative as authoritative when a selected-scene record differs from it.
+
+Focus on material inconsistencies across images. Do not repeat isolated anatomy, hand, or finger issues here. Respect intentional single-subject framing and anonymous off-frame interaction partners; do not demand a complete second person, face, identity, silhouette, or person-count tag. Write concise, issue-focused English. If the set has no material consistency issue, say so briefly.
+
+Return JSON only, with exactly this machine-consumed shape:
+{"overall_feedback":"short set-level outfit, identity, chronology, and story-state feedback"}
+Do not add scores or extra fields."""
+
+
+_DUPLICATE_DESCRIPTOR_FIELDS = {
+    "raw_positive",
+    "raw_negative",
+    "positive",
+    "negative",
+    "backup_name",
+    "prompt_id",
+    "llm_trace",
+    "multi_char_history_ids",
+}
 
 
 def _queue_item_id(queue_item: Any) -> str:
@@ -59,8 +83,6 @@ def _raw_text(value: Any) -> str:
 
 
 def _slot_number(value: Any, *, field: str) -> int:
-    """Accept the integer slot contract and numeric strings from queue payloads."""
-
     if isinstance(value, bool):
         raise ValueError(f"{field} must be an integer slot")
     if isinstance(value, int):
@@ -70,29 +92,14 @@ def _slot_number(value: Any, *, field: str) -> int:
     raise ValueError(f"{field} must be an integer slot")
 
 
-def _image_mime(image_bytes: bytes) -> str:
-    data = bytes(image_bytes)
-    if data.startswith(b"\x89PNG\r\n\x1a\n"):
-        return "image/png"
-    if data.startswith(b"\xff\xd8\xff"):
-        return "image/jpeg"
-    if data.startswith((b"GIF87a", b"GIF89a")):
-        return "image/gif"
-    if data.startswith(b"RIFF") and data[8:12] == b"WEBP":
-        return "image/webp"
-    if len(data) >= 12 and data[4:8] == b"ftyp":
-        brands = data[8:64]
-        if b"avif" in brands or b"avis" in brands:
-            return "image/avif"
-    return "image/webp"
-
-
-def _validate_entries(entries: Any) -> list[dict]:
-    """Check the small queue snapshot contract without building another DTO."""
-
+def _validate_entries(entries: Any, scope: str) -> list[dict]:
     try:
+        if scope not in {IMAGE_SCOPE, OVERALL_SCOPE}:
+            raise ValueError(f"unsupported illustration inspection scope: {scope!r}")
         if not isinstance(entries, list) or not entries:
             raise ValueError("illustration inspection requires a non-empty entries list")
+        if scope == IMAGE_SCOPE and len(entries) != 1:
+            raise ValueError("image inspection requires exactly one generated image")
         seen: set[int] = set()
         for index, item in enumerate(entries, start=1):
             if not isinstance(item, dict):
@@ -101,9 +108,7 @@ def _validate_entries(entries: Any) -> list[dict]:
             if slot in seen:
                 raise ValueError(f"illustration inspection has duplicate slot {slot}")
             image_bytes = item.get("image_bytes")
-            if isinstance(image_bytes, (bytearray, memoryview)):
-                image_bytes = bytes(image_bytes)
-            if not isinstance(image_bytes, bytes) or not image_bytes:
+            if not isinstance(image_bytes, (bytes, bytearray, memoryview)) or not image_bytes:
                 raise ValueError(f"illustration inspection entry {index} has no final image bytes")
             descriptor = item.get("descriptor")
             if descriptor is not None and not isinstance(descriptor, dict):
@@ -113,15 +118,13 @@ def _validate_entries(entries: Any) -> list[dict]:
     except Exception as exc:
         print(
             "[ILLUSTRATION_QUALITY] entry snapshot validation failed: "
-            f"error={type(exc).__name__}: {exc}"
+            f"scope={scope!r} error={type(exc).__name__}: {exc}"
         )
         traceback.print_exc()
         raise
 
 
 def _natural_value(value: Any) -> str:
-    """Render scene descriptors as readable context while omitting binary data."""
-
     if value is None:
         return ""
     if isinstance(value, (bytes, bytearray, memoryview)):
@@ -143,10 +146,10 @@ def _natural_value(value: Any) -> str:
 
 
 def _descriptor_context(descriptor: dict[str, Any], slot: int) -> str:
-    if not descriptor:
-        return f"Slot {slot} has no additional selected-scene context."
     parts: list[str] = []
-    for key, value in descriptor.items():
+    for key, value in (descriptor or {}).items():
+        if str(key) in _DUPLICATE_DESCRIPTOR_FIELDS:
+            continue
         rendered = _natural_value(value)
         if rendered:
             parts.append(f"{str(key).replace('_', ' ').capitalize()}: {rendered}")
@@ -155,105 +158,223 @@ def _descriptor_context(descriptor: dict[str, Any], slot: int) -> str:
     return f"Slot {slot} selected-scene context: " + " | ".join(parts)
 
 
-def _build_messages(context: str, entries: list[dict[str, Any]]) -> list[dict[str, str]]:
-    sections: list[str] = []
-    for index, entry in enumerate(entries, start=1):
-        slot = entry["slot"]
-        sections.append(
-            f"IMAGE {index} ROLE: FINAL GENERATED IMAGE FOR SLOT {slot}\n"
-            f"Backup reference: {entry.get('backup_name') or '(none)'}\n"
-            f"Prompt reference: {entry.get('prompt_id') or '(none)'}\n"
-            "Final positive prompt:\n"
-            f"{entry.get('positive') or '(empty)'}\n"
-            "Final negative prompt:\n"
-            f"{entry.get('negative') or '(empty)'}\n"
-            f"{_descriptor_context(entry.get('descriptor') or {}, slot)}"
-        )
+def _build_image_messages(context: str, entry: dict[str, Any]) -> list[dict[str, str]]:
+    slot = _slot_number(entry.get("slot"), field="entry slot")
     user = (
         "SOURCE NARRATIVE (complete original text)\n"
         f"{str(context or '(empty)')}\n\n"
-        "FINAL IMAGE AND SCENE RECORDS\n"
-        + "\n\n".join(sections)
-        + "\n\nEvaluate each labeled image independently, then compare outfit, identity, and story-state continuity."
+        f"FINAL GENERATED IMAGE FOR SLOT {slot}\n"
+        f"Backup reference: {entry.get('backup_name') or '(none)'}\n"
+        f"Prompt reference: {entry.get('prompt_id') or '(none)'}\n"
+        "Actual final positive prompt:\n"
+        f"{entry.get('positive') or '(empty)'}\n"
+        "Actual final negative prompt:\n"
+        f"{entry.get('negative') or '(empty)'}\n"
+        f"{_descriptor_context(entry.get('descriptor') or {}, slot)}\n\n"
+        "Inspect only this supplied final image."
     )
     return [
-        {"role": "system", "content": _SYSTEM_PROMPT},
+        {"role": "system", "content": _IMAGE_SYSTEM_PROMPT},
         {"role": "user", "content": user},
     ]
 
 
-def _parse_inspection_response(raw: Any, expected_slots: list[int]) -> dict[str, Any]:
-    if isinstance(raw, dict):
-        data = raw
-    else:
-        cleaned = _raw_text(raw).strip()
-        if cleaned.startswith("```"):
-            cleaned = re.sub(r"^```[a-zA-Z0-9_-]*\s*", "", cleaned)
-            cleaned = re.sub(r"\s*```$", "", cleaned).strip()
-        candidates = [cleaned]
-        start, end = cleaned.find("{"), cleaned.rfind("}")
-        if start >= 0 and end > start and cleaned[start : end + 1] != cleaned:
-            candidates.append(cleaned[start : end + 1])
-        data = None
-        for candidate in candidates:
-            try:
-                parsed = json.loads(candidate)
-            except (TypeError, json.JSONDecodeError):
-                continue
-            if isinstance(parsed, dict):
-                data = parsed
-                break
-        if data is None:
-            raise ValueError("inspection response is not a JSON object")
+def _individual_observations(results: Any) -> dict[int, dict[str, str]]:
+    observations: dict[int, dict[str, str]] = {}
+    for result in results if isinstance(results, list) else []:
+        if not isinstance(result, dict) or result.get("inspection_scope") != IMAGE_SCOPE:
+            continue
+        try:
+            slot = _slot_number(result.get("slot"), field="individual result slot")
+        except Exception as exc:
+            print(f"[ILLUSTRATION_QUALITY] individual result slot skipped: result={result!r}, error={exc}")
+            traceback.print_exc()
+            continue
+        observations[slot] = {
+            "feedback": str(result.get("feedback") or "").strip(),
+            "continuity_observation": str(
+                result.get("continuity_observation") or ""
+            ).strip(),
+        }
+    return observations
 
-    image_items = data.get("images")
-    overall = data.get("overall_feedback")
-    if not isinstance(image_items, list):
-        raise ValueError("inspection response images must be a list")
-    if not isinstance(overall, str) or not overall.strip():
-        raise ValueError("inspection response overall_feedback is empty")
 
-    by_slot: dict[int, str] = {}
-    for item in image_items:
-        if not isinstance(item, dict):
-            raise ValueError("inspection response contains a non-object image entry")
-        slot = _slot_number(item.get("slot"), field="inspection response slot")
-        feedback = item.get("feedback")
-        if slot in by_slot:
-            raise ValueError(f"inspection response contains duplicate slot {slot}")
-        if not isinstance(feedback, str) or not feedback.strip():
-            raise ValueError(f"inspection response feedback is empty for slot {slot}")
-        by_slot[slot] = feedback.strip()
-
-    expected = [_slot_number(slot, field="expected slot") for slot in expected_slots]
-    if set(by_slot) != set(expected):
-        missing = sorted(set(expected) - set(by_slot))
-        extra = sorted(set(by_slot) - set(expected))
-        raise ValueError(
-            f"inspection response slots do not match images: missing={missing}, extra={extra}"
+def _build_overall_messages(
+    context: str,
+    entries: list[dict[str, Any]],
+    individual_results: list[dict[str, Any]] | None,
+) -> list[dict[str, str]]:
+    observations = _individual_observations(individual_results)
+    sections: list[str] = []
+    for entry in entries:
+        slot = _slot_number(entry.get("slot"), field="entry slot")
+        observed = observations.get(slot) or {}
+        sections.append(
+            f"CONTACT SHEET LABEL SLOT {slot}\n"
+            f"{_descriptor_context(entry.get('descriptor') or {}, slot)}\n"
+            "Completed image-specific feedback: "
+            f"{observed.get('feedback') or '(unavailable)'}\n"
+            "Completed visible continuity observation: "
+            f"{observed.get('continuity_observation') or '(unavailable)'}"
         )
-    return {
-        "images": [{"slot": slot, "feedback": by_slot[slot]} for slot in expected],
-        "overall_feedback": overall.strip(),
-    }
+    user = (
+        "SOURCE NARRATIVE (complete original text)\n"
+        f"{str(context or '(empty)')}\n\n"
+        "COMPLETED IMAGE SET RECORDS\n"
+        + "\n\n".join(sections)
+        + "\n\nCompare the labeled images as one set and return only the overall feedback."
+    )
+    return [
+        {"role": "system", "content": _OVERALL_SYSTEM_PROMPT},
+        {"role": "user", "content": user},
+    ]
 
 
-def _validate_inspection_response(raw: Any, expected_slots: list[int]) -> tuple[bool, str]:
+def _json_object(raw: Any) -> dict[str, Any]:
+    if isinstance(raw, dict):
+        return raw
+    cleaned = _raw_text(raw).strip()
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```[a-zA-Z0-9_-]*\s*", "", cleaned)
+        cleaned = re.sub(r"\s*```$", "", cleaned).strip()
+    candidates = [cleaned]
+    start, end = cleaned.find("{"), cleaned.rfind("}")
+    if start >= 0 and end > start and cleaned[start : end + 1] != cleaned:
+        candidates.append(cleaned[start : end + 1])
+    for candidate in candidates:
+        try:
+            parsed = json.loads(candidate)
+        except (TypeError, json.JSONDecodeError):
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    raise ValueError("inspection response is not a JSON object")
+
+
+def _parse_inspection_response(raw: Any, scope: str, slot: int | None = None) -> dict[str, Any]:
+    data = _json_object(raw)
+    if scope == IMAGE_SCOPE:
+        normalized_slot = _slot_number(slot, field="expected image slot")
+        feedback = data.get("feedback")
+        continuity = data.get("continuity_observation")
+        if not isinstance(feedback, str) or not feedback.strip():
+            raise ValueError("image inspection feedback is empty")
+        if not isinstance(continuity, str) or not continuity.strip():
+            raise ValueError("image inspection continuity_observation is empty")
+        return {
+            "inspection_scope": IMAGE_SCOPE,
+            "slot": normalized_slot,
+            "feedback": feedback.strip(),
+            "continuity_observation": continuity.strip(),
+        }
+    if scope == OVERALL_SCOPE:
+        overall = data.get("overall_feedback")
+        if not isinstance(overall, str) or not overall.strip():
+            raise ValueError("overall inspection overall_feedback is empty")
+        return {
+            "inspection_scope": OVERALL_SCOPE,
+            "overall_feedback": overall.strip(),
+        }
+    raise ValueError(f"unsupported illustration inspection scope: {scope!r}")
+
+
+def _validate_inspection_response(
+    raw: Any, scope: str, slot: int | None = None
+) -> tuple[bool, str]:
     try:
-        _parse_inspection_response(raw, expected_slots)
+        _parse_inspection_response(raw, scope, slot)
         return True, ""
     except Exception as exc:
         print(
             "[ILLUSTRATION_QUALITY] response validation failed: "
-            f"error={type(exc).__name__}: {exc}"
+            f"scope={scope!r} slot={slot!r} error={type(exc).__name__}: {exc}"
         )
         traceback.print_exc()
         return False, str(exc)
 
 
-def _slot_identity(slot: Any) -> tuple[str, str]:
-    """Read only the provider/model keys belonging to the active routed slot."""
+def _rgb_image(image_bytes: bytes):
+    from PIL import Image, ImageOps
 
+    source = Image.open(io.BytesIO(bytes(image_bytes)))
+    try:
+        source.seek(0)
+        transposed = ImageOps.exif_transpose(source)
+        try:
+            transposed.load()
+            if transposed.mode in {"RGBA", "LA"}:
+                rgba = transposed.convert("RGBA")
+                background = Image.new("RGB", rgba.size, "white")
+                background.paste(rgba, mask=rgba.getchannel("A"))
+                rgba.close()
+                return background
+            return transposed.convert("RGB")
+        finally:
+            if transposed is not source:
+                transposed.close()
+    finally:
+        source.close()
+
+
+def _contact_sheet(entries: list[dict[str, Any]]) -> bytes:
+    try:
+        from PIL import Image, ImageDraw, ImageOps
+
+        count = len(entries)
+        columns = min(4, max(1, math.ceil(math.sqrt(count))))
+        rows = math.ceil(count / columns)
+        cell_width, cell_height, label_height = 420, 500, 34
+        sheet = Image.new(
+            "RGB", (columns * cell_width, rows * cell_height), (15, 23, 42)
+        )
+        draw = ImageDraw.Draw(sheet)
+        resampling = getattr(Image, "Resampling", Image).LANCZOS
+        try:
+            for index, entry in enumerate(entries):
+                image = _rgb_image(entry["image_bytes"])
+                try:
+                    thumb = ImageOps.contain(
+                        image,
+                        (cell_width - 20, cell_height - label_height - 20),
+                        method=resampling,
+                    )
+                    column, row = index % columns, index // columns
+                    x = column * cell_width + (cell_width - thumb.width) // 2
+                    y = row * cell_height + label_height + (
+                        cell_height - label_height - thumb.height
+                    ) // 2
+                    sheet.paste(thumb, (x, y))
+                    draw.text(
+                        (column * cell_width + 12, row * cell_height + 10),
+                        f"SLOT {_slot_number(entry.get('slot'), field='entry slot')}",
+                        fill=(226, 232, 240),
+                    )
+                    thumb.close()
+                finally:
+                    image.close()
+            output = io.BytesIO()
+            # 공용 LLM 비전 전송 경로가 활성 슬롯의 설정에 따라 PNG를 그대로
+            # 보내거나 WebP로 압축한다. 여기서는 의미 있는 합성만 담당한다.
+            sheet.save(output, format="PNG", optimize=True, compress_level=9)
+            encoded = output.getvalue()
+        finally:
+            sheet.close()
+        print(
+            "[ILLUSTRATION_QUALITY] overall contact sheet prepared: "
+            f"images={count}, size={columns * cell_width}x{rows * cell_height}, "
+            f"png_bytes={len(encoded)}"
+        )
+        return encoded
+    except Exception as exc:
+        print(
+            "[ILLUSTRATION_QUALITY] overall contact sheet failed: "
+            f"images={len(entries)}, error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        raise
+
+
+def _slot_identity(slot: Any) -> tuple[str, str]:
     normalized = str(slot or "").strip().lower()
     match = re.fullmatch(r"llm([1-9]|10)", normalized)
     if not match:
@@ -302,8 +423,21 @@ def _token_counts(usage: Any, messages: list[dict[str, str]], raw: Any) -> tuple
     return max(0, prompt), max(0, completion)
 
 
+def _image_refs(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {
+            "slot": _slot_number(entry["slot"], field="entry slot"),
+            "backup_name": str(entry.get("backup_name") or ""),
+            "prompt_id": str(entry.get("prompt_id") or ""),
+        }
+        for entry in entries
+    ]
+
+
 def _history_record(
     *,
+    scope: str,
+    call_name: str,
     session_id: str,
     flow_run_id: str,
     image_refs: list[dict[str, Any]],
@@ -330,7 +464,7 @@ def _history_record(
         elapsed_value = 0.0
     return {
         "task_key": TASK_KEY,
-        "call_name": CALL_NAME,
+        "call_name": call_name,
         "history_id": str(history_id or uuid.uuid4().hex),
         "execution_id": str(execution_id or ""),
         "parent_execution_id": str(parent_execution_id or ""),
@@ -347,6 +481,7 @@ def _history_record(
         "status": str(status or ""),
         "error": str(error or ""),
         "queue_item_id": queue_item_id,
+        "inspection_scope": scope,
         "inspection_session_id": session_id,
         "inspection_flow_run_id": flow_run_id,
         "inspection_images": [dict(ref) for ref in image_refs],
@@ -354,8 +489,6 @@ def _history_record(
 
 
 def _log_history(record: dict[str, Any]) -> None:
-    """LB Details currently exposes a synchronous logger."""
-
     try:
         lighbd_service._log_lighbd_history(record)
     except Exception as exc:
@@ -366,20 +499,7 @@ def _log_history(record: dict[str, Any]) -> None:
         traceback.print_exc()
 
 
-def _image_refs(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [
-        {
-            "slot": _slot_number(entry["slot"], field="entry slot"),
-            "backup_name": str(entry.get("backup_name") or ""),
-            "prompt_id": str(entry.get("prompt_id") or ""),
-        }
-        for entry in entries
-    ]
-
-
 def _result_field(result: Any, field: str, default: Any = None) -> Any:
-    """Read routed-call results returned as either a dataclass or a mapping."""
-
     if isinstance(result, dict):
         return result.get(field, default)
     return getattr(result, field, default)
@@ -388,21 +508,33 @@ def _result_field(result: Any, field: str, default: Any = None) -> Any:
 async def execute_inspection(
     queue_item: Any,
     *,
+    scope: str,
     session_id: str,
     context: str,
     entries: list[dict],
     flow_run_id: str = "",
+    individual_results: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Inspect one completed illustration batch through the unified vision route."""
+    """Run one immediate image review or one completed-set contact-sheet review."""
 
-    normalized_entries = _validate_entries(entries)
+    normalized_entries = _validate_entries(entries, scope)
     session_id = str(session_id or "")
     flow_run_id = str(flow_run_id or "")
     queue_id = _queue_item_id(queue_item)
-    messages = _build_messages(str(context or ""), normalized_entries)
-    expected_slots = [entry["slot"] for entry in normalized_entries]
     refs = _image_refs(normalized_entries)
-    execution_id = f"{TASK_KEY}:{session_id}:{uuid.uuid4().hex[:12]}"
+    call_name = IMAGE_CALL_NAME if scope == IMAGE_SCOPE else OVERALL_CALL_NAME
+    expected_slot = refs[0]["slot"] if scope == IMAGE_SCOPE else None
+    messages = (
+        _build_image_messages(str(context or ""), normalized_entries[0])
+        if scope == IMAGE_SCOPE
+        else _build_overall_messages(
+            str(context or ""), normalized_entries, individual_results
+        )
+    )
+    execution_id = (
+        f"{TASK_KEY}:{scope}:{session_id}:"
+        f"{expected_slot if expected_slot is not None else 'set'}:{uuid.uuid4().hex[:12]}"
+    )
     parent_execution_id = flow_run_id or session_id
     usage: dict[str, Any] = {}
     execution_context = None
@@ -416,14 +548,49 @@ async def execute_inspection(
         active_slot = "llm1"
     active_phase = "primary"
 
+    def record(
+        *,
+        status: str,
+        raw: Any,
+        error: str,
+        slot: str,
+        phase: str,
+        elapsed: float,
+        history_id: str,
+        record_execution_id: str,
+        record_parent_id: str,
+    ) -> None:
+        _log_history(
+            _history_record(
+                scope=scope,
+                call_name=call_name,
+                session_id=session_id,
+                flow_run_id=flow_run_id,
+                image_refs=refs,
+                queue_item_id=queue_id,
+                messages=messages,
+                usage=usage,
+                raw=raw,
+                elapsed=elapsed,
+                status=status,
+                error=error,
+                history_id=history_id,
+                execution_id=record_execution_id,
+                parent_execution_id=record_parent_id,
+                slot=slot,
+                phase=phase,
+            )
+        )
+
     try:
         execution_context = llm_service.create_llm_execution_context(
             TASK_KEY,
-            call_name=CALL_NAME,
+            call_name=call_name,
             json_mode=True,
             execution_id=execution_id,
             parent_execution_id=parent_execution_id,
             metadata={
+                "inspection_scope": scope,
                 "inspection_session_id": session_id,
                 "inspection_flow_run_id": flow_run_id,
                 "inspection_images": [dict(ref) for ref in refs],
@@ -431,29 +598,21 @@ async def execute_inspection(
             },
         )
         try:
-            # The parent already binds the flow node. Keep the real text input
-            # visible in that node without attaching image bytes to it.
-            illustration_flow.llm_metadata(input=messages, status="processing")
+            illustration_flow.llm_metadata(
+                input=messages, status="processing", inspection_scope=scope
+            )
         except Exception as exc:
             print(f"[ILLUSTRATION_QUALITY] flow metadata update failed: {exc}")
             traceback.print_exc()
 
-        encoded_images = [
-            (
-                base64.b64encode(entry["image_bytes"]).decode("ascii"),
-                _image_mime(entry["image_bytes"]),
-                (
-                    f"IMAGE {index} ROLE: FINAL GENERATED IMAGE FOR SLOT {entry['slot']} "
-                    f"BACKUP {entry.get('backup_name') or '(none)'} "
-                    f"PROMPT {entry.get('prompt_id') or '(none)'}"
-                ),
-            )
-            for index, entry in enumerate(normalized_entries, start=1)
-        ]
+        request_image = (
+            bytes(normalized_entries[0]["image_bytes"])
+            if scope == IMAGE_SCOPE
+            else _contact_sheet(normalized_entries)
+        )
+        request_mime = "application/octet-stream" if scope == IMAGE_SCOPE else "image/png"
 
         async def on_attempt_failure(event: Any) -> None:
-            """Persist every failed route attempt while allowing routing to continue."""
-
             nonlocal active_slot, active_phase
             try:
                 event = event if isinstance(event, dict) else {}
@@ -462,53 +621,46 @@ async def execute_inspection(
                     event.get("slot") or event.get("llm_slot") or active_slot
                 )
                 attempt_phase = str(event.get("phase") or active_phase)
-                active_slot = attempt_slot
-                active_phase = attempt_phase
+                active_slot, active_phase = attempt_slot, attempt_phase
                 reason = str(
                     event.get("reason")
                     or event.get("error")
                     or "LLM routing attempt failed"
                 )
-                attempt_elapsed = event.get("elapsed") or (time.time() - started)
-                record = _history_record(
-                    session_id=session_id,
-                    flow_run_id=flow_run_id,
-                    image_refs=refs,
-                    queue_item_id=queue_id,
-                    messages=messages,
-                    usage=usage,
-                    raw=event.get("raw_response", event.get("result", "")),
-                    elapsed=attempt_elapsed,
+                print(
+                    "[ILLUSTRATION_QUALITY] routed attempt failed: "
+                    f"scope={scope} phase={attempt_phase!r} "
+                    f"slot={attempt_slot!r} error={reason}"
+                )
+                record(
                     status="error",
+                    raw=event.get("raw_response", event.get("result", "")),
                     error=reason,
+                    slot=attempt_slot,
+                    phase=attempt_phase,
+                    elapsed=event.get("elapsed") or (time.time() - started),
                     history_id=attempt_id,
-                    execution_id=attempt_id,
-                    parent_execution_id=str(
+                    record_execution_id=attempt_id,
+                    record_parent_id=str(
                         getattr(execution_context, "execution_id", execution_id)
                         or execution_id
                     ),
-                    slot=attempt_slot,
-                    phase=attempt_phase,
                 )
-                print(
-                    "[ILLUSTRATION_QUALITY] routed attempt failed: "
-                    f"phase={attempt_phase!r} slot={attempt_slot!r} error={reason}"
-                )
-                _log_history(record)
             except Exception as exc:
                 print(
                     "[ILLUSTRATION_QUALITY] retry audit failed: "
-                    f"error={type(exc).__name__}: {exc}"
+                    f"scope={scope} error={type(exc).__name__}: {exc}"
                 )
                 traceback.print_exc()
 
         def result_validator(raw: Any) -> tuple[bool, str]:
-            return _validate_inspection_response(raw, expected_slots)
+            return _validate_inspection_response(raw, scope, expected_slot)
 
         result = await llm_service.callLLMVisionTaskResult(
             TASK_KEY,
             messages,
-            images=encoded_images,
+            image_bytes=request_image,
+            image_mime=request_mime,
             json_mode=True,
             result_validator=result_validator,
             metadata_sink=usage,
@@ -521,8 +673,7 @@ async def execute_inspection(
             raw_result = _result_field(result, "text", "")
         final_slot = str(_result_field(result, "final_slot", "") or active_slot)
         final_phase = str(_result_field(result, "final_phase", "") or active_phase)
-        active_slot = final_slot
-        active_phase = final_phase
+        active_slot, active_phase = final_slot, final_phase
 
         if not bool(_result_field(result, "accepted", False)):
             exception = _result_field(result, "exception")
@@ -532,106 +683,63 @@ async def execute_inspection(
                 or _result_field(result, "text", "")
                 or "illustration quality inspection LLM call failed"
             )
-            print(f"[ILLUSTRATION_QUALITY] terminal vision failure: {error}")
-            _log_history(
-                _history_record(
-                    session_id=session_id,
-                    flow_run_id=flow_run_id,
-                    image_refs=refs,
-                    queue_item_id=queue_id,
-                    messages=messages,
-                    usage=usage,
-                    raw=raw_result,
-                    elapsed=elapsed,
-                    status="error",
-                    error=error,
-                    history_id=execution_id,
-                    execution_id=execution_id,
-                    parent_execution_id=parent_execution_id,
-                    slot=final_slot,
-                    phase=final_phase,
-                )
+            print(
+                f"[ILLUSTRATION_QUALITY] terminal vision failure: "
+                f"scope={scope} error={error}"
             )
-            terminal_logged = True
-            raise RuntimeError(error)
-
-        try:
-            parsed = _parse_inspection_response(raw_result, expected_slots)
-        except Exception as exc:
-            error = f"inspection response parse failed: {type(exc).__name__}: {exc}"
-            print(f"[ILLUSTRATION_QUALITY] final response parse failed: {error}")
-            traceback.print_exc()
-            _log_history(
-                _history_record(
-                    session_id=session_id,
-                    flow_run_id=flow_run_id,
-                    image_refs=refs,
-                    queue_item_id=queue_id,
-                    messages=messages,
-                    usage=usage,
-                    raw=raw_result,
-                    elapsed=elapsed,
-                    status="error",
-                    error=error,
-                    history_id=execution_id,
-                    execution_id=execution_id,
-                    parent_execution_id=parent_execution_id,
-                    slot=final_slot,
-                    phase=final_phase,
-                )
-            )
-            terminal_logged = True
-            raise RuntimeError(error)
-
-        _log_history(
-            _history_record(
-                session_id=session_id,
-                flow_run_id=flow_run_id,
-                image_refs=refs,
-                queue_item_id=queue_id,
-                messages=messages,
-                usage=usage,
+            record(
+                status="error",
                 raw=raw_result,
-                elapsed=elapsed,
-                status="ok",
-                error="",
-                history_id=execution_id,
-                execution_id=execution_id,
-                parent_execution_id=parent_execution_id,
+                error=error,
                 slot=final_slot,
                 phase=final_phase,
+                elapsed=elapsed,
+                history_id=execution_id,
+                record_execution_id=execution_id,
+                record_parent_id=parent_execution_id,
             )
+            terminal_logged = True
+            raise RuntimeError(error)
+
+        parsed = _parse_inspection_response(raw_result, scope, expected_slot)
+        record(
+            status="ok",
+            raw=raw_result,
+            error="",
+            slot=final_slot,
+            phase=final_phase,
+            elapsed=elapsed,
+            history_id=execution_id,
+            record_execution_id=execution_id,
+            record_parent_id=parent_execution_id,
         )
         return parsed
     except BaseException as exc:
         print(
             "[ILLUSTRATION_QUALITY] inspection failed: "
-            f"session={session_id!r} flow={flow_run_id!r} queue={queue_id!r} "
-            f"state={'terminal' if terminal_logged else 'unexpected'} "
+            f"scope={scope!r} session={session_id!r} flow={flow_run_id!r} "
+            f"queue={queue_id!r} state={'terminal' if terminal_logged else 'unexpected'} "
             f"error={type(exc).__name__}: {exc}"
         )
         traceback.print_exc()
         if not terminal_logged:
-            _log_history(
-                _history_record(
-                    session_id=session_id,
-                    flow_run_id=flow_run_id,
-                    image_refs=refs,
-                    queue_item_id=queue_id,
-                    messages=messages,
-                    usage=usage,
-                    raw="",
-                    elapsed=time.time() - started,
-                    status="error",
-                    error=f"{type(exc).__name__}: {exc}",
-                    history_id=execution_id,
-                    execution_id=execution_id,
-                    parent_execution_id=parent_execution_id,
-                    slot=active_slot,
-                    phase=active_phase,
-                )
+            record(
+                status="error",
+                raw="",
+                error=f"{type(exc).__name__}: {exc}",
+                slot=active_slot,
+                phase=active_phase,
+                elapsed=time.time() - started,
+                history_id=execution_id,
+                record_execution_id=execution_id,
+                record_parent_id=parent_execution_id,
             )
         raise
 
 
-__all__ = ["TASK_KEY", "execute_inspection"]
+__all__ = [
+    "TASK_KEY",
+    "IMAGE_SCOPE",
+    "OVERALL_SCOPE",
+    "execute_inspection",
+]

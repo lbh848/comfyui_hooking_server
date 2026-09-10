@@ -1,12 +1,14 @@
 import asyncio
 import base64
 import copy
+import io
 import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -30,12 +32,19 @@ class _Request:
 
 
 def _entries() -> list[dict]:
+    def image_bytes(color: tuple[int, int, int]) -> bytes:
+        output = io.BytesIO()
+        image = Image.new("RGB", (640, 960), color)
+        image.save(output, format="PNG")
+        image.close()
+        return output.getvalue()
+
     return [
         {
             "slot": 2,
             "backup_name": "river-scene-2",
             "prompt_id": "prompt-2",
-            "image_bytes": b"\x89PNG\r\n\x1a\nraw-two",
+            "image_bytes": image_bytes((30, 60, 90)),
             "positive": "Ari reaches toward the lantern",
             "negative": "extra unrelated people",
             "descriptor": {
@@ -48,7 +57,7 @@ def _entries() -> list[dict]:
             "slot": 5,
             "backup_name": "river-scene-5",
             "prompt_id": "prompt-5",
-            "image_bytes": b"RIFF1234WEBPraw-five",
+            "image_bytes": image_bytes((90, 60, 30)),
             "positive": "Ari opens the lantern beside the river",
             "negative": "unmotivated costume change",
             "descriptor": {
@@ -90,28 +99,30 @@ def _runtime_snapshot(*, inspection=True, original_assets=False) -> dict:
 
 
 @pytest.mark.asyncio
-async def test_quality_settings_post_preserves_unrelated_config_and_gets_new_value(monkeypatch):
+async def test_quality_settings_post_changes_only_runtime_state(monkeypatch):
     config = {
-        "illustration_quality_inspection_enabled": False,
+        "illustration_quality_inspection_enabled": True,
         "unrelated_setting": "keep-me",
         "nested": {"value": 7},
     }
-    saved: list[dict] = []
     monkeypatch.setattr(server, "app_config", config)
-    monkeypatch.setattr(server, "save_config", lambda candidate: saved.append(copy.deepcopy(candidate)))
+    monkeypatch.setattr(server, "_illustration_quality_inspection_runtime_enabled", False)
+
+    def unexpected_save(_candidate):
+        raise AssertionError("runtime developer state must not be written to config")
+
+    monkeypatch.setattr(server, "save_config", unexpected_save)
 
     response = await server.handle_illustration_quality_inspection_settings(
         _Request("POST", {"enabled": True})
     )
     assert response.status == 200
     assert json.loads(response.text) == {"enabled": True}
-    assert saved == [{
+    assert config == {
         "illustration_quality_inspection_enabled": True,
         "unrelated_setting": "keep-me",
         "nested": {"value": 7},
-    }]
-    assert config["unrelated_setting"] == "keep-me"
-    assert config["nested"] == {"value": 7}
+    }
 
     get_response = await server.handle_illustration_quality_inspection_settings(
         _Request("GET")
@@ -121,26 +132,27 @@ async def test_quality_settings_post_preserves_unrelated_config_and_gets_new_val
 
 
 @pytest.mark.asyncio
-async def test_quality_settings_failed_save_does_not_change_runtime_config(monkeypatch):
-    config = {
-        "illustration_quality_inspection_enabled": False,
-        "unrelated_setting": "keep-me",
-    }
-    monkeypatch.setattr(server, "app_config", config)
-
-    def fail_save(_candidate):
-        raise OSError("settings disk is unavailable")
-
-    monkeypatch.setattr(server, "save_config", fail_save)
+async def test_quality_settings_rejects_invalid_value_without_changing_runtime_state(monkeypatch):
+    monkeypatch.setattr(server, "_illustration_quality_inspection_runtime_enabled", True)
     response = await server.handle_illustration_quality_inspection_settings(
-        _Request("POST", {"enabled": True})
+        _Request("POST", {"enabled": "false"})
     )
 
-    assert response.status == 500
-    assert config == {
-        "illustration_quality_inspection_enabled": False,
-        "unrelated_setting": "keep-me",
-    }
+    assert response.status == 400
+    assert server._illustration_quality_inspection_runtime_enabled is True
+
+
+def test_quality_inspection_starts_off_and_ignores_persisted_config(monkeypatch):
+    config = copy.deepcopy(server.DEFAULT_CONFIG)
+    config["illustration_quality_inspection_enabled"] = True
+    monkeypatch.setattr(server, "_illustration_quality_inspection_runtime_enabled", True)
+    monkeypatch.setattr(server, "_load_word_rules_snapshot", lambda _bot_name: [])
+
+    server._reset_illustration_quality_inspection_runtime()
+    snapshot = server._capture_illustration_runtime_snapshot(config)
+
+    assert server._illustration_quality_inspection_runtime_enabled is False
+    assert snapshot["illustration_quality_inspection_enabled"] is False
 
 
 @pytest.mark.asyncio
@@ -163,23 +175,41 @@ async def test_quality_enqueue_is_nonblocking_and_releases_snapshot_after_comple
         live_snapshot["entries"] = freevars["snapshot_entries"]
         return queue_item
 
-    async def fake_execute(_queue_item, *, session_id, context, entries, flow_run_id):
+    async def fake_execute(
+        _queue_item,
+        *,
+        scope,
+        session_id,
+        context,
+        entries,
+        flow_run_id,
+        individual_results,
+    ):
         live_snapshot["seen"] = copy.deepcopy(entries)
+        live_snapshot["scope"] = scope
         live_snapshot["context"] = context
         live_snapshot["flow_run_id"] = flow_run_id
-        return {"images": [], "overall_feedback": "done"}
+        live_snapshot["individual_results"] = individual_results
+        return {"inspection_scope": "image", "slot": 2, "feedback": "done"}
 
     monkeypatch.setattr(server.queue_manager, "add_item", fake_add_item)
     monkeypatch.setattr(server.illustration_quality_inspection, "execute_inspection", fake_execute)
     original = _entries()
-    await server._enqueue_illustration_quality_inspection(
+    queued = await server._enqueue_illustration_quality_inspection(
+        scope=quality.IMAGE_SCOPE,
         session_id="session-queue",
         context="The original river narrative.",
-        entries=original,
+        entries=[original[0]],
     )
 
+    assert queued is queue_item
     assert captured["item_type"] == quality.TASK_KEY
-    assert captured["params"] == {"session_id": "session-queue", "slots": [2, 5]}
+    assert captured["label"] == "생성 이미지 자동 검사 · slot 2"
+    assert captured["params"] == {
+        "scope": "image",
+        "session_id": "session-queue",
+        "slots": [2],
+    }
     assert "runtime_handler" in captured["kwargs"]
     assert "illustration_quality_inspection" in queue_module.LLM_TYPES
     assert live_snapshot.get("seen") is None
@@ -187,6 +217,8 @@ async def test_quality_enqueue_is_nonblocking_and_releases_snapshot_after_comple
     original[0]["image_bytes"] = b"caller-mutated"
     await captured["handler"](queue_item)
     assert live_snapshot["seen"][0]["image_bytes"] == _entries()[0]["image_bytes"]
+    assert live_snapshot["scope"] == "image"
+    assert live_snapshot["individual_results"] == []
     assert live_snapshot["context"] == "The original river narrative."
     assert live_snapshot["entries"] == []
 
@@ -210,9 +242,10 @@ async def test_quality_enqueue_releases_snapshot_when_waiting_item_is_cancelled(
 
     monkeypatch.setattr(server.queue_manager, "add_item", fake_add_item)
     await server._enqueue_illustration_quality_inspection(
+        scope=quality.IMAGE_SCOPE,
         session_id="session-cancelled",
         context="A narrative that will not be inspected.",
-        entries=_entries(),
+        entries=[_entries()[0]],
     )
     freevars = dict(zip(
         captured["handler"].__code__.co_freevars,
@@ -224,6 +257,70 @@ async def test_quality_enqueue_releases_snapshot_when_waiting_item_is_cancelled(
     queue_item.completion_future.cancel()
     await asyncio.sleep(0)
     assert snapshot == []
+
+
+@pytest.mark.asyncio
+async def test_overall_enqueue_waits_for_image_reviews_and_keeps_available_results(monkeypatch):
+    loop = asyncio.get_running_loop()
+    completed = SimpleNamespace(
+        id="image-review-2",
+        status="completed",
+        completion_future=loop.create_future(),
+    )
+    failed = SimpleNamespace(
+        id="image-review-5",
+        status="failed",
+        completion_future=loop.create_future(),
+    )
+    completed.completion_future.set_result({
+        "inspection_scope": "image",
+        "slot": 2,
+        "feedback": "No material issue observed.",
+        "continuity_observation": "Ari wears the blue coat.",
+    })
+    failed.completion_future.set_exception(RuntimeError("slot 5 inspection failed"))
+    overall_item = SimpleNamespace(
+        id="overall-review",
+        status="pending",
+        completion_future=loop.create_future(),
+    )
+    captured: dict = {}
+
+    async def fake_add_item(item_type, label, params, **kwargs):
+        captured.update(
+            item_type=item_type,
+            label=label,
+            params=params,
+            handler=kwargs["runtime_handler"],
+        )
+        return overall_item
+
+    async def fake_execute(_queue_item, **kwargs):
+        captured["execute"] = kwargs
+        return {"inspection_scope": "overall", "overall_feedback": "done"}
+
+    monkeypatch.setattr(server.queue_manager, "add_item", fake_add_item)
+    monkeypatch.setattr(server.illustration_quality_inspection, "execute_inspection", fake_execute)
+
+    queued = await server._enqueue_illustration_quality_inspection(
+        scope=quality.OVERALL_SCOPE,
+        session_id="session-overall",
+        context="The original river narrative.",
+        entries=_entries(),
+        dependencies=[completed, failed],
+    )
+    result = await captured["handler"](overall_item)
+
+    assert queued is overall_item
+    assert result == {"inspection_scope": "overall", "overall_feedback": "done"}
+    assert captured["label"] == "생성 이미지 전체 품질 검사 · 2장"
+    assert captured["params"] == {
+        "scope": "overall",
+        "session_id": "session-overall",
+        "slots": [2, 5],
+    }
+    assert captured["execute"]["scope"] == quality.OVERALL_SCOPE
+    assert [item["slot"] for item in captured["execute"]["individual_results"]] == [2]
 
 
 @pytest.mark.asyncio
@@ -314,7 +411,7 @@ async def test_process_prompt_captures_raw_pixels_and_actual_prompt_before_backu
 
 
 @pytest.mark.asyncio
-async def test_context_pipeline_publishes_ready_before_inspection_and_filters_retries_assets_and_failures(
+async def test_context_pipeline_inspects_each_success_immediately_then_enqueues_overall_after_publish(
     tmp_path, monkeypatch
 ):
     session_id = "risu_" + ("f" * 64)
@@ -354,7 +451,7 @@ async def test_context_pipeline_publishes_ready_before_inspection_and_filters_re
     ]
     attempts = {slot: 0 for slot in (2, 7, 11)}
     enqueued_slots: list[int] = []
-    captured_inspection: dict = {}
+    inspection_calls: list[dict] = []
     lifecycle: list[str] = []
     child_prompt_ids: list[str] = []
 
@@ -395,9 +492,33 @@ async def test_context_pipeline_publishes_ready_before_inspection_and_filters_re
             "requested_count": 1,
         }
 
-    async def fake_inspection(*, session_id, context, entries):
-        lifecycle.append("inspection-enqueue")
-        captured_inspection.update(session_id=session_id, context=context, entries=copy.deepcopy(entries))
+    async def fake_inspection(*, scope, session_id, context, entries, dependencies=None):
+        lifecycle.append(f"inspection-{scope}")
+        call = {
+            "scope": scope,
+            "session_id": session_id,
+            "context": context,
+            "entries": copy.deepcopy(entries),
+            "dependencies": list(dependencies or []),
+        }
+        inspection_calls.append(call)
+        future = asyncio.get_running_loop().create_future()
+        queue_item = SimpleNamespace(
+            id=f"inspection-{scope}-{len(inspection_calls)}",
+            status="completed",
+            completion_future=future,
+        )
+        if scope == quality.IMAGE_SCOPE:
+            slot = int(entries[0]["slot"])
+            future.set_result({
+                "inspection_scope": "image",
+                "slot": slot,
+                "feedback": "done",
+                "continuity_observation": f"slot {slot} visible state",
+            })
+        else:
+            future.set_result({"inspection_scope": "overall", "overall_feedback": "done"})
+        return queue_item
 
     original_set_result = pipeline.set_session_result
 
@@ -455,22 +576,32 @@ async def test_context_pipeline_publishes_ready_before_inspection_and_filters_re
             b"raw-image-slot-7-attempt-2",
             b"uploaded-original-asset",
         ]
-        assert lifecycle.index("ready-publish") < lifecycle.index("inspection-enqueue")
-        assert captured_inspection["session_id"] == session_id
-        assert "Ari crosses the river" in captured_inspection["context"]
-        assert "CALL1 translated context" not in captured_inspection["context"]
-        assert [entry["slot"] for entry in captured_inspection["entries"]] == [2, 7]
-        assert [entry["backup_name"] for entry in captured_inspection["entries"]] == [
+        image_calls = [call for call in inspection_calls if call["scope"] == quality.IMAGE_SCOPE]
+        overall_calls = [call for call in inspection_calls if call["scope"] == quality.OVERALL_SCOPE]
+        assert [call["entries"][0]["slot"] for call in image_calls] == [2, 7]
+        assert len(overall_calls) == 1
+        overall_call = overall_calls[0]
+        assert lifecycle.index("inspection-image") < lifecycle.index("ready-publish")
+        assert lifecycle.index("ready-publish") < lifecycle.index("inspection-overall")
+        assert overall_call["session_id"] == session_id
+        assert "Ari crosses the river" in overall_call["context"]
+        assert "CALL1 translated context" not in overall_call["context"]
+        assert [entry["slot"] for entry in overall_call["entries"]] == [2, 7]
+        assert [entry["backup_name"] for entry in overall_call["entries"]] == [
             "new-backup-slot-2",
             "new-backup-slot-7",
         ]
-        assert [entry["image_bytes"] for entry in captured_inspection["entries"]] == [
+        assert [entry["image_bytes"] for entry in overall_call["entries"]] == [
             b"raw-image-slot-2-attempt-1",
             b"raw-image-slot-7-attempt-2",
         ]
-        assert all("actual generated positive" in entry["positive"] for entry in captured_inspection["entries"])
-        assert 11 not in [entry["slot"] for entry in captured_inspection["entries"]]
-        assert 99 not in [entry["slot"] for entry in captured_inspection["entries"]]
+        assert all("actual generated positive" in entry["positive"] for entry in overall_call["entries"])
+        assert [dependency.id for dependency in overall_call["dependencies"]] == [
+            "inspection-image-1",
+            "inspection-image-2",
+        ]
+        assert 11 not in [entry["slot"] for entry in overall_call["entries"]]
+        assert 99 not in [entry["slot"] for entry in overall_call["entries"]]
         for child_id in child_prompt_ids:
             assert "_quality_inspection_source" not in server.prompts[child_id]
     finally:
@@ -482,16 +613,12 @@ async def test_context_pipeline_publishes_ready_before_inspection_and_filters_re
 
 
 @pytest.mark.asyncio
-async def test_quality_history_record_is_text_only_and_shared_across_all_images(monkeypatch):
+async def test_overall_quality_history_record_is_text_only_and_references_all_images(monkeypatch):
     records: list[dict] = []
 
     async def fake_call(_task_key, _messages, **kwargs):
         kwargs["metadata_sink"].update(completion_tokens=12, prompt_tokens=34)
         raw = json.dumps({
-            "images": [
-                {"slot": 2, "feedback": "The reaching action reads clearly."},
-                {"slot": 5, "feedback": "The lantern action is visible."},
-            ],
             "overall_feedback": "Ari and the blue coat remain consistent across the set.",
         })
         return SimpleNamespace(
@@ -510,6 +637,7 @@ async def test_quality_history_record_is_text_only_and_shared_across_all_images(
 
     result = await quality.execute_inspection(
         SimpleNamespace(id="quality-log-queue"),
+        scope=quality.OVERALL_SCOPE,
         session_id="quality-log-session",
         flow_run_id="flow-log",
         context="Ari crosses the river and opens the lantern.",
@@ -520,6 +648,7 @@ async def test_quality_history_record_is_text_only_and_shared_across_all_images(
     assert len(records) == 1
     record = records[0]
     assert record["task_key"] == quality.TASK_KEY
+    assert record["inspection_scope"] == quality.OVERALL_SCOPE
     assert [image["slot"] for image in record["inspection_images"]] == [2, 5]
     assert record["inspection_images"] == [
         {"slot": 2, "backup_name": "river-scene-2", "prompt_id": "prompt-2"},
@@ -667,7 +796,7 @@ async def test_quality_background_node_shares_illustration_run_without_blocking_
             id="background-inspection",
             type=quality.TASK_KEY,
             label="quality inspection",
-            params={"session_id": "session-flow"},
+            params={"scope": "image", "session_id": "session-flow", "slots": [2]},
             status="pending",
         )
         illustration_flow.queue_added(background)
@@ -689,6 +818,11 @@ async def test_quality_background_node_shares_illustration_run_without_blocking_
     nodes = {node["id"]: node for node in graph["nodes"]}
     assert background._illustration_flow[0] is run
     assert nodes[background.id]["kind"] == "llm"
+    assert run["nodes"][background.id]["input"] == {
+        "scope": "image",
+        "session_id": "session-flow",
+        "slots": [2],
+    }
     assert nodes[image.id]["kind"] == "image"
     assert background.id not in nodes[image.id]["dependencies"]
     assert nodes[image.id]["dependencies"] == [root.id]

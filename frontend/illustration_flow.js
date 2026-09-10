@@ -137,11 +137,11 @@
         qualityCheckbox.id = 'if-quality-inspection-enabled';
         qualityCheckbox.checked = false;
         qualityCheckbox.addEventListener('change', event => {
-            void saveQualityInspectionSetting(Boolean(event.currentTarget.checked));
+            void setQualityInspectionState(Boolean(event.currentTarget.checked));
         });
         qualityLabel.append(qualityCheckbox, element('span', '', '생성 이미지 자동 검사 (ON/OFF)'));
-        qualityCard.append(qualityLabel, element('p', 'if-quality-copy', '기본값은 꺼짐입니다. 켜면 생성 이미지마다 문제 중심의 영어 피드백을 남기고, 전체 이미지의 복장·스토리 일관성을 함께 검토합니다. 손 문제는 평가하지 않습니다. 검사 기록은 LLM 로그에만 저장되며, LLM 흐름과 LB Details에서 볼 수 있습니다.'));
-        const qualityStatus = element('div', 'if-quality-status', '꺼짐 · 검사 기록은 LLM 로그에만 저장되며, LLM 흐름과 LB Details에서 볼 수 있습니다.');
+        qualityCard.append(qualityLabel, element('p', 'if-quality-copy', '서버를 켤 때마다 꺼진 상태로 시작합니다. 켜면 생성 이미지마다 문제 중심의 영어 피드백을 남기고, 전체 이미지의 복장·스토리 일관성을 함께 검토합니다. 손 문제는 평가하지 않습니다. 검사 기록은 LLM 로그에만 저장되며, LLM 흐름과 LB Details에서 볼 수 있습니다.'));
+        const qualityStatus = element('div', 'if-quality-status', '꺼짐 · 서버를 켤 때마다 꺼진 상태로 시작합니다.');
         qualityStatus.id = 'if-quality-inspection-status';
         qualityCard.append(qualityStatus);
         developerBody.append(qualityCard);
@@ -199,7 +199,7 @@
             checkbox.checked = qualityInspectionEnabled;
             setQualityInspectionStatus(qualityInspectionEnabled
                 ? '켜짐 · 다음 삽화 생성부터 자동 검사를 요청합니다.'
-                : '꺼짐 · 검사 기록은 LLM 로그에만 저장되며, LLM 흐름과 LB Details에서 볼 수 있습니다.');
+                : '꺼짐 · 서버를 켤 때마다 꺼진 상태로 시작합니다.');
         } catch (error) {
             console.error('[ILLUST_QUALITY] 설정 조회 실패:', error);
             if (request !== qualityInspectionRequest || !developerModal?.open) return;
@@ -210,14 +210,14 @@
             if (request === qualityInspectionRequest && developerModal?.open) checkbox.disabled = false;
         }
     }
-    async function saveQualityInspectionSetting(nextValue) {
+    async function setQualityInspectionState(nextValue) {
         const checkbox = developerModal?.querySelector('#if-quality-inspection-enabled');
         if (!checkbox) return;
         const previousValue = qualityInspectionEnabled;
         const request = ++qualityInspectionRequest;
         qualityInspectionEnabled = Boolean(nextValue);
         checkbox.disabled = true;
-        setQualityInspectionStatus('설정을 저장하는 중…');
+        setQualityInspectionStatus('실행 상태를 변경하는 중…');
         try {
             const response = await fetch(qualityInspectionSettingsUrl, {
                 method: 'POST',
@@ -225,24 +225,24 @@
                 body: JSON.stringify({enabled: qualityInspectionEnabled}),
             });
             const payload = await response.json().catch(() => ({}));
-            if (!response.ok) throw Error(payload.error || `설정 저장 실패 (${response.status})`);
+            if (!response.ok) throw Error(payload.error || `실행 상태 변경 실패 (${response.status})`);
             if (typeof payload.enabled !== 'boolean') {
-                throw Error('설정 저장 응답에 enabled 값이 없습니다.');
+                throw Error('실행 상태 변경 응답에 enabled 값이 없습니다.');
             }
             if (request !== qualityInspectionRequest || !developerModal?.open) return;
             qualityInspectionEnabled = payload.enabled;
             checkbox.checked = qualityInspectionEnabled;
             setQualityInspectionStatus(qualityInspectionEnabled
                 ? '켜짐 · 다음 삽화 생성부터 자동 검사를 요청합니다.'
-                : '꺼짐 · 검사 기록은 LLM 로그에만 저장되며, LLM 흐름과 LB Details에서 볼 수 있습니다.', 'success');
+                : '꺼짐 · 서버를 켤 때마다 꺼진 상태로 시작합니다.', 'success');
             qualityInspectionToast(`삽화 품질 자동 검사 ${qualityInspectionEnabled ? '켜짐' : '꺼짐'}`, 'success');
         } catch (error) {
-            console.error('[ILLUST_QUALITY] 설정 저장 실패:', {nextValue, error});
+            console.error('[ILLUST_QUALITY] 실행 상태 변경 실패:', {nextValue, error});
             if (request !== qualityInspectionRequest || !developerModal?.open) return;
             qualityInspectionEnabled = previousValue;
             checkbox.checked = previousValue;
-            setQualityInspectionStatus(`저장 실패 · ${previousValue ? '켜짐' : '꺼짐'}으로 되돌렸습니다.`, 'error');
-            qualityInspectionToast(`삽화 품질 검사 설정 저장 실패: ${error.message || error}`, 'error');
+            setQualityInspectionStatus(`변경 실패 · ${previousValue ? '켜짐' : '꺼짐'}으로 되돌렸습니다.`, 'error');
+            qualityInspectionToast(`삽화 품질 검사 실행 상태 변경 실패: ${error.message || error}`, 'error');
         } finally {
             if (request === qualityInspectionRequest && developerModal?.open) checkbox.disabled = false;
         }
