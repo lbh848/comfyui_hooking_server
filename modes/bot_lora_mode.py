@@ -1472,15 +1472,27 @@ def copy_project_test_to_char(
             continue
         try:
             shutil.copy2(src_path, dst_path)
-            # 프롬프트 JSON도 복사
+            # 프롬프트 JSON은 공통 테스트에서 사용자가 저장한 현재값을
+            # 캐릭터 테스트의 새 원본 기준으로 삼아 복사한다.
             base = os.path.splitext(fname)[0]
             prompt_src = os.path.join(src_dir, f"{base}_prompt.json")
             prompt_dst = os.path.join(dst_dir, f"{base}_prompt.json")
             if os.path.isfile(prompt_src) and not os.path.isfile(prompt_dst):
-                shutil.copy2(prompt_src, prompt_dst)
+                with open(prompt_src, "r", encoding="utf-8") as f:
+                    source_prompt = json.load(f)
+                current_positive = source_prompt.get("positive") or source_prompt.get("original_positive", "")
+                current_negative = source_prompt.get("negative") or source_prompt.get("original_negative", "")
+                copied_prompt = dict(source_prompt)
+                copied_prompt["positive"] = current_positive
+                copied_prompt["negative"] = current_negative
+                copied_prompt["original_positive"] = current_positive
+                copied_prompt["original_negative"] = current_negative
+                with open(prompt_dst, "w", encoding="utf-8") as f:
+                    json.dump(copied_prompt, f, ensure_ascii=False, indent=2)
             copied.append(fname)
         except Exception as e:
             print(f"[BOT_LORA] 공통 테스트 복사 실패: {src_path} -> {dst_path} - {e}")
+            traceback.print_exc()
             skipped += 1
 
     print(f"[BOT_LORA] 공통→캐릭터 복제 완료: {bot_name}/{project_name}/{char_name} - 복사:{len(copied)}, 스킵:{skipped}")
@@ -1570,8 +1582,13 @@ def save_bot_char_test_prompt_positive_only(
     filename: str,
     positive: str,
     visual_card_id: str = "",
+    source_positive: str | None = None,
 ) -> dict:
-    """LLM '테스트 이미지 세팅' 결과로 positive만 교체. negative/original_*는 기존값을 유지한다."""
+    """LLM '테스트 이미지 세팅' 결과로 positive만 교체.
+
+    source_positive가 주어지면 실제 정제 입력을 파생 테스트 이미지의 원본 기준으로 기록한다.
+    캐릭터별 단일 재정제처럼 값이 없으면 기존 original_*를 유지한다.
+    """
     if ".." in filename or os.path.sep in filename:
         return {"success": False, "error": "잘못된 파일명"}
     t_dir = _bot_char_test_dir(
@@ -1588,6 +1605,8 @@ def save_bot_char_test_prompt_positive_only(
             existing["original_positive"] = existing.get("positive", "")
         if "original_negative" not in existing:
             existing["original_negative"] = existing.get("negative", "")
+        if source_positive is not None:
+            existing["original_positive"] = source_positive
         # positive만 교체 — negative는 절대 건드리지 않는다.
         existing["positive"] = positive
         with open(prompt_path, "w", encoding="utf-8") as f:

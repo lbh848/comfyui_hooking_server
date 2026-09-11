@@ -411,11 +411,13 @@ def add_test_image(project_id: str, src_path: str, filename: str) -> dict:
         if os.path.isfile(src_prompt_path):
             with open(src_prompt_path, "r", encoding="utf-8") as pf:
                 pdata = json.load(pf)
+            current_positive = pdata.get("positive") or pdata.get("original_positive", "")
+            current_negative = pdata.get("negative") or pdata.get("original_negative", "")
             seeded = {
-                "positive": pdata.get("positive", pdata.get("original_positive", "")),
-                "negative": pdata.get("negative", pdata.get("original_negative", "")),
-                "original_positive": pdata.get("original_positive", pdata.get("positive", "")),
-                "original_negative": pdata.get("original_negative", pdata.get("negative", "")),
+                "positive": current_positive,
+                "negative": current_negative,
+                "original_positive": current_positive,
+                "original_negative": current_negative,
             }
             with open(dst_prompt_path, "w", encoding="utf-8") as pf:
                 json.dump(seeded, pf, ensure_ascii=False, indent=2)
@@ -460,11 +462,13 @@ def add_test_image_from_train(project_id: str, filename: str) -> dict:
         try:
             with open(src_prompt_path, "r", encoding="utf-8") as pf:
                 pdata = json.load(pf)
+            current_positive = pdata.get("positive") or pdata.get("original_positive", "")
+            current_negative = pdata.get("negative") or pdata.get("original_negative", "")
             seeded = {
-                "positive": pdata.get("positive", pdata.get("original_positive", "")),
-                "negative": pdata.get("negative", pdata.get("original_negative", "")),
-                "original_positive": pdata.get("original_positive", pdata.get("positive", "")),
-                "original_negative": pdata.get("original_negative", pdata.get("negative", "")),
+                "positive": current_positive,
+                "negative": current_negative,
+                "original_positive": current_positive,
+                "original_negative": current_negative,
             }
             with open(dst_prompt_path, "w", encoding="utf-8") as pf:
                 json.dump(seeded, pf, ensure_ascii=False, indent=2)

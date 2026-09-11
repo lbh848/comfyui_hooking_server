@@ -6748,6 +6748,7 @@ class QueueManager:
                 test_filename,
                 refined_positive,
                 visual_card_id,
+                source_positive=test_positive,
             )
             if persist_err:
                 print(f"[QUEUE:BOT_LORA_TEST_SETUP] 영속화 실패: bot={bot_name} project={project_name} char={char_name} test={test_filename} - {persist_err}")
@@ -6802,6 +6803,7 @@ class QueueManager:
         test_filename: str,
         positive: str,
         visual_card_id: str = "",
+        source_positive: str | None = None,
     ) -> str | None:
         """공통 테스트 이미지를 캐릭터 char_test로 복사한 뒤, 조합 결과 positive를 저장.
         반환: 성공 → None, 실패 → 에러 문자열."""
@@ -6823,6 +6825,7 @@ class QueueManager:
                 test_filename,
                 positive,
                 visual_card_id,
+                source_positive=source_positive,
             )
             if not sv.get("success"):
                 return sv.get("error", "테스트 프롬프트 저장 실패")
@@ -7015,7 +7018,13 @@ class QueueManager:
 
             refined_positive = result["data"].get("positive") or ""
 
-            persist_err = self._persist_asset_test_setup(char_name, entry, test_filename, refined_positive)
+            persist_err = self._persist_asset_test_setup(
+                char_name,
+                entry,
+                test_filename,
+                refined_positive,
+                source_positive=test_positive,
+            )
             if persist_err:
                 print(f"[QUEUE:ASSET_TEST_SETUP] 영속화 실패: char={char_name} entry={entry} test={test_filename} - {persist_err}")
                 if self.notify_frontend:
@@ -7055,12 +7064,25 @@ class QueueManager:
                 })
             raise
 
-    def _persist_asset_test_setup(self, character: str, entry: str, test_filename: str, positive: str) -> str | None:
+    def _persist_asset_test_setup(
+        self,
+        character: str,
+        entry: str,
+        test_filename: str,
+        positive: str,
+        source_positive: str | None = None,
+    ) -> str | None:
         """에셋 테스트 일괄 세팅 영속화: 복사 불필요(이미 entry test_images에 존재).
         조합 결과 positive를 해당 테스트 이미지 프롬프트에 저장. 반환: 성공 → None, 실패 → 에러."""
         try:
             from modes.lora_mode import save_test_prompt_positive_only
-            sv = save_test_prompt_positive_only(character, entry, test_filename, positive)
+            sv = save_test_prompt_positive_only(
+                character,
+                entry,
+                test_filename,
+                positive,
+                source_positive=source_positive,
+            )
             if not sv.get("success"):
                 return sv.get("error", "테스트 프롬프트 저장 실패")
             return None

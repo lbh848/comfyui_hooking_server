@@ -27206,6 +27206,7 @@ app.router.add_post(
     "/api/bot_mode/face_crop_image/delete",
     bot_mode.handle_delete_face_crop_image,
 )
+app.router.add_post("/api/bot_mode/upload_preflight", bot_mode.handle_upload_preflight)
 app.router.add_post("/api/bot_mode/upload", bot_mode.handle_upload_image)
 app.router.add_post("/api/bot_mode/import_asset", bot_mode.handle_import_asset)
 app.router.add_post("/api/bot_mode/prompt", bot_mode.handle_update_prompt)

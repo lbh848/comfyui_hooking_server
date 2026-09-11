@@ -73133,6 +73133,14 @@
         let _assetLoraTestCard = { filename: '', positive: '' }; // 카드=현재 entry 학습 첫 이미지
         let _assetLoraTestRefreshTimer = null;
 
+        // 테스트 이미지 세팅은 사용자가 저장한 현재 프롬프트를 기준으로 한다.
+        // 현재값이 없는 이전 데이터에서만 보존된 원본 프롬프트를 대체값으로 사용한다.
+        function _loraTestSetupCurrentPositive(image) {
+            const current = ((image && image.positive) || '').trim();
+            if (current) return current;
+            return ((image && image.original_positive) || '').trim();
+        }
+
         function _assetLoraTestStatusEl() { return document.getElementById('asset-lora-test-setup-status'); }
         function _setAssetLoraTestBtnDisabled(disabled) {
             const btn = document.getElementById('asset-lora-test-setup-btn');
@@ -73194,7 +73202,7 @@
             if (cardInfo) cardInfo.textContent = `카드(복장/외모 소스): 학습 첫 이미지 "${cardImg.filename}"`;
 
             const grid = testImages.map(img => {
-                const positive = (img.original_positive || img.positive || '').trim();
+                const positive = _loraTestSetupCurrentPositive(img);
                 const hasPrompt = !!positive;
                 const key = enc(img.filename);
                 const imgSrc = `/api/lora/test_image/${enc(loraCurrentCharacter)}/${enc(loraCurrentEntry)}/${enc(img.filename)}`;
@@ -73290,7 +73298,7 @@
                 const filename = decodeURIComponent(key);
                 const img = testImages.find(t => t.filename === filename);
                 if (!img) { skipped++; continue; }
-                const positive = (img.original_positive || img.positive || '').trim();
+                const positive = _loraTestSetupCurrentPositive(img);
                 if (!positive) { skipped++; continue; }
                 targets.push({ filename, positive });
             }
@@ -73382,11 +73390,21 @@
         }
 
         // ─── 봇 LoRA: 선택 이미지 일괄 LLM 정제 (이미지 1개 = 큐 1개) ─────
-        let _botLoraRefineBatch = { active: false, total: 0, remaining: 0, success: 0, fail: 0, skipped: 0 };
+        let _botLoraRefineBatch = { active: false, total: 0, remaining: 0, success: 0, fail: 0, skipped: 0, skippedTraining: 0 };
         let _botLoraRefineModalSel = new Set(); // 모달 선택: "enc(char)|enc(card)|enc(filename)"
 
         function _botLoraRefineKey(char, visualCardId, filename) {
             return [char || '', visualCardId || '', filename || ''].map(encodeURIComponent).join('|');
+        }
+
+        function _botLoraBatchRefineCardState(ch, positive) {
+            const hasPrompt = !!String(positive || '').trim();
+            const skipTraining = !!(ch && ch.skip_training);
+            return {
+                hasPrompt,
+                skipTraining,
+                enabled: hasPrompt && !skipTraining,
+            };
         }
 
         function _botLoraRefineStatusEl() { return document.getElementById('bot-lora-refine-batch-status'); }
@@ -73406,24 +73424,24 @@
             for (const ch of chars) {
                 for (const img of (ch.training_images || [])) {
                     const positive = (img.original_positive || img.positive || '').trim();
-                    items.push({ char: ch.name, visualCardId: ch.visual_card_id || '', cardLabel: ch.visual_card_label || '', filename: img.filename, positive, source: img.source || '' });
+                    const state = _botLoraBatchRefineCardState(ch, positive);
+                    items.push({ char: ch.name, visualCardId: ch.visual_card_id || '', cardLabel: ch.visual_card_label || '', filename: img.filename, positive, source: img.source || '', ...state });
                 }
             }
             _botLoraRefineModalSel.clear();
 
             const grid = items.map(it => {
                 const key = _botLoraRefineKey(it.char, it.visualCardId, it.filename);
-                const hasPrompt = !!it.positive;
                 const imgSrc = `/api/bot_lora/training_image/${enc(botLoraCurrentBot)}/${enc(botLoraCurrentProject)}/${enc(it.char)}/${enc(it.filename)}${_botLoraCardQuery(it.visualCardId)}`;
-                const border = hasPrompt ? '1px solid var(--border)' : '1px solid rgba(220,80,80,0.5)';
-                return `<label data-key="${key}" data-enabled="${hasPrompt ? '1' : '0'}" onclick="_toggleBotLoraRefineModalCard(this)" style="position:relative; display:block; width:120px; cursor:${hasPrompt ? 'pointer' : 'not-allowed'}; opacity:${hasPrompt ? '1' : '0.5'}; border:${border}; border-radius:8px; overflow:hidden; background:var(--surface2);">
+                const border = it.enabled ? '1px solid var(--border)' : (it.skipTraining ? '1px solid rgba(140,140,140,0.6)' : '1px solid rgba(220,80,80,0.5)');
+                return `<label data-key="${key}" data-enabled="${it.enabled ? '1' : '0'}" onclick="_toggleBotLoraRefineModalCard(this)" style="position:relative; display:block; width:120px; cursor:${it.enabled ? 'pointer' : 'not-allowed'}; opacity:${it.enabled ? '1' : '0.5'}; border:${border}; border-radius:8px; overflow:hidden; background:var(--surface2);">
                     <img src="${imgSrc}" loading="lazy" style="width:100%; aspect-ratio:1; object-fit:cover; display:block;">
                     <span class="refine-sel-tick" style="position:absolute; top:4px; left:4px; width:18px; height:18px; border-radius:4px; background:var(--accent); border:2px solid #fff; display:none; align-items:center; justify-content:center; color:#fff; font-size:0.7rem; font-weight:700;">✓</span>
                     ${it.source === 'face' ? '<span style="position:absolute; top:4px; right:4px; background:rgba(0,0,0,0.7); color:#fff; font-size:0.6rem; padding:1px 4px; border-radius:3px;">얼굴</span>' : ''}
                     <div style="padding:4px 6px; font-size:0.68rem; line-height:1.2;">
                         <div style="font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(it.char)} · ${escapeHtml(it.cardLabel || it.visualCardId || '기본 카드')}</div>
                         <div style="color:var(--text-secondary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(it.filename)}</div>
-                        ${hasPrompt ? '' : '<div style="color:var(--error); font-size:0.62rem;">프롬프트 없음</div>'}
+                        ${it.skipTraining ? '<div style="color:var(--text-secondary); font-size:0.62rem;">순차 학습 스킵</div>' : (it.hasPrompt ? '' : '<div style="color:var(--error); font-size:0.62rem;">프롬프트 없음</div>')}
                     </div>
                 </label>`;
             }).join('');
@@ -73495,6 +73513,7 @@
             const chars = botLoraProjectData.characters || [];
             const targets = [];
             let skippedEmpty = 0;
+            let skippedTraining = 0;
             for (const key of _botLoraRefineModalSel) {
                 const parts = key.split('|');
                 if (parts.length !== 3) continue;
@@ -73507,18 +73526,27 @@
                 if (!img) { skippedEmpty++; continue; }
                 // 정제 입력: 원본 긍정 프롬프트(WD Tagger) — 단일 정제와 동일 소스 (분리 금지)
                 const positive = (img.original_positive || img.positive || '').trim();
-                if (!positive) { skippedEmpty++; continue; }
+                const state = _botLoraBatchRefineCardState(ch, positive);
+                if (state.skipTraining) {
+                    skippedTraining++;
+                    console.warn(`[BOT_LORA_BATCH] 순차 학습 스킵 카드 정제 제외: ${charName}/${visualCardId || '기본 카드'}/${filename}`);
+                    continue;
+                }
+                if (!state.hasPrompt) { skippedEmpty++; continue; }
                 targets.push({ charName, visualCardId, filename, positive });
             }
 
             if (targets.length === 0) {
-                showToast(`정제 가능한 이미지가 없습니다 (프롬프트 없음 ${skippedEmpty}장)`, 'error');
+                const reasons = [];
+                if (skippedTraining) reasons.push(`순차 학습 스킵 ${skippedTraining}장`);
+                if (skippedEmpty) reasons.push(`프롬프트 없음 ${skippedEmpty}장`);
+                showToast(`정제 가능한 이미지가 없습니다${reasons.length ? ` (${reasons.join(' / ')})` : ''}`, 'error');
                 return;
             }
 
             closeBotLoraRefineSelectModal();
 
-            _botLoraRefineBatch = { active: true, total: targets.length, remaining: targets.length, success: 0, fail: 0, skipped: skippedEmpty };
+            _botLoraRefineBatch = { active: true, total: targets.length, remaining: targets.length, success: 0, fail: 0, skipped: skippedEmpty, skippedTraining };
             _setBotLoraRefineBtnDisabled(true);
             const statusEl = _botLoraRefineStatusEl();
             if (statusEl) statusEl.textContent = `큐 적재 중... (0/${targets.length})`;
@@ -73576,7 +73604,7 @@
             // 대기 중 디바운스 갱신 취소 — 아래서 최종 갱신을 한 번에 수행.
             if (_botLoraRefineRefreshTimer) { clearTimeout(_botLoraRefineRefreshTimer); _botLoraRefineRefreshTimer = null; }
             const statusEl = _botLoraRefineStatusEl();
-            const msg = `일괄 정제 완료: 성공 ${b.success}장${b.fail ? ` / 실패 ${b.fail}장` : ''}${b.skipped ? ` / 프롬프트없음 ${b.skipped}장` : ''}`;
+            const msg = `일괄 정제 완료: 성공 ${b.success}장${b.fail ? ` / 실패 ${b.fail}장` : ''}${b.skippedTraining ? ` / 순차학습스킵 ${b.skippedTraining}장` : ''}${b.skipped ? ` / 프롬프트없음 ${b.skipped}장` : ''}`;
             showToast(msg, b.fail ? 'error' : 'success');
             if (statusEl) statusEl.textContent = msg;
             _setBotLoraRefineBtnDisabled(false);
@@ -73662,21 +73690,21 @@
                 const img = imgs[0];
                 // 복장/외모 소스는 캐릭터 카드의 "수정 프롬프트"(positive).
                 const positive = (img.positive || '').trim();
-                items.push({ char: ch.name, visualCardId: ch.visual_card_id || '', cardLabel: ch.visual_card_label || '', filename: img.filename, positive });
+                const state = _botLoraBatchRefineCardState(ch, positive);
+                items.push({ char: ch.name, visualCardId: ch.visual_card_id || '', cardLabel: ch.visual_card_label || '', filename: img.filename, positive, ...state });
             }
             _botTestSetupCardSel.clear();
             const grid = items.map(it => {
                 const key = [it.char, it.visualCardId, it.filename].map(v => enc(v || '')).join('|');
-                const hasPrompt = !!it.positive;
                 const imgSrc = `/api/bot_lora/training_image/${enc(botLoraCurrentBot)}/${enc(botLoraCurrentProject)}/${enc(it.char)}/${enc(it.filename)}${_botLoraCardQuery(it.visualCardId)}`;
-                const border = hasPrompt ? '1px solid var(--border)' : '1px solid rgba(220,80,80,0.5)';
-                return `<label data-key="${key}" data-enabled="${hasPrompt ? '1' : '0'}" onclick="_toggleBotTestSetupCard(this)" style="position:relative; display:block; width:120px; cursor:${hasPrompt ? 'pointer' : 'not-allowed'}; opacity:${hasPrompt ? '1' : '0.5'}; border:${border}; border-radius:8px; overflow:hidden; background:var(--surface2);">
+                const border = it.enabled ? '1px solid var(--border)' : (it.skipTraining ? '1px solid rgba(140,140,140,0.6)' : '1px solid rgba(220,80,80,0.5)');
+                return `<label data-key="${key}" data-enabled="${it.enabled ? '1' : '0'}" onclick="_toggleBotTestSetupCard(this)" style="position:relative; display:block; width:120px; cursor:${it.enabled ? 'pointer' : 'not-allowed'}; opacity:${it.enabled ? '1' : '0.5'}; border:${border}; border-radius:8px; overflow:hidden; background:var(--surface2);">
                     <img src="${imgSrc}" loading="lazy" style="width:100%; aspect-ratio:1; object-fit:cover; display:block;">
                     <span class="ts-sel-tick" style="position:absolute; top:4px; left:4px; width:18px; height:18px; border-radius:4px; background:var(--accent); border:2px solid #fff; display:none; align-items:center; justify-content:center; color:#fff; font-size:0.7rem; font-weight:700;">✓</span>
                     <div style="padding:4px 6px; font-size:0.68rem; line-height:1.2;">
                         <div style="font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(it.char)} · ${escapeHtml(it.cardLabel || it.visualCardId || '기본 카드')}</div>
                         <div style="color:var(--text-secondary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(it.filename)}</div>
-                        ${hasPrompt ? '' : '<div style="color:var(--error); font-size:0.62rem;">수정 프롬프트 없음</div>'}
+                        ${it.skipTraining ? '<div style="color:var(--text-secondary); font-size:0.62rem;">순차 학습 스킵</div>' : (it.hasPrompt ? '' : '<div style="color:var(--error); font-size:0.62rem;">수정 프롬프트 없음</div>')}
                     </div>
                 </label>`;
             }).join('');
@@ -73743,6 +73771,7 @@
             const chars = botLoraProjectData.characters || [];
             const picked = [];
             let skipped = 0;
+            let skippedTraining = 0;
             for (const key of _botTestSetupCardSel) {
                 const parts = key.split('|');
                 if (parts.length !== 3) continue;
@@ -73753,10 +73782,22 @@
                 const img = ch && (ch.training_images || []).find(i => i.filename === filename);
                 if (!img) { skipped++; continue; }
                 const positive = (img.positive || '').trim();
-                if (!positive) { skipped++; continue; }
+                const state = _botLoraBatchRefineCardState(ch, positive);
+                if (state.skipTraining) {
+                    skippedTraining++;
+                    console.warn(`[BOT_TEST_SETUP] 순차 학습 스킵 카드 정제 제외: ${charName}/${visualCardId || '기본 카드'}/${filename}`);
+                    continue;
+                }
+                if (!state.hasPrompt) { skipped++; continue; }
                 picked.push({ charName, visualCardId, filename, positive });
             }
-            if (picked.length === 0) { showToast(`유효한 카드가 없습니다 (수정 프롬프트 없음 ${skipped}장)`, 'error'); return; }
+            if (picked.length === 0) {
+                const reasons = [];
+                if (skippedTraining) reasons.push(`순차 학습 스킵 ${skippedTraining}장`);
+                if (skipped) reasons.push(`수정 프롬프트 없음 ${skipped}장`);
+                showToast(`유효한 카드가 없습니다${reasons.length ? ` (${reasons.join(' / ')})` : ''}`, 'error');
+                return;
+            }
             _botTestSetupPickedCards = picked;
             closeBotTestSetupCardModal();
             _openBotTestSetupTestModal();
@@ -73768,7 +73809,7 @@
             const tests = (botLoraProjectData && botLoraProjectData.test_images) || [];
             _botTestSetupTestSel.clear();
             const grid = tests.map(img => {
-                const positive = (img.original_positive || img.positive || '').trim();
+                const positive = _loraTestSetupCurrentPositive(img);
                 const hasPrompt = !!positive;
                 const key = enc(img.filename);
                 const imgSrc = `/api/bot_lora/test_image/${enc(botLoraCurrentBot)}/${enc(botLoraCurrentProject)}/${enc(img.filename)}`;
@@ -73850,7 +73891,7 @@
                 const filename = decodeURIComponent(key);
                 const img = tests.find(t => t.filename === filename);
                 if (!img) { skipped++; continue; }
-                const positive = (img.original_positive || img.positive || '').trim();
+                const positive = _loraTestSetupCurrentPositive(img);
                 if (!positive) { skipped++; continue; }
                 pickedTests.push({ filename, positive });
             }
@@ -75260,6 +75301,44 @@
             return `${charName || ''}::${visualCardId || 'legacy'}`;
         }
 
+        const _ALR_PROFILE_LABELS = {solo: '1인 LoRA', group: '다인 LoRA', face: '얼굴 LoRA'};
+
+        function _alrProfileLabel(profile) {
+            return _ALR_PROFILE_LABELS[profile] || profile;
+        }
+
+        function _alrTargetLoras(target, profile) {
+            const card = _visualCardProfileById(target.name, target.visualCardId || '');
+            const overrides = card?.render_overrides || {};
+            if (profile === 'face') {
+                return Array.isArray(overrides.face_loras) ? overrides.face_loras : [];
+            }
+            const key = profile === 'group' ? 'loras_group' : 'loras_solo';
+            if (Array.isArray(overrides[key])) return overrides[key];
+            return Array.isArray(overrides.loras) ? overrides.loras : [];
+        }
+
+        function _alrLoraDisplayName(lora) {
+            const direct = String(lora?.name || lora?.lora_id || '').trim();
+            if (direct) return direct;
+            const path = String(lora?.lora_path || '').trim();
+            return path ? (path.split(/[\\/]/).filter(Boolean).pop() || path) : '이름 없는 LoRA';
+        }
+
+        function _alrTargetStatus(target, profile) {
+            const loras = _alrTargetLoras(target, profile);
+            return {
+                configured: loras.length > 0,
+                count: loras.length,
+                names: loras.map(_alrLoraDisplayName),
+                sources: [...new Set(loras.map(item => item?.source || '직접 지정'))],
+            };
+        }
+
+        function _alrCloneLoras(loras) {
+            return JSON.parse(JSON.stringify(Array.isArray(loras) ? loras : []));
+        }
+
         function _botAutoLoraTargets(bot) {
             const targets = [];
             for (const root of (bot?.characters || [])) {
@@ -75305,11 +75384,21 @@
                 showToast('자동 세팅 가능한 프로필 카드가 없습니다', 'error');
                 return;
             }
+            const checkedTargetsByProfile = {solo: {}, group: {}, face: {}};
+            Object.keys(checkedTargetsByProfile).forEach(profile => {
+                targets.forEach(target => {
+                    checkedTargetsByProfile[profile][target.key] = !_alrTargetStatus(target, profile).configured;
+                });
+            });
             _botAutoLoraState = {
                 step: 1,
                 targets,
-                checkedTargets: {},
+                checkedTargetsByProfile,
+                checkedTargets: checkedTargetsByProfile.solo,
                 profile: 'solo',
+                targetFilter: 'unset',
+                targetSearch: '',
+                sourceFilter: 'all',
                 conflict: 'add',
                 strength: 0.5,
                 tab: 'instance',
@@ -75317,62 +75406,69 @@
                 botProjects: null, botProjectsLoaded: false,
                 botSelectedProject: '', botProjectData: null,
                 loraChecked: {}, // key -> bool (기본 true; false로 해제)
+                reviewPlans: null,
+                executionResults: {},
+                executing: false,
+                completed: false,
             };
+            document.getElementById('bot-auto-lora-overlay')?.remove();
             const overlay = document.createElement('div');
             overlay.id = 'bot-auto-lora-overlay';
             overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:10012; display:flex; align-items:center; justify-content:center;';
             overlay.innerHTML = `
-                <div style="background:var(--surface); border-radius:12px; padding:20px; max-width:1150px; width:96%; height:92vh; max-height:95vh; display:flex; flex-direction:column;">
-                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-                        <h3 style="margin:0;">선택 캐릭터 로라 자동 세팅 <span id="alr-step-label" style="font-size:0.75rem; color:var(--text2); font-weight:normal;">— 1/2 프로필 카드 선택</span></h3>
-                        <button onclick="document.getElementById('bot-auto-lora-overlay').remove()" style="background:none; border:none; color:var(--text); font-size:1.2rem; cursor:pointer;">x</button>
+                <div style="background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:18px; max-width:1220px; width:96%; height:92vh; max-height:95vh; display:flex; flex-direction:column; box-shadow:0 18px 60px rgba(0,0,0,.35);">
+                    <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom:12px;">
+                        <div>
+                            <h3 style="margin:0 0 3px;">선택 캐릭터 LoRA 자동 세팅</h3>
+                            <div id="alr-step-label" style="font-size:.75rem; color:var(--text2);">1/3 · 상태를 확인하고 세팅할 프로필 카드를 선택하세요.</div>
+                        </div>
+                        <button type="button" aria-label="닫기" onclick="document.getElementById('bot-auto-lora-overlay').remove()" style="background:var(--surface2); border:1px solid var(--border); border-radius:7px; color:var(--text); width:32px; height:32px; cursor:pointer;">✕</button>
                     </div>
 
-                    <!-- STEP 1: 캐릭터 선택 -->
                     <div id="alr-step1" style="display:flex; flex-direction:column; flex:1; min-height:0;">
-                        <div style="font-size:0.75rem; color:var(--text2); display:flex; gap:10px; align-items:center; margin-bottom:8px; flex-wrap:wrap;">
-                            <span>프로필 카드 선택 <span id="alr-char-count">0</span> / ${targets.length}</span>
-                            <button onclick="document.querySelectorAll('.alr-char-check').forEach(c=>c.checked=true); _alrSyncCharCount()" style="background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:2px 8px; border-radius:4px; cursor:pointer; font-size:0.7rem;">전체 선택</button>
-                            <button onclick="document.querySelectorAll('.alr-char-check').forEach(c=>c.checked=false); _alrSyncCharCount()" style="background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:2px 8px; border-radius:4px; cursor:pointer; font-size:0.7rem;">전체 해제</button>
+                        <div id="alr-overview" style="display:grid; grid-template-columns:repeat(auto-fit,minmax(110px,1fr)); gap:7px; margin-bottom:10px;"></div>
+                        <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:9px; padding:9px; border:1px solid var(--border); border-radius:9px; background:var(--surface2);">
+                            <span style="font-size:.72rem; color:var(--text2); font-weight:700;">세팅 대상</span>
+                            <button type="button" class="alr-profile-btn" data-profile="solo" onclick="_alrSetProfile('solo')" style="padding:6px 12px; border:1px solid var(--border); border-radius:6px; cursor:pointer; font-weight:700;">1인 LoRA</button>
+                            <button type="button" class="alr-profile-btn" data-profile="group" onclick="_alrSetProfile('group')" style="padding:6px 12px; border:1px solid var(--border); border-radius:6px; cursor:pointer; font-weight:700;">다인 LoRA</button>
+                            <button type="button" class="alr-profile-btn" data-profile="face" onclick="_alrSetProfile('face')" style="padding:6px 12px; border:1px solid var(--border); border-radius:6px; cursor:pointer; font-weight:700;">얼굴 LoRA</button>
+                            <span style="font-size:.68rem; color:var(--text2);">대상을 바꾸면 해당 종류의 미설정 카드가 자동 선택됩니다.</span>
                         </div>
-                        <div id="alr-char-grid" style="overflow-y:auto; flex:1 1 0; min-height:360px; display:flex; flex-wrap:wrap; align-content:flex-start; gap:10px; padding:4px; border:1px solid var(--border); border-radius:8px;"></div>
+                        <div style="display:flex; gap:7px; align-items:center; margin-bottom:8px; flex-wrap:wrap;">
+                            <input id="alr-target-search" type="search" placeholder="캐릭터 또는 카드 이름 검색" oninput="_alrSetTargetSearch(this.value)" style="min-width:230px; flex:1; max-width:380px; padding:7px 9px; border:1px solid var(--border); border-radius:6px; background:var(--surface2); color:var(--text);">
+                            <select id="alr-target-filter" onchange="_alrSetTargetFilter(this.value)" style="padding:7px 9px; border:1px solid var(--border); border-radius:6px; background:var(--surface2); color:var(--text);">
+                                <option value="unset">미설정만</option><option value="configured">설정됨만</option><option value="all">전체</option>
+                            </select>
+                            <button type="button" onclick="_alrSelectTargets('unset')" style="background:var(--accent); border:1px solid var(--accent); color:#fff; padding:6px 10px; border-radius:6px; cursor:pointer; font-size:.72rem; font-weight:700;">미설정 전체 선택</button>
+                            <button type="button" onclick="_alrSelectTargets('visible')" style="background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:6px 10px; border-radius:6px; cursor:pointer; font-size:.72rem;">보이는 카드 선택</button>
+                            <button type="button" onclick="_alrSelectTargets('none')" style="background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:6px 10px; border-radius:6px; cursor:pointer; font-size:.72rem;">선택 해제</button>
+                            <span style="font-size:.74rem; color:var(--text2); margin-left:auto;">선택 <b id="alr-char-count" style="color:var(--text);">0</b> / ${targets.length}</span>
+                        </div>
+                        <div id="alr-char-grid" style="overflow-y:auto; flex:1 1 0; min-height:340px; display:grid; grid-template-columns:repeat(auto-fill,minmax(255px,1fr)); align-content:start; gap:8px; padding:8px; border:1px solid var(--border); border-radius:9px;"></div>
                         <div style="display:flex; justify-content:flex-end; margin-top:10px;">
-                            <button id="alr-continue-btn" onclick="_alrGoStep2()" style="background:#0D47A1; color:#fff; border:none; padding:8px 18px; border-radius:6px; cursor:pointer; font-weight:600;">계속</button>
+                            <button id="alr-continue-btn" onclick="_alrGoStep2()" style="background:#0D47A1; color:#fff; border:none; padding:9px 20px; border-radius:7px; cursor:pointer; font-weight:700;">다음: 자동 매칭 검토</button>
                         </div>
                     </div>
 
-                    <!-- STEP 2: 설정 + 로라 선택 -->
                     <div id="alr-step2" style="display:none; flex-direction:column; flex:1; min-height:0;">
-                        <div style="display:flex; gap:12px; margin-bottom:10px; flex-wrap:wrap;">
-                            <div style="background:var(--surface2); border-radius:8px; padding:6px 10px;">
-                                <div style="font-size:0.7rem; color:var(--text2); margin-bottom:3px;">대상 프로필</div>
-                                <label style="font-size:0.76rem; margin-right:6px;"><input type="radio" name="alr-profile" value="solo" checked onchange="_botAutoLoraState.profile=this.value"> solo</label>
-                                <label style="font-size:0.76rem; margin-right:6px;"><input type="radio" name="alr-profile" value="group" onchange="_botAutoLoraState.profile=this.value"> group</label>
-                                <label style="font-size:0.76rem;"><input type="radio" name="alr-profile" value="face" onchange="_botAutoLoraState.profile=this.value"> face</label>
-                            </div>
-                            <div style="background:var(--surface2); border-radius:8px; padding:6px 10px;">
-                                <div style="font-size:0.7rem; color:var(--text2); margin-bottom:3px;">로라 추가 동작</div>
-                                <label style="font-size:0.76rem; margin-right:6px;"><input type="radio" name="alr-conflict" value="add" checked onchange="_botAutoLoraState.conflict=this.value"> 추가</label>
-                                <label style="font-size:0.76rem;"><input type="radio" name="alr-conflict" value="overwrite" onchange="_botAutoLoraState.conflict=this.value"> 이미 세팅된 로라를 버리고 추가</label>
-                            </div>
-                            <div style="background:var(--surface2); border-radius:8px; padding:6px 10px; min-width:150px;">
-                                <div style="font-size:0.7rem; color:var(--text2); margin-bottom:3px;">임포트 강도: <span id="alr-strength-val">0.5</span></div>
-                                <input type="range" min="0" max="1" step="0.05" value="0.5" oninput="_botAutoLoraState.strength=parseFloat(this.value); document.getElementById('alr-strength-val').textContent=this.value" style="width:100%;">
-                            </div>
+                        <div style="display:flex; gap:9px; margin-bottom:9px; flex-wrap:wrap;">
+                            <div style="background:rgba(13,71,161,.12); border:1px solid rgba(59,130,246,.35); border-radius:8px; padding:7px 11px; min-width:145px;"><div style="font-size:.67rem; color:var(--text2);">세팅 대상</div><div id="alr-selected-profile-label" style="font-size:.82rem; font-weight:800;"></div></div>
+                            <div style="background:var(--surface2); border:1px solid var(--border); border-radius:8px; padding:7px 11px;"><div style="font-size:.67rem; color:var(--text2); margin-bottom:3px;">기존 설정 처리</div><label style="font-size:.76rem; margin-right:9px;"><input type="radio" name="alr-conflict" value="add" checked onchange="_alrSetConflict(this.value)"> 기존에 추가</label><label style="font-size:.76rem;"><input type="radio" name="alr-conflict" value="overwrite" onchange="_alrSetConflict(this.value)"> 매칭된 LoRA로 교체</label></div>
+                            <div style="background:var(--surface2); border:1px solid var(--border); border-radius:8px; padding:7px 11px; min-width:175px;"><div style="font-size:.67rem; color:var(--text2); margin-bottom:3px;">적용 강도: <b id="alr-strength-val" style="color:var(--text);">0.50</b></div><input type="range" min="0" max="1" step="0.05" value="0.5" oninput="_alrSetStrength(this.value)" style="width:100%;"></div>
                         </div>
-
-                        <div style="display:flex; gap:0; margin-bottom:8px; border:1px solid var(--border); border-radius:8px; overflow:hidden;">
-                            <button onclick="switchAutoLoraTab('instance')" id="alr-tab-instance" style="flex:1; padding:7px; border:none; background:var(--surface2); color:var(--text); cursor:pointer; font-size:0.8rem; font-weight:600;">인스턴스 (⭐ 이름 매칭)</button>
-                            <button onclick="switchAutoLoraTab('bot')" id="alr-tab-bot" style="flex:1; padding:7px; border:none; background:var(--surface2); color:var(--text); cursor:pointer; font-size:0.8rem; font-weight:600;">봇 (프로젝트)</button>
+                        <div style="display:flex; gap:0; margin-bottom:7px; border:1px solid var(--border); border-radius:8px; overflow:hidden;">
+                            <button onclick="switchAutoLoraTab('instance')" id="alr-tab-instance" style="flex:1; padding:8px; border:none; background:var(--surface2); color:var(--text); cursor:pointer; font-size:.8rem; font-weight:700;">인스턴스 LoRA 자동 매칭</button>
+                            <button onclick="switchAutoLoraTab('bot')" id="alr-tab-bot" style="flex:1; padding:8px; border:none; background:var(--surface2); color:var(--text); cursor:pointer; font-size:.8rem; font-weight:700;">현재 봇 학습 프로젝트</button>
                         </div>
+                        <div style="display:flex; align-items:center; gap:8px; margin-bottom:7px; flex-wrap:wrap;"><div id="alr-source-summary" style="font-size:.73rem; color:var(--text2); flex:1;"></div><select id="alr-source-filter" onchange="_alrSetSourceFilter(this.value)" style="padding:6px 8px; border:1px solid var(--border); border-radius:6px; background:var(--surface2); color:var(--text); font-size:.72rem;"><option value="all">선택 대상 전체</option><option value="matched">매칭됨만</option><option value="unmatched">매칭 없음만</option></select></div>
+                        <div id="alr-tab-content" style="flex:1 1 0; overflow-y:auto; border:1px solid var(--border); border-radius:9px; padding:9px; min-height:300px;"></div>
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-top:10px; gap:8px;"><div id="alr-exec-status" style="font-size:.72rem; color:var(--text2); flex:1;"></div><button onclick="_alrBackStep1()" style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:8px 16px; border-radius:6px; cursor:pointer;">뒤로</button><button onclick="_alrGoStep3()" style="background:#0D47A1; color:#fff; border:none; padding:8px 16px; border-radius:6px; cursor:pointer; font-weight:700;">다음: 변경 확인</button></div>
+                    </div>
 
-                        <div id="alr-tab-content" style="flex:1 1 0; overflow-y:auto; border:1px solid var(--border); border-radius:8px; padding:10px; min-height:300px;"></div>
-
-                        <div style="display:flex; justify-content:space-between; align-items:center; margin-top:10px; gap:8px;">
-                            <div id="alr-exec-status" style="font-size:0.72rem; color:var(--text2); flex:1;"></div>
-                            <button onclick="_alrBackStep1()" style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:8px 16px; border-radius:6px; cursor:pointer;">뒤로</button>
-                            <button onclick="executeBotAutoLoraSetup()" style="background:#0D47A1; color:#fff; border:none; padding:8px 16px; border-radius:6px; cursor:pointer; font-weight:600;">자동 세팅 실행</button>
-                        </div>
+                    <div id="alr-step3" style="display:none; flex-direction:column; flex:1; min-height:0;">
+                        <div id="alr-review-summary" style="margin-bottom:8px;"></div>
+                        <div id="alr-review-list" style="flex:1 1 0; min-height:320px; overflow-y:auto; border:1px solid var(--border); border-radius:9px; padding:9px;"></div>
+                        <div style="display:flex; justify-content:flex-end; align-items:center; gap:8px; margin-top:10px;"><div id="alr-review-status" style="font-size:.72rem; color:var(--text2); margin-right:auto;"></div><button id="alr-review-back-btn" onclick="_alrBackStep2()" style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:8px 16px; border-radius:6px; cursor:pointer;">뒤로</button><button id="alr-review-close-btn" onclick="document.getElementById('bot-auto-lora-overlay').remove()" style="display:none; background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:8px 16px; border-radius:6px; cursor:pointer;">닫기</button><button id="alr-review-execute-btn" onclick="executeBotAutoLoraSetup()" style="background:#0D47A1; color:#fff; border:none; padding:8px 18px; border-radius:6px; cursor:pointer; font-weight:700;">확인 후 자동 세팅 실행</button></div>
                     </div>
                 </div>`;
             document.body.appendChild(overlay);
@@ -75380,37 +75476,151 @@
         }
 
         // ── STEP 1 ──
+        function _alrOverviewCard(label, value, tone = 'var(--text)') {
+            return `<div style="padding:8px 10px; border:1px solid var(--border); border-radius:8px; background:var(--surface2);"><div style="font-size:.65rem; color:var(--text2);">${escHtml(label)}</div><div style="font-size:1rem; font-weight:800; color:${tone}; margin-top:2px;">${value}</div></div>`;
+        }
+
+        function _alrRenderOverview() {
+            const el = document.getElementById('alr-overview');
+            if (!el || !_botAutoLoraState) return;
+            const targets = _botAutoLoraState.targets;
+            const counts = {};
+            ['solo', 'group', 'face'].forEach(profile => {
+                counts[profile] = targets.filter(target => _alrTargetStatus(target, profile).configured).length;
+            });
+            const empty = targets.filter(target => ['solo', 'group', 'face'].every(profile => !_alrTargetStatus(target, profile).configured)).length;
+            el.innerHTML = [
+                _alrOverviewCard('전체 프로필 카드', targets.length),
+                _alrOverviewCard('1인 설정됨', `${counts.solo} / ${targets.length}`, counts.solo ? '#22c55e' : 'var(--text2)'),
+                _alrOverviewCard('다인 설정됨', `${counts.group} / ${targets.length}`, counts.group ? '#22c55e' : 'var(--text2)'),
+                _alrOverviewCard('얼굴 설정됨', `${counts.face} / ${targets.length}`, counts.face ? '#22c55e' : 'var(--text2)'),
+                _alrOverviewCard('완전 미설정', empty, empty ? '#f59e0b' : '#22c55e'),
+            ].join('');
+        }
+
+        function _alrStatusPill(profile, status, active) {
+            const color = status.configured ? '#22c55e' : '#f59e0b';
+            const background = status.configured ? 'rgba(34,197,94,.13)' : 'rgba(245,158,11,.12)';
+            const title = status.configured ? `${status.names.join(', ')} · ${status.sources.join(', ')}` : '등록된 LoRA 없음';
+            const short = profile === 'solo' ? '1인' : profile === 'group' ? '다인' : '얼굴';
+            return `<span title="${escAttr(title)}" style="padding:3px 6px; border:1px solid ${active ? color : 'var(--border)'}; border-radius:999px; background:${background}; color:${color}; font-size:.63rem; font-weight:${active ? '800' : '600'}; white-space:nowrap;">${short} ${status.configured ? status.count + '개' : '미설정'}</span>`;
+        }
+
+        function _alrTargetMatchesView(target) {
+            if (!_botAutoLoraState) return false;
+            const query = _botAutoLoraState.targetSearch.trim().toLocaleLowerCase();
+            const haystack = `${target.name} ${target.visualCardLabel} ${target.visualCardId}`.toLocaleLowerCase();
+            if (query && !haystack.includes(query)) return false;
+            const configured = _alrTargetStatus(target, _botAutoLoraState.profile).configured;
+            if (_botAutoLoraState.targetFilter === 'unset' && configured) return false;
+            if (_botAutoLoraState.targetFilter === 'configured' && !configured) return false;
+            return true;
+        }
+
         function _renderAutoLoraStep1() {
             const grid = document.getElementById('alr-char-grid');
             if (!grid || !_botAutoLoraState) return;
+            _alrRenderOverview();
+            document.querySelectorAll('.alr-profile-btn').forEach(btn => {
+                const active = btn.dataset.profile === _botAutoLoraState.profile;
+                btn.style.background = active ? 'var(--accent)' : 'var(--surface)';
+                btn.style.color = active ? '#fff' : 'var(--text)';
+                btn.style.borderColor = active ? 'var(--accent)' : 'var(--border)';
+            });
             const enc = encodeURIComponent;
-            grid.innerHTML = _botAutoLoraState.targets.map(target => {
+            const visibleTargets = _botAutoLoraState.targets.map(target => target).filter(_alrTargetMatchesView);
+            if (visibleTargets.length === 0) {
+                grid.innerHTML = '<div style="grid-column:1/-1; padding:28px; text-align:center; color:var(--text2);">현재 검색·필터 조건에 맞는 프로필 카드가 없습니다.</div>';
+                _alrSyncCharCount();
+                return;
+            }
+            grid.innerHTML = visibleTargets.map(target => {
                 const checked = _botAutoLoraState.checkedTargets[target.key] ? 'checked' : '';
+                const current = _alrTargetStatus(target, _botAutoLoraState.profile);
+                const solo = _alrTargetStatus(target, 'solo');
+                const group = _alrTargetStatus(target, 'group');
+                const face = _alrTargetStatus(target, 'face');
                 const img = target.rep
-                    ? `<img src="/api/bot_lora/char_image/${enc(botCurrentBot)}/${enc(target.name)}/${enc(target.rep)}" loading="lazy" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';" style="width:160px; height:160px; object-fit:cover; display:block; border-radius:6px;"><div style="width:160px; height:160px; display:none; align-items:center; justify-content:center; background:var(--surface2); border-radius:6px; font-size:1.4rem;">👤</div>`
-                    : `<div style="width:160px; height:160px; display:flex; align-items:center; justify-content:center; background:var(--surface2); border-radius:6px; font-size:1.4rem;">👤</div>`;
-                return `<label style="display:block; width:172px; max-width:172px; height:200px; padding:6px; border:1px solid var(--border); border-radius:8px; background:var(--surface2); cursor:pointer; box-sizing:border-box; overflow:hidden;">
+                    ? `<img src="/api/bot_lora/char_image/${enc(botCurrentBot)}/${enc(target.name)}/${enc(target.rep)}" loading="lazy" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';" style="width:84px; height:84px; object-fit:cover; display:block; border-radius:6px; flex-shrink:0;"><div style="width:84px; height:84px; display:none; align-items:center; justify-content:center; background:var(--surface); border-radius:6px; font-size:1.4rem; flex-shrink:0;">👤</div>`
+                    : `<div style="width:84px; height:84px; display:flex; align-items:center; justify-content:center; background:var(--surface); border-radius:6px; font-size:1.4rem; flex-shrink:0;">👤</div>`;
+                const names = current.configured ? current.names.slice(0, 2).join(', ') : `${_alrProfileLabel(_botAutoLoraState.profile)}가 비어 있습니다`;
+                return `<label style="display:flex; gap:9px; padding:8px; border:1px solid ${checked ? 'var(--accent)' : 'var(--border)'}; border-radius:8px; background:${checked ? 'color-mix(in srgb,var(--accent) 9%,var(--surface2))' : 'var(--surface2)'}; cursor:pointer; box-sizing:border-box; min-width:0;">
+                    <input type="checkbox" class="alr-char-check" data-target-key="${escAttr(target.key)}" ${checked} onchange="_alrToggleTarget(this.dataset.targetKey,this.checked)" style="width:17px; height:17px; cursor:pointer; flex-shrink:0; margin-top:2px;">
                     ${img}
-                    <div style="width:160px; max-width:160px; margin-top:4px; display:flex; align-items:center; gap:4px;">
-                        <input type="checkbox" class="alr-char-check" data-target-key="${escAttr(target.key)}" ${checked} onchange="_alrSyncCharCount()" style="cursor:pointer; flex-shrink:0;">
-                        <span style="font-size:0.74rem; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${escAttr(target.name)} · [${target.visualCardIndex}] ${escAttr(target.visualCardLabel)}">${escHtml(target.name)} · [${target.visualCardIndex}] ${escHtml(target.visualCardLabel)}</span>
-                    </div>
+                    <div style="min-width:0; flex:1;"><div style="font-size:.77rem; font-weight:800; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${escAttr(target.name)}">${escHtml(target.name)}</div><div style="font-size:.67rem; color:var(--text2); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">[${target.visualCardIndex}] ${escHtml(target.visualCardLabel)}</div><div style="display:flex; gap:3px; flex-wrap:wrap; margin:6px 0 5px;">${_alrStatusPill('solo', solo, _botAutoLoraState.profile === 'solo')}${_alrStatusPill('group', group, _botAutoLoraState.profile === 'group')}${_alrStatusPill('face', face, _botAutoLoraState.profile === 'face')}</div><div style="font-size:.63rem; color:${current.configured ? 'var(--text2)' : '#f59e0b'}; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escAttr(current.names.join(', '))}">${escHtml(names)}</div></div>
                 </label>`;
             }).join('');
             _alrSyncCharCount();
         }
+
+        function _alrSetProfile(profile) {
+            if (!_botAutoLoraState || !_botAutoLoraState.checkedTargetsByProfile[profile]) return;
+            _alrSyncCheckedTargets();
+            _botAutoLoraState.profile = profile;
+            _botAutoLoraState.checkedTargets = _botAutoLoraState.checkedTargetsByProfile[profile];
+            _botAutoLoraState.targetFilter = 'unset';
+            const filter = document.getElementById('alr-target-filter');
+            if (filter) filter.value = 'unset';
+            _renderAutoLoraStep1();
+        }
+
+        function _alrSetTargetSearch(value) {
+            if (!_botAutoLoraState) return;
+            _alrSyncCheckedTargets();
+            _botAutoLoraState.targetSearch = String(value || '');
+            _renderAutoLoraStep1();
+            const input = document.getElementById('alr-target-search');
+            if (input) { input.value = _botAutoLoraState.targetSearch; input.focus(); }
+        }
+
+        function _alrSetTargetFilter(value) {
+            if (!_botAutoLoraState) return;
+            _alrSyncCheckedTargets();
+            _botAutoLoraState.targetFilter = value;
+            _renderAutoLoraStep1();
+        }
+
+        function _alrToggleTarget(targetKey, checked) {
+            if (!_botAutoLoraState) return;
+            _botAutoLoraState.checkedTargets[targetKey] = !!checked;
+            _renderAutoLoraStep1();
+        }
+
+        function _alrSelectTargets(mode) {
+            if (!_botAutoLoraState) return;
+            _alrSyncCheckedTargets();
+            if (mode === 'none') {
+                _botAutoLoraState.targets.forEach(target => { _botAutoLoraState.checkedTargets[target.key] = false; });
+            } else if (mode === 'unset') {
+                _botAutoLoraState.targets.forEach(target => {
+                    _botAutoLoraState.checkedTargets[target.key] = !_alrTargetStatus(target, _botAutoLoraState.profile).configured;
+                });
+            } else if (mode === 'visible') {
+                _botAutoLoraState.targets.filter(_alrTargetMatchesView).forEach(target => {
+                    _botAutoLoraState.checkedTargets[target.key] = true;
+                });
+            }
+            _renderAutoLoraStep1();
+        }
+
         function _alrSyncCharCount() {
-            const n = document.querySelectorAll('.alr-char-check:checked').length;
+            const n = _alrCheckedTargets().length;
             const el = document.getElementById('alr-char-count');
             if (el) el.textContent = String(n);
             const btn = document.getElementById('alr-continue-btn');
-            if (btn) btn.disabled = n === 0;
+            if (btn) {
+                btn.disabled = n === 0;
+                btn.style.opacity = n === 0 ? '.45' : '1';
+                btn.style.cursor = n === 0 ? 'not-allowed' : 'pointer';
+            }
         }
         function _alrSyncCheckedTargets() {
             if (!_botAutoLoraState) return;
-            const set = new Set([...document.querySelectorAll('.alr-char-check:checked')].map(c => c.dataset.targetKey));
+            const rendered = [...document.querySelectorAll('.alr-char-check')];
+            const set = new Set(rendered.filter(c => c.checked).map(c => c.dataset.targetKey));
+            const renderedKeys = new Set(rendered.map(c => c.dataset.targetKey));
             _botAutoLoraState.targets.forEach(target => {
-                _botAutoLoraState.checkedTargets[target.key] = set.has(target.key);
+                if (renderedKeys.has(target.key)) _botAutoLoraState.checkedTargets[target.key] = set.has(target.key);
             });
         }
         function _alrCheckedTargets() {
@@ -75424,15 +75634,19 @@
             _botAutoLoraState.step = 2;
             document.getElementById('alr-step1').style.display = 'none';
             document.getElementById('alr-step2').style.display = 'flex';
-            document.getElementById('alr-step-label').textContent = '— 2/2 설정 & 로라 선택';
+            document.getElementById('alr-step3').style.display = 'none';
+            document.getElementById('alr-step-label').textContent = '2/3 · 자동 매칭된 LoRA를 검토하고 적용 방식을 정하세요.';
+            document.getElementById('alr-selected-profile-label').textContent = _alrProfileLabel(_botAutoLoraState.profile);
+            const status = document.getElementById('alr-exec-status');
+            if (status) status.textContent = '';
             switchAutoLoraTab('instance');
         }
         function _alrBackStep1() {
-            _alrSyncCheckedTargets();
             _botAutoLoraState.step = 1;
             document.getElementById('alr-step2').style.display = 'none';
+            document.getElementById('alr-step3').style.display = 'none';
             document.getElementById('alr-step1').style.display = 'flex';
-            document.getElementById('alr-step-label').textContent = '— 1/2 프로필 카드 선택';
+            document.getElementById('alr-step-label').textContent = '1/3 · 상태를 확인하고 세팅할 프로필 카드를 선택하세요.';
             _renderAutoLoraStep1();
         }
 
@@ -75444,6 +75658,23 @@
             const d = el.dataset;
             const key = d.src === 'i' ? _alrIKey(d.targetKey, d.lora, d.base) : _alrBKey(d.targetKey, d.lora);
             _botAutoLoraState.loraChecked[key] = el.checked;
+            _alrUpdateSourceSummary();
+        }
+        function _alrSetConflict(value) {
+            if (!_botAutoLoraState) return;
+            _botAutoLoraState.conflict = value;
+            _alrUpdateSourceSummary();
+        }
+        function _alrSetStrength(value) {
+            if (!_botAutoLoraState) return;
+            _botAutoLoraState.strength = Number.parseFloat(value);
+            const label = document.getElementById('alr-strength-val');
+            if (label) label.textContent = _botAutoLoraState.strength.toFixed(2);
+        }
+        function _alrSetSourceFilter(value) {
+            if (!_botAutoLoraState) return;
+            _botAutoLoraState.sourceFilter = value;
+            _renderAutoLoraTab();
         }
 
         function switchAutoLoraTab(tab) {
@@ -75465,268 +75696,441 @@
             else _renderAutoLoraBot(targets, c);
         }
 
+        function _alrInstanceCandidates(target) {
+            if (!_botAutoLoraState?.instanceLoaded) return [];
+            const enc = encodeURIComponent;
+            const items = (_botAutoLoraState.instanceItems || []).filter(item => _isInstanceLoraRecommended(item, target.name));
+            const candidates = [];
+            items.forEach(item => {
+                Object.entries(item.profiles || {}).forEach(([baseKey, profileData]) => {
+                    if (!profileData?.lora_path) {
+                        console.error('[BOT_AUTO_LORA] 인스턴스 LoRA 경로 없음', {target: target.key, loraId: item.lora_id, baseKey});
+                        return;
+                    }
+                    const previewUrl = item.first_image ? `/api/instance_lora/image/${enc(item.lora_id)}/${enc(item.first_image)}` : '';
+                    candidates.push({
+                        key: _alrIKey(target.key, item.lora_id, baseKey),
+                        sourceType: 'i', sourceId: item.lora_id, baseKey, previewUrl,
+                        lora: {
+                            source: 'instance', name: `${item.lora_id} (${baseKey})`, character: 'instance',
+                            lora_path: profileData.lora_path, strength: _botAutoLoraState.strength,
+                            preview_url: previewUrl, trigger: item.trigger || '', BASE: baseKey, lora_id: item.lora_id,
+                        },
+                    });
+                });
+            });
+            return candidates;
+        }
+
+        function _alrBotCandidates(target) {
+            const project = _botAutoLoraState?.botProjectData;
+            if (!project || !_botAutoLoraState.botSelectedProject) return [];
+            const matched = _findBestBotProjectCharacter(project.characters || [], target.name, target.visualCardId);
+            if (!matched) return [];
+            const sessions = (matched.trained_sessions || []).filter(session => !!session.representative);
+            const priorities = sessions.filter(session => session.priority_rank && session.priority_rank > 0)
+                .sort((a, b) => (a.priority_rank || 999) - (b.priority_rank || 999));
+            const representative = priorities[0] || sessions[0];
+            if (!representative) return [];
+            let representativeData = {};
+            try {
+                representativeData = typeof representative.representative === 'string'
+                    ? JSON.parse(representative.representative)
+                    : (representative.representative || {});
+            } catch (error) {
+                console.error('[BOT_AUTO_LORA] 대표 LoRA 정보 해석 실패', {target: target.key, session: representative.name, error});
+                return [];
+            }
+            if (!representativeData.safetensors) {
+                console.error('[BOT_AUTO_LORA] 대표 LoRA 파일명 없음', {target: target.key, session: representative.name});
+                return [];
+            }
+            const baseKey = (project.training_config && project.training_config.profile) || 'anima';
+            const loraPath = [botCurrentBot, 'Lora', _botAutoLoraState.botSelectedProject, matched.name]
+                .concat(matched.visual_card_id ? ['_visual_profiles', matched.visual_card_id] : [])
+                .concat([representative.name, representativeData.safetensors]).join('\\');
+            return [{
+                key: _alrBKey(target.key, loraPath), sourceType: 'b', sourceId: loraPath,
+                baseKey, previewUrl: representative.preview_url || '', sessionName: representative.name,
+                matchedName: matched.name, matchedCardLabel: matched.visual_card_label || matched.visual_card_id || '기본 카드',
+                lora: {
+                    source: 'bot', name: matched.name, bot_name: botCurrentBot,
+                    project_name: _botAutoLoraState.botSelectedProject, character: matched.name,
+                    visual_card_id: matched.visual_card_id || '', visual_card_label: matched.visual_card_label || '',
+                    lora_path: loraPath, strength: _botAutoLoraState.strength,
+                    preview_url: representative.preview_url || '', trigger: matched.trigger || matched.name, BASE: baseKey,
+                },
+            }];
+        }
+
+        function _alrCandidates(target) {
+            return _botAutoLoraState?.tab === 'bot' ? _alrBotCandidates(target) : _alrInstanceCandidates(target);
+        }
+
+        function _alrSourceTargets(targets) {
+            const filter = _botAutoLoraState?.sourceFilter || 'all';
+            if (filter === 'all') return targets;
+            return targets.filter(target => {
+                const matched = _alrCandidates(target).length > 0;
+                return filter === 'matched' ? matched : !matched;
+            });
+        }
+
+        function _alrUpdateSourceSummary() {
+            const el = document.getElementById('alr-source-summary');
+            if (!el || !_botAutoLoraState) return;
+            const targets = _alrCheckedTargets();
+            let matched = 0;
+            let selected = 0;
+            targets.forEach(target => {
+                const candidates = _alrCandidates(target);
+                if (candidates.length) matched++;
+                selected += candidates.filter(candidate => _alrLoraIsChecked(candidate.key)).length;
+            });
+            const unmatched = targets.length - matched;
+            el.innerHTML = `대상 <b style="color:var(--text)">${targets.length}</b> · 매칭됨 <b style="color:#22c55e">${matched}</b> · 매칭 없음 <b style="color:${unmatched ? '#f59e0b' : 'var(--text2)'}">${unmatched}</b> · 적용 후보 <b style="color:var(--text)">${selected}</b>`;
+        }
+
         async function _renderAutoLoraInstance(targets, c) {
             if (!_botAutoLoraState.instanceLoaded) {
                 c.innerHTML = '<div style="text-align:center; color:var(--text2); padding:12px;">로딩중...</div>';
                 try {
                     const resp = await fetch('/api/instance_lora/for_picker');
                     const data = await resp.json();
-                    if (!data.success) { c.innerHTML = '<div style="color:var(--error);">인스턴스 로라 로드 실패: ' + escapeHtml(data.error || '응답 실패') + '</div>'; return; }
+                    if (!data.success) {
+                        console.error('[BOT_AUTO_LORA] 인스턴스 LoRA 로드 실패', {error: data.error, data});
+                        c.innerHTML = '<div style="color:var(--error);">인스턴스 로라 로드 실패: ' + escapeHtml(data.error || '응답 실패') + '</div>';
+                        return;
+                    }
                     _botAutoLoraState.instanceItems = data.items || [];
                     _botAutoLoraState.instanceLoaded = true;
                 } catch (e) {
+                    console.error('[BOT_AUTO_LORA] 인스턴스 LoRA 로드 예외', e);
                     c.innerHTML = '<div style="color:var(--error);">인스턴스 로라 로드 실패: ' + escapeHtml(e.message) + '</div>'; return;
                 }
             }
-            const items = _botAutoLoraState.instanceItems || [];
-            const enc = encodeURIComponent;
-            c.innerHTML = '<div style="font-size:0.72rem; color:var(--text2); margin-bottom:6px;">체크된 로라만 선택한 프로필 카드에 임포트됩니다 (기본: 캐릭터 이름과 lora_id/trigger 매칭).</div>' + targets.map(target => {
-                const cn = target.name;
-                const matched = items.filter(it => _isInstanceLoraRecommended(it, cn));
-                let body;
-                if (matched.length === 0) {
-                    body = '<div style="font-size:0.7rem; color:var(--warning);">매칭된 인스턴스 로라 없음</div>';
-                } else {
-                    body = matched.map(it => {
-                        let prev = '';
-                        if (it.first_image) prev = `/api/instance_lora/image/${enc(it.lora_id)}/${enc(it.first_image)}`;
-                        const profs = Object.keys(it.profiles || {});
-                        return profs.map(bk => {
-                            const key = _alrIKey(target.key, it.lora_id, bk);
-                            const chk = _alrLoraIsChecked(key) ? 'checked' : '';
-                            const img = prev ? `<img src="${escapeHtml(prev)}" loading="lazy" onerror="this.style.display='none'" style="width:48px; height:48px; object-fit:cover; border-radius:4px; flex-shrink:0;">` : '<div style="width:48px; height:48px; display:flex; align-items:center; justify-content:center; background:var(--surface2); border-radius:4px; flex-shrink:0;">⚡</div>';
-                            return `<label style="display:flex; align-items:center; gap:6px; padding:4px 6px; border:1px solid var(--border); border-radius:5px; background:var(--surface2); cursor:pointer; margin-top:3px;">
-                                ${img}
-                                <input type="checkbox" data-src="i" data-target-key="${escAttr(target.key)}" data-lora="${escAttr(it.lora_id)}" data-base="${escAttr(bk)}" ${chk} onchange="_alrLoraOnChange(this)" style="cursor:pointer;">
-                                <span style="font-size:0.7rem;"><b>⭐ ${escHtml(it.lora_id)}</b> <span style="color:var(--text2);">(${bk})</span><br><span style="color:var(--text2);">${escHtml(it.trigger || '')}</span></span>
-                            </label>`;
-                        }).join('');
+            if (_botAutoLoraState.tab !== 'instance') {
+                console.warn('[BOT_AUTO_LORA] 인스턴스 로드 완료 후 탭이 변경되어 렌더링 건너뜀');
+                _renderAutoLoraTab();
+                return;
+            }
+            const visibleTargets = _alrSourceTargets(targets);
+            const rows = visibleTargets.map(target => {
+                const candidates = _alrInstanceCandidates(target);
+                const current = _alrTargetStatus(target, _botAutoLoraState.profile);
+                const body = candidates.length === 0
+                    ? '<div style="padding:9px; border-radius:6px; background:rgba(245,158,11,.08); color:#f59e0b; font-size:.7rem;">자동 매칭되는 인스턴스 LoRA가 없습니다. 이 카드는 실행 시 건너뜁니다.</div>'
+                    : candidates.map(candidate => {
+                        const checked = _alrLoraIsChecked(candidate.key) ? 'checked' : '';
+                        const image = candidate.previewUrl
+                            ? `<img src="${escapeHtml(candidate.previewUrl)}" loading="lazy" onerror="this.style.display='none'" style="width:50px;height:50px;object-fit:cover;border-radius:5px;flex-shrink:0;">`
+                            : '<div style="width:50px;height:50px;display:flex;align-items:center;justify-content:center;background:var(--surface);border-radius:5px;flex-shrink:0;">⚡</div>';
+                        return `<label style="display:flex;align-items:center;gap:7px;padding:5px 7px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);cursor:pointer;margin-top:4px;">${image}<input type="checkbox" data-src="i" data-target-key="${escAttr(target.key)}" data-lora="${escAttr(candidate.sourceId)}" data-base="${escAttr(candidate.baseKey)}" ${checked} onchange="_alrLoraOnChange(this)" style="width:17px;height:17px;cursor:pointer;"><span style="font-size:.71rem;"><b>⭐ ${escHtml(candidate.sourceId)}</b> <span style="color:var(--text2);">${escHtml(candidate.baseKey)}</span><br><span style="color:var(--text2);">${escHtml(candidate.lora.trigger || '트리거 없음')}</span></span></label>`;
                     }).join('');
-                }
-                return `<div style="border:1px solid var(--border); border-radius:6px; padding:6px 8px; margin-bottom:6px;">
-                    <div style="font-size:0.8rem; font-weight:600; margin-bottom:3px;">${escHtml(cn)} · [${target.visualCardIndex}] ${escHtml(target.visualCardLabel)} <span style="color:var(--text2); font-weight:normal;">— ${matched.length}개 매칭</span></div>
-                    ${body}
-                </div>`;
+                return `<div style="border:1px solid var(--border);border-radius:8px;padding:7px 9px;margin-bottom:7px;"><div style="display:flex;justify-content:space-between;gap:8px;margin-bottom:5px;"><div style="font-size:.78rem;font-weight:750;">${escHtml(target.name)} · [${target.visualCardIndex}] ${escHtml(target.visualCardLabel)}</div><span style="font-size:.65rem;color:${current.configured ? '#22c55e' : '#f59e0b'};white-space:nowrap;">현재 ${current.configured ? current.count + '개 설정' : '미설정'}</span></div>${body}</div>`;
             }).join('');
+            c.innerHTML = '<div style="font-size:.71rem;color:var(--text2);margin-bottom:7px;">이름과 트리거가 대응되는 후보를 자동으로 골랐습니다. 체크된 후보만 다음 단계의 변경안에 포함됩니다.</div>' + (rows || '<div style="text-align:center;color:var(--text2);padding:28px;">현재 필터에 맞는 대상이 없습니다.</div>');
+            _alrUpdateSourceSummary();
         }
 
         async function _renderAutoLoraBot(targets, c) {
-            const header = '<div style="font-size:0.72rem; color:var(--text2); margin-bottom:6px;">봇: <b>' + escHtml(botCurrentBot) + '</b> (고정) — 프로젝트를 선택하면 그 안에서 캐릭터 이름 매칭 representative 로라를 가져옵니다.</div>';
+            const header = '<div style="font-size:.71rem; color:var(--text2); margin-bottom:7px;">현재 봇 <b>' + escHtml(botCurrentBot) + '</b>의 학습 프로젝트에서 프로필 카드별 대표 LoRA를 자동 매칭합니다.</div>';
             if (!_botAutoLoraState.botProjectsLoaded) {
                 c.innerHTML = header + '<div style="text-align:center; color:var(--text2); padding:12px;">프로젝트 로딩중...</div>';
                 try {
                     const resp = await fetchJSON('/api/bot_lora/projects?bot=' + encodeURIComponent(botCurrentBot));
-                    if (!resp.success) { c.innerHTML = header + '<div style="color:var(--error);">프로젝트 로드 실패: ' + escapeHtml(resp.error || '응답 실패') + '</div>'; return; }
+                    if (!resp.success) {
+                        console.error('[BOT_AUTO_LORA] 봇 학습 프로젝트 로드 실패', {error: resp.error, resp});
+                        c.innerHTML = header + '<div style="color:var(--error);">프로젝트 로드 실패: ' + escapeHtml(resp.error || '응답 실패') + '</div>';
+                        return;
+                    }
                     _botAutoLoraState.botProjects = resp.projects || [];
                     _botAutoLoraState.botProjectsLoaded = true;
                 } catch (e) {
+                    console.error('[BOT_AUTO_LORA] 봇 학습 프로젝트 로드 예외', e);
                     c.innerHTML = header + '<div style="color:var(--error);">프로젝트 로드 실패: ' + escapeHtml(e.message) + '</div>'; return;
                 }
             }
+            if (_botAutoLoraState.tab !== 'bot') {
+                console.warn('[BOT_AUTO_LORA] 봇 프로젝트 로드 완료 후 탭이 변경되어 렌더링 건너뜀');
+                _renderAutoLoraTab();
+                return;
+            }
             const projects = _botAutoLoraState.botProjects || [];
             let html = header;
-            html += '<div style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px;">';
             if (projects.length === 0) {
-                html += '<div style="color:var(--warning); font-size:0.72rem;">학습 프로젝트가 없습니다</div>';
+                html += '<div style="color:var(--warning); font-size:.72rem; margin-bottom:10px;">학습 프로젝트가 없습니다.</div>';
             } else {
-                projects.forEach(p => {
-                    const sel = _botAutoLoraState.botSelectedProject === p.name;
-                    html += `<button onclick="selectAutoLoraBotProject('${escAttr(p.name)}')" style="padding:4px 10px; border:1px solid ${sel ? 'var(--accent)' : 'var(--border)'}; background:${sel ? 'var(--accent)' : 'var(--surface2)'}; color:${sel ? '#fff' : 'var(--text)'}; border-radius:4px; cursor:pointer; font-size:0.72rem;">${escHtml(p.name)} (${p.character_count})</button>`;
-                });
+                html += `<select onchange="selectAutoLoraBotProject(this.value)" style="width:min(440px,100%);padding:7px 9px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--text);margin-bottom:10px;"><option value="">학습 프로젝트 선택</option>${projects.map(project => `<option value="${escAttr(project.name)}" ${_botAutoLoraState.botSelectedProject === project.name ? 'selected' : ''}>${escHtml(project.name)} (${project.character_count})</option>`).join('')}</select>`;
             }
-            html += '</div>';
             if (!_botAutoLoraState.botSelectedProject || !_botAutoLoraState.botProjectData) {
                 html += '<div style="text-align:center; color:var(--text2); padding:12px;">프로젝트를 선택하세요.</div>';
             } else {
-                const pd = _botAutoLoraState.botProjectData;
-                const prof = (pd.training_config && pd.training_config.profile) || 'anima';
-                const chars = pd.characters || [];
+                const prof = (_botAutoLoraState.botProjectData.training_config && _botAutoLoraState.botProjectData.training_config.profile) || 'anima';
                 html += `<div style="font-size:0.72rem; color:var(--text2); margin-bottom:6px;">선택 프로젝트 BASE: <b>${escHtml(prof)}</b></div>`;
-                html += targets.map(target => {
-                    const cn = target.name;
-                    const mch = _findBestBotProjectCharacter(chars, cn, target.visualCardId);
-                    let body;
-                    if (!mch) {
-                        body = '<div style="font-size:0.7rem; color:var(--warning);">이 프로젝트에 매칭되는 캐릭터 없음</div>';
-                    } else {
-                        const sessions = (mch.trained_sessions || []).filter(s => !!s.representative);
-                        const prio = sessions.filter(s => s.priority_rank && s.priority_rank > 0).sort((a, b) => (a.priority_rank || 999) - (b.priority_rank || 999));
-                        const rep = prio.length > 0 ? prio[0] : sessions[0];
-                        if (!rep) {
-                            body = '<div style="font-size:0.7rem; color:var(--warning);">대표 로라 미선택</div>';
-                        } else {
-                            let repData = {};
-                            try { repData = JSON.parse(rep.representative); } catch (_) {}
-                            const loraPath = [botCurrentBot, 'Lora', _botAutoLoraState.botSelectedProject, mch.name]
-                                .concat(mch.visual_card_id ? ['_visual_profiles', mch.visual_card_id] : [])
-                                .concat([rep.name, repData.safetensors || '']).join('\\');
-                            const key = _alrBKey(target.key, loraPath);
-                            const chk = _alrLoraIsChecked(key) ? 'checked' : '';
-                            const img = rep.preview_url ? `<img src="${escapeHtml(rep.preview_url)}" loading="lazy" onerror="this.style.display='none'" style="width:48px; height:48px; object-fit:cover; border-radius:4px; flex-shrink:0;">` : '<div style="width:48px; height:48px; display:flex; align-items:center; justify-content:center; background:var(--surface2); border-radius:4px; flex-shrink:0;">👤</div>';
-                            body = `<label style="display:flex; align-items:center; gap:6px; padding:4px 6px; border:1px solid var(--border); border-radius:5px; background:var(--surface2); cursor:pointer; margin-top:3px;">
-                                ${img}
-                                <input type="checkbox" data-src="b" data-target-key="${escAttr(target.key)}" data-lora="${escAttr(loraPath)}" ${chk} onchange="_alrLoraOnChange(this)" style="cursor:pointer;">
-                                <span style="font-size:0.7rem;"><b>⭐ ${escHtml(mch.name)} · ${escHtml(mch.visual_card_label || mch.visual_card_id || '기본 카드')}</b> <span style="color:var(--text2);">→ ${escHtml(rep.name)}</span></span>
-                            </label>`;
-                        }
-                    }
-                    return `<div style="border:1px solid var(--border); border-radius:6px; padding:6px 8px; margin-bottom:6px;">
-                        <div style="font-size:0.8rem; font-weight:600; margin-bottom:3px;">${escHtml(cn)} · [${target.visualCardIndex}] ${escHtml(target.visualCardLabel)}</div>
-                        ${body}
-                    </div>`;
+                const visibleTargets = _alrSourceTargets(targets);
+                html += visibleTargets.map(target => {
+                    const candidates = _alrBotCandidates(target);
+                    const current = _alrTargetStatus(target, _botAutoLoraState.profile);
+                    const body = candidates.length === 0
+                        ? '<div style="padding:9px;border-radius:6px;background:rgba(245,158,11,.08);color:#f59e0b;font-size:.7rem;">이 프로젝트에서 사용할 대표 LoRA를 찾지 못했습니다. 실행 시 건너뜁니다.</div>'
+                        : candidates.map(candidate => {
+                            const checked = _alrLoraIsChecked(candidate.key) ? 'checked' : '';
+                            const image = candidate.previewUrl ? `<img src="${escapeHtml(candidate.previewUrl)}" loading="lazy" onerror="this.style.display='none'" style="width:50px;height:50px;object-fit:cover;border-radius:5px;flex-shrink:0;">` : '<div style="width:50px;height:50px;display:flex;align-items:center;justify-content:center;background:var(--surface);border-radius:5px;flex-shrink:0;">👤</div>';
+                            return `<label style="display:flex;align-items:center;gap:7px;padding:5px 7px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);cursor:pointer;">${image}<input type="checkbox" data-src="b" data-target-key="${escAttr(target.key)}" data-lora="${escAttr(candidate.sourceId)}" ${checked} onchange="_alrLoraOnChange(this)" style="width:17px;height:17px;cursor:pointer;"><span style="font-size:.71rem;"><b>⭐ ${escHtml(candidate.matchedName)} · ${escHtml(candidate.matchedCardLabel)}</b><br><span style="color:var(--text2);">대표 세션 ${escHtml(candidate.sessionName)} · ${escHtml(candidate.baseKey)}</span></span></label>`;
+                        }).join('');
+                    return `<div style="border:1px solid var(--border);border-radius:8px;padding:7px 9px;margin-bottom:7px;"><div style="display:flex;justify-content:space-between;gap:8px;margin-bottom:5px;"><div style="font-size:.78rem;font-weight:750;">${escHtml(target.name)} · [${target.visualCardIndex}] ${escHtml(target.visualCardLabel)}</div><span style="font-size:.65rem;color:${current.configured ? '#22c55e' : '#f59e0b'};white-space:nowrap;">현재 ${current.configured ? current.count + '개 설정' : '미설정'}</span></div>${body}</div>`;
                 }).join('');
+                if (visibleTargets.length === 0) html += '<div style="text-align:center;color:var(--text2);padding:28px;">현재 필터에 맞는 대상이 없습니다.</div>';
             }
             c.innerHTML = html;
+            _alrUpdateSourceSummary();
         }
 
         async function selectAutoLoraBotProject(projectName) {
             if (!_botAutoLoraState) return;
             _botAutoLoraState.botSelectedProject = projectName;
+            _botAutoLoraState.botProjectData = null;
             const c = document.getElementById('alr-tab-content');
+            if (!projectName) {
+                _renderAutoLoraTab();
+                return;
+            }
             if (c) c.innerHTML = '<div style="text-align:center; color:var(--text2); padding:12px;">로딩중...</div>';
             try {
                 const enc = encodeURIComponent;
                 const resp = await fetchJSON(`/api/bot_lora/project?bot=${enc(botCurrentBot)}&project=${enc(projectName)}`);
+                if (_botAutoLoraState.botSelectedProject !== projectName) {
+                    console.warn('[BOT_AUTO_LORA] 다른 프로젝트가 선택되어 이전 상세 응답 건너뜀', {projectName, selected: _botAutoLoraState.botSelectedProject});
+                    return;
+                }
                 if (!resp.success) {
                     _botAutoLoraState.botProjectData = null;
+                    console.error('[BOT_AUTO_LORA] 봇 학습 프로젝트 상세 로드 실패', {projectName, error: resp.error, resp});
                     if (c) c.innerHTML = '<div style="color:var(--error);">프로젝트 로드 실패: ' + escapeHtml(resp.error || '응답 실패') + '</div>';
                     return;
                 }
                 _botAutoLoraState.botProjectData = resp;
                 _renderAutoLoraTab();
             } catch (e) {
+                if (_botAutoLoraState.botSelectedProject !== projectName) {
+                    console.warn('[BOT_AUTO_LORA] 다른 프로젝트가 선택되어 이전 상세 오류 건너뜀', {projectName, selected: _botAutoLoraState.botSelectedProject});
+                    return;
+                }
                 _botAutoLoraState.botProjectData = null;
+                console.error('[BOT_AUTO_LORA] 봇 학습 프로젝트 상세 로드 예외', {projectName, error: e});
                 if (c) c.innerHTML = '<div style="color:var(--error);">프로젝트 로드 실패: ' + escapeHtml(e.message) + '</div>';
             }
         }
 
-        async function executeBotAutoLoraSetup() {
-            const st = document.getElementById('alr-exec-status');
-            if (!_botAutoLoraState) return;
-            const targets = _alrCheckedTargets();
-            if (targets.length === 0) { if (st) { st.style.color = 'var(--error)'; st.textContent = '선택된 프로필 카드가 없습니다. 뒤로 가서 선택하세요.'; } return; }
-
-            const tab = _botAutoLoraState.tab;
-            const srcLabel = tab === 'bot' ? '봇' : '인스턴스';
-            if (tab === 'bot' && !_botAutoLoraState.botSelectedProject) { if (st) { st.style.color = 'var(--error)'; st.textContent = '봇 탭에서 프로젝트를 먼저 선택하세요.'; } return; }
-            if (tab === 'instance' && !_botAutoLoraState.instanceLoaded) { if (st) { st.style.color = 'var(--error)'; st.textContent = '인스턴스 목록이 아직 로드되지 않았습니다.'; } return; }
-
+        // ── STEP 3: 변경안 생성 + 검토 ──
+        function _alrBuildTargetPlan(target) {
             const profile = _botAutoLoraState.profile;
-            const isFace = profile === 'face';
+            const current = _alrCloneLoras(_alrTargetLoras(target, profile));
+            const availableCandidates = _alrCandidates(target);
+            const selectedCandidates = availableCandidates.filter(candidate => _alrLoraIsChecked(candidate.key));
+            let after = _alrCloneLoras(current);
+            let added = 0;
+            let removed = 0;
+            let duplicates = 0;
+
+            // 교체는 선택된 후보가 있을 때만 기존값을 비운다. 매칭 실패로 기존 설정이
+            // 사라지는 일이 없도록 후보가 없는 카드는 원래 값을 보존하고 건너뛴다.
+            if (selectedCandidates.length > 0 && _botAutoLoraState.conflict === 'overwrite') {
+                after = [];
+                removed = current.length;
+            }
+            const existingPaths = new Set(after.map(lora => lora?.lora_path).filter(Boolean));
+            selectedCandidates.forEach(candidate => {
+                const next = _alrCloneLoras([candidate.lora])[0];
+                next.strength = _botAutoLoraState.strength;
+                if (existingPaths.has(next.lora_path)) {
+                    duplicates++;
+                    return;
+                }
+                after.push(next);
+                existingPaths.add(next.lora_path);
+                added++;
+            });
+            const canApply = selectedCandidates.length > 0 && (added > 0 || removed > 0);
+            return {
+                target, profile, current, after: canApply ? after : current,
+                availableCandidates, selectedCandidates,
+                added: canApply ? added : 0,
+                removed: canApply ? removed : 0,
+                duplicates, canApply,
+                reason: availableCandidates.length === 0
+                    ? '자동 매칭 후보 없음'
+                    : selectedCandidates.length === 0
+                        ? '적용 후보가 모두 체크 해제됨'
+                        : '이미 같은 LoRA가 설정됨',
+            };
+        }
+
+        function _alrGoStep3() {
+            if (!_botAutoLoraState) return;
+            const status = document.getElementById('alr-exec-status');
+            if (_botAutoLoraState.tab === 'instance' && !_botAutoLoraState.instanceLoaded) {
+                console.error('[BOT_AUTO_LORA] 변경 검토 불가: 인스턴스 목록 로드 미완료');
+                if (status) { status.style.color = 'var(--error)'; status.textContent = '인스턴스 LoRA 목록이 아직 로드되지 않았습니다.'; }
+                return;
+            }
+            if (_botAutoLoraState.tab === 'bot' && (!_botAutoLoraState.botSelectedProject || !_botAutoLoraState.botProjectData)) {
+                console.error('[BOT_AUTO_LORA] 변경 검토 불가: 봇 학습 프로젝트 미선택');
+                if (status) { status.style.color = 'var(--error)'; status.textContent = '사용할 봇 학습 프로젝트를 먼저 선택하세요.'; }
+                return;
+            }
+            _botAutoLoraState.reviewPlans = _alrCheckedTargets().map(_alrBuildTargetPlan);
+            _botAutoLoraState.executionResults = {};
+            _botAutoLoraState.completed = false;
+            _botAutoLoraState.step = 3;
+            document.getElementById('alr-step1').style.display = 'none';
+            document.getElementById('alr-step2').style.display = 'none';
+            document.getElementById('alr-step3').style.display = 'flex';
+            document.getElementById('alr-step-label').textContent = '3/3 · 현재 설정과 실행 후 결과를 비교한 뒤 적용하세요.';
+            _alrRenderReview();
+        }
+
+        function _alrBackStep2() {
+            if (!_botAutoLoraState || _botAutoLoraState.executing) return;
+            _botAutoLoraState.step = 2;
+            document.getElementById('alr-step1').style.display = 'none';
+            document.getElementById('alr-step3').style.display = 'none';
+            document.getElementById('alr-step2').style.display = 'flex';
+            document.getElementById('alr-step-label').textContent = '2/3 · 자동 매칭된 LoRA를 검토하고 적용 방식을 정하세요.';
+            _renderAutoLoraTab();
+        }
+
+        function _alrReviewLoraList(loras, emptyText) {
+            if (!loras.length) return `<span style="font-size:.68rem;color:var(--text2);">${escHtml(emptyText)}</span>`;
+            return `<div style="display:flex;gap:4px;flex-wrap:wrap;">${loras.map(lora => `<span title="${escAttr(lora.lora_path || '')}" style="padding:3px 6px;border:1px solid var(--border);border-radius:999px;background:var(--surface2);font-size:.65rem;">${escHtml(_alrLoraDisplayName(lora))} · ${Number(lora.strength ?? .5).toFixed(2)}</span>`).join('')}</div>`;
+        }
+
+        function _alrRenderReview() {
+            if (!_botAutoLoraState) return;
+            const plans = _botAutoLoraState.reviewPlans || [];
+            const actionable = plans.filter(plan => plan.canApply);
+            const added = actionable.reduce((sum, plan) => sum + plan.added, 0);
+            const removed = actionable.reduce((sum, plan) => sum + plan.removed, 0);
+            const sourceLabel = _botAutoLoraState.tab === 'bot' ? `봇 프로젝트 · ${_botAutoLoraState.botSelectedProject}` : '인스턴스 LoRA';
+            const summary = document.getElementById('alr-review-summary');
+            if (summary) summary.innerHTML = `<div style="display:flex;gap:7px;flex-wrap:wrap;align-items:center;padding:9px 11px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);font-size:.73rem;"><b>${escHtml(_alrProfileLabel(_botAutoLoraState.profile))}</b><span style="color:var(--text2);">${escHtml(sourceLabel)}</span><span style="margin-left:auto;">변경 <b style="color:#22c55e;">${actionable.length}</b> · 건너뜀 <b style="color:${plans.length - actionable.length ? '#f59e0b' : 'var(--text2)'};">${plans.length - actionable.length}</b> · 추가 ${added}${removed ? ` · 제거 ${removed}` : ''}</span></div>`;
+            const list = document.getElementById('alr-review-list');
+            if (list) list.innerHTML = plans.map(plan => {
+                const target = plan.target;
+                const result = _botAutoLoraState.executionResults[target.key];
+                const badgeText = plan.canApply
+                    ? (_botAutoLoraState.conflict === 'overwrite' ? `교체 · ${plan.removed}개 제거 / ${plan.added}개 추가` : `${plan.added}개 추가`)
+                    : `건너뜀 · ${plan.reason}`;
+                const badgeColor = plan.canApply ? '#22c55e' : '#f59e0b';
+                let resultHtml = '';
+                if (result) {
+                    const resultColor = result.state === 'success' ? '#22c55e' : result.state === 'error' ? 'var(--error)' : 'var(--text2)';
+                    resultHtml = `<div style="margin-top:7px;padding:6px 8px;border-radius:6px;color:${resultColor};font-size:.68rem;font-weight:700;">${escHtml(result.message)}</div>`;
+                }
+                return `<div style="padding:9px 10px;border:1px solid var(--border);border-radius:8px;margin-bottom:7px;"><div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;margin-bottom:7px;"><div><div style="font-size:.78rem;font-weight:800;">${escHtml(target.name)}</div><div style="font-size:.66rem;color:var(--text2);">[${target.visualCardIndex}] ${escHtml(target.visualCardLabel)}</div></div><span style="font-size:.65rem;color:${badgeColor};border:1px solid ${badgeColor};border-radius:999px;padding:3px 7px;white-space:nowrap;">${escHtml(badgeText)}</span></div><div style="display:grid;grid-template-columns:minmax(85px,.18fr) 1fr;gap:6px 9px;align-items:start;"><div style="font-size:.66rem;color:var(--text2);padding-top:3px;">현재</div><div>${_alrReviewLoraList(plan.current, '미설정')}</div><div style="font-size:.66rem;color:var(--text2);padding-top:3px;">실행 후</div><div>${_alrReviewLoraList(plan.after, '미설정')}</div></div>${resultHtml}</div>`;
+            }).join('') || '<div style="text-align:center;color:var(--text2);padding:28px;">검토할 대상이 없습니다.</div>';
+            const executeButton = document.getElementById('alr-review-execute-btn');
+            if (executeButton) {
+                executeButton.disabled = actionable.length === 0 || _botAutoLoraState.executing || _botAutoLoraState.completed;
+                executeButton.style.opacity = executeButton.disabled ? '.45' : '1';
+                executeButton.style.cursor = executeButton.disabled ? 'not-allowed' : 'pointer';
+                executeButton.textContent = _botAutoLoraState.executing ? '세팅 저장 중…' : '확인 후 자동 세팅 실행';
+            }
+            const backButton = document.getElementById('alr-review-back-btn');
+            if (backButton) backButton.disabled = _botAutoLoraState.executing;
+            const closeButton = document.getElementById('alr-review-close-btn');
+            if (closeButton) closeButton.style.display = _botAutoLoraState.completed ? 'inline-block' : 'none';
+            const status = document.getElementById('alr-review-status');
+            if (status && !_botAutoLoraState.executing && !_botAutoLoraState.completed) {
+                status.textContent = actionable.length ? '매칭 후보가 없는 카드는 기존 설정을 유지하고 건너뜁니다.' : '실행 가능한 변경이 없습니다.';
+                status.style.color = actionable.length ? 'var(--text2)' : '#f59e0b';
+            }
+        }
+
+        async function executeBotAutoLoraSetup() {
+            if (!_botAutoLoraState || _botAutoLoraState.executing || _botAutoLoraState.completed) return;
+            const plans = _botAutoLoraState.reviewPlans || [];
+            const actionable = plans.filter(plan => plan.canApply);
+            if (actionable.length === 0) {
+                console.error('[BOT_AUTO_LORA] 실행 가능한 변경 없음', {plans: plans.length});
+                const emptyStatus = document.getElementById('alr-review-status');
+                if (emptyStatus) { emptyStatus.style.color = 'var(--error)'; emptyStatus.textContent = '실행 가능한 변경이 없습니다.'; }
+                return;
+            }
             const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
             if (!bot) {
                 console.error('[BOT_AUTO_LORA] 실행 대상 봇 없음', {bot: botCurrentBot});
-                if (st) { st.style.color = 'var(--error)'; st.textContent = '실행 대상 봇을 찾지 못했습니다.'; }
+                const missingStatus = document.getElementById('alr-review-status');
+                if (missingStatus) { missingStatus.style.color = 'var(--error)'; missingStatus.textContent = '실행 대상 봇을 찾지 못했습니다.'; }
                 return;
             }
-            const instanceItems = _botAutoLoraState.instanceItems || [];
-            const botProject = _botAutoLoraState.botProjectData;
-            const botProf = botProject ? ((botProject.training_config && botProject.training_config.profile) || 'anima') : 'anima';
-            const enc = encodeURIComponent;
-
-            if (st) { st.style.color = 'var(--text2)'; st.textContent = `${srcLabel} 소스에서 세팅 중...`; }
-
+            _botAutoLoraState.executing = true;
+            _alrRenderReview();
+            const status = document.getElementById('alr-review-status');
+            const profile = _botAutoLoraState.profile;
+            const isFace = profile === 'face';
             let totalAdded = 0;
-            const results = [];
-            for (const target of targets) {
-                const cn = target.name;
-                const visualCardId = target.visualCardId || '';
-                const targetLabel = `${cn} · [${target.visualCardIndex}] ${target.visualCardLabel}`;
+            let totalRemoved = 0;
+            let successCount = 0;
+            let failCount = 0;
+            let processed = 0;
+            for (const plan of plans) {
+                const target = plan.target;
+                const targetLabel = `${target.name} · [${target.visualCardIndex}] ${target.visualCardLabel}`;
+                if (!plan.canApply) {
+                    console.warn('[BOT_AUTO_LORA] 프로필 카드 자동 세팅 건너뜀', {target: target.key, reason: plan.reason});
+                    _botAutoLoraState.executionResults[target.key] = {state: 'skipped', message: `건너뜀: ${plan.reason}`};
+                    continue;
+                }
+                processed++;
+                if (status) {
+                    status.style.color = 'var(--text2)';
+                    status.textContent = `저장 중 ${processed} / ${actionable.length} · ${targetLabel}`;
+                }
                 try {
-                    const charIdx = bot.characters.findIndex(c => c.name === cn);
+                    const charIdx = bot.characters.findIndex(character => character.name === target.name);
                     if (charIdx < 0) {
-                        console.error('[BOT_AUTO_LORA] 실행 대상 캐릭터 없음', {character: cn, visualCardId});
-                        results.push(`${targetLabel}: 캐릭터 없음`);
-                        continue;
+                        throw new Error('실행 대상 캐릭터를 찾지 못했습니다');
                     }
-                    if (!_visualCardProfileById(cn, visualCardId)) {
-                        throw new Error(`프로필 카드 없음(${visualCardId || 'legacy'})`);
+                    if (!_visualCardProfileById(target.name, target.visualCardId || '')) {
+                        throw new Error(`프로필 카드 없음(${target.visualCardId || 'legacy'})`);
                     }
-
-                    let loras = isFace
-                        ? getBotCharFaceLoras(cn, visualCardId)
-                        : getBotCharLoras(cn, profile, visualCardId);
-                    if (_botAutoLoraState.conflict === 'overwrite') loras = [];
-                    const before = loras.length;
-                    const existPaths = new Set(loras.map(l => l.lora_path).filter(Boolean));
-                    let skippedDup = 0;
-
-                    if (tab === 'instance') {
-                        // 인스턴스: 체크된 매칭 로라만
-                        const matchedInst = instanceItems.filter(it => _isInstanceLoraRecommended(it, cn));
-                        for (const it of matchedInst) {
-                            let previewUrl = '';
-                            if (it.first_image) previewUrl = `/api/instance_lora/image/${enc(it.lora_id)}/${enc(it.first_image)}`;
-                            for (const [baseKey, pData] of Object.entries(it.profiles || {})) {
-                                if (!_alrLoraIsChecked(_alrIKey(target.key, it.lora_id, baseKey))) continue;
-                                if (existPaths.has(pData.lora_path)) { skippedDup++; continue; }
-                                loras.push({
-                                    source: 'instance', name: `${it.lora_id} (${baseKey})`, character: 'instance',
-                                    lora_path: pData.lora_path, strength: _botAutoLoraState.strength, preview_url: previewUrl,
-                                    trigger: it.trigger || '', BASE: baseKey, lora_id: it.lora_id,
-                                });
-                                existPaths.add(pData.lora_path);
-                            }
-                        }
-                    } else {
-                        // 봇: 체크된 representative만
-                        const chars = (botProject && botProject.characters) || [];
-                        // 미리보기와 실제 전송 모두 정확 일치 우선 공통 선택기를 사용한다.
-                        const mch = _findBestBotProjectCharacter(chars, cn, visualCardId);
-                        if (mch) {
-                            const sessions = (mch.trained_sessions || []).filter(s => !!s.representative);
-                            const prio = sessions.filter(s => s.priority_rank && s.priority_rank > 0).sort((a, b) => (a.priority_rank || 999) - (b.priority_rank || 999));
-                            const rep = prio.length > 0 ? prio[0] : sessions[0];
-                            if (rep) {
-                                let repData = {};
-                                try { repData = JSON.parse(rep.representative); } catch (_) {}
-                                const botLoraPath = [botCurrentBot, 'Lora', _botAutoLoraState.botSelectedProject, mch.name]
-                                    .concat(mch.visual_card_id ? ['_visual_profiles', mch.visual_card_id] : [])
-                                    .concat([rep.name, repData.safetensors || '']).join('\\');
-                                if (_alrLoraIsChecked(_alrBKey(target.key, botLoraPath))) {
-                                    if (existPaths.has(botLoraPath)) { skippedDup++; }
-                                    else {
-                                        loras.push({
-                                            source: 'bot', name: mch.name, bot_name: botCurrentBot,
-                                            project_name: _botAutoLoraState.botSelectedProject, character: mch.name,
-                                            visual_card_id: mch.visual_card_id || '', visual_card_label: mch.visual_card_label || '',
-                                            lora_path: botLoraPath, strength: _botAutoLoraState.strength,
-                                            preview_url: rep.preview_url || '', trigger: mch.trigger || mch.name, BASE: botProf,
-                                        });
-                                        existPaths.add(botLoraPath);
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    const added = loras.length - before;
-                    const kept = _botAutoLoraState.conflict === 'overwrite' ? 0 : before;
                     if (isFace) {
-                        setBotCharFaceLoras(cn, loras, visualCardId);
+                        setBotCharFaceLoras(target.name, _alrCloneLoras(plan.after), target.visualCardId || '');
                     } else {
-                        setBotCharLoras(cn, loras, profile, visualCardId);
+                        setBotCharLoras(target.name, _alrCloneLoras(plan.after), profile, target.visualCardId || '');
                     }
-                    await _saveVisualCardState(cn, {quiet:true});
-                    if ((_visualCardProfile(cn)?.id || '') === visualCardId) {
-                        if (isFace) renderBotCharFaceLoraList(charIdx, cn, loras);
-                        else renderBotCharLoraList(charIdx, cn, loras);
+                    await _saveVisualCardState(target.name, {quiet:true});
+                    if ((_visualCardProfile(target.name)?.id || '') === (target.visualCardId || '')) {
+                        if (isFace) renderBotCharFaceLoraList(charIdx, target.name, plan.after);
+                        else renderBotCharLoraList(charIdx, target.name, plan.after);
                     }
-                    totalAdded += added;
-                    const parts = [`${targetLabel}: 기존${kept} +${added}`];
-                    if (skippedDup > 0) parts.push(`(중복${skippedDup}제거)`);
-                    results.push(parts.join(' '));
-                } catch (e) {
-                    console.error(`[BOT_AUTO_LORA] ${targetLabel} 세팅 실패:`, e);
-                    results.push(`${targetLabel}: 오류(${e.message})`);
+                    successCount++;
+                    totalAdded += plan.added;
+                    totalRemoved += plan.removed;
+                    _botAutoLoraState.executionResults[target.key] = {state: 'success', message: `저장 완료 · ${plan.added}개 추가${plan.removed ? ` / ${plan.removed}개 제거` : ''}`};
+                } catch (error) {
+                    // 저장 실패 시 화면 메모리도 실행 전 상태로 되돌린다.
+                    if (isFace) setBotCharFaceLoras(target.name, _alrCloneLoras(plan.current), target.visualCardId || '');
+                    else setBotCharLoras(target.name, _alrCloneLoras(plan.current), profile, target.visualCardId || '');
+                    failCount++;
+                    console.error(`[BOT_AUTO_LORA] ${targetLabel} 세팅 실패:`, error);
+                    _botAutoLoraState.executionResults[target.key] = {state: 'error', message: `저장 실패: ${error.message}`};
                 }
             }
-
-            const msg = `완료[${srcLabel}] — ${targets.length}프로필 카드 / +${totalAdded}로라. ` + results.join(' / ');
-            if (st) { st.style.color = 'var(--text2)'; st.textContent = msg; }
+            _botAutoLoraState.executing = false;
+            _botAutoLoraState.completed = true;
+            const skippedCount = plans.length - actionable.length;
+            const msg = `자동 세팅 완료 · 성공 ${successCount} / 실패 ${failCount} / 건너뜀 ${skippedCount} · LoRA ${totalAdded}개 추가${totalRemoved ? ` / ${totalRemoved}개 제거` : ''}`;
             const statusBar = document.getElementById('bot-auto-lora-status');
             if (statusBar) { statusBar.style.display = 'block'; statusBar.textContent = msg; }
-            showToast(`자동 세팅 완료(${srcLabel}): ${targets.length}프로필 카드 +${totalAdded}로라`, totalAdded > 0 ? 'success' : 'info');
+            _alrRenderReview();
+            if (status) {
+                status.style.color = failCount ? 'var(--error)' : '#22c55e';
+                status.textContent = msg;
+            }
+            showToast(msg, failCount && !successCount ? 'error' : successCount ? 'success' : 'info');
         }
 
         async function checkPatchFiles() {
@@ -76725,6 +77129,12 @@
                 </div>
             `;
             window._botBatchFiles = [];
+            window._botBatchFileMap = [];
+            window._botBatchPreviewRevision = (window._botBatchPreviewRevision || 0) + 1;
+            window._botBatchPreflightPending = false;
+            window._botBatchPreflightError = '';
+            window._botBatchPreflightId = '';
+            window._botBatchPreviewDetails = [];
             window._botBatchRules = [
                 { action: 'strip_suffix', pattern: '\\.(webp|png|jpg|jpeg|gif|bmp)$' }
             ];
@@ -76821,16 +77231,24 @@
             return result.trim();
         }
 
-        function botBatchHandleFiles(files) {
-            window._botBatchFileMap = Array.from(files).map(f => ({ file: f, name: f.name }));
-            window._botBatchFiles = window._botBatchFileMap.map(f => f.name);
-            botBatchUpdatePreview();
+        async function botBatchFileSha256(file) {
+            const data = await file.arrayBuffer();
+            const digest = await crypto.subtle.digest('SHA-256', data);
+            return Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, '0')).join('');
         }
 
-        function botBatchUpdatePreview() {
+        async function botBatchHandleFiles(files) {
+            window._botBatchFileMap = Array.from(files).map(f => ({ file: f, name: f.name }));
+            window._botBatchFiles = window._botBatchFileMap.map(f => f.name);
+            await botBatchUpdatePreview();
+        }
+
+        async function botBatchUpdatePreview() {
             const preview = document.getElementById('bot-batch-preview');
             const confirmBtn = document.getElementById('bot-batch-confirm-btn');
             if (!preview || !confirmBtn) return;
+            const revision = (window._botBatchPreviewRevision || 0) + 1;
+            window._botBatchPreviewRevision = revision;
             const filenames = window._botBatchFiles || [];
             if (filenames.length === 0) {
                 preview.innerHTML = '<span style="color:var(--text2);">파일을 선택하면 여기에 추출된 캐릭터명이 표시됩니다.</span>';
@@ -76840,60 +77258,215 @@
                 confirmBtn.style.cursor = 'not-allowed';
                 window._botBatchNewNames = [];
                 window._botBatchValidationErrors = [];
+                window._botBatchPreflightPending = false;
+                window._botBatchPreflightError = '';
+                window._botBatchPreflightId = '';
+                window._botBatchPreviewDetails = [];
                 return;
             }
             const existing = new Set(((botData.bots || []).find(b => b.name === botCurrentBot)?.characters || []).map(c => c.name));
             const names = new Set();
             const details = [];
-            for (const fn of filenames) {
+            for (const [sourceIndex, fn] of filenames.entries()) {
                 const name = botBatchApplyRules(fn);
-                const validationError = getBotStorageNameError(name, '캐릭터 이름');
+                const isExisting = existing.has(name);
+                // 기존 캐릭터에는 이미지만 추가하므로 신규 생성용 이름 규칙을 적용하지 않는다.
+                const validationError = isExisting ? '' : getBotStorageNameError(name, '캐릭터 이름');
                 if (!validationError) {
                     names.add(name);
                 }
-                const isDup = !validationError && existing.has(name);
-                details.push({ filename: fn, name, isDup, validationError });
+                details.push({ sourceIndex, filename: fn, name, isExisting, validationError, action: '' });
             }
-            preview.innerHTML = details.map(d =>
-                `<div style="padding:3px 0; ${d.isDup ? 'opacity:0.5; text-decoration:line-through;' : ''}">
-                    <div style="display:flex; justify-content:space-between; gap:8px;">
-                        <span>${escHtml(d.filename)}</span>
-                        <span style="color:${d.validationError ? 'var(--error)' : d.isDup ? 'var(--text2)' : 'var(--accent)'};">→ ${escHtml(d.name || '(빈 이름)')}${d.isDup ? ' (이미 존재)' : ''}</span>
-                    </div>
-                    ${d.validationError ? `<div style="margin-top:2px; color:var(--error);">⚠ ${escHtml(d.validationError)}</div>` : ''}
-                </div>`
-            ).join('');
-            const newCount = Array.from(names).filter(n => !existing.has(n)).length;
             const validationErrors = details.filter(d => d.validationError);
-            confirmBtn.textContent = `일괄추가 (${newCount})`;
             window._botBatchNewNames = Array.from(names).filter(n => !existing.has(n));
             window._botBatchValidationErrors = validationErrors;
-            confirmBtn.disabled = validationErrors.length > 0;
-            confirmBtn.style.opacity = validationErrors.length ? '0.5' : '';
-            confirmBtn.style.cursor = validationErrors.length ? 'not-allowed' : 'pointer';
+            window._botBatchPreflightPending = true;
+            window._botBatchPreflightError = '';
+            window._botBatchPreflightId = '';
+            window._botBatchPreviewDetails = [];
+
+            const renderDetails = () => {
+                preview.innerHTML = details.map(d => {
+                    let stateText = '내용 비교 중...';
+                    let stateColor = 'var(--text2)';
+                    if (d.validationError) {
+                        stateText = '';
+                        stateColor = 'var(--error)';
+                    } else if (d.action === 'added') {
+                        stateText = d.isExisting ? '이미지 추가' : '새 캐릭터 생성 · 이미지 추가';
+                        stateColor = 'var(--accent)';
+                    } else if (d.action === 'replaced') {
+                        stateText = '기존 이미지 교체';
+                        stateColor = '#F59E0B';
+                    } else if (d.action === 'unchanged') {
+                        stateText = '동일 이미지 · 건너뜀';
+                        stateColor = 'var(--text2)';
+                    } else if (d.preflightError) {
+                        stateText = '내용 비교 실패';
+                        stateColor = 'var(--error)';
+                    }
+                    return `<div style="padding:3px 0;">
+                        <div style="display:flex; justify-content:space-between; gap:8px;">
+                            <span>${escHtml(d.filename)}</span>
+                            <span style="color:${stateColor};">→ ${escHtml(d.name || '(빈 이름)')}${stateText ? ` (${escHtml(stateText)})` : ''}</span>
+                        </div>
+                        ${d.validationError ? `<div style="margin-top:2px; color:var(--error);">⚠ ${escHtml(d.validationError)}</div>` : ''}
+                        ${d.preflightError ? `<div style="margin-top:2px; color:var(--error);">⚠ ${escHtml(d.preflightError)}</div>` : ''}
+                    </div>`;
+                }).join('');
+            };
+
+            renderDetails();
+            confirmBtn.textContent = '이미지 내용 비교 중...';
+            confirmBtn.disabled = true;
+            confirmBtn.style.opacity = '0.5';
+            confirmBtn.style.cursor = 'not-allowed';
+
+            const validDetails = details.filter(d => !d.validationError);
+            if (validDetails.length === 0) {
+                window._botBatchPreflightPending = false;
+                confirmBtn.textContent = '일괄추가 (0)';
+                return;
+            }
+
+            try {
+                const hardwareConcurrency = Number(globalThis.navigator?.hardwareConcurrency) || 8;
+                const hashConcurrency = Math.min(
+                    validDetails.length,
+                    Math.max(2, Math.min(16, hardwareConcurrency))
+                );
+                const hashedItems = new Array(validDetails.length);
+                let nextHashIndex = 0;
+                let completedHashes = 0;
+                const hashWorker = async () => {
+                    while (window._botBatchPreviewRevision === revision) {
+                        const hashIndex = nextHashIndex++;
+                        if (hashIndex >= validDetails.length) return;
+                        const d = validDetails[hashIndex];
+                        const item = (window._botBatchFileMap || [])[d.sourceIndex];
+                        if (!item) throw new Error(`선택 파일을 찾을 수 없습니다: ${d.filename}`);
+                        if (!item.sha256) item.sha256 = await botBatchFileSha256(item.file);
+                        hashedItems[hashIndex] = {
+                            character: d.name,
+                            filename: d.filename,
+                            sha256: item.sha256,
+                        };
+                        completedHashes++;
+                        confirmBtn.textContent = `이미지 내용 병렬 비교 중... ${completedHashes}/${validDetails.length}`;
+                    }
+                };
+                await Promise.all(Array.from({length: hashConcurrency}, () => hashWorker()));
+                if (window._botBatchPreviewRevision !== revision) return;
+                const resp = await fetch('/api/bot_mode/upload_preflight', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({bot: botCurrentBot, items: hashedItems})
+                });
+                const data = await resp.json();
+                if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
+                if (typeof data.preflight_id !== 'string' || !data.preflight_id) {
+                    throw new Error('서버가 이미지 판정 작업 ID를 반환하지 않았습니다.');
+                }
+                if (!Array.isArray(data.items) || data.items.length !== validDetails.length) {
+                    throw new Error('서버의 이미지 판정 결과 수가 일치하지 않습니다.');
+                }
+                if (window._botBatchPreviewRevision !== revision) return;
+                const mismatchIndex = data.items.findIndex((result, index) => {
+                    const detail = validDetails[index];
+                    return (
+                        result.index !== index
+                        || result.character !== detail.name
+                        || result.source_filename !== detail.filename
+                        || !['added', 'replaced', 'unchanged'].includes(result.action)
+                    );
+                });
+                if (mismatchIndex >= 0) {
+                    throw new Error(`이미지 판정 결과가 요청과 일치하지 않습니다: ${validDetails[mismatchIndex].filename}`);
+                }
+                data.items.forEach((result, index) => {
+                    const detail = validDetails[index];
+                    detail.action = result.action;
+                    detail.existingFilename = result.filename || '';
+                    detail.preflightIndex = index;
+                });
+                window._botBatchPreflightId = data.preflight_id;
+                window._botBatchPreviewDetails = details;
+                window._botBatchPreflightPending = false;
+                renderDetails();
+
+                const newCount = window._botBatchNewNames.length;
+                const addedCount = validDetails.filter(d => d.action === 'added').length;
+                const replacedCount = validDetails.filter(d => d.action === 'replaced').length;
+                const unchangedCount = validDetails.filter(d => d.action === 'unchanged').length;
+                confirmBtn.textContent = `일괄추가 (새 캐릭터 ${newCount}개 · 추가 ${addedCount}장 · 교체 ${replacedCount}장 · 건너뜀 ${unchangedCount}장)`;
+                confirmBtn.disabled = validationErrors.length > 0;
+                confirmBtn.style.opacity = validationErrors.length ? '0.5' : '';
+                confirmBtn.style.cursor = validationErrors.length ? 'not-allowed' : 'pointer';
+            } catch (e) {
+                if (window._botBatchPreviewRevision !== revision) return;
+                console.error('[BOT-BATCH] 이미지 내용 사전 비교 실패:', e);
+                const message = e && e.message ? e.message : String(e);
+                validDetails.forEach(d => { d.preflightError = message; });
+                window._botBatchPreflightPending = false;
+                window._botBatchPreflightError = message;
+                window._botBatchPreflightId = '';
+                window._botBatchPreviewDetails = [];
+                renderDetails();
+                confirmBtn.textContent = '이미지 내용 비교 실패';
+                confirmBtn.disabled = true;
+                confirmBtn.style.opacity = '0.5';
+                confirmBtn.style.cursor = 'not-allowed';
+            }
         }
 
         async function confirmBotBatchAdd() {
             const names = window._botBatchNewNames || [];
             const fileMap = window._botBatchFileMap || [];
             const validationErrors = window._botBatchValidationErrors || [];
+            const details = window._botBatchPreviewDetails || [];
+            const preflightId = window._botBatchPreflightId || '';
+            if (window._botBatchPreflightPending) {
+                showToast('이미지 내용 비교가 끝날 때까지 기다려 주세요.', 'error');
+                return;
+            }
+            if (window._botBatchPreflightError) {
+                showToast('이미지 내용 비교 실패를 먼저 해결하세요.', 'error');
+                return;
+            }
             if (validationErrors.length) {
                 showToast('모달의 캐릭터 이름 거절 사유를 먼저 해결하세요.', 'error');
                 return;
             }
             if (names.length === 0 && fileMap.length === 0) { alert('추가할 캐릭터가 없습니다.'); return; }
+            if (fileMap.length > 0 && (!preflightId || details.length !== fileMap.length)) {
+                showToast('이미지 내용 비교 결과가 없습니다. 파일을 다시 선택해 주세요.', 'error');
+                return;
+            }
 
-            const totalSteps = names.length + fileMap.length;
+            let duplicateSkipped = details.filter(d => d.action === 'unchanged').length;
+            const uploadEntries = details
+                .filter(d => d.action === 'added' || d.action === 'replaced')
+                .map(detail => ({detail, item: fileMap[detail.sourceIndex]}));
+            const totalSteps = names.length + uploadEntries.length;
             let currentStep = 0;
             const progEl = document.getElementById('bot-batch-progress');
-            if (progEl) { progEl.style.display = ''; progEl.textContent = `로딩 0/${totalSteps}`; }
+            if (progEl) {
+                progEl.style.display = '';
+                progEl.textContent = `처리 0/${totalSteps} · 동일 이미지 ${duplicateSkipped}장 전송 생략`;
+            }
             const setStatus = (text) => { if (progEl) progEl.textContent = text; };
+            const confirmBtn = document.getElementById('bot-batch-confirm-btn');
+            if (confirmBtn) {
+                confirmBtn.disabled = true;
+                confirmBtn.style.opacity = '0.5';
+                confirmBtn.style.cursor = 'not-allowed';
+            }
 
             // 1) 캐릭터 생성
             let added = 0;
             for (const name of names) {
                 currentStep++;
-                setStatus(`로딩 ${currentStep}/${totalSteps}`);
+                setStatus(`캐릭터 준비 ${currentStep}/${totalSteps} · 동일 이미지 ${duplicateSkipped}장 전송 생략`);
                 try {
                     const resp = await fetch('/api/bot_mode/action', {
                         method: 'POST',
@@ -76910,26 +77483,66 @@
 
             // 2) 이미지 업로드 (파일명에서 추출한 캐릭터명에 맞춰 업로드)
             let uploaded = 0;
-            const existing = new Set(((botData.bots || []).find(b => b.name === botCurrentBot)?.characters || []).map(c => c.name));
-            const allCharNames = new Set([...existing, ...names]);
-            for (const item of fileMap) {
-                const charName = botBatchApplyRules(item.name);
-                if (!charName || !allCharNames.has(charName)) continue;
-                currentStep++;
-                setStatus(`로딩 ${currentStep}/${totalSteps}`);
+            let replaced = 0;
+            let uploadFailed = 0;
+            const uploadGroups = new Map();
+            for (const entry of uploadEntries) {
+                const {detail, item} = entry;
+                if (!item) {
+                    uploadFailed++;
+                    console.error(`[BOT] 이미지 "${detail.filename}" 업로드 실패: 선택 파일을 찾을 수 없습니다.`);
+                    continue;
+                }
+                const targetName = detail.existingFilename || detail.filename;
+                const groupKey = `${detail.name}\u0000${targetName.toLowerCase()}`;
+                if (!uploadGroups.has(groupKey)) uploadGroups.set(groupKey, []);
+                uploadGroups.get(groupKey).push(entry);
+            }
+            const groups = Array.from(uploadGroups.values());
+            const hardwareConcurrency = Number(globalThis.navigator?.hardwareConcurrency) || 8;
+            const uploadConcurrency = Math.min(
+                groups.length,
+                Math.max(2, Math.min(8, hardwareConcurrency))
+            );
+            let nextGroupIndex = 0;
+            const uploadOne = async ({detail, item}) => {
                 const fd = new FormData();
                 fd.append('file', item.file);
                 fd.append('bot', botCurrentBot);
-                fd.append('character', charName);
+                fd.append('character', detail.name);
+                fd.append('preflight_id', preflightId);
+                fd.append('preflight_index', String(detail.preflightIndex));
                 try {
                     const resp = await fetch('/api/bot_mode/upload', {method: 'POST', body: fd});
                     const data = await resp.json();
-                    if (data.error) { console.error(`[BOT] 이미지 "${item.name}" 업로드 실패:`, data.error); }
-                    else { uploaded++; }
+                    if (!resp.ok || data.error) {
+                        uploadFailed++;
+                        console.error(`[BOT] 이미지 "${item.name}" 업로드 실패:`, data.error || `HTTP ${resp.status}`);
+                    } else if (data.action === 'unchanged' || data.duplicate === true) {
+                        // 서버에서 파일 변경을 감지해 중복으로 판정한 경우만 추가한다.
+                        duplicateSkipped++;
+                    } else if (data.action === 'replaced') {
+                        replaced++;
+                    } else {
+                        uploaded++;
+                    }
                 } catch (e) {
+                    uploadFailed++;
                     console.error(`[BOT] 이미지 "${item.name}" 업로드 실패:`, e);
+                } finally {
+                    currentStep++;
+                    setStatus(`이미지 병렬 업로드 ${currentStep}/${totalSteps} · 동일 이미지 ${duplicateSkipped}장 전송 생략`);
                 }
-            }
+            };
+            const uploadWorker = async () => {
+                while (true) {
+                    const groupIndex = nextGroupIndex++;
+                    if (groupIndex >= groups.length) return;
+                    // 같은 최종 파일을 여러 번 교체하는 항목은 선택 순서를 유지한다.
+                    for (const entry of groups[groupIndex]) await uploadOne(entry);
+                }
+            };
+            await Promise.all(Array.from({length: uploadConcurrency}, () => uploadWorker()));
 
             // 최신 botData 다시 로드
             try {
@@ -76941,7 +77554,13 @@
             }
             document.getElementById('bot-batch-add-modal').style.display = 'none';
             renderBotCharacters();
-            showToast(`캐릭터 ${added}개 추가, 이미지 ${uploaded}장 업로드됨`);
+            const resultParts = [`캐릭터 ${added}개 추가`];
+            if (uploaded) resultParts.push(`이미지 ${uploaded}장 추가`);
+            if (replaced) resultParts.push(`${replaced}장 교체`);
+            if (duplicateSkipped) resultParts.push(`동일 이미지 ${duplicateSkipped}장 건너뜀`);
+            if (uploadFailed) resultParts.push(`${uploadFailed}장 실패`);
+            if (!uploaded && !replaced && !duplicateSkipped && !uploadFailed) resultParts.push('이미지 변경 없음');
+            showToast(resultParts.join(', '), uploadFailed ? 'error' : 'success');
         }
 
         async function removeBotCharacter(charName) {
@@ -84293,6 +84912,10 @@
             input.accept = 'image/*';
             input.multiple = true;
             input.onchange = async () => {
+                let added = 0;
+                let replaced = 0;
+                let duplicateSkipped = 0;
+                let failed = 0;
                 for (const file of input.files) {
                     const fd = new FormData();
                     fd.append('file', file);
@@ -84301,13 +84924,29 @@
                     try {
                         const resp = await fetch('/api/bot_mode/upload', {method: 'POST', body: fd});
                         const data = await resp.json();
-                        if (data.error) { console.error(data.error); alert(data.error); }
+                        if (data.error) {
+                            failed++;
+                            console.error(data.error);
+                            alert(data.error);
+                        } else if (data.action === 'unchanged' || data.duplicate === true) {
+                            duplicateSkipped++;
+                        } else if (data.action === 'replaced') {
+                            replaced++;
+                        } else {
+                            added++;
+                        }
                     } catch (e) {
+                        failed++;
                         console.error('[BOT] 업로드 실패:', e);
                     }
                 }
                 await loadBotCharDetailImages(charName, true);
-                showToast(`${input.files.length}개 이미지 업로드됨`);
+                const resultParts = [];
+                if (added) resultParts.push(`${added}장 추가`);
+                if (replaced) resultParts.push(`${replaced}장 교체`);
+                if (duplicateSkipped) resultParts.push(`동일 이미지 ${duplicateSkipped}장 건너뜀`);
+                if (failed) resultParts.push(`${failed}장 실패`);
+                showToast(resultParts.join(', ') || '이미지 변경 없음', failed ? 'error' : 'success');
             };
             input.click();
         }

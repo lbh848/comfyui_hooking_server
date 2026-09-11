@@ -1190,8 +1190,17 @@ def save_test_prompt(character: str, entry: str, filename: str, positive: str, n
         return {"success": False, "error": str(e)}
 
 
-def save_test_prompt_positive_only(character: str, entry: str, filename: str, positive: str) -> dict:
-    """LLM 정제(테스트 일괄 세팅) 결과로 positive만 교체. negative/original_*는 유지한다."""
+def save_test_prompt_positive_only(
+    character: str,
+    entry: str,
+    filename: str,
+    positive: str,
+    source_positive: str | None = None,
+) -> dict:
+    """LLM 정제(테스트 일괄 세팅) 결과로 positive만 교체.
+
+    source_positive가 주어지면 실제 정제 입력을 원본 기준으로 기록한다.
+    """
     if ".." in filename or os.path.sep in filename:
         return {"success": False, "error": "잘못된 파일명"}
     t_dir = _test_dir(character, entry)
@@ -1206,6 +1215,8 @@ def save_test_prompt_positive_only(character: str, entry: str, filename: str, po
             existing["original_positive"] = existing.get("positive", "")
         if "original_negative" not in existing:
             existing["original_negative"] = existing.get("negative", "")
+        if source_positive is not None:
+            existing["original_positive"] = source_positive
         existing["positive"] = positive
         with open(prompt_path, "w", encoding="utf-8") as f:
             json.dump(existing, f, ensure_ascii=False, indent=2)

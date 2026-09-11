@@ -117,6 +117,97 @@ def validate_bot_storage_name(value, label: str = "이름") -> str | None:
     return None
 
 
+def _sha256_file(path: str) -> str:
+    """파일 전체 내용을 SHA-256으로 비교하되 큰 이미지도 한 번에 읽지 않는다."""
+    digest = hashlib.sha256()
+    with open(path, "rb") as file:
+        for chunk in iter(lambda: file.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _upload_image_filename(source_filename: str) -> str:
+    ext = os.path.splitext(source_filename)[1].lower()
+    if ext not in IMAGE_EXTENSIONS:
+        ext = ".webp"
+    return f"{os.path.splitext(source_filename)[0]}{ext}"
+
+
+def _character_image_hashes(
+    char_dir: str,
+    *,
+    bot_name: str,
+    char_name: str,
+    requested_filename: str,
+) -> tuple[set[str], dict[str, str]]:
+    names: set[str] = set()
+    hashes: dict[str, str] = {}
+    if not os.path.isdir(char_dir):
+        return names, hashes
+    for existing_name in sorted(os.listdir(char_dir)):
+        existing_path = os.path.join(char_dir, existing_name)
+        if (
+            not os.path.isfile(existing_path)
+            or os.path.splitext(existing_name)[1].lower() not in IMAGE_EXTENSIONS
+        ):
+            continue
+        names.add(existing_name)
+        try:
+            hashes[existing_name] = _sha256_file(existing_path)
+        except Exception as hash_error:
+            print(
+                f"[BOT_MODE] 이미지 중복 비교 파일 읽기 실패, 계속 진행: "
+                f"bot={bot_name!r}, character={char_name!r}, "
+                f"requested={requested_filename!r}, existing={existing_name!r}, "
+                f"path={existing_path!r}, error={hash_error}"
+            )
+            traceback.print_exc()
+    return names, hashes
+
+
+def _classify_image_upload(
+    filename: str,
+    upload_hash: str,
+    existing_names: set[str],
+    existing_hashes: dict[str, str],
+) -> dict:
+    filename_key = os.path.normcase(filename)
+    matching_names = sorted(
+        name for name, content_hash in existing_hashes.items()
+        if content_hash == upload_hash
+    )
+    matching_target = next(
+        (name for name in matching_names if os.path.normcase(name) == filename_key),
+        None,
+    )
+    if matching_target:
+        matching_names.remove(matching_target)
+        matching_names.insert(0, matching_target)
+    if matching_names:
+        existing_name = matching_names[0]
+        result = {
+            "filename": existing_name,
+            "action": "unchanged",
+            "duplicate": True,
+        }
+        if existing_name != filename:
+            result["requested_filename"] = filename
+        return result
+    existing_target = next(
+        (name for name in existing_names if os.path.normcase(name) == filename_key),
+        None,
+    )
+    stored_filename = existing_target or filename
+    result = {
+        "filename": stored_filename,
+        "action": "replaced" if existing_target else "added",
+        "duplicate": False,
+    }
+    if stored_filename != filename:
+        result["requested_filename"] = filename
+    return result
+
+
 def get_bot_visual_targets(
     bot_name: str,
     char_name: str = "",
@@ -1407,10 +1498,32 @@ async def _generate_visual_profile_appearance_context(
 class BotMode:
     """삽화 설정 모드 매니저"""
 
+    _UPLOAD_PREFLIGHT_TTL_SECONDS = 30 * 60
+    _UPLOAD_PREFLIGHT_MAX_SESSIONS = 4
+
     def __init__(self):
         self._lock = asyncio.Lock()
         self._asset_tool = None
         self._queue_manager = None
+        self._upload_preflight_sessions = {}
+
+    def _prune_upload_preflight_sessions(self) -> None:
+        now = time.monotonic()
+        expired_ids = [
+            preflight_id
+            for preflight_id, session in self._upload_preflight_sessions.items()
+            if now - session["last_used"] > self._UPLOAD_PREFLIGHT_TTL_SECONDS
+        ]
+        for preflight_id in expired_ids:
+            self._upload_preflight_sessions.pop(preflight_id, None)
+        if len(self._upload_preflight_sessions) <= self._UPLOAD_PREFLIGHT_MAX_SESSIONS:
+            return
+        oldest_ids = sorted(
+            self._upload_preflight_sessions,
+            key=lambda preflight_id: self._upload_preflight_sessions[preflight_id]["last_used"],
+        )
+        for preflight_id in oldest_ids[:-self._UPLOAD_PREFLIGHT_MAX_SESSIONS]:
+            self._upload_preflight_sessions.pop(preflight_id, None)
 
     def set_asset_tool(self, tool):
         self._asset_tool = tool
@@ -2392,6 +2505,123 @@ class BotMode:
             traceback.print_exc()
             return _json_error(str(e))
 
+    # ─── 이미지 업로드 사전 판정 ───────────────────────────
+    async def handle_upload_preflight(self, request):
+        """선택한 일괄 이미지의 추가/교체/중복 상태를 저장 없이 판정한다."""
+        try:
+            body = await request.json()
+            bot_name = str(body.get("bot", "")).strip()
+            items = body.get("items", [])
+            if not bot_name or not isinstance(items, list) or not items:
+                print(
+                    f"[BOT_MODE] 이미지 업로드 사전 판정 입력 누락: "
+                    f"bot={bot_name!r}, items_type={type(items).__name__}, "
+                    f"items_count={len(items) if isinstance(items, list) else 'invalid'}"
+                )
+                return _json_error("봇과 판정할 이미지 목록이 필요합니다.")
+
+            prepared_items = []
+            first_filename_by_character = {}
+            for index, item in enumerate(items):
+                if not isinstance(item, dict):
+                    print(
+                        f"[BOT_MODE] 이미지 업로드 사전 판정 항목 형식 오류: "
+                        f"bot={bot_name!r}, index={index}, item={item!r}"
+                    )
+                    return _json_error(f"이미지 판정 항목 {index + 1}의 형식이 잘못되었습니다.")
+                char_name = str(item.get("character", "")).strip()
+                source_filename = str(item.get("filename", ""))
+                upload_hash = str(item.get("sha256", "")).lower()
+                if (
+                    not char_name
+                    or not source_filename
+                    or not re.fullmatch(r"[0-9a-f]{64}", upload_hash)
+                ):
+                    print(
+                        f"[BOT_MODE] 이미지 업로드 사전 판정 항목 누락: "
+                        f"bot={bot_name!r}, index={index}, "
+                        f"character={char_name!r}, filename={source_filename!r}, "
+                        f"sha256={upload_hash!r}"
+                    )
+                    return _json_error(f"이미지 판정 항목 {index + 1}이 올바르지 않습니다.")
+                filename = _upload_image_filename(source_filename)
+                prepared_items.append((
+                    index, char_name, source_filename, filename, upload_hash
+                ))
+                first_filename_by_character.setdefault(char_name, filename)
+
+            results = []
+            async with self._lock:
+                self._prune_upload_preflight_sessions()
+                character_names = list(first_filename_by_character)
+                loaded_indexes = await asyncio.gather(*(
+                    asyncio.to_thread(
+                        _character_image_hashes,
+                        os.path.join(BOT_DIR, bot_name, char_name),
+                        bot_name=bot_name,
+                        char_name=char_name,
+                        requested_filename=first_filename_by_character[char_name],
+                    )
+                    for char_name in character_names
+                ))
+                indexes = dict(zip(character_names, loaded_indexes))
+
+                for index, char_name, source_filename, filename, upload_hash in prepared_items:
+                    existing_names, existing_hashes = indexes[char_name]
+                    result = _classify_image_upload(
+                        filename, upload_hash, existing_names, existing_hashes
+                    )
+                    results.append({
+                        "index": index,
+                        "character": char_name,
+                        "source_filename": source_filename,
+                        **result,
+                    })
+                    if result["action"] != "unchanged":
+                        stored_filename = result["filename"]
+                        existing_names.add(stored_filename)
+                        existing_hashes[stored_filename] = upload_hash
+
+                preflight_id = uuid.uuid4().hex
+                results_by_index = {result["index"]: result for result in results}
+                self._upload_preflight_sessions[preflight_id] = {
+                    "bot": bot_name,
+                    "last_used": time.monotonic(),
+                    "pending": {
+                        index
+                        for index in results_by_index
+                        if results_by_index[index]["action"] != "unchanged"
+                    },
+                    "items": {
+                        index: {
+                            "character": char_name,
+                            "source_filename": source_filename,
+                            "sha256": upload_hash,
+                            "result": {
+                                key: value
+                                for key, value in results_by_index[index].items()
+                                if key not in {"index", "character", "source_filename"}
+                            },
+                        }
+                        for index, char_name, source_filename, _filename, upload_hash
+                        in prepared_items
+                    },
+                }
+                self._prune_upload_preflight_sessions()
+
+            print(
+                f"[BOT_MODE] 이미지 업로드 사전 판정 완료: "
+                f"bot={bot_name!r}, items={len(results)}, "
+                f"added={sum(r['action'] == 'added' for r in results)}, "
+                f"replaced={sum(r['action'] == 'replaced' for r in results)}, "
+                f"unchanged={sum(r['action'] == 'unchanged' for r in results)}"
+            )
+            return _json_ok({"preflight_id": preflight_id, "items": results})
+        except Exception as e:
+            print(f"[BOT_MODE] 이미지 업로드 사전 판정 실패: {e}")
+            traceback.print_exc()
+            return _json_error(str(e))
+
     # ─── 이미지 업로드 ─────────────────────────────────────
     async def handle_upload_image(self, request):
         """POST /api/bot_mode/upload - 이미지 업로드"""
@@ -2400,38 +2630,135 @@ class BotMode:
             bot_name = data_multipart.get("bot", "").strip()
             char_name = data_multipart.get("character", "").strip()
             prompt = data_multipart.get("prompt", "")
+            preflight_id = str(data_multipart.get("preflight_id", "")).strip()
+            preflight_index_raw = str(data_multipart.get("preflight_index", "")).strip()
             file_field = data_multipart.get("file")
 
             if not bot_name or not char_name:
+                print(
+                    f"[BOT_MODE] 이미지 업로드 필수 값 누락: "
+                    f"bot={bot_name!r}, character={char_name!r}"
+                )
                 return _json_error("봇과 캐릭터 이름이 필요합니다.")
             if not file_field or not hasattr(file_field, "filename"):
+                print(
+                    f"[BOT_MODE] 이미지 업로드 파일 누락: "
+                    f"bot={bot_name!r}, character={char_name!r}"
+                )
                 return _json_error("파일이 없습니다.")
 
             char_dir = os.path.join(BOT_DIR, bot_name, char_name)
             os.makedirs(char_dir, exist_ok=True)
 
-            ext = os.path.splitext(file_field.filename)[1].lower()
-            if ext not in IMAGE_EXTENSIONS:
-                ext = ".webp"
-            # 원래 파일명 유지, 충돌 시 해시 추가
-            base_name = os.path.splitext(file_field.filename)[0]
-            filename = f"{base_name}{ext}"
+            # 원래 파일명을 유지한다. 같은 이름은 교체하고, 같은 내용은 중복 저장하지 않는다.
+            filename = _upload_image_filename(file_field.filename)
             filepath = os.path.join(char_dir, filename)
-            if os.path.exists(filepath):
-                filename = f"{base_name}_{uuid.uuid4().hex[:6]}{ext}"
+            image_data = file_field.file.read()
+            upload_hash = hashlib.sha256(image_data).hexdigest()
+
+            async with self._lock:
+                self._prune_upload_preflight_sessions()
+                if preflight_id:
+                    session = self._upload_preflight_sessions.get(preflight_id)
+                    try:
+                        preflight_index = int(preflight_index_raw)
+                    except (TypeError, ValueError):
+                        preflight_index = -1
+                    planned = (
+                        session.get("items", {}).get(preflight_index)
+                        if session and session.get("bot") == bot_name
+                        else None
+                    )
+                    if (
+                        not planned
+                        or planned.get("character") != char_name
+                        or planned.get("source_filename") != file_field.filename
+                        or planned.get("sha256") != upload_hash
+                    ):
+                        print(
+                            f"[BOT_MODE] 이미지 업로드 사전 판정 불일치: "
+                            f"bot={bot_name!r}, character={char_name!r}, "
+                            f"filename={file_field.filename!r}, "
+                            f"preflight_id={preflight_id!r}, "
+                            f"preflight_index={preflight_index_raw!r}, "
+                            f"session_found={session is not None}, "
+                            f"planned={planned!r}, sha256={upload_hash}"
+                        )
+                        return _json_error(
+                            "이미지 사전 비교 결과가 만료되었거나 파일과 일치하지 않습니다. "
+                            "파일을 다시 선택해 주세요."
+                        )
+                    session["last_used"] = time.monotonic()
+                    result = dict(planned["result"])
+                else:
+                    existing_names, existing_hashes = _character_image_hashes(
+                        char_dir,
+                        bot_name=bot_name,
+                        char_name=char_name,
+                        requested_filename=filename,
+                    )
+                    result = _classify_image_upload(
+                        filename, upload_hash, existing_names, existing_hashes
+                    )
+                action = result["action"]
+                if action == "unchanged":
+                    print(
+                        f"[BOT_MODE] 동일 내용 이미지 업로드 건너뜀: "
+                        f"bot={bot_name!r}, character={char_name!r}, "
+                        f"requested={filename!r}, existing={result['filename']!r}, "
+                        f"sha256={upload_hash}"
+                    )
+                    return _json_ok(result)
+                filename = result["filename"]
                 filepath = os.path.join(char_dir, filename)
 
-            with open(filepath, "wb") as f:
-                f.write(file_field.file.read())
+                prompt_path = os.path.join(
+                    char_dir, f"{os.path.splitext(filename)[0]}_prompt.json"
+                )
+                if prompt and os.path.isfile(prompt_path):
+                    _backup_data_file_before_overwrite(prompt_path, "봇 이미지 프롬프트")
 
-            # 프롬프트 저장
-            if prompt:
-                prompt_path = os.path.join(char_dir, f"{os.path.splitext(filename)[0]}_prompt.json")
-                with open(prompt_path, "w", encoding="utf-8") as f:
-                    json.dump({"prompt": prompt, "source": "upload"}, f, ensure_ascii=False)
+                temp_path = os.path.join(
+                    char_dir, f".{filename}.{uuid.uuid4().hex}.upload"
+                )
+                try:
+                    with open(temp_path, "wb") as f:
+                        f.write(image_data)
+                    os.replace(temp_path, filepath)
+                finally:
+                    if os.path.isfile(temp_path):
+                        try:
+                            os.remove(temp_path)
+                        except Exception as cleanup_error:
+                            print(
+                                f"[BOT_MODE] 이미지 업로드 임시 파일 정리 실패: "
+                                f"bot={bot_name!r}, character={char_name!r}, "
+                                f"filename={filename!r}, temp={temp_path!r}, "
+                                f"state={action!r}, error={cleanup_error}"
+                            )
+                            traceback.print_exc()
 
-            print(f"[BOT_MODE] 이미지 업로드: {bot_name}/{char_name}/{filename}")
-            return _json_ok({"filename": filename})
+                # 새 프롬프트가 전달된 경우에만 저장한다.
+                if prompt:
+                    with open(prompt_path, "w", encoding="utf-8") as f:
+                        json.dump(
+                            {"prompt": prompt, "source": "upload"},
+                            f,
+                            ensure_ascii=False,
+                        )
+
+                if preflight_id:
+                    active_session = self._upload_preflight_sessions.get(preflight_id)
+                    if active_session:
+                        active_session["pending"].discard(preflight_index)
+                        if not active_session["pending"]:
+                            self._upload_preflight_sessions.pop(preflight_id, None)
+
+            print(
+                f"[BOT_MODE] 이미지 업로드 {action}: "
+                f"{bot_name}/{char_name}/{filename}"
+            )
+            return _json_ok(result)
         except Exception as e:
             print(f"[BOT_MODE] 이미지 업로드 실패: {e}")
             traceback.print_exc()
