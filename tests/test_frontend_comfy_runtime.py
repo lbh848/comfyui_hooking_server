@@ -121,6 +121,7 @@ def test_video_engine_tab_is_next_to_vast_and_exposes_managed_runtime() -> None:
         'id="setting-video-engine-port"',
         'id="setting-video-engine-project-path"',
         'id="setting-video-engine-auto-start"',
+        'id="setting-video-engine-profile"',
         'id="video-engine-start"',
         'id="video-engine-stop"',
         'id="video-engine-terminal"',
@@ -130,15 +131,27 @@ def test_video_engine_tab_is_next_to_vast_and_exposes_managed_runtime() -> None:
         "/api/video-engine/start",
         "/api/video-engine/stop",
         "/api/video-engine/resources",
+        "/api/video-engine/models",
         "video_engine_port: videoEnginePort",
         "video_engine_project_path: videoEngineProjectPathValue(false)",
         "video_engine_auto_start:",
+        "video_engine_profile:",
+        "residency?.model_profile",
         "외부 실행 중",
         "4060의 4B VL은 유지됩니다.",
     ):
         assert value in FRONTEND
     assert "engineOption.textContent = '영상 전용 엔진'" in FRONTEND
     assert "videoEngineSupported: true" in FRONTEND
+
+
+def test_fixed_step_video_engine_profile_disables_separate_fast_workflows() -> None:
+    assert 'id="video-generation-workflow-hint"' in FRONTEND
+    assert "function selectedVideoEngineFixedSteps()" in FRONTEND
+    assert "function updateVideoEngineFixedStepControls()" in FRONTEND
+    assert "radio.disabled = locked && variant === 'fast';" in FRONTEND
+    assert "if (selectedVideoEngineFixedSteps() !== null) workflowVariant = 'standard';" in FRONTEND
+    assert "외부 가속 LoRA 없음" in FRONTEND
 
 
 def test_runtime_has_managed_modal_tab_lifecycle_sync_and_log_controls() -> None:

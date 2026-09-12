@@ -13,6 +13,22 @@ def test_character_cards_are_switched_inline_and_limited_to_ten():
     assert "[${index + 1}]" in FRONTEND
 
 
+def test_new_character_card_starts_blank_instead_of_copying_the_active_card():
+    start = FRONTEND.index("async function addVisualCard(charName)")
+    end = FRONTEND.index("async function removeVisualCard(charName)", start)
+    source = FRONTEND[start:end]
+
+    assert "_visualCardResolved(" not in source
+    assert "current.appearance" not in source
+    assert "current.default_outfit" not in source
+    assert "appearance: []" in source
+    assert "default_outfit: []" in source
+    assert "loras_solo: []" in source
+    assert "loras_group: []" in source
+    assert "face_loras: []" in source
+    assert "style_loras: []" in source
+
+
 def test_card_metadata_and_flat_lb_extra_editor_are_on_the_character_card():
     assert "자연어 선택 기준" in FRONTEND
     assert "작중 별칭" in FRONTEND

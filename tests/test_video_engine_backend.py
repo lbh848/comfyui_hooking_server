@@ -8,17 +8,22 @@ from aiohttp.test_utils import TestClient, TestServer
 
 from video_engine_backend import (
     VIDEO_ENGINE_DEFAULT_PORT,
+    VIDEO_ENGINE_DEFAULT_PROFILE,
     VideoEngineError,
     VideoEngineService,
     VideoEngineUnavailableError,
     normalize_video_engine_port,
+    normalize_video_engine_profile,
     register_video_engine_routes,
 )
 
 
 def _service() -> VideoEngineService:
     return VideoEngineService(
-        get_config=lambda: {"video_engine_port": VIDEO_ENGINE_DEFAULT_PORT},
+        get_config=lambda: {
+            "video_engine_port": VIDEO_ENGINE_DEFAULT_PORT,
+            "video_engine_profile": "stock",
+        },
         get_comfy_ports=lambda: [(1, 8188), (2, 8187), (3, 8186)],
     )
 
@@ -34,6 +39,31 @@ def test_video_engine_port_rejects_invalid_values(value) -> None:
         normalize_video_engine_port(value)
 
 
+def test_video_engine_profile_normalization() -> None:
+    assert normalize_video_engine_profile(None) == VIDEO_ENGINE_DEFAULT_PROFILE
+    assert normalize_video_engine_profile("  dasiwa_8turbo_v1_int4  ") == (
+        "dasiwa_8turbo_v1_int4"
+    )
+    with pytest.raises(ValueError, match="문자열"):
+        normalize_video_engine_profile(8)
+
+
+@pytest.mark.asyncio
+async def test_unconfigured_profile_uses_daemon_default() -> None:
+    service = VideoEngineService(
+        get_config=lambda: {"video_engine_port": VIDEO_ENGINE_DEFAULT_PORT},
+        get_comfy_ports=lambda: [],
+    )
+    service.models = AsyncMock(  # type: ignore[method-assign]
+        return_value={
+            "default_profile": "stock",
+            "profiles": {"stock": {"label": "MiniMax H3 Stock"}},
+        }
+    )
+
+    assert await service.selected_profile() == "stock"
+
+
 @pytest.mark.asyncio
 async def test_prepare_video_frees_comfy_before_warming_engine() -> None:
     service = _service()
@@ -43,17 +73,83 @@ async def test_prepare_video_frees_comfy_before_warming_engine() -> None:
         events.append("free_comfy")
         return []
 
-    async def set_warm(enabled: bool, *, mode: str):
-        events.append(("warmup", enabled, mode))
-        return {"status": "ready", "residency": {"model_mode": mode}}
+    async def set_warm(enabled: bool, *, mode: str, profile: str | None = None):
+        events.append(("warmup", enabled, mode, profile))
+        return {
+            "status": "ready",
+            "residency": {"model_mode": mode, "model_profile": profile},
+        }
 
     service.free_comfy_memory = free_comfy  # type: ignore[method-assign]
     service._set_warmup = set_warm  # type: ignore[method-assign]
 
     result = await service.prepare_video(mode="ref2v")
 
-    assert events == ["free_comfy", ("warmup", True, "ref2v")]
+    assert events == ["free_comfy", ("warmup", True, "ref2v", "stock")]
     assert result["residency"]["model_mode"] == "ref2v"
+    assert result["residency"]["model_profile"] == "stock"
+
+
+@pytest.mark.asyncio
+async def test_warmup_requires_mode_and_profile_to_match() -> None:
+    service = _service()
+    service.status = AsyncMock(  # type: ignore[method-assign]
+        side_effect=(
+            {
+                "status": "ready",
+                "residency": {
+                    "model_mode": "i2v",
+                    "model_profile": "dasiwa_8turbo_v1_int4",
+                },
+            },
+            {
+                "status": "ready",
+                "residency": {
+                    "model_mode": "i2v",
+                    "model_profile": "stock",
+                },
+            },
+        )
+    )
+    service._request_json = AsyncMock(  # type: ignore[method-assign]
+        return_value={"status": "warming"}
+    )
+
+    result = await service._set_warmup(True, mode="i2v", profile="stock")
+
+    assert result["residency"]["model_profile"] == "stock"
+    service._request_json.assert_awaited_once_with(
+        "PUT",
+        "/api/warmup",
+        body={"enabled": True, "mode": "i2v", "profile": "stock"},
+        timeout_seconds=15.0,
+    )
+
+
+@pytest.mark.asyncio
+async def test_generation_forces_configured_profile_into_daemon_request() -> None:
+    service = _service()
+    service.prepare_video = AsyncMock(return_value={"status": "ready"})  # type: ignore[method-assign]
+    service._request_json = AsyncMock(  # type: ignore[method-assign]
+        side_effect=(
+            {"job_id": "job-1"},
+            {"status": "completed", "progress": 1.0, "result": {}},
+        )
+    )
+    service._request_bytes = AsyncMock(return_value=b"mp4")  # type: ignore[method-assign]
+
+    video, descriptor = await service.generate_video(
+        {"mode": "i2v", "prompt": "prompt"}
+    )
+
+    assert video == b"mp4"
+    service.prepare_video.assert_awaited_once_with(mode="i2v", profile="stock")
+    assert service._request_json.await_args_list[0].kwargs["body"] == {
+        "mode": "i2v",
+        "prompt": "prompt",
+        "profile": "stock",
+    }
+    assert descriptor["profile"] == "stock"
 
 
 @pytest.mark.asyncio
@@ -176,6 +272,39 @@ async def test_status_marks_reachable_unowned_daemon_as_external(monkeypatch) ->
     assert payload["runtime"]["external"] is True
     assert payload["runtime"]["managed"] is False
     assert payload["runtime"]["logs"][0]["text"] == "daemon log\n"
+
+
+@pytest.mark.asyncio
+async def test_models_route_proxies_daemon_profiles_and_configured_value(monkeypatch) -> None:
+    async def fake_models(_self):
+        return {
+            "default_profile": "stock",
+            "profiles": {
+                "stock": {"label": "MiniMax H3 Stock"},
+                "dasiwa": {"label": "DaSiWa"},
+            },
+        }
+
+    monkeypatch.setattr(VideoEngineService, "models", fake_models)
+    app = web.Application()
+    register_video_engine_routes(
+        app,
+        get_config=lambda: {
+            "video_engine_port": 8093,
+            "video_engine_profile": "dasiwa",
+        },
+        get_comfy_ports=lambda: [],
+    )
+
+    async with TestClient(TestServer(app)) as client:
+        response = await client.get("/api/video-engine/models")
+        payload = await response.json()
+
+    assert response.status == 200
+    assert payload["port"] == 8093
+    assert payload["default_profile"] == "stock"
+    assert payload["configured_profile"] == "dasiwa"
+    assert set(payload["profiles"]) == {"stock", "dasiwa"}
 
 
 @pytest.mark.asyncio

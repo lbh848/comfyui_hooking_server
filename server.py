@@ -184,8 +184,10 @@ from modal_backend.settings import ModalSettings
 from vast_backend.settings import VastSettings
 from video_engine_backend import (
     VIDEO_ENGINE_DEFAULT_PORT,
+    VIDEO_ENGINE_DEFAULT_PROFILE,
     VIDEO_ENGINE_TARGET,
     normalize_video_engine_port,
+    normalize_video_engine_profile,
     register_video_engine_routes,
 )
 from video_engine_runtime import (
@@ -534,6 +536,7 @@ DEFAULT_CONFIG = {
     "video_engine_port": VIDEO_ENGINE_DEFAULT_PORT,
     "video_engine_project_path": VIDEO_ENGINE_DEFAULT_PROJECT_PATH,
     "video_engine_auto_start": VIDEO_ENGINE_DEFAULT_AUTO_START,
+    "video_engine_profile": VIDEO_ENGINE_DEFAULT_PROFILE,
     "modal_enabled": False,
     "modal_profile": "soya-comfy",
     "modal_environment": "main",
@@ -1084,6 +1087,21 @@ def load_config() -> dict:
                     merged["video_engine_auto_start"] = (
                         VIDEO_ENGINE_DEFAULT_AUTO_START
                     )
+                try:
+                    merged["video_engine_profile"] = normalize_video_engine_profile(
+                        config.get(
+                            "video_engine_profile",
+                            VIDEO_ENGINE_DEFAULT_PROFILE,
+                        )
+                    )
+                except ValueError as e:
+                    print(
+                        "[CONFIG] 영상 전용 엔진 프로필 로드 실패, "
+                        "daemon 기본값 사용: "
+                        f"value={config.get('video_engine_profile')!r}, error={e}"
+                    )
+                    traceback.print_exc()
+                    merged["video_engine_profile"] = VIDEO_ENGINE_DEFAULT_PROFILE
                 review_enabled = merged.get("lora_prompt_review_enabled", False)
                 if not isinstance(review_enabled, bool):
                     try:
@@ -19119,6 +19137,19 @@ async def handle_api_config(request: web.Request) -> web.Response:
                     print(
                         "[CONFIG] 영상 전용 엔진 자동 시작 저장 거부: "
                         f"value={body.get('video_engine_auto_start')!r}, error={e}"
+                    )
+                    traceback.print_exc()
+                    return web.json_response({"error": str(e)}, status=400)
+
+            if "video_engine_profile" in body:
+                try:
+                    body["video_engine_profile"] = normalize_video_engine_profile(
+                        body.get("video_engine_profile")
+                    )
+                except ValueError as e:
+                    print(
+                        "[CONFIG] 영상 전용 엔진 프로필 저장 거부: "
+                        f"value={body.get('video_engine_profile')!r}, error={e}"
                     )
                     traceback.print_exc()
                     return web.json_response({"error": str(e)}, status=400)

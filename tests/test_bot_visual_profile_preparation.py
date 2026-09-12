@@ -11,6 +11,7 @@ from unittest.mock import patch
 
 
 bot_mode = importlib.import_module("modes.bot_mode")
+visual_profiles = importlib.import_module("modes.visual_profiles")
 
 
 def _card(card_id, label, rep_name, *, use_profile_embedding=False):
@@ -290,12 +291,19 @@ async def test_bulk_main_rep_replaces_all_representative_candidates_only_on_requ
 
 
 @pytest.mark.asyncio
-async def test_bulk_main_rep_creates_profile_from_selected_source_on_apply(
-    visual_bot, monkeypatch
+@pytest.mark.parametrize("legacy_source_id", ["primary", "alternate"])
+async def test_bulk_main_rep_creates_completely_blank_profile_on_apply(
+    visual_bot, monkeypatch, legacy_source_id
 ):
     _tmp_path, _bot_root, char_dir, data = visual_bot
     (char_dir / "transformed.webp").write_bytes(b"transformed")
-    source_before = deepcopy(data["bots"][0]["characters"][0]["visual_cards"][1])
+    source = data["bots"][0]["characters"][0]["visual_cards"][1]
+    source["appearance"] = [{"tag": "silver hair"}]
+    source["default_outfit"] = [{"tag": "black coat"}]
+    source["loras_solo"] = [{"path": "alternate.safetensors"}]
+    source["loras_group"] = [{"path": "alternate-group.safetensors"}]
+    source["face_loras"] = [{"path": "alternate-face.safetensors"}]
+    source["style_loras"] = [{"path": "alternate-style.safetensors"}]
     saved = []
     monkeypatch.setattr(bot_mode, "_save_bot_data", lambda value: saved.append(value))
 
@@ -306,7 +314,8 @@ async def test_bulk_main_rep_creates_profile_from_selected_source_on_apply(
             "char_name": "alice",
             "filename": "transformed.webp",
             "create_profile": True,
-            "source_visual_card_id": "alternate",
+            # 구버전 클라이언트가 원본 ID를 보내도 어떤 설정도 복사하지 않는다.
+            "source_visual_card_id": legacy_source_id,
             "profile_label": "변신 상태",
         }],
     })
@@ -318,12 +327,33 @@ async def test_bulk_main_rep_creates_profile_from_selected_source_on_apply(
     assert created["id"].startswith("card_")
     assert created["label"] == "변신 상태"
     assert created["rep_images"] == ["transformed.webp"]
-    assert created["face_tags"] == source_before["face_tags"]
-    assert created["default_outfit"] == source_before["default_outfit"]
+    assert created["appearance"] == []
+    assert created["default_outfit"] == []
+    assert created["face_tags"] == ""
+    assert created["eye_tags"] == ""
+    assert created["absolute_tags"] == ""
+    assert created["gender_tag"] == ""
+    for field in ("loras", "loras_solo", "loras_group", "face_loras", "style_loras"):
+        assert created[field] == []
     assert created["selection_guide"] == ""
     assert created["aliases"] == []
     assert created["use_profile_embedding"] is True
     assert character["rep_images"] == ["primary.webp"]
+    assert character["visual_cards"][1]["face_tags"] == "face alternate"
+    assert character["visual_cards"][1]["appearance"] == [{"tag": "silver hair"}]
+    profiles = bot_mode.cards_to_character_profiles("alice", character["visual_cards"])
+    rendered, base = visual_profiles.resolve_render_character(
+        character,
+        profiles,
+        created["id"],
+    )
+    assert base["appearance"] == []
+    assert base["outfit"] == []
+    assert rendered["face_tags"] == ""
+    assert rendered["eye_tags"] == ""
+    assert rendered["absolute_tags"] == ""
+    for field in ("loras", "loras_solo", "loras_group", "face_loras", "style_loras"):
+        assert rendered[field] == []
     assert payload["updated"][0]["visual_card_id"] == created["id"]
     assert payload["updated"][0]["created_profile"] is True
     assert len(saved) == 1
@@ -538,7 +568,9 @@ def test_representative_batch_frontend_supports_profile_drafts():
     assert "manual_override: !!profile.manualTarget" in source
     assert "skippedNoImage: skipNoImage" in source
     assert "create_profile = true" in source
-    assert "source_visual_card_id" in source
+    assert "source_visual_card_id" not in source
+    assert "복제 원본" not in source
+    assert "빈 카드로 생성" in source
     assert "visual_card_id: profile.profileId" in source
     assert "＋ 프로필 추가" in source
     assert "function _repBatchToggleRemoveProfile(" in source

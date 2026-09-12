@@ -260,6 +260,7 @@ def test_video_engine_runtime_migration_preserves_existing_config_exactly(
     assert loaded["video_engine_port"] == 8093
     assert loaded["video_engine_project_path"] == ""
     assert loaded["video_engine_auto_start"] is False
+    assert loaded["video_engine_profile"] == ""
     assert loaded["comfyui_port"] == 9001
     assert loaded["comfy_task_allocations"]["video_generation"] == 2
     assert loaded["backup_max_count"] == 321
@@ -344,6 +345,7 @@ async def test_config_api_persists_video_engine_runtime_settings(
                 "video_engine_port": 8094,
                 "video_engine_project_path": str(tmp_path),
                 "video_engine_auto_start": True,
+                "video_engine_profile": "dasiwa_8turbo_v1_int4",
             }
         )
     )
@@ -354,6 +356,7 @@ async def test_config_api_persists_video_engine_runtime_settings(
     assert saved[-1]["video_engine_port"] == 8094
     assert saved[-1]["video_engine_project_path"] == str(tmp_path)
     assert saved[-1]["video_engine_auto_start"] is True
+    assert saved[-1]["video_engine_profile"] == "dasiwa_8turbo_v1_int4"
 
 
 @pytest.mark.asyncio
@@ -367,6 +370,21 @@ async def test_config_api_rejects_non_boolean_video_engine_autostart(
 
     response = await server.handle_api_config(
         _ConfigRequest({"video_engine_auto_start": "yes"})
+    )
+
+    assert response.status == 400
+    assert saved == []
+
+
+@pytest.mark.asyncio
+async def test_config_api_rejects_non_string_video_engine_profile(monkeypatch) -> None:
+    config = copy.deepcopy(server.DEFAULT_CONFIG)
+    saved: list[dict] = []
+    monkeypatch.setattr(server, "app_config", config)
+    monkeypatch.setattr(server, "save_config", lambda value: saved.append(value))
+
+    response = await server.handle_api_config(
+        _ConfigRequest({"video_engine_profile": 8})
     )
 
     assert response.status == 400

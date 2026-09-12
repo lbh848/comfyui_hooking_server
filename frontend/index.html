@@ -5826,6 +5826,9 @@
         .video-engine-port-card .video-engine-project-field {
             grid-column: 1 / -1;
         }
+        .video-engine-port-card .video-engine-profile-field {
+            grid-column: 1 / -1;
+        }
         .video-engine-port-card > label { min-width: 0; }
         .video-engine-port-card > label > span {
             display: block;
@@ -5834,7 +5837,8 @@
             font-size: .62rem;
             font-weight: 700;
         }
-        .video-engine-port-card > label > input {
+        .video-engine-port-card > label > input,
+        .video-engine-port-card > label > select {
             width: 100%;
             padding: 8px 9px;
             box-sizing: border-box;
@@ -15958,7 +15962,7 @@
 
                     <section class="video-panel video-controls-stack">
                         <div>
-                            <div class="video-field-label"><span>영상화 방식</span><small>일반 REF 20-step TeaCache · 전용 고속 4-step</small></div>
+                            <div class="video-field-label"><span>영상화 방식</span><small id="video-generation-workflow-hint">일반 REF 20-step TeaCache · 전용 고속 4-step</small></div>
                             <input id="video-generation-mode" type="hidden" value="i2v">
                             <input id="video-generation-workflow-variant" type="hidden" value="standard">
                             <div class="option-card-grid compact" style="--option-card-columns:2;" role="radiogroup" aria-label="영상화 방식">
@@ -22697,12 +22701,19 @@
                                 <div class="comfy-modal-runtime-metric"><small>프로세스</small><strong id="video-engine-process">확인 중</strong></div>
                                 <div class="comfy-modal-runtime-metric"><small>엔진 상태</small><strong id="video-engine-status">확인 중</strong></div>
                                 <div class="comfy-modal-runtime-metric"><small>모델 모드</small><strong id="video-engine-model-mode">-</strong></div>
+                                <div class="comfy-modal-runtime-metric"><small>모델 프로필</small><strong id="video-engine-model-profile">-</strong></div>
                                 <div class="comfy-modal-runtime-metric"><small>4080 H3 / VAE</small><strong id="video-engine-residency">-</strong></div>
                             </div>
                             <div class="video-engine-port-card">
                                 <label class="video-engine-project-field" for="setting-video-engine-project-path">
                                     <span>프로젝트 위치</span>
                                     <input type="text" id="setting-video-engine-project-path" placeholder="예: E:\minmax_low_vram" spellcheck="false">
+                                </label>
+                                <label class="video-engine-profile-field" for="setting-video-engine-profile">
+                                    <span>H3 모델 프로필 · daemon의 /api/models에서 불러옴</span>
+                                    <select id="setting-video-engine-profile" onchange="updateVideoEngineFixedStepControls(); updateVideoWorkspaceMode();" disabled>
+                                        <option value="">엔진 연결 후 프로필을 불러옵니다</option>
+                                    </select>
                                 </label>
                                 <label for="setting-video-engine-port">
                                     <span>서비스 포트</span>
@@ -31655,6 +31666,64 @@
             return value;
         }
 
+        function selectedVideoEngineFixedSteps() {
+            const allocation = String(
+                document.getElementById('setting-comfy-allocation-video_generation')?.value
+                    || currentConfig?.comfy_task_allocations?.video_generation
+                    || '',
+            );
+            if (allocation !== 'video_engine') return null;
+            const selectedProfile = String(
+                document.getElementById('setting-video-engine-profile')?.value
+                    || currentConfig?.video_engine_profile
+                    || videoEngineLastModels?.configured_profile
+                    || videoEngineLastModels?.default_profile
+                    || '',
+            ).trim();
+            const rawSteps = videoEngineLastModels?.profiles?.[selectedProfile]?.fixed_steps;
+            if (rawSteps === null || rawSteps === undefined) return null;
+            const fixedSteps = Number(rawSteps);
+            return Number.isInteger(fixedSteps) ? fixedSteps : null;
+        }
+
+        function updateVideoEngineFixedStepControls() {
+            const fixedSteps = selectedVideoEngineFixedSteps();
+            const locked = fixedSteps !== null;
+            const mode = document.getElementById('video-generation-mode')?.value || 'i2v';
+            const variantInput = document.getElementById('video-generation-workflow-variant');
+            const hint = document.getElementById('video-generation-workflow-hint');
+            const radios = document.querySelectorAll('input[name="video-mode-choice"]');
+            const variantChanged = locked && variantInput?.value !== 'standard';
+            radios.forEach(radio => {
+                const variant = String(radio.value || '').split(':')[1] || 'standard';
+                radio.disabled = locked && variant === 'fast';
+                radio.title = locked && variant === 'fast'
+                    ? `선택한 H3 모델은 내장 Turbo ${fixedSteps}-step으로 고정되며 별도 가속 LoRA를 사용하지 않습니다.`
+                    : '';
+                const description = radio.nextElementSibling?.querySelector('.option-card-description');
+                if (!description) return;
+                if (!description.dataset.originalText) {
+                    description.dataset.originalText = description.textContent || '';
+                }
+                description.textContent = locked && variant === 'standard'
+                    ? `내장 Turbo · ${fixedSteps}-step 고정 · 외부 가속 LoRA 없음`
+                    : description.dataset.originalText;
+            });
+            if (locked) {
+                if (variantInput) variantInput.value = 'standard';
+                const standard = document.querySelector(
+                    `input[name="video-mode-choice"][value="${mode}:standard"]`,
+                );
+                if (standard) standard.checked = true;
+            }
+            if (variantChanged) updateVideoResolutionControls();
+            if (hint) {
+                hint.textContent = locked
+                    ? `내장 Turbo ${fixedSteps}-step 고정 · 외부 가속 LoRA 없음`
+                    : '일반 REF 20-step TeaCache · 전용 고속 4-step';
+            }
+        }
+
         function snapVideoFastDimension(value) {
             if (!Number.isFinite(value) || value <= 0) {
                 console.error('[VIDEO_UI] FAST 해상도 스냅값 오류:', value);
@@ -34265,6 +34334,7 @@
         function updateVideoWorkspaceMode() {
             const mode = document.getElementById('video-generation-mode')?.value || 'i2v';
             const workflowVariant = selectedVideoWorkflowVariant();
+            const fixedSteps = selectedVideoEngineFixedSteps();
             const isLast = mode === 'first_last';
             const isRef = mode === 'ref2v';
             const lastFrame = document.getElementById('video-frame-last');
@@ -34276,7 +34346,9 @@
             const duration = normalizedVideoDuration();
             const header = document.getElementById('video-generation-header-summary');
             if (header) {
-                header.textContent = `MiniMax H3${workflowVariant === 'fast' ? ' 고속' : ''} · ${duration}초`;
+                header.textContent = fixedSteps !== null
+                    ? `MiniMax H3 · ${fixedSteps}-step 고정 · ${duration}초`
+                    : `MiniMax H3${workflowVariant === 'fast' ? ' 고속' : ''} · ${duration}초`;
             }
             if (lastFrame) lastFrame.style.display = isLast ? 'block' : 'none';
             if (referencePanel) referencePanel.style.display = isRef ? 'block' : 'none';
@@ -34293,11 +34365,13 @@
                     ? '선택 에셋'
                     : '선택 삽화의 원본';
                 const speedLabel = workflowVariant === 'fast' ? '고속으로 ' : '';
-                modeNote.textContent = isRef
-                    ? `${sourceLabel}을 참조 1로 사용하고, 선택한 총 ${getSelectedVideoReferenceRefs().length}장의 독립 REF 이미지로 ${duration}초 영상을 만듭니다. ${workflowVariant === 'fast' ? '전용 4-step' : 'Base 20-step + TeaCache 0.10'}의 REF 기본은 16:9 · 960×544이며, 그 밖의 비율·MP는 실험 옵션입니다.`
-                    : (isLast
-                        ? `${speedLabel}${sourceLabel}을 0초, 선택한 마지막 프레임을 ${duration}초에 정렬합니다.`
-                        : `${speedLabel}${sourceLabel}을 시작 프레임으로 사용해 ${duration}초 영상을 만듭니다.`);
+                modeNote.textContent = fixedSteps !== null
+                    ? `${sourceLabel}을 사용해 내장 Turbo ${fixedSteps}-step으로 ${duration}초 영상을 만듭니다. 외부 가속 LoRA는 적용하지 않습니다.`
+                    : (isRef
+                        ? `${sourceLabel}을 참조 1로 사용하고, 선택한 총 ${getSelectedVideoReferenceRefs().length}장의 독립 REF 이미지로 ${duration}초 영상을 만듭니다. ${workflowVariant === 'fast' ? '전용 4-step' : 'Base 20-step + TeaCache 0.10'}의 REF 기본은 16:9 · 960×544이며, 그 밖의 비율·MP는 실험 옵션입니다.`
+                        : (isLast
+                            ? `${speedLabel}${sourceLabel}을 0초, 선택한 마지막 프레임을 ${duration}초에 정렬합니다.`
+                            : `${speedLabel}${sourceLabel}을 시작 프레임으로 사용해 ${duration}초 영상을 만듭니다.`));
             }
             const loopCheckbox = document.getElementById('video-generation-loop');
             if (loopCheckbox) {
@@ -34318,6 +34392,7 @@
                 console.error('[VIDEO_UI] 지원하지 않는 워크플로우 변형:', workflowVariant);
                 return;
             }
+            if (selectedVideoEngineFixedSteps() !== null) workflowVariant = 'standard';
             const input = document.getElementById('video-generation-mode');
             const variantInput = document.getElementById('video-generation-workflow-variant');
             if (input) input.value = mode;
@@ -34334,6 +34409,7 @@
             updateVideoVisualContextSourcePresentation();
             updateVideoInstructionDraftPresentation();
             updateVideoGenerationSummary();
+            updateVideoEngineFixedStepControls();
         }
 
         function refreshVideoLastFrameOptions(sourceKey) {
@@ -34736,6 +34812,11 @@
                 try {
                     const cfg = await loadCurrentConfig();
                     applyVideoGenerationDefaults(cfg);
+                    if (cfg?.comfy_task_allocations?.video_generation === 'video_engine') {
+                        await videoEngineRefreshModels(false);
+                        updateVideoEngineFixedStepControls();
+                        updateVideoWorkspaceMode();
+                    }
                 } catch (error) {
                     console.error('[VIDEO_UI] 영상화 모달 기본 설정 동기화 실패:', error);
                     updateVideoUpscaleControls();
@@ -37441,6 +37522,9 @@
         let videoEngineLogSeq = 0;
         let videoEngineLogText = '';
         let videoEngineLastStatus = null;
+        let videoEngineLastModels = null;
+        let videoEngineModelsPort = null;
+        let videoEngineModelsBusy = false;
         let comfyTaskAllocations = Object.fromEntries(
             COMFY_TASK_DEFINITIONS.map(item => [item.key, item.defaultInstance || 1]),
         );
@@ -37614,6 +37698,10 @@
                     comfyTaskAllocations[item.key] = ['modal', 'vast', 'video_engine'].includes(select.value)
                         ? select.value
                         : Number(select.value);
+                    if (item.key === 'video_generation') {
+                        updateVideoEngineFixedStepControls();
+                        updateVideoWorkspaceMode();
+                    }
                     comfyAllocationSyncRemoteParallel(
                         item,
                         select,
@@ -38065,6 +38153,100 @@
             return path;
         }
 
+        function videoEngineProfileValue(requireValue = false) {
+            const profile = String(
+                document.getElementById('setting-video-engine-profile')?.value || '',
+            ).trim();
+            if (requireValue && !profile) {
+                console.error('[VIDEO_ENGINE] 선택된 H3 모델 프로필이 없습니다.');
+                throw new Error('영상 전용 엔진의 H3 모델 프로필을 선택하세요.');
+            }
+            return profile;
+        }
+
+        function videoEngineSetPendingProfile(profile) {
+            const select = document.getElementById('setting-video-engine-profile');
+            if (!select) return;
+            const normalized = String(profile || '').trim();
+            select.replaceChildren();
+            const option = document.createElement('option');
+            option.value = normalized;
+            option.textContent = normalized
+                ? `저장된 프로필 · ${normalized}`
+                : '엔진 연결 후 프로필을 불러옵니다';
+            option.selected = true;
+            select.append(option);
+            select.disabled = true;
+            updateVideoEngineFixedStepControls();
+        }
+
+        function videoEngineRenderModels(data) {
+            const select = document.getElementById('setting-video-engine-profile');
+            if (!select) return;
+            const profiles = data?.profiles && typeof data.profiles === 'object'
+                && !Array.isArray(data.profiles)
+                ? data.profiles
+                : null;
+            const entries = profiles ? Object.entries(profiles) : [];
+            if (!entries.length) {
+                console.error('[VIDEO_ENGINE] daemon 모델 프로필 목록이 비어 있습니다.', data);
+                videoEngineSetPendingProfile(currentConfig?.video_engine_profile || '');
+                return;
+            }
+            const previous = String(select.value || '').trim();
+            const configured = String(
+                currentConfig?.video_engine_profile || data?.configured_profile || '',
+            ).trim();
+            const defaultProfile = String(data?.default_profile || '').trim();
+            const desired = previous || configured || defaultProfile;
+            select.replaceChildren();
+            if (desired && !Object.prototype.hasOwnProperty.call(profiles, desired)) {
+                const missing = document.createElement('option');
+                missing.value = desired;
+                missing.textContent = `저장된 프로필 · ${desired} (현재 엔진 목록에 없음)`;
+                select.append(missing);
+            }
+            for (const [name, raw] of entries) {
+                const profile = raw && typeof raw === 'object' ? raw : {};
+                const label = String(profile.label || name);
+                const turboMode = String(profile.turbo_mode || '').trim();
+                const option = document.createElement('option');
+                option.value = name;
+                option.textContent = `${label} · ${name}${turboMode ? ` · ${turboMode}` : ''}`;
+                select.append(option);
+            }
+            if (desired && Array.from(select.options).some(option => option.value === desired)) {
+                select.value = desired;
+            } else if (defaultProfile) {
+                select.value = defaultProfile;
+            }
+            videoEngineLastModels = data;
+            videoEngineModelsPort = Number(data?.port || videoEnginePortValue());
+            select.disabled = videoEngineActionBusy;
+            updateVideoEngineFixedStepControls();
+            updateVideoWorkspaceMode();
+        }
+
+        async function videoEngineRefreshModels(manual = false) {
+            if (videoEngineModelsBusy) return;
+            videoEngineModelsBusy = true;
+            try {
+                const data = await fetchJSON('/api/video-engine/models');
+                videoEngineRenderModels(data);
+                if (manual) showToast('영상 전용 엔진 모델 프로필을 갱신했습니다.', 'success');
+            } catch (error) {
+                console.error('[VIDEO_ENGINE] 모델 프로필 조회 실패:', error);
+                videoEngineLastModels = null;
+                videoEngineModelsPort = null;
+                videoEngineSetPendingProfile(currentConfig?.video_engine_profile || '');
+                if (manual) {
+                    showToast('영상 전용 엔진 모델 프로필 조회 실패: ' + (error.message || error), 'error');
+                }
+            } finally {
+                videoEngineModelsBusy = false;
+            }
+        }
+
         function videoEngineResidencyText(residency) {
             if (!residency || typeof residency !== 'object') return '-';
             const format = (label, value) => value && typeof value === 'object'
@@ -38090,6 +38272,7 @@
             const processEl = document.getElementById('video-engine-process');
             const statusEl = document.getElementById('video-engine-status');
             const modeEl = document.getElementById('video-engine-model-mode');
+            const profileEl = document.getElementById('video-engine-model-profile');
             const residencyEl = document.getElementById('video-engine-residency');
             if (state) {
                 if (runtimeRunning) state.textContent = `● 실행 중 · PID ${runtime.pid}`;
@@ -38111,6 +38294,7 @@
             }
             if (statusEl) statusEl.textContent = status;
             if (modeEl) modeEl.textContent = residency?.model_mode || '-';
+            if (profileEl) profileEl.textContent = residency?.model_profile || '-';
             if (residencyEl) residencyEl.textContent = videoEngineResidencyText(residency);
             if (runtime) {
                 if (runtime.log_reset) videoEngineLogText = '';
@@ -38149,6 +38333,7 @@
             const save = document.getElementById('video-engine-save-runtime');
             const pathInput = document.getElementById('setting-video-engine-project-path');
             const portInput = document.getElementById('setting-video-engine-port');
+            const profileInput = document.getElementById('setting-video-engine-profile');
             if (raise) raise.disabled = videoEngineActionBusy || transitionBusy || !reachable;
             if (lower) lower.disabled = videoEngineActionBusy || transitionBusy || !reachable;
             if (start) start.disabled = videoEngineActionBusy || runtimeRunning || externalRunning;
@@ -38156,6 +38341,9 @@
             if (save) save.disabled = videoEngineActionBusy;
             if (pathInput) pathInput.disabled = runtimeRunning;
             if (portInput) portInput.disabled = runtimeRunning;
+            if (profileInput) {
+                profileInput.disabled = videoEngineActionBusy || !reachable || !videoEngineLastModels;
+            }
         }
 
         async function videoEngineRefreshStatus(manual = false) {
@@ -38167,6 +38355,10 @@
                     `/api/video-engine/status?after=${encodeURIComponent(String(videoEngineLogSeq || 0))}`,
                 );
                 videoEngineRenderStatus(data);
+                if (data.reachable === true
+                    && (manual || videoEngineModelsPort !== Number(data.port))) {
+                    void videoEngineRefreshModels(manual);
+                }
                 if (manual) {
                     showToast(data.reachable ? '영상 전용 엔진 상태를 갱신했습니다.' : '영상 전용 엔진에 연결할 수 없습니다.', data.reachable ? 'success' : 'warning');
                 }
@@ -38184,10 +38376,11 @@
         }
 
         async function videoEngineSaveRuntimeSettings(showSuccess = true) {
-            let port, projectPath;
+            let port, projectPath, profile;
             try {
                 port = videoEnginePortValue();
                 projectPath = videoEngineProjectPathValue(false);
+                profile = videoEngineProfileValue(false);
             } catch (error) {
                 showToast(error.message || String(error), 'error');
                 return false;
@@ -38202,6 +38395,7 @@
                         video_engine_port: port,
                         video_engine_project_path: projectPath,
                         video_engine_auto_start: autoStart,
+                        video_engine_profile: profile,
                     }),
                 });
                 if (result?.success !== true) throw new Error(result?.error || '실행 설정 저장 실패');
@@ -38210,6 +38404,7 @@
                     video_engine_port: port,
                     video_engine_project_path: projectPath,
                     video_engine_auto_start: autoStart,
+                    video_engine_profile: profile,
                 };
                 currentConfigLoadPromise = Promise.resolve(currentConfig);
                 if (showSuccess) showToast('영상 전용 엔진 실행 설정을 저장했습니다.', 'success');
@@ -38292,7 +38487,9 @@
                 showToast(error.message || String(error), 'error');
                 return;
             }
-            if (Number(currentConfig?.video_engine_port || 8093) !== port) {
+            const profile = videoEngineProfileValue(false);
+            if (Number(currentConfig?.video_engine_port || 8093) !== port
+                || String(currentConfig?.video_engine_profile || '') !== profile) {
                 const saved = await videoEngineSaveRuntimeSettings(false);
                 if (!saved) return;
             }
@@ -38306,7 +38503,11 @@
                 await fetchJSON('/api/video-engine/resources', {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ enabled: enabled === true, mode: 'i2v' }),
+                    body: JSON.stringify({
+                        enabled: enabled === true,
+                        mode: 'i2v',
+                        profile,
+                    }),
                 });
                 showToast(enabled ? '영상 전용 엔진 RAM/VRAM을 올렸습니다.' : 'H3/VAE RAM/VRAM을 내렸습니다. 4060의 4B VL은 유지됩니다.', 'success');
             } catch (error) {
@@ -38350,6 +38551,7 @@
             document.getElementById('comfy-video-engine-panel')?.classList.add('active');
             comfyRuntimeStopPolling();
             modalRuntimeStopPolling();
+            void videoEngineRefreshModels(false);
             void videoEngineRefreshStatus(false);
         }
 
@@ -41811,6 +42013,7 @@
             document.getElementById('setting-video-engine-port').value = currentConfig.video_engine_port || 8093;
             document.getElementById('setting-video-engine-project-path').value = currentConfig.video_engine_project_path || '';
             document.getElementById('setting-video-engine-auto-start').checked = currentConfig.video_engine_auto_start === true;
+            videoEngineSetPendingProfile(currentConfig.video_engine_profile || '');
             const memoEnabled = currentConfig.memo_enabled !== false;
             document.getElementById('setting-memo-enabled').checked = memoEnabled;
             updateMemoSettingStatus(memoEnabled);
@@ -43489,6 +43692,7 @@
                 video_engine_port: videoEnginePort,
                 video_engine_project_path: videoEngineProjectPathValue(false),
                 video_engine_auto_start: document.getElementById('setting-video-engine-auto-start')?.checked === true,
+                video_engine_profile: videoEngineProfileValue(false),
                 comfyui_port_illustration: null,
                 comfy_launch_profiles: comfyRuntimeProfilesForSave(),
                 comfy_task_allocations: comfyAllocationsForSave(),
@@ -67940,7 +68144,7 @@
             const active = _visualCardSlots[charName] || 0;
             const slots = profiles.map((_, index) => `<button onclick="event.stopPropagation(); switchVisualCard('${escAttr(charName)}',${index})" title="캐릭터 카드 ${index + 1}" style="min-width:32px;height:30px;padding:0 8px;border:1px solid ${index === active ? 'var(--accent)' : 'var(--border)'};border-radius:6px;background:${index === active ? 'var(--accent)' : 'var(--surface2)'};color:${index === active ? '#fff' : 'var(--text)'};cursor:pointer;font-weight:700">[${index + 1}]</button>`).join('');
             const add = profiles.length < VISUAL_CARD_LIMIT
-                ? `<button onclick="event.stopPropagation(); addVisualCard('${escAttr(charName)}')" title="현재 카드를 복제해 새 카드 추가" style="height:30px;padding:0 10px;border:1px dashed var(--accent);border-radius:6px;background:transparent;color:var(--accent);cursor:pointer;font-weight:700">＋</button>`
+                ? `<button onclick="event.stopPropagation(); addVisualCard('${escAttr(charName)}')" title="빈 캐릭터 카드 추가" style="height:30px;padding:0 10px;border:1px dashed var(--accent);border-radius:6px;background:transparent;color:var(--accent);cursor:pointer;font-weight:700">＋</button>`
                 : '';
             const remove = active > 0
                 ? `<button onclick="event.stopPropagation(); removeVisualCard('${escAttr(charName)}')" title="현재 카드 삭제" style="height:30px;padding:0 9px;border:1px solid #ef444477;border-radius:6px;background:transparent;color:#ef4444;cursor:pointer">삭제</button>`
@@ -67968,22 +68172,16 @@
         }
 
         async function addVisualCard(charName) {
-            const state = _visualCardState(charName), current = _visualCardProfile(charName);
-            if (!state || !current) {
-                console.error('[VISUAL_CARD] 복제할 카드 없음', charName);
-                showToast('복제할 캐릭터 카드를 찾지 못했습니다.', 'error');
+            const state = _visualCardState(charName);
+            if (!state) {
+                console.error('[VISUAL_CARD] 새 카드를 추가할 캐릭터 상태 없음', charName);
+                showToast('캐릭터 카드 상태를 찾지 못했습니다.', 'error');
                 return;
             }
             if ((state.data.profiles || []).length >= VISUAL_CARD_LIMIT) {
                 showToast(`캐릭터 카드는 최대 ${VISUAL_CARD_LIMIT}장까지 등록할 수 있습니다.`, 'error');
                 return;
             }
-            const resolved = _visualCardResolved(charName) || {};
-            const renderOverrides = {};
-            VISUAL_CARD_RENDER_FIELDS.forEach(key => {
-                if (Object.prototype.hasOwnProperty.call(resolved, key)) renderOverrides[key] = JSON.parse(JSON.stringify(resolved[key]));
-            });
-            renderOverrides.use_profile_embedding = true;
             const index = state.data.profiles.length;
             const id = _newVisualCardId(state);
             state.data.profiles.push({
@@ -67991,9 +68189,25 @@
                 label: `카드 ${index + 1}`,
                 selection_guide: '',
                 aliases: [],
-                appearance: JSON.parse(JSON.stringify(current.appearance || [])),
-                default_outfit: JSON.parse(JSON.stringify(current.default_outfit || [])),
-                render_overrides: renderOverrides
+                appearance: [],
+                default_outfit: [],
+                render_overrides: {
+                    absolute_tags: '',
+                    character_negative: '',
+                    eye_prompt: '',
+                    eye_tags: '',
+                    face_loras: [],
+                    face_tags: '',
+                    gender_tag: '',
+                    image_name_tag: '',
+                    loras: [],
+                    loras_group: [],
+                    loras_solo: [],
+                    rep_images: [],
+                    style_loras: [],
+                    use_image_name_tag: false,
+                    use_profile_embedding: true
+                }
             });
             _visualCardSlots[charName] = index;
             try {
@@ -75325,12 +75539,20 @@
             return path ? (path.split(/[\\/]/).filter(Boolean).pop() || path) : '이름 없는 LoRA';
         }
 
+        function _alrLoraStrength(lora) {
+            const strength = Number(lora?.strength ?? 0.5);
+            if (Number.isFinite(strength)) return strength;
+            console.error('[BOT_AUTO_LORA] LoRA 강도 형식 오류, 기본값 0.5 사용', {lora});
+            return 0.5;
+        }
+
         function _alrTargetStatus(target, profile) {
             const loras = _alrTargetLoras(target, profile);
             return {
                 configured: loras.length > 0,
                 count: loras.length,
                 names: loras.map(_alrLoraDisplayName),
+                strengths: loras.map(_alrLoraStrength),
                 sources: [...new Set(loras.map(item => item?.source || '직접 지정'))],
             };
         }
@@ -75387,7 +75609,7 @@
             const checkedTargetsByProfile = {solo: {}, group: {}, face: {}};
             Object.keys(checkedTargetsByProfile).forEach(profile => {
                 targets.forEach(target => {
-                    checkedTargetsByProfile[profile][target.key] = !_alrTargetStatus(target, profile).configured;
+                    checkedTargetsByProfile[profile][target.key] = true;
                 });
             });
             _botAutoLoraState = {
@@ -75396,8 +75618,10 @@
                 checkedTargetsByProfile,
                 checkedTargets: checkedTargetsByProfile.solo,
                 profile: 'solo',
-                targetFilter: 'unset',
+                targetFilter: 'all',
                 targetSearch: '',
+                targetStrengthCondition: 'all',
+                targetStrengthValue: 0.5,
                 sourceFilter: 'all',
                 conflict: 'add',
                 strength: 0.5,
@@ -75432,13 +75656,17 @@
                             <button type="button" class="alr-profile-btn" data-profile="solo" onclick="_alrSetProfile('solo')" style="padding:6px 12px; border:1px solid var(--border); border-radius:6px; cursor:pointer; font-weight:700;">1인 LoRA</button>
                             <button type="button" class="alr-profile-btn" data-profile="group" onclick="_alrSetProfile('group')" style="padding:6px 12px; border:1px solid var(--border); border-radius:6px; cursor:pointer; font-weight:700;">다인 LoRA</button>
                             <button type="button" class="alr-profile-btn" data-profile="face" onclick="_alrSetProfile('face')" style="padding:6px 12px; border:1px solid var(--border); border-radius:6px; cursor:pointer; font-weight:700;">얼굴 LoRA</button>
-                            <span style="font-size:.68rem; color:var(--text2);">대상을 바꾸면 해당 종류의 미설정 카드가 자동 선택됩니다.</span>
+                            <span style="font-size:.68rem; color:var(--text2);">대상을 바꾸면 해당 종류의 모든 카드가 기본 선택됩니다.</span>
                         </div>
                         <div style="display:flex; gap:7px; align-items:center; margin-bottom:8px; flex-wrap:wrap;">
                             <input id="alr-target-search" type="search" placeholder="캐릭터 또는 카드 이름 검색" oninput="_alrSetTargetSearch(this.value)" style="min-width:230px; flex:1; max-width:380px; padding:7px 9px; border:1px solid var(--border); border-radius:6px; background:var(--surface2); color:var(--text);">
                             <select id="alr-target-filter" onchange="_alrSetTargetFilter(this.value)" style="padding:7px 9px; border:1px solid var(--border); border-radius:6px; background:var(--surface2); color:var(--text);">
-                                <option value="unset">미설정만</option><option value="configured">설정됨만</option><option value="all">전체</option>
+                                <option value="all">전체</option><option value="unset">미설정만</option><option value="configured">설정됨만</option>
                             </select>
+                            <select id="alr-target-strength-condition" onchange="_alrSetTargetStrengthCondition(this.value)" style="padding:7px 9px; border:1px solid var(--border); border-radius:6px; background:var(--surface2); color:var(--text);">
+                                <option value="all">강도 조건 없음</option><option value="lte">LoRA 강도 이하</option><option value="gte">LoRA 강도 이상</option>
+                            </select>
+                            <input id="alr-target-strength-value" type="number" min="0" max="1" step="0.01" value="0.50" disabled onchange="_alrSetTargetStrengthValue(this.value)" aria-label="LoRA 강도 기준값" style="width:76px; padding:7px 9px; border:1px solid var(--border); border-radius:6px; background:var(--surface2); color:var(--text);">
                             <button type="button" onclick="_alrSelectTargets('unset')" style="background:var(--accent); border:1px solid var(--accent); color:#fff; padding:6px 10px; border-radius:6px; cursor:pointer; font-size:.72rem; font-weight:700;">미설정 전체 선택</button>
                             <button type="button" onclick="_alrSelectTargets('visible')" style="background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:6px 10px; border-radius:6px; cursor:pointer; font-size:.72rem;">보이는 카드 선택</button>
                             <button type="button" onclick="_alrSelectTargets('none')" style="background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:6px 10px; border-radius:6px; cursor:pointer; font-size:.72rem;">선택 해제</button>
@@ -75514,7 +75742,20 @@
             const configured = _alrTargetStatus(target, _botAutoLoraState.profile).configured;
             if (_botAutoLoraState.targetFilter === 'unset' && configured) return false;
             if (_botAutoLoraState.targetFilter === 'configured' && !configured) return false;
-            return true;
+            return _alrTargetMatchesStrength(target);
+        }
+
+        function _alrTargetMatchesStrength(target) {
+            if (!_botAutoLoraState) return false;
+            const condition = _botAutoLoraState.targetStrengthCondition;
+            if (condition === 'all') return true;
+            const threshold = _botAutoLoraState.targetStrengthValue;
+            const strengths = _alrTargetStatus(target, _botAutoLoraState.profile).strengths;
+            if (strengths.length === 0) return false;
+            if (condition === 'lte') return strengths.some(strength => strength <= threshold);
+            if (condition === 'gte') return strengths.some(strength => strength >= threshold);
+            console.error('[BOT_AUTO_LORA] 알 수 없는 LoRA 강도 조건', {condition});
+            return false;
         }
 
         function _renderAutoLoraStep1() {
@@ -75558,9 +75799,9 @@
             _alrSyncCheckedTargets();
             _botAutoLoraState.profile = profile;
             _botAutoLoraState.checkedTargets = _botAutoLoraState.checkedTargetsByProfile[profile];
-            _botAutoLoraState.targetFilter = 'unset';
+            _botAutoLoraState.targetFilter = 'all';
             const filter = document.getElementById('alr-target-filter');
-            if (filter) filter.value = 'unset';
+            if (filter) filter.value = 'all';
             _renderAutoLoraStep1();
         }
 
@@ -75577,6 +75818,35 @@
             if (!_botAutoLoraState) return;
             _alrSyncCheckedTargets();
             _botAutoLoraState.targetFilter = value;
+            _renderAutoLoraStep1();
+        }
+
+        function _alrSetTargetStrengthCondition(value) {
+            if (!_botAutoLoraState) return;
+            _alrSyncCheckedTargets();
+            const condition = ['all', 'lte', 'gte'].includes(value) ? value : 'all';
+            if (condition !== value) {
+                console.error('[BOT_AUTO_LORA] LoRA 강도 조건 변경 거부', {value});
+            }
+            _botAutoLoraState.targetStrengthCondition = condition;
+            const input = document.getElementById('alr-target-strength-value');
+            if (input) input.disabled = condition === 'all';
+            _renderAutoLoraStep1();
+        }
+
+        function _alrSetTargetStrengthValue(value) {
+            if (!_botAutoLoraState) return;
+            _alrSyncCheckedTargets();
+            const parsed = Number.parseFloat(value);
+            if (!Number.isFinite(parsed)) {
+                console.error('[BOT_AUTO_LORA] LoRA 강도 기준값 변경 거부', {value});
+                const invalidInput = document.getElementById('alr-target-strength-value');
+                if (invalidInput) invalidInput.value = _botAutoLoraState.targetStrengthValue.toFixed(2);
+                return;
+            }
+            _botAutoLoraState.targetStrengthValue = Math.min(1, Math.max(0, parsed));
+            const input = document.getElementById('alr-target-strength-value');
+            if (input) input.value = _botAutoLoraState.targetStrengthValue.toFixed(2);
             _renderAutoLoraStep1();
         }
 
@@ -75625,7 +75895,9 @@
         }
         function _alrCheckedTargets() {
             if (!_botAutoLoraState) return [];
-            return _botAutoLoraState.targets.filter(target => _botAutoLoraState.checkedTargets[target.key]);
+            return _botAutoLoraState.targets.filter(target =>
+                _botAutoLoraState.checkedTargets[target.key] && _alrTargetMatchesStrength(target)
+            );
         }
         function _alrGoStep2() {
             _alrSyncCheckedTargets();
@@ -77706,7 +77978,6 @@
                     profileLabel: profile.label || `카드 ${index + 1}`,
                     rep0: reps[0] || '',
                     isNew: false,
-                    sourceProfileId: '',
                     useOwnSearch: false,
                     ownSearch: '',
                     manualTarget: '',
@@ -77812,7 +78083,7 @@
                         '<button id="rep-batch-apply" onclick="applyRepBatchSet()" disabled style="background:var(--accent2); color:#fff; border:none; padding:6px 12px; border-radius:6px; cursor:not-allowed; font-size:0.78rem; font-weight:600; opacity:0.5;">일괄 설정 적용</button>' +
                         '<button onclick="closeRepBatchModal()" style="background:none; border:none; color:var(--text); font-size:1.3rem; cursor:pointer; padding:2px 8px; line-height:1;" title="닫기">✕</button>' +
                     '</div>' +
-                    '<div style="font-size:0.7rem; color:var(--text2); margin-bottom:8px;">캐릭터별 모든 프로필의 메인 대표를 지정합니다. 새 대표가 적용되면 해당 카드의 기존 대표와 후보는 제거되고 선택한 이미지 하나만 남습니다. <b>＋ 프로필 추가</b>는 원본 프로필 설정을 복제하되 대표 이미지는 새 후보로 시작합니다. 저장된 보조 카드는 <b>카드 빼기</b>로 삭제 예정 상태에 둘 수 있습니다. 추가와 삭제는 모두 적용 전에는 저장되지 않습니다. 공통 검색 대신 프로필별 개별 검색도 사용할 수 있습니다. <b>보호 모드</b>는 기존 대표의 자동 교체만 건너뛰며, 썸네일에서 직접 선택한 프로필은 변경합니다.</div>' +
+                    '<div style="font-size:0.7rem; color:var(--text2); margin-bottom:8px;">캐릭터별 모든 프로필의 메인 대표를 지정합니다. 새 대표가 적용되면 해당 카드의 기존 대표와 후보는 제거되고 선택한 이미지 하나만 남습니다. <b>＋ 프로필 추가</b>는 기존 설정을 복사하지 않는 빈 카드를 만들고 선택한 대표 이미지만 지정합니다. 저장된 보조 카드는 <b>카드 빼기</b>로 삭제 예정 상태에 둘 수 있습니다. 추가와 삭제는 모두 적용 전에는 저장되지 않습니다. 공통 검색 대신 프로필별 개별 검색도 사용할 수 있습니다. <b>보호 모드</b>는 기존 대표의 자동 교체만 건너뛰며, 썸네일에서 직접 선택한 프로필은 변경합니다.</div>' +
                     '<div id="rep-batch-body" style="overflow-y:auto; flex:1; display:flex; flex-direction:column; gap:16px; padding:4px 8px 8px 4px;"></div>' +
                 '</div>';
             window._repBatchPrevOverflow = document.body.style.overflow;
@@ -77859,7 +78130,6 @@
             const searchEl = document.getElementById('rep-batch-search');
             const commonSearch = (searchEl ? searchEl.value : '').trim().toLowerCase();
             const mode = _repBatchMode();
-            const existingProfiles = row.profiles.filter(profile => !profile.isNew && !profile.removePending);
             const removePendingCount = row.profiles.filter(profile => profile.removePending).length;
             const activeProfileCount = row.profiles.length - removePendingCount;
             const canAdd = activeProfileCount < VISUAL_CARD_LIMIT;
@@ -77891,11 +78161,9 @@
                     : (search
                     ? '파일명 일치 ' + matchedCount + '건 / 전체 ' + row.baseOrder.length + '장'
                     : display.length + '장 표시' + (row.baseOrder.length > 10 ? ' (전체 ' + row.baseOrder.length + '장)' : ''));
-                const sourceSelect = profile.isNew
-                    ? '<label style="display:flex;align-items:center;gap:4px;font-size:0.66rem;color:var(--text2);">복제 원본 ' +
-                        '<select onchange="_repBatchSetDraftSource(' + i + ',' + profileIndex + ',this.value)" style="padding:3px 5px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);font-size:0.68rem;">' +
-                            existingProfiles.map((source, sourceIndex) => '<option value="' + escAttr(source.profileId) + '" ' + (source.profileId === profile.sourceProfileId ? 'selected' : '') + '>[' + (sourceIndex + 1) + '] ' + escHtml(source.profileLabel) + '</option>').join('') +
-                        '</select></label>' : '';
+                const newProfileNote = profile.isNew
+                    ? '<span style="font-size:0.62rem;color:var(--text2);border:1px dashed var(--border);border-radius:999px;padding:1px 6px;">빈 카드로 생성</span>'
+                    : '';
                 const profileTitle = profile.isNew
                     ? '<input value="' + escAttr(profile.profileLabel) + '" maxlength="80" onchange="_repBatchSetDraftLabel(' + i + ',' + profileIndex + ',this.value)" style="min-width:130px;padding:4px 6px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);font-size:0.76rem;font-weight:600;" aria-label="새 프로필 이름">'
                     : '<span style="font-weight:600;font-size:0.78rem;">[' + (profileIndex + 1) + '] ' + escHtml(profile.profileLabel) + '</span>';
@@ -77939,7 +78207,7 @@
                 }).join('');
                 const thumbsContent = thumbs || '<span style="font-size:0.68rem;color:var(--text2);padding:8px 2px;">대표로 지정할 이미지가 없습니다.</span>';
                 return '<div data-profile-idx="' + profileIndex + '" data-remove-pending="' + (profileRemoved ? 'true' : 'false') + '" style="border:1px solid ' + (profileRemoved ? 'rgba(239,68,68,.4)' : 'var(--border)') + ';border-radius:7px;padding:7px;background:var(--surface);opacity:' + (profileRemoved ? '.62' : '1') + ';">' +
-                    '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:6px;">' + profileTitle + badge + protectNote + targetHint + sourceSelect + ownSearchControl + removeControl +
+                    '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:6px;">' + profileTitle + badge + protectNote + targetHint + newProfileNote + ownSearchControl + removeControl +
                         '<span style="margin-left:auto;font-size:0.64rem;color:var(--text2);">' + matchInfo + '</span></div>' +
                     '<div style="display:flex;gap:6px;overflow-x:auto;padding-bottom:4px;">' + thumbsContent + '</div></div>';
             }).join('');
@@ -78002,19 +78270,12 @@
                 showToast(`캐릭터 프로필은 최대 ${VISUAL_CARD_LIMIT}개까지 추가할 수 있습니다.`, 'error');
                 return;
             }
-            const source = row.profiles.find(profile => !profile.isNew && !profile.removePending);
-            if (!source) {
-                console.error('[BOT] 대표 일괄 설정 새 프로필 원본 없음:', row.charName);
-                showToast('복제할 원본 프로필을 찾지 못했습니다.', 'error');
-                return;
-            }
             row.profiles.push({
                 clientKey: `draft:${++_repBatchDraftSeq}`,
                 profileId: '',
                 profileLabel: `카드 ${row.profiles.length + 1}`,
                 rep0: '',
                 isNew: true,
-                sourceProfileId: source.profileId,
                 useOwnSearch: false,
                 ownSearch: '',
                 manualTarget: '',
@@ -78045,23 +78306,7 @@
                 return;
             }
             profile.removePending = !profile.removePending;
-            if (profile.removePending) {
-                const fallbackSource = row.profiles.find(candidate =>
-                    !candidate.isNew && !candidate.removePending && candidate.profileId !== profile.profileId
-                );
-                row.profiles.forEach(candidate => {
-                    if (candidate.isNew && candidate.sourceProfileId === profile.profileId) {
-                        candidate.sourceProfileId = fallbackSource?.profileId || '';
-                    }
-                });
-            }
             _repBatchRenderRow(rowIndex);
-        }
-
-        function _repBatchSetDraftSource(rowIndex, profileIndex, sourceProfileId) {
-            const profile = _repBatchRowData[rowIndex]?.profiles?.[profileIndex];
-            if (!profile?.isNew) return;
-            profile.sourceProfileId = String(sourceProfileId || '');
         }
 
         function _repBatchSetDraftLabel(rowIndex, profileIndex, value) {
@@ -78194,7 +78439,6 @@
                     };
                     if (profile.isNew) {
                         item.create_profile = true;
-                        item.source_visual_card_id = profile.sourceProfileId;
                         item.profile_label = profile.profileLabel;
                     }
                     items.push(item);

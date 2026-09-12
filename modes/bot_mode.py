@@ -1952,8 +1952,9 @@ class BotMode:
 
         기존 호출의 ``items:[{char_name, filename}]`` 형식은 첫 번째 카드 대상으로
         계속 지원한다. 다중 카드 호출은 ``visual_card_id``를 보내며, 새 카드는
-        ``create_profile=true``와 ``source_visual_card_id``를 함께 보낸다. 저장된
-        보조 카드 삭제는 ``remove_profile=true``로 요청하며 기본 카드는 보호한다.
+        ``create_profile=true``로 요청한다. 새 카드는 기존 카드 설정을 복사하지
+        않고 대표 이미지만 지정된 빈 카드로 만든다. 저장된 보조 카드 삭제는
+        ``remove_profile=true``로 요청하며 기본 카드는 보호한다.
         보호 모드에서도 사용자가 직접 고른 항목은 ``manual_override=true``로 교체한다.
         대표를 지정한 카드에는 선택한 파일 하나만 남기고 기존 대표/후보는 제거한다.
         """
@@ -2100,24 +2101,35 @@ class BotMode:
                 if len(cards) >= MAX_VISUAL_CARDS:
                     skip_item(char_name, "", f"프로필 최대 {MAX_VISUAL_CARDS}개 초과")
                     continue
-                source_card_id = (it.get("source_visual_card_id", "") or "").strip()
-                source_card = next(
-                    (card for card in cards if str(card.get("id") or "") == source_card_id),
-                    cards[0] if not source_card_id and cards else None,
-                )
-                if source_card is None:
-                    skip_item(char_name, source_card_id, "복제 원본 프로필을 찾을 수 없음")
-                    continue
-                target_card = deepcopy(source_card)
-                target_card["id"] = new_card_id(cards)
-                target_card["label"] = (
-                    str(it.get("profile_label") or "").strip()
-                    or f"카드 {len(cards) + 1}"
-                )
-                target_card["selection_guide"] = ""
-                target_card["aliases"] = []
-                target_card["rep_images"] = []
-                target_card["use_profile_embedding"] = True
+                # 루트 캐릭터는 카드 [1]의 렌더 값을 미러링한다. 새 카드에서
+                # 필드를 생략하면 카드 [1] 값이 다시 보일 수 있으므로 모든 카드별
+                # 렌더 필드를 명시적으로 비워 완전히 독립된 카드로 시작한다.
+                target_card = {
+                    "id": new_card_id(cards),
+                    "label": (
+                        str(it.get("profile_label") or "").strip()
+                        or f"카드 {len(cards) + 1}"
+                    ),
+                    "selection_guide": "",
+                    "aliases": [],
+                    "appearance": [],
+                    "default_outfit": [],
+                    "absolute_tags": "",
+                    "character_negative": "",
+                    "eye_prompt": "",
+                    "eye_tags": "",
+                    "face_loras": [],
+                    "face_tags": "",
+                    "gender_tag": "",
+                    "image_name_tag": "",
+                    "loras": [],
+                    "loras_group": [],
+                    "loras_solo": [],
+                    "rep_images": [],
+                    "style_loras": [],
+                    "use_image_name_tag": False,
+                    "use_profile_embedding": True,
+                }
                 cards.append(target_card)
                 requested_card_id = target_card["id"]
             else:

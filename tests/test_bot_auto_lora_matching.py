@@ -107,7 +107,7 @@ def test_bot_auto_lora_is_a_status_first_three_step_wizard():
     assert "확인 후 자동 세팅 실행" in modal
 
 
-def test_bot_auto_lora_defaults_each_profile_to_only_unconfigured_cards():
+def test_bot_auto_lora_defaults_each_profile_to_all_cards():
     modal = _function_source(
         "openBotAutoLoraSetupModal()", "_alrOverviewCard(label, value, tone = 'var(--text)')"
     )
@@ -115,9 +115,12 @@ def test_bot_auto_lora_defaults_each_profile_to_only_unconfigured_cards():
     bulk_select = _function_source("_alrSelectTargets(mode)", "_alrSyncCharCount()")
 
     assert "checkedTargetsByProfile = {solo: {}, group: {}, face: {}}" in modal
-    assert "!_alrTargetStatus(target, profile).configured" in modal
+    assert "checkedTargetsByProfile[profile][target.key] = true" in modal
+    assert "targetFilter: 'all'" in modal
+    assert '<option value="all">전체</option>' in modal
     assert "checkedTargetsByProfile[profile]" in switcher
-    assert "targetFilter = 'unset'" in switcher
+    assert "targetFilter = 'all'" in switcher
+    assert "filter.value = 'all'" in switcher
     assert "!_alrTargetStatus(target, _botAutoLoraState.profile).configured" in bulk_select
 
 
@@ -138,6 +141,25 @@ def test_bot_auto_lora_status_cards_and_filters_expose_current_settings():
     assert 'id="alr-target-search"' in modal
     assert 'value="unset">미설정만' in modal
     assert 'value="unmatched">매칭 없음만' in modal
+
+
+def test_bot_auto_lora_strength_condition_is_inclusive_and_limits_execution_targets():
+    modal = _function_source(
+        "openBotAutoLoraSetupModal()", "_alrOverviewCard(label, value, tone = 'var(--text)')"
+    )
+    status = _function_source("_alrTargetStatus(target, profile)", "_alrCloneLoras(loras)")
+    matcher = _function_source("_alrTargetMatchesStrength(target)", "_renderAutoLoraStep1()")
+    checked = _function_source("_alrCheckedTargets()", "_alrGoStep2()")
+
+    assert 'id="alr-target-strength-condition"' in modal
+    assert '<option value="lte">LoRA 강도 이하</option>' in modal
+    assert '<option value="gte">LoRA 강도 이상</option>' in modal
+    assert 'id="alr-target-strength-value"' in modal
+    assert "strengths: loras.map(_alrLoraStrength)" in status
+    assert "if (strengths.length === 0) return false" in matcher
+    assert "strengths.some(strength => strength <= threshold)" in matcher
+    assert "strengths.some(strength => strength >= threshold)" in matcher
+    assert "_alrTargetMatchesStrength(target)" in checked
 
 
 def test_bot_auto_lora_overwrite_never_clears_without_a_selected_candidate():

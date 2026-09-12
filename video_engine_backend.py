@@ -20,6 +20,7 @@ from video_engine_runtime import (
 
 
 VIDEO_ENGINE_DEFAULT_PORT = 8093
+VIDEO_ENGINE_DEFAULT_PROFILE = ""
 VIDEO_ENGINE_TARGET = VIDEO_ENGINE_COMFY_TARGET
 VIDEO_ENGINE_MODES = frozenset({"i2v", "first_last", "ref2v"})
 _ACTIVE_ENGINE_STATES = frozenset(
@@ -60,6 +61,18 @@ def normalize_video_engine_port(value: Any) -> int:
     return parsed
 
 
+def normalize_video_engine_profile(value: Any) -> str:
+    if value is None:
+        return VIDEO_ENGINE_DEFAULT_PROFILE
+    if not isinstance(value, str):
+        print(
+            "[VIDEO_ENGINE] 프로필 설정 검증 실패: "
+            f"문자열이 아닌 값 value={value!r}"
+        )
+        raise ValueError("영상 전용 엔진 프로필은 문자열이어야 합니다.")
+    return value.strip()
+
+
 class VideoEngineService:
     def __init__(
         self,
@@ -79,6 +92,14 @@ class VideoEngineService:
 
     def base_url(self) -> str:
         return f"http://127.0.0.1:{self.port()}"
+
+    def configured_profile(self) -> str:
+        return normalize_video_engine_profile(
+            self.get_config().get(
+                "video_engine_profile",
+                VIDEO_ENGINE_DEFAULT_PROFILE,
+            )
+        )
 
     def _report_connection_error(self, operation: str, exc: BaseException) -> None:
         message = f"{type(exc).__name__}: {exc}"
@@ -179,6 +200,31 @@ class VideoEngineService:
     async def status(self) -> dict[str, Any]:
         payload = await self._request_json("GET", "/api/status", timeout_seconds=5.0)
         return {"reachable": True, "port": self.port(), **payload}
+
+    async def models(self) -> dict[str, Any]:
+        payload = await self._request_json("GET", "/api/models", timeout_seconds=10.0)
+        profiles = payload.get("profiles")
+        if not isinstance(profiles, dict) or not profiles:
+            print(
+                "[VIDEO_ENGINE] 모델 프로필 조회 실패: "
+                f"profiles가 비어 있거나 객체가 아님 payload={payload!r}"
+            )
+            raise VideoEngineError("영상 전용 엔진에 선택 가능한 모델 프로필이 없습니다.")
+        return payload
+
+    async def selected_profile(self) -> str:
+        configured = self.configured_profile()
+        if configured:
+            return configured
+        models = await self.models()
+        default_profile = normalize_video_engine_profile(models.get("default_profile"))
+        if not default_profile:
+            print(
+                "[VIDEO_ENGINE] 기본 프로필 확인 실패: "
+                f"configured={configured!r}, models={models!r}"
+            )
+            raise VideoEngineError("영상 전용 엔진의 기본 모델 프로필을 확인할 수 없습니다.")
+        return default_profile
 
     @staticmethod
     def _comfy_queue_busy(payload: Any) -> bool:
@@ -317,8 +363,15 @@ class VideoEngineService:
             await asyncio.sleep(0.5)
         return results
 
-    async def _set_warmup(self, enabled: bool, *, mode: str) -> dict[str, Any]:
+    async def _set_warmup(
+        self,
+        enabled: bool,
+        *,
+        mode: str,
+        profile: str | None = None,
+    ) -> dict[str, Any]:
         normalized_mode = "ref2v" if mode == "ref2v" else "i2v"
+        normalized_profile = normalize_video_engine_profile(profile)
         deadline = asyncio.get_running_loop().time() + 600.0
         requested = False
         while True:
@@ -326,7 +379,13 @@ class VideoEngineService:
             state = str(status.get("status") or "")
             residency = status.get("residency") if isinstance(status.get("residency"), dict) else {}
             active_mode = str(residency.get("model_mode") or "")
-            if enabled and state == "ready" and active_mode == normalized_mode:
+            active_profile = str(residency.get("model_profile") or "")
+            if (
+                enabled
+                and state == "ready"
+                and active_mode == normalized_mode
+                and (not normalized_profile or active_profile == normalized_profile)
+            ):
                 return status
             if not enabled and state == "cold":
                 return status
@@ -351,10 +410,16 @@ class VideoEngineService:
                 await asyncio.sleep(0.5)
                 continue
             try:
+                warmup_body: dict[str, Any] = {
+                    "enabled": enabled,
+                    "mode": normalized_mode,
+                }
+                if enabled and normalized_profile:
+                    warmup_body["profile"] = normalized_profile
                 await self._request_json(
                     "PUT",
                     "/api/warmup",
-                    body={"enabled": enabled, "mode": normalized_mode},
+                    body=warmup_body,
                     timeout_seconds=15.0,
                 )
                 requested = True
@@ -362,27 +427,44 @@ class VideoEngineService:
                 print(
                     "[VIDEO_ENGINE] 자원 전환 요청 실패: "
                     f"enabled={enabled}, mode={normalized_mode}, "
+                    f"profile={normalized_profile!r}, "
                     f"error={type(exc).__name__}: {exc}"
                 )
                 traceback.print_exc()
                 raise
 
-    async def prepare_video(self, *, mode: str) -> dict[str, Any]:
+    async def prepare_video(
+        self,
+        *,
+        mode: str,
+        profile: str | None = None,
+    ) -> dict[str, Any]:
         if mode not in VIDEO_ENGINE_MODES:
             print(f"[VIDEO_ENGINE] 영상 모드 검증 실패: mode={mode!r}")
             raise VideoEngineError(f"지원하지 않는 영상 전용 엔진 모드입니다: {mode}")
+        selected_profile = normalize_video_engine_profile(profile)
+        if not selected_profile:
+            selected_profile = await self.selected_profile()
         await self.free_comfy_memory()
         try:
-            return await self._set_warmup(True, mode=mode)
+            return await self._set_warmup(
+                True,
+                mode=mode,
+                profile=selected_profile,
+            )
         except VideoEngineError:
             # Comfy /free 플래그 소비가 늦은 경우 headroom 오류가 먼저 올 수 있다.
             # 한 번 더 정리한 뒤 동일 전환을 재시도한다.
             print(
                 "[VIDEO_ENGINE] 첫 WARMUP 실패 후 Comfy 정리 재확인: "
-                f"mode={mode}"
+                f"mode={mode}, profile={selected_profile}"
             )
             await self.free_comfy_memory()
-            return await self._set_warmup(True, mode=mode)
+            return await self._set_warmup(
+                True,
+                mode=mode,
+                profile=selected_profile,
+            )
 
     async def ensure_cold_for_comfy(self) -> dict[str, Any]:
         try:
@@ -399,9 +481,15 @@ class VideoEngineService:
                 "released": True,
             }
 
-    async def set_warmup(self, enabled: bool, *, mode: str = "i2v") -> dict[str, Any]:
+    async def set_warmup(
+        self,
+        enabled: bool,
+        *,
+        mode: str = "i2v",
+        profile: str | None = None,
+    ) -> dict[str, Any]:
         if enabled:
-            return await self.prepare_video(mode=mode)
+            return await self.prepare_video(mode=mode, profile=profile)
         return await self.ensure_cold_for_comfy()
 
     async def generate_video(
@@ -411,18 +499,24 @@ class VideoEngineService:
         progress_callback: Callable[[int, int], Awaitable[None] | None] | None = None,
     ) -> tuple[bytes, dict[str, Any]]:
         mode = str(payload.get("mode") or "i2v")
-        await self.prepare_video(mode=mode)
+        selected_profile = await self.selected_profile()
+        request_payload = dict(payload)
+        request_payload["profile"] = selected_profile
+        await self.prepare_video(mode=mode, profile=selected_profile)
         created = await self._request_json(
             "POST",
             "/api/generate",
-            body=payload,
+            body=request_payload,
             timeout_seconds=30.0,
         )
         job_id = str(created.get("job_id") or "")
         if not job_id:
             print(f"[VIDEO_ENGINE] 작업 등록 응답에 job_id 없음: response={created!r}")
             raise VideoEngineError("영상 전용 엔진 작업 ID가 없습니다.")
-        print(f"[VIDEO_ENGINE] 생성 작업 등록: job={job_id}, mode={mode}")
+        print(
+            "[VIDEO_ENGINE] 생성 작업 등록: "
+            f"job={job_id}, mode={mode}, profile={selected_profile}"
+        )
         deadline = asyncio.get_running_loop().time() + 1800.0
         last_progress = -1
         while True:
@@ -471,11 +565,13 @@ class VideoEngineService:
             "execution_source": VIDEO_ENGINE_TARGET,
             "job_id": job_id,
             "port": self.port(),
+            "profile": selected_profile,
             "result": job.get("result") if isinstance(job.get("result"), dict) else {},
         }
         print(
             "[VIDEO_ENGINE] MP4 수신 완료: "
-            f"job={job_id}, mode={mode}, bytes={len(video_bytes):,}"
+            f"job={job_id}, mode={mode}, profile={selected_profile}, "
+            f"bytes={len(video_bytes):,}"
         )
         return video_bytes, descriptor
 
@@ -599,6 +695,34 @@ def register_video_engine_routes(
                 traceback.print_exc()
             return web.json_response(payload, status=502)
 
+    async def handle_models(request: web.Request) -> web.Response:
+        denied = require_authorized(request)
+        if denied is not None:
+            return denied
+        try:
+            payload = await service.models()
+            return web.json_response(
+                {
+                    **payload,
+                    "port": service.port(),
+                    "configured_profile": service.configured_profile(),
+                }
+            )
+        except VideoEngineError as exc:
+            print(
+                "[VIDEO_ENGINE_API] 모델 프로필 조회 실패: "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            return web.json_response({"error": str(exc)}, status=502)
+        except Exception as exc:
+            print(
+                "[VIDEO_ENGINE_API] 모델 프로필 조회 예외: "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            return web.json_response({"error": str(exc)}, status=500)
+
     async def handle_resources(request: web.Request) -> web.Response:
         denied = require_authorized(request)
         if denied is not None:
@@ -614,7 +738,14 @@ def register_video_engine_routes(
             mode = str(body.get("mode") or "i2v").strip().lower()
             if mode not in VIDEO_ENGINE_MODES:
                 raise ValueError("영상 전용 엔진 mode 값이 올바르지 않습니다.")
-            return web.json_response(await service.set_warmup(enabled, mode=mode))
+            profile = normalize_video_engine_profile(body.get("profile"))
+            return web.json_response(
+                await service.set_warmup(
+                    enabled,
+                    mode=mode,
+                    profile=profile,
+                )
+            )
         except ValueError as exc:
             print(f"[VIDEO_ENGINE_API] 자원 요청 검증 실패: body={body!r}, error={exc}")
             traceback.print_exc()
@@ -740,6 +871,7 @@ def register_video_engine_routes(
             traceback.print_exc()
 
     app.router.add_get("/api/video-engine/status", handle_status)
+    app.router.add_get("/api/video-engine/models", handle_models)
     app.router.add_put("/api/video-engine/resources", handle_resources)
     app.router.add_post("/api/video-engine/start", handle_start)
     app.router.add_post("/api/video-engine/stop", handle_stop)
