@@ -365,6 +365,9 @@ async def _render_items(
                 "illustration_provider_mode": runtime["provider"],
                 "illustration_defer_postprocess": True,
                 "illustration_visual_states": server._descriptor_visual_states(descriptor),
+                "illustration_anonymous_partner_fragment": bool(
+                    descriptor.get("anonymous_partner_fragment", False)
+                ),
             }
             multi_context = _multi_char_context(descriptor)
             if multi_context is not None:
@@ -478,7 +481,7 @@ async def _run_once(
             str(baseline["target_slotted"])
             if baseline is not None
             else illustration_context_pipeline.insert_slots(
-                illustration_context_pipeline._strip_nodes(chats[-1]["data"])
+                chats[-1]["data"]
             )
         ),
     }

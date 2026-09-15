@@ -172,7 +172,7 @@ def test_ref_request_preserves_standard_and_fast_experimental_resolution() -> No
         ("prompt_generation_mode", "all"),
         ("translate_instruction_to_english", "true"),
         ("instruction_language", "ja"),
-        ("refine_version", "v4"),
+        ("refine_version", "v5"),
         ("upscale_model", "unknown"),
         ("upscale_scale", 8),
         ("output_format", "gif"),
@@ -196,6 +196,15 @@ def test_video_generation_defaults_accept_japanese_animation_profile() -> None:
     normalized = server.normalize_video_generation_defaults(settings)
 
     assert normalized["refine_version"] == "v3"
+
+
+def test_video_generation_defaults_accept_dasiwa_prompt_profile() -> None:
+    settings = copy.deepcopy(server.DEFAULT_VIDEO_GENERATION_DEFAULTS)
+    settings["refine_version"] = "v4"
+
+    normalized = server.normalize_video_generation_defaults(settings)
+
+    assert normalized["refine_version"] == "v4"
 
 
 def test_load_config_inherits_legacy_video_postprocess_defaults(
@@ -222,6 +231,9 @@ def test_load_config_inherits_legacy_video_postprocess_defaults(
 
     assert loaded["video_generation_defaults"]["upscale_model"] == "none"
     assert loaded["video_generation_defaults"]["upscale_scale"] == 4
+    assert loaded["video_postprocess"]["webp_compression_level"] == 4
+    assert loaded["video_postprocess"]["avif_gpu_enabled"] is False
+    assert loaded["video_postprocess"]["avif_gpu_preset"] == "p4"
 
 
 def test_video_engine_runtime_migration_preserves_existing_config_exactly(
@@ -261,6 +273,7 @@ def test_video_engine_runtime_migration_preserves_existing_config_exactly(
     assert loaded["video_engine_project_path"] == ""
     assert loaded["video_engine_auto_start"] is False
     assert loaded["video_engine_profile"] == ""
+    assert loaded["video_engine_steps"] == 4
     assert loaded["comfyui_port"] == 9001
     assert loaded["comfy_task_allocations"]["video_generation"] == 2
     assert loaded["backup_max_count"] == 321
@@ -301,6 +314,37 @@ async def test_config_api_persists_video_generation_defaults(monkeypatch) -> Non
     assert payload["success"] is True
     assert saved[-1]["video_generation_defaults"] == defaults
     assert saved[-1]["video_secondary_motion"] is False
+
+
+@pytest.mark.asyncio
+async def test_config_api_persists_video_encoder_defaults(monkeypatch) -> None:
+    config = copy.deepcopy(server.DEFAULT_CONFIG)
+    saved: list[dict] = []
+    monkeypatch.setattr(server, "app_config", config)
+    monkeypatch.setattr(
+        server,
+        "save_config",
+        lambda value: saved.append(copy.deepcopy(value)),
+    )
+    postprocess = copy.deepcopy(server.DEFAULT_VIDEO_POSTPROCESS_CONFIG)
+    postprocess.update(
+        {
+            "webp_compression_level": 2,
+            "avif_gpu_enabled": True,
+            "avif_gpu_preset": "p6",
+        }
+    )
+
+    response = await server.handle_api_config(
+        _ConfigRequest({"video_postprocess": postprocess})
+    )
+
+    payload = json.loads(response.text)
+    assert response.status == 200
+    assert payload["success"] is True
+    assert saved[-1]["video_postprocess"]["webp_compression_level"] == 2
+    assert saved[-1]["video_postprocess"]["avif_gpu_enabled"] is True
+    assert saved[-1]["video_postprocess"]["avif_gpu_preset"] == "p6"
 
 
 @pytest.mark.asyncio
@@ -346,6 +390,7 @@ async def test_config_api_persists_video_engine_runtime_settings(
                 "video_engine_project_path": str(tmp_path),
                 "video_engine_auto_start": True,
                 "video_engine_profile": "dasiwa_8turbo_v1_int4",
+                "video_engine_steps": 8,
             }
         )
     )
@@ -357,6 +402,29 @@ async def test_config_api_persists_video_engine_runtime_settings(
     assert saved[-1]["video_engine_project_path"] == str(tmp_path)
     assert saved[-1]["video_engine_auto_start"] is True
     assert saved[-1]["video_engine_profile"] == "dasiwa_8turbo_v1_int4"
+    assert saved[-1]["video_engine_steps"] == 8
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("steps", (4, 8, 13, 20, 25))
+async def test_video_engine_steps_survive_save_and_reload(tmp_path, monkeypatch, steps) -> None:
+    monkeypatch.setattr(server, "app_config", copy.deepcopy(server.DEFAULT_CONFIG))
+    saved = []
+    monkeypatch.setattr(server, "save_config", lambda config: saved.append(copy.deepcopy(config)))
+
+    response = await server.handle_api_config(_ConfigRequest({
+        "video_engine_profile": "hybrid",
+        "video_engine_steps": steps,
+    }))
+
+    assert response.status == 200
+    assert json.loads(response.text)["config"]["video_engine_steps"] == steps
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps(saved[-1]), encoding="utf-8")
+    monkeypatch.setattr(server, "CONFIG_FILE", str(config_path))
+    loaded = server.load_config()
+    assert loaded["video_engine_steps"] == steps
+    assert loaded["video_engine_profile"] == "hybrid"
 
 
 @pytest.mark.asyncio

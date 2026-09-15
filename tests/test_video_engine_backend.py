@@ -9,11 +9,13 @@ from aiohttp.test_utils import TestClient, TestServer
 from video_engine_backend import (
     VIDEO_ENGINE_DEFAULT_PORT,
     VIDEO_ENGINE_DEFAULT_PROFILE,
+    VIDEO_ENGINE_DEFAULT_STEPS,
     VideoEngineError,
     VideoEngineService,
     VideoEngineUnavailableError,
     normalize_video_engine_port,
     normalize_video_engine_profile,
+    normalize_video_engine_steps,
     register_video_engine_routes,
 )
 
@@ -46,6 +48,19 @@ def test_video_engine_profile_normalization() -> None:
     )
     with pytest.raises(ValueError, match="문자열"):
         normalize_video_engine_profile(8)
+
+
+@pytest.mark.parametrize("value", (None, 4, 8, 13, 20, 25, "25", "20", " 8 "))
+def test_video_engine_steps_normalization(value) -> None:
+    assert normalize_video_engine_steps(value) == (
+        VIDEO_ENGINE_DEFAULT_STEPS if value is None else int(value)
+    )
+
+
+@pytest.mark.parametrize("value", (True, False, 3, 26, 8.5, "fast", "", float("inf")))
+def test_video_engine_steps_respect_daemon_request_range(value) -> None:
+    with pytest.raises(ValueError, match="4~25"):
+        normalize_video_engine_steps(value)
 
 
 @pytest.mark.asyncio
@@ -129,6 +144,7 @@ async def test_warmup_requires_mode_and_profile_to_match() -> None:
 @pytest.mark.asyncio
 async def test_generation_forces_configured_profile_into_daemon_request() -> None:
     service = _service()
+    service.models = AsyncMock(return_value={"profiles": {"stock": {}}})  # type: ignore[method-assign]
     service.prepare_video = AsyncMock(return_value={"status": "ready"})  # type: ignore[method-assign]
     service._request_json = AsyncMock(  # type: ignore[method-assign]
         side_effect=(
@@ -148,8 +164,62 @@ async def test_generation_forces_configured_profile_into_daemon_request() -> Non
         "mode": "i2v",
         "prompt": "prompt",
         "profile": "stock",
+        "steps": VIDEO_ENGINE_DEFAULT_STEPS,
     }
     assert descriptor["profile"] == "stock"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ("i2v", "first_last", "ref2v"))
+@pytest.mark.parametrize(
+    ("profile", "fixed_steps", "configured_steps", "expected_steps"),
+    (
+        ("stock", None, 20, 20),
+        ("stock", None, 25, 25),
+        ("hybrid", None, 4, 4),
+        ("hybrid", None, 8, 8),
+        ("hybrid", None, 13, 13),
+        ("dasiwa_8turbo_v1_int4", 8, 4, 8),
+        ("dasiwa_8turbo_v1_int4", 8, 20, 8),
+        ("dasiwa_8turbo_v1_int4", 8, 25, 8),
+        ("another_fixed_model", 12, 4, 12),
+        ("turbo_named_but_unlocked", None, 20, 20),
+        ("", 8, 20, 8),
+    ),
+)
+async def test_generation_uses_setting_or_profile_fixed_steps(
+    mode, profile, fixed_steps, configured_steps, expected_steps,
+) -> None:
+    selected = profile or "daemon_default"
+    service = VideoEngineService(
+        get_config=lambda: {
+            "video_engine_profile": profile,
+            "video_engine_steps": configured_steps,
+        },
+        get_comfy_ports=lambda: [],
+    )
+    service.models = AsyncMock(return_value={  # type: ignore[method-assign]
+        "default_profile": "daemon_default",
+        "profiles": {selected: {"fixed_steps": fixed_steps}},
+    })
+    service.prepare_video = AsyncMock(return_value={"status": "ready"})  # type: ignore[method-assign]
+    service._request_json = AsyncMock(side_effect=(  # type: ignore[method-assign]
+        {"job_id": "job-steps"},
+        {"status": "completed", "progress": 1, "result": {}},
+    ))
+    service._request_bytes = AsyncMock(return_value=b"mp4")  # type: ignore[method-assign]
+    incoming = {"mode": mode, "prompt": "A moving scene", "profile": "stale", "steps": 6}
+
+    _, descriptor = await service.generate_video(incoming)
+
+    sent = service._request_json.await_args_list[0].kwargs["body"]
+    assert sent["steps"] == expected_steps
+    assert sent["profile"] == selected
+    assert incoming["steps"] == 6
+    assert incoming["profile"] == "stale"
+    assert descriptor["steps"] == expected_steps
+    service.prepare_video.assert_awaited_once_with(mode=mode, profile=selected)
+    service.models.assert_awaited_once()
 
 
 @pytest.mark.asyncio

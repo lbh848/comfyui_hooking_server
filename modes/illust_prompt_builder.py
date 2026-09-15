@@ -21,6 +21,47 @@ import time
 from modes.word_rules import apply_insert_rules_to_quality_parts
 
 
+_ANONYMOUS_FRAGMENT_NEGATIVE_CONFLICTS = frozenset({
+    "extra person",
+})
+FIRST_PASS_SINGLE_V5_PRESET = "배포_1차 싱글 V5"
+
+
+def allows_anonymous_fragment_negative_relaxation(
+    bot: dict | None,
+    requested: bool,
+) -> bool:
+    """Scope the relaxation to the approved First-Pass Single V5 contract."""
+    return (
+        bool(requested)
+        and isinstance(bot, dict)
+        and str(bot.get("system_prompt_preset") or "").strip()
+        == FIRST_PASS_SINGLE_V5_PRESET
+    )
+
+
+def filter_anonymous_fragment_negative_conflicts(
+    values,
+    enabled: bool,
+) -> list[str]:
+    """Drop only preset negatives that directly contradict an approved fragment pose."""
+    source = values if isinstance(values, list) else []
+    normalized = [str(value).strip() for value in source if str(value).strip()]
+    if not enabled:
+        return normalized
+    filtered = [
+        value
+        for value in normalized
+        if value.casefold() not in _ANONYMOUS_FRAGMENT_NEGATIVE_CONFLICTS
+    ]
+    removed = [value for value in normalized if value not in filtered]
+    print(
+        "[ILLUST:PROMPT] 익명 상호작용 조각과 충돌하는 프리셋 음성 태그 제외: "
+        f"removed={removed}, kept={len(filtered)}"
+    )
+    return filtered
+
+
 # ─── 로깅 ──────────────────────────────────────────────────
 _illust_build_logs: deque = deque(maxlen=20)
 
@@ -1295,7 +1336,8 @@ class IllustPromptBuilder:
 
     @staticmethod
     def build_negative_prompt(tags: dict, settings: dict = None,
-                              detected_chars: list = None, bot: dict = None) -> str:
+                              detected_chars: list = None, bot: dict = None,
+                              *, allow_anonymous_fragment: bool = False) -> str:
         """최종 부정 프롬프트 빌드.
 
         ANIMA 부정: anima_negative_preset + 감지된 캐릭터 부정
@@ -1326,20 +1368,20 @@ class IllustPromptBuilder:
         anima_neg_preset_name = settings.get("anima_negative_preset", "")
         anima_n_tags = negative_presets.get(anima_neg_preset_name, tags.get("anima_negative", []))
 
-        anima_neg_parts = []
-        for t in anima_n_tags if isinstance(anima_n_tags, list) else []:
-            if t.strip():
-                anima_neg_parts.append(t.strip())
+        anima_neg_parts = filter_anonymous_fragment_negative_conflicts(
+            anima_n_tags,
+            allow_anonymous_fragment,
+        )
         anima_neg_parts.extend(char_neg_parts)
 
         # SDXL 부정: SDXL 부정 프리셋 + 캐릭터 부정
         sdxl_neg_preset_name = settings.get("sdxl_negative_preset", "")
         sdxl_n_tags = negative_presets.get(sdxl_neg_preset_name, tags.get("negative", []))
 
-        sdxl_neg_parts = []
-        for t in sdxl_n_tags if isinstance(sdxl_n_tags, list) else []:
-            if t.strip():
-                sdxl_neg_parts.append(t.strip())
+        sdxl_neg_parts = filter_anonymous_fragment_negative_conflicts(
+            sdxl_n_tags,
+            allow_anonymous_fragment,
+        )
         sdxl_neg_parts.extend(char_neg_parts)
 
         negative = ", ".join(anima_neg_parts)

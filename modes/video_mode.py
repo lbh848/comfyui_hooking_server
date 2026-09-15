@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import illustration_flow
 import base64
 import copy
 import datetime
@@ -54,10 +55,11 @@ VIDEO_MIN_DURATION_SECONDS = 1
 VIDEO_MAX_DURATION_SECONDS = 15
 VIDEO_FPS = 24
 VIDEO_MODES = frozenset({"i2v", "first_last", "ref2v"})
+VIDEO_INSTRUCTION_TRANSLATE_TASK_KEY = "video_instruction_translate"
 VIDEO_WORKFLOW_VARIANTS = frozenset({"standard", "fast"})
 VIDEO_PROMPT_GENERATION_MODES = frozenset({"single", "best_of_three"})
 VIDEO_PROMPT_GENERATION_MODE_DEFAULT = "single"
-VIDEO_REFINE_VERSIONS = frozenset({"v1", "v2", "v3"})
+VIDEO_REFINE_VERSIONS = frozenset({"v1", "v2", "v3", "v3_2", "v4"})
 VIDEO_REFINE_VERSION_DEFAULT = "v1"
 REF2V_MAX_REFERENCE_IMAGES = 3
 H3_PROMPT_CANDIDATE_COUNT = 3
@@ -185,7 +187,7 @@ def normalize_video_refine_version(
             "[VIDEO:REFINE_VERSION] 영상 연출 계획 방식 오류: "
             f"value={value!r}, allowed={sorted(VIDEO_REFINE_VERSIONS)!r}"
         )
-        raise ValueError("영상 연출 계획 방식은 v1, v2, v3 중 하나여야 합니다")
+        raise ValueError("영상 연출 계획 방식은 v1, v2, v3, v3_2, v4 중 하나여야 합니다")
     return normalized
 
 I2V_ALIGNMENT = (
@@ -357,6 +359,35 @@ _H3_SECONDARY_MOTION_SEGMENT = (
 )
 
 
+DASIWA_H3_SYSTEM_PROMPT = """You write compact, production-ready MiniMax H3 prompts in the DaSiWa prompt style.
+Return only English prompt text, except that user-provided dialogue and visible text remain verbatim. The program owns the image-alignment sentence, so do not write one.
+
+Use exactly these three fields in this order:
+integrated_multimodal_description:
+...
+
+overall_soundscape:
+...
+
+non_diegetic_music:
+...
+
+Inside integrated_multimodal_description, bind important reference content directly and briefly. Introduce stable labels such as <Subject 1> in fluent sentences and cite the supporting <Picture N> when identity, appearance, clothing, an object, environment, composition, or style must be preserved. Do not turn incidental picture content into a requirement. After those bindings, include one compact sentence beginning with [reference generation] that states the target duration, format or aspect ratio when supplied, visual style, central action, and intended payoff. When useful for continuity, follow it with concise subject preservation lines in the form "<Subject 1> (appears in [Shot 1]-[Shot 3]): fully_preserved — ...". Do not add a separate subject_definitions, summary, retention_analysis, or detailed_description heading in this mode.
+
+Write the actual sequence as direct shot prose. Start the first setup with [Shot 1] and no timestamp. A real later cut starts a new line in the form "[Shot 2] At 00:03.500, the camera cuts to ...". A timed event inside the same continuous setup remains inside the existing shot instead of becoming a false cut. First-and-last-frame video always uses one continuous [Shot 1] and reaches Picture 2 exactly at the supplied end time. Cover the requested progression across the available duration and end with the requested result visibly established.
+
+Use the reference picture as authority for the visible state assigned to it and the user's direction as authority for what newly happens. Preserve the user's actors, actions, order, counts, timing, intensity, spatial relationships, camera constraints, dialogue, tone, and outcome. Supply only the short connective motion needed to make the action readable. Keep identities, clothing, important props, and the visual medium stable unless the user requests a change. Never invent a different event, repeat an event that was requested once, or add an unsupported consequence.
+
+Match the density of a strong generation example: describe observable framing, motion, expression, material response, effects, and sound with concrete verbs, but prefer one compact paragraph per shot. Do not output a planning report, continuity audit, state ledger, filmmaking lesson, negative checklist, or explanation of your choices. Do not pad the response with generic quality language or restate the same preservation fact in several places.
+
+Use speaker IDs such as (S1) only for characters who speak or vocalize. Preserve dialogue as <d>[Language] exact text</d>. Put synchronized action sounds near their visual beats when useful, then summarize only supported ambience, voices, movement, contact, and effects under overall_soundscape. Under non_diegetic_music, describe only requested or clearly established score behavior; otherwise write N/A.
+
+Before answering, silently check chronological order, reference-label consistency, shot numbering, and the requested final state. Correct those issues in the prompt without returning the check."""
+
+
+DASIWA_H3_SECONDARY_MOTION = """Unless complete stillness is requested, add only a few restrained secondary motions that visibly follow the primary action, such as a brief hair, cloth, gaze, breath, or balance response. Keep them weaker than the main event and do not animate every layer continuously. Add a tiny impact-synchronized camera impulse only when the complete event clearly benefits from it and no locked-camera instruction forbids it."""
+
+
 def _build_h3_system_prompt(
     secondary_motion: bool,
     duration: object = VIDEO_DEFAULT_DURATION_SECONDS,
@@ -369,17 +400,30 @@ def _build_h3_system_prompt(
     True면 H3_SYSTEM_PROMPT 원본을 그대로 반환한다.
     """
     normalized = normalize_video_duration(duration)
+    normalized_refine_version = normalize_video_refine_version(refine_version)
+    if normalized_refine_version == "v4":
+        prompt = DASIWA_H3_SYSTEM_PROMPT.replace(
+            "the target duration",
+            f"the target {normalized:g}-second duration",
+            1,
+        )
+        if secondary_motion:
+            prompt = f"{prompt}\n\n{DASIWA_H3_SECONDARY_MOTION}"
+        return prompt
+    # V3_2의 세컨더리 모션은 뒤에 붙는 V3_2 계약이 장면 부하를 보고 선택한다.
+    # 공용 자동 세그먼트를 함께 주면 조용한 장면마다 호흡·머리카락·카메라를
+    # 다시 강제해 observability/density 계약과 모순되므로 제거한다.
     prompt = (
-        H3_SYSTEM_PROMPT
-        if secondary_motion
-        else H3_SYSTEM_PROMPT.replace(_H3_SECONDARY_MOTION_SEGMENT, "")
+        H3_SYSTEM_PROMPT.replace(_H3_SECONDARY_MOTION_SEGMENT, "")
+        if normalized_refine_version == "v3_2" or not secondary_motion
+        else H3_SYSTEM_PROMPT
     )
     return _apply_h3_refine_style(
         prompt.replace(
             "one coherent 5-second video",
             f"one coherent {normalized:g}-second video",
         ).replace("by 5.00 seconds", f"by {normalized:.2f} seconds"),
-        refine_version,
+        normalized_refine_version,
     )
 
 
@@ -422,6 +466,34 @@ Describe the score and how it changes with the action, or write N/A when no musi
 Read the complete Visual Context by meaning. Never identify a reference by keyword matching. Preserve the user's temporal, spatial, intensity, and camera constraints exactly. Add only physically necessary connective motion and do not invent unsupported consequences."""
 
 
+DASIWA_REF2V_H3_SYSTEM_PROMPT = """You write compact, production-ready MiniMax H3 Reference-to-Video prompts in the DaSiWa prompt style.
+The pictures are independent references rather than timeline frames. Interpret their assigned roles from the complete user direction and Visual Context. Preserve only the identity, appearance, clothing, object, environment, voice, or style traits actually assigned from each reference; the user's direction controls the new action, staging, timing, camera, dialogue, and outcome.
+
+Return only English prompt text, except that user-provided dialogue and visible text remain verbatim. Use exactly these six headings once and in this order:
+
+subject_definitions:
+Write one compact line per stable referenced entity. Every line begins with an exact label such as <Subject 1> or <Audio 1>. Define at least one <Subject N>. Cite the source of every visual definition with its exact <Picture N> tag, and use every supplied Picture tag in this section. Keep only positive reference-supported traits that the target actually reuses. Do not put target-only actions, props, states, or source absences here.
+
+summary:
+The first nonblank text begins exactly [reference generation]. In one or two sentences, state the target duration, format or aspect ratio when supplied, style, central progression, payoff, and how the references are used.
+
+retention_analysis:
+Write exactly one line for every definition and no others. For a visible subject, use "<Subject 1> (appears in [Shot 1], [Shot 2]): fully_preserved - ..." and list exactly the shots where that label will appear. The allowed visible markers are fully_preserved, partially_preserved, attribute_transfer, and weak_reference. For <Audio N>, use fully_copy, partially_copy, reference, or weak_reference without a shot range. Keep the same label identity as its definition.
+
+detailed_description:
+Establish the visual style in one or two sentences, then begin the first setup on a new line as "[Shot 1] ..." without a timestamp. A real later cut begins on a new line as "[Shot 2] At 00:03.000, the camera cuts to ..." with strictly increasing times before the supplied end time. A timed event in one continuous setup stays inside the same shot. Each shot has one camera setup. Use every visible reference label literally in each shot declared by its retention line; do not give object labels human anatomy or agency. Cover the requested event across the full duration and leave its result visibly established.
+
+overall_soundscape:
+Summarize only supported ambience, dialogue, voices, movement, contact, material, and effect sounds. Keep user dialogue verbatim as <d>[Language] exact text</d> and use speaker IDs only for audible subjects.
+
+non_diegetic_music:
+Describe only requested or clearly established score behavior; otherwise write N/A.
+
+Write direct generation prose with concrete framing, motion, expression, material response, effects, and synchronized audio. Prefer one compact paragraph per shot. Preserve the user's participants, actions, order, counts, timing, intensity, spatial constraints, camera policy, tone, and ending. Add only short physically necessary transitions. Do not output a planning report, provenance explanation, state ledger, audit, negative checklist, or repeated preservation language. Do not imitate typos, contradictory timestamps, or internal contradictions from examples.
+
+Before answering, silently verify the six-field order, picture provenance, matching definition and retention labels, exact shot coverage, chronological timestamps, and requested final state. Correct the prompt without returning the check."""
+
+
 def _build_ref2v_h3_system_prompt(
     secondary_motion: bool,
     duration: object = VIDEO_DEFAULT_DURATION_SECONDS,
@@ -429,6 +501,7 @@ def _build_ref2v_h3_system_prompt(
     refine_version: object = VIDEO_REFINE_VERSION_DEFAULT,
 ) -> str:
     normalized = normalize_video_duration(duration)
+    normalized_refine_version = normalize_video_refine_version(refine_version)
     if not 1 <= int(picture_count) <= REF2V_MAX_REFERENCE_IMAGES:
         print(
             "[VIDEO:LLM] REF 시스템 프롬프트 이미지 장수 오류: "
@@ -454,8 +527,21 @@ def _build_ref2v_h3_system_prompt(
         if secondary_motion
         else ""
     )
+    if normalized_refine_version == "v3_2":
+        # I2V/FLF2V와 동일하게 V3_2 전용 계약이 선택적 보조 동작을 결정한다.
+        # 공용 자동 idle/camera 문구를 중복 적용하지 않는다.
+        secondary = ""
+    if normalized_refine_version == "v4":
+        secondary = f"\n\nThe target duration is exactly {normalized:g} seconds."
+        if secondary_motion:
+            secondary = f"{secondary}\n\n{DASIWA_H3_SECONDARY_MOTION}"
+    base_prompt = (
+        DASIWA_REF2V_H3_SYSTEM_PROMPT
+        if normalized_refine_version == "v4"
+        else REF2V_H3_SYSTEM_PROMPT
+    )
     prompt = (
-        REF2V_H3_SYSTEM_PROMPT.replace(
+        base_prompt.replace(
             "one coherent target video",
             f"one coherent {normalized:g}-second target video",
         )
@@ -472,7 +558,9 @@ def _build_ref2v_h3_system_prompt(
         )
         + secondary
     )
-    return _apply_h3_refine_style(prompt, refine_version)
+    if normalized_refine_version == "v4":
+        return prompt
+    return _apply_h3_refine_style(prompt, normalized_refine_version)
 
 
 VISUAL_CONTEXT_SYSTEM_PROMPT = """You inspect reference images and write a dense, precise factual Visual Context for a later video-prompt writer.
@@ -593,6 +681,21 @@ The stability section is grouped by the scenes where each risk occurs and is wri
 Before answering, silently compare the finished plan with the whole user direction and correct any missing event, order, number, timeline gap, repeated beat, audio mismatch, missing requested final state or payoff, isolated pose-to-pose jump, simultaneous initiation of the whole body, unnecessary full stop, unjustified cut, cut that discards useful momentum, or abstract transition that names no continuing subject, body part, object, gaze, sound, or state change. Return only the production direction as headed prose with timestamp headings."""
 
 
+DASIWA_DIRECTION_SYSTEM_PROMPT = """You expand a user's video direction into a compact, editable DaSiWa-style generation draft while inspecting the supplied reference pictures.
+
+The user's direction is the sole event specification. Preserve its participants, actions, order, counts, timing, intensity, spatial relationships, camera constraints, dialogue, tone, and ending. Interpret the complete meaning and context rather than matching keywords. The reference pictures supply only the visible identities, designs, clothing, objects, environments, composition, or style assigned to them under the supplied mode. Do not replace the user's event with a story inferred from an incidental picture detail.
+
+Write in the requested language, while keeping quoted dialogue and visible text verbatim. Use direct production prose, not a six-section planning report. Start with one compact sentence binding the important reference content to labels such as <Subject 1> and <Picture 1> when that makes continuity clearer. Then describe the target style and the chronological shot progression. Use [Shot 1] for the first setup without a timestamp; use a new numbered shot only for a real cut, and give later cuts exact increasing times. Timed events in one continuous setup remain inside the same shot. Finish with a short account of synchronized sound and music only when they are supported.
+
+For image-to-video, Picture 1 is the exact frame at 0.00 seconds. Begin from that visible state and describe only what happens next. For first-and-last-frame video, Picture 1 is the exact opening and Picture 2 the exact ending at the supplied duration; use one continuous shot and visibly reach Picture 2 at that time. For reference-to-video, every picture is an independent reference rather than a timeline frame; preserve only the traits assigned from each one and stage the user's requested video freely.
+
+Match the useful density of a strong DaSiWa example: concrete framing, decisive action verbs, readable expressions, material response, effects, and shot-local sound, with one compact paragraph per actual setup whenever possible. Add only the brief connective motion required to make the action and contact readable. Do not output subject_definitions, summary, retention_analysis, detailed_description, overall_soundscape, or non_diegetic_music headings at this editable-draft stage; the final prompt writer owns that protocol. Do not output an image inventory, continuity audit, state ledger, negative checklist, filmmaking explanation, JSON, Markdown fences, or commentary. Do not pad the draft, repeat preservation facts, imitate source-example typos, or preserve contradictory timestamps.
+
+Use stable speaker IDs such as (S1) only for audible characters and format dialogue as <d>[Language] exact text</d>. Do not invent speech, music, ambience, camera movement, background changes, participants, props, or consequences merely to make the draft more elaborate. When the supplied camera or background policy forbids a change, keep it unchanged.
+
+Before answering, silently check reference continuity, chronological order, duration coverage, and the requested final state, then return only the editable direction."""
+
+
 ANIME_DIRECTION_STYLE_CONTRACT = """The selected directing language is hand-drawn Japanese animation. Apply this style contract to every preceding planning requirement. Where a preceding preference for naturalistic continuous flow, progressive settling, residual motion, or avoidance of pose holds conflicts with this contract, this contract controls; factual identity, action, contact, spatial, timing, endpoint, and reference-continuity requirements remain binding.
 
 Build the performance around a small number of expressive key poses, clear silhouettes, intentional stillness, and selective movement. Do not continuously interpolate every body part or keep hair, clothing, breathing, the environment, and the camera perpetually drifting merely to prove that the image is alive. Let an action anticipate economically, move decisively through only the in-betweens needed to read its path and contact, hit a strong drawing or expression, and hold long enough for its emotion or meaning to register. A held drawing is active timing, not dead time. Preserve physically necessary travel and handoffs on screen; limited animation never permits teleportation, missing contact, or a broken cause-and-effect chain.
@@ -613,6 +716,31 @@ INSTRUCTION_ANIME_SYSTEM_PROMPT = (
 )
 
 
+ANIME_V3_2_DIRECTION_SYSTEM_PROMPT = """You write a compact, editable production direction for a hand-drawn Japanese-animation video.
+
+The user's direction is the sole plot authority. Preserve its participants, actions, order, counts, intensity, timing, spatial constraints, dialogue, tone, and requested ending. Read the complete meaning and context; never classify the scene or choose motion by keyword matching. Reference pictures establish their exact assigned visible states, identities, clothing, objects, environment, composition, and art style. For image-to-video, Picture 1 is the exact frame at 0.00 seconds. For first-and-last-frame video, Picture 1 is the exact opening and Picture 2 the exact ending at the supplied duration. For reference-to-video, the pictures are independent references rather than timeline frames.
+
+Silently identify the dominant visible event or explicit event sequence, its readable final state, and the primary genre promise from the full scene. Then distinguish facts already visible in the aligned reference state from changes that must newly happen. Do not replay an established state as an action, and do not invent a multi-step spectacle merely because a broad manner such as intensity, beauty, tension, humor, or tenderness was requested.
+
+Design the clearest physically renderable causal sequence for the supplied duration. Use the official H3 progression as a flexible temporal grammar: first-frame anchor, action onset, continuous development, and result or reaction. These are functional phases, not a fixed number of beats, equal time bins, or mandatory separate shots. Choose event density semantically from the complete request and the available duration. A quiet short shot may spend most of its time on one meaningful acting change and its hold; a longer shot may contain more visible states when they remain causally continuous and each has enough screen time to read.
+
+Judge feasible density from the combined load of subject count, interacting bodies or objects, required contacts and releases, motion amplitude, dialogue, camera or cut changes, reference endpoints, and the number of explicitly ordered actions. Higher interaction load requires clearer staging and more time per change; extra duration permits further development only when it adds meaningful visible progress. Never use a universal maximum, a seconds-per-beat formula, or duration alone as a quota. Preserve every action, repetition, line, timing constraint, and endpoint explicitly requested by the user. Simplify only invented flourishes, redundant effects, simultaneous unrelated activity, and unnecessary viewpoint changes.
+
+Apply a perceptual observability floor at the supplied framing and normal playback speed. An essential story or emotion change must be carried by a pose, gaze, head, hand, body, prop, contact, or composition change that a viewer can actually notice without pausing or reading the prompt. Do not make millimeter iris drift, tiny degree measurements, a single-frame facial twitch, generic breathing, or another sub-perceptual micro-motion the sole carrier of a required beat. Enlarge it naturally, combine it with one coherent readable change, or remove it when it is invented detail. Small acting remains welcome when it is visibly legible at the current shot scale.
+
+Use duration as time for readable development, not as empty delay. Unless the user explicitly requests waiting or stillness, begin the first meaningful change promptly. Put purposeful holds after a pose, contact, reaction, or decision has visibly landed, or within an anticipation whose tension visibly develops; do not fill the opening or middle with dead time before a later essential event. Anchor important later actions to visible causes and transitions rather than to a timestamp alone. For dialogue, preserve the exact supplied line, reserve plausible delivery time plus its necessary lead-in and reaction, and connect speech onset to a readable acting cue. Do not ask a long line, several unrelated gestures, and a separate payoff to occupy the same interval.
+
+When the user requests an ongoing category of activity or a broad manner without specifying its internal subevents, stage the smallest self-contained visible example that convincingly proves that request. Derive intensity, speed, tenderness, comedy, or danger from the execution and contrast inside that example, not by multiplying attacks, gestures, cuts, reactions, effects, or resets. A longer duration may deepen or develop that causal example, but does not itself authorize a montage.
+
+Each beat advances one primary physical or emotional change. Preserve the complete travel, weight transfer, contact, release, regrip, support, occlusion, screen direction, and cause-and-effect needed to connect the states, but mention only the mechanics that clarify rendering. Avoid fragile repeated point contacts, simultaneous unrelated actions, isolated poses with no visible path, and prose that asks the generator to solve more changes than the duration can show. Reserve meaningful time for the climax, reaction, and final readable state instead of spending the ending on another transition.
+
+Express Japanese-animation language through observable direction: deliberate key poses and silhouettes, selective in-betweens, purposeful stillness, decisive speed changes, restrained graphic accents, and motivated composition or cuts. Use only the devices that strengthen this scene's semantically inferred genre. Quiet acting may keep most of the drawing still while eyes, mouth, hand, or posture carries the change; decisive action may use one clear anticipation-to-contact-to-recoil peak; comedy needs a readable setup, reaction, and payoff. Do not force action impacts, perpetual hair or cloth motion, generic breathing, camera drift, decorative zoom, or a uniformly low frame rate into every genre.
+
+Treat every insert, close-up, reverse angle, reframing, or shot-scale change as camera coverage. It must obey the supplied camera policy and agree with the continuity section. A locked or continuous shot cannot also contain an inserted close-up or hidden cut. Use exact timestamps only for coarse meaningful boundaries; describe the visible causal trigger that advances each boundary so timing is not a clock-only instruction.
+
+Return only natural-language production direction in the requested language, using three short headed sections: overall direction and genre promise; timestamped progression; continuity, camera, and sound. Cover the supplied duration continuously. State reference preservation once, do not repeat the same beat in several sections, do not output JSON or an audit, and do not name or imitate a copyrighted work."""
+
+
 ANIME_H3_STYLE_CONTRACT = """Selected motion and presentation style: hand-drawn Japanese animation. This is a binding generation requirement, not optional mood wording. Preserve all reference, identity, action, contact, spatial, timing, and endpoint constraints above, but do not regularize the requested performance into continuously smooth naturalistic interpolation.
 
 Stage the shot around expressive key poses, clean silhouettes, selective in-betweens, and intentional held drawings. Let quiet or emotional beats keep most of the cel still while only the meaningful feature moves. Let decisive actions use economical anticipation, a fast readable transition, an accented drawing or brief smear-like passage when justified, then a purposeful hold. Keep necessary physical paths, grips, supports, and cause-and-effect visible; stylized timing must not create teleportation or continuity gaps. Contrast stillness with motion and vary cadence according to the scene instead of simulating broken playback or applying a uniformly low frame rate.
@@ -620,6 +748,21 @@ Stage the shot around expressive key poses, clean silhouettes, selective in-betw
 When a key pose, expression, or final state lands, keep it truly still unless the user's event calls for another visible change. Do not add breathing, eye shimmer, hair or cloth drift, light fluctuation, or background motion merely to make a held drawing look alive. Describe stability as consistent drawing, contact, and readable necessary transition shapes, never as smooth morphing or generic natural connection.
 
 Secondary motion is selective: use a delayed hair, cloth, eye, mouth, hand, breath, lighting, or effect accent only when it strengthens the beat, then let it settle into graphic stillness. Do not keep every layer swaying, breathing, drifting, or easing at once. Prefer locked, composed framing and emotionally motivated cuts or decisive camera moves over perpetual float, orbit, handheld drift, decorative zoom, photorealistic lens behavior, or blanket motion blur. Preserve the reference art while expressing stable 2D facial design, controlled cel-like shadow shapes, purposeful negative space, and Japanese-animation rhythm and ma. Write these observable timing and staging choices directly into the generated H3 prompt."""
+
+
+ANIME_V3_2_H3_STYLE_CONTRACT = ANIME_H3_STYLE_CONTRACT + """
+
+V3_2 duration-adaptive planning rule: when elaboration conflicts with reliable visibility inside the supplied duration, preserve the user's explicit event and simplify only invented directing detail. State the aligned reference state once, then describe the dominant causal action chain or the explicitly requested ordered sequence. Use first-frame anchor, action onset, continuous development, and result or reaction as flexible functions rather than a fixed beat count. Let semantic event boundaries and physical cause-and-effect determine the progression; never impose a universal state maximum, equal time bins, or a seconds-per-beat quota.
+
+Choose density from the complete interaction load: subject and object count, contact changes, motion amplitude, dialogue, camera or cut changes, reference endpoints, and ordered actions. A short quiet shot may use one small acting change plus a purposeful hold. A longer or more active shot may use more states only when each adds meaningful visible progress and has enough time to read. Give each state one primary change; connect states through the necessary path, contact, recoil, reaction, or emotional carry rather than adding another flourish. A real cut must introduce meaningful new information while preserving action continuity.
+
+Apply a normal-playback observability floor to every essential beat. If the change would be hard to notice at the supplied shot scale without pausing, do not encode it as millimeters, tiny angle measurements, a one-frame facial twitch, or generic idle motion and expect it to carry the story. Express the same intention through one naturally larger, coherent pose, gaze, head, hand, body, prop, contact, or composition change. Preserve subtlety through timing and restraint, not through invisible amplitude.
+
+Unless explicit waiting or stillness is part of the user's event, start meaningful development promptly and spend surplus duration on its visible causal path, reaction, and final landing rather than dead pre-roll or a frozen middle. A hold must let an already readable pose, contact, realization, or anticipation register. Anchor a delayed essential action to the visible change that causes it, not only to an elapsed-second instruction. For dialogue, preserve the exact line, reserve plausible delivery time, and attach its onset to a readable acting cue; never squeeze a long line, several unrelated gestures, and a separate payoff into one interval.
+
+When the user supplies an ongoing activity or broad manner without explicit internal choreography, show the smallest self-contained example that visibly proves it. Make it convincing through anticipation, execution, consequence, and contrast rather than inventing a montage, repeated exchange, reset, or second climax. The secondary-motion option permits a restrained supporting response only when it remains subordinate and renderable; it does not require breathing, hair motion, particles, or camera movement in every shot.
+
+Do not multiply a broad request into several attacks, gestures, reactions, effects, camera moves, or secondary climaxes. Use at most one dominant graphic or impact peak unless the user explicitly requests more. Reserve the ending for the requested payoff and a stable readable landing that is materially distinct from the opening when progression calls for change. Treat an insert, close-up, reverse angle, reframing, or shot-scale change as camera coverage: never include one inside a locked or continuous shot, and never contradict the selected camera policy elsewhere in the prompt. Describe causal triggers as well as coarse timing boundaries. Describe what the viewer sees rather than issuing abstract production commands, and do not repeat the same timing, preservation fact, or action in several phrasings. Keep overall_soundscape concise and synchronized to the visible beats; keep non_diegetic_music as N/A unless it is requested or already established."""
 
 
 def _apply_h3_refine_style(prompt: str, refine_version: object) -> str:
@@ -630,6 +773,11 @@ def _apply_h3_refine_style(prompt: str, refine_version: object) -> str:
         return (
             f"{prompt}\n\nSelected Japanese-animation generation contract:\n"
             f"{ANIME_H3_STYLE_CONTRACT}"
+        )
+    if normalized == "v3_2":
+        return (
+            f"{prompt}\n\nSelected Japanese-animation V3_2 generation contract:\n"
+            f"{ANIME_V3_2_H3_STYLE_CONTRACT}"
         )
     return prompt
 
@@ -2792,18 +2940,34 @@ class VideoMode:
             refine_version,
             default="v2",
         )
-        if normalized_refine_version not in {"v2", "v3"}:
+        if normalized_refine_version not in {"v2", "v3", "v3_2", "v4"}:
             print(
                 "[VIDEO:DIRECTION_DIRECT] 제작 계획 방식 오류: "
                 f"refine_version={normalized_refine_version!r}"
             )
-            raise ValueError("제작 계획 방식은 v2 또는 v3여야 합니다")
-        anime_style = normalized_refine_version == "v3"
+            raise ValueError("제작 계획 방식은 v2, v3, v3_2 또는 v4여야 합니다")
+        anime_style = normalized_refine_version in {"v3", "v3_2"}
+        anime_v3_2_style = normalized_refine_version == "v3_2"
+        dasiwa_style = normalized_refine_version == "v4"
         implementation_detail = (
-            "Add Japanese-animation timing, pose, composition, and performance detail"
-            if anime_style
-            else "Add cinematic implementation detail"
+            "Build a concise, physically renderable Japanese-animation action and acting plan"
+            if anime_v3_2_style
+            else (
+                "Add Japanese-animation timing, pose, composition, and performance detail"
+                if anime_style
+                else (
+                    "Add compact DaSiWa-style generation detail"
+                    if dasiwa_style
+                    else "Add cinematic implementation detail"
+                )
+            )
         )
+        profile_label = {
+            "v2": "V2 cinematic",
+            "v3": "V3 Japanese animation",
+            "v3_2": "V3_2 Japanese animation style 2",
+            "v4": "V4 DaSiWa prompt",
+        }[normalized_refine_version]
         language_contract = {
             "ko": "Write the entire direction in natural Korean.",
             "en": "Write the entire direction in natural English.",
@@ -2867,7 +3031,7 @@ class VideoMode:
         )
         task = (
             f"{task}\n\n"
-            f"Selected directing profile: {'V3 Japanese animation' if anime_style else 'V2 cinematic'}. "
+            f"Selected directing profile: {profile_label}. "
             "Apply that profile as a binding production language rather than a decorative label.\n"
             "Timeline scale: all timestamps are elapsed seconds starting at 0.00; "
             f"the last timestamp must end at exactly {normalized_duration:.2f} seconds.\n"
@@ -2908,13 +3072,32 @@ class VideoMode:
             f"{reference_authority}:\n"
             f'"""\n{seed}\n"""'
         )
+        if anime_v3_2_style:
+            task += """
+
+Mandatory V3_2 execution check — apply this after reading the picture and the complete user direction:
+- Every required beat must be plainly noticeable at normal playback in the supplied framing. Do not use microscopic facial measurements, generic idle motion, or a clock-only boundary as its evidence.
+- Start from the picture's visible object, contact, mouth, gaze, and pose state before any requested result. If the requested action has not visibly happened yet, show its onset and completion rather than claiming its result at frame zero.
+- Match acting scale to shot scale: in a medium or wide shot, carry an essential emotion mainly through readable head direction, hand or prop action, posture, or silhouette; eyes and mouth may support it but cannot be its only evidence. Preserve subtlety through timing and holds, not invisible amplitude.
+- Unless the user explicitly requests a delay, begin meaningful development promptly. Spend remaining time on the visible causal path, reaction, and readable landing.
+- If the user gave a broad ongoing activity rather than internal choreography, use one self-contained example that proves it instead of inventing a montage or repeated reset.
+- Preserve exact user-requested waits, repetitions, dialogue, and endpoints. Copy quoted or contextual dialogue verbatim without translation or language replacement. Keep every insert or shot-scale change consistent with the camera policy.
+Silently rewrite the plan until all five checks agree, then return only the three requested production-direction sections."""
         return [
             {
                 "role": "system",
                 "content": (
-                    INSTRUCTION_ANIME_SYSTEM_PROMPT
-                    if anime_style
-                    else INSTRUCTION_DIRECT_SYSTEM_PROMPT
+                    ANIME_V3_2_DIRECTION_SYSTEM_PROMPT
+                    if anime_v3_2_style
+                    else (
+                        DASIWA_DIRECTION_SYSTEM_PROMPT
+                        if dasiwa_style
+                        else (
+                            INSTRUCTION_ANIME_SYSTEM_PROMPT
+                            if anime_style
+                            else INSTRUCTION_DIRECT_SYSTEM_PROMPT
+                        )
+                    )
                 ),
             },
             {"role": "user", "content": task},
@@ -2945,7 +3128,13 @@ class VideoMode:
             ),
         }[mode]
         expanded_direction = str(instruction or "").strip()
-        direction_context = f"""Expanded natural-language directing draft:
+        if normalized_refine_version == "v4":
+            direction_context = f"""Editable directing draft:
+{expanded_direction}
+
+Use this as the complete event specification. Preserve its intended action, order, timing, reference roles, camera behavior, tone, dialogue, and ending while expressing it as concise final generation prose."""
+        else:
+            direction_context = f"""Expanded natural-language directing draft:
 {expanded_direction}
 
 Preserve its central premise, requested participants, required actions, relationships, tone, and outcome. Treat its detailed timing allocation, camera coverage, setup count, transitional embellishment, and other directing elaborations as working choices that may be improved in the final prompt. If two working details cannot physically coexist, do not repeat the contradiction: preserve the intended beat and result, then resolve it through the smallest natural visible transition or an equally expressive feasible staging choice. This is not permission to simplify a difficult but physically achievable request. Refine working choices when necessary to create clearer action progression, stronger pacing, more motivated coverage, and a more satisfying viewing experience without replacing the requested event."""
@@ -2960,7 +3149,42 @@ Mode:
 
 Selected directing profile:
 V3 Japanese animation. Preserve the draft's intended anime timing and make its key poses, selective movement, intentional holds, emotionally motivated composition, and contrast between stillness and motion concrete in the final H3 prompt. Do not smooth this profile back into generic continuous cinematic motion."""
-        if mode == "i2v":
+        elif normalized_refine_version == "v3_2":
+            user_content += """
+
+Selected directing profile:
+V3_2 Japanese animation style 2. Preserve the user's explicit event while reducing invented directing load to a short, physically renderable causal sequence. State the reference start once, give each materially different beat one primary visible change, use only scene-appropriate Japanese-animation timing and accents, and reserve enough time for the reaction, payoff, and final readable state. Do not expand a broad manner into several unrequested actions or effects."""
+        elif normalized_refine_version == "v4":
+            user_content += """
+
+Selected directing profile:
+V4 DaSiWa prompt. Convert the draft into compact, direct generation prose centered on reference bindings, chronological shot action, visible reactions and material response, and synchronized audio. Preserve all requested content, but do not expand it into a planning report, continuity audit, or repeated explanatory detail."""
+        if normalized_refine_version == "v4":
+            if mode == "i2v":
+                user_content += f"""
+
+Reference authority:
+Picture 1 is the exact opening frame and the following Visual Context is only its factual static summary. Bind the important visible reference traits compactly, begin from that state, and stage the requested next action without importing technical image-generation metadata or an unrelated event.
+
+Vision-produced static Visual Context:
+{visual_context or '(Visual Context is unavailable.)'}"""
+            elif mode == "first_last":
+                user_content += f"""
+
+Reference authority:
+Picture 1 is the exact opening frame and Picture 2 is the exact final frame at {normalized_duration:.2f} seconds. The following Visual Context is only their factual static summary. Use one continuous [Shot 1], show the requested connecting action, and arrive visibly at Picture 2 without a cut or contradictory endpoint.
+
+Vision-produced static Visual Context:
+{visual_context or '(Visual Context is unavailable.)'}"""
+            else:
+                user_content += f"""
+
+Reference authority:
+The pictures are independent references, not timeline frames. Assign only the identities, designs, objects, environment, voice, or style that the user's direction actually takes from each picture. Keep target-only additions out of subject_definitions and retention_analysis, while introducing them directly in summary and detailed_description.
+
+Vision-produced static Visual Context:
+{visual_context or '(Visual Context is unavailable.)'}"""
+        elif mode == "i2v":
             user_content += f"""
 
 Reference authority and directing task:
@@ -2997,6 +3221,11 @@ Use the Visual Context silently to classify provenance; do not expose the classi
 Render every requested direct manipulation as the same unambiguous physical operation. For example, a grip requires the named gripper to close around and hold the named target; merely positioning or guiding it is not equivalent. Immediately before each dependent action, include a short causal bridge naming the contact, support, restraint, or alignment mechanism that still preserves its prerequisite. If the effector that established the prerequisite leaves for another task, name the temporary support that takes over or explicitly re-establish the prerequisite before the dependent action; never leave that interval physically implicit. Before writing, silently trace each important entity's identity, presence count, provenance, owner and controller set, controlling hand(s) or support points, other contacts, orientation, active end, and release or transfer state through all shots. Preserve requested two-handed or joint control and otherwise keep those states until an observable requested change. At shared-contact beats, state each participant's contact separately and preserve each entity's positive distinguishing geometry. Verify that the requested activity develops through the sequence itself and has not been replaced by extra camera setups.
 
 Final protocol audit: reread every exact <Subject N> occurrence against its definition and correct any identity or entity-type mismatch; an object never owns a hand, gaze, expression, or bodily action. Verify that no hand independently grips multiple entities at once without an explicitly feasible combined grip, that no wrist or arm simultaneously holds an entity and performs an incompatible full-limb pose, that every grip or body-resource change includes visible release and re-contact or stable placement, and that any named entity being pushed, slid, lifted, or presented receives direct controlling contact or an explicit force-transmitting mechanism. Mentally simulate large rigid objects through apertures using their full oriented extent, preserve the invariant direction of every named rotation axis, and make controller paths capable of producing the stated rotation. When a tool returns clear of a worked surface, show separation before travel and keep the return path offset from the worked track. Verify that each stated camera crop can actually contain the complete required motion and endpoints. Across every cut, the next shot starts from the exact last visible state; never finish a merely begun transition invisibly during the cut. Every defined visible label must literally appear in detailed_description wherever it participates, including at least once. The first shot line begins exactly "[Shot 1] " followed immediately by scene prose, never "At" or a numeric timestamp; only Shot 2 and later use "[Shot N] At MM:SS.mmm,". Each numbered Shot must contain only its one declared camera setup, with no internal cut, angle switch, or materially different viewpoint hidden inside it. If the direction says one continuous setup, static camera, or no cuts, verify that detailed_description contains [Shot 1] only; event timestamps remain prose inside that shot. Then reread every subject_definitions and retention_analysis line. Delete or move to summary or detailed_description every target-only addition, source absence, original pose or contact not preserved as a target state, rejected incidental picture detail, or explanation of future target content. Do not leave a disclaimer behind. Those two reference sections must say only what the assigned picture positively supplies and what the target video actually preserves from it. In non-destructive interactions, describe a positive intact surface relationship using against, across, rests on, or equivalent wording rather than penetration, clipping, overlap, or damage language."""
+        if normalized_refine_version == "v3_2":
+            user_content += """
+
+Mandatory final V3_2 rewrite — this is the last instruction before answering:
+Preserve the user's explicit content, but discard invented micro-acting, generic idle motion, repeated exchanges, resets, decorative coverage, and clock-only waits from the working draft. Begin with the exact visible object, contact, mouth, gaze, and pose state in the aligned picture; never claim at frame zero that a requested action has already completed, and visibly bridge to every changed state. Each essential change must be plainly visible at normal playback in the supplied framing and connected to the next by an observable cause. In a medium or wide shot, make head direction, hand or prop action, posture, or silhouette carry essential emotion; eye and mouth detail may support it but cannot carry the beat alone. Preserve subtlety through timing and holds rather than invisible amplitude. Start development promptly unless delay was explicitly requested; reserve plausible time for exact dialogue and finish on a readable reaction or changed state. Copy every supplied line verbatim with its original language and an accurate language tag; never translate or rewrite dialogue. For a broad ongoing activity without specified choreography, render one self-contained example that proves it. If the camera policy or draft says locked or continuous, output one setup with no insert, close-up switch, hidden cut, or reframing. Do not express essential acting in millimeters, tiny degree values, or one-frame facial motion. Silently rewrite until these constraints and the reference state agree, then output only the required H3 fields."""
         return [
             {
                 "role": "system",
@@ -3512,13 +3741,15 @@ Final protocol audit: reread every exact <Subject N> occurrence against its defi
             (params or {}).get("refine_version", "v2"),
             default="v2",
         )
-        if refine_version not in {"v2", "v3"}:
+        if refine_version not in {"v2", "v3", "v3_2", "v4"}:
             print(
                 "[VIDEO:DIRECTION_DIRECT] 제작 계획 방식 오류: "
                 f"item={queue_item_id}, refine_version={refine_version!r}"
             )
-            raise ValueError("제작 계획 방식은 v2 또는 v3여야 합니다")
-        anime_style = refine_version == "v3"
+            raise ValueError("제작 계획 방식은 v2, v3, v3_2 또는 v4여야 합니다")
+        anime_style = refine_version in {"v3", "v3_2"}
+        anime_v3_2_style = refine_version == "v3_2"
+        dasiwa_style = refine_version == "v4"
         language = str((params or {}).get("language") or "ko").strip().lower()
         if language not in {"ko", "en"}:
             print(
@@ -3594,6 +3825,18 @@ Final protocol audit: reread every exact <Subject N> occurrence against its defi
         task_key = f"video_prompt_{mode}"
         call_label = (
             {
+                "i2v": "H3 I2V DaSiWa 프롬프트 연출 계획",
+                "first_last": "H3 FLF2V DaSiWa 프롬프트 연출 계획",
+                "ref2v": "H3 REF2V DaSiWa 프롬프트 연출 계획",
+            }[mode]
+            if dasiwa_style
+            else {
+                "i2v": "H3 I2V 일본 애니메이션 V3_2 연출 계획",
+                "first_last": "H3 FLF2V 일본 애니메이션 V3_2 연출 계획",
+                "ref2v": "H3 REF2V 일본 애니메이션 V3_2 연출 계획",
+            }[mode]
+            if anime_v3_2_style
+            else {
                 "i2v": "H3 I2V 일본 애니메이션 연출 계획",
                 "first_last": "H3 FLF2V 일본 애니메이션 연출 계획",
                 "ref2v": "H3 REF2V 일본 애니메이션 연출 계획",
@@ -3821,7 +4064,9 @@ Final protocol audit: reread every exact <Subject N> occurrence against its defi
         )
 
         task_key = f"video_prompt_{mode}"
-        # 비전 단계(연출 초안·다듬기·이미지 정적 분석)=task_key, 텍스트 단계(정적 해석·최종 작성)=compose 키로 모델 분리
+        # 비전 단계(연출 초안·다듬기·이미지 정적 분석)=task_key,
+        # 영어 번역=공통 번역 키, 텍스트 단계(정적 해석·최종 작성)=compose 키로 모델 분리
+        translation_task_key = VIDEO_INSTRUCTION_TRANSLATE_TASK_KEY
         compose_task_key = f"video_prompt_{mode}_compose"
         call_label = {
             "i2v": "H3 I2V 프롬프트 작성",
@@ -3855,8 +4100,11 @@ Final protocol audit: reread every exact <Subject N> occurrence against its defi
             translation_messages = video_instruction_translation_messages(instruction)
             translation_metadata: dict = {}
             translation_started = time.time()
+            translation_model_name = (
+                llm_service.routing_primary_model(translation_task_key) or ""
+            )
             translation_execution_context = llm_service.create_llm_execution_context(
-                compose_task_key,
+                translation_task_key,
                 call_name=translation_call_label,
                 execution_id=local_history_id,
                 parent_execution_id=history_id,
@@ -3869,7 +4117,7 @@ Final protocol audit: reread every exact <Subject N> occurrence against its defi
             raw_translation = ""
             try:
                 raw_translation = await llm_service.callLLMTask(
-                    compose_task_key,
+                    translation_task_key,
                     translation_messages,
                     result_validator=lambda value: (
                         (True, "")
@@ -3898,8 +4146,8 @@ Final protocol audit: reread every exact <Subject N> occurrence against its defi
                             "execution_id": translation_execution_context.execution_id,
                             "parent_execution_id": history_id,
                             "call_name": translation_call_label,
-                            "task_key": compose_task_key,
-                            "model": model_name,
+                            "task_key": translation_task_key,
+                            "model": translation_model_name,
                             "input": translation_messages,
                             "output": translated,
                             "elapsed": round(elapsed, 3),
@@ -3926,8 +4174,8 @@ Final protocol audit: reread every exact <Subject N> occurrence against its defi
                         "execution_id": translation_execution_context.execution_id,
                         "parent_execution_id": history_id,
                         "call_name": translation_call_label,
-                        "task_key": compose_task_key,
-                        "model": model_name,
+                        "task_key": translation_task_key,
+                        "model": translation_model_name,
                         "input": translation_messages,
                         "output": translated,
                         "prompt_tokens": prompt_tokens,
@@ -3958,8 +4206,8 @@ Final protocol audit: reread every exact <Subject N> occurrence against its defi
                         "execution_id": translation_execution_context.execution_id,
                         "parent_execution_id": history_id,
                         "call_name": translation_call_label,
-                        "task_key": compose_task_key,
-                        "model": model_name,
+                        "task_key": translation_task_key,
+                        "model": translation_model_name,
                         "input": translation_messages,
                         "output": str(raw_translation or ""),
                         "elapsed": round(elapsed, 3),
@@ -3989,7 +4237,7 @@ Final protocol audit: reread every exact <Subject N> occurrence against its defi
         raw_response_text = ""
         try:
             if translate_instruction_to_english:
-                translation_task = asyncio.create_task(
+                translation_task = illustration_flow.create_task(
                     translate_instruction_with_fallback()
                 )
             if mode in VIDEO_MODES:
@@ -4126,6 +4374,7 @@ Final protocol audit: reread every exact <Subject N> occurrence against its defi
                     instruction_translation_applied,
                     translation_history_id,
                 ) = await translation_task
+                illustration_flow.merge([translation_task])
                 trace_ids.append(translation_history_id)
 
             if "secondary_motion" in (params or {}):
@@ -4325,7 +4574,7 @@ Final protocol audit: reread every exact <Subject N> occurrence against its defi
                     f"length={len(response_text)}"
                 )
             else:
-                candidate_results = await asyncio.gather(
+                candidate_results = await illustration_flow.gather(
                     *(
                         generate_candidate(candidate_number)
                         for candidate_number in range(
@@ -5532,6 +5781,12 @@ Final protocol audit: reread every exact <Subject N> occurrence against its defi
                     VIDEO_PROMPT_GENERATION_MODE_DEFAULT,
                 )
             )
+            refine_version = normalize_video_refine_version(
+                (params or {}).get(
+                    "refine_version",
+                    VIDEO_REFINE_VERSION_DEFAULT,
+                )
+            )
             translate_instruction_to_english = (params or {}).get(
                 "translate_instruction_to_english",
                 False,
@@ -5586,6 +5841,7 @@ Final protocol audit: reread every exact <Subject N> occurrence against its defi
                 "visual_context": visual_context,
                 "visual_context_source": visual_context_source,
                 "prompt_generation_mode": prompt_generation_mode,
+                "refine_version": refine_version,
                 "translate_instruction_to_english": translate_instruction_to_english,
                 "translated_instruction": translated_instruction,
                 "instruction_translation_applied": instruction_translation_applied,
@@ -6077,6 +6333,18 @@ Final protocol audit: reread every exact <Subject N> occurrence against its defi
             translated_instruction = str(
                 manifest.get("translated_instruction") or ""
             )
+            video_refine_version = str(
+                manifest.get("refine_version") or ""
+            ).strip().lower()
+            if (
+                video_refine_version
+                and video_refine_version not in VIDEO_REFINE_VERSIONS
+            ):
+                print(
+                    "[VIDEO:POSTPROCESS] 저장할 연출 계획 방식 오류, 빈 기록으로 복구: "
+                    f"value={video_refine_version!r}, mode={mode!r}"
+                )
+                video_refine_version = ""
             prompt_record = {
                 "provider": "video",
                 "kind": "video_reprocess" if is_reprocess else "h3_video",
@@ -6094,6 +6362,7 @@ Final protocol audit: reread every exact <Subject N> occurrence against its defi
                 "video_visual_context": visual_context,
                 "video_visual_context_source": visual_context_source,
                 "video_prompt_generation_mode": prompt_generation_mode,
+                "video_refine_version": video_refine_version,
                 "video_translate_instruction_to_english": raw_translate_instruction,
                 "video_translated_instruction": translated_instruction,
                 "video_instruction_translation_applied": raw_translation_applied,
@@ -6173,6 +6442,7 @@ Final protocol audit: reread every exact <Subject N> occurrence against its defi
                 ),
                 "video_visual_context_source": visual_context_source,
                 "video_prompt_generation_mode": prompt_generation_mode,
+                "video_refine_version": video_refine_version,
                 "video_translate_instruction_to_english": raw_translate_instruction,
                 "video_translated_instruction": translated_instruction,
                 "video_instruction_translation_applied": raw_translation_applied,

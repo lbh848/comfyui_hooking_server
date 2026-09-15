@@ -348,14 +348,18 @@ def inspect_runtime(
         install_mode=install_mode,
     )
     manager = collect_manager_state(root)
-    nodes = collect_custom_node_state(root, manifest.custom_nodes)
+    from .execution_profile import custom_nodes_for_profile, profile_kind
+    selected_nodes = custom_nodes_for_profile(
+        manifest.custom_nodes, cpu_only=profile_kind(manifest, profile_id) == "cpu",
+    )
+    nodes = collect_custom_node_state(root, selected_nodes)
     receipt_python = (
         receipt.get("python", {}) if isinstance(receipt, dict) else {}
     )
     receipt_nodes = (
         receipt.get("custom_nodes", {}) if isinstance(receipt, dict) else {}
     )
-    node_manifest_signature = _json_hash(manifest.custom_nodes)
+    node_manifest_signature = _json_hash(selected_nodes)
     reasons: list[str] = []
     if actual_ref != str(manifest.comfy["ref"]).lower():
         reasons.append("comfy_ref")
@@ -484,6 +488,9 @@ def write_runtime_receipt(
     release_version: str | None,
 ) -> dict[str, Any]:
     root = Path(comfy_root).resolve()
+    from .execution_profile import custom_nodes_for_profile, profile_kind
+    kind = profile_kind(manifest, profile_id)
+    selected_nodes = custom_nodes_for_profile(manifest.custom_nodes, cpu_only=kind == "cpu")
     value = {
         "schema_version": RECEIPT_SCHEMA_VERSION,
         "written_at": _now_iso(),
@@ -496,6 +503,7 @@ def write_runtime_receipt(
         "python": {
             "version": str(manifest.python["version"]),
             "profile_id": str(profile_id),
+            "profile_kind": kind,
             "install_mode": str(install_mode),
             "signature": desired_python_signature(
                 manifest,
@@ -504,8 +512,8 @@ def write_runtime_receipt(
             ),
         },
         "manager": collect_manager_state(root),
-        "custom_node_manifest_signature": _json_hash(manifest.custom_nodes),
-        "custom_nodes": collect_custom_node_state(root, manifest.custom_nodes),
+        "custom_node_manifest_signature": _json_hash(selected_nodes),
+        "custom_nodes": collect_custom_node_state(root, selected_nodes),
         "workflows": {
             "release_version": release_version,
             "selected_item_ids": [str(value) for value in selected_workflow_ids],

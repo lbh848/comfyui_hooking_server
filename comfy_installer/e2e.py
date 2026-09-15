@@ -27,6 +27,7 @@ from .manager_dependencies import (
     expected_manager_version,
 )
 from .operations import isolated_subprocess_env
+from .execution_profile import cpu_launch_args, installed_cpu_runtime
 
 
 class ComfyE2EError(RuntimeError):
@@ -114,6 +115,7 @@ class ComfyProcess:
         port: int | None = None,
         extra_args: Sequence[str] = (),
         verify_manager: bool = True,
+        cpu_only: bool | None = None,
     ) -> None:
         self.comfy_root = comfy_root.resolve()
         # 인터프리터 심볼릭 링크는 따라가지 않는다(operations.uv_python_path 와
@@ -124,6 +126,7 @@ class ComfyProcess:
         self.port = port or find_free_local_port()
         self.extra_args = tuple(str(value) for value in extra_args)
         self.verify_manager = bool(verify_manager)
+        self.cpu_only = cpu_only
         self.base_url = f"http://127.0.0.1:{self.port}"
         self.process: subprocess.Popen[str] | None = None
         self._tail: list[str] = []
@@ -266,7 +269,12 @@ class ComfyProcess:
             "--disable-auto-launch",
             "--enable-manager",
         ]
-        command.extend(self.extra_args)
+        command.extend(cpu_launch_args(
+            self.extra_args,
+            cpu_only=(installed_cpu_runtime(self.comfy_root)
+                      if self.cpu_only is None else self.cpu_only),
+            comfy_root=self.comfy_root,
+        ))
         return command
 
     def _read_output(self) -> None:

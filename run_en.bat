@@ -1,6 +1,10 @@
 @echo off
 setlocal
 cd /d %~dp0
+set "UV_CACHE_DIR=%CD%\.tools\uv-cache"
+if not exist "%CD%\.tools\tmp" mkdir "%CD%\.tools\tmp"
+set "TEMP=%CD%\.tools\tmp"
+set "TMP=%CD%\.tools\tmp"
 chcp 65001 >nul 2>&1
 set "PYTHONUTF8=1"
 set "PYTHONIOENCODING=utf-8"

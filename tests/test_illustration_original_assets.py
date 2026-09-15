@@ -249,6 +249,26 @@ def test_original_asset_context_excludes_current_target_from_recent_context() ->
     assert target == payload["target_slotted"]
 
 
+def test_original_asset_context_fallback_keeps_module_filtered_xml() -> None:
+    current = (
+        '<output target=input priority=extra-high source=ai sender=ai recipient=user>\n'
+        "Aoi looks toward the classroom door.\n\n"
+        "Aoi raises one hand.\n"
+        "</output>"
+    )
+
+    context, target = server._original_asset_context(
+        {"chats": [{"role": "char", "data": current}]},
+        context_turns=3,
+    )
+
+    assert context == ""
+    assert "<output target=input" in target
+    assert "Aoi looks toward the classroom door." in target
+    assert "</output>" in target
+    assert "[Slot 0]" in target
+
+
 @pytest.mark.asyncio
 async def test_original_asset_output_keeps_underfilled_valid_selections(
     tmp_path: Path,
@@ -856,9 +876,11 @@ async def test_asset_only_queue_skips_regular_pipeline_and_comfy(
 
 
 @pytest.mark.asyncio
-async def test_mixed_output_starts_original_asset_after_plan_using_remaining_slots(
+@pytest.mark.parametrize("multi_character", [False, True])
+async def test_mixed_output_starts_original_asset_after_detail_gpu_dispatch(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    multi_character: bool,
 ) -> None:
     monkeypatch.setattr(pipeline, "SESSION_DIR", str(tmp_path / "sessions"))
     session_id = "risu_" + ("9" * 64)
@@ -891,14 +913,26 @@ async def test_mixed_output_starts_original_asset_after_plan_using_remaining_slo
     generated_descriptor = {
         "kind": "scene",
         "slot": 1,
-        "characters": [],
+        "characters": (
+            [{"name": "Aoi"}, {"name": "Ren"}]
+            if multi_character
+            else []
+        ),
         "raw_positive": "scene",
         "raw_negative": "",
     }
+    if multi_character:
+        generated_descriptor["multi_char_layout"] = {
+            "character_order": ["Aoi", "Ren"],
+            "background_prompt": "classroom",
+            "composition_prompt": "two characters",
+            "regions": [],
+        }
     child_ids = []
     stage_order = []
     asset_started = asyncio.Event()
-    asset_release = asyncio.Event()
+    gpu_futures = []
+    gpu_completion_tasks = []
     resolved_profile_output = '{"profile_events":[]}'
     resolved_profile_result = {
         "profile_events": [],
@@ -922,7 +956,7 @@ async def test_mixed_output_starts_original_asset_after_plan_using_remaining_slo
                 "scene_mode": "manual",
                 "output_count_min": 1,
                 "output_count_max": 1,
-                "multi_char_mask_enabled": False,
+                "multi_char_mask_enabled": multi_character,
             },
         },
     )
@@ -934,11 +968,14 @@ async def test_mixed_output_starts_original_asset_after_plan_using_remaining_slo
 
     async def fake_select(**kwargs):
         stage_order.append("asset_start")
-        asset_started.set()
         assert kwargs["used_slots"] == {1}
         assert kwargs["reserve_slot_count"] == 0
         assert kwargs["profile_authority"] == "selected profile authority"
-        await asset_release.wait()
+        assert "detail_3_done" in stage_order
+        assert "gpu_enqueued" in stage_order
+        assert gpu_futures and all(not future.done() for future in gpu_futures)
+        asset_started.set()
+        await asyncio.sleep(0)
         stage_order.append("asset_done")
         return {
             "items": [original_descriptor],
@@ -963,18 +1000,25 @@ async def test_mixed_output_starts_original_asset_after_plan_using_remaining_slo
             "scene_slots": [1],
             "target_slotted": build_payload["target_slotted"],
         })
-        await asyncio.wait_for(asset_started.wait(), timeout=1.0)
-        assert "asset_done" not in stage_order
         stage_order.append("call2_after_plan")
 
-        # CALL2 may continue while ORIGINAL-ASSET is still running.
+        # ORIGINAL-ASSET은 PLAN 직후 LLM 슬롯을 선점하지 않고 마지막 DETAIL까지 양보한다.
+        for detail_index in range(1, 4):
+            await asyncio.sleep(0)
+            assert not asset_started.is_set()
+            stage_order.append(f"detail_{detail_index}_done")
+
         await kwargs["on_call2_ready"]({
             "context": "context",
             "prompt_format": "v3",
             "items": [generated_descriptor],
         })
-        assert "asset_done" not in stage_order
-        asset_release.set()
+        if multi_character:
+            # 다중 장면은 CALL3/레이아웃 뒤 실제 GPU 큐 등록까지 한 번 더 보류한다.
+            await asyncio.sleep(0)
+            assert not asset_started.is_set()
+        else:
+            await asyncio.wait_for(asset_started.wait(), timeout=1.0)
         return {
             "context": "context",
             "prompt_format": "v3",
@@ -985,10 +1029,18 @@ async def test_mixed_output_starts_original_asset_after_plan_using_remaining_slo
     async def fake_add_item(_item_type, _label, params, **_kwargs):
         child_id = params["prompt_id"]
         child_ids.append(child_id)
+        stage_order.append("gpu_enqueued")
         future = asyncio.get_running_loop().create_future()
-        server.prompts[child_id]["image_bytes"] = generated_bytes
-        future.set_result({"success": True})
-        return SimpleNamespace(status="completed", completion_future=future)
+        gpu_futures.append(future)
+
+        async def complete_gpu_after_asset_starts():
+            await asset_started.wait()
+            stage_order.append("gpu_done")
+            server.prompts[child_id]["image_bytes"] = generated_bytes
+            future.set_result({"success": True})
+
+        gpu_completion_tasks.append(asyncio.create_task(complete_gpu_after_asset_starts()))
+        return SimpleNamespace(status="processing", completion_future=future)
 
     async def ignore_progress(*_args, **_kwargs):
         return None
@@ -1027,7 +1079,10 @@ async def test_mixed_output_starts_original_asset_after_plan_using_remaining_slo
     })
 
     try:
-        result = await server.process_illustration_context_queue_item(parent_item)
+        result = await asyncio.wait_for(
+            server.process_illustration_context_queue_item(parent_item),
+            timeout=2.0,
+        )
 
         assert result["count"] == 2
         assert result["requested_count"] == 2
@@ -1038,15 +1093,16 @@ async def test_mixed_output_starts_original_asset_after_plan_using_remaining_slo
             "scene",
         ]
         assert session["images"] == [original_bytes, generated_bytes]
-        assert stage_order == [
-            "profile",
-            "call1_start",
-            "call1_done",
-            "asset_start",
-            "call2_after_plan",
-            "asset_done",
-        ]
+        assert stage_order.index("call2_after_plan") < stage_order.index("detail_1_done")
+        assert stage_order.index("detail_3_done") < stage_order.index("gpu_enqueued")
+        assert stage_order.index("gpu_enqueued") < stage_order.index("asset_start")
+        assert stage_order.index("asset_start") < stage_order.index("gpu_done")
     finally:
+        for task in gpu_completion_tasks:
+            if not task.done():
+                task.cancel()
+        if gpu_completion_tasks:
+            await asyncio.gather(*gpu_completion_tasks, return_exceptions=True)
         pipeline._SESSIONS.pop(session_id, None)
         pipeline._LOOKUP_KEYS.pop(lookup_key, None)
         server.prompts.pop(prompt_id, None)
@@ -1054,21 +1110,34 @@ async def test_mixed_output_starts_original_asset_after_plan_using_remaining_slo
             server.prompts.pop(child_id, None)
 
 
-def test_original_asset_plan_priority_has_no_call2_barrier() -> None:
+def test_original_asset_plan_reserves_slots_but_gpu_dispatch_starts_selection() -> None:
     server_source = Path(server.__file__).read_text(encoding="utf-8")
     pipeline_source = Path(pipeline.__file__).read_text(encoding="utf-8")
 
     assert "before_call2" not in server_source
     assert "before_call2" not in pipeline_source
     assert "on_call2_plan_ready=None" in pipeline_source
-    assert "CALL2-PLAN 직후 선택 시작" in server_source
-    assert "_run_original_asset_selection(used_slots)" in server_source
+    assert "CALL2-PLAN 직후 선택 시작" not in server_source
+    assert "CALL2-PLAN slot 확정 · DETAIL/GPU 등록까지 선택 보류" in server_source
 
     plan_join = pipeline_source.index("call2_plan_output = await illustration_flow.join(plan_task)")
     plan_parse = pipeline_source.index("parsed_plan, plan_reason = parse_call2_plan(", plan_join)
     plan_callback = pipeline_source.index("await on_call2_plan_ready({", plan_parse)
     detail_stage = pipeline_source.index('parallel_stage = "CALL2-DETAIL"', plan_callback)
     assert plan_join < plan_parse < plan_callback < detail_stage
+
+    server_plan_callback = server_source.index("async def _on_call2_plan_ready")
+    slot_reservation = server_source.index(
+        "original_asset_plan_slots = {",
+        server_plan_callback,
+    )
+    call2_ready = server_source.index("async def _on_call2_ready", slot_reservation)
+    gpu_enqueue = server_source.index("child_pairs.append(await _enqueue_child(", call2_ready)
+    asset_start = server_source.index(
+        "_start_original_asset_selection(",
+        gpu_enqueue,
+    )
+    assert server_plan_callback < slot_reservation < call2_ready < gpu_enqueue < asset_start
 
 
 def test_asset_only_path_is_free_and_mixed_path_waits_for_plan_slots() -> None:
@@ -1077,5 +1146,17 @@ def test_asset_only_path_is_free_and_mixed_path_waits_for_plan_slots() -> None:
     free_select = source.index("_run_original_asset_selection(set())", asset_only)
     plan_wait = source.index("일반 삽화 PLAN slot 확정 대기", free_select)
     plan_callback = source.index("async def _on_call2_plan_ready", plan_wait)
-    plan_select = source.index("_run_original_asset_selection(used_slots)", plan_callback)
-    assert asset_only < free_select < plan_wait < plan_callback < plan_select
+    plan_reservation = source.index("original_asset_plan_slots = {", plan_callback)
+    call2_ready = source.index("async def _on_call2_ready", plan_reservation)
+    gpu_enqueue = source.index("child_pairs.append(await _enqueue_child(", call2_ready)
+    mixed_select = source.index("_start_original_asset_selection(", gpu_enqueue)
+    assert (
+        asset_only
+        < free_select
+        < plan_wait
+        < plan_callback
+        < plan_reservation
+        < call2_ready
+        < gpu_enqueue
+        < mixed_select
+    )

@@ -6,6 +6,35 @@ FRONTEND = (
 ).read_text(encoding="utf-8")
 
 
+def test_video_settings_expose_format_specific_encoder_defaults_first() -> None:
+    panel = FRONTEND.split('id="settings-tab-video"', 1)[1].split(
+        'id="settings-tab-lora"', 1
+    )[0]
+
+    webp_level = panel.index('id="setting-video-webp-compression-level"')
+    avif_gpu = panel.index('id="setting-video-avif-gpu-enabled"')
+    avif_preset = panel.index('id="setting-video-avif-gpu-preset"')
+    i2v_workflow = panel.index('id="setting-video-i2v-workflow-filename"')
+    assert webp_level < avif_gpu < avif_preset < i2v_workflow
+    assert '<option value="4" selected>4 · 균형 (추천)</option>' in panel
+    assert '<option value="p4" selected>P4 · 균형 (추천)</option>' in panel
+    assert "CPU AVIF로 자동 재시도" in panel
+
+    populate = FRONTEND.split("async function populateSettingsForm()", 1)[1].split(
+        "function openSettings()", 1
+    )[0]
+    assert "videoEncodingDefaults.webp_compression_level ?? 4" in populate
+    assert "videoEncodingDefaults.avif_gpu_enabled === true" in populate
+    assert "videoEncodingDefaults.avif_gpu_preset || 'p4'" in populate
+
+    save = FRONTEND.split("async function saveSettings()", 1)[1].split(
+        "function closeSettings()", 1
+    )[0]
+    assert "webp_compression_level: Number.parseInt(" in save
+    assert "avif_gpu_enabled:" in save
+    assert "avif_gpu_preset:" in save
+
+
 def test_backup_card_has_one_video_button_immediately_before_delete() -> None:
     video_button = FRONTEND.index('class="video-backup-btn"')
     delete_button = FRONTEND.index('class="delete-backup-btn"', video_button)
@@ -480,6 +509,8 @@ def test_video_refine_uses_one_button_and_ai_context_version_dropdown() -> None:
     assert '<option value="v1" selected>V1 (일반 다듬기)</option>' in ai_panel
     assert '<option value="v2">V2 (시네마틱 스타일)</option>' in ai_panel
     assert '<option value="v3">V3 (일본 애니메이션 스타일)</option>' in ai_panel
+    assert '<option value="v3_2">V3_2 (일본 애니메이션 스타일 2)</option>' in ai_panel
+    assert '<option value="v4">V4 (DaSiWa 프롬프트)</option>' in ai_panel
 
     dispatcher = FRONTEND.split(
         "function requestSelectedVideoInstructionRefine()", 1
@@ -498,7 +529,9 @@ def test_video_refine_uses_one_button_and_ai_context_version_dropdown() -> None:
     assert "/api/video/instruction-refine" in v1_request
     assert "/api/video/instruction-direct" in v2_request
     assert "refine_version: refineVersionValue" in v2_request
-    assert "['v2', 'v3'].includes(refineVersionValue)" in v2_request
+    assert "['v2', 'v3', 'v3_2', 'v4'].includes(refineVersionValue)" in v2_request
+    assert "v3_2: 'V3_2 일본 애니메이션 2'" in v2_request
+    assert "v4: 'V4 DaSiWa 프롬프트'" in v2_request
     assert "document.getElementById('video-generation-refine-button')" in v2_request
     assert "button.innerHTML = '✍️ 입력 다듬기'" in v2_request
 

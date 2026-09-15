@@ -78,7 +78,7 @@ def test_active_character_card_face_preview_and_prompt_edit_keep_profile_id():
     assert "visual_card_id: visualCardId" in modal_source
 
 
-def test_lb_extra_batch_refine_targets_every_profile_and_only_syncs_card_one_portable_data():
+def test_lb_extra_batch_refine_targets_every_non_skipped_profile_and_only_syncs_card_one_portable_data():
     assert "프로필 카드 일괄 정제" in FRONTEND
     assert "이식용 데이터 일괄 정제" not in FRONTEND
 
@@ -86,6 +86,7 @@ def test_lb_extra_batch_refine_targets_every_profile_and_only_syncs_card_one_por
     target_end = FRONTEND.index("async function _lbExtraBatchRefine()", target_start)
     target_source = FRONTEND[target_start:target_end]
     assert "profiles.forEach((profile, profileIndex)" in target_source
+    assert "profile.skip_lb_extra_batch_refine === true" in target_source
     assert "profile.default_outfit" in target_source
     assert "defaultOutfitId" not in target_source
     assert "rep: repImages[0] || ''" in target_source
@@ -109,6 +110,20 @@ def test_lb_extra_batch_refine_targets_every_profile_and_only_syncs_card_one_por
     assert "if (target.isPortable && _lbExtraEdited[ci])" in run_source
     assert "_lbExtraEdited[ci].appearance" in run_source
     assert "_lbExtraEdited[ci].outfit" in run_source
+
+
+def test_lb_extra_card_has_persistent_batch_refine_skip_toggle_in_its_top_row():
+    assert "async function _setLbExtraBatchRefineSkipped(charName, profileIndex, checkbox)" in FRONTEND
+    assert "profile.skip_lb_extra_batch_refine = next" in FRONTEND
+    assert "await _saveVisualCardState(charName, {quiet:true})" in FRONTEND
+    assert "rollbackProfile.skip_lb_extra_batch_refine = previous" in FRONTEND
+
+    render_start = FRONTEND.index("function _renderLbExtraContent()")
+    render_end = FRONTEND.index("function _attachLbExtraChipTooltips()", render_start)
+    renderer = FRONTEND[render_start:render_end]
+    assert "일괄 정제 스킵" in renderer
+    assert "skipsBatchRefine" in renderer
+    assert renderer.index("일괄 정제 스킵") < renderer.index('<code style="display:block;')
 
 
 def test_lb_extra_refine_is_registered_in_queue_ui_and_routing_ui():

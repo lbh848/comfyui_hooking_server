@@ -1,28 +1,9 @@
-"""설치기가 로컬로 받을 모델 범위를 정한다 (모델 취득 경로별).
+"""설치 프로필과 작업 배분에 따라 로컬 모델 다운로드 범위를 정한다.
 
-배경: 로컬 디스크가 모델의 유일한 원본이라, 클라우드에서만 생성하는 사용자도
-매니페스트 전체(117.7 GiB)를 로컬에 받았다가 다시 원격으로 올려야 했다.
-``modal_model_source=cloud_direct`` 는 워커가 저장소에서 볼륨으로 직접 받게 하지만,
-설치기는 그 설정을 보지 않아 여전히 전부 받았다. 이 모듈이 그 구멍을 메운다.
-
-규칙은 하나다:
-
-    **원격이 아닌 대상에 배분된 작업이 쓰는 모델만 로컬로 받는다.**
-
-플랫폼 조건이 아니라 **배분** 조건이라는 점이 중요하다. NVIDIA 가 없는 Windows
-머신도 macOS 와 똑같은 처지이고, 똑같은 이득을 본다. 이 모듈에 ``platform`` 분기가
-들어가면 그건 버그다.
-
-로컬 실행이 남아 있는 한 로컬 모델도 남는다. 그래서 cloud_direct 는
-"아무것도 안 받는다"가 아니라 "로컬 실행에 필요한 만큼만 받는다"로 귀결된다.
-
-남은 로컬 전용은 두 종뿐이다 — ``outfit``(워크플로우가 배포되지 않아 모델 요구
-사항조차 알 수 없다)과 ``face_extract``(원격 분기는 있으나 미검증). 한때 여기
-있던 ``utility_debug`` 와 ``tag_analysis`` 는 회수 경로가 생겨 원격으로 옮겼다.
-특히 ``utility_debug`` 가 만드는 ``cache.pt`` 는 없으면 등록 캐릭터 삽화가 통째로
-막히는 파일이라, 이것이 원격에서 돌게 된 것이 로컬 0에 가까운 구성을 가능하게
-했다. 정확한 목록은 언제나 ``MODAL_SUPPORTED_COMFY_TASK_KEYS`` 가 기준이다 —
-여기 적힌 이름은 설명이고, 판단 근거로 쓰면 안 된다.
+GPU 프로필은 기존 local_first / cloud_direct 설정을 따른다. CPU 경량
+프로필은 로컬에 배분된 분석·유틸리티의 모델만 받는다. 모델 이름이나 크기로
+용도를 추측하지 않고 작업 바인딩과 해당 팩의 model_ids를 사용한다.
+CPU용 필터는 설치 범위만 바꾸며 원격 서비스·모델 취득 설정은 변경하지 않는다.
 """
 
 from __future__ import annotations
@@ -31,6 +12,7 @@ from dataclasses import dataclass
 from typing import Any, Iterable, Mapping, Sequence
 
 from comfy_allocation import local_required_binding_ids
+from .execution_profile import cpu_workflow_bindings
 
 
 MODEL_SOURCE_LOCAL_FIRST = "local_first"
@@ -128,6 +110,7 @@ def local_model_gaps(
     allocations: Any,
     config: Mapping[str, Any],
     comfy_root: Any,
+    cpu_only: bool = False,
 ) -> tuple[dict[str, Any], ...]:
     """로컬 실행 작업이 쓰는데 로컬 디스크에 없는 모델.
 
@@ -143,6 +126,8 @@ def local_model_gaps(
     from pathlib import Path
 
     local_bindings = local_required_binding_ids(allocations)
+    if cpu_only:
+        local_bindings &= cpu_workflow_bindings()
     installed = configured_binding_ids(workflows, config)
     relevant = local_bindings & installed
     if not relevant:
@@ -214,6 +199,14 @@ class ModelScope:
     def summary(self) -> str:
         """설치 로그에 남길 한 줄. 조용한 스킵은 버그와 구별되지 않는다."""
 
+        if self.model_source == "cpu_local":
+            return (
+                f"[모델 범위] CPU 경량 작업용 {len(self.keep)}개 "
+                f"({self.keep_bytes / 1024**3:.2f} GiB) 다운로드; "
+                f"생성/학습 또는 원격 작업용 {len(self.skipped)}개 "
+                f"({self.skipped_bytes / 1024**3:.2f} GiB)는 로컬 설치 생략. "
+                "원격 실행 대상과 모델 취득 설정은 유지합니다."
+            )
         if not self.filtered:
             return (
                 f"[모델 범위] 전체 다운로드: {len(self.keep)}개 "
@@ -234,13 +227,22 @@ def scope_models(
     workflows: Mapping[str, Any],
     allocations: Any,
     model_source: str,
+    cpu_only: bool = False,
 ) -> ModelScope:
     """선택된 모델 목록을 로컬 다운로드분과 원격 위임분으로 가른다.
 
-    ``local_first`` 에서는 항등이다 — 기존 사용자의 동작이 1바이트도 달라지면 안 된다.
+    GPU의 ``local_first`` 는 기존대로 전체를 받고 CPU는 경량 로컬 작업만 준비한다.
     """
 
     ordered = tuple(dict(model) for model in models)
+    if cpu_only:
+        bindings = local_required_binding_ids(allocations) & cpu_workflow_bindings()
+        needed = binding_model_ids(workflows, bindings)
+        return ModelScope(
+            model_source="cpu_local",
+            keep=tuple(model for model in ordered if str(model.get("id")) in needed),
+            skipped=tuple(model for model in ordered if str(model.get("id")) not in needed),
+        )
     if str(model_source) != MODEL_SOURCE_CLOUD_DIRECT:
         return ModelScope(
             model_source=str(model_source),

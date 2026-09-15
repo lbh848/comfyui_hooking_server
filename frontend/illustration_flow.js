@@ -4,11 +4,36 @@
     let selected = null, detailRequest = 0, developerPreviousFocus = null;
     let qualityInspectionEnabled = false, qualityInspectionRequest = 0;
     let scale = 1, previousFocus = null;
+    let activeTab = 'illustration';
+    const flows = {illustration: null, video: null, video_input: null};
+    const views = {
+        illustration: {scale: 1, scroll: [0, 0]},
+        video: {scale: 1, scroll: [0, 0]},
+        video_input: {scale: 1, scroll: [0, 0]},
+    };
+    const tabLabels = {
+        illustration: '삽화 흐름 보기',
+        video: '영상 흐름 보기',
+        video_input: '영상 입력 개선',
+    };
+    const autoOpenStorageKey = kind => `workflow-flow-auto-open-${kind}`;
+    const autoOpenEnabled = {illustration: true, video: true, video_input: false};
+    Object.keys(autoOpenEnabled).forEach(kind => {
+        try {
+            const saved = localStorage.getItem(autoOpenStorageKey(kind));
+            if (saved !== null) autoOpenEnabled[kind] = saved === 'true';
+        } catch (error) {
+            console.error('[ILLUST_FLOW] 자동 열기 설정 조회 실패:', {kind, enabled: autoOpenEnabled[kind]}, error);
+        }
+    });
+    const flowUrl = kind => kind === 'illustration'
+        ? '/api/illustration_flow'
+        : `/api/illustration_flow?kind=${encodeURIComponent(kind)}`;
     const qualityInspectionSettingsUrl = '/api/illustration_quality_inspection/settings';
     const labels = {waiting: '대기', processing: '처리 중', cancelling: '중단 중', completed: '완료', failed: '실패', cancelled: '취소', skipped: '생략'};
     const colors = {waiting: '#94a3b8', processing: '#60a5fa', cancelling: '#f59e0b', completed: '#4ade80', failed: '#fb7185', cancelled: '#fbbf24', skipped: '#a78bfa'};
-    const executorLabels = {llm: 'LLM', comfy: 'Comfy', process: '기타 프로세스'};
-    const executorColors = {llm: '#a78bfa', comfy: '#22d3ee', process: '#94a3b8'};
+    const executorLabels = {llm: 'LLM', comfy: 'Comfy', human: '사람', process: '기타 프로세스'};
+    const executorColors = {llm: '#a78bfa', comfy: '#22d3ee', human: '#f59e0b', process: '#94a3b8'};
     const nodeExecutor = n => n.executor || (n.kind === 'llm' ? 'llm' : 'process');
     const element = (tag, className, text) => {
         const el = document.createElement(tag);
@@ -44,14 +69,17 @@
             .if-layer-backdrop{position:fixed;inset:0;z-index:2147483643;background:#020617b3;backdrop-filter:blur(3px)}
             .if-layer-backdrop[hidden]{display:none}
             .if-modal{position:fixed;inset:0;z-index:2147483644;margin:auto;box-sizing:border-box;overflow:hidden;color:var(--text,#e2e8f0);background:var(--bg2,#111827);border:1px solid #64748b66;border-radius:16px;padding:0;width:min(1240px,94vw);max-width:96vw;max-height:calc(100dvh - 32px);box-shadow:0 24px 90px #0009;font:14px/1.5 system-ui,sans-serif}
+            .if-modal[open]{display:flex;flex-direction:column}.if-header,.if-tabs,.if-auto-open-settings,.if-legend,.if-footer{flex-shrink:0}
             .if-detail{z-index:2147483645}
             .if-developer{z-index:2147483646;width:min(620px,94vw)}
             .if-header{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:18px 22px;border-bottom:1px solid #64748b44}
             .if-header h2{font-size:19px;margin:0}.if-title-row{display:flex;align-items:center;gap:9px;flex-wrap:wrap}.if-subtitle{font-size:12px;color:var(--text2,#94a3b8);margin-top:4px;overflow-wrap:anywhere}
             .if-actions,.if-legend,.if-legend-group{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.if-button{border:1px solid #64748b66;border-radius:8px;background:transparent;color:inherit;padding:6px 11px;cursor:pointer}.if-button:hover{background:#64748b33}.if-button:disabled{opacity:.45;cursor:not-allowed}.if-button-danger{border-color:#fb718580;color:#fecdd3}.if-button-danger:not(:disabled):hover{background:#fb71851f}.if-button:focus-visible,.if-port:focus-visible{outline:3px solid #60a5fa;outline-offset:3px}
             .if-developer-button{border-color:#c084fc99;color:#e9d5ff}.if-developer-button:hover{background:#c084fc1f}
+            .if-tabs{display:flex;gap:8px;padding:12px 22px 0;border-bottom:1px solid #64748b44}.if-tab{border:0;border-bottom:3px solid transparent;border-radius:8px 8px 0 0;padding:10px 16px;color:var(--text2,#94a3b8)}.if-tab[aria-selected=true]{color:var(--text,#e2e8f0);background:#60a5fa18;border-bottom-color:#60a5fa}.if-modal [hidden]{display:none!important}
+            .if-auto-open-settings{padding:10px 22px;border-bottom:1px solid #64748b33}.if-auto-open-toggle{display:flex;align-items:center;gap:9px;width:fit-content;font-size:13px;cursor:pointer}.if-auto-open-toggle input{appearance:none;flex-shrink:0;width:34px;height:20px;margin:0;border:1px solid #64748b;border-radius:12px;background:#475569;cursor:pointer;position:relative}.if-auto-open-toggle input::after{content:'';position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:#e2e8f0;transition:transform .15s}.if-auto-open-toggle input:checked{background:#2563eb;border-color:#60a5fa}.if-auto-open-toggle input:checked::after{transform:translateX(14px)}.if-auto-open-toggle input:focus-visible{outline:3px solid #60a5fa;outline-offset:3px}.if-auto-open-state{font-size:12px;color:var(--text2,#94a3b8)}.if-auto-open-help{font-size:12px;color:var(--text2,#94a3b8);margin:5px 0 0;overflow-wrap:anywhere}
             .if-legend{padding:10px 22px;gap:18px;font-size:12px;border-bottom:1px solid #64748b33}.if-legend-group{gap:12px}.if-legend-label{color:var(--text2,#94a3b8);font-weight:650}.if-legend-status .if-legend-item::before{content:'●';color:var(--state);margin-right:5px}.if-legend-executor .if-legend-item::before{content:'';display:inline-block;width:13px;height:13px;border-radius:4px;background:color-mix(in srgb,var(--bg2,#172033) 68%,var(--node-tint) 32%);border:1px solid var(--node-tint);margin-right:6px;vertical-align:-2px}
-            .if-viewport{height:min(65vh,660px);overflow:auto;background-color:var(--bg,#0b1220);background-image:radial-gradient(#94a3b822 1px,transparent 1px);background-size:20px 20px;padding:0;position:relative}
+            .if-viewport{height:min(65vh,660px);min-height:0;flex-shrink:1;overflow:auto;background-color:var(--bg,#0b1220);background-image:radial-gradient(#94a3b822 1px,transparent 1px);background-size:20px 20px;padding:0;position:relative}
             .if-space{position:relative}.if-canvas{position:relative;transform-origin:0 0}.if-edges{position:absolute;inset:0;overflow:visible;pointer-events:none}
             .if-node{position:absolute;box-sizing:border-box;width:222px;height:98px;border:1px solid #64748b77;border-left:4px solid var(--state);border-radius:11px;background:color-mix(in srgb,var(--bg2,#172033) 68%,var(--node-tint,#94a3b8) 32%);padding:12px 22px 10px 13px;box-shadow:0 4px 15px #0002}
             .if-node[data-status=processing]{box-shadow:0 0 0 2px #60a5fa33,0 0 22px #60a5fa22}.if-node-title{font-weight:650;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.if-node-state{color:var(--state);font-size:12px;margin-top:6px}.if-node-model{font-size:11px;color:var(--text2,#94a3b8);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -68,7 +96,7 @@
         modal.setAttribute('aria-labelledby', 'if-title');
         const header = element('header', 'if-header'), titleBox = element('div');
         const titleRow = element('div', 'if-title-row');
-        const title = element('h2', '', '삽화 처리 흐름'); title.id = 'if-title';
+        const title = element('h2', '', '작업 흐름 보기'); title.id = 'if-title';
         developerButton = button('개발자 모드', openDeveloperMode);
         developerButton.classList.add('if-developer-button');
         developerButton.id = 'if-developer-mode';
@@ -85,6 +113,53 @@
         resetZoom.title = '현재 확대 비율을 100%로 되돌립니다.';
         actions.append(stopButton, button('−', () => zoom(-0.15)), button('+', () => zoom(0.15)), resetZoom, button('닫기', () => modal.close()));
         header.append(titleBox, actions);
+        const tabs = element('div', 'if-tabs');
+        tabs.setAttribute('role', 'tablist'); tabs.setAttribute('aria-label', '작업 흐름 종류');
+        const autoOpenSettings = element('div', 'if-auto-open-settings');
+        Object.entries(tabLabels).forEach(([key, label]) => {
+            const tab = button(label, () => {switchTab(key); void refresh(key);});
+            tab.classList.add('if-tab'); tab.id = `if-tab-${key}`;
+            tab.setAttribute('role', 'tab'); tab.setAttribute('aria-controls', 'if-flow-panel');
+            tab.dataset.tab = key;
+            tab.addEventListener('keydown', event => {
+                if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+                event.preventDefault();
+                const keys = Object.keys(tabLabels);
+                const currentIndex = keys.indexOf(key);
+                const nextIndex = event.key === 'Home'
+                    ? 0
+                    : event.key === 'End'
+                        ? keys.length - 1
+                        : (currentIndex + (event.key === 'ArrowRight' ? 1 : -1) + keys.length) % keys.length;
+                const next = keys[nextIndex];
+                switchTab(next); modal.querySelector(`#if-tab-${next}`).focus(); void refresh(next);
+            });
+            tabs.append(tab);
+            const setting = element('div', 'if-auto-open-setting');
+            setting.dataset.tab = key;
+            const toggle = element('label', 'if-auto-open-toggle');
+            const checkbox = element('input');
+            checkbox.type = 'checkbox'; checkbox.id = `if-auto-open-${key}`;
+            checkbox.setAttribute('role', 'switch');
+            checkbox.setAttribute('aria-label', `${label} 자동 열기`);
+            checkbox.setAttribute('aria-describedby', 'if-auto-open-help');
+            checkbox.checked = autoOpenEnabled[key];
+            const state = element('span', 'if-auto-open-state', checkbox.checked ? '켜짐' : '꺼짐');
+            checkbox.addEventListener('change', () => {
+                autoOpenEnabled[key] = checkbox.checked;
+                state.textContent = checkbox.checked ? '켜짐' : '꺼짐';
+                try {
+                    localStorage.setItem(autoOpenStorageKey(key), String(checkbox.checked));
+                } catch (error) {
+                    console.error('[ILLUST_FLOW] 자동 열기 설정 저장 실패:', {kind: key, enabled: checkbox.checked}, error);
+                    if (typeof showToast === 'function') showToast('자동 열기 설정을 저장하지 못했습니다. 현재 페이지에서만 적용됩니다.', 'error');
+                }
+            });
+            toggle.append(checkbox, element('span', '', '이 탭의 새 작업 시작 시 자동으로 열기'), state);
+            setting.append(toggle); autoOpenSettings.append(setting);
+        });
+        const autoOpenHelp = element('p', 'if-auto-open-help', '꺼져 있어도 작업 흐름은 계속 기록되며, 작업 흐름 보기 버튼으로 열어 확인할 수 있습니다.');
+        autoOpenHelp.id = 'if-auto-open-help'; autoOpenSettings.append(autoOpenHelp);
         const legend = element('div', 'if-legend');
         const statusLegend = element('div', 'if-legend-group if-legend-status');
         statusLegend.append(element('span', 'if-legend-label', '상태'));
@@ -93,7 +168,9 @@
         executorLegend.append(element('span', 'if-legend-label', '처리 주체'));
         Object.entries(executorLabels).forEach(([key, label]) => {const s = element('span', 'if-legend-item', label); s.style.setProperty('--node-tint', executorColors[key]); executorLegend.append(s);});
         legend.append(statusLegend, executorLegend);
-        modal.append(header, legend, element('div', 'if-viewport'), element('footer', 'if-footer', '출력 ●에 마우스를 올리면 요약, 클릭하면 모델·폴백·입력·출력을 확인할 수 있습니다.'));
+        const viewport = element('div', 'if-viewport'); viewport.id = 'if-flow-panel';
+        viewport.setAttribute('role', 'tabpanel'); viewport.tabIndex = 0;
+        modal.append(header, tabs, autoOpenSettings, legend, viewport, element('footer', 'if-footer', '출력 ●에 마우스를 올리면 요약, 클릭하면 모델·폴백·입력·출력을 확인할 수 있습니다.'));
         modal.addEventListener('close', () => {
             hideTooltip();
             if (developerModal?.open) developerModal.close();
@@ -110,7 +187,7 @@
                 const nodes = new Map((flow?.nodes || []).map(n => [n.id, n]));
                 modal.querySelectorAll('.if-node').forEach(card => {
                     const n = nodes.get(card.dataset.nodeId);
-                    if (n) card.querySelector('.if-node-state').textContent = `${labels[n.status] || n.status} · ${elapsed(n)}`;
+                    if (n) card.querySelector('.if-node-state').textContent = nodeState(n);
                 });
             }, 1000);
         });
@@ -160,8 +237,26 @@
             else if (event.key === 'Tab') event.stopPropagation();
         }));
     }
+    function nodeState(n) {
+        const progress = n.status === 'processing' && Number.isFinite(n.progress) ? ` · ${Math.round(n.progress)}%` : '';
+        return `${labels[n.status] || n.status}${progress} · ${elapsed(n)}`;
+    }
+    function switchTab(kind) {
+        init();
+        if (kind !== activeTab) {
+            const viewport = modal.querySelector('.if-viewport');
+            views[activeTab] = {scale, scroll: [viewport.scrollLeft, viewport.scrollTop]};
+            if (detailModal.open) detailModal.close();
+            if (developerModal.open) developerModal.close();
+            activeTab = kind; flow = flows[kind]; scale = views[kind].scale;
+            updateZoomDisplay(); render();
+            [viewport.scrollLeft, viewport.scrollTop] = views[kind].scroll;
+        } else render();
+    }
     function updateStopButton() {
         if (!stopButton) return;
+        stopButton.hidden = activeTab !== 'illustration';
+        developerButton.hidden = activeTab !== 'illustration';
         const terminal = ['completed', 'failed', 'cancelled', 'skipped'].includes(flow?.status);
         const cancelling = Boolean(flow?.cancel_requested) || flow?.status === 'cancelling';
         stopButton.disabled = !flow || terminal || cancelling;
@@ -309,7 +404,7 @@
     function tooltip(n, port) {
         hideTooltip();
         const executor = nodeExecutor(n);
-        const tip = element('div', 'if-tooltip', `${n.label}\n${executorLabels[executor] || executor} · ${labels[n.status] || n.status} · ${elapsed(n)}\n${n.model || (executor === 'llm' ? '모델 배정 대기' : executor === 'comfy' ? 'ComfyUI' : '서버 처리')}\n${n.phase === 'fallback' ? '폴백 사용 · ' : ''}${n.error || n.summary || '클릭하여 상세 보기'}`);
+        const tip = element('div', 'if-tooltip', `${n.label}\n${executorLabels[executor] || executor} · ${labels[n.status] || n.status} · ${elapsed(n)}\n${n.model || (executor === 'llm' ? '모델 배정 대기' : executor === 'comfy' ? 'ComfyUI' : executor === 'human' ? '사람이 선택한 입력 상태' : '서버 처리')}\n${n.phase === 'fallback' ? '폴백 사용 · ' : ''}${n.error || n.summary || '클릭하여 상세 보기'}`);
         tip.setAttribute('role', 'tooltip'); modal.append(tip);
         const r = port.getBoundingClientRect();
         tip.style.left = `${Math.max(8, Math.min(innerWidth - tip.offsetWidth - 12, r.left - 80))}px`;
@@ -320,11 +415,23 @@
         if (!modal?.open) return;
         hideTooltip();
         const viewport = modal.querySelector('.if-viewport');
+        modal.querySelectorAll('.if-tab').forEach(tab => {
+            const active = tab.dataset.tab === activeTab;
+            tab.setAttribute('aria-selected', String(active)); tab.tabIndex = active ? 0 : -1;
+        });
+        modal.querySelectorAll('.if-auto-open-setting').forEach(setting => {
+            setting.hidden = setting.dataset.tab !== activeTab;
+        });
+        viewport.setAttribute('aria-labelledby', `if-tab-${activeTab}`);
         const scroll = [viewport.scrollLeft, viewport.scrollTop];
         const focusedNode = document.activeElement?.dataset?.nodeId;
         viewport.replaceChildren();
         if (!flow) {
-            const empty = element('div', 'if-empty', '아직 삽화 요청이 없습니다. 요청이 들어오면 여기에 처리 흐름이 표시됩니다.');
+            modal.querySelector('.if-subtitle').textContent = `${tabLabels[activeTab]} · 최신 요청의 실행 상태`;
+            const name = activeTab === 'video_input' ? '영상 입력 개선' : activeTab === 'video' ? '영상' : '삽화';
+            const empty = element('div', 'if-empty', `아직 ${name} 요청이 없습니다. 요청이 들어오면 여기에 처리 흐름이 표시됩니다.`);
+            if (activeTab === 'video') empty.append(element('small', '', '연출 작성·참조 분석 → 프롬프트 작성·후보 선택 → 영상 생성 → 후처리 → 결과 반환'));
+            if (activeTab === 'video_input') empty.append(element('small', '', '입력 상태와 AI 다듬기 결과, 적용·되돌리기 선택을 한 세션 안에 이어서 보존합니다.'));
             empty.append(element('small', '', `현재 확대 비율 ${Math.round(scale * 100)}% — 지금 조절한 비율은 다음 그래프에도 적용됩니다.`));
             viewport.append(empty);
             return;
@@ -340,17 +447,16 @@
                 label.startsWith('CALL1-BACKTRANSLATE') ||
                 label === 'CALL1' || /^CALL1 \d+\/\d+(?:\s|$)/.test(label);
         };
-        const isPlanAssetColumnLabel = value => {
+        const isPlanColumnLabel = value => {
             const label = String(value || '');
-            return label === 'CALL2-PLAN' || label.startsWith('CALL2-PLAN-') ||
-                label === 'ORIGINAL-ASSET' || label.startsWith('ORIGINAL-ASSET-');
+            return label === 'CALL2-PLAN' || label.startsWith('CALL2-PLAN-');
         };
         const isCompactColumnNode = n => isCompactColumnLabel(n.label) || isCompactColumnLabel(n.call_name);
-        const isPlanAssetColumnNode = n => isPlanAssetColumnLabel(n.label) || isPlanAssetColumnLabel(n.call_name);
+        const isPlanColumnNode = n => isPlanColumnLabel(n.label) || isPlanColumnLabel(n.call_name);
         const layoutGroup = n => isCompactColumnNode(n)
             ? '__early_compact__'
-            : isPlanAssetColumnNode(n)
-                ? '__call2_plan_asset__'
+            : isPlanColumnNode(n)
+                ? '__call2_plan__'
                 : String(n.layout_group || n.id);
         const membersByGroup = new Map();
         nodes.forEach(n => {
@@ -384,7 +490,8 @@
             }
             resolvingGroups.add(group);
             const dependencies = [...(dependenciesByGroup.get(group) || [])];
-            const depth = Math.max(2, ...dependencies.map(parentGroup => groupDepth(parentGroup) + 1));
+            const minimumDepth = activeTab === 'illustration' ? 2 : dependencies.length ? 1 : 0;
+            const depth = Math.max(minimumDepth, ...dependencies.map(parentGroup => groupDepth(parentGroup) + 1));
             resolvingGroups.delete(group);
             depthByGroup.set(group, depth);
             return depth;
@@ -432,7 +539,7 @@
             card.dataset.status = n.status; card.dataset.nodeId = n.id; card.dataset.executor = executor; card.style.setProperty('--state', colors[n.status] || colors.waiting); card.style.setProperty('--node-tint', executorColors[executor] || executorColors.process);
             card.style.left = `${p.x}px`; card.style.top = `${p.y}px`;
             const title = element('div', 'if-node-title', n.label); title.title = n.label;
-            card.append(title, element('div', 'if-node-state', `${labels[n.status] || n.status} · ${elapsed(n)}`), element('div', 'if-node-model', n.model || (executor === 'llm' ? 'LLM' : executor === 'comfy' ? 'ComfyUI' : '서버 처리')));
+            card.append(title, element('div', 'if-node-state', nodeState(n)), element('div', 'if-node-model', n.model || (executor === 'llm' ? 'LLM' : executor === 'comfy' ? 'ComfyUI' : executor === 'human' ? '사람이 선택한 입력 상태' : '서버 처리')));
             const port = button('', () => openDetail(n.id)); port.className = 'if-port'; port.dataset.nodeId = n.id;
             port.setAttribute('aria-label', `${n.label} 출력 상세`);
             port.onmouseenter = port.onfocus = () => tooltip(n, port); port.onmouseleave = port.onblur = hideTooltip;
@@ -441,23 +548,32 @@
         space.append(canvas); viewport.append(space); viewport.scrollLeft = scroll[0]; viewport.scrollTop = scroll[1];
         if (focusedNode) [...canvas.querySelectorAll('.if-port')].find(p => p.dataset.nodeId === focusedNode)?.focus({preventScroll: true});
     }
-    async function refresh() {
-        const before = flow;
+    async function refresh(kind) {
+        if (!kind) {await Promise.all(Object.keys(flows).map(key => refresh(key))); return;}
+        const before = flows[kind];
         try {
-            const response = await fetch('/api/illustration_flow', {cache: 'no-store'});
+            const response = await fetch(flowUrl(kind), {cache: 'no-store'});
             if (!response.ok) throw Error(`흐름 조회 실패 (${response.status})`);
             const next = (await response.json()).flow;
-            if (!next && flow === before) {flow = null; if (detailModal?.open) detailModal.close(); render();}
-            else receive(next, false);
+            if (!next && flows[kind] === before) {
+                flows[kind] = null;
+                if (kind === activeTab) {flow = null; if (detailModal?.open) detailModal.close(); render();}
+            } else receive(next, false, kind);
         } catch (error) {console.error('[ILLUST_FLOW] 최신 상태 조회 실패:', error); if (modal?.open) showToast(error.message, 'error');}
     }
-    function receive(next, autoOpen) {
+    function receive(next, autoOpen, kind = next?.kind || 'illustration') {
         if (!next) return;
-        if (flow && (next.created_at < flow.created_at || (next.id === flow.id && next.revision <= flow.revision))) return;
-        const isNew = flow?.id !== next.id;
+        const current = flows[kind];
+        if (current && (next.created_at < current.created_at || (next.id === current.id && next.revision <= current.revision))) return;
+        const isNew = current?.id !== next.id;
+        flows[kind] = next;
+        if (autoOpen && autoOpenEnabled[kind] && isNew && !modal?.open) {
+            init(); previousFocus = document.activeElement; switchTab(kind);
+            flowBackdrop.hidden = false; modal.show(); modal.dispatchEvent(new Event('if-open'));
+        }
+        if (kind !== activeTab) return;
         flow = next;
         if (isNew && detailModal?.open) detailModal.close();
-        if (autoOpen && isNew) {init(); previousFocus = document.activeElement; if (!modal.open) {flowBackdrop.hidden = false; modal.show(); modal.dispatchEvent(new Event('if-open'));}}
         render();
         if (selected && detailModal?.open) openDetail(selected, true);
     }
@@ -471,7 +587,7 @@
         if (!updating) body.replaceChildren(element('p', '', '상세 정보를 불러오는 중…'));
         try {
             const response = await fetch(`/api/illustration_flow?run=${encodeURIComponent(runId)}&node=${encodeURIComponent(nodeId)}`, {cache: 'no-store'});
-            if (!response.ok) throw Error(response.status === 404 ? '새 삽화 요청이 접수되어 이전 상세 정보가 종료되었습니다.' : `상세 조회 실패 (${response.status})`);
+            if (!response.ok) throw Error(response.status === 404 ? '새 요청이 접수되어 이전 상세 정보가 종료되었습니다.' : `상세 조회 실패 (${response.status})`);
             const {node: n} = await response.json();
             if (request !== detailRequest || runId !== flow?.id || !detailModal.open) return;
             const scroll = body.scrollTop;
@@ -499,8 +615,11 @@
         } catch (error) {console.error('[ILLUST_FLOW] 상세 조회 실패:', error); if (request === detailRequest) body.replaceChildren(element('p', '', error.message));}
     }
     window.receiveIllustrationFlow = receive;
+    window.receiveVideoFlow = (next, autoOpen) => receive(next, autoOpen, 'video');
+    window.receiveVideoInputFlow = (next, autoOpen) => receive(next, autoOpen, 'video_input');
     window.rehomeIllustrationToast = rehomeToast;
     window.refreshIllustrationFlow = refresh;
     window.openIllustrationFlowDeveloperMode = openDeveloperMode;
-    window.openIllustrationFlow = async () => {init(); previousFocus = document.activeElement; if (!modal.open) {flowBackdrop.hidden = false; modal.show(); modal.dispatchEvent(new Event('if-open'));} render(); await refresh();};
+    window.openWorkflowFlow = async () => {init(); previousFocus = document.activeElement; if (!modal.open) {flowBackdrop.hidden = false; modal.show(); modal.dispatchEvent(new Event('if-open'));} render(); await refresh();};
+    window.openIllustrationFlow = async () => {switchTab('illustration'); await window.openWorkflowFlow();};
 })();

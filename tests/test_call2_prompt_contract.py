@@ -36,9 +36,9 @@ def test_call2_default_outfit_is_fallback_and_context_can_create_replacement():
 
     assert "fallback visual reference" in system
     assert "create a coherent outfit suited to that context" in system
-    assert "explicit garment sentence is not required" in thoughts
-    assert "without keyword matching" in thoughts
-    assert "Do not mix abandoned default garments" in thoughts
+    assert "Only when wardrobe is unresolved" in thoughts
+    assert "make the minimum coherent design choices needed by the context" in thoughts
+    assert "Do not add physical or framing constraints to display the complete outfit" in thoughts
 
 
 def test_call2_remove_targets_semantic_garment_cluster():
@@ -46,10 +46,7 @@ def test_call2_remove_targets_semantic_garment_cluster():
     thoughts = CALL2_THOUGHTS.read_text(encoding="utf-8")
 
     assert "every tag describing that same physical garment" in system
-    assert (
-        "removing one physical garment removes every tag describing that same garment"
-        in thoughts
-    )
+    assert "Removing one physical garment removes all descriptions of that garment" in thoughts
 
 
 def test_call2_replace_keeps_independent_accessories_and_minimal_new_tags():
@@ -76,7 +73,8 @@ def test_call2_smallest_change_principle():
     thoughts = CALL2_THOUGHTS.read_text(encoding="utf-8")
 
     assert "make the smallest change" in system
-    assert "make the smallest change the evidence supports" in thoughts
+    assert "replace only the exact conflicting fixed arrangement tag" in thoughts
+    assert "Replace only the exact physically conflicting tag" in thoughts
 
 
 def test_call2_injection_message_states_items_may_be_empty():
@@ -153,7 +151,8 @@ def test_call2_builds_one_coherent_explicit_bundle_without_tag_dictionary():
 def test_call2_plan_handoff_stays_natural_and_schema_remains_compact():
     source = PIPELINE_PY.read_text(encoding="utf-8")
 
-    assert "Write scene_brief as natural language, not a field menu or tag list" in source
+    assert "Write each scene_brief as one plain natural-language visual instant" in source
+    assert "Lead with the familiar high-level action or pose" in source
     assert '"scene_brief": "objective visual moment to expand"' in source
     assert "lower_body_exposure" not in source
     assert '"must_show"' not in source
@@ -165,27 +164,27 @@ def test_call2_plan_handoff_stays_natural_and_schema_remains_compact():
 def test_call2_plan_uses_active_single_focus_instruction_as_renderability_envelope():
     source = PIPELINE_PY.read_text(encoding="utf-8")
 
-    assert "ACTIVE BOT IMAGE INSTRUCTIONS as a binding renderability envelope" in source
-    assert "anonymous-partner, face-visibility, and crop limits" in source
-    assert "requires more of another participant than the active instruction permits" in source
-    assert "whose only content is an invisible internal state" in source
+    assert "ACTIVE BOT IMAGE INSTRUCTIONS as the renderability envelope" in source
+    assert "active single-subject composition" in source
+    assert "requires the partner's face, identity, complete silhouette" in source
+    assert "Do not downgrade them to isolated reactions" in source
 
 
 def test_call2_plan_preserves_requested_count_with_distinct_visible_slices():
     source = PIPELINE_PY.read_text(encoding="utf-8")
 
     assert "The requested scene count remains binding" in source
-    assert "materially different directly visible instants or emphases" in source
-    assert "invisible, metaphorical, or consequence-only filler" in source
-    assert "visible pose, action, reaction, gesture, spatial relationship, or environment" in source
+    assert "materially different strong beats and visible progression" in source
+    assert "repeating near-identical micro-stages or using invisible filler" in source
+    assert "action, pose, reaction, contact, or spatial relationship" in source
 
 
 def test_call2_plan_keeps_concrete_environment_and_aftermath_opposite_cases():
     source = PIPELINE_PY.read_text(encoding="utf-8")
 
     assert "environment, aftermath, or secondary effect is selectable only when" in source
-    assert "it is itself the narrative's concrete visual subject" in source
-    assert "never use it as a substitute for an omitted causal interaction" in source
+    assert "the passage also supplies an independently readable subject action" in source
+    assert "If the proposed scene cannot be described as one coherent still without invention" in source
 
 
 def test_call2_prioritizes_character_state_over_environment_detail():
@@ -255,12 +254,10 @@ def test_call2_prompt_separates_named_roster_from_anonymous_fragment():
     assert "Never repeat the same canonical name within one image" in system
     assert "must not receive an invented `characters[]` entry or a second complete-person count" in system
     assert "do not add `1boy` or any person-focus/solo tag" in system
-    assert "exact unique canonical roster of named, identity-managed" in source
-    assert "never repeat the same " in source
-    assert "canonical name within one scene" in source
-    assert "does not require a second complete-person count tag" in source
-    assert "do not add `1boy` or any person-focus" in source
-    assert "must never expand into a complete second person" in source
+    assert "exact named roster and never add or duplicate an entry" in source
+    assert "Keep an anonymous partner out of " in source
+    assert "out of complete-person count tags" in source
+    assert "second identifiable person." in source
 
 
 def test_call2_prompt_keeps_cropped_partner_out_of_focused_character_positive():
@@ -271,8 +268,8 @@ def test_call2_prompt_keeps_cropped_partner_out_of_focused_character_positive():
     assert "omit person-focus tags including `solo`, `solo focus`, `female focus`, and `male focus`" in system
     assert "never place them in the focused named character's `positive`" in system
     assert "Keep an anonymous, unnamed, or unregistered cropped partner's body parts" in system
-    assert "never in the named girl's " in source
-    assert '"positive. The declared characters[n] count' in source
+    assert "partner-owned anatomy and action" in source
+    assert "never in a named character's positive" in source
 
 
 def test_single_v5_preserves_v4_and_keeps_partner_as_connected_fragment():
@@ -284,13 +281,16 @@ def test_single_v5_preserves_v4_and_keeps_partner_as_connected_fragment():
     assert "does not mean full-body, fully exposed, unobstructed" in v5
     assert "Do not use keyword matching" in v5
     assert "does not add a second `1girl` or `1boy` count" in v5
-    assert "Do not add `1boy` merely because the forearms are visible" in v5
+    assert "Do not add `1boy` merely because that fragment is visible" in v5
     assert "omit every person-focus tag" in v5
     assert "including `solo`, `solo focus`, `female focus`, and `male focus`" in v5
     assert "Never put the partner's body parts or actions in the named subject's `positive`" in v5
     assert "do not expand the fragment into a whole man" in v5
     assert "may naturally occlude large portions of the named subject" in v5
-    assert "back or side of the head may enter only when contact with that head" in v5
+    assert "exactly one continuous region from exactly one frame edge" in v5
+    assert "may not leave and re-enter the image, touch a second edge, or appear as separated limbs" in v5
+    assert "No part of the partner's head or face may enter the image" in v5
+    assert "back or side of the head may enter" not in v5
     assert "At most one face is visible" in v5
     assert "a zero-face contact crop is allowed" in v5
     assert "do not combine `legs together` with thighs framing" in v5
@@ -299,6 +299,17 @@ def test_single_v5_preserves_v4_and_keeps_partner_as_connected_fragment():
     assert "`1girl, 1boy, female focus`" not in v5
     assert "ALLOWED fragment tags" not in v5
     assert "MANDATORY negative field" not in v5
+
+
+def test_call2_generic_fragment_examples_defer_to_the_active_strict_contract():
+    system = CALL2_SYSTEM.read_text(encoding="utf-8")
+
+    assert "cropped male hand and forearm entering from the top edge" in system
+    assert "that stricter contract is final" in system
+    assert "never authorize a partner head, a second visible region, separated limbs" in system
+    assert "One anchor means one visibly continuous region" in system
+    assert "the fragment may not leave and re-enter the image" in system
+    assert "cropped male forearms" not in system
 
 
 def test_call2_negative_does_not_block_intentional_partial_body_framing():
@@ -316,7 +327,7 @@ def test_interaction_contract_does_not_invent_secondary_limb_contact():
     v5 = presets["배포_1차 싱글 V5"]
 
     assert "contact by one body region does not authorize a second embrace" in thoughts
-    assert "contact point or action for an unmentioned limb" in source
+    assert "Do not invent another contact" in source
     assert "contact by one body region does not authorize a second embrace" in v5
 
 
@@ -330,12 +341,12 @@ def test_anima_fragment_uses_one_broad_anchor_and_natural_language_geometry():
     assert "anchor an anonymous fragment exactly once in `scene` with one short, familiar body-region" in system
     assert "prefer `cropped male lower body`" in system
     assert "do not atomize the same connected fragment" in thoughts
-    assert "do not atomize one connected fragment into a comma chain" in source
-    assert "never change a third-person camera to POV" in source
+    assert "use one short familiar fragment phrase in scene" in source
+    assert "continuously entering once from one frame edge" in source
     assert "`cropped male upper torso` is too broad" in system
     assert "use a genuinely tight crop" in system
     assert "either the interaction geometry or the named subject's visible reaction" in system
-    assert "semantically inspect every phrase in each named character positive" in source
+    assert "partner-owned anatomy and action" in source
     assert "express the partner fragment exactly once with one familiar region/composition phrase" in v5
     assert "over atomizing one connected fragment into a comma chain" in v5
     assert "use a contact-point close-up instead of portrait, cowboy-shot, or full-body framing" in v5
@@ -367,9 +378,10 @@ def test_call2_detail_prioritizes_one_visible_fact_and_natural_occlusion():
     assert "Preserve all natural overlap and occlusion" in system
     assert "never pull hips, thighs, or torsos apart" in system
     assert "never force both distant regions into one close-up" in thoughts
-    assert "Fixed appearance is identity authority, not a quota of features to display" in source
-    assert "Do not turn " in source
-    assert "an internal sensation, thought, metaphor, or secondary consequence" in source
+    assert "fixed appearance and logical wardrobe remain authoritative without becoming a display quota" in source
+    assert "Those details may clarify the core action but " in source
+    assert "must never replace it. Do not downgrade an interaction" in source
+    assert "Do not downgrade an interaction to a quieter reaction" in source
     assert "Never combine flush or sealed body contact" in source
     assert "contact point centered" not in system
     assert "contact point centered" not in thoughts
@@ -384,20 +396,20 @@ def test_call2_plan_and_detail_repair_disconnected_closeup_regions():
     # Actual failure shape: a feet/ankle close-up must not retain remote head details.
     assert "one contiguous visible region along a coherent body chain" in system
     assert "A close-up of feet and ankle hems therefore omits the face, headwear, and head motion" in system
-    assert "remove descriptors belonging wholly to remote regions" in thoughts
-    assert "a close-up of feet and ankle hems omits face, headwear, and head motion" in source
+    assert "never force both distant regions into one close-up" in thoughts
+    assert "face, hair, eye, expression, or clothing details that fall outside" in source
 
     # Isomorphic failures use the same spatial rule rather than body-part keywords.
     assert "the same principle applies to any other pair of distant regions" in system
-    assert "These examples express spatial reasoning, not keyword rules" in source
-    assert "never compress or contort a body to keep disconnected focal regions" in source
+    assert "Choose camera azimuth, elevation, and distance " in source
+    assert "and natural occlusion read as one physical instant" in source
 
     # Opposite case: coherent wide framing remains valid and does not lose useful detail.
     assert "A naturally wider full-body composition may retain headwear, face, hands, and feet" in system
-    assert "a wider full-body view may show them together" in thoughts
-    assert "such a wider full-body view may retain headwear and feet" in source
+    assert "No view is mandatory" in thoughts
+    assert "never widen or rearrange the composition merely to expose it" in source
 
     # DETAIL may repair geometry but must not change the selected event or requested item.
-    assert "not as camera, crop, pose-geometry, or simultaneous-feature authority" in source
-    assert "preserve the slot, event, roster, and primary fact but repair the camera and crop" in source
-    assert "unless the assigned narrative itself establishes that pose" in source
+    assert "preserve the slot, event, roster, and core action" in source
+    assert "repairing only camera and crop within the active partner-visibility limits" in source
+    assert "scene_brief identifies the one primary visible fact inside that passage" in source

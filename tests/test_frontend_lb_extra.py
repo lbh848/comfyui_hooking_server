@@ -261,11 +261,12 @@ const _visualCardState = () => ({data: {
         default_outfit: [{tag:'jacket'}]
     }, {
         id: 'awakened', label: '카드 2', appearance: [{tag:'white hair'}, {tag:'horns'}],
-        default_outfit: [{tag:'black armor'}]
+        default_outfit: [{tag:'black armor'}], skip_lb_extra_batch_refine: true
     }]
 }});
 const _visualCardResolvedById = (_name, profileId) => ({rep_images:[`${profileId}.webp`]});
 console.error = () => {};
+console.info = () => {};
 const result = _lbExtraProfileBatchTargets();
 """
 
@@ -282,13 +283,6 @@ const result = _lbExtraProfileBatchTargets();
             "portable": True,
             "rep": "base.webp",
             "appearance": 1,
-        },
-        {
-            "id": "awakened",
-            "outfitCount": 1,
-            "portable": False,
-            "rep": "awakened.webp",
-            "appearance": 2,
         },
     ]
 

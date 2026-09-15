@@ -48,6 +48,10 @@ _CARD_LOCAL_LORA_KEYS = {
     "style_loras",
 }
 
+_CARD_BOOLEAN_METADATA_KEYS = {
+    "skip_lb_extra_batch_refine",
+}
+
 
 class VisualProfileValidationError(ValueError):
     """Raised when character-card routing data is invalid."""
@@ -227,8 +231,15 @@ def normalize_visual_card(raw: dict, *, field: str = "card") -> dict:
         "appearance": normalize_tag_entries(raw.get("appearance"), field=f"{field}.appearance"),
         "default_outfit": _normalize_flat_default_outfit(raw, field=field),
     }
+    for key in _CARD_BOOLEAN_METADATA_KEYS:
+        value = raw.get(key, False)
+        if not isinstance(value, bool):
+            error = f"{field}.{key}는 bool이어야 합니다."
+            print(f"[CHARACTER_CARD] 카드 필드 검증 실패: {error}")
+            raise VisualProfileValidationError(error)
+        result[key] = value
     unknown = sorted(
-        set(raw) - _CARD_RENDER_KEYS - {
+        set(raw) - _CARD_RENDER_KEYS - _CARD_BOOLEAN_METADATA_KEYS - {
             "id", "label", "selection_guide", "aliases", "appearance",
             "default_outfit", "default_outfit_id", "outfits",
         }
@@ -292,6 +303,7 @@ def legacy_visual_card(
         "aliases": [],
         "appearance": normalize_tag_entries(extra.get("appearance"), field="legacy.appearance"),
         "default_outfit": normalize_tag_entries(extra.get("outfit"), field="legacy.outfit"),
+        "skip_lb_extra_batch_refine": False,
     }
     for key in _CARD_RENDER_KEYS - {"use_profile_embedding"}:
         if key in root_character:
@@ -324,6 +336,7 @@ def cards_to_character_profiles(character_name: str, cards: list[dict]) -> dict:
             "aliases": deepcopy(card["aliases"]),
             "appearance": deepcopy(card["appearance"]),
             "default_outfit": deepcopy(card["default_outfit"]),
+            "skip_lb_extra_batch_refine": card["skip_lb_extra_batch_refine"],
             "render_overrides": render_overrides,
         })
     return {
@@ -356,6 +369,7 @@ def character_profiles_to_cards(raw: dict) -> list[dict]:
             key: deepcopy(profile[key]) for key in (
                 "id", "label", "selection_guide", "aliases", "appearance",
                 "default_outfit", "default_outfit_id", "outfits",
+                "skip_lb_extra_batch_refine",
             )
             if key in profile
         }

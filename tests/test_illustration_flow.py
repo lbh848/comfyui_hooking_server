@@ -43,12 +43,21 @@ def test_flow_exposes_stop_button_and_cancel_endpoint():
 def test_flow_layout_reserves_columns_in_pipeline_order():
     source = (Path(__file__).resolve().parents[1] / "frontend" / "illustration_flow.js").read_text(encoding="utf-8")
     assert "label.startsWith('CALL1-BACKTRANSLATE')" in source
-    assert "const isPlanAssetColumnLabel = value =>" in source
+    assert "const isPlanColumnLabel = value =>" in source
     assert "label === 'CALL2-PLAN'" in source
-    assert "label === 'ORIGINAL-ASSET'" in source
     assert "? '__early_compact__'" in source
-    assert "? '__call2_plan_asset__'" in source
+    assert "? '__call2_plan__'" in source
     assert "if (group === '__early_compact__')" in source
+
+
+def test_flow_layout_does_not_merge_late_original_asset_into_call2_plan_group():
+    source = (Path(__file__).resolve().parents[1] / "frontend" / "illustration_flow.js").read_text(encoding="utf-8")
+    plan_classifier = source.split("const isPlanColumnLabel = value =>", 1)[1].split("};", 1)[0]
+    assert "CALL2-PLAN" in plan_classifier
+    assert "ORIGINAL-ASSET" not in plan_classifier
+    assert "isPlanColumnLabel(n.label) || isPlanColumnLabel(n.call_name)" in source
+    assert "__call2_plan_asset__" not in source
+    assert "String(n.layout_group || n.id)" in source
 
 
 def test_flow_layout_keeps_logical_stage_retries_and_images_in_one_column():

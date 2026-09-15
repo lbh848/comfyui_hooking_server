@@ -137,7 +137,9 @@ from modes.bot_mode import handle_get_illust_settings, handle_update_illust_sett
 from modes.instance_lora_mode import handle_get_auto_lora_prompt, handle_set_auto_lora_prompt, handle_auto_refine_enqueue, handle_resolve_gender_tag, handle_get_bot_test_setup_prompt, handle_set_bot_test_setup_prompt
 from modes import embedding_service
 from modes.illust_prompt_builder import (
+    FIRST_PASS_SINGLE_V5_PRESET,
     IllustPromptBuilder,
+    allows_anonymous_fragment_negative_relaxation,
     get_illust_logs,
     log_illust_build,
     sync_multi_char_shared_tags,
@@ -185,9 +187,11 @@ from vast_backend.settings import VastSettings
 from video_engine_backend import (
     VIDEO_ENGINE_DEFAULT_PORT,
     VIDEO_ENGINE_DEFAULT_PROFILE,
+    VIDEO_ENGINE_DEFAULT_STEPS,
     VIDEO_ENGINE_TARGET,
     normalize_video_engine_port,
     normalize_video_engine_profile,
+    normalize_video_engine_steps,
     register_video_engine_routes,
 )
 from video_engine_runtime import (
@@ -288,7 +292,8 @@ DEFAULT_VIDEO_GENERATION_DEFAULTS = {
     "include_dialogue_context": True,
     "allow_camera_motion": True,
     "allow_background_change": False,
-    # 입력 다듬기 방식: v1(일반) / v2(시네마틱) / v3(일본 애니메이션). 영구 저장 기본값.
+    # 입력 다듬기 방식: v1(일반) / v2(시네마틱) / v3(일본 애니메이션) /
+    # v4(DaSiWa 프롬프트). 영구 저장 기본값.
     "refine_version": VIDEO_REFINE_VERSION_DEFAULT,
     "upscale_model": DEFAULT_VIDEO_POSTPROCESS_CONFIG["model"],
     "upscale_scale": DEFAULT_VIDEO_POSTPROCESS_CONFIG["scale"],
@@ -537,6 +542,7 @@ DEFAULT_CONFIG = {
     "video_engine_project_path": VIDEO_ENGINE_DEFAULT_PROJECT_PATH,
     "video_engine_auto_start": VIDEO_ENGINE_DEFAULT_AUTO_START,
     "video_engine_profile": VIDEO_ENGINE_DEFAULT_PROFILE,
+    "video_engine_steps": VIDEO_ENGINE_DEFAULT_STEPS,
     "modal_enabled": False,
     "modal_profile": "soya-comfy",
     "modal_environment": "main",
@@ -718,10 +724,12 @@ DEFAULT_CONFIG = {
         "edit_illustration_prompt":_llm_route_defaults(json_mode=True),  # 끄면 response_format 미전송(Cerebras/Gemma 루프 회피)
         "illustration_auto_feedback_review": _llm_route_defaults(json_mode=True),
         "qwen_edit_translate":     _llm_route_defaults(max_retries=1),
+        "video_instruction_translate": _llm_route_defaults(max_retries=1),
         "video_prompt_i2v":        _llm_route_defaults(max_retries=1),
         "video_prompt_first_last": _llm_route_defaults(max_retries=1),
         "video_prompt_ref2v":      _llm_route_defaults(max_retries=1),
-        # 영상화 비전 단계(연출 초안·다듬기·이미지 정적 분석)와 텍스트 단계(프롬프트 정적 해석·최종 작성) 모델 분리
+        # 영상화 영어 번역, 비전 단계(연출 초안·다듬기·이미지 정적 분석),
+        # 텍스트 단계(프롬프트 정적 해석·최종 작성) 모델 분리
         "video_prompt_i2v_compose":        _llm_route_defaults(max_retries=1),
         "video_prompt_first_last_compose": _llm_route_defaults(max_retries=1),
         "video_prompt_ref2v_compose":      _llm_route_defaults(max_retries=1),
@@ -1102,6 +1110,17 @@ def load_config() -> dict:
                     )
                     traceback.print_exc()
                     merged["video_engine_profile"] = VIDEO_ENGINE_DEFAULT_PROFILE
+                try:
+                    merged["video_engine_steps"] = normalize_video_engine_steps(
+                        config.get("video_engine_steps")
+                    )
+                except ValueError as e:
+                    print(
+                        "[CONFIG] 영상 전용 엔진 STEP 로드 실패, 기본값 사용: "
+                        f"value={config.get('video_engine_steps')!r}, error={e}"
+                    )
+                    traceback.print_exc()
+                    merged["video_engine_steps"] = VIDEO_ENGINE_DEFAULT_STEPS
                 review_enabled = merged.get("lora_prompt_review_enabled", False)
                 if not isinstance(review_enabled, bool):
                     try:
@@ -3348,6 +3367,7 @@ def _local_model_preflight() -> list[dict]:
     try:
         from comfy_installer.manifest import load_install_manifest
         from comfy_installer.model_scope import local_model_gaps, tasks_needing_model
+        from comfy_installer.execution_profile import installed_cpu_runtime
 
         manifest = load_install_manifest()
         allocations = normalize_comfy_task_allocations(
@@ -3360,6 +3380,7 @@ def _local_model_preflight() -> list[dict]:
             allocations=allocations,
             config=app_config,
             comfy_root=os.path.join(os.path.dirname(os.path.abspath(__file__)), "comfy"),
+            cpu_only=installed_cpu_runtime(os.path.join(BASE_DIR, "comfy")),
         )
         return [
             {
@@ -4736,6 +4757,17 @@ def init_queue_manager():
 async def prepare_local_gpu_execution_target(target: str, item) -> None:
     """Before a local Comfy queue item, release the video engine's 4080/RAM."""
 
+    from comfy_installer.execution_profile import installed_cpu_runtime, require_local_cpu_task
+
+    if target == "local" and installed_cpu_runtime(os.path.join(BASE_DIR, "comfy")):
+        task_key = queue_manager._comfy_task_key_for_item(item)
+        # Analysis shares the LoRA allocation, but does not perform training.
+        if item.type in ("tag_analysis", "instance_lora_analysis"):
+            task_key = "tag_analysis"
+        require_local_cpu_task(task_key, comfy_root=os.path.join(BASE_DIR, "comfy"))
+        print(f"[COMFY_PROFILE] CPU 경량 작업 준비: item={item.id}, type={item.type}, task={task_key}")
+        return
+
     if target == VIDEO_ENGINE_TARGET:
         print(
             "[VIDEO_ENGINE] 영상 전용 엔진 큐 항목 준비는 렌더 직전에 수행: "
@@ -6012,6 +6044,20 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                 settings_key = "illust_settings_group" if is_multi else "illust_settings_solo"
                 settings = bot.get(settings_key, bot.get("illust_settings", {}))
                 print(f"[ILLUST] 프로필 선택: {'group' if is_multi else 'solo'} ({len(detected)}명)")
+                anonymous_fragment_requested = bool(
+                    raw_body.get("illustration_anonymous_partner_fragment", False)
+                )
+                allow_anonymous_fragment = allows_anonymous_fragment_negative_relaxation(
+                    bot,
+                    anonymous_fragment_requested,
+                )
+                if anonymous_fragment_requested and not allow_anonymous_fragment:
+                    print(
+                        "[ILLUST:PROMPT] 익명 상호작용 조각 음성 완화 건너뜀 - "
+                        "First-Pass Single V5 계약 아님: "
+                        f"bot={bot_name!r}, preset={bot.get('system_prompt_preset')!r}, "
+                        f"required={FIRST_PASS_SINGLE_V5_PRESET!r}"
+                    )
                 from modes.bot_mode import _load_patch_settings, _load_bot_data
                 patch = _load_patch_settings(bot_name)
                 settings["face_crop_top"] = patch.get("face_crop_top", 1.0)
@@ -6029,6 +6075,7 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                         tags,
                         settings,
                         insert_rules=scene_word_rules,
+                        allow_anonymous_fragment=allow_anonymous_fragment,
                     )
                     positive = chansub_built["positive"]
                     negative = chansub_built["negative"]
@@ -6056,6 +6103,7 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                         supplement_replaced,
                         tags,
                         settings,
+                        allow_anonymous_fragment=allow_anonymous_fragment,
                     )
                     positive = v1_built["positive"]
                     negative = v1_built["negative"]
@@ -6084,7 +6132,13 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                         multi_char_context=multi_char_prompt_context,
                         insert_rules=scene_word_rules,
                     )
-                    negative = builder.build_negative_prompt(tags, settings, detected, _bot_for_build)
+                    negative = builder.build_negative_prompt(
+                        tags,
+                        settings,
+                        detected,
+                        _bot_for_build,
+                        allow_anonymous_fragment=allow_anonymous_fragment,
+                    )
                     if multi_char_prompt_context:
                         positive = sync_multi_char_shared_tags(positive)
 
@@ -6395,6 +6449,9 @@ def _build_llm_final_result(descriptor: dict | None) -> dict | None:
         "raw_positive": raw_positive,
         "character_names": names,
         "visual_states": _descriptor_visual_states(descriptor),
+        "anonymous_partner_fragment": bool(
+            descriptor.get("anonymous_partner_fragment", False)
+        ),
     }
 
 
@@ -6685,9 +6742,7 @@ def _original_asset_context(payload: dict, context_turns: int) -> tuple[str, str
     target_slotted = str(payload.get("target_slotted") or "").strip()
     if not target_slotted:
         narrative = str(chats[target_index].get("data") or "")
-        target_slotted = illustration_context_pipeline.insert_slots(
-            illustration_context_pipeline._strip_nodes(narrative)
-        )
+        target_slotted = illustration_context_pipeline.insert_slots(narrative)
     return "\n\n".join(context_parts), target_slotted
 
 
@@ -7463,6 +7518,7 @@ async def process_illustration_context_queue_item(item) -> dict:
         "requested_count": 0,
     }
     original_asset_task = None
+    original_asset_plan_slots: set[int] | None = None
     history_plan = None
     history_finalize_attempted = False
     # build_from_context 완료 후 MULTI-CHAR-MASK~CALL3 의 LLM 호출 id 목록으로 채워진다.
@@ -7749,6 +7805,9 @@ async def process_illustration_context_queue_item(item) -> dict:
             "illustration_provider": child_provider,
             "illustration_defer_postprocess": bool(defer_postprocess),
             "illustration_visual_states": _descriptor_visual_states(descriptor),
+            "illustration_anonymous_partner_fragment": bool(
+                descriptor.get("anonymous_partner_fragment", False)
+            ),
         }
         multi_char_context = _multi_char_queue_context(descriptor, child_prompt_format)
         if multi_char_context:
@@ -8115,6 +8174,38 @@ async def process_illustration_context_queue_item(item) -> dict:
                     "target_slotted": str(payload.get("target_slotted") or ""),
                 }
 
+        def _start_original_asset_selection(
+            used_slots: set[int],
+            *,
+            trigger: str,
+        ) -> bool:
+            nonlocal original_asset_task
+            illustration_flow.raise_if_cancel_requested()
+            if not original_asset_enabled:
+                print(
+                    f"[ILLUST_ORIGINAL_ASSET] 선택 시작 건너뜀 - 토글 비활성화: "
+                    f"session={session_id}, trigger={trigger}"
+                )
+                return False
+            if original_asset_task is not None:
+                print(
+                    f"[ILLUST_ORIGINAL_ASSET] 선택 시작 건너뜀 - 이미 실행 중: "
+                    f"session={session_id}, trigger={trigger}"
+                )
+                return False
+            reserved_slots = set(used_slots)
+            original_asset_task = illustration_flow.create_task(
+                _run_original_asset_selection(reserved_slots),
+                name="original-asset-after-gpu-dispatch",
+            )
+            print(
+                f"[ILLUST_ORIGINAL_ASSET] DETAIL 우선 처리 후 선택 시작: "
+                f"session={session_id}, trigger={trigger}, "
+                f"illustration_slots={sorted(reserved_slots)}, "
+                f"requested={illust_toggles['original_asset_count']}"
+            )
+            return True
+
         def _prompt_batch_regular_slots() -> set[int]:
             slots: set[int] = set()
             for descriptor in payload.get("items") or []:
@@ -8260,20 +8351,21 @@ async def process_illustration_context_queue_item(item) -> dict:
                 )
 
             async def _on_call2_plan_ready(plan_built: dict):
-                nonlocal original_asset_task
+                nonlocal original_asset_plan_slots
                 illustration_flow.raise_if_cancel_requested()
-                if not original_asset_enabled or original_asset_task is not None:
+                if not original_asset_enabled:
+                    print(
+                        f"[ILLUST_ORIGINAL_ASSET] PLAN slot 기록 건너뜀 - 토글 비활성화: "
+                        f"session={session_id}"
+                    )
                     return
-                used_slots = {
+                original_asset_plan_slots = {
                     int(slot) for slot in (plan_built.get("scene_slots") or [])
                 }
-                original_asset_task = illustration_flow.create_task(
-                    _run_original_asset_selection(used_slots),
-                    name="original-asset-after-plan",
-                )
                 print(
-                    f"[ILLUST_ORIGINAL_ASSET] CALL2-PLAN 직후 선택 시작: "
-                    f"session={session_id}, illustration_slots={sorted(used_slots)}, "
+                    f"[ILLUST_ORIGINAL_ASSET] CALL2-PLAN slot 확정 · DETAIL/GPU 등록까지 선택 보류: "
+                    f"session={session_id}, "
+                    f"illustration_slots={sorted(original_asset_plan_slots)}, "
                     f"requested={illust_toggles['original_asset_count']}"
                 )
 
@@ -8321,6 +8413,29 @@ async def process_illustration_context_queue_item(item) -> dict:
                             defer_postprocess=True,
                             queue_priority=0,
                         ))
+                if original_asset_enabled:
+                    if any(pair is not None for pair in child_pairs):
+                        used_slots = (
+                            set(original_asset_plan_slots)
+                            if original_asset_plan_slots is not None
+                            else {
+                                int(entry["slot"])
+                                for entry in preliminary_items
+                                if isinstance(entry, dict)
+                                and entry.get("slot") is not None
+                                and str(entry.get("kind") or "") == "scene"
+                            }
+                        )
+                        _start_original_asset_selection(
+                            used_slots,
+                            trigger="CALL2 DETAIL 완료 · GPU 큐 등록",
+                        )
+                    else:
+                        print(
+                            f"[ILLUST_ORIGINAL_ASSET] DETAIL 완료했으나 등록 가능한 GPU 작업이 "
+                            f"아직 없음 · CALL3/다중 레이아웃 뒤로 선택 보류: "
+                            f"session={session_id}, items={len(preliminary_items)}"
+                        )
 
             if illustration_enabled:
                 built = await illustration_context_pipeline.build_from_context(
@@ -8383,27 +8498,6 @@ async def process_illustration_context_queue_item(item) -> dict:
                 history_finalize_attempted = True
                 illustration_chat_history.finalize_history(history_plan, built)
             raw_items = built.get("items") or []
-            if (
-                original_asset_enabled
-                and illustration_enabled
-                and payload.get("protocol") != "prompt_batch_v1"
-                and original_asset_task is None
-                and raw_items
-            ):
-                fallback_used_slots = {
-                    int(entry["slot"])
-                    for entry in raw_items
-                    if isinstance(entry, dict) and entry.get("slot") is not None
-                    and str(entry.get("kind") or "") == "scene"
-                }
-                original_asset_task = illustration_flow.create_task(
-                    _run_original_asset_selection(fallback_used_slots),
-                    name="original-asset-after-call2",
-                )
-                print(
-                    f"[ILLUST_ORIGINAL_ASSET] PLAN 콜백 없는 경로에서 CALL2 slot 확정 후 선택 시작: "
-                    f"session={session_id}, illustration_slots={sorted(fallback_used_slots)}"
-                )
             if illustration_enabled and not raw_items:
                 print(f"[ILLUST_CONTEXT] 생성할 장면이 없음: session={session_id}")
                 raise RuntimeError("CALL 결과에 생성할 장면이 없습니다")
@@ -8460,6 +8554,29 @@ async def process_illustration_context_queue_item(item) -> dict:
                     defer_postprocess=False,
                     queue_priority=1,
                     llm_trace=_child_llm_trace(llm_trace, descriptor),
+                )
+
+            if original_asset_enabled and original_asset_task is None:
+                fallback_used_slots = (
+                    set(original_asset_plan_slots)
+                    if original_asset_plan_slots is not None
+                    else {
+                        int(entry["slot"])
+                        for entry in raw_items
+                        if isinstance(entry, dict)
+                        and entry.get("slot") is not None
+                        and str(entry.get("kind") or "") == "scene"
+                    }
+                )
+                registered_count = sum(pair is not None for pair in child_pairs)
+                trigger = (
+                    "CALL3/다중 레이아웃 완료 · GPU 큐 등록"
+                    if registered_count
+                    else "DETAIL/CALL3 완료 · 등록 가능한 GPU 작업 없음"
+                )
+                _start_original_asset_selection(
+                    fallback_used_slots,
+                    trigger=trigger,
                 )
 
         if not raw_items:
@@ -8814,7 +8931,66 @@ async def handle_illustration_flow(request: web.Request) -> web.Response:
         node = illustration_flow.detail(request.query.get("run", ""), node_id)
         return web.json_response({"node": node}, status=200 if node else 404,
                                  headers={"Cache-Control": "no-store"})
-    return web.json_response({"flow": illustration_flow.snapshot()}, headers={"Cache-Control": "no-store"})
+    return web.json_response({"flow": illustration_flow.snapshot(kind=request.query.get("kind", "illustration"))}, headers={"Cache-Control": "no-store"})
+
+
+async def handle_video_input_flow_event(request: web.Request) -> web.Response:
+    """Record a human choice without putting it through the LLM queue."""
+    try:
+        body = await request.json()
+        if not isinstance(body, dict):
+            print(f"[VIDEO_INPUT_FLOW:API] 요청 본문 형식 오류: body={body!r}")
+            return web.json_response(
+                {"success": False, "error": "요청 본문은 객체여야 합니다"},
+                status=400,
+            )
+        session_id = str(body.get("session_id") or "").strip()
+        action = str(body.get("action") or "").strip()
+        if not session_id:
+            print(f"[VIDEO_INPUT_FLOW:API] 세션 ID 누락: body={body!r}")
+            return web.json_response(
+                {"success": False, "error": "영상 입력 개선 세션 ID가 필요합니다"},
+                status=400,
+            )
+        if action not in illustration_flow.VIDEO_INPUT_EVENT_LABELS:
+            print(
+                f"[VIDEO_INPUT_FLOW:API] 지원하지 않는 조작: "
+                f"session={session_id}, action={action!r}, body={body!r}"
+            )
+            return web.json_response(
+                {"success": False, "error": "지원하지 않는 영상 입력 조작입니다"},
+                status=400,
+            )
+        graph = illustration_flow.record_video_input_event(
+            session_id,
+            action,
+            input=body.get("input"),
+            output=body.get("output"),
+        )
+        if graph is None:
+            print(
+                f"[VIDEO_INPUT_FLOW:API] 현재 세션에 조작을 기록하지 못함: "
+                f"session={session_id}, action={action}, body={body!r}"
+            )
+            return web.json_response(
+                {"success": False, "error": "현재 영상 입력 개선 세션을 찾을 수 없습니다"},
+                status=409,
+            )
+        return web.json_response(
+            {"success": True, "flow": graph},
+            headers={"Cache-Control": "no-store"},
+        )
+    except json.JSONDecodeError as exc:
+        print(f"[VIDEO_INPUT_FLOW:API] JSON 파싱 실패: error={exc}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(exc)}, status=400)
+    except Exception as exc:
+        print(
+            f"[VIDEO_INPUT_FLOW:API] 사람 조작 기록 실패: "
+            f"error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(exc)}, status=500)
 
 
 async def handle_illustration_flow_cancel(request: web.Request) -> web.Response:
@@ -10757,6 +10933,9 @@ async def _enqueue_illustration_session_slot(
         "illustration_regenerate_session_id": session_id,
         "illustration_regenerate_slot": slot,
         "illustration_visual_states": _descriptor_visual_states(descriptor),
+        "illustration_anonymous_partner_fragment": bool(
+            descriptor.get("anonymous_partner_fragment", False)
+        ),
     }
     if attach_context:
         session = illustration_context_pipeline.get_session(session_id) or {}
@@ -10914,6 +11093,9 @@ async def handle_prompt(request: web.Request) -> web.Response:
                 "illustration_regenerate_session_id": session_id,
                 "illustration_regenerate_slot": slot,
                 "illustration_visual_states": _descriptor_visual_states(descriptor),
+                "illustration_anonymous_partner_fragment": bool(
+                    descriptor.get("anonymous_partner_fragment", False)
+                ),
             }
             backup_name = str(descriptor.get("backup_name") or "").strip()
             if backup_name and _backup_uses_hybrid_regeneration(backup_name):
@@ -13989,6 +14171,8 @@ async def handle_api_video_instruction_draft(request: web.Request) -> web.Respon
             )
         params = {
             "mode": mode,
+            "video_input_session_id": str(body.get("video_input_session_id") or "").strip(),
+            "instruction_before": str(body.get("instruction_before") or ""),
             "workflow_variant": workflow_variant,
             "source_ref": source_ref,
             "last_ref": last_ref or {},
@@ -14232,6 +14416,7 @@ async def handle_api_video_instruction_refine(request: web.Request) -> web.Respo
             )
         params = {
             "mode": mode,
+            "video_input_session_id": str(body.get("video_input_session_id") or "").strip(),
             "workflow_variant": workflow_variant,
             "instruction": instruction,
             "edit_direction": edit_direction,
@@ -14346,8 +14531,8 @@ async def handle_api_video_instruction_direct(request: web.Request) -> web.Respo
                 body.get("refine_version", "v2"),
                 default="v2",
             )
-            if refine_version not in {"v2", "v3"}:
-                raise ValueError("제작 계획 방식은 v2 또는 v3여야 합니다")
+            if refine_version not in {"v2", "v3", "v3_2", "v4"}:
+                raise ValueError("제작 계획 방식은 v2, v3, v3_2 또는 v4여야 합니다")
         except ValueError as exc:
             print(
                 "[VIDEO:DIRECT:API] 제작 계획 방식 오류: "
@@ -14488,6 +14673,7 @@ async def handle_api_video_instruction_direct(request: web.Request) -> web.Respo
             )
         params = {
             "mode": mode,
+            "video_input_session_id": str(body.get("video_input_session_id") or "").strip(),
             "workflow_variant": workflow_variant,
             "instruction": instruction,
             "source_ref": source_ref,
@@ -14512,9 +14698,23 @@ async def handle_api_video_instruction_direct(request: web.Request) -> web.Respo
             "refine_version": refine_version,
             **boolean_options,
         }
-        anime_style = refine_version == "v3"
+        anime_style = refine_version in {"v3", "v3_2"}
+        anime_v3_2_style = refine_version == "v3_2"
+        dasiwa_style = refine_version == "v4"
         label = (
             {
+                "i2v": "H3 I2V DaSiWa 프롬프트 연출 계획",
+                "first_last": "H3 FLF2V DaSiWa 프롬프트 연출 계획",
+                "ref2v": "H3 REF2V DaSiWa 프롬프트 연출 계획",
+            }[mode]
+            if dasiwa_style
+            else {
+                "i2v": "H3 I2V V3_2 일본 애니메이션 2 연출 계획",
+                "first_last": "H3 FLF2V V3_2 일본 애니메이션 2 연출 계획",
+                "ref2v": "H3 REF2V V3_2 일본 애니메이션 2 연출 계획",
+            }[mode]
+            if anime_v3_2_style
+            else {
                 "i2v": "H3 I2V 일본 애니메이션 연출 계획",
                 "first_last": "H3 FLF2V 일본 애니메이션 연출 계획",
                 "ref2v": "H3 REF2V 일본 애니메이션 연출 계획",
@@ -19154,6 +19354,19 @@ async def handle_api_config(request: web.Request) -> web.Response:
                     traceback.print_exc()
                     return web.json_response({"error": str(e)}, status=400)
 
+            if "video_engine_steps" in body:
+                try:
+                    body["video_engine_steps"] = normalize_video_engine_steps(
+                        body.get("video_engine_steps")
+                    )
+                except ValueError as e:
+                    print(
+                        "[CONFIG] 영상 전용 엔진 STEP 저장 실패: "
+                        f"value={body.get('video_engine_steps')!r}, error={e}"
+                    )
+                    traceback.print_exc()
+                    return web.json_response({"error": str(e)}, status=400)
+
             if "video_postprocess" in body:
                 try:
                     body["video_postprocess"] = normalize_video_postprocess_config(
@@ -21060,6 +21273,7 @@ app.router.add_get("/api/backup_prompt/{name}", handle_api_backup_prompt)
 app.router.add_get("/api/backup_chat", handle_api_backup_chat)
 app.router.add_post("/api/backup_delete/{name}", handle_api_backup_delete)
 app.router.add_get("/api/video/reference-options", handle_api_video_reference_options)
+app.router.add_post("/api/video/input-flow-event", handle_video_input_flow_event)
 app.router.add_post("/api/video/instruction-draft", handle_api_video_instruction_draft)
 app.router.add_post("/api/video/instruction-refine", handle_api_video_instruction_refine)
 app.router.add_post("/api/video/instruction-direct", handle_api_video_instruction_direct)

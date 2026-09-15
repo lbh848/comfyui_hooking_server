@@ -175,6 +175,24 @@ def test_receipt_changes_inventory_from_unverified_to_current(tmp_path: Path) ->
     assert current["runtime_change_reasons"] == []
 
 
+def test_cpu_update_does_not_reinstall_omitted_generation_nodes(tmp_path: Path) -> None:
+    comfy, _remote, _node, manifest = _prepare_runtime(tmp_path)
+    manifest.python["gpu_profiles"] = [{"id": "light-host", "kind": "cpu"},
+                                        {"id": "gpu-host", "kind": "nvidia"}]
+    manifest.custom_nodes.append({"name": "comfyui-spectrum-ksampler", "source_type": "archive",
+                                 "url": "https://example.invalid/sampler.zip", "sha256": "b" * 64, "size": 1})
+    receipt = write_runtime_receipt(
+        comfy_root=comfy, manifest=manifest, profile_id="light-host", install_mode="standard",
+        workflow_bindings={}, selected_workflow_ids=[], release_version="v1",
+    )
+    assert receipt["python"]["profile_kind"] == "cpu"
+    assert "comfyui-spectrum-ksampler" not in receipt["custom_nodes"]
+    current = inspect_runtime(comfy_root=comfy, manifest=manifest, profile_id="light-host", install_mode="standard")
+    assert current["runtime_change_reasons"] == []
+    gpu = inspect_runtime(comfy_root=comfy, manifest=manifest, profile_id="gpu-host", install_mode="standard")
+    assert "custom_node_missing:comfyui-spectrum-ksampler" in gpu["runtime_change_reasons"]
+
+
 def test_tracking_main_change_requires_runtime_e2e(tmp_path: Path) -> None:
     comfy, remote, _node, manifest = _prepare_runtime(tmp_path)
     write_runtime_receipt(

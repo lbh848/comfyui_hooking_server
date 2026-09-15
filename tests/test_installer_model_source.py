@@ -339,7 +339,7 @@ def test_preflight_disk_requirement_follows_the_filtered_set(tmp_path, monkeypat
     def fake_probe(comfy_root, manifest, *, required_bytes, require_disk, install_mode):
         captured["required_bytes"] = required_bytes
         return {
-            "gpu_profile": "cpu",
+            "gpu_profile": "nvidia-cu130",
             "disk": {"free": 400 * 1024**3, "required": required_bytes},
             "nvidia": {"available": False, "gpus": []},
         }
@@ -384,7 +384,7 @@ def test_preflight_disk_requirement_follows_the_filtered_set(tmp_path, monkeypat
     )
 
     runtime_and_buffer = 30 * 1024**3
-    local_bytes = captured["required_bytes"] - runtime_and_buffer
+    local_bytes = result["disk"]["required"] - runtime_and_buffer
     assert 0.0 < local_bytes / 1024**3 < 0.5, (
         "cloud_direct 인데 디스크 요구량이 로컬 다운로드분을 넘습니다: "
         f"{local_bytes / 1024**3:.2f} GiB"
@@ -405,7 +405,7 @@ def test_preflight_disk_requirement_unchanged_for_local_first(tmp_path, monkeypa
     def fake_probe(comfy_root, manifest, *, required_bytes, require_disk, install_mode):
         captured["required_bytes"] = required_bytes
         return {
-            "gpu_profile": "cpu",
+            "gpu_profile": "nvidia-cu130",
             "disk": {"free": 400 * 1024**3, "required": required_bytes},
             "nvidia": {"available": False, "gpus": []},
         }
@@ -438,9 +438,9 @@ def test_preflight_disk_requirement_unchanged_for_local_first(tmp_path, monkeypa
     service._state = {"manifest": {}}
     service._lock = __import__("threading").RLock()
 
-    service.preflight_selection(release_version="v2", selected_item_ids=["anything"])
+    result = service.preflight_selection(release_version="v2", selected_item_ids=["anything"])
     expected = 30 * 1024**3 + sum(int(m["size"]) for m in MODELS)
-    assert captured["required_bytes"] == expected
+    assert result["disk"]["required"] == expected
 
 
 def test_installer_ui_shows_the_local_remote_split():

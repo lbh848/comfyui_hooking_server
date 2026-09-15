@@ -35,6 +35,9 @@ VIDEO_UPSCALE_MODELS = frozenset(
     {"realesr-animevideov3", "anime4k-fast-m", "lanczos"}
 )
 VIDEO_OUTPUT_FORMATS = frozenset({"avif", "webp"})
+VIDEO_AVIF_GPU_PRESETS = frozenset(
+    {"p1", "p2", "p3", "p4", "p5", "p6", "p7"}
+)
 VIDEO_REPROCESS_MIN_FPS = 1
 VIDEO_REPROCESS_MAX_FPS = 60
 VIDEO_REPROCESS_MIN_TARGET_MB = 0.1
@@ -47,6 +50,9 @@ DEFAULT_VIDEO_POSTPROCESS_CONFIG = {
     "target_size_mb": 10.0,
     "fps": 24,
     "output_format": "avif",
+    "webp_compression_level": 4,
+    "avif_gpu_enabled": False,
+    "avif_gpu_preset": "p4",
     "gpu_id": "auto",
     "tile_size": 0,
     "worker_count": 1,
@@ -244,6 +250,61 @@ def normalize_video_postprocess_config(raw: object) -> dict:
         print(f"[VIDEO:POSTPROCESS:CONFIG] {message}")
         raise ValueError(message)
     normalized["output_format"] = output_format
+
+    raw_webp_compression_level = source.get(
+        "webp_compression_level",
+        normalized["webp_compression_level"],
+    )
+    try:
+        if isinstance(raw_webp_compression_level, bool):
+            raise TypeError("bool은 허용되지 않음")
+        webp_compression_level = int(raw_webp_compression_level)
+        if (
+            isinstance(raw_webp_compression_level, float)
+            and not raw_webp_compression_level.is_integer()
+        ):
+            raise ValueError("정수가 아닌 실수는 허용되지 않음")
+        if (
+            isinstance(raw_webp_compression_level, str)
+            and raw_webp_compression_level.strip() != str(webp_compression_level)
+        ):
+            raise ValueError("정수 문자열 형식이 아님")
+        if not 0 <= webp_compression_level <= 6:
+            raise ValueError("허용 범위 0~6을 벗어남")
+    except (TypeError, ValueError, OverflowError) as exc:
+        print(
+            "[VIDEO:POSTPROCESS:CONFIG] WebP 압축 레벨 검증 실패: "
+            f"value={raw_webp_compression_level!r}, settings={source!r}, "
+            f"error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        raise ValueError("WebP 압축 레벨은 0부터 6까지의 정수여야 합니다") from exc
+    normalized["webp_compression_level"] = webp_compression_level
+
+    avif_gpu_enabled = source.get(
+        "avif_gpu_enabled",
+        normalized["avif_gpu_enabled"],
+    )
+    if not isinstance(avif_gpu_enabled, bool):
+        message = (
+            "video_postprocess.avif_gpu_enabled는 bool이어야 합니다: "
+            f"value={avif_gpu_enabled!r}, settings={source!r}"
+        )
+        print(f"[VIDEO:POSTPROCESS:CONFIG] {message}")
+        raise ValueError(message)
+    normalized["avif_gpu_enabled"] = avif_gpu_enabled
+
+    avif_gpu_preset = str(
+        source.get("avif_gpu_preset", normalized["avif_gpu_preset"]) or ""
+    ).strip().lower()
+    if avif_gpu_preset not in VIDEO_AVIF_GPU_PRESETS:
+        message = (
+            "지원하지 않는 AVIF GPU 인코딩 프리셋입니다: "
+            f"value={avif_gpu_preset!r}, settings={source!r}"
+        )
+        print(f"[VIDEO:POSTPROCESS:CONFIG] {message}")
+        raise ValueError(message)
+    normalized["avif_gpu_preset"] = avif_gpu_preset
 
     raw_gpu_id = source.get("gpu_id", normalized["gpu_id"])
     if isinstance(raw_gpu_id, str) and raw_gpu_id.strip().lower() == "auto":
@@ -617,6 +678,11 @@ def _avif_crf(quality: int) -> int:
     return max(0, min(63, round((100 - quality) * 0.8)))
 
 
+def _avif_nvenc_cq(quality: int) -> int:
+    # NVENC의 CQ 0은 최고 품질이 아니라 자동값이므로 1을 최솟값으로 사용한다.
+    return max(1, _avif_crf(quality))
+
+
 def inspect_animation(
     path: str | os.PathLike[str],
     *,
@@ -816,6 +882,10 @@ def _encode_command(
     output_format: str,
     overlay_path: Path | None = None,
     canvas_height: int | None = None,
+    webp_compression_level: int = 4,
+    avif_gpu: bool = False,
+    avif_gpu_preset: str = "p4",
+    gpu_id: str | int = "auto",
 ) -> list[str]:
     command = [
         ffmpeg,
@@ -852,7 +922,27 @@ def _encode_command(
         command.extend(["-vf", "format=yuv420p"])
 
     command.extend(["-frames:v", str(frame_count), "-an"])
-    if output_format == "AVIF":
+    if output_format == "AVIF" and avif_gpu:
+        command.extend(
+            [
+                "-c:v",
+                "av1_nvenc",
+                "-preset",
+                avif_gpu_preset,
+                "-tune",
+                "hq",
+                "-rc",
+                "vbr",
+                "-cq",
+                str(_avif_nvenc_cq(quality)),
+                "-b:v",
+                "0",
+            ]
+        )
+        if gpu_id != "auto":
+            command.extend(["-gpu", str(gpu_id)])
+        command.extend(["-loop", "0", "-f", "avif"])
+    elif output_format == "AVIF":
         command.extend(
             [
                 "-c:v",
@@ -884,6 +974,8 @@ def _encode_command(
                 "libwebp_anim",
                 "-q:v",
                 str(quality),
+                "-compression_level",
+                str(webp_compression_level),
                 "-loop",
                 "0",
                 "-f",
@@ -905,6 +997,10 @@ async def _encode_pair(
     canvas_height: int,
     progress_callback: ProgressCallback | None,
     output_format: str = "avif",
+    webp_compression_level: int = 4,
+    avif_gpu_enabled: bool = False,
+    avif_gpu_preset: str = "p4",
+    gpu_id: str | int = "auto",
 ) -> tuple[Path, Path, str]:
     ffmpeg = str(await ensure_ffmpeg())
     frame_pattern = frames_dir / "frame_%08d.png"
@@ -914,11 +1010,20 @@ async def _encode_pair(
         print(f"[VIDEO:ENCODE] 지원하지 않는 출력 형식: value={output_format!r}")
         raise ValueError("영상 출력 형식은 AVIF 또는 WebP여야 합니다")
     attempts = (
-        (("AVIF", ".avif"), ("WEBP", ".webp"))
+        (
+            (
+                ("AVIF_GPU", ".avif", True),
+                ("AVIF_CPU", ".avif", False),
+                ("WEBP", ".webp", False),
+            )
+            if avif_gpu_enabled
+            else (("AVIF", ".avif", False), ("WEBP", ".webp", False))
+        )
         if requested_format == "avif"
-        else (("WEBP", ".webp"),)
+        else (("WEBP", ".webp", False),)
     )
-    for encoder_format, extension in attempts:
+    for encoder_format, extension, use_avif_gpu in attempts:
+        output_encoder_format = "AVIF" if extension == ".avif" else "WEBP"
         raw_path = job_dir / f"result_raw{extension}"
         main_path = job_dir / f"result_main{extension}"
         for candidate in (raw_path, main_path):
@@ -929,7 +1034,8 @@ async def _encode_pair(
                 progress_callback,
                 phase="video_encoding_raw",
                 percentage=80,
-                format=encoder_format.lower(),
+                format=output_encoder_format.lower(),
+                encoder=encoder_format.lower(),
             )
             await _run_command(
                 _encode_command(
@@ -939,7 +1045,11 @@ async def _encode_pair(
                     fps=fps,
                     frame_count=frame_count,
                     quality=quality,
-                    output_format=encoder_format,
+                    output_format=output_encoder_format,
+                    webp_compression_level=webp_compression_level,
+                    avif_gpu=use_avif_gpu,
+                    avif_gpu_preset=avif_gpu_preset,
+                    gpu_id=gpu_id,
                 ),
                 label="ENCODE_RAW",
             )
@@ -949,7 +1059,8 @@ async def _encode_pair(
                 progress_callback,
                 phase="video_encoding_composite",
                 percentage=90,
-                format=encoder_format.lower(),
+                format=output_encoder_format.lower(),
+                encoder=encoder_format.lower(),
             )
             if overlay_path is None:
                 await asyncio.to_thread(shutil.copyfile, raw_path, main_path)
@@ -962,9 +1073,13 @@ async def _encode_pair(
                         fps=fps,
                         frame_count=frame_count,
                         quality=quality,
-                        output_format=encoder_format,
+                        output_format=output_encoder_format,
                         overlay_path=overlay_path,
                         canvas_height=canvas_height,
+                        webp_compression_level=webp_compression_level,
+                        avif_gpu=use_avif_gpu,
+                        avif_gpu_preset=avif_gpu_preset,
+                        gpu_id=gpu_id,
                     ),
                     label="ENCODE_COMPOSITE",
                 )
@@ -1003,6 +1118,10 @@ async def _encode_pair_to_target_size(
     target_bytes: int,
     progress_callback: ProgressCallback | None,
     output_format: str,
+    webp_compression_level: int = 4,
+    avif_gpu_enabled: bool = False,
+    avif_gpu_preset: str = "p4",
+    gpu_id: str | int = "auto",
 ) -> tuple[Path, Path, str, int, int]:
     """Find the highest encoder quality whose main output fits the byte ceiling."""
 
@@ -1033,6 +1152,10 @@ async def _encode_pair_to_target_size(
             canvas_height=1,
             progress_callback=None,
             output_format=output_format,
+            webp_compression_level=webp_compression_level,
+            avif_gpu_enabled=avif_gpu_enabled,
+            avif_gpu_preset=avif_gpu_preset,
+            gpu_id=gpu_id,
         )
         size_bytes = main_path.stat().st_size
         print(
@@ -1344,6 +1467,10 @@ async def process_staged_video(
                         target_bytes=target_bytes,
                         progress_callback=progress_callback,
                         output_format=output_format,
+                        webp_compression_level=effective["webp_compression_level"],
+                        avif_gpu_enabled=effective["avif_gpu_enabled"],
+                        avif_gpu_preset=effective["avif_gpu_preset"],
+                        gpu_id=effective["gpu_id"],
                     )
                 )
                 manifest["quality"] = quality
@@ -1359,6 +1486,10 @@ async def process_staged_video(
                     canvas_height=int(manifest.get("output_height") or 1),
                     progress_callback=progress_callback,
                     output_format=output_format,
+                    webp_compression_level=effective["webp_compression_level"],
+                    avif_gpu_enabled=effective["avif_gpu_enabled"],
+                    avif_gpu_preset=effective["avif_gpu_preset"],
+                    gpu_id=effective["gpu_id"],
                 )
                 output_size_bytes = main_path.stat().st_size
     except Exception as exc:

@@ -1531,6 +1531,7 @@ class QueueManager:
         if percentage is not None:
             item.progress = percentage
         item.progress_detail = detail
+        illustration_flow.queue_progress(item)
         if self.notify_frontend:
             await self.notify_frontend("queue_progress", {
                 "item_id": item.id,

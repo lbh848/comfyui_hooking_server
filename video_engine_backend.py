@@ -21,6 +21,7 @@ from video_engine_runtime import (
 
 VIDEO_ENGINE_DEFAULT_PORT = 8093
 VIDEO_ENGINE_DEFAULT_PROFILE = ""
+VIDEO_ENGINE_DEFAULT_STEPS = 4
 VIDEO_ENGINE_TARGET = VIDEO_ENGINE_COMFY_TARGET
 VIDEO_ENGINE_MODES = frozenset({"i2v", "first_last", "ref2v"})
 _ACTIVE_ENGINE_STATES = frozenset(
@@ -71,6 +72,24 @@ def normalize_video_engine_profile(value: Any) -> str:
         )
         raise ValueError("영상 전용 엔진 프로필은 문자열이어야 합니다.")
     return value.strip()
+
+
+def normalize_video_engine_steps(value: Any) -> int:
+    if value is None:
+        return VIDEO_ENGINE_DEFAULT_STEPS
+    try:
+        steps = int(value)
+        if (
+            isinstance(value, bool)
+            or (isinstance(value, float) and value != steps)
+            or not 4 <= steps <= 25
+        ):
+            raise ValueError("steps must be an integer between 4 and 25")
+    except (TypeError, ValueError, OverflowError) as exc:
+        print(f"[VIDEO_ENGINE] STEP 설정 오류: value={value!r}, error={exc}")
+        traceback.print_exc()
+        raise ValueError("영상 전용 엔진 STEP은 4~25 사이 정수여야 합니다.") from exc
+    return steps
 
 
 class VideoEngineService:
@@ -212,11 +231,12 @@ class VideoEngineService:
             raise VideoEngineError("영상 전용 엔진에 선택 가능한 모델 프로필이 없습니다.")
         return payload
 
-    async def selected_profile(self) -> str:
+    async def selected_profile(self, models: dict[str, Any] | None = None) -> str:
         configured = self.configured_profile()
         if configured:
             return configured
-        models = await self.models()
+        if models is None:
+            models = await self.models()
         default_profile = normalize_video_engine_profile(models.get("default_profile"))
         if not default_profile:
             print(
@@ -499,9 +519,17 @@ class VideoEngineService:
         progress_callback: Callable[[int, int], Awaitable[None] | None] | None = None,
     ) -> tuple[bytes, dict[str, Any]]:
         mode = str(payload.get("mode") or "i2v")
-        selected_profile = await self.selected_profile()
+        models = await self.models()
+        selected_profile = await self.selected_profile(models)
+        fixed_steps = models["profiles"].get(selected_profile, {}).get("fixed_steps")
+        steps = normalize_video_engine_steps(
+            fixed_steps
+            if fixed_steps is not None
+            else self.get_config().get("video_engine_steps")
+        )
         request_payload = dict(payload)
         request_payload["profile"] = selected_profile
+        request_payload["steps"] = steps
         await self.prepare_video(mode=mode, profile=selected_profile)
         created = await self._request_json(
             "POST",
@@ -515,7 +543,7 @@ class VideoEngineService:
             raise VideoEngineError("영상 전용 엔진 작업 ID가 없습니다.")
         print(
             "[VIDEO_ENGINE] 생성 작업 등록: "
-            f"job={job_id}, mode={mode}, profile={selected_profile}"
+            f"job={job_id}, mode={mode}, profile={selected_profile}, steps={steps}"
         )
         deadline = asyncio.get_running_loop().time() + 1800.0
         last_progress = -1
@@ -566,6 +594,7 @@ class VideoEngineService:
             "job_id": job_id,
             "port": self.port(),
             "profile": selected_profile,
+            "steps": steps,
             "result": job.get("result") if isinstance(job.get("result"), dict) else {},
         }
         print(

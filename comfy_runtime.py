@@ -23,6 +23,7 @@ from comfy_installer.python_runtime import (
     ManagedPythonError,
     repair_relocated_managed_venv,
 )
+from comfy_installer.execution_profile import cpu_launch_args, installed_cpu_runtime
 
 
 VALID_VRAM_MODES = {"auto", "highvram", "normalvram", "lowvram", "novram"}
@@ -363,7 +364,11 @@ class ComfyRuntimeManager:
             command.extend(("--listen", "0.0.0.0"))
         if normalized_profile["enable_cors"]:
             command.extend(("--enable-cors-header", "*"))
-        command.extend(comfy_launch_profile_extra_args(normalized_profile))
+        command.extend(cpu_launch_args(
+            comfy_launch_profile_extra_args(normalized_profile),
+            cpu_only=installed_cpu_runtime(self.comfy_root),
+            comfy_root=self.comfy_root,
+        ))
         return command, parsed_port, normalized_profile
 
     @staticmethod

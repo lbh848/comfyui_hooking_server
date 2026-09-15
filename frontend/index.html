@@ -73,7 +73,8 @@
             flex-wrap: wrap;
             gap: 14px 24px;
             box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
-            isolation: isolate;
+            /* 고정 도크의 최상위 z-index가 헤더 내부 stacking context에 갇히지 않게 한다. */
+            isolation: auto;
         }
 
         header.app-header::after {
@@ -239,19 +240,38 @@
             display: none !important;
         }
 
-        /* 헤더 시스템 모니터 스트립 — CPU/RAM과 GPU/VRAM을 좌우 열로 분리 */
+        /* 헤더 시스템 모니터 스트립 — 평소에는 CPU/GPU 요약만, hover/focus 시 전체 상세 표시 */
         .sysmon-strip {
+            position: relative;
             display: inline-grid;
             grid-template-columns: auto auto;
             align-items: start;
-            column-gap: 10px;
+            column-gap: 7px;
             flex: 0 0 auto;
-            padding: 3px 8px;
+            overflow: hidden;
+            padding: 2px 6px;
             border: 1px solid rgba(174, 204, 194, 0.18);
             border-radius: 8px;
             background: rgba(255, 255, 255, 0.035);
             line-height: 1;
             user-select: none;
+            cursor: default;
+            transition: padding 0.2s ease, column-gap 0.2s ease,
+                border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .sysmon-strip:hover,
+        .sysmon-strip:focus-visible {
+            column-gap: 14px;
+            padding: 7px 11px;
+            border-color: var(--chrome-border-strong);
+            background: var(--chrome-panel);
+            box-shadow: 0 10px 26px rgba(0, 0, 0, 0.32);
+        }
+
+        .sysmon-strip:focus-visible {
+            outline: 2px solid var(--chrome-accent);
+            outline-offset: 2px;
         }
 
         .sysmon-row {
@@ -263,6 +283,26 @@
             line-height: 1.2;
             color: #71827c;
             white-space: nowrap;
+            overflow: hidden;
+            max-width: 260px;
+            max-height: 18px;
+            opacity: 1;
+            transition: max-width 0.2s ease, max-height 0.2s ease,
+                opacity 0.16s ease, font-size 0.2s ease;
+        }
+
+        .sysmon-strip:hover .sysmon-row,
+        .sysmon-strip:focus-visible .sysmon-row {
+            max-height: 22px;
+            font-size: 0.68rem;
+        }
+
+        .sysmon-strip:not(:hover):not(:focus-visible) .sysmon-host-rows .sysmon-row:nth-child(n + 2),
+        .sysmon-strip:not(:hover):not(:focus-visible) .sysmon-gpu-rows .sysmon-row:nth-child(even) {
+            max-width: 0;
+            max-height: 0;
+            opacity: 0;
+            pointer-events: none;
         }
 
         .sysmon-label {
@@ -290,13 +330,106 @@
         }
 
         header.app-header .controls {
+            --header-dock-peek: 22px;
+            position: fixed;
+            z-index: 2147483647;
+            top: 0;
+            right: 12px;
             display: flex;
             min-width: 0;
-            flex: 1 1 720px;
+            width: max-content;
+            max-width: calc(100vw - 24px);
+            flex: 0 0 auto;
             align-items: center;
             justify-content: flex-end;
             flex-wrap: wrap;
             gap: 8px;
+            padding: 6px 6px calc(6px + var(--header-dock-peek));
+            border: 1px solid var(--chrome-border-strong);
+            border-top: 0;
+            border-radius: 0 0 12px 12px;
+            background: color-mix(in srgb, var(--chrome-bg) 95%, transparent);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.34);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            transform: translateY(calc(-100% + var(--header-dock-peek)));
+            transform-origin: top center;
+            transition: transform 0.24s cubic-bezier(0.2, 0.8, 0.2, 1),
+                box-shadow 0.2s ease;
+            will-change: transform;
+        }
+
+        header.app-header .controls::after {
+            position: absolute;
+            bottom: 2px;
+            left: 50%;
+            width: 54px;
+            height: 18px;
+            border: 1px solid rgba(77, 226, 174, 0.26);
+            border-radius: 999px;
+            background: rgba(77, 226, 174, 0.08);
+            box-shadow: 0 0 12px rgba(77, 226, 174, 0.16), inset 0 1px rgba(255, 255, 255, 0.04);
+            transform: translateX(-50%);
+            opacity: 0.9;
+            pointer-events: none;
+            content: '';
+            transition: width 0.2s ease, opacity 0.2s ease, background 0.2s ease;
+        }
+
+        header.app-header .controls:hover:not(.is-hover-suppressed),
+        header.app-header .controls:has(:focus-visible):not(.is-hover-suppressed),
+        header.app-header .controls.is-pinned {
+            transform: translateY(0);
+            box-shadow: 0 16px 42px rgba(0, 0, 0, 0.48);
+        }
+
+        header.app-header .controls:hover:not(.is-hover-suppressed)::after,
+        header.app-header .controls:has(:focus-visible):not(.is-hover-suppressed)::after,
+        header.app-header .controls.is-pinned::after {
+            width: 64px;
+            background: rgba(77, 226, 174, 0.14);
+            opacity: 1;
+        }
+
+        .header-controls-handle {
+            position: absolute;
+            z-index: 1;
+            bottom: 2px;
+            left: 50%;
+            display: grid;
+            width: 54px;
+            height: 18px;
+            padding: 0;
+            border: 0;
+            border-radius: 999px;
+            background: transparent;
+            color: var(--chrome-accent);
+            place-items: center;
+            transform: translateX(-50%);
+            cursor: pointer;
+        }
+
+        .header-controls-handle:hover {
+            color: #8ff5d1;
+        }
+
+        .header-controls-handle:focus-visible {
+            outline: 2px solid var(--chrome-accent);
+            outline-offset: 1px;
+        }
+
+        .header-controls-handle .ui-icon {
+            width: 14px;
+            height: 14px;
+            stroke-width: 2.4;
+            filter: drop-shadow(0 0 4px rgba(77, 226, 174, 0.5));
+            transition: transform 0.2s ease;
+        }
+
+        header.app-header .controls:hover:not(.is-hover-suppressed) .header-controls-handle .ui-icon,
+        header.app-header .controls:has(:focus-visible):not(.is-hover-suppressed) .header-controls-handle .ui-icon,
+        header.app-header .controls.is-pinned .header-controls-handle .ui-icon {
+            transform: rotate(180deg);
         }
 
         .control-group {
@@ -431,13 +564,17 @@
 
         @media (max-width: 1180px) {
             header.app-header .controls {
-                flex-basis: 100%;
+                width: calc(100vw - 24px);
+                max-width: calc(100vw - 24px);
                 justify-content: flex-start;
                 flex-wrap: nowrap;
                 overflow-x: auto;
-                padding: 1px 0 4px;
-                scrollbar-width: thin;
+                overflow-y: hidden;
+                padding: 6px 6px calc(6px + var(--header-dock-peek));
+                scrollbar-width: none;
             }
+
+            header.app-header .controls::-webkit-scrollbar { display: none; }
 
             .control-group {
                 flex: 0 0 auto;
@@ -448,6 +585,12 @@
             header.app-header {
                 padding: 12px;
                 gap: 11px;
+            }
+
+            header.app-header .controls {
+                right: 6px;
+                width: calc(100vw - 12px);
+                max-width: calc(100vw - 12px);
             }
 
             .brand-mark {
@@ -478,6 +621,17 @@
             .workspace-chrome-toggle .ui-icon {
                 width: 12px;
                 height: 12px;
+            }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            header.app-header .controls,
+            header.app-header .controls::after,
+            .header-controls-handle,
+            .header-controls-handle .ui-icon,
+            .sysmon-strip,
+            .sysmon-row {
+                transition-duration: 0.01ms;
             }
         }
 
@@ -5829,6 +5983,16 @@
         .video-engine-port-card .video-engine-profile-field {
             grid-column: 1 / -1;
         }
+        .video-engine-port-card .video-engine-steps-field {
+            grid-column: 1 / -1;
+        }
+        .video-engine-steps-field small {
+            display: block;
+            margin-top: 5px;
+            color: var(--text2);
+            font-size: .66rem;
+        }
+        .video-engine-port-card select:disabled { opacity: .6; cursor: not-allowed; }
         .video-engine-port-card > label { min-width: 0; }
         .video-engine-port-card > label > span {
             display: block;
@@ -15726,7 +15890,7 @@
                         <span class="workspace-chrome-toggle-label">탭 접기</span>
                         <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 15 6-6 6 6"></path></svg>
                     </button>
-                    <div id="sysmon-strip" class="sysmon-strip" title="시스템 리소스 사용량 (참고용)">
+                    <div id="sysmon-strip" class="sysmon-strip" tabindex="0" title="시스템 리소스 사용량 (참고용)" aria-label="시스템 리소스 사용량">
                         <div class="sysmon-host-rows">
                             <span class="sysmon-row"><span class="sysmon-label">CPU</span><span class="sysmon-value" id="sysmon-cpu">—</span></span>
                             <span class="sysmon-row"><span class="sysmon-label">RAM</span><span class="sysmon-value" id="sysmon-ram">—</span></span>
@@ -15737,7 +15901,12 @@
             </div>
         </div>
 
-        <div class="controls">
+        <div id="header-controls-dock" class="controls">
+            <button type="button" id="header-controls-handle" class="header-controls-handle"
+                    aria-expanded="false" aria-label="상단 도구 메뉴 열기" title="상단 도구 메뉴 열기"
+                    onclick="toggleHeaderControlsDock(event)">
+                <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"></path></svg>
+            </button>
             <div class="control-group" role="group" aria-label="상태 및 로그">
                 <button type="button" id="notification-bell" class="control-btn control-btn--icon" onclick="openNotificationBoard()" title="알림" aria-label="알림 열기">
                     <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"></path><path d="M10 21h4"></path></svg>
@@ -15758,7 +15927,7 @@
                         <span class="lock-icon">🔓</span>
                     </button>
                 </div>
-                <button type="button" id="illustration-flow-btn" class="control-btn" onclick="openIllustrationFlow()"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="9" width="5" height="6" rx="1"></rect><rect x="17" y="2" width="5" height="6" rx="1"></rect><rect x="17" y="16" width="5" height="6" rx="1"></rect><path d="M7 12h5V5h5M12 12v7h5"></path></svg><span class="control-label">삽화 흐름 보기</span></button>
+                <button type="button" id="illustration-flow-btn" class="control-btn" onclick="openWorkflowFlow()"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="9" width="5" height="6" rx="1"></rect><rect x="17" y="2" width="5" height="6" rx="1"></rect><rect x="17" y="16" width="5" height="6" rx="1"></rect><path d="M7 12h5V5h5M12 12v7h5"></path></svg><span class="control-label">작업 흐름 보기</span></button>
                 <button type="button" class="control-btn" onclick="openModeLogModal()">
                     <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5h11M9 12h11M9 19h11"></path><path d="M4 5h.01M4 12h.01M4 19h.01"></path></svg>
                     <span class="control-label">모드 로그</span>
@@ -16176,12 +16345,14 @@
                     <label class="video-secondary-row video-ai-context-option">
                         <span class="video-ai-context-copy">
                             <span class="video-panel-title">입력 다듬기 방식</span>
-                            <span class="video-panel-hint" style="display:block; margin-top:3px;">일반 확장, 시네마틱 또는 일본 애니메이션 감성의 제작 계획으로 다듬습니다.</span>
+                            <span class="video-panel-hint" style="display:block; margin-top:3px;">일반 확장, 시네마틱, 일본 애니메이션 또는 간결한 DaSiWa 프롬프트 방식으로 다듬습니다.</span>
                         </span>
                         <select id="video-generation-refine-version" class="video-select">
                             <option value="v1" selected>V1 (일반 다듬기)</option>
                             <option value="v2">V2 (시네마틱 스타일)</option>
                             <option value="v3">V3 (일본 애니메이션 스타일)</option>
+                            <option value="v3_2">V3_2 (일본 애니메이션 스타일 2)</option>
+                            <option value="v4">V4 (DaSiWa 프롬프트)</option>
                         </select>
                     </label>
                     <label class="video-secondary-row video-ai-context-option">
@@ -22710,10 +22881,20 @@
                                     <input type="text" id="setting-video-engine-project-path" placeholder="예: E:\minmax_low_vram" spellcheck="false">
                                 </label>
                                 <label class="video-engine-profile-field" for="setting-video-engine-profile">
-                                    <span>H3 모델 프로필 · daemon의 /api/models에서 불러옴</span>
+                                    <span>H3 모델 프로필</span>
                                     <select id="setting-video-engine-profile" onchange="updateVideoEngineFixedStepControls(); updateVideoWorkspaceMode();" disabled>
                                         <option value="">엔진 연결 후 프로필을 불러옵니다</option>
                                     </select>
+                                </label>
+                                <label class="video-engine-steps-field" for="setting-video-engine-steps">
+                                    <span>STEP</span>
+                                    <select id="setting-video-engine-steps" aria-describedby="video-engine-steps-hint" onchange="this.dataset.editableSteps = this.value; updateVideoEngineFixedStepControls(); updateVideoWorkspaceMode();" disabled>
+                                        <option value="4">4 STEP</option>
+                                        <option value="8">8 STEP</option>
+                                        <option value="20">20 STEP</option>
+                                        <option value="25">25 STEP</option>
+                                    </select>
+                                    <small id="video-engine-steps-hint">엔진 연결 후 모델별 STEP 설정을 확인합니다.</small>
                                 </label>
                                 <label for="setting-video-engine-port">
                                     <span>서비스 포트</span>
@@ -25779,6 +25960,49 @@
                 <div class="settings-tab-panel" id="settings-tab-video">
                     <div class="setting-row">
                         <div class="setting-label">
+                            <div class="title">⚡ 영상 변환 인코더 기본값</div>
+                            <div class="desc">WebP는 CPU 압축 단계, AVIF는 NVIDIA GPU 인코더의 기본 동작을 설정합니다.</div>
+                        </div>
+                    </div>
+                    <div class="form-group" style="margin-top: -8px;">
+                        <label for="setting-video-webp-compression-level">WebP 압축 레벨</label>
+                        <select id="setting-video-webp-compression-level">
+                            <option value="0">0 · 최고속 / 가장 큰 파일</option>
+                            <option value="1">1 · 매우 빠름</option>
+                            <option value="2">2 · 빠름</option>
+                            <option value="3">3 · 약간 빠름</option>
+                            <option value="4" selected>4 · 균형 (추천)</option>
+                            <option value="5">5 · 높은 압축</option>
+                            <option value="6">6 · 최고 압축 / 가장 느림</option>
+                        </select>
+                        <div class="hint">화질 값과 별개인 속도·파일 크기 설정입니다. 낮을수록 빠르고 파일이 커집니다.</div>
+                    </div>
+                    <div class="setting-row" style="margin-top: 12px;">
+                        <div class="setting-label">
+                            <div class="title">AVIF GPU 인코딩</div>
+                            <div class="desc">AV1 NVENC를 사용합니다. 지원되지 않거나 실패하면 CPU AVIF로 자동 재시도합니다.</div>
+                        </div>
+                        <label class="toggle-switch" for="setting-video-avif-gpu-enabled">
+                            <input type="checkbox" id="setting-video-avif-gpu-enabled" onchange="updateVideoEncodingDefaultControls()">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                    <div class="form-group" style="margin-top: -8px;">
+                        <label for="setting-video-avif-gpu-preset">AVIF GPU 프리셋</label>
+                        <select id="setting-video-avif-gpu-preset" disabled>
+                            <option value="p1">P1 · 최고속</option>
+                            <option value="p2">P2 · 더 빠름</option>
+                            <option value="p3">P3 · 빠름</option>
+                            <option value="p4" selected>P4 · 균형 (추천)</option>
+                            <option value="p5">P5 · 높은 품질</option>
+                            <option value="p6">P6 · 더 높은 품질</option>
+                            <option value="p7">P7 · 최고 품질 / 가장 느림</option>
+                        </select>
+                        <div class="hint">AV1 codec level은 호환성을 위해 자동으로 유지합니다. P1은 가장 빠르고 P7은 가장 높은 품질을 지향합니다.</div>
+                    </div>
+
+                    <div class="setting-row">
+                        <div class="setting-label">
                             <div class="title">🎬 I2V 워크플로우</div>
                             <div class="desc">첫 프레임 이미지에서 영상을 생성할 때 사용할 워크플로우 파일 (공통설정 탭 베이스 경로 공유)</div>
                         </div>
@@ -26247,7 +26471,7 @@
                                 <span class="comfy-installer-step" aria-hidden="true">01</span>
                                 <div class="comfy-installer-section-heading">
                                     <h3 class="comfy-installer-title">시스템 검사</h3>
-                                    <p class="comfy-installer-section-copy">GPU 가속 가능 여부, 필수 도구와 저장 공간을 확인합니다. GPU가 맞지 않거나 없어도 CPU 프로필로 설치합니다.</p>
+                                    <p class="comfy-installer-section-copy">GPU 가속 가능 여부, 필수 도구와 저장 공간을 확인합니다. GPU가 맞지 않거나 없으면 분석·유틸리티용 CPU 경량 프로필로 설치합니다.</p>
                                 </div>
                             </div>
                             <div class="comfy-installer-status-grid">
@@ -26258,7 +26482,7 @@
                             </div>
                             <div class="comfy-installer-actions">
                                 <button type="button" class="comfy-installer-btn" id="comfy-installer-preflight-btn" onclick="comfyInstallerRunPreflight()">다시 검사</button>
-                                <span class="comfy-installer-note" id="comfy-installer-preflight-note">NVIDIA 가속을 사용할 수 없으면 CPU 프로필로 자동 전환합니다. uv·Git과 여유 공간(런타임 최소 30 GiB)은 계속 검사합니다.</span>
+                                <span class="comfy-installer-note" id="comfy-installer-preflight-note">CPU 프로필은 태그 분석·얼굴 추출·유틸리티를 로컬에서 처리합니다. 생성·학습은 별도로 선택한 원격 실행 대상에서 사용하세요. uv·Git과 여유 공간(런타임 최소 30 GiB)은 계속 검사합니다.</span>
                             </div>
                         </section>
 
@@ -30621,6 +30845,12 @@
                         case 'illustration_flow':
                             receiveIllustrationFlow(msg.data, true);
                             break;
+                        case 'video_flow':
+                            receiveVideoFlow(msg.data, true);
+                            break;
+                        case 'video_input_flow':
+                            receiveVideoInputFlow(msg.data, true);
+                            break;
                         case 'illustration_warning':
                             showToast(msg.data.message, 'warning');
                             break;
@@ -31589,6 +31819,8 @@
         let videoInstructionRefineUndoSnapshot = null;
         let videoInstructionOriginalInput = '';
         let videoInstructionLlmTrace = [];
+        let videoInputFlowSessionId = '';
+        let videoInputFlowEventChain = Promise.resolve();
 
         const VIDEO_UPSCALE_LABELS = {
             'realesr-animevideov3': '품질',
@@ -31666,13 +31898,16 @@
             return value;
         }
 
-        function selectedVideoEngineFixedSteps() {
+        function isVideoEngineSelected() {
             const allocation = String(
                 document.getElementById('setting-comfy-allocation-video_generation')?.value
                     || currentConfig?.comfy_task_allocations?.video_generation
                     || '',
             );
-            if (allocation !== 'video_engine') return null;
+            return allocation === 'video_engine';
+        }
+
+        function videoEngineProfileFixedSteps() {
             const selectedProfile = String(
                 document.getElementById('setting-video-engine-profile')?.value
                     || currentConfig?.video_engine_profile
@@ -31686,19 +31921,69 @@
             return Number.isInteger(fixedSteps) ? fixedSteps : null;
         }
 
+        function selectedVideoEngineFixedSteps() {
+            return isVideoEngineSelected() ? videoEngineProfileFixedSteps() : null;
+        }
+
+        function videoEngineStepsValue() {
+            const fixedSteps = videoEngineProfileFixedSteps();
+            if (fixedSteps !== null) return fixedSteps;
+            const steps = Number(document.getElementById('setting-video-engine-steps')?.value
+                ?? currentConfig?.video_engine_steps ?? 4);
+            if (![4, 8, 20, 25].includes(steps)) {
+                console.error('[VIDEO_ENGINE] STEP 설정 오류:', steps);
+                throw new Error('영상 전용 엔진 STEP은 4·8·20·25 중 선택하세요.');
+            }
+            return steps;
+        }
+
+        function updateVideoEngineStepSetting() {
+            const select = document.getElementById('setting-video-engine-steps');
+            if (!select) return;
+            const fixedSteps = videoEngineProfileFixedSteps();
+            const profileName = videoEngineProfileValue(false)
+                || currentConfig?.video_engine_profile || videoEngineLastModels?.default_profile || '';
+            const profile = videoEngineLastModels?.profiles?.[profileName];
+            if (!select.dataset.editableSteps) {
+                select.dataset.editableSteps = select.value || String(currentConfig?.video_engine_steps ?? 4);
+            }
+            const presets = [4, 8, 20, 25];
+            const editableSteps = Number(select.dataset.editableSteps);
+            if (!presets.includes(editableSteps)) {
+                select.dataset.editableSteps = String(presets.find(value => value >= editableSteps) ?? 25);
+                console.info('[VIDEO_ENGINE] 기존 STEP을 선택 가능한 프리셋으로 표시:', editableSteps, select.dataset.editableSteps);
+            }
+            select.replaceChildren(...(fixedSteps !== null ? [fixedSteps] : presets)
+                .map(value => new Option(`${value} STEP`, String(value))));
+            select.value = fixedSteps !== null ? String(fixedSteps) : select.dataset.editableSteps;
+            select.disabled = videoEngineActionBusy || !profile || fixedSteps !== null;
+            const hint = document.getElementById('video-engine-steps-hint');
+            if (hint) {
+                hint.textContent = fixedSteps !== null
+                    ? `이 모델은 ${fixedSteps} STEP 고정입니다. 모든 영상 요청에 자동 적용됩니다.`
+                    : (profile
+                        ? (profile.turbo_mode === 'baked' || profile.turbo_mode === 'none'
+                            ? '4·8·20·25 STEP 선택 · 외부 Turbo LoRA를 추가하지 않습니다. 실행 설정을 저장하세요.'
+                            : '4/8 STEP은 전용 Turbo LoRA, 20/25 STEP은 LoRA 없이 생성합니다. REF2V는 4-step LoRA만 지원합니다. 실행 설정을 저장하세요.')
+                        : '엔진 연결 후 모델별 STEP 설정을 확인합니다.');
+            }
+        }
+
         function updateVideoEngineFixedStepControls() {
+            updateVideoEngineStepSetting();
+            const engineSelected = isVideoEngineSelected();
             const fixedSteps = selectedVideoEngineFixedSteps();
             const locked = fixedSteps !== null;
+            const steps = engineSelected ? videoEngineStepsValue() : null;
             const mode = document.getElementById('video-generation-mode')?.value || 'i2v';
             const variantInput = document.getElementById('video-generation-workflow-variant');
             const hint = document.getElementById('video-generation-workflow-hint');
             const radios = document.querySelectorAll('input[name="video-mode-choice"]');
-            const variantChanged = locked && variantInput?.value !== 'standard';
             radios.forEach(radio => {
                 const variant = String(radio.value || '').split(':')[1] || 'standard';
-                radio.disabled = locked && variant === 'fast';
-                radio.title = locked && variant === 'fast'
-                    ? `선택한 H3 모델은 내장 Turbo ${fixedSteps}-step으로 고정되며 별도 가속 LoRA를 사용하지 않습니다.`
+                radio.disabled = engineSelected && variant === 'fast';
+                radio.title = engineSelected && variant === 'fast'
+                    ? '영상 전용 엔진의 STEP은 설정 → Comfy 실행 관리 → 영상 전용 엔진에서 선택합니다.'
                     : '';
                 const description = radio.nextElementSibling?.querySelector('.option-card-description');
                 if (!description) return;
@@ -31706,21 +31991,25 @@
                     description.dataset.originalText = description.textContent || '';
                 }
                 description.textContent = locked && variant === 'standard'
-                    ? `내장 Turbo · ${fixedSteps}-step 고정 · 외부 가속 LoRA 없음`
-                    : description.dataset.originalText;
+                    ? `${fixedSteps}-step 고정 · 선택한 H3 모델 프로필 사용`
+                    : (engineSelected
+                        ? (variant === 'fast' ? '영상 전용 엔진 설정에서 STEP 선택' : `${steps}-step · 선택한 H3 모델 프로필 사용`)
+                        : description.dataset.originalText);
             });
-            if (locked) {
+            if (engineSelected) {
                 if (variantInput) variantInput.value = 'standard';
                 const standard = document.querySelector(
                     `input[name="video-mode-choice"][value="${mode}:standard"]`,
                 );
                 if (standard) standard.checked = true;
             }
-            if (variantChanged) updateVideoResolutionControls();
+            updateVideoResolutionControls();
             if (hint) {
                 hint.textContent = locked
-                    ? `내장 Turbo ${fixedSteps}-step 고정 · 외부 가속 LoRA 없음`
-                    : '일반 REF 20-step TeaCache · 전용 고속 4-step';
+                    ? `선택한 H3 모델 · ${fixedSteps}-step 고정`
+                    : (engineSelected
+                        ? `선택한 H3 모델 · ${steps}-step · Comfy 실행 관리에서 변경`
+                        : '일반 REF 20-step TeaCache · 전용 고속 4-step');
             }
         }
 
@@ -31908,9 +32197,11 @@
                 qualitySelect.disabled = false;
                 qualitySelect.title = 'REF 기본 960×544 외 해상도는 검증되지 않은 실험 옵션입니다.';
                 if (qualityHint) {
-                    qualityHint.textContent = workflowVariant === 'fast'
-                        ? 'REF 전용 4-step · 기본 외 실험'
-                        : 'REF 20-step · 기본 외 실험';
+                    qualityHint.textContent = isVideoEngineSelected()
+                        ? `REF ${videoEngineStepsValue()}-step · 기본 외 실험`
+                        : (workflowVariant === 'fast'
+                            ? 'REF 전용 4-step · 기본 외 실험'
+                            : 'REF 20-step · 기본 외 실험');
                 }
                 qualitySelect.dataset.activeVariant = workflowVariant;
                 qualitySelect.dataset.activeResolutionProfile = resolutionProfile;
@@ -32781,6 +33072,7 @@
                 return;
             }
             const requestId = ++videoInstructionDraftRequestId;
+            const inputFlowSessionId = videoInputFlowSessionId;
             const selectionKey = videoInstructionDraftSelectionKey();
             const refineButton = document.getElementById('video-generation-refine-button');
             const refineVersion = document.getElementById('video-generation-refine-version');
@@ -32796,11 +33088,14 @@
             }
             updateVideoInstructionDraftPresentation('LLM 큐 대기 및 참조 이미지 분석 중...');
             try {
+                await videoInputFlowEventChain;
                 const data = await fetchJSON('/api/video/instruction-draft', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({
+                        video_input_session_id: inputFlowSessionId,
                         mode,
+                        instruction_before: document.getElementById('video-generation-instruction')?.value || '',
                         workflow_variant: selectedVideoWorkflowVariant(),
                         source_ref: sourceRef,
                         last_ref: lastRef,
@@ -32901,6 +33196,48 @@
             return normalized;
         }
 
+        function createVideoInputFlowSessionId() {
+            if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+            const randomPart = Math.random().toString(36).slice(2);
+            return `video-input-${Date.now().toString(36)}-${randomPart}`;
+        }
+
+        function recordVideoInputFlowEvent(action, input, output, sessionId = videoInputFlowSessionId) {
+            const normalizedSessionId = String(sessionId || '').trim();
+            if (!normalizedSessionId) {
+                console.error('[VIDEO_INPUT_FLOW] 사람 조작을 기록할 세션 ID가 없습니다.', {action, input, output});
+                return Promise.resolve(null);
+            }
+            const send = async () => {
+                try {
+                    const data = await fetchJSON('/api/video/input-flow-event', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({
+                            session_id: normalizedSessionId,
+                            action,
+                            input,
+                            output,
+                        }),
+                    });
+                    if (!data?.success) {
+                        throw new Error(data?.error || '영상 입력 개선 그래프 기록 실패');
+                    }
+                    return data;
+                } catch (error) {
+                    console.error('[VIDEO_INPUT_FLOW] 사람 조작 기록 실패:', error, {
+                        sessionId: normalizedSessionId,
+                        action,
+                        input,
+                        output,
+                    });
+                    return null;
+                }
+            };
+            videoInputFlowEventChain = videoInputFlowEventChain.then(send, send);
+            return videoInputFlowEventChain;
+        }
+
         function clearVideoInstructionProvenance() {
             videoInstructionOriginalInput = '';
             videoInstructionLlmTrace = [];
@@ -32943,6 +33280,8 @@
                 return;
             }
             const input = document.getElementById('video-generation-instruction');
+            const discardedInstruction = String(input?.value || '');
+            const discardedTrace = [...videoInstructionLlmTrace];
             if (input) {
                 input.value = String(snapshot.instruction || '');
                 resizeVideoInstructionToContent(input);
@@ -32952,6 +33291,11 @@
             }
             videoInstructionOriginalInput = String(snapshot.originalInput || '');
             videoInstructionLlmTrace = normalizeVideoInstructionLlmTrace(snapshot.llmTrace);
+            void recordVideoInputFlowEvent(
+                'restore_original',
+                {instruction: discardedInstruction, llm_trace: discardedTrace},
+                {instruction: String(snapshot.instruction || ''), llm_trace: [...videoInstructionLlmTrace]},
+            );
             clearVideoInstructionRefineUndo();
             updateVideoInstructionDraftPresentation('원문으로 되돌렸습니다. 내용을 수정한 뒤 큐에 등록하세요.');
             showToast('원문으로 되돌렸습니다.', 'info');
@@ -32975,7 +33319,7 @@
                 return 'v1';
             }
             const version = String(select.value || '').trim().toLowerCase();
-            if (!['v1', 'v2', 'v3'].includes(version)) {
+            if (!['v1', 'v2', 'v3', 'v3_2', 'v4'].includes(version)) {
                 console.error('[VIDEO_UI] 지원하지 않는 입력 다듬기 방식입니다. V1을 사용합니다:', select.value);
                 select.value = 'v1';
                 return 'v1';
@@ -33014,6 +33358,7 @@
                 return;
             }
             const requestId = ++videoInstructionRefineRequestId;
+            const inputFlowSessionId = videoInputFlowSessionId;
             const selectionKey = videoInstructionDraftSelectionKey();
             const draftButton = document.getElementById('video-generation-draft-button');
             const refineVersion = document.getElementById('video-generation-refine-version');
@@ -33030,10 +33375,12 @@
             clearVideoInstructionRefineUndo();
             updateVideoInstructionDraftPresentation('사용자 입력을 바탕으로 참조 이미지와 함께 다듬는 중...');
             try {
+                await videoInputFlowEventChain;
                 const data = await fetchJSON('/api/video/instruction-refine', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({
+                        video_input_session_id: inputFlowSessionId,
                         mode,
                         workflow_variant: selectedVideoWorkflowVariant(),
                         instruction,
@@ -33107,17 +33454,23 @@
         async function requestVideoInstructionDirect(requestedVersion = selectedVideoInstructionRefineVersion()) {
             if (videoInstructionDraftBusy || videoInstructionRefineBusy || videoInstructionDirectBusy || videoDirectionEditBusy) return;
             const refineVersionValue = String(requestedVersion || '').trim().toLowerCase();
-            if (!['v2', 'v3'].includes(refineVersionValue)) {
+            if (!['v2', 'v3', 'v3_2', 'v4'].includes(refineVersionValue)) {
                 console.error('[VIDEO_UI] 제작 계획 다듬기에 지원하지 않는 방식입니다:', requestedVersion);
-                showToast('시네마틱 또는 일본 애니메이션 스타일을 선택해 주세요.', 'error');
+                showToast('시네마틱, 일본 애니메이션 또는 DaSiWa 프롬프트 방식을 선택해 주세요.', 'error');
                 return;
             }
-            const styleLabel = refineVersionValue === 'v3'
-                ? 'V3 일본 애니메이션'
-                : 'V2 시네마틱';
-            const styleName = refineVersionValue === 'v3'
-                ? '일본 애니메이션 스타일'
-                : '시네마틱 스타일';
+            const styleLabel = {
+                v2: 'V2 시네마틱',
+                v3: 'V3 일본 애니메이션',
+                v3_2: 'V3_2 일본 애니메이션 2',
+                v4: 'V4 DaSiWa 프롬프트',
+            }[refineVersionValue];
+            const styleName = {
+                v2: '시네마틱 스타일',
+                v3: '일본 애니메이션 스타일',
+                v3_2: '일본 애니메이션 스타일 2',
+                v4: 'DaSiWa 프롬프트 방식',
+            }[refineVersionValue];
             const instructionInput = document.getElementById('video-generation-instruction');
             const instruction = (instructionInput?.value || '').trim();
             if (!instruction) {
@@ -33140,6 +33493,7 @@
                 return;
             }
             const requestId = ++videoInstructionDirectRequestId;
+            const inputFlowSessionId = videoInputFlowSessionId;
             const selectionKey = videoInstructionDraftSelectionKey();
             const draftButton = document.getElementById('video-generation-draft-button');
             const refineVersion = document.getElementById('video-generation-refine-version');
@@ -33156,10 +33510,12 @@
             clearVideoInstructionRefineUndo();
             updateVideoInstructionDraftPresentation(`${styleLabel} 스타일로 참조 이미지와 함께 연출을 다듬는 중...`);
             try {
+                await videoInputFlowEventChain;
                 const data = await fetchJSON('/api/video/instruction-direct', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({
+                        video_input_session_id: inputFlowSessionId,
                         mode,
                         refine_version: refineVersionValue,
                         workflow_variant: selectedVideoWorkflowVariant(),
@@ -33791,14 +34147,17 @@
                 return;
             }
             const requestId = ++videoDirectionEditRequestId;
+            const inputFlowSessionId = videoInputFlowSessionId;
             const selectionKey = videoDirectionEditState.selectionKey;
             setVideoDirectionEditBusy(true);
             setVideoDirectionEditStatus('원문을 보존하며 명령한 부분만 최소 수정하는 중...', 'busy');
             try {
+                await videoInputFlowEventChain;
                 const data = await fetchJSON('/api/video/instruction-refine', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({
+                        video_input_session_id: inputFlowSessionId,
                         mode,
                         workflow_variant: selectedVideoWorkflowVariant(),
                         instruction,
@@ -33876,6 +34235,12 @@
                 console.error('[VIDEO_UI] 처리 중에는 다듬기 방향 수정안을 되돌릴 수 없습니다.');
                 return;
             }
+            const discardedState = {
+                instruction: String(videoDirectionEditState.candidateInstruction || ''),
+                base_instruction: String(videoDirectionEditState.baseInstruction || ''),
+                round: videoDirectionEditState.round,
+                llm_trace: [...videoDirectionEditState.llmTrace],
+            };
             videoDirectionEditState.candidateInstruction = '';
             videoDirectionEditState.llmTrace = [];
             videoDirectionEditState.round = 0;
@@ -33900,6 +34265,11 @@
             if (more) more.hidden = true;
             if (revert) revert.hidden = true;
             if (accept) accept.hidden = true;
+            void recordVideoInputFlowEvent(
+                'discard_direction',
+                discardedState,
+                {instruction: discardedState.base_instruction},
+            );
             setVideoDirectionEditStatus('검토 중이던 수정안을 버리고 최초 원문으로 되돌렸습니다.');
             showToast('수정안을 버리고 최초 원문으로 되돌렸습니다.', 'info');
         }
@@ -33940,6 +34310,16 @@
             videoInstructionOriginalInput = String(baseSnapshot.originalInput || '');
             videoInstructionLlmTrace = normalizeVideoInstructionLlmTrace(baseSnapshot.llmTrace);
             appendVideoInstructionProvenance(baseInstruction, videoDirectionEditState.llmTrace);
+            void recordVideoInputFlowEvent(
+                'apply_direction',
+                {
+                    instruction: baseInstruction,
+                    candidate_instruction: candidate,
+                    round: videoDirectionEditState.round,
+                    llm_trace: [...videoDirectionEditState.llmTrace],
+                },
+                {instruction: candidate, llm_trace: [...videoInstructionLlmTrace]},
+            );
             target.value = candidate;
             resizeVideoInstructionToContent(target);
             showVideoInstructionRefineUndo();
@@ -34050,7 +34430,7 @@
             const refineVersionSelect = document.getElementById('video-generation-refine-version');
             if (refineVersionSelect) {
                 const refineVersionValue = String(settings.refine_version || 'v1').trim().toLowerCase();
-                if (['v1', 'v2', 'v3'].includes(refineVersionValue)) {
+                if (['v1', 'v2', 'v3', 'v3_2', 'v4'].includes(refineVersionValue)) {
                     refineVersionSelect.value = refineVersionValue;
                 } else {
                     console.error('[VIDEO_UI] 저장된 입력 다듬기 방식이 올바르지 않습니다:', settings.refine_version);
@@ -34335,6 +34715,8 @@
             const mode = document.getElementById('video-generation-mode')?.value || 'i2v';
             const workflowVariant = selectedVideoWorkflowVariant();
             const fixedSteps = selectedVideoEngineFixedSteps();
+            const engineSelected = isVideoEngineSelected();
+            const steps = engineSelected ? videoEngineStepsValue() : null;
             const isLast = mode === 'first_last';
             const isRef = mode === 'ref2v';
             const lastFrame = document.getElementById('video-frame-last');
@@ -34346,8 +34728,8 @@
             const duration = normalizedVideoDuration();
             const header = document.getElementById('video-generation-header-summary');
             if (header) {
-                header.textContent = fixedSteps !== null
-                    ? `MiniMax H3 · ${fixedSteps}-step 고정 · ${duration}초`
+                header.textContent = engineSelected
+                    ? `MiniMax H3 · ${steps}-step${fixedSteps !== null ? ' 고정' : ''} · ${duration}초`
                     : `MiniMax H3${workflowVariant === 'fast' ? ' 고속' : ''} · ${duration}초`;
             }
             if (lastFrame) lastFrame.style.display = isLast ? 'block' : 'none';
@@ -34365,8 +34747,8 @@
                     ? '선택 에셋'
                     : '선택 삽화의 원본';
                 const speedLabel = workflowVariant === 'fast' ? '고속으로 ' : '';
-                modeNote.textContent = fixedSteps !== null
-                    ? `${sourceLabel}을 사용해 내장 Turbo ${fixedSteps}-step으로 ${duration}초 영상을 만듭니다. 외부 가속 LoRA는 적용하지 않습니다.`
+                modeNote.textContent = engineSelected
+                    ? `${sourceLabel}을 사용해 설정에서 선택한 H3 모델과 ${steps}-step${fixedSteps !== null ? ' 고정값' : ''}으로 ${duration}초 영상을 만듭니다.`
                     : (isRef
                         ? `${sourceLabel}을 참조 1로 사용하고, 선택한 총 ${getSelectedVideoReferenceRefs().length}장의 독립 REF 이미지로 ${duration}초 영상을 만듭니다. ${workflowVariant === 'fast' ? '전용 4-step' : 'Base 20-step + TeaCache 0.10'}의 REF 기본은 16:9 · 960×544이며, 그 밖의 비율·MP는 실험 옵션입니다.`
                         : (isLast
@@ -34392,7 +34774,7 @@
                 console.error('[VIDEO_UI] 지원하지 않는 워크플로우 변형:', workflowVariant);
                 return;
             }
-            if (selectedVideoEngineFixedSteps() !== null) workflowVariant = 'standard';
+            if (isVideoEngineSelected()) workflowVariant = 'standard';
             const input = document.getElementById('video-generation-mode');
             const variantInput = document.getElementById('video-generation-workflow-variant');
             if (input) input.value = mode;
@@ -34782,6 +35164,13 @@
                 return;
             }
             videoWorkspaceSourceRef = reference;
+            videoInputFlowSessionId = createVideoInputFlowSessionId();
+            const inputFlowStart = recordVideoInputFlowEvent(
+                'session_start',
+                {reference},
+                {instruction: document.getElementById('video-generation-instruction')?.value || ''},
+                videoInputFlowSessionId,
+            );
             resetVideoInstructionDraftRequest();
             resetVideoInstructionRefineRequest();
             resetVideoInstructionDirectRequest();
@@ -34825,6 +35214,7 @@
             await Promise.all([
                 configSync,
                 loadVideoReferenceOptions(reference),
+                inputFlowStart,
             ]);
         }
 
@@ -38344,6 +38734,7 @@
             if (profileInput) {
                 profileInput.disabled = videoEngineActionBusy || !reachable || !videoEngineLastModels;
             }
+            updateVideoEngineStepSetting();
         }
 
         async function videoEngineRefreshStatus(manual = false) {
@@ -38376,11 +38767,12 @@
         }
 
         async function videoEngineSaveRuntimeSettings(showSuccess = true) {
-            let port, projectPath, profile;
+            let port, projectPath, profile, steps;
             try {
                 port = videoEnginePortValue();
                 projectPath = videoEngineProjectPathValue(false);
                 profile = videoEngineProfileValue(false);
+                steps = videoEngineStepsValue();
             } catch (error) {
                 showToast(error.message || String(error), 'error');
                 return false;
@@ -38396,6 +38788,7 @@
                         video_engine_project_path: projectPath,
                         video_engine_auto_start: autoStart,
                         video_engine_profile: profile,
+                        video_engine_steps: steps,
                     }),
                 });
                 if (result?.success !== true) throw new Error(result?.error || '실행 설정 저장 실패');
@@ -38405,6 +38798,7 @@
                     video_engine_project_path: projectPath,
                     video_engine_auto_start: autoStart,
                     video_engine_profile: profile,
+                    video_engine_steps: steps,
                 };
                 currentConfigLoadPromise = Promise.resolve(currentConfig);
                 if (showSuccess) showToast('영상 전용 엔진 실행 설정을 저장했습니다.', 'success');
@@ -39181,8 +39575,11 @@
                 // 다운로드 경로가 'cloud_direct'일 때 로컬 다운로드 용량과 Worker 직접 다운로드 용량이 분리됩니다.
                 // 설치기와 동일한 규칙을 적용하기 위해 프론트엔드에서 재계산하지 않고 서버의 계산값을 사용합니다.
                 const cloudDirect = selection && selection.model_source === 'cloud_direct';
+                const cpuLocal = selection && selection.model_source === 'cpu_local';
                 document.getElementById('comfy-installer-size').textContent = selection
-                    ? (cloudDirect
+                    ? (cpuLocal
+                        ? `CPU 경량 작업용 ${Number((selection.local_model_ids || []).length)}개 · ${comfyInstallerFormatBytes(selection.local_model_bytes || 0)} (로컬 설치 제외 ${Number(selection.remote_model_count || 0)}개 · ${comfyInstallerFormatBytes(selection.remote_model_bytes || 0)})`
+                        : cloudDirect
                         ? `로컬 ${Number((selection.local_model_ids || []).length)}개 · ${comfyInstallerFormatBytes(selection.local_model_bytes || 0)} (원격 직접 ${Number(selection.remote_model_count || 0)}개 · ${comfyInstallerFormatBytes(selection.remote_model_bytes || 0)})`
                         : `${Number((selection.model_ids || []).length)} 선택 모델 · ${comfyInstallerFormatBytes(selection.model_bytes || 0)}`)
                     : `${manifest.model_count || 36} 전체 모델 · ${comfyInstallerFormatBytes(manifest.model_bytes || 0)}`;
@@ -39206,7 +39603,7 @@
                     note.textContent = diskEnough === false
                         ? `여유 공간 런타임 최소치(30 GiB) 미만 · 선택 워크플로우 기준은 설치 시 재검사 · ${probeCommon}`
                         : (fallback
-                            ? `설치 가능 · CPU 프로필 자동 전환 · ${fallback} · ${probeCommon}`
+                            ? `설치 가능 · CPU 경량 프로필 · 로컬 생성/학습 제외 · ${fallback} · ${probeCommon}`
                             : `검사 통과 · ${probeCommon}`);
                 }
                 comfyInstallerPreflightLoaded = true;
@@ -39325,7 +39722,9 @@
                     e2eCurrent = data.result.workflow_runtime.length;
                 }
             }
-            document.getElementById('comfy-installer-e2e').textContent = `${e2eCurrent} / ${e2eTotal}`;
+            const e2eSkipped = Number((data.result?.workflow_skipped || []).length);
+            document.getElementById('comfy-installer-e2e').textContent =
+                `${e2eCurrent} / ${e2eTotal}${e2eSkipped ? ` · CPU 대상 제외 ${e2eSkipped}개` : ''}`;
 
             if (data.error) comfyInstallerSetError(data.error);
             else if (state !== 'failed') comfyInstallerSetError('');
@@ -39379,7 +39778,7 @@
             if (e2eJustSucceeded) {
                 const passed = Number((data.result?.workflow_runtime || []).length);
                 const selected = Number((data.result?.selected_workflow_ids || []).length);
-                showToast(`선택 E2E 완료 · ${passed}/${selected}개 통과`, 'success');
+                showToast(`선택 E2E 완료 · ${passed}/${selected}개 통과${e2eSkipped ? ` · CPU 대상 제외 ${e2eSkipped}개` : ''}`, 'success');
             }
             if (compatibilityInstallJustSucceeded) {
                 const warning = data.result?.compatibility_warning ||
@@ -41991,6 +42390,19 @@
         // 기존 설정이 유실될 수 있습니다.
         let settingsFormPopulated = false;
 
+        function updateVideoEncodingDefaultControls() {
+            const gpuEnabled = document.getElementById('setting-video-avif-gpu-enabled');
+            const gpuPreset = document.getElementById('setting-video-avif-gpu-preset');
+            if (!gpuEnabled || !gpuPreset) {
+                console.error('[VIDEO_SETTINGS] AVIF GPU 인코딩 설정 컨트롤을 찾지 못했습니다.', {
+                    gpuEnabled: !!gpuEnabled,
+                    gpuPreset: !!gpuPreset,
+                });
+                return;
+            }
+            gpuPreset.disabled = !gpuEnabled.checked;
+        }
+
         // Modal을 열지 않고 저장하는 경우(예: Modal Runtime의 '설정 저장·적용')를 대비해,
         // 저장 전 반드시 Form을 현재 값으로 채우도록 처리합니다.
         async function populateSettingsForm() {
@@ -42013,6 +42425,9 @@
             document.getElementById('setting-video-engine-port').value = currentConfig.video_engine_port || 8093;
             document.getElementById('setting-video-engine-project-path').value = currentConfig.video_engine_project_path || '';
             document.getElementById('setting-video-engine-auto-start').checked = currentConfig.video_engine_auto_start === true;
+            const videoEngineSteps = document.getElementById('setting-video-engine-steps');
+            videoEngineSteps.value = String(currentConfig.video_engine_steps ?? 4);
+            videoEngineSteps.dataset.editableSteps = String(currentConfig.video_engine_steps ?? 4);
             videoEngineSetPendingProfile(currentConfig.video_engine_profile || '');
             const memoEnabled = currentConfig.memo_enabled !== false;
             document.getElementById('setting-memo-enabled').checked = memoEnabled;
@@ -42069,6 +42484,14 @@
             document.getElementById('backup-quality-value').textContent = currentConfig.backup_webp_quality || 80;
             document.getElementById('setting-backup-webp-lossless').checked = currentConfig.backup_webp_lossless || false;
             document.getElementById('setting-backup-webp-quality').disabled = currentConfig.backup_webp_lossless || false;
+            const videoEncodingDefaults = currentConfig.video_postprocess || {};
+            document.getElementById('setting-video-webp-compression-level').value =
+                String(videoEncodingDefaults.webp_compression_level ?? 4);
+            document.getElementById('setting-video-avif-gpu-enabled').checked =
+                videoEncodingDefaults.avif_gpu_enabled === true;
+            document.getElementById('setting-video-avif-gpu-preset').value =
+                videoEncodingDefaults.avif_gpu_preset || 'p4';
+            updateVideoEncodingDefaultControls();
 
             // 선택된 삽화 프로필의 로컬 워크플로우 경로를 베이스 경로/파일명으로 분리
             const illustrationPaths = currentConfig.illustration_workflow_source_paths || {};
@@ -43667,9 +44090,10 @@
             const modalWebGpu = document.getElementById('modal-runtime-web-gpu')?.value;
             const modalVramMode = document.getElementById('modal-runtime-vram-mode')?.value || 'highvram';
             const vastVramMode = document.getElementById('setting-vast-vram-mode')?.value || 'highvram';
-            let videoEnginePort;
+            let videoEnginePort, videoEngineSteps;
             try {
                 videoEnginePort = videoEnginePortValue();
+                videoEngineSteps = videoEngineStepsValue();
             } catch (error) {
                 showToast(error.message || String(error), 'error');
                 return false;
@@ -43693,6 +44117,7 @@
                 video_engine_project_path: videoEngineProjectPathValue(false),
                 video_engine_auto_start: document.getElementById('setting-video-engine-auto-start')?.checked === true,
                 video_engine_profile: videoEngineProfileValue(false),
+                video_engine_steps: videoEngineSteps,
                 comfyui_port_illustration: null,
                 comfy_launch_profiles: comfyRuntimeProfilesForSave(),
                 comfy_task_allocations: comfyAllocationsForSave(),
@@ -43728,18 +44153,31 @@
                         gpu_id: 'auto',
                         tile_size: 0,
                         worker_count: 1,
+                        webp_compression_level: 4,
+                        avif_gpu_enabled: false,
+                        avif_gpu_preset: 'p4',
+                    };
+                    const encodingDefaults = {
+                        webp_compression_level: Number.parseInt(
+                            document.getElementById('setting-video-webp-compression-level')?.value || '4',
+                            10,
+                        ),
+                        avif_gpu_enabled:
+                            document.getElementById('setting-video-avif-gpu-enabled')?.checked === true,
+                        avif_gpu_preset:
+                            document.getElementById('setting-video-avif-gpu-preset')?.value || 'p4',
                     };
                     // 영상 모달을 한 번이라도 열어 config와 동기화한 뒤에만 UI 선택값을 반영.
                     // 동기화 전(HTML 기본 라디오)에는 기존 config를 그대로 유지해 의도치 않은 덮어쓰기를 막는다.
-                    if (!videoPostprocessSynced) return { ...vpBase };
+                    if (!videoPostprocessSynced) return { ...vpBase, ...encodingDefaults };
                     const vpChecked = document.querySelector('input[name="video-upscale-model"]:checked');
-                    if (!vpChecked) return { ...vpBase };
+                    if (!vpChecked) return { ...vpBase, ...encodingDefaults };
                     const enabled = vpChecked.value !== 'none';
                     const model = enabled
                         ? vpChecked.value
                         : (vpBase.model || 'realesr-animevideov3');
                     const scale = Number(document.getElementById('video-generation-upscale-scale')?.value) || vpBase.scale || 2;
-                    return { ...vpBase, enabled, model, scale };
+                    return { ...vpBase, ...encodingDefaults, enabled, model, scale };
                 })(),
                 comfy_workflow_source_path: document.getElementById('setting-workflow-path').value || currentConfig.comfy_workflow_source_path || '',
                 illustration_workflow_type: normalizeIllustrationWorkflowType(document.getElementById('setting-illustration-workflow-type').value),
@@ -47225,6 +47663,7 @@
             { key: 'illustration_call2_fix',   label: '삽화 CALL2-FIX (TOON 교정)',    kind: '텍스트', modality: 'text', group: 'illustration_pipeline' },
             { key: 'illustration_call3',       label: '삽화 CALL3 (대사·애니 자막)',    kind: '텍스트', modality: 'text', group: 'illustration_pipeline' },
             { key: 'illustration_multi_char_mask', label: '삽화 다중 캐릭터 마스크',    kind: 'JSON', modality: 'text', group: 'illustration_pipeline', json: true },
+            { key: 'video_instruction_translate', label: '영상 연출 영어 번역', kind: '텍스트', modality: 'text', group: 'video_pipeline' },
             { key: 'video_prompt_i2v',        label: 'H3 I2V 연출·정적 분석', kind: '비전', modality: 'vision', group: 'video_pipeline' },
             { key: 'video_prompt_i2v_compose',        label: 'H3 I2V 프롬프트 작성', kind: '텍스트', modality: 'text', group: 'video_pipeline' },
             { key: 'video_prompt_first_last', label: 'H3 FLF2V 연출·정적 분석', kind: '다중 비전', modality: 'vision', group: 'video_pipeline' },
@@ -59927,6 +60366,50 @@
 
         const WORKSPACE_CHROME_SESSION_KEY = 'workspaceChromeCollapsed';
 
+        function toggleHeaderControlsDock(event) {
+            if (event) event.stopPropagation();
+
+            const dock = document.getElementById('header-controls-dock');
+            const handle = document.getElementById('header-controls-handle');
+            if (!dock || !handle) {
+                console.error('[HEADER_CONTROLS] 상단 도구 메뉴 또는 화살표 손잡이를 찾지 못했습니다.', {
+                    dockFound: Boolean(dock),
+                    handleFound: Boolean(handle),
+                });
+                return;
+            }
+
+            const willPin = !dock.classList.contains('is-pinned');
+            dock.classList.toggle('is-pinned', willPin);
+            dock.classList.toggle('is-hover-suppressed', !willPin);
+
+            const actionLabel = willPin ? '상단 도구 메뉴 닫기' : '상단 도구 메뉴 열기';
+            handle.setAttribute('aria-expanded', String(willPin));
+            handle.setAttribute('aria-label', actionLabel);
+            handle.title = actionLabel;
+        }
+
+        function releaseHeaderControlsHoverSuppression() {
+            const dock = document.getElementById('header-controls-dock');
+            if (!dock) {
+                console.error('[HEADER_CONTROLS] 호버 억제를 해제할 상단 도구 메뉴를 찾지 못했습니다.');
+                return;
+            }
+            dock.classList.remove('is-hover-suppressed');
+        }
+
+        const headerControlsDock = document.getElementById('header-controls-dock');
+        if (headerControlsDock) {
+            headerControlsDock.addEventListener('pointerleave', releaseHeaderControlsHoverSuppression);
+            headerControlsDock.addEventListener('focusout', (event) => {
+                if (!headerControlsDock.contains(event.relatedTarget)) {
+                    releaseHeaderControlsHoverSuppression();
+                }
+            });
+        } else {
+            console.error('[HEADER_CONTROLS] 이벤트를 연결할 상단 도구 메뉴를 찾지 못했습니다.');
+        }
+
         function setWorkspaceChromeCollapsed(collapsed, persist = true) {
             const isCollapsed = Boolean(collapsed);
             document.body.classList.toggle('workspace-chrome-collapsed', isCollapsed);
@@ -68098,7 +68581,7 @@
                     data: {
                         name: charName,
                         default_visual_profile_id: 'card_1',
-                        profiles: [{id:'card_1', label:'카드 1', selection_guide:'', aliases:[], appearance:[], default_outfit:[], render_overrides:{}}]
+                        profiles: [{id:'card_1', label:'카드 1', selection_guide:'', aliases:[], appearance:[], default_outfit:[], skip_lb_extra_batch_refine:false, render_overrides:{}}]
                     }
                 };
                 console.error('[VISUAL_CARD] 임시 기본 카드 사용', root.name);
@@ -68191,6 +68674,7 @@
                 aliases: [],
                 appearance: [],
                 default_outfit: [],
+                skip_lb_extra_batch_refine: false,
                 render_overrides: {
                     absolute_tags: '',
                     character_negative: '',
@@ -70397,6 +70881,44 @@
             await openVisualCardLbExtraEditor(charName);
         }
 
+        async function _setLbExtraBatchRefineSkipped(charName, profileIndex, checkbox) {
+            const state = _visualCardState(charName);
+            const profiles = state?.data?.profiles || [];
+            if (!Number.isInteger(profileIndex) || profileIndex < 0 || profileIndex >= profiles.length) {
+                console.error('[LB_EXTRA:TREE] 일괄 정제 스킵을 변경할 프로필을 찾지 못했습니다', {
+                    charName, profileIndex, profileCount: profiles.length
+                });
+                if (checkbox) checkbox.checked = !checkbox.checked;
+                showToast('일괄 정제 스킵을 변경할 프로필을 찾지 못했습니다.', 'error');
+                return;
+            }
+
+            const profile = profiles[profileIndex];
+            const profileId = String(profile.id || '');
+            const previous = profile.skip_lb_extra_batch_refine === true;
+            const next = checkbox ? checkbox.checked === true : !previous;
+            if (previous === next) return;
+
+            profile.skip_lb_extra_batch_refine = next;
+            if (checkbox) checkbox.disabled = true;
+            try {
+                await _saveVisualCardState(charName, {quiet:true});
+                _renderLbExtraContent();
+                showToast(`일괄 정제 스킵 ${next ? '설정' : '해제'} 완료`, 'success');
+            } catch (error) {
+                const rollbackProfile = (state.data?.profiles || []).find(item => String(item.id || '') === profileId);
+                if (rollbackProfile) rollbackProfile.skip_lb_extra_batch_refine = previous;
+                if (checkbox) {
+                    checkbox.checked = previous;
+                    checkbox.disabled = false;
+                }
+                console.error('[LB_EXTRA:TREE] 일괄 정제 스킵 저장 실패', {
+                    charName, profileId, next
+                }, error);
+                showToast('일괄 정제 스킵 저장 실패: ' + error.message, 'error');
+            }
+        }
+
         function _lbExtraTransferEditorHtml(char, ci) {
             return `
                 ${char.promptMissing ? '<div style="background:rgba(245,158,11,0.12); border:1px solid rgba(245,158,11,0.35); border-radius:4px; padding:6px 10px; margin-bottom:8px; font-size:0.75rem; color:#B45309;">⚠ 대표 이미지의 프롬프트 파일이 없어 자동 분류를 하지 못했습니다. 편집본에 태그를 직접 입력하세요.</div>' : ''}
@@ -70487,6 +71009,7 @@
                     const genderTag = String(profile.render_overrides?.gender_tag || _getCharGenderTag(char.name) || '');
                     const aliases = Array.isArray(profile.aliases) ? profile.aliases.filter(Boolean) : [];
                     const guide = String(profile.selection_guide || '').trim();
+                    const skipsBatchRefine = profile.skip_lb_extra_batch_refine === true;
 
                     const childNodes = [{
                         key: `${profileKey}:appearance`,
@@ -70546,6 +71069,10 @@
                                 <div style="display:flex; align-items:center; gap:5px; flex-wrap:wrap;">
                                     <span style="font-weight:750; font-size:0.8rem;">프로필 [${pi + 1}] ${escHtml(profileLabel)}</span>
                                     ${isDefaultProfile ? _lbExtraTreeBadge('기본 프로필') : ''}
+                                    <label title="이 카드를 프로필 카드 일괄 정제 대상에서 제외합니다." onclick="event.stopPropagation();" style="margin-left:auto; display:inline-flex; align-items:center; gap:4px; padding:2px 6px; border:1px solid ${skipsBatchRefine ? 'rgba(245,158,11,0.55)' : 'var(--border)'}; border-radius:999px; background:${skipsBatchRefine ? 'rgba(245,158,11,0.13)' : 'var(--surface)'}; color:${skipsBatchRefine ? '#B45309' : 'var(--text2)'}; font-size:0.62rem; font-weight:650; cursor:pointer; user-select:none; white-space:nowrap;">
+                                        <input type="checkbox" ${skipsBatchRefine ? 'checked' : ''} onchange="event.stopPropagation(); _setLbExtraBatchRefineSkipped('${escAttr(char.name)}', ${pi}, this)" style="width:13px; height:13px; margin:0; cursor:pointer;">
+                                        <span>일괄 정제 스킵</span>
+                                    </label>
                                 </div>
                                 <code style="display:block; font-size:0.64rem; color:var(--text2); margin-top:3px;">${escHtml(profileId)}</code>
                                 ${guide ? `<div title="${escAttr(guide)}" style="font-size:0.69rem; color:var(--text2); line-height:1.35; margin-top:6px; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;">${escHtml(guide)}</div>` : ''}
@@ -71299,6 +71826,14 @@
                 }
                 const portableProfileId = String(cardData.default_visual_profile_id || profiles[0]?.id || '');
                 profiles.forEach((profile, profileIndex) => {
+                    if (profile.skip_lb_extra_batch_refine === true) {
+                        console.info('[LB_EXTRA_BATCH] 카드에 일괄 정제 스킵이 설정되어 대상에서 제외', {
+                            character: flat.name,
+                            visualCardId: String(profile.id || ''),
+                            visualCardIndex: profileIndex + 1,
+                        });
+                        return;
+                    }
                     const defaultOutfit = Array.isArray(profile.default_outfit) ? profile.default_outfit : [];
                     const resolved = _visualCardResolvedById(flat.name, profile.id);
                     const repImages = resolved?.rep_images || [];

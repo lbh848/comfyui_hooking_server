@@ -1,4 +1,4 @@
-"""In-memory illustration execution graph. Tracking never changes scheduling."""
+"""In-memory illustration, video-render, and video-input execution graphs."""
 import asyncio
 import contextvars
 import copy
@@ -14,9 +14,24 @@ _node = contextvars.ContextVar("illustration_flow_node", default=None)
 _branches = contextvars.ContextVar("illustration_flow_branches", default=None)
 _reserved = contextvars.ContextVar("illustration_flow_reserved", default=None)
 _latest = None
+_latest_video = None
+_latest_video_input = None
 _notify = None
 ROOT_TYPES = {"illustration", "illustration_llm_build", "illustration_easy_edit", "character_maker_illustration"}
 BACKGROUND_LLM_TYPES = {"illustration_quality_inspection"}
+VIDEO_INPUT_TYPES = {
+    "video_instruction_draft", "video_instruction_refine", "video_instruction_direct",
+}
+VIDEO_TYPES = {
+    "video_prompt_build", "video_i2v", "video_first_last", "video_ref2v", "video_postprocess",
+}
+VIDEO_RENDER_TYPES = {"video_i2v", "video_first_last", "video_ref2v"}
+VIDEO_INPUT_EVENT_LABELS = {
+    "session_start": "영상 입력 시작",
+    "restore_original": "원문으로 되돌리기",
+    "apply_direction": "방향 수정안 적용",
+    "discard_direction": "방향 수정안 폐기",
+}
 TERMINAL = {"completed", "failed", "cancelled", "skipped"}
 
 
@@ -25,19 +40,25 @@ def configure(notify):
     _notify = notify
 
 
-def snapshot(run=None):
-    run = run or _latest
+def snapshot(run=None, *, kind="illustration"):
+    latest_by_kind = {
+        "illustration": _latest,
+        "video": _latest_video,
+        "video_input": _latest_video_input,
+    }
+    run = run if run is not None else latest_by_kind.get(kind)
     if run is None:
         return None
-    return {key: copy.deepcopy(value) for key, value in run.items() if key not in {"nodes", "publish_pending", "_active_llm_tasks"}} | {
+    return {key: copy.deepcopy(value) for key, value in run.items() if key not in {"nodes", "publish_pending", "_active_llm_tasks", "_frontier"}} | {
         "nodes": [{k: copy.deepcopy(v) for k, v in node.items()
                    if k not in {"input", "output", "attempts"}} for node in run["nodes"].values()]
     }
 
 
 def detail(run_id, node_id):
-    if _latest is not None and _latest["id"] == run_id:
-        return copy.deepcopy(_latest["nodes"].get(node_id))
+    for run in (_latest, _latest_video, _latest_video_input):
+        if run is not None and run["id"] == run_id:
+            return copy.deepcopy(run["nodes"].get(node_id))
     print(f"[ILLUST_FLOW] 상세 정보 없음: run={run_id}, node={node_id}")
     return None
 
@@ -106,7 +127,8 @@ def unregister_active_llm_task(registration):
 def changed(run):
     run["revision"] += 1
     run["updated_at"] = time.time()
-    if run is _latest and _notify is not None:
+    latest_runs = (_latest, _latest_video, _latest_video_input)
+    if any(run is latest for latest in latest_runs) and _notify is not None:
         # Coalesce a burst of state changes without streaming full prompts.
         if not run.get("publish_pending"):
             run["publish_pending"] = True
@@ -114,8 +136,12 @@ def changed(run):
                 try:
                     await asyncio.sleep(0.05)
                     run["publish_pending"] = False
-                    if run is _latest:
-                        await _notify("illustration_flow", snapshot(run))
+                    if any(run is latest for latest in (_latest, _latest_video, _latest_video_input)):
+                        event_type = {
+                            "video": "video_flow",
+                            "video_input": "video_input_flow",
+                        }.get(run.get("kind"), "illustration_flow")
+                        await _notify(event_type, snapshot(run))
                 except Exception as exc:
                     run["publish_pending"] = False
                     print(f"[ILLUST_FLOW] 알림 실패: run={run['id']}, error={exc}")
@@ -142,6 +168,72 @@ def update(run, node_id, **fields):
         fields["ended_at"] = time.time()
     node.update(fields)
     changed(run)
+
+
+def record_video_input_event(session_id, action, *, input=None, output=None):
+    """Append a human choice to one video-input editing session."""
+    global _latest_video_input
+    normalized_session = str(session_id or "").strip()
+    normalized_action = str(action or "").strip()
+    if not normalized_session:
+        print(
+            f"[VIDEO_INPUT_FLOW] 사람 조작 기록 실패: session_id={session_id!r}, "
+            f"action={normalized_action!r}, input={serializable(input)}"
+        )
+        return None
+    label = VIDEO_INPUT_EVENT_LABELS.get(normalized_action)
+    if label is None:
+        print(
+            f"[VIDEO_INPUT_FLOW] 지원하지 않는 사람 조작: session={normalized_session}, "
+            f"action={normalized_action!r}, input={serializable(input)}"
+        )
+        return None
+    run = _latest_video_input
+    if normalized_action == "session_start":
+        if run is None or run.get("session_id") != normalized_session:
+            now = time.time()
+            run = {
+                "id": uuid.uuid4().hex,
+                "kind": "video_input",
+                "session_id": normalized_session,
+                "label": "영상 입력 개선",
+                "status": "completed",
+                "cancel_requested": False,
+                "created_at": now,
+                "updated_at": now,
+                "revision": 0,
+                "nodes": {},
+                "_frontier": [],
+                "_active_llm_tasks": set(),
+            }
+            _latest_video_input = run
+        elif run["nodes"]:
+            return snapshot(run)
+    elif run is None or run.get("session_id") != normalized_session:
+        print(
+            f"[VIDEO_INPUT_FLOW] 현재 세션과 다른 사람 조작 생략: "
+            f"session={normalized_session}, latest={run.get('session_id') if run else None}, "
+            f"action={normalized_action}, input={serializable(input)}"
+        )
+        return None
+    now = time.time()
+    node_id = add_node(
+        run,
+        label,
+        dependencies=run.get("_frontier") or (),
+        kind="human",
+        task_key=f"video_input_{normalized_action}",
+        executor="human",
+        status="completed",
+        started_at=now,
+        ended_at=now,
+        input=serializable(input),
+        output=serializable(output),
+    )
+    run["_frontier"] = [node_id]
+    run["status"] = "completed"
+    changed(run)
+    return snapshot(run)
 
 
 def serializable(value):
@@ -238,8 +330,68 @@ def stage(label, *, executor="process", layout_group=None):
 
 
 def queue_added(item):
-    global _latest
+    global _latest, _latest_video, _latest_video_input
     run = _run.get()
+    if item.type in VIDEO_INPUT_TYPES:
+        session_id = str((item.params or {}).get("video_input_session_id") or item.id).strip()
+        nested = run is not None and run.get("kind") == "video_input"
+        if not nested:
+            if _latest_video_input is not None and _latest_video_input.get("session_id") == session_id:
+                run = _latest_video_input
+            else:
+                now = time.time()
+                run = {
+                    "id": uuid.uuid4().hex,
+                    "kind": "video_input",
+                    "session_id": session_id,
+                    "label": "영상 입력 개선",
+                    "status": "waiting",
+                    "cancel_requested": False,
+                    "created_at": now,
+                    "updated_at": now,
+                    "revision": 0,
+                    "nodes": {},
+                    "_frontier": [],
+                    "_active_llm_tasks": set(),
+                }
+                _latest_video_input = run
+        operation_root = not nested
+        dependencies = _frontier.get() if nested else tuple(run.get("_frontier") or ())
+        is_first_node = not run["nodes"]
+        node_id = add_node(
+            run,
+            item.label,
+            dependencies=dependencies,
+            node_id=item.id,
+            kind="request" if is_first_node else "input_action",
+            task_key=item.type,
+            executor="process",
+            input=serializable(item.params),
+        )
+        if operation_root:
+            run["status"] = "waiting"
+            changed(run)
+        item._illustration_flow = (run, node_id, operation_root)
+        return
+    if item.type in VIDEO_TYPES:
+        # A video request can be submitted while an illustration is executing.
+        # Only video queue handoffs share the originating video graph.
+        if run is None or run.get("kind") != "video":
+            run = {"id": uuid.uuid4().hex, "kind": "video", "label": item.label,
+                   "status": "waiting", "cancel_requested": False, "created_at": time.time(),
+                   "updated_at": time.time(), "revision": 0, "nodes": {}, "_active_llm_tasks": set()}
+            _latest_video = run
+        is_root = not run["nodes"]
+        node_id = add_node(
+            run, item.label, dependencies=() if is_root else _frontier.get(),
+            node_id=item.id, kind="request" if is_root else "video", task_key=item.type,
+            executor="comfy" if item.type in VIDEO_RENDER_TYPES else "process",
+            input=serializable(item.params),
+        )
+        item._illustration_flow = (run, node_id, is_root)
+        return
+    if run is not None and run.get("kind") in {"video", "video_input"}:
+        run = None
     if run is None and item.type not in ROOT_TYPES:
         return
     # Reviews belong to the originating flow, but cannot start a new image flow.
@@ -247,7 +399,7 @@ def queue_added(item):
         return
     is_root = run is None
     if is_root:
-        run = {"id": uuid.uuid4().hex, "label": item.label, "status": "waiting",
+        run = {"id": uuid.uuid4().hex, "kind": "illustration", "label": item.label, "status": "waiting",
                "cancel_requested": False, "created_at": time.time(),
                "updated_at": time.time(), "revision": 0, "nodes": {},
                "_active_llm_tasks": set()}
@@ -287,6 +439,34 @@ def queue_added(item):
         )
 
 
+def finish_video(run):
+    """The prompt job finishing is a handoff, not completion of the video."""
+    jobs = [n for n in run["nodes"].values() if n.get("kind") in {"request", "video"}]
+    if any(n["status"] not in TERMINAL for n in jobs):
+        return
+    status = "failed" if any(n["status"] == "failed" for n in jobs) else (
+        "cancelled" if any(n["status"] == "cancelled" for n in jobs) else "completed"
+    )
+    if run["status"] in TERMINAL:
+        return
+    if status == "completed":
+        depended = {d for n in run["nodes"].values() for d in n["dependencies"]}
+        leaves = [n for n in run["nodes"] if n not in depended]
+        add_node(run, "결과 반환", dependencies=leaves, status=status,
+                 ended_at=time.time(), kind="result", executor="process",
+                 output=jobs[-1].get("output", ""))
+    run["status"] = status
+    changed(run)
+
+
+def queue_progress(item):
+    binding = getattr(item, "_illustration_flow", None)
+    if binding and binding[0].get("kind") in {"video", "video_input"}:
+        run, node_id, _ = binding
+        update(run, node_id, progress=item.progress, summary=f"진행률 {item.progress:g}%",
+               progress_detail=serializable(item.progress_detail))
+
+
 def queue_sync(items):
     for item in items:
         binding = getattr(item, "_illustration_flow", None)
@@ -307,7 +487,15 @@ def queue_sync(items):
                     f"error={reason}, input={serializable(node.get('input'))}"
                 )
             update(run, node_id, **fields)
-        if root and status == "cancelled" and run["status"] not in TERMINAL:
+        if run.get("kind") == "video":
+            finish_video(run)
+        elif run.get("kind") == "video_input" and root and status in TERMINAL:
+            run["_frontier"] = list(
+                getattr(item, "_illustration_flow_ends", ()) or (node_id,)
+            )
+            run["status"] = status
+            changed(run)
+        elif root and status == "cancelled" and run["status"] not in TERMINAL:
             run["status"] = status
             changed(run)
 
@@ -330,6 +518,8 @@ def queue_execution(fn):
         tokens = (_run.set(run), _frontier.set((node_id,)), _node.set(node_id if is_review else None), _reserved.set(None), _branches.set(None))
         provider = str((item.params or {}).get("provider") or "comfy").strip().lower()
         executor = "llm" if is_review else ("process" if root else ("comfy" if provider == "comfy" else "process"))
+        if run.get("kind") == "video":
+            executor = "comfy" if item.type in VIDEO_RENDER_TYPES else "process"
         update(run, node_id, status="processing", summary="큐에서 실행 시작", executor=executor)
         if root:
             run["status"] = "processing"
@@ -347,7 +537,13 @@ def queue_execution(fn):
                        if cancelled
                        else str(result.get("error") or "작업 실패") if failed else ""
                    ))
-            if root:
+            if run.get("kind") == "video":
+                finish_video(run)
+            elif run.get("kind") == "video_input" and root:
+                run["_frontier"] = list(_frontier.get())
+                run["status"] = status
+                changed(run)
+            elif root:
                 # Images are delivered independently of the background review.
                 delivery_nodes = {
                     key: value for key, value in run["nodes"].items()
@@ -370,7 +566,13 @@ def queue_execution(fn):
             traceback.print_exc()
             update(run, node_id, status=status, error=reason,
                    output=_failure_output(run["nodes"][node_id], reason))
-            if root:
+            if run.get("kind") == "video":
+                finish_video(run)
+            elif run.get("kind") == "video_input" and root:
+                run["_frontier"] = list(_frontier.get())
+                run["status"] = status
+                changed(run)
+            elif root:
                 run["status"] = status
                 changed(run)
             raise

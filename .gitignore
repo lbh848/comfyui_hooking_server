@@ -25,6 +25,8 @@ current_mode_workflow/
 auto_complete/
 CLAUDE.md
 AGENTS.md
+# 에이전트 스킬 정의 (로컬 전용)
+.agents/
 
 # Key files (보안상 git에 포함하지 않음)
 key/

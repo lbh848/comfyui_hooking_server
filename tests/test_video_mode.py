@@ -234,6 +234,132 @@ def test_video_postprocess_global_defaults_include_batch_export_controls() -> No
     assert normalized["output_format"] == "webp"
     assert normalized["enabled"] is False
     assert normalized["scale"] == 3
+    assert normalized["webp_compression_level"] == 4
+    assert normalized["avif_gpu_enabled"] is False
+    assert normalized["avif_gpu_preset"] == "p4"
+
+
+def test_video_postprocess_normalizes_format_specific_encoder_defaults() -> None:
+    normalized = postprocess_module.normalize_video_postprocess_config(
+        {
+            "webp_compression_level": "1",
+            "avif_gpu_enabled": True,
+            "avif_gpu_preset": "P6",
+        }
+    )
+
+    assert normalized["webp_compression_level"] == 1
+    assert normalized["avif_gpu_enabled"] is True
+    assert normalized["avif_gpu_preset"] == "p6"
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("webp_compression_level", -1),
+        ("webp_compression_level", 7),
+        ("webp_compression_level", 1.5),
+        ("webp_compression_level", True),
+        ("avif_gpu_enabled", "true"),
+        ("avif_gpu_preset", "p8"),
+    ],
+)
+def test_video_postprocess_rejects_invalid_encoder_defaults(
+    field: str,
+    value: object,
+) -> None:
+    with pytest.raises(ValueError):
+        postprocess_module.normalize_video_postprocess_config({field: value})
+
+
+def test_video_encode_command_applies_format_specific_encoder_settings() -> None:
+    webp = postprocess_module._encode_command(
+        "ffmpeg",
+        Path("frames/frame_%08d.png"),
+        Path("output.webp"),
+        fps=24,
+        frame_count=120,
+        quality=80,
+        output_format="WEBP",
+        webp_compression_level=1,
+    )
+    assert webp[webp.index("-c:v") + 1] == "libwebp_anim"
+    assert webp[webp.index("-compression_level") + 1] == "1"
+
+    gpu_avif = postprocess_module._encode_command(
+        "ffmpeg",
+        Path("frames/frame_%08d.png"),
+        Path("output.avif"),
+        fps=24,
+        frame_count=120,
+        quality=80,
+        output_format="AVIF",
+        avif_gpu=True,
+        avif_gpu_preset="p6",
+        gpu_id=1,
+    )
+    assert gpu_avif[gpu_avif.index("-c:v") + 1] == "av1_nvenc"
+    assert gpu_avif[gpu_avif.index("-preset") + 1] == "p6"
+    assert gpu_avif[gpu_avif.index("-gpu") + 1] == "1"
+    assert gpu_avif[gpu_avif.index("-cq") + 1] == "16"
+    assert "-level" not in gpu_avif
+
+    cpu_avif = postprocess_module._encode_command(
+        "ffmpeg",
+        Path("frames/frame_%08d.png"),
+        Path("output.avif"),
+        fps=24,
+        frame_count=120,
+        quality=80,
+        output_format="AVIF",
+    )
+    assert cpu_avif[cpu_avif.index("-c:v") + 1] == "libaom-av1"
+
+
+@pytest.mark.asyncio
+async def test_avif_gpu_encode_failure_retries_cpu_avif(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    frames_dir = tmp_path / "frames"
+    frames_dir.mkdir()
+    encoders: list[str] = []
+
+    async def fake_ensure_ffmpeg() -> Path:
+        return tmp_path / "ffmpeg.exe"
+
+    async def fake_command(command, *, label, cwd=None):
+        encoder = command[command.index("-c:v") + 1]
+        encoders.append(encoder)
+        if encoder == "av1_nvenc":
+            raise RuntimeError("NVENC unavailable")
+        Path(command[-1]).write_bytes(b"animated-avif")
+        return ""
+
+    monkeypatch.setattr(postprocess_module, "ensure_ffmpeg", fake_ensure_ffmpeg)
+    monkeypatch.setattr(postprocess_module, "_run_command", fake_command)
+    monkeypatch.setattr(postprocess_module, "_verify_animation", lambda *args: None)
+
+    main_path, raw_path, extension = await postprocess_module._encode_pair(
+        frames_dir,
+        tmp_path,
+        fps=24,
+        frame_count=2,
+        quality=80,
+        overlay_path=None,
+        canvas_height=16,
+        progress_callback=None,
+        output_format="avif",
+        avif_gpu_enabled=True,
+        avif_gpu_preset="p4",
+    )
+
+    assert encoders == ["av1_nvenc", "libaom-av1"]
+    assert extension == ".avif"
+    assert main_path.read_bytes() == b"animated-avif"
+    assert raw_path.read_bytes() == b"animated-avif"
+    assert "AVIF_GPU 저장 실패, 다음 형식 시도" in capsys.readouterr().out
 
 
 def _valid_body(prefix: str = "") -> str:
@@ -1179,6 +1305,149 @@ def test_instruction_anime_prompt_uses_pose_to_pose_timing_contract() -> None:
     assert "Japanese-animation timing, pose, composition, and performance" in task_message
 
 
+@pytest.mark.parametrize(
+    "duration,user_direction",
+    [
+        (10, "두 캐릭터가 서로 격렬하게 전투함"),
+        (10, "가람과 유진이 서로 밀어낸 뒤 다시 달려들어 충돌한다"),
+        (5, "히요리는 도시락을 한입 먹고 잠시 머뭇거리다 작게 미소 짓는다"),
+        (15, "히요리는 상대를 바라보다 믿기 어렵다는 듯 말을 마치고 조용히 시선을 내린다"),
+    ],
+)
+def test_instruction_anime_v3_2_uses_semantic_duration_adaptive_planning(
+    duration: int,
+    user_direction: str,
+) -> None:
+    messages = VideoMode._instruction_direct_messages(
+        "i2v",
+        "ko",
+        duration=duration,
+        user_input=user_direction,
+        allow_camera_motion=True,
+        allow_background_change=False,
+        refine_version="v3_2",
+    )
+    system_message = str(messages[0]["content"])
+    task_message = str(messages[1]["content"])
+
+    assert system_message == video_module.ANIME_V3_2_DIRECTION_SYSTEM_PROMPT
+    assert "first-frame anchor, action onset, continuous development, and result or reaction" in system_message
+    assert "Never use a universal maximum" in system_message
+    assert "seconds-per-beat formula" in system_message
+    assert "combined load of subject count" in system_message
+    assert "perceptual observability floor" in system_message
+    assert "without pausing or reading the prompt" in system_message
+    assert "Use duration as time for readable development, not as empty delay" in system_message
+    assert "reserve plausible delivery time plus its necessary lead-in and reaction" in system_message
+    assert "smallest self-contained visible example" in system_message
+    assert "A locked or continuous shot cannot also contain an inserted close-up" in system_message
+    assert "never classify the scene or choose motion by keyword matching" in system_message
+    assert "no more than three materially different visible states" not in system_message
+    assert "Selected directing profile: V3_2 Japanese animation style 2" in task_message
+    assert "Mandatory V3_2 execution check" in task_message
+    assert "Every required beat must be plainly noticeable at normal playback" in task_message
+    assert "Start from the picture's visible object, contact, mouth, gaze, and pose state" in task_message
+    assert "Match acting scale to shot scale" in task_message
+    assert "Preserve exact user-requested waits, repetitions, dialogue, and endpoints" in task_message
+    assert "Copy quoted or contextual dialogue verbatim without translation" in task_message
+    assert f"{duration:.2f} seconds" in task_message
+    assert user_direction in task_message
+
+
+@pytest.mark.parametrize(
+    "user_direction",
+    [
+        "처음 4초는 완전히 멈춰 기다린 뒤 고개를 들고 정확한 대사를 말한다",
+        "두 검사가 명시적으로 세 번 공방을 주고받고 세 번째 충돌 뒤 서로 물러난다",
+    ],
+)
+def test_instruction_anime_v3_2_preserves_explicit_wait_or_repetition(
+    user_direction: str,
+) -> None:
+    messages = VideoMode._instruction_direct_messages(
+        "i2v",
+        "ko",
+        duration=15,
+        user_input=user_direction,
+        allow_camera_motion=False,
+        allow_background_change=False,
+        refine_version="v3_2",
+    )
+    system_message = str(messages[0]["content"])
+    task_message = str(messages[1]["content"])
+
+    assert "Unless the user explicitly requests waiting or stillness" in system_message
+    assert "Preserve every action, repetition, line, timing constraint" in system_message
+    assert user_direction in task_message
+
+
+@pytest.mark.parametrize(
+    "mode,picture_count,duration",
+    [("i2v", 1, 5), ("first_last", 2, 10), ("ref2v", 3, 15)],
+)
+def test_final_h3_prompt_v3_2_keeps_duration_adaptive_anime_contract(
+    mode: str,
+    picture_count: int,
+    duration: int,
+) -> None:
+    messages = VideoMode._prompt_messages(
+        mode,
+        "사용자가 명시한 사건의 순서와 결말을 그대로 연출한다.",
+        visual_context="visual_context:\nPicture 1: A hand-drawn anime scene.",
+        secondary_motion=True,
+        duration=duration,
+        picture_count=picture_count,
+        refine_version="v3_2",
+    )
+    system_message = str(messages[0]["content"])
+    task_message = str(messages[1]["content"])
+
+    assert "Selected Japanese-animation V3_2 generation contract" in system_message
+    assert "V3_2 duration-adaptive planning rule" in system_message
+    assert "never impose a universal state maximum" in system_message
+    assert "A short quiet shot may use one small acting change" in system_message
+    assert "A longer or more active shot may use more states" in system_message
+    assert "normal-playback observability floor" in system_message
+    assert "spend surplus duration on its visible causal path" in system_message
+    assert "reserve plausible delivery time" in system_message
+    assert "smallest self-contained example" in system_message
+    assert "never include one inside a locked or continuous shot" in system_message
+    assert "automatically add restrained, low-amplitude secondary character motion" not in system_message
+    assert "Unless complete stillness is requested, add restrained breathing" not in system_message
+    assert "no more than three materially different visible states" not in system_message
+    assert "Selected directing profile:\nV3_2 Japanese animation style 2" in task_message
+    assert "Mandatory final V3_2 rewrite" in task_message
+    assert "discard invented micro-acting, generic idle motion, repeated exchanges" in task_message
+    assert "never claim at frame zero that a requested action has already completed" in task_message
+    assert "In a medium or wide shot, make head direction, hand or prop action" in task_message
+    assert "never translate or rewrite dialogue" in task_message
+    assert "Do not express essential acting in millimeters" in task_message
+
+
+def test_instruction_dasiwa_prompt_uses_compact_generation_contract() -> None:
+    messages = VideoMode._instruction_direct_messages(
+        "i2v",
+        "ko",
+        duration=8,
+        user_input="성인 여성이 검을 뽑아 화면을 가르고 마지막 자세를 유지한다",
+        allow_camera_motion=True,
+        allow_background_change=False,
+        refine_version="v4",
+    )
+    system_message = str(messages[0]["content"])
+    task_message = str(messages[1]["content"])
+
+    assert system_message == video_module.DASIWA_DIRECTION_SYSTEM_PROMPT
+    assert "compact, editable DaSiWa-style generation draft" in system_message
+    assert "not a six-section planning report" in system_message
+    assert "subject_definitions" in system_message
+    assert "the final prompt writer owns that protocol" in system_message
+    assert "Return six natural-language sections" not in system_message
+    assert "Selected directing profile: V4 DaSiWa prompt" in task_message
+    assert "Add compact DaSiWa-style generation detail" in task_message
+    assert "the last timestamp must end at exactly 8.00 seconds" in task_message
+
+
 @pytest.mark.parametrize("mode,picture_count", [("i2v", 1), ("first_last", 2), ("ref2v", 2)])
 def test_final_h3_prompt_keeps_japanese_animation_profile(
     mode: str,
@@ -1213,6 +1482,47 @@ def test_final_h3_prompt_keeps_japanese_animation_profile(
     assert "Selected directing profile:\nV3 Japanese animation" in anime_task
     assert "Do not smooth this profile back" in anime_task
     assert "Selected Japanese-animation generation contract" not in cinematic_system
+
+
+@pytest.mark.parametrize("mode,picture_count", [("i2v", 1), ("first_last", 2), ("ref2v", 3)])
+def test_final_h3_prompt_uses_dedicated_dasiwa_contract(
+    mode: str,
+    picture_count: int,
+) -> None:
+    messages = VideoMode._prompt_messages(
+        mode,
+        "성인 여성이 소품을 들어 보인 뒤 내려놓는다.",
+        visual_context=(
+            "visual_context:\n"
+            "Picture 1: An adult woman holds a small prop.\n"
+            "Picture 2: A studio interior.\n"
+            "Picture 3: A painted color style."
+        ),
+        secondary_motion=True,
+        duration=8,
+        picture_count=picture_count,
+        refine_version="v4",
+    )
+    system_message = str(messages[0]["content"])
+    task_message = str(messages[1]["content"])
+
+    assert "Selected directing profile:\nV4 DaSiWa prompt" in task_message
+    assert "continuity audit" in task_message
+    assert "do not expand it into" in task_message
+    assert "Final protocol audit" not in task_message
+    if mode == "ref2v":
+        assert "MiniMax H3 Reference-to-Video prompts in the DaSiWa prompt style" in system_message
+        assert "Use exactly these six headings once and in this order" in system_message
+        assert "The target duration is exactly 8 seconds" in system_message
+        assert "<Picture 3>" in system_message
+        assert "continuous state ledger" not in system_message
+    else:
+        assert "compact, production-ready MiniMax H3 prompts in the DaSiWa prompt style" in system_message
+        assert "Use exactly these three fields in this order" in system_message
+        assert "target 8-second duration" in system_message
+        assert "subject_definitions:" not in system_message
+        assert "one compact paragraph per shot" in system_message
+        assert "Before enriching the description" not in system_message
 
 
 def test_instruction_direct_prompt_passes_first_last_mode_contracts() -> None:
@@ -1966,14 +2276,20 @@ def test_video_instruction_translation_request_is_plain_prose_without_model_name
 
 
 @pytest.mark.asyncio
-async def test_i2v_instruction_translation_runs_with_visual_context_then_feeds_writer(
+@pytest.mark.parametrize("mode_name", ["i2v", "first_last", "ref2v"])
+async def test_instruction_translation_uses_dedicated_route_for_every_video_mode(
     tmp_path: Path,
     monkeypatch,
+    mode_name: str,
 ) -> None:
     raw_dir = tmp_path / "_raw"
     raw_dir.mkdir()
     Image.new("RGB", (512, 512), "green").save(
         raw_dir / "source.webp",
+        format="WEBP",
+    )
+    Image.new("RGB", (512, 512), "blue").save(
+        raw_dir / "last.webp",
         format="WEBP",
     )
     source_instruction = "인물이 오른손으로 문을 한 번 열고 밖으로 나간다."
@@ -1991,22 +2307,123 @@ async def test_i2v_instruction_translation_runs_with_visual_context_then_feeds_w
         calls.append("vision")
         visual_started.set()
         await asyncio.wait_for(translation_started.wait(), timeout=1)
-        assert task_key == "video_prompt_i2v"
+        assert task_key == f"video_prompt_{mode_name}"
         return visual_context
 
     async def fake_text_call(task_key, messages, **kwargs):
         combined = "\n".join(str(message["content"]) for message in messages)
-        assert task_key == "video_prompt_i2v_compose"
         if "faithful English translation stage" in combined:
+            assert task_key == video_module.VIDEO_INSTRUCTION_TRANSLATE_TASK_KEY
             calls.append("translation")
             translation_started.set()
             await asyncio.wait_for(visual_started.wait(), timeout=1)
             assert messages[-1]["content"] == source_instruction
             assert kwargs["result_validator"](english_instruction) == (True, "")
             return english_instruction
+        assert task_key == f"video_prompt_{mode_name}_compose"
         calls.append("writer")
         assert english_instruction in combined
         assert source_instruction not in combined
+        return body
+
+    monkeypatch.setattr(
+        video_module.llm_service,
+        "callLLMVisionTask",
+        fake_vision_call,
+    )
+    monkeypatch.setattr(video_module.llm_service, "callLLMTask", fake_text_call)
+    monkeypatch.setattr(video_module, "_log_lighbd_history", history_records.append)
+    monkeypatch.setattr(
+        video_module.llm_service,
+        "routing_primary_model",
+        lambda task_key: (
+            "translation-model"
+            if task_key == video_module.VIDEO_INSTRUCTION_TRANSLATE_TASK_KEY
+            else f"model-for-{task_key}"
+        ),
+    )
+
+    async def notify(_event_type, _data):
+        return None
+
+    mode = VideoMode()
+    mode.get_backup_dir = lambda: str(tmp_path)
+    mode.notify_frontend_func = notify
+
+    params = {
+        "mode": mode_name,
+        "source_backup": "source",
+        "instruction": source_instruction,
+        "translate_instruction_to_english": True,
+        "secondary_motion": False,
+        "preset": "1:1",
+    }
+    if mode_name == "first_last":
+        params["last_backup"] = "last"
+    queue_item_id = f"queue-translate-{mode_name}"
+    result = await mode.build_prompt(params, queue_item_id=queue_item_id)
+
+    assert calls[-1] == "writer"
+    assert set(calls[:2]) == {"vision", "translation"}
+    assert result["instruction"] == source_instruction
+    assert result["translate_instruction_to_english"] is True
+    assert result["translated_instruction"] == english_instruction
+    assert result["instruction_translation_applied"] is True
+    expected_prompt = (
+        body
+        if mode_name == "ref2v"
+        else f"{alignment_for_mode(mode_name)}\n\n{body}"
+    )
+    assert result["h3_prompt"] == expected_prompt
+    assert result["llm_trace"] == [
+        f"video_prompt:{mode_name}:{queue_item_id}:visual_context",
+        f"video_prompt:{mode_name}:{queue_item_id}:instruction_translation",
+        f"video_prompt:{mode_name}:{queue_item_id}",
+    ]
+    translation_records = [
+        record
+        for record in history_records
+        if record.get("history_id", "").endswith(":instruction_translation")
+    ]
+    assert len(translation_records) == 1
+    assert translation_records[0]["status"] == "ok"
+    assert translation_records[0]["task_key"] == "video_instruction_translate"
+    assert translation_records[0]["model"] == "translation-model"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("translation_failure", ["empty", "exception"])
+async def test_i2v_instruction_translation_failure_uses_original_without_retry(
+    tmp_path: Path,
+    monkeypatch,
+    translation_failure: str,
+) -> None:
+    raw_dir = tmp_path / "_raw"
+    raw_dir.mkdir()
+    Image.new("RGB", (512, 512), "green").save(
+        raw_dir / "source.webp",
+        format="WEBP",
+    )
+    source_instruction = "인물이 천천히 고개를 든다."
+    visual_context = "visual_context:\nPicture 1: One character looks downward."
+    body = "The writer continues from the original direction."
+    translation_calls = 0
+    history_records: list[dict] = []
+
+    async def fake_vision_call(_task_key, _messages, **_kwargs):
+        return visual_context
+
+    async def fake_text_call(task_key, messages, **_kwargs):
+        nonlocal translation_calls
+        combined = "\n".join(str(message["content"]) for message in messages)
+        if "faithful English translation stage" in combined:
+            assert task_key == video_module.VIDEO_INSTRUCTION_TRANSLATE_TASK_KEY
+            translation_calls += 1
+            if translation_failure == "exception":
+                raise RuntimeError("synthetic translation outage")
+            return ""
+        assert task_key == "video_prompt_i2v_compose"
+        assert source_instruction in combined
         return body
 
     monkeypatch.setattr(
@@ -2033,86 +2450,6 @@ async def test_i2v_instruction_translation_runs_with_visual_context_then_feeds_w
             "secondary_motion": False,
             "preset": "1:1",
         },
-        queue_item_id="queue-translate-i2v",
-    )
-
-    assert calls[-1] == "writer"
-    assert set(calls[:2]) == {"vision", "translation"}
-    assert result["instruction"] == source_instruction
-    assert result["translate_instruction_to_english"] is True
-    assert result["translated_instruction"] == english_instruction
-    assert result["instruction_translation_applied"] is True
-    assert result["h3_prompt"] == f"{I2V_ALIGNMENT}\n\n{body}"
-    assert result["llm_trace"] == [
-        "video_prompt:i2v:queue-translate-i2v:visual_context",
-        "video_prompt:i2v:queue-translate-i2v:instruction_translation",
-        "video_prompt:i2v:queue-translate-i2v",
-    ]
-    translation_records = [
-        record
-        for record in history_records
-        if record.get("history_id", "").endswith(":instruction_translation")
-    ]
-    assert len(translation_records) == 1
-    assert translation_records[0]["status"] == "ok"
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("translation_failure", ["empty", "exception"])
-async def test_i2v_instruction_translation_failure_uses_original_without_retry(
-    tmp_path: Path,
-    monkeypatch,
-    translation_failure: str,
-) -> None:
-    raw_dir = tmp_path / "_raw"
-    raw_dir.mkdir()
-    Image.new("RGB", (512, 512), "green").save(
-        raw_dir / "source.webp",
-        format="WEBP",
-    )
-    source_instruction = "인물이 천천히 고개를 든다."
-    visual_context = "visual_context:\nPicture 1: One character looks downward."
-    body = "The writer continues from the original direction."
-    translation_calls = 0
-
-    async def fake_vision_call(_task_key, _messages, **_kwargs):
-        return visual_context
-
-    async def fake_text_call(_task_key, messages, **_kwargs):
-        nonlocal translation_calls
-        combined = "\n".join(str(message["content"]) for message in messages)
-        if "faithful English translation stage" in combined:
-            translation_calls += 1
-            if translation_failure == "exception":
-                raise RuntimeError("synthetic translation outage")
-            return ""
-        assert source_instruction in combined
-        return body
-
-    monkeypatch.setattr(
-        video_module.llm_service,
-        "callLLMVisionTask",
-        fake_vision_call,
-    )
-    monkeypatch.setattr(video_module.llm_service, "callLLMTask", fake_text_call)
-    monkeypatch.setattr(video_module, "_log_lighbd_history", lambda _record: None)
-
-    async def notify(_event_type, _data):
-        return None
-
-    mode = VideoMode()
-    mode.get_backup_dir = lambda: str(tmp_path)
-    mode.notify_frontend_func = notify
-
-    result = await mode.build_prompt(
-        {
-            "mode": "i2v",
-            "source_backup": "source",
-            "instruction": source_instruction,
-            "translate_instruction_to_english": True,
-            "secondary_motion": False,
-            "preset": "1:1",
-        },
         queue_item_id=f"queue-translate-fallback-{translation_failure}",
     )
 
@@ -2122,6 +2459,14 @@ async def test_i2v_instruction_translation_failure_uses_original_without_retry(
     assert result["translated_instruction"] == ""
     assert result["instruction_translation_applied"] is False
     assert result["h3_prompt"] == f"{I2V_ALIGNMENT}\n\n{body}"
+    translation_records = [
+        record
+        for record in history_records
+        if record.get("history_id", "").endswith(":instruction_translation")
+    ]
+    assert len(translation_records) == 1
+    assert translation_records[0]["status"] == "fallback"
+    assert translation_records[0]["task_key"] == "video_instruction_translate"
 
 
 @pytest.mark.asyncio
@@ -2463,6 +2808,7 @@ async def test_render_spools_video_postprocess_before_cleaning_comfy_mp4(
         "instruction_source": "user",
         "visual_context": "visual_context:\nOne character stands still.",
         "prompt_generation_mode": "best_of_three",
+        "refine_version": "v3_2",
         "translate_instruction_to_english": True,
         "translated_instruction": "Move gently.",
         "instruction_translation_applied": True,
@@ -2494,6 +2840,7 @@ async def test_render_spools_video_postprocess_before_cleaning_comfy_mp4(
     assert manifest["auto_instruction"] is False
     assert manifest["visual_context"] == "visual_context:\nOne character stands still."
     assert manifest["prompt_generation_mode"] == "best_of_three"
+    assert manifest["refine_version"] == "v3_2"
     assert manifest["translate_instruction_to_english"] is True
     assert manifest["translated_instruction"] == "Move gently."
     assert manifest["instruction_translation_applied"] is True
@@ -2645,6 +2992,7 @@ async def test_video_postprocess_commits_verified_pair_and_metadata(
         "auto_instruction": True,
         "visual_context": "visual_context:\nOne character stands still.",
         "prompt_generation_mode": "best_of_three",
+        "refine_version": "v3_2",
         "translate_instruction_to_english": True,
         "translated_instruction": "Move gently.",
         "instruction_translation_applied": True,
@@ -2744,6 +3092,7 @@ async def test_video_postprocess_commits_verified_pair_and_metadata(
     assert info["video_instruction"] == "move gently"
     assert info["video_instruction_original"] == "move"
     assert info["video_prompt_generation_mode"] == "best_of_three"
+    assert info["video_refine_version"] == "v3_2"
     assert info["video_translate_instruction_to_english"] is True
     assert info["video_translated_instruction"] == "Move gently."
     assert info["video_instruction_translation_applied"] is True
@@ -2761,6 +3110,7 @@ async def test_video_postprocess_commits_verified_pair_and_metadata(
     assert prompt["video_auto_instruction"] is True
     assert prompt["video_visual_context"] == "visual_context:\nOne character stands still."
     assert prompt["video_prompt_generation_mode"] == "best_of_three"
+    assert prompt["video_refine_version"] == "v3_2"
     assert prompt["video_translate_instruction_to_english"] is True
     assert prompt["video_translated_instruction"] == "Move gently."
     assert prompt["video_instruction_translation_applied"] is True

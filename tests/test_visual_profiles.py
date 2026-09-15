@@ -89,6 +89,23 @@ def test_existing_character_becomes_virtual_card_one():
     assert "visual_cards" not in root
 
 
+def test_lb_extra_batch_refine_skip_defaults_false_and_round_trips_per_card():
+    root = _root_character()
+    legacy_cards, _source = effective_character_cards(root, None)
+    assert legacy_cards[0]["skip_lb_extra_batch_refine"] is False
+
+    cards = _cards()
+    cards[1]["skip_lb_extra_batch_refine"] = True
+    character_profiles = cards_to_character_profiles("Adachi", cards)
+    profiles = character_profiles["profiles"]
+
+    assert profiles[0]["skip_lb_extra_batch_refine"] is False
+    assert profiles[1]["skip_lb_extra_batch_refine"] is True
+    restored = character_profiles_to_cards(character_profiles)
+    assert restored[0]["skip_lb_extra_batch_refine"] is False
+    assert restored[1]["skip_lb_extra_batch_refine"] is True
+
+
 def test_character_cards_have_no_separate_profile_file_storage():
     source = Path("modes/visual_profiles.py").read_text(encoding="utf-8")
     assert "_visual_profiles.json" not in source

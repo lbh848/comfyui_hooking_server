@@ -665,7 +665,13 @@ async def test_video_instruction_draft_waits_for_llm_queue_and_passes_options(
     monkeypatch.setattr(server.queue_manager, "add_item", fake_add_item)
 
     response = await server.handle_api_video_instruction_draft(
-        _JsonRequest(_draft_request(allow_background_change=True))
+        _JsonRequest(
+            _draft_request(
+                allow_background_change=True,
+                video_input_session_id="draft-session",
+                instruction_before="덮어쓰기 전 사람이 쓴 입력",
+            )
+        )
     )
     payload = json.loads(response.text)
 
@@ -677,6 +683,8 @@ async def test_video_instruction_draft_waits_for_llm_queue_and_passes_options(
     assert captured["params"]["include_dialogue_context"] is False
     assert captured["params"]["allow_camera_motion"] is True
     assert captured["params"]["allow_background_change"] is True
+    assert captured["params"]["video_input_session_id"] == "draft-session"
+    assert captured["params"]["instruction_before"] == "덮어쓰기 전 사람이 쓴 입력"
 
 
 @pytest.mark.asyncio
@@ -736,6 +744,7 @@ async def test_video_instruction_v3_uses_existing_direct_queue_and_llm_route(
             _draft_request(
                 refine_version="v3",
                 instruction="인물이 편지를 읽다가 상대를 바라본다",
+                video_input_session_id="direct-session",
             )
         )
     )
@@ -747,6 +756,105 @@ async def test_video_instruction_v3_uses_existing_direct_queue_and_llm_route(
     assert captured["item_type"] == "video_instruction_direct"
     assert "일본 애니메이션 연출 계획" in captured["label"]
     assert captured["params"]["refine_version"] == "v3"
+    assert captured["params"]["video_input_session_id"] == "direct-session"
+    assert server.DEFAULT_CONFIG["llm_routing"]["video_prompt_i2v"]["primary"] == "llm1"
+
+
+@pytest.mark.asyncio
+async def test_video_instruction_v3_2_uses_adaptive_anime_label_and_existing_route(
+    monkeypatch,
+) -> None:
+    captured: dict = {}
+
+    async def fake_add_item(item_type, label, params):
+        captured.update(item_type=item_type, label=label, params=params)
+        future = asyncio.get_running_loop().create_future()
+        future.set_result(
+            {
+                "success": True,
+                "draft": "영상 길이와 상호작용 난도에 맞춘 일본 애니메이션 연출 계획",
+                "language": "ko",
+                "refine_version": "v3_2",
+                "history_id": "video_instruction_direct:i2v:anime-v3-2",
+                "llm_trace": ["video_instruction_direct:i2v:anime-v3-2"],
+            }
+        )
+        return SimpleNamespace(
+            id="video-anime-v3-2-id",
+            label=label,
+            completion_future=future,
+        )
+
+    monkeypatch.setattr(server.video_mode, "validate_reference", lambda _reference: None)
+    monkeypatch.setattr(server.queue_manager, "add_item", fake_add_item)
+
+    response = await server.handle_api_video_instruction_direct(
+        _JsonRequest(
+            _draft_request(
+                refine_version="v3_2",
+                instruction="두 인물이 서로 밀어낸 뒤 다시 충돌한다",
+                video_input_session_id="adaptive-anime-session",
+            )
+        )
+    )
+    payload = json.loads(response.text)
+
+    assert response.status == 200
+    assert payload["success"] is True
+    assert payload["refine_version"] == "v3_2"
+    assert captured["item_type"] == "video_instruction_direct"
+    assert "V3_2 일본 애니메이션 2 연출 계획" in captured["label"]
+    assert captured["params"]["refine_version"] == "v3_2"
+    assert captured["params"]["video_input_session_id"] == "adaptive-anime-session"
+    assert server.DEFAULT_CONFIG["llm_routing"]["video_prompt_i2v"]["primary"] == "llm1"
+
+
+@pytest.mark.asyncio
+async def test_video_instruction_v4_uses_dasiwa_label_and_existing_route(
+    monkeypatch,
+) -> None:
+    captured: dict = {}
+
+    async def fake_add_item(item_type, label, params):
+        captured.update(item_type=item_type, label=label, params=params)
+        future = asyncio.get_running_loop().create_future()
+        future.set_result(
+            {
+                "success": True,
+                "draft": "<Subject 1>이 짧고 직접적인 한 개의 숏으로 동작을 마친다.",
+                "language": "ko",
+                "refine_version": "v4",
+                "history_id": "video_instruction_direct:i2v:dasiwa-1",
+                "llm_trace": ["video_instruction_direct:i2v:dasiwa-1"],
+            }
+        )
+        return SimpleNamespace(
+            id="video-dasiwa-id",
+            label=label,
+            completion_future=future,
+        )
+
+    monkeypatch.setattr(server.video_mode, "validate_reference", lambda _reference: None)
+    monkeypatch.setattr(server.queue_manager, "add_item", fake_add_item)
+
+    response = await server.handle_api_video_instruction_direct(
+        _JsonRequest(
+            _draft_request(
+                refine_version="v4",
+                instruction="성인 인물이 소품을 들어 보인 뒤 제자리에 내려놓는다",
+                video_input_session_id="dasiwa-session",
+            )
+        )
+    )
+    payload = json.loads(response.text)
+
+    assert response.status == 200
+    assert payload["success"] is True
+    assert payload["refine_version"] == "v4"
+    assert captured["item_type"] == "video_instruction_direct"
+    assert "DaSiWa 프롬프트 연출 계획" in captured["label"]
+    assert captured["params"]["refine_version"] == "v4"
+    assert captured["params"]["video_input_session_id"] == "dasiwa-session"
     assert server.DEFAULT_CONFIG["llm_routing"]["video_prompt_i2v"]["primary"] == "llm1"
 
 

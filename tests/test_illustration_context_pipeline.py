@@ -135,6 +135,144 @@ def test_context_and_result_transport_markers():
     ) is None
 
 
+@pytest.mark.parametrize(
+    "filtered_chat",
+    [
+        (
+            '<output target=input priority=extra-high source=ai sender=ai recipient=user>\n'
+            "호시노 유이는 낡은 문틈으로 준비실을 지켜보았다.\n"
+            "</output>"
+        ),
+        "<scene mood=quiet>Mira crosses the empty platform.</scene>",
+        "Sena closes the umbrella and enters the room.",
+    ],
+    ids=["output-only-actual-shape", "xml-off-isomorphic", "xml-on-plain"],
+)
+def test_backend_keeps_module_filtered_chat_authoritative(filtered_chat):
+    payload = {
+        "session_id": "module_filter_authority_1234",
+        "target_slotted": filtered_chat + "\n\n[Slot 0]",
+        "chats": [{"role": "char", "data": filtered_chat}],
+    }
+
+    parsed = pipeline.parse_context_request(
+        pipeline.CONTEXT_PREFIX + "\n" + json.dumps(payload, ensure_ascii=False)
+    )
+
+    assert parsed["chats"][0]["data"] == filtered_chat
+    assert pipeline._history_messages_text(parsed["chats"]) == "[CHAR]\n" + filtered_chat
+    assert pipeline._anchor_text(filtered_chat, limit=len(filtered_chat) + 10) == re.sub(
+        r"\s+",
+        " ",
+        filtered_chat,
+    ).strip()
+
+
+@pytest.mark.asyncio
+async def test_output_only_current_reaches_character_resolution_with_body(monkeypatch):
+    current = (
+        '<output target=input priority=extra-high source=ai sender=ai recipient=user>\n'
+        "호시노 유이는 낡은 문틈으로 준비실을 지켜보았다.\n\n"
+        "그녀는 손을 문틀에 얹고 숨을 죽였다.\n"
+        "</output>"
+    )
+    captured = []
+
+    async def fake_pipeline_call(call_name, messages, _stream_notify, **_kwargs):
+        captured.append((call_name, "\n".join(message["content"] for message in messages)))
+        return json.dumps({
+            "characters": [{"name": "Hoshino"}],
+            "uncertainties": [],
+        })
+
+    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
+    visual_profiles = {
+        "Hoshino": cards_to_character_profiles("Hoshino", [{
+            "id": "ordinary",
+            "aliases": ["Hoshino_Normal"],
+            "appearance": ["black hair"],
+            "default_outfit": ["school uniform"],
+        }]),
+    }
+
+    _output, result = await pipeline.resolve_profiles_before_generation(
+        payload={"chats": [{"role": "char", "data": current}]},
+        toggles={"profile_resolve_enabled": False},
+        history_plan=None,
+        visual_profiles=visual_profiles,
+    )
+
+    assert [call_name for call_name, _prompt in captured] == ["CHARACTER-RESOLVE"]
+    assert "호시노 유이는 낡은 문틈으로 준비실을 지켜보았다." in captured[0][1]
+    assert "<output target=input" in captured[0][1]
+    assert result["current_characters"] == [{"name": "Hoshino", "confidence": 1.0}]
+
+
+@pytest.mark.asyncio
+async def test_output_only_current_uses_call2_plan_instead_of_empty_context_fallback(monkeypatch):
+    current = (
+        '<output target=input priority=extra-high source=ai sender=ai recipient=user>\n'
+        "Hana waits beside the old door.\n\n"
+        "Hana opens it and steps inside.\n"
+        "</output>"
+    )
+    call_names = []
+    requests = {}
+
+    async def fake_pipeline_call(call_name, messages, *_args, **_kwargs):
+        call_names.append(call_name)
+        requests[call_name] = "\n".join(
+            str(message.get("content") or "") for message in messages
+        )
+        if call_name == "CALL2-PLAN":
+            return json.dumps({
+                "scene_plan": [{
+                    "anchor_segment": "C001",
+                    "characters": ["Hana"],
+                    "scene_brief": "Hana waits beside the old door.",
+                    "continuity_note": "Hana wears her school uniform.",
+                }],
+            })
+        if call_name.startswith("CALL2-DETAIL 1/1"):
+            return _toon_for_slots([0])
+        raise AssertionError(f"unexpected call: {call_name}")
+
+    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
+    result = await pipeline.build_from_context(
+        {
+            "session_id": "output_only_plan_regression_1234",
+            "target_slotted": pipeline.insert_slots(current),
+            "chats": [
+                {"role": "user", "data": "Continue."},
+                {"role": "char", "data": current},
+            ],
+        },
+        {
+            "call1_enabled": False,
+            "call2_parallel_enabled": True,
+            "call2_parallel_max_concurrency": 1,
+            "call2_parallel_slow_retry_enabled": False,
+            "scene_mode": "manual",
+            "output_count_min": 1,
+            "output_count_max": 1,
+            "key_visual": False,
+            "call3_enabled": False,
+            "speak_enabled": False,
+        },
+        "### Hana\n-default_outfit\nschool uniform",
+        extra_costume="### Hana\n-default_outfit\nschool uniform",
+        extra_names="Hana",
+        backtranslate_names="Hana",
+    )
+
+    assert call_names[0] == "CALL2-PLAN"
+    assert "CALL2-FALLBACK" not in call_names
+    assert "Hana waits beside the old door." in requests["CALL2-PLAN"]
+    assert "<output target=input" in requests["CALL2-PLAN"]
+    assert result["call2_fallback_stage"] == ""
+    assert [item["slot"] for item in result["items"]] == [0]
+
+
 def test_call2_plan_selects_global_slots_and_builds_key_visual():
     slotted = "\n\n".join(
         ["첫 문단."]
@@ -641,6 +779,7 @@ def test_downstream_call2_plan_handoff_omits_internal_wardrobe_structure():
         "characters": ["Sato"],
         "scene_brief": "Sato leans forward while his lowered clothing remains visible.",
         "continuity_note": "Sato pulled down his pants and underwear.",
+        "anonymous_partner_fragment": False,
     }
 
 
@@ -1770,6 +1909,7 @@ async def test_independent_call2_keyvis_returns_one_object_and_rejects_scenes(mo
 @pytest.mark.asyncio
 async def test_call2_role_inputs_are_isolated_without_mutating_stored_state(monkeypatch):
     request_by_call = {}
+    messages_by_call = {}
     state_before = {
         "hana": {
             "canonical_name": "Hana",
@@ -1791,6 +1931,7 @@ async def test_call2_role_inputs_are_isolated_without_mutating_stored_state(monk
     original_state = json.loads(json.dumps(state_before))
 
     async def fake_pipeline_call(call_name, messages, *args, **kwargs):
+        messages_by_call[call_name] = json.loads(json.dumps(messages))
         request_by_call[call_name] = "\n".join(
             str(message.get("content") or "") for message in messages
         )
@@ -1903,24 +2044,35 @@ scenes: []
     assert "# ACTIVE BOT IMAGE INSTRUCTIONS" in plan_request
     assert "ACTIVE BOT INSTRUCTION MARKER" in plan_request
     assert "### Nested instruction heading" in plan_request
-    assert "binding renderability envelope during selection" in plan_request
+    assert "ACTIVE BOT IMAGE INSTRUCTIONS as the renderability envelope" in plan_request
     assert "requested scene count remains binding" in plan_request
-    assert "materially different directly visible instants" in plan_request
-    assert "invisible, metaphorical, or consequence-only filler" in plan_request
-    assert "primary visible action and a compatible whole-body situation" in plan_request
-    assert "meaningful simultaneous contacts" in plan_request
-    assert "DETAIL will choose the camera and visible overlap" in plan_request
-    assert "what bears the weight" in plan_request
-    assert "Do not make the scene easier by replacing its action" in plan_request
+    assert "materially different strong beats and visible progression" in plan_request
+    assert "using invisible filler" in plan_request
+    assert "Lead with the familiar high-level action or pose" in plan_request
+    assert "Preserve who acts on whom" in plan_request
+    assert "DETAIL chooses the exact edge and camera" in plan_request
+    assert "Do not downgrade them to isolated reactions" in plan_request
+    assert "smallest coherent partner portion continuously entering from one frame edge" in plan_request
+    assert "disconnected body regions" in plan_request
+    assert "# FINAL SELECTION CHECK" in plan_request
+    assert "undergarment revealed by an opened, torn" in plan_request
+    assert "second visible body region" in plan_request
+    assert "partner face, full silhouette" in plan_request
+    assert "one canonical natural-language wardrobe sentence" in plan_request
+    assert "for each unchanged outfit interval" in plan_request
+    assert "Copy the canonical sentence word-for-word and unabridged" in plan_request
+    assert "Start a new interval only for an actual story-time wardrobe change" in plan_request
+    assert "Keep every selected instant faithful to its own anchor passage" in plan_request
+    assert "Keep expression, fluid, physiology, and other micro-detail secondary" in plan_request
     assert "# CHARACTER DICTIONARY" in plan_request
     assert "### Hana" in plan_request
     assert "### Bob" not in plan_request
     assert "# AUTHORITATIVE FIXED APPEARANCE" not in plan_request
     assert "# AUTHORITATIVE WARDROBE CONTINUITY STATE" not in plan_request
     assert "# CURRENT WARDROBE EVENT TIMELINE" not in plan_request
-    assert "# CLASSIFIED LAST VISUAL REFERENCE" in plan_request
+    assert "# CLASSIFIED LAST VISUAL REFERENCE" not in plan_request
     assert "nested generated visual marker" not in plan_request
-    assert "dedicated last visual marker" in plan_request
+    assert "dedicated last visual marker" not in plan_request
     assert "timeline event marker" in plan_request
 
     keyvis_request = request_by_call["CALL2-KEYVIS"]
@@ -1953,6 +2105,8 @@ scenes: []
     assert "Reason silently and return only the requested final <lb-xnai> block." in detail_request
     assert "\nkeyvis:\n" not in detail_request
     assert "negative: ..." not in detail_request
+    assert "\n        name: ...\n        position: ..." in detail_request
+    assert "\nname: ...\n" not in detail_request
     assert "# ACTIVE BOT IMAGE INSTRUCTIONS" in detail_request
     assert "ACTIVE BOT INSTRUCTION MARKER" in detail_request
     assert "### Nested instruction heading" in detail_request
@@ -1963,17 +2117,34 @@ scenes: []
     assert "# TRACKED WARDROBE CONTINUITY AND DEFAULT REFERENCE" in detail_request
     assert "# SPARSE CURRENT WARDROBE CHANGE HISTORY" in detail_request
     assert "# CLASSIFIED LAST VISUAL REFERENCE" in detail_request
-    assert "not as camera, crop, pose-geometry, or simultaneous-feature authority" in detail_request
-    assert "preserve the slot, event, roster, and primary fact but repair the camera and crop" in detail_request
-    assert "Never invent sitting, crouching, extreme joint flexion, or bodily contortion" in detail_request
-    assert "the interaction or weakening its contact, motion, or expression" in detail_request
+    assert "Treat anchor_passage as the event authority" in detail_request
+    assert "preserve the slot, event, roster, and core action" in detail_request
+    assert "repairing only camera and crop within the active partner-visibility limits" in detail_request
     assert "Choose camera azimuth, elevation, and distance together" in detail_request
-    assert "none is a default" in detail_request
-    assert "foreshortening, close contact, and dynamic poses are valid" in detail_request
-    assert "preserving the original interaction rather than simplifying it away" in detail_request
+    assert "selected action, actor/receiver direction, connected anatomy" in detail_request
+    assert "# ASSIGNED SCENE DETAIL PRIORITY" in detail_request
+    assert "Render one clear primary visible fact per slot" in detail_request
+    detail_messages = next(
+        messages
+        for name, messages in messages_by_call.items()
+        if name.startswith("CALL2-DETAIL 1/1")
+    )
+    assert any(
+        message["role"] == "system"
+        and "# ASSIGNED SCENE DETAIL PRIORITY" in message["content"]
+        for message in detail_messages
+    )
+    assert "# PER-SCENE ANONYMOUS PARTNER CONTRACT" in detail_request
+    assert "slot 0: SOLO" in detail_request
+    assert "Do not show or describe an anonymous partner body part or contact" in detail_request
+    assert "# PER-SCENE WARDROBE HANDOFF" in detail_request
+    assert "complete logical outfit_state" in detail_request
+    assert "put only visible or coverage-defining garments in positive" in detail_request
+    assert "Omit remote face, hair, eye, expression, or clothing details" in detail_request
+    assert "owner-predicate pair" in detail_request
+    assert "Put all partner-owned anatomy and action in scene or supplement" in detail_request
     assert "severe foreshortening" not in detail_request
     assert "Keep remote ongoing contact as context rather than demanding" not in detail_request
-    assert "do not confuse screen direction with anatomical side" in detail_request
     assert "nested generated visual marker" not in detail_request
     assert "dedicated last visual marker" in detail_request
     assert "timeline event marker" in detail_request
@@ -3412,14 +3583,11 @@ async def test_call2_detail_worker_receives_physical_construction_order(monkeypa
     assert len(requests) == 1
     call_name, combined = requests[0]
     assert call_name.startswith("CALL2-DETAIL")
-    assert "coherent skeletons and joints" in combined
+    assert "reconstruct coherent bodies and joints" in combined
     assert "clothing/object coverage" in combined
-    assert "body-to-body contact and natural occlusion, then camera crop" in combined
-    assert "Treat the crop only as a boundary" in combined
-    assert "smallest sufficient connected body region" in combined
-    assert "smallest coherent visible body portion" not in combined
-    assert "do not force covered, off-frame, or physically occluded anatomy" in combined
-    assert "one primary visual fact" in combined
+    assert "contact, overlap, natural occlusion, and finally the crop" in combined
+    assert "smallest coherent portion that makes the core action readable" in combined
+    assert "one clear primary visible fact" in combined
     assert "Never combine flush or sealed body contact" in combined
     assert "entire junction to remain unobstructed" in combined
     assert "contact point centered" not in combined
@@ -3427,8 +3595,8 @@ async def test_call2_detail_worker_receives_physical_construction_order(monkeypa
     assert "owner-predicate pair" in combined
     assert "A visible penis belonging to a cropped anonymous male" in combined
     assert "never in a named woman's positive" in combined
-    assert "Fixed appearance is identity authority, not a quota of features to display" in combined
-    assert "face-, hair-, eye-, and expression-specific traits wholly outside the frame" in combined
+    assert "fixed appearance and logical wardrobe remain authoritative without becoming a display quota" in combined
+    assert "Omit remote face, hair, eye, expression, or clothing details" in combined
 
 
 @pytest.mark.asyncio
@@ -3466,9 +3634,9 @@ async def test_call2_detail_worker_hides_explicit_physics_when_nsfw_off(monkeypa
 
     assert len(requests) == 1
     combined = requests[0]
-    assert "coherent skeletons and joints" in combined
-    assert "body-to-body contact and natural occlusion" in combined
-    assert "one primary visual fact" in combined
+    assert "reconstruct coherent bodies and joints" in combined
+    assert "contact, overlap, natural occlusion, and finally the crop" in combined
+    assert "one clear primary visible fact" in combined
     assert "genital focus" not in combined
     assert "visible penis" not in combined
     assert "named woman's positive" not in combined

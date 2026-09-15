@@ -77,6 +77,9 @@ from .model_scope import (
 )
 from .node_installer import install_custom_nodes, update_custom_nodes
 from .node_compatibility import validate_instant_lora_export_order
+from .execution_profile import (
+    cpu_workflow_bindings, custom_nodes_for_profile, installed_cpu_runtime, profile_kind,
+)
 from .operations import uv_python_path
 from .pack_cli import collect_workflow_bindings
 from .runtime_state import (
@@ -461,7 +464,7 @@ class ComfyInstallerService:
         models_by_id = {
             str(model["id"]): model for model in pack_manifest.models
         }
-        scope = self._scope_selected_models(
+        probe, scope = self._preflight_models(
             [
                 models_by_id[model_id]
                 for model_id in requirements["model_ids"]
@@ -471,11 +474,7 @@ class ComfyInstallerService:
             manifest=pack_manifest,
         )
         return {
-            **self.preflight(
-                selected_model_bytes=int(scope.keep_bytes),
-                install_mode=install_mode,
-                manifest=pack_manifest,
-            ),
+            **probe,
             "selection": {
                 **requirements,
                 "model_source": scope.model_source,
@@ -485,6 +484,29 @@ class ComfyInstallerService:
                 "remote_model_bytes": int(scope.skipped_bytes),
             },
         }
+
+    def _preflight_models(
+        self, models: list[dict], *, install_mode: str, manifest: InstallManifest,
+    ) -> tuple[dict, ModelScope]:
+        # Select hardware before calculating model space; CPU never needs the
+        # generation models merely to pass the preflight disk check.
+        probe = self.preflight(require_disk=False, install_mode=install_mode, manifest=manifest)
+        cpu_only = profile_kind(manifest, str(probe["gpu_profile"])) == "cpu"
+        scope = self._scope_selected_models(
+            models, install_mode=install_mode, manifest=manifest, cpu_only=cpu_only,
+        )
+        disk = probe["disk"]
+        disk["required"] = 30 * 1024**3 + scope.keep_bytes
+        disk["enough"] = disk["free"] >= disk["required"]
+        if not disk["enough"]:
+            message = (
+                "ComfyUI 설치 공간이 부족합니다: "
+                f"free={disk['free'] / 1024**3:.2f} GiB, "
+                f"required={disk['required'] / 1024**3:.2f} GiB"
+            )
+            print(f"[COMFY_INSTALL][PREFLIGHT] {message}; profile={probe['gpu_profile']}")
+            raise InstallerServiceError(message)
+        return probe, scope
 
     def workflow_library_status(self) -> dict:
         return library_status(
@@ -1001,6 +1023,7 @@ class ComfyInstallerService:
         *,
         install_mode: str = INSTALL_MODE_STANDARD,
         manifest: InstallManifest | None = None,
+        cpu_only: bool = False,
     ) -> ModelScope:
         """설치기가 실제로 로컬에 받을 모델을 정한다.
 
@@ -1030,6 +1053,7 @@ class ComfyInstallerService:
                 workflows=active_manifest.workflows,
                 allocations=CLOUD_ONLY_DEFAULT_COMFY_TASK_ALLOCATIONS,
                 model_source=MODEL_SOURCE_CLOUD_DIRECT,
+                cpu_only=cpu_only,
             )
         raw_source = str(config.get("modal_model_source") or "").strip().lower()
         if raw_source not in {MODEL_SOURCE_LOCAL_FIRST, MODEL_SOURCE_CLOUD_DIRECT}:
@@ -1044,6 +1068,7 @@ class ComfyInstallerService:
             workflows=active_manifest.workflows,
             allocations=config.get("comfy_task_allocations"),
             model_source=raw_source,
+            cpu_only=cpu_only,
         )
 
     def _video_e2e_extra_args(self) -> tuple[str, ...]:
@@ -1554,6 +1579,7 @@ class ComfyInstallerService:
                     f"E2E를 실행할 내장 Comfy Python이 없습니다: {python}"
                 )
             install_mode = self._installed_install_mode()
+            e2e_bindings, skipped_e2e = self._local_e2e_bindings(selection.workflow_bindings)
 
             with protected_e2e_fixtures(
                 comfy_root=self.comfy_root,
@@ -1583,8 +1609,9 @@ class ComfyInstallerService:
                     self._set_phase("e2e_static")
                     validations, _ = validate_all_workflows(
                         base_url=process.base_url,
-                        workflow_bindings=selection.workflow_bindings,
-                        selected_count=len(selection.selected_item_ids),
+                        workflow_bindings=e2e_bindings,
+                        selected_count=(len(set(e2e_bindings.values())) if skipped_e2e
+                                        else len(selection.selected_item_ids)),
                         excluded_filenames=list(
                             self.manifest.workflows["excluded_filenames"]
                         ),
@@ -1669,6 +1696,7 @@ class ComfyInstallerService:
                     validation.public_result() for validation in validations
                 ],
                 "workflow_runtime": runtime_e2e,
+                "workflow_skipped": skipped_e2e,
                 "workflow_runtime_sections": {
                     "legacy": legacy_runtime_e2e,
                     "minimax_h3": video_runtime_e2e,
@@ -1691,8 +1719,8 @@ class ComfyInstallerService:
                     }
                 )
             self._log(
-                "[완료] 선택한 배포 워크플로우 E2E 성공: "
-                f"{len(runtime_e2e)}개, {result_path}"
+                "[완료] 선택한 배포 워크플로우 E2E 완료: "
+                f"실행 {len(runtime_e2e)}개, CPU 대상 제외 {len(skipped_e2e)}개, {result_path}"
             )
         except ComfyE2ECancelled as exc:
             self._log(f"[중단] {exc}", "warning")
@@ -1719,6 +1747,21 @@ class ComfyInstallerService:
         finally:
             if process is not None:
                 process.stop()
+
+    def _local_e2e_bindings(self, bindings: dict[str, str]) -> tuple[dict[str, str], list[dict]]:
+        if not installed_cpu_runtime(self.comfy_root):
+            return bindings, []
+        allowed = cpu_workflow_bindings()
+        kept, skipped = {}, []
+        for binding, path in bindings.items():
+            if binding in allowed:
+                kept[binding] = path
+            else:
+                reason = "CPU 경량 런타임: 생성/학습 워크플로우의 로컬 E2E는 실행하지 않습니다."
+                print(f"[COMFY_INSTALL][E2E] 검사 생략: binding={binding}, path={path}, reason={reason}")
+                self._log(f"[E2E 생략] {binding}: {reason}")
+                skipped.append({"binding": binding, "path": path, "status": "skipped", "reason": reason})
+        return kept, skipped
 
     def _run_migration(self, *, old_comfy_root: str) -> None:
         started_monotonic = time.monotonic()
@@ -1861,18 +1904,13 @@ class ComfyInstallerService:
             # 디스크 요구량은 "실제로 로컬에 받을 것" 기준이어야 한다.
             # cloud_direct 에서 매니페스트 전체를 요구하면 정작 받을 것보다
             # 100 GiB 넘게 과대 산정돼 멀쩡한 머신이 프리플라이트에서 막힌다.
-            preflight_scope = self._scope_selected_models(
+            self._set_phase("preflight")
+            system, preflight_scope = self._preflight_models(
                 [
                     models_by_id[model_id]
                     for model_id in selection_info["model_ids"]
                     if model_id in models_by_id
                 ],
-                install_mode=install_mode,
-                manifest=pack_manifest,
-            )
-            self._set_phase("preflight")
-            system = self.preflight(
-                selected_model_bytes=int(preflight_scope.keep_bytes),
                 install_mode=install_mode,
                 manifest=pack_manifest,
             )
@@ -1924,6 +1962,7 @@ class ComfyInstallerService:
                 [models_by_id[model_id] for model_id in selection.model_ids],
                 install_mode=install_mode,
                 manifest=pack_manifest,
+                cpu_only=profile_kind(pack_manifest, str(system["gpu_profile"])) == "cpu",
             )
             selected_models = list(model_scope.keep)
             self._log(model_scope.summary())
@@ -1970,7 +2009,9 @@ class ComfyInstallerService:
 
             self._set_phase("custom_nodes")
             node_paths = install_custom_nodes(
-                nodes=pack_manifest.custom_nodes,
+                nodes=custom_nodes_for_profile(
+                    pack_manifest.custom_nodes, cpu_only=profile.get("kind") == "cpu",
+                ),
                 comfy_root=self.comfy_root,
                 downloader=self.downloader,
                 cancel_event=self._cancel,
@@ -2033,6 +2074,7 @@ class ComfyInstallerService:
                     cancel_event=self._cancel,
                     log=self._log_comfy,
                     extra_args=_WINDOWS_E2E_EXTRA_ARGS,
+                    cpu_only=profile.get("kind") == "cpu",
                 )
                 stats = process.start(timeout=900)
                 actual_version = (
@@ -2372,7 +2414,9 @@ class ComfyInstallerService:
             self._set_phase("custom_nodes")
             updated_node_names: list[str] = []
             node_paths = update_custom_nodes(
-                nodes=new_manifest.custom_nodes,
+                nodes=custom_nodes_for_profile(
+                    new_manifest.custom_nodes, cpu_only=profile.get("kind") == "cpu",
+                ),
                 comfy_root=self.comfy_root,
                 downloader=self.downloader,
                 cancel_event=self._cancel,
@@ -2423,6 +2467,7 @@ class ComfyInstallerService:
                 python=python,
                 cancel_event=self._cancel,
                 log=self._log_comfy,
+                cpu_only=profile.get("kind") == "cpu",
             )
             stats = process.start(timeout=900)
             actual_version = (
@@ -2905,7 +2950,9 @@ class ComfyInstallerService:
             self._set_phase("custom_nodes")
             updated_node_names: list[str] = []
             node_paths = update_custom_nodes(
-                nodes=new_manifest.custom_nodes,
+                nodes=custom_nodes_for_profile(
+                    new_manifest.custom_nodes, cpu_only=profile.get("kind") == "cpu",
+                ),
                 comfy_root=self.comfy_root,
                 downloader=self.downloader,
                 cancel_event=self._cancel,
@@ -2968,6 +3015,7 @@ class ComfyInstallerService:
                     cancel_event=self._cancel,
                     log=self._log_comfy,
                     extra_args=_WINDOWS_E2E_EXTRA_ARGS,
+                    cpu_only=profile.get("kind") == "cpu",
                 )
                 stats = process.start(timeout=900)
                 actual_version = (

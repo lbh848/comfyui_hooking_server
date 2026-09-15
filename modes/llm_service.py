@@ -16,6 +16,7 @@ import illustration_flow
 import base64
 import codecs
 import datetime
+import functools
 import inspect
 import json
 import math
@@ -3463,6 +3464,69 @@ async def _call_routed_text_slot(
         _request_config_override_ctx.reset(config_token)
 
 
+def _track_video_llm(fn):
+    """Observe existing routed calls without changing their queue or result contract."""
+    signature = inspect.signature(fn)
+
+    @functools.wraps(fn)
+    async def wrapped(*args, **kwargs):
+        run = illustration_flow._run.get()
+        if run is None or run.get("kind") != "video":
+            return await fn(*args, **kwargs)
+        bound = signature.bind(*args, **kwargs)
+        inputs = bound.arguments
+        task_key = inputs["task_key"]
+        context = inputs.get("execution_context")
+        label = context.call_name if context else task_key
+        node_id = illustration_flow.add_node(
+            run, label, dependencies=illustration_flow._frontier.get(), kind="llm",
+            executor="llm", task_key=task_key,
+            input=illustration_flow.serializable(inputs["messages"]),
+        )
+        token = illustration_flow._node.set(node_id)
+        original_observer = inputs.get("execution_observer")
+
+        async def observe(event):
+            slot = event.get("slot") or event.get("llm_slot")
+            suffix = _slot_suffix(slot) if slot else ""
+            model = inputs.get("model") or _base_config_get(f"llm_model{suffix}") or ""
+            service = _base_config_get(f"llm_service{suffix}") or _base_config_get("llm_service") or ""
+            illustration_flow.llm_attempt(event, model, service)
+            illustration_flow.llm_metadata(
+                label=event.get("call_name") or label,
+                execution_id=event.get("execution_id") or node_id,
+            )
+            if original_observer is not None:
+                await _emit_execution_observer(original_observer, event)
+
+        inputs["execution_observer"] = observe
+        try:
+            result = await fn(*bound.args, **bound.kwargs)
+            status = "completed" if result.accepted else "failed"
+            if not result.accepted:
+                print(f"[VIDEO_FLOW] LLM 실패: task={task_key}, reason={result.reason}, input={inputs['messages']!r}")
+            usage = inputs.get("metadata_sink") or {}
+            illustration_flow.update(
+                run, node_id, status=status, output=illustration_flow.serializable(result.raw_response),
+                error=result.reason, summary=str(result.text or "")[:220],
+                execution_id=result.context.execution_id,
+                prompt_tokens=usage.get("prompt_tokens"), completion_tokens=usage.get("completion_tokens"),
+            )
+            return result
+        except BaseException as exc:
+            status = "cancelled" if isinstance(exc, asyncio.CancelledError) else "failed"
+            reason = str(exc) or type(exc).__name__
+            print(f"[VIDEO_FLOW] LLM 종료: task={task_key}, status={status}, error={reason}, input={inputs['messages']!r}")
+            traceback.print_exc()
+            illustration_flow.update(run, node_id, status=status, error=reason, output={"error": reason})
+            raise
+        finally:
+            illustration_flow._node.reset(token)
+            illustration_flow._frontier.set((node_id,))
+    return wrapped
+
+
+@_track_video_llm
 async def callLLMTaskResult(
     task_key: str,
     messages: list,
@@ -3795,6 +3859,7 @@ async def callLLMVision3(messages: list, image_b64: str = None, image_mime: str 
         _request_config_override_ctx.reset(config_token)
 
 
+@_track_video_llm
 async def callLLMVisionTaskResult(
     task_key: str,
     messages: list,
