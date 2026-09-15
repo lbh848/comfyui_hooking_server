@@ -102720,15 +102720,56 @@
             if (_notiReminderBubble) _notiReminderBubble.remove();
 
             const bell = document.getElementById('notification-bell');
-            if (!bell) return;
+            const handle = document.getElementById('header-controls-handle');
+            if (!bell || !handle) {
+                console.error('[NOTIFICATION] 공지 리마인더 기준 요소를 찾지 못했습니다.', {
+                    bellFound: Boolean(bell),
+                    handleFound: Boolean(handle),
+                    unreadCount,
+                });
+                return;
+            }
 
             const bellRect = bell.getBoundingClientRect();
+            const bellFullyVisible = bellRect.width > 0
+                && bellRect.height > 0
+                && bellRect.top >= 0
+                && bellRect.left >= 0
+                && bellRect.bottom <= window.innerHeight
+                && bellRect.right <= window.innerWidth;
+            // 상단 도구 메뉴가 접히면 종 버튼은 뷰포트 밖으로 이동한다.
+            // 그 좌표를 따라가지 않고 항상 보이는 메뉴 손잡이를 대체 기준으로 사용한다.
+            const anchorRect = bellFullyVisible ? bellRect : handle.getBoundingClientRect();
             const bubble = document.createElement('div');
             bubble.id = 'noti-reminder-bubble';
-            bubble.style.cssText = `position:fixed; left:${bellRect.left + bellRect.width / 2}px; top:${bellRect.bottom + 8}px; transform:translateX(-50%); background:var(--error); color:#fff; padding:10px 16px; border-radius:8px; font-size:0.85rem; font-weight:600; box-shadow:0 4px 16px rgba(0,0,0,0.3); z-index:10001; animation:noti-bubble-in 0.3s ease; cursor:pointer; white-space:nowrap;`;
+            bubble.style.cssText = 'position:fixed; left:0; top:0; visibility:hidden; max-width:calc(100vw - 24px); box-sizing:border-box; background:var(--error); color:#fff; padding:10px 16px; border-radius:8px; font-size:0.85rem; font-weight:600; text-align:center; box-shadow:0 4px 16px rgba(0,0,0,0.3); z-index:2147483647; animation:noti-bubble-in 0.3s ease; cursor:pointer; white-space:normal;';
             bubble.textContent = `📢 안읽은 공지 ${unreadCount}건`;
             bubble.onclick = () => { bubble.remove(); openNotificationBoard(); };
             document.body.appendChild(bubble);
+
+            // 실제 렌더 크기를 알아야 오른쪽·아래쪽 경계도 정확히 보정할 수 있다.
+            const bubbleRect = bubble.getBoundingClientRect();
+            const viewportMargin = 12;
+            const anchorGap = 8;
+            const maxLeft = Math.max(
+                viewportMargin,
+                window.innerWidth - bubbleRect.width - viewportMargin,
+            );
+            const centeredLeft = anchorRect.left + (anchorRect.width / 2) - (bubbleRect.width / 2);
+            const safeLeft = Math.min(Math.max(centeredLeft, viewportMargin), maxLeft);
+            const maxTop = Math.max(
+                viewportMargin,
+                window.innerHeight - bubbleRect.height - viewportMargin,
+            );
+            let safeTop = anchorRect.bottom + anchorGap;
+            if (safeTop > maxTop) {
+                safeTop = anchorRect.top - anchorGap - bubbleRect.height;
+            }
+            safeTop = Math.min(Math.max(safeTop, viewportMargin), maxTop);
+
+            bubble.style.left = `${Math.round(safeLeft)}px`;
+            bubble.style.top = `${Math.round(safeTop)}px`;
+            bubble.style.visibility = 'visible';
             _notiReminderBubble = bubble;
             setTimeout(() => { if (bubble.parentNode) bubble.remove(); }, 10000);
         }
@@ -102804,7 +102845,7 @@
         async function openNotificationBoard() {
             const overlay = document.createElement('div');
             overlay.id = 'noti-overlay';
-            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:10000; display:flex; align-items:center; justify-content:center;';
+            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:2147483647; display:flex; align-items:center; justify-content:center;';
             overlay.innerHTML = `
                 <div style="background:var(--surface); border-radius:12px; padding:20px; max-width:700px; width:90%; max-height:80vh; display:flex; flex-direction:column; overflow:hidden;">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-shrink:0;">
