@@ -2040,6 +2040,48 @@ def _selected_visual_profiles(
     return selected
 
 
+def _persona_identity_context(
+    visual_profiles: dict[str, dict] | None,
+    character_names: list[str] | None = None,
+) -> str:
+    """Render one semantic identity note without parsing first-person wording in code."""
+    persona_names = [
+        str(name or "").strip()
+        for name, value in (visual_profiles or {}).items()
+        if str(name or "").strip()
+        and isinstance(value, dict)
+        and value.get("is_persona") is True
+    ]
+    persona_names = list(dict.fromkeys(persona_names))
+    if len(persona_names) > 1:
+        print(
+            f"[ILLUST_CONTEXT:PERSONA] 페르소나가 둘 이상이라 정체성 안내 생략: "
+            f"characters={persona_names}"
+        )
+        return ""
+    if not persona_names:
+        return ""
+
+    persona_name = persona_names[0]
+    allowed_names = {
+        str(name or "").strip().casefold()
+        for name in (character_names or [])
+        if str(name or "").strip()
+    }
+    if allowed_names and persona_name.casefold() not in allowed_names:
+        return ""
+    return (
+        "# REGISTERED USER PERSONA IDENTITY\n"
+        f"The exact canonical character `{persona_name}` is the configured user persona. "
+        "When the narrative is genuinely written from the user/player's first-person self "
+        "perspective, interpret that self-reference as this canonical character. Resolve "
+        "perspective, quotation, embedded speech or thought, and narrator changes from the "
+        "full discourse; first-person language belonging to another established viewpoint "
+        "does not refer to the user persona. This identity mapping does not by itself invent "
+        "participation, an action, a visible state, or a profile transition."
+    )
+
+
 def _profile_state_for_prompt(
     character_state: dict | None,
     character_names: list[str],
@@ -10671,6 +10713,10 @@ async def _run_resolution_stage(
         return "", _empty_profile_result()
 
     selected_names = list(selected_profiles)
+    persona_context = _persona_identity_context(
+        selected_profiles,
+        selected_names,
+    )
     repair_call_name = (
         "PROFILE-RESOLVE-REPAIR"
         if profile_inference_enabled
@@ -10721,6 +10767,8 @@ async def _run_resolution_stage(
             '{"characters":[{"name":"exact registered name from the list above"'
             '}],"uncertainties":[]}'
         )
+    if persona_context:
+        user_content = persona_context + "\n\n" + user_content
     messages = _normalize_messages([
         {"role": "system", "content": str(profile_system or "").strip()},
         {"role": "user", "content": user_content},
@@ -10879,7 +10927,10 @@ async def _run_resolution_stage(
             )
             return valid, reason
 
-        repair_context = "# FULL CURRENT CONTEXT SEGMENTS\n" + segmented_current
+        repair_context = "\n\n".join(x for x in (
+            persona_context,
+            "# FULL CURRENT CONTEXT SEGMENTS\n" + segmented_current,
+        ) if x)
         repair_targets = [
             {
                 "source_index": int(issue.get("source_index") or 0),
@@ -11125,6 +11176,7 @@ async def _run_resolution_stage(
                         + json.dumps(repair_requests, ensure_ascii=False, indent=2)
                         + "\n\n# PREVIOUSLY TRACKED PROFILE STATE\n"
                         + json.dumps(tracked_state, ensure_ascii=False, indent=2)
+                        + ("\n\n" + persona_context if persona_context else "")
                         + "\n\n# REGISTERED PROFILE CATALOG FOR REJECTED CHARACTERS\n"
                         + build_natural_profile_catalog(repair_profiles)
                         + "\n\n# FULL CURRENT CONTEXT SEGMENTS\n"
@@ -12720,6 +12772,12 @@ async def build_from_context(
                 "\n\n# PRESELECTED PROFILE AUTHORITY\n"
                 + selected_profile_authority
             )
+        call1_persona_context = _persona_identity_context(
+            visual_profiles,
+            call1_character_names,
+        )
+        if call1_persona_context:
+            call1_system += "\n\n" + call1_persona_context
         call1_system = call1_system.replace(
             "{character_names}",
             ", ".join(call1_character_names),
@@ -13062,6 +13120,19 @@ async def build_from_context(
             call2_plan_context_messages.append(deepcopy(message))
         if include_keyvis:
             call2_keyvis_context_messages.append(deepcopy(message))
+
+    call2_persona_context = _persona_identity_context(
+        visual_profiles,
+        list(dict.fromkeys([
+            *plan_character_names,
+            *current_character_names,
+        ])),
+    )
+    if call2_persona_context:
+        append_call2_context({
+            "role": "user",
+            "content": call2_persona_context,
+        })
 
     if call2_instruction:
         append_call2_context({
@@ -14314,6 +14385,15 @@ async def build_from_context(
             "role": "system",
             "content": call3_system_prompt,
         }]
+        call3_persona_context = _persona_identity_context(
+            visual_profiles,
+            current_character_names,
+        )
+        if call3_persona_context:
+            speak_messages.append({
+                "role": "user",
+                "content": call3_persona_context,
+            })
         if persistent_history:
             if not call1_result or balanced_fallback:
                 fallback_text = _history_messages_text(

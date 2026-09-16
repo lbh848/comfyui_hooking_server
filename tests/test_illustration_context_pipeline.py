@@ -209,6 +209,118 @@ async def test_output_only_current_reaches_character_resolution_with_body(monkey
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("current", "persona_name", "other_name", "resolved_name"),
+    [
+        ("나는 젖은 우산을 접고 현관으로 들어갔다.", "Mira", "Hana", "Mira"),
+        ("I pulled my coat tighter before crossing the square.", "Noel", "Iris", "Noel"),
+        (
+            'Hana whispered, "I will wait here," while the observer left.',
+            "Mira",
+            "Hana",
+            "Hana",
+        ),
+    ],
+    ids=["korean-self", "english-self-isomorphic", "quoted-other-opposite"],
+)
+async def test_character_resolver_receives_semantic_persona_identity(
+    monkeypatch,
+    current,
+    persona_name,
+    other_name,
+    resolved_name,
+):
+    captured = []
+
+    async def fake_pipeline_call(call_name, messages, _stream_notify, **_kwargs):
+        request = "\n".join(message["content"] for message in messages)
+        captured.append((call_name, request))
+        return json.dumps({
+            "characters": [{"name": resolved_name}],
+            "uncertainties": [],
+        })
+
+    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
+    visual_profiles = {}
+    for name in (persona_name, other_name):
+        profile = cards_to_character_profiles(name, [{
+            "id": "default",
+            "appearance": ["black hair"],
+            "default_outfit": ["coat"],
+        }])
+        profile["is_persona"] = name == persona_name
+        visual_profiles[name] = profile
+
+    _output, result = await pipeline.resolve_profiles_before_generation(
+        payload={"chats": [{"role": "char", "data": current}]},
+        toggles={"profile_resolve_enabled": False},
+        history_plan=None,
+        visual_profiles=visual_profiles,
+    )
+
+    assert [name for name, _request in captured] == ["CHARACTER-RESOLVE"]
+    assert "# REGISTERED USER PERSONA IDENTITY" in captured[0][1]
+    assert f"`{persona_name}` is the configured user persona" in captured[0][1]
+    assert "full discourse" in captured[0][1]
+    assert result["current_characters"] == [{"name": resolved_name, "confidence": 1.0}]
+
+
+@pytest.mark.asyncio
+async def test_persona_identity_reaches_multi_card_profile_selection(monkeypatch):
+    calls = []
+
+    async def fake_pipeline_call(call_name, messages, _stream_notify, **_kwargs):
+        request = "\n".join(message["content"] for message in messages)
+        calls.append((call_name, request))
+        if call_name == "CHARACTER-RESOLVE":
+            return json.dumps({
+                "characters": [{"name": "Mira"}],
+                "uncertainties": [],
+            })
+        if call_name == "PROFILE-RESOLVE":
+            return json.dumps({
+                "characters": [{
+                    "name": "Mira",
+                    "profile_timeline": [{
+                        "at": "START",
+                        "profile_ref": "[2]",
+                        "reason": "The first-person narrator is already in the transformed form.",
+                    }],
+                }],
+                "uncertainties": [],
+            })
+        raise AssertionError(f"unexpected call: {call_name}")
+
+    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
+    profiles = cards_to_character_profiles("Mira", [{
+        "id": "ordinary",
+        "selection_guide": "평상시 모습.",
+        "appearance": ["black hair"],
+        "default_outfit": ["coat"],
+    }, {
+        "id": "transformed",
+        "selection_guide": "몸 전체의 변신이 완료된 상태.",
+        "appearance": ["white hair"],
+        "default_outfit": ["armor"],
+    }])
+    profiles["is_persona"] = True
+
+    _output, result = await pipeline.resolve_profiles_before_generation(
+        payload={"chats": [{"role": "char", "data": "나는 이미 변신한 채 문을 열었다."}]},
+        toggles={"profile_resolve_enabled": True},
+        history_plan=None,
+        visual_profiles={"Mira": profiles},
+    )
+
+    assert [name for name, _request in calls] == [
+        "CHARACTER-RESOLVE",
+        "PROFILE-RESOLVE",
+    ]
+    assert all("# REGISTERED USER PERSONA IDENTITY" in request for _name, request in calls)
+    assert result["initial_visual_bases"][0]["target_visual_profile_id"] == "transformed"
+
+
+@pytest.mark.asyncio
 async def test_output_only_current_uses_call2_plan_instead_of_empty_context_fallback(monkeypatch):
     current = (
         '<output target=input priority=extra-high source=ai sender=ai recipient=user>\n'
@@ -271,6 +383,114 @@ async def test_output_only_current_uses_call2_plan_instead_of_empty_context_fall
     assert "<output target=input" in requests["CALL2-PLAN"]
     assert result["call2_fallback_stage"] == ""
     assert [item["slot"] for item in result["items"]] == [0]
+
+
+@pytest.mark.asyncio
+async def test_persona_identity_reaches_call1_call2_and_call3(monkeypatch):
+    requests = {}
+
+    async def fake_pipeline_call(call_name, messages, *_args, **_kwargs):
+        request = "\n".join(
+            str(message.get("content") or "") for message in messages
+        )
+        requests[call_name] = request
+        if call_name == "CALL1":
+            return json.dumps({
+                "wardrobe_events": [],
+                "hairstyle_events": [],
+            })
+        if call_name == "CALL2-PLAN":
+            return json.dumps({
+                "scene_plan": [{
+                    "anchor_segment": "C001",
+                    "characters": ["Mira"],
+                    "scene_brief": "Mira closes her umbrella and enters the foyer.",
+                }],
+            })
+        if call_name.startswith("CALL2-DETAIL 1/1"):
+            return """<lb-xnai>
+scenes[1]:
+  - camera: medium shot
+    characters[1]:
+      - name: Mira
+        positive: 1girl, black hair, holding closed umbrella
+        outfit_state:
+          body_state: clothed
+          worn: [coat]
+          removed: []
+    scene: foyer, rainy doorway
+    slot: 0
+    supplement: The girl has just stepped in from the rain.
+</lb-xnai>"""
+        if call_name == "CALL2-AUTHORITY-AUDIT":
+            return _authority_audit_response(messages)
+        if call_name == "CALL3":
+            return '[Scene slot=0]\nMira: "이제 안으로 들어왔네."'
+        raise AssertionError(f"unexpected call: {call_name}")
+
+    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
+    profiles = cards_to_character_profiles("Mira", [{
+        "id": "default",
+        "appearance": ["black hair"],
+        "default_outfit": ["coat"],
+        "gender_tag": "1girl",
+    }])
+    profiles["is_persona"] = True
+    visual_profiles = {"Mira": profiles}
+    pre_resolved = pipeline._materialize_profile_character_records(
+        [{
+            "name": "Mira",
+            "in_history": False,
+            "profile_timeline": [{
+                "at": "START",
+                "profile_id": "default",
+                "reason": "The configured persona is in the default form.",
+            }],
+        }],
+        visual_profiles,
+    )
+    current = "나는 젖은 우산을 접고 현관 안으로 들어갔다."
+
+    result = await pipeline.build_from_context(
+        {
+            "session_id": "persona_all_calls_1234",
+            "target_slotted": current + "\n\n[Slot 0]",
+            "chats": [{"role": "char", "data": current}],
+        },
+        {
+            "call1_backtranslate_enabled": False,
+            "call1_enabled": True,
+            "call1_parallel_enabled": False,
+            "call2_parallel_enabled": True,
+            "call2_parallel_max_concurrency": 1,
+            "call2_parallel_slow_retry_enabled": False,
+            "scene_mode": "manual",
+            "output_count_min": 1,
+            "output_count_max": 1,
+            "key_visual": False,
+            "call3_enabled": True,
+            "speak_enabled": True,
+            "speak_emotion_enabled": False,
+        },
+        "### Mira\n-Appearance\n1girl, black hair\n-default_outfit\ncoat",
+        extra_costume="### Mira\n-default_outfit\ncoat",
+        extra_names="Mira",
+        backtranslate_names="Mira",
+        visual_profiles=visual_profiles,
+        pre_resolved_profile_result=pre_resolved,
+    )
+
+    required_calls = [
+        "CALL1",
+        "CALL2-PLAN",
+        next(name for name in requests if name.startswith("CALL2-DETAIL 1/1")),
+        "CALL3",
+    ]
+    for call_name in required_calls:
+        assert "# REGISTERED USER PERSONA IDENTITY" in requests[call_name]
+        assert "`Mira` is the configured user persona" in requests[call_name]
+    assert result["items"][0]["characters"][0]["name"] == "Mira"
+    assert result["items"][0]["speak"] == 'Mira: "이제 안으로 들어왔네."'
 
 
 def test_call2_plan_selects_global_slots_and_builds_key_visual():

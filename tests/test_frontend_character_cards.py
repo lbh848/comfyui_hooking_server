@@ -13,6 +13,15 @@ def test_character_cards_are_switched_inline_and_limited_to_ten():
     assert "[${index + 1}]" in FRONTEND
 
 
+def test_character_card_persona_checkbox_switches_one_bot_level_persona():
+    assert "<span>페르소나</span>" in FRONTEND
+    assert "bot.persona_character_name" in FRONTEND
+    assert "async function setBotPersonaCharacter(charName, checkbox)" in FRONTEND
+    assert "action: 'update_persona_character'" in FRONTEND
+    assert "페르소나를 ${previousName}에서 ${nextName}" in FRONTEND
+    assert "외형 카드가 바뀌어도 같은 페르소나로 유지됩니다." in FRONTEND
+
+
 def test_new_character_card_starts_blank_instead_of_copying_the_active_card():
     start = FRONTEND.index("async function addVisualCard(charName)")
     end = FRONTEND.index("async function removeVisualCard(charName)", start)

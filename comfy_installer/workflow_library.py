@@ -11,7 +11,7 @@ import traceback
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Iterable, Mapping
+from typing import Any, Callable, Iterable, Mapping
 
 from .crypto import ExtractedWorkflowPack, extract_workflow_pack
 from .manifest import InstallManifest, load_install_manifest_data
@@ -1017,6 +1017,232 @@ def latest_release_version(
         traceback.print_exc()
         raise WorkflowLibraryError(
             f"최신 기본 워크플로우 버전 확인 실패: {exc}"
+        ) from exc
+
+
+def _get_dotted_config_value(config: Mapping[str, Any], dotted_key: str) -> Any:
+    current: Any = config
+    for part in dotted_key.split("."):
+        if not isinstance(current, Mapping) or part not in current:
+            return None
+        current = current[part]
+    return current
+
+
+def configured_workflow_integrity(
+    *,
+    config_path: str | os.PathLike[str],
+    library_root: str | os.PathLike[str],
+    release_version: str | None = None,
+) -> dict:
+    """Compare configured workflow files with one immutable pack release.
+
+    Empty bindings are reported as unconfigured rather than damaged.  Once an
+    item has at least one configured binding, every binding declared by that
+    pack item must point to bytes matching the distribution original.
+    """
+
+    config_file = Path(config_path).resolve()
+    release = release_version or latest_release_version(library_root)
+    try:
+        config = _read_json_object(config_file, "워크플로우 무결성 검사 설정")
+        release_root, state = _load_release(
+            Path(library_root).resolve(), release
+        )
+        raw_items = state.get("items")
+        if not isinstance(raw_items, list):
+            raise WorkflowLibraryError(
+                f"워크플로우 팩 항목 목록이 손상되었습니다: {release}"
+            )
+
+        results: list[dict] = []
+        for raw_item in raw_items:
+            if not isinstance(raw_item, dict):
+                raise WorkflowLibraryError(
+                    f"워크플로우 팩 항목 형식이 잘못되었습니다: {raw_item!r}"
+                )
+            item_id = str(raw_item.get("id") or "").strip()
+            raw_filename = str(raw_item.get("filename") or "")
+            filename = Path(raw_filename).name
+            expected_hash = str(raw_item.get("sha256") or "").strip()
+            raw_bindings = raw_item.get("bindings")
+            if (
+                not item_id
+                or not filename
+                or filename != raw_filename
+                or not expected_hash
+                or not isinstance(raw_bindings, list)
+                or not raw_bindings
+            ):
+                raise WorkflowLibraryError(
+                    "워크플로우 팩 무결성 메타데이터가 잘못되었습니다: "
+                    f"release={release}, item={item_id or '<unknown>'}"
+                )
+
+            source = release_root / filename
+            distribution_status = "clean"
+            distribution_reason = "팩 원본 SHA-256 일치"
+            try:
+                if source.is_symlink() or not source.is_file():
+                    distribution_status = "missing"
+                    distribution_reason = "팩 원본 파일이 없습니다."
+                elif _sha256_bytes(source.read_bytes()) != expected_hash:
+                    distribution_status = "modified"
+                    distribution_reason = "팩 원본 SHA-256이 배포 기록과 다릅니다."
+            except Exception as exc:
+                distribution_status = "unreadable"
+                distribution_reason = f"팩 원본을 읽지 못했습니다: {exc}"
+                print(
+                    "[COMFY_INSTALL][WORKFLOW_LIBRARY] 무결성 검사 중 팩 "
+                    f"원본 읽기 실패: release={release}, item={item_id}, "
+                    f"path={source}, error={exc}"
+                )
+                traceback.print_exc()
+            if distribution_status != "clean":
+                print(
+                    "[COMFY_INSTALL][WORKFLOW_LIBRARY] 팩 원본 무결성 실패: "
+                    f"release={release}, item={item_id}, path={source}, "
+                    f"status={distribution_status}, reason={distribution_reason}"
+                )
+
+            bindings: list[dict] = []
+            configured_count = 0
+            for raw_binding in raw_bindings:
+                binding = str(raw_binding).strip()
+                if not binding:
+                    raise WorkflowLibraryError(
+                        "워크플로우 팩에 빈 바인딩 키가 있습니다: "
+                        f"release={release}, item={item_id}"
+                    )
+                raw_value = _get_dotted_config_value(config, binding)
+                if not isinstance(raw_value, str) or not raw_value.strip():
+                    print(
+                        "[COMFY_INSTALL][WORKFLOW_LIBRARY] 무결성 검사 바인딩 "
+                        "생략: 설정되지 않음: "
+                        f"release={release}, item={item_id}, binding={binding}, "
+                        f"value={raw_value!r}"
+                    )
+                    bindings.append(
+                        {
+                            "key": binding,
+                            "path": "",
+                            "status": "unconfigured",
+                            "reason": "현재 설정에서 사용하지 않는 경로입니다.",
+                        }
+                    )
+                    continue
+
+                configured_count += 1
+                configured_path = raw_value.strip()
+                status = "clean"
+                reason = "팩 원본과 일치"
+                actual_hash: str | None = None
+                try:
+                    candidate = Path(configured_path)
+                    if not candidate.is_absolute():
+                        status = "invalid_path"
+                        reason = "절대 경로가 아닙니다."
+                    else:
+                        resolved = candidate.resolve()
+                        configured_path = str(resolved)
+                        if resolved.is_symlink() or not resolved.is_file():
+                            status = "missing"
+                            reason = "설정된 워크플로우 파일이 없습니다."
+                        else:
+                            actual_hash = _sha256_bytes(resolved.read_bytes())
+                            if actual_hash != expected_hash:
+                                status = "modified"
+                                reason = (
+                                    "팩 원본과 내용이 다릅니다. ComfyUI 저장 또는 "
+                                    "사용자 편집으로 변경됐을 수 있습니다."
+                                )
+                except Exception as exc:
+                    status = "unreadable"
+                    reason = f"설정된 워크플로우를 읽지 못했습니다: {exc}"
+                    print(
+                        "[COMFY_INSTALL][WORKFLOW_LIBRARY] 설정 워크플로우 "
+                        f"무결성 검사 실패: release={release}, item={item_id}, "
+                        f"binding={binding}, path={configured_path}, error={exc}"
+                    )
+                    traceback.print_exc()
+                if status != "clean":
+                    print(
+                        "[COMFY_INSTALL][WORKFLOW_LIBRARY] 설정 워크플로우 "
+                        "무결성 불일치: "
+                        f"release={release}, item={item_id}, binding={binding}, "
+                        f"path={configured_path}, status={status}, reason={reason}"
+                    )
+                bindings.append(
+                    {
+                        "key": binding,
+                        "path": configured_path,
+                        "status": status,
+                        "reason": reason,
+                        "actual_sha256": actual_hash,
+                    }
+                )
+
+            if distribution_status != "clean":
+                status = "distribution_error"
+            elif configured_count == 0:
+                status = "unconfigured"
+            elif all(entry["status"] == "clean" for entry in bindings):
+                status = "clean"
+            else:
+                status = "needs_repair"
+            results.append(
+                {
+                    "id": item_id,
+                    "name": str(raw_item.get("name") or filename),
+                    "filename": filename,
+                    "status": status,
+                    "repairable": status == "needs_repair",
+                    "expected_sha256": expected_hash,
+                    "distribution": {
+                        "path": str(source),
+                        "status": distribution_status,
+                        "reason": distribution_reason,
+                    },
+                    "bindings": bindings,
+                }
+            )
+
+        counts = {
+            name: sum(1 for item in results if item["status"] == name)
+            for name in (
+                "clean",
+                "needs_repair",
+                "unconfigured",
+                "distribution_error",
+            )
+        }
+        return {
+            "release_version": release,
+            "source_kind": "configured_files_against_distribution_original",
+            "items": results,
+            "counts": counts,
+            "configured_count": len(results) - counts["unconfigured"],
+            "repairable_count": counts["needs_repair"],
+            "clean": (
+                counts["needs_repair"] == 0
+                and counts["distribution_error"] == 0
+            ),
+        }
+    except WorkflowLibraryError as exc:
+        print(
+            "[COMFY_INSTALL][WORKFLOW_LIBRARY] 워크플로우 무결성 검사 거부: "
+            f"release={release}, config={config_file}, error={exc}"
+        )
+        traceback.print_exc()
+        raise
+    except Exception as exc:
+        print(
+            "[COMFY_INSTALL][WORKFLOW_LIBRARY] 워크플로우 무결성 검사 실패: "
+            f"release={release}, config={config_file}, error={exc}"
+        )
+        traceback.print_exc()
+        raise WorkflowLibraryError(
+            f"워크플로우 무결성 검사 실패: {exc}"
         ) from exc
 
 

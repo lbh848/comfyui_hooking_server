@@ -523,6 +523,21 @@ def effective_character_profiles(
 
 def effective_bot_profiles(bot: dict, lb_extra: list[dict] | None) -> dict[str, dict]:
     result: dict[str, dict] = {}
+    requested_persona = _clean_text(bot.get("persona_character_name"))
+    canonical_persona = ""
+    if requested_persona:
+        canonical_persona = next((
+            _clean_text(character.get("name"))
+            for character in bot.get("characters") or []
+            if isinstance(character, dict)
+            and _clean_text(character.get("name")).casefold()
+            == requested_persona.casefold()
+        ), "")
+        if not canonical_persona:
+            print(
+                f"[CHARACTER_CARD:PERSONA] 저장된 페르소나 캐릭터를 찾지 못해 "
+                f"이번 해석에서 무시: persona={requested_persona!r}"
+            )
     for root_character in bot.get("characters") or []:
         if not isinstance(root_character, dict):
             print(f"[CHARACTER_CARD] object가 아닌 캐릭터 스킵: {root_character!r}")
@@ -533,7 +548,14 @@ def effective_bot_profiles(bot: dict, lb_extra: list[dict] | None) -> dict[str, 
             continue
         extra = _find_named(lb_extra or [], name)
         profiles, source = effective_character_profiles(name, root_character, extra)
-        result[name] = {**profiles, "source": source}
+        result[name] = {
+            **profiles,
+            "source": source,
+            "is_persona": bool(
+                canonical_persona
+                and name.casefold() == canonical_persona.casefold()
+            ),
+        }
     return result
 
 

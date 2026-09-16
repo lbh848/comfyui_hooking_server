@@ -24,6 +24,7 @@ APP_SERVICE_KEY = web.AppKey(
 ShutdownAfterUpdateCallback = Callable[[], Awaitable[dict[str, Any]]]
 PauseManagedComfyCallback = Callable[[], Any]
 ResumeManagedComfyCallback = Callable[[Any], Any]
+ApplyRepairedWorkflowRuntimeCallback = Callable[[dict[str, str]], None]
 
 
 def _json_error(message: str, *, status: int = 400) -> web.Response:
@@ -100,6 +101,51 @@ async def handle_workflow_library(request: web.Request) -> web.Response:
         return web.json_response({"ok": True, "library": result})
     except Exception as exc:
         print(f"[COMFY_INSTALL][API] 워크플로우 라이브러리 조회 실패: {exc}")
+        traceback.print_exc()
+        return _json_error(str(exc), status=500)
+
+
+async def handle_workflow_integrity(request: web.Request) -> web.Response:
+    service = request.app[APP_SERVICE_KEY]
+    try:
+        result = await asyncio.to_thread(service.workflow_integrity_report)
+        return web.json_response({"ok": True, "report": result})
+    except InstallerServiceError as exc:
+        print(f"[COMFY_INSTALL][API] 워크플로우 무결성 검사 거부: {exc}")
+        traceback.print_exc()
+        return _json_error(str(exc), status=409)
+    except Exception as exc:
+        print(f"[COMFY_INSTALL][API] 워크플로우 무결성 검사 실패: {exc}")
+        traceback.print_exc()
+        return _json_error(str(exc), status=500)
+
+
+async def handle_workflow_integrity_repair(request: web.Request) -> web.Response:
+    service = request.app[APP_SERVICE_KEY]
+    try:
+        body = await _read_json_object(request)
+        release_version = body.get("release_version")
+        selected_item_ids = body.get("selected_item_ids")
+        if not isinstance(release_version, str):
+            raise InstallerServiceError("release_version은 문자열이어야 합니다.")
+        if not isinstance(selected_item_ids, list) or not all(
+            isinstance(value, str) for value in selected_item_ids
+        ):
+            raise InstallerServiceError(
+                "selected_item_ids는 문자열 배열이어야 합니다."
+            )
+        result = await asyncio.to_thread(
+            service.repair_workflow_integrity,
+            release_version=release_version,
+            selected_item_ids=selected_item_ids,
+        )
+        return web.json_response({"ok": True, "repair": result})
+    except InstallerServiceError as exc:
+        print(f"[COMFY_INSTALL][API] 워크플로우 무결성 복구 거부: {exc}")
+        traceback.print_exc()
+        return _json_error(str(exc), status=409)
+    except Exception as exc:
+        print(f"[COMFY_INSTALL][API] 워크플로우 무결성 복구 실패: {exc}")
         traceback.print_exc()
         return _json_error(str(exc), status=500)
 
@@ -451,6 +497,9 @@ def register_comfy_installer_routes(
     shutdown_after_update: ShutdownAfterUpdateCallback | None = None,
     pause_managed_comfy: PauseManagedComfyCallback | None = None,
     resume_managed_comfy: ResumeManagedComfyCallback | None = None,
+    apply_repaired_workflow_runtime: (
+        ApplyRepairedWorkflowRuntimeCallback | None
+    ) = None,
 ) -> ComfyInstallerService:
     service = ComfyInstallerService(
         project_root=project_root,
@@ -458,6 +507,7 @@ def register_comfy_installer_routes(
         requirements_dir=requirements_dir,
         pause_managed_comfy=pause_managed_comfy,
         resume_managed_comfy=resume_managed_comfy,
+        apply_repaired_workflow_runtime=apply_repaired_workflow_runtime,
     )
     app[APP_SERVICE_KEY] = service
     shutdown_requested = False
@@ -530,6 +580,13 @@ def register_comfy_installer_routes(
     app.router.add_post("/api/comfy-installer/preflight", handle_preflight)
     app.router.add_get(
         "/api/comfy-installer/workflow-library", handle_workflow_library
+    )
+    app.router.add_get(
+        "/api/comfy-installer/workflow-integrity", handle_workflow_integrity
+    )
+    app.router.add_post(
+        "/api/comfy-installer/workflow-integrity/repair",
+        handle_workflow_integrity_repair,
     )
     app.router.add_post(
         "/api/comfy-installer/workflows/patch-sage-attention",

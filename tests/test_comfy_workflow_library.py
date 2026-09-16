@@ -17,6 +17,7 @@ from comfy_installer.workflow_library import (
     LEGACY_USER_WORKFLOW_DIRNAME,
     USER_WORKFLOW_DIRNAME,
     WorkflowLibraryError,
+    configured_workflow_integrity,
     distribution_e2e_catalog,
     embedded_workflow_base_dir,
     import_default_user_copies,
@@ -179,6 +180,61 @@ def test_distribution_e2e_catalog_uses_intact_supported_originals_only(
         for path in release_root.rglob("*"):
             if path.is_file():
                 path.chmod(path.stat().st_mode | stat.S_IWRITE)
+
+
+def test_configured_workflow_integrity_distinguishes_changed_missing_clean_and_unused(
+    tmp_path: Path,
+) -> None:
+    library_root = tmp_path / "library"
+    _write_library_release(
+        library_root,
+        "v1",
+        [
+            ("changed", ["tag_analysis_workflow_source_path"]),
+            ("missing", ["debug_workflow_source_path"]),
+            ("clean", ["comfy_workflow_source_path"]),
+            ("unused", ["utility_workflow_source_path"]),
+        ],
+    )
+    release_root = library_root / DISTRIBUTION_LIBRARY_DIRNAME / "v1"
+    changed = tmp_path / "changed.json"
+    changed.write_text('{"nodes": [{"title": "Comfy autosave"}]}', encoding="utf-8")
+    clean = tmp_path / "clean.json"
+    clean.write_bytes((release_root / "clean.json").read_bytes())
+    config = tmp_path / "config.json"
+    config.write_text(
+        json.dumps(
+            {
+                "tag_analysis_workflow_source_path": str(changed),
+                "debug_workflow_source_path": str(tmp_path / "gone.json"),
+                "comfy_workflow_source_path": str(clean),
+                "utility_workflow_source_path": "",
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    report = configured_workflow_integrity(
+        config_path=config,
+        library_root=library_root,
+        release_version="v1",
+    )
+
+    by_id = {item["id"]: item for item in report["items"]}
+    assert by_id["changed"]["status"] == "needs_repair"
+    assert by_id["changed"]["bindings"][0]["status"] == "modified"
+    assert by_id["missing"]["status"] == "needs_repair"
+    assert by_id["missing"]["bindings"][0]["status"] == "missing"
+    assert by_id["clean"]["status"] == "clean"
+    assert by_id["unused"]["status"] == "unconfigured"
+    assert by_id["unused"]["repairable"] is False
+    assert report["counts"] == {
+        "clean": 1,
+        "needs_repair": 2,
+        "unconfigured": 1,
+        "distribution_error": 0,
+    }
 
 
 def test_default_workflow_copies_use_latest_release_metadata_as_source_of_truth(

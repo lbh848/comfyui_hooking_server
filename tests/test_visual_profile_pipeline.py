@@ -172,6 +172,18 @@ def test_character_and_profile_resolve_are_registered_in_routing_and_prompt_edit
     assert "profile_result" in frontend_source
 
 
+def test_persona_identity_context_is_omitted_when_not_configured_or_not_current():
+    profiles = _profiles()
+    assert pipeline._persona_identity_context(profiles, ["Adachi"]) == ""
+
+    profiles["Adachi"]["is_persona"] = True
+    assert pipeline._persona_identity_context(profiles, ["AnotherCharacter"]) == ""
+    assert "`Adachi` is the configured user persona" in pipeline._persona_identity_context(
+        profiles,
+        ["Adachi"],
+    )
+
+
 def test_call1_profile_event_maps_exact_meaningful_name_to_internal_route():
     raw = {
         "reference_assignments": [],

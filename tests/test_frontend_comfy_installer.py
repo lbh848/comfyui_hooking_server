@@ -21,12 +21,14 @@ def test_settings_has_comfy_installer_tab_and_key_inputs() -> None:
     assert 'id="comfy-installer-pack"' in FRONTEND
     assert 'id="comfy-installer-unpack-btn"' in FRONTEND
     assert 'id="comfy-installer-update-btn"' in FRONTEND
+    assert 'id="comfy-installer-integrity-btn"' in FRONTEND
     assert 'id="comfy-installer-e2e-btn"' in FRONTEND
     assert 'id="comfy-installer-sage-enable-btn"' in FRONTEND
     assert 'id="comfy-installer-sage-disable-btn"' in FRONTEND
     assert ">PatchSageAttention 일괄 활성화</button>" in FRONTEND
     assert ">PatchSageAttention 일괄 비활성화</button>" in FRONTEND
     assert 'id="comfy-installer-e2e-modal"' in FRONTEND
+    assert 'id="comfy-installer-integrity-modal"' in FRONTEND
     assert 'id="comfy-installer-compat-start-btn"' in FRONTEND
     assert "<strong>설치 / 누락 설치</strong>는" in FRONTEND
     assert (
@@ -68,6 +70,8 @@ def test_frontend_uses_dedicated_installer_apis_and_does_not_persist_keys() -> N
         "/api/comfy-installer/cancel",
         "/api/comfy-installer/unpack-workflow-pack",
         "/api/comfy-installer/workflow-library",
+        "/api/comfy-installer/workflow-integrity",
+        "/api/comfy-installer/workflow-integrity/repair",
         "/api/comfy-installer/workflows/patch-sage-attention",
         "/api/comfy-installer/civitai-key",
         "/api/comfy-installer/troubleshooting/civitai-key",
@@ -109,6 +113,19 @@ def test_workflow_e2e_is_optional_and_uses_read_only_originals_modal() -> None:
     assert "선택하지 않은 항목은 건너뜁니다" in FRONTEND
     assert "E2E 검사는 별도 실행할 수 있습니다" in FRONTEND
     assert "설치는 선택한 워크플로우에 필요한 모델만 받고 E2E 없이 완료" in FRONTEND
+
+
+def test_workflow_integrity_modal_requires_explicit_non_destructive_repair() -> None:
+    integrity_button = FRONTEND.index('id="comfy-installer-integrity-btn"')
+    e2e_button = FRONTEND.index('id="comfy-installer-e2e-btn"')
+    assert integrity_button < e2e_button
+    assert "async function comfyInstallerOpenIntegrityModal()" in FRONTEND
+    assert "async function comfyInstallerRepairIntegrity()" in FRONTEND
+    assert "comfyInstallerSelectedIntegrityIds()" in FRONTEND
+    assert "사용자 편집본은 자동으로 덮어쓰지 않습니다" in FRONTEND
+    assert "기존 파일은 삭제하거나 덮어쓰지 않습니다" in FRONTEND
+    assert "config.json을 백업" in FRONTEND
+    assert "window.confirm(" in FRONTEND
 
 
 def test_troubleshooting_civitai_key_replacement_requires_comfy_restart() -> None:

@@ -963,6 +963,111 @@ def apply_installed_config(
         raise ConfigUpdateError(f"설정 적용 실패: {exc}") from exc
 
 
+def apply_repaired_workflow_bindings(
+    *,
+    config_path: str | os.PathLike[str],
+    backup_dir: str | os.PathLike[str],
+    comfy_root: str | os.PathLike[str],
+    workflow_bindings: Mapping[str, str],
+) -> ConfigUpdateResult:
+    """Back up config and replace only explicitly repaired workflow bindings."""
+
+    config_file = Path(config_path).resolve()
+    install_root = Path(comfy_root).resolve()
+    try:
+        if not workflow_bindings:
+            raise ConfigUpdateError("복구할 워크플로우 바인딩이 없습니다.")
+        normalized = _normalize_embedded_workflow_bindings(
+            workflow_bindings,
+            comfy_root=install_root,
+            label="무결성 복구 워크플로우",
+        )
+        before_hash = _sha256_file(config_file)
+        config = _read_json_object(config_file, "현재 설정")
+        updated = copy.deepcopy(config)
+        for key, value in normalized.items():
+            _set_dotted(updated, key, value)
+
+        backup = backup_current_config(
+            config_path=config_file,
+            backup_dir=backup_dir,
+            reason="workflow_integrity_repair",
+        )
+        backup_path = Path(str(backup["backup_path"])).resolve()
+        if backup["sha256"] != before_hash or _sha256_file(config_file) != before_hash:
+            raise ConfigUpdateError(
+                "워크플로우 복구 전 config.json이 변경되어 경로 전환을 중단합니다."
+            )
+
+        _write_json_atomic(config_file, updated)
+        try:
+            reloaded = _read_json_object(config_file, "워크플로우 복구 설정")
+            if reloaded != updated:
+                raise ConfigUpdateError(
+                    "워크플로우 복구 후 config.json 재검증 값이 일치하지 않습니다."
+                )
+            after_hash = _sha256_file(config_file)
+        except Exception as verify_exc:
+            print(
+                "[COMFY_INSTALL][CONFIG] 워크플로우 복구 설정 재검증 실패, "
+                f"기존 설정 복원 시작: error={verify_exc}"
+            )
+            traceback.print_exc()
+            try:
+                _copy_file_atomic(backup_path, config_file)
+                restored_hash = _sha256_file(config_file)
+                if restored_hash != before_hash:
+                    raise ConfigUpdateError(
+                        "워크플로우 복구 실패 후 기존 config.json의 SHA-256을 "
+                        "복원하지 못했습니다."
+                    )
+                print(
+                    "[COMFY_INSTALL][CONFIG] 워크플로우 복구 실패 후 기존 "
+                    f"설정 복원 완료: source={backup_path}"
+                )
+            except Exception as restore_exc:
+                print(
+                    "[COMFY_INSTALL][CONFIG] 워크플로우 복구 설정 재검증과 "
+                    f"기존 설정 복원이 모두 실패했습니다: error={restore_exc}"
+                )
+                traceback.print_exc()
+                raise ConfigUpdateError(
+                    "워크플로우 복구 설정 재검증과 기존 config.json 복원이 "
+                    f"모두 실패했습니다: {restore_exc}"
+                ) from verify_exc
+            raise ConfigUpdateError(
+                "워크플로우 복구 설정 재검증에 실패해 기존 config.json을 "
+                f"복원했습니다: {verify_exc}"
+            ) from verify_exc
+        print(
+            "[COMFY_INSTALL][CONFIG] 워크플로우 무결성 복구 경로 적용 완료: "
+            f"backup={backup_path}, updated={len(normalized)}"
+        )
+        return ConfigUpdateResult(
+            config_path=config_file,
+            backup_path=backup_path,
+            before_sha256=before_hash,
+            after_sha256=after_hash,
+            updated_keys=tuple(sorted(normalized)),
+        )
+    except ConfigUpdateError as exc:
+        print(
+            "[COMFY_INSTALL][CONFIG] 워크플로우 무결성 복구 설정 적용 실패: "
+            f"bindings={dict(workflow_bindings)!r}, error={exc}"
+        )
+        traceback.print_exc()
+        raise
+    except Exception as exc:
+        print(
+            "[COMFY_INSTALL][CONFIG] 워크플로우 무결성 복구 설정 적용 실패: "
+            f"bindings={dict(workflow_bindings)!r}, error={exc}"
+        )
+        traceback.print_exc()
+        raise ConfigUpdateError(
+            f"워크플로우 무결성 복구 설정 적용 실패: {exc}"
+        ) from exc
+
+
 def restore_config_backup(
     *,
     config_path: str | os.PathLike[str],

@@ -21612,6 +21612,88 @@ async def _shutdown_after_successful_comfy_update() -> dict[str, Any]:
     }
 
 
+def _apply_repaired_workflow_runtime(bindings: dict[str, str]) -> None:
+    """Apply installer-repaired workflow paths without waiting for a restart."""
+
+    global current_original_workflow, current_api_workflow, current_conversion_info
+    try:
+        for dotted_key, value in bindings.items():
+            parts = dotted_key.split(".")
+            if any(not part for part in parts):
+                raise ValueError(f"잘못된 워크플로우 설정 키: {dotted_key!r}")
+            cursor = app_config
+            for part in parts[:-1]:
+                child = cursor.get(part)
+                if child is None:
+                    child = {}
+                    cursor[part] = child
+                if not isinstance(child, dict):
+                    raise TypeError(
+                        "워크플로우 런타임 설정 대상이 객체가 아닙니다: "
+                        f"key={dotted_key!r}, part={part!r}"
+                    )
+                cursor = child
+            cursor[parts[-1]] = value
+
+        workflow_profiles.normalize_workflow_config(app_config)
+        if any(
+            key == "comfy_workflow_source_path"
+            or key.startswith("illustration_workflow_source_paths.")
+            for key in bindings
+        ):
+            current_original_workflow = None
+            current_api_workflow = None
+            current_conversion_info = {}
+
+        if "outfit_workflow_source_path" in bindings:
+            outfit_mode.outfit_workflow_source_path = str(
+                bindings["outfit_workflow_source_path"]
+            )
+            outfit_mode._outfit_api_workflow = None
+            outfit_mode._outfit_hash = ""
+        if "asset_workflow_source_path" in bindings:
+            asset_mode.workflow_source_path = str(
+                bindings["asset_workflow_source_path"]
+            )
+            asset_mode._asset_api_workflow = None
+            asset_mode._asset_hash = ""
+        if "anima_asset_workflow_source_path" in bindings:
+            asset_mode.anima_workflow_source_path = str(
+                bindings["anima_asset_workflow_source_path"]
+            )
+            asset_mode._asset_api_workflow = None
+            asset_mode._asset_hash = ""
+        if "anima_only_asset_workflow_source_path" in bindings:
+            asset_mode.anima_only_workflow_source_path = str(
+                bindings["anima_only_asset_workflow_source_path"]
+            )
+            asset_mode._asset_api_workflow = None
+            asset_mode._asset_hash = ""
+        if "tag_analysis_workflow_source_path" in bindings:
+            asset_tool.workflow_source_path = str(
+                bindings["tag_analysis_workflow_source_path"]
+            )
+            asset_tool._api_workflow = None
+            asset_tool._workflow_hash = ""
+        if "asset_tag_analysis_workflow_source_path" in bindings:
+            asset_tool.fallback_workflow_source_path = str(
+                bindings["asset_tag_analysis_workflow_source_path"]
+            )
+            asset_tool._fallback_api_workflow = None
+            asset_tool._fallback_hash = ""
+        print(
+            "[COMFY_INSTALL][INTEGRITY] 복구 워크플로우 런타임 반영 완료: "
+            f"bindings={sorted(bindings)}"
+        )
+    except Exception as exc:
+        print(
+            "[COMFY_INSTALL][INTEGRITY] 복구 워크플로우 런타임 반영 실패: "
+            f"bindings={bindings!r}, error={exc}"
+        )
+        traceback.print_exc()
+        raise
+
+
 comfy_installer_service = register_comfy_installer_routes(
     app,
     project_root=BASE_DIR,
@@ -21623,6 +21705,7 @@ comfy_installer_service = register_comfy_installer_routes(
     shutdown_after_update=_shutdown_after_successful_comfy_update,
     pause_managed_comfy=_pause_managed_comfy_for_update,
     resume_managed_comfy=_resume_managed_comfy_after_update,
+    apply_repaired_workflow_runtime=_apply_repaired_workflow_runtime,
 )
 register_patch_import_routes(
     app,

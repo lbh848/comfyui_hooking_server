@@ -200,6 +200,27 @@ def test_card_routing_reuses_profile_pipeline_shape():
     assert base["visual_profile_id"] == "despair"
 
 
+def test_effective_bot_profiles_marks_only_the_configured_bot_persona():
+    adachi = _root_character("Adachi")
+    maya = _root_character("Maya")
+    profiles = effective_bot_profiles({
+        "persona_character_name": "Adachi",
+        "characters": [adachi, maya],
+    }, [])
+
+    assert profiles["Adachi"]["is_persona"] is True
+    assert profiles["Maya"]["is_persona"] is False
+
+
+def test_effective_bot_profiles_ignores_a_stale_persona_pointer():
+    profiles = effective_bot_profiles({
+        "persona_character_name": "Missing",
+        "characters": [_root_character("Adachi")],
+    }, [])
+
+    assert profiles["Adachi"]["is_persona"] is False
+
+
 def test_secondary_card_does_not_inherit_primary_card_loras_when_fields_are_missing():
     root = _root_character()
     cards = _cards()

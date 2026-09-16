@@ -68,6 +68,76 @@ def test_hooking_server_restart_not_required_for_current_process() -> None:
     )
 
 
+def test_workflow_integrity_repair_preserves_changed_copy_and_rebinds_clean_copy(
+    tmp_path: Path,
+) -> None:
+    comfy = tmp_path / "comfy"
+    user_root = comfy / "user" / "default" / "workflows" / USER_WORKFLOW_DIRNAME
+    user_root.mkdir(parents=True)
+    changed = user_root / "tag__v1.json"
+    changed_payload = b'{"nodes":[{"title":"Comfy autosave changed this"}]}'
+    changed.write_bytes(changed_payload)
+    config = tmp_path / "config.json"
+    config.write_text(
+        json.dumps({"tag_analysis_workflow_source_path": str(changed)}),
+        encoding="utf-8",
+    )
+    release_root = (
+        tmp_path / "comfy_workflow_library" / DISTRIBUTION_LIBRARY_DIRNAME / "v1"
+    )
+    release_root.mkdir(parents=True)
+    source = release_root / "tag.json"
+    source_payload = b'{"nodes":[{"title":"WD_TAG_TEXT"}]}'
+    source.write_bytes(source_payload)
+    (release_root / ".soya-pack.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 3,
+                "release_version": "v1",
+                "items": [
+                    {
+                        "id": "tag_analysis_workflow_source_path",
+                        "name": "tag.json",
+                        "filename": "tag.json",
+                        "sha256": hashlib.sha256(source_payload).hexdigest(),
+                        "bindings": ["tag_analysis_workflow_source_path"],
+                        "model_ids": [],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    runtime_updates: list[dict[str, str]] = []
+    service = ComfyInstallerService(
+        project_root=tmp_path,
+        config_path=config,
+        requirements_dir=tmp_path / "requirements",
+        apply_repaired_workflow_runtime=lambda bindings: runtime_updates.append(
+            dict(bindings)
+        ),
+    )
+
+    before = service.workflow_integrity_report()
+    assert before["items"][0]["status"] == "needs_repair"
+    result = service.repair_workflow_integrity(
+        release_version="v1",
+        selected_item_ids=["tag_analysis_workflow_source_path"],
+    )
+
+    updated_config = json.loads(config.read_text(encoding="utf-8"))
+    repaired_path = Path(updated_config["tag_analysis_workflow_source_path"])
+    assert changed.read_bytes() == changed_payload
+    assert repaired_path.name == "tag__v1_2.json"
+    assert repaired_path.read_bytes() == source_payload
+    assert Path(result["config"]["backup_path"]).is_file()
+    assert result["report"]["items"][0]["status"] == "clean"
+    assert result["runtime_applied"] is True
+    assert runtime_updates == [
+        {"tag_analysis_workflow_source_path": str(repaired_path)}
+    ]
+
+
 def test_e2e_catalog_uses_distribution_originals_without_runtime_receipt(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

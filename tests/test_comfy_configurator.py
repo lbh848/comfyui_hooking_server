@@ -3,9 +3,11 @@ from pathlib import Path
 
 import pytest
 
+import comfy_installer.configurator as configurator
 from comfy_installer.configurator import (
     ConfigUpdateError,
     apply_installed_config,
+    apply_repaired_workflow_bindings,
     backup_current_config,
     retarget_config_to_embedded_comfy,
     restore_config_backup,
@@ -17,6 +19,71 @@ def _write_json(path: Path, value: dict) -> None:
         json.dumps(value, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+
+
+def test_workflow_integrity_repair_updates_only_selected_bindings_and_backs_up(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "config.json"
+    comfy = tmp_path / "comfy"
+    workflows = comfy / "user" / "default" / "workflows" / "SOYA_USER"
+    workflows.mkdir(parents=True)
+    clean = workflows / "tag__v4_2.json"
+    _write_json(clean, {"nodes": [{"title": "WD_TAG_TEXT"}]})
+    original = {
+        "tag_analysis_workflow_source_path": str(tmp_path / "changed.json"),
+        "unrelated": {"keep": True},
+    }
+    _write_json(config_path, original)
+
+    result = apply_repaired_workflow_bindings(
+        config_path=config_path,
+        backup_dir=comfy / ".installer-state" / "backups" / "config",
+        comfy_root=comfy,
+        workflow_bindings={"tag_analysis_workflow_source_path": str(clean)},
+    )
+
+    updated = json.loads(config_path.read_text(encoding="utf-8"))
+    backup = json.loads(result.backup_path.read_text(encoding="utf-8"))
+    assert updated["tag_analysis_workflow_source_path"] == str(clean.resolve())
+    assert updated["unrelated"] == {"keep": True}
+    assert backup == original
+    assert result.updated_keys == ("tag_analysis_workflow_source_path",)
+
+
+def test_workflow_integrity_repair_restores_config_when_post_write_check_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = tmp_path / "config.json"
+    comfy = tmp_path / "comfy"
+    workflows = comfy / "user" / "default" / "workflows" / "SOYA_USER"
+    workflows.mkdir(parents=True)
+    clean = workflows / "tag__v4_2.json"
+    _write_json(clean, {"nodes": [{"title": "WD_TAG_TEXT"}]})
+    original = {
+        "tag_analysis_workflow_source_path": str(tmp_path / "changed.json"),
+        "unrelated": {"keep": True},
+    }
+    _write_json(config_path, original)
+    real_read = configurator._read_json_object
+
+    def fail_post_write_check(path: Path, label: str) -> dict:
+        if label == "워크플로우 복구 설정":
+            raise ConfigUpdateError("의도한 재검증 실패")
+        return real_read(path, label)
+
+    monkeypatch.setattr(configurator, "_read_json_object", fail_post_write_check)
+
+    with pytest.raises(ConfigUpdateError, match="기존 config.json을 복원"):
+        apply_repaired_workflow_bindings(
+            config_path=config_path,
+            backup_dir=comfy / ".installer-state" / "backups" / "config",
+            comfy_root=comfy,
+            workflow_bindings={"tag_analysis_workflow_source_path": str(clean)},
+        )
+
+    assert json.loads(config_path.read_text(encoding="utf-8")) == original
 
 
 def test_config_apply_backs_up_updates_and_restores(tmp_path):

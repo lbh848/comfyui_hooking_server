@@ -376,14 +376,15 @@
             transition: width 0.2s ease, opacity 0.2s ease, background 0.2s ease;
         }
 
-        header.app-header .controls:hover:not(.is-hover-suppressed),
+        header.app-header .controls.is-hover-active:not(.is-hover-suppressed),
         header.app-header .controls:has(:focus-visible):not(.is-hover-suppressed),
         header.app-header .controls.is-pinned {
             transform: translateY(0);
             box-shadow: 0 16px 42px rgba(0, 0, 0, 0.48);
+            transition-duration: 0.16s, 0.18s;
         }
 
-        header.app-header .controls:hover:not(.is-hover-suppressed)::after,
+        header.app-header .controls.is-hover-active:not(.is-hover-suppressed)::after,
         header.app-header .controls:has(:focus-visible):not(.is-hover-suppressed)::after,
         header.app-header .controls.is-pinned::after {
             width: 64px;
@@ -426,7 +427,7 @@
             transition: transform 0.2s ease;
         }
 
-        header.app-header .controls:hover:not(.is-hover-suppressed) .header-controls-handle .ui-icon,
+        header.app-header .controls.is-hover-active:not(.is-hover-suppressed) .header-controls-handle .ui-icon,
         header.app-header .controls:has(:focus-visible):not(.is-hover-suppressed) .header-controls-handle .ui-icon,
         header.app-header .controls.is-pinned .header-controls-handle .ui-icon {
             transform: rotate(180deg);
@@ -631,7 +632,7 @@
             .header-controls-handle .ui-icon,
             .sysmon-strip,
             .sysmon-row {
-                transition-duration: 0.01ms;
+                transition-duration: 0.01ms !important;
             }
         }
 
@@ -7666,6 +7667,7 @@
         #comfy-installer-start-btn,
         #comfy-installer-compat-start-btn,
         #comfy-installer-update-btn,
+        #comfy-installer-integrity-btn,
         #comfy-installer-e2e-btn,
         #comfy-installer-sage-enable-btn,
         #comfy-installer-sage-disable-btn {
@@ -7680,6 +7682,11 @@
             border-color: color-mix(in srgb, #8d70ff 48%, var(--border));
             color: color-mix(in srgb, #b9a9ff 78%, var(--text));
             background: color-mix(in srgb, #8d70ff 10%, var(--surface2));
+        }
+        #comfy-installer-integrity-btn {
+            border-color: color-mix(in srgb, #4fb7d8 52%, var(--border));
+            color: color-mix(in srgb, #8fdcf2 82%, var(--text));
+            background: color-mix(in srgb, #4fb7d8 9%, var(--surface2));
         }
         #comfy-installer-e2e-btn {
             border-color: color-mix(in srgb, #55d69e 52%, var(--border));
@@ -7703,6 +7710,7 @@
             font-size: .68rem;
             line-height: 1.45;
         }
+        #comfy-installer-integrity-modal,
         #comfy-installer-e2e-modal { z-index: 1900; }
         .comfy-installer-e2e-content {
             width: min(680px, calc(100vw - 28px));
@@ -7740,6 +7748,26 @@
             color: var(--text2);
             font-size: .7rem;
         }
+        #comfy-installer-integrity-list {
+            min-height: 160px;
+            max-height: 430px;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            background: color-mix(in srgb, var(--surface2) 18%, transparent);
+        }
+        .comfy-integrity-status {
+            display: inline-flex;
+            align-items: center;
+            margin-left: 6px;
+            padding: 2px 6px;
+            border-radius: 999px;
+            font-size: .62rem;
+            font-weight: 750;
+        }
+        .comfy-integrity-status.clean { color: #8ce8bb; background: rgba(85,214,158,.12); }
+        .comfy-integrity-status.needs_repair { color: #ffd28a; background: rgba(227,162,58,.13); }
+        .comfy-integrity-status.unconfigured { color: var(--text2); background: rgba(148,163,184,.12); }
+        .comfy-integrity-status.distribution_error { color: #ff9aa7; background: rgba(239,68,68,.13); }
         .comfy-installer-monitor-card {
             border-color: color-mix(in srgb, #8d70ff 25%, var(--border));
             background: color-mix(in srgb, var(--surface) 96%, #8d70ff);
@@ -26560,6 +26588,7 @@
                                 <button type="button" class="comfy-installer-btn" id="comfy-installer-compat-start-btn" onclick="comfyInstallerStart('nvidia_compatibility')">호환 설치</button>
                                 <button type="button" class="comfy-installer-btn" id="comfy-installer-cloud-start-btn" onclick="comfyInstallerStart('cloud_only')" title="로컬 GPU 없이 Modal Worker를 통해 생성 작업을 수행합니다. 모델은 원격 저장소에서 Modal Volume으로 직접 다운로드되며, 로컬 환경에는 원격으로 보낼 수 없는 작업용 모델만 다운로드됩니다.">Cloud-Only 설치</button>
                                 <button type="button" class="comfy-installer-btn" id="comfy-installer-update-btn" onclick="comfyInstallerStartUpdate()">업데이트</button>
+                                <button type="button" class="comfy-installer-btn" id="comfy-installer-integrity-btn" onclick="comfyInstallerOpenIntegrityModal()">무결성 검사</button>
                                 <button type="button" class="comfy-installer-btn" id="comfy-installer-e2e-btn" onclick="comfyInstallerOpenE2EModal()">E2E 검사</button>
                                 <button type="button" class="comfy-installer-btn danger" id="comfy-installer-cancel-btn" onclick="comfyInstallerCancel()" disabled>안전하게 중단</button>
                             </div>
@@ -26570,7 +26599,7 @@
                             </div>
                             <p class="comfy-installer-note" style="margin-top:9px;">
                                 설치는 선택한 워크플로우에 필요한 모델만 받고 E2E 없이 완료됩니다. 업데이트도 워크플로우 실행 검사를 하지 않으며,
-                                후킹 서버가 바뀌면 재시작 후 한 번 더 눌러야 합니다. E2E 검사는 설치 완료 후 별도 버튼에서 읽기 전용 배포 원본 중 지원되는 워크플로우만 선택해 실행하거나 전부 건너뛸 수 있습니다.
+                                후킹 서버가 바뀌면 재시작 후 한 번 더 눌러야 합니다. 무결성 검사는 현재 설정된 워크플로우와 읽기 전용 팩 원본을 비교하며, 복구는 결과 모달에서 사용자가 선택한 항목만 비파괴 방식으로 처리합니다. E2E 검사는 설치 완료 후 지원되는 배포 원본을 선택해 실제 실행합니다.
                             </p>
                             <p class="comfy-installer-note" id="comfy-installer-compatibility-note" style="margin-top:7px;">
                                 <strong>호환 설치:</strong> RTX 2070/2080 같은 Turing(sm75)부터 사용할 수 있도록 SageAttention과 전용 Triton을 제외합니다.
@@ -26747,6 +26776,35 @@
                 <button class="cancel" onclick="previewConfig()">📋 Config 미리보기</button>
                 <button class="cancel" onclick="closeSettingsModal()">취소</button>
                 <button class="confirm" onclick="saveSettings()">저장</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ComfyUI 워크플로우 무결성 검사·선택 복구 모달 -->
+    <div class="modal" id="comfy-installer-integrity-modal" onclick="if (event.target === this) comfyInstallerCloseIntegrityModal()">
+        <div class="modal-content comfy-installer-e2e-content" role="dialog" aria-modal="true" aria-labelledby="comfy-installer-integrity-title">
+            <div class="modal-header">
+                <div>
+                    <h2 id="comfy-installer-integrity-title">워크플로우 무결성 검사</h2>
+                    <div class="comfy-installer-note" style="margin-top:5px;">현재 설정된 파일을 읽기 전용 팩 원본과 SHA-256으로 비교합니다. 사용자 편집본은 자동으로 덮어쓰지 않습니다.</div>
+                </div>
+                <button class="modal-close" onclick="comfyInstallerCloseIntegrityModal()" aria-label="무결성 검사 닫기">&times;</button>
+            </div>
+            <div class="comfy-installer-e2e-body">
+                <div class="comfy-installer-e2e-toolbar">
+                    <span class="comfy-installer-e2e-release">원본 버전 <strong id="comfy-installer-integrity-release">확인 중</strong></span>
+                    <button type="button" class="comfy-installer-btn" onclick="comfyInstallerToggleAllIntegrity(true)">복구 대상 전체 선택</button>
+                    <button type="button" class="comfy-installer-btn" onclick="comfyInstallerToggleAllIntegrity(false)">전체 해제</button>
+                </div>
+                <div class="comfy-workflow-list" id="comfy-installer-integrity-list">
+                    <div class="comfy-workflow-empty">팩 원본과 현재 설정을 비교하고 있습니다.</div>
+                </div>
+                <div class="comfy-installer-e2e-summary" id="comfy-installer-integrity-summary">검사 중입니다.</div>
+                <div class="comfy-installer-note">복구하면 기존 파일은 그대로 보존하고 검증된 새 사본을 만든 뒤, <code>config.json</code>을 런타임 백업하고 선택 항목의 경로만 전환합니다.</div>
+            </div>
+            <div class="modal-footer">
+                <button class="cancel" type="button" onclick="comfyInstallerCloseIntegrityModal()">닫기</button>
+                <button class="confirm" type="button" id="comfy-installer-integrity-repair-btn" onclick="comfyInstallerRepairIntegrity()" disabled>선택 항목 복구</button>
             </div>
         </div>
     </div>
@@ -39162,10 +39220,12 @@
         let comfyInstallerStatusBusy = false;
         let comfyInstallerPreflightLoaded = false;
         let comfyInstallerLibrary = { releases: [], user_files: [] };
+        let comfyInstallerIntegrityReport = { release_version: '', items: [], counts: {} };
         let comfyInstallerE2ECatalog = { release_version: '', items: [] };
         let comfyInstallerLastState = 'idle';
         let comfyInstallerShutdownRequested = false;
         let comfyInstallerPatchSageModeBusy = false;
+        let comfyInstallerIntegrityBusy = false;
 
         function comfyInstallerFormatBytes(value) {
             const bytes = Number(value);
@@ -39376,6 +39436,137 @@
             } catch (error) {
                 console.error('[COMFY_INSTALL] 워크플로우 라이브러리 조회 실패:', error);
                 comfyInstallerSetError(`워크플로우 목록 조회 실패: ${error.message || error}`);
+            }
+        }
+
+        function comfyInstallerSelectedIntegrityIds() {
+            return Array.from(document.querySelectorAll('#comfy-installer-integrity-list input[type="checkbox"]:checked'))
+                .map(input => input.dataset.integrityItemId)
+                .filter(Boolean);
+        }
+
+        function comfyInstallerIntegrityStatusLabel(status) {
+            const labels = {
+                clean: '정상',
+                needs_repair: '팩 원본과 다름',
+                unconfigured: '현재 미사용',
+                distribution_error: '팩 원본 오류',
+            };
+            return labels[status] || status || '확인 불가';
+        }
+
+        function comfyInstallerUpdateIntegritySummary() {
+            const selected = comfyInstallerSelectedIntegrityIds();
+            const counts = comfyInstallerIntegrityReport.counts || {};
+            const summary = document.getElementById('comfy-installer-integrity-summary');
+            const repairButton = document.getElementById('comfy-installer-integrity-repair-btn');
+            if (summary) {
+                summary.textContent = `정상 ${Number(counts.clean || 0)}개 · 복구 필요 ${Number(counts.needs_repair || 0)}개 · 현재 미사용 ${Number(counts.unconfigured || 0)}개 · 팩 원본 오류 ${Number(counts.distribution_error || 0)}개${selected.length ? ` · 복구 선택 ${selected.length}개` : ''}`;
+            }
+            if (repairButton) repairButton.disabled = comfyInstallerIntegrityBusy || selected.length === 0;
+        }
+
+        function comfyInstallerRenderIntegrityReport({selectRepairable = false} = {}) {
+            const release = document.getElementById('comfy-installer-integrity-release');
+            const list = document.getElementById('comfy-installer-integrity-list');
+            if (release) release.textContent = comfyInstallerIntegrityReport.release_version || '-';
+            if (!list) return;
+            const items = comfyInstallerIntegrityReport.items || [];
+            list.innerHTML = items.length ? items.map(item => {
+                const status = String(item.status || '');
+                const bindingIssues = (item.bindings || []).filter(binding => binding.status !== 'clean');
+                let detail = '';
+                if (status === 'clean') {
+                    detail = `설정 경로 ${(item.bindings || []).length}개가 팩 원본과 일치합니다.`;
+                } else if (status === 'unconfigured') {
+                    detail = '현재 설정에서 사용하지 않는 워크플로우라 검사 대상에서 제외했습니다.';
+                } else if (status === 'distribution_error') {
+                    detail = item.distribution?.reason || '팩 원본을 검증하지 못했습니다. 팩을 다시 풀어주세요.';
+                } else {
+                    detail = bindingIssues.map(binding => `${binding.key}: ${binding.reason || binding.status}`).join(' · ');
+                }
+                const checkbox = item.repairable
+                    ? `<input type="checkbox" data-integrity-item-id="${escapeHtml(item.id)}" onchange="comfyInstallerUpdateIntegritySummary()" ${selectRepairable ? 'checked' : ''}>`
+                    : '<input type="checkbox" disabled aria-label="복구 대상 아님">';
+                return `<label class="comfy-workflow-item">${checkbox}<span><strong>${escapeHtml(item.name || item.filename || item.id)}<span class="comfy-integrity-status ${escapeHtml(status)}">${escapeHtml(comfyInstallerIntegrityStatusLabel(status))}</span></strong><small>${escapeHtml(detail)}</small></span></label>`;
+            }).join('') : '<div class="comfy-workflow-empty">검사할 팩 워크플로우가 없습니다.</div>';
+            comfyInstallerUpdateIntegritySummary();
+        }
+
+        async function comfyInstallerOpenIntegrityModal() {
+            const modal = document.getElementById('comfy-installer-integrity-modal');
+            const release = document.getElementById('comfy-installer-integrity-release');
+            const list = document.getElementById('comfy-installer-integrity-list');
+            const repairButton = document.getElementById('comfy-installer-integrity-repair-btn');
+            modal?.classList.add('visible');
+            if (release) release.textContent = '확인 중';
+            if (list) list.innerHTML = '<div class="comfy-workflow-empty">팩 원본과 현재 설정을 비교하고 있습니다.</div>';
+            if (repairButton) repairButton.disabled = true;
+            try {
+                const data = await fetchJSON('/api/comfy-installer/workflow-integrity');
+                comfyInstallerIntegrityReport = data.report || { release_version: '', items: [], counts: {} };
+                comfyInstallerRenderIntegrityReport({selectRepairable: true});
+            } catch (error) {
+                console.error('[COMFY_INSTALL] 워크플로우 무결성 검사 실패:', error);
+                if (release) release.textContent = '검사 실패';
+                if (list) list.innerHTML = `<div class="comfy-workflow-empty">${escapeHtml(error.message || error)}</div>`;
+                const summary = document.getElementById('comfy-installer-integrity-summary');
+                if (summary) summary.textContent = '팩을 풀고 설치를 완료한 뒤 다시 시도하세요.';
+                showToast(`워크플로우 무결성 검사 실패: ${error.message || error}`, 'error');
+            }
+        }
+
+        function comfyInstallerCloseIntegrityModal() {
+            if (comfyInstallerIntegrityBusy) return;
+            document.getElementById('comfy-installer-integrity-modal')?.classList.remove('visible');
+        }
+
+        function comfyInstallerToggleAllIntegrity(checked) {
+            document.querySelectorAll('#comfy-installer-integrity-list input[type="checkbox"]:not(:disabled)').forEach(input => {
+                input.checked = Boolean(checked);
+            });
+            comfyInstallerUpdateIntegritySummary();
+        }
+
+        async function comfyInstallerRepairIntegrity() {
+            const selectedItemIds = comfyInstallerSelectedIntegrityIds();
+            const releaseVersion = String(comfyInstallerIntegrityReport.release_version || '');
+            if (!selectedItemIds.length) {
+                showToast('복구할 워크플로우를 하나 이상 선택하세요', 'warning');
+                return;
+            }
+            if (!window.confirm(
+                `선택한 ${selectedItemIds.length}개 워크플로우를 팩 원본으로 복구할까요?\n\n` +
+                '기존 파일은 삭제하거나 덮어쓰지 않습니다. 검증된 새 사본을 만들고 config.json을 백업한 뒤 해당 설정 경로만 전환합니다.'
+            )) return;
+            comfyInstallerIntegrityBusy = true;
+            comfyInstallerUpdateIntegritySummary();
+            document.querySelectorAll('#comfy-installer-integrity-list input[type="checkbox"]').forEach(input => { input.disabled = true; });
+            try {
+                const data = await fetchJSON('/api/comfy-installer/workflow-integrity/repair', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        release_version: releaseVersion,
+                        selected_item_ids: selectedItemIds,
+                    }),
+                });
+                const repair = data.repair || {};
+                comfyInstallerIntegrityReport = repair.report || comfyInstallerIntegrityReport;
+                comfyInstallerRenderIntegrityReport({selectRepairable: false});
+                await Promise.all([
+                    comfyInstallerLoadWorkflowLibrary(releaseVersion),
+                    comfyInstallerReloadSettingsAfterConfigChange(),
+                ]);
+                void comfyInstallerRefreshStatus(false);
+                const runtimeNote = repair.runtime_error ? ' · 실시간 반영 실패로 재시작 필요' : '';
+                showToast(`워크플로우 ${Number((repair.repaired_item_ids || []).length)}개 복구 완료${runtimeNote}`, repair.runtime_error ? 'warning' : 'success');
+            } catch (error) {
+                console.error('[COMFY_INSTALL] 워크플로우 무결성 복구 실패:', error);
+                showToast(`워크플로우 복구 실패: ${error.message || error}`, 'error');
+            } finally {
+                comfyInstallerIntegrityBusy = false;
+                comfyInstallerRenderIntegrityReport({selectRepairable: false});
             }
         }
 
@@ -39662,6 +39853,7 @@
             const compatibilityStartButton = document.getElementById('comfy-installer-compat-start-btn');
             const cloudOnlyStartButton = document.getElementById('comfy-installer-cloud-start-btn');
             const updateButton = document.getElementById('comfy-installer-update-btn');
+            const integrityButton = document.getElementById('comfy-installer-integrity-btn');
             const e2eButton = document.getElementById('comfy-installer-e2e-btn');
             const sageEnableButton = document.getElementById('comfy-installer-sage-enable-btn');
             const sageDisableButton = document.getElementById('comfy-installer-sage-disable-btn');
@@ -39753,6 +39945,7 @@
             if (compatibilityStartButton) compatibilityStartButton.disabled = running;
             if (cloudOnlyStartButton) cloudOnlyStartButton.disabled = running;
             if (updateButton) updateButton.disabled = running;
+            if (integrityButton) integrityButton.disabled = running || comfyInstallerIntegrityBusy;
             if (e2eButton) e2eButton.disabled = running;
             if (sageEnableButton) sageEnableButton.disabled = running || comfyInstallerPatchSageModeBusy;
             if (sageDisableButton) sageDisableButton.disabled = running || comfyInstallerPatchSageModeBusy;
@@ -60382,6 +60575,10 @@
             const willPin = !dock.classList.contains('is-pinned');
             dock.classList.toggle('is-pinned', willPin);
             dock.classList.toggle('is-hover-suppressed', !willPin);
+            if (!willPin) {
+                cancelHeaderControlsHoverClose();
+                dock.classList.remove('is-hover-active');
+            }
 
             const actionLabel = willPin ? '상단 도구 메뉴 닫기' : '상단 도구 메뉴 열기';
             handle.setAttribute('aria-expanded', String(willPin));
@@ -60398,9 +60595,33 @@
             dock.classList.remove('is-hover-suppressed');
         }
 
+        const HEADER_CONTROLS_HOVER_CLOSE_DELAY_MS = 300;
+        let headerControlsHoverCloseTimer = null;
+
+        function cancelHeaderControlsHoverClose() {
+            if (headerControlsHoverCloseTimer !== null) {
+                clearTimeout(headerControlsHoverCloseTimer);
+                headerControlsHoverCloseTimer = null;
+            }
+        }
+
         const headerControlsDock = document.getElementById('header-controls-dock');
         if (headerControlsDock) {
-            headerControlsDock.addEventListener('pointerleave', releaseHeaderControlsHoverSuppression);
+            headerControlsDock.addEventListener('pointerenter', () => {
+                cancelHeaderControlsHoverClose();
+                headerControlsDock.classList.toggle(
+                    'is-hover-active',
+                    !headerControlsDock.classList.contains('is-hover-suppressed'),
+                );
+            });
+            headerControlsDock.addEventListener('pointerleave', () => {
+                cancelHeaderControlsHoverClose();
+                headerControlsHoverCloseTimer = window.setTimeout(() => {
+                    headerControlsDock.classList.remove('is-hover-active');
+                    headerControlsHoverCloseTimer = null;
+                }, HEADER_CONTROLS_HOVER_CLOSE_DELAY_MS);
+                releaseHeaderControlsHoverSuppression();
+            });
             headerControlsDock.addEventListener('focusout', (event) => {
                 if (!headerControlsDock.contains(event.relatedTarget)) {
                     releaseHeaderControlsHoverSuppression();
@@ -69751,6 +69972,14 @@
                                 `<option value="${g}" ${char.gender_tag === g ? 'selected' : ''}>${g}</option>`
                             ).join('')}
                         </select>
+                        <label title="이 봇의 사용자 자신을 나타내는 캐릭터로 지정합니다. 외형 카드가 바뀌어도 같은 페르소나로 유지됩니다."
+                            style="display:inline-flex;align-items:center;gap:5px;padding:4px 7px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);font-size:.78rem;cursor:pointer;white-space:nowrap"
+                            onclick="event.stopPropagation()">
+                            <input type="checkbox" ${String(bot.persona_character_name || '').toLowerCase() === String(char.name || '').toLowerCase() ? 'checked' : ''}
+                                onchange="setBotPersonaCharacter('${escAttr(char.name)}', this)"
+                                style="width:15px;height:15px;cursor:pointer">
+                            <span>페르소나</span>
+                        </label>
                         <div style="margin-left:auto;"></div>
                         <button onclick="event.stopPropagation(); togglePromptPreviewModal('${escAttr(char.name)}', this)"
                             style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:6px 10px; border-radius:6px; cursor:pointer; font-size:0.8rem; white-space:nowrap;">패치 프롬프트 미리보기</button>
@@ -70185,6 +70414,72 @@
             } catch (e) {
                 console.error('[BOT] 성별 태그 저장 실패:', e);
                 showToast('성별 태그 저장 실패: ' + e.message, 'error');
+            }
+        }
+
+        async function setBotPersonaCharacter(charName, checkbox) {
+            const bot = (botData.bots || []).find(item => item.name === botCurrentBot);
+            if (!bot) {
+                console.error('[BOT:PERSONA] 선택된 봇을 찾을 수 없음', {botCurrentBot, charName});
+                checkbox.checked = false;
+                showToast('선택된 봇을 찾을 수 없습니다.', 'error');
+                return;
+            }
+            const previousName = String(bot.persona_character_name || '').trim();
+            const nextName = checkbox.checked ? String(charName || '').trim() : '';
+            if (nextName && previousName && previousName.toLowerCase() !== nextName.toLowerCase()) {
+                const accepted = confirm(`페르소나를 ${previousName}에서 ${nextName}로 변경할까요?`);
+                if (!accepted) {
+                    checkbox.checked = false;
+                    return;
+                }
+            } else if (!nextName) {
+                if (previousName.toLowerCase() !== String(charName || '').toLowerCase()) {
+                    console.error('[BOT:PERSONA] 현재 페르소나가 아닌 체크박스 해제 요청', {
+                        bot: botCurrentBot,
+                        character: charName,
+                        previousName,
+                    });
+                    await renderBotCharacters();
+                    return;
+                }
+                const accepted = confirm(`${previousName}의 페르소나 설정을 해제할까요?`);
+                if (!accepted) {
+                    checkbox.checked = true;
+                    return;
+                }
+            }
+
+            checkbox.disabled = true;
+            try {
+                const response = await fetch('/api/bot_mode/action', {
+                    method: 'POST',
+                    headers: {'Content-Type':'application/json'},
+                    body: JSON.stringify({
+                        action: 'update_persona_character',
+                        bot_name: botCurrentBot,
+                        char_name: nextName,
+                    }),
+                });
+                const result = await response.json();
+                if (!response.ok || !Array.isArray(result.bots)) {
+                    throw new Error(result.error || '페르소나 설정 저장 실패');
+                }
+                botData.bots = result.bots;
+                await renderBotCharacters();
+                showToast(
+                    nextName ? `${nextName} 캐릭터를 페르소나로 설정했습니다.` : '페르소나 설정을 해제했습니다.',
+                    'success',
+                );
+            } catch (error) {
+                console.error('[BOT:PERSONA] 페르소나 설정 저장 실패', error, {
+                    bot: botCurrentBot,
+                    previousName,
+                    nextName,
+                });
+                checkbox.checked = previousName.toLowerCase() === String(charName || '').toLowerCase();
+                checkbox.disabled = false;
+                showToast('페르소나 설정 저장 실패: ' + error.message, 'error');
             }
         }
 

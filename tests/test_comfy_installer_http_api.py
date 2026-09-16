@@ -125,6 +125,65 @@ async def test_e2e_catalog_and_start_routes_use_selected_originals(
 
 
 @pytest.mark.asyncio
+async def test_workflow_integrity_routes_keep_repair_as_explicit_second_request(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = tmp_path / "config.json"
+    config.write_text("{}\n", encoding="utf-8")
+    app = web.Application()
+    service = register_comfy_installer_routes(
+        app,
+        project_root=tmp_path,
+        config_path=config,
+        requirements_dir=tmp_path / "requirements",
+    )
+    report = {
+        "release_version": "v4",
+        "items": [
+            {
+                "id": "tag_analysis_workflow_source_path",
+                "status": "needs_repair",
+                "repairable": True,
+            }
+        ],
+        "counts": {"needs_repair": 1},
+    }
+    repairs: list[dict] = []
+    monkeypatch.setattr(service, "workflow_integrity_report", lambda: report)
+
+    def fake_repair(**kwargs):
+        repairs.append(kwargs)
+        return {"repaired_item_ids": kwargs["selected_item_ids"], "report": report}
+
+    monkeypatch.setattr(service, "repair_workflow_integrity", fake_repair)
+    client = TestClient(TestServer(app))
+    await client.start_server()
+    try:
+        response = await client.get("/api/comfy-installer/workflow-integrity")
+        assert response.status == 200
+        assert await response.json() == {"ok": True, "report": report}
+        assert repairs == []
+
+        response = await client.post(
+            "/api/comfy-installer/workflow-integrity/repair",
+            json={
+                "release_version": "v4",
+                "selected_item_ids": ["tag_analysis_workflow_source_path"],
+            },
+        )
+        assert response.status == 200
+        assert repairs == [
+            {
+                "release_version": "v4",
+                "selected_item_ids": ["tag_analysis_workflow_source_path"],
+            }
+        ]
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
 async def test_patch_sage_attention_mode_route_validates_and_forwards_boolean(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -1591,7 +1591,10 @@ class BotMode:
                     return await self._update_char_style_loras(data, body)
                 elif action == "update_char_gender_tag":
                     return await self._update_char_gender_tag(data, body)
+                elif action == "update_persona_character":
+                    return await self._update_persona_character(data, body)
                 else:
+                    print(f"[BOT_MODE] 알 수 없는 액션 요청: action={action!r}")
                     return _json_error(f"알 수 없는 액션: {action}")
         except Exception as e:
             print(f"[BOT_MODE] 액션 처리 실패: {e}")
@@ -1612,6 +1615,7 @@ class BotMode:
         data["bots"].append({
             "name": name,
             "asset_output_instruction": "",
+            "persona_character_name": "",
             "characters": [],
         })
         os.makedirs(os.path.join(BOT_DIR, name), exist_ok=True)
@@ -1685,6 +1689,12 @@ class BotMode:
         if not bot:
             return _json_error(f"봇을 찾을 수 없음: {bot_name}")
         bot["characters"] = [c for c in bot.get("characters", []) if c["name"] != char_name]
+        if str(bot.get("persona_character_name") or "").casefold() == char_name.casefold():
+            bot["persona_character_name"] = ""
+            print(
+                f"[BOT_MODE:PERSONA] 페르소나 캐릭터 삭제로 설정 해제: "
+                f"bot={bot_name!r}, character={char_name!r}"
+            )
         char_path = os.path.join(BOT_DIR, bot_name, char_name)
         if os.path.isdir(char_path):
             shutil.rmtree(char_path)
@@ -1719,6 +1729,12 @@ class BotMode:
             if c["name"] == old_name:
                 c["name"] = new_name
                 break
+        if str(bot.get("persona_character_name") or "").casefold() == old_name.casefold():
+            bot["persona_character_name"] = new_name
+            print(
+                f"[BOT_MODE:PERSONA] 캐릭터 이름 변경을 페르소나 설정에 반영: "
+                f"bot={bot_name!r}, {old_name!r} → {new_name!r}"
+            )
         old_path = os.path.join(BOT_DIR, bot_name, old_name)
         new_path = os.path.join(BOT_DIR, bot_name, new_name)
         if os.path.isdir(old_path):
@@ -1888,6 +1904,66 @@ class BotMode:
         _save_bot_data(data)
         print(f"[BOT_MODE] 캐릭터 성별 태그 업데이트: {bot_name}/{char_name} → {gender_tag}")
         return _json_ok({"bots": data["bots"]})
+
+    async def _update_persona_character(self, data, body):
+        """Set or clear the one canonical user-persona character for a bot."""
+        raw_bot_name = body.get("bot_name", "")
+        raw_char_name = body.get("char_name", "")
+        if not isinstance(raw_bot_name, str) or not isinstance(raw_char_name, str):
+            print(
+                f"[BOT_MODE:PERSONA] 설정 실패 - 문자열 형식 오류: "
+                f"bot={raw_bot_name!r}, character={raw_char_name!r}"
+            )
+            return _json_error("봇 이름과 페르소나 캐릭터 이름은 문자열이어야 합니다.")
+        bot_name = raw_bot_name.strip()
+        char_name = raw_char_name.strip()
+        if not bot_name:
+            print("[BOT_MODE:PERSONA] 설정 실패 - 봇 이름이 비어있음")
+            return _json_error("봇 이름이 비어있습니다.")
+        bot = next((b for b in data.get("bots", []) if b.get("name") == bot_name), None)
+        if not bot:
+            print(f"[BOT_MODE:PERSONA] 설정 실패 - 봇을 찾을 수 없음: bot={bot_name!r}")
+            return _json_error(f"봇을 찾을 수 없음: {bot_name}")
+
+        canonical_name = ""
+        if char_name:
+            character = next((
+                item
+                for item in bot.get("characters", [])
+                if isinstance(item, dict)
+                and str(item.get("name") or "").casefold() == char_name.casefold()
+            ), None)
+            if character is None:
+                print(
+                    f"[BOT_MODE:PERSONA] 설정 실패 - 캐릭터를 찾을 수 없음: "
+                    f"bot={bot_name!r}, character={char_name!r}"
+                )
+                return _json_error(f"캐릭터를 찾을 수 없음: {char_name}")
+            canonical_name = str(character.get("name") or "").strip()
+
+        previous_name = str(bot.get("persona_character_name") or "").strip()
+        if previous_name == canonical_name:
+            print(
+                f"[BOT_MODE:PERSONA] 동일 설정 요청으로 저장 생략: "
+                f"bot={bot_name!r}, character={canonical_name!r}"
+            )
+            return _json_ok({
+                "bots": data["bots"],
+                "previous_persona_character_name": previous_name,
+                "persona_character_name": canonical_name,
+            })
+
+        bot["persona_character_name"] = canonical_name
+        _save_bot_data(data)
+        print(
+            f"[BOT_MODE:PERSONA] 페르소나 설정 변경: bot={bot_name!r}, "
+            f"previous={previous_name!r}, current={canonical_name!r}"
+        )
+        return _json_ok({
+            "bots": data["bots"],
+            "previous_persona_character_name": previous_name,
+            "persona_character_name": canonical_name,
+        })
 
     async def _toggle_rep_image(self, data, body):
         bot_name = body.get("bot_name", "").strip()

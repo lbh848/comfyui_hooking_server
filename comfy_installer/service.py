@@ -21,6 +21,7 @@ from comfy_runtime import (
 from .configurator import (
     ConfigUpdateResult,
     apply_installed_config,
+    apply_repaired_workflow_bindings,
     backup_current_config,
     retarget_config_to_embedded_comfy,
     restore_config_backup,
@@ -97,6 +98,7 @@ from .updater import update_hooking_server_main
 from .workflow_library import (
     WorkflowSelection,
     WorkflowLibraryError,
+    configured_workflow_integrity,
     distribution_e2e_catalog,
     embedded_workflow_base_dir,
     import_default_user_copies,
@@ -203,6 +205,9 @@ class ComfyInstallerService:
         downloader: ResumableDownloader | None = None,
         pause_managed_comfy: Callable[[], Any] | None = None,
         resume_managed_comfy: Callable[[Any], Any] | None = None,
+        apply_repaired_workflow_runtime: (
+            Callable[[Mapping[str, str]], None] | None
+        ) = None,
     ) -> None:
         self.project_root = Path(project_root).resolve()
         try:
@@ -244,6 +249,7 @@ class ComfyInstallerService:
             )
         self.pause_managed_comfy = pause_managed_comfy
         self.resume_managed_comfy = resume_managed_comfy
+        self.apply_repaired_workflow_runtime = apply_repaired_workflow_runtime
         self._lock = RLock()
         self._cancel = Event()
         self._thread: threading.Thread | None = None
@@ -513,6 +519,216 @@ class ComfyInstallerService:
             self.comfy_root,
             self.workflow_library_root,
         )
+
+    def workflow_integrity_report(self) -> dict:
+        with self._lock:
+            if self._thread is not None and self._thread.is_alive():
+                print(
+                    "[COMFY_INSTALL][SERVICE] 워크플로우 무결성 검사 거부: "
+                    "설치·업데이트·E2E·이사 작업 실행 중"
+                )
+                raise InstallerServiceError(
+                    "진행 중인 ComfyUI 작업이 끝난 뒤 무결성을 검사하세요."
+                )
+            try:
+                report = configured_workflow_integrity(
+                    config_path=self.config_path,
+                    library_root=self.workflow_library_root,
+                )
+                self._log(
+                    "[무결성 검사] "
+                    f"release={report['release_version']}, "
+                    f"정상={report['counts']['clean']}, "
+                    f"복구 필요={report['counts']['needs_repair']}, "
+                    f"미사용={report['counts']['unconfigured']}, "
+                    f"팩 원본 오류={report['counts']['distribution_error']}"
+                )
+                return report
+            except WorkflowLibraryError as exc:
+                print(
+                    "[COMFY_INSTALL][SERVICE] 워크플로우 무결성 검사 실패: "
+                    f"{exc}"
+                )
+                traceback.print_exc()
+                raise InstallerServiceError(str(exc)) from exc
+
+    def repair_workflow_integrity(
+        self,
+        *,
+        release_version: str,
+        selected_item_ids: list[str],
+    ) -> dict:
+        with self._lock:
+            if self._thread is not None and self._thread.is_alive():
+                print(
+                    "[COMFY_INSTALL][SERVICE] 워크플로우 무결성 복구 거부: "
+                    "설치·업데이트·E2E·이사 작업 실행 중"
+                )
+                raise InstallerServiceError(
+                    "진행 중인 ComfyUI 작업이 끝난 뒤 워크플로우를 복구하세요."
+                )
+            requested = tuple(
+                dict.fromkeys(str(value).strip() for value in selected_item_ids)
+            )
+            if not release_version or not requested or any(not value for value in requested):
+                print(
+                    "[COMFY_INSTALL][SERVICE] 워크플로우 무결성 복구 입력 거부: "
+                    f"release={release_version!r}, items={selected_item_ids!r}"
+                )
+                raise InstallerServiceError(
+                    "복구할 배포 버전과 워크플로우를 하나 이상 선택하세요."
+                )
+            try:
+                latest = latest_release_version(self.workflow_library_root)
+            except WorkflowLibraryError as exc:
+                print(
+                    "[COMFY_INSTALL][SERVICE] 최신 워크플로우 팩 확인 실패: "
+                    f"library={self.workflow_library_root}, error={exc}"
+                )
+                traceback.print_exc()
+                raise InstallerServiceError(str(exc)) from exc
+            if release_version != latest:
+                print(
+                    "[COMFY_INSTALL][SERVICE] 오래된 무결성 검사 결과 복구 거부: "
+                    f"requested={release_version}, latest={latest}"
+                )
+                raise InstallerServiceError(
+                    "검사 후 팩 버전이 바뀌었습니다. 무결성을 다시 검사하세요."
+                )
+
+            try:
+                before = configured_workflow_integrity(
+                    config_path=self.config_path,
+                    library_root=self.workflow_library_root,
+                    release_version=release_version,
+                )
+                items_by_id = {
+                    str(item["id"]): item for item in before["items"]
+                }
+                unavailable = [
+                    item_id
+                    for item_id in requested
+                    if item_id not in items_by_id
+                    or not items_by_id[item_id].get("repairable")
+                ]
+                if unavailable:
+                    print(
+                        "[COMFY_INSTALL][SERVICE] 복구 불가능한 무결성 항목 거부: "
+                        f"release={release_version}, items={unavailable}"
+                    )
+                    raise InstallerServiceError(
+                        "현재 검사 결과에서 복구할 수 없는 항목입니다: "
+                        + ", ".join(unavailable)
+                    )
+
+                selection = import_user_copies(
+                    comfy_root=self.comfy_root,
+                    library_root=self.workflow_library_root,
+                    release_version=release_version,
+                    selected_item_ids=requested,
+                    log=self._log,
+                )
+                config_update = apply_repaired_workflow_bindings(
+                    config_path=self.config_path,
+                    backup_dir=self.config_backup_dir,
+                    comfy_root=self.comfy_root,
+                    workflow_bindings=selection.workflow_bindings,
+                )
+
+                try:
+                    after = configured_workflow_integrity(
+                        config_path=self.config_path,
+                        library_root=self.workflow_library_root,
+                        release_version=release_version,
+                    )
+                    remaining = [
+                        item["id"]
+                        for item in after["items"]
+                        if item["id"] in requested and item["status"] != "clean"
+                    ]
+                    if remaining:
+                        raise InstallerServiceError(
+                            "복구 후 무결성 재검증에 실패했습니다: "
+                            + ", ".join(remaining)
+                        )
+                except Exception as verify_exc:
+                    print(
+                        "[COMFY_INSTALL][SERVICE] 워크플로우 복구 후 재검증 "
+                        f"실패, config 복원 시작: error={verify_exc}"
+                    )
+                    traceback.print_exc()
+                    try:
+                        restore_verified_config_snapshot(
+                            config_path=self.config_path,
+                            backup_dir=self.config_backup_dir,
+                            backup_path=config_update.backup_path,
+                            expected_sha256=config_update.before_sha256,
+                        )
+                    except Exception as restore_exc:
+                        print(
+                            "[COMFY_INSTALL][SERVICE] 워크플로우 복구 재검증과 "
+                            "config 복원이 모두 실패했습니다: "
+                            f"verify_error={verify_exc}, restore_error={restore_exc}"
+                        )
+                        traceback.print_exc()
+                        raise InstallerServiceError(
+                            "워크플로우 복구 재검증과 config 복원이 모두 "
+                            f"실패했습니다: {restore_exc}"
+                        ) from verify_exc
+                    raise
+
+                runtime_applied = False
+                runtime_error: str | None = None
+                if self.apply_repaired_workflow_runtime is not None:
+                    try:
+                        self.apply_repaired_workflow_runtime(
+                            selection.workflow_bindings
+                        )
+                        runtime_applied = True
+                    except Exception as exc:
+                        runtime_error = str(exc)
+                        print(
+                            "[COMFY_INSTALL][SERVICE] 복구된 워크플로우 런타임 "
+                            f"반영 실패: bindings={selection.workflow_bindings!r}, "
+                            f"error={exc}"
+                        )
+                        traceback.print_exc()
+                        self._log(
+                            "[무결성 복구 경고] 설정 파일 복구는 완료됐지만 "
+                            f"실시간 반영에 실패했습니다. 재시작이 필요합니다: {exc}",
+                            "warning",
+                        )
+                self._log(
+                    "[무결성 복구] 기존 파일을 보존하고 검증된 새 사본으로 "
+                    f"경로 전환 완료: release={release_version}, "
+                    f"items={len(requested)}, bindings={len(selection.workflow_bindings)}"
+                )
+                return {
+                    "release_version": release_version,
+                    "repaired_item_ids": list(requested),
+                    "user_workflow_files": list(selection.user_files),
+                    "workflow_bindings": dict(selection.workflow_bindings),
+                    "config": {
+                        "backup_path": str(config_update.backup_path),
+                        "before_sha256": config_update.before_sha256,
+                        "after_sha256": config_update.after_sha256,
+                        "updated_keys": list(config_update.updated_keys),
+                    },
+                    "runtime_applied": runtime_applied,
+                    "runtime_error": runtime_error,
+                    "report": after,
+                }
+            except InstallerServiceError:
+                raise
+            except Exception as exc:
+                print(
+                    "[COMFY_INSTALL][SERVICE] 워크플로우 무결성 복구 실패: "
+                    f"release={release_version}, items={requested}, error={exc}"
+                )
+                traceback.print_exc()
+                raise InstallerServiceError(
+                    f"워크플로우 무결성 복구 실패: {exc}"
+                ) from exc
 
     def set_patch_sage_attention_enabled(self, enabled: bool) -> dict:
         if not isinstance(enabled, bool):
