@@ -227,7 +227,10 @@ def _baseline_capture(backup_arg: str) -> dict[str, Any]:
         if isinstance(message, dict) and "[Last log entry]" in str(message.get("content") or "")
     )
     slot_start = detail_user.index("[Last log entry]") + len("[Last log entry]")
-    slot_end = detail_user.index("# ASSIGNED GLOBAL SCENE PLAN", slot_start)
+    # Older traces appended the assigned plan to this message. Role-specific
+    # prompts keep it in a later message, so the log entry naturally runs to EOF.
+    legacy_plan_marker = detail_user.find("# ASSIGNED GLOBAL SCENE PLAN", slot_start)
+    slot_end = legacy_plan_marker if legacy_plan_marker >= 0 else len(detail_user)
     target_slotted = detail_user[slot_start:slot_end].strip()
     if not illustration_context_pipeline.candidate_slots(target_slotted):
         raise RuntimeError("baseline Last log entry has no slot markers")

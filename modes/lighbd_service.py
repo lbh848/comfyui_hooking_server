@@ -32,7 +32,16 @@ def load_prompts() -> dict:
     """prompts/lighbd/*.txt를 읽어 dict로 반환. 파일 mtime 기반 캐싱."""
     global _PROMPTS_CACHE, _PROMPTS_MTIME
 
-    files = ["system", "job", "format", "thoughts", "jailbreak", "preset"]
+    files = [
+        "jailbreak",
+        "job",
+        "prefill",
+        "system",
+        "explicit",
+        "fallback",
+        "format",
+        "preset",
+    ]
     latest_mtime = 0.0
     for name in files:
         p = os.path.join(PROMPTS_DIR, f"{name}.txt")
@@ -899,62 +908,129 @@ async def handle_enqueue(context: str, prompt_id: str) -> dict:
         return {"plan": "", "status": "error", "error": msg}
 
     prompts = load_prompts()
-    if not prompts.get("system") or not prompts.get("format"):
-        msg = "required prompt files missing (system/format)"
+    if (
+        not prompts.get("jailbreak")
+        or not prompts.get("job")
+        or not prompts.get("system")
+        or not prompts.get("explicit")
+        or not prompts.get("fallback")
+        or not prompts.get("format")
+    ):
+        msg = (
+            "required prompt files missing "
+            "(jailbreak/job/system/explicit/fallback/format)"
+        )
         print(f"[LIGHBD] ERROR: {msg}")
         _log_enqueue(prompt_id, context, "", status="error", error=msg)
         return {"plan": "", "status": "error", "error": msg}
 
-    # 루아 LightBoard XNAI 모듈의 메시지 구조 반영:
-    #   1. user:    "# System rules" + jailbreak(요정 프레임) + "# Job Instruction"
-    #   2. user:    [CHARACTER DICTIONARY] (lb_extra, 있을 때만 별도 메시지)
-    #   3. user:    "# Chat log / --- Start of the log ---"
-    #   4. assistant: context (로그 본문)
-    #   5. user:    "--- End of the log ---"
-    #   6. user:    "# Output" + thoughts + system(Tagging Details) + format
-    #   7. user:    최종 포맷 리마인더
-    # system role 사용 안 함. 로그는 assistant 메시지로 샌드위치.
-    # 캐릭터 도감 lb_extra 주입 — LLM이 장면 분할 시 캐릭터 외모/복장 참조
+    # 단일 호출 호환 경로도 공통 계약 + fallback 역할만 결합한다.
+    # 신뢰 지시는 system, 캐릭터 도감과 채팅 본문은 reference data로
+    # user 메시지에 분리해 페르소나/사고과정/prefill 계층을 복원하지 않는다.
     char_dict_yaml = _build_character_dictionary_yaml()
 
     jailbreak_txt = (prompts.get("jailbreak") or "").strip()
     job_txt = (prompts.get("job") or "").strip()
-    thoughts_txt = (prompts.get("thoughts") or "").strip()
+    prefill_txt = (prompts.get("prefill") or "").strip()
     system_txt = (prompts.get("system") or "").strip()
+    explicit_txt = (prompts.get("explicit") or "").strip()
+    fallback_txt = (prompts.get("fallback") or "").strip()
     format_txt = (prompts.get("format") or "").strip()
 
-    # 1. system rules + job
-    msg1_parts = []
-    if jailbreak_txt:
-        msg1_parts.append("# System rules\n" + jailbreak_txt)
-    if job_txt:
-        msg1_parts.append("# Job Instruction\n" + job_txt)
-    msg1 = "\n\n---\n\n".join(msg1_parts)
+    try:
+        from modes import illustration_context_pipeline
+        legacy_toggles = illustration_context_pipeline.merged_toggles({})
+        # The legacy endpoint has no NSFW toggle. Include the conditional
+        # execution contract for all requests; its own wording applies it only
+        # when the authorized moment is explicit and does not make SFW scenes explicit.
+        legacy_toggles["nsfw"] = True
+        rendered_jailbreak = illustration_context_pipeline.render_call2_prompt(
+            jailbreak_txt,
+            legacy_toggles,
+            include_scene_count_limit=False,
+            include_server_limits=False,
+        )
+        rendered_job = illustration_context_pipeline.render_call2_prompt(
+            job_txt,
+            legacy_toggles,
+            include_scene_count_limit=False,
+            include_server_limits=False,
+        )
+        rendered_prefill = illustration_context_pipeline.render_call2_prompt(
+            prefill_txt,
+            legacy_toggles,
+            include_scene_count_limit=False,
+            include_server_limits=False,
+        )
+        rendered_system = illustration_context_pipeline.render_call2_prompt(
+            system_txt,
+            legacy_toggles,
+            include_scene_count_limit=False,
+            include_server_limits=False,
+        )
+        rendered_explicit = illustration_context_pipeline.render_call2_prompt(
+            explicit_txt,
+            legacy_toggles,
+            include_scene_count_limit=False,
+            include_server_limits=False,
+        )
+        rendered_fallback = illustration_context_pipeline.render_call2_prompt(
+            fallback_txt,
+            legacy_toggles,
+            include_scene_count_limit=False,
+            include_server_limits=False,
+        )
+    except Exception as e:
+        print(f"[LIGHBD] role prompt 렌더 실패: {e}")
+        traceback.print_exc()
+        _log_enqueue(prompt_id, context, "", status="error", error=str(e))
+        return {"plan": "", "status": "error", "error": str(e)}
 
-    # 6. output instructions
-    msg6_parts = []
-    if thoughts_txt:
-        msg6_parts.append("# Output\n" + thoughts_txt)
-    if system_txt:
-        msg6_parts.append(system_txt)
-    if format_txt:
-        msg6_parts.append("[Output format]\n" + format_txt)
-    msg6 = "\n\n---\n\n".join(msg6_parts)
+    role_system = "\n\n".join(
+        part
+        for part in (
+            rendered_jailbreak,
+            rendered_job,
+            rendered_system,
+            rendered_explicit,
+            rendered_fallback,
+        )
+        if part
+    )
+    if not role_system:
+        msg = "rendered common/fallback prompt is empty"
+        print(f"[LIGHBD] ERROR: {msg}")
+        _log_enqueue(prompt_id, context, "", status="error", error=msg)
+        return {"plan": "", "status": "error", "error": msg}
 
-    messages = []
-    if msg1:
-        messages.append({"role": "user", "content": msg1})
+    messages = [{"role": "system", "content": role_system}]
     if char_dict_yaml:
-        messages.append({"role": "user", "content": "[CHARACTER DICTIONARY]\n" + char_dict_yaml})
-    messages.append({"role": "user", "content": "# Chat log\n\n--- Start of the log ---"})
-    messages.append({"role": "assistant", "content": context})
-    messages.append({"role": "user", "content": "--- End of the log ---"})
-    if msg6:
-        messages.append({"role": "user", "content": msg6})
-    messages.append({"role": "user", "content": "---\n\nAdhere to the format. You MUST OUTPUT IN THE STRUCTURED FORMAT/SYNTAX ABOVE, AS EXPLICITLY INSTRUCTED, WITHOUT ASSUMPTIONS OR GUESSES."})
+        messages.append({
+            "role": "user",
+            "content": "# CHARACTER DICTIONARY REFERENCE DATA\n\n" + char_dict_yaml,
+        })
+    messages.append({
+        "role": "user",
+        "content": "# NARRATIVE REFERENCE DATA\n\n" + context.strip(),
+    })
+    messages.append({
+        "role": "user",
+        "content": (
+            "# OUTPUT CONTRACT\n\n"
+            + format_txt
+        ),
+    })
+    if rendered_prefill:
+        messages.append({
+            "role": "assistant",
+            "content": rendered_prefill,
+        })
+    messages.append({
+        "role": "user",
+        "content": "Return only the final <lb-xnai> block.",
+    })
 
     try:
-        from modes.llm_service import callLLMStream
         print(f"[LIGHBD] callLLMStream start prompt_id={prompt_id[:8]} context_len={len(context)}")
         plan_parts = []
         plan = ""

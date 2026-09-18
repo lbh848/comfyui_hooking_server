@@ -96,8 +96,12 @@ PROMPT_FILES = {
     "call2_jailbreak": "jailbreak.txt",
     "call2_job": "job.txt",
     "call2_prefill": "prefill.txt",
-    "call2_thoughts": "thoughts.txt",
-    "call2_system": "system.txt",
+    "call2_common": "system.txt",
+    "call2_explicit": "explicit.txt",
+    "call2_plan": "plan.txt",
+    "call2_detail": "detail.txt",
+    "call2_keyvis": "keyvisual.txt",
+    "call2_fallback": "fallback.txt",
     "call2_format": "format.txt",
     "call2_preset": "preset.txt",
     "call3_speak": "speak.txt",
@@ -191,7 +195,8 @@ DEFAULT_TOGGLES = {
     "key_visual": True,
     "minimal_background_description": True,
     "character_limit": 3,
-    # scene_mode: "manual" = 서버가 최소/최대 강제, "auto" = lb-xnai(call2)에 완전 방임
+    # scene_mode: 두 모드 모두 output_count_min/max를 강제한다. "auto"는 그 범위
+    # 안에서 문맥에 맞는 수량을 고르고, "manual"은 지정 범위 자체만 전달한다.
     "scene_mode": "manual",
     # output_count_min/max: 삽화 총 장면 수의 유일한 소스. PLAN은 이 총량을,
     # 병렬 Call2-detail worker는 (총량÷worker수)를 받아 3배 과잉 생성을 방지한다.
@@ -216,9 +221,7 @@ DEFAULT_TOGGLES = {
 OUTPUT_COUNT_RULE_TEMPLATE = """## Output Count Rule
 Each response MUST contain a minimum of {min} and a maximum of {max} image tags.
 This is a hard constraint, not a suggestion.
-- If the scene naturally calls for fewer than {min} distinct visual moments, find additional meaningful moments to illustrate (a gesture, an environment shot, a character's expression, an object of focus).
-- Character Count & Focus: Tailor the character count to the specific focus of the image. If character interaction is emphasized, include a maximum of 2 characters. If a character's emotion or expression is the focal point, restrict the image to a maximum of 1 character.
-- Distribution Ratio: Across your total image output, maintain a recommended ratio of 70-80% single-character images and 20-30% two-character interaction images.
+- Use materially different, directly supported visible moments. When one sustained event must supply several images, vary its supported action, pose, reaction, contact, or spatial relationship instead of using invisible states or unrelated filler.
 - If the scene contains more than {max} potential visual moments, select the {max} most impactful ones.
 - Never output fewer than {min} images or more than {max} images."""
 
@@ -228,6 +231,20 @@ def render_output_count_rule(min_value: int, max_value: int) -> str:
     return OUTPUT_COUNT_RULE_TEMPLATE.replace("{min}", str(int(min_value))).replace(
         "{max}", str(int(max_value))
     )
+
+
+def render_plan_output_count_rule(toggles: dict, available_slot_count: int) -> str:
+    """Render the PLAN count contract; auto chooses only inside the hard range."""
+    available = max(0, int(available_slot_count))
+    minimum = min(int(toggles["output_count_min"]), available)
+    maximum = min(int(toggles["output_count_max"]), available)
+    rule = render_output_count_rule(minimum, maximum)
+    if str(toggles.get("scene_mode")) == "auto":
+        rule += (
+            "\nWithin this hard range, choose the count that best represents the "
+            f"narrative across the {available} available slots."
+        )
+    return rule
 
 _SESSIONS: dict[str, dict] = {}
 _LOOKUP_KEYS: dict[str, str] = {}
@@ -4442,6 +4459,32 @@ def _outfit_state_is_known(value) -> bool:
     )
 
 
+def _resolved_wardrobe_continuity_note(wardrobe_snapshot: dict) -> str:
+    """Render only each assigned character's resolved scene outfit for DETAIL."""
+    statements = []
+    for raw_name, raw_outfit in (wardrobe_snapshot or {}).items():
+        name = str(raw_name or "").strip()
+        outfit = _normalize_outfit_state(raw_outfit)
+        if not name or not _outfit_state_is_known(outfit):
+            continue
+        facts = []
+        if outfit["body_state"] != "unknown":
+            facts.append(f"body_state is {outfit['body_state']}")
+        if outfit["worn"]:
+            facts.append("worn items are " + ", ".join(outfit["worn"]))
+        if outfit["removed"]:
+            facts.append("removed items are " + ", ".join(outfit["removed"]))
+        if facts:
+            statements.append(f"- {name}: " + "; ".join(facts) + ".")
+    if not statements:
+        return ""
+    return (
+        "Server-resolved wardrobe for this story instant (authoritative for DETAIL):\n"
+        + "\n".join(statements)
+        + "\nTranslate these resolved items into outfit_state without inventing a different outfit."
+    )
+
+
 def _outfit_states_equal(left, right) -> bool:
     left_state = _normalize_outfit_state(left)
     right_state = _normalize_outfit_state(right)
@@ -4946,6 +4989,9 @@ def bind_scene_plan_wardrobes(
         if authority_note:
             plan["visual_base_authority"] = authority_note
         planned_continuity = str(plan.get("continuity_note") or "").strip()
+        resolved_wardrobe_note = _resolved_wardrobe_continuity_note(
+            wardrobe_snapshot
+        )
         if planned_continuity:
             plan["continuity_note"] = (
                 "Shared wardrobe resolution for this story instant:\n"
@@ -4959,6 +5005,14 @@ def bind_scene_plan_wardrobes(
             # Internal parser guidance only. It is deliberately omitted from the
             # LLM payload so the actual inter-LLM handoff stays natural-language.
             plan["_continuity_characters"] = continuity_characters
+        if resolved_wardrobe_note:
+            existing_continuity = str(plan.get("continuity_note") or "").strip()
+            plan["continuity_note"] = (
+                existing_continuity + "\n\n" + resolved_wardrobe_note
+                if existing_continuity
+                else resolved_wardrobe_note
+            )
+            plan["_continuity_characters"] = list(plan_names)
         normalized_plan.append(plan)
 
     print(
@@ -4992,45 +5046,6 @@ def _public_call2_scene_plan(plan: dict) -> dict:
     if visual_base_authority:
         public["visual_base_authority"] = visual_base_authority
     return public
-
-
-def _detail_partner_contract_line(plan: dict) -> str:
-    """Render one semantic partner rule without interpreting scene vocabulary."""
-    slot = int(plan.get("slot") or 0)
-    if plan.get("anonymous_partner_fragment") is True:
-        authorized_instant = str(plan.get("scene_brief") or "").strip()
-        return (
-            f"- slot {slot}: REQUIRED. Preserve the scene_brief's one core visible "
-            "interaction. The anonymous partner can be either the actor or the receiver. "
-            "Resolve that direction from the complete scene_brief and anchor_passage by meaning, "
-            "then preserve exactly who acts on whom, which participant owns the acting limb, and "
-            "which participant receives the contact. Never swap those roles while converting the "
-            "interaction into a cropped composition. Encode the familiar core action plainly "
-            "across scene, the named character positive, and supplement before adding any "
-            "secondary expression, fluid, physiological effect, or micro-motion. "
-            "Show the anonymous partner only as the smallest coherent body portion that makes "
-            "the action readable, continuously entering once from one frame edge. Keep the "
-            "partner's head, face, identity, complete silhouette, and every unneeded second "
-            "body region outside the image. Choose a close enough camera for the body alignment "
-            "and contact to read naturally; do not widen it to retain a remote face or detail. "
-            "If the named subject acts on the anonymous partner, keep the named subject's acting "
-            "limb and action in that character's positive, anchor only the anonymous receiver's "
-            "visible fragment in scene, and state the full actor-to-receiver relation in supplement. "
-            "If the anonymous partner acts on the named subject, put the partner-owned acting "
-            "fragment and action in scene, keep the named receiver's pose or reaction in that "
-            "character's positive, and state the same direction in supplement. Do not emit an "
-            "ownerless contact phrase that could attach the acting limb to either participant. "
-            "Use one concise supplement sentence for edge continuation and contact; use a second "
-            "sentence only when the same contact needs essential spatial clarification. Do not invent another contact "
-            "or place partner-owned anatomy or action in a named character's positive. "
-            "Authorized visible instant: "
-            + authorized_instant
-        )
-    return (
-        f"- slot {slot}: SOLO. Make the named subject's selected observable action, "
-        "pose, gesture, or reaction independently readable. Do not show or describe an "
-        "anonymous partner body part or contact in any output field."
-    )
 
 
 def bind_scene_plan_anchor_passages(
@@ -5643,13 +5658,14 @@ def render_call2_prompt(
     history: str = "",
     *,
     include_scene_count_limit: bool = True,
+    include_server_limits: bool = True,
 ) -> str:
     """Risu 토글 매크로를 서버 설정으로 렌더링한다.
 
-    include_scene_count_limit=False 면 "# Server limits"에서 장면 수(min/max) 라인을
-    생략한다. 병렬 Call2-detail worker는 PLAN이 정한 총량을 worker 수로 나눈
-    per-worker 카운트 규칙을 별도로 주입받으므로, detail system에는 전체 카운트 라인을
-    붙이지 않는다(3배 과잉 생성 원천 차단).
+    include_server_limits=False면 "# Server limits" 섹션 전체를 생략한다.
+    include_scene_count_limit=False면 그 섹션의 장면 수(min/max) 라인만
+    생략한다. PLAN과 병렬 DETAIL은 각 태스크 메시지에 자신의 정확한
+    카운트 계약을 별도로 받으므로 role system에 공통 제한을 중복하지 않는다.
     """
     text = str(text or "")
     # 복잡한 history/client-comment 블록은 서버 값으로 명시적으로 재구성한다.
@@ -5711,59 +5727,22 @@ def render_call2_prompt(
     if leftovers:
         print(f"[ILLUST_CONTEXT] 렌더 후 잔여 Risu 매크로 {len(leftovers)}개 제거: {leftovers}")
         text = re.sub(r"\{\{[^\n]*?\}\}", "", text)
-    # scene_mode == "auto" 면 장면 수에 대한 서버 제한을 일절 붙이지 않고
-    # lb-xnai(call2)에 완전히 맡긴다(템플릿의 scene.quantity 도 3으로 무력화됨).
-    limits = []
-    if include_scene_count_limit and str(toggles.get("scene_mode")) != "auto":
+    # output_count_min/max는 scene_mode와 무관한 유일한 장면 수 권위다.
+    if include_server_limits:
+        limits = []
+        if include_scene_count_limit:
+            limits.append(
+                f"Generate between {int(toggles['output_count_min'])} and "
+                f"{int(toggles['output_count_max'])} scenes."
+            )
         limits.append(
-            f"Generate between {int(toggles['output_count_min'])} and "
-            f"{int(toggles['output_count_max'])} scenes."
+            f"Maximum fully visible characters per image: {int(toggles['character_limit'])}."
         )
-    limits.append(f"Maximum fully visible characters per image: {int(toggles['character_limit'])}.")
-    limits.append(
-        f"Key visual: {'required' if toggles.get('key_visual') else 'disabled; omit keyvis'} ."
-    )
-    text += "\n\n# Server limits\n- " + "\n- ".join(limits)
+        limits.append(
+            f"Key visual: {'required' if toggles.get('key_visual') else 'disabled; omit keyvis'}."
+        )
+        text += "\n\n# Server limits\n- " + "\n- ".join(limits)
     return text.strip()
-
-
-def _keyvis_only_call2_system(rendered_system: str) -> str:
-    """Remove Scene-only selection/output sections from the KEYVIS worker prompt."""
-    source = str(rendered_system or "").strip()
-    without_scene, scene_count = re.subn(
-        r"(?ms)^### Scene\s*$.*?(?=^## Client Comments\s*$)",
-        "",
-        source,
-        count=1,
-    )
-    without_examples, example_count = re.subn(
-        r"(?ms)^# Example\s*$.*\Z",
-        "",
-        without_scene,
-        count=1,
-    )
-    if scene_count != 1:
-        print(
-            "[ILLUST_CONTEXT:CALL2_KEYVIS] 공유 프롬프트에서 Scene 전용 섹션을 "
-            f"찾지 못함: matches={scene_count}"
-        )
-    if example_count != 1:
-        print(
-            "[ILLUST_CONTEXT:CALL2_KEYVIS] 공유 프롬프트에서 공통 출력 예시를 "
-            f"찾지 못함: matches={example_count}"
-        )
-    result = without_examples.strip()
-    if not result:
-        print(
-            "[ILLUST_CONTEXT:CALL2_KEYVIS] KEYVIS 전용 system 축약 결과가 비어 "
-            "공유 system을 그대로 사용"
-        )
-        return source
-    print(
-        "[ILLUST_CONTEXT:CALL2_KEYVIS] Scene 전용 지시 제거: "
-        f"chars={len(source)}->{len(result)} (-{len(source) - len(result)})"
-    )
-    return result
 
 
 def _extract_lb_block(text: str) -> str:
@@ -5883,10 +5862,10 @@ def parse_toon_plan(text: str, toggles: dict, source: str = "CALL2") -> list[dic
     if not isinstance(scenes, list):
         print(f"[ILLUST_CONTEXT:{source}] scenes가 list가 아님: {type(scenes).__name__}")
         scenes = []
-    # auto 모드는 파싱 단계에서도 장면 수를 컷하지 않고 lb-xnai(call2)의 결정을
-    # 그대로 수용한다. manual 모드일 때만 output_count_max 상한으로 잘라낸다.
-    scene_cap = None if str(toggles.get("scene_mode")) == "auto" else int(toggles["output_count_max"])
-    capped = scenes if scene_cap is None else scenes[:scene_cap]
+    # output_count_max는 scene_mode와 무관한 유일한 장면 수 상한이다.
+    # auto는 범위 안의 수량 선택만 LLM에 맡기며 범위 자체를 해제하지 않는다.
+    scene_cap = int(toggles["output_count_max"])
+    capped = scenes[:scene_cap]
     for index, raw in enumerate(capped, start=1):
         if isinstance(raw, dict):
             out.append(_descriptor(raw, "scene", index))
@@ -5939,7 +5918,7 @@ def validate_complete_call2_output(
                 f"{source} PLAN scene slot 불일치: "
                 f"expected={normalized_expected}, actual={actual_slots}"
             )
-    elif str(toggles.get("scene_mode")) != "auto":
+    else:
         minimum = min(int(toggles["output_count_min"]), len(candidates))
         maximum = min(int(toggles["output_count_max"]), len(candidates))
         if not minimum <= len(scenes) <= maximum:
@@ -5947,9 +5926,6 @@ def validate_complete_call2_output(
                 f"{source} 장면 수 범위 위반: count={len(scenes)}, "
                 f"required={minimum}..{maximum}"
             )
-    elif not scenes:
-        return fail(f"{source} auto 모드에서 장면을 하나도 반환하지 않음")
-
     for item in scenes:
         if (
             not str(item.get("camera") or "").strip()
@@ -5971,8 +5947,8 @@ def _parse_call2_keyvis_output(
     local_toggles = deepcopy(toggles)
     local_toggles.update({
         "key_visual": True,
-        # Keep any accidental scene objects visible so this validator can
-        # reject them instead of having a manual scene cap silently drop them.
+        # Keep accidental scene objects in the parsed result so this validator
+        # can reject the KEYVIS response whenever any scene was emitted.
         "scene_mode": "auto",
     })
     descriptors = parse_toon_plan(text, local_toggles, source)
@@ -6247,6 +6223,22 @@ def parse_call2_plan(
     if re.search(r"<lb[-_]xnai|\[TOON\]", source, re.I):
         descriptors = parse_toon_plan(source, toggles, "CALL2-PLAN-LEGACY")
         if descriptors:
+            legacy_scene_count = sum(
+                1
+                for item in descriptors
+                if str(item.get("kind") or "") == "scene"
+            )
+            candidates = candidate_slots(target_slotted)
+            minimum = min(int(toggles["output_count_min"]), len(candidates))
+            maximum = min(int(toggles["output_count_max"]), len(candidates))
+            if not minimum <= legacy_scene_count <= maximum:
+                reason = (
+                    "CALL2-PLAN legacy 장면 수 범위 위반: "
+                    f"count={legacy_scene_count}, required={minimum}..{maximum}"
+                )
+                if log_errors:
+                    print(f"[ILLUST_CONTEXT:CALL2_PLAN] {reason}")
+                return None, reason
             return {
                 "mode": "legacy",
                 "descriptors": descriptors,
@@ -6446,7 +6438,6 @@ def parse_call2_plan(
     for index, item in enumerate(scene_plan, start=1):
         item["plan_id"] = f"S{index:03d}"
 
-    scene_mode = str(toggles.get("scene_mode"))
     maximum = min(int(toggles["output_count_max"]), len(candidates))
     if len(scene_plan) > maximum:
         # 모델이 max 초과 반환 → 유사도 maximin으로 maximum개만 남기고 나머지는 자름.
@@ -6461,17 +6452,16 @@ def parse_call2_plan(
         for index, item in enumerate(scene_plan, start=1):
             item["plan_id"] = f"S{index:03d}"
 
-    if scene_mode != "auto":
-        minimum = min(int(toggles["output_count_min"]), len(candidates))
-        repaired_minimum = max(0, minimum - dropped_collision_count)
-        if len(scene_plan) < repaired_minimum:
-            reason = (
-                f"CALL2-PLAN 장면 수 범위 위반(과소): count={len(scene_plan)}, "
-                f"required={repaired_minimum}..{maximum}"
-            )
-            if log_errors:
-                print(f"[ILLUST_CONTEXT:CALL2_PLAN] {reason}")
-            return None, reason
+    minimum = min(int(toggles["output_count_min"]), len(candidates))
+    if len(scene_plan) < minimum:
+        reason = (
+            f"CALL2-PLAN 장면 수 범위 위반(과소): count={len(scene_plan)}, "
+            f"required={minimum}..{maximum}, "
+            f"dropped_slot_collisions={dropped_collision_count}"
+        )
+        if log_errors:
+            print(f"[ILLUST_CONTEXT:CALL2_PLAN] {reason}")
+        return None, reason
 
     keyvis_descriptor = None
     keyvis_plan = None
@@ -7436,7 +7426,7 @@ async def _run_call2_authority_audit(
         if reason:
             print(
                 f"[ILLUST_CONTEXT:CALL2_AUTHORITY_AUDIT] 최종 응답 검증 실패, "
-                f"고정 외형 예외 없이 복원하는 degraded 모드 사용: reason={reason}, "
+                f"DETAIL의 이미지별 가시성 선택을 보존하는 degraded 모드 사용: reason={reason}, "
                 f"raw={raw_output[:1000]!r}"
             )
             degraded = {
@@ -7474,8 +7464,8 @@ async def _run_call2_authority_audit(
         raise
     except Exception as e:
         print(
-            f"[ILLUST_CONTEXT:CALL2_AUTHORITY_AUDIT] LLM 실패, 고정 외형 예외 없이 "
-            f"복원하는 degraded 모드 사용: error={e}"
+            f"[ILLUST_CONTEXT:CALL2_AUTHORITY_AUDIT] LLM 실패, DETAIL의 이미지별 "
+            f"가시성 선택을 보존하는 degraded 모드 사용: error={e}"
         )
         traceback.print_exc()
         degraded = {
@@ -7500,9 +7490,12 @@ def apply_call2_authority_base(
 ) -> list[dict]:
     """Preserve fixed identity and CALL2's complete logical wardrobe snapshot.
 
-    Only the separate semantic audit may approve fixed-appearance changes or
-    visibility omissions. A known outfit_state stays complete for continuity,
-    while positive retains only the wardrobe tags CALL2 judged image-visible.
+    Only the separate semantic audit may approve fixed-appearance changes. It
+    also reviews visibility omissions when available; a degraded audit preserves
+    DETAIL's already usable per-image visibility selection instead of forcing
+    absent fixed tags back into the image prompt. A known outfit_state stays
+    complete for continuity, while positive retains only the wardrobe tags CALL2
+    judged image-visible.
     A known CALL2 outfit_state owns wardrobe as a complete set. The profile
     default outfit is restored only when CALL2 did not provide a usable state.
     This function compares only server-provided tag-set membership; it does not
@@ -7576,6 +7569,7 @@ def apply_call2_authority_base(
                     semantic_status if semantic_decision else "not_needed"
                 )
             )
+            preserve_generated_visibility = entry_semantic_status == "degraded"
             untrusted_exceptions = list(character.get("authority_exceptions") or [])
             if untrusted_exceptions:
                 rejected_exceptions.extend(
@@ -7714,12 +7708,29 @@ def apply_call2_authority_base(
                     continue
                 semantic_required_ids.add(identity)
                 semantic_required.append(required)
-            mandatory_fixed = [
-                tag for tag in fixed_tags
-                if _authority_tag_identity(tag) not in (
-                    exception_ids | visibility_omission_ids
-                )
-            ]
+            omitted_fixed_ids = exception_ids | visibility_omission_ids
+            if preserve_generated_visibility:
+                degraded_omissions = [
+                    tag for tag in fixed_tags
+                    if _authority_tag_identity(tag) not in generated_ids
+                ]
+                if degraded_omissions:
+                    print(
+                        "[ILLUST_CONTEXT:CALL2_AUTHORITY_AUDIT] semantic audit "
+                        "degraded로 DETAIL의 이미지별 고정 외형 생략 보존: "
+                        f"kind={kind}, slot={slot}, character={name}, "
+                        f"omissions={degraded_omissions}"
+                    )
+                mandatory_fixed = [
+                    tag for tag in fixed_tags
+                    if _authority_tag_identity(tag) in generated_ids
+                    and _authority_tag_identity(tag) not in omitted_fixed_ids
+                ]
+            else:
+                mandatory_fixed = [
+                    tag for tag in fixed_tags
+                    if _authority_tag_identity(tag) not in omitted_fixed_ids
+                ]
             mandatory_wardrobe = list(wardrobe_authority)
             missing_fixed = [
                 tag for tag in mandatory_fixed
@@ -7859,68 +7870,17 @@ async def _run_call2_keyvis(
             "[ILLUST_CONTEXT:CALL2_KEYVIS] 현재 canonical roster가 비어 있음: "
             "CHARACTER DICTIONARY와 현재 문맥에 명시된 canonical 이름만 사용하도록 요청"
         )
-    if messages and messages[0].get("role") == "system":
-        messages[0]["content"] = str(messages[0].get("content") or "") + (
-            "\n\n# Independent promotional Key Visual task\n"
-            "Create exactly one standalone promotional Key Visual from the supplied current context. "
-            "This task is independent from the narrative scene planner: do not select narrative slots, do not "
-            "output a scene plan, and do not wait for or refer to another worker. Synthesize the central "
-            "relationship, contrast, or theme into one magazine-cover-level composition instead of "
-            "copying one presumed planned scene. Output exactly one keyvis object and no scene objects. "
-            "Use only canonical character names supported by the supplied dictionary and current context. "
-            "For named characters, persistent appearance comes only from the server-supplied "
-            "AUTHORITATIVE FIXED APPEARANCE block; other CHARACTER DICTIONARY sections are not "
-            "identity sources. Do not "
-            "creatively fill missing identity traits from narrative prose. Narrative may control pose, "
-            "action, expression, composition, and compatible temporary visual state. Replace an exact "
-            "conflicting fixed appearance tag only when the actual narrative directly and explicitly states "
-            "that temporary change; never infer it from the Key Visual concept. Rebuild each named character "
-            "from the visible applicable portion of fixed appearance. A fully cropped or naturally occluded "
-            "trait may be absent from positive without changing identity, and the composition must never be "
-            "widened or rearranged merely to display it. Treat the supplied current "
-            "wardrobe as continuity and default_outfit as a fallback reference, not fixed identity. "
-            "When shared wardrobe resolutions are supplied, choose the story time represented by your "
-            "concept and keep that time's same garment design and worn/carried state. Promotional framing "
-            "does not itself change clothing. Otherwise resolve wardrobe from the story by meaning. "
-            "Keep complete logical wardrobe continuity in outfit_state while positive contains only "
-            "visible or coverage-defining garments. A separate server audit preserves fixed identity while "
-            "allowing true visibility omissions and only an explicit narrative change to replace a fixed trait. Generated visual references "
-            "are intentionally absent and must not be reconstructed as identity facts. "
-            "Before returning, silently verify that the composition is one physically possible image and "
-            "that its camera can actually show every story-essential action, contact, exposure, displaced "
-            "garment, and visible anatomy. Treat explicit content as a coherent scene-specific detail bundle, "
-            "not as one isolated tag, while adding nothing the story does not support. "
-            "Derive visible anatomy only after establishing pose, continuous body volumes, coverage, contact, "
-            "occlusion, camera angle, and crop. Expected anatomy derived from an already established, uncovered "
-            "body region inside the frame is not invented story content, even when the narrative does not name "
-            "each structure. `nude`, `topless`, `bottomless`, and similar terms describe coverage state; they do "
-            "not replace the anatomically expected visible structures in the appropriate character or scene "
-            "field. A focal tag does not erase other uncovered anatomy that remains inside the same frame. Never "
-            "force anatomy that is cropped, covered, naturally occluded, or hidden by the established view, and "
-            "never widen or rearrange the composition merely to expose it. "
-            "If the Key Visual includes an anonymous interaction fragment, keep one minimal fragment anchor exactly once in scene "
-            "and never copy the partner's body, pose, or action into a named character positive. The fragment adds no complete-person "
-            "count or person-focus tag. Use a contact-point close-up for anything broader than hands or forearms, allow zero visible "
-            "faces, and place exact frame-edge continuity, overlap, and contact only in supplement. "
-            "This override "
-            "supersedes every global scene-count, slot-selection, and combined keyvis/scene requirement. "
-            "Every characters[] entry must include its exact canonical name even when cropped or partially "
-            "visible. characters[].negative is optional: include it only when the Client explicitly "
-            "supplied that negative; otherwise omit the field."
-        )
-
     roster_text = json.dumps(allowed, ensure_ascii=False)
     messages.append({
         "role": "user",
         "content": (
-            "# INDEPENDENT KEY VISUAL\n"
-            "Return one complete Key Visual descriptor only. Do not output scenes, slots, plan_id, "
-            "analysis, JSON, or prose outside the <lb-xnai> block. Choose at least one and at most "
+            "# KEY VISUAL TASK\n"
+            "Choose at least one and at most "
             f"{max(1, min(3, int(toggles.get('character_limit', 3))))} named characters when supported "
             "by the current context.\n\n"
             "# CURRENT CANONICAL CHARACTER ROSTER\n"
             + (roster_text if allowed else "(unavailable; use only names in CHARACTER DICTIONARY)")
-            + "\n\n# OUTPUT FORMAT\n"
+            + "\n\n# OUTPUT SCHEMA\n"
             "<lb-xnai>\n"
             "keyvis:\n"
             "  camera: ...\n"
@@ -7935,7 +7895,7 @@ async def _run_call2_keyvis(
             "  scene: ...\n"
             "  supplement: ...\n"
             "scenes: []\n"
-            "</lb-xnai>"
+            "</lb-xnai>\n\nReturn only this block."
         ),
     })
     try:
@@ -7985,7 +7945,7 @@ async def _run_parallel_call2_details(
     call2_format: str,
     toggles: dict,
     stream_notify,
-    call2_thoughts: str = "",
+    fixed_appearance_by_name: dict[str, str] | None = None,
 ) -> tuple[list[dict], list[str], list[int], list[dict]]:
     source_format = str(call2_format or "").strip()
     keyvis_marker = re.search(r"(?m)^keyvis:\s*$", source_format)
@@ -8011,28 +7971,6 @@ async def _run_parallel_call2_details(
         "",
         detail_output_format,
     )
-    detail_checklist = str(call2_thoughts or "").strip()
-    if toggles.get("minimal_background_description", True):
-        detail_background_instruction = (
-            "Prioritize each character's current clothing or exposure state, pose, action, "
-            "expression, gaze, and interaction before environment detail. Keep the environment "
-            "to the smallest story-supported cue, or use only `simple background` when no clear "
-            "or important background exists. Do not invent decorative props, weather, time, or "
-            "elaborate lighting. Make the camera, relative positions, actions, contact, visible "
-            "anatomy, garment displacement, expressions, and minimal background agree as one "
-            "physically possible image. "
-        )
-    else:
-        detail_background_instruction = (
-            "Prioritize each character's current clothing or exposure state, pose, action, "
-            "expression, gaze, and interaction, while also describing the story-supported "
-            "environment at a useful visual density. Include concrete location, time, weather, "
-            "lighting, scenery, furniture, and prominent props when established. Use multiple "
-            "complementary environment details when they express distinct visible facts; do not "
-            "invent unsupported decoration or collapse a specific setting into `simple background`. "
-            "Make the camera, relative positions, actions, contact, visible anatomy, garment "
-            "displacement, expressions, and environment agree as one physically possible image. "
-        )
     max_concurrency = int(toggles["call2_parallel_max_concurrency"])
     batches = _balanced_call2_scene_plan_batches(scene_plan, max_concurrency)
     jobs = [{"plans": batch, "weight": len(batch)} for batch in batches]
@@ -8100,193 +8038,83 @@ async def _run_parallel_call2_details(
             req_min = max(1, min(per_worker_min, request_count))
             req_max = max(req_min, min(per_worker_max, request_count))
             req_rule = render_output_count_rule(req_min, req_max)
-            explicit_physics_instruction = ""
-            if toggles.get("nsfw"):
-                explicit_physics_instruction = (
-                    "When established genital contact is the primary visible fact, use a physically feasible tight "
-                    "view that makes the participants' alignment and action readable while preserving natural "
-                    "overlap and occlusion. Never combine flush or sealed body contact with a demand for the entire "
-                    "junction to remain unobstructed, and never pull bodies apart merely to expose it. Include only "
-                    "the anatomy the chosen view really reveals. A visible penis belonging to a cropped anonymous "
-                    "male must be placed in scene, with its exact contact in supplement, never in a named woman's "
-                    "positive. If the named subject's face or reaction is primary, keep lower contact naturally "
-                    "occluded or off-frame instead of forcing both distant regions into one close-up. "
-                )
             base = deepcopy(call2_context_messages)
-            if base and base[0].get("role") == "system":
-                base[0]["content"] = str(base[0].get("content") or "") + (
-                    "\n\n# Parallel scene-detail instructions\n"
-                    "The global planner already selected the visual beats. Do not select, add, remove, or move a scene. "
-                    "Copy every assigned slot exactly; the server will attach plan_id after slot validation. "
-                    "Omit keyvis completely. "
-                    + "An assigned plan may have characters: []. That means no named tracked character is "
-                    "present: output characters: [] for that scene, keep anonymous background people only "
-                    "in scene/supplement, and do not invent a canonical character. This shard-specific rule "
-                    "overrides any global requirement that every scene contain a key character. Every characters[] "
-                    "entry for a named character must include its exact canonical name even when cropped "
-                    "or partially visible. characters[].negative is optional: include it only when the "
-                    "Client explicitly supplied that negative; otherwise omit the field."
-                    # 이 요청의 카운트 규칙은 전체 총량이 아니라 (총량÷worker수) per-worker 값을
-                    # 이번 batch 크기로 맞춘 것이다. 다른 전역 카운트 지시보다 이 값이 우선한다.
-                    + "\n\n# SHARD OUTPUT COUNT RULE (per worker)\n"
-                    + req_rule
+            authority_slots: dict[str, list[int]] = {}
+            authority_covered_names: set[str] = set()
+            requested_names: set[str] = set()
+            public_request_plans = []
+            for plan in request_plans:
+                requested_names.update(
+                    str(name or "").strip().casefold()
+                    for name in plan.get("characters") or []
+                    if str(name or "").strip()
                 )
-            public_request_plans = [
-                _public_call2_scene_plan(plan) for plan in request_plans
+                public_plan = _public_call2_scene_plan(plan)
+                authority_note = str(
+                    public_plan.pop("visual_base_authority", "") or ""
+                ).strip()
+                if authority_note:
+                    authority_slots.setdefault(authority_note, []).append(
+                        int(plan["slot"])
+                    )
+                    authority_covered_names.update(
+                        str(name or "").strip().casefold()
+                        for name in (plan.get("visual_base_snapshot") or {})
+                        if str(name or "").strip()
+                    )
+                public_request_plans.append(public_plan)
+            authority_payload = ""
+            authority_sections = [
+                f"Applies to slots {slots}:\n{authority_note}"
+                for authority_note, slots in authority_slots.items()
             ]
+            unresolved_fixed_appearance = {
+                str(name): value
+                for name, value in (fixed_appearance_by_name or {}).items()
+                if str(name or "").strip().casefold() in requested_names
+                and str(name or "").strip().casefold() not in authority_covered_names
+            }
+            fixed_fallback = _fixed_appearance_authority_content(
+                unresolved_fixed_appearance
+            )
+            if fixed_fallback:
+                fixed_fallback = fixed_fallback.split("\n", 1)[-1].strip()
+                authority_sections.append(
+                    "Applies to every assigned slot containing these characters:\n"
+                    + fixed_fallback
+                )
+            if authority_sections:
+                authority_payload = (
+                    "# AUTHORITATIVE FIXED APPEARANCE FOR ASSIGNED SLOTS\n"
+                    "Each note applies only to the listed assigned slots.\n\n"
+                    + "\n\n".join(authority_sections)
+                    + "\n\n"
+                )
             assigned_plan_payload = (
-                "# ASSIGNED GLOBAL SCENE PLAN\n"
+                authority_payload
+                + "# ASSIGNED SCENE PLAN DATA\n"
                 + json.dumps(public_request_plans, ensure_ascii=False, indent=2)
             )
-            partner_contract_lines = [
-                _detail_partner_contract_line(public_plan)
-                for public_plan in public_request_plans
-            ]
-            partner_contract_payload = (
-                "# PER-SCENE ANONYMOUS PARTNER CONTRACT\n"
-                "Follow each slot's REQUIRED or SOLO line without changing its named roster or selected "
-                "event. These lines specialize the active single-subject preset; they never authorize a "
-                "second identifiable person.\n"
-                + "\n".join(partner_contract_lines)
-            )
-            wardrobe_contract_lines = [
-                (
-                    f"- slot {int(public_plan.get('slot') or 0)}: "
-                    + str(public_plan.get("continuity_note") or "").strip()
-                )
-                for public_plan in public_request_plans
-            ]
-            wardrobe_contract_payload = (
-                "# PER-SCENE WARDROBE HANDOFF\n"
-                "Copy each PLAN note into the slot's complete logical outfit_state without dropping "
-                "a still-worn outer layer, revealed underlayer, damage or displacement, accessory, "
-                "carried garment, or removal. Keep off-frame items in outfit_state and only visible "
-                "or coverage-defining items in positive.\n"
-                + "\n".join(wardrobe_contract_lines)
+            retry_scope = (
+                "This retry contains only missing scenes. Produce exactly these slots and do not repeat "
+                "a scene already accepted from this shard."
+                if partial
+                else "Produce exactly the assigned scenes."
             )
             base.append({
-                "role": "system",
-                "content": (
-                    "# ASSIGNED SCENE DETAIL PRIORITY\n"
-                    "Render one clear primary visible fact per slot. Preserve the selected core action "
-                    "with a familiar high-level tag or short phrase before adding secondary detail. "
-                    "A REQUIRED anonymous partner remains one connected, headless, off-frame portion; "
-                    "a SOLO slot contains no partner fragment. The per-scene lines in the user message "
-                    "supply the exact selected instant. The PLAN continuity_note is the logical wardrobe "
-                    "authority: retain its complete garment state in outfit_state and put only visible "
-                    "or coverage-defining garments in positive."
-                ),
-            })
-            expand_instruction = (
-                "Expand each plan into a complete, coherent visual tag bundle with camera, scene, "
-                "character positives, outfit_state, and supplement. The structured wardrobe snapshot is "
-                "kept server-side for validation rather than used as an inter-LLM semantic handoff. Start "
-                "from fixed appearance and resolve wardrobe from tracked continuity, the default-outfit "
-                "reference, and the full assigned scene. "
-                "When continuity_note is present, read that natural-language chronology by meaning and "
-                "treat it as authority for the affected character's current wardrobe, coverage, and "
-                "exposure; coarse operation/body-state hints or a stale snapshot must never simplify, "
-                "euphemize, or contradict it. Use fixed appearance as authoritative identity, but put only "
-                "traits belonging to visible or materially render-relevant portions in positive. A trait fully "
-                "outside the frame or naturally occluded by another body may be omitted without changing identity; "
-                "never widen or rearrange the composition merely to expose it. Replace only the "
-                "exact tag directly contradicted by an explicit current-narrative statement or active "
-                "evidence-bearing history event; the assigned scene selection controls the visual beat but has no appearance authority. "
-                "When continuity_note supplies a shared wardrobe resolution, translate that same outfit "
-                "into outfit_state and the visible prompt without redesigning it for this batch. "
-                "Preserve each named garment's identity and current worn, displaced, damaged, or carried "
-                "state literally; do not substitute a different material, design, or undergarment from a "
-                "lower-authority generated reference. "
-                "Keep neckline, sleeve shape, length, material, fastenings, and accessories consistent "
-                "where visible. A carried garment belongs to the scene's objects, not worn; when visible, "
-                "use scene and supplement to express its support and location as one object, keeping the "
-                "named character's clothing tags about what is actually worn. The same arm may support "
-                "an object while its hand acts if the selected pose permits it; do not invent another arm "
-                "or contact to display the object. An off-frame garment stays in logical state without constraining "
-                "the pose or crop. Use the complete default outfit "
-                "only as fallback when the tracked wardrobe and full scene do not call for something different. "
-                "Only when no shared resolution is supplied, resolve missing wardrobe from the full story "
-                "by meaning; never keyword-match or carry incompatible default pieces into it. "
-                "The separate server audit handles fixed appearance only. Complete wardrobe consistency "
-                "here, across outfit_state, positive, and supplement. Record the complete resolved wardrobe in outfit_state, "
-                "including garments outside the frame, but put only visible or coverage-defining garments in "
-                "positive. Never advance state beyond the assigned scene. "
-                + detail_background_instruction
-                + "Treat anchor_passage as the event authority for action, location, and story time. "
-                "scene_brief identifies the one primary visible fact inside that passage; surrounding "
-                "context may resolve identity and continuity but may not contribute another event. State "
-                "the familiar high-level action or pose plainly before secondary expressions, fluids, "
-                "physiological effects, or micro-motions. Those details may clarify the core action but "
-                "must never replace it. Do not downgrade an interaction to a quieter reaction merely "
-                "because the reaction is easier to frame. Choose camera azimuth, elevation, and distance "
-                "together so the selected action, actor/receiver direction, connected anatomy, contact, "
-                "and natural occlusion read as one physical instant. If a suggested composition cannot "
-                "contain that instant coherently, preserve the slot, event, roster, and core action while "
-                "repairing only camera and crop within the active partner-visibility limits. Omit remote "
-                "face, hair, eye, expression, or clothing details that fall outside the repaired crop; "
-                "fixed appearance and logical wardrobe remain authoritative without becoming a display quota. "
-                "Never repeat scene-wide environment, lighting, weather, time, character-count, or shared "
-                "background-prop tags in characters[].positive. Treat each plan's characters list as the "
-                "exact named roster and never add or duplicate an entry. Keep an anonymous partner out of "
-                "characters[] and out of complete-person count tags. For anonymous_partner_fragment=true, "
-                "use one short familiar fragment phrase in scene and one concise spatial/contact sentence "
-                "in supplement, with a second sentence only when essential to clarify that same contact. "
-                "The fragment must remain the smallest coherent portion that makes the core action readable, "
-                "continuously entering once from one frame edge, with no partner face, complete silhouette, "
-                "second region, or invented contact. The anonymous partner can be either actor or receiver: "
-                "derive that role from scene_brief and anchor_passage by meaning and never reverse it during "
-                "cropping. When the named subject acts on an anonymous receiver, keep the named acting limb "
-                "and action in that character's positive, the receiver fragment in scene, and the complete "
-                "direction in supplement. When the anonymous partner acts on the named receiver, preserve that "
-                "direction without transferring the action to the named subject. Put all partner-owned anatomy and action in scene or supplement, never in a named character's positive. "
-                "Never leave a contact limb ownerless. For anonymous_partner_fragment=false, "
-                "show and describe no partner fragment or contact. "
-                + explicit_physics_instruction
-                + "Before return, reconstruct coherent bodies and joints, clothing/object coverage, contact, "
-                "overlap, natural occlusion, and finally the crop. Read every anatomy, pose, and action phrase "
-                "as an owner-predicate pair with one unambiguous owner. Do not reduce the story-essential "
-                "state to an ambiguous isolated secondary detail or crop the core action out. "
-                "When a plan has characters: [], preserve characters: [] and express anonymous people "
-                "only through scene tags and supplement. "
-                "Copy slot exactly into every scene object and preserve plan order. The server assigns "
-                "plan_id from the validated slot."
-            )
-            if partial:
-                expand_instruction = (
-                    "These are the ONLY scenes still missing from this shard. Produce exactly these slots "
-                    "and no others — do not repeat scenes already delivered earlier in this shard. "
-                    + expand_instruction
-                )
-            base.extend([{
                 "role": "user",
                 "content": (
                     assigned_plan_payload
+                    + "\n\n# SERVER SCOPE\n"
+                    + retry_scope
                     + "\n\n"
-                    + expand_instruction
-                    + (
-                        "\n\n# SCENE EXPANSION CHECKLIST\n"
-                        + detail_checklist
-                        if detail_checklist
-                        else ""
-                    )
-                    + "\n\n"
-                    + partner_contract_payload
-                    + "\n\n"
-                    + wardrobe_contract_payload
-                    + "\n\n"
-                    "# OUTPUT FORMAT\n"
+                    + req_rule
+                    + f"\nMaximum fully visible characters per image: {int(toggles['character_limit'])}."
+                    + "\n\n# OUTPUT SCHEMA\n"
                     + detail_output_format
-                    + "\n\nReturn one <lb-xnai> block containing scenes only. Omit keyvis.\n\n"
-                    "# FINAL RESPONSE CONTRACT\n"
-                    "For each slot, encode its familiar core action or pose before any secondary micro-detail, "
-                    "then make camera, scene, character positives, and supplement describe that same instant. "
-                    "Copy the complete PLAN garment state into outfit_state even when part of it is off-frame. "
-                    "For anonymous_partner_fragment=true, show one smallest coherent partner portion entering "
-                    "once from one edge, with no face, full silhouette, second body region, or extra contact. "
-                    "For false, show no partner fragment. Keep remote identity details out of a tight contact "
-                    "crop instead of widening the image."
+                    + "\n\nReturn only one <lb-xnai> block containing scenes. Omit keyvis."
                 ),
-            }])
+            })
             return base
 
         # CALL2-DETAIL 부분 재시도 루프: ①전부예측(primary) → ②실패분만(fallback) →
@@ -13341,62 +13169,143 @@ async def build_from_context(
     # fixed appearance is supplied separately. Repeating it inside the rendered
     # system prompt wastes context and makes source authority less clear.
     history = ""
-    call2_system = render_call2_prompt(prompts.get("call2_system", ""), toggles, history)
-    call2_thoughts = render_call2_prompt(prompts.get("call2_thoughts", ""), toggles, history)
     call2_detail_toggles = deepcopy(toggles)
     call2_detail_toggles["key_visual"] = False
-    call2_detail_system = render_call2_prompt(
-        prompts.get("call2_system", ""),
+    call2_jailbreak_prompt = render_call2_prompt(
+        prompts.get("call2_jailbreak", ""),
+        toggles,
+        history,
+        include_scene_count_limit=False,
+        include_server_limits=False,
+    )
+    call2_job_prompt = render_call2_prompt(
+        prompts.get("call2_job", ""),
+        toggles,
+        history,
+        include_scene_count_limit=False,
+        include_server_limits=False,
+    )
+    call2_prefill_prompt = render_call2_prompt(
+        prompts.get("call2_prefill", ""),
+        toggles,
+        history,
+        include_scene_count_limit=False,
+        include_server_limits=False,
+    )
+    call2_common_prompt = render_call2_prompt(
+        prompts.get("call2_common", ""),
+        toggles,
+        history,
+        include_scene_count_limit=False,
+        include_server_limits=False,
+    )
+    call2_explicit_prompt = render_call2_prompt(
+        prompts.get("call2_explicit", ""),
+        toggles,
+        history,
+        include_scene_count_limit=False,
+        include_server_limits=False,
+    )
+    call2_plan_prompt = render_call2_prompt(
+        prompts.get("call2_plan", ""),
         call2_detail_toggles,
         history,
         include_scene_count_limit=False,
+        include_server_limits=False,
     )
-    call2_detail_thoughts = render_call2_prompt(
-        prompts.get("call2_thoughts", ""),
+    call2_detail_prompt = render_call2_prompt(
+        prompts.get("call2_detail", ""),
         call2_detail_toggles,
         history,
+        include_scene_count_limit=False,
+        include_server_limits=False,
     )
-    call2_keyvis_system = (
-        _keyvis_only_call2_system(call2_system)
-        if toggles.get("key_visual")
-        else call2_system
+    call2_keyvis_prompt = render_call2_prompt(
+        prompts.get("call2_keyvis", ""),
+        toggles,
+        history,
+        include_scene_count_limit=False,
+        include_server_limits=False,
     )
+    call2_fallback_prompt = render_call2_prompt(
+        prompts.get("call2_fallback", ""),
+        toggles,
+        history,
+        include_scene_count_limit=False,
+        include_server_limits=False,
+    )
+
+    def role_system(role: str, *parts: str) -> str:
+        content = "\n\n".join(str(part or "").strip() for part in parts if str(part or "").strip())
+        if not content:
+            print(f"[ILLUST_CONTEXT:{role}] 역할 전용 system 프롬프트가 비어 있음")
+            raise ValueError(f"{role} 역할 전용 system 프롬프트가 비어 있습니다")
+        return content
+
     call2_base_message = {
         "role": "system",
-        "content": "\n\n".join(x for x in (
-            prompts.get("call2_jailbreak", ""), prompts.get("call2_job", ""), call2_system,
-        ) if x.strip()),
+        "content": role_system(
+            "CALL2_FALLBACK",
+            call2_jailbreak_prompt,
+            call2_job_prompt,
+            call2_common_prompt,
+            call2_explicit_prompt,
+            call2_fallback_prompt,
+        ),
     }
     call2_detail_base_message = {
         "role": "system",
-        "content": "\n\n".join(x for x in (
-            prompts.get("call2_jailbreak", ""),
-            prompts.get("call2_job", ""),
-            call2_detail_system,
-        ) if x.strip()),
+        "content": role_system(
+            "CALL2_DETAIL",
+            call2_jailbreak_prompt,
+            call2_job_prompt,
+            call2_common_prompt,
+            call2_explicit_prompt,
+            call2_detail_prompt,
+        ),
+    }
+    call2_plan_base_message = {
+        "role": "system",
+        "content": role_system(
+            "CALL2_PLAN",
+            call2_jailbreak_prompt,
+            call2_job_prompt,
+            call2_plan_prompt,
+        ),
     }
     call2_keyvis_base_message = {
         "role": "system",
-        "content": "\n\n".join(x for x in (
-            prompts.get("call2_jailbreak", ""),
-            prompts.get("call2_job", ""),
-            call2_keyvis_system,
-        ) if x.strip()),
+        "content": role_system(
+            "CALL2_KEYVIS",
+            call2_jailbreak_prompt,
+            call2_job_prompt,
+            call2_common_prompt,
+            call2_explicit_prompt,
+            call2_keyvis_prompt,
+        ),
     }
     call2_messages = [deepcopy(call2_base_message)]
     call2_detail_context_messages = [deepcopy(call2_detail_base_message)]
-    call2_plan_context_messages = [deepcopy(call2_base_message)]
+    call2_plan_context_messages = [deepcopy(call2_plan_base_message)]
     call2_keyvis_context_messages = [deepcopy(call2_keyvis_base_message)]
 
     def append_call2_context(
         message: dict,
         *,
+        include_fallback: bool | None = None,
         include_plan: bool = True,
         include_keyvis: bool = True,
         include_detail: bool = True,
     ) -> None:
-        if include_detail:
+        # Before this flag existed, include_detail controlled both the legacy
+        # fallback and parallel DETAIL inputs. Preserve that behavior for old
+        # call sites while allowing DETAIL to omit context already resolved by
+        # PLAN without weakening the recovery path.
+        if include_fallback is None:
+            include_fallback = include_detail
+        if include_fallback:
             call2_messages.append(deepcopy(message))
+        if include_detail:
             call2_detail_context_messages.append(deepcopy(message))
         if include_plan:
             call2_plan_context_messages.append(deepcopy(message))
@@ -13414,12 +13323,12 @@ async def build_from_context(
         append_call2_context({
             "role": "user",
             "content": call2_persona_context,
-        })
+        }, include_fallback=True, include_detail=False)
 
     if call2_instruction:
         append_call2_context({
             "role": "user",
-            "content": "# ACTIVE BOT IMAGE INSTRUCTIONS\n\n" + call2_instruction,
+            "content": "# TRUSTED ACTIVE BOT IMAGE POLICY\n\n" + call2_instruction,
         })
     if selected_profile_authority:
         append_call2_context({
@@ -13428,12 +13337,12 @@ async def build_from_context(
                 "# PRESELECTED PROFILE AUTHORITY\n\n"
                 + selected_profile_authority
             ),
-        })
+        }, include_fallback=True, include_detail=False)
     if call2_reference.strip():
         append_call2_context({
             "role": "user",
             "content": "# CHARACTER DICTIONARY\n\n" + call2_reference,
-        }, include_plan=False)
+        }, include_fallback=True, include_plan=False, include_detail=False)
     plan_character_reference = _filter_character_reference(
         call2_reference,
         plan_character_names,
@@ -13462,7 +13371,7 @@ async def build_from_context(
         append_call2_context({
             "role": "user",
             "content": fixed_appearance_content,
-        }, include_plan=False)
+        }, include_fallback=True, include_plan=False, include_detail=False)
     if persistent_history:
         if selected_states:
             projected_states = _state_without_generated_visual_references(
@@ -13480,7 +13389,7 @@ async def build_from_context(
                     "the profile default. Camera absence alone never means removal.\n\n"
                     + json.dumps(projected_states, ensure_ascii=False, indent=2)
                 ),
-            })
+            }, include_fallback=True, include_detail=False)
         if wardrobe_events:
             append_call2_context({
                 "role": "user",
@@ -13495,7 +13404,7 @@ async def build_from_context(
                     "outfit even when it does not enumerate every garment.\n\n"
                     + json.dumps(wardrobe_events, ensure_ascii=False, indent=2)
                 ),
-            })
+            }, include_fallback=True, include_detail=False)
         # hairstyle history: selected_states의 누적 timeline + 이번 턴 CALL1 이벤트를 합쳐
         # CALL2에 전달한다(서버는 의미 해석 없이 전달만). persistence가 이 기능의 핵심이다.
         hairstyle_history: dict[str, list] = {}
@@ -13540,7 +13449,7 @@ async def build_from_context(
             append_call2_context({
                 "role": "user",
                 "content": classified_visual_reference,
-            }, include_plan=False, include_keyvis=False)
+            }, include_fallback=True, include_plan=False, include_keyvis=False, include_detail=False)
         if balanced_fallback:
             fallback_text = _history_messages_text(
                 persistent_history.get("call2_fallback_history") or []
@@ -13553,7 +13462,7 @@ async def build_from_context(
                 append_call2_context({
                     "role": "user",
                     "content": "# BALANCED FALLBACK PAST HISTORY\n\n" + fallback_text,
-                }, include_plan=False)
+                }, include_fallback=True, include_plan=False, include_detail=False)
             print(
                 f"[ILLUST_CONTEXT:CALL2] 균형형 폴백 입력 사용: "
                 f"history_chars={len(fallback_text)}, full_reference={bool(call2_reference.strip())}"
@@ -13590,7 +13499,7 @@ async def build_from_context(
     append_call2_context({
         "role": "user",
         "content": "[Last log entry]\n" + slotted,
-    }, include_plan=False)
+    }, include_fallback=True, include_plan=False, include_detail=False)
     downstream_chats = deepcopy(chats)
     if toggles.get("call1_backtranslate_enabled") or (persistent_history and call1_result):
         downstream_chats[target_index]["data"] = enhanced
@@ -13659,13 +13568,32 @@ async def build_from_context(
     except Exception as e:
         print(f"[ILLUST_CONTEXT:CALL2] 역할별 입력 크기 계산 실패: error={e}")
         traceback.print_exc()
+    fallback_limits = [
+        render_output_count_rule(
+            int(toggles["output_count_min"]),
+            int(toggles["output_count_max"]),
+        ),
+        f"Maximum fully visible characters per image: {int(toggles['character_limit'])}.",
+        f"Key Visual: {'required' if toggles.get('key_visual') else 'disabled; omit keyvis'}.",
+    ]
     call2_messages.append({
         "role": "user",
-        "content": "# Output instructions\n\n" + call2_thoughts + "\n\n" + prompts.get("call2_format", ""),
+        "content": (
+            "# SERVER OUTPUT CONTRACT\n\n"
+            + "\n\n".join(fallback_limits)
+            + "\n\n# OUTPUT SCHEMA\n\n"
+            + prompts.get("call2_format", "")
+        ),
     })
-    if prompts.get("call2_prefill", "").strip():
-        call2_messages.append({"role": "assistant", "content": prompts["call2_prefill"]})
-    call2_messages.append({"role": "user", "content": "Return the final <lb-xnai> TOON block only after your analysis."})
+    if call2_prefill_prompt:
+        call2_messages.append({
+            "role": "assistant",
+            "content": call2_prefill_prompt,
+        })
+    call2_messages.append({
+        "role": "user",
+        "content": "Return the final <lb-xnai> TOON block only.",
+    })
     call2_output = ""
     call2_fix_output = ""
     call2_plan_output = ""
@@ -13830,71 +13758,31 @@ async def build_from_context(
                     f"{plan_toggles['output_count_max']}, "
                     f"available_slots={candidates}"
                 )
-            if plan_messages and plan_messages[0].get("role") == "system":
-                planner_rules = [
-                    "Select the global semantic visual beats that should become illustrations.",
-                    "Before selecting any scene, read the supplied current narrative from its first segment through its final segment.",
-                    "First resolve character identity and reference continuity globally across the whole narrative, using relevant prior context plus evidence from both before and after each possible anchor. Resolve explicit names, aliases, roles or titles, pronouns, initially unidentified references, and delayed identity reveals to canonical tracked characters when the full context supports that resolution.",
-                    "Only after that global identity pass, select binding moments and assign each selected scene's canonical character roster. Never decide a scene roster from its anchor segment alone.",
-                    "The exact selected anchor passage is the sole event authority for that illustration's action, location, and story time. Earlier and later context may resolve identity, reference, chronology, and continuity, but may not supply a different event to the selected anchor.",
-                    "Every scene_brief must be fully supported by visible facts inside its own anchor passage. Never attach a moment described in another segment to an unrelated Cxxx ID as a placeholder, even to satisfy the requested count. If a passage does not contain a usable visible moment, do not select it.",
-                    "Reason silently and return only the compact JSON requested by the user message.",
-                    "Do not output Danbooru tags, camera fields, outfit lists, plan_id, source_segments, slots, analysis, or prose outside JSON.",
-                    "Select narrative scene beats and resolve their shared wardrobe continuity once for all detail workers. You have no fixed-appearance or camera authority.",
-                    "In continuity_note, write a concise natural-language account of each named character's complete active outfit and carried garments at this exact instant. Resolve the story, prior wardrobe events, profile fallback, and prior visual design together by meaning. Story evidence overrides a stale stored garment list or generated reference. An unchanged garment remains the same physical garment across scenes, not a fresh design opportunity.",
-                    "For the same continuous outfit, repeat the same concise garment design wording in every applicable continuity_note. Preserve established color, material, sleeves, neckline, length, closures, and accessories; fill an unspecified visually important detail only once when needed to render that outfit, then share that choice. Keep this compact, not a catalog of invented decorations. Distinguish wearing a garment from holding it, carrying it on an arm, or placing it on furniture. Several descriptions of one garment do not create separate objects.",
-                    "The shared description retains underlying garments and their established details even when an outer layer currently hides them; describe visibility later in DETAIL. Keep established accessories in that logical outfit until the story changes them. Do not shorten later notes by silently dropping part of the outfit. Keep hair, eyes, body traits, expression, camera, and partner pose out of continuity_note; their existing authorities and scene_brief already carry those meanings.",
-                    "A real change of clothing, a flashback, or a different story time may require a different outfit. Resolve each scene at its own narrative time. Intending to change or entering a changing place does not establish the finished replacement. Wardrobe continuity must not constrain camera, pose, natural occlusion, anonymous-partner visibility, or scene count. Do not add a contact or action to keep carried clothing in view.",
-                    "Do not copy, restate, infer, or invent hair arrangement, hair/eye/body/species traits, or any other persistent appearance in scene_brief; the later image-detail task receives the complete fixed appearance separately. Preserve only the visible action or expression, such as narrowing the eyes, without turning appearance wording into a temporary replacement.",
-                    "Treat # ACTIVE BOT IMAGE INSTRUCTIONS as the renderability envelope, while using PLAN to choose the strongest directly visible beats rather than pre-writing DETAIL's camera or tags.",
-                    "Never select an insertion boundary that interrupts one speaker's continuous dialogue, thought, or monologue. Quoted or bracketed speech is one uninterrupted unit until its closing delimiter; for unquoted speech, infer the complete utterance from the surrounding narrative and place any illustration only after that utterance or at a distinct external narrative beat.",
-                    "Normally treat consecutive paragraphs sharing one time, location, and ongoing action as one visual beat. When distinct major beats can satisfy the requested count, select at most one scene from each.",
-                    "An existing <img ...> block already occupies its visual beat, so select a different beat.",
-                    "Choose each anchor by semantic context and common sense, never by keyword matching.",
-                    "Write each scene_brief as one plain natural-language visual instant. Lead with the familiar high-level action or pose that makes the beat recognizable, then include only the participant direction, contact, expression, or clothing state needed to distinguish that instant. A secondary reaction, fluid, physiological effect, or micro-motion may refine the core action but must not replace it.",
-                    "Prefer strong interaction beats when their core action can remain readable with the active single-subject composition. Do not downgrade them to isolated reactions merely because reactions are easier to frame. For an anonymous partner, keep a beat when the action can be understood from one smallest coherent partner portion continuously entering from one frame edge; DETAIL chooses the exact edge and camera. Reject it only when understanding the primary fact genuinely requires the partner's face, identity, complete silhouette, or disconnected body regions.",
-                    "Preserve who acts on whom, the direction and intensity of contact, natural overlap, and any story-essential exposure or displaced clothing. Choose one instant within a motion sequence and do not combine successive positions. Do not invent an action, contact, pose, or body region from a neighboring passage.",
-                    "A thought, metaphor, environment, aftermath, or secondary effect is selectable only when the passage also supplies an independently readable subject action, gesture, reaction, or spatial change. If the proposed scene cannot be described as one coherent still without invention, scan for another supported external instant.",
-                    "The requested scene count remains binding. Cover the narrative with materially different strong beats and visible progression; when a sustained event must supply several images, vary its supported action, pose, reaction, contact, or spatial relationship rather than repeating near-identical micro-stages or using invisible filler. Return scenes in ascending anchor order.",
-                ]
-                focus = str(toggles.get("focus") or "").strip()
-                direction = str(toggles.get("direction") or "").strip()
-                if focus:
-                    planner_rules.append(
-                        f"Client focus is {focus!r}; do not select scenes focused on other characters."
-                    )
-                if direction:
-                    planner_rules.append(f"Client direction: {direction}")
-                plan_messages[0]["content"] = "\n".join(planner_rules)
-            if str(toggles.get("scene_mode")) == "auto":
-                scene_count_rule = (
-                    f"Choose the appropriate count from the {len(candidates)} available slots."
+            focus = str(toggles.get("focus") or "").strip()
+            direction = str(toggles.get("direction") or "").strip()
+            scene_count_rule = render_plan_output_count_rule(
+                plan_toggles,
+                len(candidates),
+            )
+            plan_limits = [
+                scene_count_rule,
+                f"Maximum fully visible characters per image: {int(toggles['character_limit'])}.",
+            ]
+            if focus:
+                plan_limits.append(
+                    f"Client focus: {focus!r}. Do not select scenes focused on other characters."
                 )
-            else:
-                minimum = int(plan_toggles["output_count_min"])
-                maximum = int(plan_toggles["output_count_max"])
-                scene_count_rule = f"Choose between {minimum} and {maximum} scenes."
-            # PLAN에게 총장면 수(총량) 카운트 규칙을 준다. 병렬 detail worker는 이 총량을
-            # worker 수로 나눈 per-worker 카운트를 별도로 주입받으므로, 여기서는 전체 값.
-            plan_messages.append({
-                "role": "user",
-                "content": render_output_count_rule(
-                    plan_toggles["output_count_min"],
-                    plan_toggles["output_count_max"],
-                ),
-            })
+            if direction:
+                plan_limits.append(f"Client direction: {direction}")
             plan_messages.append({
                 "role": "user",
                 "content": (
-                    "# GLOBAL ILLUSTRATION SCENE PLAN\n"
-                    + scene_count_rule
-                    + " Select at most one scene per semantic visual beat. Do not invent or output a "
-                    "slot number. The segment catalog below intentionally contains no slot numbers. "
-                    "Copy exactly one bracketed Cxxx ID as anchor_segment for each scene; never derive, "
-                    "renumber, or synthesize a Cxxx ID from paragraph order or any other number. The server "
-                    "derives the insertion slot from its private authoritative mapping. Every selected anchor must map to a "
-                    "different server slot. Key Visual is handled by a different worker; do not output "
-                    "keyvis or keyvis_plan.\n\nReturn this JSON schema only:\n"
+                    "# SCENE-PLAN TASK\n\n"
+                    + "\n\n".join(plan_limits)
+                    + "\n\nCopy one exact Cxxx ID from the catalog into each anchor_segment. "
+                    "Do not invent or output server slots. Use a different anchor for every scene. "
+                    "The Key Visual is handled separately.\n\n"
+                    "# OUTPUT SCHEMA\n"
                     "{\n"
                     '  "scene_plan": [\n'
                     "    {\n"
@@ -13906,46 +13794,9 @@ async def build_from_context(
                     "    }\n"
                     "  ]\n"
                     "}\n\n"
-                    "anchor_segment must be one exact Cxxx ID from the server map. Do not copy a full "
-                    "scene from a different catalog entry: the selected entry's own prose must directly support "
-                    "scene_brief's action, location, and story time. Surrounding entries may clarify identity and "
-                    "continuity only. The server will pass the selected entry verbatim to DETAIL as the event authority. "
-                    "Never use an unrelated entry as a count-filling placeholder. Do not copy a full "
-                    "outfit inventory into scene_brief, but never omit a transient wardrobe, coverage, "
-                    "contact, or exposure state that defines the selected visual moment; describe that "
-                    "state in ordinary natural language. Use continuity_note for the shared wardrobe resolution; "
-                    "keep scene_brief focused on the selected action. The server separately carries the upstream wardrobe "
-                    "analyzer's literal change wording into the scene-detail task. characters must contain every tracked character intended to "
-                    "appear in that image, in canonical-name form. Determine that roster from the full narrative, not just the anchor text. "
-                    "If the anchor refers to a character indirectly by an alias, role, title, pronoun, initially unidentified reference, "
-                    "or other withheld name, use the canonical name when earlier or later context resolves the identity. An initially unidentified "
-                    "person resolved elsewhere in the supplied narrative is not anonymous background. Use only canonical names available in the "
-                    "supplied profile authority or character dictionary; never invent a canonical identity. Use characters: [] only when the whole "
-                    "supplied context leaves the depicted person genuinely unresolved or the visual beat contains no tracked character. Anonymous "
-                    "students, crowds, staff, or other background people belong in scene_brief and must not be given invented canonical names."
-                    " Set anonymous_partner_fragment to true only when a genuinely unresolved partner is needed and the "
-                    "interaction remains readable through the smallest connected non-head body portion entering once from "
-                    "one frame edge. Otherwise set it to false. This flag never adds a named character, partner face, full "
-                    "silhouette, second visible body region, or second-person count tag."
                     "\n\n# SERVER SEGMENT CATALOG (Cxxx IDs ONLY; SLOT MAPPING IS PRIVATE)\n"
                     + call2_segment_map
-                    + "\n\n# FINAL SELECTION CHECK\n"
-                    "Lead each scene_brief with one familiar, plainly recognizable core action or pose. Keep expression, "
-                    "fluid, physiology, and other micro-detail secondary; they cannot replace the core action. Prefer the "
-                    "strongest interaction beats that remain understandable in the active single-subject composition, and "
-                    "reject an interaction only when it truly requires the anonymous partner's face, identity, full body, "
-                    "or disconnected body regions. Keep every selected instant faithful to its own anchor passage, preserve "
-                    "who acts on whom and the active contact or clothing state, meet the requested count with materially "
-                    "different beats, and preserve narrative progression.\n"
-                    "Before emitting JSON, silently derive one canonical natural-language wardrobe sentence "
-                    "for each unchanged outfit interval from the complete narrative and active wardrobe events. "
-                    "That sentence must name every garment physically worn in the interval, including any "
-                    "undergarment revealed by an opened, torn, displaced, or removed outer layer, and must retain "
-                    "each damage, displacement, carried, and removed state. If a garment is named as worn or "
-                    "revealed anywhere in a selected scene_brief or its source passage, it must also be present in "
-                    "that interval's continuity_note. Copy the canonical sentence word-for-word and unabridged "
-                    "into every selected scene in the same interval; do not rewrite or shorten it per scene. Start a new "
-                    "interval only for an actual story-time wardrobe change."
+                    + "\n\nReturn only the JSON object."
                 ),
             })
 
@@ -14118,7 +13969,7 @@ async def build_from_context(
                         call2_format=prompts.get("call2_format", ""),
                         toggles=toggles,
                         stream_notify=stream_notify,
-                        call2_thoughts=call2_detail_thoughts,
+                        fixed_appearance_by_name=fixed_appearance,
                     ),
                     name="call2-details",
                 )

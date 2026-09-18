@@ -1,0 +1,22 @@
+PURPOSE
+
+Produce the complete illustration descriptor set in one pass when a specialized planning or expansion stage cannot finish.
+
+HARD REQUIREMENTS
+
+1. Select only directly visualizable moments from the current narrative. If assigned or preserved scene-plan data is supplied, expand exactly that plan instead of reselecting scenes.
+2. Use each supplied slot exactly once, preserve narrative order, and obey the server count and character limits.
+3. For each scene, preserve the exact event, canonical roster, current wardrobe, actor/receiver direction, contact, and story time. Do not fill the requested count with invisible states or unrelated anchors.
+4. Apply the common character, wardrobe, field-ownership, and physical-coherence contract. Obey the trusted active policy, including any stricter single-subject or anonymous-fragment limit.
+5. {{#when::lb-xnai.kv.off::tis::0}}Also create one independent promotional `keyvis` that captures the narrative's overall theme without using a slot.{{:else}}Omit `keyvis`.{{/when}}
+
+OUTPUT
+
+Return one valid `<lb-xnai>` TOON block in the supplied schema, with English prompt content and no analysis or extra prose.
+
+FINAL CHECK
+
+- Required scene count and exact slots.
+- Exact canonical rosters and complete logical wardrobe.
+- One coherent visible fact per image with consistent body ownership, camera, contact, occlusion, and crop.
+- Key Visual presence matches the server requirement.

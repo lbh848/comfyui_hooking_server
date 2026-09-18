@@ -1,6 +1,5 @@
 """Regression coverage for scene-to-insertion anchor authority."""
 
-import inspect
 import pytest
 
 from modes import illustration_context_pipeline as pipeline
@@ -94,15 +93,16 @@ def test_selected_anchor_passage_is_preserved_as_downstream_event_authority(
 
 
 def test_anchor_authority_contract_covers_planner_and_detail_handoffs():
-    pipeline_source = inspect.getsource(pipeline.build_from_context)
-    detail_source = inspect.getsource(pipeline._run_parallel_call2_details)
+    prompts = pipeline.load_prompt_files()
+    plan_contract = prompts["call2_plan"]
+    detail_contract = prompts["call2_detail"]
 
-    assert "sole event authority" in pipeline_source
-    assert "Never attach a moment described in another segment" in pipeline_source
-    assert "Do not invent an action, contact, pose, or body region from a neighboring passage" in pipeline_source
-    assert "Never select an insertion boundary that interrupts one speaker's continuous dialogue" in pipeline_source
-    assert "anchor_passage as the event authority" in detail_source
-    assert "context may resolve identity and continuity but may not contribute another event" in detail_source
+    assert "sole authority for the scene's action, location, and story time" in plan_contract
+    assert "may not donate a different event to the anchor" in plan_contract
+    assert "Never invent an action, pose, contact, body region, or setting" in plan_contract
+    assert "Never place an illustration boundary inside one continuous dialogue" in plan_contract
+    assert "`anchor_passage` is the event authority" in detail_contract
+    assert "may not add another event" in detail_contract
 
 
 def test_missing_anchor_passage_fails_with_diagnostic(capsys):

@@ -1,1 +1,1 @@
-I will inspect the last log entry, preserve character continuity, select separated visual slots, and return the final plan as a single valid <lb-xnai> TOON block with 2-space indentation.
+I will inspect the authorized narrative and supplied continuity, preserve the exact event and character state, and return only the requested structured illustration artifact.

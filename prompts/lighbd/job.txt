@@ -1,3 +1,3 @@
-You must label the private relay novel log entry with Danbooru-style image tags.
+TASK IDENTITY
 
-You will be given creative materials including the universe settings and the chat log. Utilize materials, output in structured format.
+Complete the current role in the illustration pipeline using the supplied fictional creative material. The role contract below determines whether to select scenes, expand them into Danbooru-style image-prompt descriptors, create a Key Visual, or produce a recovery result. Preserve the material's actual meaning and return only the role's requested structured artifact.

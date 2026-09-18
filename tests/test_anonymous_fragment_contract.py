@@ -2,6 +2,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -184,60 +186,39 @@ def test_soft_reference_withholds_generated_payload_but_continuity_keeps_it():
     assert "untrusted pose and substitute garment marker" in continuity
 
 
-def test_detail_partner_contract_preserves_actor_receiver_in_both_directions():
-    actual_named_actor = pipeline._detail_partner_contract_line({
+@pytest.mark.parametrize(
+    ("brief", "fragment_required"),
+    [
+        (
+            "Doyun covers an off-frame visitor's mouth while the visitor pulls away.",
+            True,
+        ),
+        (
+            "Mara steadies an off-frame guest by both shoulders.",
+            True,
+        ),
+        (
+            "An off-frame guard covers Nari's mouth while she recoils.",
+            True,
+        ),
+        (
+            "Nari adjusts her own sleeve with nobody else visible.",
+            False,
+        ),
+    ],
+)
+def test_detail_handoff_preserves_semantic_brief_and_explicit_fragment_decision(
+    brief,
+    fragment_required,
+):
+    public = pipeline._public_call2_scene_plan({
+        "plan_id": "S001",
         "slot": 4,
-        "scene_brief": (
-            "Doyun desperately claps his hand over Hibiki's mouth to silence her."
-        ),
-        "anonymous_partner_fragment": True,
-    })
-    isomorphic_named_actor = pipeline._detail_partner_contract_line({
-        "slot": 9,
-        "scene_brief": (
-            "Mara reaches down and rests both hands on an off-frame visitor's shoulders."
-        ),
-        "anonymous_partner_fragment": True,
-    })
-    opposite_anonymous_actor = pipeline._detail_partner_contract_line({
-        "slot": 11,
-        "scene_brief": (
-            "An off-frame guard clamps one hand over Nari's mouth while she recoils."
-        ),
-        "anonymous_partner_fragment": True,
-    })
-    solo = pipeline._detail_partner_contract_line({
-        "slot": 12,
-        "scene_brief": "The named subject adjusts her own sleeve.",
-        "anonymous_partner_fragment": False,
+        "anchor_segment": "C001",
+        "characters": ["Nari"],
+        "scene_brief": brief,
+        "anonymous_partner_fragment": fragment_required,
     })
 
-    for contract, brief in (
-        (
-            actual_named_actor,
-            "Doyun desperately claps his hand over Hibiki's mouth to silence her.",
-        ),
-        (
-            isomorphic_named_actor,
-            "Mara reaches down and rests both hands on an off-frame visitor's shoulders.",
-        ),
-        (
-            opposite_anonymous_actor,
-            "An off-frame guard clamps one hand over Nari's mouth while she recoils.",
-        ),
-    ):
-        assert ": REQUIRED." in contract
-        assert "anonymous partner can be either the actor or the receiver" in contract
-        assert "Never swap those roles" in contract
-        assert "If the named subject acts on the anonymous partner" in contract
-        assert "If the anonymous partner acts on the named subject" in contract
-        assert "Do not emit an ownerless contact phrase" in contract
-        assert "smallest coherent body portion" in contract
-        assert "continuously entering once from one frame edge" in contract
-        assert "Do not invent another contact" in contract
-        assert f"Authorized visible instant: {brief}" in contract
-
-    assert "- slot 12: SOLO." in solo
-    assert "independently readable" in solo
-    assert "Do not show or describe an anonymous partner body part or contact" in solo
-    assert "Authorized visible instant:" not in solo
+    assert public["scene_brief"] == brief
+    assert public["anonymous_partner_fragment"] is fragment_required

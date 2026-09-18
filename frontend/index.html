@@ -81008,7 +81008,7 @@
                                 4. 역번역이 켜져 있으면 <strong>backtranslate.txt</strong>로 현재 응답만 영어로 병렬 번역하며, 과거 CHAT은 번역하지 않습니다.<br>
                                 5. CALL1은 <strong>enhance.txt</strong>, 저장 히스토리, 확정 등장인물·프로필을 바탕으로 복장 및 헤어스타일 변화 타임라인만 JSON으로 만듭니다. 지칭어는 자연어 문맥으로 해석해 각 사건에 확정 canonical name을 쓰며 본문은 치환하지 않습니다. 병렬 분석을 켜면 segment를 최대 동시 요청 수만큼 균등 분할해 동시에 분석하고 검증된 결과를 하나로 병합합니다.<br>
                                 6. CALL2-PLAN은 장면 앵커·등장 캐릭터·짧은 장면 개요만 선택합니다. 독립 CALL2-KEYVIS는 같은 시점에 별도 LLM 요청으로 대표 이미지 한 장만 완성합니다. PLAN이 끝나면 서버가 복장 상태와 슬롯을 결합해 장면을 CALL2-DETAIL 작업들에 균등 분배하며, Key Visual 결과는 DETAIL과 CALL3 입력에 넣지 않고 마지막 이미지 목록에만 병합합니다.<br>
-                                7. CALL2 system = <strong>jailbreak.txt</strong> + <strong>job.txt</strong> + <strong>system.txt</strong>이며, DETAIL 출력은 <strong>format.txt</strong> 구조를 사용합니다. CALL1이 모호하거나 PLAN/KEYVIS/DETAIL이 실패하면 기존 단일 CALL2 경로로 폴백합니다.<br>
+                                7. CALL2는 모델 호환성용 <strong>jailbreak.txt</strong>·<strong>job.txt</strong> 뒤에 <strong>system.txt</strong>의 공통 불변 규칙과 <strong>plan.txt</strong>, <strong>detail.txt</strong>, <strong>keyvisual.txt</strong>, <strong>fallback.txt</strong> 중 현재 역할 하나를 결합합니다. NSFW 토글이 켜진 렌더링 역할에는 <strong>explicit.txt</strong>를 추가하고, 단일 FALLBACK에는 <strong>prefill.txt</strong>를 assistant prefill로 사용합니다. 출력 구조는 <strong>format.txt</strong>를 사용합니다.<br>
                                 8. CALL2 파싱이 실패하면 <strong>repair.txt</strong>(CALL2-FIX)가 TOON 블록을 교정합니다. 대사 단계는 후처리 모드에 맞춰 <strong>speak.txt</strong>, <strong>manga.txt</strong>, <strong>subtitle.txt</strong> 중 하나를 사용합니다.<br>
                                 <strong>preset.txt</strong>는 V3의 <code>[SETUP]/[CHAR]/[SUPPLEMENT]</code> RAW 입력 템플릿과 공통 부정 프롬프트를 담습니다. V1을 선택하면 서버가 같은 장면을 <code>[ILXL]/[UPSCALE]</code> 입력 형태로 생성합니다.
                             </div>
@@ -81047,24 +81047,40 @@
                             </div>
                             <div id="illust-call-content-call2" style="display:none;">
                             <details open style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
-                                <summary style="cursor:pointer; font-size:0.8rem; font-weight:600; color:var(--text);">📝 jailbreak.txt (첫 user - # System rules / 요정 프레임)</summary>
-                                <textarea id="lighbd-prompt-jailbreak" data-lighbd-prompt="jailbreak" style="width:100%; height:140px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;" placeholder="로딩 중..."></textarea>
+                                <summary style="cursor:pointer; font-size:0.8rem; font-weight:600; color:var(--text);">📝 jailbreak.txt (외부 LLM 호환성 envelope)</summary>
+                                <textarea id="lighbd-prompt-call2_jailbreak" data-lighbd-prompt="call2_jailbreak" style="width:100%; height:180px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;" placeholder="로딩 중..."></textarea>
+                            </details>
+                            <details style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
+                                <summary style="cursor:pointer; font-size:0.8rem; font-weight:600; color:var(--text);">📝 job.txt (역할 공통 작업 정체성)</summary>
+                                <textarea id="lighbd-prompt-call2_job" data-lighbd-prompt="call2_job" style="width:100%; height:110px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;" placeholder="로딩 중..."></textarea>
+                            </details>
+                            <details style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
+                                <summary style="cursor:pointer; font-size:0.8rem; font-weight:600; color:var(--text);">📝 system.txt (DETAIL/KEYVIS/FALLBACK 공통 불변 규칙)</summary>
+                                <textarea id="lighbd-prompt-call2_common" data-lighbd-prompt="call2_common" style="width:100%; height:280px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;" placeholder="로딩 중..."></textarea>
                             </details>
                             <details open style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
-                                <summary style="cursor:pointer; font-size:0.8rem; font-weight:600; color:var(--text);">📝 job.txt (첫 user - # Job Instruction)</summary>
-                                <textarea id="lighbd-prompt-job" data-lighbd-prompt="job" style="width:100%; height:90px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;" placeholder="로딩 중..."></textarea>
+                                <summary style="cursor:pointer; font-size:0.8rem; font-weight:600; color:var(--text);">📝 explicit.txt (NSFW 활성 시 물리·노출·접촉 계약)</summary>
+                                <textarea id="lighbd-prompt-call2_explicit" data-lighbd-prompt="call2_explicit" style="width:100%; height:280px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;" placeholder="로딩 중..."></textarea>
+                            </details>
+                            <details open style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
+                                <summary style="cursor:pointer; font-size:0.8rem; font-weight:600; color:var(--text);">📝 plan.txt (전역 장면 선택·복장 연속성)</summary>
+                                <textarea id="lighbd-prompt-call2_plan" data-lighbd-prompt="call2_plan" style="width:100%; height:260px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;" placeholder="로딩 중..."></textarea>
+                            </details>
+                            <details open style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
+                                <summary style="cursor:pointer; font-size:0.8rem; font-weight:600; color:var(--text);">📝 detail.txt (할당 장면 시각화)</summary>
+                                <textarea id="lighbd-prompt-call2_detail" data-lighbd-prompt="call2_detail" style="width:100%; height:260px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;" placeholder="로딩 중..."></textarea>
                             </details>
                             <details style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
-                                <summary style="cursor:pointer; font-size:0.8rem; font-weight:600;">📝 prefill.txt (CALL2 assistant prefill)</summary>
-                                <textarea id="lighbd-prompt-call2_prefill" data-lighbd-prompt="call2_prefill" style="width:100%; height:120px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;"></textarea>
+                                <summary style="cursor:pointer; font-size:0.8rem; font-weight:600; color:var(--text);">📝 keyvisual.txt (독립 대표 이미지)</summary>
+                                <textarea id="lighbd-prompt-call2_keyvis" data-lighbd-prompt="call2_keyvis" style="width:100%; height:240px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;" placeholder="로딩 중..."></textarea>
                             </details>
                             <details style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
-                                <summary style="cursor:pointer; font-size:0.8rem; font-weight:600; color:var(--text);">📝 thoughts.txt (마지막 user - # Output step-by-step)</summary>
-                                <textarea id="lighbd-prompt-thoughts" data-lighbd-prompt="thoughts" style="width:100%; height:180px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;" placeholder="로딩 중..."></textarea>
+                                <summary style="cursor:pointer; font-size:0.8rem; font-weight:600; color:var(--text);">📝 fallback.txt (단일 호출 복구)</summary>
+                                <textarea id="lighbd-prompt-call2_fallback" data-lighbd-prompt="call2_fallback" style="width:100%; height:220px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;" placeholder="로딩 중..."></textarea>
                             </details>
                             <details style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
-                                <summary style="cursor:pointer; font-size:0.8rem; font-weight:600; color:var(--text);">📝 system.txt (마지막 user - Tagging Details)</summary>
-                                <textarea id="lighbd-prompt-system" data-lighbd-prompt="system" style="width:100%; height:280px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;" placeholder="로딩 중..."></textarea>
+                                <summary style="cursor:pointer; font-size:0.8rem; font-weight:600; color:var(--text);">📝 prefill.txt (단일 FALLBACK assistant prefill)</summary>
+                                <textarea id="lighbd-prompt-call2_prefill" data-lighbd-prompt="call2_prefill" style="width:100%; height:110px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;" placeholder="로딩 중..."></textarea>
                             </details>
                             <details open style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
                                 <summary style="cursor:pointer; font-size:0.8rem; font-weight:600; color:var(--text);">📝 format.txt (마지막 user - lb-xnai YAML 템플릿)</summary>
@@ -81196,8 +81212,9 @@
                 call1_enhance: 'call1_enhance',
                 character_resolve: 'character_resolve',
                 profile_resolve: 'profile_resolve',
-                call2_jailbreak: 'jailbreak', call2_job: 'job', call2_prefill: 'call2_prefill',
-                call2_thoughts: 'thoughts', call2_system: 'system', call2_format: 'format', call2_preset: 'preset',
+                call2_jailbreak: 'call2_jailbreak', call2_job: 'call2_job', call2_prefill: 'call2_prefill',
+                call2_common: 'call2_common', call2_explicit: 'call2_explicit', call2_plan: 'call2_plan', call2_detail: 'call2_detail',
+                call2_keyvis: 'call2_keyvis', call2_fallback: 'call2_fallback', call2_format: 'format', call2_preset: 'preset',
                 call3_speak: 'call3_speak', call3_manga: 'call3_manga', call3_manga_nsfw: 'call3_manga_nsfw', call2_fix: 'call2_fix',
             };
             statusEl.textContent = '불러오는 중...';
@@ -81223,8 +81240,9 @@
                 call1_enhance: 'call1_enhance',
                 character_resolve: 'character_resolve',
                 profile_resolve: 'profile_resolve',
-                call2_jailbreak: 'jailbreak', call2_job: 'job', call2_prefill: 'call2_prefill',
-                call2_thoughts: 'thoughts', call2_system: 'system', call2_format: 'format', call2_preset: 'preset',
+                call2_jailbreak: 'call2_jailbreak', call2_job: 'call2_job', call2_prefill: 'call2_prefill',
+                call2_common: 'call2_common', call2_explicit: 'call2_explicit', call2_plan: 'call2_plan', call2_detail: 'call2_detail',
+                call2_keyvis: 'call2_keyvis', call2_fallback: 'call2_fallback', call2_format: 'format', call2_preset: 'preset',
                 call3_speak: 'call3_speak', call3_manga: 'call3_manga', call3_manga_nsfw: 'call3_manga_nsfw', call2_fix: 'call2_fix',
             };
             const body = {};
@@ -81738,10 +81756,10 @@
                     {key: 'character_limit', label: '이미지당 최대 캐릭터', type: 'select', help: '한 이미지에 함께 배치할 캐릭터 수입니다.', options: [1, 2, 3]},
                     {
                         key: 'scene_mode', label: 'Scene 수 결정', type: 'select',
-                        help: '수동 지정은 최소/최대 범위를 강제하고, lb-xnai에 맡김은 CALL2가 문맥에 따라 자율 결정합니다.',
+                        help: '두 모드 모두 출력 장면 수의 최소/최대 범위를 강제합니다. lb-xnai에 맡김은 그 범위 안에서 문맥에 맞는 수량을 선택합니다.',
                         options: [
-                            {value: 'manual', label: '수동 지정'},
-                            {value: 'auto', label: 'lb-xnai에 맡김'},
+                            {value: 'manual', label: '범위 지정'},
+                            {value: 'auto', label: '범위 안에서 lb-xnai에 맡김'},
                         ],
                     },
                     {key: 'context_history', label: 'lb.extra 외형 이력 사용', type: 'toggle', help: 'CALL2가 저장된 캐릭터 외형과 복장 정보를 참조하도록 합니다.'},
@@ -81954,12 +81972,9 @@
                     <h4 class="illust-settings-subheading">장면 제한</h4>
                     ${_renderIllustrationContextField(group.fields[12])}
                     ${_renderIllustrationContextField(group.fields[13])}
-                    <div class="illust-settings-paired" data-illust-scene-manual aria-label="수동 Scene 수 범위">
-                        ${_renderIllustrationContextField(group.fields[14], {compact: true})}
-                        ${_renderIllustrationContextField(group.fields[15], {compact: true})}
-                    </div>
+                    ${_renderIllustrationContextField(group.fields[14])}
                     <h4 class="illust-settings-subheading">컨텍스트와 연출</h4>
-                    ${group.fields.slice(16).map(field => _renderIllustrationContextField(field)).join('')}`;
+                    ${group.fields.slice(15).map(field => _renderIllustrationContextField(field)).join('')}`;
             }
             if (group.key === 'output') {
                 return `
@@ -82021,7 +82036,7 @@
                 const markDirtyFromControl = event => {
                     if (event.target?.matches?.('[data-illust-toggle]')) {
                         markIllustrationContextSettingsDirty();
-                        // scene_mode 등 셀렉트 변경 시 종속 UI(수동 min/max 표시) 갱신
+                        // 셀렉트와 토글 변경 시 종속 옵션 잠금 상태 갱신
                         updateIllustrationContextOptionLocks();
                     }
                 };
@@ -82137,7 +82152,6 @@
                 );
                 subpanel.classList.toggle('is-locked', fullyLocked);
             });
-            updateIllustrationContextSceneModeVisibility();
             _applyPromptFormatChansubLock();
             _applyCall3PromptModeLock();
         }
@@ -82193,19 +82207,6 @@
                 console.error('[POSTPROCESS] 활성 모드 조회 실패:', e);
             }
             _applyCall3PromptModeLock();
-        }
-
-
-        function updateIllustrationContextSceneModeVisibility() {
-            const body = document.getElementById('illust-tab-content-toggles');
-            if (!body) {
-                return;
-            }
-            const modeEl = body.querySelector('[data-illust-toggle="scene_mode"]');
-            const mode = modeEl ? modeEl.value : 'manual';
-            body.querySelectorAll('[data-illust-scene-manual]').forEach(el => {
-                el.classList.toggle('is-hidden', mode !== 'manual');
-            });
         }
 
         async function loadIllustrationContextToggles() {
