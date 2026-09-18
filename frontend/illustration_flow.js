@@ -443,6 +443,7 @@
         const isCompactColumnLabel = value => {
             const label = String(value || '');
             return label === 'CHARACTER-RESOLVE' || label.startsWith('CHARACTER-RESOLVE-') ||
+                label === 'PROFILE-CONTEXT-CACHE' || label.startsWith('PROFILE-CONTEXT-TRANSLATE') ||
                 label === 'PROFILE-RESOLVE' || label.startsWith('PROFILE-RESOLVE-') ||
                 label.startsWith('CALL1-BACKTRANSLATE') ||
                 label === 'CALL1' || /^CALL1 \d+\/\d+(?:\s|$)/.test(label);

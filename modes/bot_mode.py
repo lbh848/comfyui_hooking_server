@@ -757,35 +757,6 @@ def _normalize_visual_profile_appearance_result(parsed) -> tuple[str | None, str
     return visual_context, ""
 
 
-def _append_visual_context_to_selection_guide(
-    selection_guide: str,
-    visual_context: str,
-) -> str:
-    base = str(selection_guide or "").strip()
-    context = str(visual_context or "").strip()
-    if not context:
-        print(
-            "[VISUAL_APPEARANCE] 선택 기준 병합 스킵: "
-            f"visual_context가 비어 있음, guide_length={len(base)}"
-        )
-        return base
-    separator = "\n\n외형 참고: "
-    available = VISUAL_GUIDE_MAX_SELECTION_LENGTH - len(base) - len(separator)
-    if available <= 0:
-        print(
-            "[VISUAL_APPEARANCE] 선택 기준 병합 스킵: "
-            f"기존 선택 기준 길이 한도 도달, guide_length={len(base)}"
-        )
-        return base
-    if len(context) > available:
-        print(
-            "[VISUAL_APPEARANCE] 외형 참고 길이 축소: "
-            f"context_length={len(context)}, available={available}"
-        )
-        context = context[:available].rstrip()
-    return f"{base}{separator}{context}" if base else f"외형 참고: {context}"
-
-
 def _visual_profile_first_rep_image(
     bot_name: str,
     target: dict,
@@ -866,6 +837,54 @@ def _visual_profile_image_mime(filename: str) -> str:
 
 def _build_visual_guide_messages(system_prompt: str, targets: list[dict]) -> list[dict]:
     """Build a prose-first prompt; JSON is used only for the machine-consumed reply."""
+    routing_profiles = list(
+        (targets[0].get("routing_profiles") if targets else None) or []
+    )
+    default_profile_id = str(
+        (targets[0].get("default_profile_id") if targets else "") or ""
+    ).strip()
+    requested_profile_ids = {
+        str(target.get("profile", {}).get("id") or "").strip()
+        for target in targets
+    }
+    routing_sections = []
+    for profile in routing_profiles:
+        if not isinstance(profile, dict):
+            print(
+                "[VISUAL_GUIDE] 전체 카드 비교 문맥에서 object가 아닌 항목 생략: "
+                f"value={profile!r}"
+            )
+            continue
+        profile_id = str(profile.get("id") or "").strip()
+        render_overrides = profile.get("render_overrides") or {}
+        rep_images = [
+            str(value).strip()
+            for value in render_overrides.get("rep_images", [])
+            if str(value).strip()
+        ]
+        routing_sections.append("\n".join([
+            f"- Profile internal id: {profile_id}",
+            (
+                "  Routing role: declared default/base profile"
+                if profile_id == default_profile_id
+                else "  Routing role: registered non-default alternative"
+            ),
+            (
+                "  Rewrite status: requested target"
+                if profile_id in requested_profile_ids
+                else "  Rewrite status: comparison only; do not return a suggestion"
+            ),
+            f"  Current profile label: {profile.get('label') or profile_id}",
+            f"  Representative image filenames: {', '.join(rep_images) or '(none)'}",
+            f"  Current aliases: {', '.join(profile.get('aliases') or []) or '(none)'}",
+            (
+                "  Current selection guide: "
+                f"{str(profile.get('selection_guide') or '').strip() or '(none)'}"
+            ),
+            f"  Appearance evidence: {_visual_guide_tag_text(profile.get('appearance'))}",
+            f"  Default outfit evidence: {_visual_guide_tag_text(profile.get('default_outfit'))}",
+        ]))
+
     target_sections = []
     for target in targets:
         profile = target["profile"]
@@ -879,6 +898,11 @@ def _build_visual_guide_messages(system_prompt: str, targets: list[dict]) -> lis
             f"### Target {target['target_key']}",
             f"Character: {target['character']}",
             f"Profile internal id: {profile.get('id')}",
+            (
+                "Routing role: declared default/base profile"
+                if bool(target.get("is_default"))
+                else "Routing role: registered non-default alternative"
+            ),
             f"Current profile label: {profile.get('label') or profile.get('id')}",
             f"Representative image filenames: {', '.join(rep_images) or '(none)'}",
             f"Current aliases: {', '.join(profile.get('aliases') or []) or '(none)'}",
@@ -890,9 +914,17 @@ def _build_visual_guide_messages(system_prompt: str, targets: list[dict]) -> lis
     system_message = """You organize illustration character-card routing metadata.
 Read the supplied image-command document as a whole and reason about its own grammar, examples, exceptions, and narrative constraints. Do not classify by hardcoded keyword spotting. Different bots may use completely different command formats.
 
-For every target, infer which canonical character command, form, outfit, corruption/overcome state, or other profile identity it represents. Representative filenames and visual tags are supporting evidence, while the source document is authoritative.
+The complete registered card set supplied for the character is a fixed, exhaustive, closed choice set. You are not inventing a new taxonomy or requiring one card per source command. Organize every source-described persistent visual form of that character under exactly one existing registered card. Cards marked comparison-only still constrain the decision boundaries even though you must not return suggestions for them.
+
+Card routing follows the character's currently manifested visual profile or form. An internal allegiance, corruption, recovery, mood, power source, or other narrative condition does not by itself exclude the declared default/base card when no registered non-default card visibly represents that condition in the character's current untransformed form. Ordinary school, casual, work, indoor, outdoor, damaged, or scene-specific clothing is layered later by wardrobe handling and does not require a different profile unless another registered card actually represents that distinct visible profile.
+
+Treat the declared default/base card as the routing answer whenever no registered special visual form is currently manifested. A completed release, cancellation, dismissal, or dissolution of a registered special form returns to the declared default/base card unless another registered card in the supplied fixed set represents the resulting visible form. Lingering personality, affiliation, magic, injury, or consequences from the released form do not keep that special card active. Conversely, do not collapse a state into the default when a registered peer card genuinely represents that state in the same untransformed or ordinary-clothing condition.
+
+For every target, infer which canonical character commands, forms, and source variants route to it. Representative filenames and visual tags are supporting evidence, while the source document is authoritative. A representative filename may identify one example belonging to the card, but it must not narrow the card to only that example when other source variants have no separate registered card. Include all exact source-grounded canonical command labels that route to the target as aliases.
 
 Write Korean natural-language selection guides that explain when the profile becomes true, when it remains true, and the important situations in which it must not be selected. Preserve distinctions such as normal/corrupted/overcome forms, profile-level outfit variants, and first-event-only special assets. Each card has one flat default-outfit reference and no nested outfit choice; that reference is a fallback example, not a rule that prevents scene-appropriate attire. Do not turn ordinary emotion or action suffixes into a persistent profile unless the target itself is demonstrably that profile.
+
+Before responding, compare the complete fixed card set as a whole. Check that the proposed guides are mutually understandable and collectively leave no source-supported persistent visual form without a routing answer. In particular, check completed transitions both into and out of every non-default form. When only some cards are requested for rewriting, make their guides compatible with the comparison-only peers rather than silently redefining those peers.
 
 Aliases are short source-grounded names that identify this profile or form, including exact canonical command labels and confirmed in-story form/outfit titles. Do not add the character's ordinary base name as a profile alias, and do not invent unsupported nicknames or translations. If the match is unclear, use low confidence and explain why instead of fabricating certainty.
 
@@ -909,6 +941,11 @@ Return exactly one item for every target_key and no extra targets."""
         "===== SOURCE DOCUMENT END =====\n\n"
         "아래 대상은 프로그램에 실제 등록된 캐릭터 카드이다. 내부 ID는 결과를 다시 "
         "연결하기 위한 기계 식별자일 뿐 의미를 추측하는 근거로 사용하지 마라.\n\n"
+        "===== COMPLETE FIXED REGISTERED CARD SET =====\n"
+        + ("\n\n".join(routing_sections) or "(none)")
+        + "\n===== END COMPLETE FIXED REGISTERED CARD SET =====\n\n"
+        "아래 TARGET 카드만 새 별칭과 선택 기준을 반환하라. 위의 comparison-only "
+        "카드는 선택 경계를 비교하기 위한 것이며 결과 항목으로 추가하지 마라.\n\n"
         + "\n\n".join(target_sections)
     )
     return [
@@ -2187,6 +2224,7 @@ class BotMode:
                         or f"카드 {len(cards) + 1}"
                     ),
                     "selection_guide": "",
+                    "visual_context": "",
                     "aliases": [],
                     "appearance": [],
                     "default_outfit": [],
@@ -4423,6 +4461,18 @@ class BotMode:
                     "target_key": str(index),
                     "character": canonical_name,
                     "profile": profile,
+                    "default_profile_id": str(
+                        character_profiles.get("default_visual_profile_id") or ""
+                    ).strip(),
+                    "is_default": (
+                        str(profile.get("id") or "").strip()
+                        == str(
+                            character_profiles.get("default_visual_profile_id") or ""
+                        ).strip()
+                    ),
+                    "routing_profiles": list(
+                        character_profiles.get("profiles") or []
+                    ),
                 })
 
             from modes import llm_prompt_edit
@@ -5140,13 +5190,6 @@ class BotMode:
                     suggestion["visual_context_image"] = str(
                         appearance_result.get("image_filename") or ""
                     )
-                    if suggestion["visual_context_status"] == "ok":
-                        suggestion["selection_guide"] = (
-                            _append_visual_context_to_selection_guide(
-                                suggestion["selection_guide"],
-                                suggestion["visual_context"],
-                            )
-                        )
 
                     async with appearance_progress_lock:
                         appearance_completed_count += 1
@@ -5516,6 +5559,28 @@ class BotMode:
                 character = str(raw.get("character") or "").strip()
                 profile_id = str(raw.get("profile_id") or "").strip()
                 selection_guide = str(raw.get("selection_guide") or "").strip()
+                visual_context = None
+                if "visual_context" in raw:
+                    raw_visual_context = raw.get("visual_context")
+                    if not isinstance(raw_visual_context, str):
+                        print(
+                            f"[VISUAL_GUIDE:APPLY] visual_context 형식 오류: "
+                            f"index={index}, value={raw_visual_context!r}"
+                        )
+                        return _json_error(
+                            f"items[{index}].visual_context는 문자열이어야 합니다."
+                        )
+                    visual_context = raw_visual_context.strip()
+                    if len(visual_context) > VISUAL_APPEARANCE_MAX_CONTEXT_LENGTH:
+                        print(
+                            f"[VISUAL_GUIDE:APPLY] 외형 참고 길이 초과: "
+                            f"character={character!r}, profile={profile_id!r}, "
+                            f"length={len(visual_context)}"
+                        )
+                        return _json_error(
+                            "대표 이미지 외형 참고는 "
+                            f"{VISUAL_APPEARANCE_MAX_CONTEXT_LENGTH}자를 넘을 수 없습니다."
+                        )
                 aliases = raw.get("aliases")
                 if not character or not profile_id or not selection_guide:
                     print(
@@ -5583,6 +5648,7 @@ class BotMode:
                     "profile_id": profile_id,
                     "aliases": clean_aliases,
                     "selection_guide": selection_guide,
+                    "visual_context": visual_context,
                 })
 
             async with self._lock:
@@ -5661,6 +5727,15 @@ class BotMode:
                     if overwrite or not str(profile.get("selection_guide") or "").strip():
                         if str(profile.get("selection_guide") or "").strip() != item["selection_guide"]:
                             profile["selection_guide"] = item["selection_guide"]
+                            target_changed = True
+                    if item["visual_context"] is not None and (
+                        overwrite or not str(profile.get("visual_context") or "").strip()
+                    ):
+                        if (
+                            str(profile.get("visual_context") or "").strip()
+                            != item["visual_context"]
+                        ):
+                            profile["visual_context"] = item["visual_context"]
                             target_changed = True
                     if target_changed:
                         entry["changed"] = True

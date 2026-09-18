@@ -335,15 +335,10 @@
             z-index: 2147483647;
             top: 0;
             right: 12px;
-            display: flex;
+            display: block;
             min-width: 0;
             width: max-content;
             max-width: calc(100vw - 24px);
-            flex: 0 0 auto;
-            align-items: center;
-            justify-content: flex-end;
-            flex-wrap: wrap;
-            gap: 8px;
             padding: 6px 6px calc(6px + var(--header-dock-peek));
             border: 1px solid var(--chrome-border-strong);
             border-top: 0;
@@ -359,58 +354,44 @@
             will-change: transform;
         }
 
-        header.app-header .controls::after {
-            position: absolute;
-            bottom: 2px;
-            left: 50%;
-            width: 54px;
-            height: 18px;
-            border: 1px solid rgba(77, 226, 174, 0.26);
-            border-radius: 999px;
-            background: rgba(77, 226, 174, 0.08);
-            box-shadow: 0 0 12px rgba(77, 226, 174, 0.16), inset 0 1px rgba(255, 255, 255, 0.04);
-            transform: translateX(-50%);
-            opacity: 0.9;
-            pointer-events: none;
-            content: '';
-            transition: width 0.2s ease, opacity 0.2s ease, background 0.2s ease;
+        .header-controls-scroll {
+            display: flex;
+            min-width: 0;
+            width: max-content;
+            max-width: 100%;
+            align-items: center;
+            justify-content: flex-end;
+            flex-wrap: wrap;
+            gap: 8px;
         }
 
-        header.app-header .controls.is-hover-active:not(.is-hover-suppressed),
-        header.app-header .controls:has(:focus-visible):not(.is-hover-suppressed),
         header.app-header .controls.is-pinned {
             transform: translateY(0);
             box-shadow: 0 16px 42px rgba(0, 0, 0, 0.48);
             transition-duration: 0.16s, 0.18s;
         }
 
-        header.app-header .controls.is-hover-active:not(.is-hover-suppressed)::after,
-        header.app-header .controls:has(:focus-visible):not(.is-hover-suppressed)::after,
-        header.app-header .controls.is-pinned::after {
-            width: 64px;
-            background: rgba(77, 226, 174, 0.14);
-            opacity: 1;
-        }
-
         .header-controls-handle {
             position: absolute;
             z-index: 1;
-            bottom: 2px;
-            left: 50%;
+            bottom: 0;
+            right: 0;
+            left: 0;
             display: grid;
-            width: 54px;
-            height: 18px;
+            width: auto;
+            height: var(--header-dock-peek);
+            margin: 0;
             padding: 0;
             border: 0;
-            border-radius: 999px;
+            border-radius: 0 0 11px 11px;
             background: transparent;
             color: var(--chrome-accent);
             place-items: center;
-            transform: translateX(-50%);
             cursor: pointer;
         }
 
         .header-controls-handle:hover {
+            background: rgba(77, 226, 174, 0.08);
             color: #8ff5d1;
         }
 
@@ -424,13 +405,18 @@
             height: 14px;
             stroke-width: 2.4;
             filter: drop-shadow(0 0 4px rgba(77, 226, 174, 0.5));
-            transition: transform 0.2s ease;
         }
 
-        header.app-header .controls.is-hover-active:not(.is-hover-suppressed) .header-controls-handle .ui-icon,
-        header.app-header .controls:has(:focus-visible):not(.is-hover-suppressed) .header-controls-handle .ui-icon,
-        header.app-header .controls.is-pinned .header-controls-handle .ui-icon {
-            transform: rotate(180deg);
+        .header-controls-arrow--up {
+            display: none;
+        }
+
+        header.app-header .controls.is-pinned .header-controls-arrow--down {
+            display: none;
+        }
+
+        header.app-header .controls.is-pinned .header-controls-arrow--up {
+            display: block;
         }
 
         .control-group {
@@ -567,15 +553,19 @@
             header.app-header .controls {
                 width: calc(100vw - 24px);
                 max-width: calc(100vw - 24px);
+            }
+
+            .header-controls-scroll {
+                width: 100%;
+                max-width: 100%;
                 justify-content: flex-start;
                 flex-wrap: nowrap;
                 overflow-x: auto;
                 overflow-y: hidden;
-                padding: 6px 6px calc(6px + var(--header-dock-peek));
                 scrollbar-width: none;
             }
 
-            header.app-header .controls::-webkit-scrollbar { display: none; }
+            .header-controls-scroll::-webkit-scrollbar { display: none; }
 
             .control-group {
                 flex: 0 0 auto;
@@ -627,9 +617,7 @@
 
         @media (prefers-reduced-motion: reduce) {
             header.app-header .controls,
-            header.app-header .controls::after,
             .header-controls-handle,
-            .header-controls-handle .ui-icon,
             .sysmon-strip,
             .sysmon-row {
                 transition-duration: 0.01ms !important;
@@ -15933,8 +15921,10 @@
             <button type="button" id="header-controls-handle" class="header-controls-handle"
                     aria-expanded="false" aria-label="상단 도구 메뉴 열기" title="상단 도구 메뉴 열기"
                     onclick="toggleHeaderControlsDock(event)">
-                <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"></path></svg>
+                <svg class="ui-icon header-controls-arrow--down" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"></path></svg>
+                <svg class="ui-icon header-controls-arrow--up" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 15 6-6 6 6"></path></svg>
             </button>
+            <div class="header-controls-scroll">
             <div class="control-group" role="group" aria-label="상태 및 로그">
                 <button type="button" id="notification-bell" class="control-btn control-btn--icon" onclick="openNotificationBoard()" title="알림" aria-label="알림 열기">
                     <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"></path><path d="M10 21h4"></path></svg>
@@ -15990,6 +15980,7 @@
                     <span id="ws-status-led" class="ws-status-led" title="WS 미연결"></span>
                     <span class="control-label">WS 재연결</span>
                 </button>
+            </div>
             </div>
         </div>
     </header>
@@ -47844,6 +47835,7 @@
             { key: 'character_maker_feedback', label: '캐릭터 메이커 이미지 피드백', kind: '비전/JSON', modality: 'vision', group: 'character_maker', json: true },
             { key: 'danbooru_tag_search',      label: '단부르 태그 검색', kind: '텍스트/JSON · 2단계', modality: 'text', group: 'knowledge_search', json: true },
             { key: 'illustration_character_resolve', label: '삽화 CURRENT 등장인물 판별', kind: 'JSON · 항상 실행', modality: 'text', group: 'illustration_pipeline', json: true },
+            { key: 'illustration_profile_context_translate', label: '삽화 프로필 영어 컨텍스트 번역', kind: 'JSON · 캐시 미스 시', modality: 'text', group: 'illustration_pipeline', json: true },
             { key: 'illustration_profile_resolve', label: '삽화 CURRENT 프로필 결정', kind: 'JSON · 캐릭터별 병렬', modality: 'text', group: 'illustration_pipeline', json: true },
             { key: 'illustration_original_asset', label: '삽화 원본 에셋 선택',          kind: 'JSON · 1단계', modality: 'text', group: 'illustration_pipeline', json: true },
             { key: 'illustration_original_asset_recovery', label: '삽화 원본 에셋 복구', kind: 'JSON · 실패 후보 재선택', modality: 'text', group: 'illustration_pipeline', json: true },
@@ -60558,9 +60550,13 @@
         }
 
         const WORKSPACE_CHROME_SESSION_KEY = 'workspaceChromeCollapsed';
+        const HEADER_CONTROLS_TOGGLE_LOCK_MS = 260;
+        let headerControlsToggleLocked = false;
 
         function toggleHeaderControlsDock(event) {
             if (event) event.stopPropagation();
+
+            if (headerControlsToggleLocked) return;
 
             const dock = document.getElementById('header-controls-dock');
             const handle = document.getElementById('header-controls-handle');
@@ -60574,61 +60570,16 @@
 
             const willPin = !dock.classList.contains('is-pinned');
             dock.classList.toggle('is-pinned', willPin);
-            dock.classList.toggle('is-hover-suppressed', !willPin);
-            if (!willPin) {
-                cancelHeaderControlsHoverClose();
-                dock.classList.remove('is-hover-active');
-            }
 
             const actionLabel = willPin ? '상단 도구 메뉴 닫기' : '상단 도구 메뉴 열기';
             handle.setAttribute('aria-expanded', String(willPin));
             handle.setAttribute('aria-label', actionLabel);
             handle.title = actionLabel;
-        }
 
-        function releaseHeaderControlsHoverSuppression() {
-            const dock = document.getElementById('header-controls-dock');
-            if (!dock) {
-                console.error('[HEADER_CONTROLS] 호버 억제를 해제할 상단 도구 메뉴를 찾지 못했습니다.');
-                return;
-            }
-            dock.classList.remove('is-hover-suppressed');
-        }
-
-        const HEADER_CONTROLS_HOVER_CLOSE_DELAY_MS = 300;
-        let headerControlsHoverCloseTimer = null;
-
-        function cancelHeaderControlsHoverClose() {
-            if (headerControlsHoverCloseTimer !== null) {
-                clearTimeout(headerControlsHoverCloseTimer);
-                headerControlsHoverCloseTimer = null;
-            }
-        }
-
-        const headerControlsDock = document.getElementById('header-controls-dock');
-        if (headerControlsDock) {
-            headerControlsDock.addEventListener('pointerenter', () => {
-                cancelHeaderControlsHoverClose();
-                headerControlsDock.classList.toggle(
-                    'is-hover-active',
-                    !headerControlsDock.classList.contains('is-hover-suppressed'),
-                );
-            });
-            headerControlsDock.addEventListener('pointerleave', () => {
-                cancelHeaderControlsHoverClose();
-                headerControlsHoverCloseTimer = window.setTimeout(() => {
-                    headerControlsDock.classList.remove('is-hover-active');
-                    headerControlsHoverCloseTimer = null;
-                }, HEADER_CONTROLS_HOVER_CLOSE_DELAY_MS);
-                releaseHeaderControlsHoverSuppression();
-            });
-            headerControlsDock.addEventListener('focusout', (event) => {
-                if (!headerControlsDock.contains(event.relatedTarget)) {
-                    releaseHeaderControlsHoverSuppression();
-                }
-            });
-        } else {
-            console.error('[HEADER_CONTROLS] 이벤트를 연결할 상단 도구 메뉴를 찾지 못했습니다.');
+            headerControlsToggleLocked = true;
+            window.setTimeout(() => {
+                headerControlsToggleLocked = false;
+            }, HEADER_CONTROLS_TOGGLE_LOCK_MS);
         }
 
         function setWorkspaceChromeCollapsed(collapsed, persist = true) {
@@ -68892,6 +68843,7 @@
                 id,
                 label: `카드 ${index + 1}`,
                 selection_guide: '',
+                visual_context: '',
                 aliases: [],
                 appearance: [],
                 default_outfit: [],
@@ -68948,6 +68900,14 @@
             profile.selection_guide = String(value || '').trim();
             try { await _saveVisualCardState(charName, {quiet:true}); }
             catch (error) { showToast('자연어 선택 기준 저장 실패: ' + error.message, 'error'); }
+        }
+
+        async function updateVisualCardVisualContext(charName, value) {
+            const profile = _visualCardProfile(charName);
+            if (!profile) return;
+            profile.visual_context = String(value || '').trim();
+            try { await _saveVisualCardState(charName, {quiet:true}); }
+            catch (error) { showToast('대표 이미지 외형 참고 저장 실패: ' + error.message, 'error'); }
         }
 
         async function updateVisualCardAliases(charName, value) {
@@ -69162,6 +69122,7 @@
                     const identity = _visualGuideTargetIdentity(rootCharacter.name, profile.id);
                     const aliases = Array.isArray(profile.aliases) ? [...profile.aliases] : [];
                     const currentGuide = String(profile.selection_guide || '').trim();
+                    const currentVisualContext = String(profile.visual_context || '').trim();
                     targets.push({
                         identity,
                         character: rootCharacter.name,
@@ -69174,7 +69135,8 @@
                             : '',
                         currentAliases: aliases,
                         currentGuide,
-                        selected: !aliases.length || !currentGuide || identity === focusIdentity,
+                        currentVisualContext,
+                        selected: !aliases.length || !currentGuide || !currentVisualContext || identity === focusIdentity,
                         focused: identity === focusIdentity,
                         suggestion: null,
                     });
@@ -69431,6 +69393,7 @@
                 const suggestion = target.suggestion;
                 const currentAliases = target.currentAliases.length ? target.currentAliases.join(', ') : '(비어 있음)';
                 const currentGuide = target.currentGuide || '(비어 있음)';
+                const currentVisualContext = target.currentVisualContext || '(비어 있음)';
                 const thumb = target.imageUrl
                     ? `<button type="button" class="visual-guide-thumb" data-vg-thumb="${index}" title="썸네일 확대"><img src="${escAttr(target.imageUrl)}" alt="${escAttr(target.character + ' ' + target.profileLabel)} 썸네일"></button>`
                     : '<div class="visual-guide-thumb" style="cursor:default;font-size:.7rem">대표 이미지 없음</div>';
@@ -69438,7 +69401,9 @@
                 const visualContext = String(suggestion?.visual_context || '');
                 const visualContextError = String(suggestion?.visual_context_error || '');
                 const visualContextHtml = visualContextStatus === 'ok'
-                    ? `<div style="margin-top:7px;font-size:.68rem;line-height:1.45;color:var(--text2)"><b style="color:var(--text)">대표 이미지 외형</b> · ${escHtml(visualContext)}</div>`
+                    ? `<label style="display:block;font-size:.69rem;color:var(--text2);margin-top:8px">대표 이미지 외형 참고
+                        <textarea class="visual-guide-field" data-vg-visual-context="${index}" ${state.busy ? 'disabled' : ''} style="display:block;margin-top:4px">${escHtml(visualContext)}</textarea>
+                    </label>`
                     : (visualContextStatus
                         ? `<div style="margin-top:7px;font-size:.68rem;line-height:1.45;color:#fca5a5"><b>대표 이미지 외형 분석 실패</b> · ${escHtml(visualContextError || '원인을 확인할 수 없습니다.')}</div>`
                         : '');
@@ -69465,7 +69430,7 @@
                             <div style="margin-top:3px;font-size:.76rem;color:var(--accent)">[${target.profileIndex + 1}] ${escHtml(target.profileLabel)}</div>
                             <div style="margin-top:5px;font-size:.66rem;color:var(--text2);overflow-wrap:anywhere">ID · ${escHtml(target.profileId)}</div>
                             <div style="margin-top:3px;font-size:.66rem;color:var(--text2);overflow-wrap:anywhere">파일 · ${escHtml(target.repFilename || '대표 이미지 없음')}</div>
-                            <div class="visual-guide-current"><b>현재 별칭</b> · ${escHtml(currentAliases)}\n<b>현재 기준</b> · ${escHtml(currentGuide)}</div>
+                            <div class="visual-guide-current"><b>현재 별칭</b> · ${escHtml(currentAliases)}\n<b>현재 기준</b> · ${escHtml(currentGuide)}\n<b>현재 외형 참고</b> · ${escHtml(currentVisualContext)}</div>
                         </div>
                         <div class="visual-guide-suggestion">${suggestionHtml}</div>
                     </article>`;
@@ -69500,6 +69465,16 @@
                         return;
                     }
                     target.suggestion.selection_guide = event.currentTarget.value;
+                });
+            });
+            list.querySelectorAll('[data-vg-visual-context]').forEach(input => {
+                input.addEventListener('input', event => {
+                    const target = state.targets[Number(event.currentTarget.dataset.vgVisualContext)];
+                    if (!target?.suggestion) {
+                        console.error('[VISUAL_GUIDE] 외형 참고 편집 대상 누락', {index:event.currentTarget.dataset.vgVisualContext});
+                        return;
+                    }
+                    target.suggestion.visual_context = event.currentTarget.value;
                 });
             });
             list.querySelectorAll('[data-vg-thumb]').forEach(button => {
@@ -69538,7 +69513,7 @@
                 if (!visibleSet.has(target.identity)) return;
                 if (mode === 'all') target.selected = true;
                 else if (mode === 'none') target.selected = false;
-                else if (mode === 'missing') target.selected = !target.currentAliases.length || !target.currentGuide;
+                else if (mode === 'missing') target.selected = !target.currentAliases.length || !target.currentGuide || !target.currentVisualContext;
                 else console.error('[VISUAL_GUIDE] 알 수 없는 선택 모드', {mode});
             });
             _renderVisualGuideRows();
@@ -69778,6 +69753,9 @@
                             profile_id: target.profileId,
                             aliases: target.suggestion.aliases || [],
                             selection_guide: String(target.suggestion.selection_guide || '').trim(),
+                            ...(target.suggestion.visual_context_status === 'ok'
+                                ? {visual_context: String(target.suggestion.visual_context || '').trim()}
+                                : {}),
                         })),
                     }),
                 });
@@ -69988,9 +69966,10 @@
                             <span class="patch-label">확인중</span>
                         </span>
                     </div>
-                    <div class="card-section" style="display:grid;grid-template-columns:minmax(180px,.65fr) minmax(320px,1.35fr);gap:12px">
+                    <div class="card-section" style="display:grid;grid-template-columns:minmax(180px,.55fr) minmax(280px,1fr) minmax(280px,1fr);gap:12px">
                         <label style="display:block"><span class="card-section-title" style="display:block;margin-bottom:5px">작중 별칭</span><input value="${escAttr((activeProfile?.aliases || []).join(', '))}" onchange="updateVisualCardAliases('${escAttr(char.name)}',this.value)" placeholder="쉼표로 구분" style="width:100%;box-sizing:border-box;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--text)"></label>
                         <label style="display:block"><span class="card-section-title" style="display:block;margin-bottom:5px">자연어 선택 기준</span><textarea rows="2" onchange="updateVisualCardGuide('${escAttr(char.name)}',this.value)" placeholder="이 카드의 모습이 언제 성립하고 유지되는지 자연어로 입력" style="width:100%;box-sizing:border-box;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--text);resize:vertical">${escHtml(activeProfile?.selection_guide || '')}</textarea></label>
+                        <label style="display:block"><span class="card-section-title" style="display:block;margin-bottom:5px">대표 이미지 외형 참고</span><textarea rows="2" onchange="updateVisualCardVisualContext('${escAttr(char.name)}',this.value)" placeholder="대표 이미지에서 보이는 외형 식별 정보를 자연어로 입력" style="width:100%;box-sizing:border-box;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--text);resize:vertical">${escHtml(activeProfile?.visual_context || '')}</textarea></label>
                     </div>
                     <div class="card-section" id="char-data-section-${charIdx}">
                         <div class="card-section-title">캐릭터 데이터</div>

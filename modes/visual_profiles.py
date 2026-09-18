@@ -227,6 +227,7 @@ def normalize_visual_card(raw: dict, *, field: str = "card") -> dict:
         "id": card_id,
         "label": _clean_text(raw.get("label")) or card_id,
         "selection_guide": _clean_text(raw.get("selection_guide")),
+        "visual_context": _clean_text(raw.get("visual_context")),
         "aliases": _normalize_aliases(raw.get("aliases"), field=f"{field}.aliases"),
         "appearance": normalize_tag_entries(raw.get("appearance"), field=f"{field}.appearance"),
         "default_outfit": _normalize_flat_default_outfit(raw, field=field),
@@ -240,7 +241,7 @@ def normalize_visual_card(raw: dict, *, field: str = "card") -> dict:
         result[key] = value
     unknown = sorted(
         set(raw) - _CARD_RENDER_KEYS - _CARD_BOOLEAN_METADATA_KEYS - {
-            "id", "label", "selection_guide", "aliases", "appearance",
+            "id", "label", "selection_guide", "visual_context", "aliases", "appearance",
             "default_outfit", "default_outfit_id", "outfits",
         }
     )
@@ -300,6 +301,7 @@ def legacy_visual_card(
         "id": LEGACY_VISUAL_PROFILE_ID,
         "label": "카드 1",
         "selection_guide": "다른 카드로 바뀌었다는 서사적 근거가 없을 때 유지하는 기본 모습.",
+        "visual_context": "",
         "aliases": [],
         "appearance": normalize_tag_entries(extra.get("appearance"), field="legacy.appearance"),
         "default_outfit": normalize_tag_entries(extra.get("outfit"), field="legacy.outfit"),
@@ -333,6 +335,7 @@ def cards_to_character_profiles(character_name: str, cards: list[dict]) -> dict:
             "id": card["id"],
             "label": card["label"],
             "selection_guide": card["selection_guide"],
+            "visual_context": card["visual_context"],
             "aliases": deepcopy(card["aliases"]),
             "appearance": deepcopy(card["appearance"]),
             "default_outfit": deepcopy(card["default_outfit"]),
@@ -367,7 +370,7 @@ def character_profiles_to_cards(raw: dict) -> list[dict]:
         # 실제 선택 복장이 유실되므로, 원본에 있는 키만 전달한다.
         card = {
             key: deepcopy(profile[key]) for key in (
-                "id", "label", "selection_guide", "aliases", "appearance",
+                "id", "label", "selection_guide", "visual_context", "aliases", "appearance",
                 "default_outfit", "default_outfit_id", "outfits",
                 "skip_lb_extra_batch_refine",
             )
@@ -745,35 +748,57 @@ def build_natural_profile_catalog(effective_profiles: dict[str, dict]) -> str:
         )
         lines = [
             f"### {character_name}",
-            f"기본 프로필 참조는 [{default_index}]이다. "
-            "이전 추적 상태도 서사가 확정한 다른 카드 상태도 없을 때만 폴백으로 사용한다.",
+            f"Declared default profile_ref: [{default_index}]. "
+            "Use it only without valid tracked continuity or another supported card, "
+            "and only if CURRENT does not contradict its conditions.",
         ]
         for index, profile in enumerate(profiles):
             raw_guide = (
-                _clean_text(profile.get("selection_guide"))
-                or "별도 선택 설명 없음."
+                _clean_text(profile.get("selection_guide_english"))
+                or _clean_text(profile.get("selection_guide"))
+                or "No selection guide supplied."
             )
             guide = _selection_guide_without_profile_labels(
                 character_name,
                 profiles,
                 raw_guide,
             )
-            lines.append(
-                f"- [{index + 1}] — 선택 기준: {guide} "
-                f"이 기준이 충족될 때만 profile_ref로 `[{index + 1}]`을 출력한다."
+            raw_visual_context = (
+                _clean_text(profile.get("visual_context_english"))
+                or _clean_text(profile.get("visual_context"))
+            )
+            visual_context = (
+                _selection_guide_without_profile_labels(
+                    character_name,
+                    profiles,
+                    raw_visual_context,
+                )
+                if raw_visual_context
+                else "No appearance reference supplied."
             )
             lines.append(
-                "  이 카드에는 별도 복장 선택 축이 없으며, 카드 자체의 "
-                "default_outfit은 서사상 다른 복장이 정해지지 않았을 때 참고하는 "
-                "기본 복장이다. 장면 맥락이 다른 복장을 요구하면 고정하지 않는다."
+                f"- [{index + 1}] — Selection conditions: {guide}"
+            )
+            lines.append(
+                "  Appearance reference (identification support only): "
+                f"{visual_context}"
+            )
+            lines.append(
+                f"  If selected, output `[{index + 1}]` as profile_ref."
             )
         sections.append("\n".join(lines))
     if not sections:
         return ""
     authority = (
-        "프로필 등록 이름, 별칭, 내부 ID는 선택 근거가 아니므로 이 카탈로그에서 "
-        "제외하고 각 후보를 [1], [2], ... 참조로만 표시했다. "
-        "선택 기준에 직접 명시된 상태, 행동, 연속성, 외형 또는 복장 조건만 "
-        "서사와 대조하여 판단한다."
+        "Profile names, aliases, and internal IDs are omitted because they are not "
+        "selection evidence; use the bracketed references. Read Selection conditions "
+        "semantically as the applicability contract. Story state is primary. Appearance "
+        "reference is separate identification support only: matching details can support "
+        "identification, but the reference does not establish applicability by itself, "
+        "and missing or differing details are not extra exclusion conditions. Use only "
+        "CURRENT, valid tracked continuity, and these card descriptions. "
+        "Do not import external genre conventions or lore from other works or settings. "
+        "After a completed relevant change, assess the previous and default cards as "
+        "well as alternatives: rejecting one card does not establish another."
     )
     return authority + "\n\n" + "\n\n".join(sections)

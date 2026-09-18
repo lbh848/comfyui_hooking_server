@@ -55,6 +55,7 @@ def test_illustration_routes_follow_runtime_call_order() -> None:
 
     assert illustration_keys == [
         "illustration_character_resolve",
+        "illustration_profile_context_translate",
         "illustration_profile_resolve",
         "illustration_original_asset",
         "illustration_original_asset_recovery",

@@ -41,6 +41,7 @@ def _cards():
         "id": "civilian",
         "label": "카드 1",
         "selection_guide": "변신하지 않은 평상시 인간 모습일 때 유지한다.",
+        "visual_context": "갈색 단발과 갈색 눈의 평상시 모습.",
         "aliases": ["평상시 모습"],
         "appearance": ["short brown hair", "brown eyes"],
         "default_outfit": ["hoodie", "jeans"],
@@ -54,6 +55,7 @@ def _cards():
         "id": "despair",
         "label": "카드 2",
         "selection_guide": "절망의 힘으로 몸 자체가 변형된 상태가 성립한 뒤 유지한다.",
+        "visual_context": "흰 머리와 붉은 눈, 검은 뿔이 드러난 모습.",
         "aliases": ["절망체"],
         "appearance": ["white hair", "red eyes", "black horns"],
         "default_outfit": ["black armor"],
@@ -101,9 +103,11 @@ def test_lb_extra_batch_refine_skip_defaults_false_and_round_trips_per_card():
 
     assert profiles[0]["skip_lb_extra_batch_refine"] is False
     assert profiles[1]["skip_lb_extra_batch_refine"] is True
+    assert profiles[1]["visual_context"] == cards[1]["visual_context"]
     restored = character_profiles_to_cards(character_profiles)
     assert restored[0]["skip_lb_extra_batch_refine"] is False
     assert restored[1]["skip_lb_extra_batch_refine"] is True
+    assert restored[1]["visual_context"] == cards[1]["visual_context"]
 
 
 def test_character_cards_have_no_separate_profile_file_storage():
@@ -274,21 +278,53 @@ def test_natural_catalog_keeps_prose_and_ids_but_omits_profile_names():
 
     assert "- [1]" in catalog
     assert "- [2]" in catalog
-    assert "서사가 확정한 다른 카드 상태도 없을 때만 폴백" in catalog
+    assert "Declared default profile_ref: [1]" in catalog
     assert "몸 자체가 변형된 상태" in catalog
     assert "평상시 모습" not in catalog
     assert "절망체" not in catalog
-    assert "profile_ref로 `[1]`을 출력" in catalog
-    assert "profile_ref로 `[2]`을 출력" in catalog
+    assert "output `[1]` as profile_ref" in catalog
+    assert "output `[2]` as profile_ref" in catalog
+    assert "Selection conditions:" in catalog
+    assert "Appearance reference (identification support only):" in catalog
+    assert _cards()[1]["visual_context"] in catalog
     assert "`civilian`" not in catalog
     assert "`despair`" not in catalog
-    assert "내부 ID는 선택 근거가 아니므로" in catalog
-    assert "선택 기준에 직접 명시된" in catalog
-    assert "별도 복장 선택 축이 없으며" in catalog
-    assert "default_outfit" in catalog
-    assert "참고하는 기본 복장" in catalog
-    assert "장면 맥락이 다른 복장을 요구하면 고정하지 않는다" in catalog
+    assert "default_outfit" not in catalog
     assert "white hair" not in catalog
+
+
+def test_natural_catalog_preserves_guide_without_turning_whole_text_into_gate():
+    cards = [{
+        "id": "ordinary",
+        "label": "카드 1",
+        "selection_guide": "정식 임명 전에는 일반 직원 카드를 유지한다.",
+        "visual_context": "갈색 머리와 회색 작업복을 착용한 모습.",
+        "appearance": [],
+        "default_outfit": [],
+    }, {
+        "id": "appointed",
+        "label": "카드 2",
+        "selection_guide": "정식 임명되어 책임자로 근무 중일 때 선택한다.",
+        "visual_context": "은빛 머리, 보라색 눈, 검은 제복을 갖춘 모습.",
+        "appearance": [],
+        "default_outfit": [],
+    }]
+    profiles = {"Mina": cards_to_character_profiles("Mina", cards)}
+
+    catalog = build_natural_profile_catalog(profiles)
+
+    for card in cards:
+        assert card["selection_guide"] in catalog
+        assert card["visual_context"] in catalog
+    assert "Selection conditions:" in catalog
+    assert "Appearance reference (identification support only):" in catalog
+    assert "이 기준이 충족될 때만" not in catalog
+    assert "변신" not in catalog
+    wrapper = catalog
+    for card in cards:
+        wrapper = wrapper.replace(card["selection_guide"], "")
+        wrapper = wrapper.replace(card["visual_context"], "")
+    assert not any("\uac00" <= char <= "\ud7a3" for char in wrapper)
 
 
 def test_natural_catalog_keeps_explicit_appearance_but_masks_registered_labels():
@@ -299,6 +335,7 @@ def test_natural_catalog_keeps_explicit_appearance_but_masks_registered_labels()
         "selection_guide": (
             "Denial Lapis는 푸른 망토가 명시되고 자신의 힘을 부정할 때 선택한다."
         ),
+        "visual_context": "Denial Lapis의 푸른 망토와 은빛 머리.",
         "appearance": ["unlisted appearance metadata"],
         "default_outfit": [],
     }, {
@@ -308,6 +345,7 @@ def test_natural_catalog_keeps_explicit_appearance_but_masks_registered_labels()
         "selection_guide": (
             "Luminant Lapis는 금빛 날개가 명시되고 부정 상태가 아닐 때 선택한다."
         ),
+        "visual_context": "Luminant Lapis의 금빛 날개와 보라색 눈.",
         "appearance": ["other unlisted metadata"],
         "default_outfit": [],
     }]
@@ -325,6 +363,8 @@ def test_natural_catalog_keeps_explicit_appearance_but_masks_registered_labels()
     assert "다른 후보 프로필의 등록명" not in catalog
     assert "푸른 망토가 명시되고 자신의 힘을 부정할 때" in catalog
     assert "금빛 날개가 명시되고 부정 상태가 아닐 때" in catalog
+    assert "[1]의 푸른 망토와 은빛 머리" in catalog
+    assert "[2]의 금빛 날개와 보라색 눈" in catalog
     assert "unlisted appearance metadata" not in catalog
 
 

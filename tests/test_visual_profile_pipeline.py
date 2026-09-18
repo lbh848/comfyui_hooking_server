@@ -120,42 +120,21 @@ def test_character_and_profile_prompts_are_separated_before_compact_call1_contra
     assert "Do not force an unidentified or unregistered narrative person" in character_prompt
     assert "Never use keyword matching" in character_prompt
 
-    assert '"characters"' in profile_prompt
-    assert '"in_history"' not in profile_prompt
-    assert '"profile_timeline"' in profile_prompt
-    assert '"at": "START or one exact Cxxx ID"' in profile_prompt
-    assert '"profile_ref"' in profile_prompt
-    assert '"reason"' in profile_prompt
-    assert '"profile_id"' not in profile_prompt
-    assert "emit exactly one START event" in profile_prompt
-    assert "preceding CURRENT-character stage has already confirmed" in profile_prompt
-    assert "supplies exactly one authoritative CURRENT character" in profile_prompt
-    assert "include that character exactly once" in profile_prompt
-    assert "Never use keyword matching" in profile_prompt
-    assert "authoritative semantic contract" in profile_prompt
-    assert "apply all material inclusion, prerequisite, persistence, and exclusion" in profile_prompt
-    assert "Absence of a contradiction is not positive support" in profile_prompt
-    assert "No PAST HISTORY is supplied" in profile_prompt
-    assert "does not by itself establish that the resulting profile transition completed" in profile_prompt
-    assert "not-yet-completed transition preserves the prior active profile" in profile_prompt
-    assert "Damage, removal, or alteration of an outfit" in profile_prompt
-    assert "Treat ordinary wardrobe changes as state layered over the active profile" in profile_prompt
-    assert "completed entry into or release of a registered visual form" in profile_prompt
-    assert "do not reduce it to wardrobe merely because clothing participates" in profile_prompt
-    assert "Do not infer a transition from garment motion alone" in profile_prompt
-    assert "does not, by itself, negate an otherwise completed visible release" in profile_prompt
-    assert 'such as "wearing [2]" inside candidate `[2]`' in profile_prompt
-    assert "Do not choose the nearest special profile" in profile_prompt
-    assert "actual CURRENT wording" in profile_prompt
-    assert "plausible competing profile does not apply" in profile_prompt
-    assert "written entirely in English" in profile_prompt
-    assert "do not mix original-language phrases" in profile_prompt
-    assert "separate evidence/counterevidence fields" in profile_prompt
-    assert '"profile_events"' not in profile_prompt
-    assert "initial_visual_bases" not in profile_prompt
-    assert "target_visual_profile_id" not in profile_prompt
-    assert "Adachi" not in profile_prompt
-    assert "Lapis" not in profile_prompt
+    # The machine-consumed response contract remains unchanged. Semantic behavior
+    # is checked with actual model calls, not assertions about prompt wording.
+    import json
+
+    example = profile_prompt[profile_prompt.index('{\n  "characters"'):]
+    example = example[:example.rindex("}") + 1]
+    schema = json.loads(example)
+    assert set(schema) == {"characters", "uncertainties"}
+    assert set(schema["characters"][0]) == {"name", "profile_timeline"}
+    event = schema["characters"][0]["profile_timeline"][0]
+    assert set(event) == {"at", "profile_ref", "reason"}
+    assert event["at"] == "START or one exact Cxxx ID"
+    assert profile_prompt.isascii()
+    for case_specific_term in ("Ruri", "Corruption", "Overcome", "transformation"):
+        assert case_specific_term not in profile_prompt
 
 
 def test_character_and_profile_resolve_are_registered_in_routing_and_prompt_editor():

@@ -184,15 +184,26 @@ def test_soft_reference_withholds_generated_payload_but_continuity_keeps_it():
     assert "untrusted pose and substitute garment marker" in continuity
 
 
-def test_detail_partner_contract_is_general_for_actual_isomorphic_and_solo_cases():
-    actual = pipeline._detail_partner_contract_line({
+def test_detail_partner_contract_preserves_actor_receiver_in_both_directions():
+    actual_named_actor = pipeline._detail_partner_contract_line({
         "slot": 4,
-        "scene_brief": "The named subject is held close while a whisper reaches her ear.",
+        "scene_brief": (
+            "Doyun desperately claps his hand over Hibiki's mouth to silence her."
+        ),
         "anonymous_partner_fragment": True,
     })
-    isomorphic = pipeline._detail_partner_contract_line({
+    isomorphic_named_actor = pipeline._detail_partner_contract_line({
         "slot": 9,
-        "scene_brief": "Another subject steadies herself against an off-frame partner.",
+        "scene_brief": (
+            "Mara reaches down and rests both hands on an off-frame visitor's shoulders."
+        ),
+        "anonymous_partner_fragment": True,
+    })
+    opposite_anonymous_actor = pipeline._detail_partner_contract_line({
+        "slot": 11,
+        "scene_brief": (
+            "An off-frame guard clamps one hand over Nari's mouth while she recoils."
+        ),
         "anonymous_partner_fragment": True,
     })
     solo = pipeline._detail_partner_contract_line({
@@ -202,11 +213,25 @@ def test_detail_partner_contract_is_general_for_actual_isomorphic_and_solo_cases
     })
 
     for contract, brief in (
-        (actual, "The named subject is held close while a whisper reaches her ear."),
-        (isomorphic, "Another subject steadies herself against an off-frame partner."),
+        (
+            actual_named_actor,
+            "Doyun desperately claps his hand over Hibiki's mouth to silence her.",
+        ),
+        (
+            isomorphic_named_actor,
+            "Mara reaches down and rests both hands on an off-frame visitor's shoulders.",
+        ),
+        (
+            opposite_anonymous_actor,
+            "An off-frame guard clamps one hand over Nari's mouth while she recoils.",
+        ),
     ):
         assert ": REQUIRED." in contract
-        assert "State that familiar core action or pose plainly" in contract
+        assert "anonymous partner can be either the actor or the receiver" in contract
+        assert "Never swap those roles" in contract
+        assert "If the named subject acts on the anonymous partner" in contract
+        assert "If the anonymous partner acts on the named subject" in contract
+        assert "Do not emit an ownerless contact phrase" in contract
         assert "smallest coherent body portion" in contract
         assert "continuously entering once from one frame edge" in contract
         assert "Do not invent another contact" in contract

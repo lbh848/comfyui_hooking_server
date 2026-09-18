@@ -32,6 +32,7 @@ def test_new_character_card_starts_blank_instead_of_copying_the_active_card():
     assert "current.default_outfit" not in source
     assert "appearance: []" in source
     assert "default_outfit: []" in source
+    assert "visual_context: ''" in source
     assert "loras_solo: []" in source
     assert "loras_group: []" in source
     assert "face_loras: []" in source
@@ -40,9 +41,12 @@ def test_new_character_card_starts_blank_instead_of_copying_the_active_card():
 
 def test_card_metadata_and_flat_lb_extra_editor_are_on_the_character_card():
     assert "자연어 선택 기준" in FRONTEND
+    assert "대표 이미지 외형 참고" in FRONTEND
     assert "작중 별칭" in FRONTEND
-    card_metadata = FRONTEND[FRONTEND.index('<div class="card-section" style="display:grid;grid-template-columns:minmax(180px,.65fr) minmax(320px,1.35fr)'):]
+    card_metadata = FRONTEND[FRONTEND.index('<div class="card-section" style="display:grid;grid-template-columns:minmax(180px,.55fr) minmax(280px,1fr) minmax(280px,1fr)'):]
     assert card_metadata.index("작중 별칭") < card_metadata.index("자연어 선택 기준")
+    assert card_metadata.index("자연어 선택 기준") < card_metadata.index("대표 이미지 외형 참고")
+    assert "updateVisualCardVisualContext" in card_metadata
     assert "lb-xnai.lb.extra 설정" in FRONTEND
     assert "lb-xnai.lb.extra 복장 설정" not in FRONTEND
     assert "openVisualCardLbExtraEditor" in FRONTEND

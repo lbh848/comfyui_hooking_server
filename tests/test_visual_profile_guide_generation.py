@@ -8,11 +8,12 @@ from types import SimpleNamespace
 import pytest
 
 
-def _card(card_id, label, filename, *, aliases=None, guide=""):
+def _card(card_id, label, filename, *, aliases=None, guide="", visual_context=""):
     return {
         "id": card_id,
         "label": label,
         "selection_guide": guide,
+        "visual_context": visual_context,
         "aliases": list(aliases or []),
         "appearance": [{"tag": "blue hair"}],
         "default_outfit": [{"tag": "school uniform"}],
@@ -271,6 +272,102 @@ async def test_suggest_metadata_reads_the_whole_selected_prompt_and_does_not_sav
     assert "Registered outfits:" not in prompt_text
     assert "fallback example, not a rule" in prompt_text
     assert "hardcoded keyword spotting" in prompt_text
+    assert "fixed, exhaustive, closed choice set" in prompt_text
+    assert "Routing role: declared default/base profile" in prompt_text
+    assert "completed release" in prompt_text
+    assert "returns to the declared default/base card" in prompt_text
+
+
+@pytest.mark.asyncio
+async def test_visual_guide_partial_rewrite_receives_complete_fixed_card_set(monkeypatch):
+    bot_mode = importlib.import_module("modes.bot_mode")
+    llm_service = importlib.import_module("modes.llm_service")
+    lighbd_service = importlib.import_module("modes.lighbd_service")
+    cards = [
+        _card(
+            "base",
+            "기본",
+            "Shoko_Overcome_School.webp",
+            aliases=["Shoko_Overcome_School", "Shoko_Overcome_Casual"],
+        ),
+        _card(
+            "fallen_transform",
+            "타락 변신",
+            "Shoko_Tainted Fluorite.webp",
+            aliases=["Shoko_Tainted Fluorite"],
+        ),
+        _card(
+            "recovered_transform",
+            "극복 변신",
+            "Shoko_Overcome_Swift Fluorite.webp",
+            aliases=["Shoko_Overcome_Swift Fluorite"],
+        ),
+        _card(
+            "normal_transform",
+            "일반 변신",
+            "Shoko_Swift Fluorite.webp",
+            aliases=["Shoko_Swift Fluorite"],
+        ),
+    ]
+    data = _bot_data(cards)
+    data["bots"][0]["characters"][0]["name"] = "Shoko"
+    data["bots"][0]["asset_output_instruction"] = (
+        "Yoshimura Shoko: Shoko_Corruption_Casual, "
+        "Shoko_Corruption_School, Shoko_Swift Fluorite, "
+        "Shoko_Tainted Fluorite, Shoko_Overcome_Casual, "
+        "Shoko_Overcome_School, Shoko_Overcome_Swift Fluorite"
+    )
+    queue = _InlineLlmQueue()
+    captured = {}
+
+    async def fake_call(_task_key, messages, **kwargs):
+        captured["prompt"] = "\n".join(str(item["content"]) for item in messages)
+        raw = json.dumps({
+            "suggestions": [{
+                "target_key": "0",
+                "aliases": ["Shoko_Tainted Fluorite"],
+                "selection_guide": "특수 타락 변신 외형이 현재 활성화된 동안 선택한다.",
+                "evidence": "등록된 타락 변신 카드에 해당한다.",
+                "confidence": "high",
+            }]
+        }, ensure_ascii=False)
+        valid, reason = kwargs["result_validator"](raw)
+        assert valid, reason
+        return raw
+
+    monkeypatch.setattr(bot_mode, "_load_bot_data", lambda: data)
+    monkeypatch.setattr(bot_mode, "_load_lb_extra", lambda _bot_name: [])
+    monkeypatch.setattr(llm_service, "callLLMTask", fake_call)
+    monkeypatch.setattr(lighbd_service, "_log_lighbd_history", lambda _record: None)
+
+    manager = bot_mode.BotMode()
+    manager.set_queue_manager(queue)
+    response = await manager.handle_suggest_character_card_metadata(
+        _JsonRequest({
+            "bot_name": "demo",
+            "targets": [{
+                "character": "Shoko",
+                "profile_id": "fallen_transform",
+            }],
+        })
+    )
+
+    assert response.status == 200
+    prompt = captured["prompt"]
+    assert "COMPLETE FIXED REGISTERED CARD SET" in prompt
+    assert "Profile internal id: base" in prompt
+    assert "Routing role: declared default/base profile" in prompt
+    assert "Shoko_Overcome_School.webp" in prompt
+    assert "Profile internal id: fallen_transform" in prompt
+    assert "Rewrite status: requested target" in prompt
+    assert "Profile internal id: recovered_transform" in prompt
+    assert "Profile internal id: normal_transform" in prompt
+    assert prompt.count("Rewrite status: comparison only") == 3
+    assert "Shoko_Corruption_Casual" in prompt
+    assert "internal allegiance, corruption, recovery" in prompt
+    assert "no registered non-default card visibly represents" in prompt
+    assert "do not collapse a state into the default" in prompt
+    assert "a registered peer card genuinely represents that state" in prompt
 
 
 @pytest.mark.asyncio
@@ -362,9 +459,9 @@ async def test_suggest_metadata_reads_only_each_profiles_first_rep_with_separate
     ]
     assert suggestion["visual_context_status"] == "ok"
     assert suggestion["visual_context_image"] == "first.webp"
-    assert suggestion["selection_guide"] == (
-        "Prism Heart 형태가 유지되는 동안 선택한다.\n\n"
-        "외형 참고: 푸른 장발과 금빛 눈, 흰 망토와 별 모양 브로치를 착용한 모습."
+    assert suggestion["selection_guide"] == "Prism Heart 형태가 유지되는 동안 선택한다."
+    assert suggestion["visual_context"] == (
+        "푸른 장발과 금빛 눈, 흰 망토와 별 모양 브로치를 착용한 모습."
     )
     assert [record["task_key"] for record in detail_records] == [
         "visual_profile_guide",
@@ -1317,6 +1414,7 @@ async def test_apply_metadata_preserves_existing_fields_and_saves_once(monkeypat
             "Riko_normal.webp",
             aliases=["manual alias"],
             guide="사람이 직접 작성한 선택 기준",
+            visual_context="사람이 직접 작성한 외형 참고",
         ),
         _card("card_2", "카드 2", "Riko_awakened.webp"),
     ]
@@ -1337,12 +1435,14 @@ async def test_apply_metadata_preserves_existing_fields_and_saves_once(monkeypat
                         "profile_id": "card_1",
                         "aliases": ["generated normal"],
                         "selection_guide": "생성된 기본 기준",
+                        "visual_context": "생성된 기본 외형 참고",
                     },
                     {
                         "character": "Riko",
                         "profile_id": "card_2",
                         "aliases": ["Riko_Prism Heart"],
                         "selection_guide": "각성 형태가 유지되는 동안 선택한다.",
+                        "visual_context": "푸른 장발과 금빛 눈의 각성 모습",
                     },
                 ],
             }
@@ -1357,8 +1457,10 @@ async def test_apply_metadata_preserves_existing_fields_and_saves_once(monkeypat
     assert len(saved) == 1
     assert stored_cards[0]["aliases"] == ["manual alias"]
     assert stored_cards[0]["selection_guide"] == "사람이 직접 작성한 선택 기준"
+    assert stored_cards[0]["visual_context"] == "사람이 직접 작성한 외형 참고"
     assert stored_cards[1]["aliases"] == ["Riko_Prism Heart"]
     assert stored_cards[1]["selection_guide"] == "각성 형태가 유지되는 동안 선택한다."
+    assert stored_cards[1]["visual_context"] == "푸른 장발과 금빛 눈의 각성 모습"
 
 
 @pytest.mark.asyncio
@@ -1371,6 +1473,7 @@ async def test_apply_metadata_can_replace_reviewed_existing_values(monkeypatch):
             "Riko_normal.webp",
             aliases=["old"],
             guide="old guide",
+            visual_context="old visual context",
         )
     ]
     data = _bot_data(cards)
@@ -1390,6 +1493,7 @@ async def test_apply_metadata_can_replace_reviewed_existing_values(monkeypatch):
                         "profile_id": "card_1",
                         "aliases": ["Riko_Normal"],
                         "selection_guide": "리코의 일반 형태일 때 선택한다.",
+                        "visual_context": "갈색 머리와 푸른 눈의 일반 모습",
                     }
                 ],
             }
@@ -1402,6 +1506,47 @@ async def test_apply_metadata_can_replace_reviewed_existing_values(monkeypatch):
     assert payload["applied"] == 1
     assert stored["aliases"] == ["Riko_Normal"]
     assert stored["selection_guide"] == "리코의 일반 형태일 때 선택한다."
+    assert stored["visual_context"] == "갈색 머리와 푸른 눈의 일반 모습"
+
+
+@pytest.mark.asyncio
+async def test_apply_metadata_legacy_payload_does_not_clear_visual_context(monkeypatch):
+    bot_mode = importlib.import_module("modes.bot_mode")
+    cards = [
+        _card(
+            "card_1",
+            "카드 1",
+            "Riko_normal.webp",
+            aliases=["old"],
+            guide="old guide",
+            visual_context="보존해야 하는 기존 외형 참고",
+        )
+    ]
+    data = _bot_data(cards)
+    saved = []
+    monkeypatch.setattr(bot_mode, "_load_bot_data", lambda: data)
+    monkeypatch.setattr(bot_mode, "_load_lb_extra", lambda _bot_name: [])
+    monkeypatch.setattr(bot_mode, "_save_bot_data", lambda value: saved.append(deepcopy(value)))
+
+    response = await bot_mode.BotMode().handle_apply_character_card_metadata(
+        _JsonRequest(
+            {
+                "bot_name": "demo",
+                "overwrite": True,
+                "items": [{
+                    "character": "Riko",
+                    "profile_id": "card_1",
+                    "aliases": ["new"],
+                    "selection_guide": "new guide",
+                }],
+            }
+        )
+    )
+    stored = saved[0]["bots"][0]["characters"][0]["visual_cards"][0]
+
+    assert response.status == 200
+    assert stored["selection_guide"] == "new guide"
+    assert stored["visual_context"] == "보존해야 하는 기존 외형 참고"
 
 
 def test_frontend_has_thumbnail_review_modal_and_explicit_apply_modes():
@@ -1417,6 +1562,8 @@ def test_frontend_has_thumbnail_review_modal_and_explicit_apply_modes():
     assert "LLM 제안" in frontend
     assert "판단 근거" in frontend
     assert "대표 이미지 외형" in frontend
+    assert 'data-vg-visual-context="${index}"' in frontend
+    assert "visual_context: String(target.suggestion.visual_context || '').trim()" in frontend
     assert "visual_context_status" in frontend
     assert "대표 이미지 외형 분석 실패" in frontend
     assert "비어 있는 값만 채우기" in frontend

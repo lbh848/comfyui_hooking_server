@@ -47,12 +47,6 @@ def test_header_controls_are_a_retractable_top_layer_dock() -> None:
     assert "position: fixed;" in controls_rule
     assert "z-index: 2147483647;" in controls_rule
     assert "transform: translateY(calc(-100% + var(--header-dock-peek)));" in controls_rule
-    assert (
-        "header.app-header .controls.is-hover-active:not(.is-hover-suppressed),"
-        in FRONTEND
-    )
-    assert (
-        "header.app-header .controls:has(:focus-visible):not(.is-hover-suppressed)"
-        in FRONTEND
-    )
     assert "header.app-header .controls.is-pinned" in FRONTEND
+    assert "header.app-header .controls.is-hover-active" not in FRONTEND
+    assert "header.app-header .controls:has(:focus-visible)" not in FRONTEND

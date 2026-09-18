@@ -738,6 +738,7 @@ DEFAULT_CONFIG = {
         "illustration_call1_backtranslate": _llm_route_defaults(max_retries=1, retry_delay_sec=0.0, fallback_max_retries=1, fallback_retry_delay_sec=0.0),
         "illustration_call1":      _llm_route_defaults(json_mode=True),  # 복장·헤어 변화 JSON 분석
         "illustration_character_resolve": _llm_route_defaults(json_mode=True),  # 생성 최전단 CURRENT 등장인물 판별(항상 실행)
+        "illustration_profile_context_translate": _llm_route_defaults(json_mode=True),  # CURRENT 카드 자연어의 지연 영어 번역
         "illustration_profile_resolve": _llm_route_defaults(json_mode=True),  # 확정 CURRENT 다중 프로필 결정(토글 시)
         "illustration_call2_plan": _llm_route_defaults(),  # CALL2 전역 장면 PLAN
         "illustration_call2":      _llm_route_defaults(),  # CALL2 DETAIL 및 기존 단일/폴백 경로
@@ -8125,6 +8126,7 @@ async def process_illustration_context_queue_item(item) -> dict:
                     toggles=illust_toggles,
                     history_plan=history_plan,
                     visual_profiles=effective_visual_profiles,
+                    profile_translation_namespace=active_bot,
                     stream_notify=stream_notify,
                     progress=progress,
                     history_ids_sink=llm_trace,
@@ -8457,6 +8459,7 @@ async def process_illustration_context_queue_item(item) -> dict:
                     enable_multi_char_layout=multi_char_mask_active,
                     visual_profile_catalog=visual_profile_catalog,
                     visual_profiles=effective_visual_profiles,
+                    profile_translation_namespace=active_bot,
                     pre_resolved_profile_output=profile_output,
                     pre_resolved_profile_result=profile_result,
                 )

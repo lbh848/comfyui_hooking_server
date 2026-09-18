@@ -30,6 +30,7 @@ from modes import (
     llm_service,
     multi_char_mask,
     postprocess,
+    visual_profile_translation_cache,
 )
 from modes.visual_profiles import (
     build_natural_profile_catalog,
@@ -58,6 +59,9 @@ EASY_EDIT_PREFIX = "__LB_ILLUST_EASY_EDIT_V1__"
 MAX_ILLUSTRATION_SLOT_COUNT = 65
 MAX_EASY_EDIT_DIRECTION_LENGTH = 4000
 CALL5_MAX_PAIRWISE_OVERLAP_RATIO = 0.60
+PROFILE_CONTEXT_TRANSLATE_TASK_KEY = "illustration_profile_context_translate"
+PROFILE_CONTEXT_TRANSLATE_CALL_NAME = "PROFILE-CONTEXT-TRANSLATE"
+_profile_context_translation_lock = asyncio.Lock()
 
 # 삽화 1회 생성(build_from_context) 동안 발생한 모든 LLM 호출의 history_id를
 # 수집하는 컨텍스트 변수. _call_pipeline_llm 가 성공/실패/취소/실패시도 레코드의
@@ -4997,16 +5001,27 @@ def _detail_partner_contract_line(plan: dict) -> str:
         authorized_instant = str(plan.get("scene_brief") or "").strip()
         return (
             f"- slot {slot}: REQUIRED. Preserve the scene_brief's one core visible "
-            "interaction. State that familiar core action or pose plainly in scene before "
-            "adding any secondary expression, fluid, physiological effect, or micro-motion. "
+            "interaction. The anonymous partner can be either the actor or the receiver. "
+            "Resolve that direction from the complete scene_brief and anchor_passage by meaning, "
+            "then preserve exactly who acts on whom, which participant owns the acting limb, and "
+            "which participant receives the contact. Never swap those roles while converting the "
+            "interaction into a cropped composition. Encode the familiar core action plainly "
+            "across scene, the named character positive, and supplement before adding any "
+            "secondary expression, fluid, physiological effect, or micro-motion. "
             "Show the anonymous partner only as the smallest coherent body portion that makes "
             "the action readable, continuously entering once from one frame edge. Keep the "
             "partner's head, face, identity, complete silhouette, and every unneeded second "
             "body region outside the image. Choose a close enough camera for the body alignment "
             "and contact to read naturally; do not widen it to retain a remote face or detail. "
-            "Put the partner-owned fragment and action in scene, and use one concise supplement "
-            "sentence for its edge continuation and contact; use a second sentence only when the "
-            "same contact needs essential spatial clarification. Do not invent another contact "
+            "If the named subject acts on the anonymous partner, keep the named subject's acting "
+            "limb and action in that character's positive, anchor only the anonymous receiver's "
+            "visible fragment in scene, and state the full actor-to-receiver relation in supplement. "
+            "If the anonymous partner acts on the named subject, put the partner-owned acting "
+            "fragment and action in scene, keep the named receiver's pose or reaction in that "
+            "character's positive, and state the same direction in supplement. Do not emit an "
+            "ownerless contact phrase that could attach the acting limb to either participant. "
+            "Use one concise supplement sentence for edge continuation and contact; use a second "
+            "sentence only when the same contact needs essential spatial clarification. Do not invent another contact "
             "or place partner-owned anatomy or action in a named character's positive. "
             "Authorized visible instant: "
             + authorized_instant
@@ -8218,8 +8233,13 @@ async def _run_parallel_call2_details(
                 "in supplement, with a second sentence only when essential to clarify that same contact. "
                 "The fragment must remain the smallest coherent portion that makes the core action readable, "
                 "continuously entering once from one frame edge, with no partner face, complete silhouette, "
-                "second region, or invented contact. Put all partner-owned anatomy and action in scene or "
-                "supplement, never in a named character's positive. For anonymous_partner_fragment=false, "
+                "second region, or invented contact. The anonymous partner can be either actor or receiver: "
+                "derive that role from scene_brief and anchor_passage by meaning and never reverse it during "
+                "cropping. When the named subject acts on an anonymous receiver, keep the named acting limb "
+                "and action in that character's positive, the receiver fragment in scene, and the complete "
+                "direction in supplement. When the anonymous partner acts on the named receiver, preserve that "
+                "direction without transferring the action to the named subject. Put all partner-owned anatomy and action in scene or supplement, never in a named character's positive. "
+                "Never leave a contact limb ownerless. For anonymous_partner_fragment=false, "
                 "show and describe no partner fragment or contact. "
                 + explicit_physics_instruction
                 + "Before return, reconstruct coherent bodies and joints, clothing/object coverage, contact, "
@@ -9426,6 +9446,7 @@ _CALL_TASK_KEYS = {
     "CHARACTER-RESOLVE-REPAIR": "illustration_character_resolve",
     "PROFILE-RESOLVE": "illustration_profile_resolve",
     "PROFILE-RESOLVE-REPAIR": "illustration_profile_resolve",
+    PROFILE_CONTEXT_TRANSLATE_CALL_NAME: PROFILE_CONTEXT_TRANSLATE_TASK_KEY,
     "CALL2": "illustration_call2",
     "CALL2-PLAN": "illustration_call2_plan",
     "CALL2-KEYVIS": "illustration_call2_keyvis",
@@ -9460,6 +9481,10 @@ _CALL_QUEUE_SUBTASK_GROUPS = {
     ),
     "PROFILE-RESOLVE": ("profile_resolve", "CURRENT 프로필 캐릭터별 병렬 결정"),
     "PROFILE-RESOLVE-REPAIR": ("profile_resolve", "프로필 오류 항목 교정"),
+    PROFILE_CONTEXT_TRANSLATE_CALL_NAME: (
+        "profile_context_translation",
+        "프로필 영어 컨텍스트 번역",
+    ),
     "CALL2": ("call2", "CALL2 장면/태그 빌드"),
     "CALL2-PLAN": ("call2_plan", "CALL2 장면 PLAN"),
     "CALL2-DETAIL": ("call2_detail", "CALL2 장면 DETAIL"),
@@ -11566,12 +11591,251 @@ def _merge_character_and_profile_stage_results(
     )
 
 
+def _parse_profile_context_translations(
+    result,
+    expected_refs: list[str],
+) -> dict[str, str]:
+    raw = _json_object_from_text(result)
+    if raw is None:
+        raise ValueError("프로필 영어 번역 응답에 JSON object가 없습니다.")
+    translations = raw.get("translations")
+    if not isinstance(translations, list):
+        raise ValueError("프로필 영어 번역 응답의 translations가 list가 아닙니다.")
+    parsed: dict[str, str] = {}
+    for index, item in enumerate(translations):
+        if not isinstance(item, dict):
+            raise ValueError(
+                "프로필 영어 번역 항목이 object가 아닙니다: "
+                f"index={index}, value={item!r}"
+            )
+        ref = str(item.get("ref") or "").strip()
+        english = str(item.get("english") or "").strip()
+        if not ref or not english:
+            raise ValueError(
+                "프로필 영어 번역 항목의 ref 또는 english가 비어 있습니다: "
+                f"index={index}, value={item!r}"
+            )
+        if ref in parsed:
+            raise ValueError(f"프로필 영어 번역 ref가 중복되었습니다: {ref!r}")
+        parsed[ref] = english
+    expected = set(expected_refs)
+    actual = set(parsed)
+    if actual != expected:
+        raise ValueError(
+            "프로필 영어 번역 ref 집합이 요청과 다릅니다: "
+            f"missing={sorted(expected - actual)}, extra={sorted(actual - expected)}"
+        )
+    return parsed
+
+
+async def prepare_profile_context_translations(
+    visual_profiles: dict[str, dict],
+    *,
+    cache_namespace: str,
+    stream_notify=None,
+    history_ids_sink: list[str] | None = None,
+) -> tuple[dict[str, dict], dict]:
+    """Attach cached/lazily translated English prose to selected profile copies."""
+    translated_profiles = deepcopy(visual_profiles or {})
+    namespace = str(cache_namespace or "").strip()
+    summary = {
+        "cache_namespace": namespace,
+        "profile_count": 0,
+        "cache_hits": 0,
+        "cache_misses": 0,
+        "empty_fields": 0,
+        "translated_fields": 0,
+        "fallback_fields": 0,
+        "cache_saved": False,
+    }
+    if not translated_profiles:
+        print(
+            "[ILLUST_CONTEXT:PROFILE_CONTEXT_TRANSLATE] 번역할 프로필이 없어 생략: "
+            f"namespace={namespace!r}, profiles={translated_profiles!r}"
+        )
+        return translated_profiles, summary
+    if not namespace:
+        print(
+            "[ILLUST_CONTEXT:PROFILE_CONTEXT_TRANSLATE] 캐시 namespace가 없어 번역 생략: "
+            f"characters={list(translated_profiles)}, state={summary!r}"
+        )
+        return translated_profiles, summary
+
+    async with _profile_context_translation_lock:
+        cache = visual_profile_translation_cache.load_cache()
+        misses: list[dict] = []
+        targets_by_ref: dict[str, tuple[dict, str, str, str, str]] = {}
+        for character_name, character in translated_profiles.items():
+            profiles = character.get("profiles") or []
+            for profile in profiles:
+                if not isinstance(profile, dict):
+                    print(
+                        "[ILLUST_CONTEXT:PROFILE_CONTEXT_TRANSLATE] object가 아닌 프로필 생략: "
+                        f"namespace={namespace!r}, character={character_name!r}, "
+                        f"profile={profile!r}"
+                    )
+                    continue
+                profile_id = str(profile.get("id") or "").strip()
+                if not profile_id:
+                    print(
+                        "[ILLUST_CONTEXT:PROFILE_CONTEXT_TRANSLATE] ID 없는 프로필 생략: "
+                        f"namespace={namespace!r}, character={character_name!r}, "
+                        f"profile={profile!r}"
+                    )
+                    continue
+                summary["profile_count"] += 1
+                for field in visual_profile_translation_cache.TRANSLATABLE_FIELDS:
+                    source = str(profile.get(field) or "").strip()
+                    cached = visual_profile_translation_cache.cached_translation(
+                        cache,
+                        bot_name=namespace,
+                        character_name=character_name,
+                        profile_id=profile_id,
+                        field=field,
+                        source_text=source,
+                    )
+                    if cached == "":
+                        summary["empty_fields"] += 1
+                        continue
+                    english_field = f"{field}_english"
+                    if cached is not None:
+                        profile[english_field] = cached
+                        summary["cache_hits"] += 1
+                        continue
+                    ref = f"text_{len(misses) + 1}"
+                    purpose = (
+                        "profile selection conditions"
+                        if field == "selection_guide"
+                        else "representative-image appearance reference"
+                    )
+                    misses.append({
+                        "ref": ref,
+                        "purpose": purpose,
+                        "source": source,
+                    })
+                    targets_by_ref[ref] = (
+                        profile,
+                        str(character_name),
+                        profile_id,
+                        field,
+                        source,
+                    )
+                    summary["cache_misses"] += 1
+
+        if not misses:
+            print(
+                "[ILLUST_CONTEXT:PROFILE_CONTEXT_TRANSLATE] 모든 원문이 캐시에 있어 LLM 호출 생략: "
+                f"namespace={namespace!r}, state={summary!r}"
+            )
+            return translated_profiles, summary
+
+        system_prompt = (
+            "Translate the supplied character-profile context into concise, faithful English "
+            "for a downstream illustration scene-selection model. Preserve the full meaning, "
+            "conditions, chronology, uncertainty, names, bracketed references, and Danbooru-style "
+            "tags. Do not add facts, infer age, merge entries, or turn an appearance reference "
+            "into a selection condition. Return only one JSON object with this shape: "
+            '{"translations":[{"ref":"text_1","english":"..."}]}. '
+            "Include every supplied ref exactly once and no additional refs."
+        )
+        messages = _normalize_messages([
+            {"role": "system", "content": system_prompt},
+            {
+                "role": "user",
+                "content": (
+                    "Translate only these missing cached fields. Each entry remains independent.\n\n"
+                    + json.dumps(misses, ensure_ascii=False, indent=2)
+                ),
+            },
+        ])
+        expected_refs = [item["ref"] for item in misses]
+
+        def validate_translation_result(result):
+            try:
+                _parse_profile_context_translations(result, expected_refs)
+                return True, ""
+            except Exception as exc:
+                return False, str(exc)
+
+        try:
+            raw = await _call_pipeline_llm(
+                PROFILE_CONTEXT_TRANSLATE_CALL_NAME,
+                messages,
+                stream_notify,
+                result_validator=validate_translation_result,
+                json_mode=True,
+                history_ids_sink=history_ids_sink,
+            )
+            parsed = _parse_profile_context_translations(raw, expected_refs)
+        except asyncio.CancelledError:
+            print(
+                "[ILLUST_CONTEXT:PROFILE_CONTEXT_TRANSLATE] 번역 취소: "
+                f"namespace={namespace!r}, misses={misses!r}, state={summary!r}"
+            )
+            raise
+        except Exception as exc:
+            summary["fallback_fields"] = len(misses)
+            print(
+                "[ILLUST_CONTEXT:PROFILE_CONTEXT_TRANSLATE] 번역 실패, 이번 실행은 원문 사용: "
+                f"namespace={namespace!r}, misses={misses!r}, state={summary!r}, "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            return translated_profiles, summary
+
+        for ref, english in parsed.items():
+            profile, character_name, profile_id, field, source = targets_by_ref[ref]
+            profile[f"{field}_english"] = english
+            visual_profile_translation_cache.update_cached_translation(
+                cache,
+                bot_name=namespace,
+                character_name=character_name,
+                profile_id=profile_id,
+                field=field,
+                source_text=source,
+                english=english,
+            )
+            summary["translated_fields"] += 1
+
+        try:
+            visual_profile_translation_cache.save_cache(cache)
+            summary["cache_saved"] = True
+        except Exception as exc:
+            print(
+                "[ILLUST_CONTEXT:PROFILE_CONTEXT_TRANSLATE] 번역은 사용하지만 캐시 저장 실패: "
+                f"namespace={namespace!r}, state={summary!r}, "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+
+        print(
+            "[ILLUST_CONTEXT:PROFILE_CONTEXT_TRANSLATE] 지연 번역 준비 완료: "
+            f"namespace={namespace!r}, state={summary!r}"
+        )
+        return translated_profiles, summary
+
+
+@illustration_flow.stage(
+    "PROFILE-CONTEXT-CACHE",
+    executor="process",
+    layout_group="profile_context_translation",
+)
+async def _record_profile_context_cache_summary(summary: dict) -> dict:
+    normalized = dict(summary or {})
+    print(
+        "[ILLUST_CONTEXT:PROFILE_CONTEXT_TRANSLATE] 작업 흐름 캐시 상태 기록: "
+        f"state={normalized!r}"
+    )
+    return normalized
+
+
 async def resolve_profiles_before_generation(
     *,
     payload: dict,
     toggles: dict | None,
     history_plan: dict | None,
     visual_profiles: dict[str, dict] | None,
+    profile_translation_namespace: str = "",
     stream_notify=None,
     progress=None,
     history_ids_sink: list[str] | None = None,
@@ -11657,7 +11921,23 @@ async def resolve_profiles_before_generation(
         return character_output, character_result
 
     if progress:
-        await progress(2, "profile_resolve", "CURRENT 다중 프로필 결정")
+        await progress(2, "profile_context_translation", "프로필 영어 컨텍스트 준비")
+    profile_resolution_inputs = _selected_visual_profiles(
+        current_profiles,
+        multi_profile_names,
+        multiple_only=True,
+    )
+    translated_profiles, _translation_summary = (
+        await prepare_profile_context_translations(
+            profile_resolution_inputs,
+            cache_namespace=profile_translation_namespace,
+            stream_notify=stream_notify,
+            history_ids_sink=history_ids_sink,
+        )
+    )
+    await _record_profile_context_cache_summary(_translation_summary)
+    if progress:
+        await progress(3, "profile_resolve", "CURRENT 다중 프로필 결정")
     profile_output, profile_result = await _run_profile_resolution(
         profile_system=prompts.get("profile_resolve", ""),
         segmented_current=segmented_current,
@@ -11665,7 +11945,7 @@ async def resolve_profiles_before_generation(
         current_segments=current_segments,
         candidate_names=multi_profile_names,
         previous_state=previous_state,
-        visual_profiles=current_profiles,
+        visual_profiles=translated_profiles,
         stream_notify=stream_notify,
         history_ids_sink=history_ids_sink,
     )
@@ -12583,6 +12863,7 @@ async def build_from_context(
     history_plan: dict | None = None,
     visual_profile_catalog: str = "",
     visual_profiles: dict[str, dict] | None = None,
+    profile_translation_namespace: str = "",
     pre_resolved_profile_output: str = "",
     pre_resolved_profile_result: dict | None = None,
 ) -> dict:
@@ -12696,6 +12977,7 @@ async def build_from_context(
             toggles=toggles,
             history_plan=persistent_history,
             visual_profiles=visual_profiles,
+            profile_translation_namespace=profile_translation_namespace,
             stream_notify=stream_notify,
             progress=progress,
         )

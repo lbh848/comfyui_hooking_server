@@ -7084,9 +7084,10 @@ async def test_profile_resolution_receives_only_resolved_current_multi_profile_c
         assert "Adachi_Civilian" not in prompt
         assert "Adachi_Changed" not in prompt
         assert "Bob_Default" not in prompt
-        assert "선택 기준: ordinary human form" in prompt
-        assert "선택 기준: persistent transformed form" in prompt
-        assert "선택 기준: ordinary form" not in prompt
+        assert "Selection conditions: ordinary human form" in prompt
+        assert "Selection conditions: persistent transformed form" in prompt
+        assert "Selection conditions: ordinary form" not in prompt
+        assert "Appearance reference (identification support only):" in prompt
         assert "# FULL CURRENT CONTEXT SEGMENTS" in prompt
         assert "# PAST HISTORY" not in prompt
         return json.dumps({
@@ -7607,7 +7608,7 @@ async def test_profile_resolution_repairs_only_unknown_profile_id_character(monk
         assert call_name == "PROFILE-RESOLVE-REPAIR"
         assert '"character": "Adachi"' in prompt
         assert "Adachi_Civilian" not in prompt
-        assert "선택 기준: ordinary human form" in prompt
+        assert "Selection conditions: ordinary human form" in prompt
         assert "Mina_Normal" not in prompt
         return json.dumps({
             "characters": [{
@@ -9063,8 +9064,8 @@ async def test_persistent_history_path_uses_compact_call2_and_updates_wardrobe(m
             request_text = "\n".join(message["content"] for message in messages)
             assert "Hana_Ordinary" not in request_text
             assert "Hana_Transformed" not in request_text
-            assert "선택 기준: ordinary persistent form" in request_text
-            assert "선택 기준: persistent transformed form" in request_text
+            assert "Selection conditions: ordinary persistent form" in request_text
+            assert "Selection conditions: persistent transformed form" in request_text
             return json.dumps({
                 "characters": [{
                     "name": "Hana",

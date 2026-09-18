@@ -270,6 +270,23 @@ def test_call2_prompt_keeps_cropped_partner_out_of_focused_character_positive():
     assert "Keep an anonymous, unnamed, or unregistered cropped partner's body parts" in system
     assert "partner-owned anatomy and action" in source
     assert "never in a named character's positive" in source
+    assert "anonymous partner can be either actor or receiver" in source
+    assert "When the named subject acts on an anonymous receiver" in source
+    assert "Never leave a contact limb ownerless" in source
+
+
+def test_call2_prompt_preserves_anonymous_actor_and_receiver_directions():
+    system = CALL2_SYSTEM.read_text(encoding="utf-8")
+    thoughts = CALL2_THOUGHTS.read_text(encoding="utf-8")
+
+    assert "An anonymous participant may be the actor or the receiver" in system
+    assert "When the named participant acts on an anonymous receiver" in system
+    assert "When the anonymous participant acts on the named receiver" in system
+    assert "Never use an ownerless contact phrase" in system
+    assert "An anonymous fragment may act or receive" in thoughts
+    assert "instead of assigning the action from whichever body part is cropped" in thoughts
+    assert "If the named subject acts" in thoughts
+    assert "if the anonymous partner acts" in thoughts
 
 
 def test_single_v5_preserves_v4_and_keeps_partner_as_connected_fragment():
