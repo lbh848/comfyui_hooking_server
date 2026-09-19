@@ -165,7 +165,19 @@ def test_common_contract_preserves_physical_coherence_without_keyword_logic():
     assert "keyword" not in common.casefold()
 
 
-def test_plan_contract_owns_selection_and_natural_language_continuity_only():
+def test_upstream_wardrobe_contract_owns_start_state_and_current_deltas():
+    enhance = _read(CALL1_ENHANCE)
+
+    assert '"wardrobe_at_start"' in enhance
+    assert "immediately before C001" in enhance
+    assert "tracked state plus all PAST HISTORY" in enhance
+    assert "later established state wins" in enhance
+    assert "Do not carry a CURRENT event backward" in enhance
+    assert "relative to `wardrobe_at_start`" in enhance
+    assert "ordinary-language physical state, not as tags" in enhance
+
+
+def test_plan_contract_owns_scene_selection_but_not_wardrobe_resolution():
     plan = _read(PLAN)
 
     assert "Select the global semantic visual beats" in plan
@@ -176,13 +188,11 @@ def test_plan_contract_owns_selection_and_natural_language_continuity_only():
     assert "Lead `scene_brief` with the familiar high-level action or pose" in plan
     assert "Preserve who acts on whom" in plan
     assert "Meet the requested count with materially different supported actions" in plan
-    assert "`continuity_note` is the shared natural-language wardrobe handoff" in plan
-    assert "Reconstruct it only from the supplied story chronology" in plan
-    assert "canonical-name roster is identity-only and provides no clothing" in plan
-    assert "use the downstream profile-default fallback" in plan
-    assert "never reconstruct or mix a default outfit inside PLAN" in plan
-    assert "same concise garment-design wording" in plan
-    assert "Do not output image tags, camera fields, outfit arrays" in plan
+    assert "resolved by the upstream wardrobe analyzer" in plan
+    assert "Do not reconstruct, summarize, or output clothing" in plan
+    assert "never turn it into a complete outfit judgment" in plan
+    assert "No scene contains a planner-authored wardrobe state" in plan
+    assert "Do not output image tags, camera fields, wardrobe continuity" in plan
     assert "characters[].positive" not in plan
 
 
@@ -191,11 +201,16 @@ def test_plan_contract_keeps_single_preset_renderability_without_loosening_it():
 
     assert "Treat `TRUSTED ACTIVE BOT IMAGE POLICY` as the single renderability" in plan
     assert "do not restate, narrow, or loosen it" in plan
-    assert "exact named roster remains the identity-managed subject roster" in plan
+    assert "`SINGLE-PRESET NAMED SUBJECT AUTHORITY` is supplied" in plan
+    assert "identity/LoRA owner and focal subject" in plan
     assert "promote an anonymous participant into the named or focal subject" in plan
     assert "anonymous_partner_fragment" in plan
+    assert "narrative participation alone is insufficient" in plan
+    assert "read as self-touch" in plan
     assert "identifiable partner face" in plan
     assert "blanket ban on every cropped rear or side portion" in plan
+    assert "partner-owned facial feature must remain visible to carry the action" in plan
+    assert "no facial feature is needed to recognize the action" in plan
     assert "internal-only effect" in plan
     assert "Preserve the requested count through other supported visible instants" in plan
 
@@ -214,6 +229,10 @@ def test_detail_contract_expands_exact_assignments_and_handles_both_flag_values(
     assert "Use a reaction-centered camera" in detail
     assert "When the flag is false, add no partner fragment or partner contact" in detail
     assert "Omit remote face, hair, eye, expression, or clothing details" in detail
+    assert "one coherent state across all fields" in detail
+    assert "`supplement` must not reintroduce an item marked removed" in detail
+    assert "read as self-touch, an actor/receiver swap" in detail
+    assert "Never use a vague nearby torso or limb" in detail
 
 
 def test_interaction_examples_cover_failed_paraphrases_and_opposite_cases():
@@ -233,6 +252,7 @@ def test_interaction_examples_cover_failed_paraphrases_and_opposite_cases():
     # Opposite cases retain their simpler treatment.
     assert "hand-led interaction normally needs only the connected hand and forearm" in plan
     assert "A truly subject-only reaction needs no partner fragment" in plan
+    assert "partner-local touch that can read as self-touch" in plan
 
     # Actual DETAIL contradiction class: the action region owns the crop, while
     # reaction-only and conditionally valid rear-head crops remain distinct.
@@ -240,6 +260,7 @@ def test_interaction_examples_cover_failed_paraphrases_and_opposite_cases():
     assert "omit the distant face" in detail
     assert "looking toward an off-frame person" in detail
     assert "never turn it into a second portrait or camera center" in detail
+    assert "actor-owned limb must visibly land on the receiver-owned surface" in detail
 
 
 def test_keyvisual_contract_is_independent_and_has_no_scene_slot_responsibility():
@@ -251,6 +272,36 @@ def test_keyvisual_contract_is_independent_and_has_no_scene_slot_responsibility(
     assert "exactly one `keyvis` object and `scenes: []`" in keyvis
     assert "scene_plan" not in keyvis
     assert "anchor_segment" not in keyvis
+    assert "use only the chronological wardrobe reference labeled for that same instant" in keyvis
+    assert "References from other instants are alternatives, not facts to merge" in keyvis
+    assert "no cross-instant garment merge" in keyvis
+
+
+def test_keyvisual_wardrobe_handoff_keeps_actual_isomorphic_and_opposite_states_separate():
+    reference = pipeline._keyvis_wardrobe_reference([
+        {
+            "anchor_segment": "C003",
+            "scene_brief": "Ari lies on the bed after every garment was removed.",
+            "continuity_note": "Ari is fully nude; the undergarment is removed.",
+        },
+        {
+            "anchor_segment": "C014",
+            "scene_brief": "Mina stands after discarding her opened raincoat.",
+            "continuity_note": "Mina wears a blue dress; the raincoat lies on the chair.",
+        },
+        {
+            "anchor_segment": "C022",
+            "scene_brief": "Leon keeps his jacket hanging open on his shoulders.",
+            "continuity_note": "Leon still wears the unfastened black jacket.",
+        },
+    ])
+
+    assert "Story instant C003" in reference
+    assert "Story instant C014" in reference
+    assert "Story instant C022" in reference
+    assert reference.count("Resolved wardrobe at this instant:") == 3
+    assert reference.index("fully nude") < reference.index("blue dress")
+    assert reference.index("blue dress") < reference.index("still wears")
 
 
 def test_fallback_contract_combines_roles_only_for_recovery():
@@ -293,9 +344,16 @@ def test_plan_handoff_stays_compact_and_code_consumable():
     source = _read(PIPELINE_PY)
 
     assert '"scene_brief": "objective visual moment to expand"' in source
-    assert '"continuity_note": "shared active wardrobe' in source
+    assert '"continuity_note": "shared active wardrobe' not in source
     assert '"anonymous_partner_fragment": true' in source
     assert "Copy one exact Cxxx ID" in source
+    assert "narrative presence is insufficient" in source
+    assert "Do not output wardrobe" in source
+    assert 'wardrobe_at_start=call1_result.get("wardrobe_at_start")' in source
+    assert "# CHRONOLOGICAL WARDROBE REFERENCES BY STORY INSTANT" in source
+    assert "and do not merge " in source
+    assert "garments across blocks" in source
+    assert "# SHARED STORY WARDROBE RESOLUTIONS" not in source
     assert "Return only the JSON object" in source
     assert '"must_show"' not in source
     assert '"camera_replacement"' not in source

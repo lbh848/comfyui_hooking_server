@@ -103,7 +103,6 @@ def test_plan_boolean_survives_plan_parse_and_detail_assignment():
                 "scene_brief": (
                     "Mina braces against pressure from a connected off-frame arm."
                 ),
-                "continuity_note": "Mina still wears the same rumpled jacket.",
                 "anonymous_partner_fragment": True,
             }],
         }),
@@ -118,7 +117,18 @@ def test_plan_boolean_survives_plan_parse_and_detail_assignment():
     )
 
     assert reason == ""
-    selected = plan["scene_plan"][0]
+    selected = pipeline.bind_scene_plan_wardrobes(
+        plan["scene_plan"],
+        ["C001"],
+        {},
+        [{"name": "Mina"}],
+        [],
+        "test-message",
+        wardrobe_at_start=[{
+            "character": "Mina",
+            "state": "Mina still wears the same rumpled jacket.",
+        }],
+    )[0]
     assert selected["anonymous_partner_fragment"] is True
     assert pipeline._public_call2_scene_plan(selected)[
         "anonymous_partner_fragment"

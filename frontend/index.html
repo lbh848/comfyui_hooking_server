@@ -40,6 +40,7 @@
             --button-warning-hover: #b36d13;
             --button-warning-text: #fff;
             --button-focus-ring: rgba(77, 226, 174, 0.42);
+            --header-ws-corner-reserve: 122px;
         }
 
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -332,13 +333,13 @@
         header.app-header .controls {
             --header-dock-peek: 22px;
             position: fixed;
-            z-index: 2147483647;
+            z-index: 2147483645;
             top: 0;
-            right: 12px;
+            right: var(--header-ws-corner-reserve);
             display: block;
             min-width: 0;
             width: max-content;
-            max-width: calc(100vw - 24px);
+            max-width: calc(100vw - var(--header-ws-corner-reserve) - 12px);
             padding: 6px 6px calc(6px + var(--header-dock-peek));
             border: 1px solid var(--chrome-border-strong);
             border-top: 0;
@@ -549,10 +550,31 @@
             transition: background 0.2s, box-shadow 0.2s;
         }
 
+        /* WS 재연결은 접히는 상단 도구 메뉴와 분리해 항상 우상단에 노출한다. */
+        header.app-header .ws-reconnect-float {
+            position: fixed;
+            top: 8px;
+            right: 10px;
+            width: 104px;
+            z-index: 2147483646;
+            min-height: 32px;
+            padding: 6px 10px;
+            border-color: var(--chrome-border-strong);
+            background: color-mix(in srgb, var(--chrome-bg) 94%, transparent);
+            box-shadow: 0 8px 22px rgba(0, 0, 0, 0.34);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+        }
+
+        header.app-header .ws-reconnect-float:hover {
+            border-color: rgba(77, 226, 174, 0.58);
+            background: color-mix(in srgb, var(--chrome-panel-hover) 94%, transparent);
+        }
+
         @media (max-width: 1180px) {
             header.app-header .controls {
-                width: calc(100vw - 24px);
-                max-width: calc(100vw - 24px);
+                width: calc(100vw - var(--header-ws-corner-reserve) - 12px);
+                max-width: calc(100vw - var(--header-ws-corner-reserve) - 12px);
             }
 
             .header-controls-scroll {
@@ -573,15 +595,29 @@
         }
 
         @media (max-width: 620px) {
+            :root {
+                --header-ws-corner-reserve: 54px;
+            }
+
             header.app-header {
                 padding: 12px;
                 gap: 11px;
             }
 
+            header.app-header .ws-reconnect-float {
+                right: 8px;
+                width: 38px;
+                padding-inline: 0;
+            }
+
+            header.app-header .ws-reconnect-float .control-label {
+                display: none;
+            }
+
             header.app-header .controls {
-                right: 6px;
-                width: calc(100vw - 12px);
-                max-width: calc(100vw - 12px);
+                right: var(--header-ws-corner-reserve);
+                width: calc(100vw - var(--header-ws-corner-reserve) - 6px);
+                max-width: calc(100vw - var(--header-ws-corner-reserve) - 6px);
             }
 
             .brand-mark {
@@ -13005,7 +13041,8 @@
             right: 0;
             height: 4px;
             background: var(--surface2);
-            z-index: 99999;
+            z-index: 2147483647;
+            pointer-events: none;
         }
         .top-progress-inner {
             height: 100%;
@@ -13016,11 +13053,15 @@
         .top-progress-label {
             position: fixed;
             top: 6px;
-            right: 12px;
+            right: calc(var(--header-ws-corner-reserve) + 6px);
             font-size: 0.7rem;
             color: var(--accent);
             font-weight: 600;
-            z-index: 99999;
+            z-index: 2147483647;
+            pointer-events: none;
+            padding: 2px 6px;
+            border-radius: 999px;
+            background: color-mix(in srgb, var(--bg) 86%, transparent);
         }
 
         /* ─── 태그 자동완성 드롭다운 ─── */
@@ -15917,6 +15958,12 @@
             </div>
         </div>
 
+        <button type="button" id="ws-reconnect-btn" class="control-btn ws-reconnect-float"
+                onclick="reconnectFrontendWs()" title="WebSocket 재연결" aria-label="WebSocket 재연결">
+            <span id="ws-status-led" class="ws-status-led" title="WS 미연결"></span>
+            <span class="control-label">WS 재연결</span>
+        </button>
+
         <div id="header-controls-dock" class="controls">
             <button type="button" id="header-controls-handle" class="header-controls-handle"
                     aria-expanded="false" aria-label="상단 도구 메뉴 열기" title="상단 도구 메뉴 열기"
@@ -15972,13 +16019,6 @@
                 <button type="button" id="restore-manual-btn" class="control-btn control-btn--primary" onclick="manualRestoreDraw()" style="display:none;">
                     <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m14.5 4.5 5 5L8 21H3v-5zM12 7l5 5"></path></svg>
                     <span class="control-label">삽화 수동 그리기</span>
-                </button>
-            </div>
-
-            <div class="control-group" role="group" aria-label="연결 상태">
-                <button type="button" id="ws-reconnect-btn" class="control-btn" onclick="reconnectFrontendWs()" title="WebSocket 재연결">
-                    <span id="ws-status-led" class="ws-status-led" title="WS 미연결"></span>
-                    <span class="control-label">WS 재연결</span>
                 </button>
             </div>
             </div>

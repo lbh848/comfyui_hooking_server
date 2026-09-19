@@ -102,7 +102,8 @@ def test_character_and_profile_prompts_are_separated_before_compact_call1_contra
     assert "{visual_profile_catalog}" not in call1_prompt
     assert '"profile_events"' not in call1_prompt
     assert "profile" not in call1_prompt.casefold()
-    assert "both arrays must exist" in call1_prompt
+    assert "all three arrays must exist" in call1_prompt
+    assert '"wardrobe_at_start"' in call1_prompt
     assert '"wardrobe_events"' in call1_prompt
     assert '"hairstyle_events"' in call1_prompt
     assert '"reference_assignments"' not in call1_prompt

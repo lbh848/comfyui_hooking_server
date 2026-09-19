@@ -396,6 +396,10 @@ async def test_persona_identity_reaches_call1_call2_and_call3(monkeypatch):
         requests[call_name] = request
         if call_name == "CALL1":
             return json.dumps({
+                "wardrobe_at_start": [{
+                    "character": "Mira",
+                    "state": "Mira wears her coat.",
+                }],
                 "wardrobe_events": [],
                 "hairstyle_events": [],
             })
@@ -747,7 +751,7 @@ def test_segment_slot_map_returns_empty_only_when_no_segment_can_be_mapped():
     assert "excluded=['C001', 'C002', 'C003']" in reason
 
 
-def test_call2_plan_uses_anchor_mapping_and_ignores_model_slot_number():
+def test_call2_plan_uses_anchor_mapping_and_ignores_model_slot_and_outfit(capsys):
     slotted = "첫 문단.\n\n[Slot 0]\n\n둘째 문단.\n\n[Slot 1]"
     raw = json.dumps({
         "scene_plan": [{
@@ -782,11 +786,123 @@ def test_call2_plan_uses_anchor_mapping_and_ignores_model_slot_number():
     assert reason == ""
     assert plan["scene_plan"][0]["anchor_segment"] == "C002"
     assert plan["scene_plan"][0]["slot"] == 1
-    assert plan["scene_plan"][0]["planned_outfits"]["Hana"] == {
-        "body_state": "clothed",
-        "worn": ["blue dress"],
-        "removed": [],
+    assert "planned_outfits" not in plan["scene_plan"][0]
+    assert "PLAN의 outfit_state를 무시" in capsys.readouterr().out
+
+
+def test_single_preset_subject_candidates_prefer_identity_lora_owners():
+    visual_profiles = {
+        "Leon": {
+            "is_persona": True,
+            "profiles": [{
+                "id": "card_1",
+                "render_overrides": {"rep_images": ["leon.png"]},
+            }],
+        },
+        "Mina": {
+            "is_persona": False,
+            "profiles": [{
+                "id": "card_1",
+                "render_overrides": {
+                    "loras_solo": [{"lora_path": "mina-body.safetensors"}],
+                },
+            }],
+        },
+        "Rin": {
+            "is_persona": False,
+            "profiles": [{
+                "id": "card_1",
+                "render_overrides": {
+                    "face_loras": [{"lora_path": "rin-face.safetensors"}],
+                },
+            }],
+        },
     }
+
+    candidates, source = pipeline.single_preset_subject_candidates(
+        visual_profiles,
+        ["Leon", "Mina", "Rin"],
+    )
+
+    assert candidates == ["Mina", "Rin"]
+    assert source == "configured_character_identity_lora"
+
+
+def test_single_preset_subject_candidates_keep_no_lora_bot_usable():
+    visual_profiles = {
+        "Pilot": {
+            "is_persona": True,
+            "profiles": [{"id": "card_1", "render_overrides": {}}],
+        },
+        "Guide": {
+            "is_persona": False,
+            "profiles": [{
+                "id": "card_1",
+                "render_overrides": {"rep_images": ["guide.png"]},
+            }],
+        },
+    }
+
+    candidates, source = pipeline.single_preset_subject_candidates(
+        visual_profiles,
+        ["Pilot", "Guide"],
+    )
+
+    assert candidates == ["Guide"]
+    assert source == "registered_non_persona_fallback"
+
+
+@pytest.mark.parametrize(
+    ("characters", "authority", "accepted"),
+    [
+        (["Mina"], ["Mina", "Rin"], True),
+        (["mina"], ["Mina", "Rin"], True),
+        (["Leon"], ["Mina", "Rin"], False),
+        (["Mina", "Rin"], ["Mina", "Rin"], False),
+        (["Leon", "Mina"], None, True),
+    ],
+    ids=[
+        "authorized-lora-owner",
+        "canonicalizes-authorized-case",
+        "rejects-non-owner-subject-takeover",
+        "rejects-two-named-subjects-in-single-v5",
+        "opposite-non-single-plan-remains-multi-character",
+    ],
+)
+def test_call2_plan_enforces_single_preset_named_subject_authority(
+    characters,
+    authority,
+    accepted,
+):
+    raw = json.dumps({
+        "scene_plan": [{
+            "anchor_segment": "C001",
+            "characters": characters,
+            "scene_brief": "Mina turns toward an off-frame partner.",
+            "anonymous_partner_fragment": False,
+        }],
+    })
+
+    plan, reason = pipeline.parse_call2_plan(
+        raw,
+        pipeline.merged_toggles({
+            "output_count_min": 1,
+            "output_count_max": 1,
+            "key_visual": False,
+        }),
+        "Mina turns.\n\n[Slot 0]",
+        segment_slot_map={"C001": 0},
+        named_subject_candidates=authority,
+    )
+
+    if accepted:
+        assert reason == ""
+        assert plan is not None
+        if authority is not None:
+            assert plan["scene_plan"][0]["characters"] == ["Mina"]
+    else:
+        assert plan is None
+        assert "Single V5" in reason
 
 
 def test_call2_plan_accepts_compact_server_derived_fields_and_keyvis_plan():
@@ -813,7 +929,7 @@ def test_call2_plan_accepts_compact_server_derived_fields_and_keyvis_plan():
     assert plan["scene_plan"][0]["plan_id"] == "S001"
     assert plan["scene_plan"][0]["slot"] == 1
     assert plan["scene_plan"][0]["source_segments"] == ["C002"]
-    assert plan["scene_plan"][0]["planned_outfits"] == {}
+    assert "planned_outfits" not in plan["scene_plan"][0]
     assert plan["keyvis_descriptor"] is None
     assert plan["keyvis_plan"] == {
         "characters": ["Hana"],
@@ -846,7 +962,7 @@ def test_call2_plan_accepts_scene_without_named_tracked_characters(capsys):
 
     assert reason == ""
     assert plan["scene_plan"][0]["characters"] == []
-    assert plan["scene_plan"][0]["planned_outfits"] == {}
+    assert "planned_outfits" not in plan["scene_plan"][0]
     assert "이름 있는 추적 캐릭터가 없는 장면 수용" in capsys.readouterr().out
 
 
@@ -921,107 +1037,78 @@ def test_call2_plan_drops_only_unplaceable_earlier_duplicate(capsys):
     assert "중복 slot 장면 제외" in capsys.readouterr().out
 
 
-def test_scene_plan_wardrobe_snapshot_uses_plan_over_tracked_timeline():
+def test_scene_plan_wardrobe_timeline_does_not_leak_future_change_backward():
     plans = [{
         "plan_id": "S001",
         "slot": 0,
         "anchor_segment": "C001",
         "source_segments": ["C001"],
         "characters": ["Hana"],
-        "planned_outfits": {
-            "Hana": {"body_state": "clothed", "worn": ["red coat"], "removed": []},
-        },
     }, {
         "plan_id": "S002",
         "slot": 1,
         "anchor_segment": "C003",
         "source_segments": ["C003"],
         "characters": ["Hana"],
-        "planned_outfits": {
-            "Hana": {"body_state": "topless", "worn": [], "removed": ["red coat"]},
-        },
     }]
-    state_before = {
-        "hana": {
-            "canonical_name": "Hana",
-            "current_wardrobe": {
-                "body_state": "clothed",
-                "worn": ["blue dress"],
-                "removed": [],
-            },
-        },
-    }
     events = [{
         "segment_id": "C003",
         "character": "Hana",
         "operation": "remove",
-        "items": ["blue dress"],
+        "wardrobe_change": "Hana removed her red coat, leaving the blue dress worn.",
         "state_after": "topless",
+        "evidence": "Hana removed her red coat, leaving the blue dress worn.",
     }]
 
     bound = pipeline.bind_scene_plan_wardrobes(
         plans,
         ["C001", "C002", "C003"],
-        state_before,
+        {},
         [{"name": "Hana", "confidence": 1.0}],
         events,
         "message-1",
+        wardrobe_at_start=[{
+            "character": "Hana",
+            "state": "Hana wears a red coat over a blue dress.",
+        }],
     )
 
-    assert bound[0]["wardrobe_snapshot"]["Hana"] == {
-        "body_state": "clothed",
-        "worn": ["red coat"],
-        "removed": [],
-    }
-    assert bound[1]["wardrobe_snapshot"]["Hana"] == {
-        "body_state": "topless",
-        "worn": [],
-        "removed": ["red coat"],
-    }
-    assert bound[0]["wardrobe_sources"]["Hana"] == "call2_plan"
-    assert bound[1]["wardrobe_sources"]["Hana"] == "call2_plan"
-    assert "worn items are red coat" in bound[0]["continuity_note"]
-    assert "body_state is topless" in bound[1]["continuity_note"]
-    assert "removed items are red coat" in bound[1]["continuity_note"]
+    assert bound[0]["wardrobe_snapshot"] == {}
+    assert bound[1]["wardrobe_snapshot"] == {}
+    assert bound[0]["wardrobe_sources"]["Hana"] == "call1_natural_language_timeline"
+    assert bound[1]["wardrobe_sources"]["Hana"] == "call1_natural_language_timeline"
+    assert "wears a red coat over a blue dress" in bound[0]["continuity_note"]
+    assert "removed her red coat" not in bound[0]["continuity_note"]
+    assert "removed her red coat" in bound[1]["continuity_note"]
 
 
-def test_scene_plan_uses_each_outfit_decided_by_global_plan():
+def test_scene_plan_preserves_opposite_case_where_open_jacket_remains_worn():
     plans = [{
         "plan_id": "S001",
         "slot": 0,
         "anchor_segment": "C001",
-        "characters": ["Hana"],
-        "planned_outfits": {
-            "Hana": {"body_state": "clothed", "worn": ["red coat"], "removed": []},
-        },
-    }, {
-        "plan_id": "S002",
-        "slot": 1,
-        "anchor_segment": "C002",
-        "characters": ["Hana"],
-        "planned_outfits": {
-            "Hana": {"body_state": "clothed", "worn": ["blue dress"], "removed": []},
-        },
+        "characters": ["Leon"],
     }]
 
     bound = pipeline.bind_scene_plan_wardrobes(
         plans,
-        ["C001", "C002"],
+        ["C001"],
         {},
-        [{"name": "Hana", "confidence": 1.0}],
+        [{"name": "Leon", "confidence": 1.0}],
         [],
         "message-1",
+        wardrobe_at_start=[{
+            "character": "Leon",
+            "state": "Leon still wears his unfastened black jacket open on his shoulders.",
+        }],
     )
 
-    assert bound[0]["wardrobe_snapshot"]["Hana"]["worn"] == ["red coat"]
-    assert bound[1]["wardrobe_snapshot"]["Hana"]["worn"] == ["blue dress"]
-    assert bound[0]["wardrobe_sources"]["Hana"] == "call2_plan"
-    assert bound[1]["wardrobe_sources"]["Hana"] == "call2_plan"
-    assert "worn items are red coat" in bound[0]["continuity_note"]
-    assert "worn items are blue dress" in bound[1]["continuity_note"]
+    assert bound[0]["wardrobe_snapshot"] == {}
+    assert bound[0]["wardrobe_sources"]["Leon"] == "call1_natural_language_timeline"
+    assert "still wears his unfastened black jacket" in bound[0]["continuity_note"]
 
 
-def test_scene_plan_natural_language_continuity_is_not_overwritten_by_stale_tags():
+def test_call1_start_state_overrides_plan_wardrobe_and_stale_tags():
     plans = [{
         "plan_id": "S001",
         "slot": 7,
@@ -1029,8 +1116,7 @@ def test_scene_plan_natural_language_continuity_is_not_overwritten_by_stale_tags
         "characters": ["Mina"],
         "scene_brief": "Mina recoils on the bed.",
         "continuity_note": (
-            "Mina remains fully nude after her dress and underwear were removed "
-            "in the preceding story passage; no later dressing event occurs."
+            "Mina wears a white shirt and a displaced black bra."
         ),
     }]
     stale_state = {
@@ -1051,16 +1137,104 @@ def test_scene_plan_natural_language_continuity_is_not_overwritten_by_stale_tags
         [{"name": "Mina", "confidence": 1.0}],
         [],
         "message-1",
+        wardrobe_at_start=[{
+            "character": "Mina",
+            "state": (
+                "Mina is fully nude after her dress and underwear were completely removed; "
+                "no garment remains worn."
+            ),
+        }],
     )
 
     assert bound[0]["wardrobe_snapshot"] == {}
     assert bound[0]["wardrobe_sources"] == {
-        "Mina": "call2_plan_natural_language",
+        "Mina": "call1_natural_language_timeline",
     }
-    assert "Mina remains fully nude" in bound[0]["continuity_note"]
+    assert "Mina is fully nude" in bound[0]["continuity_note"]
     assert "Server-resolved wardrobe" not in bound[0]["continuity_note"]
+    assert "black bra" not in bound[0]["continuity_note"]
     assert "school uniform" not in bound[0]["continuity_note"]
     assert "black tights" not in bound[0]["continuity_note"]
+
+
+def test_call1_timeline_preserves_actual_nude_then_shirt_state_without_bra():
+    plans = [{
+        "plan_id": "S001",
+        "slot": 4,
+        "anchor_segment": "C005",
+        "characters": ["Shoko"],
+        "scene_brief": "Shoko reacts on the bed.",
+    }, {
+        "plan_id": "S002",
+        "slot": 8,
+        "anchor_segment": "C009",
+        "characters": ["Shoko"],
+        "scene_brief": "Shoko leans forward as her loose shirt falls open.",
+    }]
+    events = [{
+        "segment_id": "C009",
+        "character": "Shoko",
+        "operation": "wear",
+        "wardrobe_change": (
+            "Shoko now wears only a loose white shirt, open at the front; "
+            "her lower body remains nude."
+        ),
+        "state_after": "bottomless",
+        "evidence": "The loose white shirt falls open while her lower body remains bare.",
+    }]
+
+    bound = pipeline.bind_scene_plan_wardrobes(
+        plans,
+        [f"C{index:03d}" for index in range(1, 10)],
+        {},
+        [{"name": "Shoko", "confidence": 1.0}],
+        events,
+        "message-actual",
+        wardrobe_at_start=[{
+            "character": "Shoko",
+            "state": "Shoko is fully nude; all clothing and underwear have been removed.",
+        }],
+    )
+
+    assert "fully nude" in bound[0]["continuity_note"]
+    assert "white shirt" not in bound[0]["continuity_note"]
+    assert "white shirt" in bound[1]["continuity_note"]
+    assert "lower body remains nude" in bound[1]["continuity_note"]
+    assert all("bra" not in item["continuity_note"].casefold() for item in bound)
+
+
+def test_call1_timeline_generalizes_to_removed_raincoat_then_added_shawl():
+    plan = [{
+        "plan_id": "S001",
+        "slot": 2,
+        "anchor_segment": "C003",
+        "characters": ["Mina"],
+        "scene_brief": "Mina draws a shawl around her shoulders.",
+    }]
+    bound = pipeline.bind_scene_plan_wardrobes(
+        plan,
+        ["C001", "C002", "C003"],
+        {},
+        [{"name": "Mina", "confidence": 1.0}],
+        [{
+            "segment_id": "C003",
+            "character": "Mina",
+            "operation": "add",
+            "wardrobe_change": "Mina adds a wool shawl over her blue dress.",
+            "state_after": "clothed",
+            "evidence": "Mina drew a wool shawl over her blue dress.",
+        }],
+        "message-isomorphic",
+        wardrobe_at_start=[{
+            "character": "Mina",
+            "state": "Mina wears a blue dress; her discarded raincoat remains on the chair.",
+        }],
+    )
+
+    note = bound[0]["continuity_note"]
+    assert "blue dress" in note
+    assert "discarded raincoat remains on the chair" in note
+    assert "adds a wool shawl" in note
 
 
 def test_scene_plan_carries_literal_wardrobe_change_as_natural_continuity():
@@ -1094,13 +1268,16 @@ def test_scene_plan_carries_literal_wardrobe_change_as_natural_continuity():
         events,
         "message-1",
         default_outfits={"Sato": ["white shirt", "blue pants", "underwear"]},
+        wardrobe_at_start=[{
+            "character": "Sato",
+            "state": "Sato wears a white shirt, blue pants, and underwear.",
+        }],
     )
 
     note = bound[0]["continuity_note"]
-    assert note.startswith("By this point in the story")
+    assert note.startswith("CALL1-resolved wardrobe timeline")
     assert "pulled down his pants and underwear" in note
     assert "penis remained fully visible" in note
-    assert "Server-resolved wardrobe for this story instant" in note
     assert "white shirt" in note
     assert bound[0]["_continuity_characters"] == ["Sato"]
 
@@ -1888,6 +2065,10 @@ async def test_call2_plan_allows_unregistered_current_character_without_global_r
         call_names.append(call_name)
         if call_name == "CALL1":
             return json.dumps({
+                "wardrobe_at_start": [{
+                    "character": "Doyoon",
+                    "state": "Doyoon's clothing is not established; use the profile default.",
+                }],
                 "wardrobe_events": [],
                 "hairstyle_events": [],
             })
@@ -2337,6 +2518,10 @@ async def test_call2_role_inputs_are_isolated_without_mutating_stored_state(monk
                 "reference_assignments": [],
                 "history_characters": ["Hana"],
                 "current_characters": [{"name": "Hana", "confidence": 0.99}],
+                "wardrobe_at_start": [{
+                    "character": "Hana",
+                    "state": "Hana wears a blue dress.",
+                }],
                 "wardrobe_events": [{
                     "segment_id": "C001",
                     "character": "Hana",
@@ -2345,6 +2530,7 @@ async def test_call2_role_inputs_are_isolated_without_mutating_stored_state(monk
                     "evidence": "Hana waits in the blue dress.",
                     "confidence": 0.99,
                 }],
+                "hairstyle_events": [],
                 "unresolved_references": [],
             })
         if call_name == "CALL2-PLAN":
@@ -2461,8 +2647,9 @@ scenes: []
     assert "keep an unnecessary partner fragment off-frame" in plan_request
     assert "blanket ban on every cropped rear or side portion" in plan_request
     assert "rather than weakening the policy" in plan_request
-    assert "same concise garment-design wording" in plan_request
-    assert "Start a new description only for a real story-time wardrobe change" in plan_request
+    assert "resolved by the upstream wardrobe analyzer" in plan_request
+    assert "Do not reconstruct, summarize, or output clothing" in plan_request
+    assert "No scene contains a planner-authored wardrobe state" in plan_request
     assert "Every scene is directly supported by its own anchor passage" in plan_request
     assert "# RECENT STORY CONTINUITY REFERENCE (NOT SCENE CANDIDATES)" in plan_request
     assert "BRANCH-SCOPED PRIOR NARRATIVE" in plan_request
@@ -2532,11 +2719,11 @@ scenes: []
     assert "[Last log entry]" not in detail_request
     assert "`anchor_passage` is the event authority" in detail_request
     assert "repair only camera and crop" in detail_request
-    assert "Treat the first core action or pose in `scene_brief` as the image center" in detail_request
+    assert "If the primary fact is contact" in detail_request
     assert "use a contact-centered camera" in detail_request
-    assert "Use a reaction-centered camera only when the assigned primary fact" in detail_request
-    assert "Never crop away the plan's defining action" in detail_request
-    assert "Make camera, relative positions, poses, gaze" in detail_request
+    assert "Use a reaction-centered camera only when the reaction is the assigned fact" in detail_request
+    assert "Never crop away the defining action" in detail_request
+    assert "Make camera, positions, poses, gaze" in detail_request
     assert "action-bearing region named by `scene_brief` must be inside the camera crop" in detail_request
     detail_messages = next(
         messages
@@ -2550,10 +2737,10 @@ scenes: []
     )
     assert '"anonymous_partner_fragment": false' in detail_request
     assert "When the flag is false, add no partner fragment or partner contact" in detail_request
-    assert "complete resolved wardrobe" in detail_request
+    assert "complete wardrobe" in detail_request
     assert "Put only visible or coverage-defining garments in `positive`" in detail_request
     assert "Omit remote face, hair, eye, expression, or clothing details" in detail_request
-    assert "Keep partner-owned anatomy and action out of every named character's `positive`" in detail_request
+    assert "Keep partner anatomy and action out of named-character `positive`" in detail_request
     assert "never replace one with an anonymous participant" in detail_request
     assert "non-identifying rear or side portion of a partner's head" in detail_request
     assert "never turn it into a second portrait or camera center" in detail_request
@@ -2686,6 +2873,118 @@ scenes[1]:
     assert "brown hair" not in detail_request
 
 
+@pytest.mark.asyncio
+async def test_single_v5_plan_receives_lora_subject_authority_separate_from_roster(
+    monkeypatch,
+):
+    requests = {}
+
+    async def fake_pipeline_call(call_name, messages, *args, **kwargs):
+        requests[call_name] = "\n".join(
+            str(message.get("content") or "") for message in messages
+        )
+        if call_name == "CALL2-PLAN":
+            return json.dumps({
+                "scene_plan": [{
+                    "anchor_segment": "C001",
+                    "characters": ["Shoko"],
+                    "scene_brief": "Shoko recoils from an off-frame touch.",
+                    "anonymous_partner_fragment": False,
+                }],
+            })
+        if call_name.startswith("CALL2-DETAIL 1/1"):
+            return """<lb-xnai>
+scenes[1]:
+  - camera: close-up
+    characters[1]:
+      - name: Shoko
+        positive: 1girl, black hair, recoiling
+        position: center
+        outfit_state:
+          body_state: clothed
+          worn: [white shirt]
+          removed: []
+    scene: 1girl, bedroom
+    supplement: Shoko recoils while the other person remains off-frame.
+    slot: 0
+</lb-xnai>"""
+        if call_name == "CALL2-AUTHORITY-AUDIT":
+            return _authority_audit_response(messages)
+        raise AssertionError(f"unexpected call: {call_name}")
+
+    doyun = cards_to_character_profiles("Doyun", [{
+        "id": "card_1",
+        "appearance": ["short black hair"],
+        "default_outfit": ["school uniform"],
+        "rep_images": ["Doyun.png"],
+    }])
+    doyun["is_persona"] = True
+    shoko = cards_to_character_profiles("Shoko", [{
+        "id": "card_1",
+        "appearance": ["long black hair"],
+        "default_outfit": ["white shirt"],
+        "loras_solo": [{"lora_path": "shoko-body.safetensors"}],
+    }])
+    shoko["is_persona"] = False
+
+    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
+    result = await pipeline.build_from_context(
+        {
+            "session_id": "single_v5_lora_subject_authority",
+            "target_slotted": "Shoko recoils from Doyun's touch.\n\n[Slot 0]",
+            "chats": [
+                {"role": "user", "data": "Continue."},
+                {"role": "char", "data": "Shoko recoils from Doyun's touch."},
+            ],
+        },
+        {
+            "call1_enabled": False,
+            "call2_parallel_enabled": True,
+            "call2_parallel_max_concurrency": 1,
+            "call2_parallel_slow_retry_enabled": False,
+            "output_count_min": 1,
+            "output_count_max": 1,
+            "key_visual": False,
+            "call3_enabled": False,
+            "speak_enabled": False,
+        },
+        "",
+        visual_profiles={"Doyun": doyun, "Shoko": shoko},
+        pre_resolved_profile_result={
+            "characters": [],
+            "history_characters": [],
+            "current_characters": [
+                {"name": "Doyun", "confidence": 1.0},
+                {"name": "Shoko", "confidence": 1.0},
+            ],
+            "uncertainties": [],
+            "profile_events": [],
+            "initial_visual_bases": [],
+            "visual_base_events": [],
+            "repair_requests": [],
+            "validation_warnings": [],
+            "validation_errors": [],
+        },
+        first_pass_single_v5=True,
+    )
+
+    plan_request = requests["CALL2-PLAN"]
+    roster_block = plan_request.split(
+        "# CURRENT CANONICAL CHARACTER ROSTER (IDENTITY LABELS ONLY)",
+        1,
+    )[1].split("# SINGLE-PRESET NAMED SUBJECT AUTHORITY", 1)[0]
+    authority_block = plan_request.split(
+        "# SINGLE-PRESET NAMED SUBJECT AUTHORITY",
+        1,
+    )[1].split("# SCENE-PLAN TASK", 1)[0]
+    assert '"Doyun"' in roster_block
+    assert '"Shoko"' in roster_block
+    assert '"Shoko"' in authority_block
+    assert '"Doyun"' not in authority_block
+    assert "configured character-identity LoRAs" in authority_block
+    assert result["items"][0]["characters"][0]["name"] == "Shoko"
+
+
 def test_complete_call2_validation_rejects_one_shard_as_global_fallback():
     toggles = pipeline.merged_toggles({
         "output_count_min": 3,
@@ -2724,6 +3023,40 @@ def test_complete_call2_validation_accepts_scene_without_named_characters():
     assert reason == ""
     assert len(descriptors) == 1
     assert descriptors[0]["characters"] == []
+
+
+def test_complete_call2_fallback_rejects_non_lora_subject_under_single_authority():
+    output = """<lb-xnai>
+scenes[1]:
+  - camera: medium shot
+    characters[1]:
+      - name: Leon
+        positive: 1boy, black hair
+        position: center
+        outfit_state:
+          body_state: clothed
+          worn: [shirt]
+          removed: []
+    scene: 1boy, bedroom
+    supplement: Leon reaches toward an off-frame partner.
+    slot: 0
+</lb-xnai>"""
+
+    descriptors, reason = pipeline.validate_complete_call2_output(
+        output,
+        pipeline.merged_toggles({
+            "output_count_min": 1,
+            "output_count_max": 1,
+            "key_visual": False,
+        }),
+        "Mina reacts.\n\n[Slot 0]",
+        "TEST-CALL2-SINGLE-SUBJECT-FALLBACK",
+        [0],
+        named_subject_candidates=["Mina"],
+    )
+
+    assert descriptors == []
+    assert "Single V5 주체 권위 밖 이름" in reason
 
 
 @pytest.mark.parametrize(
@@ -3130,7 +3463,12 @@ async def test_call1_parallel_then_shared_plan_then_parallel_keyvis_and_details(
                     "reference_assignments": [],
                     "history_characters": [],
                     "current_characters": [{"name": "Hana", "confidence": 0.99}],
+                    "wardrobe_at_start": [{
+                        "character": "Hana",
+                        "state": "Hana wears the same blue dress with short sleeves and a round neckline.",
+                    }],
                     "wardrobe_events": [],
+                    "hairstyle_events": [],
                     "unresolved_references": [],
                     "assigned": assigned,
                 })
@@ -3155,7 +3493,6 @@ async def test_call1_parallel_then_shared_plan_then_parallel_keyvis_and_details(
                             "anchor_segment": f"C{slot + 1:03d}",
                             "characters": ["Hana"],
                             "scene_brief": f"Hana scene {slot}",
-                            "continuity_note": "Hana wears the same blue dress with short sleeves and a round neckline.",
                         }
                         for slot in range(9)
                     ],
@@ -7083,6 +7420,7 @@ async def test_call1_compact_json_preserves_original_context_and_slots(monkeypat
         calls.append((call_name, messages, kwargs))
         if task_key == "illustration_call1":
             return json.dumps({
+                "wardrobe_at_start": [],
                 "wardrobe_events": [],
                 "hairstyle_events": [],
             })
@@ -7139,6 +7477,7 @@ scenes[1]:
     call2_text = "\n".join(message["content"] for message in calls[1][1])
     assert "[Slot 0]" not in call1_text
     assert "__SLOT_" not in call1_text
+    assert '"wardrobe_at_start"' in call1_text
     assert '"wardrobe_events"' in call1_text
     assert '"reference_assignments"' not in call1_text
     assert "[Slot 0]" in call2_text
@@ -7313,11 +7652,15 @@ def test_call1_shard_scope_violations_are_warnings_for_event_arrays():
         ["C001", "C002"],
     )
     assert any("담당 밖 복장 이벤트 폐기" in item for item in warnings)
-    assert merged == {"wardrobe_events": [], "hairstyle_events": []}
+    assert merged == {
+        "wardrobe_at_start": [],
+        "wardrobe_events": [],
+        "hairstyle_events": [],
+    }
     assert fallback_errors == []
 
 
-def test_call1_shards_merge_only_wardrobe_and_hairstyle_arrays():
+def test_call1_shards_merge_only_start_state_and_event_arrays():
     merged, warnings, fallback_errors = pipeline._merge_call1_shard_values(
         [{
             "assigned_segment_ids": ["C007"],
@@ -7325,6 +7668,10 @@ def test_call1_shards_merge_only_wardrobe_and_hairstyle_arrays():
                 "history_characters": ["Shiho"],
                 "current_characters": ["Shiho"],
                 "profile_events": [{"profile_id": "corrupted_heart"}],
+                "wardrobe_at_start": [{
+                    "character": "Shiho",
+                    "state": "Shiho wears a black jacket.",
+                }],
                 "wardrobe_events": [],
                 "hairstyle_events": [],
             },
@@ -7334,6 +7681,10 @@ def test_call1_shards_merge_only_wardrobe_and_hairstyle_arrays():
                 "history_characters": ["Shiho"],
                 "current_characters": ["Shiho"],
                 "reference_assignments": [{"surface": "she"}],
+                "wardrobe_at_start": [{
+                    "character": "Shiho",
+                    "state": "Shiho wears a black jacket.",
+                }],
                 "wardrobe_events": [],
                 "hairstyle_events": [],
             },
@@ -7343,7 +7694,14 @@ def test_call1_shards_merge_only_wardrobe_and_hairstyle_arrays():
 
     assert warnings == []
     assert fallback_errors == []
-    assert merged == {"wardrobe_events": [], "hairstyle_events": []}
+    assert merged == {
+        "wardrobe_at_start": [{
+            "character": "Shiho",
+            "state": "Shiho wears a black jacket.",
+        }],
+        "wardrobe_events": [],
+        "hairstyle_events": [],
+    }
 
 
 @pytest.mark.asyncio
@@ -9550,6 +9908,10 @@ async def test_persistent_history_path_uses_compact_call2_and_updates_wardrobe(m
             assert "# PRESELECTED PROFILE AUTHORITY" in request_text
             assert "Hana_Ordinary" in request_text
             return json.dumps({
+                "wardrobe_at_start": [{
+                    "character": "Hana",
+                    "state": "Hana wears a blue dress.",
+                }],
                 "wardrobe_events": [{
                     "segment_id": "C002",
                     "character": "Hana",
@@ -9793,7 +10155,15 @@ async def test_persistent_history_recovers_missing_prior_wardrobe_with_balanced_
                 "reference_assignments": [],
                 "history_characters": ["Hana"],
                 "current_characters": [{"name": "Hana", "confidence": 0.99}],
+                "wardrobe_at_start": [{
+                    "character": "Hana",
+                    "state": (
+                        "With no story-established outfit, Hana uses the profile-default "
+                        "red cardigan and pleated skirt as the fallback."
+                    ),
+                }],
                 "wardrobe_events": [],
+                "hairstyle_events": [],
                 "unresolved_references": [],
             })
         call_name = _call_name(task_key)
@@ -9883,6 +10253,13 @@ scenes[1]:
     state = result["character_states_after"]["hana"]
     assert state["current_wardrobe"]["worn"] == ["red cardigan", "pleated skirt"]
     assert "source" not in state["current_wardrobe"]
+    assert state["last_resolved_wardrobe_start"] == {
+        "message_id": "msg_current",
+        "state": (
+            "With no story-established outfit, Hana uses the profile-default "
+            "red cardigan and pleated skirt as the fallback."
+        ),
+    }
 
 
 @pytest.mark.asyncio
@@ -9893,6 +10270,7 @@ async def test_persistent_backtranslation_off_keeps_original_text_across_calls(m
         calls.append((task_key, messages))
         if task_key == "illustration_call1":
             return json.dumps({
+                "wardrobe_at_start": [],
                 "wardrobe_events": [],
                 "hairstyle_events": [],
             })
@@ -10089,6 +10467,10 @@ async def test_call1_parallel_keeps_successful_shard_when_another_shard_exhausts
                 1: {
                     "raw": "",
                     "value": {
+                        "wardrobe_at_start": [{
+                            "character": "Hana",
+                            "state": "Hana wears her previous outfit.",
+                        }],
                         "wardrobe_events": [{
                             "segment_id": "C001",
                             "character": "Hana",
@@ -10117,6 +10499,10 @@ async def test_call1_parallel_keeps_successful_shard_when_another_shard_exhausts
     )
 
     parsed = json.loads(raw)
+    assert parsed["wardrobe_at_start"] == [{
+        "character": "Hana",
+        "state": "Hana wears her previous outfit.",
+    }]
     assert [event["segment_id"] for event in parsed["wardrobe_events"]] == ["C001"]
     assert parsed["hairstyle_events"] == []
     assert any("segments=['C002']" in warning for warning in warnings)

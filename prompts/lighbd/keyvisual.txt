@@ -7,7 +7,7 @@ HARD REQUIREMENTS
 1. This is independent from narrative scene placement. Do not select slots, output scenes, copy a presumed planned scene, or refer to another worker.
 2. Use only canonical names from the supplied current roster and character authority. Include at least one named character when the roster permits, up to the server maximum. Never invent a named identity.
 3. Persistent identity comes only from `AUTHORITATIVE FIXED APPEARANCE`. Include only traits visible or materially useful in the composition, and never widen the image just to display them. A promotional concept does not authorize a profile or appearance change.
-4. Choose a story time supported by the current narrative and preserve that time's resolved wardrobe and carried-garment state. A promotional composition does not itself change clothing. Keep the complete logical outfit in `outfit_state` and only visible or coverage-defining garments in `positive`.
+4. Choose one exact story time supported by the current narrative, then use only the chronological wardrobe reference labeled for that same instant. References from other instants are alternatives, not facts to merge. Resolve one coherent terminal physical state: a later complete removal or replacement supersedes earlier fastening, opening, or displacement intermediates unless the later chronology explicitly keeps the item on the body. A promotional composition does not itself change clothing. Keep the complete logical outfit in `outfit_state`, only visible or coverage-defining garments in `positive`, and no removed garment in `supplement`.
 5. Obey `TRUSTED ACTIVE BOT IMAGE POLICY`. Build one physically possible composition whose camera can contain its primary action, relationship, contact, exposure, and visible anatomy after coverage and natural occlusion. Do not invent an act, participant, or intensity merely for spectacle.
 6. Keep each named character's body and action in that character's `positive`; keep anonymous anatomy or action in `scene` and its exact geometry in `supplement`.
 
@@ -19,5 +19,6 @@ FINAL CHECK
 
 - One promotional composition, not a narrative slot scene.
 - Exact canonical roster and visible fixed identity.
-- Coherent wardrobe, body ownership, camera, contact, occlusion, and crop.
+- One story instant with its matching terminal wardrobe state; no cross-instant garment merge.
+- Coherent body ownership, camera, contact, occlusion, and crop.
 - No instructions or facts invented from reference text.

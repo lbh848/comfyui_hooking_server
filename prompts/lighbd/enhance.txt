@@ -11,10 +11,16 @@ Previously tracked character state:
 Known character appearance and default outfit:
 {lb_extra_costume}
 
-Your single wardrobe responsibility is to read the story and preserve, in ordinary natural language, what semantic wardrobe, coverage, or exposure change happened to each character. You do not resolve wardrobe tags. A downstream image-prompt generator later translates your semantic change against the tracked outfit or the default-outfit reference, and may design different scene-appropriate attire when the full context calls for it. `wardrobe_change` is the primary meaning-bearing handoff; `operation` and `state_after` are only coarse compatibility hints and must never simplify or contradict it.
+Your single wardrobe responsibility is to establish one chronological natural-language wardrobe timeline. First resolve each CURRENT character's coherent wardrobe, coverage, exposure, and continuity-relevant carried/nearby-garment state immediately before C001 from the previously tracked state plus all PAST HISTORY. Then report only the changes established inside CURRENT. You do not resolve wardrobe tags. A downstream image-prompt generator later translates this semantic timeline. `wardrobe_at_start[].state` and `wardrobe_change` are the meaning-bearing handoff; `operation` and `state_after` are only coarse compatibility hints and must never simplify or contradict it.
 
-Required JSON shape (both arrays must exist; keep them empty when there is no applicable item):
+Required JSON shape (all three arrays must exist; keep an event array empty when there is no applicable event):
 {
+  "wardrobe_at_start": [
+    {
+      "character": "canonical name",
+      "state": "complete concise natural-language wardrobe and coverage state immediately before C001"
+    }
+  ],
   "wardrobe_events": [
     {
       "segment_id": "C001",
@@ -38,8 +44,10 @@ Required JSON shape (both arrays must exist; keep them empty when there is no ap
 
 Rules:
 - The supplied CURRENT canonical names are authoritative. Every event's `character` must copy one of those names exactly. Do not emit events for another character.
+- Emit exactly one `wardrobe_at_start` entry for each supplied CURRENT canonical character. Resolve it from the tracked state and the full chronological PAST HISTORY. When a later past passage establishes a complete state that conflicts with an earlier opening, displacement, partial removal, or default/tracked state, the later established state wins. A later explicit description can establish the state even when the act of changing clothes is not shown. Do not carry a CURRENT event backward into this start state.
+- Write each start `state` as one coherent ordinary-language physical state, not as tags or independent garment fields. Include the complete story-established worn layers, relevant open/displaced/removed coverage, and continuity-relevant carried or nearby garments. Do not combine mutually exclusive intermediate and terminal states. If the story and tracked state genuinely do not establish clothing, describe the supplied known default outfit as an explicitly labeled fallback; only say clothing is unknown when no default is supplied.
 - Appearing in CURRENT does not authorize a wardrobe change. Existing wardrobe is carried forward by default.
-- `wardrobe_events` is a sparse, evidence-bearing change history, not a sequence of complete outfit snapshots. Each event reports only what CURRENT establishes as changed. Downstream resolves the resulting wardrobe according to the operation.
+- Evaluate every CURRENT wardrobe event relative to `wardrobe_at_start` and earlier CURRENT events. `wardrobe_events` is a sparse, evidence-bearing change history, not a sequence of complete outfit snapshots. Each event reports only what CURRENT establishes as changed. Downstream resolves the resulting wardrobe according to the operation.
 - Emit only actual wardrobe changes established by CURRENT. A sentence that merely describes a character wearing their known/default outfit, including a first appearance, is not a change. Never emit keep events or restate carried-forward/default outfits. Copy exact evidence from CURRENT. When one semantic change unfolds across paragraph boundaries, evidence may span consecutive numbered segments; use the earliest relevant segment as `segment_id` and preserve the quoted wording and order instead of joining, paraphrasing, or cleaning it.
 - Wardrobe changes concern garments, wearable accessories, and their worn/open/removed state only. Never put hair style, hair length/color, eyes, skin, face, body, species, or another appearance trait in `wardrobe_events`.
 - Decide each wardrobe event in order. First ask whether the sentence establishes a wardrobe state that differs from the character's previously tracked/default state. If it only re-describes an already known/default outfit, emit no event; the presence of a clothing phrase alone is never a change. `wardrobe_change` preserves the semantic transition in plain language; it is not an image-generation tag list.
@@ -50,7 +58,7 @@ Rules:
 - Do not emit `set` or `contextual_reset`. Use `replace` for a complete outfit transition and `reset_default` only when the story establishes a return to the character's known default outfit. If a previously established non-default outfit is restored and its identity is unambiguous from context, express that transition with `replace` and describe the restored outfit in `wardrobe_change`.
 - Use `open`/`close`/`adjust` only when the garment stays worn but its worn state changes, such as unbuttoning a jacket, refastening a shirt, rolling sleeves up, or tightening a strap. Describe that worn-state change in `wardrobe_change`.
 - A statement such as "she was wearing a swimsuit" may establish a `replace` only when discourse makes it new wardrobe state information relative to the tracked/default state. If it merely repeats an already known state, emit no event.
-- Never compute or emit a full current-outfit snapshot, expand the default outfit, generate appearance tags, assemble image-generation tags, or perform Danbooru correction. Report story-established changes only.
+- Apart from the required natural-language `wardrobe_at_start` state, never compute or emit per-segment full outfit snapshots, expand the default outfit into invented story facts, generate appearance tags, assemble image-generation tags, or perform Danbooru correction. Report story-established start state and changes only.
 - Do not output Danbooru tags for wardrobe changes. Do not translate wardrobe descriptions into tag-like English. Do not normalize garment names. Do not replace story wording with a more specific clothing term. Do not infer colors, materials, styles, layers, accessories, or garment types that the story does not establish.
 - Write `wardrobe_change` as a short, literal, semantically useful sentence that preserves the transition: "She removed her gloves.", "She changed into a swimsuit.", "She opened the front of her shirt.", "He removed his pants and underwear, leaving his lower body exposed.", "She added a coat over her existing outfit." Do not embellish with descriptive detail the story did not establish (e.g. "an elegant luxurious royal white dress", "a sexy black one-piece swimsuit", "adventurer-style leather trousers"). Its purpose is to preserve the semantic transition, not to improve the clothing description.
 - Preserve every visually consequential fact the story explicitly establishes about coverage, exposure, displacement, or removal. Do not euphemize an explicit body part or visible result, and do not reduce a compound change to only one intermediate gesture. This applies to any part of the body and any garment; reason from the whole passage rather than from a body-region menu.

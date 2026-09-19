@@ -24,18 +24,20 @@ def test_call1_replace_is_a_semantic_full_outfit_transition():
     assert "putting a shirt over a swimsuit adds the shirt" in prompt
 
 
-def test_call1_remains_a_sparse_change_extractor():
+def test_call1_uses_one_start_state_plus_sparse_current_changes():
     prompt = CALL1_PROMPT.read_text(encoding="utf-8")
 
+    assert '"wardrobe_at_start"' in prompt
+    assert "immediately before C001" in prompt
     assert "not a sequence of complete outfit snapshots" in prompt
-    assert "Never compute or emit a full current-outfit snapshot" in prompt
+    assert "never compute or emit per-segment full outfit snapshots" in prompt
     assert "merely repeats an already known state, emit no event" in prompt
 
 
 def test_call1_natural_change_text_outranks_coarse_enum_hints():
     prompt = CALL1_PROMPT.read_text(encoding="utf-8")
 
-    assert "`wardrobe_change` is the primary meaning-bearing handoff" in prompt
+    assert "`wardrobe_at_start[].state` and `wardrobe_change` are the meaning-bearing handoff" in prompt
     assert "must never simplify or contradict it" in prompt
     assert "When one semantic change unfolds across paragraph boundaries" in prompt
     assert "evidence may span consecutive numbered segments" in prompt

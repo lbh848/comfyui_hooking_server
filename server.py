@@ -6586,6 +6586,7 @@ def _collect_lb_extra(bot_name: str) -> dict | None:
         ]
         return {
             "system_prompt": system_prompt.strip(),
+            "system_prompt_preset": preset_name,
             "characters": characters,
             "bot_character_names": bot_character_names,
             "visual_profiles": visual_profiles,
@@ -6636,6 +6637,24 @@ def build_active_lb_instruction(bot_name: str) -> str:
     if not collected:
         return ""
     return strip_output_count_rule(collected["system_prompt"])
+
+
+def active_bot_uses_first_pass_single_v5(bot_name: str) -> bool:
+    """Return the exact active preset scope used by Single V5 PLAN safeguards."""
+    collected = _collect_lb_extra(bot_name)
+    if not collected:
+        print(
+            "[ILLUST_CONTEXT:CALL2_PLAN] 활성 봇 프리셋 확인 실패로 Single V5 "
+            f"주체 권위 비활성화: bot={bot_name!r}"
+        )
+        return False
+    preset_name = str(collected.get("system_prompt_preset") or "").strip()
+    enabled = preset_name == FIRST_PASS_SINGLE_V5_PRESET
+    print(
+        "[ILLUST_CONTEXT:CALL2_PLAN] Single V5 프리셋 범위 확인: "
+        f"bot={bot_name!r}, preset={preset_name!r}, enabled={enabled}"
+    )
+    return enabled
 
 
 def build_lb_extra_costume(bot_name: str) -> str:
@@ -8107,6 +8126,7 @@ async def process_illustration_context_queue_item(item) -> dict:
         backtranslate_names = ""
         visual_profile_catalog = ""
         effective_visual_profiles = {}
+        first_pass_single_v5 = False
         if payload.get("protocol") != "prompt_batch_v1":
             history_chats = payload.get("chats") or []
             if not history_chats:
@@ -8143,6 +8163,7 @@ async def process_illustration_context_queue_item(item) -> dict:
             backtranslate_names = build_bot_character_names(active_bot)
             visual_profile_catalog = build_visual_profile_catalog(active_bot)
             effective_visual_profiles = build_effective_visual_profiles(active_bot)
+            first_pass_single_v5 = active_bot_uses_first_pass_single_v5(active_bot)
             profile_output, profile_result = (
                 await illustration_context_pipeline.resolve_profiles_before_generation(
                     payload=payload,
@@ -8485,6 +8506,7 @@ async def process_illustration_context_queue_item(item) -> dict:
                     profile_translation_namespace=active_bot,
                     pre_resolved_profile_output=profile_output,
                     pre_resolved_profile_result=profile_result,
+                    first_pass_single_v5=first_pass_single_v5,
                 )
                 illustration_flow.raise_if_cancel_requested()
             else:

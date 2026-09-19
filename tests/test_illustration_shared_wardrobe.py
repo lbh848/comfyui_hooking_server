@@ -8,32 +8,38 @@ from modes import illustration_context_pipeline as pipeline
 
 
 @pytest.mark.parametrize(
-    "name,narrative,note,operation",
+    "name,narrative,start_state,operation",
     [
         (
             "Hiyori",
             "Hiyori carries her trench coat over her arm, wearing an ivory chiffon blouse and white miniskirt.",
-            "Hiyori wears the ivory chiffon blouse with a frilled neckline and pink ribbon, and the white miniskirt. The trench coat is carried over her arm, not worn.",
+            "Hiyori begins CURRENT wearing the trench coat over her ivory blouse and white miniskirt.",
             "remove",
         ),
         (
             "Mina",
             "Mina drapes her rain jacket across her forearm and keeps walking in her green shirt and linen trousers.",
-            "Mina wears the same green short-sleeved shirt and linen trousers. Her rain jacket rests across her forearm, not on her body.",
+            "Mina begins CURRENT wearing her rain jacket over a green shirt and linen trousers.",
             "remove",
         ),
         (
             "Ren",
             "Ren lifts the jacket from the chair, puts both arms through its sleeves, and fastens the front.",
-            "Ren now wears the brown jacket buttoned over his cream shirt. The jacket is no longer on the chair.",
+            "Ren begins CURRENT in a cream shirt while the brown jacket rests on the chair.",
             "wear",
         ),
     ],
 )
-def test_plan_resolution_survives_binding_and_public_handoff(name, narrative, note, operation):
+def test_call1_resolution_survives_binding_and_public_handoff(
+    name,
+    narrative,
+    start_state,
+    operation,
+):
+    rejected_plan_note = f"{name} wears a PLAN-invented silver costume."
     raw = json.dumps({"scene_plan": [{
         "anchor_segment": "C001", "characters": [name],
-        "scene_brief": narrative, "continuity_note": note,
+        "scene_brief": narrative, "continuity_note": rejected_plan_note,
     }]})
     parsed, reason = pipeline.parse_call2_plan(
         raw,
@@ -48,10 +54,12 @@ def test_plan_resolution_survives_binding_and_public_handoff(name, narrative, no
         [{"segment_id": "C001", "character": name, "operation": operation,
           "wardrobe_change": narrative, "evidence": narrative, "state_after": "clothed"}],
         "test-message", default_outfits={name: ["old default sweater"]},
+        wardrobe_at_start=[{"character": name, "state": start_state}],
     )
     public = pipeline._public_call2_scene_plan(bound[0])
-    assert note in public["continuity_note"]
+    assert start_state in public["continuity_note"]
     assert narrative in public["continuity_note"]
+    assert rejected_plan_note not in public["continuity_note"]
     assert public["scene_brief"] == original
     assert "wardrobe_snapshot" not in public
     assert "old default sweater" not in public["continuity_note"]
