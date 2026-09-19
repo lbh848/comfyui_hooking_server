@@ -2255,12 +2255,9 @@ async def test_call2_plan_resolves_delayed_identity_before_assigning_scene_roste
         )
         if call_name == "CALL2-PLAN":
             assert "???" not in str(messages[0].get("content") or "")
-            assert (
-                "Read the supplied current narrative from its first segment through "
-                "its final segment"
-            ) in request_text
+            assert "Read the complete current narrative before selecting" in request_text
             assert "delayed reveals from the whole narrative" in request_text
-            assert "never one anchor alone" in request_text
+            assert "Surrounding passages may clarify identity and chronology" in request_text
             catalog = request_text.split(
                 "# SERVER SEGMENT CATALOG (Cxxx IDs ONLY; SLOT MAPPING IS PRIVATE)",
                 1,
@@ -2639,11 +2636,13 @@ scenes: []
     assert "materially different supported actions" in plan_request
     assert "Internal thought, atmosphere, fluid, or micro-motion alone is not a still" in plan_request
     assert "one independently readable visible fact" in plan_request
-    assert "Preserve actor, receiver, direction, and intensity" in plan_request
-    assert "identifiable partner face, separated or distant action regions" in plan_request
+    assert "Preserve actor, receiver, direction, intensity" in plan_request
+    assert "established body support, orientation, and relative placement" in plan_request
+    assert "identifiable partner face, several competing contact regions" in plan_request
     assert "read as self-touch or reverse actor and receiver" in plan_request
     assert "one connected partner region reaching the subject" in plan_request
-    assert "complete subject reaction, pose, or gaze keeps its cause off-frame" in plan_request
+    assert "complete subject reaction, pose, gaze, or aftermath keeps its cause off-frame" in plan_request
+    assert "face close-up with remote contact left implied" in plan_request
     assert "Replace an incompatible candidate with another supported instant" in plan_request
     assert "instead of reducing the count or weakening the active policy" in plan_request
     assert "Wardrobe is resolved upstream and attached by the server" in plan_request
@@ -2718,9 +2717,9 @@ scenes: []
     assert "[Last log entry]" not in detail_request
     assert "`anchor_passage` is event authority" in detail_request
     assert "Repair camera and crop only" in detail_request
-    assert "A contact fact uses a contact-centered camera" in detail_request
-    assert "a complete reaction uses a reaction-centered camera" in detail_request
-    assert "Keep the primary action region readable" in detail_request
+    assert "face/expression and one physical contact jointly carry" in detail_request
+    assert "face close-up while describing required contact as implied" in detail_request
+    assert "keep every required contact visibly readable" in detail_request
     assert "Make camera, pose, gaze, anatomy" in detail_request
     assert "Bind one actor-owned connected part to one receiver-owned local surface" in detail_request
     detail_messages = next(
@@ -2734,7 +2733,7 @@ scenes: []
         for message in detail_messages
     )
     assert '"anonymous_partner_fragment": false' in detail_request
-    assert "When the flag is false, add no partner fragment or partner contact" in detail_request
+    assert "When the flag is false, add no partner fragment, partner contact" in detail_request
     assert "complete wardrobe" in detail_request
     assert "only visible or coverage-defining state in `positive`" in detail_request
     assert "Omit face, hair, eye, expression, clothing, and local detail outside" in detail_request
@@ -4399,10 +4398,10 @@ async def test_call2_detail_worker_receives_physical_construction_order(monkeypa
     assert "one primary visible fact" in combined
     assert "EXPLICIT SCENE EXECUTION" in combined
     assert "After the view is established" in combined
-    assert "Never pull hips, thighs, torsos, or limbs apart" in combined
+    assert "A crop is a boundary, not an occluder" in combined
     assert "one unambiguous owner" in combined
-    assert "Fixed identity and logical wardrobe are continuity authorities, not a display quota" in combined
-    assert "Omit remote face, hair, eye, expression, or clothing details" in combined
+    assert "Source completeness is not a display quota" in combined
+    assert "Omit face, hair, eye, expression, clothing, and local detail outside" in combined
 
 
 @pytest.mark.asyncio
@@ -8791,9 +8790,9 @@ def test_enhance_prompt_distinguishes_garment_owner_from_wearer():
         / "enhance.txt"
     ).read_text(encoding="utf-8")
 
-    assert "Resolve an object's owner, its wearer, and the actor" in prompt
-    assert "A grasping the hem of B's shirt does not establish that A wears it" in prompt
-    assert "A putting on B's shirt does" in prompt
+    assert "Separate an object's owner, wearer, and actor" in prompt
+    assert "touching another person's garment does not make the actor its wearer" in prompt
+    assert "Use `wear`/`add` for an incremental addition" in prompt
 
 
 def test_interaction_legibility_prompts_cover_reaction_crop_and_fragment_contrasts():
@@ -8801,28 +8800,30 @@ def test_interaction_legibility_prompts_cover_reaction_crop_and_fragment_contras
     plan_prompt = (prompt_dir / "plan.txt").read_text(encoding="utf-8")
     detail_prompt = (prompt_dir / "detail.txt").read_text(encoding="utf-8")
 
-    # Subject-only reaction: an off-frame addressee must not grow a floating face.
-    assert "looking toward an addressed off-frame person" in plan_prompt
-    assert "set `anonymous_partner_fragment` false" in plan_prompt
-    assert "rather than adding a floating chin or face" in plan_prompt
+    # Actual failure shape: an ongoing interaction cannot become a face-only
+    # reaction with the required contact merely promised outside the frame.
+    assert "face close-up with remote contact left implied" in plan_prompt
+    assert "face close-up while describing required contact as implied" in detail_prompt
+    assert "fragment and its contact must be visibly inside the crop" in detail_prompt
 
-    # Isomorphic unrenderable contact: face-led or multi-region geometry is
-    # rejected at selection time instead of expanding the anonymous partner.
-    assert "A face-led contact" in plan_prompt
-    assert "embrace that needs several distant partner regions at once" in plan_prompt
-    assert "choose another supported instant" in plan_prompt
-    assert "blanket ban on every cropped rear or side portion of a head" in plan_prompt
+    # Isomorphic composition: the face remains primary while one local contact
+    # stays visibly connected in the same wider pose.
+    assert "face primary" in plan_prompt
+    assert "same wider oblique or body-spanning composition" in plan_prompt
+    assert "same wider oblique or body-spanning composition" in detail_prompt
+    assert "detached contact-only insert" in detail_prompt
 
-    # Opposite valid case: one connected action-bearing fragment remains allowed.
-    assert "A hand-led interaction normally needs only the connected hand and forearm" in plan_prompt
-    assert "one connected hand and forearm visibly establish a wrist hold" in detail_prompt
+    # Transient reactions preserve the established support instead of inventing
+    # a seated/standing transition, and invisible cessation is not count filler.
+    assert "does not create a sitting, standing, turning" in plan_prompt
+    assert "absence of motion is not a readable still" in plan_prompt
+    assert "transient arching, jolting, trembling, or stillness" in detail_prompt
 
-    # The downstream crop must carry the selected event rather than relegating
-    # it to prose outside the visible frame.
-    assert "legs locked around a waist" in detail_prompt
-    assert "frame the legs and waist as the readable center" in detail_prompt
-    assert "never choose a face-and-chest crop that excludes the legs" in detail_prompt
-    assert "The action-bearing region named by `scene_brief` must be inside" in detail_prompt
+    # Opposite valid cases remain distinct: a complete reaction needs no
+    # anonymous fragment, while a local wrist hold may use one connected limb.
+    assert "complete subject reaction, pose, gaze, or aftermath" in plan_prompt
+    assert "keeps its cause off-frame and uses false" in plan_prompt
+    assert "one connected hand and forearm establish a wrist hold" in detail_prompt
 
 
 def test_parse_call1_legacy_items_event_still_carried_for_backward_compat():

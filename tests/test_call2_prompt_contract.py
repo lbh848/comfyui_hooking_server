@@ -152,7 +152,10 @@ def test_plan_contract_owns_scene_selection_but_not_wardrobe_resolution():
     assert "Read the complete current narrative before selecting" in plan
     assert "anchor_segment" in plan
     assert "one independently readable visible fact" in plan
-    assert "Preserve actor, receiver, direction, and intensity" in plan
+    assert "Preserve actor, receiver, direction, intensity" in plan
+    assert "established body support, orientation, and relative placement" in plan
+    assert "does not create a sitting, standing, turning" in plan
+    assert "absence of motion is not a readable still" in plan
     assert "Meet the requested count with materially different supported actions" in plan
     assert "Wardrobe is resolved upstream and attached by the server" in plan
     assert "Do not reconstruct or output clothing" in plan
@@ -172,11 +175,11 @@ def test_plan_contract_keeps_single_preset_renderability_without_loosening_it():
     assert "anonymous_partner_fragment" in plan
     assert "one connected partner region" in plan
     assert "local contact point" in plan
-    assert "complete subject reaction, pose, or gaze" in plan
+    assert "complete subject reaction, pose, gaze, or aftermath" in plan
     assert "read as self-touch" in plan
     assert "identifiable partner face" in plan
-    assert "separated or distant action regions" in plan
-    assert "Do not repeat near-identical stages" in plan
+    assert "several competing contact regions" in plan
+    assert "near-identical reaction portraits" in plan
     assert "Replace an incompatible candidate with another supported instant" in plan
     assert "instead of reducing the count" in plan
 
@@ -192,9 +195,9 @@ def test_detail_contract_expands_exact_assignments_and_handles_both_flag_values(
     assert "Repair camera and crop only" in detail
     assert "When `anonymous_partner_fragment` is true" in detail
     assert "preserve the assigned actor/receiver relation" in detail
-    assert "contact-centered camera" in detail
-    assert "reaction-centered camera" in detail
-    assert "When the flag is false, add no partner fragment or partner contact" in detail
+    assert "face/expression and one physical contact jointly carry" in detail
+    assert "face close-up while describing required contact as implied" in detail
+    assert "When the flag is false, add no partner fragment, partner contact" in detail
     assert "Omit face, hair, eye, expression, clothing, and local detail outside" in detail
     assert "one physically coherent state" in detail
     assert "Never reintroduce removed fabric" in detail
@@ -211,25 +214,40 @@ def test_interaction_examples_cover_failed_paraphrases_and_opposite_cases():
     plan = _read(PLAN)
     detail = _read(DETAIL)
 
-    # Actual and isomorphic failure: one crop cannot carry a face plus remote
-    # upper- and lower-body contacts. One local contact remains valid.
-    assert "subject's face plus partner neck/chest contact" in plan
-    assert "distant waist or leg contact is not one crop" in plan
-    assert "select one locally readable contact or another instant" in plan
+    # Actual failure and paraphrase: a story-critical face remains primary, but
+    # one required contact must share a wider connected pose instead of being
+    # promised outside a close-up or isolated as a detached insert.
+    assert "named subject's readable face and one physical contact jointly carry" in plan
+    assert "same wider oblique or body-spanning composition" in plan
+    assert "face close-up with remote contact left implied" in plan
+    assert "contact-only insert that loses a story-critical face" in plan
+    assert "named subject's face and lower body contact jointly carry" in detail
+    assert "do not crop either fact away" in detail
+
+    # Support and orientation survive transient reactions; a jolt is not an
+    # invented seated pose, and invisible cessation is not count filler.
+    assert "jolt, arch, tremor, or stop in motion" in plan
+    assert "does not create a sitting, standing, turning" in plan
+    assert "invisible cessation as filler" in plan
+    assert "transient arching, jolting, trembling, or stillness" in detail
+
+    # A genuinely local interaction still uses one connected fragment.
     assert "local wrist hold can use one connected hand and forearm" in plan
 
     # Opposite case: a complete visible reaction keeps its cause off-frame.
     assert "distinctive recoil or exhausted pose" in plan
     assert "omit its off-frame cause" in plan
     assert "upward gaze or overwhelmed recoil" in detail
+    assert "do not imply a cropped face above it" in detail
 
     # Requested-count preservation cannot produce near-duplicate micro-stages.
     assert "Two moments from one sustained event" in plan
     assert "materially different" in plan
 
-    # DETAIL keeps one local action region and one coherent wardrobe state.
-    assert "legs locked around a waist" in detail
-    assert "omit the distant face" in detail
+    # DETAIL keeps visible contact and coherent wardrobe state without inventing
+    # an explanatory fragment.
+    assert "fragment and its contact must be visibly inside the crop" in detail
+    assert "never merely `implied`" in detail
     assert "one connected hand and forearm" in detail
     assert "coarse word such as `nude` describes coverage" in detail
     assert "garment that the same continuity note says remains attached" in detail

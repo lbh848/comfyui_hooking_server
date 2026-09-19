@@ -282,13 +282,21 @@ def test_prompts_cover_requested_semantics_without_age_or_second_character_polic
     assert "primary action or interaction is unclear" in system
     assert "actor and receiver cannot be distinguished" in system
     assert "required local contact does not read" in system
-    assert "story-critical orientation or support is lost" in system
+    assert "established lying/seated/standing support" in system
+    assert "changes without a narrative transition" in system
+    assert "jolt, arch, tremor, or momentary stillness" in system
     assert "Respect natural crop and occlusion" in system
     assert "Do not evaluate finger count or fine hand rendering" in system
     assert "fused or detached limb or crop-edge shape" in system
     assert "complete subject reaction, pose, gaze, or aftermath" in system
-    assert "Omission of an anonymous partner fragment is not itself a defect" in system
-    assert "a present fragment fails when it is vague, detached, awkward" in system
+    assert "only when that reaction or aftermath is itself the selected fact" in system
+    assert "selected fact is an ongoing interaction" in system
+    assert "required contact must be visibly present" in system
+    assert "does not supply pixels" in system
+    assert "face may remain the primary focus while one contact is secondary" in system
+    assert "do not demand a contact-only insert" in system
+    assert "Omission of an unnecessary anonymous fragment is not itself a defect" in system
+    assert "required or present fragment fails when it is absent, vague, detached" in system
     assert "complete partner, identifiable face, silhouette" in system
     assert "remaining displaced garment that vanishes" in system
     assert "Do not infer a transition merely because two prompt descriptions differ" in system
