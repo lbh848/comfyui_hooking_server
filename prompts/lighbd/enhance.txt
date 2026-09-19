@@ -13,7 +13,9 @@ Previously tracked character state:
 Known character appearance and default outfit:
 {lb_extra_costume}
 
-Read PAST HISTORY and every numbered CURRENT segment semantically. Resolve aliases and pronouns from the discourse. Separate an object's owner, wearer, and actor: touching another person's garment does not make the actor its wearer. Do not use keyword matching or emit a separate coreference analysis.
+INTERPRETATION
+
+Read PAST HISTORY and every numbered CURRENT segment semantically. Resolve aliases, titles, and pronouns from the complete discourse. Separate an object's owner, wearer, and actor: a possessive identifies ownership or relation, and touching another person's garment does not make the actor its wearer. Attribute a change only to the character whose worn state actually changes. Do not use keyword matching, emit a separate coreference analysis, or rewrite the supplied context.
 
 OUTPUT
 
@@ -23,7 +25,7 @@ Return one JSON object with all three arrays. Keep an event array empty when no 
   "wardrobe_at_start": [
     {
       "character": "canonical name",
-      "state": "concise coherent natural-language physical wardrobe and coverage state immediately before C001"
+      "state": "complete concise natural-language physical wardrobe and coverage state immediately before C001"
     }
   ],
   "wardrobe_events": [
@@ -47,22 +49,63 @@ Return one JSON object with all three arrays. Keep an event array empty when no 
   ]
 }
 
-HARD REQUIREMENTS
+WARDROBE AT START
 
-1. Copy supplied canonical names exactly. Emit one `wardrobe_at_start` entry for every supplied character. Resolve it from tracked state plus chronological PAST HISTORY; the latest established physical state wins over an earlier/default state. Never carry a CURRENT change backward into the start state. Use a supplied default only as an explicitly labeled fallback when story history does not establish the state.
+1. Copy supplied canonical names exactly and emit one `wardrobe_at_start` entry for every supplied character. Resolve it from the tracked state plus chronological PAST HISTORY. The latest established physical state wins over an earlier opening, displacement, partial removal, default, or tracked state. A later explicit description may establish the state even when the changing action is not shown. Never carry a CURRENT change backward into the start state.
 
-2. Each start `state` must describe one physically possible instant. State every story-relevant garment that remains worn, attached, draped, lowered, pooled, carried, or nearby together with the resulting exposure. For every changed garment, make one final semantic choice about its relation to the body: it either remains worn or attached, including open, unhooked, lowered, displaced, draped, or pooled states, or it has been removed from the body. A removed garment may separately be carried or nearby. Use `fully unclothed`, `wearing nothing`, or equivalent terminal wording only when no garment remains worn or attached. If fabric remains worn or attached, describe the exact exposure without terminal wording. If a garment was removed, state that removal and do not also describe it as worn, open, unhooked, lowered, or attached. A coarse value such as `nude`, `topless`, or `bottomless` summarizes coverage only; it never erases an explicitly remaining displaced garment from the natural-language state.
+2. Write each start `state` as one coherent ordinary-language physical state, not tags or independent garment fields. Include every story-relevant worn layer and any open, displaced, removed, carried, or nearby garment whose state matters to continuity. Appearing in CURRENT does not authorize a wardrobe change; existing wardrobe carries forward unless the story establishes a transition.
 
-3. `wardrobe_events` is a sparse change history, not a sequence of complete outfit snapshots. Emit an event only when CURRENT establishes a real before-to-after wardrobe change relative to the start state and earlier CURRENT events. A first appearance or repeated description of an existing/default outfit is not a change. Attribute the event only to the character whose worn state changes. Preserve a change that spans consecutive segments as one event using the earliest relevant segment and exact ordered evidence.
+3. Each start state must describe one physically possible instant. State every story-relevant garment that remains worn, attached, draped, lowered, pooled, carried, or nearby together with the resulting exposure. For every changed garment, make one final semantic choice: it either remains worn or attached—including open, unhooked, lowered, displaced, draped, or pooled states—or it has been removed from the body. A removed garment may separately be carried or nearby. Use `fully unclothed`, `wearing nothing`, or equivalent terminal wording only when no garment remains worn or attached. If fabric remains worn or attached, describe the exact exposure without terminal wording. If a garment was removed, state that removal and do not also describe it as worn, open, unhooked, lowered, or attached.
 
-4. `wardrobe_at_start[].state` and `wardrobe_change` are the meaning-bearing handoff. `operation` and `state_after` are coarse compatibility hints and must never simplify or contradict the natural language. Use `wear`/`add` for an incremental addition, `remove` for specified removed items, `replace` for a complete transition to another outfit, `open`/`close`/`adjust` when the same garment stays worn, and `reset_default` only for a story-established return to the known default. Do not emit `set` or `contextual_reset`. Judge coverage from the physical result: lowered or displaced clothing may stop covering a region while remaining attached, and that remaining garment must stay in the natural-language transition.
+4. If story history and tracked state genuinely do not establish clothing, use the supplied known default as an explicitly labeled fallback. Say clothing is unknown only when neither story state nor a default is supplied. Never expand the default into invented story facts.
 
-5. Preserve only story-established garment, accessory, coverage, exposure, displacement, and removal facts. Do not invent or normalize colors, materials, layers, garment types, or image tags. Do not generate Danbooru tags or per-segment full outfit snapshots. A garment outside a camera view is not removed.
+CURRENT WARDROBE EVENTS
 
-6. `hairstyle_events` contains only an actual before-to-after hair-arrangement change such as tying, untying, replacing, adding, removing, or restoring an arrangement. Hair color, length, texture, movement, messiness, bangs, body traits, and wearable hair accessories are not hairstyle events. A disheveled ponytail is still a ponytail unless the narrative establishes that it was undone. Preserve literal evidence and do not convert it to tag syntax.
+1. `wardrobe_events` is a sparse, evidence-bearing change history, not a sequence of complete outfit snapshots. Evaluate each event relative to the start state and earlier CURRENT events. A first appearance or repeated description of an existing/default outfit is not a change. Never emit keep events or restate carried-forward clothing.
+
+2. Emit a change only when CURRENT establishes a real before-to-after transition. Copy exact evidence from CURRENT. When one semantic change spans consecutive segments as one event, use the earliest relevant `segment_id` and preserve the excerpts and their order instead of joining, cleaning, or paraphrasing them.
+
+3. Wardrobe events cover garments, wearable accessories, and their worn, opened, displaced, or removed state only. Do not put hairstyle, hair color or length, eyes, skin, face, body, species, pose, expression, or another appearance trait in `wardrobe_events`.
+
+4. Choose the operation from the full sentence and discourse context, never from a trigger word:
+   - Use `wear`/`add` for an incremental addition that leaves the existing outfit in place. Putting a shirt over a swimsuit adds the shirt; it does not replace the swimsuit.
+   - Use `remove` for specified removed items while the rest of the current outfit remains in effect. Describe only those removed items.
+   - Use `replace` for a complete transition to another outfit, including an unambiguous change of clothes or newly established non-default outfit. A replacement ends the previous worn outfit as a whole; do not require separate removals or copy unmentioned default garments into the new state.
+   - Use `open`/`close`/`adjust` when the same garment stays worn but its worn state changes, such as unbuttoning a jacket, refastening a shirt, rolling sleeves, or tightening a strap.
+   - Use `reset_default` only when the story establishes a return to the known default. Do not emit `set` or `contextual_reset`.
+
+5. `wardrobe_at_start[].state` and `wardrobe_change` are the meaning-bearing handoff. `operation` and `state_after` are coarse compatibility hints and must never simplify or contradict the natural language. Write a short literal transition such as `She removed her gloves.`, `She changed into a swimsuit.`, `She opened the front of her shirt.`, or `She added a coat over her existing outfit.` Do not embellish, normalize garment terms, infer colors, materials, layers, or styles, or convert the transition to image tags.
+
+6. Preserve every visually consequential fact explicitly established about coverage, exposure, displacement, and removal. Do not reduce a compound change to one intermediate gesture. If a coarse enum cannot express the full result, choose the nearest compatible hint while keeping the complete meaning in `wardrobe_change` and `evidence`.
+
+COVERAGE AND PHYSICAL STATE
+
+1. Judge coverage from the physical result, not from whether a garment has completely left the body: lowered or displaced clothing may stop covering a region while remaining attached, and that remaining garment must stay in the natural-language state.
+
+2. Use the coarse `state_after` values with these meanings:
+   - `bottomless`: lower-body clothing no longer covers the groin, even if it remains lowered, pooled around the thighs or ankles, or partly attached.
+   - `topless`: upper-body clothing no longer covers the chest, even if it remains partially attached or lowered.
+   - `underwear_only`: outer clothing is removed while underwear still covers the relevant regions.
+   - `nude`: no clothing provides coverage of the groin, chest, or other normally covered regions. A coarse word such as `nude` summarizes coverage only; it never erases an explicitly remaining displaced garment.
+   - `partial`: an incomplete, displaced, or open state that does not qualify as nude, topless, bottomless, or underwear-only.
+
+3. An empty outfit is not `unknown` when nudity is established. A garment absent from a camera view is not removed; visibility and wardrobe state are different.
+
+HAIRSTYLE EVENTS
+
+1. `hairstyle_events` contains only an actual before-to-after hair-arrangement change such as tying, untying, replacing, adding, removing, or restoring a ponytail, twintails, braid, bun, hair-down state, two-side-up, side ponytail, or similar arrangement. Hair color, length, texture, movement, messiness, bangs, sidelocks, ahoge, eyes, face, body, species, skin, expression, pose, clothing, and wearable hair accessories are not hairstyle events.
+
+2. A wearable object on the hair is a wardrobe/accessory change, not a hairstyle change. `She untied her ponytail` changes the hairstyle; `She removed her hair ribbon` changes wardrobe.
+
+3. Use `replace` when one arrangement becomes another, including letting tied hair down; `add` when a component is added while the arrangement remains; `remove` when a component is undone while the rest remains meaningful; and `reset_default` only for a story-established return to the usual arrangement.
+
+4. Require literal evidence of an arrangement transition. A disheveled ponytail is still a ponytail unless the narrative establishes that it was undone. Likewise, messy, tousled, spread, swaying, or loose-looking hair remains in its established twintails, braid, bun, or other arrangement unless the story establishes that arrangement was released, replaced, added, or restored. If the distinction is ambiguous, emit no hairstyle event and preserve the fixed appearance.
+
+5. `hairstyle_change` is a short literal semantic transition, never a Danbooru tag list. Preserve exact evidence and do not infer a more specific arrangement than the story establishes.
 
 FINAL CHECK
 
-- One coherent start state per supplied character; every changed garment has one remaining-or-removed interpretation, with no mutually exclusive terminal and intermediate clothing claims.
-- Only evidence-bearing CURRENT transitions; natural language retains meaning that coarse enums cannot express.
-- Valid JSON only, with no Markdown, analysis, image tags, or extra prose.
+- One coherent start state per supplied character; every changed garment has one remaining-or-removed interpretation, with no mutually exclusive terminal and intermediate claims.
+- Only evidence-bearing CURRENT transitions; natural language retains every physical fact that coarse enums cannot express.
+- Do not generate Danbooru tags or per-segment full outfit snapshots.
+- Return valid JSON only, with no Markdown, analysis, or extra prose.

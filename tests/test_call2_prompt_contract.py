@@ -321,6 +321,55 @@ def test_interaction_examples_cover_failed_paraphrases_and_opposite_cases():
     assert "carry the authoritative coverage state into `positive`" in detail
 
 
+def test_selective_restoration_keeps_stage_boundaries_and_later_safeguards():
+    plan = _read(PLAN)
+    detail = _read(DETAIL)
+    curate = _read(CURATE)
+
+    # The restored planner keeps narrative resolution, anchor authority,
+    # visible-fact selection, crop feasibility, and set coverage as separate
+    # decisions instead of compressing them into one compound instruction.
+    for heading in (
+        "NARRATIVE AND ANCHOR AUTHORITY",
+        "VISIBLE FACT",
+        "RENDERABILITY AND SUBJECT OWNERSHIP",
+        "BEAT GROUPING, COUNT, AND SET COVERAGE",
+        "WARDROBE BOUNDARY",
+    ):
+        assert heading in plan
+    assert "one exact supplied Cxxx ID" in plan
+    assert "may not donate another event" in plan
+    assert "every action-bearing region needed to recognize it" in plan
+    assert "consecutive paragraphs sharing one time, location, and ongoing action" in plan
+
+    # Actual and isomorphic failures reject caption-dependent reactions and
+    # incompatible multi-region arrangements; valid opposite cases survive.
+    assert "generic expression whose meaning depends on dialogue" in plan
+    assert "facial reaction, a contact at the back, and a second contact" in plan
+    assert "distinctive recoil or exhausted pose" in plan
+    assert "local wrist hold can use one connected hand and forearm" in plan
+
+    # Expansion again separates event, camera, wardrobe, visibility, contact,
+    # and physical coherence while retaining every later Single V5 safeguard.
+    for heading in (
+        "ASSIGNMENT AND EVENT AUTHORITY",
+        "CAMERA AND VISIBLE EVENT",
+        "WARDROBE AUTHORITY",
+        "VISIBLE ATTRIBUTES",
+        "ANONYMOUS PARTNER AND CONTACT OWNERSHIP",
+        "PHYSICAL COHERENCE",
+    ):
+        assert heading in detail
+    assert "one continuous region entering from exactly one frame edge" in detail
+    assert "same wider oblique or body-spanning composition" in detail
+    assert "Source completeness and logical wardrobe continuity are not display quotas" in detail
+
+    # The selective restoration does not remove or bypass the later curator.
+    assert "final set of illustration scenes" in curate
+    assert "event-specific physical fact" in curate
+    assert "qualifying named-subject coverage" in curate
+
+
 def test_keyvisual_contract_is_independent_and_has_no_scene_slot_responsibility():
     keyvis = _read(KEYVIS)
 
