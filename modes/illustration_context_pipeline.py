@@ -105,6 +105,7 @@ PROMPT_FILES = {
     "call2_common": "system.txt",
     "call2_explicit": "explicit.txt",
     "call2_plan": "plan.txt",
+    "call2_curate": "curate.txt",
     "call2_detail": "detail.txt",
     "call2_keyvis": "keyvisual.txt",
     "call2_fallback": "fallback.txt",
@@ -9690,7 +9691,7 @@ def _build_character_history(extra_reference: str) -> str:
 
 
 # 삽화 CALL 이름 → 외부 LLM 분기 task_key. 기존 illustration_call2는 DETAIL과
-# 단일/폴백 경로에 유지하고 PLAN/KEYVIS/AUTHORITY-AUDIT는 독립 분리한다.
+# 단일/폴백 경로에 유지하고 PLAN/SCENE-CURATE/KEYVIS/AUTHORITY-AUDIT는 독립 분리한다.
 _CALL_TASK_KEYS = {
     "ORIGINAL-ASSET": "illustration_original_asset",
     "ORIGINAL-ASSET-RECOVERY": "illustration_original_asset_recovery",
@@ -9703,6 +9704,7 @@ _CALL_TASK_KEYS = {
     PROFILE_CONTEXT_TRANSLATE_CALL_NAME: PROFILE_CONTEXT_TRANSLATE_TASK_KEY,
     "CALL2": "illustration_call2",
     "CALL2-PLAN": "illustration_call2_plan",
+    "CALL2-SCENE-CURATE": "illustration_scene_curate",
     "CALL2-KEYVIS": "illustration_call2_keyvis",
     "CALL2-AUTHORITY-AUDIT": "illustration_call2_authority_audit",
     "CALL2-FALLBACK": "illustration_call2",
@@ -9741,6 +9743,7 @@ _CALL_QUEUE_SUBTASK_GROUPS = {
     ),
     "CALL2": ("call2", "CALL2 장면/태그 빌드"),
     "CALL2-PLAN": ("call2_plan", "CALL2 장면 PLAN"),
+    "CALL2-SCENE-CURATE": ("call2_scene_curate", "CALL2 최종 장면 선별"),
     "CALL2-DETAIL": ("call2_detail", "CALL2 장면 DETAIL"),
     "CALL2-KEYVIS": ("call2_keyvis", "CALL2 Key Visual"),
     "CALL2-AUTHORITY-AUDIT": (
@@ -9780,6 +9783,8 @@ async def _call_pipeline_llm(
         task_key = _CALL_TASK_KEYS["CALL1"]
     if task_key is None and call_name.startswith("CALL2-PLAN"):
         task_key = _CALL_TASK_KEYS["CALL2-PLAN"]
+    if task_key is None and call_name.startswith("CALL2-SCENE-CURATE"):
+        task_key = _CALL_TASK_KEYS["CALL2-SCENE-CURATE"]
     if task_key is None and call_name.startswith("CALL2-DETAIL"):
         task_key = _CALL_TASK_KEYS["CALL2"]
     if task_key is None and call_name.startswith("CALL2-KEYVIS"):
@@ -13728,6 +13733,13 @@ async def build_from_context(
         include_scene_count_limit=False,
         include_server_limits=False,
     )
+    call2_curate_prompt = render_call2_prompt(
+        prompts.get("call2_curate", ""),
+        call2_detail_toggles,
+        history,
+        include_scene_count_limit=False,
+        include_server_limits=False,
+    )
     call2_detail_prompt = render_call2_prompt(
         prompts.get("call2_detail", ""),
         call2_detail_toggles,
@@ -13788,6 +13800,15 @@ async def build_from_context(
             call2_plan_prompt,
         ),
     }
+    call2_curate_base_message = {
+        "role": "system",
+        "content": role_system(
+            "CALL2_SCENE_CURATE",
+            call2_jailbreak_prompt,
+            call2_job_prompt,
+            call2_curate_prompt,
+        ),
+    }
     call2_keyvis_base_message = {
         "role": "system",
         "content": role_system(
@@ -13802,6 +13823,7 @@ async def build_from_context(
     call2_messages = [deepcopy(call2_base_message)]
     call2_detail_context_messages = [deepcopy(call2_detail_base_message)]
     call2_plan_context_messages = [deepcopy(call2_plan_base_message)]
+    call2_curate_context_messages = [deepcopy(call2_curate_base_message)]
     call2_keyvis_context_messages = [deepcopy(call2_keyvis_base_message)]
 
     def append_call2_context(
@@ -13835,16 +13857,24 @@ async def build_from_context(
         ])),
     )
     if call2_persona_context:
-        append_call2_context({
+        persona_identity_message = {
             "role": "user",
             "content": call2_persona_context,
-        }, include_fallback=True, include_detail=False)
+        }
+        append_call2_context(
+            persona_identity_message,
+            include_fallback=True,
+            include_detail=False,
+        )
+        call2_curate_context_messages.append(deepcopy(persona_identity_message))
 
     if call2_instruction:
-        append_call2_context({
+        active_policy_message = {
             "role": "user",
             "content": "# TRUSTED ACTIVE BOT IMAGE POLICY\n\n" + call2_instruction,
-        })
+        }
+        append_call2_context(active_policy_message)
+        call2_curate_context_messages.append(deepcopy(active_policy_message))
     if selected_profile_authority:
         append_call2_context({
             "role": "user",
@@ -13859,7 +13889,7 @@ async def build_from_context(
             "content": "# CHARACTER DICTIONARY\n\n" + call2_reference,
         }, include_fallback=True, include_plan=False, include_detail=False)
     if plan_character_names:
-        append_call2_context({
+        canonical_roster_message = {
             "role": "user",
             "content": (
                 "# CURRENT CANONICAL CHARACTER ROSTER (IDENTITY LABELS ONLY)\n\n"
@@ -13870,7 +13900,14 @@ async def build_from_context(
                 "Resolve those facts only from the supplied current narrative and bounded "
                 "same-branch natural-language continuity."
             ),
-        }, include_fallback=False, include_keyvis=False, include_detail=False)
+        }
+        append_call2_context(
+            canonical_roster_message,
+            include_fallback=False,
+            include_keyvis=False,
+            include_detail=False,
+        )
+        call2_curate_context_messages.append(deepcopy(canonical_roster_message))
         print(
             f"[ILLUST_CONTEXT:CALL2_PLAN] Resolver CURRENT 캐릭터 이름만 전달: "
             f"characters={plan_character_names}"
@@ -13885,10 +13922,20 @@ async def build_from_context(
         single_subject_source,
     )
     if single_subject_authority:
-        append_call2_context({
+        single_subject_authority_message = {
             "role": "user",
             "content": single_subject_authority,
-        }, include_fallback=True, include_plan=True, include_keyvis=False, include_detail=False)
+        }
+        append_call2_context(
+            single_subject_authority_message,
+            include_fallback=True,
+            include_plan=True,
+            include_keyvis=False,
+            include_detail=False,
+        )
+        call2_curate_context_messages.append(
+            deepcopy(single_subject_authority_message)
+        )
     fixed_appearance_content = _fixed_appearance_authority_content(fixed_appearance)
     if fixed_appearance_content:
         append_call2_context({
@@ -14092,6 +14139,10 @@ async def build_from_context(
             len(str(message.get("content") or ""))
             for message in call2_plan_context_messages
         )
+        curate_context_chars = sum(
+            len(str(message.get("content") or ""))
+            for message in call2_curate_context_messages
+        )
         keyvis_context_chars = sum(
             len(str(message.get("content") or ""))
             for message in call2_keyvis_context_messages
@@ -14100,6 +14151,8 @@ async def build_from_context(
             "[ILLUST_CONTEXT:CALL2] 역할별 입력 분리: "
             f"detail_chars={detail_context_chars}, plan_chars={plan_context_chars} "
             f"(-{detail_context_chars - plan_context_chars}), "
+            f"curate_chars={curate_context_chars} "
+            f"(-{detail_context_chars - curate_context_chars}), "
             f"keyvis_chars={keyvis_context_chars} "
             f"(-{detail_context_chars - keyvis_context_chars})"
         )
@@ -14135,6 +14188,7 @@ async def build_from_context(
     call2_output = ""
     call2_fix_output = ""
     call2_plan_output = ""
+    call2_scene_curate_output = ""
     call2_keyvis_output = ""
     call2_detail_outputs: list[str] = []
     call2_authority_audit: list[dict] = []
@@ -14380,6 +14434,137 @@ async def build_from_context(
                 raise ValueError(plan_reason or "CALL2-PLAN 파싱 실패")
 
             if parsed_plan.get("mode") != "legacy":
+                parallel_stage = "CALL2-SCENE-CURATE"
+                if progress:
+                    await progress(
+                        34,
+                        "call2_scene_curate",
+                        "CALL2 최종 장면 세트 선별",
+                    )
+                draft_scene_plan = {
+                    "scene_plan": [
+                        {
+                            "anchor_segment": str(
+                                item.get("anchor_segment") or ""
+                            ).strip(),
+                            "characters": list(item.get("characters") or []),
+                            "scene_brief": str(
+                                item.get("scene_brief") or ""
+                            ).strip(),
+                            "anonymous_partner_fragment": bool(
+                                item.get("anonymous_partner_fragment", False)
+                            ),
+                        }
+                        for item in parsed_plan.get("scene_plan") or []
+                    ],
+                }
+                curated_count = len(draft_scene_plan["scene_plan"])
+                curate_toggles = deepcopy(plan_toggles)
+                curate_toggles["output_count_min"] = curated_count
+                curate_toggles["output_count_max"] = curated_count
+                curate_messages = deepcopy(call2_curate_context_messages)
+                curate_limits = [
+                    f"Return exactly {curated_count} scene_plan entries.",
+                    (
+                        "Maximum fully visible characters per image: "
+                        f"{int(toggles['character_limit'])}."
+                    ),
+                ]
+                if focus:
+                    curate_limits.append(
+                        f"Client focus: {focus!r}. Keep the final set focused on it."
+                    )
+                if direction:
+                    curate_limits.append(f"Client direction: {direction}")
+                curate_messages.append({
+                    "role": "user",
+                    "content": (
+                        "# FINAL SCENE-CURATION TASK\n\n"
+                        + "\n\n".join(curate_limits)
+                        + "\n\nYou own the final scene set. Keep strong entries and replace "
+                        "weak entries with better anchors from the current catalog. Return "
+                        "the complete final set, not a critique or patch list.\n\n"
+                        "# DRAFT SCENE PLAN (REFERENCE DATA)\n\n"
+                        + json.dumps(
+                            draft_scene_plan,
+                            ensure_ascii=False,
+                            indent=2,
+                        )
+                        + "\n\n# CURRENT SERVER SEGMENT CATALOG "
+                        "(ONLY THESE Cxxx ANCHORS ARE VALID)\n\n"
+                        + call2_segment_map
+                        + "\n\n# OUTPUT SCHEMA\n"
+                        "{\n"
+                        '  "scene_plan": [\n'
+                        "    {\n"
+                        '      "anchor_segment": "C001",\n'
+                        '      "characters": ["canonical name"],\n'
+                        '      "scene_brief": "one self-contained visible fact",\n'
+                        '      "anonymous_partner_fragment": false\n'
+                        "    }\n"
+                        "  ]\n"
+                        "}\n\nReturn only the JSON object."
+                    ),
+                })
+
+                def parse_curated_scene_plan(
+                    result: str,
+                    *,
+                    log_errors: bool,
+                ) -> tuple[dict | None, str]:
+                    curated, reason = parse_call2_plan(
+                        result,
+                        curate_toggles,
+                        original_slotted,
+                        segment_slot_map=call2_segment_slots,
+                        named_subject_candidates=(single_subject_names or None),
+                        log_errors=log_errors,
+                    )
+                    if curated is not None and curated.get("mode") != "plan":
+                        reason = (
+                            "CALL2-SCENE-CURATE는 scene_plan JSON만 반환해야 함"
+                        )
+                        if log_errors:
+                            print(f"[ILLUST_CONTEXT:CALL2_SCENE_CURATE] {reason}")
+                        return None, reason
+                    return curated, reason
+
+                def validate_curated_scene_plan(result):
+                    curated, reason = parse_curated_scene_plan(
+                        result,
+                        log_errors=False,
+                    )
+                    return bool(curated), reason or "CALL2-SCENE-CURATE 파싱 실패"
+
+                normalized_curate_messages = _normalize_messages(curate_messages)
+                print(
+                    "[ILLUST_CONTEXT:CALL2_SCENE_CURATE] 전용 입력 준비: "
+                    f"messages={len(normalized_curate_messages)}, "
+                    f"draft_scenes={curated_count}, "
+                    f"chars={sum(len(str(item.get('content') or '')) for item in normalized_curate_messages)}"
+                )
+                call2_scene_curate_output = await _call_pipeline_llm(
+                    "CALL2-SCENE-CURATE",
+                    normalized_curate_messages,
+                    stream_notify,
+                    result_validator=validate_curated_scene_plan,
+                    json_mode=True,
+                )
+                curated_plan, curate_reason = parse_curated_scene_plan(
+                    call2_scene_curate_output,
+                    log_errors=True,
+                )
+                if curated_plan is None:
+                    raise ValueError(
+                        curate_reason or "CALL2-SCENE-CURATE 파싱 실패"
+                    )
+                print(
+                    "[ILLUST_CONTEXT:CALL2_SCENE_CURATE] 최종 장면 세트 확정: "
+                    f"draft_anchors={[item.get('anchor_segment') for item in parsed_plan.get('scene_plan') or []]}, "
+                    f"final_anchors={[item.get('anchor_segment') for item in curated_plan.get('scene_plan') or []]}"
+                )
+                parsed_plan = curated_plan
+                parallel_stage = "CALL2-PLAN"
                 parsed_plan["scene_plan"] = bind_scene_plan_anchor_passages(
                     list(parsed_plan.get("scene_plan") or []),
                     _call2_segments,
@@ -15213,6 +15398,7 @@ async def build_from_context(
         "balanced_fallback_used": balanced_fallback,
         "call2_output": call2_output,
         "call2_plan_output": call2_plan_output,
+        "call2_scene_curate_output": call2_scene_curate_output,
         "call2_keyvis_output": call2_keyvis_output,
         "call2_detail_outputs": call2_detail_outputs,
         "call2_detail_failed_slots": call2_detail_failed_slots,

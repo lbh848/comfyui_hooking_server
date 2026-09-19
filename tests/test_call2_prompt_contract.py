@@ -16,6 +16,7 @@ JOB = PROMPT_DIR / "job.txt"
 PREFILL = PROMPT_DIR / "prefill.txt"
 EXPLICIT = PROMPT_DIR / "explicit.txt"
 PLAN = PROMPT_DIR / "plan.txt"
+CURATE = PROMPT_DIR / "curate.txt"
 DETAIL = PROMPT_DIR / "detail.txt"
 KEYVIS = PROMPT_DIR / "keyvisual.txt"
 FALLBACK = PROMPT_DIR / "fallback.txt"
@@ -50,6 +51,7 @@ def test_call2_uses_role_specific_files_with_compatibility_layers():
         "system.txt",
         "explicit.txt",
         "plan.txt",
+        "curate.txt",
         "detail.txt",
         "keyvisual.txt",
         "fallback.txt",
@@ -65,6 +67,7 @@ def test_call2_uses_role_specific_files_with_compatibility_layers():
     assert '"call2_common": "system.txt"' in source
     assert '"call2_explicit": "explicit.txt"' in source
     assert '"call2_plan": "plan.txt"' in source
+    assert '"call2_curate": "curate.txt"' in source
     assert '"call2_detail": "detail.txt"' in source
     assert '"call2_keyvis": "keyvisual.txt"' in source
     assert '"call2_fallback": "fallback.txt"' in source
@@ -184,6 +187,65 @@ def test_plan_contract_keeps_single_preset_renderability_without_loosening_it():
     assert "instead of reducing the count" in plan
 
 
+def test_plan_set_coverage_handles_qualifying_paraphrases_and_opposite_cases():
+    plan = _read(PLAN)
+
+    # Actual failure shape and isomorphic cases: a second authorized named
+    # subject has a distinct readable current action/reaction, while another
+    # subject already occupies several weaker or duplicate moments.
+    assert "selection also has a set-level coverage duty" in plan
+    assert "each authorized name that has at least one distinct, independently readable CURRENT beat" in plan
+    assert "at least once across the selected set" in plan
+    assert "Replace a duplicate or weaker moment with the qualifying beat" in plan
+
+    # Opposite cases: authority without a current visible beat, dialogue-only
+    # presence, an off-frame cause, or unreadable geometry does not create a
+    # quota and never expands the anonymous-partner visibility policy.
+    assert "This does not require equal counts" in plan
+    assert "Authority alone does not establish current participation" in plan
+    assert "dialogue, an off-frame cause, or an unreadable candidate does not force a scene" in plan
+    assert "preserving the requested count and active policy" in plan
+    assert "more names qualify than the requested slot count can represent" in plan
+    assert "rather than fabricating coverage" in plan
+
+
+def test_scene_curator_owns_final_reselection_without_new_score_schema():
+    curate = _read(CURATE)
+
+    assert "Turn the supplied draft scene plan into the final set" in curate
+    assert "keep, rewrite, or replace any draft entry" in curate
+    assert "unfamiliar viewer who sees only the pixels" in curate
+    assert "event-specific physical fact" in curate
+    assert "Use only exact Cxxx anchors" in curate
+    assert "Return exactly the requested number" in curate
+    assert "qualifying named-subject coverage" in curate
+    assert "smallest connected edge-to-contact body region" in curate
+    assert "Do not add scores, critiques, reasons" in curate
+    assert '"score"' not in curate
+    assert '"verdict"' not in curate
+    assert "retry" not in curate.casefold()
+
+
+def test_scene_curator_covers_actual_paraphrased_and_opposite_event_proof():
+    curate = _read(CURATE)
+
+    # Actual failure class: generic reaction, gaze, aftermath, and stillness
+    # cannot survive only because a caption explains their invisible cause.
+    assert "Expression, intensity, gaze, wardrobe display, aftermath" in curate
+    assert "lack of motion is not sufficient by itself" in curate
+    assert "looking toward an off-frame speaker is not event proof" in curate
+
+    # Isomorphic wording: the end of motion becomes usable only when a changed
+    # physical relation is visible in the frame.
+    assert "Stillness after a sudden stop is not visible by itself" in curate
+    assert "released grip, displaced object, or changed support relation" in curate
+
+    # Opposite cases remain selectable when a local object/contact relation or
+    # a complete subject-only action already proves the fact.
+    assert "hand closing around an offered key" in curate
+    assert "distinctive subject-only action may remain unchanged" in curate
+
+
 def test_detail_contract_expands_exact_assignments_and_handles_both_flag_values():
     detail = _read(DETAIL)
 
@@ -201,6 +263,10 @@ def test_detail_contract_expands_exact_assignments_and_handles_both_flag_values(
     assert "Omit face, hair, eye, expression, clothing, and local detail outside" in detail
     assert "one physically coherent state" in detail
     assert "Never reintroduce removed fabric" in detail
+    assert "one continuous region entering from exactly one frame edge" in detail
+    assert "never assemble a chest, waist, limb, or skin region from different edges" in detail
+    assert "broad torso or wall of skin is not a substitute" in detail
+    assert "without a caption" in detail
     assert "read as self-touch, an actor/receiver swap" in detail
     assert "vague nearby torso" in detail
     assert "Do not invent a blanket" in detail
@@ -325,6 +391,7 @@ def test_pipeline_composes_compatibility_and_explicit_layers_by_role():
     assert 'prompts.get("call2_prefill", "")' in source
     assert 'prompts.get("call2_explicit", "")' in source
     assert '"CALL2_PLAN",\n            call2_jailbreak_prompt,\n            call2_job_prompt,\n            call2_plan_prompt' in source
+    assert '"CALL2_SCENE_CURATE",\n            call2_jailbreak_prompt,\n            call2_job_prompt,\n            call2_curate_prompt' in source
     assert 'call2_common_prompt,\n            call2_explicit_prompt,\n            call2_detail_prompt' in source
     assert 'call2_common_prompt,\n            call2_explicit_prompt,\n            call2_keyvis_prompt' in source
     assert 'call2_common_prompt,\n            call2_explicit_prompt,\n            call2_fallback_prompt' in source
@@ -466,6 +533,7 @@ def test_prompt_editor_exposes_new_roles_and_hides_removed_layers():
         "call2_common",
         "call2_explicit",
         "call2_plan",
+        "call2_curate",
         "call2_detail",
         "call2_keyvis",
         "call2_fallback",

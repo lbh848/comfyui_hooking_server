@@ -741,6 +741,7 @@ DEFAULT_CONFIG = {
         "illustration_profile_context_translate": _llm_route_defaults(json_mode=True),  # CURRENT 카드 자연어의 지연 영어 번역
         "illustration_profile_resolve": _llm_route_defaults(json_mode=True),  # 확정 CURRENT 다중 프로필 결정(토글 시)
         "illustration_call2_plan": _llm_route_defaults(),  # CALL2 전역 장면 PLAN
+        "illustration_scene_curate": _llm_route_defaults(primary="llm3", json_mode=True),  # PLAN 초안 뒤 최종 장면 세트 선별
         "illustration_call2":      _llm_route_defaults(),  # CALL2 DETAIL 및 기존 단일/폴백 경로
         "illustration_call2_keyvis": _llm_route_defaults(),  # CALL2 독립 Key Visual
         "illustration_call2_authority_audit": _llm_route_defaults(json_mode=True),  # CALL2 고정 외형 예외 감사
@@ -9423,7 +9424,7 @@ async def handle_api_illustration_context_bridge_health(request: web.Request) ->
         "asset_reroll": True,
         "lookup_key_length": 24,
         "max_slot_manifest_count": illustration_context_pipeline.MAX_ILLUSTRATION_SLOT_COUNT,
-        "progress_phases": ["call1", "call2", "call2_plan", "call2_keyvis", "call2_detail", "call2_authority_audit", "call2_fallback", "call3", "multi_char_mask", "asset_reroll", "enqueue", "generating", "retrying", "regenerating", "ready", "error"],
+        "progress_phases": ["call1", "call2", "call2_plan", "call2_scene_curate", "call2_keyvis", "call2_detail", "call2_authority_audit", "call2_fallback", "call3", "multi_char_mask", "asset_reroll", "enqueue", "generating", "retrying", "regenerating", "ready", "error"],
     })
 
 

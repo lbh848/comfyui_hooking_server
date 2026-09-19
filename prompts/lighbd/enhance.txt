@@ -51,7 +51,7 @@ HARD REQUIREMENTS
 
 1. Copy supplied canonical names exactly. Emit one `wardrobe_at_start` entry for every supplied character. Resolve it from tracked state plus chronological PAST HISTORY; the latest established physical state wins over an earlier/default state. Never carry a CURRENT change backward into the start state. Use a supplied default only as an explicitly labeled fallback when story history does not establish the state.
 
-2. Each start `state` must describe one physically possible instant. State every story-relevant garment that remains worn, attached, draped, lowered, pooled, carried, or nearby together with the resulting exposure. Never say `fully unclothed`, `wearing nothing`, or an equivalent terminal claim while also saying a garment remains on or attached to the body. A coarse value such as `nude`, `topless`, or `bottomless` summarizes coverage only; it never erases an explicitly remaining displaced garment from the natural-language state.
+2. Each start `state` must describe one physically possible instant. State every story-relevant garment that remains worn, attached, draped, lowered, pooled, carried, or nearby together with the resulting exposure. For every changed garment, make one final semantic choice about its relation to the body: it either remains worn or attached, including open, unhooked, lowered, displaced, draped, or pooled states, or it has been removed from the body. A removed garment may separately be carried or nearby. Use `fully unclothed`, `wearing nothing`, or equivalent terminal wording only when no garment remains worn or attached. If fabric remains worn or attached, describe the exact exposure without terminal wording. If a garment was removed, state that removal and do not also describe it as worn, open, unhooked, lowered, or attached. A coarse value such as `nude`, `topless`, or `bottomless` summarizes coverage only; it never erases an explicitly remaining displaced garment from the natural-language state.
 
 3. `wardrobe_events` is a sparse change history, not a sequence of complete outfit snapshots. Emit an event only when CURRENT establishes a real before-to-after wardrobe change relative to the start state and earlier CURRENT events. A first appearance or repeated description of an existing/default outfit is not a change. Attribute the event only to the character whose worn state changes. Preserve a change that spans consecutive segments as one event using the earliest relevant segment and exact ordered evidence.
 
@@ -63,6 +63,6 @@ HARD REQUIREMENTS
 
 FINAL CHECK
 
-- One coherent start state per supplied character; no mutually exclusive terminal and intermediate clothing claims.
+- One coherent start state per supplied character; every changed garment has one remaining-or-removed interpretation, with no mutually exclusive terminal and intermediate clothing claims.
 - Only evidence-bearing CURRENT transitions; natural language retains meaning that coarse enums cannot express.
 - Valid JSON only, with no Markdown, analysis, image tags, or extra prose.

@@ -279,6 +279,7 @@ def test_prompts_cover_requested_semantics_without_age_or_second_character_polic
     assert "source narrative is authoritative" in system
     assert "resolved wardrobe timeline or `outfit_state`" in system
     assert "not a literal pixel checklist" in system
+    assert "what an unfamiliar viewer can read from the pixels" in system
     assert "primary action or interaction is unclear" in system
     assert "actor and receiver cannot be distinguished" in system
     assert "required local contact does not read" in system
@@ -297,6 +298,10 @@ def test_prompts_cover_requested_semantics_without_age_or_second_character_polic
     assert "do not demand a contact-only insert" in system
     assert "Omission of an unnecessary anonymous fragment is not itself a defect" in system
     assert "required or present fragment fails when it is absent, vague, detached" in system
+    assert "broad wall of skin" in system
+    assert "disconnected body fragments entering from different edges" in system
+    assert "minor literal pose or contact mismatch" in system
+    assert "natural, semantically equivalent" in system
     assert "complete partner, identifiable face, silhouette" in system
     assert "remaining displaced garment that vanishes" in system
     assert "Do not infer a transition merely because two prompt descriptions differ" in system
@@ -306,6 +311,11 @@ def test_prompts_cover_requested_semantics_without_age_or_second_character_polic
 
     overall = quality._build_overall_messages("source", _entries(), [])[0]["content"]
     assert "set-level outfit, identity, chronology, and story-state consistency" in overall
+    assert "meaningful named-subject coverage" in overall
+    assert "at least one distinct, independently readable current beat" in overall
+    assert "duplicate or weaker moments of another subject" in overall
+    assert "Do not demand equal counts" in overall
+    assert "dialogue, an off-frame cause, or an unreadable candidate" in overall
     assert "do not invent a transition merely because adjacent images" in overall
     assert "unexplained disappearance, reappearance, or alternation" in overall
     assert "Do not repeat isolated anatomy or fine hand issues" in overall

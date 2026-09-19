@@ -47075,13 +47075,14 @@
                 lines.push('3. **ORIGINAL-ASSET** — 켜진 경우, 확정 프로필을 기준으로 현재 장면에 맞는 등록 원본 에셋과 삽입 슬롯을 선택.');
                 lines.push('4. **CALL1-BACKTRANSLATE** — 최신 CHAR 응답(현재 맥락)을 영어로 역번역. 후속 단계가 상황을 정확히 이해하도록 정규화. (토글 시)');
                 lines.push('5. **CALL1** (enhance) — 앞 단계가 확정한 CURRENT 캐릭터를 기준으로 복장·헤어스타일 변화 사건만 분석해 CALL2에 전달. 지칭어는 문맥상 해석하되 본문을 치환하지 않습니다.');
-                lines.push('6. **CALL2-PLAN** — 전역 시각 비트 플래너. 어떤 장면(scene)/키비주얼(keyvis)을 그릴지 JSON scene_plan으로 결정.');
-                lines.push('7. **CALL2-KEYVIS / CALL2-DETAIL** — 릴레이 소설 로그에 Danbooru 태그를 붙여 `<lb-xnai>` TOON 구조(camera/scene/supplement/characters) 생성. KEYVIS=키비주얼, DETAIL=일반 장면. PLAN 없이 단독일 때 **CALL2-FALLBACK**.');
-                lines.push('8. **CALL2-AUTHORITY-AUDIT** — 고정 외형 예외 감사. 복장은 CALL2의 outfit_state를 그대로 신뢰하며 감사하지 않습니다. 고정 외형은 유지하되 서사에 명시된 헤어스타일·신체 변화가 있을 때만 예외를 의미로 판정합니다.');
-                lines.push('9. **CALL2-FIX** — CALL2 출력이 malformed일 때 내용을 바꾸지 않고 구조만 교정(실패 시에만).');
-                 lines.push('10. **CALL3** (speak/manga) — 선택된 일반 장면의 대사/생각 작성. speak=vn 대사창, manga=말풍선. 이미지 생성과 병렬 실행.');
-                 lines.push('11. **MULTI-CHAR-MASK** (CALL5) — 2인 이상 장면의 캐릭터별 영역 공간 분해(마스크). CALL3 이후, 장면(slot)마다 별도 호출.');
-                 lines.push('12. **ILLUSTRATION-QUALITY-INSPECTION** (조건부) — 각 이미지 백업 직후 한 장씩 문제 중심 영어 피드백을 생성하고, 모든 이미지 완료 뒤 축소 연락처 시트로 전체 복장·스토리 일관성을 검토. 손 문제는 평가하지 않으며, 결과는 LB Details LLM 로그에 기록되어 이 흐름에 표시.');
+                lines.push('6. **CALL2-PLAN** — 현재 본문에서 요청 수만큼 장면 후보를 고르는 전역 시각 비트 초안.');
+                lines.push('7. **CALL2-SCENE-CURATE** — 초안과 전체 Cxxx 카탈로그를 함께 보고, 픽셀만으로 사건이 읽히는 최종 scene_plan 세트로 교체·확정.');
+                lines.push('8. **CALL2-KEYVIS / CALL2-DETAIL** — 릴레이 소설 로그에 Danbooru 태그를 붙여 `<lb-xnai>` TOON 구조(camera/scene/supplement/characters) 생성. KEYVIS=키비주얼, DETAIL=일반 장면. PLAN 없이 단독일 때 **CALL2-FALLBACK**.');
+                lines.push('9. **CALL2-AUTHORITY-AUDIT** — 고정 외형 예외 감사. 복장은 CALL2의 outfit_state를 그대로 신뢰하며 감사하지 않습니다. 고정 외형은 유지하되 서사에 명시된 헤어스타일·신체 변화가 있을 때만 예외를 의미로 판정합니다.');
+                lines.push('10. **CALL2-FIX** — CALL2 출력이 malformed일 때 내용을 바꾸지 않고 구조만 교정(실패 시에만).');
+                 lines.push('11. **CALL3** (speak/manga) — 선택된 일반 장면의 대사/생각 작성. speak=vn 대사창, manga=말풍선. 이미지 생성과 병렬 실행.');
+                 lines.push('12. **MULTI-CHAR-MASK** (CALL5) — 2인 이상 장면의 캐릭터별 영역 공간 분해(마스크). CALL3 이후, 장면(slot)마다 별도 호출.');
+                 lines.push('13. **ILLUSTRATION-QUALITY-INSPECTION** (조건부) — 각 이미지 백업 직후 한 장씩 문제 중심 영어 피드백을 생성하고, 모든 이미지 완료 뒤 축소 연락처 시트로 전체 복장·스토리 일관성을 검토. 손 문제는 평가하지 않으며, 결과는 LB Details LLM 로그에 기록되어 이 흐름에 표시.');
                  lines.push('');
                 lines.push('**결과 요약(본문 최하단, 시간순):** ');
                 lines.push('- **③ 캐릭터 원본(lb.extra)** — 이 그림 캐릭터들의 원형 외형/복장 태그(태그 누락 점검용). ');
@@ -47929,6 +47930,7 @@
             { key: 'illustration_call1_backtranslate', label: '삽화 CALL1 역번역',               kind: '텍스트', modality: 'text', group: 'illustration_pipeline' },
             { key: 'illustration_call1',       label: '삽화 CALL1 (복장·헤어)',         kind: 'JSON · 병렬 가능', modality: 'text', group: 'illustration_pipeline', json: true },
             { key: 'illustration_call2_plan',  label: '삽화 CALL2-PLAN',                 kind: '텍스트', modality: 'text', group: 'illustration_pipeline' },
+            { key: 'illustration_scene_curate', label: '삽화 CALL2-SCENE-CURATE',         kind: 'JSON · 최종 장면 선별', modality: 'text', group: 'illustration_pipeline', json: true },
             { key: 'illustration_call2_keyvis', label: '삽화 CALL2-KEYVIS',              kind: '텍스트', modality: 'text', group: 'illustration_pipeline' },
             { key: 'illustration_call2',       label: '삽화 CALL2-DETAIL',               kind: '텍스트 · 기존 폴백 포함', modality: 'text', group: 'illustration_pipeline' },
             { key: 'illustration_call2_authority_audit', label: '삽화 CALL2-AUTHORITY-AUDIT', kind: 'JSON · 고정 외형 예외 감사', modality: 'text', group: 'illustration_pipeline', json: true },
@@ -81088,14 +81090,14 @@
                         </div>
                         <div id="illust-tab-content-llm" style="display:none; padding:12px 16px;">
                             <div style="margin-bottom:12px; padding:8px; background:rgba(0,0,0,0.06); border-radius:6px; font-size:0.75rem; color:var(--text2); line-height:1.5;">
-                                CHAT을 받은 서버가 히스토리 연속성/리롤 판정 → CHARACTER-RESOLVE(항상) → PROFILE-RESOLVE(다중 프로필 추론 토글 시) → 원본 에셋 선택/CALL1 역번역·병렬 분석 → CALL2-PLAN과 독립 CALL2-KEYVIS 동시 호출 → CALL2-DETAIL 병렬 생성·최종 병합 → (폴백/파싱 실패 시 기존 CALL2/CALL2-FIX) → CALL3 순서로 실행합니다. 삽화 프롬프트 본문은 config.json이 아니라 아래 개별 txt 파일에 저장됩니다.
+                                CHAT을 받은 서버가 히스토리 연속성/리롤 판정 → CHARACTER-RESOLVE(항상) → PROFILE-RESOLVE(다중 프로필 추론 토글 시) → 원본 에셋 선택/CALL1 역번역·병렬 분석 → CALL2-PLAN 초안 → CALL2-SCENE-CURATE 최종 선별 → 독립 CALL2-KEYVIS/CALL2-DETAIL 생성·최종 병합 → (폴백/파싱 실패 시 기존 CALL2/CALL2-FIX) → CALL3 순서로 실행합니다. 삽화 프롬프트 본문은 config.json이 아니라 아래 개별 txt 파일에 저장됩니다.
                                 1. CHARACTER-RESOLVE는 <strong>character.txt</strong>와 전체 CURRENT만 사용해 현재 등장인물을 결정합니다. PAST와 프로필 카탈로그는 받지 않으며, 과거 추적 여부는 서버의 기존 상태에서 결합합니다.<br>
                                 2. PROFILE-RESOLVE는 다중 프로필 추론을 켠 경우에만 확정된 CURRENT 다중 프로필 캐릭터를 한 명씩 병렬 호출합니다. 각 호출은 <strong>profile.txt</strong>, 전체 CURRENT, 대상 캐릭터 한 명의 카탈로그만 사용해 START·변환 타임라인과 실제 본문에 근거한 reason을 결정합니다. PAST는 받지 않으며, 토글을 끄면 서버가 등록 기본 프로필을 사용합니다.<br>
                                 3. 원본 에셋 출력이 켜져 있으면 확정 프로필을 받은 선택기가 등록 에셋과 삽입 슬롯을 먼저 정합니다.<br>
                                 4. 역번역이 켜져 있으면 <strong>backtranslate.txt</strong>로 현재 응답만 영어로 병렬 번역하며, 과거 CHAT은 번역하지 않습니다.<br>
                                 5. CALL1은 <strong>enhance.txt</strong>, 저장 히스토리, 확정 등장인물·프로필을 바탕으로 복장 및 헤어스타일 변화 타임라인만 JSON으로 만듭니다. 지칭어는 자연어 문맥으로 해석해 각 사건에 확정 canonical name을 쓰며 본문은 치환하지 않습니다. 병렬 분석을 켜면 segment를 최대 동시 요청 수만큼 균등 분할해 동시에 분석하고 검증된 결과를 하나로 병합합니다.<br>
-                                6. CALL2-PLAN은 장면 앵커·등장 캐릭터·짧은 장면 개요만 선택합니다. 독립 CALL2-KEYVIS는 같은 시점에 별도 LLM 요청으로 대표 이미지 한 장만 완성합니다. PLAN이 끝나면 서버가 복장 상태와 슬롯을 결합해 장면을 CALL2-DETAIL 작업들에 균등 분배하며, Key Visual 결과는 DETAIL과 CALL3 입력에 넣지 않고 마지막 이미지 목록에만 병합합니다.<br>
-                                7. CALL2는 모델 호환성용 <strong>jailbreak.txt</strong>·<strong>job.txt</strong> 뒤에 <strong>system.txt</strong>의 공통 불변 규칙과 <strong>plan.txt</strong>, <strong>detail.txt</strong>, <strong>keyvisual.txt</strong>, <strong>fallback.txt</strong> 중 현재 역할 하나를 결합합니다. NSFW 토글이 켜진 렌더링 역할에는 <strong>explicit.txt</strong>를 추가하고, 단일 FALLBACK에는 <strong>prefill.txt</strong>를 assistant prefill로 사용합니다. 출력 구조는 <strong>format.txt</strong>를 사용합니다.<br>
+                                6. CALL2-PLAN은 장면 앵커·등장 캐릭터·짧은 장면 개요의 초안을 선택합니다. CALL2-SCENE-CURATE는 그 초안과 전체 현재 Cxxx 카탈로그를 함께 받아 장면 수와 Single V5 정책을 유지하면서 최종 세트를 교체·확정합니다. 그 뒤 서버가 복장 상태와 슬롯을 결합해 장면을 CALL2-DETAIL 작업들에 균등 분배합니다. 독립 CALL2-KEYVIS 결과는 DETAIL과 CALL3 입력에 넣지 않고 마지막 이미지 목록에만 병합합니다.<br>
+                                7. CALL2는 모델 호환성용 <strong>jailbreak.txt</strong>·<strong>job.txt</strong> 뒤에 역할에 맞는 <strong>plan.txt</strong>, <strong>curate.txt</strong>, <strong>detail.txt</strong>, <strong>keyvisual.txt</strong>, <strong>fallback.txt</strong>를 결합합니다. 렌더링 역할은 <strong>system.txt</strong>의 공통 불변 규칙을 사용하고, NSFW 토글이 켜진 렌더링 역할에는 <strong>explicit.txt</strong>를 추가하며, 단일 FALLBACK에는 <strong>prefill.txt</strong>를 assistant prefill로 사용합니다. 출력 구조는 <strong>format.txt</strong>를 사용합니다.<br>
                                 8. CALL2 파싱이 실패하면 <strong>repair.txt</strong>(CALL2-FIX)가 TOON 블록을 교정합니다. 대사 단계는 후처리 모드에 맞춰 <strong>speak.txt</strong>, <strong>manga.txt</strong>, <strong>subtitle.txt</strong> 중 하나를 사용합니다.<br>
                                 <strong>preset.txt</strong>는 V3의 <code>[SETUP]/[CHAR]/[SUPPLEMENT]</code> RAW 입력 템플릿과 공통 부정 프롬프트를 담습니다. V1을 선택하면 서버가 같은 장면을 <code>[ILXL]/[UPSCALE]</code> 입력 형태로 생성합니다.
                             </div>
@@ -81150,8 +81152,12 @@
                                 <textarea id="lighbd-prompt-call2_explicit" data-lighbd-prompt="call2_explicit" style="width:100%; height:280px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;" placeholder="로딩 중..."></textarea>
                             </details>
                             <details open style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
-                                <summary style="cursor:pointer; font-size:0.8rem; font-weight:600; color:var(--text);">📝 plan.txt (전역 장면 선택·복장 연속성)</summary>
+                                <summary style="cursor:pointer; font-size:0.8rem; font-weight:600; color:var(--text);">📝 plan.txt (전역 장면 후보 선택)</summary>
                                 <textarea id="lighbd-prompt-call2_plan" data-lighbd-prompt="call2_plan" style="width:100%; height:260px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;" placeholder="로딩 중..."></textarea>
+                            </details>
+                            <details open style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
+                                <summary style="cursor:pointer; font-size:0.8rem; font-weight:600; color:var(--text);">📝 curate.txt (최종 장면 세트 선별)</summary>
+                                <textarea id="lighbd-prompt-call2_curate" data-lighbd-prompt="call2_curate" style="width:100%; height:260px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;" placeholder="로딩 중..."></textarea>
                             </details>
                             <details open style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
                                 <summary style="cursor:pointer; font-size:0.8rem; font-weight:600; color:var(--text);">📝 detail.txt (할당 장면 시각화)</summary>
@@ -81300,7 +81306,7 @@
                 character_resolve: 'character_resolve',
                 profile_resolve: 'profile_resolve',
                 call2_jailbreak: 'call2_jailbreak', call2_job: 'call2_job', call2_prefill: 'call2_prefill',
-                call2_common: 'call2_common', call2_explicit: 'call2_explicit', call2_plan: 'call2_plan', call2_detail: 'call2_detail',
+                call2_common: 'call2_common', call2_explicit: 'call2_explicit', call2_plan: 'call2_plan', call2_curate: 'call2_curate', call2_detail: 'call2_detail',
                 call2_keyvis: 'call2_keyvis', call2_fallback: 'call2_fallback', call2_format: 'format', call2_preset: 'preset',
                 call3_speak: 'call3_speak', call3_manga: 'call3_manga', call3_manga_nsfw: 'call3_manga_nsfw', call2_fix: 'call2_fix',
             };
@@ -81328,7 +81334,7 @@
                 character_resolve: 'character_resolve',
                 profile_resolve: 'profile_resolve',
                 call2_jailbreak: 'call2_jailbreak', call2_job: 'call2_job', call2_prefill: 'call2_prefill',
-                call2_common: 'call2_common', call2_explicit: 'call2_explicit', call2_plan: 'call2_plan', call2_detail: 'call2_detail',
+                call2_common: 'call2_common', call2_explicit: 'call2_explicit', call2_plan: 'call2_plan', call2_curate: 'call2_curate', call2_detail: 'call2_detail',
                 call2_keyvis: 'call2_keyvis', call2_fallback: 'call2_fallback', call2_format: 'format', call2_preset: 'preset',
                 call3_speak: 'call3_speak', call3_manga: 'call3_manga', call3_manga_nsfw: 'call3_manga_nsfw', call2_fix: 'call2_fix',
             };

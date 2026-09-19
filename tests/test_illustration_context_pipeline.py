@@ -62,6 +62,20 @@ def _call_name(task_key):
     return str(metadata.get("call_name") or task_key)
 
 
+def _echo_scene_curate(messages):
+    request = "\n".join(
+        str(message.get("content") or "") for message in messages
+    )
+    draft_text = request.split(
+        "# DRAFT SCENE PLAN (REFERENCE DATA)",
+        1,
+    )[1].split(
+        "# CURRENT SERVER SEGMENT CATALOG",
+        1,
+    )[0].strip()
+    return json.dumps(json.loads(draft_text), ensure_ascii=False)
+
+
 def _authority_audit_response(
     messages,
     *,
@@ -345,6 +359,8 @@ async def test_output_only_current_uses_call2_plan_instead_of_empty_context_fall
                     "continuity_note": "Hana wears her school uniform.",
                 }],
             })
+        if call_name == "CALL2-SCENE-CURATE":
+            return _echo_scene_curate(messages)
         if call_name.startswith("CALL2-DETAIL 1/1"):
             return _toon_for_slots([0])
         raise AssertionError(f"unexpected call: {call_name}")
@@ -386,6 +402,118 @@ async def test_output_only_current_uses_call2_plan_instead_of_empty_context_fall
 
 
 @pytest.mark.asyncio
+async def test_scene_curator_replaces_caption_dependent_draft_before_detail(
+    monkeypatch,
+):
+    calls = []
+    requests = {}
+
+    async def fake_pipeline_call(call_name, messages, *_args, **_kwargs):
+        calls.append(call_name)
+        request = "\n".join(
+            str(message.get("content") or "") for message in messages
+        )
+        requests[call_name] = request
+        if call_name == "CALL2-PLAN":
+            return json.dumps({
+                "scene_plan": [{
+                    "anchor_segment": "C001",
+                    "characters": ["Hana"],
+                    "scene_brief": "Hana looks upward toward an off-frame voice.",
+                    "anonymous_partner_fragment": False,
+                }, {
+                    "anchor_segment": "C002",
+                    "characters": ["Hana"],
+                    "scene_brief": "Hana pulls the door shut with both hands on the rope.",
+                    "anonymous_partner_fragment": False,
+                }],
+            })
+        if call_name == "CALL2-SCENE-CURATE":
+            assert "Hana looks upward toward an off-frame voice." in request
+            assert "Mira sets the lantern on the map" in request
+            assert "Return exactly 2 scene_plan entries." in request
+            return json.dumps({
+                "scene_plan": [{
+                    "anchor_segment": "C002",
+                    "characters": ["Hana"],
+                    "scene_brief": "Hana pulls the door shut with both hands on the rope.",
+                    "anonymous_partner_fragment": False,
+                }, {
+                    "anchor_segment": "C003",
+                    "characters": ["Mira"],
+                    "scene_brief": "Mira sets the lit lantern on the map, revealing the marked route.",
+                    "anonymous_partner_fragment": False,
+                }],
+            })
+        if call_name.startswith("CALL2-DETAIL 1/1"):
+            assert "Hana looks upward toward an off-frame voice." not in request
+            assert "Hana pulls the door shut with both hands on the rope." in request
+            assert "Mira sets the lit lantern on the map" in request
+            return """<lb-xnai>
+scenes[2]:
+  - camera: medium shot
+    characters[1]:
+      - name: Hana
+        positive: 1girl, black hair, pulling rope
+    scene: wooden door, taut rope
+    slot: 1
+  - camera: medium shot
+    characters[1]:
+      - name: Mira
+        positive: 1girl, silver hair, placing lantern
+    scene: table, map, lit lantern, marked route
+    slot: 2
+</lb-xnai>"""
+        raise AssertionError(f"unexpected call: {call_name}")
+
+    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
+    result = await pipeline.build_from_context(
+        {
+            "session_id": "scene_curator_reselection_test",
+            "target_slotted": (
+                "Hana looks upward toward an off-frame voice.\n\n[Slot 0]\n\n"
+                "Hana grips the rope with both hands and pulls the door shut.\n\n"
+                "[Slot 1]\n\n"
+                "Mira sets the lantern on the map, revealing the marked route.\n\n"
+                "[Slot 2]"
+            ),
+            "chats": [{
+                "role": "char",
+                "data": (
+                    "Hana looks upward toward an off-frame voice.\n\n"
+                    "Hana grips the rope with both hands and pulls the door shut.\n\n"
+                    "Mira sets the lantern on the map, revealing the marked route."
+                ),
+            }],
+        },
+        {
+            "call1_enabled": False,
+            "call2_parallel_enabled": True,
+            "call2_parallel_max_concurrency": 1,
+            "call2_parallel_slow_retry_enabled": False,
+            "output_count_min": 2,
+            "output_count_max": 2,
+            "key_visual": False,
+            "call3_enabled": False,
+            "speak_enabled": False,
+        },
+        (
+            "### Hana\n-Appearance\n1girl, black hair\n\n"
+            "### Mira\n-Appearance\n1girl, silver hair"
+        ),
+        extra_names="Hana, Mira",
+        backtranslate_names="Hana, Mira",
+    )
+
+    assert calls[:2] == ["CALL2-PLAN", "CALL2-SCENE-CURATE"]
+    assert calls[2].startswith("CALL2-DETAIL 1/1 [FULL c1/")
+    assert [item["slot"] for item in result["items"]] == [1, 2]
+    assert "off-frame voice" in result["call2_plan_output"]
+    assert "off-frame voice" not in result["call2_scene_curate_output"]
+    assert '"Mira"' in result["call2_scene_curate_output"]
+
+
+@pytest.mark.asyncio
 async def test_persona_identity_reaches_call1_call2_and_call3(monkeypatch):
     requests = {}
 
@@ -411,6 +539,8 @@ async def test_persona_identity_reaches_call1_call2_and_call3(monkeypatch):
                     "scene_brief": "Mira closes her umbrella and enters the foyer.",
                 }],
             })
+        if call_name == "CALL2-SCENE-CURATE":
+            return _echo_scene_curate(messages)
         if call_name.startswith("CALL2-DETAIL 1/1"):
             return """<lb-xnai>
 scenes[1]:
@@ -487,7 +617,7 @@ scenes[1]:
     detail_call = next(
         name for name in requests if name.startswith("CALL2-DETAIL 1/1")
     )
-    for call_name in ["CALL1", "CALL2-PLAN", "CALL3"]:
+    for call_name in ["CALL1", "CALL2-PLAN", "CALL2-SCENE-CURATE", "CALL3"]:
         assert "# REGISTERED USER PERSONA IDENTITY" in requests[call_name]
         assert "`Mira` is the configured user persona" in requests[call_name]
     assert "# REGISTERED USER PERSONA IDENTITY" not in requests[detail_call]
@@ -1929,6 +2059,8 @@ async def test_call2_pipeline_repairs_character_mismatch_without_global_fallback
                 }],
                 "keyvis_plan": None,
             })
+        if call_name == "CALL2-SCENE-CURATE":
+            return _echo_scene_curate(messages)
         if call_name.startswith("CALL2-DETAIL 1/1"):
             return _toon_for_slots([0])
         if call_name.startswith("CALL2-FIX slot=0"):
@@ -1991,6 +2123,8 @@ async def test_call2_plan_marks_balanced_fallback_past_as_non_candidate_referenc
                     "scene_brief": "Hana waits in the current hallway",
                 }],
             })
+        if call_name == "CALL2-SCENE-CURATE":
+            return _echo_scene_curate(messages)
         if call_name.startswith("CALL2-DETAIL 1/1"):
             return _toon_for_slots([0])
         raise AssertionError(f"unexpected call: {call_name}")
@@ -2080,6 +2214,8 @@ async def test_call2_plan_allows_unregistered_current_character_without_global_r
                     "scene_brief": "Doyoon studies alone at his desk.",
                 }],
             })
+        if call_name == "CALL2-SCENE-CURATE":
+            return _echo_scene_curate(messages)
         if call_name.startswith("CALL2-DETAIL 1/1"):
             return """<lb-xnai>
 scenes[1]:
@@ -2180,6 +2316,8 @@ async def test_call2_pipeline_generates_characterless_scene_without_fallback(mon
                 }],
                 "keyvis_plan": None,
             })
+        if call_name == "CALL2-SCENE-CURATE":
+            return _echo_scene_curate(messages)
         if call_name.startswith("CALL2-DETAIL 1/1"):
             detail_messages.extend(messages)
             return _toon_without_named_characters(0)
@@ -2276,6 +2414,8 @@ async def test_call2_plan_resolves_delayed_identity_before_assigning_scene_roste
                     "scene_brief": "The wounded magical girl Aya lies beside the collapsed wall.",
                 }],
             })
+        if call_name == "CALL2-SCENE-CURATE":
+            return _echo_scene_curate(messages)
         if call_name.startswith("CALL2-DETAIL 1/1"):
             return f"""<lb-xnai>
 scenes[1]:
@@ -2356,6 +2496,8 @@ async def test_call2_pipeline_continues_with_partial_segment_slot_map(monkeypatc
                 ],
                 "keyvis_plan": None,
             })
+        if call_name == "CALL2-SCENE-CURATE":
+            return _echo_scene_curate(messages)
         if call_name.startswith("CALL2-DETAIL 1/1"):
             return _toon_for_slots([0, 1])
         raise AssertionError(f"unexpected call: {call_name}")
@@ -2538,6 +2680,8 @@ async def test_call2_role_inputs_are_isolated_without_mutating_stored_state(monk
                     "scene_brief": "Hana waits by the window",
                 }],
             })
+        if call_name == "CALL2-SCENE-CURATE":
+            return _echo_scene_curate(messages)
         if call_name == "CALL2-KEYVIS":
             return """<lb-xnai>
 keyvis:
@@ -2645,6 +2789,10 @@ scenes: []
     assert "face close-up with remote contact left implied" in plan_request
     assert "Replace an incompatible candidate with another supported instant" in plan_request
     assert "instead of reducing the count or weakening the active policy" in plan_request
+    assert "selection also has a set-level coverage duty" in plan_request
+    assert "each authorized name that has at least one distinct, independently readable CURRENT beat" in plan_request
+    assert "Authority alone does not establish current participation" in plan_request
+    assert "dialogue, an off-frame cause, or an unreadable candidate does not force a scene" in plan_request
     assert "Wardrobe is resolved upstream and attached by the server" in plan_request
     assert "Do not reconstruct or output clothing" in plan_request
     assert "PLAN contributes no wardrobe state" in plan_request
@@ -2722,6 +2870,9 @@ scenes: []
     assert "keep every required contact visibly readable" in detail_request
     assert "Make camera, pose, gaze, anatomy" in detail_request
     assert "Bind one actor-owned connected part to one receiver-owned local surface" in detail_request
+    assert "one continuous region entering from exactly one frame edge" in detail_request
+    assert "never assemble a chest, waist, limb, or skin region from different edges" in detail_request
+    assert "broad torso or wall of skin is not a substitute" in detail_request
     detail_messages = next(
         messages
         for name, messages in messages_by_call.items()
@@ -2768,6 +2919,8 @@ async def test_call2_plan_roster_contains_only_resolver_current_identity_labels(
                     "scene_brief": "Hana and Mira wait while a stranger passes behind them",
                 }],
             })
+        if call_name == "CALL2-SCENE-CURATE":
+            return _echo_scene_curate(messages)
         if call_name.startswith("CALL2-DETAIL 1/1"):
             return """<lb-xnai>
 scenes[1]:
@@ -2889,6 +3042,8 @@ async def test_single_v5_plan_receives_lora_subject_authority_separate_from_rost
                     "anonymous_partner_fragment": False,
                 }],
             })
+        if call_name == "CALL2-SCENE-CURATE":
+            return _echo_scene_curate(messages)
         if call_name.startswith("CALL2-DETAIL 1/1"):
             return """<lb-xnai>
 scenes[1]:
@@ -3227,6 +3382,8 @@ async def test_call2_detail_failure_reuses_preserved_plan_in_global_fallback(mon
                 }],
                 "keyvis_plan": None,
             })
+        if call_name == "CALL2-SCENE-CURATE":
+            return _echo_scene_curate(messages)
         if call_name.startswith("CALL2-DETAIL"):
             return "not toon"
         if call_name == "CALL2-FALLBACK":
@@ -3314,6 +3471,8 @@ scenes: []
                     "scene_brief": "Hana waits",
                 }],
             })
+        if call_name == "CALL2-SCENE-CURATE":
+            return _echo_scene_curate(messages)
         if call_name == "CALL2-KEYVIS":
             return keyvis_output
         if call_name.startswith("CALL2-DETAIL"):
@@ -3497,6 +3656,12 @@ async def test_call1_parallel_then_shared_plan_then_parallel_keyvis_and_details(
             finally:
                 plan_keyvis_active -= 1
 
+        if call_name == "CALL2-SCENE-CURATE":
+            assert task_key == "illustration_scene_curate"
+            assert "# DRAFT SCENE PLAN (REFERENCE DATA)" in text
+            assert "Return exactly 9 scene_plan entries." in text
+            return _echo_scene_curate(messages)
+
         if call_name == "CALL2-KEYVIS":
             assert task_key == "illustration_call2_keyvis"
             assert "# KEY VISUAL TASK" in text
@@ -3600,6 +3765,9 @@ scenes: []
         f"S{index:03d}" for index in range(1, 10)
     ]
     assert "CALL2-PLAN" in call_names
+    assert "CALL2-SCENE-CURATE" in call_names
+    assert call_names.index("CALL2-PLAN") < call_names.index("CALL2-SCENE-CURATE")
+    assert call_names.index("CALL2-SCENE-CURATE") < call_names.index("CALL2-KEYVIS")
     assert "CALL2-KEYVIS" in call_names
     assert sum(name.startswith("CALL2-DETAIL") for name in call_names) >= 3
 
@@ -5876,6 +6044,7 @@ async def test_call3_uses_original_narrative_and_only_call2_selected_scene_slots
             )
         if task_key in {
             "illustration_call2_plan",
+            "illustration_scene_curate",
             "illustration_call2",
             "illustration_call2_keyvis",
         }:
@@ -5895,6 +6064,9 @@ async def test_call3_uses_original_narrative_and_only_call2_selected_scene_slots
                         "scene_brief": "second selected moment",
                     }],
                 })
+            if call_name == "CALL2-SCENE-CURATE":
+                assert task_key == "illustration_scene_curate"
+                return _echo_scene_curate(messages)
             if call_name == "CALL2-KEYVIS":
                 assert task_key == "illustration_call2_keyvis"
                 return """<lb-xnai>
@@ -5969,9 +6141,11 @@ Hana: (다음은 어떤 장면일까?) #thought_cloud"""
     assert task_keys[0] == "illustration_call1_backtranslate"
     assert task_keys[-1] == "illustration_call3"
     assert task_keys.count("illustration_call2_plan") == 1
+    assert task_keys.count("illustration_scene_curate") == 1
     assert task_keys.count("illustration_call2_keyvis") == 1
     assert task_keys.count("illustration_call2") == 2
     assert "CALL2-PLAN" in call_names
+    assert "CALL2-SCENE-CURATE" in call_names
     assert "CALL2-KEYVIS" in call_names
     assert sum(name.startswith("CALL2-DETAIL") for name in call_names) == 2
     assert [item["kind"] for item in result["items"]] == ["keyvis", "scene", "scene"]
@@ -6241,6 +6415,8 @@ async def test_call3_skips_dialogue_when_call2_selected_only_key_visual(monkeypa
                     "scene_brief": "Maria appears in the poster scene",
                 }],
             })
+        if call_name == "CALL2-SCENE-CURATE":
+            return _echo_scene_curate(messages)
         if call_name == "CALL2-KEYVIS":
             return """<lb-xnai>
 keyvis:
@@ -6302,6 +6478,7 @@ scenes: []
     )
 
     assert "CALL2-PLAN" in call_names
+    assert "CALL2-SCENE-CURATE" in call_names
     assert "CALL2-KEYVIS" in call_names
     assert sum(name.startswith("CALL2-DETAIL") for name in call_names) == 1
     assert sum(name.startswith("CALL2-FIX") for name in call_names) == 1
@@ -6413,6 +6590,8 @@ scenes: []
                     "scene_brief": "Hana waits in the classroom",
                 }],
             })
+        if call_name == "CALL2-SCENE-CURATE":
+            return _echo_scene_curate(messages)
         if call_name == "CALL2-KEYVIS":
             return keyvis_output
         if call_name.startswith("CALL2-DETAIL"):
@@ -10073,6 +10252,10 @@ async def test_persistent_call2_only_uses_bounded_history_and_visual_candidate(m
                     "scene_brief": "Hana waits by the current door",
                 }],
             })
+        if call_name == "CALL2-SCENE-CURATE":
+            assert task_key == "illustration_scene_curate"
+            assert "bounded past marker" not in request_text
+            return _echo_scene_curate(messages)
         assert task_key == "illustration_call2"
         assert "bounded past marker" not in request_text
         assert "# CHARACTER DICTIONARY" not in request_text
@@ -10131,6 +10314,7 @@ scenes[1]:
 
     assert [task_key for task_key, _messages in calls] == [
         "illustration_call2_plan",
+        "illustration_scene_curate",
         "illustration_call2",
     ]
     assert result["balanced_fallback_used"] is True
@@ -10182,6 +10366,10 @@ async def test_persistent_history_recovers_missing_prior_wardrobe_with_balanced_
                     "scene_brief": "Hana looks outside in the current scene",
                 }],
             })
+        if call_name == "CALL2-SCENE-CURATE":
+            assert task_key == "illustration_scene_curate"
+            assert "past wardrobe recovery marker" not in request_text
+            return _echo_scene_curate(messages)
         assert task_key == "illustration_call2"
         assert "past wardrobe recovery marker" not in request_text
         assert "# CHARACTER DICTIONARY" not in request_text
@@ -10246,6 +10434,7 @@ scenes[1]:
     assert [task_key for task_key, _messages in calls] == [
         "illustration_call1",
         "illustration_call2_plan",
+        "illustration_scene_curate",
         "illustration_call2",
     ]
     assert result["balanced_fallback_used"] is True
@@ -10374,7 +10563,11 @@ async def test_persistent_call1_off_keeps_call2_call3_with_separate_bounded_hist
         calls.append((task_key, messages))
         request_text = "\n".join(message["content"] for message in messages)
         call_name = _call_name(task_key)
-        if task_key in {"illustration_call2_plan", "illustration_call2"}:
+        if task_key in {
+            "illustration_call2_plan",
+            "illustration_scene_curate",
+            "illustration_call2",
+        }:
             if call_name == "CALL2-AUTHORITY-AUDIT":
                 assert task_key == "illustration_call2"
                 return _authority_audit_response(messages)
@@ -10390,6 +10583,11 @@ async def test_persistent_call1_off_keeps_call2_call3_with_separate_bounded_hist
                         "scene_brief": "Hana waits by the current door",
                     }],
                 })
+            if call_name == "CALL2-SCENE-CURATE":
+                assert task_key == "illustration_scene_curate"
+                assert "call2 bounded marker" not in request_text
+                assert "call3 bounded marker" not in request_text
+                return _echo_scene_curate(messages)
             assert task_key == "illustration_call2"
             assert "call2 bounded marker" not in request_text
             assert "call3 bounded marker" not in request_text
@@ -10449,6 +10647,7 @@ scenes[1]:
 
     assert [task_key for task_key, _messages in calls] == [
         "illustration_call2_plan",
+        "illustration_scene_curate",
         "illustration_call2",
         "illustration_call3",
     ]
@@ -10522,6 +10721,8 @@ async def test_call2_drops_only_generic_failure_below_one_third(monkeypatch):
                     "scene_brief": f"Hana scene {slot}",
                 } for slot in range(4)],
             })
+        if call_name == "CALL2-SCENE-CURATE":
+            return _echo_scene_curate(messages)
         if call_name.startswith("CALL2-DETAIL"):
             shard = int(re.search(r"CALL2-DETAIL (\d+)/4", call_name).group(1))
             return (
@@ -10582,6 +10783,8 @@ async def test_character_roster_fix_failure_drops_only_that_scene_below_threshol
                     "scene_brief": f"Scene {slot}",
                 } for slot in range(4)],
             })
+        if call_name == "CALL2-SCENE-CURATE":
+            return _echo_scene_curate(messages)
         if call_name.startswith("CALL2-DETAIL"):
             shard = int(re.search(r"CALL2-DETAIL (\d+)/4", call_name).group(1))
             return _toon_for_slots([shard - 1]).replace(
@@ -10646,6 +10849,8 @@ async def test_call2_global_fallback_starts_at_exactly_one_third_failure(monkeyp
                     "scene_brief": f"Hana scene {slot}",
                 } for slot in range(3)],
             })
+        if call_name == "CALL2-SCENE-CURATE":
+            return _echo_scene_curate(messages)
         if call_name.startswith("CALL2-DETAIL"):
             shard = int(re.search(r"CALL2-DETAIL (\d+)/3", call_name).group(1))
             return (

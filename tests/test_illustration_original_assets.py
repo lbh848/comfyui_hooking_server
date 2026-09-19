@@ -1164,9 +1164,24 @@ def test_original_asset_plan_reserves_slots_but_gpu_dispatch_starts_selection() 
 
     plan_join = pipeline_source.index("call2_plan_output = await illustration_flow.join(plan_task)")
     plan_parse = pipeline_source.index("parsed_plan, plan_reason = parse_call2_plan(", plan_join)
-    plan_callback = pipeline_source.index("await on_call2_plan_ready({", plan_parse)
+    curate_call = pipeline_source.index(
+        "call2_scene_curate_output = await _call_pipeline_llm(",
+        plan_parse,
+    )
+    curate_parse = pipeline_source.index(
+        "curated_plan, curate_reason = parse_curated_scene_plan(",
+        curate_call,
+    )
+    plan_callback = pipeline_source.index("await on_call2_plan_ready({", curate_parse)
     detail_stage = pipeline_source.index('parallel_stage = "CALL2-DETAIL"', plan_callback)
-    assert plan_join < plan_parse < plan_callback < detail_stage
+    assert (
+        plan_join
+        < plan_parse
+        < curate_call
+        < curate_parse
+        < plan_callback
+        < detail_stage
+    )
 
     server_plan_callback = server_source.index("async def _on_call2_plan_ready")
     slot_reservation = server_source.index(

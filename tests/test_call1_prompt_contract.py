@@ -48,6 +48,9 @@ def test_call1_start_state_cannot_mix_terminal_nudity_with_remaining_garments():
 
     assert "one physically possible instant" in prompt
     assert "attached, draped, lowered, pooled" in prompt
-    assert "Never say `fully unclothed`, `wearing nothing`" in prompt
+    assert "make one final semantic choice" in prompt
+    assert "only when no garment remains worn or attached" in prompt
+    assert "describe the exact exposure without terminal wording" in prompt
+    assert "do not also describe it as worn, open, unhooked" in prompt
     assert "summarizes coverage only" in prompt
     assert "never erases an explicitly remaining displaced garment" in prompt
