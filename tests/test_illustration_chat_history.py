@@ -133,6 +133,36 @@ def test_same_past_and_current_is_duplicate(isolated_history):
     assert len(duplicate["proposed_messages"]) == 2
 
 
+def test_same_bot_with_unrelated_story_sections_keeps_state_in_separate_records(
+    isolated_history,
+):
+    first = history.prepare_history([
+        _chat("user", "Mina studies alone in a quiet library. " * 8),
+        _chat("char", "Mina removes her red coat beside the shelves. " * 8),
+    ], 1, "shared-bot")
+    first_state = {
+        "mina": {
+            "canonical_name": "Mina",
+            "current_wardrobe": {
+                "body_state": "clothed",
+                "worn": ["white shirt"],
+                "removed": ["red coat"],
+            },
+        },
+    }
+    history.finalize_history(first, {"character_states_after": first_state})
+
+    second = history.prepare_history([
+        _chat("user", "Riku repairs a fishing boat at the harbor. " * 8),
+        _chat("char", "Riku keeps his rain jacket on as waves strike the pier. " * 8),
+    ], 1, "shared-bot")
+
+    assert second["operation"] == "new"
+    assert second["history_id"] != first["history_id"]
+    assert second["state_before"] == {}
+    assert all("Mina" not in item["content"] for item in second["proposed_messages"])
+
+
 def test_revision_conflict_forks_instead_of_overwriting_newer_history(isolated_history):
     base_chats = [
         _chat("user", "shared user base " * 10),

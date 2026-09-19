@@ -37,5 +37,6 @@ def test_call1_natural_change_text_outranks_coarse_enum_hints():
 
     assert "`wardrobe_change` is the primary meaning-bearing handoff" in prompt
     assert "must never simplify or contradict it" in prompt
-    assert "Evidence may span adjacent lines" in prompt
+    assert "When one semantic change unfolds across paragraph boundaries" in prompt
+    assert "evidence may span consecutive numbered segments" in prompt
     assert "reason from the whole passage rather than from a body-region menu" in prompt

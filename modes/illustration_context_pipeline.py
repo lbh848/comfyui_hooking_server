@@ -2103,6 +2103,70 @@ def _persona_identity_context(
     )
 
 
+def _character_card_identity_context(
+    visual_profiles: dict[str, dict] | None,
+    character_names: list[str] | None = None,
+) -> str:
+    """Render card-authored identity hints without turning cards into story state."""
+    sections: list[str] = []
+    for name in character_names or []:
+        canonical_name = str(name or "").strip()
+        character_profiles = _authority_values_for_name(
+            visual_profiles or {},
+            canonical_name,
+        )
+        if not canonical_name or not isinstance(character_profiles, dict):
+            continue
+
+        aliases: list[str] = []
+        descriptions: list[str] = []
+        seen_aliases: set[str] = set()
+        seen_descriptions: set[str] = set()
+        for profile in character_profiles.get("profiles") or []:
+            if not isinstance(profile, dict):
+                continue
+            for raw_alias in profile.get("aliases") or []:
+                alias = str(raw_alias or "").strip()
+                folded = alias.casefold()
+                if alias and folded not in seen_aliases:
+                    seen_aliases.add(folded)
+                    aliases.append(alias)
+            description = str(
+                profile.get("visual_context_english")
+                or profile.get("visual_context")
+                or ""
+            ).strip()
+            folded_description = description.casefold()
+            if description and folded_description not in seen_descriptions:
+                seen_descriptions.add(folded_description)
+                descriptions.append(description)
+
+        if not aliases and not descriptions:
+            continue
+        lines = [f"### {canonical_name}"]
+        if aliases:
+            lines.append(
+                "Card-authored aliases or semantic names: "
+                + json.dumps(aliases, ensure_ascii=False)
+            )
+        if descriptions:
+            lines.append("Card-authored natural-language identity references:")
+            lines.extend(f"- {description}" for description in descriptions)
+        sections.append("\n".join(lines))
+
+    if not sections:
+        return ""
+    return (
+        "# REGISTERED CHARACTER CARD IDENTITY REFERENCES\n"
+        "These existing card-authored names and natural-language descriptions may help "
+        "connect a narrative alias, localized name, title, or description to one exact "
+        "canonical roster name. They are identity reference only. They do not establish "
+        "CURRENT participation, story chronology, wardrobe, action, or active profile, "
+        "and nothing from the story is stored back into a card.\n\n"
+        + "\n\n".join(sections)
+    )
+
+
 def _profile_state_for_prompt(
     character_state: dict | None,
     character_names: list[str],
@@ -2449,6 +2513,54 @@ def _analysis_evidence_matches_segment(evidence: str, segment_text: str) -> bool
     )
 
 
+def _analysis_evidence_matches_context(
+    evidence: str,
+    current_context: str,
+    start_offset: int = 0,
+) -> bool:
+    """Accept exact evidence split across consecutive narrative paragraphs.
+
+    CALL1 may quote one semantic change across several numbered paragraphs while
+    omitting server-added segment labels or timestamp separators.  Preserve that
+    natural-language judgment only when every quoted line is found verbatim and
+    in order in CURRENT after the claimed anchor.
+    """
+    normalized_evidence = _normalize_analysis_text(evidence)
+    source = str(current_context or "")
+    try:
+        offset = max(0, min(len(source), int(start_offset or 0)))
+    except Exception as e:
+        print(
+            "[ILLUST_CONTEXT:CALL1] 근거 검색 시작 위치 보정 실패: "
+            f"start_offset={start_offset!r}, error={e}"
+        )
+        traceback.print_exc()
+        offset = 0
+    normalized_context = re.sub(
+        r"\s+", " ", _normalize_analysis_text(source[offset:])
+    ).strip()
+    normalized_whole = re.sub(r"\s+", " ", normalized_evidence).strip()
+    if not normalized_whole or not normalized_context:
+        return False
+    if normalized_whole in normalized_context:
+        return True
+
+    evidence_lines = [
+        re.sub(r"\s+", " ", line).strip()
+        for line in normalized_evidence.split("\n")
+        if re.sub(r"\s+", " ", line).strip()
+    ]
+    if len(evidence_lines) < 2:
+        return False
+    cursor = 0
+    for line in evidence_lines:
+        position = normalized_context.find(line, cursor)
+        if position < 0:
+            return False
+        cursor = position + len(line)
+    return True
+
+
 def _contains_canonical_name(text: str, name: str) -> bool:
     """Check a supplied canonical name as a complete token, not as inference."""
     source = _normalize_analysis_text(text)
@@ -2621,17 +2733,32 @@ def parse_call1_analysis(
             )
             continue
         if operation in changing_operations:
-            segment_text = str((segments.get(segment_id) or {}).get("text") or "")
-            if (
-                not segment_id
-                or not evidence
-                or not _analysis_evidence_matches_segment(evidence, segment_text)
-            ):
+            segment = segments.get(segment_id) or {}
+            segment_text = str(segment.get("text") or "")
+            segment_match = _analysis_evidence_matches_segment(
+                evidence,
+                segment_text,
+            )
+            context_match = bool(
+                segment_id in segments
+                and evidence
+                and _analysis_evidence_matches_context(
+                    evidence,
+                    current_context,
+                    int(segment.get("start") or 0),
+                )
+            )
+            if not segment_id or not evidence or not (segment_match or context_match):
                 warnings.append(
                     f"복장 변경 근거 불일치로 폐기: character={name}, operation={operation}, "
                     f"segment={segment_id!r}"
                 )
                 continue
+            if not segment_match and context_match:
+                warnings.append(
+                    f"복장 변경 근거가 여러 CURRENT segment에 걸쳐 있어 보존: "
+                    f"character={name}, operation={operation}, segment={segment_id!r}"
+                )
         if confidence < 0.70:
             warnings.append(
                 f"복장 사건 신뢰도 낮아 폐기: {name}/{operation}={confidence:.2f}"
@@ -4946,41 +5073,54 @@ def bind_scene_plan_wardrobes(
             selected_reference=selected_reference,
             default_outfits=scene_default_outfits,
         )
+        planned_continuity = str(plan.get("continuity_note") or "").strip()
         planned_outfits = plan.get("planned_outfits") or {}
         wardrobe_snapshot = {}
         wardrobe_sources = {}
-        for name in plan_names:
-            folded_name = name.casefold()
-            proposal = next((
-                value
-                for proposal_name, value in planned_outfits.items()
-                if str(proposal_name).casefold() == folded_name
-            ), {})
-            planned_outfit = _normalize_outfit_state(proposal)
-            tracked = _character_state(states_at_scene, name)
-            tracked_outfit = _normalize_outfit_state(
-                tracked.get("current_wardrobe") if isinstance(tracked, dict) else {}
-            )
-            if _outfit_state_is_known(planned_outfit):
-                outfit = planned_outfit
-                source = "call2_plan"
-            elif _outfit_state_is_known(tracked_outfit):
-                outfit = tracked_outfit
-                source = "default_base_plus_sparse_history"
-            elif folded_name in resolved_outfits:
-                outfit = deepcopy(resolved_outfits[folded_name])
-                source = "call2_plan_carried"
-            else:
-                outfit = planned_outfit
-                source = "unknown"
-                print(
-                    f"[ILLUST_CONTEXT:CALL2_PLAN] 기본·추적 복장 상태가 모두 unknown, "
-                    f"generated visual은 권위로 승격하지 않음: "
-                    f"plan={plan_index}, anchor={anchor_segment}, character={name}"
+        if planned_continuity:
+            # PLAN has already made the semantic wardrobe judgment in natural
+            # language. DETAIL is the first consumer that needs outfit_state, so
+            # do not overwrite that judgment with a stale tag snapshot here.
+            wardrobe_sources = {
+                name: "call2_plan_natural_language"
+                for name in plan_names
+            }
+        else:
+            # Missing PLAN continuity is genuinely unusable for downstream
+            # wardrobe binding. Preserve the existing structured state only as
+            # that narrow fallback.
+            for name in plan_names:
+                folded_name = name.casefold()
+                proposal = next((
+                    value
+                    for proposal_name, value in planned_outfits.items()
+                    if str(proposal_name).casefold() == folded_name
+                ), {})
+                planned_outfit = _normalize_outfit_state(proposal)
+                tracked = _character_state(states_at_scene, name)
+                tracked_outfit = _normalize_outfit_state(
+                    tracked.get("current_wardrobe") if isinstance(tracked, dict) else {}
                 )
-            wardrobe_snapshot[name] = outfit
-            wardrobe_sources[name] = source
-            resolved_outfits[folded_name] = deepcopy(outfit)
+                if _outfit_state_is_known(planned_outfit):
+                    outfit = planned_outfit
+                    source = "call2_plan"
+                elif _outfit_state_is_known(tracked_outfit):
+                    outfit = tracked_outfit
+                    source = "default_base_plus_sparse_history"
+                elif folded_name in resolved_outfits:
+                    outfit = deepcopy(resolved_outfits[folded_name])
+                    source = "call2_plan_carried"
+                else:
+                    outfit = planned_outfit
+                    source = "unknown"
+                    print(
+                        f"[ILLUST_CONTEXT:CALL2_PLAN] 기본·추적 복장 상태가 모두 unknown, "
+                        f"generated visual은 권위로 승격하지 않음: "
+                        f"plan={plan_index}, anchor={anchor_segment}, character={name}"
+                    )
+                wardrobe_snapshot[name] = outfit
+                wardrobe_sources[name] = source
+                resolved_outfits[folded_name] = deepcopy(outfit)
 
         plan["wardrobe_snapshot"] = wardrobe_snapshot
         plan["wardrobe_sources"] = wardrobe_sources
@@ -4988,7 +5128,6 @@ def bind_scene_plan_wardrobes(
         authority_note = _visual_base_authority_note(scene_visual_bases)
         if authority_note:
             plan["visual_base_authority"] = authority_note
-        planned_continuity = str(plan.get("continuity_note") or "").strip()
         resolved_wardrobe_note = _resolved_wardrobe_continuity_note(
             wardrobe_snapshot
         )
@@ -10570,6 +10709,10 @@ async def _run_resolution_stage(
         selected_profiles,
         selected_names,
     )
+    card_identity_context = _character_card_identity_context(
+        selected_profiles,
+        selected_names,
+    )
     repair_call_name = (
         "PROFILE-RESOLVE-REPAIR"
         if profile_inference_enabled
@@ -10604,6 +10747,7 @@ async def _run_resolution_stage(
         user_content = (
             "# COMPLETE REGISTERED CHARACTER ROSTER\n"
             + json.dumps(selected_names, ensure_ascii=False)
+            + ("\n\n" + card_identity_context if card_identity_context else "")
             + "\n\n# FULL CURRENT CONTEXT SEGMENTS\n"
             + segmented_current
             + "\n\n# FINAL CANONICAL NAME OUTPUT AUTHORITY\n"
@@ -10782,6 +10926,7 @@ async def _run_resolution_stage(
 
         repair_context = "\n\n".join(x for x in (
             persona_context,
+            card_identity_context if not profile_inference_enabled else "",
             "# FULL CURRENT CONTEXT SEGMENTS\n" + segmented_current,
         ) if x)
         repair_targets = [
@@ -13337,34 +13482,33 @@ async def build_from_context(
                 "# PRESELECTED PROFILE AUTHORITY\n\n"
                 + selected_profile_authority
             ),
-        }, include_fallback=True, include_detail=False)
+        }, include_fallback=True, include_plan=False, include_detail=False)
     if call2_reference.strip():
         append_call2_context({
             "role": "user",
             "content": "# CHARACTER DICTIONARY\n\n" + call2_reference,
         }, include_fallback=True, include_plan=False, include_detail=False)
-    plan_character_reference = _filter_character_reference(
-        call2_reference,
-        plan_character_names,
-    )
-    if plan_character_reference.strip():
+    if plan_character_names:
         append_call2_context({
             "role": "user",
-            "content": "# CHARACTER DICTIONARY\n\n" + plan_character_reference,
-        }, include_keyvis=False, include_detail=False)
+            "content": (
+                "# CURRENT CANONICAL CHARACTER ROSTER (IDENTITY LABELS ONLY)\n\n"
+                + json.dumps(plan_character_names, ensure_ascii=False)
+                + "\n\nThese exact names are identity labels available for resolving the "
+                "current narrative. The roster does not establish participation, "
+                "current clothing, physical state, action, location, or scene membership. "
+                "Resolve those facts only from the supplied current narrative and bounded "
+                "same-branch natural-language continuity."
+            ),
+        }, include_fallback=False, include_keyvis=False, include_detail=False)
         print(
-            f"[ILLUST_CONTEXT:CALL2_PLAN] Resolver CURRENT 캐릭터로 사전 필터링: "
+            f"[ILLUST_CONTEXT:CALL2_PLAN] Resolver CURRENT 캐릭터 이름만 전달: "
             f"characters={plan_character_names}"
-        )
-    elif plan_character_names:
-        print(
-            f"[ILLUST_CONTEXT:CALL2_PLAN] Resolver CURRENT 캐릭터의 사전 블록이 없어 "
-            f"CHARACTER DICTIONARY 생략: characters={plan_character_names}"
         )
     else:
         print(
             "[ILLUST_CONTEXT:CALL2_PLAN] Resolver CURRENT 캐릭터가 비어 "
-            "CHARACTER DICTIONARY 생략"
+            "identity-only roster 생략"
         )
     fixed_appearance_content = _fixed_appearance_authority_content(fixed_appearance)
     if fixed_appearance_content:
@@ -13373,6 +13517,21 @@ async def build_from_context(
             "content": fixed_appearance_content,
         }, include_fallback=True, include_plan=False, include_detail=False)
     if persistent_history:
+        recent_continuity_text = _history_messages_text(
+            persistent_history.get("call2_fallback_history") or []
+        )
+        if recent_continuity_text:
+            append_call2_context({
+                "role": "user",
+                "content": (
+                    "# RECENT STORY CONTINUITY REFERENCE (NOT SCENE CANDIDATES)\n\n"
+                    "Use this bounded natural-language history only to resolve identity, "
+                    "ownership, chronology, and story state carried into CURRENT. Never "
+                    "select an action or visual beat from this block; selectable scenes "
+                    "come only from the current Cxxx segment catalog.\n\n"
+                    + recent_continuity_text
+                ),
+            }, include_fallback=False, include_plan=True, include_keyvis=False, include_detail=False)
         if selected_states:
             projected_states = _state_without_generated_visual_references(
                 selected_states,
@@ -13389,7 +13548,7 @@ async def build_from_context(
                     "the profile default. Camera absence alone never means removal.\n\n"
                     + json.dumps(projected_states, ensure_ascii=False, indent=2)
                 ),
-            }, include_fallback=True, include_detail=False)
+            }, include_fallback=True, include_plan=False, include_detail=False)
         if wardrobe_events:
             append_call2_context({
                 "role": "user",
@@ -13404,7 +13563,7 @@ async def build_from_context(
                     "outfit even when it does not enumerate every garment.\n\n"
                     + json.dumps(wardrobe_events, ensure_ascii=False, indent=2)
                 ),
-            }, include_fallback=True, include_detail=False)
+            }, include_fallback=True, include_plan=False, include_detail=False)
         # hairstyle history: selected_states의 누적 timeline + 이번 턴 CALL1 이벤트를 합쳐
         # CALL2에 전달한다(서버는 의미 해석 없이 전달만). persistence가 이 기능의 핵심이다.
         hairstyle_history: dict[str, list] = {}

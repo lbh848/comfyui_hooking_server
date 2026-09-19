@@ -176,7 +176,11 @@ def test_plan_contract_owns_selection_and_natural_language_continuity_only():
     assert "Lead `scene_brief` with the familiar high-level action or pose" in plan
     assert "Preserve who acts on whom" in plan
     assert "Meet the requested count with materially different supported actions" in plan
-    assert "`continuity_note` is the shared wardrobe handoff" in plan
+    assert "`continuity_note` is the shared natural-language wardrobe handoff" in plan
+    assert "Reconstruct it only from the supplied story chronology" in plan
+    assert "canonical-name roster is identity-only and provides no clothing" in plan
+    assert "use the downstream profile-default fallback" in plan
+    assert "never reconstruct or mix a default outfit inside PLAN" in plan
     assert "same concise garment-design wording" in plan
     assert "Do not output image tags, camera fields, outfit arrays" in plan
     assert "characters[].positive" not in plan
@@ -185,13 +189,15 @@ def test_plan_contract_owns_selection_and_natural_language_continuity_only():
 def test_plan_contract_keeps_single_preset_renderability_without_loosening_it():
     plan = _read(PLAN)
 
-    assert "Treat `TRUSTED ACTIVE BOT IMAGE POLICY` as the renderability envelope" in plan
-    assert "defining contact, body axes, and required anonymous partner portion" in plan
+    assert "Treat `TRUSTED ACTIVE BOT IMAGE POLICY` as the single renderability" in plan
+    assert "do not restate, narrow, or loosen it" in plan
+    assert "exact named roster remains the identity-managed subject roster" in plan
+    assert "promote an anonymous participant into the named or focal subject" in plan
     assert "anonymous_partner_fragment" in plan
-    assert "smallest connected, simplified, non-identifying partner fragment" in plan
-    assert "complete or identifiable partner face" in plan
+    assert "identifiable partner face" in plan
+    assert "blanket ban on every cropped rear or side portion" in plan
     assert "internal-only effect" in plan
-    assert "do not replace a renderable interaction" in plan
+    assert "Preserve the requested count through other supported visible instants" in plan
 
 
 def test_detail_contract_expands_exact_assignments_and_handles_both_flag_values():
@@ -202,10 +208,10 @@ def test_detail_contract_expands_exact_assignments_and_handles_both_flag_values(
     assert "`anchor_passage` is the event authority" in detail
     assert "repair only camera and crop" in detail
     assert "When `anonymous_partner_fragment` is true" in detail
-    assert "preserve the partner's actor/receiver role" in detail
-    assert "simplified non-identifying partial head or facial contact surface" in detail
-    assert "contact-centered view" in detail
-    assert "reaction-centered view" in detail
+    assert "Preserve the assigned actor/receiver relation" in detail
+    assert "non-identifying rear or side portion of a partner's head" in detail
+    assert "use a contact-centered camera" in detail
+    assert "Use a reaction-centered camera" in detail
     assert "When the flag is false, add no partner fragment or partner contact" in detail
     assert "Omit remote face, hair, eye, expression, or clothing details" in detail
 
@@ -219,20 +225,21 @@ def test_interaction_examples_cover_failed_paraphrases_and_opposite_cases():
     assert "only change is an internal micro-motion is not a distinct still" in plan
     assert "another supported visible pose, reaction, contact change, or aftermath" in plan
 
-    # Isomorphic failure with different wording: a head-led contact may appear,
-    # but only as a connected anonymous fragment rather than a second identity.
-    assert "head-led interaction may keep the smallest connected simplified" in plan
-    assert "complete or recognizable partner face" in plan
+    # Isomorphic failure with different wording: a face-led contact is rejected
+    # when it would require a second identity, without banning every rear crop.
+    assert "face-led contact that requires an identifiable partner face" in plan
+    assert "cropped rear or side portion of a head" in plan
 
     # Opposite cases retain their simpler treatment.
     assert "hand-led interaction normally needs only the connected hand and forearm" in plan
-    assert "A truly solo reaction needs no partner fragment" in plan
+    assert "A truly subject-only reaction needs no partner fragment" in plan
 
-    # Actual DETAIL contradiction class: an occluded face cannot simultaneously
-    # carry frontal facial detail, and a remote second contact is not pulled in.
-    assert "face is pressed into an anonymous partner's chest" in detail
-    assert "do not also describe the subject's frontal eyes and mouth" in detail
-    assert "Do not force a distant second contact region" in detail
+    # Actual DETAIL contradiction class: the action region owns the crop, while
+    # reaction-only and conditionally valid rear-head crops remain distinct.
+    assert "legs locked around a waist" in detail
+    assert "omit the distant face" in detail
+    assert "looking toward an off-frame person" in detail
+    assert "never turn it into a second portrait or camera center" in detail
 
 
 def test_keyvisual_contract_is_independent_and_has_no_scene_slot_responsibility():
@@ -364,20 +371,27 @@ def test_pipeline_keeps_wardrobe_and_fixed_appearance_audit_boundaries():
     assert "hairstyle_history establishes a temporary physical change" in source
 
 
-def test_single_v5_preserves_lora_isolation_and_connected_fragment_policy():
+def test_single_v5_preserves_subject_ownership_and_connected_fragment_policy():
     presets = json.loads(_read(BUILTIN_PRESETS))
 
     assert "배포_1차 싱글 V4" in presets
     v5 = presets["배포_1차 싱글 V5"]
     assert "exactly one identifiable named character as the subject" in v5
+    assert "character identity/LoRA owner, and the camera's named focal subject must remain aligned" in v5
+    assert "Never swap actor and receiver" in v5
+    assert "center a named character's descriptor on another person's face or body" in v5
     assert "does not add a second `1girl` or `1boy` count" in v5
     assert "Do not add `1boy` merely because that fragment is visible" in v5
-    assert "Never put the partner's body parts or actions in the named subject's `positive`" in v5
+    assert "Keep partner-owned anatomy and actions out of every named character's `positive`" in v5
     assert "exactly one continuous region from exactly one frame edge" in v5
-    assert "smallest connected, simplified, non-identifying portion" in v5
+    assert "Never show a complete or identifiable partner face" in v5
+    assert "not a blanket ban on every part of the partner's head" in v5
+    assert "cropped non-identifying rear or side portion may appear only when" in v5
     assert "complete or identifiable partner face" in v5
     assert "At most one complete or identifiable face is visible" in v5
     assert "A zero-face contact crop is allowed" in v5
+    assert "reaction or pose already communicates the selected fact, keep the partner fully off-frame" in v5
+    assert "Do not use a broad torso merely as a stand-in" in v5
     assert "body-part whitelist" in v5
     assert "No weights or negative tags are invented" in v5
     assert "In an explicit scene, preserve the exact story-established action" not in v5

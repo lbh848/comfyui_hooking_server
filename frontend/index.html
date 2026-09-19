@@ -46388,7 +46388,7 @@
                     <div class="lighbd-modal-head">
                         <div class="lighbd-modal-title" id="lighbd-history-title">
                             LB · LLM 히스토리
-                            <div class="lighbd-modal-subtitle">일반 최근 300건 · 다중 인물 분석 최근 100건 · 항목의 열기를 누르면 전체 입력과 출력을 확인할 수 있습니다.</div>
+                            <div class="lighbd-modal-subtitle">일반 최근 300건 · 다중 인물 분석 최근 100건 · 사람이 평가한 이미지 사례의 연결 기록은 별도 보존 · 항목의 열기를 누르면 전체 입력과 출력을 확인할 수 있습니다.</div>
                         </div>
                         <button class="lighbd-modal-close" onclick="closeLighbdHistoryModal()" aria-label="닫기">✕</button>
                     </div>
@@ -46886,9 +46886,11 @@
 
         function _renderIllustrationQualityInspectionOutput(record) {
             const parsed = _parseIllustrationQualityInspectionOutput(record);
-            if (!parsed) return '';
-            const images = Array.isArray(parsed.images) ? parsed.images : [];
-            const overall = String(parsed.overall_feedback || '').trim();
+            const images = Array.isArray(parsed?.images) ? parsed.images : [];
+            const overall = String(parsed?.overall_feedback || '').trim();
+            const human = record?.human_evaluation && typeof record.human_evaluation === 'object'
+                ? record.human_evaluation
+                : null;
             const imageSection = images.length
                 ? `<div class="lighbd-detail-section-title">Image-specific feedback (English)</div>${images.map((item, index) => {
                     const slotValue = Number.isFinite(Number(item?.slot)) ? Number(item.slot) : (index + 1);
@@ -46903,10 +46905,19 @@
                 ? `<div class="lighbd-detail-section-title" style="margin-top:${images.length ? '13px' : '0'};">Overall outfit/story consistency (English)</div>
                     <div style="margin-top:7px; white-space:pre-wrap; word-break:break-word; color:var(--text);">${escapeHtml(overall)}</div>`
                 : '';
-            if (!imageSection && !overallSection) return '';
+            const humanSection = human?.rating
+                ? `<div class="lighbd-detail-section-title" style="margin-top:${imageSection || overallSection ? '13px' : '0'};">사람 평가</div>
+                    <div style="margin-top:7px; border:1px solid rgba(245,158,11,.45); border-radius:7px; padding:9px 10px; background:rgba(245,158,11,.08);">
+                        <strong style="color:#fcd34d;">${escapeHtml(human.label || ({good:'좋음', normal:'보통', bad:'나쁨'}[human.rating] || human.rating))}</strong>
+                        <div style="margin-top:4px; white-space:pre-wrap; word-break:break-word; color:var(--text);">${escapeHtml(human.reason || '(이유 없음)')}</div>
+                        ${human.updated_at ? `<div style="margin-top:4px; font-size:.7rem; color:var(--text2);">${escapeHtml(human.updated_at)}</div>` : ''}
+                    </div>`
+                : '';
+            if (!imageSection && !overallSection && !humanSection) return '';
             return `<section class="llm-quality-inspection-output" data-task-key="illustration_quality_inspection" style="border:none; border-top:1px solid var(--border); border-radius:0; padding:10px 12px;">
                 ${imageSection}
                 ${overallSection}
+                ${humanSection}
             </section>`;
         }
 
@@ -46920,7 +46931,7 @@
             const errorText = record.error || '';
             const rawOutput = record.output || '';
             const rawOutputText = _formatLighbdHistoryContent(rawOutput);
-            const qualityOutput = !isError ? _renderIllustrationQualityInspectionOutput(record) : '';
+            const qualityOutput = _renderIllustrationQualityInspectionOutput(record);
             const callName = record.call_name || record.task_key || 'LLM 호출';
             const stats = `${_formatLighbdInputTokens(record)} · 출력 ${record.completion_tokens ?? 0} · 한도 ${record.max_output_tokens ?? '-'} · 종료 ${record.finish_reason || '-'} · ${record.elapsed ?? 0}s · ${record.tps ?? 0} t/s`;
             const providerSection = (record.finish_reason || record.finish_message || record.max_output_tokens != null)
@@ -46932,7 +46943,7 @@
                         </section>`
                 : '';
             const outputSection = isError
-                ? `<section class="lighbd-detail-section" style="border:none; border-top:1px solid var(--border); border-radius:0;">
+                ? `${qualityOutput}<section class="lighbd-detail-section" style="border:none; border-top:1px solid var(--border); border-radius:0;">
                             <div class="lighbd-detail-section-title">오류 내용</div>
                             <pre class="lighbd-detail-content">${escapeHtml(errorText || '-')}</pre>
                         </section>
@@ -47056,6 +47067,18 @@
                     lines.push('```');
                     lines.push('-');
                     lines.push('```');
+                    lines.push('');
+                }
+                const humanEvaluation = r.human_evaluation && typeof r.human_evaluation === 'object'
+                    ? r.human_evaluation
+                    : null;
+                if (humanEvaluation?.rating) {
+                    const humanLabel = humanEvaluation.label || ({good:'좋음', normal:'보통', bad:'나쁨'}[humanEvaluation.rating] || humanEvaluation.rating);
+                    lines.push('### 사람 평가');
+                    lines.push('');
+                    lines.push(`- 판단: **${humanLabel}**`);
+                    lines.push(`- 이유: ${humanEvaluation.reason || '(이유 없음)'}`);
+                    if (humanEvaluation.updated_at) lines.push(`- 저장 시각: ${humanEvaluation.updated_at}`);
                     lines.push('');
                 }
                 if (r.error) {

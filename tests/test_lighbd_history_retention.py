@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import asyncio
+import json
 import sys
 import types
 from pathlib import Path
@@ -12,6 +13,37 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from modes import lighbd_service
+
+
+def test_human_review_cases_are_retained_outside_rolling_history_budgets(monkeypatch):
+    monkeypatch.setattr(lighbd_service, "LIGHBD_GENERAL_HISTORY_MAX", 1)
+    monkeypatch.setattr(lighbd_service, "LIGHBD_MULTI_CHAR_HISTORY_MAX", 1)
+    records = [
+        {
+            "history_id": "reviewed-inspection",
+            "task_key": "illustration_quality_inspection",
+            "human_evaluation": {"rating": "bad", "reason": "contact is unclear"},
+        },
+        {
+            "history_id": "reviewed-call2",
+            "task_key": "illustration_call2_detail",
+            "human_review_case_ids": ["reviewed-inspection"],
+        },
+        {"history_id": "old-general", "task_key": "illustration_call1"},
+        {"history_id": "new-general", "task_key": "illustration_call3"},
+        {"history_id": "old-mask", "task_key": "illustration_multi_char_mask"},
+        {"history_id": "new-mask", "task_key": "illustration_multi_char_mask"},
+    ]
+    lines = [json.dumps(record) + "\n" for record in records]
+
+    retained = [json.loads(line) for line in lighbd_service._trim_lighbd_history_lines(lines)]
+
+    assert [record["history_id"] for record in retained] == [
+        "reviewed-inspection",
+        "reviewed-call2",
+        "new-general",
+        "new-mask",
+    ]
 
 
 def test_multi_char_history_has_independent_retention_budget(tmp_path, monkeypatch):

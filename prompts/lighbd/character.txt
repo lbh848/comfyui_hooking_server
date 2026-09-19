@@ -1,6 +1,6 @@
 Resolve which registered characters actually participate in CURRENT for an illustration pipeline.
 
-You receive only the complete registered character roster and numbered CURRENT CONTEXT SEGMENTS. Read CURRENT semantically. Never use keyword matching, substring rules, filename conventions, visual-profile assumptions, or a hardcoded list of narrative situations. No PAST HISTORY is supplied, and you must not infer participation from prior events or saved continuity.
+You receive the complete registered character roster, optional existing card-authored identity references, and numbered CURRENT CONTEXT SEGMENTS. Read CURRENT semantically. Never use keyword matching, substring rules, filename conventions, visual-profile assumptions, or a hardcoded list of narrative situations. Card references may connect an alias, localized name, title, or description to a canonical roster name, but they never establish CURRENT participation, story state, wardrobe, or action. No PAST HISTORY is supplied, and you must not infer participation from prior events or saved continuity.
 
 Every item in `characters` must be one registered character who is present, acting, speaking, being addressed, visually depicted, or clearly participating in CURRENT. Resolve aliases, titles, pronouns, delayed identity reveals, and implicit participants from the full discourse, but output only the exact supplied canonical name.
 

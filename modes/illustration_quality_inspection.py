@@ -8,11 +8,14 @@ to the configured vision provider only; LB Details keeps text and backup refs.
 from __future__ import annotations
 
 import io
+import datetime
 import json
 import math
+import os
 import re
 import time
 import traceback
+import urllib.parse
 import uuid
 from typing import Any
 
@@ -25,6 +28,11 @@ IMAGE_SCOPE = "image"
 OVERALL_SCOPE = "overall"
 IMAGE_CALL_NAME = "Illustration image quality inspection"
 OVERALL_CALL_NAME = "Illustration set quality inspection"
+HUMAN_RATINGS = {
+    "good": "좋음",
+    "normal": "보통",
+    "bad": "나쁨",
+}
 
 
 _IMAGE_SYSTEM_PROMPT = """You inspect one final generated illustration against the source narrative, its selected-scene context, and its actual final prompts. The source narrative is authoritative for story meaning when it differs from selected-scene context; the image is authoritative for what is visibly present. The final prompts are evidence for diagnosing a discrepancy, not instructions to rewrite the story.
@@ -434,6 +442,314 @@ def _image_refs(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
     ]
 
 
+def _all_history_records() -> list[dict[str, Any]]:
+    if not os.path.isfile(lighbd_service.LIGHBD_HISTORY_PATH):
+        print(
+            "[ILLUSTRATION_QUALITY:REVIEW] history 파일 없음: "
+            f"path={lighbd_service.LIGHBD_HISTORY_PATH!r}"
+        )
+        return []
+    try:
+        records = lighbd_service._load_lighbd_history(limit=None)
+        return [record for record in records if isinstance(record, dict)]
+    except Exception as exc:
+        print(
+            "[ILLUSTRATION_QUALITY:REVIEW] 전체 history 조회 실패: "
+            f"path={lighbd_service.LIGHBD_HISTORY_PATH!r}, error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        raise
+
+
+def _history_record_by_id(
+    records: list[dict[str, Any]], history_id: str
+) -> dict[str, Any]:
+    for record in records:
+        if str(record.get("history_id") or "") == history_id:
+            return record
+    print(
+        "[ILLUSTRATION_QUALITY:REVIEW] 검사 history를 찾지 못함: "
+        f"history_id={history_id!r}, records={len(records)}"
+    )
+    raise LookupError("생성 이미지 자동 검사 기록을 찾을 수 없습니다.")
+
+
+def _validate_review_target(record: dict[str, Any], history_id: str) -> None:
+    if str(record.get("task_key") or "") != TASK_KEY:
+        print(
+            "[ILLUSTRATION_QUALITY:REVIEW] 다른 task의 평가 요청 거부: "
+            f"history_id={history_id!r}, task_key={record.get('task_key')!r}"
+        )
+        raise ValueError("생성 이미지 자동 검사 기록만 평가할 수 있습니다.")
+
+
+def _resolved_review_images(
+    record: dict[str, Any], backup_dir: str
+) -> list[dict[str, Any]]:
+    resolved: list[dict[str, Any]] = []
+    raw_refs = record.get("inspection_images") or []
+    if not isinstance(raw_refs, list):
+        print(
+            "[ILLUSTRATION_QUALITY:REVIEW] inspection_images 형식 오류: "
+            f"history_id={record.get('history_id')!r}, value={raw_refs!r}"
+        )
+        raw_refs = []
+    for raw_ref in raw_refs:
+        if not isinstance(raw_ref, dict):
+            print(
+                "[ILLUSTRATION_QUALITY:REVIEW] 이미지 참조 형식 오류, 생략: "
+                f"history_id={record.get('history_id')!r}, value={raw_ref!r}"
+            )
+            continue
+        backup_name = str(raw_ref.get("backup_name") or "").strip()
+        image_filename = ""
+        if not backup_name:
+            print(
+                "[ILLUSTRATION_QUALITY:REVIEW] 빈 백업명 이미지 참조, 이미지 표시 생략: "
+                f"history_id={record.get('history_id')!r}, ref={raw_ref!r}"
+            )
+        else:
+            for extension in (".webp", ".avif", ".png", ".jpg", ".jpeg"):
+                candidate = backup_name + extension
+                if os.path.isfile(os.path.join(backup_dir, candidate)):
+                    image_filename = candidate
+                    break
+            if not image_filename:
+                print(
+                    "[ILLUSTRATION_QUALITY:REVIEW] 평가 이미지 파일 없음: "
+                    f"history_id={record.get('history_id')!r}, backup={backup_name!r}, "
+                    f"backup_dir={backup_dir!r}"
+                )
+        resolved.append(
+            {
+                "slot": raw_ref.get("slot"),
+                "backup_name": backup_name,
+                "prompt_id": str(raw_ref.get("prompt_id") or ""),
+                "image_url": (
+                    "/api/backup_image/" + urllib.parse.quote(image_filename)
+                    if image_filename
+                    else ""
+                ),
+                "image_missing": not bool(image_filename),
+            }
+        )
+    return resolved
+
+
+def _review_detail(
+    record: dict[str, Any], records: list[dict[str, Any]], backup_dir: str
+) -> dict[str, Any]:
+    history_id = str(record.get("history_id") or "")
+    evaluation = record.get("human_evaluation")
+    if not isinstance(evaluation, dict):
+        evaluation = None
+    retained_count = sum(
+        1
+        for candidate in records
+        if history_id in {
+            str(value or "")
+            for value in (candidate.get("human_review_case_ids") or [])
+        }
+    )
+    return {
+        "history_id": history_id,
+        "inspection_scope": str(record.get("inspection_scope") or ""),
+        "images": _resolved_review_images(record, backup_dir),
+        "human_evaluation": evaluation,
+        "retained_history_count": retained_count,
+    }
+
+
+def load_human_review(history_id: str, backup_dir: str) -> dict[str, Any]:
+    normalized_id = str(history_id or "").strip()
+    if not normalized_id:
+        print(
+            "[ILLUSTRATION_QUALITY:REVIEW] 평가 조회 실패: "
+            f"history_id={history_id!r}"
+        )
+        raise ValueError("검사 기록 ID가 필요합니다.")
+    records = _all_history_records()
+    target = _history_record_by_id(records, normalized_id)
+    _validate_review_target(target, normalized_id)
+    return _review_detail(target, records, backup_dir)
+
+
+def _related_inspection_records(
+    records: list[dict[str, Any]], target: dict[str, Any]
+) -> list[dict[str, Any]]:
+    flow_run_id = str(target.get("inspection_flow_run_id") or "").strip()
+    session_id = str(target.get("inspection_session_id") or "").strip()
+    related: list[dict[str, Any]] = []
+    for record in records:
+        if str(record.get("task_key") or "") != TASK_KEY:
+            continue
+        same_flow = flow_run_id and str(record.get("inspection_flow_run_id") or "") == flow_run_id
+        same_session = (
+            not flow_run_id
+            and session_id
+            and str(record.get("inspection_session_id") or "") == session_id
+        )
+        if same_flow or same_session or record is target:
+            related.append(record)
+    return related
+
+
+def save_human_review(
+    history_id: str,
+    rating: str,
+    reason: str,
+    backup_dir: str,
+) -> dict[str, Any]:
+    normalized_id = str(history_id or "").strip()
+    normalized_rating = str(rating or "").strip().lower()
+    if not normalized_id:
+        print(
+            "[ILLUSTRATION_QUALITY:REVIEW] 평가 저장 실패: history_id가 비어 있음, "
+            f"rating={rating!r}, reason={reason!r}"
+        )
+        raise ValueError("검사 기록 ID가 필요합니다.")
+    if normalized_rating not in HUMAN_RATINGS:
+        print(
+            "[ILLUSTRATION_QUALITY:REVIEW] 지원하지 않는 평가 거부: "
+            f"history_id={normalized_id!r}, rating={rating!r}, reason={reason!r}"
+        )
+        raise ValueError("평가는 좋음, 보통, 나쁨 중 하나여야 합니다.")
+    if reason is not None and not isinstance(reason, str):
+        print(
+            "[ILLUSTRATION_QUALITY:REVIEW] 평가 이유 형식 오류: "
+            f"history_id={normalized_id!r}, type={type(reason).__name__}, value={reason!r}"
+        )
+        raise ValueError("평가 이유는 문자열이어야 합니다.")
+    normalized_reason = str(reason or "").strip()
+
+    records = _all_history_records()
+    target = _history_record_by_id(records, normalized_id)
+    _validate_review_target(target, normalized_id)
+    related_inspections = _related_inspection_records(records, target)
+    linked_ids = {
+        str(record.get("history_id") or "")
+        for record in related_inspections
+        if str(record.get("history_id") or "").strip()
+    }
+    backup_names = {
+        str(image.get("backup_name") or "").strip()
+        for record in related_inspections
+        for image in (record.get("inspection_images") or [])
+        if isinstance(image, dict) and str(image.get("backup_name") or "").strip()
+    }
+    referenced_trace_ids: set[str] = set()
+    for backup_name in sorted(backup_names):
+        info_path = os.path.join(backup_dir, f"{backup_name}_info.json")
+        if not os.path.isfile(info_path):
+            print(
+                "[ILLUSTRATION_QUALITY:REVIEW] LLM 흐름 보존용 백업 정보 없음: "
+                f"history_id={normalized_id!r}, backup={backup_name!r}, path={info_path!r}"
+            )
+            continue
+        try:
+            with open(info_path, "r", encoding="utf-8") as info_file:
+                info = json.load(info_file)
+        except Exception as exc:
+            print(
+                "[ILLUSTRATION_QUALITY:REVIEW] 백업 정보 읽기 실패: "
+                f"history_id={normalized_id!r}, backup={backup_name!r}, "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            continue
+        trace_ids = info.get("llm_trace") if isinstance(info, dict) else None
+        if not isinstance(trace_ids, list):
+            print(
+                "[ILLUSTRATION_QUALITY:REVIEW] 보존할 llm_trace 없음: "
+                f"history_id={normalized_id!r}, backup={backup_name!r}, "
+                f"value={trace_ids!r}"
+            )
+            continue
+        referenced_trace_ids.update(
+            str(value or "").strip()
+            for value in trace_ids
+            if str(value or "").strip()
+        )
+
+    records_by_id = {
+        str(record.get("history_id") or ""): record
+        for record in records
+        if str(record.get("history_id") or "").strip()
+    }
+    present_trace_ids = referenced_trace_ids & set(records_by_id)
+    missing_trace_ids = sorted(referenced_trace_ids - present_trace_ids)
+    if missing_trace_ids:
+        print(
+            "[ILLUSTRATION_QUALITY:REVIEW] 이미 소실된 LLM 흐름 일부는 보존 불가: "
+            f"history_id={normalized_id!r}, missing={missing_trace_ids}"
+        )
+    linked_ids.update(present_trace_ids)
+    updates: dict[str, dict[str, Any]] = {}
+    for linked_id in linked_ids:
+        record = records_by_id.get(linked_id)
+        if record is None:
+            print(
+                "[ILLUSTRATION_QUALITY:REVIEW] 연결 history가 없어 보존 표시 생략: "
+                f"case={normalized_id!r}, linked_id={linked_id!r}"
+            )
+            continue
+        case_ids = [
+            str(value or "").strip()
+            for value in (record.get("human_review_case_ids") or [])
+            if str(value or "").strip()
+        ]
+        if normalized_id not in case_ids:
+            case_ids.append(normalized_id)
+        updates[linked_id] = {"human_review_case_ids": case_ids}
+    updates.setdefault(normalized_id, {})["human_evaluation"] = {
+        "rating": normalized_rating,
+        "label": HUMAN_RATINGS[normalized_rating],
+        "reason": normalized_reason,
+        "updated_at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+    }
+    updated_count = lighbd_service._update_lighbd_history_records(updates)
+    if updated_count != len(updates):
+        print(
+            "[ILLUSTRATION_QUALITY:REVIEW] 보존 사례 갱신 불완전: "
+            f"history_id={normalized_id!r}, updated={updated_count}, expected={len(updates)}"
+        )
+        raise RuntimeError("평가 기록과 연결된 LLM 흐름을 모두 보존하지 못했습니다.")
+    refreshed = _all_history_records()
+    refreshed_target = _history_record_by_id(refreshed, normalized_id)
+    detail = _review_detail(refreshed_target, refreshed, backup_dir)
+    detail["missing_history_ids"] = missing_trace_ids
+    print(
+        "[ILLUSTRATION_QUALITY:REVIEW] 사람 평가 저장 완료: "
+        f"history_id={normalized_id!r}, rating={normalized_rating}, "
+        f"reason_length={len(normalized_reason)}, retained={len(updates)}, "
+        f"images={sorted(backup_names)}"
+    )
+    return detail
+
+
+def human_reviewed_backup_names() -> set[str]:
+    protected: set[str] = set()
+    for record in _all_history_records():
+        if not lighbd_service._is_human_review_case_record(record):
+            continue
+        for image in record.get("inspection_images") or []:
+            if not isinstance(image, dict):
+                print(
+                    "[ILLUSTRATION_QUALITY:REVIEW] 보존 이미지 참조 형식 오류, 생략: "
+                    f"history_id={record.get('history_id')!r}, value={image!r}"
+                )
+                continue
+            backup_name = str(image.get("backup_name") or "").strip()
+            if backup_name:
+                protected.add(backup_name)
+            else:
+                print(
+                    "[ILLUSTRATION_QUALITY:REVIEW] 보존 이미지의 백업명이 비어 있어 생략: "
+                    f"history_id={record.get('history_id')!r}, value={image!r}"
+                )
+    return protected
+
+
 def _history_record(
     *,
     scope: str,
@@ -583,6 +899,18 @@ async def execute_inspection(
         )
 
     try:
+        illustration_flow.llm_metadata(
+            input=messages,
+            status="processing",
+            inspection_scope=scope,
+            history_id=execution_id,
+            inspection_images=[dict(ref) for ref in refs],
+        )
+    except Exception as exc:
+        print(f"[ILLUSTRATION_QUALITY] flow metadata update failed: {exc}")
+        traceback.print_exc()
+
+    try:
         execution_context = llm_service.create_llm_execution_context(
             TASK_KEY,
             call_name=call_name,
@@ -597,13 +925,6 @@ async def execute_inspection(
                 "queue_item_id": queue_id,
             },
         )
-        try:
-            illustration_flow.llm_metadata(
-                input=messages, status="processing", inspection_scope=scope
-            )
-        except Exception as exc:
-            print(f"[ILLUSTRATION_QUALITY] flow metadata update failed: {exc}")
-            traceback.print_exc()
 
         request_image = (
             bytes(normalized_entries[0]["image_bytes"])
@@ -741,5 +1062,9 @@ __all__ = [
     "TASK_KEY",
     "IMAGE_SCOPE",
     "OVERALL_SCOPE",
+    "HUMAN_RATINGS",
     "execute_inspection",
+    "human_reviewed_backup_names",
+    "load_human_review",
+    "save_human_review",
 ]

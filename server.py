@@ -3187,14 +3187,37 @@ async def save_backup(
 
 
 def cleanup_backups():
-    """최대 보관 수를 초과하는 오래된 백업을 삭제한다."""
+    """Delete old unreviewed backups while retaining every human review case."""
     max_count = app_config.get("backup_max_count", DEFAULT_MAX_BACKUP_IMAGES)
     backup_dir = get_backup_base_dir()
+    try:
+        reviewed_names = illustration_quality_inspection.human_reviewed_backup_names()
+    except Exception as exc:
+        print(
+            "[BACKUP:CLEANUP] 사람 평가 보존 목록 조회 실패로 자동 정리 중단: "
+            f"backup_dir={backup_dir!r}, error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        return
     files = []
     for pattern in ("*.webp", "*.avif"):
         files.extend(glob.glob(os.path.join(backup_dir, pattern)))
     files = sorted(set(files), key=os.path.getmtime, reverse=True)
-    for old_file in files[max_count:]:
+    old_files = []
+    unreviewed_kept = 0
+    for candidate in files:
+        candidate_name = os.path.splitext(os.path.basename(candidate))[0]
+        if candidate_name in reviewed_names:
+            print(
+                "[BACKUP:CLEANUP] 사람 평가 사례 백업 보존: "
+                f"name={candidate_name!r}"
+            )
+            continue
+        if unreviewed_kept < max_count:
+            unreviewed_kept += 1
+            continue
+        old_files.append(candidate)
+    for old_file in old_files:
         base, _image_extension = os.path.splitext(old_file)
         for ext in [".webp", ".avif", ".json", ".txt", "_info.json", "_enhanced.txt", "_chat.txt", "_wildcard.json"]:
             try:
@@ -8926,6 +8949,65 @@ async def handle_illustration_quality_inspection_settings(request: web.Request) 
         )
         traceback.print_exc()
         return web.json_response({"error": str(exc)}, status=500)
+
+
+async def handle_illustration_quality_inspection_review(request: web.Request) -> web.Response:
+    history_id = str(request.match_info.get("history_id") or "").strip()
+    try:
+        backup_dir = get_backup_base_dir()
+        if request.method == "GET":
+            result = illustration_quality_inspection.load_human_review(
+                history_id,
+                backup_dir,
+            )
+        elif request.method == "POST":
+            body = await request.json()
+            if not isinstance(body, dict):
+                print(
+                    "[ILLUST_INSPECTION:REVIEW] 평가 요청 본문 형식 오류: "
+                    f"history_id={history_id!r}, body={body!r}"
+                )
+                return web.json_response(
+                    {"status": "error", "error": "평가 요청은 JSON 객체여야 합니다."},
+                    status=400,
+                )
+            result = illustration_quality_inspection.save_human_review(
+                history_id,
+                body.get("rating"),
+                body.get("reason", ""),
+                backup_dir,
+            )
+        else:
+            print(
+                "[ILLUST_INSPECTION:REVIEW] 지원하지 않는 요청 방식: "
+                f"history_id={history_id!r}, method={request.method!r}"
+            )
+            return web.json_response(
+                {"status": "error", "error": "지원하지 않는 요청 방식입니다."},
+                status=405,
+            )
+        return web.json_response(result)
+    except LookupError as exc:
+        print(
+            "[ILLUST_INSPECTION:REVIEW] 평가 대상 조회 실패: "
+            f"history_id={history_id!r}, error={exc}"
+        )
+        traceback.print_exc()
+        return web.json_response({"status": "error", "error": str(exc)}, status=404)
+    except ValueError as exc:
+        print(
+            "[ILLUST_INSPECTION:REVIEW] 평가 요청 거부: "
+            f"history_id={history_id!r}, error={exc}"
+        )
+        traceback.print_exc()
+        return web.json_response({"status": "error", "error": str(exc)}, status=400)
+    except Exception as exc:
+        print(
+            "[ILLUST_INSPECTION:REVIEW] 평가 처리 실패: "
+            f"history_id={history_id!r}, error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        return web.json_response({"status": "error", "error": str(exc)}, status=500)
 
 
 async def handle_illustration_flow(request: web.Request) -> web.Response:
@@ -21420,6 +21502,14 @@ app.router.add_get("/api/frontend_ws", handle_frontend_ws)
 app.router.add_get("/api/illustration_flow", handle_illustration_flow)
 app.router.add_get("/api/illustration_quality_inspection/settings", handle_illustration_quality_inspection_settings)
 app.router.add_post("/api/illustration_quality_inspection/settings", handle_illustration_quality_inspection_settings)
+app.router.add_get(
+    "/api/illustration_quality_inspection/review/{history_id}",
+    handle_illustration_quality_inspection_review,
+)
+app.router.add_post(
+    "/api/illustration_quality_inspection/review/{history_id}",
+    handle_illustration_quality_inspection_review,
+)
 app.router.add_post("/api/illustration_flow/cancel", handle_illustration_flow_cancel)
 app.router.add_get("/illustration_flow.js", handle_illustration_flow_script)
 app.router.add_get("/api/config", handle_api_config)
@@ -25924,7 +26014,6 @@ async def handle_api_tailscale_start(request: web.Request) -> web.Response:
         print(f"[TAILSCALE] Serve 시작 중 예외: {exc}")
         traceback.print_exc()
         return web.json_response({"status": "error", "error": str(exc)}, status=500)
-
 async def handle_api_tailscale_status(request: web.Request) -> web.Response:
     global _tailscale_active, _tailscale_url
     try:

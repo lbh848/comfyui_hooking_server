@@ -1021,6 +1021,48 @@ def test_scene_plan_uses_each_outfit_decided_by_global_plan():
     assert "worn items are blue dress" in bound[1]["continuity_note"]
 
 
+def test_scene_plan_natural_language_continuity_is_not_overwritten_by_stale_tags():
+    plans = [{
+        "plan_id": "S001",
+        "slot": 7,
+        "anchor_segment": "C002",
+        "characters": ["Mina"],
+        "scene_brief": "Mina recoils on the bed.",
+        "continuity_note": (
+            "Mina remains fully nude after her dress and underwear were removed "
+            "in the preceding story passage; no later dressing event occurs."
+        ),
+    }]
+    stale_state = {
+        "mina": {
+            "canonical_name": "Mina",
+            "current_wardrobe": {
+                "body_state": "clothed",
+                "worn": ["school uniform", "black tights"],
+                "removed": [],
+            },
+        },
+    }
+
+    bound = pipeline.bind_scene_plan_wardrobes(
+        plans,
+        ["C001", "C002"],
+        stale_state,
+        [{"name": "Mina", "confidence": 1.0}],
+        [],
+        "message-1",
+    )
+
+    assert bound[0]["wardrobe_snapshot"] == {}
+    assert bound[0]["wardrobe_sources"] == {
+        "Mina": "call2_plan_natural_language",
+    }
+    assert "Mina remains fully nude" in bound[0]["continuity_note"]
+    assert "Server-resolved wardrobe" not in bound[0]["continuity_note"]
+    assert "school uniform" not in bound[0]["continuity_note"]
+    assert "black tights" not in bound[0]["continuity_note"]
+
+
 def test_scene_plan_carries_literal_wardrobe_change_as_natural_continuity():
     plans = [{
         "plan_id": "S001",
@@ -1755,7 +1797,9 @@ async def test_call2_pipeline_repairs_character_mismatch_without_global_fallback
 
 
 @pytest.mark.asyncio
-async def test_call2_plan_excludes_balanced_fallback_past_scenes(monkeypatch):
+async def test_call2_plan_marks_balanced_fallback_past_as_non_candidate_reference(
+    monkeypatch,
+):
     requests = {}
 
     async def fake_pipeline_call(call_name, messages, *args, **kwargs):
@@ -1822,7 +1866,9 @@ async def test_call2_plan_excludes_balanced_fallback_past_scenes(monkeypatch):
     )
     assert "# SERVER SEGMENT CATALOG" in plan_request
     assert "Hana waits in the current hallway." in plan_request
-    assert "PAST SCENE MARKER" not in plan_request
+    assert "# RECENT STORY CONTINUITY REFERENCE (NOT SCENE CANDIDATES)" in plan_request
+    assert "PAST SCENE MARKER" in plan_request
+    assert "Never select an action or visual beat from this block" in plan_request
     assert "# BALANCED FALLBACK PAST HISTORY" not in plan_request
     assert "# BALANCED FALLBACK PAST HISTORY" not in detail_request
     assert "PAST SCENE MARKER" not in detail_request
@@ -1998,7 +2044,7 @@ async def test_call2_pipeline_generates_characterless_scene_without_fallback(mon
     assert result["call2_fallback_stage"] == ""
     assert "students" in result["items"][0]["scene"]
     detail_prompt = "\n".join(str(message.get("content") or "") for message in detail_messages)
-    assert "When the list is empty, keep `characters: []`" in detail_prompt
+    assert "When empty, keep `characters: []`" in detail_prompt
 
 
 @pytest.mark.asyncio
@@ -2032,9 +2078,8 @@ async def test_call2_plan_resolves_delayed_identity_before_assigning_scene_roste
                 "Read the supplied current narrative from its first segment through "
                 "its final segment"
             ) in request_text
-            assert "delayed identity reveals globally" in request_text
-            assert "Assign canonical characters from the whole narrative" in request_text
-            assert "never from an anchor segment alone" in request_text
+            assert "delayed reveals from the whole narrative" in request_text
+            assert "never one anchor alone" in request_text
             catalog = request_text.split(
                 "# SERVER SEGMENT CATALOG (Cxxx IDs ONLY; SLOT MAPPING IS PRIVATE)",
                 1,
@@ -2352,7 +2397,8 @@ scenes: []
             "speak_enabled": False,
         },
         (
-            "### Hana\n-Appearance\n1girl, black hair\n-default_outfit\nblue dress\n\n"
+            "### Hana\n-Appearance\n1girl, black hair\n-default_outfit\n"
+            "profile-only cerulean gown\n\n"
             "### Bob\n-Appearance\n1boy, brown hair\n-default_outfit\nblack suit"
         ),
         extra_instruction=(
@@ -2361,7 +2407,7 @@ scenes: []
             "### Nested instruction heading\n"
             "Keep this nested instruction even when character cards are filtered."
         ),
-        extra_costume="### Hana\n-default_outfit\nblue dress",
+        extra_costume="### Hana\n-default_outfit\nprofile-only cerulean gown",
         extra_names="Hana",
         backtranslate_names="Hana",
         history_plan={
@@ -2371,7 +2417,13 @@ scenes: []
             "base_context_hash": "base-current",
             "state_before": state_before,
             "call1_history": [],
-            "call2_fallback_history": [],
+            "call2_fallback_history": [{
+                "role": "char",
+                "data": (
+                    "BRANCH-SCOPED PRIOR NARRATIVE: Hana removed the blue dress "
+                    "and did not put it back on."
+                ),
+            }],
             "call3_fallback_history": [],
             "record_before": {
                 "source": {"branch_id": "main"},
@@ -2397,21 +2449,30 @@ scenes: []
     assert "# TRUSTED ACTIVE BOT IMAGE POLICY" in plan_request
     assert "ACTIVE BOT INSTRUCTION MARKER" in plan_request
     assert "### Nested instruction heading" in plan_request
-    assert "Treat `TRUSTED ACTIVE BOT IMAGE POLICY` as the renderability envelope" in plan_request
+    assert "Treat `TRUSTED ACTIVE BOT IMAGE POLICY` as the single renderability" in plan_request
     assert "materially different supported actions" in plan_request
     assert "invisible internal states" in plan_request
     assert "Lead `scene_brief` with the familiar high-level action or pose" in plan_request
     assert "Preserve who acts on whom" in plan_request
-    assert "do not replace a renderable interaction" in plan_request
-    assert "defining contact, body axes, and required anonymous partner portion" in plan_request
-    assert "smallest connected, simplified, non-identifying partner fragment" in plan_request
-    assert "complete or identifiable partner face" in plan_request
-    assert "internal-only effect" in plan_request
+    assert "Apply an isolated-still legibility test" in plan_request
+    assert "never swap actor and receiver" in plan_request
+    assert "promote an anonymous participant into the named or focal subject" in plan_request
+    assert "every action-bearing region needed to recognize it must fit" in plan_request
+    assert "keep an unnecessary partner fragment off-frame" in plan_request
+    assert "blanket ban on every cropped rear or side portion" in plan_request
+    assert "rather than weakening the policy" in plan_request
     assert "same concise garment-design wording" in plan_request
     assert "Start a new description only for a real story-time wardrobe change" in plan_request
     assert "Every scene is directly supported by its own anchor passage" in plan_request
-    assert "# CHARACTER DICTIONARY" in plan_request
-    assert "### Hana" in plan_request
+    assert "# RECENT STORY CONTINUITY REFERENCE (NOT SCENE CANDIDATES)" in plan_request
+    assert "BRANCH-SCOPED PRIOR NARRATIVE" in plan_request
+    assert "# CURRENT CANONICAL CHARACTER ROSTER (IDENTITY LABELS ONLY)" in plan_request
+    assert '["Hana"]' in plan_request
+    assert "# CHARACTER DICTIONARY" not in plan_request
+    assert "# PRESELECTED PROFILE AUTHORITY" not in plan_request
+    assert "# TRACKED WARDROBE CONTINUITY AND DEFAULT REFERENCE" not in plan_request
+    assert "# SPARSE CURRENT WARDROBE CHANGE HISTORY" not in plan_request
+    assert "profile-only cerulean gown" not in plan_request
     assert "### Bob" not in plan_request
     assert "# AUTHORITATIVE FIXED APPEARANCE" not in plan_request
     assert "# AUTHORITATIVE WARDROBE CONTINUITY STATE" not in plan_request
@@ -2419,7 +2480,7 @@ scenes: []
     assert "# CLASSIFIED LAST VISUAL REFERENCE" not in plan_request
     assert "nested generated visual marker" not in plan_request
     assert "dedicated last visual marker" not in plan_request
-    assert "timeline event marker" in plan_request
+    assert "timeline event marker" not in plan_request
 
     keyvis_request = request_by_call["CALL2-KEYVIS"]
     assert "Create exactly one standalone promotional Key Visual" in keyvis_request
@@ -2437,7 +2498,9 @@ scenes: []
     assert "# TRACKED WARDROBE CONTINUITY AND DEFAULT REFERENCE" in keyvis_request
     assert "# SPARSE CURRENT WARDROBE CHANGE HISTORY" in keyvis_request
     assert "blue dress" in keyvis_request
+    assert "profile-only cerulean gown" in keyvis_request
     assert "timeline event marker" in keyvis_request
+    assert "BRANCH-SCOPED PRIOR NARRATIVE" not in keyvis_request
     assert "# CLASSIFIED LAST VISUAL REFERENCE" not in keyvis_request
     assert "nested generated visual marker" not in keyvis_request
     assert "dedicated last visual marker" not in keyvis_request
@@ -2469,10 +2532,12 @@ scenes: []
     assert "[Last log entry]" not in detail_request
     assert "`anchor_passage` is the event authority" in detail_request
     assert "repair only camera and crop" in detail_request
-    assert "contact-centered view" in detail_request
-    assert "reaction-centered view" in detail_request
+    assert "Treat the first core action or pose in `scene_brief` as the image center" in detail_request
+    assert "use a contact-centered camera" in detail_request
+    assert "Use a reaction-centered camera only when the assigned primary fact" in detail_request
+    assert "Never crop away the plan's defining action" in detail_request
     assert "Make camera, relative positions, poses, gaze" in detail_request
-    assert "one primary visible fact" in detail_request
+    assert "action-bearing region named by `scene_brief` must be inside the camera crop" in detail_request
     detail_messages = next(
         messages
         for name, messages in messages_by_call.items()
@@ -2489,18 +2554,22 @@ scenes: []
     assert "Put only visible or coverage-defining garments in `positive`" in detail_request
     assert "Omit remote face, hair, eye, expression, or clothing details" in detail_request
     assert "Keep partner-owned anatomy and action out of every named character's `positive`" in detail_request
+    assert "never replace one with an anonymous participant" in detail_request
+    assert "non-identifying rear or side portion of a partner's head" in detail_request
+    assert "never turn it into a second portrait or camera center" in detail_request
     assert "severe foreshortening" not in detail_request
     assert "Keep remote ongoing contact as context rather than demanding" not in detail_request
     assert "nested generated visual marker" not in detail_request
     assert "dedicated last visual marker" not in detail_request
     assert "timeline event marker" not in detail_request
+    assert "BRANCH-SCOPED PRIOR NARRATIVE" not in detail_request
     assert result["last_visual_reference_classification"]["reference_type"] == "CONTINUITY"
     assert state_before == original_state
     assert [item["kind"] for item in result["items"]] == ["keyvis", "scene"]
 
 
 @pytest.mark.asyncio
-async def test_call2_plan_dictionary_contains_only_resolver_current_characters(monkeypatch):
+async def test_call2_plan_roster_contains_only_resolver_current_identity_labels(monkeypatch):
     request_by_call = {}
 
     async def fake_pipeline_call(call_name, messages, *args, **kwargs):
@@ -2585,13 +2654,22 @@ scenes[1]:
     )
 
     plan_request = request_by_call["CALL2-PLAN"]
-    plan_dictionary = plan_request.split("# CHARACTER DICTIONARY", 1)[1].split(
+    plan_roster = plan_request.split(
+        "# CURRENT CANONICAL CHARACTER ROSTER (IDENTITY LABELS ONLY)",
+        1,
+    )[1].split(
         "# SCENE-PLAN TASK",
         1,
     )[0]
-    assert "### Hana" in plan_dictionary
-    assert "### Mira" in plan_dictionary
-    assert "### Bob" not in plan_dictionary
+    assert '"Hana"' in plan_roster
+    assert '"Mira"' in plan_roster
+    assert '"Bob"' not in plan_roster
+    assert "Appearance" not in plan_roster
+    assert "default_outfit" not in plan_roster
+    assert "black hair" not in plan_roster
+    assert "blue dress" not in plan_roster
+    assert "# CHARACTER DICTIONARY" not in plan_request
+    assert "# PRESELECTED PROFILE AUTHORITY" not in plan_request
 
     detail_request = next(
         content
@@ -6607,6 +6685,8 @@ async def test_profile_resolution_toggle_off_still_resolves_characters_and_uses_
         calls.append((call_name, messages, kwargs))
         prompt = "\n".join(message["content"] for message in messages)
         assert "# COMPLETE REGISTERED CHARACTER ROSTER" in prompt
+        assert "# REGISTERED CHARACTER CARD IDENTITY REFERENCES" in prompt
+        assert "Hana_Ordinary" in prompt
         assert "# PAST HISTORY" not in prompt
         assert "# REGISTERED PROFILE CATALOG" not in prompt
         return json.dumps({
@@ -6680,6 +6760,34 @@ async def test_profile_resolution_toggle_off_still_resolves_characters_and_uses_
     assert pipeline.merged_toggles({
         "profile_resolve_enabled": False,
     })["profile_resolve_enabled"] is False
+
+
+def test_character_card_identity_context_excludes_story_state_and_tag_fields():
+    visual_profiles = {
+        "Doyun": cards_to_character_profiles("Doyun", [{
+            "id": "daily",
+            "aliases": ["한도윤", "Doyun Daily"],
+            "selection_guide": "A private transformation-state routing rule.",
+            "visual_context": "A black-haired student known in the story as 한도윤.",
+            "appearance": ["black hair", "black eyes"],
+            "default_outfit": ["school uniform", "blue necktie"],
+        }]),
+    }
+
+    context = pipeline._character_card_identity_context(
+        visual_profiles,
+        ["Doyun"],
+    )
+
+    assert "# REGISTERED CHARACTER CARD IDENTITY REFERENCES" in context
+    assert "### Doyun" in context
+    assert "한도윤" in context
+    assert "A black-haired student known in the story as 한도윤." in context
+    assert "private transformation-state routing rule" not in context
+    assert "black eyes" not in context
+    assert "school uniform" not in context
+    assert "blue necktie" not in context
+    assert "nothing from the story is stored back into a card" in context
 
 
 @pytest.mark.asyncio
@@ -8201,6 +8309,166 @@ def test_parse_call1_accepts_literal_multiline_evidence_with_transport_whitespac
     )
 
 
+def test_parse_call1_preserves_actual_nude_transition_across_numbered_paragraphs():
+    current = (
+        "§툭, 투둑……!§\n"
+        "찢어발길 듯한 기세로 흰 셔츠의 플라스틱 단추들이 튕겨 나갔다.\n\n"
+        "도윤의 손가락이 브래지어 후크를 건드려 단숨에 가슴팍을 해방했다.\n\n"
+        "숏팬츠의 단추가 튕겨 나가고 지퍼가 내려갔다.\n\n"
+        "검은 속옷까지 골반에서 발끝까지 끌어내려 침대 바닥으로 내팽개쳤다.\n\n"
+        "---\n⏱️[2025-05-17 (Sat) 10:02 AM]\n§정────적……§\n완벽한 해체.\n\n"
+        "요시무라 쇼코의 전신이 실오라기 하나 걸치지 않은 전라 상태로 완전히 노출되었다."
+    )
+    _rendered, segments = pipeline._segment_current_context(current)
+    output = {
+        "current_characters": ["Shoko", "Doyun"],
+        "wardrobe_events": [{
+            "segment_id": "C001",
+            "character": "Shoko",
+            "operation": "open",
+            "wardrobe_change": "Her white shirt is torn open.",
+            "state_after": "partial",
+            "evidence": (
+                "§툭, 투둑……!§\n"
+                "찢어발길 듯한 기세로 흰 셔츠의 플라스틱 단추들이 튕겨 나갔다."
+            ),
+        }, {
+            "segment_id": "C002",
+            "character": "Shoko",
+            "operation": "remove",
+            "wardrobe_change": "Doyun unfastens her bra, leaving her topless.",
+            "state_after": "topless",
+            "evidence": (
+                "도윤의 손가락이 브래지어 후크를 건드려 "
+                "단숨에 가슴팍을 해방했다."
+            ),
+        }, {
+            "segment_id": "C003",
+            "character": "Shoko",
+            "operation": "remove",
+            "wardrobe_change": (
+                "Her shorts and black underwear are pulled off, leaving her fully nude."
+            ),
+            "state_after": "nude",
+            "evidence": (
+                "숏팬츠의 단추가 튕겨 나가고 지퍼가 내려갔다.\n"
+                "검은 속옷까지 골반에서 발끝까지 끌어내려 침대 바닥으로 내팽개쳤다.\n"
+                "§정────적……§\n"
+                "완벽한 해체.\n"
+                "요시무라 쇼코의 전신이 실오라기 하나 걸치지 않은 전라 상태로 완전히 노출되었다."
+            ),
+        }],
+        "hairstyle_events": [],
+    }
+
+    analysis = pipeline.parse_call1_analysis(
+        json.dumps(output, ensure_ascii=False),
+        current,
+        segments,
+        "Shoko, Doyun",
+    )
+
+    assert analysis is not None
+    assert [event["state_after"] for event in analysis["wardrobe_events"]] == [
+        "partial",
+        "topless",
+        "nude",
+    ]
+    assert any(
+        "여러 CURRENT segment에 걸쳐 있어 보존" in warning
+        for warning in analysis["validation_warnings"]
+    )
+
+
+def test_parse_call1_cross_segment_evidence_generalizes_and_rejects_reversed_order():
+    current = (
+        "Mina unfastened the red coat.\n\n"
+        "She pulled it from her shoulders.\n\n"
+        "The coat fell beside the chair."
+    )
+    _rendered, segments = pipeline._segment_current_context(current)
+
+    def parse(evidence):
+        return pipeline.parse_call1_analysis(
+            json.dumps({
+                "current_characters": ["Mina"],
+                "wardrobe_events": [{
+                    "segment_id": "C001",
+                    "character": "Mina",
+                    "operation": "remove",
+                    "wardrobe_change": "Mina removed her red coat.",
+                    "state_after": "clothed",
+                    "evidence": evidence,
+                }],
+                "hairstyle_events": [],
+            }),
+            current,
+            segments,
+            "Mina",
+        )
+
+    accepted = parse(
+        "Mina unfastened the red coat.\n"
+        "She pulled it from her shoulders.\n"
+        "The coat fell beside the chair."
+    )
+    rejected = parse(
+        "The coat fell beside the chair.\n"
+        "Mina unfastened the red coat."
+    )
+
+    assert accepted is not None
+    assert len(accepted["wardrobe_events"]) == 1
+    assert rejected is not None
+    assert rejected["wardrobe_events"] == []
+    assert any(
+        "복장 변경 근거 불일치로 폐기" in warning
+        for warning in rejected["validation_warnings"]
+    )
+
+
+def test_enhance_prompt_distinguishes_garment_owner_from_wearer():
+    prompt = (
+        Path(__file__).resolve().parents[1]
+        / "prompts"
+        / "lighbd"
+        / "enhance.txt"
+    ).read_text(encoding="utf-8")
+
+    assert "Resolve an object's owner, its wearer, and the actor" in prompt
+    assert "A grasping the hem of B's shirt does not establish that A wears it" in prompt
+    assert "A putting on B's shirt does" in prompt
+
+
+def test_interaction_legibility_prompts_cover_reaction_crop_and_fragment_contrasts():
+    prompt_dir = Path(__file__).resolve().parents[1] / "prompts" / "lighbd"
+    plan_prompt = (prompt_dir / "plan.txt").read_text(encoding="utf-8")
+    detail_prompt = (prompt_dir / "detail.txt").read_text(encoding="utf-8")
+
+    # Subject-only reaction: an off-frame addressee must not grow a floating face.
+    assert "looking toward an addressed off-frame person" in plan_prompt
+    assert "set `anonymous_partner_fragment` false" in plan_prompt
+    assert "rather than adding a floating chin or face" in plan_prompt
+
+    # Isomorphic unrenderable contact: face-led or multi-region geometry is
+    # rejected at selection time instead of expanding the anonymous partner.
+    assert "A face-led contact" in plan_prompt
+    assert "embrace that needs several distant partner regions at once" in plan_prompt
+    assert "choose another supported instant" in plan_prompt
+    assert "blanket ban on every cropped rear or side portion of a head" in plan_prompt
+
+    # Opposite valid case: one connected action-bearing fragment remains allowed.
+    assert "A hand-led interaction normally needs only the connected hand and forearm" in plan_prompt
+    assert "one connected hand and forearm visibly establish a wrist hold" in detail_prompt
+
+    # The downstream crop must carry the selected event rather than relegating
+    # it to prose outside the visible frame.
+    assert "legs locked around a waist" in detail_prompt
+    assert "frame the legs and waist as the readable center" in detail_prompt
+    assert "never choose a face-and-chest crop that excludes the legs" in detail_prompt
+    assert "The action-bearing region named by `scene_brief` must be inside" in detail_prompt
+
+
 def test_parse_call1_legacy_items_event_still_carried_for_backward_compat():
     # 과거 기록/구 출력의 items 형식은 하위 호환을 위해 계속 파싱한다.
     current = "She removed her gloves."
@@ -9434,7 +9702,9 @@ async def test_persistent_call2_only_uses_bounded_history_and_visual_candidate(m
         request_text = "\n".join(message["content"] for message in messages)
         if call_name == "CALL2-PLAN":
             assert task_key == "illustration_call2_plan"
-            assert "bounded past marker" not in request_text
+            assert "# RECENT STORY CONTINUITY REFERENCE (NOT SCENE CANDIDATES)" in request_text
+            assert "bounded past marker" in request_text
+            assert "selectable scenes come only from the current Cxxx segment catalog" in request_text
             return json.dumps({
                 "scene_plan": [{
                     "anchor_segment": "C001",
@@ -9533,7 +9803,9 @@ async def test_persistent_history_recovers_missing_prior_wardrobe_with_balanced_
         request_text = "\n".join(message["content"] for message in messages)
         if call_name == "CALL2-PLAN":
             assert task_key == "illustration_call2_plan"
-            assert "past wardrobe recovery marker" not in request_text
+            assert "# RECENT STORY CONTINUITY REFERENCE (NOT SCENE CANDIDATES)" in request_text
+            assert "past wardrobe recovery marker" in request_text
+            assert "selectable scenes come only from the current Cxxx segment catalog" in request_text
             return json.dumps({
                 "scene_plan": [{
                     "anchor_segment": "C001",
@@ -9731,7 +10003,8 @@ async def test_persistent_call1_off_keeps_call2_call3_with_separate_bounded_hist
                 return _authority_audit_response(messages)
             if call_name == "CALL2-PLAN":
                 assert task_key == "illustration_call2_plan"
-                assert "call2 bounded marker" not in request_text
+                assert "# RECENT STORY CONTINUITY REFERENCE (NOT SCENE CANDIDATES)" in request_text
+                assert "call2 bounded marker" in request_text
                 assert "call3 bounded marker" not in request_text
                 return json.dumps({
                     "scene_plan": [{

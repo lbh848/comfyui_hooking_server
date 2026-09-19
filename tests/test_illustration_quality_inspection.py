@@ -169,11 +169,16 @@ async def test_image_review_delegates_original_bytes_to_shared_vision_transport(
     assert "naturally cropped" in user_message
     assert user_message.count(entry["positive"]) == 1
     assert user_message.count(entry["negative"]) == 1
-    assert flow_events == [{
-        "input": captured["messages"],
-        "status": "processing",
-        "inspection_scope": "image",
-    }]
+    assert len(flow_events) == 1
+    assert flow_events[0]["input"] == captured["messages"]
+    assert flow_events[0]["status"] == "processing"
+    assert flow_events[0]["inspection_scope"] == "image"
+    assert flow_events[0]["history_id"].startswith(
+        "illustration_quality_inspection:image:session-1:2:"
+    )
+    assert flow_events[0]["inspection_images"] == [
+        {"slot": 2, "backup_name": "scene-2", "prompt_id": "prompt-2"}
+    ]
 
     assert len(records) == 1
     record = records[0]

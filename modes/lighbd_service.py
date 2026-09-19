@@ -217,8 +217,9 @@ def _get_server_globals():
 
 
 LIGHBD_HISTORY_PATH = os.path.join(LOG_DIR, "lighbd_history.jsonl")
-# 일반 LLM 호출(품질 검사 포함)은 최근 300건을 보존한다. 다중 캐릭터 마스크
-# 호출은 별도 예산으로 관리하며, 두 버킷을 합친 파일 최대 보관량은 400건이다.
+# 일반 LLM 호출(품질 검사 포함)은 최근 300건을 보존하고 다중 캐릭터 마스크
+# 호출은 별도 100건을 보존한다. 사람이 평가한 품질 검사 사례와 그 사례가
+# 참조하는 LLM 흐름은 이 회전 한도 밖에서 계속 보존한다.
 LIGHBD_GENERAL_HISTORY_MAX = 300
 LIGHBD_MULTI_CHAR_HISTORY_MAX = 100
 LIGHBD_HISTORY_MAX = LIGHBD_GENERAL_HISTORY_MAX + LIGHBD_MULTI_CHAR_HISTORY_MAX
@@ -270,10 +271,22 @@ def _is_multi_char_history_record(record: object) -> bool:
     )
 
 
+def _is_human_review_case_record(record: object) -> bool:
+    """Return whether a history record belongs to a retained human review case."""
+    if not isinstance(record, dict):
+        return False
+    evaluation = record.get("human_evaluation")
+    if isinstance(evaluation, dict) and str(evaluation.get("rating") or "").strip():
+        return True
+    case_ids = record.get("human_review_case_ids")
+    return isinstance(case_ids, list) and any(str(value or "").strip() for value in case_ids)
+
+
 def _trim_lighbd_history_lines(lines: list[str]) -> list[str]:
-    """일반 최근 300건과 다중 캐릭터 최근 100건을 각각 보존한다."""
+    """Keep reviewed cases permanently, plus the ordinary rolling budgets."""
     general_indices = []
     multi_char_indices = []
+    protected_indices = []
     for index, line in enumerate(lines):
         try:
             record = json.loads(line)
@@ -285,18 +298,23 @@ def _trim_lighbd_history_lines(lines: list[str]) -> list[str]:
             traceback.print_exc()
             general_indices.append(index)
             continue
+        if _is_human_review_case_record(record):
+            protected_indices.append(index)
+            continue
         if _is_multi_char_history_record(record):
             multi_char_indices.append(index)
         else:
             general_indices.append(index)
-    keep = set(general_indices[-LIGHBD_GENERAL_HISTORY_MAX:])
+    keep = set(protected_indices)
+    keep.update(general_indices[-LIGHBD_GENERAL_HISTORY_MAX:])
     keep.update(multi_char_indices[-LIGHBD_MULTI_CHAR_HISTORY_MAX:])
     return [line for index, line in enumerate(lines) if index in keep]
 
 
 def _log_lighbd_history(record: dict) -> None:
     """lighbd 전용 히스토리 파일(logs/lighbd_history.jsonl)에 append.
-    일반 호출(품질 검사 포함) 최근 300개와 다중 분리 호출 최근 100개를 별도로 유지한다.
+    일반 호출 최근 300개와 다중 분리 호출 최근 100개를 유지하며 사람 평가
+    사례에 연결된 레코드는 회전 한도와 무관하게 보존한다.
 
     배포 환경에도 존재하는 logs/backups/ 폴더에 write 전 백업을 보관한다.
     """
@@ -564,7 +582,7 @@ def _update_lighbd_history_records(updates_by_id: dict[str, dict]) -> int:
         return 0
 
 
-def _load_lighbd_history(limit: int = LIGHBD_HISTORY_MAX) -> list:
+def _load_lighbd_history(limit: int | None = LIGHBD_HISTORY_MAX) -> list:
     """보존된 일반/다중 분리 히스토리를 오래된 → 최신 순(ts 기준)으로 반환한다.
 
     파일 append 순서가 항상 시간순은 아니므로(동시 호출·같은 초 기록 등),
@@ -586,6 +604,8 @@ def _load_lighbd_history(limit: int = LIGHBD_HISTORY_MAX) -> list:
             except Exception:
                 continue
         records.sort(key=lambda r: str(r.get("ts") or ""))
+        if limit is None:
+            return records
         return records[-limit:]
     except Exception as e:
         print(f"[LIGHBD] history 읽기 실패: {e}")

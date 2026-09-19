@@ -3,6 +3,7 @@ import base64
 import copy
 import io
 import json
+import os
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -773,6 +774,138 @@ async def test_backup_llm_trace_api_returns_inspection_when_info_has_no_trace_id
     assert payload["trace_ids"] == ["inspection-api-exact"]
     assert [record["history_id"] for record in payload["records"]] == ["inspection-api-exact"]
     assert payload["missing"] == []
+
+
+@pytest.mark.asyncio
+async def test_human_review_updates_existing_records_and_retains_complete_linked_flow(
+    tmp_path, monkeypatch
+):
+    history_path = tmp_path / "logs" / "lighbd_history.jsonl"
+    history_path.parent.mkdir()
+    backup_dir = tmp_path / "workflow_backup"
+    backup_dir.mkdir()
+    records = [
+        {
+            "ts": "2026-09-10T12:00:00",
+            "history_id": "call-one",
+            "task_key": "illustration_call1",
+            "input": [{"role": "user", "content": "source context"}],
+            "output": "call one output",
+        },
+        {
+            "ts": "2026-09-10T12:00:01",
+            "history_id": "call-two",
+            "task_key": "illustration_call2_detail",
+            "input": [{"role": "user", "content": "scene context"}],
+            "output": "call two output",
+        },
+        {
+            "ts": "2026-09-10T12:00:02",
+            "history_id": "inspection-image",
+            "task_key": quality.TASK_KEY,
+            "inspection_scope": quality.IMAGE_SCOPE,
+            "inspection_session_id": "session-review",
+            "inspection_flow_run_id": "flow-review",
+            "inspection_images": [
+                {"slot": 2, "backup_name": "review-image", "prompt_id": "prompt-2"}
+            ],
+            "input": [{"role": "user", "content": "full inspection input"}],
+            "output": json.dumps({
+                "feedback": "No material issue observed.",
+                "continuity_observation": "Blue coat.",
+            }),
+        },
+        {
+            "ts": "2026-09-10T12:00:03",
+            "history_id": "inspection-overall",
+            "task_key": quality.TASK_KEY,
+            "inspection_scope": quality.OVERALL_SCOPE,
+            "inspection_session_id": "session-review",
+            "inspection_flow_run_id": "flow-review",
+            "inspection_images": [
+                {"slot": 2, "backup_name": "review-image", "prompt_id": "prompt-2"},
+                {"slot": 5, "backup_name": "review-set-image", "prompt_id": "prompt-5"},
+            ],
+            "output": json.dumps({"overall_feedback": "The set is consistent."}),
+        },
+    ]
+    history_path.write_text(
+        "".join(json.dumps(record) + "\n" for record in records),
+        encoding="utf-8",
+    )
+    for name, trace in (
+        ("review-image", ["call-one", "missing-call"]),
+        ("review-set-image", ["call-two"]),
+    ):
+        (backup_dir / f"{name}.webp").write_bytes(b"image")
+        (backup_dir / f"{name}_info.json").write_text(
+            json.dumps({"llm_trace": trace}),
+            encoding="utf-8",
+        )
+    monkeypatch.setattr(lighbd_service, "LIGHBD_HISTORY_PATH", str(history_path))
+    monkeypatch.setattr(lighbd_service, "LOG_DIR", str(history_path.parent))
+    monkeypatch.setattr(server, "get_backup_base_dir", lambda: str(backup_dir))
+
+    response = await server.handle_illustration_quality_inspection_review(
+        _Request(
+            "POST",
+            {"rating": "good", "reason": "구도와 장면 전달이 좋음"},
+            history_id="inspection-image",
+        )
+    )
+    payload = json.loads(response.text)
+
+    assert response.status == 200
+    assert payload["human_evaluation"]["rating"] == "good"
+    assert payload["human_evaluation"]["label"] == "좋음"
+    assert payload["human_evaluation"]["reason"] == "구도와 장면 전달이 좋음"
+    assert payload["retained_history_count"] == 4
+    assert payload["missing_history_ids"] == ["missing-call"]
+    assert payload["images"][0]["image_url"] == "/api/backup_image/review-image.webp"
+
+    saved = {
+        record["history_id"]: record
+        for record in lighbd_service._load_lighbd_history(limit=None)
+    }
+    assert saved["inspection-image"]["human_evaluation"]["rating"] == "good"
+    for history_id in ("call-one", "call-two", "inspection-image", "inspection-overall"):
+        assert saved[history_id]["human_review_case_ids"] == ["inspection-image"]
+    assert quality.human_reviewed_backup_names() == {"review-image", "review-set-image"}
+    assert (history_path.parent / "backups" / "lighbd_history.jsonl.bak").is_file()
+
+    get_response = await server.handle_illustration_quality_inspection_review(
+        _Request("GET", history_id="inspection-image")
+    )
+    get_payload = json.loads(get_response.text)
+    assert get_response.status == 200
+    assert get_payload["human_evaluation"]["reason"] == "구도와 장면 전달이 좋음"
+
+
+def test_backup_cleanup_keeps_reviewed_images_outside_the_ordinary_limit(
+    tmp_path, monkeypatch
+):
+    backup_dir = tmp_path / "workflow_backup"
+    backup_dir.mkdir()
+    for index, name in enumerate(("reviewed-old", "ordinary-middle", "ordinary-new"), start=1):
+        image = backup_dir / f"{name}.webp"
+        image.write_bytes(name.encode("utf-8"))
+        (backup_dir / f"{name}_info.json").write_text("{}", encoding="utf-8")
+        os.utime(image, (index, index))
+    monkeypatch.setattr(server, "get_backup_base_dir", lambda: str(backup_dir))
+    monkeypatch.setattr(server, "app_config", {"backup_max_count": 1})
+    monkeypatch.setattr(
+        server.illustration_quality_inspection,
+        "human_reviewed_backup_names",
+        lambda: {"reviewed-old"},
+    )
+
+    server.cleanup_backups()
+
+    assert (backup_dir / "reviewed-old.webp").is_file()
+    assert (backup_dir / "reviewed-old_info.json").is_file()
+    assert (backup_dir / "ordinary-new.webp").is_file()
+    assert not (backup_dir / "ordinary-middle.webp").exists()
+    assert not (backup_dir / "ordinary-middle_info.json").exists()
 
 
 @pytest.mark.asyncio

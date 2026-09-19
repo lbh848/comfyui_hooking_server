@@ -97,8 +97,8 @@ def test_anchor_authority_contract_covers_planner_and_detail_handoffs():
     plan_contract = prompts["call2_plan"]
     detail_contract = prompts["call2_detail"]
 
-    assert "sole authority for the scene's action, location, and story time" in plan_contract
-    assert "may not donate a different event to the anchor" in plan_contract
+    assert "verbatim passage alone establishes action, location, and story time" in plan_contract
+    assert "may not donate another event" in plan_contract
     assert "Never invent an action, pose, contact, body region, or setting" in plan_contract
     assert "Never place an illustration boundary inside one continuous dialogue" in plan_contract
     assert "`anchor_passage` is the event authority" in detail_contract
