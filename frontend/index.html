@@ -5,6 +5,30 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ComfyUI 에셋/삽화 매니저-V5</title>
     <style>
+        /* ─── z-index 표준 래더 (2026-09 전면 재편: 전체 대소관계 보존 순위로 10 간격 재부여) ───
+           0        기준면(≡ auto, 컨테이너 내부 뒷면)
+           10~90    컨테이너 내부 로컬 stacking(카드 배지·캔버스·스티키 헤더·툴팁)
+           100      로컬 ? 툴팁 버블
+           110      태그 자동완성 드롭다운            120  custom-select 옵션 펼침
+           130      플로팅 독·AT 업로드 모달           140  그림체 테스트 이미지 모달(공통 피커보다 아래)
+           150      LoRA 학습 세션 모달                160  .modal 공통 기본층(공통 이미지 피커 #lora-image-picker-modal 포함)
+           170      TOML 모달·LoRA 칩 설명 툴팁        180  영상 참조 피커 모달
+           190      영상 방향 편집·삽화 히스토리 상세·LoRA 정제/세팅 모달·프롬프트 자동완성
+           200      봇 테스트 시스템 프롬프트 편집     210  ComfyUI 인스톨러 무결성/E2E 모달
+           220      이미지 크롭 모달·공용 ? 툴팁       230  복장 추출 진행 토스트
+           240      인스턴스 LoRA 프롬프트 편집 오버레이  250  캐릭터 메이커 설정 드로어
+           260      활성 봇 플로트 버튼                270  JS 오버레이 표준층(범용 모달·라이트박스·이름치환 마법사)
+           280~320  표준층 위 2~3단(컨펌·카메라·오토피드백·LB 일괄·도움말 버블)
+           330~370  각종 피커·자동 태그 편집·CM 모달·배치 프리셋 저장/이어붙이기
+           380~400  Qwen Edit(편집 모달 → 큐 강제[!important] → 합성 모달)
+           410      .lightbox 대형 확대                420  배포/설치 진행·비주얼 가이드 오버레이
+           430      작업 잠금 모달                      440  중앙 토스트
+           450      태그 설명 툴팁·칩 복사 힌트         460  삽화 파이프라인 백드롭(if-*)
+           470      삽화 파이프라인 메인 모달(if-modal)  480  if-detail·헤더 도구 도크
+           490      if-developer·WS 재연결·메모장·LIGHBD 위젯/오버레이(Qwen 모드 !important 강제층)
+           500      작업큐·좌측 유틸 스택·상단 진행바·공지 버블/보드(최상위 크롬)
+           규칙: 새 계층을 끼워 넣을 땐 10 간격이 깨지지 않게 관련 구간 전체를 재조정한다.
+           illustration_flow.js의 if-* 래더도 이 체계를 따른다(460/470/480/490). */
         select option { background: var(--surface2); color: var(--text); }
         :root {
             --bg: #0b1117;
@@ -333,7 +357,7 @@
         header.app-header .controls {
             --header-dock-peek: 22px;
             position: fixed;
-            z-index: 2147483645;
+            z-index: 480;
             top: 0;
             right: var(--header-ws-corner-reserve);
             display: block;
@@ -374,7 +398,7 @@
 
         .header-controls-handle {
             position: absolute;
-            z-index: 1;
+            z-index: 10;
             bottom: 0;
             right: 0;
             left: 0;
@@ -507,7 +531,7 @@
         .header-dot-badge,
         .header-count-badge {
             position: absolute;
-            z-index: 1;
+            z-index: 10;
             display: none;
             align-items: center;
             justify-content: center;
@@ -556,7 +580,7 @@
             top: 8px;
             right: 10px;
             width: 104px;
-            z-index: 2147483646;
+            z-index: 490;
             min-height: 32px;
             padding: 6px 10px;
             border-color: var(--chrome-border-strong);
@@ -802,7 +826,7 @@
             position: absolute;
             top: 6px;
             left: 6px;
-            z-index: 3;
+            z-index: 30;
             display: flex;
             flex-direction: column;
             gap: 3px;
@@ -1199,7 +1223,7 @@
             position: fixed;
             top: 0; left: 0; right: 0; bottom: 0;
             background: rgba(0,0,0,0.9);
-            z-index: 11000;
+            z-index: 410;
             justify-content: center;
             align-items: center;
             cursor: pointer;
@@ -1233,7 +1257,7 @@
             border-radius: 8px;
             font-size: 0.9rem;
             font-weight: 600;
-            z-index: 23000;
+            z-index: 440;
             opacity: 0;
             pointer-events: none;
             transition: opacity 0.3s;
@@ -1277,7 +1301,7 @@
             border-left: 4px solid var(--accent);
             border-radius: 10px;
             padding: 14px 18px;
-            z-index: 2100;
+            z-index: 230;
             display: none;
             box-shadow: 0 4px 24px rgba(0,0,0,0.5);
             font-size: 0.85rem;
@@ -1320,7 +1344,7 @@
             position: fixed;
             top: 0; left: 0; right: 0; bottom: 0;
             background: rgba(0,0,0,0.85);
-            z-index: 1500;
+            z-index: 160;
             justify-content: center;
             align-items: center;
             padding: 20px;
@@ -1806,7 +1830,7 @@
             max-height: 150px;
             object-fit: contain;
         }
-        #video-reference-picker-modal { z-index: 1650; }
+        #video-reference-picker-modal { z-index: 180; }
         #video-reference-picker-modal .video-reference-picker-content {
             width: min(1040px, calc(100vw - 32px));
             max-width: 1040px;
@@ -2053,7 +2077,7 @@
         }
         .video-direction-edit-button:disabled { opacity: .58; cursor: wait; }
         #video-direction-edit-modal {
-            z-index: 1700;
+            z-index: 190;
             background: rgba(4, 7, 12, .9);
             backdrop-filter: blur(8px);
         }
@@ -3936,7 +3960,7 @@
         }
         .illust-settings .illust-setting-tooltip-bubble {
             position: absolute;
-            z-index: 30;
+            z-index: 90;
             top: calc(100% + 8px);
             left: 0;
             display: none;
@@ -3974,7 +3998,7 @@
             gap: 10px;
             min-width: 0;
         }
-        /* 이름 치환 모달 내 ? 도움말 버블 (모달 overlay z-index:10000 위에 떠야 함) */
+        /* 이름 치환 모달 내 ? 도움말 버블 (모달 overlay z-index:270 위에 떠야 함) */
         .nm-help-tip {
             position: relative;
             display: inline-flex;
@@ -3991,7 +4015,7 @@
         }
         .nm-help-tip-bubble {
             position: absolute;
-            z-index: 10005;
+            z-index: 320;
             bottom: calc(100% + 8px);
             left: 50%;
             transform: translateX(-50%);
@@ -4021,7 +4045,7 @@
         .nm-overlay {
             position: fixed;
             inset: 0;
-            z-index: 10000;
+            z-index: 270;
             display: flex;
             align-items: center;
             justify-content: center;
@@ -4128,7 +4152,7 @@
         }
         .nm-step-number {
             position: relative;
-            z-index: 1;
+            z-index: 10;
             flex: 0 0 auto;
             display: grid;
             width: 30px;
@@ -4144,7 +4168,7 @@
         }
         .nm-step-copy {
             position: relative;
-            z-index: 1;
+            z-index: 10;
             min-width: 0;
             padding-right: 10px;
             background: color-mix(in srgb, var(--surface2) 22%, var(--surface));
@@ -4667,7 +4691,7 @@
         .nm-nested-overlay {
             position: fixed;
             inset: 0;
-            z-index: 10020;
+            z-index: 360;
             display: flex;
             align-items: center;
             justify-content: center;
@@ -4916,7 +4940,7 @@
         .illust-settings-footer {
             position: sticky;
             bottom: 0;
-            z-index: 2;
+            z-index: 20;
             align-items: center;
             gap: 8px;
             background: var(--surface);
@@ -5141,7 +5165,7 @@
             border-radius: 8px;
         }
         #illust-history-detail-modal {
-            z-index: 1700;
+            z-index: 190;
         }
         .illust-history-detail-content {
             width: min(1000px, calc(100vw - 32px));
@@ -6720,7 +6744,7 @@
         }
         .comfy-installer-hero-main {
             position: relative;
-            z-index: 1;
+            z-index: 10;
             min-width: 0;
         }
         .comfy-installer-eyebrow {
@@ -6755,7 +6779,7 @@
         .comfy-installer-copy strong { color: var(--text); }
         .comfy-installer-hero-badges {
             position: relative;
-            z-index: 1;
+            z-index: 10;
             display: flex;
             flex-wrap: wrap;
             justify-content: flex-end;
@@ -7095,7 +7119,7 @@
         .modal-action-overlay {
             position: fixed;
             inset: 0;
-            z-index: 22000;
+            z-index: 420;
             display: flex;
             align-items: center;
             justify-content: center;
@@ -7604,7 +7628,7 @@
             background: color-mix(in srgb, #ff6b78 8%, var(--surface2));
         }
         .modal-lora-footer-actions button:disabled { cursor: default; opacity: .35; }
-        #modal-operation-lock-modal { z-index: 22100; }
+        #modal-operation-lock-modal { z-index: 430; }
         .modal-operation-main {
             display: grid;
             grid-template-columns: auto minmax(0, 1fr);
@@ -7735,7 +7759,7 @@
             line-height: 1.45;
         }
         #comfy-installer-integrity-modal,
-        #comfy-installer-e2e-modal { z-index: 1900; }
+        #comfy-installer-e2e-modal { z-index: 210; }
         .comfy-installer-e2e-content {
             width: min(680px, calc(100vw - 28px));
             max-height: min(760px, calc(100vh - 28px));
@@ -8160,7 +8184,7 @@
         }
         .cm-rag-settings-badges {
             position: relative;
-            z-index: 1;
+            z-index: 10;
             display: flex;
             flex: 0 0 auto;
             flex-wrap: wrap;
@@ -8828,7 +8852,7 @@
             border-radius: 6px;
             max-height: 200px;
             overflow-y: auto;
-            z-index: 10000;
+            z-index: 270;
             display: none;
             box-shadow: 0 4px 12px rgba(0,0,0,0.3);
         }
@@ -9145,7 +9169,7 @@
             cursor: col-resize;
             background: transparent;
             transition: background 0.2s;
-            z-index: 2;
+            z-index: 20;
         }
         .pose-sidebar .resize-handle:hover,
         .pose-sidebar .resize-handle.active {
@@ -9196,7 +9220,7 @@
             position: fixed;
             top: 0; left: 0; right: 0; bottom: 0;
             background: rgba(0,0,0,0.92);
-            z-index: 2000;
+            z-index: 220;
             justify-content: center;
             align-items: center;
             padding: 20px;
@@ -9250,7 +9274,7 @@
             border: 2px dashed #fff;
             box-shadow: 0 0 0 9999px rgba(0,0,0,0.6);
             cursor: move;
-            z-index: 2;
+            z-index: 20;
         }
         .crop-handle {
             position: absolute;
@@ -9259,7 +9283,7 @@
             background: #fff;
             border: 1px solid rgba(0,0,0,0.3);
             border-radius: 2px;
-            z-index: 3;
+            z-index: 30;
         }
         .crop-handle[data-handle="nw"] { top: -6px; left: -6px; cursor: nw-resize; }
         .crop-handle[data-handle="ne"] { top: -6px; right: -6px; cursor: ne-resize; }
@@ -9414,7 +9438,7 @@
             justify-content: center;
             gap: 12px;
             color: #fff;
-            z-index: 5;
+            z-index: 50;
         }
         .pose-toolbar {
             display: flex;
@@ -9643,7 +9667,7 @@
             cursor: pointer;
             background: rgba(0,0,0,0.3);
             border-radius: 4px;
-            z-index: 2;
+            z-index: 20;
             transition: background 0.15s;
         }
         .au-select-check:hover { background: rgba(0,0,0,0.5); }
@@ -9652,7 +9676,7 @@
             position: absolute;
             top: 8px;
             right: 8px;
-            z-index: 2;
+            z-index: 20;
             background: var(--accent);
             color: #fff;
             font-size: 0.7rem;
@@ -9665,7 +9689,7 @@
             position: absolute;
             bottom: 8px;
             right: 8px;
-            z-index: 2;
+            z-index: 20;
             padding: 3px 8px;
             border-radius: 999px;
             background: rgba(14, 165, 233, 0.92);
@@ -9734,7 +9758,7 @@
             position: absolute;
             top: 36px;
             right: 8px;
-            z-index: 3;
+            z-index: 30;
             padding: 2px 7px;
             border-radius: 4px;
             color: #fff;
@@ -9787,7 +9811,7 @@
         .qwen-edit-modal {
             position: fixed;
             inset: 0;
-            z-index: 10060;
+            z-index: 380;
             display: none;
             align-items: center;
             justify-content: center;
@@ -9801,9 +9825,9 @@
         body.qwen-edit-open .lighbd-live-overlay,
         body.qwen-edit-open .lighbd-history-overlay,
         body.qwen-edit-open .lighbd-detail-overlay {
-            z-index: 2147483646 !important;
+            z-index: 490 !important;
         }
-        body.qwen-edit-open .asset-queue-container { z-index: 10070 !important; }
+        body.qwen-edit-open .asset-queue-container { z-index: 390 !important; }
         .qwen-edit-panel {
             width: min(1480px, 96vw);
             height: min(920px, 94vh);
@@ -9927,7 +9951,7 @@
             inset: 0;
             width: 100%;
             height: 100%;
-            z-index: 2;
+            z-index: 20;
             cursor: crosshair;
             opacity: 0.64;
             touch-action: none;
@@ -9938,7 +9962,7 @@
         }
         .qwen-brush-cursor {
             position: absolute;
-            z-index: 6;
+            z-index: 60;
             border-radius: 50%;
             border: 1.5px solid #38bdf8;
             box-sizing: border-box;
@@ -9956,7 +9980,7 @@
         .qwen-composite-layer {
             position: absolute;
             inset: 0;
-            z-index: 1;
+            z-index: 10;
             overflow: hidden;
             pointer-events: none;
         }
@@ -9994,7 +10018,7 @@
         }
         .qwen-composite-handle {
             position: absolute;
-            z-index: 4;
+            z-index: 40;
             display: none;
             width: 12px;
             height: 12px;
@@ -10069,7 +10093,7 @@
         .qwen-composite-modal {
             position: fixed;
             inset: 0;
-            z-index: 10090;
+            z-index: 400;
             display: none;
             align-items: center;
             justify-content: center;
@@ -10199,7 +10223,7 @@
         }
         .qwen-item-crop-box {
             position: absolute;
-            z-index: 3;
+            z-index: 30;
             display: none;
             box-sizing: border-box;
             border: 2px solid #facc15;
@@ -10737,7 +10761,7 @@
             font-size: 0.78rem;
             color: var(--text);
             max-width: 300px;
-            z-index: 1600;
+            z-index: 170;
             box-shadow: 0 4px 12px rgba(0,0,0,0.3);
             line-height: 1.4;
             pointer-events: none;
@@ -10751,7 +10775,7 @@
             border-radius: 6px;
             max-height: 220px;
             overflow-y: auto;
-            z-index: 1700;
+            z-index: 190;
             box-shadow: 0 4px 12px rgba(0,0,0,0.3);
             font-size: 0.8rem;
             min-width: 200px;
@@ -10916,7 +10940,7 @@
         .visual-guide-overlay {
             position: fixed;
             inset: 0;
-            z-index: 22000;
+            z-index: 420;
             display: flex;
             align-items: center;
             justify-content: center;
@@ -11076,7 +11100,7 @@
             border-radius: 4px;
             opacity: 0.4;
             transition: opacity 0.2s, transform 0.15s;
-            z-index: 2;
+            z-index: 20;
             line-height: 1;
         }
         .bot-img-rep-btn:hover {
@@ -11108,7 +11132,7 @@
             display: flex;
             align-items: center;
             gap: 8px;
-            z-index: 1000;
+            z-index: 130;
             box-shadow: 0 4px 20px rgba(0,0,0,0.4);
             user-select: none;
         }
@@ -11275,7 +11299,7 @@
             padding: 4px 8px;
             font-size: 0.7rem;
             cursor: pointer;
-            z-index: 2;
+            z-index: 20;
         }
         .asset-gallery-card .gallery-delete-btn:hover {
             background: rgba(220,40,40,0.95);
@@ -11315,7 +11339,7 @@
             height: 20px;
             font-size: 0.75rem;
             cursor: pointer;
-            z-index: 3;
+            z-index: 30;
             opacity: 0;
             transition: opacity 0.15s;
         }
@@ -11335,7 +11359,7 @@
             position: fixed;
             left: 0;
             bottom: 18px;
-            z-index: 2147483647;
+            z-index: 500;
             display: flex;
             flex-direction: column;
             align-items: flex-start;
@@ -12313,7 +12337,7 @@
         .memo-overlay {
             position: fixed;
             inset: 0;
-            z-index: 2147483646;
+            z-index: 490;
             display: flex;
             align-items: center;
             justify-content: center;
@@ -12624,7 +12648,7 @@
             position: fixed;
             bottom: 18px;
             left: 0;
-            z-index: 2147483647;
+            z-index: 500;
             display: flex;
             flex-direction: column;
             align-items: flex-start;
@@ -12780,7 +12804,7 @@
             right: 0;
             height: 2px;
             background: linear-gradient(90deg, var(--accent), #8b5cf6 55%, #38bdf8);
-            z-index: 1;
+            z-index: 10;
         }
         .asset-queue-panel.hidden {
             opacity: 0;
@@ -13041,7 +13065,7 @@
             right: 0;
             height: 4px;
             background: var(--surface2);
-            z-index: 2147483647;
+            z-index: 500;
             pointer-events: none;
         }
         .top-progress-inner {
@@ -13057,7 +13081,7 @@
             font-size: 0.7rem;
             color: var(--accent);
             font-weight: 600;
-            z-index: 2147483647;
+            z-index: 500;
             pointer-events: none;
             padding: 2px 6px;
             border-radius: 999px;
@@ -13075,7 +13099,7 @@
             border-radius: 6px;
             max-height: 200px;
             overflow-y: auto;
-            z-index: 200;
+            z-index: 110;
             display: none;
         }
         .tag-autocomplete-dropdown.visible { display: block; }
@@ -13103,7 +13127,7 @@
             white-space: normal;
             word-break: break-word;
             max-width: 300px;
-            z-index: 99999;
+            z-index: 450;
             box-shadow: 0 4px 12px rgba(0,0,0,0.3);
             color: var(--text);
             line-height: 1.4;
@@ -13113,7 +13137,7 @@
         /* ─── "?" 호버 툴팁 (라벨 설명용, 공용) ─── */
         .tip-wrap { position: relative; display: inline-flex; align-items: center; margin-left: 4px; }
         .tip-q { display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; border-radius: 50%; border: 1px solid var(--border); background: var(--surface2); color: var(--text-secondary); font-size: 0.62rem; cursor: help; }
-        .tip-box { display: none; position: absolute; top: 20px; left: 0; z-index: 2000; width: 270px; padding: 8px 10px; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 6px; font-size: 0.7rem; line-height: 1.5; box-shadow: 0 2px 10px rgba(0,0,0,0.35); white-space: normal; }
+        .tip-box { display: none; position: absolute; top: 20px; left: 0; z-index: 220; width: 270px; padding: 8px 10px; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 6px; font-size: 0.7rem; line-height: 1.5; box-shadow: 0 2px 10px rgba(0,0,0,0.35); white-space: normal; }
         .tip-box b { font-weight: 600; }
         .tip-wrap:hover .tip-box { display: block; }
         /* 오른쪽 끝 배치 툴팁: left:0 전개가 뷰포트를 벗어나면 right:0로 좌측 전개 */
@@ -13135,7 +13159,7 @@
         .at-sidebar-btn { width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; border-radius: 6px; cursor: pointer; font-size: 1.1rem; border: none; background: transparent; color: var(--text2); transition: all 0.15s; margin-bottom: 4px; position: relative; }
         .at-sidebar-btn:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); color: var(--text); }
         .at-sidebar-btn.active { background: var(--accent); color: #fff; }
-        .at-sidebar-btn .at-sidebar-tooltip { display: none; position: absolute; left: 44px; top: 50%; transform: translateY(-50%); background: var(--surface); border: 1px solid var(--border); padding: 4px 10px; border-radius: 4px; font-size: 0.78rem; white-space: nowrap; z-index: 10; color: var(--text); box-shadow: 0 2px 8px rgba(0,0,0,0.2); }
+        .at-sidebar-btn .at-sidebar-tooltip { display: none; position: absolute; left: 44px; top: 50%; transform: translateY(-50%); background: var(--surface); border: 1px solid var(--border); padding: 4px 10px; border-radius: 4px; font-size: 0.78rem; white-space: nowrap; z-index: 70; color: var(--text); box-shadow: 0 2px 8px rgba(0,0,0,0.2); }
         .at-sidebar-btn:hover .at-sidebar-tooltip { display: block; }
         .at-main { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
         .at-main > div { flex: 1; min-height: 0; }
@@ -13148,8 +13172,8 @@
         .at-card-source { border-color: rgba(76,175,80,0.5); }
         .at-card-img { width: 100%; aspect-ratio: 3/4; background: var(--surface2); display: flex; align-items: center; justify-content: center; color: var(--text2); font-size: 0.8rem; position: relative; overflow: hidden; border-radius: 10px 10px 0 0; }
         .at-card-img img { width: 100%; height: 100%; object-fit: cover; display: block; }
-        .at-card-img .at-card-pct { position: absolute; top: 6px; left: 6px; background: var(--accent); color: #fff; font-size: 0.7rem; font-weight: 700; padding: 2px 8px; border-radius: 4px; z-index: 2; }
-        .at-card-img .at-card-check { position: absolute; top: 6px; right: 6px; z-index: 2; width: 18px; height: 18px; cursor: pointer; accent-color: var(--accent); }
+        .at-card-img .at-card-pct { position: absolute; top: 6px; left: 6px; background: var(--accent); color: #fff; font-size: 0.7rem; font-weight: 700; padding: 2px 8px; border-radius: 4px; z-index: 20; }
+        .at-card-img .at-card-check { position: absolute; top: 6px; right: 6px; z-index: 20; width: 18px; height: 18px; cursor: pointer; accent-color: var(--accent); }
         .at-card-img .at-card-badge { position: absolute; bottom: 0; left: 0; right: 0; background: rgba(0,0,0,0.7); color: #4caf50; font-size: 0.7rem; padding: 2px 6px; text-align: center; }
         .at-card-body { padding: 10px 12px; display: flex; flex-direction: column; gap: 4px; }
         .at-card-name { font-weight: 600; font-size: 0.85rem; word-break: break-word; }
@@ -13200,7 +13224,7 @@
         .at-match-grid { width: 100%; min-width: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; align-items: start; justify-content: start; padding-bottom: 8px; overflow: visible; }
         .at-match-grid .at-card { width: 100%; min-width: 0; max-width: 220px; height: auto; overflow: hidden; }
         .at-result-panel { min-width: 0; min-height: 0; overflow-y: auto; border-left: 1px solid var(--border); background: color-mix(in srgb, var(--surface) 94%, var(--surface2)); }
-        .at-result-panel-head { position: sticky; top: 0; z-index: 4; padding: 13px 14px 11px; border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--surface) 96%, transparent); backdrop-filter: blur(10px); }
+        .at-result-panel-head { position: sticky; top: 0; z-index: 40; padding: 13px 14px 11px; border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--surface) 96%, transparent); backdrop-filter: blur(10px); }
         .at-result-panel-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 0.9rem; font-weight: 750; }
         .at-result-panel-note { margin-top: 4px; color: var(--text2); font-size: 0.68rem; line-height: 1.45; }
         .at-result-panel-body { padding: 12px; }
@@ -13248,7 +13272,7 @@
         .at-fill-existing label { display: flex; align-items: center; gap: 7px; color: var(--text); font-size: 0.72rem; font-weight: 700; cursor: pointer; }
         .at-fill-existing input { accent-color: var(--success); }
         .at-fill-existing-note { color: var(--text2); font-size: 0.61rem; line-height: 1.4; }
-        .at-fill-footer { position: sticky; bottom: 0; z-index: 3; display: grid; gap: 8px; padding: 11px 12px; border-top: 1px solid var(--border); background: color-mix(in srgb, var(--surface) 96%, transparent); backdrop-filter: blur(10px); }
+        .at-fill-footer { position: sticky; bottom: 0; z-index: 30; display: grid; gap: 8px; padding: 11px 12px; border-top: 1px solid var(--border); background: color-mix(in srgb, var(--surface) 96%, transparent); backdrop-filter: blur(10px); }
         .at-fill-top-row { display: grid; grid-template-columns: minmax(0, 1fr) 82px; gap: 8px; align-items: end; }
         .at-fill-top-label { color: var(--text2); font-size: 0.68rem; line-height: 1.4; }
         .at-fill-top-input { min-height: 38px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface2); color: var(--text); font-weight: 700; text-align: center; }
@@ -13259,7 +13283,7 @@
         .at-fill-status { display: none; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface2); color: var(--text2); font-size: 0.7rem; line-height: 1.45; }
         .at-fill-progress { display: none; height: 5px; overflow: hidden; border-radius: 99px; background: var(--surface2); }
         .at-fill-progress > div { height: 100%; width: 0; border-radius: inherit; background: linear-gradient(90deg, var(--accent), var(--success)); transition: width 0.2s; }
-        .at-source-badge { position: absolute; right: 6px; bottom: 6px; z-index: 2; display: inline-flex; align-items: center; gap: 4px; padding: 3px 7px; border-radius: 999px; color: #fff; background: rgba(0,0,0,0.68); font-size: 0.62rem; font-weight: 700; }
+        .at-source-badge { position: absolute; right: 6px; bottom: 6px; z-index: 20; display: inline-flex; align-items: center; gap: 4px; padding: 3px 7px; border-radius: 999px; color: #fff; background: rgba(0,0,0,0.68); font-size: 0.62rem; font-weight: 700; }
         .at-source-badge.direct { background: rgba(37, 145, 92, 0.88); }
         .at-source-badge.existing_asset { background: rgba(12, 126, 141, 0.9); }
         .at-source-badge.generated_default { background: rgba(76, 92, 184, 0.9); }
@@ -13750,7 +13774,7 @@
             position: absolute;
             top: 7px;
             left: 8px;
-            z-index: 2;
+            z-index: 20;
             padding: 2px 8px;
             border-radius: 999px;
             font-size: .6rem;
@@ -13774,7 +13798,7 @@
             position: absolute;
             top: 7px;
             right: 8px;
-            z-index: 3;
+            z-index: 30;
             display: none;
             align-items: center;
             min-height: 27px;
@@ -13799,7 +13823,7 @@
         .cm-split-handle {
             flex: 0 0 7px;
             position: relative;
-            z-index: 4;
+            z-index: 40;
             cursor: col-resize;
             background: color-mix(in srgb, var(--border) 70%, #121722);
             border-left: 1px solid rgba(255,255,255,.06);
@@ -13836,7 +13860,7 @@
             color: #fff;
             background: rgba(9,13,22,.72);
             backdrop-filter: blur(5px);
-            z-index: 10;
+            z-index: 70;
         }
         .cm-busy-overlay.visible { display: flex; }
         .cm-stage-actions {
@@ -13920,7 +13944,7 @@
             position: absolute;
             top: 3px;
             left: 3px;
-            z-index: 2;
+            z-index: 20;
             padding: 1px 5px;
             border-radius: 5px;
             font-size: .54rem;
@@ -14001,7 +14025,7 @@
             flex: 0 0 auto;
             position: sticky;
             top: 0;
-            z-index: 3;
+            z-index: 30;
         }
         .cm-editor-title { font-size: .78rem; font-weight: 750; }
         .cm-mode-toggle {
@@ -14173,7 +14197,7 @@
                정확히 맞추므로 손잡이 위쪽에 빈 공간이 생기지 않는다. */
             top: 290px;
             bottom: 0;
-            z-index: 8800;
+            z-index: 250;
             display: flex;
             align-items: stretch;
             max-height: calc(100vh - 290px);
@@ -14399,7 +14423,7 @@
             padding: 20px;
             background: rgba(5,8,14,.7);
             backdrop-filter: blur(5px);
-            z-index: 10020;
+            z-index: 360;
         }
         .cm-modal.visible { display: flex; }
         .cm-modal-shell {
@@ -14765,7 +14789,7 @@
         .pmi-editor { overflow-y: auto; padding: 13px; }
         .pmi-editor-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
         .pmi-source { max-height: 116px; overflow-y: auto; margin: 7px 0 12px; padding: 9px; border: 1px dashed var(--border); border-radius: 8px; background: color-mix(in srgb, var(--bg) 76%, transparent); color: var(--text2); font: 0.68rem/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
-        .pmi-bulk-toolbar { position: sticky; top: -1px; z-index: 2; display: grid; gap: 8px; margin: 9px 0 11px; padding: 10px; border: 1px solid color-mix(in srgb, var(--accent) 38%, var(--border)); border-radius: 9px; background: color-mix(in srgb, var(--surface) 94%, var(--bg)); box-shadow: 0 5px 16px color-mix(in srgb, var(--bg) 28%, transparent); }
+        .pmi-bulk-toolbar { position: sticky; top: -1px; z-index: 20; display: grid; gap: 8px; margin: 9px 0 11px; padding: 10px; border: 1px solid color-mix(in srgb, var(--accent) 38%, var(--border)); border-radius: 9px; background: color-mix(in srgb, var(--surface) 94%, var(--bg)); box-shadow: 0 5px 16px color-mix(in srgb, var(--bg) 28%, transparent); }
         .pmi-bulk-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--text2); font-size: .66rem; }
         .pmi-bulk-head strong { color: var(--text); font-size: .74rem; }
         .pmi-bulk-controls { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
@@ -15072,7 +15096,7 @@
         .custom-select-options {
             display: none; position: absolute; left: -1px; right: -1px; top: 100%;
             background: var(--surface2); border: 1px solid var(--accent); border-top: none;
-            border-radius: 0 0 4px 4px; z-index: 900; max-height: 280px; overflow: hidden;
+            border-radius: 0 0 4px 4px; z-index: 120; max-height: 280px; overflow: hidden;
             flex-direction: column;
         }
         .custom-select.open .custom-select-options { display: flex; }
@@ -15186,7 +15210,7 @@
         .batch-bulk-overlay {
             position: fixed;
             inset: 0;
-            z-index: 10000;
+            z-index: 270;
             display: flex;
             align-items: center;
             justify-content: center;
@@ -15494,7 +15518,7 @@
             max-width: 240px;
             overflow: hidden;
             text-overflow: ellipsis;
-            z-index: 10;
+            z-index: 70;
             pointer-events: none;
             box-shadow: 0 2px 8px rgba(0,0,0,0.2);
         }
@@ -15551,8 +15575,8 @@
             backdrop-filter: blur(5px);
             -webkit-backdrop-filter: blur(5px);
         }
-        .lighbd-history-overlay { z-index: 2147483646; }
-        .lighbd-detail-overlay { z-index: 2147483646; }
+        .lighbd-history-overlay { z-index: 490; }
+        .lighbd-detail-overlay { z-index: 490; }
         .lighbd-history-shell,
         .lighbd-detail-shell {
             display: flex;
@@ -15623,7 +15647,7 @@
             .lighbd-detail-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
         }
         /* lighbd LLM 라이브 모달 */
-        .lighbd-live-overlay { z-index: 2147483646; }
+        .lighbd-live-overlay { z-index: 490; }
         .lighbd-live-shell { width: min(1080px, 96vw); height: min(86vh, 820px); }
         .lighbd-live-summary {
             display: flex; gap: 14px; align-items: center; flex-wrap: wrap;
@@ -16059,7 +16083,7 @@
     <div id="toast" class="toast"></div>
 
     <!-- lighbd LLM 스트리밍 위젯: 실행 중에만 표시 (전역 — 모든 탭에서 표시) -->
-    <div id="lighbd-llm-widget" style="position:fixed; right:24px; bottom:100px; z-index:2147483646; display:none;
+    <div id="lighbd-llm-widget" style="position:fixed; right:24px; bottom:100px; z-index:490; display:none;
             flex-direction:column; gap:6px; padding:10px 12px; width:320px; max-width:calc(100vw - 48px);
             background:rgba(11,17,23,0.88); backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px);
             border:1px solid var(--border); border-radius:12px;
@@ -16132,7 +16156,7 @@
                 더 불러오기
             </button>
             <div id="active-bot-float" onclick="toggleBotFloatPopover(event)" title="봇 목록 보기"
-                style="position:fixed; right:24px; bottom:24px; z-index:9999; cursor:pointer;
+                style="position:fixed; right:24px; bottom:24px; z-index:260; cursor:pointer;
                     display:none; align-items:center; gap:12px; padding:14px 20px;
                     background:rgba(11,17,23,0.72); backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px);
                     border:1px solid rgba(77,226,174,0.5); border-radius:14px;
@@ -16150,7 +16174,7 @@
                 <span id="active-bot-float-caret" style="margin-left:4px; font-size:0.8rem; color:var(--text2); transition:transform 0.2s ease;">▲</span>
             </div>
             <div id="active-bot-popover"
-                style="position:fixed; right:24px; bottom:92px; z-index:10000; display:none;
+                style="position:fixed; right:24px; bottom:92px; z-index:270; display:none;
                     flex-direction:column; gap:4px; padding:8px; width:260px; max-height:60vh; overflow-y:auto;
                     background:rgba(11,17,23,0.88); backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px);
                     border:1px solid rgba(77,226,174,0.4); border-radius:14px;
@@ -17846,7 +17870,7 @@
                             <div class="at-progress-bar" id="at-progress-bar" style="display:none;"><div class="at-progress-bar-inner" id="at-progress-inner"></div></div>
                         </div>
                         <!-- 이미지 업로드 & 감정 추출 모달 -->
-                        <div id="at-upload-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:1000; align-items:center; justify-content:center;">
+                        <div id="at-upload-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:130; align-items:center; justify-content:center;">
                             <div style="background:var(--surface); border-radius:10px; padding:16px; max-width:760px; width:92%; max-height:88vh; overflow:auto; position:relative; box-shadow:0 8px 32px rgba(0,0,0,0.3);">
                                 <button onclick="atCloseUploadModal()" style="position:absolute; top:8px; right:10px; background:none; border:none; font-size:1.1rem; cursor:pointer; color:var(--text2);">✕</button>
                                 <div style="font-size:1rem; font-weight:700; margin-bottom:12px;">📷 이미지 업로드 &amp; 감정 추출</div>
@@ -19348,7 +19372,7 @@
                 </div>
                 <!-- 인스턴스 로라 이미지 상세 모달 -->
                 <!-- 인스턴스 로라 라이트박스 -->
-                <div id="instance-lora-lightbox" onclick="closeInstanceLightbox()" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.85);z-index:10000;cursor:zoom-out;display:flex;align-items:center;justify-content:center;">
+                <div id="instance-lora-lightbox" onclick="closeInstanceLightbox()" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.85);z-index:270;cursor:zoom-out;display:flex;align-items:center;justify-content:center;">
                     <img id="instance-lightbox-img" src="" draggable="false" style="max-width:90vw;max-height:90vh;object-fit:contain;border-radius:4px;user-select:none;-webkit-user-drag:none;pointer-events:none;">
                 </div>
                 <!-- 인스턴스 로라 프롬프트 모달 -->
@@ -19503,7 +19527,7 @@
                     </div>
                 </div>
                 <!-- 그림체 라이트박스 -->
-                <div id="style-lora-lightbox" onclick="closeStyleLightbox()" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.85);z-index:10000;cursor:zoom-out;align-items:center;justify-content:center;">
+                <div id="style-lora-lightbox" onclick="closeStyleLightbox()" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.85);z-index:270;cursor:zoom-out;align-items:center;justify-content:center;">
                     <img id="style-lightbox-img" src="" draggable="false" style="max-width:90vw;max-height:90vh;object-fit:contain;border-radius:4px;user-select:none;-webkit-user-drag:none;pointer-events:none;">
                 </div>
             </div><!-- /lora-style-mode -->
@@ -19511,7 +19535,7 @@
     </main>
 
     <!-- 표정별 고급 설정 모달 -->
-    <div id="ep-adv-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:10000; display:none; align-items:center; justify-content:center;">
+    <div id="ep-adv-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:270; display:none; align-items:center; justify-content:center;">
         <div style="background:var(--surface); border-radius:12px; width:720px; max-width:92vw; max-height:80vh; display:flex; flex-direction:column; overflow:hidden; box-shadow:0 8px 32px rgba(0,0,0,0.3);">
             <div style="display:flex; align-items:center; justify-content:space-between; padding:14px 18px; border-bottom:1px solid var(--border); background:var(--surface2);">
                 <span style="font-weight:600; font-size:1rem;">표정별 고급 설정</span>
@@ -19849,7 +19873,7 @@
     </div>
 
     <!-- 삽화 백업 Anima 카메라 구도 조정 모달 -->
-    <div class="modal" id="illustration-camera-modal" style="z-index:10001;">
+    <div class="modal" id="illustration-camera-modal" style="z-index:280;">
         <div class="modal-content" style="width:min(900px,94vw); max-width:900px; max-height:92vh; display:flex; flex-direction:column;">
             <div class="modal-header">
                 <div>
@@ -20068,7 +20092,7 @@
     </div>
 
     <!-- 오토피드백 전용 진행 모달 -->
-    <div class="modal" id="illustration-auto-feedback-modal" style="z-index:10003;">
+    <div class="modal" id="illustration-auto-feedback-modal" style="z-index:300;">
         <div class="modal-content" style="width:min(900px,94vw); max-width:900px; max-height:92vh; display:flex; flex-direction:column;">
             <div class="modal-header">
                 <div>
@@ -20511,7 +20535,7 @@
 
     <!-- LoRA 학습 세션 STEP 보기 모달 (세션 카드 클릭 → step/loss/프리뷰를 모달로) -->
     <!-- CLAUDE.md 규칙: 바깥 클릭 닫기 금지 — ✕/breadcrumb 상위 세그먼트로만 닫힘 -->
-    <div class="modal" id="lora-trained-session-modal" style="z-index:1450;">
+    <div class="modal" id="lora-trained-session-modal" style="z-index:150;">
         <div class="modal-content" style="max-width:1400px; width:96vw; max-height:94vh; height:94vh; overflow:hidden;">
             <div class="modal-header" style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
                 <!-- 페이지 breadcrumb는 그대로 두고, 모달 전용 breadcrumb를 별도로 렌더링한다. -->
@@ -20735,7 +20759,7 @@
     </div>
 
     <!-- 봇 LoRA 프로젝트 간 캐릭터 임포트 모달 (바깥 클릭 닫기 없음) -->
-    <div class="modal" id="bot-lora-char-import-proj-modal" style="display:none; z-index:1700;">
+    <div class="modal" id="bot-lora-char-import-proj-modal" style="display:none; z-index:190;">
         <div class="modal-content" style="max-width:560px;">
             <div class="modal-header">
                 <h2>봇 로라 프로젝트에서 캐릭터 임포트</h2>
@@ -20772,7 +20796,7 @@
     </div>
 
     <!-- 에셋 LoRA: 학습 이미지 일괄 LLM 정제 선택 모달 (바깥 클릭 닫기 없음) -->
-    <div class="modal" id="asset-lora-refine-select-modal" style="display:none; z-index:1700;">
+    <div class="modal" id="asset-lora-refine-select-modal" style="display:none; z-index:190;">
         <div class="modal-content" style="max-width:760px;">
             <div class="modal-header">
                 <h2>LLM 기반 학습 이미지 태그 정제</h2>
@@ -20798,7 +20822,7 @@
     </div>
 
     <!-- 에셋 LoRA: 테스트 이미지 일괄 LLM 정제 선택 모달 (바깥 클릭 닫기 없음) -->
-    <div class="modal" id="asset-lora-test-setup-modal" style="display:none; z-index:1700;">
+    <div class="modal" id="asset-lora-test-setup-modal" style="display:none; z-index:190;">
         <div class="modal-content" style="max-width:760px;">
             <div class="modal-header">
                 <h2>LLM 기반 테스트 이미지 태그 정제</h2>
@@ -20825,7 +20849,7 @@
     </div>
 
     <!-- 봇 LoRA: 일괄 LLM 정제 이미지 선택 모달 (바깥 클릭 닫기 없음) -->
-    <div class="modal" id="bot-lora-refine-select-modal" style="display:none; z-index:1700;">
+    <div class="modal" id="bot-lora-refine-select-modal" style="display:none; z-index:190;">
         <div class="modal-content" style="max-width:760px;">
             <div class="modal-header">
                 <h2>일괄 LLM 정제 - 이미지 선택</h2>
@@ -20851,7 +20875,7 @@
     </div>
 
     <!-- 봇 LoRA: 테스트 이미지 일괄 세팅 - 1단계 캐릭터 카드 선택 모달 (바깥 클릭 닫기 없음) -->
-    <div class="modal" id="bot-test-setup-card-modal" style="display:none; z-index:1700;">
+    <div class="modal" id="bot-test-setup-card-modal" style="display:none; z-index:190;">
         <div class="modal-content" style="max-width:760px;">
             <div class="modal-header">
                 <h2>테스트 이미지 세팅 - 캐릭터 카드 선택</h2>
@@ -20877,7 +20901,7 @@
     </div>
 
     <!-- 봇 LoRA: 테스트 이미지 일괄 세팅 - 2단계 공통 테스트 이미지 선택 모달 (바깥 클릭 닫기 없음) -->
-    <div class="modal" id="bot-test-setup-test-modal" style="display:none; z-index:1700;">
+    <div class="modal" id="bot-test-setup-test-modal" style="display:none; z-index:190;">
         <div class="modal-content" style="max-width:760px;">
             <div class="modal-header">
                 <h2>테스트 이미지 세팅 - 공통 테스트 이미지 선택</h2>
@@ -20903,7 +20927,7 @@
     </div>
 
     <!-- TOML 미리보기 모달 -->
-    <div class="modal" id="lora-toml-modal" onclick="if (event.target === this) closeLoraTomlModal()" style="z-index:1600;">
+    <div class="modal" id="lora-toml-modal" onclick="if (event.target === this) closeLoraTomlModal()" style="z-index:170;">
         <div class="modal-content" style="max-width:640px;">
             <div class="modal-header">
                 <h2 id="lora-toml-modal-title">TOML 학습 설정</h2>
@@ -20920,7 +20944,7 @@
 
     <!-- 인스턴스 로라 생성 모달 -->
     <!-- 인스턴스 로라 프롬프트 편집 모달 -->
-    <div style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:2500;align-items:center;justify-content:center;padding:20px;" id="ic-prompt-editor-overlay">
+    <div style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:240;align-items:center;justify-content:center;padding:20px;" id="ic-prompt-editor-overlay">
         <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;width:700px;max-width:90vw;max-height:85vh;display:flex;flex-direction:column;">
             <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-shrink:0;">
                 <span style="font-size:0.9rem;font-weight:600;">프롬프트 편집</span>
@@ -21266,7 +21290,7 @@
 .postprocess-ui .pp-tab-bar {
   position: sticky;
   top: 0;
-  z-index: 20;
+  z-index: 80;
   display: grid !important;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 7px !important;
@@ -37357,7 +37381,7 @@
 
             const overlay = document.createElement('div');
             overlay.id = 'llm-edit-template-overlay';
-            overlay.style.cssText = 'position:fixed; inset:0; z-index:10002; background:rgba(0,0,0,0.6); display:flex; align-items:center; justify-content:center;';
+            overlay.style.cssText = 'position:fixed; inset:0; z-index:290; background:rgba(0,0,0,0.6); display:flex; align-items:center; justify-content:center;';
             // 바깥 클릭으로 닫기 금지 — ✕/닫기/저장 버튼만
             overlay.innerHTML = `
                 <div style="background:var(--surface); border:1px solid var(--border); border-radius:12px; width:92vw; max-width:820px; height:86vh; display:flex; flex-direction:column; overflow:hidden;">
@@ -49784,7 +49808,7 @@
                             html += `<div style="display: inline-block; width: 180px; margin-right: 12px; vertical-align: top; white-space: normal; background: var(--surface); border-radius: 8px; border: 1px solid var(--border); overflow: hidden; position: relative;">`;
 
                             // 삭제 X 버튼
-                            html += `<button onclick="event.stopPropagation(); deleteOutfitEntry('${ch.name.replace(/'/g, "\\'")}', ${idx})" style="position: absolute; top: 4px; right: 4px; width: 22px; height: 22px; border-radius: 50%; border: none; background: rgba(0,0,0,0.6); color: #fff; font-size: 14px; line-height: 22px; text-align: center; cursor: pointer; z-index: 2; padding: 0; display: flex; align-items: center; justify-content: center;" title="이 항목 삭제">&#10005;</button>`;
+                            html += `<button onclick="event.stopPropagation(); deleteOutfitEntry('${ch.name.replace(/'/g, "\\'")}', ${idx})" style="position: absolute; top: 4px; right: 4px; width: 22px; height: 22px; border-radius: 50%; border: none; background: rgba(0,0,0,0.6); color: #fff; font-size: 14px; line-height: 22px; text-align: center; cursor: pointer; z-index: 20; padding: 0; display: flex; align-items: center; justify-content: center;" title="이 항목 삭제">&#10005;</button>`;
 
                             // 이미지
                             if (entry.image_filename) {
@@ -50687,7 +50711,7 @@
                 if (images.length === 0) { showToast('이미지가 없습니다', 'info'); return; }
                 const overlay = document.createElement('div');
                 overlay.id = 'ep-image-gallery-overlay';
-                overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:10000; display:flex; align-items:center; justify-content:center;';
+                overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:270; display:flex; align-items:center; justify-content:center;';
                 let gridHtml = images.map(img => {
                     const imgSrc = `/api/asset_mode/characters/${enc(charName)}/outfits/${enc(outfitName)}/expressions/${enc(profile.name)}/images/${enc(img.filename)}`;
                     const isRep = img.filename === profile.representative;
@@ -50870,7 +50894,7 @@
             if (!assetTags || !assetTags.characters) return;
             const overlay = document.createElement('div');
             overlay.id = 'ep-ref-picker-overlay';
-            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:10000; display:flex; align-items:center; justify-content:center;';
+            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:270; display:flex; align-items:center; justify-content:center;';
             overlay.innerHTML = `<div style="background:var(--surface); border-radius:12px; padding:20px; max-width:700px; width:90%; max-height:80vh; display:flex; flex-direction:column; overflow:hidden;">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; flex-shrink:0;">
                     <h3 style="margin:0;">에셋에서 FACE-IPAdapter 선택</h3>
@@ -50964,7 +50988,7 @@
             if (!assetTags || !assetTags.characters) return;
             const overlay = document.createElement('div');
             overlay.id = 'ep-ref-slot-picker-overlay';
-            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:10000; display:flex; align-items:center; justify-content:center;';
+            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:270; display:flex; align-items:center; justify-content:center;';
             overlay.innerHTML = `<div style="background:var(--surface); border-radius:12px; padding:20px; max-width:700px; width:90%; max-height:80vh; display:flex; flex-direction:column; overflow:hidden;">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; flex-shrink:0;">
                     <h3 style="margin:0;">에셋에서 FACE-IPAdapter 선택</h3>
@@ -52170,7 +52194,7 @@
                 }
                 const overlay = document.createElement('div');
                 overlay.id = 'at-fill-pose-picker-overlay';
-                overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:10000; display:flex; align-items:center; justify-content:center;';
+                overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:270; display:flex; align-items:center; justify-content:center;';
                 overlay.innerHTML = `
                     <div style="background:var(--surface); border-radius:12px; padding:20px; max-width:700px; width:90%; max-height:80vh; display:flex; flex-direction:column;">
                         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;"><h3 style="margin:0;">포즈 선택</h3><button type="button" id="at-fill-pose-close" style="background:none;border:none;color:var(--text);font-size:1.2rem;cursor:pointer;">×</button></div>
@@ -54935,7 +54959,7 @@
                                     onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0'"
                                     class="trained-delete-btn">폴더 삭제</button>
                             ${sessionPreview ? `<img src="${sessionPreview}" style="width:100%; border-radius:8px; margin-bottom:10px; display:block;">` : ''}
-                            ${hasSessionRep ? '<div style="position:absolute; top:8px; left:8px; z-index:5; background:rgba(255,193,7,0.95); color:#000; font-size:0.7rem; font-weight:700; padding:3px 8px; border-radius:4px;">세션 대표</div>' : ''}
+                            ${hasSessionRep ? '<div style="position:absolute; top:8px; left:8px; z-index:50; background:rgba(255,193,7,0.95); color:#000; font-size:0.7rem; font-weight:700; padding:3px 8px; border-radius:4px;">세션 대표</div>' : ''}
                             <div style="font-weight:600; font-size:0.95rem;">${escapeHtml(s.name)}</div>
                             <div style="font-size:0.8rem; color:var(--text-secondary); margin-top:6px;">
                                 ${s.step_count}개 파일${s.has_final ? ' (최종 포함)' : ''}
@@ -55172,8 +55196,8 @@
                         const isRep = s.safetensors === repSafetensors;
                         const isSessionRep = s.safetensors === sessionRepSafetensors;
                         let badges = '';
-                        if (isRep) badges += '<div style="position:absolute; top:8px; left:8px; z-index:5; background:rgba(0,120,215,0.95); color:#fff; font-size:0.7rem; font-weight:700; padding:3px 8px; border-radius:4px;">엔트리 대표</div>';
-                        if (isSessionRep) badges += `<div style="position:absolute; top:8px; left:${isRep ? '110px' : '8px'}; z-index:5; background:rgba(255,193,7,0.95); color:#000; font-size:0.7rem; font-weight:700; padding:3px 8px; border-radius:4px;">세션 대표</div>`;
+                        if (isRep) badges += '<div style="position:absolute; top:8px; left:8px; z-index:50; background:rgba(0,120,215,0.95); color:#fff; font-size:0.7rem; font-weight:700; padding:3px 8px; border-radius:4px;">엔트리 대표</div>';
+                        if (isSessionRep) badges += `<div style="position:absolute; top:8px; left:${isRep ? '110px' : '8px'}; z-index:50; background:rgba(255,193,7,0.95); color:#000; font-size:0.7rem; font-weight:700; padding:3px 8px; border-radius:4px;">세션 대표</div>`;
                         return `
                         <div data-step-name="${escapeHtml(s.name)}" style="background:var(--surface); border:1px solid ${isRep ? 'var(--accent)' : (isSessionRep ? 'rgba(255,193,7,0.6)' : 'var(--border)')}; border-radius:10px; padding:12px; transition:border-color 0.2s; position:relative;"
                              onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='${isRep ? 'var(--accent)' : (isSessionRep ? 'rgba(255,193,7,0.6)' : 'var(--border)')}'">
@@ -55557,7 +55581,7 @@
                         const isRepImage = isSessionRep && sessionRepPreviewUrl === url;
                         return `<div style="position:relative;">
                             <img src="${url}" style="width:100%; border-radius:10px; cursor:pointer; display:block;" onclick="openLightbox('${url}')">
-                            ${isRepImage ? '<div style="position:absolute; top:10px; left:10px; z-index:5; background:rgba(255,193,7,0.95); color:#000; font-size:0.75rem; font-weight:700; padding:4px 10px; border-radius:6px;">현재 세션 대표 이미지</div>' : ''}
+                            ${isRepImage ? '<div style="position:absolute; top:10px; left:10px; z-index:50; background:rgba(255,193,7,0.95); color:#000; font-size:0.75rem; font-weight:700; padding:4px 10px; border-radius:6px;">현재 세션 대표 이미지</div>' : ''}
                             <div style="position:absolute; bottom:10px; right:10px; display:flex; gap:6px;">
                             <button onclick="setSessionRepresentative('${escapeHtml(session)}', '${escapeHtml(safetensorsPath)}', '${escapeHtml(url)}')"
                                     style="background:rgba(0,0,0,0.7); color:#fff; border:1px solid rgba(255,255,255,0.3); border-radius:8px; padding:6px 12px; font-size:0.78rem; cursor:pointer; backdrop-filter:blur(4px); transition:background 0.2s;"
@@ -56114,8 +56138,8 @@
                     <div class="asset-image-card" style="cursor:default;">
                         <div style="position:relative; overflow:hidden; border-radius:8px;">
                             <img src="/api/lora/training_image/${enc(loraCurrentCharacter)}/${enc(loraCurrentEntry)}/${enc(img.filename)}" style="width:100%; display:block; cursor:zoom-in;" onclick="event.stopPropagation(); openLightbox(this.src)">
-                            ${img.is_representative ? '<div style="position:absolute; top:4px; left:4px; z-index:10; background:rgba(255,193,7,0.95); color:#000; font-size:0.7rem; font-weight:700; padding:3px 8px; border-radius:4px;">대표</div>' : ''}
-                            ${img.width && img.height ? '<div style="position:absolute; top:4px; right:4px; z-index:10; background:rgba(0,0,0,0.7); color:#fff; font-size:0.65rem; padding:2px 6px; border-radius:4px;">' + img.width + 'x' + img.height + '</div>' : ''}
+                            ${img.is_representative ? '<div style="position:absolute; top:4px; left:4px; z-index:70; background:rgba(255,193,7,0.95); color:#000; font-size:0.7rem; font-weight:700; padding:3px 8px; border-radius:4px;">대표</div>' : ''}
+                            ${img.width && img.height ? '<div style="position:absolute; top:4px; right:4px; z-index:70; background:rgba(0,0,0,0.7); color:#fff; font-size:0.65rem; padding:2px 6px; border-radius:4px;">' + img.width + 'x' + img.height + '</div>' : ''}
                         </div>
                         <div style="padding:8px;">
                             <div style="font-size:0.75rem; color:var(--text-secondary); margin-bottom:4px;">${escapeHtml(img.filename)}</div>
@@ -56307,7 +56331,7 @@
             if (overlay) overlay.remove();
             overlay = document.createElement('div');
             overlay.id = 'lora-raw-overlay';
-            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:10000; display:flex; align-items:center; justify-content:center;';
+            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:270; display:flex; align-items:center; justify-content:center;';
             overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
             overlay.innerHTML = `<div style="background:var(--surface); border-radius:12px; padding:20px; max-width:700px; width:90%; max-height:85vh; display:flex; flex-direction:column; overflow:hidden;">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
@@ -56369,7 +56393,7 @@
                     <div class="asset-image-card" style="cursor:default;">
                         <div style="position:relative; overflow:hidden; border-radius:8px;">
                             <img src="/api/lora/test_image/${enc(loraCurrentCharacter)}/${enc(loraCurrentEntry)}/${enc(img.filename)}" style="width:100%; display:block; cursor:zoom-in;" onclick="event.stopPropagation(); openLightbox(this.src)">
-                            ${img.is_representative ? '<div style="position:absolute; top:4px; left:4px; z-index:10; background:rgba(255,193,7,0.95); color:#000; font-size:0.7rem; font-weight:700; padding:3px 8px; border-radius:4px;">대표</div>' : ''}
+                            ${img.is_representative ? '<div style="position:absolute; top:4px; left:4px; z-index:70; background:rgba(255,193,7,0.95); color:#000; font-size:0.7rem; font-weight:700; padding:3px 8px; border-radius:4px;">대표</div>' : ''}
                         </div>
                         <div style="padding:8px;">
                             <div style="font-size:0.75rem; color:var(--text-secondary); margin-bottom:4px;">${escapeHtml(img.filename)}</div>
@@ -57514,7 +57538,7 @@
                     html += '<img src="' + imgUrl + '" style="width:100%; display:block;">';
                     html += '<div style="position:absolute; top:4px; right:4px; width:20px; height:20px; border-radius:50%; background:' + bgColor + '; display:flex; align-items:center; justify-content:center; color:#fff; font-size:0.7rem;">' + checkMark + '</div>';
                     if (img.is_representative) {
-                        html += '<div style="position:absolute; top:4px; left:4px; z-index:10; background:rgba(255,193,7,0.95); color:#000; font-size:0.65rem; font-weight:700; padding:2px 6px; border-radius:4px;">대표</div>';
+                        html += '<div style="position:absolute; top:4px; left:4px; z-index:70; background:rgba(255,193,7,0.95); color:#000; font-size:0.65rem; font-weight:700; padding:2px 6px; border-radius:4px;">대표</div>';
                     }
                     html += '</div>';
                 });
@@ -60851,7 +60875,7 @@
                     const origPosPrompt = (prompt.original_positive || '').trim();
                     const origNegPrompt = (prompt.original_negative || '').trim();
                     return `<div class="asset-card" style="position:relative;border-radius:8px;overflow:hidden;background:var(--surface);border:1px solid var(--border);">
-                        <button onclick="event.stopPropagation();deleteInstanceLora('${esc(lora.id)}')" style="position:absolute;top:6px;right:6px;z-index:2;background:rgba(200,60,60,0.85);color:#fff;border:none;border-radius:6px;padding:3px 8px;cursor:pointer;font-size:0.75rem;font-weight:600;">삭제</button>
+                        <button onclick="event.stopPropagation();deleteInstanceLora('${esc(lora.id)}')" style="position:absolute;top:6px;right:6px;z-index:20;background:rgba(200,60,60,0.85);color:#fff;border:none;border-radius:6px;padding:3px 8px;cursor:pointer;font-size:0.75rem;font-weight:600;">삭제</button>
                         <div class="asset-card-img" onclick="openInstanceLightbox('${esc(imgSrc)}')" style="height:300px;background-size:contain;background-position:center;background-repeat:no-repeat;border-radius:8px 8px 0 0;cursor:zoom-in;background-color:#111;${imgSrc ? `background-image:url('${imgSrc}');` : ''}">
                             ${imgSrc ? '' : '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-secondary);">이미지 없음</div>'}
                         </div>
@@ -62278,7 +62302,7 @@
                 const hasPrompt = positive || negative;
                 const checked = _styleLora.selected.has(fn);
                 return `<div class="backup-card" data-filename="${escapeAttr(fn)}" style="position:relative;">
-                    <div style="position:absolute;top:6px;left:6px;z-index:3;background:rgba(0,0,0,0.6);border-radius:4px;padding:2px 4px;">
+                    <div style="position:absolute;top:6px;left:6px;z-index:30;background:rgba(0,0,0,0.6);border-radius:4px;padding:2px 4px;">
                         <input type="checkbox" onchange="styleLoraOnCheck('${escapeAttr(fn)}', this.checked)" ${checked ? 'checked' : ''} style="cursor:pointer;width:16px;height:16px;">
                     </div>
                     <div class="card-image-area">
@@ -62596,7 +62620,7 @@
             const overlay = document.createElement('div');
             overlay.className = 'modal';
             overlay.style.display = 'flex';
-            overlay.style.zIndex = '1500';
+            overlay.style.zIndex = '160';
             overlay.id = 'style-batch-negative-modal';
             const optionsHtml = presetNames.map(n =>
                 `<option value="${escapeAttr(n)}">${escapeHtml(n)} (${(presets[n] || []).length})</option>`).join('');
@@ -62879,7 +62903,7 @@
             if (overlay) overlay.remove();
             overlay = document.createElement('div');
             overlay.id = 'style-raw-overlay';
-            overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:10000;display:flex;align-items:center;justify-content:center;';
+            overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:270;display:flex;align-items:center;justify-content:center;';
             overlay.innerHTML = `<div style="background:var(--surface);border-radius:12px;padding:20px;max-width:700px;width:90%;max-height:85vh;display:flex;flex-direction:column;overflow:hidden;">
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
                     <h3 style="margin:0;">${profile.toUpperCase()} 프롬프트 Raw (불러오는 중...)</h3>
@@ -63140,7 +63164,7 @@
                 const cards = chars.map(c => {
                     const checked = _styleImportBotCharChecked(botName, c.name);
                     return `<div class="asset-folder-card" onclick="styleImportBotPickChar('${esc(botName)}','${esc(c.name)}')" style="cursor:pointer;position:relative;">
-                        <div onclick="event.stopPropagation()" style="position:absolute;top:4px;left:4px;background:rgba(0,0,0,0.55);border-radius:4px;padding:2px 3px;z-index:2;">
+                        <div onclick="event.stopPropagation()" style="position:absolute;top:4px;left:4px;background:rgba(0,0,0,0.55);border-radius:4px;padding:2px 3px;z-index:20;">
                             <input type="checkbox" ${checked ? 'checked' : ''} onchange="styleImportToggleBotChar('${esc(botName)}','${esc(c.name)}', this.checked)" style="width:16px;height:16px;cursor:pointer;" title="이 캐릭터 폴더 전체 가져오기">
                         </div>
                         <div class="folder-icon">📁</div><div class="folder-name">${esc(c.name)}</div>
@@ -63273,7 +63297,7 @@
             const overlay = document.createElement('div');
             overlay.className = 'modal';
             overlay.style.display = 'flex';
-            overlay.style.zIndex = '1400'; // 공통 피커(#lora-image-picker-modal, z-index 1500)가 이 모달 위에 열리도록 낮춤
+            overlay.style.zIndex = '140'; // 공통 피커(#lora-image-picker-modal, z-index 160)가 이 모달 위에 열리도록 낮춤
             overlay.id = 'style-test-image-modal';
             overlay.innerHTML = `
                 <div class="modal-content" style="max-width:820px;height:80vh;display:flex;flex-direction:column;">
@@ -63337,7 +63361,7 @@
             const overlay = document.createElement('div');
             overlay.className = 'modal';
             overlay.style.display = 'flex';
-            overlay.style.zIndex = '1500'; // 테스트 이미지 모달(1400) 위
+            overlay.style.zIndex = '160'; // 테스트 이미지 모달(140) 위
             overlay.id = 'style-test-from-train-modal';
             const selected = new Set();
             // 토글 핸들러 노출: 인라인 onclick → selected Set 갱신 후 체크 표시만 부분 갱신
@@ -63951,16 +63975,16 @@
                 const isSkipped = !!ch.skip_training;
 
                 return `<div id="bot-lora-char-card-${enc(unitKey)}" style="position:relative; padding:16px; margin-bottom:12px; background:var(--surface); border:1px solid var(--border); border-radius:10px;">
-                    ${isSkipped ? '<div class="bot-lora-skip-overlay" style="position:absolute;top:0;left:0;right:0;bottom:0;background:rgba(100,100,100,0.45);border-radius:10px;z-index:1;pointer-events:none;"></div>' : ''}
+                    ${isSkipped ? '<div class="bot-lora-skip-overlay" style="position:absolute;top:0;left:0;right:0;bottom:0;background:rgba(100,100,100,0.45);border-radius:10px;z-index:10;pointer-events:none;"></div>' : ''}
                     <div>
                     <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
                         <div style="display:flex; align-items:center; gap:10px;">
                             <span style="font-size:0.72rem; padding:2px 7px; border-radius:999px; background:var(--surface2); color:var(--accent);">[${ch.visual_card_index || 1}] ${escapeHtml(cardLabel)}</span>
-                            <label class="toggle-switch sm" style="position:relative;z-index:2;${isSkipped ? 'pointer-events:auto;' : ''}" title="순차 학습 시 이 캐릭터 건너뛰기">
+                            <label class="toggle-switch sm" style="position:relative;z-index:20;${isSkipped ? 'pointer-events:auto;' : ''}" title="순차 학습 시 이 캐릭터 건너뛰기">
                                 <input type="checkbox" ${isSkipped ? 'checked' : ''} onchange="updateBotLoraSkipTraining('${enc(ch.name)}', '${enc(cardId)}', this.checked)">
                                 <span class="toggle-slider"></span>
                             </label>
-                            <span style="font-size:0.7rem; color:var(--text-secondary); white-space:nowrap; position:relative; z-index:2;">순차 학습 스킵</span>
+                            <span style="font-size:0.7rem; color:var(--text-secondary); white-space:nowrap; position:relative; z-index:20;">순차 학습 스킵</span>
                         </div>
                         <div style="display:flex; gap:4px;">
                             <button onclick="openBotLoraTrainingImagePicker('${escapeHtml(ch.name)}', '${escapeHtml(cardId)}')" ${atImageLimit ? 'disabled' : ''} style="padding:4px 10px; background:rgba(180,130,220,0.2); color:var(--text); border:1px solid rgba(180,130,220,0.3); border-radius:4px; cursor:pointer; font-size:0.75rem; font-weight:600;${atImageLimit ? ' opacity:0.5; cursor:not-allowed;' : ''}">이미지 추가</button>
@@ -64668,7 +64692,7 @@
                         if (!overlay) {
                             overlay = document.createElement('div');
                             overlay.className = 'bot-lora-skip-overlay';
-                            overlay.style.cssText = 'position:absolute;top:0;left:0;right:0;bottom:0;background:rgba(100,100,100,0.45);border-radius:10px;z-index:1;pointer-events:none;';
+                            overlay.style.cssText = 'position:absolute;top:0;left:0;right:0;bottom:0;background:rgba(100,100,100,0.45);border-radius:10px;z-index:10;pointer-events:none;';
                             card.insertBefore(overlay, card.firstChild);
                         }
                     } else {
@@ -64822,7 +64846,7 @@
             if (existing) existing.remove();
             const dropdown = document.createElement('div');
             dropdown.id = 'training-tag-dropdown';
-            dropdown.style.cssText = 'position:fixed; z-index:10000; background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:10px; box-shadow:0 4px 20px rgba(0,0,0,0.4); max-width:320px; max-height:300px; overflow-y:auto;';
+            dropdown.style.cssText = 'position:fixed; z-index:270; background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:10px; box-shadow:0 4px 20px rgba(0,0,0,0.4); max-width:320px; max-height:300px; overflow-y:auto;';
             let html = '';
             if (appearance.length > 0) {
                 html += `<div style="margin-bottom:8px;">
@@ -65312,12 +65336,12 @@
                     const borderColor = isTop ? '#16a34a' : 'var(--border)';
                     const hoverColor = isTop ? '#15803d' : 'var(--accent)';
                     const arrowHtml = isTop ? `
-                        <div style="position:absolute; top:6px; left:6px; display:flex; gap:2px; z-index:5; align-items:center;">
+                        <div style="position:absolute; top:6px; left:6px; display:flex; gap:2px; z-index:50; align-items:center;">
                             <button onclick="event.stopPropagation(); moveBotLoraSessionPriority('${escapeHtml(s.name)}')" title="다음 세션을 1순위로 (순환)" style="background:rgba(0,0,0,0.6); color:#fff; border:none; border-radius:3px; width:24px; height:20px; font-size:0.7rem; cursor:pointer; padding:0; line-height:1;">▶</button>
                             <span style="background:#16a34a; color:#fff; font-size:0.65rem; font-weight:700; padding:2px 6px; border-radius:3px;">1순위</span>
                         </div>` : '';
                     return `<div onclick="enterBotLoraTrainedSession('${escapeHtml(s.name)}')" style="position:relative; border:2px solid ${borderColor}; border-radius:10px; overflow:hidden; cursor:pointer; transition:border-color 0.15s; background:var(--surface);${isTop ? ' box-shadow:0 0 8px rgba(22,163,74,0.4);' : ''}" onmouseenter="this.style.borderColor='${hoverColor}'" onmouseleave="this.style.borderColor='${borderColor}'">
-                        <button class="trained-delete-btn" onclick="event.stopPropagation(); deleteBotLoraTrainedSession('${escapeHtml(s.name)}')" style="position:absolute; top:6px; right:6px; z-index:5; background:rgba(220,80,80,0.9); color:#fff; border:none; border-radius:50%; width:22px; height:22px; font-size:0.7rem; cursor:pointer; display:flex; align-items:center; justify-content:center; opacity:0; transition:opacity 0.15s;">&times;</button>
+                        <button class="trained-delete-btn" onclick="event.stopPropagation(); deleteBotLoraTrainedSession('${escapeHtml(s.name)}')" style="position:absolute; top:6px; right:6px; z-index:50; background:rgba(220,80,80,0.9); color:#fff; border:none; border-radius:50%; width:22px; height:22px; font-size:0.7rem; cursor:pointer; display:flex; align-items:center; justify-content:center; opacity:0; transition:opacity 0.15s;">&times;</button>
                         ${previewHtml}
                         <div style="padding:10px;">
                             <div style="font-weight:700; font-size:0.85rem;">${escapeHtml(s.name)}</div>
@@ -65433,8 +65457,8 @@
                         : '';
                     const isSessionRep = s.safetensors === _botTrainedSessionRepSafetensors;
                     return `<div onclick="enterBotLoraTrainedStep('${escapeHtml(session)}', '${escapeHtml(s.name)}')" style="position:relative; border:1px solid var(--border); border-radius:8px; overflow:hidden; cursor:pointer; transition:border-color 0.15s; background:var(--surface);" onmouseenter="this.style.borderColor='var(--accent)'" onmouseleave="this.style.borderColor='var(--border)'">
-                        <button class="trained-delete-btn" onclick="event.stopPropagation(); deleteBotLoraTrainedStep('${escapeHtml(session)}', '${escapeHtml(s.name)}')" style="position:absolute; top:6px; right:6px; z-index:5; background:rgba(220,80,80,0.9); color:#fff; border:none; border-radius:50%; width:22px; height:22px; font-size:0.7rem; cursor:pointer; display:flex; align-items:center; justify-content:center; opacity:0; transition:opacity 0.15s;">&times;</button>
-                        ${isSessionRep ? '<div style="position:absolute; top:6px; left:6px; z-index:5; background:gold; color:#333; font-size:0.65rem; font-weight:700; padding:2px 6px; border-radius:3px;">세션 대표</div>' : ''}
+                        <button class="trained-delete-btn" onclick="event.stopPropagation(); deleteBotLoraTrainedStep('${escapeHtml(session)}', '${escapeHtml(s.name)}')" style="position:absolute; top:6px; right:6px; z-index:50; background:rgba(220,80,80,0.9); color:#fff; border:none; border-radius:50%; width:22px; height:22px; font-size:0.7rem; cursor:pointer; display:flex; align-items:center; justify-content:center; opacity:0; transition:opacity 0.15s;">&times;</button>
+                        ${isSessionRep ? '<div style="position:absolute; top:6px; left:6px; z-index:50; background:gold; color:#333; font-size:0.65rem; font-weight:700; padding:2px 6px; border-radius:3px;">세션 대표</div>' : ''}
                         ${previewUrl ? `<img src="${previewUrl}" style="width:100%; max-height:500px; object-fit:contain; background:var(--surface2); display:block;">` : '<div style="width:100%; padding:40px 0; background:var(--surface2); display:flex; align-items:center; justify-content:center; color:var(--text-secondary); font-size:0.75rem;">no preview</div>'}
                         <div style="padding:8px;">
                             <div style="font-size:0.8rem; font-weight:600;">${escapeHtml(s.name)}</div>
@@ -65499,7 +65523,7 @@
                     const isRep = p === currentRepPreview;
                     return `<div style="position:relative; border-radius:8px; overflow:hidden; border:1px solid var(--border); background:var(--surface2);">
                         <img src="${url}" onclick="openLightbox('${url}')" style="width:100%; display:block; cursor:zoom-in; max-height:600px; object-fit:contain; background:var(--surface2);">
-                        ${isRep ? '<div style="position:absolute; top:8px; left:8px; background:gold; color:#333; font-size:0.7rem; font-weight:700; padding:3px 8px; border-radius:4px; z-index:5;">현재 세션 대표</div>' : ''}
+                        ${isRep ? '<div style="position:absolute; top:8px; left:8px; background:gold; color:#333; font-size:0.7rem; font-weight:700; padding:3px 8px; border-radius:4px; z-index:50;">현재 세션 대표</div>' : ''}
                         <div style="position:absolute; bottom:10px; right:10px; display:flex; gap:6px;">
                         <button onclick="setBotLoraSessionRepresentative('${escapeHtml(session)}', '${escapeHtml(step.safetensors)}', '${escapeHtml(url)}')" style="background:rgba(0,0,0,0.7); color:#fff; border:1px solid rgba(255,255,255,0.3); border-radius:8px; padding:6px 12px; font-size:0.78rem; cursor:pointer; backdrop-filter:blur(4px); transition:background 0.2s;" onmouseover="this.style.background='rgba(0,160,80,0.85)'" onmouseout="this.style.background='rgba(0,0,0,0.7)'">세션 대표로 설정</button>
                         </div>
@@ -65649,12 +65673,12 @@
                     const borderColor = isTop ? '#16a34a' : 'var(--border)';
                     const hoverColor = isTop ? '#15803d' : 'var(--accent)';
                     const arrowHtml = isTop ? `
-                        <div style="position:absolute; top:6px; left:6px; display:flex; gap:2px; z-index:5; align-items:center;">
+                        <div style="position:absolute; top:6px; left:6px; display:flex; gap:2px; z-index:50; align-items:center;">
                             <button onclick="event.stopPropagation(); moveStyleSessionPriority('${escapeHtml(s.name)}')" title="다음 세션을 1순위로 (순환)" style="background:rgba(0,0,0,0.6); color:#fff; border:none; border-radius:3px; width:24px; height:20px; font-size:0.7rem; cursor:pointer; padding:0; line-height:1;">▶</button>
                             <span style="background:#16a34a; color:#fff; font-size:0.65rem; font-weight:700; padding:2px 6px; border-radius:3px;">1순위</span>
                         </div>` : '';
                     return `<div onclick="enterStyleTrainedSession('${escapeHtml(s.name)}')" style="position:relative; border:2px solid ${borderColor}; border-radius:10px; overflow:hidden; cursor:pointer; transition:border-color 0.15s; background:var(--surface);${isTop ? ' box-shadow:0 0 8px rgba(22,163,74,0.4);' : ''}" onmouseenter="this.style.borderColor='${hoverColor}'" onmouseleave="this.style.borderColor='${borderColor}'">
-                        <button class="trained-delete-btn" onclick="event.stopPropagation(); deleteStyleTrainedSession('${escapeHtml(s.name)}')" style="position:absolute; top:6px; right:6px; z-index:5; background:rgba(220,80,80,0.9); color:#fff; border:none; border-radius:50%; width:22px; height:22px; font-size:0.7rem; cursor:pointer; display:flex; align-items:center; justify-content:center; opacity:0; transition:opacity 0.15s;">&times;</button>
+                        <button class="trained-delete-btn" onclick="event.stopPropagation(); deleteStyleTrainedSession('${escapeHtml(s.name)}')" style="position:absolute; top:6px; right:6px; z-index:50; background:rgba(220,80,80,0.9); color:#fff; border:none; border-radius:50%; width:22px; height:22px; font-size:0.7rem; cursor:pointer; display:flex; align-items:center; justify-content:center; opacity:0; transition:opacity 0.15s;">&times;</button>
                         ${previewHtml}
                         <div style="padding:10px;">
                             <div style="font-weight:700; font-size:0.85rem;">${escapeHtml(s.name)}</div>
@@ -65745,8 +65769,8 @@
                     const previewUrl = s.previews.length > 0 ? `${previewBase}/${enc(s.previews[0])}` : '';
                     const isSessionRep = s.safetensors === _styleTrainedSessionRepSafetensors;
                     return `<div onclick="enterStyleTrainedStep('${escapeHtml(session)}', '${escapeHtml(s.name)}')" style="position:relative; border:1px solid var(--border); border-radius:8px; overflow:hidden; cursor:pointer; transition:border-color 0.15s; background:var(--surface);" onmouseenter="this.style.borderColor='var(--accent)'" onmouseleave="this.style.borderColor='var(--border)'">
-                        <button class="trained-delete-btn" onclick="event.stopPropagation(); deleteStyleTrainedStep('${escapeHtml(session)}', '${escapeHtml(s.name)}')" style="position:absolute; top:6px; right:6px; z-index:5; background:rgba(220,80,80,0.9); color:#fff; border:none; border-radius:50%; width:22px; height:22px; font-size:0.7rem; cursor:pointer; display:flex; align-items:center; justify-content:center; opacity:0; transition:opacity 0.15s;">&times;</button>
-                        ${isSessionRep ? '<div style="position:absolute; top:6px; left:6px; z-index:5; background:gold; color:#333; font-size:0.65rem; font-weight:700; padding:2px 6px; border-radius:3px;">세션 대표</div>' : ''}
+                        <button class="trained-delete-btn" onclick="event.stopPropagation(); deleteStyleTrainedStep('${escapeHtml(session)}', '${escapeHtml(s.name)}')" style="position:absolute; top:6px; right:6px; z-index:50; background:rgba(220,80,80,0.9); color:#fff; border:none; border-radius:50%; width:22px; height:22px; font-size:0.7rem; cursor:pointer; display:flex; align-items:center; justify-content:center; opacity:0; transition:opacity 0.15s;">&times;</button>
+                        ${isSessionRep ? '<div style="position:absolute; top:6px; left:6px; z-index:50; background:gold; color:#333; font-size:0.65rem; font-weight:700; padding:2px 6px; border-radius:3px;">세션 대표</div>' : ''}
                         ${previewUrl ? `<img src="${previewUrl}" style="width:100%; max-height:500px; object-fit:contain; background:var(--surface2); display:block;">` : '<div style="width:100%; padding:40px 0; background:var(--surface2); display:flex; align-items:center; justify-content:center; color:var(--text-secondary); font-size:0.75rem;">no preview</div>'}
                         <div style="padding:8px;">
                             <div style="font-size:0.8rem; font-weight:600;">${escapeHtml(s.name)}</div>
@@ -65808,7 +65832,7 @@
                     const isRep = p === currentRepPreview;
                     return `<div style="position:relative; border-radius:8px; overflow:hidden; border:1px solid var(--border); background:var(--surface2);">
                         <img src="${url}" onclick="openStyleLightbox('${url}')" style="width:100%; display:block; cursor:zoom-in; max-height:600px; object-fit:contain; background:var(--surface2);">
-                        ${isRep ? '<div style="position:absolute; top:8px; left:8px; background:gold; color:#333; font-size:0.7rem; font-weight:700; padding:3px 8px; border-radius:4px; z-index:5;">현재 세션 대표</div>' : ''}
+                        ${isRep ? '<div style="position:absolute; top:8px; left:8px; background:gold; color:#333; font-size:0.7rem; font-weight:700; padding:3px 8px; border-radius:4px; z-index:50;">현재 세션 대표</div>' : ''}
                         <div style="position:absolute; bottom:10px; right:10px; display:flex; gap:6px;">
                         <button onclick="setStyleSessionRepresentative('${escapeHtml(session)}', '${escapeHtml(step.safetensors)}', '${escapeHtml(url)}')" style="background:rgba(0,0,0,0.7); color:#fff; border:1px solid rgba(255,255,255,0.3); border-radius:8px; padding:6px 12px; font-size:0.78rem; cursor:pointer; backdrop-filter:blur(4px); transition:background 0.2s;" onmouseover="this.style.background='rgba(0,160,80,0.85)'" onmouseout="this.style.background='rgba(0,0,0,0.7)'">세션 대표로 설정</button>
                         </div>
@@ -66046,7 +66070,7 @@
             if (overlay) overlay.remove();
             overlay = document.createElement('div');
             overlay.id = 'bot-lora-raw-overlay';
-            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:10000; display:flex; align-items:center; justify-content:center;';
+            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:270; display:flex; align-items:center; justify-content:center;';
             overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
 
             const buildRawForChar = (charIdx) => {
@@ -66848,7 +66872,7 @@
             ppEmotionSelectBot = (typeof ppCurrentBot !== 'undefined' && ppCurrentBot)
                 || (typeof botCurrentBot !== 'undefined' && botCurrentBot) || '';
             // 바깥 클릭 닫기 넣지 않음(모달 UI 규칙).
-            modal.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.7); z-index:10001; display:flex; align-items:center; justify-content:center;';
+            modal.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.7); z-index:280; display:flex; align-items:center; justify-content:center;';
             modal.innerHTML = `<div style="background:var(--surface, #1e1e1e); border-radius:10px; width:92vw; max-width:640px; max-height:88vh; display:flex; flex-direction:column; overflow:hidden;">
                 <div style="padding:12px 16px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center;">
                     <h3 style="margin:0; font-size:1rem;">감정 뽑아내기 <span style="font-size:0.74rem; color:var(--text2,#999);">(${escapeHtml(ppEmotionSelectBot || '봇 없음')})</span></h3>
@@ -67072,7 +67096,7 @@
                 document.body.appendChild(modal);
             }
             // 바깥 클릭으로 닫기 넣지 않음(모달 UI 규칙) — ✕/복사/닫기 버튼으로만 닫힘.
-            modal.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.7); z-index:10001; display:flex; align-items:center; justify-content:center;';
+            modal.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.7); z-index:280; display:flex; align-items:center; justify-content:center;';
             modal.innerHTML = `<div style="background:var(--surface, #1e1e1e); border-radius:10px; width:80vw; max-width:640px; max-height:80vh; display:flex; flex-direction:column; overflow:hidden;">
                 <div style="padding:12px 16px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center;">
                     <h3 style="margin:0; font-size:1rem;">감정 리스트 복사 (${uniqRows.length}개 고유 · 원본 ${rows.length})</h3>
@@ -68124,7 +68148,7 @@
             const rows = (ppWorking && ppWorking.vn && Array.isArray(ppWorking.vn.emotion_rows)) ? ppWorking.vn.emotion_rows : [];
             const emotionsDefault = rows.filter(r => !r.dup).map(r => r.emotion).join(';');
             // 바깥 클릭 닫기 금지(CLAUDE.md) — ✕/실행 버튼으로만 닫힘.
-            modal.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.7); z-index:10002; display:flex; align-items:center; justify-content:center;';
+            modal.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.7); z-index:290; display:flex; align-items:center; justify-content:center;';
             modal.innerHTML = `<div style="background:var(--surface,#1e1e1e); border-radius:10px; width:92vw; max-width:720px; max-height:88vh; display:flex; flex-direction:column; overflow:hidden;">
                 <div style="padding:12px 16px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center;">
                     <h3 style="margin:0; font-size:1rem;">병렬 테스트 <span style="font-size:0.74rem; color:var(--text2,#999);">(${escapeHtml(ppCurrentBot)})</span></h3>
@@ -70726,7 +70750,7 @@
 
             const overlay = document.createElement('div');
             overlay.id = 'lb-extra-overlay';
-            overlay.style.cssText = 'position:fixed; inset:0; z-index:10000; background:rgba(0,0,0,0.5); display:flex; align-items:center; justify-content:center;';
+            overlay.style.cssText = 'position:fixed; inset:0; z-index:270; background:rgba(0,0,0,0.5); display:flex; align-items:center; justify-content:center;';
 
             overlay.innerHTML = `
                 <div style="background:var(--surface); border:1px solid var(--border); border-radius:12px; width:95vw; max-width:1400px; height:88vh; display:flex; flex-direction:column; overflow:hidden;">
@@ -71092,7 +71116,7 @@
             const overlay = document.createElement('div');
             overlay.id = 'preset-delete-resolve-overlay';
             overlay.dataset.presetName = presetName;
-            overlay.style.cssText = 'position:fixed; inset:0; z-index:10005; background:rgba(0,0,0,0.6); display:flex; align-items:center; justify-content:center;';
+            overlay.style.cssText = 'position:fixed; inset:0; z-index:320; background:rgba(0,0,0,0.6); display:flex; align-items:center; justify-content:center;';
 
             overlay.innerHTML = `
                 <div style="background:var(--surface); border:1px solid var(--border); border-radius:12px; width:96vw; max-width:680px; max-height:88vh; display:flex; flex-direction:column; overflow:hidden;">
@@ -71989,7 +72013,7 @@
 
             const overlay = document.createElement('div');
             overlay.id = 'focus-edit-overlay';
-            overlay.style.cssText = 'position:fixed; inset:0; z-index:10001; background:rgba(0,0,0,0.6); display:flex; align-items:center; justify-content:center;';
+            overlay.style.cssText = 'position:fixed; inset:0; z-index:280; background:rgba(0,0,0,0.6); display:flex; align-items:center; justify-content:center;';
 
             overlay.innerHTML = `
                 <div style="background:var(--surface); border:1px solid var(--border); border-radius:12px; width:96vw; max-width:1600px; height:92vh; display:flex; flex-direction:column; overflow:hidden;">
@@ -72225,7 +72249,7 @@
 
             const overlay = document.createElement('div');
             overlay.id = 'lb-extra-batch-select-overlay';
-            overlay.style.cssText = 'position:fixed; inset:0; z-index:10004; background:rgba(0,0,0,0.6); display:flex; align-items:center; justify-content:center;';
+            overlay.style.cssText = 'position:fixed; inset:0; z-index:310; background:rgba(0,0,0,0.6); display:flex; align-items:center; justify-content:center;';
             // 바깥 클릭으로 닫기 금지 — 취소/실행 버튼만
             overlay.innerHTML = `
                 <div style="background:var(--surface); border:1px solid var(--border); border-radius:12px; width:90vw; max-width:560px; max-height:85vh; display:flex; flex-direction:column; overflow:hidden;">
@@ -72263,7 +72287,7 @@
             // 진행도 오버레이 (화면 잠금)
             const overlay = document.createElement('div');
             overlay.id = 'lb-extra-batch-overlay';
-            overlay.style.cssText = 'position:fixed; inset:0; z-index:10005; background:rgba(0,0,0,0.7); display:flex; align-items:center; justify-content:center;';
+            overlay.style.cssText = 'position:fixed; inset:0; z-index:320; background:rgba(0,0,0,0.7); display:flex; align-items:center; justify-content:center;';
             // 바깥 클릭으로 닫기 금지 — 중단/닫기 버튼만
             overlay.innerHTML = `
                 <div style="background:var(--surface); border:1px solid var(--border); border-radius:12px; width:92vw; max-width:560px; padding:20px; display:flex; flex-direction:column; gap:14px;">
@@ -72420,7 +72444,7 @@
 
             const overlay = document.createElement('div');
             overlay.id = 'lb-extra-refine-prompt-overlay';
-            overlay.style.cssText = 'position:fixed; inset:0; z-index:10002; background:rgba(0,0,0,0.6); display:flex; align-items:center; justify-content:center;';
+            overlay.style.cssText = 'position:fixed; inset:0; z-index:290; background:rgba(0,0,0,0.6); display:flex; align-items:center; justify-content:center;';
             // 바깥 클릭으로 닫기 금지 — ✕/저장/닫기 버튼만
             overlay.innerHTML = `
                 <div style="background:var(--surface); border:1px solid var(--border); border-radius:12px; width:92vw; max-width:900px; height:88vh; display:flex; flex-direction:column; overflow:hidden;">
@@ -73229,7 +73253,7 @@
 
             const overlay = document.createElement('div');
             overlay.id = 'auto-group-overlay';
-            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:10010; display:flex; align-items:center; justify-content:center;';
+            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:330; display:flex; align-items:center; justify-content:center;';
 
             const modal = document.createElement('div');
             modal.style.cssText = 'background:var(--surface); border-radius:12px; padding:24px; max-width:1200px; width:92%; max-height:90vh; display:flex; flex-direction:column; position:relative;';
@@ -73651,7 +73675,7 @@
 
             const overlay = document.createElement('div');
             overlay.id = 'auto-face-tag-prompt-overlay';
-            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:10015; display:flex; align-items:center; justify-content:center;';
+            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:350; display:flex; align-items:center; justify-content:center;';
             // 바깥 클릭으로 닫기 금지 — ✕ 또는 저장 완료 후 명시적 닫기만 허용
 
             const modal = document.createElement('div');
@@ -75144,7 +75168,7 @@
             const overlay = document.createElement('div');
             overlay.id = 'bot-test-setup-prompt-overlay';
             overlay.className = 'modal';
-            overlay.style.cssText = 'display:flex; z-index:1800;';
+            overlay.style.cssText = 'display:flex; z-index:200;';
             overlay.innerHTML = `
                 <div class="modal-content" style="max-width:820px;">
                     <div class="modal-header">
@@ -75462,7 +75486,7 @@
 
             const overlay = document.createElement('div');
             overlay.id = 'auto-lora-prompt-overlay';
-            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:10015; display:flex; align-items:center; justify-content:center;';
+            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:350; display:flex; align-items:center; justify-content:center;';
             // 바깥 클릭으로 닫기 금지 — ✕ 또는 저장 완료 후 명시적 닫기만 허용
 
             const modal = document.createElement('div');
@@ -75747,7 +75771,7 @@
             _botCharLoraPickerState = { charName, charIdx, tab: 'asset', assetData: null, instanceData: null, botStep: 'bots', botBots: null, botProjects: null, botSelectedBot: '', botSelectedProject: '', botSelectedChar: '', isFaceLora: false, profile };
             const overlay = document.createElement('div');
             overlay.id = 'bot-char-lora-picker-overlay';
-            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:10010; display:flex; align-items:center; justify-content:center;';
+            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:330; display:flex; align-items:center; justify-content:center;';
             overlay.innerHTML = `
                 <div style="background:var(--surface); border-radius:12px; padding:24px; max-width:1100px; width:95%; max-height:95vh; display:flex; flex-direction:column;">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
@@ -75770,7 +75794,7 @@
             _botCharLoraPickerState = { charName, charIdx, tab: 'asset', assetData: null, instanceData: null, botStep: 'bots', botBots: null, botProjects: null, botSelectedBot: '', botSelectedProject: '', botSelectedChar: '', isFaceLora: true };
             const overlay = document.createElement('div');
             overlay.id = 'bot-char-lora-picker-overlay';
-            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:10010; display:flex; align-items:center; justify-content:center;';
+            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:330; display:flex; align-items:center; justify-content:center;';
             overlay.innerHTML = `
                 <div style="background:var(--surface); border-radius:12px; padding:24px; max-width:1100px; width:95%; max-height:95vh; display:flex; flex-direction:column;">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
@@ -76117,7 +76141,7 @@
             _botCharLoraPickerState = { charName, charIdx, tab: 'style', assetData: null, instanceData: null, styleData: null, botStep: 'bots', botBots: null, botProjects: null, botSelectedBot: '', botSelectedProject: '', botSelectedChar: '', isFaceLora: false, isStyleLora: true, profile: 'solo' };
             const overlay = document.createElement('div');
             overlay.id = 'bot-char-lora-picker-overlay';
-            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:10010; display:flex; align-items:center; justify-content:center;';
+            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:330; display:flex; align-items:center; justify-content:center;';
             overlay.innerHTML = `
                 <div style="background:var(--surface); border-radius:12px; padding:24px; max-width:1100px; width:95%; max-height:95vh; display:flex; flex-direction:column;">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
@@ -76510,7 +76534,7 @@
             document.getElementById('bot-auto-lora-overlay')?.remove();
             const overlay = document.createElement('div');
             overlay.id = 'bot-auto-lora-overlay';
-            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:10012; display:flex; align-items:center; justify-content:center;';
+            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:340; display:flex; align-items:center; justify-content:center;';
             overlay.innerHTML = `
                 <div style="background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:18px; max-width:1220px; width:96%; height:92vh; max-height:95vh; display:flex; flex-direction:column; box-shadow:0 18px 60px rgba(0,0,0,.35);">
                     <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom:12px;">
@@ -77476,7 +77500,7 @@
                             onclick="event.stopPropagation(); toggleRepImage('${escAttr(charName)}','${escAttr(img.filename)}')"
                             title="대표 이미지 지정 (최대 3개)">⭐</button>
                         ${isRep ? `
-                        <div style="position:absolute; bottom:6px; left:6px; display:flex; gap:4px; z-index:2;">
+                        <div style="position:absolute; bottom:6px; left:6px; display:flex; gap:4px; z-index:20;">
                             <button class="bot-img-order-btn" ${canUp ? '' : 'disabled'}
                                 onclick="event.stopPropagation(); moveRepImage('${escAttr(charName)}','${escAttr(img.filename)}','up')" title="앞으로 이동">◀</button>
                             <button class="bot-img-order-btn" ${canDown ? '' : 'disabled'}
@@ -77809,7 +77833,7 @@
                 modal.id = 'bot-name-modal';
                 document.body.appendChild(modal);
             }
-            modal.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.6); z-index:10000; display:flex; align-items:center; justify-content:center;';
+            modal.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.6); z-index:270; display:flex; align-items:center; justify-content:center;';
             modal.innerHTML = `
                 <div style="background:var(--surface); border-radius:12px; width:90vw; max-width:420px; display:flex; flex-direction:column; overflow:hidden; box-shadow:0 12px 48px rgba(0,0,0,0.4);">
                     <div style="padding:14px 18px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center;">
@@ -77954,7 +77978,7 @@
                 modal.id = 'bot-asset-char-modal';
                 document.body.appendChild(modal);
             }
-            modal.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.7); z-index:10000; display:flex; align-items:center; justify-content:center;';
+            modal.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.7); z-index:270; display:flex; align-items:center; justify-content:center;';
             modal.innerHTML = `<div style="background:var(--surface); border-radius:12px; width:90vw; max-width:800px; max-height:85vh; display:flex; flex-direction:column; overflow:hidden;">
                 <div style="padding:16px 20px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center;">
                     <h3 style="margin:0;">에셋에서 캐릭터 가져오기</h3>
@@ -78107,7 +78131,7 @@
                 confirmModal.id = 'bot-asset-char-confirm';
                 document.body.appendChild(confirmModal);
             }
-            confirmModal.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.7); z-index:10001; display:flex; align-items:center; justify-content:center;';
+            confirmModal.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.7); z-index:280; display:flex; align-items:center; justify-content:center;';
 
             const rowsHtml = charsData.map(ch => `
                 <div class="import-name-row" style="padding:6px 0; border-bottom:1px solid var(--border);">
@@ -78234,7 +78258,7 @@
                 modal.id = 'bot-batch-add-modal';
                 document.body.appendChild(modal);
             }
-            modal.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.6); z-index:10000; display:flex; align-items:center; justify-content:center;';
+            modal.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.6); z-index:270; display:flex; align-items:center; justify-content:center;';
             modal.innerHTML = `
                 <div style="background:var(--surface); border-radius:12px; width:80vw; max-width:700px; max-height:85vh; display:flex; flex-direction:column; overflow:hidden;">
                     <div style="padding:16px 20px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center;">
@@ -78942,7 +78966,7 @@
         function _repBatchBuildOverlay() {
             const overlay = document.createElement('div');
             overlay.id = 'rep-batch-overlay';
-            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:10000; display:flex; align-items:center; justify-content:center;';
+            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:270; display:flex; align-items:center; justify-content:center;';
             overlay.innerHTML =
                 '<div style="background:var(--surface); border-radius:12px; padding:18px; max-width:1100px; width:95%; max-height:88vh; display:flex; flex-direction:column; overflow:hidden; box-shadow:0 8px 32px rgba(0,0,0,0.3);">' +
                     '<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; gap:10px;">' +
@@ -79550,7 +79574,7 @@
             }
             const hasPrompt = images.filter(i => i.prompt).length;
             const noPrompt = images.length - hasPrompt;
-            modal.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.7); z-index:10000; display:flex; align-items:center; justify-content:center;';
+            modal.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.7); z-index:270; display:flex; align-items:center; justify-content:center;';
             let listHtml = images.map((img, i) => {
                 const preview = img.prompt ? escHtml(img.prompt.substring(0, 80)) + (img.prompt.length > 80 ? '...' : '') : '<span style="color:var(--text2);">프롬프트 없음</span>';
                 const hasP = img.prompt ? 'has-prompt' : '';
@@ -79660,7 +79684,7 @@
                 modal.id = 'tag-filter-modal';
                 document.body.appendChild(modal);
             }
-            modal.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.7); z-index:10000; display:flex; align-items:center; justify-content:center;';
+            modal.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.7); z-index:270; display:flex; align-items:center; justify-content:center;';
 
             // 기본 구조: 탭 2개
             modal.innerHTML = `<div style="background:var(--surface); border-radius:12px; width:92vw; max-width:900px; max-height:85vh; display:flex; flex-direction:column; overflow:hidden;">
@@ -80126,7 +80150,7 @@
 
             const modal = document.createElement('div');
             modal.id = 'patch-settings-modal';
-            modal.style.cssText = 'position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); z-index:10000; background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:20px; min-width:380px; max-width:480px; box-shadow:0 8px 32px rgba(0,0,0,0.4);';
+            modal.style.cssText = 'position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); z-index:270; background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:20px; min-width:380px; max-width:480px; box-shadow:0 8px 32px rgba(0,0,0,0.4);';
             modal.innerHTML = `
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
                     <div style="font-weight:700; font-size:1rem;">데이터 패치 설정 - ${escHtml(botCurrentBot)}</div>
@@ -80486,7 +80510,7 @@
 
             const modal = document.createElement('div');
             modal.id = 'positive-rules-modal';
-            modal.style.cssText = 'position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); z-index:10000; background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:20px; min-width:480px; max-width:600px; max-height:80vh; box-shadow:0 8px 32px rgba(0,0,0,0.4); display:flex; flex-direction:column;';
+            modal.style.cssText = 'position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); z-index:270; background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:20px; min-width:480px; max-width:600px; max-height:80vh; box-shadow:0 8px 32px rgba(0,0,0,0.4); display:flex; flex-direction:column;';
             modal.innerHTML = `
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
                     <div style="font-weight:700; font-size:1rem;">POSITIVE 태그 규칙</div>
@@ -82499,7 +82523,7 @@
 
             const modal = document.createElement('div');
             modal.id = 'word-replacements-modal';
-            modal.style.cssText = 'position:fixed; inset:0; z-index:10000; padding:clamp(12px, 3vw, 32px); background:rgba(0,0,0,0.58); backdrop-filter:blur(2px); display:flex; align-items:center; justify-content:center; box-sizing:border-box;';
+            modal.style.cssText = 'position:fixed; inset:0; z-index:270; padding:clamp(12px, 3vw, 32px); background:rgba(0,0,0,0.58); backdrop-filter:blur(2px); display:flex; align-items:center; justify-content:center; box-sizing:border-box;';
             modal.innerHTML = `
                 <div id="word-replacements-dialog" role="dialog" aria-modal="true" aria-labelledby="word-replacements-title" tabindex="-1"
                     style="width:min(1040px, 100%); height:min(88vh, 900px); max-height:100%; background:var(--surface); border:1px solid var(--border); border-radius:14px; box-shadow:0 18px 60px rgba(0,0,0,0.5); display:flex; flex-direction:column; overflow:hidden;">
@@ -83009,7 +83033,7 @@
                 modal.id = 'bot-one-click-modal';
                 document.body.appendChild(modal);
             }
-            modal.style.cssText = 'position:fixed; inset:0; z-index:10030; display:flex; align-items:center; justify-content:center; padding:18px; background:rgba(0,0,0,0.74); backdrop-filter:blur(3px);';
+            modal.style.cssText = 'position:fixed; inset:0; z-index:370; display:flex; align-items:center; justify-content:center; padding:18px; background:rgba(0,0,0,0.74); backdrop-filter:blur(3px);';
             return modal;
         }
 
@@ -84359,7 +84383,7 @@
             const modal = document.createElement('div');
             modal.id = 'dialogue-face-crop-modal';
             modal.dataset.botName = botName;
-            modal.style.cssText = 'position:fixed; inset:0; z-index:10020; display:flex; align-items:center; justify-content:center; padding:18px; background:rgba(0,0,0,0.74); backdrop-filter:blur(3px);';
+            modal.style.cssText = 'position:fixed; inset:0; z-index:360; display:flex; align-items:center; justify-content:center; padding:18px; background:rgba(0,0,0,0.74); backdrop-filter:blur(3px);';
             modal.innerHTML = '<div style="padding:24px 30px; border:1px solid var(--border); border-radius:12px; background:var(--surface); color:var(--text);">FACE CROP 대상을 불러오는 중...</div>';
             document.body.appendChild(modal);
 
@@ -84575,7 +84599,7 @@
 
             const modal = document.createElement('div');
             modal.id = 'program-embedding-modal';
-            modal.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.72); z-index:10020; display:flex; align-items:center; justify-content:center; padding:20px;';
+            modal.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.72); z-index:360; display:flex; align-items:center; justify-content:center; padding:20px;';
             document.body.appendChild(modal);
             renderProgramEmbeddingSelection();
         }
@@ -84866,7 +84890,7 @@
             // 캐릭터 선택 모달 (체크박스 다중 선택)
             const modal = document.createElement('div');
             modal.id = 'data-patch-select-modal';
-            modal.style.cssText = 'position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); z-index:10001; background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:20px; min-width:380px; max-width:520px; max-height:80vh; display:flex; flex-direction:column; box-shadow:0 8px 32px rgba(0,0,0,0.4);';
+            modal.style.cssText = 'position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); z-index:280; background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:20px; min-width:380px; max-width:520px; max-height:80vh; display:flex; flex-direction:column; box-shadow:0 8px 32px rgba(0,0,0,0.4);';
 
             const rowsHtml = chars.map((c, i) => {
                 const cnt = (c.rep_images || []).length;
@@ -84972,7 +84996,7 @@
             const modal = document.createElement('div');
             modal.id = 'data-patch-confirm-modal';
             modal.dataset.mode = mode;
-            modal.style.cssText = 'position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); z-index:10000; background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:20px; min-width:400px; max-width:520px; box-shadow:0 8px 32px rgba(0,0,0,0.4);';
+            modal.style.cssText = 'position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); z-index:270; background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:20px; min-width:400px; max-width:520px; box-shadow:0 8px 32px rgba(0,0,0,0.4);';
             modal.innerHTML = `
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
                     <div style="font-weight:700; font-size:1rem;">데이터 패치 확인${escHtml(titleSuffix)}</div>
@@ -85173,7 +85197,7 @@
 
             const modal = document.createElement('div');
             modal.id = `utility-modal-${charName}`;
-            modal.style.cssText = 'position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); z-index:10000; background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:20px; min-width:420px; max-width:520px; box-shadow:0 8px 32px rgba(0,0,0,0.4);';
+            modal.style.cssText = 'position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); z-index:270; background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:20px; min-width:420px; max-width:520px; box-shadow:0 8px 32px rgba(0,0,0,0.4);';
             modal.innerHTML = `
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
                     <div style="font-weight:700; font-size:1rem;">패치 프롬프트 미리보기 - ${escHtml(charName)} [${activeSlot + 1}]</div>
@@ -85251,7 +85275,7 @@
                     </div>
                 </label>`;
             }).join('');
-            modal.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.7); z-index:10000; display:flex; align-items:center; justify-content:center;';
+            modal.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.7); z-index:270; display:flex; align-items:center; justify-content:center;';
             modal.innerHTML = `<div style="background:var(--surface); border-radius:12px; width:90vw; max-width:700px; max-height:85vh; display:flex; flex-direction:column; overflow:hidden;">
                 <div style="padding:16px 20px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center;">
                     <h3 style="margin:0;">얼굴 태그 분석 대상 선택</h3>
@@ -85376,7 +85400,7 @@
                     </div>
                 </label>`;
             }).join('');
-            modal.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.7); z-index:10000; display:flex; align-items:center; justify-content:center;';
+            modal.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.7); z-index:270; display:flex; align-items:center; justify-content:center;';
             modal.innerHTML = `<div style="background:var(--surface); border-radius:12px; width:90vw; max-width:640px; max-height:85vh; display:flex; flex-direction:column; overflow:hidden;">
                 <div style="padding:16px 20px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center;">
                     <h3 style="margin:0;">LLM 일괄 얼굴/눈 태그 분석 대상 선택</h3>
@@ -85567,7 +85591,7 @@
                     </div>
                 </label>`;
             }).join('');
-            modal.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.7); z-index:10000; display:flex; align-items:center; justify-content:center;';
+            modal.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.7); z-index:270; display:flex; align-items:center; justify-content:center;';
             modal.innerHTML = `<div style="background:var(--surface); border-radius:12px; width:90vw; max-width:700px; max-height:85vh; display:flex; flex-direction:column; overflow:hidden;">
                 <div style="padding:16px 20px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center;">
                     <h3 style="margin:0;">얼굴 부정 태그 일괄 적용</h3>
@@ -85686,7 +85710,7 @@
                     </label>`;
                 }).join('');
 
-                modal.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.7); z-index:10000; display:flex; align-items:center; justify-content:center;';
+                modal.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.7); z-index:270; display:flex; align-items:center; justify-content:center;';
                 modal.innerHTML = `<div style="background:var(--surface); border-radius:12px; width:90vw; max-width:700px; max-height:85vh; display:flex; flex-direction:column; overflow:hidden;">
                     <div style="padding:16px 20px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center;">
                         <h3 style="margin:0;">부정 프롬프트 적용 대상 선택</h3>
@@ -85812,7 +85836,7 @@
             modal.id = 'bot-neg-single-modal';
             const presetOptionsHtml = presetNames.map(n => `<option value="${escAttr(n)}">${escHtml(n)} (${(presets[n]||[]).length}개)</option>`).join('');
 
-            modal.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.7); z-index:10000; display:flex; align-items:center; justify-content:center;';
+            modal.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.7); z-index:270; display:flex; align-items:center; justify-content:center;';
             modal.innerHTML = `<div style="background:var(--surface); border-radius:12px; width:90vw; max-width:500px; max-height:85vh; display:flex; flex-direction:column; overflow:hidden;">
                 <div style="padding:16px 20px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center;">
                     <h3 style="margin:0;">부정 프롬프트 적용</h3>
@@ -85928,7 +85952,7 @@
                 modal.id = 'lv1-prompt-edit-modal';
                 document.body.appendChild(modal);
             }
-            modal.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.7); z-index:10000; display:flex; align-items:center; justify-content:center;';
+            modal.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.7); z-index:270; display:flex; align-items:center; justify-content:center;';
             modal.innerHTML = `<div style="background:var(--surface); border-radius:12px; width:90vw; max-width:600px; max-height:80vh; display:flex; flex-direction:column; overflow:hidden;">
                 <div style="padding:12px 16px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center;">
                     <h3 style="margin:0; font-size:0.95rem;">프롬프트 편집</h3>
@@ -86086,7 +86110,7 @@
             if (!modal) {
                 modal = document.createElement('div');
                 modal.id = 'bot-asset-import-modal';
-                modal.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.6); z-index:10000; display:flex; align-items:center; justify-content:center;';
+                modal.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.6); z-index:270; display:flex; align-items:center; justify-content:center;';
                 document.body.appendChild(modal);
             }
             modal.style.display = 'flex';
@@ -87654,7 +87678,7 @@
 
             const overlay = document.createElement('div');
             overlay.id = 'prompt-preview-overlay';
-            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:10000; display:flex; align-items:center; justify-content:center;';
+            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:270; display:flex; align-items:center; justify-content:center;';
             overlay.innerHTML = `
                 <div style="background:var(--surface); border-radius:12px; padding:20px; max-width:600px; width:90%; max-height:80vh; overflow-y:auto;">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
@@ -89831,7 +89855,7 @@
             const preselectedCount = assetRefPickerSelected.length;
             const overlay = document.createElement('div');
             overlay.id = 'asset-ref-picker-overlay';
-            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:10000; display:flex; align-items:center; justify-content:center;';
+            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:270; display:flex; align-items:center; justify-content:center;';
             overlay.innerHTML = `
                 <div style="background:var(--surface); border-radius:12px; padding:20px; max-width:700px; width:90%; max-height:80vh; display:flex; flex-direction:column;">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
@@ -90218,7 +90242,7 @@
         async function _openLoraPickerModal(title, overlayId) {
             const overlay = document.createElement('div');
             overlay.id = overlayId;
-            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:10010; display:flex; align-items:center; justify-content:center;';
+            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:330; display:flex; align-items:center; justify-content:center;';
             overlay.innerHTML = `
                 <div style="background:var(--surface); border-radius:12px; padding:20px; max-width:700px; width:90%; max-height:80vh; display:flex; flex-direction:column;">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
@@ -90721,7 +90745,7 @@
         function openAssetPosePicker() {
             const overlay = document.createElement('div');
             overlay.id = 'asset-pose-picker-overlay';
-            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:10000; display:flex; align-items:center; justify-content:center;';
+            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:270; display:flex; align-items:center; justify-content:center;';
             overlay.innerHTML = `
                 <div style="background:var(--surface); border-radius:12px; padding:20px; max-width:700px; width:90%; max-height:80vh; display:flex; flex-direction:column;">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
@@ -99609,7 +99633,7 @@
             const title = bulkRefPickerMode === 'style' ? '에셋에서 IPAdapter 선택' : '에셋에서 FACE-IPAdapter 선택';
             const overlay = document.createElement('div');
             overlay.id = 'bulk-ref-picker-overlay';
-            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:10010; display:flex; align-items:center; justify-content:center;';
+            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:330; display:flex; align-items:center; justify-content:center;';
             overlay.innerHTML = `
                 <div style="background:var(--surface); border-radius:12px; padding:20px; max-width:700px; width:90%; max-height:80vh; display:flex; flex-direction:column;">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
@@ -100758,7 +100782,7 @@
                 if (!hintEl) {
                     hintEl = document.createElement('div');
                     hintEl.id = 'chip-copy-hint';
-                    hintEl.style.cssText = 'position:fixed; z-index:99999; background:rgba(40,40,40,0.95); color:#fff; padding:4px 8px; border-radius:4px; font-size:0.72rem; pointer-events:none; display:none; box-shadow:0 2px 8px rgba(0,0,0,0.35); white-space:nowrap; font-family:var(--font, sans-serif);';
+                    hintEl.style.cssText = 'position:fixed; z-index:450; background:rgba(40,40,40,0.95); color:#fff; padding:4px 8px; border-radius:4px; font-size:0.72rem; pointer-events:none; display:none; box-shadow:0 2px 8px rgba(0,0,0,0.35); white-space:nowrap; font-family:var(--font, sans-serif);';
                     document.body.appendChild(hintEl);
                 }
                 return hintEl;
@@ -100914,7 +100938,7 @@
             batchLoraPickerTarget = _batchLoraPickerCfg.target ?? -1;
             const overlay = document.createElement('div');
             overlay.id = overlayId;
-            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:10010; display:flex; align-items:center; justify-content:center;';
+            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:330; display:flex; align-items:center; justify-content:center;';
             overlay.innerHTML = `
                 <div style="background:var(--surface); border-radius:12px; padding:20px; max-width:700px; width:90%; max-height:80vh; display:flex; flex-direction:column;">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
@@ -101366,7 +101390,7 @@
             const currentPoseId = batchChains[slotIdx].pose_id;
             const overlay = document.createElement('div');
             overlay.id = 'batch-pose-picker-overlay';
-            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:10000; display:flex; align-items:center; justify-content:center;';
+            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:270; display:flex; align-items:center; justify-content:center;';
             overlay.innerHTML = `
                 <div style="background:var(--surface); border-radius:12px; padding:20px; max-width:700px; width:90%; max-height:80vh; display:flex; flex-direction:column;">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
@@ -101570,7 +101594,7 @@
             const preselectedCount = batchRefPickerSelected.length;
             const overlay = document.createElement('div');
             overlay.id = 'batch-ref-picker-overlay';
-            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:10000; display:flex; align-items:center; justify-content:center;';
+            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:270; display:flex; align-items:center; justify-content:center;';
             overlay.innerHTML = `
                 <div style="background:var(--surface); border-radius:12px; padding:20px; max-width:700px; width:90%; max-height:80vh; display:flex; flex-direction:column; overflow:hidden;">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; flex-shrink:0;">
@@ -102178,7 +102202,7 @@
             const currentName = document.getElementById('batch-preset-select').value || '';
             const overlay = document.createElement('div');
             overlay.id = 'batch-preset-save-overlay';
-            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:10030; display:flex; align-items:center; justify-content:center;';
+            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:370; display:flex; align-items:center; justify-content:center;';
             overlay.innerHTML = `
                 <div style="background:var(--surface); border-radius:10px; padding:18px; min-width:320px; box-shadow:0 4px 20px rgba(0,0,0,0.3);">
                     <div style="font-weight:600; margin-bottom:10px; font-size:0.95rem;">프리셋 저장</div>
@@ -102361,7 +102385,7 @@
 
             const overlay = document.createElement('div');
             overlay.id = 'append-chain-overlay';
-            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:10030; display:flex; align-items:center; justify-content:center;';
+            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:370; display:flex; align-items:center; justify-content:center;';
             overlay.innerHTML = `
                 <div style="background:var(--surface); border-radius:10px; padding:18px; min-width:340px; max-width:90vw; box-shadow:0 4px 20px rgba(0,0,0,0.3);">
                     <div style="font-weight:600; margin-bottom:6px; font-size:0.95rem;">🔗 체인 이어붙이기</div>
@@ -103080,7 +103104,7 @@
             const anchorRect = bellFullyVisible ? bellRect : handle.getBoundingClientRect();
             const bubble = document.createElement('div');
             bubble.id = 'noti-reminder-bubble';
-            bubble.style.cssText = 'position:fixed; left:0; top:0; visibility:hidden; max-width:calc(100vw - 24px); box-sizing:border-box; background:var(--error); color:#fff; padding:10px 16px; border-radius:8px; font-size:0.85rem; font-weight:600; text-align:center; box-shadow:0 4px 16px rgba(0,0,0,0.3); z-index:2147483647; animation:noti-bubble-in 0.3s ease; cursor:pointer; white-space:normal;';
+            bubble.style.cssText = 'position:fixed; left:0; top:0; visibility:hidden; max-width:calc(100vw - 24px); box-sizing:border-box; background:var(--error); color:#fff; padding:10px 16px; border-radius:8px; font-size:0.85rem; font-weight:600; text-align:center; box-shadow:0 4px 16px rgba(0,0,0,0.3); z-index:500; animation:noti-bubble-in 0.3s ease; cursor:pointer; white-space:normal;';
             bubble.textContent = `📢 안읽은 공지 ${unreadCount}건`;
             bubble.onclick = () => { bubble.remove(); openNotificationBoard(); };
             document.body.appendChild(bubble);
@@ -103183,7 +103207,7 @@
         async function openNotificationBoard() {
             const overlay = document.createElement('div');
             overlay.id = 'noti-overlay';
-            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:2147483647; display:flex; align-items:center; justify-content:center;';
+            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:500; display:flex; align-items:center; justify-content:center;';
             overlay.innerHTML = `
                 <div style="background:var(--surface); border-radius:12px; padding:20px; max-width:700px; width:90%; max-height:80vh; display:flex; flex-direction:column; overflow:hidden;">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-shrink:0;">

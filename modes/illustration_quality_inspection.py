@@ -560,6 +560,88 @@ def _review_detail(
     }
 
 
+def _review_ref_matches(record: dict[str, Any], image_ref: dict[str, Any]) -> bool:
+    refs = record.get("inspection_images") or []
+    if not isinstance(refs, list):
+        return False
+    backup_name = str(image_ref.get("backup_name") or "").strip()
+    prompt_id = str(image_ref.get("prompt_id") or "").strip()
+    slot = image_ref.get("slot")
+    for candidate in refs:
+        if not isinstance(candidate, dict):
+            continue
+        candidate_backup = str(candidate.get("backup_name") or "").strip()
+        if backup_name and candidate_backup == backup_name:
+            return True
+        candidate_prompt = str(candidate.get("prompt_id") or "").strip()
+        if prompt_id and candidate_prompt == prompt_id and candidate.get("slot") == slot:
+            return True
+        if not backup_name and not prompt_id and slot is not None and candidate.get("slot") == slot:
+            return True
+    return False
+
+
+def _preferred_individual_review_record(
+    records: list[dict[str, Any]], image_ref: dict[str, Any]
+) -> dict[str, Any] | None:
+    candidates = [
+        record
+        for record in records
+        if str(record.get("task_key") or "") == TASK_KEY
+        and str(record.get("inspection_scope") or "") == IMAGE_SCOPE
+        and _review_ref_matches(record, image_ref)
+    ]
+    for record in reversed(candidates):
+        if str(record.get("status") or "").lower() == "ok":
+            return record
+    return candidates[-1] if candidates else None
+
+
+def _overall_review_detail(
+    record: dict[str, Any], records: list[dict[str, Any]], backup_dir: str
+) -> dict[str, Any]:
+    related = _related_inspection_records(records, record)
+    raw_refs = record.get("inspection_images") or []
+    if not isinstance(raw_refs, list):
+        print(
+            "[ILLUSTRATION_QUALITY:REVIEW] 전체 검사 이미지 참조 형식 오류: "
+            f"history_id={record.get('history_id')!r}, value={raw_refs!r}"
+        )
+        raw_refs = []
+    resolved_images = _resolved_review_images(record, backup_dir)
+    images: list[dict[str, Any]] = []
+    for index, resolved in enumerate(resolved_images):
+        raw_ref = (
+            raw_refs[index]
+            if index < len(raw_refs) and isinstance(raw_refs[index], dict)
+            else {}
+        )
+        individual = _preferred_individual_review_record(related, raw_ref)
+        evaluation = individual.get("human_evaluation") if individual else None
+        if not isinstance(evaluation, dict):
+            evaluation = None
+        images.append(
+            {
+                **resolved,
+                "review_history_id": (
+                    str(individual.get("history_id") or "") if individual else ""
+                ),
+                "human_evaluation": evaluation,
+                "automatic_output": (
+                    str(individual.get("output") or "") if individual else ""
+                ),
+                "automatic_status": (
+                    str(individual.get("status") or "") if individual else ""
+                ),
+            }
+        )
+    return {
+        "history_id": str(record.get("history_id") or ""),
+        "inspection_scope": OVERALL_SCOPE,
+        "images": images,
+    }
+
+
 def load_human_review(history_id: str, backup_dir: str) -> dict[str, Any]:
     normalized_id = str(history_id or "").strip()
     if not normalized_id:
@@ -571,6 +653,8 @@ def load_human_review(history_id: str, backup_dir: str) -> dict[str, Any]:
     records = _all_history_records()
     target = _history_record_by_id(records, normalized_id)
     _validate_review_target(target, normalized_id)
+    if str(target.get("inspection_scope") or "") == OVERALL_SCOPE:
+        return _overall_review_detail(target, records, backup_dir)
     return _review_detail(target, records, backup_dir)
 
 
@@ -725,6 +809,109 @@ def save_human_review(
         f"images={sorted(backup_names)}"
     )
     return detail
+
+
+def save_human_reviews(
+    history_id: str,
+    reviews: Any,
+    backup_dir: str,
+) -> dict[str, Any]:
+    normalized_id = str(history_id or "").strip()
+    if not normalized_id:
+        print(
+            "[ILLUSTRATION_QUALITY:REVIEW] 일괄 평가 저장 실패: "
+            f"history_id={history_id!r}, reviews={reviews!r}"
+        )
+        raise ValueError("전체 검사 기록 ID가 필요합니다.")
+    if not isinstance(reviews, list) or not reviews:
+        print(
+            "[ILLUSTRATION_QUALITY:REVIEW] 일괄 평가 목록 형식 오류: "
+            f"history_id={normalized_id!r}, reviews={reviews!r}"
+        )
+        raise ValueError("일괄 평가는 하나 이상의 평가 목록이어야 합니다.")
+
+    records = _all_history_records()
+    target = _history_record_by_id(records, normalized_id)
+    _validate_review_target(target, normalized_id)
+    if str(target.get("inspection_scope") or "") != OVERALL_SCOPE:
+        print(
+            "[ILLUSTRATION_QUALITY:REVIEW] 개별 검사에 일괄 평가 요청 거부: "
+            f"history_id={normalized_id!r}, scope={target.get('inspection_scope')!r}"
+        )
+        raise ValueError("전체 검사 기록에서만 일괄 평가를 저장할 수 있습니다.")
+
+    detail = _overall_review_detail(target, records, backup_dir)
+    allowed_ids = {
+        str(image.get("review_history_id") or "")
+        for image in detail.get("images") or []
+        if str(image.get("review_history_id") or "").strip()
+    }
+    normalized_reviews: list[tuple[str, str, str]] = []
+    seen_ids: set[str] = set()
+    for index, review in enumerate(reviews):
+        if not isinstance(review, dict):
+            print(
+                "[ILLUSTRATION_QUALITY:REVIEW] 일괄 평가 항목 형식 오류: "
+                f"history_id={normalized_id!r}, index={index}, value={review!r}"
+            )
+            raise ValueError("각 일괄 평가 항목은 JSON 객체여야 합니다.")
+        review_id = str(review.get("history_id") or "").strip()
+        if not review_id or review_id not in allowed_ids:
+            print(
+                "[ILLUSTRATION_QUALITY:REVIEW] 전체 검사와 무관한 평가 항목 거부: "
+                f"history_id={normalized_id!r}, review_history_id={review_id!r}, "
+                f"allowed={sorted(allowed_ids)!r}"
+            )
+            raise ValueError("전체 검사에 포함된 개별 검사만 평가할 수 있습니다.")
+        if review_id in seen_ids:
+            print(
+                "[ILLUSTRATION_QUALITY:REVIEW] 중복 일괄 평가 항목 거부: "
+                f"history_id={normalized_id!r}, review_history_id={review_id!r}"
+            )
+            raise ValueError("같은 이미지 평가는 한 번만 포함할 수 있습니다.")
+        rating = str(review.get("rating") or "").strip().lower()
+        reason = review.get("reason", "")
+        if rating not in HUMAN_RATINGS:
+            print(
+                "[ILLUSTRATION_QUALITY:REVIEW] 지원하지 않는 일괄 평가 거부: "
+                f"history_id={normalized_id!r}, review_history_id={review_id!r}, "
+                f"rating={rating!r}"
+            )
+            raise ValueError("평가는 좋음, 보통, 나쁨 중 하나여야 합니다.")
+        if reason is not None and not isinstance(reason, str):
+            print(
+                "[ILLUSTRATION_QUALITY:REVIEW] 일괄 평가 이유 형식 오류: "
+                f"history_id={normalized_id!r}, review_history_id={review_id!r}, "
+                f"type={type(reason).__name__}, value={reason!r}"
+            )
+            raise ValueError("평가 이유는 문자열이어야 합니다.")
+        seen_ids.add(review_id)
+        normalized_reviews.append((review_id, rating, str(reason or "").strip()))
+
+    missing_history_ids: set[str] = set()
+    retained_history_count = 0
+    for review_id, rating, reason in normalized_reviews:
+        saved = save_human_review(review_id, rating, reason, backup_dir)
+        retained_history_count = max(
+            retained_history_count, int(saved.get("retained_history_count") or 0)
+        )
+        missing_history_ids.update(
+            str(value or "").strip()
+            for value in (saved.get("missing_history_ids") or [])
+            if str(value or "").strip()
+        )
+
+    refreshed = _all_history_records()
+    refreshed_target = _history_record_by_id(refreshed, normalized_id)
+    result = _overall_review_detail(refreshed_target, refreshed, backup_dir)
+    result["retained_history_count"] = retained_history_count
+    result["missing_history_ids"] = sorted(missing_history_ids)
+    print(
+        "[ILLUSTRATION_QUALITY:REVIEW] 이미지 일괄 평가 저장 완료: "
+        f"history_id={normalized_id!r}, reviews={len(normalized_reviews)}, "
+        f"retained={retained_history_count}"
+    )
+    return result
 
 
 def human_reviewed_backup_names() -> set[str]:
@@ -1067,4 +1254,5 @@ __all__ = [
     "human_reviewed_backup_names",
     "load_human_review",
     "save_human_review",
+    "save_human_reviews",
 ]

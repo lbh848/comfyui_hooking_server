@@ -881,6 +881,162 @@ async def test_human_review_updates_existing_records_and_retains_complete_linked
     assert get_payload["human_evaluation"]["reason"] == "구도와 장면 전달이 좋음"
 
 
+@pytest.mark.asyncio
+async def test_overall_human_review_loads_and_saves_all_image_evaluations(
+    tmp_path, monkeypatch
+):
+    history_path = tmp_path / "logs" / "lighbd_history.jsonl"
+    history_path.parent.mkdir()
+    backup_dir = tmp_path / "workflow_backup"
+    backup_dir.mkdir()
+    records = [
+        {
+            "ts": "2026-09-10T12:10:00",
+            "history_id": "call-a",
+            "task_key": "illustration_call1",
+            "output": "call a output",
+        },
+        {
+            "ts": "2026-09-10T12:10:01",
+            "history_id": "call-b",
+            "task_key": "illustration_call2_detail",
+            "output": "call b output",
+        },
+        {
+            "ts": "2026-09-10T12:10:02",
+            "history_id": "inspection-a-retry",
+            "task_key": quality.TASK_KEY,
+            "inspection_scope": quality.IMAGE_SCOPE,
+            "inspection_session_id": "session-batch-review",
+            "inspection_flow_run_id": "flow-batch-review",
+            "inspection_images": [
+                {"slot": 1, "backup_name": "batch-review-a", "prompt_id": "prompt-a"}
+            ],
+            "status": "error",
+            "output": "retry failure",
+        },
+        {
+            "ts": "2026-09-10T12:10:03",
+            "history_id": "inspection-a",
+            "task_key": quality.TASK_KEY,
+            "inspection_scope": quality.IMAGE_SCOPE,
+            "inspection_session_id": "session-batch-review",
+            "inspection_flow_run_id": "flow-batch-review",
+            "inspection_images": [
+                {"slot": 1, "backup_name": "batch-review-a", "prompt_id": "prompt-a"}
+            ],
+            "status": "ok",
+            "output": json.dumps({"feedback": "Final A feedback."}),
+        },
+        {
+            "ts": "2026-09-10T12:10:04",
+            "history_id": "inspection-b",
+            "task_key": quality.TASK_KEY,
+            "inspection_scope": quality.IMAGE_SCOPE,
+            "inspection_session_id": "session-batch-review",
+            "inspection_flow_run_id": "flow-batch-review",
+            "inspection_images": [
+                {"slot": 2, "backup_name": "batch-review-b", "prompt_id": "prompt-b"}
+            ],
+            "status": "ok",
+            "output": json.dumps({"feedback": "Final B feedback."}),
+        },
+        {
+            "ts": "2026-09-10T12:10:05",
+            "history_id": "inspection-overall-batch",
+            "task_key": quality.TASK_KEY,
+            "inspection_scope": quality.OVERALL_SCOPE,
+            "inspection_session_id": "session-batch-review",
+            "inspection_flow_run_id": "flow-batch-review",
+            "inspection_images": [
+                {"slot": 1, "backup_name": "batch-review-a", "prompt_id": "prompt-a"},
+                {"slot": 2, "backup_name": "batch-review-b", "prompt_id": "prompt-b"},
+            ],
+            "status": "ok",
+            "output": json.dumps({"overall_feedback": "The set is consistent."}),
+        },
+    ]
+    history_path.write_text(
+        "".join(json.dumps(record) + "\n" for record in records),
+        encoding="utf-8",
+    )
+    for name, trace in (
+        ("batch-review-a", ["call-a"]),
+        ("batch-review-b", ["call-b"]),
+    ):
+        (backup_dir / f"{name}.webp").write_bytes(b"image")
+        (backup_dir / f"{name}_info.json").write_text(
+            json.dumps({"llm_trace": trace}),
+            encoding="utf-8",
+        )
+    monkeypatch.setattr(lighbd_service, "LIGHBD_HISTORY_PATH", str(history_path))
+    monkeypatch.setattr(lighbd_service, "LOG_DIR", str(history_path.parent))
+    monkeypatch.setattr(server, "get_backup_base_dir", lambda: str(backup_dir))
+
+    get_response = await server.handle_illustration_quality_inspection_review(
+        _Request("GET", history_id="inspection-overall-batch")
+    )
+    get_payload = json.loads(get_response.text)
+
+    assert get_response.status == 200
+    assert [image["review_history_id"] for image in get_payload["images"]] == [
+        "inspection-a",
+        "inspection-b",
+    ]
+    assert "Final A feedback." in get_payload["images"][0]["automatic_output"]
+    assert "retry failure" not in get_payload["images"][0]["automatic_output"]
+
+    post_response = await server.handle_illustration_quality_inspection_review(
+        _Request(
+            "POST",
+            {
+                "reviews": [
+                    {
+                        "history_id": "inspection-a",
+                        "rating": "good",
+                        "reason": "구도와 전달력이 좋음",
+                    },
+                    {
+                        "history_id": "inspection-b",
+                        "rating": "normal",
+                        "reason": "전체적으로 좋지만 표정이 조금 아쉬움",
+                    },
+                ]
+            },
+            history_id="inspection-overall-batch",
+        )
+    )
+    post_payload = json.loads(post_response.text)
+
+    assert post_response.status == 200
+    assert [image["human_evaluation"]["rating"] for image in post_payload["images"]] == [
+        "good",
+        "normal",
+    ]
+    saved = {
+        record["history_id"]: record
+        for record in lighbd_service._load_lighbd_history(limit=None)
+    }
+    assert saved["inspection-a"]["human_evaluation"]["reason"] == "구도와 전달력이 좋음"
+    assert saved["inspection-b"]["human_evaluation"]["reason"] == "전체적으로 좋지만 표정이 조금 아쉬움"
+    for history_id in (
+        "call-a",
+        "call-b",
+        "inspection-a-retry",
+        "inspection-a",
+        "inspection-b",
+        "inspection-overall-batch",
+    ):
+        assert set(saved[history_id]["human_review_case_ids"]) == {
+            "inspection-a",
+            "inspection-b",
+        }
+    assert quality.human_reviewed_backup_names() == {
+        "batch-review-a",
+        "batch-review-b",
+    }
+
+
 def test_backup_cleanup_keeps_reviewed_images_outside_the_ordinary_limit(
     tmp_path, monkeypatch
 ):

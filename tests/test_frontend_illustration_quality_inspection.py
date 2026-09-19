@@ -54,14 +54,16 @@ def test_quality_records_render_structured_english_sections_and_preserve_raw_jso
     assert "human_evaluation" in FRONTEND
 
 
-def test_workflow_output_port_exposes_image_review_and_save_controls() -> None:
-    assert "출력 ● 클릭 → 이미지 평가" in FLOW
-    assert "생성 이미지 사람 평가" in FLOW
-    assert "좋음·보통·나쁨을 선택" in FLOW
+def test_workflow_overall_inspection_exposes_batch_image_review_controls() -> None:
+    assert "n.task_key === 'illustration_quality_inspection' && n.inspection_scope === 'overall'" in FLOW
+    assert "출력 ● 클릭 → 이미지 일괄 평가" in FLOW
+    assert "전체 이미지 일괄 평가" in FLOW
+    assert "좋음·보통·나쁨과 리뷰를 입력" in FLOW
     assert "['good', '좋음'], ['normal', '보통'], ['bad', '나쁨']" in FLOW
-    assert "평가 저장" in FLOW
+    assert "전체 평가 저장" in FLOW
+    assert "body: JSON.stringify({reviews})" in FLOW
     assert "/api/illustration_quality_inspection/review/${encodeURIComponent(n.history_id)}" in FLOW
-    assert "저장한 이미지와 연결된 전체 LLM 흐름은 자동 정리에서 보호됩니다." in FLOW
+    assert "모든 평가를 선택한 뒤 한 번에 저장" in FLOW
 
 
 def test_quality_task_registration_remains_visible_to_the_existing_routing_ui() -> None:

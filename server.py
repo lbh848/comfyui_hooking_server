@@ -8993,12 +8993,19 @@ async def handle_illustration_quality_inspection_review(request: web.Request) ->
                     {"status": "error", "error": "평가 요청은 JSON 객체여야 합니다."},
                     status=400,
                 )
-            result = illustration_quality_inspection.save_human_review(
-                history_id,
-                body.get("rating"),
-                body.get("reason", ""),
-                backup_dir,
-            )
+            if "reviews" in body:
+                result = illustration_quality_inspection.save_human_reviews(
+                    history_id,
+                    body.get("reviews"),
+                    backup_dir,
+                )
+            else:
+                result = illustration_quality_inspection.save_human_review(
+                    history_id,
+                    body.get("rating"),
+                    body.get("reason", ""),
+                    backup_dir,
+                )
         else:
             print(
                 "[ILLUST_INSPECTION:REVIEW] 지원하지 않는 요청 방식: "

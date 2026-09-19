@@ -66,12 +66,13 @@
         if (modal) return;
         const style = element('style');
         style.textContent = `
-            .if-layer-backdrop{position:fixed;inset:0;z-index:2147483643;background:#020617b3;backdrop-filter:blur(3px)}
+            /* z-index 표준 래더(index.html 상단 참조): 460 백드롭 < 470 모달 < 480 상세 < 490 개발자 */
+            .if-layer-backdrop{position:fixed;inset:0;z-index:460;background:#020617b3;backdrop-filter:blur(3px)}
             .if-layer-backdrop[hidden]{display:none}
-            .if-modal{position:fixed;inset:0;z-index:2147483644;margin:auto;box-sizing:border-box;overflow:hidden;color:var(--text,#e2e8f0);background:var(--bg2,#111827);border:1px solid #64748b66;border-radius:16px;padding:0;width:min(1240px,94vw);max-width:96vw;max-height:calc(100dvh - 32px);box-shadow:0 24px 90px #0009;font:14px/1.5 system-ui,sans-serif}
+            .if-modal{position:fixed;inset:0;z-index:470;margin:auto;box-sizing:border-box;overflow:hidden;color:var(--text,#e2e8f0);background:var(--bg2,#111827);border:1px solid #64748b66;border-radius:16px;padding:0;width:min(1240px,94vw);max-width:96vw;max-height:calc(100dvh - 32px);box-shadow:0 24px 90px #0009;font:14px/1.5 system-ui,sans-serif}
             .if-modal[open]{display:flex;flex-direction:column}.if-header,.if-tabs,.if-auto-open-settings,.if-legend,.if-footer{flex-shrink:0}
-            .if-detail{z-index:2147483645}
-            .if-developer{z-index:2147483646;width:min(620px,94vw)}
+            .if-detail{z-index:480}
+            .if-developer{z-index:490;width:min(620px,94vw)}
             .if-header{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:18px 22px;border-bottom:1px solid #64748b44}
             .if-header h2{font-size:19px;margin:0}.if-title-row{display:flex;align-items:center;gap:9px;flex-wrap:wrap}.if-subtitle{font-size:12px;color:var(--text2,#94a3b8);margin-top:4px;overflow-wrap:anywhere}
             .if-actions,.if-legend,.if-legend-group{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.if-button{border:1px solid #64748b66;border-radius:8px;background:transparent;color:inherit;padding:6px 11px;cursor:pointer}.if-button:hover{background:#64748b33}.if-button:disabled{opacity:.45;cursor:not-allowed}.if-button-danger{border-color:#fb718580;color:#fecdd3}.if-button-danger:not(:disabled):hover{background:#fb71851f}.if-button:focus-visible,.if-port:focus-visible{outline:3px solid #60a5fa;outline-offset:3px}
@@ -85,12 +86,12 @@
             .if-node[data-status=processing]{box-shadow:0 0 0 2px #60a5fa33,0 0 22px #60a5fa22}.if-node-title{font-weight:650;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.if-node-state{color:var(--state);font-size:12px;margin-top:6px}.if-node-model{font-size:11px;color:var(--text2,#94a3b8);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
             .if-port{position:absolute;right:-9px;top:39px;width:18px;height:18px;border-radius:50%;border:3px solid color-mix(in srgb,var(--bg2,#172033) 68%,var(--node-tint,#94a3b8) 32%);background:var(--state);cursor:pointer;padding:0;box-shadow:0 0 0 1px var(--state)}
             .if-node[data-review-node=true] .if-port{width:22px;height:22px;right:-11px;top:37px;border-color:#fef3c7;background:#f59e0b;box-shadow:0 0 0 2px #f59e0b,0 0 16px #f59e0b99}.if-node[data-review-node=true] .if-node-model{color:#fde68a;font-weight:700}
-            .if-tooltip{position:fixed;z-index:3;max-width:330px;padding:10px 13px;border-radius:9px;background:#0f172a;color:#e2e8f0;border:1px solid #64748b;box-shadow:0 8px 30px #0006;white-space:pre-wrap;pointer-events:none;font-size:12px}
+            .if-tooltip{position:fixed;z-index:30;max-width:330px;padding:10px 13px;border-radius:9px;background:#0f172a;color:#e2e8f0;border:1px solid #64748b;box-shadow:0 8px 30px #0006;white-space:pre-wrap;pointer-events:none;font-size:12px}
             .if-empty{padding:80px 24px;text-align:center;color:var(--text2,#94a3b8)}.if-empty small{display:block;margin-top:8px}.if-footer{padding:10px 22px;font-size:12px;color:var(--text2,#94a3b8)}
             .if-detail{width:min(900px,94vw)}.if-detail-body{padding:18px 22px;max-height:70vh;overflow:auto}.if-detail-body h3{font-size:14px;margin:18px 0 8px}.if-detail-body pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#64748b14;padding:14px;border-radius:8px;font:12px/1.65 ui-monospace,monospace;margin:0;max-height:340px;overflow:auto}.if-detail-body summary{cursor:pointer;padding:8px 0}.if-meta{display:grid;grid-template-columns:110px 1fr;gap:7px 14px;overflow-wrap:anywhere}.if-meta dt{color:var(--text2,#94a3b8)}.if-meta dd{margin:0}
-            .if-review-panel{border:1px solid #f59e0b88;border-radius:12px;background:#f59e0b0f;padding:16px;margin-bottom:12px}.if-review-title{font-weight:800;font-size:15px;color:#fde68a}.if-review-guide{margin:5px 0 14px;color:var(--text2,#94a3b8);font-size:12px;line-height:1.65}.if-review-images{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-bottom:15px}.if-review-figure{margin:0;border:1px solid #64748b55;border-radius:10px;overflow:hidden;background:#02061766}.if-review-image{display:block;width:100%;max-height:520px;object-fit:contain;background:#020617}.if-review-caption{padding:7px 9px;font-size:11px;color:var(--text2,#94a3b8);overflow-wrap:anywhere}.if-review-missing{padding:44px 12px;text-align:center;color:#fecaca;font-size:12px}.if-review-ratings{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0 12px}.if-review-rating{min-width:86px;font-weight:750}.if-review-rating[aria-pressed=true][data-rating=good]{border-color:#4ade80;background:#22c55e33;color:#bbf7d0}.if-review-rating[aria-pressed=true][data-rating=normal]{border-color:#facc15;background:#eab30833;color:#fef08a}.if-review-rating[aria-pressed=true][data-rating=bad]{border-color:#fb7185;background:#e11d4833;color:#fecdd3}.if-review-reason{box-sizing:border-box;width:100%;min-height:78px;resize:vertical;border:1px solid #64748b66;border-radius:8px;background:var(--bg,#0b1220);color:var(--text,#e2e8f0);padding:10px 12px;font:13px/1.5 system-ui,sans-serif}.if-review-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px}.if-review-save{border-color:#f59e0b99;background:#f59e0b22;font-weight:750}.if-review-status{font-size:12px;color:var(--text2,#94a3b8)}
+            .if-review-panel{border:1px solid #f59e0b88;border-radius:12px;background:#f59e0b0f;padding:16px;margin-bottom:12px}.if-review-title{font-weight:800;font-size:15px;color:#fde68a}.if-review-guide{margin:5px 0 14px;color:var(--text2,#94a3b8);font-size:12px;line-height:1.65}.if-review-list{display:grid;gap:14px}.if-review-item{display:grid;grid-template-columns:minmax(220px,.9fr) minmax(300px,1.1fr);gap:14px;padding:12px;border:1px solid #64748b55;border-radius:12px;background:#02061755}.if-review-item-body{min-width:0}.if-review-figure{margin:0;border:1px solid #64748b55;border-radius:10px;overflow:hidden;background:#02061766;align-self:start}.if-review-image{display:block;width:100%;max-height:520px;object-fit:contain;background:#020617}.if-review-caption{padding:7px 9px;font-size:11px;color:var(--text2,#94a3b8);overflow-wrap:anywhere}.if-review-missing{padding:44px 12px;text-align:center;color:#fecaca;font-size:12px}.if-review-auto{margin:0 0 10px}.if-review-auto summary{color:#bae6fd;font-size:12px}.if-review-auto pre{margin-top:6px!important;max-height:150px!important}.if-review-ratings{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0 12px}.if-review-rating{min-width:86px;font-weight:750}.if-review-rating[aria-pressed=true][data-rating=good]{border-color:#4ade80;background:#22c55e33;color:#bbf7d0}.if-review-rating[aria-pressed=true][data-rating=normal]{border-color:#facc15;background:#eab30833;color:#fef08a}.if-review-rating[aria-pressed=true][data-rating=bad]{border-color:#fb7185;background:#e11d4833;color:#fecdd3}.if-review-reason{box-sizing:border-box;width:100%;min-height:78px;resize:vertical;border:1px solid #64748b66;border-radius:8px;background:var(--bg,#0b1220);color:var(--text,#e2e8f0);padding:10px 12px;font:13px/1.5 system-ui,sans-serif}.if-review-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:14px}.if-review-save{border-color:#f59e0b99;background:#f59e0b22;font-weight:750}.if-review-status{font-size:12px;color:var(--text2,#94a3b8)}
             .if-developer-body{padding:20px 22px;max-height:70vh;overflow:auto}.if-quality-card{border:1px solid #64748b55;border-radius:10px;padding:15px;background:#64748b12}.if-quality-toggle{display:flex;align-items:center;gap:10px;font-weight:700;cursor:pointer}.if-quality-toggle input{width:18px;height:18px;accent-color:#c084fc}.if-quality-copy{margin:9px 0 0;color:var(--text2,#94a3b8);font-size:12px;line-height:1.65}.if-quality-status{margin-top:12px;min-height:1.4em;color:var(--text2,#94a3b8);font-size:12px}.if-developer-footer{display:flex;justify-content:flex-end;padding:12px 22px;border-top:1px solid #64748b44}
-            @media(max-width:650px){.if-header{align-items:flex-start;padding:14px}.if-actions{justify-content:flex-end}.if-header h2{font-size:16px}.if-meta{grid-template-columns:80px 1fr}}
+            @media(max-width:650px){.if-header{align-items:flex-start;padding:14px}.if-actions{justify-content:flex-end}.if-header h2{font-size:16px}.if-meta{grid-template-columns:80px 1fr}.if-review-item{grid-template-columns:1fr}}
         `;
         document.head.append(style);
         flowBackdrop = element('div', 'if-layer-backdrop'); flowBackdrop.hidden = true;
@@ -172,7 +173,7 @@
         legend.append(statusLegend, executorLegend);
         const viewport = element('div', 'if-viewport'); viewport.id = 'if-flow-panel';
         viewport.setAttribute('role', 'tabpanel'); viewport.tabIndex = 0;
-        modal.append(header, tabs, autoOpenSettings, legend, viewport, element('footer', 'if-footer', '출력 ●을 클릭하면 상세 내용을 볼 수 있습니다. 생성 이미지 자동 검사 노드의 주황색 출력 ●에서는 이미지를 보고 좋음·보통·나쁨을 바로 평가할 수 있습니다.'));
+        modal.append(header, tabs, autoOpenSettings, legend, viewport, element('footer', 'if-footer', '출력 ●을 클릭하면 상세 내용을 볼 수 있습니다. 생성 이미지 전체 품질 검사 노드의 주황색 출력 ●에서는 모든 이미지를 한 화면에서 평가할 수 있습니다.'));
         modal.addEventListener('close', () => {
             hideTooltip();
             if (developerModal?.open) developerModal.close();
@@ -406,8 +407,9 @@
     function tooltip(n, port) {
         hideTooltip();
         const executor = nodeExecutor(n);
-        const action = n.task_key === 'illustration_quality_inspection'
-            ? '클릭하면 생성 이미지가 열리고 여기에서 바로 사람 평가를 할 수 있습니다.'
+        const isOverallQualityReview = n.task_key === 'illustration_quality_inspection' && n.inspection_scope === 'overall';
+        const action = isOverallQualityReview
+            ? '클릭하면 전체 이미지를 한 화면에서 보고 일괄 평가할 수 있습니다.'
             : n.error || n.summary || '클릭하여 상세 보기';
         const tip = element('div', 'if-tooltip', `${n.label}\n${executorLabels[executor] || executor} · ${labels[n.status] || n.status} · ${elapsed(n)}\n${n.model || (executor === 'llm' ? '모델 배정 대기' : executor === 'comfy' ? 'ComfyUI' : executor === 'human' ? '사람이 선택한 입력 상태' : '서버 처리')}\n${n.phase === 'fallback' ? '폴백 사용 · ' : ''}${action}`);
         tip.setAttribute('role', 'tooltip'); modal.append(tip);
@@ -542,17 +544,17 @@
         canvas.append(svg);
         nodes.forEach(n => {
             const p = positions.get(n.id), card = element('article', 'if-node'), executor = nodeExecutor(n);
-            const isQualityReview = n.task_key === 'illustration_quality_inspection';
+            const isQualityReview = n.task_key === 'illustration_quality_inspection' && n.inspection_scope === 'overall';
             card.dataset.status = n.status; card.dataset.nodeId = n.id; card.dataset.executor = executor; card.dataset.reviewNode = String(isQualityReview); card.style.setProperty('--state', colors[n.status] || colors.waiting); card.style.setProperty('--node-tint', executorColors[executor] || executorColors.process);
             card.style.left = `${p.x}px`; card.style.top = `${p.y}px`;
             const title = element('div', 'if-node-title', n.label); title.title = n.label;
             const modelText = isQualityReview
-                ? '출력 ● 클릭 → 이미지 평가'
+                ? '출력 ● 클릭 → 이미지 일괄 평가'
                 : n.model || (executor === 'llm' ? 'LLM' : executor === 'comfy' ? 'ComfyUI' : executor === 'human' ? '사람이 선택한 입력 상태' : '서버 처리');
             card.append(title, element('div', 'if-node-state', nodeState(n)), element('div', 'if-node-model', modelText));
             const port = button('', () => openDetail(n.id)); port.className = 'if-port'; port.dataset.nodeId = n.id;
-            port.setAttribute('aria-label', isQualityReview ? `${n.label} 이미지 보기 및 사람 평가` : `${n.label} 출력 상세`);
-            if (isQualityReview) port.title = '생성 이미지를 보고 좋음·보통·나쁨을 평가합니다.';
+            port.setAttribute('aria-label', isQualityReview ? `${n.label} 전체 이미지 보기 및 일괄 평가` : `${n.label} 출력 상세`);
+            if (isQualityReview) port.title = '전체 생성 이미지를 한 화면에서 보고 평가합니다.';
             port.onmouseenter = port.onfocus = () => tooltip(n, port); port.onmouseleave = port.onblur = hideTooltip;
             card.append(port); canvas.append(card);
         });
@@ -590,18 +592,18 @@
     }
     function appendQualityReviewPanel(n, body, request, runId) {
         const panel = element('section', 'if-review-panel');
-        panel.append(element('div', 'if-review-title', '생성 이미지 사람 평가'));
-        const guide = element('p', 'if-review-guide', '아래 이미지를 직접 확인한 뒤 좋음·보통·나쁨을 선택하고 이유를 간단히 적어 저장하세요. 저장한 이미지와 연결된 전체 LLM 흐름은 자동 정리에서 보호됩니다.');
+        panel.append(element('div', 'if-review-title', '전체 이미지 일괄 평가'));
+        const guide = element('p', 'if-review-guide', '전체 검사에 포함된 이미지를 한 화면에서 확인한 뒤 각 이미지에 좋음·보통·나쁨과 리뷰를 입력하세요. 모든 평가를 선택한 뒤 한 번에 저장하면 연결된 LLM 흐름도 자동 정리에서 보호됩니다.');
         panel.append(guide);
         body.append(panel);
         if (!n.history_id) {
             panel.append(element('div', 'if-review-status', n.status === 'processing' || n.status === 'waiting'
-                ? '자동 검사가 끝나면 이미지와 평가 입력란이 여기에 표시됩니다.'
-                : '이 검사에는 사람 평가를 연결할 기록 ID가 없습니다.'));
+                ? '전체 검사가 끝나면 이미지별 평가 입력란이 여기에 표시됩니다.'
+                : '이 전체 검사에는 사람 평가를 연결할 기록 ID가 없습니다.'));
             return;
         }
         const reviewUrl = `/api/illustration_quality_inspection/review/${encodeURIComponent(n.history_id)}`;
-        const loading = element('div', 'if-review-status', '평가 이미지와 저장된 평가를 불러오는 중…');
+        const loading = element('div', 'if-review-status', '전체 이미지와 저장된 평가를 불러오는 중…');
         panel.append(loading);
         fetch(reviewUrl, {cache: 'no-store'})
             .then(async response => {
@@ -611,100 +613,126 @@
             })
             .then(payload => {
                 if (request !== detailRequest || runId !== flow?.id || !detailModal?.open || !panel.isConnected) return;
-                panel.replaceChildren(element('div', 'if-review-title', '생성 이미지 사람 평가'), guide);
+                panel.replaceChildren(element('div', 'if-review-title', '전체 이미지 일괄 평가'), guide);
                 const images = Array.isArray(payload.images) ? payload.images : [];
-                const grid = element('div', 'if-review-images');
                 if (!images.length) {
-                    grid.append(element('div', 'if-review-missing', '이 검사 기록에는 연결된 이미지가 없습니다.'));
-                } else {
-                    images.forEach((image, index) => {
-                        const figure = element('figure', 'if-review-figure');
-                        const slot = image.slot ?? index + 1;
-                        if (image.image_url) {
-                            const img = element('img', 'if-review-image');
-                            img.src = image.image_url;
-                            img.alt = `생성 이미지 slot ${slot}`;
-                            img.loading = 'lazy';
-                            img.addEventListener('error', () => {
-                                console.error('[ILLUST_QUALITY] 평가 이미지 표시 실패:', image);
-                                img.replaceWith(element('div', 'if-review-missing', '이미지 파일을 표시할 수 없습니다.'));
-                            }, {once: true});
-                            figure.append(img);
-                        } else {
-                            figure.append(element('div', 'if-review-missing', '이미지 파일이 삭제되었거나 이동되었습니다.'));
-                        }
-                        figure.append(element('figcaption', 'if-review-caption', `slot ${slot} · ${image.backup_name || '백업명 없음'}`));
-                        grid.append(figure);
-                    });
+                    panel.append(element('div', 'if-review-missing', '이 전체 검사 기록에는 연결된 이미지가 없습니다.'));
+                    return;
                 }
-                panel.append(grid);
-                panel.append(element('div', '', '내 평가'));
-                const ratings = element('div', 'if-review-ratings');
-                const ratingButtons = [];
-                let selectedRating = String(payload.human_evaluation?.rating || '');
-                const selectRating = rating => {
-                    selectedRating = rating;
-                    ratingButtons.forEach(ratingButton => ratingButton.setAttribute('aria-pressed', String(ratingButton.dataset.rating === rating)));
-                    saveButton.disabled = !selectedRating;
+                const list = element('div', 'if-review-list');
+                const entries = [];
+                let saveButton = null;
+                const status = element('span', 'if-review-status');
+                const updateSaveState = () => {
+                    const evaluable = entries.filter(entry => entry.historyId);
+                    const selectedCount = evaluable.filter(entry => entry.rating).length;
+                    if (saveButton) saveButton.disabled = !evaluable.length || selectedCount !== evaluable.length;
+                    if (!evaluable.length) status.textContent = '평가를 저장할 수 있는 개별 검사 기록이 없습니다.';
+                    else if (selectedCount !== evaluable.length) status.textContent = `평가 선택 ${selectedCount}/${evaluable.length} · 모두 선택하면 한 번에 저장할 수 있습니다.`;
+                    else status.textContent = `평가 선택 완료 ${selectedCount}/${evaluable.length} · 전체 저장 준비됨`;
                 };
-                for (const [rating, label] of [['good', '좋음'], ['normal', '보통'], ['bad', '나쁨']]) {
-                    const ratingButton = button(label, () => selectRating(rating));
-                    ratingButton.classList.add('if-review-rating');
-                    ratingButton.dataset.rating = rating;
-                    ratingButton.setAttribute('aria-pressed', 'false');
-                    ratingButtons.push(ratingButton);
-                    ratings.append(ratingButton);
-                }
-                panel.append(ratings);
-                const reason = element('textarea', 'if-review-reason');
-                reason.value = String(payload.human_evaluation?.reason || '');
-                reason.placeholder = '예: 구도와 접촉은 좋지만 복장 일관성이 조금 아쉬움';
-                reason.setAttribute('aria-label', '평가 이유');
-                panel.append(reason);
+                images.forEach((image, index) => {
+                    const item = element('section', 'if-review-item');
+                    const figure = element('figure', 'if-review-figure');
+                    const slot = image.slot ?? index + 1;
+                    if (image.image_url) {
+                        const img = element('img', 'if-review-image');
+                        img.src = image.image_url;
+                        img.alt = `생성 이미지 slot ${slot}`;
+                        img.loading = 'lazy';
+                        img.addEventListener('error', () => {
+                            console.error('[ILLUST_QUALITY] 일괄 평가 이미지 표시 실패:', image);
+                            img.replaceWith(element('div', 'if-review-missing', '이미지 파일을 표시할 수 없습니다.'));
+                        }, {once: true});
+                        figure.append(img);
+                    } else {
+                        figure.append(element('div', 'if-review-missing', '이미지 파일이 삭제되었거나 이동되었습니다.'));
+                    }
+                    figure.append(element('figcaption', 'if-review-caption', `slot ${slot} · ${image.backup_name || '백업명 없음'}`));
+                    item.append(figure);
+                    const itemBody = element('div', 'if-review-item-body');
+                    if (image.automatic_output) {
+                        const automatic = element('details', 'if-review-auto');
+                        automatic.append(element('summary', '', '자동 검사 결과'), element('pre', '', String(image.automatic_output)));
+                        itemBody.append(automatic);
+                    }
+                    const historyId = String(image.review_history_id || '');
+                    if (!historyId) {
+                        itemBody.append(element('div', 'if-review-status', '이 이미지의 개별 검사 기록을 찾을 수 없어 사람 평가를 저장할 수 없습니다.'));
+                        item.append(itemBody); list.append(item); return;
+                    }
+                    itemBody.append(element('div', '', '내 평가'));
+                    const ratings = element('div', 'if-review-ratings');
+                    const ratingButtons = [];
+                    const entry = {historyId, rating: String(image.human_evaluation?.rating || ''), reason: null};
+                    entries.push(entry);
+                    const selectRating = rating => {
+                        entry.rating = rating;
+                        ratingButtons.forEach(ratingButton => ratingButton.setAttribute('aria-pressed', String(ratingButton.dataset.rating === rating)));
+                        updateSaveState();
+                    };
+                    for (const [rating, label] of [['good', '좋음'], ['normal', '보통'], ['bad', '나쁨']]) {
+                        const ratingButton = button(label, () => selectRating(rating));
+                        ratingButton.classList.add('if-review-rating');
+                        ratingButton.dataset.rating = rating;
+                        ratingButton.setAttribute('aria-pressed', String(entry.rating === rating));
+                        ratingButtons.push(ratingButton);
+                        ratings.append(ratingButton);
+                    }
+                    itemBody.append(ratings);
+                    const reason = element('textarea', 'if-review-reason');
+                    reason.value = String(image.human_evaluation?.reason || '');
+                    reason.placeholder = '예: 구도는 좋지만 표정과 접촉 표현이 어색함';
+                    reason.setAttribute('aria-label', `slot ${slot} 평가 리뷰`);
+                    entry.reason = reason;
+                    itemBody.append(reason);
+                    const updatedAt = String(image.human_evaluation?.updated_at || '');
+                    if (updatedAt) itemBody.append(element('div', 'if-review-status', `기존 평가 저장 시각 · ${updatedAt}`));
+                    item.append(itemBody);
+                    list.append(item);
+                });
+                panel.append(list);
                 const actions = element('div', 'if-review-actions');
-                const saveButton = button('평가 저장', async () => {
-                    if (!selectedRating || saveButton.disabled) return;
+                saveButton = button('전체 평가 저장', async () => {
+                    const evaluable = entries.filter(entry => entry.historyId);
+                    if (!evaluable.length || evaluable.some(entry => !entry.rating) || saveButton.disabled) return;
+                    const reviews = evaluable.map(entry => ({history_id: entry.historyId, rating: entry.rating, reason: entry.reason?.value || ''}));
                     saveButton.disabled = true;
-                    status.textContent = '평가와 연결된 LLM 흐름을 저장하는 중…';
+                    status.textContent = `${reviews.length}개 이미지의 평가와 연결된 LLM 흐름을 저장하는 중…`;
                     try {
                         const response = await fetch(reviewUrl, {
                             method: 'POST',
                             headers: {'Content-Type': 'application/json'},
-                            body: JSON.stringify({rating: selectedRating, reason: reason.value}),
+                            body: JSON.stringify({reviews}),
                         });
                         const saved = await response.json().catch(() => ({}));
-                        if (!response.ok) throw Error(saved.error || `평가 저장 실패 (${response.status})`);
+                        if (!response.ok) throw Error(saved.error || `일괄 평가 저장 실패 (${response.status})`);
                         const retained = Number(saved.retained_history_count || 0);
                         const missing = Array.isArray(saved.missing_history_ids) ? saved.missing_history_ids.length : 0;
                         status.textContent = missing
-                            ? `저장됨 · LLM 기록 ${retained}건 보존 · 이미 삭제된 ${missing}건은 복구할 수 없습니다.`
-                            : `저장됨 · 이미지와 연결된 LLM 기록 ${retained}건을 자동 정리에서 보호합니다.`;
+                            ? `전체 평가 저장됨 · LLM 기록 ${retained}건 보존 · 이미 삭제된 ${missing}건은 복구할 수 없습니다.`
+                            : `전체 평가 저장됨 · 이미지와 연결된 LLM 기록 ${retained}건을 자동 정리에서 보호합니다.`;
                         status.style.color = missing ? '#fde68a' : '#bbf7d0';
-                        qualityInspectionToast('생성 이미지 사람 평가를 저장했습니다.', 'success');
+                        qualityInspectionToast(`${reviews.length}개 이미지 평가를 한 번에 저장했습니다.`, 'success');
                     } catch (error) {
-                        console.error('[ILLUST_QUALITY] 사람 평가 저장 실패:', {historyId: n.history_id, error});
-                        status.textContent = `평가 저장 실패: ${error.message || error}`;
+                        console.error('[ILLUST_QUALITY] 이미지 일괄 평가 저장 실패:', {historyId: n.history_id, error});
+                        status.textContent = `일괄 평가 저장 실패: ${error.message || error}`;
                         status.style.color = '#fecdd3';
-                        qualityInspectionToast(`생성 이미지 평가 저장 실패: ${error.message || error}`, 'error');
+                        qualityInspectionToast(`이미지 일괄 평가 저장 실패: ${error.message || error}`, 'error');
                     } finally {
-                        saveButton.disabled = !selectedRating;
+                        saveButton.disabled = false;
                     }
                 });
                 saveButton.classList.add('if-review-save');
-                const status = element('span', 'if-review-status');
-                const updatedAt = String(payload.human_evaluation?.updated_at || '');
-                status.textContent = updatedAt
-                    ? `저장된 평가 · ${updatedAt}`
-                    : '평가를 선택하면 저장할 수 있습니다.';
                 actions.append(saveButton, status);
                 panel.append(actions);
-                selectRating(selectedRating);
+                updateSaveState();
             })
             .catch(error => {
-                console.error('[ILLUST_QUALITY] 사람 평가 정보 조회 실패:', {historyId: n.history_id, error});
+                console.error('[ILLUST_QUALITY] 일괄 평가 정보 조회 실패:', {historyId: n.history_id, error});
                 if (request !== detailRequest || runId !== flow?.id || !detailModal?.open || !panel.isConnected) return;
                 loading.textContent = n.status === 'processing' || n.status === 'waiting'
-                    ? '자동 검사가 끝나면 이미지와 평가 입력란이 여기에 표시됩니다.'
+                    ? '전체 검사가 끝나면 이미지별 평가 입력란이 여기에 표시됩니다.'
                     : `평가 정보를 불러오지 못했습니다: ${error.message || error}`;
                 loading.style.color = n.status === 'processing' || n.status === 'waiting' ? '' : '#fecdd3';
             });
@@ -739,7 +767,7 @@
             const output = detailOutput(n);
             body.append(element('h3', '', '입력'), element('pre', '', stringify(n.input) || '아직 입력이 없습니다.'));
             body.append(element('h3', '', '출력'));
-            if (n.task_key === 'illustration_quality_inspection') appendQualityReviewPanel(n, body, request, runId);
+            if (n.task_key === 'illustration_quality_inspection' && n.inspection_scope === 'overall') appendQualityReviewPanel(n, body, request, runId);
             const outputEmptyText = ['failed', 'cancelled'].includes(n.status)
                 ? '실패했지만 기록된 오류나 응답이 없습니다.'
                 : '아직 출력이 없습니다.';
