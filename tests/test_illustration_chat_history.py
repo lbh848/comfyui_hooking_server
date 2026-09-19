@@ -56,7 +56,10 @@ def test_normal_continuation_appends_only_new_delta(isolated_history):
     ]
 
 
-def test_continuation_accepts_high_similarity_tail_with_one_exact_anchor(isolated_history):
+def test_continuation_accepts_high_similarity_tail_with_one_exact_anchor(
+    isolated_history,
+    monkeypatch,
+):
     stable_user = "The old library remains quiet. " * 8
     saved_reply = "Alice walks past the tall shelves and watches the dusty window. " * 6
     first = history.prepare_history([
@@ -65,6 +68,14 @@ def test_continuation_accepts_high_similarity_tail_with_one_exact_anchor(isolate
     ], 1, "bot-a")
     history.finalize_history(first, {"call2_output": "first"})
 
+    fuzzy_calls = []
+    original_fuzzy = history._fuzzy_candidate_for_record
+
+    def tracked_fuzzy(*args, **kwargs):
+        fuzzy_calls.append(str(args[0].get("history_id") or ""))
+        return original_fuzzy(*args, **kwargs)
+
+    monkeypatch.setattr(history, "_fuzzy_candidate_for_record", tracked_fuzzy)
     lightly_edited_reply = saved_reply.replace("dusty window", "rainy window", 1)
     continued = history.prepare_history([
         _chat("user", stable_user),
@@ -77,6 +88,49 @@ def test_continuation_accepts_high_similarity_tail_with_one_exact_anchor(isolate
     assert continued["operation"] == "append"
     assert continued["match"]["similarity"] < 1.0
     assert continued["match"]["similarity"] >= 0.90
+    assert fuzzy_calls == [first["history_id"]]
+
+
+@pytest.mark.parametrize(
+    ("current_text", "expected_operation"),
+    [
+        ("original answer " * 12, "duplicate"),
+        ("replacement answer " * 12, "reroll"),
+    ],
+)
+def test_exact_base_match_searches_all_records_without_fuzzy_fallback(
+    isolated_history,
+    monkeypatch,
+    current_text,
+    expected_operation,
+):
+    target_chats = [
+        _chat("user", "shared target context " * 15),
+        _chat("char", "original answer " * 12),
+    ]
+    target = history.prepare_history(target_chats, 1, "shared-bot")
+    history.finalize_history(target, {"call2_output": "target"})
+
+    # Add newer, unrelated records for the same bot. Exact matching must search
+    # every eligible record rather than relying on a lossy recency cutoff.
+    for index, topic in enumerate(("harbor repairs", "mountain observatory", "winter market")):
+        unrelated = history.prepare_history([
+            _chat("user", f"{topic} user context " * 12),
+            _chat("char", f"{topic} character response " * 10),
+        ], 1, "shared-bot")
+        history.finalize_history(unrelated, {"call2_output": f"unrelated-{index}"})
+
+    def fail_if_fuzzy_runs(*_args, **_kwargs):
+        pytest.fail("exact base match must resolve before fuzzy history comparison")
+
+    monkeypatch.setattr(history, "_fuzzy_candidate_for_record", fail_if_fuzzy_runs)
+    resolved = history.prepare_history([
+        _chat("user", "shared target context " * 15),
+        _chat("char", current_text),
+    ], 1, "shared-bot")
+
+    assert resolved["history_id"] == target["history_id"]
+    assert resolved["operation"] == expected_operation
 
 
 def test_same_past_different_current_is_reroll_and_rolls_back_state(isolated_history):

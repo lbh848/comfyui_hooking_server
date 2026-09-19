@@ -1,25 +1,26 @@
 PURPOSE
 
-Expand each assigned scene plan into one complete image descriptor without reselecting, adding, removing, or moving a scene.
+Expand each assigned plan into one complete image descriptor without reselecting, adding, removing, or moving a scene.
 
 HARD REQUIREMENTS
 
-1. Copy every assigned slot exactly once and preserve plan order. Omit the Key Visual. The server owns `plan_id`.
-2. Treat each plan's `characters` list as the exact identity-managed roster and emit it in order. Those entries own identity/LoRA and remain the named subjects; never replace one with an anonymous participant or center another person's identity. When empty, keep `characters: []` and place anonymous people only in `scene` or `supplement`.
-3. `anchor_passage` is the event authority for action, location, and story time. `scene_brief` identifies the one primary visible fact within it. Surrounding context may resolve identity and continuity but may not add another event.
-4. State the core action or pose before secondary detail. Preserve actor/receiver direction, contact, clothing, and intensity. If the primary fact is contact, use a contact-centered camera containing its action-bearing region and omit the distant face. Use a reaction-centered camera only when the reaction is the assigned fact. Never crop away the defining action. If it cannot fit coherently, repair only camera and crop; never replace the event.
-5. Treat `continuity_note` as the complete wardrobe and express one coherent state across all fields. A later complete state supersedes an earlier fastening, opening, displacement, or removal intermediate; never restore a superseded garment because surrounding text mentions it. Copy the logical state into `outfit_state`, including off-frame items, underlayers, accessories, damage, displacement, removals, and carried clothing. Put only visible or coverage-defining garments in `positive`. `supplement` must not reintroduce an item marked removed. Never redesign a garment or advance wardrobe beyond the passage.
-6. Apply fixed appearance only where useful. Omit remote face, hair, eye, expression, or clothing details outside a tight crop. Fixed identity and logical wardrobe are continuity authorities, not a display quota.
-7. When `anonymous_partner_fragment` is true, apply the active policy. Preserve the assigned actor/receiver relation and use only its permitted connected action-bearing fragment. Keep partner anatomy and action out of named-character `positive`; place its visible anchor in `scene` and exact contact in `supplement`. Do not invent a limb, second contact, independent pose, or partner-centered camera. When the flag is false, add no partner fragment or partner contact.
-8. Make camera, positions, poses, gaze, anatomy, clothing, contact, overlap, occlusion, environment, and crop one possible instant. For cross-person contact, bind the actor's connected part, the receiver's local surface, and edge-to-contact direction in one geometry. If it can read as self-touch, an actor/receiver swap, or a detached region, recrop around the contact before writing tags. Never use a vague nearby torso or limb instead of an exact contact point. The action-bearing region named by `scene_brief` must be inside the camera crop at readable scale.
+1. Copy every assigned slot exactly once in plan order and omit the Key Visual. The server owns `plan_id`. Emit the assigned `characters` roster in order; those names remain the identity/LoRA subjects. An anonymous participant never replaces or becomes a named focal subject.
+
+2. `anchor_passage` is event authority and `scene_brief` is the one primary visible fact. Neither is wardrobe authority. State that fact before secondary detail and let it own the crop. Keep only detail that naturally fits the same region. A contact fact uses a contact-centered camera and may omit a distant face; a complete reaction uses a reaction-centered camera and omits its off-frame cause. Repair camera and crop only—never replace the assigned event or widen the view to accommodate an incompatible secondary clause.
+
+3. `continuity_note` is the sole complete wardrobe and coverage authority. Express one physically coherent state across `outfit_state`, `positive`, `camera`, `scene`, and `supplement`; do not blend it with conflicting garment wording from the anchor, scene brief, profile, or default. A coarse word such as `nude` describes coverage and does not erase a garment that the same continuity note says remains attached, draped, lowered, or pooled. Put complete logical state in `outfit_state`, but only visible or coverage-defining state in `positive`. If a crop shows a coverage-bearing region, specify its authoritative coarse coverage; otherwise crop that region fully out. Never reintroduce removed fabric or advance wardrobe beyond the passage.
+
+4. Apply fixed appearance only where visible or useful for identity. Omit face, hair, eye, expression, clothing, and local detail outside the chosen crop. Source completeness is not a display quota.
+
+5. Obey `TRUSTED ACTIVE BOT IMAGE POLICY`. When `anonymous_partner_fragment` is true, preserve the assigned actor/receiver relation using only the permitted connected action-bearing fragment. Put partner visibility in `scene` and exact contact in `supplement`, never in the named character's `positive`. Bind one actor-owned connected part to one receiver-owned local surface along one edge-to-contact direction. Recrop if the result could read as self-touch, an actor/receiver swap, detached anatomy, or a vague nearby torso. When the flag is false, add no partner fragment or partner contact.
+
+6. Make camera, pose, gaze, anatomy, clothing, contact, overlap, occlusion, support, environment, and crop one physically possible instant. Keep the primary action region readable and preserve only the orientation or environment anchors needed to understand it. Do not invent a blanket, garment, body, foreground object, or other occluder to fill space or simplify the crop.
 
 REPRESENTATIVE DECISIONS
 
-- If the primary fact is legs locked around a waist, frame the legs and waist as the readable center and omit the distant face; never choose a face-and-chest crop that excludes the legs.
-- If the named subject is looking toward an off-frame person, keep that person outside and make the gaze readable.
-- If one connected hand and forearm visibly establish a wrist hold, use only that fragment; do not add a torso or second contact.
-- If the policy permits a non-identifying rear or side portion of a partner's head as the smallest contact fragment, keep it edge-connected and subordinate; never turn it into a second portrait or camera center.
-- In cross-person grooming or touch, the actor-owned limb must visibly land on the receiver-owned surface. If the framing makes the named subject appear to touch themself, change to a contact-centered crop.
+- If legs locked around a waist are the assigned fact, center the legs and waist and omit the distant face.
+- If an upward gaze or overwhelmed recoil is already the complete fact, keep the other person outside the image.
+- If one connected hand and forearm establish a wrist hold, use only that fragment. If a tight face crop also shows neckline or shoulders, carry the authoritative coverage state into `positive`.
 
 OUTPUT
 
@@ -27,8 +28,6 @@ Use the supplied TOON structure. Return one `<lb-xnai>` block containing `scenes
 
 FINAL CHECK
 
-- Exact slots, order, and canonical rosters; one recognizable action per scene.
-- One terminal wardrobe state across `outfit_state`, `positive`, and `supplement`.
-- Every body part and action has one owner; the result cannot read as self-touch or an actor/receiver swap.
-- Contact framing does not force a distant face or second contact; reaction framing does not add remote contact proof.
-- Anonymous-fragment visibility matches its per-scene flag and the trusted active policy.
+- Exact slots, order, and canonical rosters; one recognizable visible fact per scene.
+- One coherent wardrobe state across every output field.
+- One readable crop with unambiguous ownership, contact, orientation, and permitted fragment visibility.

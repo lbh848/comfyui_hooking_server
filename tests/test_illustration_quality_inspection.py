@@ -275,19 +275,32 @@ def test_prompts_cover_requested_semantics_without_age_or_second_character_polic
     )
     system = messages[0]["content"]
     user = messages[1]["content"]
-    assert "visible interaction and action match the narrative" in system
-    assert "Do not evaluate hand or finger rendering or finger count" in system
-    assert "required touch, grasp, or other interaction reads" in system
-    assert "natural occlusion, crop, and framing" in system
-    assert "fabric or another covering" in system
-    assert "smallest connected body fragment" in system
-    assert "complete second person" in system
+    assert "natural, coherent, immediately readable still" in system
+    assert "source narrative is authoritative" in system
+    assert "resolved wardrobe timeline or `outfit_state`" in system
+    assert "not a literal pixel checklist" in system
+    assert "primary action or interaction is unclear" in system
+    assert "actor and receiver cannot be distinguished" in system
+    assert "required local contact does not read" in system
+    assert "story-critical orientation or support is lost" in system
+    assert "Respect natural crop and occlusion" in system
+    assert "Do not evaluate finger count or fine hand rendering" in system
+    assert "fused or detached limb or crop-edge shape" in system
+    assert "complete subject reaction, pose, gaze, or aftermath" in system
+    assert "Omission of an anonymous partner fragment is not itself a defect" in system
+    assert "a present fragment fails when it is vague, detached, awkward" in system
+    assert "complete partner, identifiable face, silhouette" in system
+    assert "remaining displaced garment that vanishes" in system
+    assert "Do not infer a transition merely because two prompt descriptions differ" in system
+    assert "do not penalize clothing outside the crop" in system
     assert "classify age" not in system.lower()
     assert "exposed unclothed pelvic region" in user
 
     overall = quality._build_overall_messages("source", _entries(), [])[0]["content"]
     assert "set-level outfit, identity, chronology, and story-state consistency" in overall
-    assert "Do not repeat isolated anatomy, hand, or finger issues" in overall
+    assert "do not invent a transition merely because adjacent images" in overall
+    assert "unexplained disappearance, reappearance, or alternation" in overall
+    assert "Do not repeat isolated anatomy or fine hand issues" in overall
 
 
 def test_scope_specific_parsers_accept_fenced_json_and_reject_missing_fields():

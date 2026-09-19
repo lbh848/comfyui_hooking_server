@@ -11943,70 +11943,109 @@ async def prepare_profile_context_translations(
         )
         return translated_profiles, summary
 
+    cache = visual_profile_translation_cache.load_cache()
+    misses: list[dict] = []
+    targets_by_ref: dict[str, tuple[dict, str, str, str, str]] = {}
+    for character_name, character in translated_profiles.items():
+        profiles = character.get("profiles") or []
+        for profile in profiles:
+            if not isinstance(profile, dict):
+                print(
+                    "[ILLUST_CONTEXT:PROFILE_CONTEXT_TRANSLATE] object가 아닌 프로필 생략: "
+                    f"namespace={namespace!r}, character={character_name!r}, "
+                    f"profile={profile!r}"
+                )
+                continue
+            profile_id = str(profile.get("id") or "").strip()
+            if not profile_id:
+                print(
+                    "[ILLUST_CONTEXT:PROFILE_CONTEXT_TRANSLATE] ID 없는 프로필 생략: "
+                    f"namespace={namespace!r}, character={character_name!r}, "
+                    f"profile={profile!r}"
+                )
+                continue
+            summary["profile_count"] += 1
+            for field in visual_profile_translation_cache.TRANSLATABLE_FIELDS:
+                source = str(profile.get(field) or "").strip()
+                cached = visual_profile_translation_cache.cached_translation(
+                    cache,
+                    bot_name=namespace,
+                    character_name=character_name,
+                    profile_id=profile_id,
+                    field=field,
+                    source_text=source,
+                )
+                if cached == "":
+                    summary["empty_fields"] += 1
+                    continue
+                english_field = f"{field}_english"
+                if cached is not None:
+                    profile[english_field] = cached
+                    summary["cache_hits"] += 1
+                    continue
+                ref = f"text_{len(misses) + 1}"
+                purpose = (
+                    "profile selection conditions"
+                    if field == "selection_guide"
+                    else "representative-image appearance reference"
+                )
+                misses.append({
+                    "ref": ref,
+                    "purpose": purpose,
+                    "source": source,
+                })
+                targets_by_ref[ref] = (
+                    profile,
+                    str(character_name),
+                    profile_id,
+                    field,
+                    source,
+                )
+                summary["cache_misses"] += 1
+
+    if not misses:
+        print(
+            "[ILLUST_CONTEXT:PROFILE_CONTEXT_TRANSLATE] 모든 원문이 캐시에 있어 "
+            "락 없는 빠른 경로로 LLM 호출 생략: "
+            f"namespace={namespace!r}, state={summary!r}"
+        )
+        return translated_profiles, summary
+
     async with _profile_context_translation_lock:
+        # Another request may have filled these misses while this request waited.
+        # Reload atomically replaced cache data and only translate what is still absent.
         cache = visual_profile_translation_cache.load_cache()
-        misses: list[dict] = []
-        targets_by_ref: dict[str, tuple[dict, str, str, str, str]] = {}
-        for character_name, character in translated_profiles.items():
-            profiles = character.get("profiles") or []
-            for profile in profiles:
-                if not isinstance(profile, dict):
-                    print(
-                        "[ILLUST_CONTEXT:PROFILE_CONTEXT_TRANSLATE] object가 아닌 프로필 생략: "
-                        f"namespace={namespace!r}, character={character_name!r}, "
-                        f"profile={profile!r}"
-                    )
-                    continue
-                profile_id = str(profile.get("id") or "").strip()
-                if not profile_id:
-                    print(
-                        "[ILLUST_CONTEXT:PROFILE_CONTEXT_TRANSLATE] ID 없는 프로필 생략: "
-                        f"namespace={namespace!r}, character={character_name!r}, "
-                        f"profile={profile!r}"
-                    )
-                    continue
-                summary["profile_count"] += 1
-                for field in visual_profile_translation_cache.TRANSLATABLE_FIELDS:
-                    source = str(profile.get(field) or "").strip()
-                    cached = visual_profile_translation_cache.cached_translation(
-                        cache,
-                        bot_name=namespace,
-                        character_name=character_name,
-                        profile_id=profile_id,
-                        field=field,
-                        source_text=source,
-                    )
-                    if cached == "":
-                        summary["empty_fields"] += 1
-                        continue
-                    english_field = f"{field}_english"
-                    if cached is not None:
-                        profile[english_field] = cached
-                        summary["cache_hits"] += 1
-                        continue
-                    ref = f"text_{len(misses) + 1}"
-                    purpose = (
-                        "profile selection conditions"
-                        if field == "selection_guide"
-                        else "representative-image appearance reference"
-                    )
-                    misses.append({
-                        "ref": ref,
-                        "purpose": purpose,
-                        "source": source,
-                    })
-                    targets_by_ref[ref] = (
-                        profile,
-                        str(character_name),
-                        profile_id,
-                        field,
-                        source,
-                    )
-                    summary["cache_misses"] += 1
+        remaining_misses: list[dict] = []
+        remaining_targets: dict[str, tuple[dict, str, str, str, str]] = {}
+        for item in misses:
+            ref = item["ref"]
+            profile, character_name, profile_id, field, source = targets_by_ref[ref]
+            cached = visual_profile_translation_cache.cached_translation(
+                cache,
+                bot_name=namespace,
+                character_name=character_name,
+                profile_id=profile_id,
+                field=field,
+                source_text=source,
+            )
+            if cached == "":
+                summary["empty_fields"] += 1
+                summary["cache_misses"] -= 1
+                continue
+            if cached is not None:
+                profile[f"{field}_english"] = cached
+                summary["cache_hits"] += 1
+                summary["cache_misses"] -= 1
+                continue
+            remaining_misses.append(item)
+            remaining_targets[ref] = targets_by_ref[ref]
+        misses = remaining_misses
+        targets_by_ref = remaining_targets
 
         if not misses:
             print(
-                "[ILLUST_CONTEXT:PROFILE_CONTEXT_TRANSLATE] 모든 원문이 캐시에 있어 LLM 호출 생략: "
+                "[ILLUST_CONTEXT:PROFILE_CONTEXT_TRANSLATE] 락 대기 중 캐시가 채워져 "
+                "LLM 호출 생략: "
                 f"namespace={namespace!r}, state={summary!r}"
             )
             return translated_profiles, summary

@@ -202,6 +202,69 @@ async def test_concurrent_requests_share_one_cache_miss_translation(
 
 
 @pytest.mark.asyncio
+async def test_cache_hit_request_does_not_wait_for_another_translation(
+    monkeypatch,
+    tmp_path,
+):
+    _patch_cache_paths(monkeypatch, tmp_path)
+
+    async def immediate_call(_call_name, messages, _stream_notify, **_kwargs):
+        requested = _translation_request(messages)
+        return json.dumps({
+            "translations": [
+                {"ref": item["ref"], "english": f"EN: {item['source']}"}
+                for item in requested
+            ]
+        }, ensure_ascii=False)
+
+    monkeypatch.setattr(pipeline, "_call_pipeline_llm", immediate_call)
+    await pipeline.prepare_profile_context_translations(
+        _profiles(),
+        cache_namespace="cached-bot",
+    )
+
+    translation_started = asyncio.Event()
+    release_translation = asyncio.Event()
+
+    async def delayed_call(_call_name, messages, _stream_notify, **_kwargs):
+        translation_started.set()
+        await release_translation.wait()
+        requested = _translation_request(messages)
+        return json.dumps({
+            "translations": [
+                {"ref": item["ref"], "english": f"EN: {item['source']}"}
+                for item in requested
+            ]
+        }, ensure_ascii=False)
+
+    monkeypatch.setattr(pipeline, "_call_pipeline_llm", delayed_call)
+    translating = asyncio.create_task(
+        pipeline.prepare_profile_context_translations(
+            _profiles(),
+            cache_namespace="uncached-bot",
+        )
+    )
+    try:
+        await asyncio.wait_for(translation_started.wait(), timeout=1)
+        translated, summary = await asyncio.wait_for(
+            pipeline.prepare_profile_context_translations(
+                _profiles(),
+                cache_namespace="cached-bot",
+            ),
+            timeout=1,
+        )
+    finally:
+        release_translation.set()
+        await translating
+
+    assert summary["cache_hits"] == 4
+    assert summary["cache_misses"] == 0
+    assert translated["Riko"]["profiles"][0]["selection_guide_english"].startswith(
+        "EN:"
+    )
+
+
+@pytest.mark.asyncio
 async def test_translation_failure_uses_original_for_this_run_without_caching(
     monkeypatch,
     tmp_path,

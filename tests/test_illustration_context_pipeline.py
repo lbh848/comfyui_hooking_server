@@ -2631,26 +2631,25 @@ scenes: []
     )
 
     plan_request = request_by_call["CALL2-PLAN"]
-    assert "Select the global semantic visual beats" in plan_request
+    assert "Select the distinct, independently readable visual beats" in plan_request
     assert "# TRUSTED ACTIVE BOT IMAGE POLICY" in plan_request
     assert "ACTIVE BOT INSTRUCTION MARKER" in plan_request
     assert "### Nested instruction heading" in plan_request
-    assert "Treat `TRUSTED ACTIVE BOT IMAGE POLICY` as the single renderability" in plan_request
+    assert "`TRUSTED ACTIVE BOT IMAGE POLICY` solely owns renderability" in plan_request
     assert "materially different supported actions" in plan_request
-    assert "invisible internal states" in plan_request
-    assert "Lead `scene_brief` with the familiar high-level action or pose" in plan_request
-    assert "Preserve who acts on whom" in plan_request
-    assert "Apply an isolated-still legibility test" in plan_request
-    assert "never swap actor and receiver" in plan_request
-    assert "promote an anonymous participant into the named or focal subject" in plan_request
-    assert "every action-bearing region needed to recognize it must fit" in plan_request
-    assert "keep an unnecessary partner fragment off-frame" in plan_request
-    assert "blanket ban on every cropped rear or side portion" in plan_request
-    assert "rather than weakening the policy" in plan_request
-    assert "resolved by the upstream wardrobe analyzer" in plan_request
-    assert "Do not reconstruct, summarize, or output clothing" in plan_request
-    assert "No scene contains a planner-authored wardrobe state" in plan_request
-    assert "Every scene is directly supported by its own anchor passage" in plan_request
+    assert "Internal thought, atmosphere, fluid, or micro-motion alone is not a still" in plan_request
+    assert "one independently readable visible fact" in plan_request
+    assert "Preserve actor, receiver, direction, and intensity" in plan_request
+    assert "identifiable partner face, separated or distant action regions" in plan_request
+    assert "read as self-touch or reverse actor and receiver" in plan_request
+    assert "one connected partner region reaching the subject" in plan_request
+    assert "complete subject reaction, pose, or gaze keeps its cause off-frame" in plan_request
+    assert "Replace an incompatible candidate with another supported instant" in plan_request
+    assert "instead of reducing the count or weakening the active policy" in plan_request
+    assert "Wardrobe is resolved upstream and attached by the server" in plan_request
+    assert "Do not reconstruct or output clothing" in plan_request
+    assert "PLAN contributes no wardrobe state" in plan_request
+    assert "Every scene is supported by its own anchor" in plan_request
     assert "# RECENT STORY CONTINUITY REFERENCE (NOT SCENE CANDIDATES)" in plan_request
     assert "BRANCH-SCOPED PRIOR NARRATIVE" in plan_request
     assert "# CURRENT CANONICAL CHARACTER ROSTER (IDENTITY LABELS ONLY)" in plan_request
@@ -2698,7 +2697,7 @@ scenes: []
         for name, content in request_by_call.items()
         if name.startswith("CALL2-DETAIL 1/1")
     )
-    assert "Expand each assigned scene plan into one complete image descriptor" in detail_request
+    assert "Expand each assigned plan into one complete image descriptor" in detail_request
     assert "# ASSIGNED SCENE PLAN DATA" in detail_request
     assert "Return only one <lb-xnai> block containing scenes" in detail_request
     assert "\nkeyvis:\n" not in detail_request
@@ -2717,14 +2716,13 @@ scenes: []
     assert "# SPARSE CURRENT WARDROBE CHANGE HISTORY" not in detail_request
     assert "# CLASSIFIED LAST VISUAL REFERENCE" not in detail_request
     assert "[Last log entry]" not in detail_request
-    assert "`anchor_passage` is the event authority" in detail_request
-    assert "repair only camera and crop" in detail_request
-    assert "If the primary fact is contact" in detail_request
-    assert "use a contact-centered camera" in detail_request
-    assert "Use a reaction-centered camera only when the reaction is the assigned fact" in detail_request
-    assert "Never crop away the defining action" in detail_request
-    assert "Make camera, positions, poses, gaze" in detail_request
-    assert "action-bearing region named by `scene_brief` must be inside the camera crop" in detail_request
+    assert "`anchor_passage` is event authority" in detail_request
+    assert "Repair camera and crop only" in detail_request
+    assert "A contact fact uses a contact-centered camera" in detail_request
+    assert "a complete reaction uses a reaction-centered camera" in detail_request
+    assert "Keep the primary action region readable" in detail_request
+    assert "Make camera, pose, gaze, anatomy" in detail_request
+    assert "Bind one actor-owned connected part to one receiver-owned local surface" in detail_request
     detail_messages = next(
         messages
         for name, messages in messages_by_call.items()
@@ -2732,18 +2730,18 @@ scenes: []
     )
     assert any(
         message["role"] == "system"
-        and "Expand each assigned scene plan" in message["content"]
+        and "Expand each assigned plan" in message["content"]
         for message in detail_messages
     )
     assert '"anonymous_partner_fragment": false' in detail_request
     assert "When the flag is false, add no partner fragment or partner contact" in detail_request
     assert "complete wardrobe" in detail_request
-    assert "Put only visible or coverage-defining garments in `positive`" in detail_request
-    assert "Omit remote face, hair, eye, expression, or clothing details" in detail_request
-    assert "Keep partner anatomy and action out of named-character `positive`" in detail_request
-    assert "never replace one with an anonymous participant" in detail_request
-    assert "non-identifying rear or side portion of a partner's head" in detail_request
-    assert "never turn it into a second portrait or camera center" in detail_request
+    assert "only visible or coverage-defining state in `positive`" in detail_request
+    assert "Omit face, hair, eye, expression, clothing, and local detail outside" in detail_request
+    assert "Put partner visibility in `scene` and exact contact in `supplement`" in detail_request
+    assert "An anonymous participant never replaces or becomes a named focal subject" in detail_request
+    assert "only the permitted connected action-bearing fragment" in detail_request
+    assert "one edge-to-contact direction" in detail_request
     assert "severe foreshortening" not in detail_request
     assert "Keep remote ongoing contact as context rather than demanding" not in detail_request
     assert "nested generated visual marker" not in detail_request

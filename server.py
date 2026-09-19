@@ -6504,7 +6504,7 @@ def _descriptor_visual_states(descriptor: dict | None) -> dict:
     return result
 
 
-def _collect_lb_extra(bot_name: str) -> dict | None:
+def _collect_lb_extra_impl(bot_name: str) -> dict | None:
     """현재 봇의 시스템 프롬프트와 lb.extra 캐릭터 정보를 구조화해 수집.
 
     반환: {"system_prompt": str, "characters": [...], "bot_character_names": [...]}
@@ -6598,6 +6598,50 @@ def _collect_lb_extra(bot_name: str) -> dict | None:
         return None
 
 
+def _collect_lb_extra(
+    bot_name: str,
+    trace_id: str = "",
+    caller: str = "",
+) -> dict | None:
+    """Collect lb.extra while emitting one aggregate timing line per caller."""
+    started_at = time.perf_counter()
+    result = None
+    try:
+        result = _collect_lb_extra_impl(bot_name)
+        return result
+    finally:
+        print(
+            "[ILLUST_PERF] _collect_lb_extra 완료: "
+            f"trace={str(trace_id or '-')!r}, caller={str(caller or '-')!r}, "
+            f"bot={str(bot_name or '')!r}, "
+            f"elapsed_ms={(time.perf_counter() - started_at) * 1000.0:.1f}, "
+            f"result={'ok' if result else 'empty'}"
+        )
+
+
+def _collect_lb_extra_for_request(
+    bot_name: str,
+    trace_id: str,
+    caller: str,
+    request_cache: dict | None,
+) -> dict | None:
+    """Reuse the expensive lb.extra snapshot within one illustration request."""
+    if request_cache is None:
+        return _collect_lb_extra(bot_name, trace_id, caller)
+    cache_bot = str(request_cache.get("bot_name") or "")
+    if cache_bot == str(bot_name or "") and "collected" in request_cache:
+        print(
+            "[ILLUST_PERF] _collect_lb_extra 요청 캐시 사용: "
+            f"trace={str(trace_id or '-')!r}, caller={str(caller or '-')!r}, "
+            f"bot={str(bot_name or '')!r}"
+        )
+        return request_cache.get("collected")
+    collected = _collect_lb_extra(bot_name, trace_id, caller)
+    request_cache.clear()
+    request_cache.update({"bot_name": str(bot_name or ""), "collected": collected})
+    return collected
+
+
 def _lb_extra_costume_chunks(collected: dict) -> str:
     """수집된 lb.extra에서 시스템 프롬프트를 뺀 캐릭터 복장(Appearance/default_outfit) 덩어리."""
     chunks = []
@@ -6631,17 +6675,35 @@ def strip_output_count_rule(system_prompt: str) -> str:
     return cleaned
 
 
-def build_active_lb_instruction(bot_name: str) -> str:
+def build_active_lb_instruction(
+    bot_name: str,
+    trace_id: str = "",
+    request_cache: dict | None = None,
+) -> str:
     """현재 봇의 선택 시스템 프롬프트만 반환(CALL2 계열 공통 지침용)."""
-    collected = _collect_lb_extra(bot_name)
+    collected = _collect_lb_extra_for_request(
+        bot_name,
+        trace_id,
+        "build_active_lb_instruction",
+        request_cache,
+    )
     if not collected:
         return ""
     return strip_output_count_rule(collected["system_prompt"])
 
 
-def active_bot_uses_first_pass_single_v5(bot_name: str) -> bool:
+def active_bot_uses_first_pass_single_v5(
+    bot_name: str,
+    trace_id: str = "",
+    request_cache: dict | None = None,
+) -> bool:
     """Return the exact active preset scope used by Single V5 PLAN safeguards."""
-    collected = _collect_lb_extra(bot_name)
+    collected = _collect_lb_extra_for_request(
+        bot_name,
+        trace_id,
+        "active_bot_uses_first_pass_single_v5",
+        request_cache,
+    )
     if not collected:
         print(
             "[ILLUST_CONTEXT:CALL2_PLAN] 활성 봇 프리셋 확인 실패로 Single V5 "
@@ -6657,26 +6719,53 @@ def active_bot_uses_first_pass_single_v5(bot_name: str) -> bool:
     return enabled
 
 
-def build_lb_extra_costume(bot_name: str) -> str:
+def build_lb_extra_costume(
+    bot_name: str,
+    trace_id: str = "",
+    request_cache: dict | None = None,
+) -> str:
     """lb.extra의 캐릭터 카드만 조립(CALL1 및 CALL2 캐릭터 사전용)."""
-    collected = _collect_lb_extra(bot_name)
+    collected = _collect_lb_extra_for_request(
+        bot_name,
+        trace_id,
+        "build_lb_extra_costume",
+        request_cache,
+    )
     if not collected:
         return ""
     return _lb_extra_costume_chunks(collected)
 
 
-def build_lb_extra_names(bot_name: str) -> str:
+def build_lb_extra_names(
+    bot_name: str,
+    trace_id: str = "",
+    request_cache: dict | None = None,
+) -> str:
     """lb.extra 캐릭터 영문 이름 리스트만 반환(CALL3용)."""
-    collected = _collect_lb_extra(bot_name)
+    collected = _collect_lb_extra_for_request(
+        bot_name,
+        trace_id,
+        "build_lb_extra_names",
+        request_cache,
+    )
     if not collected:
         return ""
     names = [str(c.get("name") or "").strip() for c in collected.get("characters", [])]
     return ", ".join(n for n in names if n)
 
 
-def build_bot_character_names(bot_name: str) -> str:
+def build_bot_character_names(
+    bot_name: str,
+    trace_id: str = "",
+    request_cache: dict | None = None,
+) -> str:
     """역번역 단어 보호용 활성 봇 전체 캐릭터 정식 영문 이름 목록."""
-    collected = _collect_lb_extra(bot_name)
+    collected = _collect_lb_extra_for_request(
+        bot_name,
+        trace_id,
+        "build_bot_character_names",
+        request_cache,
+    )
     if not collected:
         print(f"[ILLUST_CONTEXT:BACKTRANSLATE] 봇 캐릭터 목록 수집 실패: bot={bot_name!r}")
         return ""
@@ -6687,17 +6776,35 @@ def build_bot_character_names(bot_name: str) -> str:
     return ", ".join(str(name) for name in names)
 
 
-def build_visual_profile_catalog(bot_name: str) -> str:
+def build_visual_profile_catalog(
+    bot_name: str,
+    trace_id: str = "",
+    request_cache: dict | None = None,
+) -> str:
     """최전단 프로필 결정 단계가 의미로 판단할 자연어 카드 카탈로그."""
-    collected = _collect_lb_extra(bot_name)
+    collected = _collect_lb_extra_for_request(
+        bot_name,
+        trace_id,
+        "build_visual_profile_catalog",
+        request_cache,
+    )
     if not collected:
         return ""
     return str(collected.get("visual_profile_catalog") or "")
 
 
-def build_effective_visual_profiles(bot_name: str) -> dict:
+def build_effective_visual_profiles(
+    bot_name: str,
+    trace_id: str = "",
+    request_cache: dict | None = None,
+) -> dict:
     """파이프라인/렌더러가 exact ID로 조회할 서버 소유 유효 프로필 맵."""
-    collected = _collect_lb_extra(bot_name)
+    collected = _collect_lb_extra_for_request(
+        bot_name,
+        trace_id,
+        "build_effective_visual_profiles",
+        request_cache,
+    )
     if not collected:
         return {}
     return copy.deepcopy(collected.get("visual_profiles") or {})
@@ -8128,6 +8235,43 @@ async def process_illustration_context_queue_item(item) -> dict:
         effective_visual_profiles = {}
         first_pass_single_v5 = False
         if payload.get("protocol") != "prompt_batch_v1":
+            pre_character_started_at = time.perf_counter()
+            pre_character_trace_id = str(session_id or original_prompt_id or "-")
+            pre_character_step_ms: dict[str, float] = {}
+            lb_extra_request_cache: dict = {}
+
+            def _timed_pre_character_step(step: str, function, *args):
+                started_at = time.perf_counter()
+                status = "error"
+                try:
+                    value = function(*args)
+                    status = "ok"
+                    return value
+                finally:
+                    elapsed_ms = (time.perf_counter() - started_at) * 1000.0
+                    pre_character_step_ms[step] = elapsed_ms
+                    print(
+                        "[ILLUST_PERF] CHARACTER-RESOLVE 전처리 단계: "
+                        f"trace={pre_character_trace_id!r}, step={step!r}, "
+                        f"elapsed_ms={elapsed_ms:.1f}, status={status}"
+                    )
+
+            async def _timed_pre_character_async_step(step: str, function, *args):
+                started_at = time.perf_counter()
+                status = "error"
+                try:
+                    value = await function(*args)
+                    status = "ok"
+                    return value
+                finally:
+                    elapsed_ms = (time.perf_counter() - started_at) * 1000.0
+                    pre_character_step_ms[step] = elapsed_ms
+                    print(
+                        "[ILLUST_PERF] CHARACTER-RESOLVE 비동기 전처리 단계: "
+                        f"trace={pre_character_trace_id!r}, step={step!r}, "
+                        f"elapsed_ms={elapsed_ms:.1f}, status={status}"
+                    )
+
             history_chats = payload.get("chats") or []
             if not history_chats:
                 print(
@@ -8148,22 +8292,80 @@ async def process_illustration_context_queue_item(item) -> dict:
                         f"session={session_id}, chats={len(history_chats)}"
                     )
                     raise RuntimeError("채팅 히스토리에 저장할 최신 CHAR 응답이 없습니다")
-                history_plan = illustration_chat_history.prepare_history(
+                history_plan = await _timed_pre_character_async_step(
+                    "prepare_history",
+                    asyncio.to_thread,
+                    illustration_chat_history.prepare_history,
                     history_chats,
                     history_target_index,
                     active_bot,
+                    pre_character_trace_id,
                 )
 
             # CURRENT 등장인물을 항상 판별하고, 토글 시에만 별도 프로필 단계를 실행한다.
             # 확정 결과는 ORIGINAL-ASSET, CALL1, CALL2가 함께 사용한다.
-            extra_instruction = build_active_lb_instruction(active_bot)
-            extra_costume = build_lb_extra_costume(active_bot)
+            extra_instruction = _timed_pre_character_step(
+                "build_active_lb_instruction",
+                build_active_lb_instruction,
+                active_bot,
+                pre_character_trace_id,
+                lb_extra_request_cache,
+            )
+            extra_costume = _timed_pre_character_step(
+                "build_lb_extra_costume",
+                build_lb_extra_costume,
+                active_bot,
+                pre_character_trace_id,
+                lb_extra_request_cache,
+            )
             extra_character_cards = extra_costume
-            extra_names = build_lb_extra_names(active_bot)
-            backtranslate_names = build_bot_character_names(active_bot)
-            visual_profile_catalog = build_visual_profile_catalog(active_bot)
-            effective_visual_profiles = build_effective_visual_profiles(active_bot)
-            first_pass_single_v5 = active_bot_uses_first_pass_single_v5(active_bot)
+            extra_names = _timed_pre_character_step(
+                "build_lb_extra_names",
+                build_lb_extra_names,
+                active_bot,
+                pre_character_trace_id,
+                lb_extra_request_cache,
+            )
+            backtranslate_names = _timed_pre_character_step(
+                "build_bot_character_names",
+                build_bot_character_names,
+                active_bot,
+                pre_character_trace_id,
+                lb_extra_request_cache,
+            )
+            visual_profile_catalog = _timed_pre_character_step(
+                "build_visual_profile_catalog",
+                build_visual_profile_catalog,
+                active_bot,
+                pre_character_trace_id,
+                lb_extra_request_cache,
+            )
+            effective_visual_profiles = _timed_pre_character_step(
+                "build_effective_visual_profiles",
+                build_effective_visual_profiles,
+                active_bot,
+                pre_character_trace_id,
+                lb_extra_request_cache,
+            )
+            first_pass_single_v5 = _timed_pre_character_step(
+                "active_bot_uses_first_pass_single_v5",
+                active_bot_uses_first_pass_single_v5,
+                active_bot,
+                pre_character_trace_id,
+                lb_extra_request_cache,
+            )
+            pre_character_total_ms = (
+                time.perf_counter() - pre_character_started_at
+            ) * 1000.0
+            step_summary = ", ".join(
+                f"{step}={elapsed_ms:.1f}ms"
+                for step, elapsed_ms in pre_character_step_ms.items()
+            )
+            print(
+                "[ILLUST_PERF] CHARACTER-RESOLVE 호출 직전: "
+                f"trace={pre_character_trace_id!r}, total_ms={pre_character_total_ms:.1f}, "
+                f"steps=[{step_summary}]"
+            )
             profile_output, profile_result = (
                 await illustration_context_pipeline.resolve_profiles_before_generation(
                     payload=payload,

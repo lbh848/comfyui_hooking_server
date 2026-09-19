@@ -28,6 +28,48 @@ class _ToggleRequest:
         return deepcopy(self._body)
 
 
+def test_character_preprocess_reuses_one_lb_extra_collection_per_request(monkeypatch):
+    calls = []
+    collected = {
+        "system_prompt": "shared illustration instruction",
+        "system_prompt_preset": server.FIRST_PASS_SINGLE_V5_PRESET,
+        "characters": [{
+            "name": "Aria",
+            "appearance": "silver hair",
+            "outfit": "blue coat",
+        }],
+        "bot_character_names": ["Aria"],
+        "visual_profiles": {"Aria": {"default_profile_id": "default"}},
+        "visual_profile_catalog": "Aria has one default visual profile.",
+    }
+
+    def fake_collect(bot_name):
+        calls.append(bot_name)
+        return collected
+
+    monkeypatch.setattr(server, "_collect_lb_extra_impl", fake_collect)
+    request_cache = {}
+
+    assert server.build_active_lb_instruction("bot-a", "trace-a", request_cache) == (
+        "shared illustration instruction"
+    )
+    assert "### Aria" in server.build_lb_extra_costume(
+        "bot-a", "trace-a", request_cache
+    )
+    assert server.build_lb_extra_names("bot-a", "trace-a", request_cache) == "Aria"
+    assert server.build_bot_character_names("bot-a", "trace-a", request_cache) == "Aria"
+    assert server.build_visual_profile_catalog(
+        "bot-a", "trace-a", request_cache
+    ) == "Aria has one default visual profile."
+    assert server.build_effective_visual_profiles(
+        "bot-a", "trace-a", request_cache
+    ) == collected["visual_profiles"]
+    assert server.active_bot_uses_first_pass_single_v5(
+        "bot-a", "trace-a", request_cache
+    ) is True
+    assert calls == ["bot-a"]
+
+
 def test_original_asset_index_uses_direct_character_files_and_logical_webp_id(
     tmp_path: Path,
 ) -> None:

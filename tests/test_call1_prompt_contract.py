@@ -18,10 +18,10 @@ def test_call1_wardrobe_operations_use_replace_without_set_or_contextual_reset()
 def test_call1_replace_is_a_semantic_full_outfit_transition():
     prompt = CALL1_PROMPT.read_text(encoding="utf-8")
 
-    assert "Choose the operation from the meaning of the full sentence" in prompt
-    assert "A `replace` ends the prior worn outfit as a whole" in prompt
-    assert "do not require separate `remove` events" in prompt
-    assert "putting a shirt over a swimsuit adds the shirt" in prompt
+    assert "`replace` for a complete transition to another outfit" in prompt
+    assert "`wear`/`add` for an incremental addition" in prompt
+    assert "`remove` for specified removed items" in prompt
+    assert "`open`/`close`/`adjust` when the same garment stays worn" in prompt
 
 
 def test_call1_uses_one_start_state_plus_sparse_current_changes():
@@ -30,15 +30,24 @@ def test_call1_uses_one_start_state_plus_sparse_current_changes():
     assert '"wardrobe_at_start"' in prompt
     assert "immediately before C001" in prompt
     assert "not a sequence of complete outfit snapshots" in prompt
-    assert "never compute or emit per-segment full outfit snapshots" in prompt
-    assert "merely repeats an already known state, emit no event" in prompt
+    assert "Do not generate Danbooru tags or per-segment full outfit snapshots" in prompt
+    assert "repeated description of an existing/default outfit is not a change" in prompt
 
 
 def test_call1_natural_change_text_outranks_coarse_enum_hints():
     prompt = CALL1_PROMPT.read_text(encoding="utf-8")
 
     assert "`wardrobe_at_start[].state` and `wardrobe_change` are the meaning-bearing handoff" in prompt
-    assert "must never simplify or contradict it" in prompt
-    assert "When one semantic change unfolds across paragraph boundaries" in prompt
-    assert "evidence may span consecutive numbered segments" in prompt
-    assert "reason from the whole passage rather than from a body-region menu" in prompt
+    assert "must never simplify or contradict the natural language" in prompt
+    assert "spans consecutive segments as one event" in prompt
+    assert "lowered or displaced clothing may stop covering a region while remaining attached" in prompt
+
+
+def test_call1_start_state_cannot_mix_terminal_nudity_with_remaining_garments():
+    prompt = CALL1_PROMPT.read_text(encoding="utf-8")
+
+    assert "one physically possible instant" in prompt
+    assert "attached, draped, lowered, pooled" in prompt
+    assert "Never say `fully unclothed`, `wearing nothing`" in prompt
+    assert "summarizes coverage only" in prompt
+    assert "never erases an explicitly remaining displaced garment" in prompt

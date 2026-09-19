@@ -1129,6 +1129,9 @@ def test_manifest_has_fully_pinned_windows_runtime_and_assets() -> None:
     assert manifest.python["version"] == "3.12.11"
     assert manifest.python["compatibility_packages"] == [
         "numpy==1.26.4",
+        # contourpy 1.4.0부터 numpy>=2.0을 요구한다. 여러 커스텀 노드가
+        # matplotlib을 상한 없이 설치하므로 transitive dependency도 직접 고정한다.
+        "contourpy==1.3.3",
         # onnx(>=insightface 의존) 가 ml_dtypes>=0.5.4 를 요구하는데, 상한이 없으면
         # 리졸버가 0.6.0 을 골라 numpy>=2.0.0 을 선언해 위 numpy 고정과 충돌한다.
         # 0.5.4 는 py3.12 에서 numpy>=1.26.0 만 요구해 둘을 동시에 만족한다.
