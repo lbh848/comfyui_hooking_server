@@ -26653,7 +26653,7 @@
                                 <button type="button" class="comfy-installer-btn" id="comfy-installer-update-btn" onclick="comfyInstallerStartUpdate()">업데이트</button>
                                 <button type="button" class="comfy-installer-btn" id="comfy-installer-integrity-btn" onclick="comfyInstallerOpenIntegrityModal()">무결성 검사</button>
                                 <button type="button" class="comfy-installer-btn" id="comfy-installer-e2e-btn" onclick="comfyInstallerOpenE2EModal()">E2E 검사</button>
-                                <button type="button" class="comfy-installer-btn" id="comfy-installer-image-diagnostic-btn" onclick="comfyInstallerStartImageDiagnostic()" title="실제 프로그램 작업 큐와 관리 Comfy에서 전체 에셋 워크플로를 연속 실행하고 DCW/CWM ON/OFF를 비교합니다.">이미지 깨짐 검사</button>
+                                <button type="button" class="comfy-installer-btn" id="comfy-installer-image-diagnostic-btn" onclick="comfyInstallerStartImageDiagnostic()" title="실제 프로그램 작업 큐에서 기존 경로, sampler 직전 ModelPatcher Refresh, DCW/CWM OFF를 비교합니다.">이미지 깨짐 검사</button>
                                 <button type="button" class="comfy-installer-btn" id="comfy-installer-image-diagnostic-download-btn" onclick="comfyInstallerDownloadImageDiagnostic()" style="display:none;">진단 ZIP 내려받기</button>
                                 <button type="button" class="comfy-installer-btn danger" id="comfy-installer-cancel-btn" onclick="comfyInstallerCancel()" disabled>안전하게 중단</button>
                             </div>
@@ -26664,7 +26664,7 @@
                             </div>
                             <p class="comfy-installer-note" style="margin-top:9px;">
                                 설치는 선택한 워크플로우에 필요한 모델만 받고 E2E 없이 완료됩니다. 업데이트도 워크플로우 실행 검사를 하지 않으며,
-                                후킹 서버가 바뀌면 재시작 후 한 번 더 눌러야 합니다. 무결성 검사는 현재 설정된 워크플로우와 읽기 전용 팩 원본을 비교하며, 복구는 결과 모달에서 사용자가 선택한 항목만 비파괴 방식으로 처리합니다. E2E 검사는 설치 완료 후 지원되는 배포 원본을 선택해 실제 실행합니다. 이미지 깨짐 검사는 관리 Comfy를 같은 설정으로 새로 시작한 뒤 실제 프로그램 작업 큐에서 전체 에셋 워크플로를 실행합니다. 변경되는 프롬프트·seed로 DCW/CWM 기본 상태와 OFF 상태를 각각 warmup 1장+15장 비교하며, 결과 이미지·실제 프롬프트·최종 제출 워크플로·GPU 수치·관리 Comfy 시작/실행 로그·MD 보고서를 ZIP으로 만듭니다.
+                                후킹 서버가 바뀌면 재시작 후 한 번 더 눌러야 합니다. 무결성 검사는 현재 설정된 워크플로우와 읽기 전용 팩 원본을 비교하며, 복구는 결과 모달에서 사용자가 선택한 항목만 비파괴 방식으로 처리합니다. E2E 검사는 설치 완료 후 지원되는 배포 원본을 선택해 실제 실행합니다. 이미지 깨짐 검사는 관리 Comfy를 같은 설정으로 새로 시작한 뒤 실제 프로그램 작업 큐에서 전체 에셋 워크플로를 실행합니다. 변경되는 프롬프트·seed로 기존 경로, sampler 직전 ModelPatcher Refresh 경로, DCW/CWM OFF 경로를 각각 warmup 1장+15장 비교합니다. Refresh는 모델 unload나 VRAM 정리를 하지 않습니다. 결과 이미지·실제 프롬프트·최종 제출 워크플로·GPU 수치·관리 Comfy 시작/실행 로그·MD 보고서를 ZIP으로 만듭니다.
                             </p>
                             <p class="comfy-installer-note" id="comfy-installer-compatibility-note" style="margin-top:7px;">
                                 <strong>호환 설치:</strong> RTX 2070/2080 같은 Turing(sm75)부터 사용할 수 있도록 SageAttention과 전용 Triton을 제외합니다.
@@ -39773,7 +39773,7 @@
                     body: JSON.stringify({}),
                 });
                 comfyInstallerRenderStatus(started);
-                showToast('이미지 깨짐 검사를 시작했습니다 · 실제 프로그램 경로에서 DCW/CWM ON/OFF를 비교합니다', 'success');
+                showToast('이미지 깨짐 검사를 시작했습니다 · 기존/ModelPatcher Refresh/DCW OFF를 비교합니다', 'success');
                 clearTimeout(comfyInstallerPollTimer);
                 comfyInstallerPollTimer = setTimeout(() => comfyInstallerRefreshStatus(false), 500);
             } catch (error) {

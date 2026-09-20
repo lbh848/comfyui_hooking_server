@@ -1511,6 +1511,82 @@ class AssetMode:
             )
         return found
 
+    @staticmethod
+    def _apply_diagnostic_model_patcher_refresh(
+        workflow: dict,
+        enabled: Optional[bool],
+    ) -> list[dict]:
+        """Insert a fresh ModelPatcher wrapper directly before real samplers.
+
+        This reproduces only the ``model.clone()`` boundary from the retired
+        diagnostic ModelProbe.  It does not add instrumentation, remove model
+        patches, unload the resident model, or clear VRAM.
+        """
+        if enabled is None or not enabled:
+            return []
+
+        numeric_ids = []
+        for node_id in workflow:
+            try:
+                numeric_ids.append(int(str(node_id)))
+            except (TypeError, ValueError):
+                continue
+        next_id = max(numeric_ids, default=0) + 1
+        inserted: list[dict] = []
+        sampler_types = {"KSampler", "KSamplerAdvanced"}
+
+        for sampler_id, sampler in list(workflow.items()):
+            if not isinstance(sampler, dict):
+                continue
+            class_type = sampler.get("class_type")
+            if class_type not in sampler_types:
+                continue
+            inputs = sampler.get("inputs")
+            if not isinstance(inputs, dict):
+                print(
+                    "[ASSET][IMAGE_DIAGNOSTIC] sampler 입력 형식 오류: "
+                    f"node={sampler_id}, class_type={class_type}, inputs={inputs!r}"
+                )
+                continue
+            source_model = inputs.get("model")
+            if not (
+                isinstance(source_model, (list, tuple))
+                and len(source_model) == 2
+            ):
+                print(
+                    "[ASSET][IMAGE_DIAGNOSTIC] sampler MODEL 연결 형식 오류: "
+                    f"node={sampler_id}, class_type={class_type}, model={source_model!r}"
+                )
+                continue
+
+            refresh_id = str(next_id)
+            next_id += 1
+            workflow[refresh_id] = {
+                "class_type": "SoyaModelPatcherRefresh_mdsoya",
+                "inputs": {"model": list(source_model)},
+                "_meta": {"title": "Image Diagnostic ModelPatcher Refresh"},
+            }
+            inputs["model"] = [refresh_id, 0]
+            inserted.append(
+                {
+                    "sampler_node_id": str(sampler_id),
+                    "sampler_class_type": str(class_type),
+                    "source_model": list(source_model),
+                    "refresh_node_id": refresh_id,
+                }
+            )
+
+        if not inserted:
+            raise RuntimeError(
+                "ModelPatcher Refresh를 삽입할 KSampler/KSamplerAdvanced MODEL 연결을 "
+                "찾지 못했습니다."
+            )
+        print(
+            "[ASSET][IMAGE_DIAGNOSTIC] 실제 sampler 직전에 ModelPatcher Refresh 삽입: "
+            f"nodes={inserted}"
+        )
+        return inserted
+
     async def generate(
         self,
         character: str,
@@ -1552,6 +1628,7 @@ class AssetMode:
         storage_session: str = "",
         modal_input_paths: Optional[list[str]] = None,
         diagnostic_dcw_cwm_smc_enabled: Optional[bool] = None,
+        diagnostic_model_patcher_refresh: Optional[bool] = None,
         diagnostic_capture_workflow: bool = False,
     ) -> dict:
         async with self._lock:
@@ -1573,6 +1650,7 @@ class AssetMode:
                     storage_group, storage_session,
                     modal_input_paths,
                     diagnostic_dcw_cwm_smc_enabled,
+                    diagnostic_model_patcher_refresh,
                     diagnostic_capture_workflow,
                 )
             finally:
@@ -1619,6 +1697,7 @@ class AssetMode:
         storage_session: str = "",
         modal_input_paths: Optional[list[str]] = None,
         diagnostic_dcw_cwm_smc_enabled: Optional[bool] = None,
+        diagnostic_model_patcher_refresh: Optional[bool] = None,
         diagnostic_capture_workflow: bool = False,
     ) -> dict:
         if storage_group not in ("", "automatch_defaults", "character_maker"):
@@ -1756,6 +1835,10 @@ class AssetMode:
                 workflow,
                 diagnostic_dcw_cwm_smc_enabled,
             )
+            diagnostic_model_refresh = self._apply_diagnostic_model_patcher_refresh(
+                workflow,
+                diagnostic_model_patcher_refresh,
+            )
 
             final_positive = positive
             final_negative = negative
@@ -1805,6 +1888,10 @@ class AssetMode:
                 failed_result = {"success": False, "error": error_msg}
                 if diagnostic_dcw_cwm_smc_enabled is not None:
                     failed_result["diagnostic_model_patch"] = diagnostic_model_patch
+                if diagnostic_model_patcher_refresh is not None:
+                    failed_result["diagnostic_model_patcher_refresh"] = (
+                        diagnostic_model_refresh
+                    )
                 return failed_result
 
             if storage_group == "character_maker":
@@ -1901,6 +1988,10 @@ class AssetMode:
                 result["prompt_record_path"] = prompt_record_path
             if diagnostic_dcw_cwm_smc_enabled is not None:
                 result["diagnostic_model_patch"] = diagnostic_model_patch
+            if diagnostic_model_patcher_refresh is not None:
+                result["diagnostic_model_patcher_refresh"] = (
+                    diagnostic_model_refresh
+                )
             if diagnostic_capture_workflow:
                 # Evidence only: return the exact API graph already submitted.
                 # This does not alter, clone, or instrument the graph itself.

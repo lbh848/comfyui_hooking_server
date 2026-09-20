@@ -22124,9 +22124,14 @@ async def _production_image_diagnostic_async(
     phase = str(request.get("phase") or "").strip()
     variant = str(request.get("variant") or "").strip()
     patch_enabled = request.get("dcw_cwm_smc_enabled")
+    model_patcher_refresh = request.get("model_patcher_refresh")
     if not character or not re.fullmatch(r"[A-Za-z0-9_-]{1,96}", character):
         raise ValueError(f"진단 임시 캐릭터 이름 형식 오류: {character!r}")
-    if case_name not in {"production_patch_on", "production_patch_off"}:
+    if case_name not in {
+        "production_patch_on",
+        "production_model_refresh",
+        "production_patch_off",
+    }:
         raise ValueError(f"진단 케이스 이름 오류: {case_name!r}")
     if phase not in {"warmup", "measurement"}:
         raise ValueError(f"진단 실행 phase 오류: {phase!r}")
@@ -22136,6 +22141,11 @@ async def _production_image_diagnostic_async(
         raise TypeError(
             "진단 DCW/CWM/SMC 상태는 bool이어야 합니다: "
             f"value={patch_enabled!r}"
+        )
+    if not isinstance(model_patcher_refresh, bool):
+        raise TypeError(
+            "진단 ModelPatcher Refresh 상태는 bool이어야 합니다: "
+            f"value={model_patcher_refresh!r}"
         )
     try:
         seed = int(request.get("seed"))
@@ -22195,6 +22205,7 @@ async def _production_image_diagnostic_async(
         "storage_group": "",
         "storage_session": "",
         "diagnostic_dcw_cwm_smc_enabled": patch_enabled,
+        "diagnostic_model_patcher_refresh": model_patcher_refresh,
         "diagnostic_capture_workflow": phase == "warmup",
     }
     log_start = int(runtime_status.get("log_seq") or 0)

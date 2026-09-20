@@ -3837,6 +3837,11 @@ class QueueManager:
                 if isinstance(body.get("diagnostic_dcw_cwm_smc_enabled"), bool)
                 else None
             ),
+            diagnostic_model_patcher_refresh=(
+                body.get("diagnostic_model_patcher_refresh")
+                if isinstance(body.get("diagnostic_model_patcher_refresh"), bool)
+                else None
+            ),
             diagnostic_capture_workflow=(
                 body.get("diagnostic_capture_workflow") is True
             ),

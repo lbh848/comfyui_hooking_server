@@ -327,6 +327,7 @@ def _case_summary(case: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "name": case.get("name"),
         "dcw_cwm_smc_enabled": case.get("dcw_cwm_smc_enabled"),
+        "model_patcher_refresh": case.get("model_patcher_refresh"),
         "completed": len(runs),
         "abnormal": len(abnormal),
         "first_abnormal": abnormal[0].get("index") if abnormal else None,
@@ -336,27 +337,36 @@ def _case_summary(case: Mapping[str, Any]) -> dict[str, Any]:
 
 def _conclusions(cases: list[dict[str, Any]]) -> list[str]:
     summaries = {case["name"]: _case_summary(case) for case in cases}
-    patch_on = summaries.get("production_patch_on", {})
+    baseline = summaries.get("production_patch_on", {})
+    refreshed = summaries.get("production_model_refresh", {})
     patch_off = summaries.get("production_patch_off", {})
-    on_bad = int(patch_on.get("abnormal") or 0) > 0
+    baseline_bad = int(baseline.get("abnormal") or 0) > 0
+    refresh_bad = int(refreshed.get("abnormal") or 0) > 0
     off_bad = int(patch_off.get("abnormal") or 0) > 0
-    if on_bad and not off_bad:
+    if baseline_bad and not refresh_bad:
         return [
-            "실제 프로그램 경로에서 DCW/CWM 기본 상태만 깨지고 OFF 상태는 안정적이었습니다. DCW/CWM 패치 경로가 가장 강한 원인 후보입니다.",
-            "두 케이스는 동일 프롬프트·동일 seed이며 관리 Comfy를 각각 새로 시작했습니다.",
+            "기존 실제 경로에서는 깨졌지만 sampler 직전 ModelPatcher Refresh 경로는 안정적이었습니다. 매 생성 새 ModelPatcher wrapper를 만드는 동작이 문제를 회피한다는 강한 증거입니다.",
+            "Refresh는 모델 unload·VRAM 정리·LoRA/DCW 제거 없이 이전 진단 ModelProbe의 clone 경계만 재현합니다.",
         ]
-    if on_bad and off_bad:
+    if baseline_bad and refresh_bad and not off_bad:
         return [
-            "실제 프로그램 경로에서 DCW/CWM ON/OFF 모두 깨졌습니다. 원인은 DCW/CWM보다 앞선 모델·conditioning·VRAM 재사용 경로에 있을 가능성이 큽니다.",
-            "각 실행의 이미지·프롬프트·Comfy 로그에서 최초 RuntimeWarning/비정상 실행을 대조해야 합니다.",
+            "기존 경로와 ModelPatcher Refresh 경로는 모두 깨졌지만 DCW/CWM OFF는 안정적이었습니다. 단순 wrapper 재생성보다 DCW/CWM 연산 경로가 강한 원인 후보입니다.",
         ]
-    if not on_bad and off_bad:
+    if baseline_bad and refresh_bad and off_bad:
         return [
-            "DCW/CWM OFF 케이스에서만 이상이 검출되었습니다. 단순 DCW/CWM 원인 가설과 반대 결과이므로 실행 로그를 우선 확인해야 합니다.",
+            "세 경로 모두 깨졌습니다. ModelPatcher wrapper 재생성과 DCW/CWM 비활성화로 회피되지 않으므로 그보다 앞선 모델 weight patch·상주 상태·conditioning 경로를 우선 확인해야 합니다.",
+        ]
+    if not baseline_bad and refresh_bad:
+        return [
+            "ModelPatcher Refresh 경로에서만 이상이 검출되었습니다. clone 경계가 해결책이라는 가설과 반대이므로 해당 케이스 로그와 제출 워크플로를 우선 확인해야 합니다.",
+        ]
+    if not baseline_bad and not refresh_bad and off_bad:
+        return [
+            "DCW/CWM OFF 경로에서만 이상이 검출되었습니다. DCW/CWM 또는 ModelPatcher warm 재사용이 원인이라는 가설과 반대 결과입니다.",
         ]
     return [
         "자동 검출 범위인 검정/고주파 컬러 노이즈/이미지 디코드 실패/비정상값 로그에서는 이상이 발견되지 않았습니다.",
-        "프롬프트 무시·미완성 전조는 픽셀 통계만으로 단정하지 않습니다. images/의 같은 번호 ON/OFF 이미지와 실제 prompt JSON을 직접 대조해야 합니다.",
+        "프롬프트 무시·미완성 전조는 픽셀 통계만으로 단정하지 않습니다. images/의 같은 번호 기존/Refresh/DCW OFF 이미지와 실제 prompt JSON을 직접 대조해야 합니다.",
         "이 결과는 별도 진단 그래프가 아니라 사용자가 실제로 쓰는 관리 Comfy와 AssetMode 생성 경로에서 얻었습니다.",
     ]
 
@@ -375,10 +385,11 @@ def _write_report(
         "",
         f"- 진단 ID: `{diagnostic_id}`",
         "- 실행 경로: 프로그램 작업 큐 → AssetMode.generate → 설치된 전체 에셋 워크플로 → 관리 Comfy",
-        "- 사용하지 않은 것: 독립 E2E Comfy, 진단 ModelProbe, 추가 model.clone(), sampler/VAE 축소 그래프",
+        "- 사용하지 않은 것: 독립 E2E Comfy, 진단 ModelProbe/계측 wrapper, sampler/VAE 축소 그래프",
         "- 사용자 선택 LoRA/캐릭터·얼굴·그림체 LoRA/Face ID/Style/Pose/Hires/Detailer: 모두 OFF",
         "- 팩 워크플로에 고정된 모델·LoRA 노드는 실제 배포 경로 보존을 위해 제거하지 않음",
-        "- 비교: 동일한 15개 프롬프트와 동일 seed로 DCW/CWM 기본 상태 대 OFF",
+        "- 비교: 동일한 warmup 1개+측정 15개 프롬프트와 동일 seed로 기존 경로 / sampler 직전 ModelPatcher Refresh / DCW/CWM OFF",
+        "- Refresh는 model.clone() wrapper만 새로 만들며 모델 unload·VRAM 정리·weight patch 삭제를 하지 않음",
         "- 자동 판정 범위: 검정/고주파 컬러 노이즈/디코드 실패/NaN·Inf 로그. 프롬프트 무시·미완성은 이미지와 prompt JSON 직접 대조",
         "",
         "## 결론",
@@ -390,14 +401,15 @@ def _write_report(
         [
             "## 케이스 결과",
             "",
-            "| 케이스 | DCW/CWM/SMC | 완료 | 이상 | 최초 이상 |",
-            "|---|---:|---:|---:|---:|",
+            "| 케이스 | DCW/CWM/SMC | ModelPatcher Refresh | 완료 | 이상 | 최초 이상 |",
+            "|---|---:|---:|---:|---:|---:|",
         ]
     )
     for case in cases:
         summary = _case_summary(case)
         lines.append(
             f"| {summary['name']} | {summary['dcw_cwm_smc_enabled']} | "
+            f"{summary['model_patcher_refresh']} | "
             f"{summary['completed']} | {summary['abnormal']} | "
             f"{summary['first_abnormal'] or '-'} |"
         )
@@ -425,7 +437,7 @@ def _write_report(
             "",
             "- `images/`: 실제 프로그램이 저장한 결과 이미지와 대응 프롬프트",
             "- `logs/`: 케이스별 관리 Comfy 시작 로그와 실행별 원본 로그 조각",
-            "- `workflows/`: warmup에서 실제 Comfy에 제출한 최종 API 워크플로(ON/OFF 각 1개)",
+            "- `workflows/`: 세 케이스 warmup에서 실제 Comfy에 제출한 최종 API 워크플로",
             "- `runs.json`: GPU 전후 상태, 이미지 수치, 유효 DCW 값, 큐 결과",
             "- `environment.json`: 실제 관리 Comfy 실행 명령·프로필·GPU 환경",
         ]
@@ -489,12 +501,13 @@ def run_production_image_diagnostic(
             )
 
         plans = (
-            ("production_patch_on", True),
-            ("production_patch_off", False),
+            ("production_patch_on", True, False),
+            ("production_model_refresh", True, True),
+            ("production_patch_off", False, False),
         )
         total_runs = len(plans) * (1 + len(MEASUREMENT_VARIANTS))
         completed_runs = 0
-        for case_name, patch_enabled in plans:
+        for case_name, patch_enabled, model_patcher_refresh in plans:
             restart = _restart_managed_runtime(
                 production_call=production_call,
                 pause_managed_comfy=pause_managed_comfy,
@@ -506,6 +519,7 @@ def run_production_image_diagnostic(
             case: dict[str, Any] = {
                 "name": case_name,
                 "dcw_cwm_smc_enabled": patch_enabled,
+                "model_patcher_refresh": model_patcher_refresh,
                 "restart": restart,
                 "runs": [],
             }
@@ -552,6 +566,7 @@ def run_production_image_diagnostic(
                         "seed": seed,
                         "variant": variant,
                         "dcw_cwm_smc_enabled": patch_enabled,
+                        "model_patcher_refresh": model_patcher_refresh,
                     }
                 )
                 duration = round(time.monotonic() - run_started, 3)
@@ -607,6 +622,9 @@ def run_production_image_diagnostic(
                     "queue_item_id": response.get("queue_item_id"),
                     "runtime": response.get("runtime"),
                     "diagnostic_model_patch": result.get("diagnostic_model_patch"),
+                    "diagnostic_model_patcher_refresh": result.get(
+                        "diagnostic_model_patcher_refresh"
+                    ),
                 }
                 case["runs"].append(run)
                 _write_json(report_dir / "runs.json", {"cases": cases, "errors": errors})
