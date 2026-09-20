@@ -3842,6 +3842,15 @@ class QueueManager:
                 if isinstance(body.get("diagnostic_model_patcher_refresh"), bool)
                 else None
             ),
+            diagnostic_stable_model_reuse=(
+                body.get("diagnostic_stable_model_reuse")
+                if isinstance(body.get("diagnostic_stable_model_reuse"), bool)
+                else None
+            ),
+            diagnostic_session_key=str(
+                body.get("diagnostic_session_key") or ""
+            ),
+            diagnostic_run_key=str(body.get("diagnostic_run_key") or ""),
             diagnostic_capture_workflow=(
                 body.get("diagnostic_capture_workflow") is True
             ),

@@ -57,6 +57,15 @@ _BAD_LOG_TOKENS = (
     "non-finite",
 )
 
+_PROBE_LOG_PREFIX = "[Soya:ImageDiagnosticProbe] "
+_EXPECTED_PROBE_STAGES = {
+    "model_before_sampler",
+    "conditioning_positive",
+    "conditioning_negative",
+    "latent_before_sampler",
+    "latent_after_sampler",
+}
+
 
 def _log(callback: LogCallback | None, message: str, level: str = "info") -> None:
     if callback is None:
@@ -85,6 +94,339 @@ def _safe_git_head(path: Path) -> str | None:
         )
         traceback.print_exc()
         return None
+
+
+def _custom_node_revisions(comfy_root: Path) -> list[dict[str, Any]]:
+    custom_nodes = comfy_root / "custom_nodes"
+    if not custom_nodes.is_dir():
+        print(
+            "[COMFY_INSTALL][PRODUCTION_IMAGE_DIAGNOSTIC] custom_nodes 폴더 없음: "
+            f"path={custom_nodes}"
+        )
+        return []
+    revisions: list[dict[str, Any]] = []
+    for path in sorted(custom_nodes.iterdir(), key=lambda item: item.name.casefold()):
+        if not path.is_dir() or not (path / ".git").exists():
+            continue
+        entry: dict[str, Any] = {"name": path.name, "path": str(path)}
+        try:
+            head = subprocess.run(
+                ["git", "-C", str(path), "rev-parse", "HEAD"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=20,
+                check=False,
+            )
+            status = subprocess.run(
+                ["git", "-C", str(path), "status", "--short"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=20,
+                check=False,
+            )
+            entry["head"] = head.stdout.strip() if head.returncode == 0 else None
+            entry["dirty"] = bool(status.stdout.strip()) if status.returncode == 0 else None
+            entry["status"] = status.stdout.splitlines()[:200]
+            if head.returncode != 0 or status.returncode != 0:
+                entry["error"] = (
+                    f"head_rc={head.returncode}, status_rc={status.returncode}, "
+                    f"head_stderr={head.stderr[:500]!r}, status_stderr={status.stderr[:500]!r}"
+                )
+                print(
+                    "[COMFY_INSTALL][PRODUCTION_IMAGE_DIAGNOSTIC] custom node revision 조회 일부 실패: "
+                    f"entry={entry}"
+                )
+        except Exception as exc:
+            entry["error"] = f"{type(exc).__name__}: {exc}"
+            print(
+                "[COMFY_INSTALL][PRODUCTION_IMAGE_DIAGNOSTIC] custom node revision 조회 예외: "
+                f"path={path}, error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+        revisions.append(entry)
+    return revisions
+
+
+def _python_packages(status: Mapping[str, Any]) -> dict[str, Any]:
+    runtime = status.get("runtime") if isinstance(status, Mapping) else None
+    command = runtime.get("command") if isinstance(runtime, Mapping) else None
+    python_path = str(command[0]) if isinstance(command, list) and command else ""
+    if not python_path or not Path(python_path).is_file():
+        print(
+            "[COMFY_INSTALL][PRODUCTION_IMAGE_DIAGNOSTIC] 관리 Comfy Python 경로 없음: "
+            f"python_path={python_path!r}, status={status}"
+        )
+        return {"ok": False, "error": "managed Comfy Python executable not found"}
+    try:
+        completed = subprocess.run(
+            [python_path, "-m", "pip", "list", "--format=json"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=120,
+            check=False,
+        )
+        if completed.returncode != 0:
+            print(
+                "[COMFY_INSTALL][PRODUCTION_IMAGE_DIAGNOSTIC] pip list 실패: "
+                f"returncode={completed.returncode}, stderr={completed.stderr[:2000]}"
+            )
+            return {
+                "ok": False,
+                "python": python_path,
+                "returncode": completed.returncode,
+                "stderr": completed.stderr[:2000],
+            }
+        packages = json.loads(completed.stdout)
+        return {"ok": True, "python": python_path, "packages": packages}
+    except Exception as exc:
+        print(
+            "[COMFY_INSTALL][PRODUCTION_IMAGE_DIAGNOSTIC] pip list 예외: "
+            f"python={python_path}, error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        return {
+            "ok": False,
+            "python": python_path,
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while True:
+            block = handle.read(8 * 1024 * 1024)
+            if not block:
+                break
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _workflow_artifact_references(workflow: Mapping[str, Any]) -> list[dict[str, str]]:
+    references: list[dict[str, str]] = []
+    direct_keys = {
+        "unet_name": "unet",
+        "vae_name": "vae",
+        "ckpt_name": "checkpoint",
+        "lora_name": "lora",
+        "clip_name": "clip",
+        "clip_name1": "clip",
+        "clip_name2": "clip",
+        "clip_name3": "clip",
+        "clip_name4": "clip",
+    }
+    for node_id, node in workflow.items():
+        if not isinstance(node, Mapping):
+            continue
+        inputs = node.get("inputs")
+        if not isinstance(inputs, Mapping):
+            continue
+        for key, kind in direct_keys.items():
+            value = inputs.get(key)
+            if isinstance(value, str) and value.strip():
+                references.append(
+                    {"kind": kind, "name": value.strip(), "node_id": str(node_id)}
+                )
+        for key, value in inputs.items():
+            if not str(key).startswith("lora_") or not isinstance(value, Mapping):
+                continue
+            if value.get("on") is not True:
+                continue
+            name = str(value.get("lora") or "").strip()
+            if name:
+                references.append(
+                    {"kind": "lora", "name": name, "node_id": str(node_id)}
+                )
+    unique: dict[tuple[str, str], dict[str, str]] = {}
+    for reference in references:
+        unique.setdefault((reference["kind"], reference["name"]), reference)
+    return list(unique.values())
+
+
+def _resolve_workflow_artifact(
+    comfy_root: Path,
+    *,
+    kind: str,
+    name: str,
+) -> list[Path]:
+    folders = {
+        "unet": ("diffusion_models", "unet"),
+        "vae": ("vae",),
+        "checkpoint": ("checkpoints",),
+        "lora": ("loras",),
+        "clip": ("text_encoders", "clip"),
+    }.get(kind, ())
+    model_root = comfy_root / "models"
+    direct: list[Path] = []
+    normalized = Path(name.replace("\\", "/"))
+    for folder in folders:
+        folder_root = (model_root / folder).resolve()
+        candidate = (folder_root / normalized).resolve()
+        if not candidate.is_relative_to(folder_root):
+            print(
+                "[COMFY_INSTALL][PRODUCTION_IMAGE_DIAGNOSTIC] "
+                "모델 파일 경로 이탈 무시: "
+                f"kind={kind}, name={name!r}, root={folder_root}, candidate={candidate}"
+            )
+            continue
+        if candidate.is_file():
+            direct.append(candidate)
+    if direct:
+        return list(dict.fromkeys(direct))
+    matches: list[Path] = []
+    for folder in folders:
+        root = model_root / folder
+        if not root.is_dir():
+            continue
+        try:
+            matches.extend(path.resolve() for path in root.rglob(normalized.name) if path.is_file())
+        except Exception as exc:
+            print(
+                "[COMFY_INSTALL][PRODUCTION_IMAGE_DIAGNOSTIC] 모델 파일 탐색 실패: "
+                f"root={root}, name={name!r}, error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+    return list(dict.fromkeys(matches))
+
+
+def _workflow_artifacts(
+    comfy_root: Path,
+    workflow: Mapping[str, Any],
+    hash_cache: dict[str, str],
+) -> dict[str, Any]:
+    canonical = json.dumps(
+        workflow,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    result: dict[str, Any] = {
+        "workflow_sha256": hashlib.sha256(canonical).hexdigest(),
+        "files": [],
+    }
+    for reference in _workflow_artifact_references(workflow):
+        matches = _resolve_workflow_artifact(
+            comfy_root,
+            kind=reference["kind"],
+            name=reference["name"],
+        )
+        entry: dict[str, Any] = {**reference, "matches": []}
+        if not matches:
+            entry["error"] = "file not found"
+            print(
+                "[COMFY_INSTALL][PRODUCTION_IMAGE_DIAGNOSTIC] 워크플로 모델 파일 없음: "
+                f"reference={reference}"
+            )
+        for match in matches:
+            cache_key = str(match)
+            try:
+                if cache_key not in hash_cache:
+                    hash_cache[cache_key] = _sha256_file(match)
+                entry["matches"].append(
+                    {
+                        "path": str(match),
+                        "size": match.stat().st_size,
+                        "mtime_ns": match.stat().st_mtime_ns,
+                        "sha256": hash_cache[cache_key],
+                    }
+                )
+            except Exception as exc:
+                print(
+                    "[COMFY_INSTALL][PRODUCTION_IMAGE_DIAGNOSTIC] 모델 파일 해시 실패: "
+                    f"path={match}, error={type(exc).__name__}: {exc}"
+                )
+                traceback.print_exc()
+                entry["matches"].append(
+                    {"path": str(match), "error": f"{type(exc).__name__}: {exc}"}
+                )
+        result["files"].append(entry)
+    return result
+
+
+def _probe_events(text: str) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = []
+    for line_number, line in enumerate(text.splitlines(), start=1):
+        marker = line.find(_PROBE_LOG_PREFIX)
+        if marker < 0:
+            continue
+        payload = line[marker + len(_PROBE_LOG_PREFIX) :].strip()
+        try:
+            event = json.loads(payload)
+            if isinstance(event, dict):
+                events.append(event)
+            else:
+                raise TypeError(f"event is {type(event).__name__}, not dict")
+        except Exception as exc:
+            print(
+                "[COMFY_INSTALL][PRODUCTION_IMAGE_DIAGNOSTIC] probe JSON 파싱 실패: "
+                f"line={line_number}, payload={payload[:2000]!r}, "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            events.append(
+                {
+                    "event": "probe_parse_error",
+                    "line": line_number,
+                    "payload": payload[:2000],
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+            )
+    return events
+
+
+def _probe_summary(events: list[dict[str, Any]]) -> dict[str, Any]:
+    stages: dict[str, dict[str, Any]] = {}
+    model_before: dict[str, Any] | None = None
+    model_after: dict[str, Any] | None = None
+    stable_reuse: dict[str, Any] | None = None
+    first_nonfinite_stage = None
+    errors = []
+    for event in events:
+        event_name = str(event.get("event") or "")
+        stage = str(event.get("stage") or "")
+        if event_name == "model_state" and stage == "model_before_sampler":
+            model_before = event.get("model") if isinstance(event.get("model"), dict) else {}
+        if event_name == "tensor_state" and stage == "latent_after_sampler":
+            model_after = (
+                event.get("model")
+                if isinstance(event.get("model"), dict)
+                else {}
+            )
+        if event_name == "stable_model_reuse":
+            stable_reuse = event
+        if event_name in {"probe_error", "probe_parse_error"}:
+            errors.append(event)
+        stats = event.get("stats")
+        if isinstance(stats, dict) and stage:
+            stages[stage] = {
+                "all_finite": stats.get("all_finite"),
+                "total_nonfinite": stats.get("total_nonfinite"),
+                "tensor_count": stats.get("tensor_count"),
+            }
+            if int(stats.get("total_nonfinite") or 0) > 0 and first_nonfinite_stage is None:
+                first_nonfinite_stage = stage
+    seen = set(stages)
+    if model_before is not None:
+        seen.add("model_before_sampler")
+    missing = sorted(_EXPECTED_PROBE_STAGES - seen)
+    if not any(stage.startswith("vae_output:") for stage in stages):
+        missing.append("vae_output")
+    return {
+        "event_count": len(events),
+        "stages": stages,
+        "missing_stages": missing,
+        "first_nonfinite_stage": first_nonfinite_stage,
+        "probe_errors": errors,
+        "model_before_sampler": model_before,
+        "model_after_sampler": model_after,
+        "stable_model_reuse": stable_reuse,
+    }
 
 
 def _gpu_snapshot() -> dict[str, Any]:
@@ -176,10 +518,10 @@ def _image_metrics(path: Path) -> dict[str, Any]:
         if metrics["mean"] <= 3.0 and metrics["std"] <= 3.0:
             reasons.append("평균·표준편차가 모두 거의 0")
         if (
-            metrics["neighbor_difference"] >= 70.0
+            metrics["neighbor_difference"] >= 10.0
             and metrics["entropy"] >= 7.5
         ):
-            reasons.append("고주파 컬러 노이즈 의심")
+            reasons.append("블록형/고주파 컬러 노이즈 의심")
         metrics["pixel_abnormal"] = bool(reasons)
         metrics["pixel_abnormal_reasons"] = reasons
         return metrics
@@ -324,14 +666,146 @@ def _copy_result_artifacts(
 def _case_summary(case: Mapping[str, Any]) -> dict[str, Any]:
     runs = list(case.get("runs") or [])
     abnormal = [run for run in runs if run.get("abnormal")]
+    first_nonfinite = next(
+        (
+            run
+            for run in runs
+            if (run.get("probe_summary") or {}).get("first_nonfinite_stage")
+        ),
+        None,
+    )
     return {
         "name": case.get("name"),
         "dcw_cwm_smc_enabled": case.get("dcw_cwm_smc_enabled"),
         "model_patcher_refresh": case.get("model_patcher_refresh"),
+        "stable_model_reuse": case.get("stable_model_reuse"),
         "completed": len(runs),
         "abnormal": len(abnormal),
         "first_abnormal": abnormal[0].get("index") if abnormal else None,
         "first_abnormal_reasons": abnormal[0].get("abnormal_reasons") if abnormal else [],
+        "first_nonfinite_run": first_nonfinite.get("index") if first_nonfinite else None,
+        "first_nonfinite_stage": (
+            (first_nonfinite.get("probe_summary") or {}).get("first_nonfinite_stage")
+            if first_nonfinite
+            else None
+        ),
+        "model_reuse": _model_reuse_summary(case),
+    }
+
+
+def _model_reuse_summary(case: Mapping[str, Any]) -> dict[str, Any]:
+    """Summarize warm ModelPatcher transitions without discarding raw events."""
+    runs = list(case.get("runs") or [])
+    measurement_runs = [run for run in runs if run.get("phase") == "measurement"]
+
+    def models(key: str, selected_runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        values = []
+        for run in selected_runs:
+            summary = run.get("probe_summary") or {}
+            value = summary.get(key)
+            if isinstance(value, dict) and value:
+                values.append(value)
+        return values
+
+    def distinct(values: list[Any]) -> list[Any]:
+        output = []
+        seen = set()
+        for value in values:
+            if value is None:
+                continue
+            marker = json.dumps(value, ensure_ascii=True, sort_keys=True)
+            if marker in seen:
+                continue
+            seen.add(marker)
+            output.append(value)
+        return output
+
+    before_models = models("model_before_sampler", measurement_runs)
+    after_models = models("model_after_sampler", measurement_runs)
+    post_alignment_failures = []
+    for run in measurement_runs:
+        after = (run.get("probe_summary") or {}).get("model_after_sampler") or {}
+        if not after:
+            continue
+        if after.get("current_weight_patches_uuid") != after.get("patches_uuid"):
+            post_alignment_failures.append(run.get("index"))
+
+    transition_matches = 0
+    transition_failures = []
+    for previous, current in zip(runs, runs[1:]):
+        previous_after = (
+            (previous.get("probe_summary") or {}).get("model_after_sampler") or {}
+        )
+        current_before = (
+            (current.get("probe_summary") or {}).get("model_before_sampler") or {}
+        )
+        expected = previous_after.get("patches_uuid")
+        observed = current_before.get("current_weight_patches_uuid")
+        if expected is None or observed is None:
+            continue
+        if expected == observed:
+            transition_matches += 1
+        else:
+            transition_failures.append(
+                {
+                    "previous_run": previous.get("index"),
+                    "current_run": current.get("index"),
+                    "expected_previous_patch_uuid": expected,
+                    "observed_current_weight_uuid": observed,
+                }
+            )
+
+    stable_events = []
+    for run in runs:
+        stable = (run.get("probe_summary") or {}).get("stable_model_reuse")
+        if isinstance(stable, dict) and stable:
+            stable_events.append(stable)
+    structure_mismatch_runs = [
+        event.get("run_key")
+        for event in stable_events
+        if event.get("structure_matches") is not True
+    ]
+
+    def weight_hashes(values: list[dict[str, Any]]) -> list[str]:
+        return distinct(
+            [
+                (value.get("patched_weight_samples") or {}).get("weights_sha256")
+                for value in values
+            ]
+        )
+
+    return {
+        "measurement_runs_with_model_before": len(before_models),
+        "measurement_runs_with_model_after": len(after_models),
+        "resident_model_ids": distinct(
+            [value.get("model_id") for value in before_models + after_models]
+        ),
+        "before_patcher_ids": distinct(
+            [value.get("patcher_id") for value in before_models]
+        ),
+        "before_patch_uuids": distinct(
+            [value.get("patches_uuid") for value in before_models]
+        ),
+        "patch_structure_hashes": distinct(
+            [value.get("patch_structure_sha256") for value in before_models]
+        ),
+        "before_weight_state_hashes": weight_hashes(before_models),
+        "after_weight_state_hashes": weight_hashes(after_models),
+        "previous_patch_uuid_transition_matches": transition_matches,
+        "previous_patch_uuid_transition_failures": transition_failures,
+        "post_sampler_uuid_alignment_failures": post_alignment_failures,
+        "stable_event_count": len(stable_events),
+        "stable_cache_hits": sum(event.get("cache_hit") is True for event in stable_events),
+        "stable_structure_mismatch_runs": structure_mismatch_runs,
+        "stable_incoming_patcher_ids": distinct(
+            [(event.get("incoming") or {}).get("patcher_id") for event in stable_events]
+        ),
+        "stable_chosen_patcher_ids": distinct(
+            [(event.get("chosen") or {}).get("patcher_id") for event in stable_events]
+        ),
+        "stable_chosen_patch_uuids": distinct(
+            [(event.get("chosen") or {}).get("patches_uuid") for event in stable_events]
+        ),
     }
 
 
@@ -340,35 +814,95 @@ def _conclusions(cases: list[dict[str, Any]]) -> list[str]:
     baseline = summaries.get("production_patch_on", {})
     refreshed = summaries.get("production_model_refresh", {})
     patch_off = summaries.get("production_patch_off", {})
+    stable = summaries.get("production_stable_model_reuse", {})
     baseline_bad = int(baseline.get("abnormal") or 0) > 0
     refresh_bad = int(refreshed.get("abnormal") or 0) > 0
     off_bad = int(patch_off.get("abnormal") or 0) > 0
-    if baseline_bad and not refresh_bad:
-        return [
-            "기존 실제 경로에서는 깨졌지만 sampler 직전 ModelPatcher Refresh 경로는 안정적이었습니다. 매 생성 새 ModelPatcher wrapper를 만드는 동작이 문제를 회피한다는 강한 증거입니다.",
-            "Refresh는 모델 unload·VRAM 정리·LoRA/DCW 제거 없이 이전 진단 ModelProbe의 clone 경계만 재현합니다.",
+    stable_bad = int(stable.get("abnormal") or 0) > 0
+    state_findings = []
+    for case in cases:
+        state = _model_reuse_summary(case)
+        name = str(case.get("name") or "unknown")
+        if len(state["after_weight_state_hashes"]) > 1:
+            state_findings.append(
+                f"{name}: 고정 LoRA 구성인데 sampler 후 resident weight 표본 상태가 "
+                f"{len(state['after_weight_state_hashes'])}개로 변했습니다."
+            )
+        if state["previous_patch_uuid_transition_failures"]:
+            state_findings.append(
+                f"{name}: 이전 실행 patch UUID와 다음 실행 직전 resident weight UUID가 "
+                f"{len(state['previous_patch_uuid_transition_failures'])}회 불일치했습니다."
+            )
+        if state["post_sampler_uuid_alignment_failures"]:
+            state_findings.append(
+                f"{name}: sampler 후 요청 patch UUID가 resident weight에 정렬되지 않은 실행이 "
+                f"{len(state['post_sampler_uuid_alignment_failures'])}회 있습니다."
+            )
+        if state["stable_structure_mismatch_runs"]:
+            state_findings.append(
+                f"{name}: stable reuse 입력의 논리적 patch 구성이 도중에 바뀌었습니다."
+            )
+    if baseline_bad:
+        recovered = []
+        if not refresh_bad:
+            recovered.append("sampler 직전 Refresh(B)")
+        if not off_bad:
+            recovered.append("DCW/CWM/SMC OFF(C)")
+        if not stable_bad:
+            recovered.append("LoRA 완료 ModelPatcher 고정 재사용(D)")
+        conclusions = [
+            "기존 실제 경로(A)에서 이미지 또는 텐서 이상이 재현되었습니다.",
         ]
-    if baseline_bad and refresh_bad and not off_bad:
+        if recovered:
+            conclusions.append(
+                "A와 동일한 입력에서 안정화된 개입: " + ", ".join(recovered)
+            )
+        else:
+            conclusions.append(
+                "Refresh(B), DCW OFF(C), stable reuse(D) 어느 개입도 이상을 회피하지 못했습니다."
+            )
+        if not stable_bad and refresh_bad:
+            conclusions.append(
+                "D만 ModelPatcher 반복 재구성을 제거해 안정화되었습니다. 동일 LoRA 구성의 patch 완료 ModelPatcher 재사용을 실제 워크플로에 적용할 근거가 됩니다."
+            )
+        if not off_bad and refresh_bad:
+            conclusions.append(
+                "C는 안정적이고 B는 실패했습니다. 단순 wrapper clone보다 DCW/CWM/SMC 경계가 더 강한 원인 후보입니다."
+            )
+        if not refresh_bad:
+            conclusions.append(
+                "B가 안정적이므로 sampler 직전 model.clone() 경계가 회피책으로 유효합니다."
+            )
+        stages = {
+            summary.get("first_nonfinite_stage")
+            for summary in summaries.values()
+            if summary.get("first_nonfinite_stage")
+        }
+        if stages:
+            conclusions.append(
+                "계측에서 최초로 확인된 비정상 텐서 단계: "
+                + ", ".join(sorted(str(stage) for stage in stages))
+            )
+        return conclusions + state_findings
+
+    intervention_failures = []
+    if refresh_bad:
+        intervention_failures.append("Refresh(B)")
+    if off_bad:
+        intervention_failures.append("DCW OFF(C)")
+    if stable_bad:
+        intervention_failures.append("stable reuse(D)")
+    if intervention_failures:
         return [
-            "기존 경로와 ModelPatcher Refresh 경로는 모두 깨졌지만 DCW/CWM OFF는 안정적이었습니다. 단순 wrapper 재생성보다 DCW/CWM 연산 경로가 강한 원인 후보입니다.",
-        ]
-    if baseline_bad and refresh_bad and off_bad:
-        return [
-            "세 경로 모두 깨졌습니다. ModelPatcher wrapper 재생성과 DCW/CWM 비활성화로 회피되지 않으므로 그보다 앞선 모델 weight patch·상주 상태·conditioning 경로를 우선 확인해야 합니다.",
-        ]
-    if not baseline_bad and refresh_bad:
-        return [
-            "ModelPatcher Refresh 경로에서만 이상이 검출되었습니다. clone 경계가 해결책이라는 가설과 반대이므로 해당 케이스 로그와 제출 워크플로를 우선 확인해야 합니다.",
-        ]
-    if not baseline_bad and not refresh_bad and off_bad:
-        return [
-            "DCW/CWM OFF 경로에서만 이상이 검출되었습니다. DCW/CWM 또는 ModelPatcher warm 재사용이 원인이라는 가설과 반대 결과입니다.",
-        ]
+            "기존 실제 경로(A)는 정상이지만 다음 개입 케이스에서만 이상이 검출되었습니다: "
+            + ", ".join(intervention_failures),
+            "해당 개입을 해결책으로 적용하면 안 됩니다. 케이스 로그와 tensor telemetry를 우선 확인해야 합니다.",
+        ] + state_findings
     return [
-        "자동 검출 범위인 검정/고주파 컬러 노이즈/이미지 디코드 실패/비정상값 로그에서는 이상이 발견되지 않았습니다.",
-        "프롬프트 무시·미완성 전조는 픽셀 통계만으로 단정하지 않습니다. images/의 같은 번호 기존/Refresh/DCW OFF 이미지와 실제 prompt JSON을 직접 대조해야 합니다.",
-        "이 결과는 별도 진단 그래프가 아니라 사용자가 실제로 쓰는 관리 Comfy와 AssetMode 생성 경로에서 얻었습니다.",
-    ]
+        "A/B/C/D 모두 검정·컬러 노이즈·디코드 실패·NaN/Inf 계측에서 이상이 발견되지 않았습니다.",
+        "프롬프트 무시·미완성 전조는 images/의 같은 번호 A/B/C/D 이미지와 실제 prompt JSON을 직접 대조해야 합니다.",
+        "이 결과는 사용자가 실제로 쓰는 관리 Comfy와 AssetMode 생성 경로에서 얻었습니다.",
+    ] + state_findings
 
 
 def _write_report(
@@ -385,12 +919,14 @@ def _write_report(
         "",
         f"- 진단 ID: `{diagnostic_id}`",
         "- 실행 경로: 프로그램 작업 큐 → AssetMode.generate → 설치된 전체 에셋 워크플로 → 관리 Comfy",
-        "- 사용하지 않은 것: 독립 E2E Comfy, 진단 ModelProbe/계측 wrapper, sampler/VAE 축소 그래프",
+        "- 사용하지 않은 것: 독립 E2E Comfy, sampler/VAE 대체 구현, 축소 그래프",
         "- 사용자 선택 LoRA/캐릭터·얼굴·그림체 LoRA/Face ID/Style/Pose/Hires/Detailer: 모두 OFF",
         "- 팩 워크플로에 고정된 모델·LoRA 노드는 실제 배포 경로 보존을 위해 제거하지 않음",
-        "- 비교: 동일한 warmup 1개+측정 15개 프롬프트와 동일 seed로 기존 경로 / sampler 직전 ModelPatcher Refresh / DCW/CWM OFF",
+        "- 비교: 동일한 warmup 1개+측정 15개 프롬프트와 동일 seed로 A 실제 경로 / B sampler 직전 Refresh / C DCW OFF / D LoRA 완료 ModelPatcher 고정 재사용",
         "- Refresh는 model.clone() wrapper만 새로 만들며 모델 unload·VRAM 정리·weight patch 삭제를 하지 않음",
-        "- 자동 판정 범위: 검정/고주파 컬러 노이즈/디코드 실패/NaN·Inf 로그. 프롬프트 무시·미완성은 이미지와 prompt JSON 직접 대조",
+        "- D는 LoRA 적용 완료 지점의 첫 ModelPatcher를 같은 케이스 안에서 재사용하고 DCW와 sampler는 매 요청 실행",
+        "- 모든 케이스에서 conditioning / sampler 입력·출력 latent / VAE 출력의 NaN·Inf와 ModelPatcher UUID·상주 UUID·patch·backup 상태를 기록",
+        "- 자동 판정 범위: 검정/블록형·고주파 컬러 노이즈/디코드 실패/NaN·Inf/계측 누락. 프롬프트 무시·미완성은 이미지와 prompt JSON 직접 대조",
         "",
         "## 결론",
         "",
@@ -401,8 +937,8 @@ def _write_report(
         [
             "## 케이스 결과",
             "",
-            "| 케이스 | DCW/CWM/SMC | ModelPatcher Refresh | 완료 | 이상 | 최초 이상 |",
-            "|---|---:|---:|---:|---:|---:|",
+            "| 케이스 | DCW/CWM/SMC | Refresh | Stable reuse | 완료 | 이상 | 최초 이상 | 최초 non-finite 단계 |",
+            "|---|---:|---:|---:|---:|---:|---:|---|",
         ]
     )
     for case in cases:
@@ -410,20 +946,75 @@ def _write_report(
         lines.append(
             f"| {summary['name']} | {summary['dcw_cwm_smc_enabled']} | "
             f"{summary['model_patcher_refresh']} | "
+            f"{summary['stable_model_reuse']} | "
             f"{summary['completed']} | {summary['abnormal']} | "
-            f"{summary['first_abnormal'] or '-'} |"
+            f"{summary['first_abnormal'] or '-'} | "
+            f"{summary['first_nonfinite_stage'] or '-'} |"
         )
+    lines.extend(
+        [
+            "",
+            "## ModelPatcher 반복 상태",
+            "",
+            "고정된 모델·LoRA 구성에서 wrapper UUID가 매회 바뀌더라도 resident weight의 sampler 후 표본 상태와 UUID 전환은 일관되어야 합니다.",
+            "",
+            "| 케이스 | resident model | wrapper | patch UUID | patch 구조 | sampler 후 weight 상태 | 이전 patch→다음 warm weight | sampler 후 UUID 불일치 | D cache hit | D 선택 patcher |",
+            "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+        ]
+    )
+    for case in cases:
+        state = _model_reuse_summary(case)
+        transitions = (
+            f"{state['previous_patch_uuid_transition_matches']} 일치 / "
+            f"{len(state['previous_patch_uuid_transition_failures'])} 불일치"
+        )
+        lines.append(
+            f"| {case.get('name')} | {len(state['resident_model_ids'])} | "
+            f"{len(state['before_patcher_ids'])} | "
+            f"{len(state['before_patch_uuids'])} | "
+            f"{len(state['patch_structure_hashes'])} | "
+            f"{len(state['after_weight_state_hashes'])} | {transitions} | "
+            f"{len(state['post_sampler_uuid_alignment_failures'])} | "
+            f"{state['stable_cache_hits']} / {state['stable_event_count']} | "
+            f"{len(state['stable_chosen_patcher_ids'])} |"
+        )
+        if state["previous_patch_uuid_transition_failures"]:
+            lines.extend(
+                [
+                    "",
+                    f"- `{case.get('name')}` UUID 전환 불일치: `"
+                    + json.dumps(
+                        state["previous_patch_uuid_transition_failures"],
+                        ensure_ascii=False,
+                    )
+                    + "`",
+                ]
+            )
+        if state["stable_structure_mismatch_runs"]:
+            lines.extend(
+                [
+                    "",
+                    f"- `{case.get('name')}` stable patch 구조 불일치 실행: "
+                    + ", ".join(
+                        f"`{value}`"
+                        for value in state["stable_structure_mismatch_runs"]
+                    ),
+                ]
+            )
     for case in cases:
         lines.extend(["", f"### {case['name']}", ""])
-        lines.append("| # | phase | seed | 초 | 평균 | 표준편차 | 검정비율 | 인접차 | 로그 경고 | 판정 |")
-        lines.append("|---:|---|---:|---:|---:|---:|---:|---:|---|---|")
+        lines.append("| # | phase | seed | 초 | 평균 | 표준편차 | 검정비율 | 인접차 | 최초 non-finite | probe 누락 | 로그 경고 | 판정 |")
+        lines.append("|---:|---|---:|---:|---:|---:|---:|---:|---|---|---|---|")
         for run in case.get("runs", []):
             metrics = run.get("image_metrics") or {}
+            probe = run.get("probe_summary") or {}
             lines.append(
                 f"| {run.get('index')} | {run.get('phase')} | {run.get('seed')} | "
                 f"{run.get('duration_seconds')} | {metrics.get('mean', '-')} | "
                 f"{metrics.get('std', '-')} | {metrics.get('black_fraction', '-')} | "
                 f"{metrics.get('neighbor_difference', '-')} | "
+                f"{probe.get('first_nonfinite_stage') or '-'} | "
+                f"{', '.join(probe.get('missing_stages') or []) or '-'} | "
                 f"{', '.join(run.get('log_findings') or []) or '-'} | "
                 f"{'; '.join(run.get('abnormal_reasons') or []) or '정상'} |"
             )
@@ -437,9 +1028,10 @@ def _write_report(
             "",
             "- `images/`: 실제 프로그램이 저장한 결과 이미지와 대응 프롬프트",
             "- `logs/`: 케이스별 관리 Comfy 시작 로그와 실행별 원본 로그 조각",
-            "- `workflows/`: 세 케이스 warmup에서 실제 Comfy에 제출한 최종 API 워크플로",
-            "- `runs.json`: GPU 전후 상태, 이미지 수치, 유효 DCW 값, 큐 결과",
-            "- `environment.json`: 실제 관리 Comfy 실행 명령·프로필·GPU 환경",
+            "- `telemetry/`: 실행별 구조화된 ModelPatcher·conditioning·latent·VAE 계측 JSON",
+            "- `workflows/`: 네 케이스 warmup에서 실제 Comfy에 제출한 최종 API 워크플로",
+            "- `runs.json`: GPU 전후 상태, 이미지 수치, 유효 개입 값, 구조화 계측 요약",
+            "- `environment.json`: 실행 명령·GPU·Python 패키지·custom-node Git revision·모델/LoRA SHA256",
         ]
     )
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -478,18 +1070,23 @@ def run_production_image_diagnostic(
     generated_root = (project_root / "asset" / generated_character).resolve()
     errors: list[str] = []
     cases: list[dict[str, Any]] = []
+    artifact_hash_cache: dict[str, str] = {}
     environment: dict[str, Any] = {
         "platform": platform.platform(),
         "python": platform.python_version(),
         "project_head": _safe_git_head(project_root),
         "comfy_head": _safe_git_head(comfy_root),
+        "custom_node_revisions": _custom_node_revisions(comfy_root),
         "gpu_at_start": _gpu_snapshot(),
         "production_status_at_start": {},
+        "python_packages": {},
+        "workflow_artifacts": {},
     }
     started = time.monotonic()
     try:
         initial = production_call({"action": "status"})
         environment["production_status_at_start"] = initial
+        environment["python_packages"] = _python_packages(initial)
         if not initial.get("queue_idle"):
             raise RuntimeError(f"진단 시작 전에 프로그램 작업 큐가 비어 있지 않습니다: {initial}")
         if not initial.get("runtime_running"):
@@ -501,13 +1098,19 @@ def run_production_image_diagnostic(
             )
 
         plans = (
-            ("production_patch_on", True, False),
-            ("production_model_refresh", True, True),
-            ("production_patch_off", False, False),
+            ("production_patch_on", True, False, False),
+            ("production_model_refresh", True, True, False),
+            ("production_patch_off", False, False, False),
+            ("production_stable_model_reuse", True, False, True),
         )
         total_runs = len(plans) * (1 + len(MEASUREMENT_VARIANTS))
         completed_runs = 0
-        for case_name, patch_enabled, model_patcher_refresh in plans:
+        for (
+            case_name,
+            patch_enabled,
+            model_patcher_refresh,
+            stable_model_reuse,
+        ) in plans:
             restart = _restart_managed_runtime(
                 production_call=production_call,
                 pause_managed_comfy=pause_managed_comfy,
@@ -520,6 +1123,7 @@ def run_production_image_diagnostic(
                 "name": case_name,
                 "dcw_cwm_smc_enabled": patch_enabled,
                 "model_patcher_refresh": model_patcher_refresh,
+                "stable_model_reuse": stable_model_reuse,
                 "restart": restart,
                 "runs": [],
             }
@@ -567,6 +1171,7 @@ def run_production_image_diagnostic(
                         "variant": variant,
                         "dcw_cwm_smc_enabled": patch_enabled,
                         "model_patcher_refresh": model_patcher_refresh,
+                        "stable_model_reuse": stable_model_reuse,
                     }
                 )
                 duration = round(time.monotonic() - run_started, 3)
@@ -587,6 +1192,13 @@ def run_production_image_diagnostic(
                         report_dir / "workflows" / f"{case_name}.json",
                         workflow_snapshot,
                     )
+                    environment["workflow_artifacts"][case_name] = (
+                        _workflow_artifacts(
+                            comfy_root,
+                            workflow_snapshot,
+                            artifact_hash_cache,
+                        )
+                    )
                 image_path, prompt_path = _copy_result_artifacts(
                     result=result,
                     report_dir=report_dir,
@@ -599,8 +1211,35 @@ def run_production_image_diagnostic(
                 log_path.parent.mkdir(parents=True, exist_ok=True)
                 log_path.write_text(comfy_log, encoding="utf-8")
                 findings = _log_findings(comfy_log)
+                probe_events = _probe_events(comfy_log)
+                probe_summary = _probe_summary(probe_events)
+                _write_json(
+                    report_dir / "telemetry" / case_name / f"{run_label}.json",
+                    {
+                        "case": case_name,
+                        "phase": phase,
+                        "index": index,
+                        "seed": seed,
+                        "events": probe_events,
+                        "summary": probe_summary,
+                    },
+                )
                 reasons = list(metrics.get("pixel_abnormal_reasons") or [])
                 reasons.extend(f"Comfy 로그: {finding}" for finding in findings)
+                if probe_summary.get("first_nonfinite_stage"):
+                    reasons.append(
+                        "최초 non-finite 텐서: "
+                        f"{probe_summary['first_nonfinite_stage']}"
+                    )
+                if probe_summary.get("probe_errors"):
+                    reasons.append(
+                        f"probe 오류 {len(probe_summary['probe_errors'])}개"
+                    )
+                if probe_summary.get("missing_stages"):
+                    reasons.append(
+                        "probe 단계 누락: "
+                        + ", ".join(probe_summary["missing_stages"])
+                    )
                 run = {
                     "index": index,
                     "phase": phase,
@@ -615,6 +1254,8 @@ def run_production_image_diagnostic(
                     ),
                     "image_metrics": metrics,
                     "log_findings": findings,
+                    "probe_events": probe_events,
+                    "probe_summary": probe_summary,
                     "abnormal": bool(reasons),
                     "abnormal_reasons": reasons,
                     "gpu_before": before_gpu,
@@ -624,6 +1265,12 @@ def run_production_image_diagnostic(
                     "diagnostic_model_patch": result.get("diagnostic_model_patch"),
                     "diagnostic_model_patcher_refresh": result.get(
                         "diagnostic_model_patcher_refresh"
+                    ),
+                    "diagnostic_stable_model_reuse": result.get(
+                        "diagnostic_stable_model_reuse"
+                    ),
+                    "diagnostic_runtime_probes": result.get(
+                        "diagnostic_runtime_probes"
                     ),
                 }
                 case["runs"].append(run)

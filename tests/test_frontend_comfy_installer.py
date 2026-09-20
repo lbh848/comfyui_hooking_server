@@ -94,7 +94,11 @@ def test_frontend_uses_dedicated_installer_apis_and_does_not_persist_keys() -> N
 def test_image_diagnostic_is_one_click_and_downloads_zip() -> None:
     assert "async function comfyInstallerStartImageDiagnostic()" in FRONTEND
     assert "function comfyInstallerDownloadImageDiagnostic()" in FRONTEND
-    assert "현재/HighVRAM/NO_VRAM을 반복 비교" in FRONTEND
+    assert "A 기존 경로" in FRONTEND
+    assert "B sampler 직전 ModelPatcher Refresh" in FRONTEND
+    assert "C DCW/CWM OFF" in FRONTEND
+    assert "D LoRA 완료 ModelPatcher 고정 재사용" in FRONTEND
+    assert "conditioning·sampler latent·VAE 출력의 NaN/Inf" in FRONTEND
     assert "data.operation === 'image_diagnostic'" in FRONTEND
     assert "result.incomplete" in FRONTEND
     assert "/archive`" in FRONTEND

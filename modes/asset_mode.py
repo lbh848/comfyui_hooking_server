@@ -1587,6 +1587,281 @@ class AssetMode:
         )
         return inserted
 
+    @staticmethod
+    def _apply_diagnostic_stable_model_reuse(
+        workflow: dict,
+        enabled: Optional[bool],
+        session_key: str,
+        run_key: str,
+    ) -> list[dict]:
+        """Pin the LoRA-complete model immediately before DCW for case D.
+
+        The controlled diagnostic keeps the logical LoRA configuration fixed.
+        This node lets repeated upstream reconstruction continue, but returns
+        the first resulting ModelPatcher so case D changes only that reuse
+        boundary.  DCW and sampler execution remain fresh on every prompt.
+        """
+        if enabled is None or not enabled:
+            return []
+        if not session_key or not run_key:
+            raise ValueError(
+                "Stable ModelPatcher 진단 session_key/run_key가 비어 있습니다: "
+                f"session_key={session_key!r}, run_key={run_key!r}"
+            )
+
+        numeric_ids = []
+        for node_id in workflow:
+            try:
+                numeric_ids.append(int(str(node_id)))
+            except (TypeError, ValueError):
+                continue
+        next_id = max(numeric_ids, default=0) + 1
+        inserted: list[dict] = []
+        for node_id, node in list(workflow.items()):
+            if not isinstance(node, dict) or node.get("class_type") != "DCWModelPatch":
+                continue
+            inputs = node.get("inputs")
+            if not isinstance(inputs, dict):
+                print(
+                    "[ASSET][IMAGE_DIAGNOSTIC] Stable reuse 대상 DCW 입력 형식 오류: "
+                    f"node={node_id}, inputs={inputs!r}"
+                )
+                continue
+            source_model = inputs.get("model")
+            if not (
+                isinstance(source_model, (list, tuple))
+                and len(source_model) == 2
+            ):
+                print(
+                    "[ASSET][IMAGE_DIAGNOSTIC] Stable reuse MODEL 연결 형식 오류: "
+                    f"node={node_id}, model={source_model!r}"
+                )
+                continue
+            reuse_id = str(next_id)
+            next_id += 1
+            node_session_key = f"{session_key}:dcw:{node_id}"
+            workflow[reuse_id] = {
+                "class_type": "SoyaDiagnosticStableModelReuse_mdsoya",
+                "inputs": {
+                    "model": list(source_model),
+                    "session_key": node_session_key,
+                    "run_key": run_key,
+                },
+                "_meta": {"title": "Image Diagnostic Stable Model Reuse"},
+            }
+            inputs["model"] = [reuse_id, 0]
+            inserted.append(
+                {
+                    "dcw_node_id": str(node_id),
+                    "source_model": list(source_model),
+                    "reuse_node_id": reuse_id,
+                    "session_key": node_session_key,
+                }
+            )
+
+        if not inserted:
+            raise RuntimeError(
+                "Stable ModelPatcher reuse를 삽입할 DCWModelPatch MODEL 연결을 "
+                "찾지 못했습니다."
+            )
+        print(
+            "[ASSET][IMAGE_DIAGNOSTIC] LoRA 완료 ModelPatcher 고정 재사용 삽입: "
+            f"run={run_key}, nodes={inserted}"
+        )
+        return inserted
+
+    @staticmethod
+    def _apply_diagnostic_runtime_probes(
+        workflow: dict,
+        run_key: str,
+    ) -> list[dict]:
+        """Add pass-through state probes without replacing sampler/VAE code."""
+        if not run_key:
+            raise ValueError("이미지 진단 runtime probe run_key가 비어 있습니다.")
+
+        numeric_ids = []
+        for node_id in workflow:
+            try:
+                numeric_ids.append(int(str(node_id)))
+            except (TypeError, ValueError):
+                continue
+        next_id = max(numeric_ids, default=0) + 1
+
+        def allocate_id() -> str:
+            nonlocal next_id
+            allocated = str(next_id)
+            next_id += 1
+            return allocated
+
+        inserted: list[dict] = []
+        sampler_types = {"KSampler", "KSamplerAdvanced"}
+        samplers: list[tuple[str, dict, dict]] = []
+        for node_id, node in list(workflow.items()):
+            if not isinstance(node, dict) or node.get("class_type") not in sampler_types:
+                continue
+            inputs = node.get("inputs")
+            if isinstance(inputs, dict):
+                samplers.append((str(node_id), node, inputs))
+            else:
+                print(
+                    "[ASSET][IMAGE_DIAGNOSTIC] runtime probe sampler 입력 오류: "
+                    f"node={node_id}, inputs={inputs!r}"
+                )
+
+        if not samplers:
+            raise RuntimeError(
+                "runtime probe를 삽입할 KSampler/KSamplerAdvanced를 찾지 못했습니다."
+            )
+
+        for sampler_id, sampler, inputs in samplers:
+            model_source = inputs.get("model")
+            positive_source = inputs.get("positive")
+            negative_source = inputs.get("negative")
+            latent_source = inputs.get("latent_image")
+            required_links = {
+                "model": model_source,
+                "positive": positive_source,
+                "negative": negative_source,
+                "latent_image": latent_source,
+            }
+            invalid = {
+                key: value
+                for key, value in required_links.items()
+                if not (
+                    isinstance(value, (list, tuple))
+                    and len(value) == 2
+                )
+            }
+            if invalid:
+                raise RuntimeError(
+                    "runtime probe sampler 연결 형식 오류: "
+                    f"node={sampler_id}, invalid={invalid}"
+                )
+
+            model_probe_id = allocate_id()
+            workflow[model_probe_id] = {
+                "class_type": "SoyaDiagnosticModelProbe_mdsoya",
+                "inputs": {
+                    "model": list(model_source),
+                    "stage": "model_before_sampler",
+                    "run_key": run_key,
+                },
+                "_meta": {"title": "Image Diagnostic Model State"},
+            }
+            inputs["model"] = [model_probe_id, 0]
+
+            for input_name, source, stage in (
+                ("positive", positive_source, "conditioning_positive"),
+                ("negative", negative_source, "conditioning_negative"),
+            ):
+                probe_id = allocate_id()
+                workflow[probe_id] = {
+                    "class_type": "SoyaDiagnosticConditioningProbe_mdsoya",
+                    "inputs": {
+                        "conditioning": list(source),
+                        "stage": stage,
+                        "run_key": run_key,
+                    },
+                    "_meta": {"title": f"Image Diagnostic {stage}"},
+                }
+                inputs[input_name] = [probe_id, 0]
+
+            latent_before_id = allocate_id()
+            workflow[latent_before_id] = {
+                "class_type": "SoyaDiagnosticLatentProbe_mdsoya",
+                "inputs": {
+                    "latent": list(latent_source),
+                    "model": [model_probe_id, 0],
+                    "stage": "latent_before_sampler",
+                    "run_key": run_key,
+                },
+                "_meta": {"title": "Image Diagnostic Latent Before Sampler"},
+            }
+            inputs["latent_image"] = [latent_before_id, 0]
+
+            latent_after_id = allocate_id()
+            workflow[latent_after_id] = {
+                "class_type": "SoyaDiagnosticLatentProbe_mdsoya",
+                "inputs": {
+                    "latent": [sampler_id, 0],
+                    "model": [model_probe_id, 0],
+                    "stage": "latent_after_sampler",
+                    "run_key": run_key,
+                },
+                "_meta": {"title": "Image Diagnostic Latent After Sampler"},
+            }
+            for consumer_id, consumer in list(workflow.items()):
+                if str(consumer_id) == latent_after_id or not isinstance(consumer, dict):
+                    continue
+                consumer_inputs = consumer.get("inputs")
+                if not isinstance(consumer_inputs, dict):
+                    continue
+                for key, value in list(consumer_inputs.items()):
+                    if (
+                        isinstance(value, (list, tuple))
+                        and len(value) == 2
+                        and str(value[0]) == sampler_id
+                        and value[1] == 0
+                    ):
+                        consumer_inputs[key] = [latent_after_id, 0]
+
+            inserted.append(
+                {
+                    "sampler_node_id": sampler_id,
+                    "sampler_class_type": str(sampler.get("class_type")),
+                    "model_probe_id": model_probe_id,
+                    "latent_before_probe_id": latent_before_id,
+                    "latent_after_probe_id": latent_after_id,
+                }
+            )
+
+        vae_types = {"VAEDecode", "VAEDecodeTiled"}
+        vae_nodes = [
+            (str(node_id), node)
+            for node_id, node in list(workflow.items())
+            if isinstance(node, dict) and node.get("class_type") in vae_types
+        ]
+        if not vae_nodes:
+            raise RuntimeError("runtime probe를 삽입할 VAEDecode 노드를 찾지 못했습니다.")
+        for vae_id, vae_node in vae_nodes:
+            image_probe_id = allocate_id()
+            workflow[image_probe_id] = {
+                "class_type": "SoyaDiagnosticImageProbe_mdsoya",
+                "inputs": {
+                    "image": [vae_id, 0],
+                    "stage": f"vae_output:{vae_id}",
+                    "run_key": run_key,
+                },
+                "_meta": {"title": "Image Diagnostic VAE Output"},
+            }
+            for consumer_id, consumer in list(workflow.items()):
+                if str(consumer_id) == image_probe_id or not isinstance(consumer, dict):
+                    continue
+                consumer_inputs = consumer.get("inputs")
+                if not isinstance(consumer_inputs, dict):
+                    continue
+                for key, value in list(consumer_inputs.items()):
+                    if (
+                        isinstance(value, (list, tuple))
+                        and len(value) == 2
+                        and str(value[0]) == vae_id
+                        and value[1] == 0
+                    ):
+                        consumer_inputs[key] = [image_probe_id, 0]
+            inserted.append(
+                {
+                    "vae_node_id": vae_id,
+                    "vae_class_type": str(vae_node.get("class_type")),
+                    "image_probe_id": image_probe_id,
+                }
+            )
+
+        print(
+            "[ASSET][IMAGE_DIAGNOSTIC] runtime state probe 삽입 완료: "
+            f"run={run_key}, nodes={inserted}"
+        )
+        return inserted
+
     async def generate(
         self,
         character: str,
@@ -1629,6 +1904,9 @@ class AssetMode:
         modal_input_paths: Optional[list[str]] = None,
         diagnostic_dcw_cwm_smc_enabled: Optional[bool] = None,
         diagnostic_model_patcher_refresh: Optional[bool] = None,
+        diagnostic_stable_model_reuse: Optional[bool] = None,
+        diagnostic_session_key: str = "",
+        diagnostic_run_key: str = "",
         diagnostic_capture_workflow: bool = False,
     ) -> dict:
         async with self._lock:
@@ -1651,6 +1929,9 @@ class AssetMode:
                     modal_input_paths,
                     diagnostic_dcw_cwm_smc_enabled,
                     diagnostic_model_patcher_refresh,
+                    diagnostic_stable_model_reuse,
+                    diagnostic_session_key,
+                    diagnostic_run_key,
                     diagnostic_capture_workflow,
                 )
             finally:
@@ -1698,6 +1979,9 @@ class AssetMode:
         modal_input_paths: Optional[list[str]] = None,
         diagnostic_dcw_cwm_smc_enabled: Optional[bool] = None,
         diagnostic_model_patcher_refresh: Optional[bool] = None,
+        diagnostic_stable_model_reuse: Optional[bool] = None,
+        diagnostic_session_key: str = "",
+        diagnostic_run_key: str = "",
         diagnostic_capture_workflow: bool = False,
     ) -> dict:
         if storage_group not in ("", "automatch_defaults", "character_maker"):
@@ -1835,9 +2119,23 @@ class AssetMode:
                 workflow,
                 diagnostic_dcw_cwm_smc_enabled,
             )
+            diagnostic_stable_reuse = self._apply_diagnostic_stable_model_reuse(
+                workflow,
+                diagnostic_stable_model_reuse,
+                diagnostic_session_key,
+                diagnostic_run_key,
+            )
             diagnostic_model_refresh = self._apply_diagnostic_model_patcher_refresh(
                 workflow,
                 diagnostic_model_patcher_refresh,
+            )
+            diagnostic_runtime_probes = (
+                self._apply_diagnostic_runtime_probes(
+                    workflow,
+                    diagnostic_run_key,
+                )
+                if diagnostic_run_key
+                else []
             )
 
             final_positive = positive
@@ -1891,6 +2189,14 @@ class AssetMode:
                 if diagnostic_model_patcher_refresh is not None:
                     failed_result["diagnostic_model_patcher_refresh"] = (
                         diagnostic_model_refresh
+                    )
+                if diagnostic_stable_model_reuse is not None:
+                    failed_result["diagnostic_stable_model_reuse"] = (
+                        diagnostic_stable_reuse
+                    )
+                if diagnostic_run_key:
+                    failed_result["diagnostic_runtime_probes"] = (
+                        diagnostic_runtime_probes
                     )
                 return failed_result
 
@@ -1992,6 +2298,12 @@ class AssetMode:
                 result["diagnostic_model_patcher_refresh"] = (
                     diagnostic_model_refresh
                 )
+            if diagnostic_stable_model_reuse is not None:
+                result["diagnostic_stable_model_reuse"] = (
+                    diagnostic_stable_reuse
+                )
+            if diagnostic_run_key:
+                result["diagnostic_runtime_probes"] = diagnostic_runtime_probes
             if diagnostic_capture_workflow:
                 # Evidence only: return the exact API graph already submitted.
                 # This does not alter, clone, or instrument the graph itself.

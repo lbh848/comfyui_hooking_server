@@ -22125,12 +22125,14 @@ async def _production_image_diagnostic_async(
     variant = str(request.get("variant") or "").strip()
     patch_enabled = request.get("dcw_cwm_smc_enabled")
     model_patcher_refresh = request.get("model_patcher_refresh")
+    stable_model_reuse = request.get("stable_model_reuse")
     if not character or not re.fullmatch(r"[A-Za-z0-9_-]{1,96}", character):
         raise ValueError(f"진단 임시 캐릭터 이름 형식 오류: {character!r}")
     if case_name not in {
         "production_patch_on",
         "production_model_refresh",
         "production_patch_off",
+        "production_stable_model_reuse",
     }:
         raise ValueError(f"진단 케이스 이름 오류: {case_name!r}")
     if phase not in {"warmup", "measurement"}:
@@ -22146,6 +22148,11 @@ async def _production_image_diagnostic_async(
         raise TypeError(
             "진단 ModelPatcher Refresh 상태는 bool이어야 합니다: "
             f"value={model_patcher_refresh!r}"
+        )
+    if not isinstance(stable_model_reuse, bool):
+        raise TypeError(
+            "진단 Stable ModelPatcher reuse 상태는 bool이어야 합니다: "
+            f"value={stable_model_reuse!r}"
         )
     try:
         seed = int(request.get("seed"))
@@ -22185,6 +22192,10 @@ async def _production_image_diagnostic_async(
         img_h=1024,
     )
     expression = "warmup" if phase == "warmup" else f"run-{index:02d}"
+    diagnostic_id = str(request.get("diagnostic_id") or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,96}", diagnostic_id):
+        raise ValueError(f"진단 ID 형식 오류: {diagnostic_id!r}")
+    diagnostic_run_key = f"{diagnostic_id}:{case_name}:{phase}:{index}"
     body = {
         "character": character,
         "appearance": case_name,
@@ -22206,6 +22217,9 @@ async def _production_image_diagnostic_async(
         "storage_session": "",
         "diagnostic_dcw_cwm_smc_enabled": patch_enabled,
         "diagnostic_model_patcher_refresh": model_patcher_refresh,
+        "diagnostic_stable_model_reuse": stable_model_reuse,
+        "diagnostic_session_key": f"{diagnostic_id}:{case_name}",
+        "diagnostic_run_key": diagnostic_run_key,
         "diagnostic_capture_workflow": phase == "warmup",
     }
     log_start = int(runtime_status.get("log_seq") or 0)
