@@ -13,6 +13,8 @@ from PIL import Image
 
 _RUNS: dict[str, dict] = {}
 _LOCK = threading.RLock()
+_ACTIVE_CONTEXT = {"run_id": "", "trace_call": -1}
+_MODEL_PROBE_GENERATION = 0
 
 
 def _tensor_items(value):
@@ -241,8 +243,7 @@ class LBDiagnosticModelProbe:
         return {
             "required": {
                 "model": ("MODEL",),
-                "run_id": ("STRING", {"default": ""}),
-                "trace_call": ("INT", {"default": -1, "min": -1, "max": 10000}),
+                "clone_nonce": ("STRING", {"default": "warm-reuse"}),
             }
         }
 
@@ -250,18 +251,30 @@ class LBDiagnosticModelProbe:
     FUNCTION = "probe"
     CATEGORY = "diagnostic"
 
-    @classmethod
-    def IS_CHANGED(cls, model, run_id, trace_call):
-        return run_id
-
-    def probe(self, model, run_id, trace_call):
+    def probe(self, model, clone_nonce):
+        global _MODEL_PROBE_GENERATION
+        run_id = "model-probe-setup"
         try:
             patched = model.clone()
             patched.model_options = {**patched.model_options}
             old_wrapper = patched.model_options.get("model_function_wrapper")
-            state = {"call": 0}
+            state = {"run_id": None, "call": 0}
+            with _LOCK:
+                _MODEL_PROBE_GENERATION += 1
+                probe_generation = _MODEL_PROBE_GENERATION
 
             def wrapper(apply_model, args):
+                with _LOCK:
+                    active = dict(_ACTIVE_CONTEXT)
+                active_run_id = str(active.get("run_id") or "")
+                if not active_run_id:
+                    raise RuntimeError(
+                        "sampler 실행 전 진단 회차 context가 설정되지 않았습니다."
+                    )
+                trace_call = int(active.get("trace_call", -1))
+                if state["run_id"] != active_run_id:
+                    state["run_id"] = active_run_id
+                    state["call"] = 0
                 call_index = state["call"]
                 state["call"] += 1
                 handles = []
@@ -274,10 +287,10 @@ class LBDiagnosticModelProbe:
                         else:
                             print(
                                 "[LB_IMAGE_DIAGNOSTIC] 정밀 추적 생략: "
-                                f"run_id={run_id}, call={call_index}, diffusion_model 없음"
+                                f"run_id={active_run_id}, call={call_index}, diffusion_model 없음"
                             )
                     except Exception as exc:
-                        _record_error(run_id, "deep_hook_install", exc)
+                        _record_error(active_run_id, "deep_hook_install", exc)
                 try:
                     input_value = args.get("input") if isinstance(args, dict) else args
                     timestep = args.get("timestep") if isinstance(args, dict) else None
@@ -309,20 +322,21 @@ class LBDiagnosticModelProbe:
                             if len(transitions) >= 64:
                                 break
                     with _LOCK:
-                        current = _run_record(run_id)
+                        current = _run_record(active_run_id)
+                        current["model_probe_generation"] = probe_generation
                         current["model_calls"].append(record)
                         if transitions:
                             current["deep_transitions"].extend(transitions)
                     return output
                 except Exception as exc:
-                    _record_error(run_id, f"model_call_{call_index}", exc)
+                    _record_error(active_run_id, f"model_call_{call_index}", exc)
                     raise
                 finally:
                     for handle in handles:
                         try:
                             handle.remove()
                         except Exception as exc:
-                            _record_error(run_id, "deep_hook_remove", exc)
+                            _record_error(active_run_id, "deep_hook_remove", exc)
 
             patched.set_model_unet_function_wrapper(wrapper)
             return (patched,)
@@ -337,6 +351,8 @@ class LBDiagnosticLatentTrigger:
         return {
             "required": {
                 "latent": ("LATENT",),
+                "run_id": ("STRING", {"default": ""}),
+                "trace_call": ("INT", {"default": -1, "min": -1, "max": 10000}),
                 "nonce": ("STRING", {"default": ""}),
             }
         }
@@ -346,10 +362,13 @@ class LBDiagnosticLatentTrigger:
     CATEGORY = "diagnostic"
 
     @classmethod
-    def IS_CHANGED(cls, latent, nonce):
+    def IS_CHANGED(cls, latent, run_id, trace_call, nonce):
         return nonce
 
-    def trigger(self, latent, nonce):
+    def trigger(self, latent, run_id, trace_call, nonce):
+        with _LOCK:
+            _ACTIVE_CONTEXT["run_id"] = str(run_id)
+            _ACTIVE_CONTEXT["trace_call"] = int(trace_call)
         return (latent,)
 
 

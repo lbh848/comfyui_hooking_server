@@ -304,14 +304,99 @@ def _sanitize_prompt(prompt: dict) -> dict:
     return result
 
 
+def _set_dcw_cwm_smc_enabled(prompt: dict, enabled: bool) -> list[dict[str, Any]]:
+    changed: list[dict[str, Any]] = []
+    for node_id, node in prompt.items():
+        if not isinstance(node, dict) or node.get("class_type") != "DCWModelPatch":
+            continue
+        inputs = node.get("inputs")
+        if not isinstance(inputs, dict):
+            print(
+                "[COMFY_INSTALL][IMAGE_DIAGNOSTIC] DCW/CWM/SMC 토글 생략: "
+                f"node={node_id}, inputs={inputs!r}"
+            )
+            continue
+        before = {
+            "dcw_enabled": inputs.get("dcw_enabled"),
+            "cwm_enabled": inputs.get("cwm_enabled"),
+            "smc_preset": inputs.get("smc_preset"),
+        }
+        if not enabled:
+            inputs["dcw_enabled"] = False
+            inputs["cwm_enabled"] = False
+            inputs["smc_preset"] = "Off"
+        after = {
+            "dcw_enabled": inputs.get("dcw_enabled"),
+            "cwm_enabled": inputs.get("cwm_enabled"),
+            "smc_preset": inputs.get("smc_preset"),
+        }
+        changed.append({"node_id": str(node_id), "before": before, "effective": after})
+    return changed
+
+
+def _model_patch_inventory(prompt: Mapping[str, Any], model_link: Any) -> list[dict[str, Any]]:
+    """Record the measured model patch chain without user prompt/LoRA data."""
+    visited: set[str] = set()
+    found: list[dict[str, Any]] = []
+
+    def visit(link: Any) -> None:
+        if not _is_link(link):
+            return
+        node_id = str(link[0])
+        if node_id in visited:
+            return
+        visited.add(node_id)
+        node = prompt.get(node_id)
+        if not isinstance(node, Mapping):
+            return
+        inputs = node.get("inputs")
+        if isinstance(inputs, Mapping):
+            for value in inputs.values():
+                visit(value)
+        class_type = str(node.get("class_type") or "")
+        lowered = class_type.casefold()
+        if not (
+            class_type in _MODEL_PATCH_CLASSES
+            or "patch" in lowered
+            or "lora" in lowered
+        ):
+            return
+        controls: dict[str, Any] = {}
+        if isinstance(inputs, Mapping):
+            for key, value in inputs.items():
+                key_text = str(key)
+                key_lower = key_text.casefold()
+                if _is_link(value) or any(
+                    token in key_lower
+                    for token in (
+                        "path", "prompt", "data", "list", "lora",
+                        "key", "token", "secret",
+                    )
+                ):
+                    continue
+                if isinstance(value, (bool, int, float)):
+                    controls[key_text] = value
+                elif isinstance(value, str) and len(value) <= 128:
+                    controls[key_text] = value
+        found.append(
+            {"node_id": node_id, "class_type": class_type, "controls": controls}
+        )
+
+    visit(model_link)
+    return found
+
+
 def prepare_diagnostic_prompt(
     validation: WorkflowValidation,
     *,
     output_dir: Path,
     profile_name: str,
     unpatched: bool = False,
+    reclone_each_run: bool = False,
+    dcw_cwm_smc_enabled: bool = True,
 ) -> dict[str, Any]:
     prompt = _sanitize_prompt(validation.prompt)
+    dcw_toggle = _set_dcw_cwm_smc_enabled(prompt, dcw_cwm_smc_enabled)
     bypassed: list[dict[str, str]] = []
     if unpatched:
         prompt, bypassed = _bypass_model_patches(prompt)
@@ -352,6 +437,10 @@ def prepare_diagnostic_prompt(
         for node_id, node in prompt.items()
         if node_id in required_nodes
     }
+    dcw_toggle = [
+        entry for entry in dcw_toggle
+        if str(entry.get("node_id")) in required_nodes
+    ]
 
     sampler = prompt[sampler_id]
     sampler_inputs = sampler.get("inputs")
@@ -367,6 +456,8 @@ def prepare_diagnostic_prompt(
         print(f"[COMFY_INSTALL][IMAGE_DIAGNOSTIC] {message}")
         raise ImageDiagnosticError(message)
 
+    model_patch_path = _model_patch_inventory(prompt, model_link)
+
     ids = {
         "model": "__lb_diag_model_probe",
         "trigger": "__lb_diag_latent_trigger",
@@ -378,11 +469,19 @@ def prepare_diagnostic_prompt(
     prompt[decode_id]["inputs"]["samples"] = [ids["latent"], 0]
     prompt[ids["model"]] = {
         "class_type": _DIAGNOSTIC_CLASSES["model"],
-        "inputs": {"model": model_link, "run_id": "pending", "trace_call": -1},
+        "inputs": {
+            "model": model_link,
+            "clone_nonce": "per-run-pending" if reclone_each_run else "warm-reuse",
+        },
     }
     prompt[ids["trigger"]] = {
         "class_type": _DIAGNOSTIC_CLASSES["trigger"],
-        "inputs": {"latent": latent_link, "nonce": "pending"},
+        "inputs": {
+            "latent": latent_link,
+            "run_id": "pending",
+            "trace_call": -1,
+            "nonce": "pending",
+        },
     }
     prompt[ids["latent"]] = {
         "class_type": _DIAGNOSTIC_CLASSES["latent"],
@@ -409,13 +508,21 @@ def prepare_diagnostic_prompt(
             "decode_node_id": decode_id,
         },
         "bypassed": bypassed,
+        "model_patch_path": model_patch_path,
+        "dcw_cwm_smc": {
+            "requested_enabled": dcw_cwm_smc_enabled,
+            "nodes": dcw_toggle,
+        },
+        "reclone_each_run": reclone_each_run,
     }
 
 
 def _prompt_for_run(template: dict, ids: Mapping[str, str], run_id: str, trace_call: int) -> dict:
     prompt = copy.deepcopy(template)
-    prompt[ids["model"]]["inputs"]["run_id"] = run_id
-    prompt[ids["model"]]["inputs"]["trace_call"] = int(trace_call)
+    if prompt[ids["model"]]["inputs"].get("clone_nonce") == "per-run-pending":
+        prompt[ids["model"]]["inputs"]["clone_nonce"] = run_id
+    prompt[ids["trigger"]]["inputs"]["run_id"] = run_id
+    prompt[ids["trigger"]]["inputs"]["trace_call"] = int(trace_call)
     prompt[ids["trigger"]]["inputs"]["nonce"] = run_id
     prompt[ids["latent"]]["inputs"]["run_id"] = run_id
     prompt[ids["image"]]["inputs"]["run_id"] = run_id
@@ -989,6 +1096,8 @@ def _run_profile(
     comfy_log: ComfyLogCallback | None,
     progress: ProgressCallback | None,
     unpatched: bool = False,
+    reclone_each_run: bool = False,
+    dcw_cwm_smc_enabled: bool = True,
 ) -> dict[str, Any]:
     arguments = comfy_launch_profile_extra_args(profile)
     profile_result: dict[str, Any] = {
@@ -998,9 +1107,15 @@ def _run_profile(
             "vram_mode": profile.get("vram_mode"),
             "disable_dynamic_vram": bool(profile.get("disable_dynamic_vram")),
             "cpu_vae": "--cpu-vae" in arguments,
+            "model_patcher_mode": (
+                "reclone_each_run" if reclone_each_run else "warm_reuse"
+            ),
+            "dcw_cwm_smc_enabled": dcw_cwm_smc_enabled,
         },
         "run_limit": run_limit,
+        "warmup_count": 1,
         "unpatched": unpatched,
+        "warmup_runs": [],
         "runs": [],
         "error": None,
         "log": None,
@@ -1027,20 +1142,26 @@ def _run_profile(
             output_dir=report_dir / "images",
             profile_name=profile_name,
             unpatched=unpatched,
+            reclone_each_run=reclone_each_run,
+            dcw_cwm_smc_enabled=dcw_cwm_smc_enabled,
         )
         profile_result["sampler"] = prepared["sampler"]
         profile_result["bypassed"] = prepared["bypassed"]
+        profile_result["model_patch_path"] = prepared["model_patch_path"]
+        profile_result["dcw_cwm_smc"] = prepared["dcw_cwm_smc"]
         reference = None
         abnormal_run = None
         trace_pending = False
         trace_call = -1
-        index = 1
+        index = 0
         while index <= run_limit or trace_pending:
             if cancel_event.is_set():
                 raise ComfyE2ECancelled(f"이미지 깨짐 검사 중단: profile={profile_name}")
             is_trace = trace_pending
             trace_pending = False
-            run_id = f"{index:03d}{'-trace' if is_trace else ''}-{uuid.uuid4().hex[:8]}"
+            phase = "warmup" if index == 0 else "measurement"
+            run_label = "warmup" if phase == "warmup" else f"{index:03d}"
+            run_id = f"{run_label}{'-trace' if is_trace else ''}-{uuid.uuid4().hex[:8]}"
             if progress:
                 progress(
                     {
@@ -1049,11 +1170,13 @@ def _run_profile(
                         "current": index,
                         "total": run_limit,
                         "trace": is_trace,
+                        "phase": phase,
                     }
                 )
             _log(
                 log,
-                f"[이미지 진단] {profile_name} {index}/{run_limit}회"
+                f"[이미지 진단] {profile_name} "
+                + ("warmup" if phase == "warmup" else f"{index}/{run_limit}회")
                 + (f" · 정밀 추적 call={trace_call}" if is_trace else ""),
             )
             before_gpu = _gpu_snapshot()
@@ -1070,16 +1193,20 @@ def _run_profile(
             )
             measured = _parse_probe_output(execution, prepared["ids"]["image"])
             measured["index"] = index
+            measured["phase"] = phase
             measured["trace"] = is_trace
             measured["duration_seconds"] = round(time.monotonic() - started, 3)
             measured["gpu_before"] = before_gpu
             measured["gpu_after"] = _gpu_snapshot()
             assessment = assess_run(measured, reference)
             measured["assessment"] = assessment
-            profile_result["runs"].append(measured)
+            if phase == "warmup":
+                profile_result["warmup_runs"].append(measured)
+            else:
+                profile_result["runs"].append(measured)
             if reference is None:
                 reference = measured
-            if assessment["abnormal"] and abnormal_run is None:
+            if phase == "measurement" and assessment["abnormal"] and abnormal_run is None:
                 abnormal_run = index
                 profile_result["first_abnormal_run"] = index
                 profile_result["first_abnormal_reasons"] = assessment["reasons"]
@@ -1094,6 +1221,8 @@ def _run_profile(
                 )
             if abnormal_run is not None and is_trace:
                 break
+            if trace_pending:
+                continue
             index += 1
         profile_result["completed_runs"] = len(profile_result["runs"])
         profile_result["stable_runs"] = (
@@ -1124,6 +1253,67 @@ def _conclusions(profiles: Sequence[Mapping[str, Any]]) -> list[str]:
         profile for profile in profiles
         if not profile.get("error") and int(profile.get("completed_runs") or 0) > 0
     ]
+    matrix = {
+        name: by_name.get(name)
+        for name in (
+            "A_warm_patch_on",
+            "A_warm_patch_off",
+            "B_reclone_patch_on",
+            "B_reclone_patch_off",
+        )
+    }
+    if all(matrix.values()) and not any(
+        profile.get("error") for profile in matrix.values() if profile
+    ):
+        dcw_nodes_present = all(
+            bool(profile.get("dcw_cwm_smc", {}).get("nodes"))
+            for profile in matrix.values()
+            if profile
+        )
+        if not dcw_nodes_present:
+            conclusions.append(
+                "선택된 sampler 모델 경로에 DCWModelPatch가 없어 DCW/CWM/SMC ON/OFF 비교는 실질적으로 수행되지 않았습니다."
+            )
+        else:
+            failed = {
+                name: bool(profile and profile.get("first_abnormal_run"))
+                for name, profile in matrix.items()
+            }
+            if failed["A_warm_patch_on"] and not failed["A_warm_patch_off"]:
+                conclusions.append(
+                    "warm 재사용 조건에서 DCW/CWM/SMC ON만 실패하고 OFF는 유지됐습니다. "
+                    "DCW/CWM/SMC patch 또는 다른 patch와의 결합 상태가 직접 원인 후보입니다."
+                )
+            if failed["A_warm_patch_on"] and not failed["B_reclone_patch_on"]:
+                conclusions.append(
+                    "DCW/CWM/SMC ON 조건에서 warm 재사용만 실패하고 매 회 clone은 유지됐습니다. "
+                    "patch 완료 ModelPatcher의 반복 재사용 상태를 최우선으로 조사해야 합니다."
+                )
+            if (
+                failed["A_warm_patch_on"]
+                and failed["B_reclone_patch_on"]
+                and not failed["A_warm_patch_off"]
+                and not failed["B_reclone_patch_off"]
+            ):
+                conclusions.append(
+                    "clone 정책과 무관하게 DCW/CWM/SMC ON만 실패했습니다. "
+                    "이 경우 warm cache보다 DCW/CWM/SMC 연산 자체 또는 GPU 호환성을 우선 조사해야 합니다."
+                )
+            if (
+                failed["A_warm_patch_on"]
+                and failed["A_warm_patch_off"]
+                and not failed["B_reclone_patch_on"]
+                and not failed["B_reclone_patch_off"]
+            ):
+                conclusions.append(
+                    "DCW/CWM/SMC ON/OFF와 무관하게 warm 재사용만 실패했습니다. "
+                    "DCW 계열 단독보다 patch 완료 ModelPatcher 또는 GPU 상주 상태의 반복 재사용이 더 강한 원인 후보입니다."
+                )
+            if not any(failed.values()):
+                conclusions.append(
+                    "동일 실행 인자의 2×2 비교(warm/매회 clone × DCW/CWM/SMC ON/OFF)가 "
+                    "모두 제한 횟수 내 정상이라 이번 실행에서는 두 차이가 재현되지 않았습니다."
+                )
     if not abnormal:
         completed = sum(int(profile.get("completed_runs") or 0) for profile in profiles)
         if not successful:
@@ -1246,8 +1436,8 @@ def _render_report(result: Mapping[str, Any]) -> str:
             "",
             "## 프로필별 반복 결과",
             "",
-            "| 프로필 | 실행 인자 | 완료 | 최초 이상 | 결과 |",
-            "|---|---|---:|---:|---|",
+            "| 프로필 | ModelPatcher | DCW/CWM/SMC | 실행 인자 | Warmup | 완료 | 최초 이상 | 결과 |",
+            "|---|---|---|---|---:|---:|---:|---|",
         ]
     )
     for profile in profiles:
@@ -1255,8 +1445,12 @@ def _render_report(result: Mapping[str, Any]) -> str:
         first = profile.get("first_abnormal_run")
         status = f"실행 오류: {error}" if error else ("이상 감지" if first else "제한 횟수 내 미재현")
         args = " ".join(profile.get("arguments", [])) or "기본"
+        settings = profile.get("settings", {})
+        patcher_mode = settings.get("model_patcher_mode", "-")
+        dcw_mode = "ON" if settings.get("dcw_cwm_smc_enabled") else "OFF"
         lines.append(
-            f"| `{profile.get('name')}` | `{args}` | {profile.get('completed_runs', 0)} | "
+            f"| `{profile.get('name')}` | `{patcher_mode}` | {dcw_mode} | `{args}` | "
+            f"{len(profile.get('warmup_runs', []))} | {profile.get('completed_runs', 0)} | "
             f"{first or '-'} | {status} |"
         )
     lines.extend(["", "## 회차별 경계 계측", ""])
@@ -1266,14 +1460,17 @@ def _render_report(result: Mapping[str, Any]) -> str:
                 f"### {profile.get('name')}",
                 "",
                 f"- sampler: `{json.dumps(profile.get('sampler'), ensure_ascii=False)}`",
+                f"- model patch 경로: `{json.dumps(profile.get('model_patch_path'), ensure_ascii=False)}`",
+                f"- DCW/CWM/SMC 토글: `{json.dumps(profile.get('dcw_cwm_smc'), ensure_ascii=False)}`",
                 f"- 우회 노드: `{json.dumps(profile.get('bypassed'), ensure_ascii=False)}`",
                 f"- Comfy 로그: `{profile.get('log') or '없음'}`",
                 "",
-                "| 회차 | 모델 유한 | latent 유한 | 이미지 유한 | 밝기 평균/표준편차 | edge | 기준 MAE | 판정 | 이미지 |",
-                "|---:|---|---|---|---|---:|---:|---|---|",
+                "| 구간 | 회차 | probe generation | 모델 유한 | latent 유한 | 이미지 유한 | 밝기 평균/표준편차 | edge | 기준 MAE | 판정 | 이미지 |",
+                "|---|---:|---:|---|---|---|---|---:|---:|---|---|",
             ]
         )
-        for run in profile.get("runs", []):
+        display_runs = list(profile.get("warmup_runs", [])) + list(profile.get("runs", []))
+        for run in display_runs:
             calls = run.get("model_calls", [])
             model_finite = all(call.get("output", {}).get("finite", True) for call in calls if isinstance(call, dict))
             latent = run.get("latent", {})
@@ -1282,12 +1479,14 @@ def _render_report(result: Mapping[str, Any]) -> str:
             reasons = "; ".join(assessment.get("reasons", [])) or "정상 범위"
             mae = assessment.get("thumbnail_mae")
             lines.append(
-                f"| {run.get('index')} {'(정밀)' if run.get('trace') else ''} | {model_finite} | "
+                f"| {run.get('phase', 'measurement')} | {run.get('index')} {'(정밀)' if run.get('trace') else ''} | "
+                f"{run.get('model_probe_generation', '-')} | {model_finite} | "
                 f"{latent.get('finite')} | {image.get('finite')} | "
                 f"{image.get('luminance_mean', 0):.4f}/{image.get('luminance_std', 0):.4f} | "
                 f"{image.get('edge_mean', 0):.4f} | {mae:.4f} | {reasons} | "
                 f"`images/{run.get('artifact')}` |" if isinstance(mae, (int, float)) else
-                f"| {run.get('index')} {'(정밀)' if run.get('trace') else ''} | {model_finite} | "
+                f"| {run.get('phase', 'measurement')} | {run.get('index')} {'(정밀)' if run.get('trace') else ''} | "
+                f"{run.get('model_probe_generation', '-')} | {model_finite} | "
                 f"{latent.get('finite')} | {image.get('finite')} | "
                 f"{image.get('luminance_mean', 0):.4f}/{image.get('luminance_std', 0):.4f} | "
                 f"{image.get('edge_mean', 0):.4f} | - | {reasons} | `images/{run.get('artifact')}` |"
@@ -1308,6 +1507,9 @@ def _render_report(result: Mapping[str, Any]) -> str:
             "## 해석 주의사항",
             "",
             "- 동일 seed와 동일 워크플로우를 반복했으므로 큰 영상 변화는 프롬프트 의미 평가가 아니라 실행 상태 변화 신호입니다.",
+            "- 각 프로필은 1회 warmup 뒤 측정합니다. A는 같은 patch 완료 ModelPatcher를 재사용하고 B는 매 회 다시 clone합니다.",
+            "- 2×2 비교의 OFF는 DCWModelPatch 노드를 제거하지 않고 DCW/CWM을 false, SMC preset을 Off로 바꿔 나머지 모델 경로를 유지합니다.",
+            "- 사용자 캐릭터/얼굴/그림체 LoRA 입력은 비활성화하고 목록을 비운 채 검사하며, 배포 팩에 고정된 모델 경로는 그대로 유지합니다.",
             "- NO_VRAM에서 제한 횟수를 통과해도 영구 해결을 의미하지 않습니다. CPU VAE가 12장 이후 실패했던 사례를 고려해 짧은 성공을 해결로 판정하지 않습니다.",
             "- `environment.json`과 `runs.json`에는 원본 프롬프트/API 키 없이 런타임·수치 계측만 저장했습니다.",
             "",
@@ -1351,6 +1553,7 @@ def _public_result(result: Mapping[str, Any], archive_path: Path) -> dict[str, A
             {
                 "name": profile.get("name"),
                 "settings": copy.deepcopy(profile.get("settings", {})),
+                "warmup_completed": len(profile.get("warmup_runs", [])),
                 "completed_runs": profile.get("completed_runs", 0),
                 "first_abnormal_run": profile.get("first_abnormal_run"),
                 "error": profile.get("error"),
@@ -1478,16 +1681,24 @@ def run_image_diagnostic(
             baseline_process.stop()
             _copy_process_log(baseline_process, report_dir, "workflow_conversion")
 
-        planned: list[tuple[str, dict[str, Any], int, bool]] = [
-            ("current", current_profile, BASELINE_RUNS, False),
-            ("highvram_dynamic_on", _profile_with(current_profile, vram_mode="highvram", dynamic_off=False, cpu_vae=False), COMPARISON_RUNS, False),
-            ("highvram_dynamic_off", _profile_with(current_profile, vram_mode="highvram", dynamic_off=True, cpu_vae=False), COMPARISON_RUNS, False),
-            ("novram_dynamic_on", _profile_with(current_profile, vram_mode="novram", dynamic_off=False, cpu_vae=False), COMPARISON_RUNS, False),
-            ("novram_dynamic_off", _profile_with(current_profile, vram_mode="novram", dynamic_off=True, cpu_vae=False), COMPARISON_RUNS, False),
+        planned: list[tuple[str, dict[str, Any], int, bool, bool, bool]] = [
+            ("A_warm_patch_on", current_profile, BASELINE_RUNS, False, False, True),
+            ("A_warm_patch_off", current_profile, BASELINE_RUNS, False, False, False),
+            ("B_reclone_patch_on", current_profile, BASELINE_RUNS, False, True, True),
+            ("B_reclone_patch_off", current_profile, BASELINE_RUNS, False, True, False),
+            ("highvram_dynamic_on", _profile_with(current_profile, vram_mode="highvram", dynamic_off=False, cpu_vae=False), COMPARISON_RUNS, False, False, True),
+            ("highvram_dynamic_off", _profile_with(current_profile, vram_mode="highvram", dynamic_off=True, cpu_vae=False), COMPARISON_RUNS, False, False, True),
+            ("novram_dynamic_on", _profile_with(current_profile, vram_mode="novram", dynamic_off=False, cpu_vae=False), COMPARISON_RUNS, False, False, True),
+            ("novram_dynamic_off", _profile_with(current_profile, vram_mode="novram", dynamic_off=True, cpu_vae=False), COMPARISON_RUNS, False, False, True),
         ]
-        seen: set[tuple[tuple[str, ...], bool]] = set()
-        for name, profile, limit, unpatched in planned:
-            signature = (comfy_launch_profile_extra_args(profile), unpatched)
+        seen: set[tuple[tuple[str, ...], bool, bool, bool]] = set()
+        for name, profile, limit, unpatched, reclone_each_run, dcw_enabled in planned:
+            signature = (
+                comfy_launch_profile_extra_args(profile),
+                unpatched,
+                reclone_each_run,
+                dcw_enabled,
+            )
             if signature in seen:
                 continue
             seen.add(signature)
@@ -1505,17 +1716,24 @@ def run_image_diagnostic(
                     comfy_log=comfy_log,
                     progress=progress,
                     unpatched=unpatched,
+                    reclone_each_run=reclone_each_run,
+                    dcw_cwm_smc_enabled=dcw_enabled,
                 )
             )
 
         if any(profile.get("first_abnormal_run") for profile in profiles_result):
             adaptive = [
-                ("highvram_cpu_vae", _profile_with(current_profile, vram_mode="highvram", dynamic_off=True, cpu_vae=True), COMPARISON_RUNS, False),
-                ("lowvram_dynamic_off", _profile_with(current_profile, vram_mode="lowvram", dynamic_off=True, cpu_vae=False), COMPARISON_RUNS, False),
-                ("core_unpatched", current_profile, COMPARISON_RUNS, True),
+                ("highvram_cpu_vae", _profile_with(current_profile, vram_mode="highvram", dynamic_off=True, cpu_vae=True), COMPARISON_RUNS, False, False, True),
+                ("lowvram_dynamic_off", _profile_with(current_profile, vram_mode="lowvram", dynamic_off=True, cpu_vae=False), COMPARISON_RUNS, False, False, True),
+                ("core_unpatched", current_profile, COMPARISON_RUNS, True, False, False),
             ]
-            for name, profile, limit, unpatched in adaptive:
-                signature = (comfy_launch_profile_extra_args(profile), unpatched)
+            for name, profile, limit, unpatched, reclone_each_run, dcw_enabled in adaptive:
+                signature = (
+                    comfy_launch_profile_extra_args(profile),
+                    unpatched,
+                    reclone_each_run,
+                    dcw_enabled,
+                )
                 if signature in seen:
                     continue
                 seen.add(signature)
@@ -1533,6 +1751,8 @@ def run_image_diagnostic(
                         comfy_log=comfy_log,
                         progress=progress,
                         unpatched=unpatched,
+                        reclone_each_run=reclone_each_run,
+                        dcw_cwm_smc_enabled=dcw_enabled,
                     )
                 )
 

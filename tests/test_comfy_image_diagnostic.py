@@ -36,7 +36,16 @@ def _validation(prompt: dict) -> WorkflowValidation:
 def _ksampler_prompt() -> dict:
     return {
         "1": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": "anima.safetensors"}},
-        "2": {"class_type": "DCWModelPatch", "inputs": {"model": ["1", 0]}},
+        "2": {
+            "class_type": "DCWModelPatch",
+            "inputs": {
+                "model": ["1", 0],
+                "dcw_enabled": True,
+                "cwm_enabled": True,
+                "smc_preset": "Light",
+                "smc_lambda": 6.0,
+            },
+        },
         "3": {
             "class_type": "EmptyLatentImage",
             "inputs": {"width": 1408, "height": 2048, "batch_size": 4},
@@ -91,8 +100,117 @@ def test_prepare_diagnostic_prompt_preserves_real_steps_and_resolution(tmp_path:
     assert prompt["4"]["inputs"]["model"] == ["__lb_diag_model_probe", 0]
     assert prompt["4"]["inputs"]["latent_image"] == ["__lb_diag_latent_trigger", 0]
     assert prompt["6"]["inputs"]["samples"] == ["__lb_diag_latent_probe", 0]
+    assert prompt["__lb_diag_model_probe"]["inputs"] == {
+        "model": ["2", 0],
+        "clone_nonce": "warm-reuse",
+    }
+    assert prompt["__lb_diag_latent_trigger"]["inputs"]["run_id"] == "pending"
     assert prepared["sampler"]["class_type"] == "KSampler"
     assert original["3"]["inputs"]["batch_size"] == 4
+
+
+def test_prepare_diagnostic_prompt_builds_warm_clone_and_dcw_two_by_two(
+    tmp_path: Path,
+) -> None:
+    validation = _validation(_ksampler_prompt())
+    warm_on = prepare_diagnostic_prompt(
+        validation,
+        output_dir=tmp_path,
+        profile_name="A_warm_patch_on",
+        reclone_each_run=False,
+        dcw_cwm_smc_enabled=True,
+    )
+    warm_off = prepare_diagnostic_prompt(
+        validation,
+        output_dir=tmp_path,
+        profile_name="A_warm_patch_off",
+        reclone_each_run=False,
+        dcw_cwm_smc_enabled=False,
+    )
+    reclone_on = prepare_diagnostic_prompt(
+        validation,
+        output_dir=tmp_path,
+        profile_name="B_reclone_patch_on",
+        reclone_each_run=True,
+        dcw_cwm_smc_enabled=True,
+    )
+
+    assert warm_on["prompt"]["2"]["inputs"]["dcw_enabled"] is True
+    assert warm_on["prompt"]["2"]["inputs"]["cwm_enabled"] is True
+    assert warm_on["prompt"]["2"]["inputs"]["smc_preset"] == "Light"
+    assert warm_off["prompt"]["2"]["inputs"]["dcw_enabled"] is False
+    assert warm_off["prompt"]["2"]["inputs"]["cwm_enabled"] is False
+    assert warm_off["prompt"]["2"]["inputs"]["smc_preset"] == "Off"
+    assert warm_off["model_patch_path"][-1]["controls"]["dcw_enabled"] is False
+
+    warm_run_1 = image_diagnostic_module._prompt_for_run(
+        warm_on["prompt"], warm_on["ids"], "warm-1", -1
+    )
+    warm_run_2 = image_diagnostic_module._prompt_for_run(
+        warm_on["prompt"], warm_on["ids"], "warm-2", -1
+    )
+    clone_run_1 = image_diagnostic_module._prompt_for_run(
+        reclone_on["prompt"], reclone_on["ids"], "clone-1", -1
+    )
+    clone_run_2 = image_diagnostic_module._prompt_for_run(
+        reclone_on["prompt"], reclone_on["ids"], "clone-2", -1
+    )
+    assert warm_run_1["__lb_diag_model_probe"]["inputs"]["clone_nonce"] == "warm-reuse"
+    assert warm_run_2["__lb_diag_model_probe"]["inputs"]["clone_nonce"] == "warm-reuse"
+    assert clone_run_1["__lb_diag_model_probe"]["inputs"]["clone_nonce"] == "clone-1"
+    assert clone_run_2["__lb_diag_model_probe"]["inputs"]["clone_nonce"] == "clone-2"
+    assert validation.prompt["2"]["inputs"]["dcw_enabled"] is True
+
+
+def test_conclusions_distinguish_warm_reuse_from_dcw_patch_effect() -> None:
+    def profile(name: str, abnormal: bool) -> dict:
+        return {
+            "name": name,
+            "completed_runs": 18,
+            "error": None,
+            "first_abnormal_run": 2 if abnormal else None,
+            "first_abnormal_reasons": ["same-seed drift"] if abnormal else [],
+            "settings": {"vram_mode": "normal", "disable_dynamic_vram": False},
+            "dcw_cwm_smc": {"nodes": [{"node_id": "2"}]},
+            "runs": [],
+        }
+
+    conclusions = image_diagnostic_module._conclusions(
+        [
+            profile("A_warm_patch_on", True),
+            profile("A_warm_patch_off", True),
+            profile("B_reclone_patch_on", False),
+            profile("B_reclone_patch_off", False),
+        ]
+    )
+
+    assert any("warm 재사용만 실패" in value for value in conclusions)
+    assert not any("DCW/CWM/SMC ON만 실패하고 OFF" in value for value in conclusions)
+
+
+def test_conclusions_do_not_claim_dcw_comparison_without_connected_node() -> None:
+    profiles = []
+    for name in (
+        "A_warm_patch_on",
+        "A_warm_patch_off",
+        "B_reclone_patch_on",
+        "B_reclone_patch_off",
+    ):
+        profiles.append(
+            {
+                "name": name,
+                "completed_runs": 18,
+                "error": None,
+                "settings": {},
+                "dcw_cwm_smc": {"nodes": []},
+                "runs": [],
+            }
+        )
+
+    conclusions = image_diagnostic_module._conclusions(profiles)
+
+    assert any("DCWModelPatch가 없어" in value for value in conclusions)
+    assert not any("ON만 실패" in value for value in conclusions)
 
 
 def test_unpatched_prompt_bypasses_model_and_clip_outputs(tmp_path: Path) -> None:
@@ -294,7 +412,8 @@ def test_temporary_probe_measures_fake_model_latent_and_image(tmp_path: Path) ->
             self.model_options["model_function_wrapper"] = wrapper
 
     run_id = "unit-run"
-    patched = module.LBDiagnosticModelProbe().probe(FakeModel(), run_id, -1)[0]
+    patched = module.LBDiagnosticModelProbe().probe(FakeModel(), "warm-reuse")[0]
+    module.LBDiagnosticLatentTrigger().trigger({}, run_id, -1, run_id)
     wrapper = patched.model_options["model_function_wrapper"]
     value = torch.tensor([[1.0, 2.0]])
     output = wrapper(
@@ -314,6 +433,23 @@ def test_temporary_probe_measures_fake_model_latent_and_image(tmp_path: Path) ->
     assert payload["latent"]["finite"] is True
     assert payload["image"]["finite"] is True
     assert (tmp_path / payload["artifact"]).is_file()
+
+    second_run_id = "unit-run-2"
+    module.LBDiagnosticLatentTrigger().trigger(
+        {}, second_run_id, -1, second_run_id
+    )
+    second_output = wrapper(
+        lambda input_value, _timestep, **_kwargs: input_value * 3,
+        {"input": value, "timestep": torch.tensor([1.0]), "c": {}},
+    )
+    second_latent = {"samples": second_output.reshape(1, 2, 1, 1)}
+    module.LBDiagnosticLatentProbe().probe(second_latent, second_run_id)
+    second_response = module.LBDiagnosticImageProbe().measure(
+        image, second_run_id, "unit", str(tmp_path)
+    )
+    second_payload = json.loads(second_response["ui"]["diagnostic"][0])
+    assert payload["model_probe_generation"] == second_payload["model_probe_generation"]
+    assert second_payload["model_calls"][0]["call"] == 0
 
 
 def test_temporary_probe_deep_trace_finds_finite_to_nonfinite_leaf(tmp_path: Path) -> None:
@@ -342,7 +478,8 @@ def test_temporary_probe_deep_trace_finds_finite_to_nonfinite_leaf(tmp_path: Pat
             self.model_options["model_function_wrapper"] = wrapper
 
     run_id = "deep-run"
-    patched = module.LBDiagnosticModelProbe().probe(FakeModel(), run_id, 0)[0]
+    patched = module.LBDiagnosticModelProbe().probe(FakeModel(), "warm-reuse")[0]
+    module.LBDiagnosticLatentTrigger().trigger({}, run_id, 0, run_id)
     with torch.no_grad():
         patched.model.diffusion_model[0].weight.fill_(float("inf"))
     wrapper = patched.model_options["model_function_wrapper"]
