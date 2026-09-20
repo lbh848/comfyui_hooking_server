@@ -69,7 +69,7 @@ from .manifest import (
 )
 from .manager_dependencies import install_manager_dependencies
 from .input_patcher import patch_comfy_input
-from .image_diagnostic import run_image_diagnostic
+from .production_image_diagnostic import run_production_image_diagnostic
 from .migration import ComfyMigrationCancelled, migrate_user_data
 from .model_installer import install_models
 from .model_scope import (
@@ -170,7 +170,7 @@ _E2E_PHASES = (
 )
 
 _IMAGE_DIAGNOSTIC_PHASES = (
-    ("image_diagnostic", "현재 에셋 워크플로우 반복 생성·경계 계측"),
+    ("image_diagnostic", "실제 프로그램 에셋 생성·DCW/CWM 비교"),
     ("complete", "진단 판정 및 ZIP 기록"),
 )
 
@@ -212,6 +212,9 @@ class ComfyInstallerService:
         downloader: ResumableDownloader | None = None,
         pause_managed_comfy: Callable[[], Any] | None = None,
         resume_managed_comfy: Callable[[Any], Any] | None = None,
+        production_image_diagnostic_call: (
+            Callable[[dict[str, Any]], dict[str, Any]] | None
+        ) = None,
         apply_repaired_workflow_runtime: (
             Callable[[Mapping[str, str]], None] | None
         ) = None,
@@ -256,6 +259,7 @@ class ComfyInstallerService:
             )
         self.pause_managed_comfy = pause_managed_comfy
         self.resume_managed_comfy = resume_managed_comfy
+        self.production_image_diagnostic_call = production_image_diagnostic_call
         self.apply_repaired_workflow_runtime = apply_repaired_workflow_runtime
         self._lock = RLock()
         self._cancel = Event()
@@ -1762,10 +1766,13 @@ class ComfyInstallerService:
         )
 
     def start_image_diagnostic(self) -> dict:
-        python = uv_python_path(self.comfy_root / ".venv")
-        if not python.is_file():
+        if self.production_image_diagnostic_call is None:
             raise InstallerServiceError(
-                f"이미지 깨짐 검사를 실행할 내장 Comfy Python이 없습니다: {python}"
+                "실제 프로그램 이미지 생성 경로가 진단기에 연결되지 않았습니다."
+            )
+        if self.pause_managed_comfy is None or self.resume_managed_comfy is None:
+            raise InstallerServiceError(
+                "관리 Comfy 재시작 콜백이 없어 실제 프로그램 이미지 진단을 실행할 수 없습니다."
             )
         return self._start_operation(
             operation="image_diagnostic",
@@ -2011,15 +2018,20 @@ class ComfyInstallerService:
         started_monotonic = time.monotonic()
         try:
             self._set_phase("image_diagnostic")
-            result = run_image_diagnostic(
+            if self.production_image_diagnostic_call is None:
+                raise InstallerServiceError(
+                    "실제 프로그램 이미지 생성 경로가 진단기에 연결되지 않았습니다."
+                )
+            if self.pause_managed_comfy is None or self.resume_managed_comfy is None:
+                raise InstallerServiceError(
+                    "관리 Comfy 재시작 콜백이 없어 실제 프로그램 이미지 진단을 실행할 수 없습니다."
+                )
+            result = run_production_image_diagnostic(
                 project_root=self.project_root,
                 comfy_root=self.comfy_root,
-                config_path=self.config_path,
-                workflow_library_root=self.workflow_library_root,
-                workflow_release=self.manifest.latest_workflow_release,
                 cancel_event=self._cancel,
+                production_call=self.production_image_diagnostic_call,
                 log=lambda message, level="info": self._log(message, level),
-                comfy_log=self._log_comfy,
                 progress=self._set_progress,
                 pause_managed_comfy=self.pause_managed_comfy,
                 resume_managed_comfy=self.resume_managed_comfy,

@@ -25,6 +25,7 @@ ShutdownAfterUpdateCallback = Callable[[], Awaitable[dict[str, Any]]]
 PauseManagedComfyCallback = Callable[[], Any]
 ResumeManagedComfyCallback = Callable[[Any], Any]
 ApplyRepairedWorkflowRuntimeCallback = Callable[[dict[str, str]], None]
+ProductionImageDiagnosticCallback = Callable[[dict[str, Any]], dict[str, Any]]
 
 
 def _json_error(message: str, *, status: int = 400) -> web.Response:
@@ -540,6 +541,7 @@ def register_comfy_installer_routes(
     shutdown_after_update: ShutdownAfterUpdateCallback | None = None,
     pause_managed_comfy: PauseManagedComfyCallback | None = None,
     resume_managed_comfy: ResumeManagedComfyCallback | None = None,
+    production_image_diagnostic_call: ProductionImageDiagnosticCallback | None = None,
     apply_repaired_workflow_runtime: (
         ApplyRepairedWorkflowRuntimeCallback | None
     ) = None,
@@ -550,6 +552,7 @@ def register_comfy_installer_routes(
         requirements_dir=requirements_dir,
         pause_managed_comfy=pause_managed_comfy,
         resume_managed_comfy=resume_managed_comfy,
+        production_image_diagnostic_call=production_image_diagnostic_call,
         apply_repaired_workflow_runtime=apply_repaired_workflow_runtime,
     )
     app[APP_SERVICE_KEY] = service

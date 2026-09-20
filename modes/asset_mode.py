@@ -1453,6 +1453,64 @@ class AssetMode:
         return await self._fallback_load_workflow()
 
     # ─── 이미지 생성 ──────────────────────────────────────
+    @staticmethod
+    def _apply_diagnostic_model_patch_override(
+        workflow: dict,
+        enabled: Optional[bool],
+    ) -> list[dict]:
+        """Record or disable DCW/CWM/SMC for the production-path diagnostic.
+
+        ``None`` leaves ordinary generation completely untouched.  The image
+        diagnostic uses ``True`` for the real workflow defaults and ``False``
+        for its single controlled A/B delta; no model-probe node or graph
+        pruning is introduced.
+        """
+        if enabled is None:
+            return []
+        found: list[dict] = []
+        for node_id, node in workflow.items():
+            if not isinstance(node, dict) or node.get("class_type") != "DCWModelPatch":
+                continue
+            inputs = node.get("inputs")
+            if not isinstance(inputs, dict):
+                print(
+                    "[ASSET][IMAGE_DIAGNOSTIC] DCWModelPatch 입력 형식 오류: "
+                    f"node={node_id}, inputs={inputs!r}"
+                )
+                continue
+            before = {
+                "dcw_enabled": inputs.get("dcw_enabled"),
+                "cwm_enabled": inputs.get("cwm_enabled"),
+                "smc_preset": inputs.get("smc_preset"),
+            }
+            if not enabled:
+                inputs["dcw_enabled"] = False
+                inputs["cwm_enabled"] = False
+                inputs["smc_preset"] = "Off"
+            effective = {
+                "dcw_enabled": inputs.get("dcw_enabled"),
+                "cwm_enabled": inputs.get("cwm_enabled"),
+                "smc_preset": inputs.get("smc_preset"),
+            }
+            found.append(
+                {
+                    "node_id": str(node_id),
+                    "before": before,
+                    "effective": effective,
+                }
+            )
+        if not found:
+            print(
+                "[ASSET][IMAGE_DIAGNOSTIC] DCWModelPatch 노드를 찾지 못함: "
+                f"requested_enabled={enabled}"
+            )
+        else:
+            print(
+                "[ASSET][IMAGE_DIAGNOSTIC] 실제 에셋 워크플로 DCW/CWM/SMC 상태: "
+                f"requested_enabled={enabled}, nodes={found}"
+            )
+        return found
+
     async def generate(
         self,
         character: str,
@@ -1493,6 +1551,8 @@ class AssetMode:
         storage_group: str = "",
         storage_session: str = "",
         modal_input_paths: Optional[list[str]] = None,
+        diagnostic_dcw_cwm_smc_enabled: Optional[bool] = None,
+        diagnostic_capture_workflow: bool = False,
     ) -> dict:
         async with self._lock:
             self._is_generating = True
@@ -1512,6 +1572,8 @@ class AssetMode:
                     style_lora_activate, style_lora_data,
                     storage_group, storage_session,
                     modal_input_paths,
+                    diagnostic_dcw_cwm_smc_enabled,
+                    diagnostic_capture_workflow,
                 )
             finally:
                 self._is_generating = False
@@ -1556,6 +1618,8 @@ class AssetMode:
         storage_group: str = "",
         storage_session: str = "",
         modal_input_paths: Optional[list[str]] = None,
+        diagnostic_dcw_cwm_smc_enabled: Optional[bool] = None,
+        diagnostic_capture_workflow: bool = False,
     ) -> dict:
         if storage_group not in ("", "automatch_defaults", "character_maker"):
             error_msg = f"지원하지 않는 에셋 저장 분류: {storage_group}"
@@ -1688,6 +1752,11 @@ class AssetMode:
                     elif title == "부정프롬프트":
                         ninfo["inputs"]["value"] = negative
 
+            diagnostic_model_patch = self._apply_diagnostic_model_patch_override(
+                workflow,
+                diagnostic_dcw_cwm_smc_enabled,
+            )
+
             final_positive = positive
             final_negative = negative
             for nid, ninfo in workflow.items():
@@ -1733,7 +1802,10 @@ class AssetMode:
                         "status": "error", "error": error_msg,
                         "character": character, "outfit": outfit, "expression": expression,
                     })
-                return {"success": False, "error": error_msg}
+                failed_result = {"success": False, "error": error_msg}
+                if diagnostic_dcw_cwm_smc_enabled is not None:
+                    failed_result["diagnostic_model_patch"] = diagnostic_model_patch
+                return failed_result
 
             if storage_group == "character_maker":
                 save_dir = os.path.join(
@@ -1827,6 +1899,12 @@ class AssetMode:
             if storage_group == "character_maker":
                 result["local_path"] = filepath
                 result["prompt_record_path"] = prompt_record_path
+            if diagnostic_dcw_cwm_smc_enabled is not None:
+                result["diagnostic_model_patch"] = diagnostic_model_patch
+            if diagnostic_capture_workflow:
+                # Evidence only: return the exact API graph already submitted.
+                # This does not alter, clone, or instrument the graph itself.
+                result["diagnostic_workflow"] = workflow
             return result
         finally:
             # 임시 선택 워크플로우 경로 복원

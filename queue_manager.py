@@ -3832,6 +3832,14 @@ class QueueManager:
             storage_group=body.get("storage_group", ""),
             storage_session=body.get("storage_session", ""),
             modal_input_paths=modal_input_paths,
+            diagnostic_dcw_cwm_smc_enabled=(
+                body.get("diagnostic_dcw_cwm_smc_enabled")
+                if isinstance(body.get("diagnostic_dcw_cwm_smc_enabled"), bool)
+                else None
+            ),
+            diagnostic_capture_workflow=(
+                body.get("diagnostic_capture_workflow") is True
+            ),
         )
 
         # 저장 전에 실패한 경우에도 오토매치 UI가 해당 큐 항목을 완료 처리할 수 있도록

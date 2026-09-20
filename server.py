@@ -19,6 +19,7 @@ import shutil
 import socket
 import mimetypes
 from contextvars import ContextVar
+from pathlib import Path
 from typing import Any
 
 from runtime_temp import clear_runtime_temp
@@ -174,7 +175,7 @@ from modes.danbooru_rag import (
     DanbooruRagInstallError,
     get_danbooru_rag_service,
 )
-from modes.asset_mode import CHARACTER_MAKER_TEMP_DIR
+from modes.asset_mode import ASSET_DIR, CHARACTER_MAKER_TEMP_DIR
 import workflow_profiles
 import importlib.util
 from comfy_installer.http_api import register_comfy_installer_routes
@@ -22030,6 +22031,260 @@ def _apply_repaired_workflow_runtime(bindings: dict[str, str]) -> None:
         raise
 
 
+async def _production_image_diagnostic_async(
+    request: dict[str, Any],
+) -> dict[str, Any]:
+    """Use the same queue, AssetMode and managed Comfy as normal asset UI jobs."""
+    action = str(request.get("action") or "").strip()
+    instance_id, port = resolve_comfy_instance("asset_generation")
+    configured_target = effective_execution_target("asset_generation")
+    execution_target = configured_target or "local"
+    runtime_status = comfy_runtime_manager.status(
+        instance_id=instance_id,
+        after=0,
+    )
+
+    if action == "status":
+        queue_status = queue_manager.get_status()
+        queue_idle = (
+            not queue_status.get("processing")
+            and int(queue_status.get("pending_count") or 0) == 0
+            and queue_status.get("current") is None
+            and not queue_status.get("current_externals")
+        )
+        runtime_ready = False
+        system_stats: dict[str, Any] | None = None
+        if execution_target == "local" and runtime_status.get("running"):
+            try:
+                timeout = aiohttp.ClientTimeout(total=3.0, connect=1.0)
+                async with aiohttp.ClientSession(timeout=timeout) as session:
+                    async with session.get(
+                        f"http://{REAL_COMFY_HOST}:{port}/system_stats"
+                    ) as response:
+                        if response.status == 200:
+                            payload = await response.json()
+                            if isinstance(payload, dict):
+                                system_stats = payload
+                            runtime_ready = True
+                        else:
+                            print(
+                                "[IMAGE_DIAGNOSTIC:PRODUCTION] 관리 Comfy 준비 조회 실패: "
+                                f"status={response.status}, port={port}"
+                            )
+            except Exception as exc:
+                print(
+                    "[IMAGE_DIAGNOSTIC:PRODUCTION] 관리 Comfy 아직 준비되지 않음: "
+                    f"port={port}, error={type(exc).__name__}: {exc}"
+                )
+        runtime_without_logs = {
+            key: value
+            for key, value in runtime_status.items()
+            if key != "logs"
+        }
+        status_result = {
+            "queue_idle": queue_idle,
+            "runtime_running": bool(runtime_status.get("running")),
+            "runtime_ready": runtime_ready,
+            "execution_target": execution_target,
+            "instance_id": instance_id,
+            "port": port,
+            "asset_workflow_type": workflow_profiles.normalize_asset_workflow_type(
+                load_config().get("asset_workflow_type")
+            ),
+            "runtime": runtime_without_logs,
+            "system_stats": system_stats,
+        }
+        if request.get("include_logs") is True:
+            status_result["comfy_log"] = "".join(
+                str(entry.get("text") or "")
+                for entry in runtime_status.get("logs", [])
+                if isinstance(entry, dict)
+            )
+        return status_result
+
+    if action != "generate":
+        print(
+            "[IMAGE_DIAGNOSTIC:PRODUCTION] 지원하지 않는 요청: "
+            f"action={action!r}, request={request!r}"
+        )
+        raise ValueError(f"지원하지 않는 실제 프로그램 진단 action: {action!r}")
+    if execution_target != "local":
+        raise RuntimeError(
+            "실제 프로그램 이미지 진단은 로컬 관리 Comfy에서만 실행합니다: "
+            f"target={execution_target!r}"
+        )
+    if not runtime_status.get("running"):
+        raise RuntimeError(
+            "에셋 생성에 할당된 관리 Comfy가 실행 중이 아닙니다: "
+            f"instance={instance_id}, port={port}"
+        )
+
+    character = str(request.get("character") or "").strip()
+    case_name = str(request.get("case") or "").strip()
+    phase = str(request.get("phase") or "").strip()
+    variant = str(request.get("variant") or "").strip()
+    patch_enabled = request.get("dcw_cwm_smc_enabled")
+    if not character or not re.fullmatch(r"[A-Za-z0-9_-]{1,96}", character):
+        raise ValueError(f"진단 임시 캐릭터 이름 형식 오류: {character!r}")
+    if case_name not in {"production_patch_on", "production_patch_off"}:
+        raise ValueError(f"진단 케이스 이름 오류: {case_name!r}")
+    if phase not in {"warmup", "measurement"}:
+        raise ValueError(f"진단 실행 phase 오류: {phase!r}")
+    if not variant or len(variant) > 4000:
+        raise ValueError(f"진단 프롬프트 길이 오류: length={len(variant)}")
+    if not isinstance(patch_enabled, bool):
+        raise TypeError(
+            "진단 DCW/CWM/SMC 상태는 bool이어야 합니다: "
+            f"value={patch_enabled!r}"
+        )
+    try:
+        seed = int(request.get("seed"))
+        index = int(request.get("index"))
+    except (TypeError, ValueError) as exc:
+        print(
+            "[IMAGE_DIAGNOSTIC:PRODUCTION] seed/index 변환 실패: "
+            f"request={request!r}, error={exc}"
+        )
+        traceback.print_exc()
+        raise ValueError("진단 seed/index가 정수가 아닙니다.") from exc
+    if not 0 <= seed <= 2**32 - 1:
+        raise ValueError(f"진단 seed 범위 오류: {seed}")
+
+    workflow_type = workflow_profiles.normalize_asset_workflow_type(
+        load_config().get("asset_workflow_type")
+    )
+    positive, negative = asset_mode.build_prompts(
+        natural_language=variant,
+        seed=seed,
+        asset_workflow_type=workflow_type,
+        lora_activate=False,
+        face_lora_activate=False,
+        style_lora_activate=False,
+        face_id_enabled=False,
+        style_ref_enabled=False,
+        pose_enabled=False,
+        hrf_activate=False,
+        anima_hrf_activate=False,
+        fd_activate=False,
+        hd_activate=False,
+        ed_activate=False,
+        anima_fd_activate=False,
+        anima_hd_activate=False,
+        anima_ed_activate=False,
+        img_w=700,
+        img_h=1024,
+    )
+    expression = "warmup" if phase == "warmup" else f"run-{index:02d}"
+    body = {
+        "character": character,
+        "appearance": case_name,
+        "outfit": case_name,
+        "expression": expression,
+        "asset_workflow_type": workflow_type,
+        "face_id_enabled": False,
+        "style_ref_enabled": False,
+        "lora_activate": False,
+        "pose_enabled": False,
+        "hrf_activate": False,
+        "anima_hrf_activate": False,
+        "fd_activate": False,
+        "hd_activate": False,
+        "ed_activate": False,
+        "positive_prompt": positive,
+        "negative_prompt": negative,
+        "storage_group": "",
+        "storage_session": "",
+        "diagnostic_dcw_cwm_smc_enabled": patch_enabled,
+        "diagnostic_capture_workflow": phase == "warmup",
+    }
+    log_start = int(runtime_status.get("log_seq") or 0)
+    item = await queue_manager.add_item(
+        "asset_generation",
+        f"이미지 진단 {case_name} {expression}",
+        {"body": body},
+    )
+    try:
+        result = await asyncio.wait_for(
+            asyncio.shield(item.completion_future),
+            timeout=3600.0,
+        )
+    except Exception as exc:
+        print(
+            "[IMAGE_DIAGNOSTIC:PRODUCTION] 실제 에셋 큐 실행 실패: "
+            f"item={item.id}, case={case_name}, index={index}, "
+            f"error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        raise
+    if not isinstance(result, dict):
+        raise RuntimeError(
+            "실제 에셋 큐 결과가 dict가 아닙니다: "
+            f"item={item.id}, result={result!r}"
+        )
+
+    if result.get("success") and result.get("filename"):
+        local_path = (
+            Path(ASSET_DIR)
+            / asset_mode._safe_dirname(character)
+            / asset_mode._safe_dirname(case_name)
+            / asset_mode._safe_dirname(expression)
+            / str(result["filename"])
+        ).resolve()
+        asset_root = Path(ASSET_DIR).resolve()
+        if asset_root not in local_path.parents:
+            raise RuntimeError(
+                "진단 에셋 결과 경로가 asset 폴더 밖입니다: "
+                f"path={local_path}, asset_root={asset_root}"
+            )
+        result = dict(result)
+        result["local_path"] = str(local_path)
+        result["prompt_record_path"] = str(
+            local_path.with_name(f"{local_path.stem}_prompt.json")
+        )
+
+    runtime_after = comfy_runtime_manager.status(
+        instance_id=instance_id,
+        after=log_start,
+    )
+    comfy_log = "".join(
+        str(entry.get("text") or "")
+        for entry in runtime_after.get("logs", [])
+        if isinstance(entry, dict)
+    )
+    runtime_without_logs = {
+        key: value
+        for key, value in runtime_after.items()
+        if key != "logs"
+    }
+    return {
+        "queue_item_id": item.id,
+        "result": result,
+        "comfy_log": comfy_log,
+        "runtime": runtime_without_logs,
+    }
+
+
+def _production_image_diagnostic_call(
+    request: dict[str, Any],
+) -> dict[str, Any]:
+    loop = _main_event_loop
+    if loop is None or loop.is_closed():
+        raise RuntimeError("서버 메인 이벤트 루프가 준비되지 않았습니다.")
+    future = asyncio.run_coroutine_threadsafe(
+        _production_image_diagnostic_async(request),
+        loop,
+    )
+    try:
+        return future.result(timeout=3700.0)
+    except Exception as exc:
+        print(
+            "[IMAGE_DIAGNOSTIC:PRODUCTION] 서버 실제 생성 경로 호출 실패: "
+            f"request={request!r}, error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        raise
+
+
 comfy_installer_service = register_comfy_installer_routes(
     app,
     project_root=BASE_DIR,
@@ -22041,6 +22296,7 @@ comfy_installer_service = register_comfy_installer_routes(
     shutdown_after_update=_shutdown_after_successful_comfy_update,
     pause_managed_comfy=_pause_managed_comfy_for_update,
     resume_managed_comfy=_resume_managed_comfy_after_update,
+    production_image_diagnostic_call=_production_image_diagnostic_call,
     apply_repaired_workflow_runtime=_apply_repaired_workflow_runtime,
 )
 register_patch_import_routes(
