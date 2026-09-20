@@ -141,6 +141,19 @@ def test_comfy_process_keeps_explicit_extra_launch_args(tmp_path: Path) -> None:
     assert command[-2:] == ["--vram-headroom", "2"]
 
 
+def test_comfy_process_can_start_without_loading_manager(tmp_path: Path) -> None:
+    process = ComfyProcess(
+        comfy_root=tmp_path,
+        python=tmp_path / "python.exe",
+        cancel_event=Event(),
+        port=12345,
+        verify_manager=False,
+        enable_manager=False,
+    )
+
+    assert "--enable-manager" not in process.launch_command()
+
+
 def test_comfy_process_verifies_v4_manager_feature_and_version(
     tmp_path: Path,
 ) -> None:

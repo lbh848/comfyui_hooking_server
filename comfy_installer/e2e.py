@@ -115,6 +115,7 @@ class ComfyProcess:
         port: int | None = None,
         extra_args: Sequence[str] = (),
         verify_manager: bool = True,
+        enable_manager: bool = True,
         cpu_only: bool | None = None,
     ) -> None:
         self.comfy_root = comfy_root.resolve()
@@ -126,6 +127,7 @@ class ComfyProcess:
         self.port = port or find_free_local_port()
         self.extra_args = tuple(str(value) for value in extra_args)
         self.verify_manager = bool(verify_manager)
+        self.enable_manager = bool(enable_manager)
         self.cpu_only = cpu_only
         self.base_url = f"http://127.0.0.1:{self.port}"
         self.process: subprocess.Popen[str] | None = None
@@ -267,8 +269,9 @@ class ComfyProcess:
             "--port",
             str(self.port),
             "--disable-auto-launch",
-            "--enable-manager",
         ]
+        if self.enable_manager:
+            command.append("--enable-manager")
         command.extend(cpu_launch_args(
             self.extra_args,
             cpu_only=(installed_cpu_runtime(self.comfy_root)

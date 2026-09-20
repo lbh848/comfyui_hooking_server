@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime
 import json
 import os
+import re
 import threading
 import time
 import traceback
@@ -68,6 +69,7 @@ from .manifest import (
 )
 from .manager_dependencies import install_manager_dependencies
 from .input_patcher import patch_comfy_input
+from .image_diagnostic import run_image_diagnostic
 from .migration import ComfyMigrationCancelled, migrate_user_data
 from .model_installer import install_models
 from .model_scope import (
@@ -165,6 +167,11 @@ _E2E_PHASES = (
     ("e2e_runtime", "선택 레거시 워크플로우 실제 실행"),
     ("e2e_video_runtime", "선택 MiniMax H3 워크플로우 별도 실행"),
     ("complete", "선택 E2E 결과 기록"),
+)
+
+_IMAGE_DIAGNOSTIC_PHASES = (
+    ("image_diagnostic", "현재 에셋 워크플로우 반복 생성·경계 계측"),
+    ("complete", "진단 판정 및 ZIP 기록"),
 )
 
 _MIGRATE_PHASES = (
@@ -1633,7 +1640,7 @@ class ComfyInstallerService:
         with self._lock:
             if self._thread is not None and self._thread.is_alive():
                 raise InstallerServiceError(
-                    "ComfyUI 설치·업데이트·E2E·이사 작업이 이미 진행 중입니다."
+                    "ComfyUI 설치·업데이트·E2E·이미지 깨짐 검사·이사 작업이 이미 진행 중입니다."
                 )
             self._cancel = Event()
             self._logs.clear()
@@ -1753,6 +1760,42 @@ class ComfyInstallerService:
                 "selected_item_ids": requested,
             },
         )
+
+    def start_image_diagnostic(self) -> dict:
+        python = uv_python_path(self.comfy_root / ".venv")
+        if not python.is_file():
+            raise InstallerServiceError(
+                f"이미지 깨짐 검사를 실행할 내장 Comfy Python이 없습니다: {python}"
+            )
+        return self._start_operation(
+            operation="image_diagnostic",
+            phases=_IMAGE_DIAGNOSTIC_PHASES,
+            target=self._run_image_diagnostic,
+            kwargs={},
+        )
+
+    def image_diagnostic_archive(self, diagnostic_id: str) -> Path:
+        candidate_id = str(diagnostic_id or "").strip()
+        if not re.fullmatch(r"[0-9]{8}_[0-9]{6}-[0-9a-f]{8}", candidate_id):
+            print(
+                "[COMFY_INSTALL][IMAGE_DIAGNOSTIC] ZIP ID 형식 거부: "
+                f"diagnostic_id={candidate_id!r}"
+            )
+            raise InstallerServiceError("이미지 진단 ZIP ID 형식이 잘못되었습니다.")
+        root = (
+            self.project_root
+            / ".work"
+            / "comfy-installer"
+            / "image-diagnostics"
+        ).resolve()
+        path = (root / f"{candidate_id}.zip").resolve()
+        if path.parent != root or not path.is_file():
+            print(
+                "[COMFY_INSTALL][IMAGE_DIAGNOSTIC] ZIP 파일 조회 실패: "
+                f"diagnostic_id={candidate_id}, path={path}"
+            )
+            raise InstallerServiceError("이미지 진단 ZIP 파일이 없습니다.")
+        return path
 
     def start_migration(
         self, old_comfy_root: str | os.PathLike[str]
@@ -1963,6 +2006,80 @@ class ComfyInstallerService:
         finally:
             if process is not None:
                 process.stop()
+
+    def _run_image_diagnostic(self) -> None:
+        started_monotonic = time.monotonic()
+        try:
+            self._set_phase("image_diagnostic")
+            result = run_image_diagnostic(
+                project_root=self.project_root,
+                comfy_root=self.comfy_root,
+                config_path=self.config_path,
+                workflow_library_root=self.workflow_library_root,
+                workflow_release=self.manifest.latest_workflow_release,
+                cancel_event=self._cancel,
+                log=lambda message, level="info": self._log(message, level),
+                comfy_log=self._log_comfy,
+                progress=self._set_progress,
+                pause_managed_comfy=self.pause_managed_comfy,
+                resume_managed_comfy=self.resume_managed_comfy,
+            )
+            self._set_phase("complete")
+            result["duration_seconds"] = round(
+                time.monotonic() - started_monotonic, 3
+            )
+            result_path = self._write_result(
+                result,
+                prefix="image-diagnostic-result",
+            )
+            result["result_path"] = str(result_path)
+            with self._lock:
+                self._state.update(
+                    {
+                        "state": "succeeded",
+                        "finished_at": _now_iso(),
+                        "progress": {
+                            "event": "complete",
+                            "current": 1,
+                            "total": 1,
+                        },
+                        "error": None,
+                        "result": result,
+                    }
+                )
+            if result.get("incomplete"):
+                self._log(
+                    "[완료/주의] 이미지 깨짐 진단을 끝까지 수행하지 못했지만 "
+                    f"실패 지점과 원본 로그를 ZIP으로 기록했습니다: {result.get('archive_name')}",
+                    "warning",
+                )
+            else:
+                self._log(
+                    "[완료] 이미지 깨짐 진단 ZIP 생성 완료: "
+                    f"{result.get('archive_name')}"
+                )
+        except ComfyE2ECancelled as exc:
+            self._log(f"[중단] {exc}", "warning")
+            with self._lock:
+                self._state.update(
+                    {
+                        "state": "cancelled",
+                        "finished_at": _now_iso(),
+                        "error": str(exc),
+                    }
+                )
+        except Exception as exc:
+            print(f"[COMFY_INSTALL][SERVICE] 이미지 깨짐 진단 실패: {exc}")
+            traceback.print_exc()
+            self._log(f"[실패] {exc}", "error")
+            with self._lock:
+                self._state.update(
+                    {
+                        "state": "failed",
+                        "finished_at": _now_iso(),
+                        "error": str(exc),
+                    }
+                )
 
     def _local_e2e_bindings(self, bindings: dict[str, str]) -> tuple[dict[str, str], list[dict]]:
         if not installed_cpu_runtime(self.comfy_root):

@@ -15,20 +15,11 @@ def test_call2_split_routes_are_registered_in_backend_defaults() -> None:
     routing = server.DEFAULT_CONFIG["llm_routing"]
 
     assert "illustration_call2_plan" in routing
-    assert "illustration_scene_curate" in routing
     assert "illustration_call2" in routing
     assert "illustration_call2_keyvis" in routing
     assert "illustration_call2_authority_audit" in routing
     assert routing["illustration_call2_authority_audit"]["json_mode"] is True
-    assert routing["illustration_scene_curate"] == {
-        "primary": "llm3",
-        "fallback": False,
-        "retry_delay_sec": 1.0,
-        "max_retries": 0,
-        "fallback_retry_delay_sec": 1.0,
-        "fallback_max_retries": 0,
-        "json_mode": True,
-    }
+    assert "illustration_scene_curate" not in routing
 
 
 def test_call2_split_routes_are_registered_in_frontend_settings() -> None:
@@ -37,12 +28,10 @@ def test_call2_split_routes_are_registered_in_frontend_settings() -> None:
     ).read_text(encoding="utf-8")
 
     assert "{ key: 'illustration_call2_plan'" in frontend
-    assert "{ key: 'illustration_scene_curate'" in frontend
     assert "{ key: 'illustration_call2'," in frontend
     assert "{ key: 'illustration_call2_keyvis'" in frontend
     assert "{ key: 'illustration_call2_authority_audit'" in frontend
     assert "삽화 CALL2-PLAN" in frontend
-    assert "삽화 CALL2-SCENE-CURATE" in frontend
     assert "삽화 CALL2-DETAIL" in frontend
     assert "삽화 CALL2-KEYVIS" in frontend
     assert "삽화 CALL2-AUTHORITY-AUDIT" in frontend
@@ -74,7 +63,6 @@ def test_illustration_routes_follow_runtime_call_order() -> None:
         "illustration_call1_backtranslate",
         "illustration_call1",
         "illustration_call2_plan",
-        "illustration_scene_curate",
         "illustration_call2_keyvis",
         "illustration_call2",
         "illustration_call2_authority_audit",
@@ -101,9 +89,6 @@ def test_call2_split_routes_inherit_legacy_detail_route_when_missing() -> None:
 
     assert merged["illustration_call2"] == legacy_route
     assert merged["illustration_call2_plan"] == legacy_route
-    assert merged["illustration_scene_curate"]["primary"] == "llm3"
-    assert merged["illustration_scene_curate"]["fallback"] is False
-    assert "fallback_target" not in merged["illustration_scene_curate"]
     assert merged["illustration_call2_keyvis"] == legacy_route
     assert merged["illustration_call2_authority_audit"]["primary"] == legacy_route["primary"]
     assert merged["illustration_call2_authority_audit"]["fallback"] == legacy_route["fallback"]
@@ -149,8 +134,6 @@ def test_legacy_only_save_payload_preserves_call2_split_inheritance() -> None:
     })
 
     assert normalized["illustration_call2_plan"] == normalized["illustration_call2"]
-    assert normalized["illustration_scene_curate"]["primary"] == "llm3"
-    assert normalized["illustration_scene_curate"]["fallback"] is False
     assert normalized["illustration_call2_keyvis"] == normalized["illustration_call2"]
     assert normalized["illustration_call2_authority_audit"]["primary"] == "llm2"
     assert normalized["illustration_call2_authority_audit"]["fallback"] is True
@@ -162,11 +145,6 @@ def test_legacy_only_save_payload_preserves_call2_split_inheritance() -> None:
     ("call_name", "expected_task_key", "expected_group_id"),
     [
         ("CALL2-PLAN", "illustration_call2_plan", "call2_plan"),
-        (
-            "CALL2-SCENE-CURATE",
-            "illustration_scene_curate",
-            "call2_scene_curate",
-        ),
         (
             "CALL2-DETAIL 1/1 [FULL c1/6]",
             "illustration_call2",

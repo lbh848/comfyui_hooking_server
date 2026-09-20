@@ -1,6 +1,6 @@
 PURPOSE
 
-Select the distinct, independently readable visual beats that should become illustrations.
+Select the final set of distinct, independently readable visual beats that should become immersive illustrations faithful to the prose.
 
 INSTRUCTION AND DATA BOUNDARY
 
@@ -14,15 +14,15 @@ NARRATIVE AND ANCHOR AUTHORITY
 
 VISIBLE FACT
 
-3. Each `scene_brief` must contain one independently readable visible fact: lead with one familiar high-level action, pose, reaction, or local interaction, then add only the direction, contact, expression, or state that distinguishes the same instant and fits the same crop. Internal thought, atmosphere, fluid, or micro-motion alone is not a still. Thought, metaphor, dialogue, environment, aftermath, physiological effect, or intensity is insufficient when the image still needs explanatory prose or an invisible cause to identify the event.
+3. Each `scene_brief` must contain one independently readable visible fact: lead with one familiar high-level action, pose, reaction, or local interaction, then add only the direction, contact, expression, or state that distinguishes the same instant and fits the same crop. Judge it as an unfamiliar viewer who sees only the pixels, without the surrounding prose. Prefer a natural view of the prose-established action over a composition that needs unrelated foreground material to make it drawable. Internal thought, atmosphere, fluid, or micro-motion alone is not a still. Thought, metaphor, dialogue, environment, aftermath, physiological effect, or intensity is insufficient when the image still needs explanatory prose or an invisible cause to identify the event.
 
-4. Preserve actor, receiver, direction, intensity, natural overlap, and the established body support, orientation, and relative placement. Choose one instant within a motion sequence. A jolt, arch, tremor, or stop in motion does not create a sitting, standing, turning, or other support transition unless the anchor establishes it. A pause or absence of motion is not a readable still unless a visible physical relation or state makes the change understandable. Never invent an action, pose, contact, body region, support, or setting from a neighboring passage.
+4. Preserve actor, receiver, direction, intensity, natural overlap, and the established body support, orientation, and relative placement. Express these as scene-space body relations: who is over, under, in front of, or behind whom, which connected surfaces meet, and which body overlaps another. Do not convert a scene-space direction into an image-top, image-bottom, image-side, or frame-entry instruction; DETAIL chooses the camera and projects the relation. Choose one instant within a motion sequence. A jolt, arch, tremor, or stop in motion does not create a sitting, standing, turning, or other support transition unless the anchor establishes it. A pause or absence of motion is not a readable still unless a visible physical relation or state makes the change understandable. Never invent an action, pose, contact, body region, support, or setting from a neighboring passage.
 
 RENDERABILITY AND SUBJECT OWNERSHIP
 
 5. `TRUSTED ACTIVE BOT IMAGE POLICY` solely owns renderability and partner visibility; do not restate, narrow, or loosen it. Apply an isolated-still legibility test without dialogue, captions, causal explanation, or off-frame anatomy. When `SINGLE-PRESET NAMED SUBJECT AUTHORITY` is supplied, every scene must use exactly one authorized name as its identity/LoRA owner and focal subject. The broader canonical roster remains identity-resolution data only. Keep that ownership stable; never swap actor and receiver or promote an anonymous participant into the named or focal subject.
 
-6. The primary fact and every action-bearing region needed to recognize it must fit one coherent crop. Set `anonymous_partner_fragment` true only when the selected fact itself requires one connected partner region reaching the subject at one stated local contact point; another person's participation, dialogue, gaze target, or implied off-frame cause is insufficient. If the fact needs an identifiable partner face, several competing contact regions, a focal-subject swap, or geometry that can read as self-touch or reverse actor and receiver, choose another supported instant.
+6. The primary fact and every action-bearing region needed to recognize it must fit one coherent crop. Set `anonymous_partner_fragment` true only when the selected fact itself requires local contact from one coherent off-frame partner body; state that contact in scene space and let DETAIL derive the naturally connected visible portion after choosing the camera. Minimum partner visibility is a ceiling, not a request to select a standalone anatomical piece as proof of presence. Another person's participation, dialogue, gaze target, or implied off-frame cause is insufficient. If the fact needs an identifiable partner face, several competing contact regions, a focal-subject swap, or geometry that can read as self-touch or reverse actor and receiver, choose another supported instant.
 
 7. When the named subject's readable face and one physical contact jointly carry the fact, keep the face primary and place that contact visibly in the same wider oblique or body-spanning composition, connected by the subject's pose. Do not propose a face close-up with remote contact left implied or a detached contact-only insert that loses a story-critical face. A complete subject reaction, pose, gaze, or aftermath keeps its cause off-frame and uses false only when the subject's visible result is independently distinctive; a generic expression whose meaning depends on dialogue or ongoing invisible contact is not complete.
 
@@ -36,13 +36,16 @@ BEAT GROUPING, COUNT, AND SET COVERAGE
 
 WARDROBE BOUNDARY
 
-11. Wardrobe is resolved upstream and attached by the server. Do not reconstruct or output clothing, coverage, carried garments, outfit arrays, or `continuity_note`. A garment may appear in `scene_brief` only when acting on it—putting it on, removing it, opening it, or grasping it—is itself the selected visible fact; a garment merely described around the body does not belong in `scene_brief`.
+11. Wardrobe is resolved upstream and attached by the server. Do not reconstruct or output clothing, coverage, carried garments, outfit arrays, or `continuity_note`. A garment may appear in `scene_brief` only when acting on it—putting it on, removing it, opening it, or grasping it—is itself the selected visible fact; a garment merely described around the body does not belong in `scene_brief`. Keep any other object or material only when the anchor establishes it and it materially carries the selected action, physical state, or setting. Prefer open image space and an honest crop to an invented foreground covering; never add material as framing, concealment, censorship, or anatomy repair.
 
 REPRESENTATIVE DECISIONS
 
 - A distinctive recoil or exhausted pose is a complete subject-only fact: omit its off-frame cause and set the fragment flag false. A generic upward look that becomes meaningful only because a caption identifies an off-frame speaker is not.
+- A hand closing around an offered key is a complete local interaction when the hand, key, receiver, and direction fit one crop. Merely looking toward an off-frame offer is not.
+- Stillness is independently readable only when pixels preserve its changed relation, such as a released grip, displaced object, or newly changed support. A prose-only claim that motion stopped is not a separate illustration.
+- A partner lying over a subject establishes body overlap and depth, not placement at the top of the eventual image. Describe the supported whole-body relation and required local contact in scene space. DETAIL first constructs one coherent off-frame body, then lets the chosen camera and crop reveal only its naturally connected projected portion.
 - When expression and one ongoing body contact jointly identify the event, keep the named subject's face readable as the primary focus and include that one contact lower or beside it in a wider connected pose. Neither a face-only close-up with promised off-frame contact nor a contact-only insert preserves the full fact.
-- A local wrist hold can use one connected hand and forearm. An embrace does not need every simultaneous contact: retain the face and the one contact that best proves the assigned relation in one coherent composition.
+- A local hold may use the connected actor region that naturally reaches the contact from one frame boundary. An embrace does not need every simultaneous contact: retain the face and the one contact that best proves the assigned relation in one coherent composition.
 - A candidate that asks one crop to prove a facial reaction, a contact at the back, and a second contact at the lower body is not one visible fact. Choose one locally readable fact supported by its own anchor or replace the candidate; never split one anonymous partner across frame edges.
 - Two moments from one sustained event are valid only when their visible pose, action, contact, support, object relation, or spatial relation is materially different.
 
@@ -53,5 +56,6 @@ Return only the compact JSON schema requested in the task message. Do not output
 FINAL CHECK
 
 - Every scene is supported by its own anchor and remains recognizable without dialogue, captions, causal explanation, or off-frame action.
-- Every scene preserves actor/receiver direction and established support and has one focal identity; when face and contact are jointly necessary, both remain visible in one connected composition under the active policy.
+- Every scene preserves actor/receiver direction and established support and has one focal identity; spatial language remains in scene/body space rather than predicting a frame edge, and when face and contact are jointly necessary both remain visible in one connected composition under the active policy.
+- Every included object or material belongs to the prose-established action, state, or setting; none exists merely to cover the interaction or patch the composition.
 - The requested count uses materially different moments, every qualifying authorized subject is represented without forced equal coverage, and PLAN contributes no wardrobe state.

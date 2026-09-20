@@ -23,6 +23,8 @@ def test_settings_has_comfy_installer_tab_and_key_inputs() -> None:
     assert 'id="comfy-installer-update-btn"' in FRONTEND
     assert 'id="comfy-installer-integrity-btn"' in FRONTEND
     assert 'id="comfy-installer-e2e-btn"' in FRONTEND
+    assert 'id="comfy-installer-image-diagnostic-btn"' in FRONTEND
+    assert 'id="comfy-installer-image-diagnostic-download-btn"' in FRONTEND
     assert 'id="comfy-installer-sage-enable-btn"' in FRONTEND
     assert 'id="comfy-installer-sage-disable-btn"' in FRONTEND
     assert ">PatchSageAttention 일괄 활성화</button>" in FRONTEND
@@ -65,6 +67,7 @@ def test_frontend_uses_dedicated_installer_apis_and_does_not_persist_keys() -> N
         "/api/comfy-installer/update",
         "/api/comfy-installer/e2e-catalog",
         "/api/comfy-installer/e2e",
+        "/api/comfy-installer/image-diagnostic",
         "/api/comfy-installer/shutdown-after-update",
         "/api/comfy-installer/status",
         "/api/comfy-installer/cancel",
@@ -86,6 +89,16 @@ def test_frontend_uses_dedicated_installer_apis_and_does_not_persist_keys() -> N
     assert "install_mode: installMode" in FRONTEND
     assert "restore_config_after_success" not in FRONTEND
     assert "workflowKeyInput.value = ''" in FRONTEND
+
+
+def test_image_diagnostic_is_one_click_and_downloads_zip() -> None:
+    assert "async function comfyInstallerStartImageDiagnostic()" in FRONTEND
+    assert "function comfyInstallerDownloadImageDiagnostic()" in FRONTEND
+    assert "현재/HighVRAM/NO_VRAM을 반복 비교" in FRONTEND
+    assert "data.operation === 'image_diagnostic'" in FRONTEND
+    assert "result.incomplete" in FRONTEND
+    assert "/archive`" in FRONTEND
+    assert "수십 분 걸릴 수 있으며" in FRONTEND
 
 
 def test_patch_sage_attention_buttons_are_on_a_new_row_below_run_actions() -> None:

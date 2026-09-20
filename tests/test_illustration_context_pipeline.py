@@ -62,20 +62,6 @@ def _call_name(task_key):
     return str(metadata.get("call_name") or task_key)
 
 
-def _echo_scene_curate(messages):
-    request = "\n".join(
-        str(message.get("content") or "") for message in messages
-    )
-    draft_text = request.split(
-        "# DRAFT SCENE PLAN (REFERENCE DATA)",
-        1,
-    )[1].split(
-        "# CURRENT SERVER SEGMENT CATALOG",
-        1,
-    )[0].strip()
-    return json.dumps(json.loads(draft_text), ensure_ascii=False)
-
-
 def _authority_audit_response(
     messages,
     *,
@@ -359,8 +345,6 @@ async def test_output_only_current_uses_call2_plan_instead_of_empty_context_fall
                     "continuity_note": "Hana wears her school uniform.",
                 }],
             })
-        if call_name == "CALL2-SCENE-CURATE":
-            return _echo_scene_curate(messages)
         if call_name.startswith("CALL2-DETAIL 1/1"):
             return _toon_for_slots([0])
         raise AssertionError(f"unexpected call: {call_name}")
@@ -402,7 +386,7 @@ async def test_output_only_current_uses_call2_plan_instead_of_empty_context_fall
 
 
 @pytest.mark.asyncio
-async def test_scene_curator_replaces_caption_dependent_draft_before_detail(
+async def test_plan_selects_the_final_readable_set_before_detail(
     monkeypatch,
 ):
     calls = []
@@ -415,23 +399,9 @@ async def test_scene_curator_replaces_caption_dependent_draft_before_detail(
         )
         requests[call_name] = request
         if call_name == "CALL2-PLAN":
-            return json.dumps({
-                "scene_plan": [{
-                    "anchor_segment": "C001",
-                    "characters": ["Hana"],
-                    "scene_brief": "Hana looks upward toward an off-frame voice.",
-                    "anonymous_partner_fragment": False,
-                }, {
-                    "anchor_segment": "C002",
-                    "characters": ["Hana"],
-                    "scene_brief": "Hana pulls the door shut with both hands on the rope.",
-                    "anonymous_partner_fragment": False,
-                }],
-            })
-        if call_name == "CALL2-SCENE-CURATE":
             assert "Hana looks upward toward an off-frame voice." in request
             assert "Mira sets the lantern on the map" in request
-            assert "Return exactly 2 scene_plan entries." in request
+            assert "minimum of 2 and a maximum of 2 image tags" in request
             return json.dumps({
                 "scene_plan": [{
                     "anchor_segment": "C002",
@@ -469,7 +439,7 @@ scenes[2]:
     monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
     result = await pipeline.build_from_context(
         {
-            "session_id": "scene_curator_reselection_test",
+            "session_id": "plan_final_selection_test",
             "target_slotted": (
                 "Hana looks upward toward an off-frame voice.\n\n[Slot 0]\n\n"
                 "Hana grips the rope with both hands and pulls the door shut.\n\n"
@@ -505,12 +475,11 @@ scenes[2]:
         backtranslate_names="Hana, Mira",
     )
 
-    assert calls[:2] == ["CALL2-PLAN", "CALL2-SCENE-CURATE"]
-    assert calls[2].startswith("CALL2-DETAIL 1/1 [FULL c1/")
+    assert calls[0] == "CALL2-PLAN"
+    assert calls[1].startswith("CALL2-DETAIL 1/1 [FULL c1/")
     assert [item["slot"] for item in result["items"]] == [1, 2]
-    assert "off-frame voice" in result["call2_plan_output"]
-    assert "off-frame voice" not in result["call2_scene_curate_output"]
-    assert '"Mira"' in result["call2_scene_curate_output"]
+    assert "off-frame voice" not in result["call2_plan_output"]
+    assert '"Mira"' in result["call2_plan_output"]
 
 
 @pytest.mark.asyncio
@@ -539,8 +508,6 @@ async def test_persona_identity_reaches_call1_call2_and_call3(monkeypatch):
                     "scene_brief": "Mira closes her umbrella and enters the foyer.",
                 }],
             })
-        if call_name == "CALL2-SCENE-CURATE":
-            return _echo_scene_curate(messages)
         if call_name.startswith("CALL2-DETAIL 1/1"):
             return """<lb-xnai>
 scenes[1]:
@@ -617,7 +584,7 @@ scenes[1]:
     detail_call = next(
         name for name in requests if name.startswith("CALL2-DETAIL 1/1")
     )
-    for call_name in ["CALL1", "CALL2-PLAN", "CALL2-SCENE-CURATE", "CALL3"]:
+    for call_name in ["CALL1", "CALL2-PLAN", "CALL3"]:
         assert "# REGISTERED USER PERSONA IDENTITY" in requests[call_name]
         assert "`Mira` is the configured user persona" in requests[call_name]
     assert "# REGISTERED USER PERSONA IDENTITY" not in requests[detail_call]
@@ -1440,6 +1407,111 @@ def test_downstream_call2_plan_handoff_omits_internal_wardrobe_structure():
     }
 
 
+@pytest.mark.parametrize(
+    "subject,partner,subject_state,partner_state,partner_change",
+    [
+        (
+            "Shoko",
+            "Doyun",
+            "Shoko is fully nude after her clothing was removed.",
+            "Doyun wears a shirt, trousers, and underwear.",
+            "Doyun lowered his trousers and underwear; they remain lowered.",
+        ),
+        (
+            "Mina",
+            "Leon",
+            "Mina wears a green dress.",
+            "Leon wears a rain jacket over a cream shirt and linen trousers.",
+            "Leon removed the rain jacket and still wears the shirt and trousers.",
+        ),
+    ],
+)
+def test_anonymous_partner_physical_state_reaches_detail_without_changing_keyvis(
+    subject,
+    partner,
+    subject_state,
+    partner_state,
+    partner_change,
+):
+    plans = [{
+        "plan_id": "S001",
+        "slot": 3,
+        "anchor_segment": "C002",
+        "anchor_passage": f"{partner} maintains the established contact with {subject}.",
+        "characters": [subject],
+        "scene_brief": f"{subject} remains the focal subject during the local contact.",
+        "anonymous_partner_fragment": True,
+    }]
+    bound = pipeline.bind_scene_plan_wardrobes(
+        plans,
+        ["C001", "C002"],
+        {},
+        [{"name": subject, "confidence": 1.0}],
+        [{
+            "segment_id": "C002",
+            "character": partner,
+            "operation": "remove",
+            "wardrobe_change": partner_change,
+            "evidence": partner_change,
+            "state_after": "partial",
+        }],
+        "message-partner-continuity",
+        wardrobe_at_start=[
+            {"character": subject, "state": subject_state},
+            {"character": partner, "state": partner_state},
+        ],
+    )
+
+    internal = bound[0]["_detail_anonymous_partner_continuity_note"]
+    public = pipeline._public_call2_scene_plan(bound[0])
+    keyvis_reference = pipeline._keyvis_wardrobe_reference(bound)
+
+    assert partner_state in internal
+    assert partner_change in internal
+    assert "names below bind state only" in internal
+    assert "do not add any listed person to characters[]" in internal
+    assert public["characters"] == [subject]
+    assert subject_state in public["continuity_note"]
+    assert partner_state in public["continuity_note"]
+    assert partner_change in public["continuity_note"]
+    assert subject_state in keyvis_reference
+    assert partner_state not in keyvis_reference
+    assert partner_change not in keyvis_reference
+
+
+def test_subject_only_scene_does_not_receive_other_current_character_state():
+    plans = [{
+        "plan_id": "S001",
+        "slot": 1,
+        "anchor_segment": "C001",
+        "anchor_passage": "Hana catches her breath alone beside the open window.",
+        "characters": ["Hana"],
+        "scene_brief": "Hana catches her breath beside the open window.",
+        "anonymous_partner_fragment": False,
+    }]
+    bound = pipeline.bind_scene_plan_wardrobes(
+        plans,
+        ["C001"],
+        {},
+        [
+            {"name": "Hana", "confidence": 1.0},
+            {"name": "Ren", "confidence": 1.0},
+        ],
+        [],
+        "message-subject-only",
+        wardrobe_at_start=[
+            {"character": "Hana", "state": "Hana wears a blue dress."},
+            {"character": "Ren", "state": "Ren wears a grey coat."},
+        ],
+    )
+
+    public = pipeline._public_call2_scene_plan(bound[0])
+
+    assert "_detail_anonymous_partner_continuity_note" not in bound[0]
+    assert "Hana wears a blue dress" in public["continuity_note"]
+    assert "Ren wears a grey coat" not in public["continuity_note"]
+
+
 def test_call2_detail_assigns_plan_ids_from_validated_slots():
     output_without_plan_ids = re.sub(
         r"\n\s+plan_id:\s*[^\r\n]+",
@@ -2059,8 +2131,6 @@ async def test_call2_pipeline_repairs_character_mismatch_without_global_fallback
                 }],
                 "keyvis_plan": None,
             })
-        if call_name == "CALL2-SCENE-CURATE":
-            return _echo_scene_curate(messages)
         if call_name.startswith("CALL2-DETAIL 1/1"):
             return _toon_for_slots([0])
         if call_name.startswith("CALL2-FIX slot=0"):
@@ -2123,8 +2193,6 @@ async def test_call2_plan_marks_balanced_fallback_past_as_non_candidate_referenc
                     "scene_brief": "Hana waits in the current hallway",
                 }],
             })
-        if call_name == "CALL2-SCENE-CURATE":
-            return _echo_scene_curate(messages)
         if call_name.startswith("CALL2-DETAIL 1/1"):
             return _toon_for_slots([0])
         raise AssertionError(f"unexpected call: {call_name}")
@@ -2214,8 +2282,6 @@ async def test_call2_plan_allows_unregistered_current_character_without_global_r
                     "scene_brief": "Doyoon studies alone at his desk.",
                 }],
             })
-        if call_name == "CALL2-SCENE-CURATE":
-            return _echo_scene_curate(messages)
         if call_name.startswith("CALL2-DETAIL 1/1"):
             return """<lb-xnai>
 scenes[1]:
@@ -2316,8 +2382,6 @@ async def test_call2_pipeline_generates_characterless_scene_without_fallback(mon
                 }],
                 "keyvis_plan": None,
             })
-        if call_name == "CALL2-SCENE-CURATE":
-            return _echo_scene_curate(messages)
         if call_name.startswith("CALL2-DETAIL 1/1"):
             detail_messages.extend(messages)
             return _toon_without_named_characters(0)
@@ -2395,7 +2459,7 @@ async def test_call2_plan_resolves_delayed_identity_before_assigning_scene_roste
             assert "???" not in str(messages[0].get("content") or "")
             assert "Read the complete current narrative before selecting" in request_text
             assert "delayed reveals from the whole narrative" in request_text
-            assert "Surrounding passages may clarify identity and chronology" in request_text
+            assert "Surrounding passages may resolve identity, chronology, and continuity" in request_text
             catalog = request_text.split(
                 "# SERVER SEGMENT CATALOG (Cxxx IDs ONLY; SLOT MAPPING IS PRIVATE)",
                 1,
@@ -2414,8 +2478,6 @@ async def test_call2_plan_resolves_delayed_identity_before_assigning_scene_roste
                     "scene_brief": "The wounded magical girl Aya lies beside the collapsed wall.",
                 }],
             })
-        if call_name == "CALL2-SCENE-CURATE":
-            return _echo_scene_curate(messages)
         if call_name.startswith("CALL2-DETAIL 1/1"):
             return f"""<lb-xnai>
 scenes[1]:
@@ -2496,8 +2558,6 @@ async def test_call2_pipeline_continues_with_partial_segment_slot_map(monkeypatc
                 ],
                 "keyvis_plan": None,
             })
-        if call_name == "CALL2-SCENE-CURATE":
-            return _echo_scene_curate(messages)
         if call_name.startswith("CALL2-DETAIL 1/1"):
             return _toon_for_slots([0, 1])
         raise AssertionError(f"unexpected call: {call_name}")
@@ -2680,8 +2740,6 @@ async def test_call2_role_inputs_are_isolated_without_mutating_stored_state(monk
                     "scene_brief": "Hana waits by the window",
                 }],
             })
-        if call_name == "CALL2-SCENE-CURATE":
-            return _echo_scene_curate(messages)
         if call_name == "CALL2-KEYVIS":
             return """<lb-xnai>
 keyvis:
@@ -2772,7 +2830,7 @@ scenes: []
     )
 
     plan_request = request_by_call["CALL2-PLAN"]
-    assert "Select the distinct, independently readable visual beats" in plan_request
+    assert "Select the final set of distinct, independently readable visual beats" in plan_request
     assert "# TRUSTED ACTIVE BOT IMAGE POLICY" in plan_request
     assert "ACTIVE BOT INSTRUCTION MARKER" in plan_request
     assert "### Nested instruction heading" in plan_request
@@ -2782,9 +2840,14 @@ scenes: []
     assert "one independently readable visible fact" in plan_request
     assert "Preserve actor, receiver, direction, intensity" in plan_request
     assert "established body support, orientation, and relative placement" in plan_request
+    assert "Express these as scene-space body relations" in plan_request
+    assert "Do not convert a scene-space direction into an image-top" in plan_request
+    assert "Describe body arrangement in scene space" in plan_request
+    assert "DETAIL chooses the camera and projects that relation" in plan_request
     assert "identifiable partner face, several competing contact regions" in plan_request
     assert "read as self-touch or reverse actor and receiver" in plan_request
-    assert "one connected partner region reaching the subject" in plan_request
+    assert "one coherent off-frame partner body" in plan_request
+    assert "Minimum partner visibility is a ceiling" in plan_request
     assert "complete subject reaction, pose, gaze, or aftermath keeps its cause off-frame" in plan_request
     assert "face close-up with remote contact left implied" in plan_request
     assert "Replace an incompatible candidate with another supported instant" in plan_request
@@ -2844,7 +2907,7 @@ scenes: []
         for name, content in request_by_call.items()
         if name.startswith("CALL2-DETAIL 1/1")
     )
-    assert "Expand each assigned plan into one complete image descriptor" in detail_request
+    assert "Expand each assigned plan into one complete, immersive image descriptor" in detail_request
     assert "# ASSIGNED SCENE PLAN DATA" in detail_request
     assert "Return only one <lb-xnai> block containing scenes" in detail_request
     assert "\nkeyvis:\n" not in detail_request
@@ -2865,14 +2928,18 @@ scenes: []
     assert "[Last log entry]" not in detail_request
     assert "`anchor_passage` is event authority" in detail_request
     assert "Repair camera and crop only" in detail_request
+    assert "Resolve spatial projection in this order" in detail_request
+    assert "# PROJECTION ORDER" in detail_request
+    assert "Choose the camera first, then resolve depth, overlap, and occlusion" in detail_request
+    assert "only then apply the frame as a window" in detail_request
     assert "face/expression and one physical contact jointly carry" in detail_request
     assert "face close-up while describing required contact as implied" in detail_request
     assert "keep every required contact visibly readable" in detail_request
     assert "Make camera, pose, gaze, anatomy" in detail_request
-    assert "Bind one actor-owned connected part to one receiver-owned local surface" in detail_request
-    assert "one continuous region entering from exactly one frame edge" in detail_request
-    assert "never assemble a chest, waist, limb, or skin region from different edges" in detail_request
-    assert "broad torso or wall of skin is not a substitute" in detail_request
+    assert "first construct one coherent partner continuing outside the frame" in detail_request
+    assert "one unbroken visible path from a single frame boundary" in detail_request
+    assert "never turn a body-part label into a standalone presence token" in detail_request
+    assert "never invent or reposition foreground material" in detail_request
     detail_messages = next(
         messages
         for name, messages in messages_by_call.items()
@@ -2890,8 +2957,8 @@ scenes: []
     assert "Omit face, hair, eye, expression, clothing, and local detail outside" in detail_request
     assert "Put partner visibility in `scene` and exact contact in `supplement`" in detail_request
     assert "An anonymous participant never replaces or becomes a named focal subject" in detail_request
-    assert "only the permitted connected action-bearing fragment" in detail_request
-    assert "one edge-to-contact direction" in detail_request
+    assert "naturally cropped connected portion" in detail_request
+    assert "consistent scale, depth, orientation, occlusion" in detail_request
     assert "severe foreshortening" not in detail_request
     assert "Keep remote ongoing contact as context rather than demanding" not in detail_request
     assert "nested generated visual marker" not in detail_request
@@ -2919,8 +2986,6 @@ async def test_call2_plan_roster_contains_only_resolver_current_identity_labels(
                     "scene_brief": "Hana and Mira wait while a stranger passes behind them",
                 }],
             })
-        if call_name == "CALL2-SCENE-CURATE":
-            return _echo_scene_curate(messages)
         if call_name.startswith("CALL2-DETAIL 1/1"):
             return """<lb-xnai>
 scenes[1]:
@@ -3042,8 +3107,6 @@ async def test_single_v5_plan_receives_lora_subject_authority_separate_from_rost
                     "anonymous_partner_fragment": False,
                 }],
             })
-        if call_name == "CALL2-SCENE-CURATE":
-            return _echo_scene_curate(messages)
         if call_name.startswith("CALL2-DETAIL 1/1"):
             return """<lb-xnai>
 scenes[1]:
@@ -3382,8 +3445,6 @@ async def test_call2_detail_failure_reuses_preserved_plan_in_global_fallback(mon
                 }],
                 "keyvis_plan": None,
             })
-        if call_name == "CALL2-SCENE-CURATE":
-            return _echo_scene_curate(messages)
         if call_name.startswith("CALL2-DETAIL"):
             return "not toon"
         if call_name == "CALL2-FALLBACK":
@@ -3471,8 +3532,6 @@ scenes: []
                     "scene_brief": "Hana waits",
                 }],
             })
-        if call_name == "CALL2-SCENE-CURATE":
-            return _echo_scene_curate(messages)
         if call_name == "CALL2-KEYVIS":
             return keyvis_output
         if call_name.startswith("CALL2-DETAIL"):
@@ -3656,12 +3715,6 @@ async def test_call1_parallel_then_shared_plan_then_parallel_keyvis_and_details(
             finally:
                 plan_keyvis_active -= 1
 
-        if call_name == "CALL2-SCENE-CURATE":
-            assert task_key == "illustration_scene_curate"
-            assert "# DRAFT SCENE PLAN (REFERENCE DATA)" in text
-            assert "Return exactly 9 scene_plan entries." in text
-            return _echo_scene_curate(messages)
-
         if call_name == "CALL2-KEYVIS":
             assert task_key == "illustration_call2_keyvis"
             assert "# KEY VISUAL TASK" in text
@@ -3765,10 +3818,8 @@ scenes: []
         f"S{index:03d}" for index in range(1, 10)
     ]
     assert "CALL2-PLAN" in call_names
-    assert "CALL2-SCENE-CURATE" in call_names
-    assert call_names.index("CALL2-PLAN") < call_names.index("CALL2-SCENE-CURATE")
-    assert call_names.index("CALL2-SCENE-CURATE") < call_names.index("CALL2-KEYVIS")
     assert "CALL2-KEYVIS" in call_names
+    assert call_names.index("CALL2-PLAN") < call_names.index("CALL2-KEYVIS")
     assert sum(name.startswith("CALL2-DETAIL") for name in call_names) >= 3
 
 
@@ -4568,7 +4619,7 @@ async def test_call2_detail_worker_receives_physical_construction_order(monkeypa
     assert "After the view is established" in combined
     assert "A crop is a boundary, not an occluder" in combined
     assert "one unambiguous owner" in combined
-    assert "Source completeness is not a display quota" in combined
+    assert "Source completeness and logical wardrobe continuity are not display quotas" in combined
     assert "Omit face, hair, eye, expression, clothing, and local detail outside" in combined
 
 
@@ -6044,7 +6095,6 @@ async def test_call3_uses_original_narrative_and_only_call2_selected_scene_slots
             )
         if task_key in {
             "illustration_call2_plan",
-            "illustration_scene_curate",
             "illustration_call2",
             "illustration_call2_keyvis",
         }:
@@ -6064,9 +6114,6 @@ async def test_call3_uses_original_narrative_and_only_call2_selected_scene_slots
                         "scene_brief": "second selected moment",
                     }],
                 })
-            if call_name == "CALL2-SCENE-CURATE":
-                assert task_key == "illustration_scene_curate"
-                return _echo_scene_curate(messages)
             if call_name == "CALL2-KEYVIS":
                 assert task_key == "illustration_call2_keyvis"
                 return """<lb-xnai>
@@ -6141,11 +6188,9 @@ Hana: (다음은 어떤 장면일까?) #thought_cloud"""
     assert task_keys[0] == "illustration_call1_backtranslate"
     assert task_keys[-1] == "illustration_call3"
     assert task_keys.count("illustration_call2_plan") == 1
-    assert task_keys.count("illustration_scene_curate") == 1
     assert task_keys.count("illustration_call2_keyvis") == 1
     assert task_keys.count("illustration_call2") == 2
     assert "CALL2-PLAN" in call_names
-    assert "CALL2-SCENE-CURATE" in call_names
     assert "CALL2-KEYVIS" in call_names
     assert sum(name.startswith("CALL2-DETAIL") for name in call_names) == 2
     assert [item["kind"] for item in result["items"]] == ["keyvis", "scene", "scene"]
@@ -6415,8 +6460,6 @@ async def test_call3_skips_dialogue_when_call2_selected_only_key_visual(monkeypa
                     "scene_brief": "Maria appears in the poster scene",
                 }],
             })
-        if call_name == "CALL2-SCENE-CURATE":
-            return _echo_scene_curate(messages)
         if call_name == "CALL2-KEYVIS":
             return """<lb-xnai>
 keyvis:
@@ -6478,7 +6521,6 @@ scenes: []
     )
 
     assert "CALL2-PLAN" in call_names
-    assert "CALL2-SCENE-CURATE" in call_names
     assert "CALL2-KEYVIS" in call_names
     assert sum(name.startswith("CALL2-DETAIL") for name in call_names) == 1
     assert sum(name.startswith("CALL2-FIX") for name in call_names) == 1
@@ -6590,8 +6632,6 @@ scenes: []
                     "scene_brief": "Hana waits in the classroom",
                 }],
             })
-        if call_name == "CALL2-SCENE-CURATE":
-            return _echo_scene_curate(messages)
         if call_name == "CALL2-KEYVIS":
             return keyvis_output
         if call_name.startswith("CALL2-DETAIL"):
@@ -8983,7 +9023,7 @@ def test_interaction_legibility_prompts_cover_reaction_crop_and_fragment_contras
     # reaction with the required contact merely promised outside the frame.
     assert "face close-up with remote contact left implied" in plan_prompt
     assert "face close-up while describing required contact as implied" in detail_prompt
-    assert "fragment and its contact must be visibly inside the crop" in detail_prompt
+    assert "contact must be visibly inside the crop" in detail_prompt
 
     # Isomorphic composition: the face remains primary while one local contact
     # stays visibly connected in the same wider pose.
@@ -8999,10 +9039,10 @@ def test_interaction_legibility_prompts_cover_reaction_crop_and_fragment_contras
     assert "transient arching, jolting, trembling, or stillness" in detail_prompt
 
     # Opposite valid cases remain distinct: a complete reaction needs no
-    # anonymous fragment, while a local wrist hold may use one connected limb.
+    # anonymous fragment, while a local hold may use one connected crop.
     assert "complete subject reaction, pose, gaze, or aftermath" in plan_prompt
     assert "keeps its cause off-frame and uses false" in plan_prompt
-    assert "one connected hand and forearm establish a wrist hold" in detail_prompt
+    assert "one local hold establishes the assigned fact" in detail_prompt
 
 
 def test_parse_call1_legacy_items_event_still_carried_for_backward_compat():
@@ -10252,10 +10292,6 @@ async def test_persistent_call2_only_uses_bounded_history_and_visual_candidate(m
                     "scene_brief": "Hana waits by the current door",
                 }],
             })
-        if call_name == "CALL2-SCENE-CURATE":
-            assert task_key == "illustration_scene_curate"
-            assert "bounded past marker" not in request_text
-            return _echo_scene_curate(messages)
         assert task_key == "illustration_call2"
         assert "bounded past marker" not in request_text
         assert "# CHARACTER DICTIONARY" not in request_text
@@ -10314,7 +10350,6 @@ scenes[1]:
 
     assert [task_key for task_key, _messages in calls] == [
         "illustration_call2_plan",
-        "illustration_scene_curate",
         "illustration_call2",
     ]
     assert result["balanced_fallback_used"] is True
@@ -10366,10 +10401,6 @@ async def test_persistent_history_recovers_missing_prior_wardrobe_with_balanced_
                     "scene_brief": "Hana looks outside in the current scene",
                 }],
             })
-        if call_name == "CALL2-SCENE-CURATE":
-            assert task_key == "illustration_scene_curate"
-            assert "past wardrobe recovery marker" not in request_text
-            return _echo_scene_curate(messages)
         assert task_key == "illustration_call2"
         assert "past wardrobe recovery marker" not in request_text
         assert "# CHARACTER DICTIONARY" not in request_text
@@ -10434,7 +10465,6 @@ scenes[1]:
     assert [task_key for task_key, _messages in calls] == [
         "illustration_call1",
         "illustration_call2_plan",
-        "illustration_scene_curate",
         "illustration_call2",
     ]
     assert result["balanced_fallback_used"] is True
@@ -10565,7 +10595,6 @@ async def test_persistent_call1_off_keeps_call2_call3_with_separate_bounded_hist
         call_name = _call_name(task_key)
         if task_key in {
             "illustration_call2_plan",
-            "illustration_scene_curate",
             "illustration_call2",
         }:
             if call_name == "CALL2-AUTHORITY-AUDIT":
@@ -10583,11 +10612,6 @@ async def test_persistent_call1_off_keeps_call2_call3_with_separate_bounded_hist
                         "scene_brief": "Hana waits by the current door",
                     }],
                 })
-            if call_name == "CALL2-SCENE-CURATE":
-                assert task_key == "illustration_scene_curate"
-                assert "call2 bounded marker" not in request_text
-                assert "call3 bounded marker" not in request_text
-                return _echo_scene_curate(messages)
             assert task_key == "illustration_call2"
             assert "call2 bounded marker" not in request_text
             assert "call3 bounded marker" not in request_text
@@ -10647,7 +10671,6 @@ scenes[1]:
 
     assert [task_key for task_key, _messages in calls] == [
         "illustration_call2_plan",
-        "illustration_scene_curate",
         "illustration_call2",
         "illustration_call3",
     ]
@@ -10721,8 +10744,6 @@ async def test_call2_drops_only_generic_failure_below_one_third(monkeypatch):
                     "scene_brief": f"Hana scene {slot}",
                 } for slot in range(4)],
             })
-        if call_name == "CALL2-SCENE-CURATE":
-            return _echo_scene_curate(messages)
         if call_name.startswith("CALL2-DETAIL"):
             shard = int(re.search(r"CALL2-DETAIL (\d+)/4", call_name).group(1))
             return (
@@ -10783,8 +10804,6 @@ async def test_character_roster_fix_failure_drops_only_that_scene_below_threshol
                     "scene_brief": f"Scene {slot}",
                 } for slot in range(4)],
             })
-        if call_name == "CALL2-SCENE-CURATE":
-            return _echo_scene_curate(messages)
         if call_name.startswith("CALL2-DETAIL"):
             shard = int(re.search(r"CALL2-DETAIL (\d+)/4", call_name).group(1))
             return _toon_for_slots([shard - 1]).replace(
@@ -10849,8 +10868,6 @@ async def test_call2_global_fallback_starts_at_exactly_one_third_failure(monkeyp
                     "scene_brief": f"Hana scene {slot}",
                 } for slot in range(3)],
             })
-        if call_name == "CALL2-SCENE-CURATE":
-            return _echo_scene_curate(messages)
         if call_name.startswith("CALL2-DETAIL"):
             shard = int(re.search(r"CALL2-DETAIL (\d+)/3", call_name).group(1))
             return (

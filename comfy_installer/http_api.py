@@ -339,6 +339,49 @@ async def handle_e2e_start(request: web.Request) -> web.Response:
         return _json_error(str(exc), status=500)
 
 
+async def handle_image_diagnostic_start(request: web.Request) -> web.Response:
+    service = request.app[APP_SERVICE_KEY]
+    try:
+        result = service.start_image_diagnostic()
+        return web.json_response({"ok": True, **result})
+    except InstallerServiceError as exc:
+        print(f"[COMFY_INSTALL][API] 이미지 깨짐 검사 시작 거부: {exc}")
+        traceback.print_exc()
+        return _json_error(str(exc), status=409)
+    except Exception as exc:
+        print(f"[COMFY_INSTALL][API] 이미지 깨짐 검사 시작 실패: {exc}")
+        traceback.print_exc()
+        return _json_error(str(exc), status=500)
+
+
+async def handle_image_diagnostic_archive(request: web.Request) -> web.Response:
+    service = request.app[APP_SERVICE_KEY]
+    diagnostic_id = request.match_info.get("diagnostic_id", "")
+    try:
+        archive = service.image_diagnostic_archive(diagnostic_id)
+        return web.FileResponse(
+            archive,
+            headers={
+                "Content-Type": "application/zip",
+                "Content-Disposition": f'attachment; filename="{archive.name}"',
+            },
+        )
+    except InstallerServiceError as exc:
+        print(
+            "[COMFY_INSTALL][API] 이미지 진단 ZIP 조회 거부: "
+            f"diagnostic_id={diagnostic_id!r}, error={exc}"
+        )
+        traceback.print_exc()
+        return _json_error(str(exc), status=404)
+    except Exception as exc:
+        print(
+            "[COMFY_INSTALL][API] 이미지 진단 ZIP 조회 실패: "
+            f"diagnostic_id={diagnostic_id!r}, error={exc}"
+        )
+        traceback.print_exc()
+        return _json_error(str(exc), status=500)
+
+
 async def handle_unpack_workflow_pack(request: web.Request) -> web.Response:
     service = request.app[APP_SERVICE_KEY]
     workflow_key = ""
@@ -600,6 +643,14 @@ def register_comfy_installer_routes(
     )
     app.router.add_post("/api/comfy-installer/start", handle_start)
     app.router.add_post("/api/comfy-installer/e2e", handle_e2e_start)
+    app.router.add_post(
+        "/api/comfy-installer/image-diagnostic",
+        handle_image_diagnostic_start,
+    )
+    app.router.add_get(
+        "/api/comfy-installer/image-diagnostic/{diagnostic_id}/archive",
+        handle_image_diagnostic_archive,
+    )
     app.router.add_post(
         "/api/comfy-installer/unpack-workflow-pack",
         handle_unpack_workflow_pack,
