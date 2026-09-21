@@ -98,6 +98,8 @@ def test_image_diagnostic_is_one_click_and_downloads_zip() -> None:
     assert "B sampler 직전 ModelPatcher Refresh" in FRONTEND
     assert "C DCW/CWM OFF" in FRONTEND
     assert "D LoRA 완료 ModelPatcher 고정 재사용" in FRONTEND
+    assert "E 텍스트 인코더 CPU 고정" in FRONTEND
+    assert "UNet과 VAE는 기존 GPU 경로를 유지" in FRONTEND
     assert "conditioning·sampler latent·VAE 출력의 NaN/Inf" in FRONTEND
     assert "data.operation === 'image_diagnostic'" in FRONTEND
     assert "result.incomplete" in FRONTEND

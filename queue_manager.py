@@ -3847,6 +3847,11 @@ class QueueManager:
                 if isinstance(body.get("diagnostic_stable_model_reuse"), bool)
                 else None
             ),
+            diagnostic_text_encoder_cpu=(
+                body.get("diagnostic_text_encoder_cpu")
+                if isinstance(body.get("diagnostic_text_encoder_cpu"), bool)
+                else None
+            ),
             diagnostic_session_key=str(
                 body.get("diagnostic_session_key") or ""
             ),

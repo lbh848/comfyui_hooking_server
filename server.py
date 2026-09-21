@@ -22185,6 +22185,7 @@ async def _production_image_diagnostic_async(
     patch_enabled = request.get("dcw_cwm_smc_enabled")
     model_patcher_refresh = request.get("model_patcher_refresh")
     stable_model_reuse = request.get("stable_model_reuse")
+    text_encoder_cpu = request.get("text_encoder_cpu")
     if not character or not re.fullmatch(r"[A-Za-z0-9_-]{1,96}", character):
         raise ValueError(f"진단 임시 캐릭터 이름 형식 오류: {character!r}")
     if case_name not in PRODUCTION_IMAGE_DIAGNOSTIC_CASE_NAMES:
@@ -22208,6 +22209,16 @@ async def _production_image_diagnostic_async(
             "진단 Stable ModelPatcher reuse 상태는 bool이어야 합니다: "
             f"value={stable_model_reuse!r}"
         )
+    if not isinstance(text_encoder_cpu, bool):
+        message = (
+            "진단 텍스트 인코더 CPU 상태는 bool이어야 합니다: "
+            f"value={text_encoder_cpu!r}"
+        )
+        print(
+            "[IMAGE_DIAGNOSTIC:PRODUCTION] 텍스트 인코더 CPU 상태 검증 실패: "
+            f"{message}, request={request!r}"
+        )
+        raise TypeError(message)
     try:
         seed = int(request.get("seed"))
         index = int(request.get("index"))
@@ -22272,6 +22283,7 @@ async def _production_image_diagnostic_async(
         "diagnostic_dcw_cwm_smc_enabled": patch_enabled,
         "diagnostic_model_patcher_refresh": model_patcher_refresh,
         "diagnostic_stable_model_reuse": stable_model_reuse,
+        "diagnostic_text_encoder_cpu": text_encoder_cpu,
         "diagnostic_session_key": f"{diagnostic_id}:{case_name}",
         "diagnostic_run_key": diagnostic_run_key,
         "diagnostic_capture_workflow": phase == "warmup",

@@ -11,6 +11,7 @@ import time
 import traceback
 import uuid
 import zipfile
+from collections import Counter
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from threading import Event
@@ -82,6 +83,7 @@ PRODUCTION_IMAGE_DIAGNOSTIC_CASE_NAMES = frozenset(
         "production_model_refresh",
         "production_patch_off",
         "production_stable_model_reuse",
+        "production_text_encoder_cpu",
         *_MEMORY_CASE_LABELS,
     }
 )
@@ -162,6 +164,7 @@ def _adaptive_memory_plans(
         "patch_enabled": bool(source_case.get("dcw_cwm_smc_enabled")),
         "model_patcher_refresh": bool(source_case.get("model_patcher_refresh")),
         "stable_model_reuse": bool(source_case.get("stable_model_reuse")),
+        "text_encoder_cpu": bool(source_case.get("text_encoder_cpu")),
         "source_case": str(source_case.get("name") or "unknown"),
     }
     candidates = (
@@ -236,6 +239,15 @@ def _write_json(path: Path, value: Any) -> None:
         json.dumps(value, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+
+
+def _write_jsonl(path: Path, values: list[Mapping[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines = [
+        json.dumps(dict(value), ensure_ascii=False, sort_keys=True)
+        for value in values
+    ]
+    path.write_text(("\n".join(lines) + "\n") if lines else "", encoding="utf-8")
 
 
 def _safe_git_head(path: Path) -> str | None:
@@ -581,6 +593,386 @@ def _probe_summary(events: list[dict[str, Any]]) -> dict[str, Any]:
         "model_after_sampler": model_after,
         "stable_model_reuse": stable_reuse,
     }
+
+
+def _events_for_run(
+    events: list[dict[str, Any]],
+    run_key: str,
+) -> list[dict[str, Any]]:
+    return [
+        event
+        for event in events
+        if not event.get("run_key") or str(event.get("run_key")) == run_key
+    ]
+
+
+def _lifecycle_events(
+    events: list[dict[str, Any]],
+    run_key: str,
+) -> list[dict[str, Any]]:
+    return [
+        event
+        for event in events
+        if event.get("event") == "lifecycle_event"
+        and str(event.get("run_key") or "") == run_key
+    ]
+
+
+def _lifecycle_summary(events: list[Mapping[str, Any]]) -> dict[str, Any]:
+    operation_counts: Counter[str] = Counter()
+    status_counts: Counter[str] = Counter()
+    identity_hits = 0
+    clone_conflicts = 0
+    load_requests = 0
+    mismatch_before_load = 0
+    error_operations = []
+    for event in events:
+        operation = str(event.get("operation") or "unknown")
+        status = str(event.get("status") or "unknown")
+        operation_counts[operation] += 1
+        status_counts[status] += 1
+        if operation == "model_management.load_models_gpu":
+            load_requests += 1
+            identity_hits += len(event.get("identity_hits") or [])
+            clone_conflicts += len(event.get("clone_conflicts") or [])
+        if operation.endswith(".partially_load"):
+            before = event.get("before") or {}
+            if isinstance(before, dict) and isinstance(before.get("patcher"), dict):
+                before = before["patcher"]
+            if isinstance(before, dict):
+                resident = before.get("resident_patch_uuid")
+                requested = before.get("patches_uuid")
+                if resident is not None and requested is not None and resident != requested:
+                    mismatch_before_load += 1
+        if status == "error":
+            error_operations.append(
+                {
+                    "operation": operation,
+                    "error": event.get("error"),
+                    "sequence": event.get("sequence"),
+                }
+            )
+    return {
+        "event_count": len(events),
+        "operation_counts": dict(sorted(operation_counts.items())),
+        "status_counts": dict(sorted(status_counts.items())),
+        "load_models_gpu_calls": load_requests,
+        "load_identity_hits": identity_hits,
+        "load_clone_conflicts": clone_conflicts,
+        "uuid_mismatch_before_partially_load": mismatch_before_load,
+        "model_load_calls": sum(
+            count
+            for operation, count in operation_counts.items()
+            if operation.endswith("LoadedModel.model_load")
+        ),
+        "model_unload_calls": sum(
+            count
+            for operation, count in operation_counts.items()
+            if operation.endswith("LoadedModel.model_unload")
+        ),
+        "parent_switches": sum(
+            count
+            for operation, count in operation_counts.items()
+            if operation.endswith("LoadedModel._switch_parent")
+        ),
+        "patch_model_calls": sum(
+            count
+            for operation, count in operation_counts.items()
+            if operation.endswith(".patch_model")
+        ),
+        "unpatch_model_calls": sum(
+            count
+            for operation, count in operation_counts.items()
+            if operation.endswith(".unpatch_model")
+        ),
+        "clip_encode_calls": sum(
+            count
+            for operation, count in operation_counts.items()
+            if operation.endswith("CLIP.encode_from_tokens")
+        ),
+        "prelude_events": sum(bool(event.get("prelude")) for event in events),
+        "error_operations": error_operations,
+    }
+
+
+def _normalized_lifecycle_event(event: Mapping[str, Any]) -> dict[str, Any]:
+    def patch_state(value: Any) -> dict[str, Any] | None:
+        if not isinstance(value, Mapping):
+            return None
+        if isinstance(value.get("patcher"), Mapping):
+            value = value["patcher"]
+        requested = value.get("patches_uuid")
+        resident = value.get("resident_patch_uuid")
+        return {
+            "patch_aligned": (
+                resident == requested
+                if resident is not None and requested is not None
+                else None
+            ),
+            "patch_key_count": value.get("patch_key_count"),
+            "backup_count": value.get("backup_count"),
+            "is_clip": value.get("is_clip"),
+            "is_dynamic": value.get("is_dynamic"),
+        }
+
+    return {
+        "operation": event.get("operation"),
+        "status": event.get("status"),
+        "prelude": bool(event.get("prelude")),
+        "identity_hit_count": len(event.get("identity_hits") or []),
+        "clone_conflict_count": len(event.get("clone_conflicts") or []),
+        "requested_model_classes": [
+            value.get("base_model_class")
+            for value in event.get("requested") or []
+            if isinstance(value, Mapping)
+        ],
+        "before": patch_state(event.get("before")),
+        "after": patch_state(event.get("after")),
+    }
+
+
+def _first_lifecycle_divergence(
+    baseline_events: list[Mapping[str, Any]],
+    stable_events: list[Mapping[str, Any]],
+) -> dict[str, Any] | None:
+    limit = max(len(baseline_events), len(stable_events))
+    for index in range(limit):
+        baseline = baseline_events[index] if index < len(baseline_events) else None
+        stable = stable_events[index] if index < len(stable_events) else None
+        baseline_signature = (
+            _normalized_lifecycle_event(baseline) if baseline is not None else None
+        )
+        stable_signature = (
+            _normalized_lifecycle_event(stable) if stable is not None else None
+        )
+        if baseline_signature != stable_signature:
+            return {
+                "event_index": index,
+                "baseline_sequence": baseline.get("sequence") if baseline else None,
+                "stable_sequence": stable.get("sequence") if stable else None,
+                "baseline": baseline_signature,
+                "stable": stable_signature,
+            }
+    return None
+
+
+def _case_lifecycle_summary(case: Mapping[str, Any]) -> dict[str, Any]:
+    operation_counts: Counter[str] = Counter()
+    totals: Counter[str] = Counter()
+    runs = list(case.get("runs") or [])
+    for run in runs:
+        summary = run.get("lifecycle_summary") or {}
+        for key, value in (summary.get("operation_counts") or {}).items():
+            operation_counts[str(key)] += int(value or 0)
+        for key in (
+            "event_count",
+            "load_models_gpu_calls",
+            "load_identity_hits",
+            "load_clone_conflicts",
+            "uuid_mismatch_before_partially_load",
+            "model_load_calls",
+            "model_unload_calls",
+            "parent_switches",
+            "patch_model_calls",
+            "unpatch_model_calls",
+            "clip_encode_calls",
+            "prelude_events",
+        ):
+            totals[key] += int(summary.get(key) or 0)
+    return {
+        "run_count": len(runs),
+        **dict(totals),
+        "operation_counts": dict(sorted(operation_counts.items())),
+        "runs_with_trace_errors": [
+            run.get("index")
+            for run in runs
+            if (run.get("lifecycle_summary") or {}).get("error_operations")
+        ],
+    }
+
+
+def _lifecycle_comparison(cases: list[dict[str, Any]]) -> dict[str, Any]:
+    by_name = {str(case.get("name")): case for case in cases}
+    case_summaries = {
+        name: _case_lifecycle_summary(case) for name, case in by_name.items()
+    }
+    baseline = by_name.get("production_patch_on", {})
+    stable = by_name.get("production_stable_model_reuse", {})
+    stable_by_run = {
+        (run.get("phase"), run.get("index")): run
+        for run in stable.get("runs", [])
+    }
+    aligned = []
+    for run in baseline.get("runs", []):
+        other = stable_by_run.get((run.get("phase"), run.get("index")))
+        if other is None:
+            continue
+        baseline_events = [
+            event
+            for event in run.get("probe_events") or []
+            if event.get("event") == "lifecycle_event"
+        ]
+        stable_events = [
+            event
+            for event in other.get("probe_events") or []
+            if event.get("event") == "lifecycle_event"
+        ]
+        aligned.append(
+            {
+                "phase": run.get("phase"),
+                "index": run.get("index"),
+                "baseline_abnormal": bool(run.get("abnormal")),
+                "stable_abnormal": bool(other.get("abnormal")),
+                "baseline_first_nonfinite": (
+                    run.get("probe_summary") or {}
+                ).get("first_nonfinite_stage"),
+                "stable_first_nonfinite": (
+                    other.get("probe_summary") or {}
+                ).get("first_nonfinite_stage"),
+                "baseline_lifecycle": run.get("lifecycle_summary") or {},
+                "stable_lifecycle": other.get("lifecycle_summary") or {},
+                "first_lifecycle_divergence": _first_lifecycle_divergence(
+                    baseline_events,
+                    stable_events,
+                ),
+            }
+        )
+    observations = []
+    baseline_summary = case_summaries.get("production_patch_on", {})
+    stable_summary = case_summaries.get("production_stable_model_reuse", {})
+    if baseline_summary and stable_summary:
+        observations.append(
+            "The comparison is observational: lifecycle logging does not call "
+            "torch.cuda.synchronize(), so it preserves asynchronous timing as much as possible."
+        )
+        if int(baseline_summary.get("load_clone_conflicts") or 0) > int(
+            stable_summary.get("load_clone_conflicts") or 0
+        ):
+            observations.append(
+                "The baseline produced more loaded-model clone conflicts than stable reuse. "
+                "This is evidence that exact ModelPatcher identity changes the load/unload path."
+            )
+        if int(baseline_summary.get("model_load_calls") or 0) > int(
+            stable_summary.get("model_load_calls") or 0
+        ):
+            observations.append(
+                "The baseline executed more LoadedModel.model_load calls than stable reuse."
+            )
+        if int(baseline_summary.get("parent_switches") or 0) > int(
+            stable_summary.get("parent_switches") or 0
+        ):
+            observations.append(
+                "The baseline performed more LoadedModel weak-reference parent switches "
+                "than stable reuse."
+            )
+        if int(
+            baseline_summary.get("uuid_mismatch_before_partially_load") or 0
+        ) > int(stable_summary.get("uuid_mismatch_before_partially_load") or 0):
+            observations.append(
+                "The baseline reached partially_load with a resident/requested patch UUID "
+                "mismatch more often than stable reuse."
+            )
+    if any(
+        pair.get("baseline_abnormal") and not pair.get("stable_abnormal")
+        for pair in aligned
+    ):
+        observations.append(
+            "At least one aligned run was abnormal only on the baseline path. Compare its "
+            "two JSONL files by sequence to identify the first divergent lifecycle event."
+        )
+    if not observations:
+        observations.append(
+            "No aligned baseline/stable lifecycle evidence was available; inspect the raw JSONL files."
+        )
+    return {
+        "schema_version": 1,
+        "case_summaries": case_summaries,
+        "aligned_baseline_vs_stable_runs": aligned,
+        "observations": observations,
+    }
+
+
+def _write_lifecycle_analysis(report_dir: Path, cases: list[dict[str, Any]]) -> None:
+    comparison = _lifecycle_comparison(cases)
+    _write_json(report_dir / "lifecycle" / "causal_comparison.json", comparison)
+    lines = [
+        "# ModelPatcher lifecycle analysis",
+        "",
+        "This report compares the ordinary patched path with stable ModelPatcher reuse. "
+        "It records object identity, UUID transitions, loaded-model registry changes, "
+        "CLIP boundaries, and load/unload calls without forcing CUDA synchronization.",
+        "",
+        "## Case totals",
+        "",
+        "| Case | Events | load_models_gpu | Identity hits | Clone conflicts | Model loads | Model unloads | Parent switches | UUID mismatch before load |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|",
+    ]
+    for name, summary in comparison["case_summaries"].items():
+        lines.append(
+            f"| {name} | {summary.get('event_count', 0)} | "
+            f"{summary.get('load_models_gpu_calls', 0)} | "
+            f"{summary.get('load_identity_hits', 0)} | "
+            f"{summary.get('load_clone_conflicts', 0)} | "
+            f"{summary.get('model_load_calls', 0)} | "
+            f"{summary.get('model_unload_calls', 0)} | "
+            f"{summary.get('parent_switches', 0)} | "
+            f"{summary.get('uuid_mismatch_before_partially_load', 0)} |"
+        )
+    lines.extend(
+        [
+            "",
+            "## Aligned baseline versus stable-reuse runs",
+            "",
+            "| Phase | Run | Baseline abnormal | Stable abnormal | Baseline first non-finite | Stable first non-finite | Baseline clone conflicts | Stable clone conflicts | Baseline model loads | Stable model loads |",
+            "|---|---:|---:|---:|---|---|---:|---:|---:|---:|",
+        ]
+    )
+    for pair in comparison["aligned_baseline_vs_stable_runs"]:
+        baseline_lifecycle = pair.get("baseline_lifecycle") or {}
+        stable_lifecycle = pair.get("stable_lifecycle") or {}
+        lines.append(
+            f"| {pair.get('phase')} | {pair.get('index')} | "
+            f"{pair.get('baseline_abnormal')} | {pair.get('stable_abnormal')} | "
+            f"{pair.get('baseline_first_nonfinite') or '-'} | "
+            f"{pair.get('stable_first_nonfinite') or '-'} | "
+            f"{baseline_lifecycle.get('load_clone_conflicts', 0)} | "
+            f"{stable_lifecycle.get('load_clone_conflicts', 0)} | "
+            f"{baseline_lifecycle.get('model_load_calls', 0)} | "
+            f"{stable_lifecycle.get('model_load_calls', 0)} |"
+        )
+    divergences = [
+        pair
+        for pair in comparison["aligned_baseline_vs_stable_runs"]
+        if pair.get("first_lifecycle_divergence")
+    ]
+    if divergences:
+        lines.extend(["", "### First normalized lifecycle divergence", ""])
+        for pair in divergences:
+            divergence = pair["first_lifecycle_divergence"]
+            lines.append(
+                f"- `{pair.get('phase')}:{pair.get('index')}` event "
+                f"{divergence.get('event_index')}: baseline=`"
+                + json.dumps(divergence.get("baseline"), ensure_ascii=False, sort_keys=True)
+                + "`, stable=`"
+                + json.dumps(divergence.get("stable"), ensure_ascii=False, sort_keys=True)
+                + "`"
+            )
+    lines.extend(["", "## Observations", ""])
+    lines.extend(f"- {value}" for value in comparison["observations"])
+    lines.extend(
+        [
+            "",
+            "## Raw evidence",
+            "",
+            "Each `lifecycle/<case>/<run>.jsonl` file is ordered by `sequence` and "
+            "`monotonic_ns`. `prelude: true` marks an event that occurred after the "
+            "previous image probe and before the next trace anchor.",
+        ]
+    )
+    (report_dir / "PATCH_LIFECYCLE_ANALYSIS.md").write_text(
+        "\n".join(lines) + "\n",
+        encoding="utf-8",
+    )
 
 
 def _gpu_snapshot() -> dict[str, Any]:
@@ -940,6 +1332,7 @@ def _case_summary(case: Mapping[str, Any]) -> dict[str, Any]:
         "dcw_cwm_smc_enabled": case.get("dcw_cwm_smc_enabled"),
         "model_patcher_refresh": case.get("model_patcher_refresh"),
         "stable_model_reuse": case.get("stable_model_reuse"),
+        "text_encoder_cpu": case.get("text_encoder_cpu"),
         "source_case": case.get("source_case"),
         "memory_intervention": case.get("memory_intervention"),
         "runtime_profile": case.get("runtime_profile"),
@@ -955,6 +1348,7 @@ def _case_summary(case: Mapping[str, Any]) -> dict[str, Any]:
             else None
         ),
         "model_reuse": _model_reuse_summary(case),
+        "lifecycle": _case_lifecycle_summary(case),
     }
 
 
@@ -1134,11 +1528,24 @@ def _conclusions(cases: list[dict[str, Any]]) -> list[str]:
     refreshed = summaries.get("production_model_refresh", {})
     patch_off = summaries.get("production_patch_off", {})
     stable = summaries.get("production_stable_model_reuse", {})
+    text_cpu = summaries.get("production_text_encoder_cpu", {})
     baseline_bad = int(baseline.get("abnormal") or 0) > 0
     refresh_bad = int(refreshed.get("abnormal") or 0) > 0
     off_bad = int(patch_off.get("abnormal") or 0) > 0
     stable_bad = int(stable.get("abnormal") or 0) > 0
+    text_cpu_available = int(text_cpu.get("completed") or 0) > 0
+    text_cpu_bad = int(text_cpu.get("abnormal") or 0) > 0
     state_findings = []
+    baseline_lifecycle = baseline.get("lifecycle") or {}
+    stable_lifecycle = stable.get("lifecycle") or {}
+    if int(baseline_lifecycle.get("load_clone_conflicts") or 0) > int(
+        stable_lifecycle.get("load_clone_conflicts") or 0
+    ):
+        state_findings.append(
+            "수명주기 추적에서 일반 경로의 loaded-model clone 충돌이 stable reuse보다 "
+            "많았습니다. 동일 patch 구조라도 ModelPatcher 객체 identity 변경이 실제 "
+            "load/unload 경로를 바꾼다는 관측 근거입니다."
+        )
     for case in cases:
         state = _model_reuse_summary(case)
         name = str(case.get("name") or "unknown")
@@ -1169,6 +1576,8 @@ def _conclusions(cases: list[dict[str, Any]]) -> list[str]:
             recovered.append("DCW/CWM/SMC OFF(C)")
         if not stable_bad:
             recovered.append("LoRA 완료 ModelPatcher 고정 재사용(D)")
+        if text_cpu_available and not text_cpu_bad:
+            recovered.append("텍스트 인코더 CPU(E)")
         conclusions = [
             "기존 실제 경로(A)에서 이미지 또는 텐서 이상이 재현되었습니다.",
         ]
@@ -1178,7 +1587,27 @@ def _conclusions(cases: list[dict[str, Any]]) -> list[str]:
             )
         else:
             conclusions.append(
-                "Refresh(B), DCW OFF(C), stable reuse(D) 어느 개입도 이상을 회피하지 못했습니다."
+                "Refresh(B), DCW OFF(C), stable reuse(D), 텍스트 인코더 CPU(E) 어느 개입도 이상을 회피하지 못했습니다."
+            )
+        if text_cpu_available and not text_cpu_bad:
+            if baseline.get("first_nonfinite_stage") in {
+                "conditioning_positive",
+                "conditioning_negative",
+            }:
+                conclusions.append(
+                    "A의 최초 non-finite가 conditioning이고 E만 텍스트 인코더를 CPU로 "
+                    "옮겨 안정화되었습니다. GPU 텍스트 인코더 실행·상주 상태가 가장 강한 "
+                    "원인 후보입니다. UNet과 VAE는 이 비교에서 GPU 경로를 유지했습니다."
+                )
+            else:
+                conclusions.append(
+                    "E가 안정화되어 GPU 텍스트 인코더 실행·상주 상태가 원인 후보입니다. "
+                    "최초 non-finite 단계와 E의 제출 워크플로도 함께 확인해야 합니다."
+                )
+        elif text_cpu_available and text_cpu_bad:
+            conclusions.append(
+                "텍스트 인코더를 CPU로 고정한 E에서도 이상이 재현되어 GPU 텍스트 "
+                "인코더 하나만으로는 현상을 설명할 수 없습니다."
             )
         if not stable_bad and refresh_bad:
             conclusions.append(
@@ -1211,6 +1640,8 @@ def _conclusions(cases: list[dict[str, Any]]) -> list[str]:
         intervention_failures.append("DCW OFF(C)")
     if stable_bad:
         intervention_failures.append("stable reuse(D)")
+    if text_cpu_available and text_cpu_bad:
+        intervention_failures.append("텍스트 인코더 CPU(E)")
     if intervention_failures:
         return [
             "기존 실제 경로(A)는 정상이지만 다음 개입 케이스에서만 이상이 검출되었습니다: "
@@ -1218,8 +1649,8 @@ def _conclusions(cases: list[dict[str, Any]]) -> list[str]:
             "해당 개입을 해결책으로 적용하면 안 됩니다. 케이스 로그와 tensor telemetry를 우선 확인해야 합니다.",
         ] + memory_findings + state_findings
     return [
-        "A/B/C/D 모두 검정·컬러 노이즈·디코드 실패·NaN/Inf 계측에서 이상이 발견되지 않았습니다.",
-        "프롬프트 무시·미완성 전조는 images/의 같은 번호 A/B/C/D 이미지와 실제 prompt JSON을 직접 대조해야 합니다.",
+        "A/B/C/D/E 모두 검정·컬러 노이즈·디코드 실패·NaN/Inf 계측에서 이상이 발견되지 않았습니다.",
+        "프롬프트 무시·미완성 전조는 images/의 같은 번호 A/B/C/D/E 이미지와 실제 prompt JSON을 직접 대조해야 합니다.",
         "이 결과는 사용자가 실제로 쓰는 관리 Comfy와 AssetMode 생성 경로에서 얻었습니다.",
     ] + memory_findings + state_findings
 
@@ -1241,11 +1672,12 @@ def _write_report(
         "- 사용하지 않은 것: 독립 E2E Comfy, sampler/VAE 대체 구현, 축소 그래프",
         "- 사용자 선택 LoRA/캐릭터·얼굴·그림체 LoRA/Face ID/Style/Pose/Hires/Detailer: 모두 OFF",
         "- 팩 워크플로에 고정된 모델·LoRA 노드는 실제 배포 경로 보존을 위해 제거하지 않음",
-        "- 비교: 동일한 warmup 1개+측정 15개 프롬프트와 동일 seed로 A 실제 경로 / B sampler 직전 Refresh / C DCW OFF / D LoRA 완료 ModelPatcher 고정 재사용",
-        "- A/B/C/D에서 이상이 재현되면 같은 실패 경로로 AUTO VRAM의 DynamicVRAM ON/OFF, async offload OFF, Smart Memory OFF, pinned memory OFF를 각각 단독 비교",
+        "- 비교: 동일한 warmup 1개+측정 15개 프롬프트와 동일 seed로 A 실제 경로 / B sampler 직전 Refresh / C DCW OFF / D LoRA 완료 ModelPatcher 고정 재사용 / E 텍스트 인코더 CPU",
+        "- A/B/C/D/E에서 이상이 재현되면 같은 실패 경로로 AUTO VRAM의 DynamicVRAM ON/OFF, async offload OFF, Smart Memory OFF, pinned memory OFF를 각각 단독 비교",
         "- 메모리 비교는 저장된 설정 파일을 바꾸지 않는 임시 런타임 프로필이며 검사 종료·실패·중단 시 원래 관리 Comfy 프로필을 복구",
         "- Refresh는 model.clone() wrapper만 새로 만들며 모델 unload·VRAM 정리·weight patch 삭제를 하지 않음",
         "- D는 LoRA 적용 완료 지점의 첫 ModelPatcher를 같은 케이스 안에서 재사용하고 DCW와 sampler는 매 요청 실행",
+        "- E는 제출 워크플로 사본의 CLIPLoader/DualCLIPLoader만 CPU로 바꾸며 UNet과 VAE는 원래 GPU 경로를 유지",
         "- 모든 케이스에서 conditioning / sampler 입력·출력 latent / VAE 출력의 NaN·Inf와 ModelPatcher UUID·상주 UUID·patch·backup 상태를 기록",
         "- 자동 판정 범위: 검정/블록형·고주파 컬러 노이즈/디코드 실패/NaN·Inf/계측 누락. 프롬프트 무시·미완성은 이미지와 prompt JSON 직접 대조",
         "",
@@ -1258,8 +1690,8 @@ def _write_report(
         [
             "## 케이스 결과",
             "",
-            "| 케이스 | DCW/CWM/SMC | Refresh | Stable reuse | 완료 | 이상 | 최초 이상 | 최초 non-finite 단계 |",
-            "|---|---:|---:|---:|---:|---:|---:|---|",
+            "| 케이스 | DCW/CWM/SMC | Refresh | Stable reuse | Text encoder CPU | 완료 | 이상 | 최초 이상 | 최초 non-finite 단계 |",
+            "|---|---:|---:|---:|---:|---:|---:|---:|---|",
         ]
     )
     for case in cases:
@@ -1268,6 +1700,7 @@ def _write_report(
             f"| {summary['name']} | {summary['dcw_cwm_smc_enabled']} | "
             f"{summary['model_patcher_refresh']} | "
             f"{summary['stable_model_reuse']} | "
+            f"{summary['text_encoder_cpu']} | "
             f"{summary['completed']} | {summary['abnormal']} | "
             f"{summary['first_abnormal'] or '-'} | "
             f"{summary['first_nonfinite_stage'] or '-'} |"
@@ -1345,6 +1778,30 @@ def _write_report(
                     ),
                 ]
             )
+    lines.extend(
+        [
+            "",
+            "## ModelPatcher lifecycle trace",
+            "",
+            "This table counts diagnostic-only lifecycle events. CUDA synchronization is not forced.",
+            "",
+            "| Case | Events | load_models_gpu | Identity hits | Clone conflicts | Model loads | Model unloads | Parent switches | UUID mismatch before load | Trace errors |",
+            "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+        ]
+    )
+    for case in cases:
+        lifecycle = _case_lifecycle_summary(case)
+        lines.append(
+            f"| {case.get('name')} | {lifecycle.get('event_count', 0)} | "
+            f"{lifecycle.get('load_models_gpu_calls', 0)} | "
+            f"{lifecycle.get('load_identity_hits', 0)} | "
+            f"{lifecycle.get('load_clone_conflicts', 0)} | "
+            f"{lifecycle.get('model_load_calls', 0)} | "
+            f"{lifecycle.get('model_unload_calls', 0)} | "
+            f"{lifecycle.get('parent_switches', 0)} | "
+            f"{lifecycle.get('uuid_mismatch_before_partially_load', 0)} | "
+            f"{len(lifecycle.get('runs_with_trace_errors') or [])} |"
+        )
     for case in cases:
         lines.extend(["", f"### {case['name']}", ""])
         lines.append("| # | phase | seed | 초 | 평균 | 표준편차 | 검정비율 | 인접차 | 최초 non-finite | probe 누락 | 로그 경고 | 판정 |")
@@ -1373,6 +1830,8 @@ def _write_report(
             "- `images/`: 실제 프로그램이 저장한 결과 이미지와 대응 프롬프트",
             "- `logs/`: 케이스별 관리 Comfy 시작 로그와 실행별 원본 로그 조각",
             "- `telemetry/`: 실행별 구조화된 ModelPatcher·conditioning·latent·VAE 계측 JSON",
+            "- `lifecycle/`: 실행별 ModelPatcher·CLIP·load/unload JSONL과 비교 JSON",
+            "- `PATCH_LIFECYCLE_ANALYSIS.md`: 일반 경로와 stable-reuse 수명주기 비교",
             "- `workflows/`: 각 케이스 warmup에서 실제 Comfy에 제출한 최종 API 워크플로",
             "- `runs.json`: GPU 전후 상태, 이미지 수치, 유효 개입 값, 구조화 계측 요약",
             "- `environment.json`: 실행 명령·GPU·Python 패키지·custom-node Git revision·모델/LoRA SHA256",
@@ -1479,24 +1938,35 @@ def run_production_image_diagnostic(
                 "patch_enabled": True,
                 "model_patcher_refresh": False,
                 "stable_model_reuse": False,
+                "text_encoder_cpu": False,
             },
             {
                 "name": "production_model_refresh",
                 "patch_enabled": True,
                 "model_patcher_refresh": True,
                 "stable_model_reuse": False,
+                "text_encoder_cpu": False,
             },
             {
                 "name": "production_patch_off",
                 "patch_enabled": False,
                 "model_patcher_refresh": False,
                 "stable_model_reuse": False,
+                "text_encoder_cpu": False,
             },
             {
                 "name": "production_stable_model_reuse",
                 "patch_enabled": True,
                 "model_patcher_refresh": False,
                 "stable_model_reuse": True,
+                "text_encoder_cpu": False,
+            },
+            {
+                "name": "production_text_encoder_cpu",
+                "patch_enabled": True,
+                "model_patcher_refresh": False,
+                "stable_model_reuse": False,
+                "text_encoder_cpu": True,
             },
         ]
         base_plan_count = len(plans)
@@ -1507,6 +1977,7 @@ def run_production_image_diagnostic(
             patch_enabled = bool(plan["patch_enabled"])
             model_patcher_refresh = bool(plan["model_patcher_refresh"])
             stable_model_reuse = bool(plan["stable_model_reuse"])
+            text_encoder_cpu = bool(plan.get("text_encoder_cpu"))
             runtime_profile = plan.get("runtime_profile")
             if isinstance(runtime_profile, Mapping):
                 runtime_profile_changed = True
@@ -1534,6 +2005,7 @@ def run_production_image_diagnostic(
                 "dcw_cwm_smc_enabled": patch_enabled,
                 "model_patcher_refresh": model_patcher_refresh,
                 "stable_model_reuse": stable_model_reuse,
+                "text_encoder_cpu": text_encoder_cpu,
                 "source_case": plan.get("source_case"),
                 "memory_intervention": plan.get("memory_intervention"),
                 "runtime_profile": ready_runtime.get("profile"),
@@ -1586,6 +2058,7 @@ def run_production_image_diagnostic(
                         "dcw_cwm_smc_enabled": patch_enabled,
                         "model_patcher_refresh": model_patcher_refresh,
                         "stable_model_reuse": stable_model_reuse,
+                        "text_encoder_cpu": text_encoder_cpu,
                     }
                 )
                 duration = round(time.monotonic() - run_started, 3)
@@ -1625,8 +2098,21 @@ def run_production_image_diagnostic(
                 log_path.parent.mkdir(parents=True, exist_ok=True)
                 log_path.write_text(comfy_log, encoding="utf-8")
                 findings = _log_findings(comfy_log)
-                probe_events = _probe_events(comfy_log)
+                expected_run_key = f"{diagnostic_id}:{case_name}:{phase}:{index}"
+                probe_events = _events_for_run(
+                    _probe_events(comfy_log),
+                    expected_run_key,
+                )
                 probe_summary = _probe_summary(probe_events)
+                lifecycle_events = _lifecycle_events(
+                    probe_events,
+                    expected_run_key,
+                )
+                lifecycle_summary = _lifecycle_summary(lifecycle_events)
+                _write_jsonl(
+                    report_dir / "lifecycle" / case_name / f"{run_label}.jsonl",
+                    lifecycle_events,
+                )
                 _write_json(
                     report_dir / "telemetry" / case_name / f"{run_label}.json",
                     {
@@ -1636,6 +2122,7 @@ def run_production_image_diagnostic(
                         "seed": seed,
                         "events": probe_events,
                         "summary": probe_summary,
+                        "lifecycle_summary": lifecycle_summary,
                     },
                 )
                 reasons = list(metrics.get("pixel_abnormal_reasons") or [])
@@ -1670,6 +2157,7 @@ def run_production_image_diagnostic(
                     "log_findings": findings,
                     "probe_events": probe_events,
                     "probe_summary": probe_summary,
+                    "lifecycle_summary": lifecycle_summary,
                     "abnormal": bool(reasons),
                     "abnormal_reasons": reasons,
                     "gpu_before": before_gpu,
@@ -1682,6 +2170,9 @@ def run_production_image_diagnostic(
                     ),
                     "diagnostic_stable_model_reuse": result.get(
                         "diagnostic_stable_model_reuse"
+                    ),
+                    "diagnostic_text_encoder_cpu": result.get(
+                        "diagnostic_text_encoder_cpu"
                     ),
                     "diagnostic_runtime_probes": result.get(
                         "diagnostic_runtime_probes"
@@ -1751,7 +2242,7 @@ def run_production_image_diagnostic(
                 else:
                     environment["adaptive_memory_diagnostic"] = {
                         "triggered": False,
-                        "reason": "A/B/C/D에서 자동 판정 이상이 재현되지 않았습니다.",
+                        "reason": "A/B/C/D/E에서 자동 판정 이상이 재현되지 않았습니다.",
                     }
 
         restore_runtime_if_needed()
@@ -1760,6 +2251,7 @@ def run_production_image_diagnostic(
         environment["duration_seconds"] = round(time.monotonic() - started, 3)
         _write_json(report_dir / "environment.json", environment)
         _write_json(report_dir / "runs.json", {"cases": cases, "errors": errors})
+        _write_lifecycle_analysis(report_dir, cases)
         _write_report(
             report_dir / "REPORT.md",
             diagnostic_id=diagnostic_id,
@@ -1817,6 +2309,7 @@ def run_production_image_diagnostic(
         environment["duration_seconds"] = round(time.monotonic() - started, 3)
         _write_json(report_dir / "environment.json", environment)
         _write_json(report_dir / "runs.json", {"cases": cases, "errors": errors})
+        _write_lifecycle_analysis(report_dir, cases)
         _write_report(
             report_dir / "REPORT.md",
             diagnostic_id=diagnostic_id,

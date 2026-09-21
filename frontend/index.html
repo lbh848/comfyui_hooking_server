@@ -26738,7 +26738,7 @@
                                 <button type="button" class="comfy-installer-btn" id="comfy-installer-update-btn" onclick="comfyInstallerStartUpdate()">업데이트</button>
                                 <button type="button" class="comfy-installer-btn" id="comfy-installer-integrity-btn" onclick="comfyInstallerOpenIntegrityModal()">무결성 검사</button>
                                 <button type="button" class="comfy-installer-btn" id="comfy-installer-e2e-btn" onclick="comfyInstallerOpenE2EModal()">E2E 검사</button>
-                                <button type="button" class="comfy-installer-btn" id="comfy-installer-image-diagnostic-btn" onclick="comfyInstallerStartImageDiagnostic()" title="실제 프로그램 작업 큐에서 A/B/C/D를 비교하고, 이상 재현 시 DynamicVRAM·async offload·Smart Memory·pinned memory를 단독 변수로 추가 비교합니다.">이미지 깨짐 검사</button>
+                                <button type="button" class="comfy-installer-btn" id="comfy-installer-image-diagnostic-btn" onclick="comfyInstallerStartImageDiagnostic()" title="실제 프로그램 작업 큐에서 A/B/C/D/E를 비교하고, 이상 재현 시 DynamicVRAM·async offload·Smart Memory·pinned memory를 단독 변수로 추가 비교합니다.">이미지 깨짐 검사</button>
                                 <button type="button" class="comfy-installer-btn" id="comfy-installer-image-diagnostic-download-btn" onclick="comfyInstallerDownloadImageDiagnostic()" style="display:none;">진단 ZIP 내려받기</button>
                                 <button type="button" class="comfy-installer-btn danger" id="comfy-installer-cancel-btn" onclick="comfyInstallerCancel()" disabled>안전하게 중단</button>
                             </div>
@@ -26749,7 +26749,7 @@
                             </div>
                             <p class="comfy-installer-note" style="margin-top:9px;">
                                 설치는 선택한 워크플로우에 필요한 모델만 받고 E2E 없이 완료됩니다. 업데이트도 워크플로우 실행 검사를 하지 않으며,
-                                후킹 서버가 바뀌면 재시작 후 한 번 더 눌러야 합니다. 무결성 검사는 현재 설정된 워크플로우와 읽기 전용 팩 원본을 비교하며, 복구는 결과 모달에서 사용자가 선택한 항목만 비파괴 방식으로 처리합니다. E2E 검사는 설치 완료 후 지원되는 배포 원본을 선택해 실제 실행합니다. 이미지 깨짐 검사는 관리 Comfy를 같은 설정으로 새로 시작한 뒤 실제 프로그램 작업 큐에서 전체 에셋 워크플로를 실행합니다. 수십 분 걸릴 수 있으며, 동일 프롬프트·seed로 A 기존 경로, B sampler 직전 ModelPatcher Refresh, C DCW/CWM OFF, D LoRA 완료 ModelPatcher 고정 재사용을 각각 warmup 1장+15장 비교합니다. 이상이 재현되면 같은 실패 경로에서 DynamicVRAM ON/OFF, async offload OFF, Smart Memory OFF, pinned memory OFF를 각각 단독 비교하고, 검사가 끝나거나 실패·중단되어도 원래 Comfy 실행 프로필을 복구합니다. 모든 케이스에서 ModelPatcher UUID·상주 패치 UUID와 conditioning·sampler latent·VAE 출력의 NaN/Inf를 기록합니다. 결과 이미지·실제 프롬프트·최종 제출 워크플로·모델/LoRA 해시·환경·원본 로그·구조화 계측·MD 보고서를 ZIP으로 만듭니다.
+                                후킹 서버가 바뀌면 재시작 후 한 번 더 눌러야 합니다. 무결성 검사는 현재 설정된 워크플로우와 읽기 전용 팩 원본을 비교하며, 복구는 결과 모달에서 사용자가 선택한 항목만 비파괴 방식으로 처리합니다. E2E 검사는 설치 완료 후 지원되는 배포 원본을 선택해 실제 실행합니다. 이미지 깨짐 검사는 관리 Comfy를 같은 설정으로 새로 시작한 뒤 실제 프로그램 작업 큐에서 전체 에셋 워크플로를 실행합니다. 수십 분 걸릴 수 있으며, 동일 프롬프트·seed로 A 기존 경로, B sampler 직전 ModelPatcher Refresh, C DCW/CWM OFF, D LoRA 완료 ModelPatcher 고정 재사용, E 텍스트 인코더 CPU 고정을 각각 warmup 1장+15장 비교합니다. E에서는 UNet과 VAE는 기존 GPU 경로를 유지합니다. 이상이 재현되면 같은 실패 경로에서 DynamicVRAM ON/OFF, async offload OFF, Smart Memory OFF, pinned memory OFF를 각각 단독 비교하고, 검사가 끝나거나 실패·중단되어도 원래 Comfy 실행 프로필을 복구합니다. 모든 케이스에서 ModelPatcher UUID·상주 패치 UUID와 conditioning·sampler latent·VAE 출력의 NaN/Inf를 기록합니다. 결과 이미지·실제 프롬프트·최종 제출 워크플로·모델/LoRA 해시·환경·원본 로그·구조화 계측·MD 보고서를 ZIP으로 만듭니다.
                             </p>
                             <p class="comfy-installer-note" id="comfy-installer-compatibility-note" style="margin-top:7px;">
                                 <strong>호환 설치:</strong> RTX 2070/2080 같은 Turing(sm75)부터 사용할 수 있도록 SageAttention과 전용 Triton을 제외합니다.
@@ -39858,7 +39858,7 @@
                     body: JSON.stringify({}),
                 });
                 comfyInstallerRenderStatus(started);
-                showToast('이미지 깨짐 검사를 시작했습니다 · A/B/C/D 후 이상 재현 시 메모리/offload 단독 변수를 비교합니다', 'success');
+                showToast('이미지 깨짐 검사를 시작했습니다 · A/B/C/D/E 후 이상 재현 시 메모리/offload 단독 변수를 비교합니다', 'success');
                 clearTimeout(comfyInstallerPollTimer);
                 comfyInstallerPollTimer = setTimeout(() => comfyInstallerRefreshStatus(false), 500);
             } catch (error) {

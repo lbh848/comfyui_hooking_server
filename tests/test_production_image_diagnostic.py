@@ -59,10 +59,18 @@ def _workflow() -> dict:
             "class_type": "PreviewImage",
             "inputs": {"images": ["5", 0]},
         },
-        "10": {"class_type": "Positive", "inputs": {}},
-        "11": {"class_type": "Negative", "inputs": {}},
+        "10": {"class_type": "Positive", "inputs": {"clip": ["14", 0]}},
+        "11": {"class_type": "Negative", "inputs": {"clip": ["14", 0]}},
         "12": {"class_type": "EmptyLatent", "inputs": {}},
         "13": {"class_type": "VAELoader", "inputs": {}},
+        "14": {
+            "class_type": "CLIPLoader",
+            "inputs": {
+                "clip_name": "qwen_3_06b_base.safetensors",
+                "type": "stable_diffusion",
+                "device": "default",
+            },
+        },
     }
 
 
@@ -76,16 +84,21 @@ def _node_by_class(workflow: dict, class_type: str) -> tuple[str, dict]:
     return matches[0]
 
 
-def test_abcd_graphs_preserve_production_path_and_insert_only_selected_boundary() -> None:
+def test_abcde_graphs_preserve_production_path_and_apply_only_selected_delta() -> None:
     cases = {
-        "A": (True, False, False),
-        "B": (True, True, False),
-        "C": (False, False, False),
-        "D": (True, False, True),
+        "A": (True, False, False, False),
+        "B": (True, True, False, False),
+        "C": (False, False, False, False),
+        "D": (True, False, True, False),
+        "E": (True, False, False, True),
     }
-    for name, (dcw_enabled, refresh, stable) in cases.items():
+    for name, (dcw_enabled, refresh, stable, text_cpu) in cases.items():
         workflow = copy.deepcopy(_workflow())
         AssetMode._apply_diagnostic_model_patch_override(workflow, dcw_enabled)
+        text_encoder_nodes = AssetMode._apply_diagnostic_text_encoder_cpu_override(
+            workflow,
+            text_cpu,
+        )
         stable_nodes = AssetMode._apply_diagnostic_stable_model_reuse(
             workflow,
             stable,
@@ -105,6 +118,7 @@ def test_abcd_graphs_preserve_production_path_and_insert_only_selected_boundary(
         preview_source = str(workflow["6"]["inputs"]["images"][0])
         assert workflow[preview_source]["class_type"] == "SoyaDiagnosticImageProbe_mdsoya"
         assert len(probes) == 2
+        assert workflow["2"]["inputs"]["model"] == ["1", 0]
 
         if name == "B":
             assert len(refresh_nodes) == 1
@@ -127,6 +141,23 @@ def test_abcd_graphs_preserve_production_path_and_insert_only_selected_boundary(
             assert workflow[stable_id]["inputs"]["model"] == ["2", 0]
         else:
             assert stable_nodes == []
+
+        if name == "E":
+            assert text_encoder_nodes == [
+                {
+                    "node_id": "14",
+                    "class_type": "CLIPLoader",
+                    "before_device": "default",
+                    "effective_device": "cpu",
+                    "text_encoders": {
+                        "clip_name": "qwen_3_06b_base.safetensors",
+                    },
+                }
+            ]
+            assert workflow["14"]["inputs"]["device"] == "cpu"
+        else:
+            assert text_encoder_nodes == []
+            assert workflow["14"]["inputs"]["device"] == "default"
 
 
 def test_probe_parser_identifies_first_nonfinite_stage_and_complete_coverage() -> None:
@@ -176,6 +207,121 @@ def test_probe_parser_identifies_first_nonfinite_stage_and_complete_coverage() -
     assert summary["first_nonfinite_stage"] == "latent_after_sampler"
     assert summary["model_before_sampler"]["patches_uuid"] == "one"
     assert summary["model_after_sampler"]["current_weight_patches_uuid"] == "one"
+
+
+def test_lifecycle_summary_distinguishes_clone_conflict_from_identity_hit() -> None:
+    run_key = "diag:production_patch_on:measurement:7"
+    events = [
+        {
+            "event": "lifecycle_event",
+            "run_key": run_key,
+            "operation": "model_management.load_models_gpu",
+            "status": "ok",
+            "identity_hits": [],
+            "clone_conflicts": [22],
+        },
+        {
+            "event": "lifecycle_event",
+            "run_key": run_key,
+            "operation": "ModelPatcher.partially_load",
+            "status": "ok",
+            "before": {
+                "patches_uuid": "new",
+                "resident_patch_uuid": "old",
+            },
+        },
+        {
+            "event": "lifecycle_event",
+            "run_key": run_key,
+            "operation": "LoadedModel.model_load",
+            "status": "ok",
+        },
+        {
+            "event": "lifecycle_event",
+            "run_key": "other:run",
+            "operation": "model_management.load_models_gpu",
+            "status": "ok",
+            "identity_hits": [99],
+            "clone_conflicts": [],
+        },
+    ]
+
+    selected = diagnostic._lifecycle_events(events, run_key)
+    summary = diagnostic._lifecycle_summary(selected)
+
+    assert len(selected) == 3
+    assert summary["load_models_gpu_calls"] == 1
+    assert summary["load_identity_hits"] == 0
+    assert summary["load_clone_conflicts"] == 1
+    assert summary["uuid_mismatch_before_partially_load"] == 1
+    assert summary["model_load_calls"] == 1
+
+
+def test_lifecycle_analysis_writes_zip_ready_comparison(tmp_path: Path) -> None:
+    def case(name: str, *, conflicts: int, loads: int, abnormal: bool) -> dict:
+        return {
+            "name": name,
+            "runs": [
+                {
+                    "phase": "measurement",
+                    "index": 7,
+                    "abnormal": abnormal,
+                    "probe_summary": {
+                        "first_nonfinite_stage": (
+                            "conditioning_positive" if abnormal else None
+                        )
+                    },
+                    "probe_events": [
+                        {
+                            "event": "lifecycle_event",
+                            "sequence": 10,
+                            "operation": "model_management.load_models_gpu",
+                            "status": "ok",
+                            "identity_hits": list(range(2 - conflicts)),
+                            "clone_conflicts": list(range(conflicts)),
+                            "requested": [
+                                {"base_model_class": "comfy.model_base.Anima"}
+                            ],
+                        }
+                    ],
+                    "lifecycle_summary": {
+                        "event_count": 10,
+                        "load_models_gpu_calls": 2,
+                        "load_identity_hits": 2 - conflicts,
+                        "load_clone_conflicts": conflicts,
+                        "model_load_calls": loads,
+                        "operation_counts": {},
+                    },
+                }
+            ],
+        }
+
+    cases = [
+        case("production_patch_on", conflicts=1, loads=2, abnormal=True),
+        case("production_stable_model_reuse", conflicts=0, loads=1, abnormal=False),
+    ]
+
+    diagnostic._write_lifecycle_analysis(tmp_path, cases)
+
+    comparison = json.loads(
+        (tmp_path / "lifecycle" / "causal_comparison.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert comparison["case_summaries"]["production_patch_on"][
+        "load_clone_conflicts"
+    ] == 1
+    assert comparison["aligned_baseline_vs_stable_runs"][0][
+        "baseline_first_nonfinite"
+    ] == "conditioning_positive"
+    assert comparison["aligned_baseline_vs_stable_runs"][0][
+        "first_lifecycle_divergence"
+    ]["baseline"]["clone_conflict_count"] == 1
+    report = (tmp_path / "PATCH_LIFECYCLE_ANALYSIS.md").read_text(
+        encoding="utf-8"
+    )
+    assert "Clone conflicts" in report
+    assert "torch.cuda.synchronize()" in report
 
 
 def test_model_reuse_summary_exposes_weight_drift_and_uuid_transition_failure() -> None:
@@ -310,6 +456,52 @@ def test_conclusions_treat_stable_reuse_only_recovery_as_actionable() -> None:
     assert any("D만 ModelPatcher 반복 재구성을 제거해 안정화" in line for line in conclusions)
 
 
+def test_conclusions_identify_text_encoder_cpu_recovery_after_conditioning_nan() -> None:
+    cases = []
+    for name in (
+        "production_patch_on",
+        "production_model_refresh",
+        "production_patch_off",
+        "production_stable_model_reuse",
+        "production_text_encoder_cpu",
+    ):
+        recovered = name == "production_text_encoder_cpu"
+        cases.append(
+            {
+                "name": name,
+                "dcw_cwm_smc_enabled": name != "production_patch_off",
+                "model_patcher_refresh": name == "production_model_refresh",
+                "stable_model_reuse": name == "production_stable_model_reuse",
+                "text_encoder_cpu": recovered,
+                "runs": [
+                    {
+                        "index": 7,
+                        "phase": "measurement",
+                        "abnormal": not recovered,
+                        "abnormal_reasons": (
+                            ["최초 non-finite 텐서: conditioning_positive"]
+                            if not recovered
+                            else []
+                        ),
+                        "probe_summary": {
+                            "first_nonfinite_stage": (
+                                "conditioning_positive" if not recovered else None
+                            )
+                        },
+                    }
+                ],
+            }
+        )
+
+    conclusions = diagnostic._conclusions(cases)
+
+    assert any("텍스트 인코더 CPU(E)" in line for line in conclusions)
+    assert any(
+        "GPU 텍스트 인코더 실행·상주 상태가 가장 강한 원인 후보" in line
+        for line in conclusions
+    )
+
+
 def test_transient_memory_profiles_isolate_one_runtime_variable() -> None:
     base = {
         "auto_start": True,
@@ -349,6 +541,7 @@ def test_server_case_contract_contains_every_adaptive_memory_profile() -> None:
         "production_model_refresh",
         "production_patch_off",
         "production_stable_model_reuse",
+        "production_text_encoder_cpu",
         "runtime_dynamic_on",
         "runtime_dynamic_off",
         "runtime_async_offload_off",
@@ -529,6 +722,135 @@ def test_stable_reuse_returns_first_equivalent_patcher() -> None:
     assert second_result is first
 
 
+def test_lifecycle_method_wrapper_emits_identity_and_uuid_state(monkeypatch) -> None:
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "comfy"
+        / "custom_nodes"
+        / "comfyui-soya-custom-nodes"
+        / "soya_image_diagnostic.py"
+    )
+    spec = importlib.util.spec_from_file_location("test_soya_lifecycle_wrapper", source)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    base = SimpleNamespace(
+        current_weight_patches_uuid="resident-old",
+        model_lowvram=False,
+        lowvram_patch_counter=0,
+        model_loaded_weight_memory=123,
+        model_offload_buffer_memory=0,
+        device="cuda:0",
+    )
+
+    class FakePatcher:
+        def __init__(self, patch_uuid: str, parent=None):
+            self.model = base
+            self.clone_base_uuid = "base"
+            self.patches_uuid = patch_uuid
+            self.patches = {"weight": [(1.0, "patch")]}
+            self.backup = {"weight": "backup"}
+            self.parent = parent
+            self.load_device = "cuda:0"
+            self.offload_device = "cpu"
+            self.weight_inplace_update = False
+            self.is_clip = False
+
+        def is_dynamic(self):
+            return False
+
+        def clone(self):
+            return FakePatcher("clone-new", parent=self)
+
+    emitted = []
+    monkeypatch.setattr(module, "_emit", emitted.append)
+    monkeypatch.setattr(module, "_loaded_registry_snapshot", lambda: [])
+    monkeypatch.setattr(module, "_cuda_stream_snapshot", lambda: {"current": 1})
+    module._LIFECYCLE_ACTIVE = True
+    module._LIFECYCLE_ARMED = True
+    module._LIFECYCLE_RUN_KEY = "diagnostic:case:measurement:1"
+    module._method_lifecycle_wrapper(FakePatcher, "clone")
+
+    original = FakePatcher("incoming")
+    cloned = original.clone()
+
+    assert cloned.patches_uuid == "clone-new"
+    assert len(emitted) == 1
+    event = emitted[0]
+    assert event["operation"] == "FakePatcher.clone"
+    assert event["run_key"] == "diagnostic:case:measurement:1"
+    assert event["before"]["patches_uuid"] == "incoming"
+    assert event["before"]["resident_patch_uuid"] == "resident-old"
+    assert event["result"]["patches_uuid"] == "clone-new"
+    assert event["result"]["parent_patcher_id"] == id(original)
+
+
+def test_lifecycle_probe_start_replays_between_run_prelude_without_cuda_sync(
+    monkeypatch,
+) -> None:
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "comfy"
+        / "custom_nodes"
+        / "comfyui-soya-custom-nodes"
+        / "soya_image_diagnostic.py"
+    )
+    spec = importlib.util.spec_from_file_location("test_soya_lifecycle_start", source)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    model = SimpleNamespace(
+        model=SimpleNamespace(
+            current_weight_patches_uuid=None,
+            model_lowvram=False,
+            lowvram_patch_counter=0,
+            model_loaded_weight_memory=0,
+            model_offload_buffer_memory=0,
+            device="cpu",
+        ),
+        clone_base_uuid="base",
+        patches_uuid="patch",
+        patches={},
+        backup={},
+        parent=None,
+        load_device="cpu",
+        offload_device="cpu",
+        weight_inplace_update=False,
+        is_clip=False,
+    )
+    emitted = []
+    monkeypatch.setattr(module, "_emit", emitted.append)
+    monkeypatch.setattr(module, "_install_lifecycle_hooks", lambda: None)
+    monkeypatch.setattr(module, "_loaded_registry_snapshot", lambda: [])
+    monkeypatch.setattr(module, "_cuda_stream_snapshot", lambda: {"current": None})
+    module._LIFECYCLE_ARMED = True
+    module._LIFECYCLE_PRELUDE.append(
+        {
+            "event": "lifecycle_event",
+            "operation": "LoadedModel._switch_parent",
+            "status": "ok",
+            "sequence": 1,
+        }
+    )
+
+    module._start_lifecycle_trace(
+        "diagnostic:case:measurement:2",
+        model,
+        "model_before_sampler",
+    )
+    module._stop_lifecycle_trace("diagnostic:case:measurement:2", "vae_output:5")
+
+    assert emitted[0]["operation"] == "LoadedModel._switch_parent"
+    assert emitted[0]["prelude"] is True
+    assert emitted[0]["run_key"] == "diagnostic:case:measurement:2"
+    assert [event["operation"] for event in emitted[1:]] == [
+        "trace.start",
+        "trace.stop",
+    ]
+
+
 @pytest.mark.asyncio
 async def test_queue_forwards_all_diagnostic_controls_to_asset_mode() -> None:
     captured = {}
@@ -546,6 +868,7 @@ async def test_queue_forwards_all_diagnostic_controls_to_asset_mode() -> None:
         "diagnostic_dcw_cwm_smc_enabled": True,
         "diagnostic_model_patcher_refresh": False,
         "diagnostic_stable_model_reuse": True,
+        "diagnostic_text_encoder_cpu": True,
         "diagnostic_session_key": "session-D",
         "diagnostic_run_key": "run-D-04",
         "diagnostic_capture_workflow": True,
@@ -563,6 +886,7 @@ async def test_queue_forwards_all_diagnostic_controls_to_asset_mode() -> None:
     assert captured["diagnostic_dcw_cwm_smc_enabled"] is True
     assert captured["diagnostic_model_patcher_refresh"] is False
     assert captured["diagnostic_stable_model_reuse"] is True
+    assert captured["diagnostic_text_encoder_cpu"] is True
     assert captured["diagnostic_session_key"] == "session-D"
     assert captured["diagnostic_run_key"] == "run-D-04"
     assert captured["diagnostic_capture_workflow"] is True

@@ -1588,6 +1588,64 @@ class AssetMode:
         return inserted
 
     @staticmethod
+    def _apply_diagnostic_text_encoder_cpu_override(
+        workflow: dict,
+        enabled: Optional[bool],
+    ) -> list[dict]:
+        """Keep only supported text-encoder loaders on CPU for case E.
+
+        The workflow passed here is the per-request deep copy.  The selected
+        workflow file, diffusion model loader, and VAE loader remain untouched.
+        """
+        if enabled is None or not enabled:
+            return []
+
+        supported_loaders = {"CLIPLoader", "DualCLIPLoader"}
+        changed: list[dict] = []
+        for node_id, node in workflow.items():
+            if not isinstance(node, dict):
+                continue
+            class_type = str(node.get("class_type") or "")
+            if class_type not in supported_loaders:
+                continue
+            inputs = node.get("inputs")
+            if not isinstance(inputs, dict):
+                print(
+                    "[ASSET][IMAGE_DIAGNOSTIC] 텍스트 인코더 로더 입력 형식 오류: "
+                    f"node={node_id}, class_type={class_type}, inputs={inputs!r}"
+                )
+                continue
+            before = inputs.get("device", "default")
+            inputs["device"] = "cpu"
+            changed.append(
+                {
+                    "node_id": str(node_id),
+                    "class_type": class_type,
+                    "before_device": before,
+                    "effective_device": "cpu",
+                    "text_encoders": {
+                        key: value
+                        for key, value in inputs.items()
+                        if key.startswith("clip_name")
+                    },
+                }
+            )
+
+        if not changed:
+            message = (
+                "텍스트 인코더 CPU 진단을 적용할 CLIPLoader/DualCLIPLoader를 "
+                "실제 제출 워크플로에서 찾지 못했습니다."
+            )
+            print(f"[ASSET][IMAGE_DIAGNOSTIC] {message}")
+            raise RuntimeError(message)
+
+        print(
+            "[ASSET][IMAGE_DIAGNOSTIC] 텍스트 인코더만 CPU로 고정: "
+            f"nodes={changed}"
+        )
+        return changed
+
+    @staticmethod
     def _apply_diagnostic_stable_model_reuse(
         workflow: dict,
         enabled: Optional[bool],
@@ -1905,6 +1963,7 @@ class AssetMode:
         diagnostic_dcw_cwm_smc_enabled: Optional[bool] = None,
         diagnostic_model_patcher_refresh: Optional[bool] = None,
         diagnostic_stable_model_reuse: Optional[bool] = None,
+        diagnostic_text_encoder_cpu: Optional[bool] = None,
         diagnostic_session_key: str = "",
         diagnostic_run_key: str = "",
         diagnostic_capture_workflow: bool = False,
@@ -1930,6 +1989,7 @@ class AssetMode:
                     diagnostic_dcw_cwm_smc_enabled,
                     diagnostic_model_patcher_refresh,
                     diagnostic_stable_model_reuse,
+                    diagnostic_text_encoder_cpu,
                     diagnostic_session_key,
                     diagnostic_run_key,
                     diagnostic_capture_workflow,
@@ -1980,6 +2040,7 @@ class AssetMode:
         diagnostic_dcw_cwm_smc_enabled: Optional[bool] = None,
         diagnostic_model_patcher_refresh: Optional[bool] = None,
         diagnostic_stable_model_reuse: Optional[bool] = None,
+        diagnostic_text_encoder_cpu: Optional[bool] = None,
         diagnostic_session_key: str = "",
         diagnostic_run_key: str = "",
         diagnostic_capture_workflow: bool = False,
@@ -2119,6 +2180,12 @@ class AssetMode:
                 workflow,
                 diagnostic_dcw_cwm_smc_enabled,
             )
+            diagnostic_text_encoder_override = (
+                self._apply_diagnostic_text_encoder_cpu_override(
+                    workflow,
+                    diagnostic_text_encoder_cpu,
+                )
+            )
             diagnostic_stable_reuse = self._apply_diagnostic_stable_model_reuse(
                 workflow,
                 diagnostic_stable_model_reuse,
@@ -2205,6 +2272,10 @@ class AssetMode:
                 if diagnostic_stable_model_reuse is not None:
                     failed_result["diagnostic_stable_model_reuse"] = (
                         diagnostic_stable_reuse
+                    )
+                if diagnostic_text_encoder_cpu is not None:
+                    failed_result["diagnostic_text_encoder_cpu"] = (
+                        diagnostic_text_encoder_override
                     )
                 if diagnostic_run_key:
                     failed_result["diagnostic_runtime_probes"] = (
@@ -2315,6 +2386,10 @@ class AssetMode:
             if diagnostic_stable_model_reuse is not None:
                 result["diagnostic_stable_model_reuse"] = (
                     diagnostic_stable_reuse
+                )
+            if diagnostic_text_encoder_cpu is not None:
+                result["diagnostic_text_encoder_cpu"] = (
+                    diagnostic_text_encoder_override
                 )
             if diagnostic_run_key:
                 result["diagnostic_runtime_probes"] = diagnostic_runtime_probes
