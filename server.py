@@ -4057,6 +4057,45 @@ def build_prompt_with_workflow(workflow_api: dict, positive: str, negative: str)
     return wf
 
 
+def _extract_stable_model_reuse_traces(real_outputs: Any) -> list[dict[str, Any]]:
+    """Collect Stable ModelPatcher UI traces from a Comfy history payload."""
+    if not isinstance(real_outputs, dict):
+        print(
+            "[ASSET] Stable ModelPatcher 계측 추출 실패: "
+            f"outputs_type={type(real_outputs).__name__}"
+        )
+        return []
+    traces: list[dict[str, Any]] = []
+    for node_id, node_output in real_outputs.items():
+        if not isinstance(node_output, dict):
+            print(
+                "[ASSET] Stable ModelPatcher 계측 노드 출력 제외: "
+                f"node={node_id}, type={type(node_output).__name__}"
+            )
+            continue
+        raw_traces = node_output.get("stable_model_reuse")
+        if raw_traces is None:
+            continue
+        if not isinstance(raw_traces, list):
+            print(
+                "[ASSET] Stable ModelPatcher 계측 형식 오류: "
+                f"node={node_id}, type={type(raw_traces).__name__}"
+            )
+            continue
+        for index, raw_trace in enumerate(raw_traces):
+            if not isinstance(raw_trace, dict):
+                print(
+                    "[ASSET] Stable ModelPatcher 계측 항목 제외: "
+                    f"node={node_id}, index={index}, "
+                    f"type={type(raw_trace).__name__}"
+                )
+                continue
+            trace = copy.deepcopy(raw_trace)
+            trace["node_id"] = str(node_id)
+            traces.append(trace)
+    return traces
+
+
 async def submit_workflow_to_comfy(
     workflow_api: dict,
     progress_callback=None,
@@ -4165,6 +4204,20 @@ async def submit_workflow_to_comfy(
         print(f"[ASSET] history keys: {list(history.keys())}, outputs: {list(real_outputs.keys())}")
         for nid, nout in real_outputs.items():
             print(f"[ASSET] output node {nid}: {list(nout.keys())}")
+        stable_model_reuse_traces = _extract_stable_model_reuse_traces(
+            real_outputs
+        )
+        if stable_model_reuse_traces:
+            print(
+                "[ASSET] Stable ModelPatcher 계측 수집: "
+                f"prompt_id={real_prompt_id}, "
+                f"count={len(stable_model_reuse_traces)}"
+            )
+        else:
+            print(
+                "[ASSET] Stable ModelPatcher 계측 없음: "
+                f"prompt_id={real_prompt_id}"
+            )
 
         real_images = []
         for nid, nout in real_outputs.items():
@@ -4193,7 +4246,10 @@ async def submit_workflow_to_comfy(
             first_img.get("type", "output"),
             port=target_port,
         )
-        return img_bytes, node_errors
+        submit_details = dict(node_errors)
+        if stable_model_reuse_traces:
+            submit_details["_stable_model_reuse"] = stable_model_reuse_traces
+        return img_bytes, submit_details
     except aiohttp.ClientError as e:
         # ComfyUI가 켜져 있지 않으면 ws_connect(제출보다 먼저 실행)에서 연결 실패.
         print(f"[ASSET] ComfyUI 연결 실패: error={type(e).__name__}: {e}")
@@ -27639,6 +27695,7 @@ async def handle_api_character_maker_generate(request: web.Request) -> web.Respo
             negative=negative,
             note=str(body.get("note") or ""),
             source=source,
+            stable_model_reuse=result.get("stable_model_reuse") or [],
         )
         public_result = {
             key: value

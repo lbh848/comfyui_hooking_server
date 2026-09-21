@@ -2171,6 +2171,18 @@ class AssetMode:
             else:
                 return {"success": False, "error": "submit_workflow_func 미설정"}
 
+            stable_model_reuse = []
+            if isinstance(error, dict) and "_stable_model_reuse" in error:
+                raw_reuse_traces = error.get("_stable_model_reuse")
+                if isinstance(raw_reuse_traces, list):
+                    stable_model_reuse = copy.deepcopy(raw_reuse_traces)
+                else:
+                    print(
+                        "[ASSET] Stable ModelPatcher 계측 전달 형식 오류: "
+                        f"type={type(raw_reuse_traces).__name__}, "
+                        f"value={raw_reuse_traces!r}"
+                    )
+
             if not img_bytes:
                 error_msg = error if isinstance(error, str) else "이미지 생성 실패"
                 print(f"[ASSET] 에셋 생성 실패 - 캐릭터: {character}, 복장: {outfit}, 표정: {expression}")
@@ -2247,6 +2259,7 @@ class AssetMode:
                         "expression": expression,
                         "storage_group": storage_group,
                         "storage_outfit": storage_outfit,
+                        "stable_model_reuse": stable_model_reuse,
                     }, f, ensure_ascii=False, indent=2)
             except Exception as e:
                 print(f"[ASSET] 프롬프트 기록 저장 실패: {prompt_record_path} ({e})")
@@ -2292,6 +2305,7 @@ class AssetMode:
             if storage_group == "character_maker":
                 result["local_path"] = filepath
                 result["prompt_record_path"] = prompt_record_path
+                result["stable_model_reuse"] = stable_model_reuse
             if diagnostic_dcw_cwm_smc_enabled is not None:
                 result["diagnostic_model_patch"] = diagnostic_model_patch
             if diagnostic_model_patcher_refresh is not None:

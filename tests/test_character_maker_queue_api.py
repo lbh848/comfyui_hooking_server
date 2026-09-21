@@ -184,6 +184,19 @@ async def _request_generation(
 async def test_character_maker_generation_uses_integrated_asset_queue(monkeypatch):
     import server
 
+    reuse_trace = {
+        "schema_version": 1,
+        "node_id": "692",
+        "scope": "asset",
+        "cache_state": "hit",
+        "signature": "a" * 64,
+        "previous_signature": "a" * 64,
+        "incoming_patches_uuid": "incoming-uuid",
+        "chosen_patches_uuid": "cached-uuid",
+        "incoming_is_chosen": False,
+        "changed_components": [],
+        "components": {"patches": "b" * 64},
+    }
     response, payload, captured, maker = await _request_generation(
         server,
         monkeypatch,
@@ -192,6 +205,7 @@ async def test_character_maker_generation_uses_integrated_asset_queue(monkeypatc
             "filename": "revision.webp",
             "local_path": "temporary/default/images/revision.webp",
             "prompt_record_path": "temporary/default/images/revision_prompt.json",
+            "stable_model_reuse": [reuse_trace],
         },
     )
 
@@ -200,6 +214,7 @@ async def test_character_maker_generation_uses_integrated_asset_queue(monkeypatc
     assert payload["generation"] == {
         "success": True,
         "filename": "revision.webp",
+        "stable_model_reuse": [reuse_trace],
         "generation_workflow": "asset",
     }
     assert captured["item_type"] == "asset_generation"
@@ -213,6 +228,33 @@ async def test_character_maker_generation_uses_integrated_asset_queue(monkeypatc
     assert "[FACE_ID_DIR]\nsoya_char_ref/fallback" in queue_body["positive_prompt"]
     assert len(maker.revisions) == 1
     assert maker.revisions[0][1]["source"] == "user"
+    assert maker.revisions[0][1]["stable_model_reuse"] == [reuse_trace]
+
+
+def test_stable_model_reuse_trace_is_extracted_from_comfy_history():
+    import server
+
+    outputs = {
+        "692": {
+            "stable_model_reuse": [
+                {
+                    "cache_state": "replace",
+                    "signature": "current-signature",
+                    "changed_components": ["configuration_b"],
+                }
+            ]
+        },
+        "700": {"images": [{"filename": "result.png"}]},
+    }
+
+    assert server._extract_stable_model_reuse_traces(outputs) == [
+        {
+            "cache_state": "replace",
+            "signature": "current-signature",
+            "changed_components": ["configuration_b"],
+            "node_id": "692",
+        }
+    ]
 
 
 @pytest.mark.asyncio

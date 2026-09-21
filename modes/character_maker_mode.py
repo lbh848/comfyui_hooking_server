@@ -879,6 +879,9 @@ class CharacterMakerService:
                 ),
                 "note": item.get("note", ""),
                 "source": item.get("source", "user"),
+                "stable_model_reuse": copy.deepcopy(
+                    item.get("stable_model_reuse") or []
+                ),
                 "url": f"/api/character_maker/session/{session_id}/image/{item['id']}",
                 "active": item["id"] == active_revision_id,
                 "llm_active": item["id"] == llm_active_revision_id,
@@ -2100,6 +2103,7 @@ class CharacterMakerService:
         negative: str,
         note: str = "",
         source: str = "user",
+        stable_model_reuse: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         if source not in ("user", "llm"):
             raise CharacterMakerError("source 는 user 또는 llm 이어야 합니다.")
@@ -2139,6 +2143,7 @@ class CharacterMakerService:
             "positive": positive,
             "negative": negative,
             "note": str(note or "")[:1000],
+            "stable_model_reuse": copy.deepcopy(stable_model_reuse or []),
         }
         session["revisions"].append(item)
         if source == "llm":

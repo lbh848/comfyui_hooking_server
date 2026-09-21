@@ -1844,8 +1844,19 @@ def test_character_maker_asset_generation_stays_in_temporary_root(
         mode._asset_api_workflow = {}
         return True
 
+    reuse_trace = {
+        "node_id": "692",
+        "cache_state": "hit",
+        "signature": "stable-signature",
+        "incoming_patches_uuid": "incoming-uuid",
+        "chosen_patches_uuid": "chosen-uuid",
+        "incoming_is_chosen": False,
+        "changed_components": [],
+        "components": {"patches": "patch-digest"},
+    }
+
     async def submit_workflow(_workflow, progress_callback=None):
-        return png_bytes, None
+        return png_bytes, {"_stable_model_reuse": [reuse_trace]}
 
     monkeypatch.setattr(mode, "update_asset_workflow", update_workflow)
     monkeypatch.setattr(mode, "_save_cached_api", lambda _workflow: None)
@@ -1870,10 +1881,47 @@ def test_character_maker_asset_generation_stays_in_temporary_root(
     assert result["success"] is True
     assert Path(result["local_path"]).is_file()
     assert Path(result["prompt_record_path"]).is_file()
+    assert result["stable_model_reuse"] == [reuse_trace]
+    prompt_record = json.loads(
+        Path(result["prompt_record_path"]).read_text(encoding="utf-8")
+    )
+    assert prompt_record["stable_model_reuse"] == [reuse_trace]
     assert Path(result["local_path"]).is_relative_to(
         temp_root / session_id / "images"
     )
     assert not asset_root.exists()
+
+
+def test_character_maker_revision_persists_stable_model_reuse_trace(tmp_path):
+    service, _ = _service(tmp_path)
+    session = service.create_session()
+    image_path = (
+        Path(service.temp_root) / session["id"] / "images" / "trace.webp"
+    )
+    prompt_path = image_path.with_name("trace_prompt.json")
+    image_path.write_bytes(b"revision-image")
+    prompt_path.write_text("{}", encoding="utf-8")
+    trace = {
+        "node_id": "692",
+        "cache_state": "replace",
+        "signature": "new-signature",
+        "previous_signature": "old-signature",
+        "changed_components": ["patches", "configuration_b"],
+    }
+
+    public = service.add_revision(
+        session["id"],
+        image_path=str(image_path),
+        prompt_path=str(prompt_path),
+        positive="positive",
+        negative="negative",
+        stable_model_reuse=[trace],
+    )
+
+    assert public["revisions"][0]["stable_model_reuse"] == [trace]
+    restarted, _ = _service(tmp_path)
+    restored = restarted.public_session(session["id"])
+    assert restored["revisions"][0]["stable_model_reuse"] == [trace]
 
 
 def test_server_defaults_expose_independent_character_maker_routes():
