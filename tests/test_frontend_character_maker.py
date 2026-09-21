@@ -34,23 +34,17 @@ def test_character_maker_has_at_a_glance_three_rail_workflow():
     assert 'id="cm-reference-drop"' in html
     assert 'id="cm-chat-log"' in html
     assert 'id="cm-revisions"' in html
-    assert 'id="cm-model-reuse-trace"' in html
     assert 'id="cm-settings-wall" class="cm-settings-wall collapsed"' in html
 
 
-def test_character_maker_renders_stable_model_patcher_trace_per_revision():
+def test_character_maker_hides_stable_model_patcher_trace_ui():
     html = _html()
 
-    assert "Stable ModelPatcher 실행 계측" in html
-    assert "리비전별 캐시 판정과 실제 반환 인스턴스" in html
-    assert "revision?.stable_model_reuse" in html
-    assert "trace.cache_state" in html
-    assert "trace.incoming_patches_uuid" in html
-    assert "trace.chosen_patches_uuid" in html
-    assert "trace.changed_components" in html
-    assert "trace.components" in html
-    assert "캐시 인스턴스 반환" in html
-    assert "Stable 노드 미실행 또는 구버전" in html
+    assert 'id="cm-model-reuse-trace"' not in html
+    assert "cm-revision-reuse-badge" not in html
+    assert "Stable ModelPatcher 실행 계측" not in html
+    assert "revision?.stable_model_reuse" not in html
+    assert "Stable ModelPatcher 계측 없음" not in html
 
 
 def test_user_image_can_open_instance_lora_modal_as_an_uploaded_file():

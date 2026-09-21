@@ -13962,90 +13962,6 @@
         }
         .cm-revision-badge.user { background: rgba(33,90,180,.82); }
         .cm-revision-badge.llm { background: rgba(108,52,180,.85); }
-        .cm-revision-reuse-badge {
-            position: absolute;
-            top: 3px;
-            right: 3px;
-            z-index: 20;
-            padding: 1px 4px;
-            border-radius: 5px;
-            color: #fff;
-            background: rgba(85,92,110,.88);
-            font-size: .5rem;
-            font-weight: 760;
-            letter-spacing: .02em;
-        }
-        .cm-revision-reuse-badge.hit { background: rgba(35,145,91,.9); }
-        .cm-revision-reuse-badge.miss { background: rgba(43,103,190,.9); }
-        .cm-revision-reuse-badge.replace { background: rgba(194,119,32,.92); }
-        .cm-model-reuse-trace {
-            display: grid;
-            gap: 6px;
-            margin-top: 7px;
-            padding: 8px;
-            border: 1px solid color-mix(in srgb, #52b788 34%, var(--border));
-            border-radius: 9px;
-            background: color-mix(in srgb, #52b788 6%, var(--surface));
-        }
-        .cm-model-reuse-title {
-            display: flex;
-            align-items: baseline;
-            justify-content: space-between;
-            gap: 8px;
-            color: var(--text);
-            font-size: .67rem;
-            font-weight: 730;
-        }
-        .cm-model-reuse-title span {
-            color: var(--text2);
-            font-size: .58rem;
-            font-weight: 500;
-        }
-        .cm-model-reuse-empty { color: var(--text2); font-size: .63rem; }
-        .cm-model-reuse-item {
-            border: 1px solid var(--border);
-            border-radius: 7px;
-            background: color-mix(in srgb, var(--surface2) 72%, transparent);
-        }
-        .cm-model-reuse-item summary {
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            padding: 6px 8px;
-            cursor: pointer;
-            color: var(--text2);
-            font-size: .62rem;
-            list-style: none;
-        }
-        .cm-model-reuse-item summary::-webkit-details-marker { display: none; }
-        .cm-model-reuse-state {
-            min-width: 52px;
-            padding: 2px 5px;
-            border-radius: 999px;
-            color: #fff;
-            background: #596170;
-            text-align: center;
-            font-size: .54rem;
-            font-weight: 780;
-        }
-        .cm-model-reuse-state.hit { background: #238f5b; }
-        .cm-model-reuse-state.miss { background: #2b67be; }
-        .cm-model-reuse-state.replace { background: #c27720; }
-        .cm-model-reuse-detail {
-            display: grid;
-            gap: 4px;
-            padding: 0 8px 8px;
-            color: var(--text2);
-            font-size: .59rem;
-            line-height: 1.45;
-            overflow-wrap: anywhere;
-        }
-        .cm-model-reuse-detail code {
-            color: var(--text);
-            font: .57rem/1.45 ui-monospace, SFMono-Regular, Consolas, monospace;
-            white-space: normal;
-            overflow-wrap: anywhere;
-        }
         .cm-llm-tags {
             display: flex;
             flex-direction: column;
@@ -18418,7 +18334,6 @@
                             <span class="cm-diff-empty">LLM 수정 전후의 태그 차이가 여기에 표시됩니다.</span>
                         </div>
                         <div id="cm-revisions" class="cm-revisions"></div>
-                        <div id="cm-model-reuse-trace" class="cm-model-reuse-trace"></div>
                     </section>
 
                     <aside id="cm-editor-wall" class="cm-editor-wall">
@@ -59387,7 +59302,6 @@
 
         function cmRenderStage() {
             const revisionsEl = document.getElementById('cm-revisions');
-            const reuseTraceEl = document.getElementById('cm-model-reuse-trace');
             const userPane = document.getElementById('cm-pane-user');
             const llmPane = document.getElementById('cm-pane-llm');
             const userImage = document.getElementById('cm-user-image');
@@ -59407,9 +59321,6 @@
             const llmActiveId = cmSession.llm_active_revision_id;
             const active = revisions.find(item => item.id === activeId);
             const llmActive = revisions.find(item => item.id === llmActiveId);
-            const reuseTraces = revision => Array.isArray(revision?.stable_model_reuse)
-                ? revision.stable_model_reuse.filter(trace => trace && typeof trace === 'object')
-                : [];
 
             const renderPane = (paneEl, imgEl, revision) => {
                 if (revision) {
@@ -59438,80 +59349,17 @@
                     isLlmActive ? 'llm-active' : '',
                 ].filter(Boolean).join(' ');
                 const badge = source === 'llm' ? 'LLM' : 'USER';
-                const reuseTrace = reuseTraces(revision)[0];
-                const reuseState = String(reuseTrace?.cache_state || '').toLowerCase();
-                const reuseBadge = reuseTrace
-                    ? `<span class="cm-revision-reuse-badge ${escapeHtml(reuseState)}">${escapeHtml(reuseState.toUpperCase())}</span>`
-                    : '';
-                const reuseTitle = reuseTrace
-                    ? ` · Stable ModelPatcher ${reuseState.toUpperCase()} · ${String(reuseTrace.signature || '').slice(0, 16)}`
-                    : ' · Stable ModelPatcher 계측 없음';
                 return `
                 <div class="${classes}"
                      role="button" tabindex="0"
-                     title="${source === 'llm' ? 'LLM' : '사용자'} 리비전 R${index + 1}${escapeHtml(reuseTitle)}"
+                     title="${source === 'llm' ? 'LLM' : '사용자'} 리비전 R${index + 1}"
                      onclick="cmSelectRevision('${revision.id}','${source}')"
                      onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();cmSelectRevision('${revision.id}','${source}');}">
                     <img src="${revision.url}?v=${encodeURIComponent(revision.created_at || '')}" alt="리비전 ${index + 1}">
                     <span class="cm-revision-badge ${source}">${badge}</span>
-                    ${reuseBadge}
                     <span class="cm-revision-label">R${index + 1}</span>
                 </div>`;
             }).join('');
-
-            if (reuseTraceEl) {
-                const rows = revisions.map((revision, index) => {
-                    const traces = reuseTraces(revision);
-                    if (!traces.length) {
-                        return `
-                            <div class="cm-model-reuse-empty">
-                                R${index + 1} · 계측 없음 (Stable 노드 미실행 또는 구버전)
-                            </div>`;
-                    }
-                    return traces.map((trace, traceIndex) => {
-                        const state = String(trace.cache_state || 'unknown').toLowerCase();
-                        const signature = String(trace.signature || '');
-                        const previousSignature = String(trace.previous_signature || '');
-                        const incomingUuid = String(trace.incoming_patches_uuid || '');
-                        const chosenUuid = String(trace.chosen_patches_uuid || '');
-                        const changed = Array.isArray(trace.changed_components)
-                            ? trace.changed_components.map(value => String(value))
-                            : [];
-                        const components = trace.components && typeof trace.components === 'object'
-                            ? Object.entries(trace.components)
-                            : [];
-                        const componentText = components.length
-                            ? components.map(([name, digest]) => `${escapeHtml(name)}=${escapeHtml(String(digest).slice(0, 16))}`).join(' · ')
-                            : '없음';
-                        const returned = trace.incoming_is_chosen
-                            ? '입력 인스턴스 반환'
-                            : '캐시 인스턴스 반환';
-                        return `
-                            <details class="cm-model-reuse-item">
-                                <summary>
-                                    <strong>R${index + 1}${traces.length > 1 ? `-${traceIndex + 1}` : ''}</strong>
-                                    <span class="cm-model-reuse-state ${escapeHtml(state)}">${escapeHtml(state.toUpperCase())}</span>
-                                    <span>sig ${escapeHtml(signature.slice(0, 16) || '-')}</span>
-                                    <span>· ${escapeHtml(returned)}</span>
-                                </summary>
-                                <div class="cm-model-reuse-detail">
-                                    <div>노드/범위: <code>${escapeHtml(String(trace.node_id || '-'))} / ${escapeHtml(String(trace.scope || '-'))}</code></div>
-                                    <div>입력 → 반환 UUID: <code>${escapeHtml(incomingUuid || '-')} → ${escapeHtml(chosenUuid || '-')}</code></div>
-                                    <div>현재 서명: <code>${escapeHtml(signature || '-')}</code></div>
-                                    <div>이전 서명: <code>${escapeHtml(previousSignature || '-')}</code></div>
-                                    <div>달라진 구성요소: <code>${escapeHtml(changed.join(', ') || '없음')}</code></div>
-                                    <div>구성요소 해시: <code>${componentText}</code></div>
-                                </div>
-                            </details>`;
-                    }).join('');
-                }).join('');
-                reuseTraceEl.innerHTML = `
-                    <div class="cm-model-reuse-title">
-                        Stable ModelPatcher 실행 계측
-                        <span>리비전별 캐시 판정과 실제 반환 인스턴스</span>
-                    </div>
-                    ${rows || '<div class="cm-model-reuse-empty">아직 생성 기록이 없습니다.</div>'}`;
-            }
 
             if (meta) {
                 if (active || llmActive) {
