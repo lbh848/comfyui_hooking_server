@@ -170,7 +170,7 @@ _E2E_PHASES = (
 )
 
 _IMAGE_DIAGNOSTIC_PHASES = (
-    ("image_diagnostic", "실제 에셋 A/B/C/D/E·메모리/offload·ModelPatcher/NaN 계측"),
+    ("image_diagnostic", "실제 에셋 A/B/C/E(+조건부 D)·메모리/offload·ModelPatcher/NaN 계측"),
     ("complete", "진단 판정 및 ZIP 기록"),
 )
 

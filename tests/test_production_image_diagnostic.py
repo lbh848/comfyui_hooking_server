@@ -160,6 +160,66 @@ def test_abcde_graphs_preserve_production_path_and_apply_only_selected_delta() -
             assert workflow["14"]["inputs"]["device"] == "default"
 
 
+def test_existing_product_stable_reuse_removes_redundant_d_plan() -> None:
+    plans = [
+        {"name": "production_patch_on"},
+        {"name": "production_stable_model_reuse"},
+        {"name": "production_text_encoder_cpu"},
+    ]
+    workflow = _workflow()
+    workflow["15"] = {
+        "class_type": "SoyaStableModelPatcherReuse_mdsoya",
+        "inputs": {
+            "model": ["2", 0],
+            "cache_scope": "asset_anima_only_asset",
+            "configuration_a": "",
+            "configuration_b": "",
+        },
+        "_meta": {"title": "Stable ModelPatcher Reuse (Asset)"},
+    }
+
+    adjustment = diagnostic._drop_redundant_stable_reuse_plan(plans, workflow)
+
+    assert [plan["name"] for plan in plans] == [
+        "production_patch_on",
+        "production_text_encoder_cpu",
+    ]
+    assert adjustment["removed_case_names"] == [
+        "production_stable_model_reuse"
+    ]
+    assert adjustment["production_nodes"] == [
+        {
+            "node_id": "15",
+            "class_type": "SoyaStableModelPatcherReuse_mdsoya",
+            "title": "Stable ModelPatcher Reuse (Asset)",
+            "cache_scope": "asset_anima_only_asset",
+            "model_source": ["2", 0],
+        }
+    ]
+    assert "중첩하지 않도록 D를 생략" in adjustment["reason"]
+
+
+def test_d_plan_remains_when_product_stable_reuse_is_absent() -> None:
+    plans = [
+        {"name": "production_patch_on"},
+        {"name": "production_stable_model_reuse"},
+        {"name": "production_text_encoder_cpu"},
+    ]
+
+    adjustment = diagnostic._drop_redundant_stable_reuse_plan(
+        plans,
+        _workflow(),
+    )
+
+    assert [plan["name"] for plan in plans] == [
+        "production_patch_on",
+        "production_stable_model_reuse",
+        "production_text_encoder_cpu",
+    ]
+    assert adjustment["production_nodes"] == []
+    assert adjustment["removed_case_names"] == []
+
+
 def test_probe_parser_identifies_first_nonfinite_stage_and_complete_coverage() -> None:
     events = [
         {
@@ -498,6 +558,55 @@ def test_conclusions_identify_text_encoder_cpu_recovery_after_conditioning_nan()
     assert any("텍스트 인코더 CPU(E)" in line for line in conclusions)
     assert any(
         "GPU 텍스트 인코더 실행·상주 상태가 가장 강한 원인 후보" in line
+        for line in conclusions
+    )
+
+
+def test_conclusions_do_not_treat_skipped_nested_d_as_recovery() -> None:
+    cases = []
+    for name in (
+        "production_patch_on",
+        "production_model_refresh",
+        "production_patch_off",
+        "production_text_encoder_cpu",
+    ):
+        cases.append(
+            {
+                "name": name,
+                "dcw_cwm_smc_enabled": name != "production_patch_off",
+                "model_patcher_refresh": name == "production_model_refresh",
+                "stable_model_reuse": False,
+                "text_encoder_cpu": name == "production_text_encoder_cpu",
+                "production_stable_model_reuse_nodes": (
+                    [
+                        {
+                            "node_id": "692",
+                            "cache_scope": "asset_anima_only_asset",
+                        }
+                    ]
+                    if name == "production_patch_on"
+                    else []
+                ),
+                "runs": [
+                    {
+                        "index": 7,
+                        "phase": "measurement",
+                        "abnormal": True,
+                        "abnormal_reasons": ["non-finite"],
+                        "probe_summary": {
+                            "first_nonfinite_stage": "conditioning_positive"
+                        },
+                    }
+                ],
+            }
+        )
+
+    conclusions = diagnostic._conclusions(cases)
+
+    assert not any("고정 재사용(D)" in line for line in conclusions)
+    assert any(
+        "중복 개입 D를 생략" in line
+        and "692:asset_anima_only_asset" in line
         for line in conclusions
     )
 

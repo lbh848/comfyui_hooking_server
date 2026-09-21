@@ -62,6 +62,7 @@ _BAD_LOG_TOKENS = (
 )
 
 _PROBE_LOG_PREFIX = "[Soya:ImageDiagnosticProbe] "
+_PRODUCTION_STABLE_REUSE_CLASS = "SoyaStableModelPatcherReuse_mdsoya"
 _EXPECTED_PROBE_STAGES = {
     "model_before_sampler",
     "conditioning_positive",
@@ -1316,6 +1317,59 @@ def _copy_result_artifacts(
     return target, prompt_target
 
 
+def _production_stable_reuse_nodes(workflow: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Describe product reuse nodes already present in the submitted API graph."""
+    found = []
+    for node_id, node in workflow.items():
+        if not isinstance(node, Mapping):
+            continue
+        if node.get("class_type") != _PRODUCTION_STABLE_REUSE_CLASS:
+            continue
+        inputs = node.get("inputs")
+        if not isinstance(inputs, Mapping):
+            inputs = {}
+        meta = node.get("_meta")
+        if not isinstance(meta, Mapping):
+            meta = {}
+        found.append(
+            {
+                "node_id": str(node_id),
+                "class_type": _PRODUCTION_STABLE_REUSE_CLASS,
+                "title": str(meta.get("title") or ""),
+                "cache_scope": str(inputs.get("cache_scope") or ""),
+                "model_source": copy.deepcopy(inputs.get("model")),
+            }
+        )
+    return found
+
+
+def _drop_redundant_stable_reuse_plan(
+    plans: list[dict[str, Any]],
+    workflow: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Skip diagnostic D when the production graph already performs reuse."""
+    production_nodes = _production_stable_reuse_nodes(workflow)
+    removed_case_names = []
+    if production_nodes:
+        retained = []
+        for plan in plans:
+            if plan.get("name") == "production_stable_model_reuse":
+                removed_case_names.append("production_stable_model_reuse")
+            else:
+                retained.append(plan)
+        plans[:] = retained
+    return {
+        "production_nodes": production_nodes,
+        "removed_case_names": removed_case_names,
+        "reason": (
+            "실제 제출 워크플로에 production Stable ModelPatcher Reuse가 이미 있어 "
+            "진단용 reuse를 중첩하지 않도록 D를 생략했습니다."
+            if removed_case_names
+            else "production Stable ModelPatcher Reuse가 없어 D를 독립 개입으로 실행합니다."
+        ),
+    }
+
+
 def _case_summary(case: Mapping[str, Any]) -> dict[str, Any]:
     runs = list(case.get("runs") or [])
     abnormal = [run for run in runs if run.get("abnormal")]
@@ -1333,6 +1387,9 @@ def _case_summary(case: Mapping[str, Any]) -> dict[str, Any]:
         "model_patcher_refresh": case.get("model_patcher_refresh"),
         "stable_model_reuse": case.get("stable_model_reuse"),
         "text_encoder_cpu": case.get("text_encoder_cpu"),
+        "production_stable_model_reuse_nodes": copy.deepcopy(
+            case.get("production_stable_model_reuse_nodes") or []
+        ),
         "source_case": case.get("source_case"),
         "memory_intervention": case.get("memory_intervention"),
         "runtime_profile": case.get("runtime_profile"),
@@ -1532,19 +1589,34 @@ def _conclusions(cases: list[dict[str, Any]]) -> list[str]:
     baseline_bad = int(baseline.get("abnormal") or 0) > 0
     refresh_bad = int(refreshed.get("abnormal") or 0) > 0
     off_bad = int(patch_off.get("abnormal") or 0) > 0
+    stable_available = int(stable.get("completed") or 0) > 0
     stable_bad = int(stable.get("abnormal") or 0) > 0
     text_cpu_available = int(text_cpu.get("completed") or 0) > 0
     text_cpu_bad = int(text_cpu.get("abnormal") or 0) > 0
     state_findings = []
     baseline_lifecycle = baseline.get("lifecycle") or {}
     stable_lifecycle = stable.get("lifecycle") or {}
-    if int(baseline_lifecycle.get("load_clone_conflicts") or 0) > int(
+    if stable_available and int(
+        baseline_lifecycle.get("load_clone_conflicts") or 0
+    ) > int(
         stable_lifecycle.get("load_clone_conflicts") or 0
     ):
         state_findings.append(
             "수명주기 추적에서 일반 경로의 loaded-model clone 충돌이 stable reuse보다 "
             "많았습니다. 동일 patch 구조라도 ModelPatcher 객체 identity 변경이 실제 "
             "load/unload 경로를 바꾼다는 관측 근거입니다."
+        )
+    production_reuse_nodes = list(
+        baseline.get("production_stable_model_reuse_nodes") or []
+    )
+    if production_reuse_nodes and not stable_available:
+        node_labels = ", ".join(
+            f"{node.get('node_id')}:{node.get('cache_scope') or '-'}"
+            for node in production_reuse_nodes
+        )
+        state_findings.append(
+            "실제 A 워크플로에 production Stable ModelPatcher Reuse가 이미 있어 "
+            f"중복 개입 D를 생략했습니다: {node_labels}"
         )
     for case in cases:
         state = _model_reuse_summary(case)
@@ -1574,7 +1646,7 @@ def _conclusions(cases: list[dict[str, Any]]) -> list[str]:
             recovered.append("sampler 직전 Refresh(B)")
         if not off_bad:
             recovered.append("DCW/CWM/SMC OFF(C)")
-        if not stable_bad:
+        if stable_available and not stable_bad:
             recovered.append("LoRA 완료 ModelPatcher 고정 재사용(D)")
         if text_cpu_available and not text_cpu_bad:
             recovered.append("텍스트 인코더 CPU(E)")
@@ -1586,8 +1658,13 @@ def _conclusions(cases: list[dict[str, Any]]) -> list[str]:
                 "A와 동일한 입력에서 안정화된 개입: " + ", ".join(recovered)
             )
         else:
+            attempted = ["Refresh(B)", "DCW OFF(C)"]
+            if stable_available:
+                attempted.append("stable reuse(D)")
+            if text_cpu_available:
+                attempted.append("텍스트 인코더 CPU(E)")
             conclusions.append(
-                "Refresh(B), DCW OFF(C), stable reuse(D), 텍스트 인코더 CPU(E) 어느 개입도 이상을 회피하지 못했습니다."
+                ", ".join(attempted) + " 어느 개입도 이상을 회피하지 못했습니다."
             )
         if text_cpu_available and not text_cpu_bad:
             if baseline.get("first_nonfinite_stage") in {
@@ -1609,7 +1686,7 @@ def _conclusions(cases: list[dict[str, Any]]) -> list[str]:
                 "텍스트 인코더를 CPU로 고정한 E에서도 이상이 재현되어 GPU 텍스트 "
                 "인코더 하나만으로는 현상을 설명할 수 없습니다."
             )
-        if not stable_bad and refresh_bad:
+        if stable_available and not stable_bad and refresh_bad:
             conclusions.append(
                 "D만 ModelPatcher 반복 재구성을 제거해 안정화되었습니다. 동일 LoRA 구성의 patch 완료 ModelPatcher 재사용을 실제 워크플로에 적용할 근거가 됩니다."
             )
@@ -1638,7 +1715,7 @@ def _conclusions(cases: list[dict[str, Any]]) -> list[str]:
         intervention_failures.append("Refresh(B)")
     if off_bad:
         intervention_failures.append("DCW OFF(C)")
-    if stable_bad:
+    if stable_available and stable_bad:
         intervention_failures.append("stable reuse(D)")
     if text_cpu_available and text_cpu_bad:
         intervention_failures.append("텍스트 인코더 CPU(E)")
@@ -1648,9 +1725,15 @@ def _conclusions(cases: list[dict[str, Any]]) -> list[str]:
             + ", ".join(intervention_failures),
             "해당 개입을 해결책으로 적용하면 안 됩니다. 케이스 로그와 tensor telemetry를 우선 확인해야 합니다.",
         ] + memory_findings + state_findings
+    executed_labels = ["A", "B", "C"]
+    if stable_available:
+        executed_labels.append("D")
+    if text_cpu_available:
+        executed_labels.append("E")
+    executed_text = "/".join(executed_labels)
     return [
-        "A/B/C/D/E 모두 검정·컬러 노이즈·디코드 실패·NaN/Inf 계측에서 이상이 발견되지 않았습니다.",
-        "프롬프트 무시·미완성 전조는 images/의 같은 번호 A/B/C/D/E 이미지와 실제 prompt JSON을 직접 대조해야 합니다.",
+        f"{executed_text} 모두 검정·컬러 노이즈·디코드 실패·NaN/Inf 계측에서 이상이 발견되지 않았습니다.",
+        f"프롬프트 무시·미완성 전조는 images/의 같은 번호 {executed_text} 이미지와 실제 prompt JSON을 직접 대조해야 합니다.",
         "이 결과는 사용자가 실제로 쓰는 관리 Comfy와 AssetMode 생성 경로에서 얻었습니다.",
     ] + memory_findings + state_findings
 
@@ -1673,10 +1756,11 @@ def _write_report(
         "- 사용자 선택 LoRA/캐릭터·얼굴·그림체 LoRA/Face ID/Style/Pose/Hires/Detailer: 모두 OFF",
         "- 팩 워크플로에 고정된 모델·LoRA 노드는 실제 배포 경로 보존을 위해 제거하지 않음",
         "- 비교: 동일한 warmup 1개+측정 15개 프롬프트와 동일 seed로 A 실제 경로 / B sampler 직전 Refresh / C DCW OFF / D LoRA 완료 ModelPatcher 고정 재사용 / E 텍스트 인코더 CPU",
-        "- A/B/C/D/E에서 이상이 재현되면 같은 실패 경로로 AUTO VRAM의 DynamicVRAM ON/OFF, async offload OFF, Smart Memory OFF, pinned memory OFF를 각각 단독 비교",
+        "- 실제 제출 워크플로에 production Stable ModelPatcher Reuse가 이미 있으면 중복 캐시를 피하기 위해 D를 자동 생략하고 노드 ID·scope·사유를 환경 기록에 보존",
+        "- 실행된 A/B/C/D/E 기본 케이스에서 이상이 재현되면 같은 실패 경로로 AUTO VRAM의 DynamicVRAM ON/OFF, async offload OFF, Smart Memory OFF, pinned memory OFF를 각각 단독 비교",
         "- 메모리 비교는 저장된 설정 파일을 바꾸지 않는 임시 런타임 프로필이며 검사 종료·실패·중단 시 원래 관리 Comfy 프로필을 복구",
         "- Refresh는 model.clone() wrapper만 새로 만들며 모델 unload·VRAM 정리·weight patch 삭제를 하지 않음",
-        "- D는 LoRA 적용 완료 지점의 첫 ModelPatcher를 같은 케이스 안에서 재사용하고 DCW와 sampler는 매 요청 실행",
+        "- D는 production reuse가 없는 워크플로에서만 LoRA 적용 완료 지점의 첫 ModelPatcher를 같은 케이스 안에서 재사용하고 DCW와 sampler는 매 요청 실행",
         "- E는 제출 워크플로 사본의 CLIPLoader/DualCLIPLoader만 CPU로 바꾸며 UNet과 VAE는 원래 GPU 경로를 유지",
         "- 모든 케이스에서 conditioning / sampler 입력·출력 latent / VAE 출력의 NaN·Inf와 ModelPatcher UUID·상주 UUID·patch·backup 상태를 기록",
         "- 자동 판정 범위: 검정/블록형·고주파 컬러 노이즈/디코드 실패/NaN·Inf/계측 누락. 프롬프트 무시·미완성은 이미지와 prompt JSON 직접 대조",
@@ -2006,6 +2090,7 @@ def run_production_image_diagnostic(
                 "model_patcher_refresh": model_patcher_refresh,
                 "stable_model_reuse": stable_model_reuse,
                 "text_encoder_cpu": text_encoder_cpu,
+                "production_stable_model_reuse_nodes": [],
                 "source_case": plan.get("source_case"),
                 "memory_intervention": plan.get("memory_intervention"),
                 "runtime_profile": ready_runtime.get("profile"),
@@ -2079,6 +2164,35 @@ def run_production_image_diagnostic(
                         report_dir / "workflows" / f"{case_name}.json",
                         workflow_snapshot,
                     )
+                    if case_name == "production_patch_on":
+                        stable_reuse_plan = _drop_redundant_stable_reuse_plan(
+                            plans,
+                            workflow_snapshot,
+                        )
+                        production_reuse_nodes = list(
+                            stable_reuse_plan["production_nodes"]
+                        )
+                        case["production_stable_model_reuse_nodes"] = (
+                            production_reuse_nodes
+                        )
+                        environment["stable_model_reuse_plan"] = stable_reuse_plan
+                        removed_count = len(
+                            stable_reuse_plan["removed_case_names"]
+                        )
+                        if removed_count:
+                            removed_runs = removed_count * (
+                                1 + len(MEASUREMENT_VARIANTS)
+                            )
+                            base_plan_count -= removed_count
+                            total_runs -= removed_runs
+                            _log(
+                                log,
+                                "[이미지 진단] production Stable ModelPatcher Reuse "
+                                "감지로 중복 D 케이스를 생략합니다: "
+                                f"nodes={production_reuse_nodes}, "
+                                f"removed_runs={removed_runs}",
+                                "warning",
+                            )
                     environment["workflow_artifacts"][case_name] = (
                         _workflow_artifacts(
                             comfy_root,
@@ -2242,7 +2356,7 @@ def run_production_image_diagnostic(
                 else:
                     environment["adaptive_memory_diagnostic"] = {
                         "triggered": False,
-                        "reason": "A/B/C/D/E에서 자동 판정 이상이 재현되지 않았습니다.",
+                        "reason": "실행된 A/B/C/D/E 기본 케이스에서 자동 판정 이상이 재현되지 않았습니다.",
                     }
 
         restore_runtime_if_needed()
