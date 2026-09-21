@@ -222,16 +222,59 @@ def _baseline_capture(backup_arg: str) -> dict[str, Any]:
         raise RuntimeError("baseline CALL1 has no recoverable tagged PAST HISTORY")
 
     detail_user = next(
-        str(message.get("content") or "")
-        for message in (detail.get("input") or [])
-        if isinstance(message, dict) and "[Last log entry]" in str(message.get("content") or "")
+        (
+            str(message.get("content") or "")
+            for message in (detail.get("input") or [])
+            if isinstance(message, dict)
+            and "[Last log entry]" in str(message.get("content") or "")
+        ),
+        "",
     )
-    slot_start = detail_user.index("[Last log entry]") + len("[Last log entry]")
-    # Older traces appended the assigned plan to this message. Role-specific
-    # prompts keep it in a later message, so the log entry naturally runs to EOF.
-    legacy_plan_marker = detail_user.find("# ASSIGNED GLOBAL SCENE PLAN", slot_start)
-    slot_end = legacy_plan_marker if legacy_plan_marker >= 0 else len(detail_user)
-    target_slotted = detail_user[slot_start:slot_end].strip()
+    if detail_user:
+        slot_start = detail_user.index("[Last log entry]") + len("[Last log entry]")
+        # Older traces appended the assigned plan to this message. Role-specific
+        # prompts keep it in a later message, so the log entry naturally runs to EOF.
+        legacy_plan_marker = detail_user.find("# ASSIGNED GLOBAL SCENE PLAN", slot_start)
+        slot_end = legacy_plan_marker if legacy_plan_marker >= 0 else len(detail_user)
+        target_slotted = detail_user[slot_start:slot_end].strip()
+    else:
+        # Role-specific DETAIL traces contain only the assigned scene subset.
+        # ORIGINAL-ASSET receives the same complete slot-inserted response and
+        # preserves it under a stable machine section marker.
+        original_asset = next(
+            (
+                record
+                for record in records
+                if record.get("call_name") == "ORIGINAL-ASSET"
+            ),
+            None,
+        )
+        slot_marker = "[CURRENT RESPONSE WITH INSERTION SLOTS]"
+        asset_sections = [
+            str(message.get("content") or "").partition(slot_marker)[2].strip()
+            for message in ((original_asset or {}).get("input") or [])
+            if isinstance(message, dict)
+            and slot_marker in str(message.get("content") or "")
+        ]
+        target_slotted = next(
+            (
+                section
+                for section in asset_sections
+                if illustration_context_pipeline.candidate_slots(section)
+            ),
+            "",
+        )
+        if not target_slotted:
+            raise RuntimeError(
+                "baseline trace has neither DETAIL [Last log entry] nor "
+                "a slot-bearing ORIGINAL-ASSET "
+                "[CURRENT RESPONSE WITH INSERTION SLOTS] section"
+            )
+        print(
+            "[WARDROBE_E2E] recovered complete slot context from "
+            "ORIGINAL-ASSET role-specific trace",
+            flush=True,
+        )
     if not illustration_context_pipeline.candidate_slots(target_slotted):
         raise RuntimeError("baseline Last log entry has no slot markers")
 

@@ -5270,55 +5270,6 @@ def bind_scene_plan_wardrobes(
             applicable_events,
             plan_names,
         )
-        other_continuity_names: list[str] = []
-        plan_name_keys = {name.casefold() for name in plan_names}
-        continuity_name_sources = list(current_characters or [])
-        continuity_name_sources.extend(
-            {"name": item.get("character")}
-            for item in wardrobe_at_start or []
-            if isinstance(item, dict)
-        )
-        continuity_name_sources.extend(
-            {"name": item.get("character")}
-            for item in applicable_events
-            if isinstance(item, dict)
-        )
-        for continuity_source in continuity_name_sources:
-            current_name = str(
-                continuity_source.get("name")
-                if isinstance(continuity_source, dict)
-                else continuity_source or ""
-            ).strip()
-            if (
-                current_name
-                and current_name.casefold() not in plan_name_keys
-                and current_name.casefold()
-                not in {name.casefold() for name in other_continuity_names}
-            ):
-                other_continuity_names.append(current_name)
-        partner_continuity_note = ""
-        if (
-            bool(plan.get("anonymous_partner_fragment", False))
-            and other_continuity_names
-        ):
-            partner_timeline, _partner_continuity_characters = (
-                _scene_wardrobe_continuity_note(
-                    list(wardrobe_at_start or []),
-                    applicable_events,
-                    other_continuity_names,
-                )
-            )
-            if partner_timeline:
-                partner_continuity_note = (
-                    "Conditional anonymous-participant physical-state authority for this "
-                    "story instant. The names below bind state only. Apply a statement only "
-                    "to the person already involved in anchor_passage and scene_brief; do not "
-                    "add any listed person to characters[], reveal identity, expand visibility, "
-                    "or create a person-count tag. Preserve the supplied clothing, removal, "
-                    "coverage, and exposure only where the permitted natural crop makes them "
-                    "physically relevant; never force an off-frame region into the image.\n"
-                    + partner_timeline
-                )
         all_current = list(current_characters or []) + [
             {"name": name, "confidence": 1.0}
             for name in plan_names
@@ -5404,13 +5355,6 @@ def bind_scene_plan_wardrobes(
                 else resolved_wardrobe_note
             )
             plan["_continuity_characters"] = list(plan_names)
-        if partner_continuity_note:
-            # DETAIL needs an involved anonymous participant's physical state even
-            # though Single V5 intentionally excludes that person from characters[].
-            # Keep it separate so Key Visual wardrobe references remain unchanged.
-            plan["_detail_anonymous_partner_continuity_note"] = (
-                partner_continuity_note
-            )
         normalized_plan.append(plan)
 
     print(
@@ -5438,17 +5382,6 @@ def _public_call2_scene_plan(plan: dict) -> dict:
     if anchor_passage:
         public["anchor_passage"] = anchor_passage
     continuity_note = str(plan.get("continuity_note") or "").strip()
-    partner_continuity_note = ""
-    if bool(plan.get("anonymous_partner_fragment", False)):
-        partner_continuity_note = str(
-            plan.get("_detail_anonymous_partner_continuity_note") or ""
-        ).strip()
-    if partner_continuity_note:
-        continuity_note = (
-            continuity_note + "\n\n" + partner_continuity_note
-            if continuity_note
-            else partner_continuity_note
-        )
     if continuity_note:
         public["continuity_note"] = continuity_note
     visual_base_authority = str(plan.get("visual_base_authority") or "").strip()
@@ -8600,11 +8533,6 @@ async def _run_parallel_call2_details(
                     assigned_plan_payload
                     + "\n\n# SERVER SCOPE\n"
                     + retry_scope
-                    + "\n\n# PROJECTION ORDER\n"
-                    + "Treat assigned spatial language as scene-space body relations. Choose the "
-                    "camera first, then resolve depth, overlap, and occlusion, and only then derive "
-                    "image-plane placement and a continuation edge. Never copy above, below, behind, "
-                    "or on top of directly into a top, bottom, or side frame edge."
                     + "\n\n"
                     + req_rule
                     + f"\nMaximum fully visible characters per image: {int(toggles['character_limit'])}."
@@ -14414,10 +14342,7 @@ async def build_from_context(
                     "anonymous_partner_fragment true only when its primary visible fact requires "
                     "one connected partner region reaching the named subject at the contact point; "
                     "another person's narrative presence is insufficient. Do not output wardrobe "
-                    "continuity; CALL1 and the server attach it after scene selection. Describe "
-                    "body arrangement in scene space; do not translate being above, below, behind, "
-                    "or on top of another body into a top, bottom, or side frame edge. DETAIL chooses "
-                    "the camera and projects that relation.\n\n"
+                    "continuity; CALL1 and the server attach it after scene selection.\n\n"
                     "# OUTPUT SCHEMA\n"
                     "{\n"
                     '  "scene_plan": [\n'

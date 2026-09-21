@@ -18,10 +18,10 @@ def test_call1_wardrobe_operations_use_replace_without_set_or_contextual_reset()
 def test_call1_replace_is_a_semantic_full_outfit_transition():
     prompt = CALL1_PROMPT.read_text(encoding="utf-8")
 
-    assert "`replace` for a complete transition to another outfit" in prompt
-    assert "`wear`/`add` for an incremental addition" in prompt
-    assert "`remove` for specified removed items" in prompt
-    assert "`open`/`close`/`adjust` when the same garment stays worn" in prompt
+    assert "Use `replace` for a semantically clear transition from the current outfit to a different outfit" in prompt
+    assert "Use `add` or `wear` only for an incremental addition that leaves the existing outfit in place" in prompt
+    assert "Use `remove` only when specific worn items are taken off while the rest of the current outfit remains in effect" in prompt
+    assert "Use `open`/`close`/`adjust` only when the garment stays worn but its worn state changes" in prompt
 
 
 def test_call1_uses_one_start_state_plus_sparse_current_changes():
@@ -30,30 +30,30 @@ def test_call1_uses_one_start_state_plus_sparse_current_changes():
     assert '"wardrobe_at_start"' in prompt
     assert "immediately before C001" in prompt
     assert "not a sequence of complete outfit snapshots" in prompt
-    assert "Do not generate Danbooru tags or per-segment full outfit snapshots" in prompt
-    assert "repeated description of an existing/default outfit is not a change" in prompt
+    assert "never compute or emit per-segment full outfit snapshots" in prompt
+    assert "If it only re-describes an already known/default outfit, emit no event" in prompt
 
 
 def test_call1_natural_change_text_outranks_coarse_enum_hints():
     prompt = CALL1_PROMPT.read_text(encoding="utf-8")
 
     assert "`wardrobe_at_start[].state` and `wardrobe_change` are the meaning-bearing handoff" in prompt
-    assert "must never simplify or contradict the natural language" in prompt
-    assert "spans consecutive segments as one event" in prompt
-    assert "lowered or displaced clothing may stop covering a region while remaining attached" in prompt
+    assert "must never simplify or contradict it" in prompt
+    assert "evidence may span consecutive numbered segments" in prompt
+    assert "A garment that is merely lowered, pooled around the thighs or ankles, displaced, or only partly removed still counts as lost coverage" in prompt
 
 
 def test_call1_start_state_cannot_mix_terminal_nudity_with_remaining_garments():
     prompt = CALL1_PROMPT.read_text(encoding="utf-8")
 
-    assert "one physically possible instant" in prompt
-    assert "attached, draped, lowered, pooled" in prompt
-    assert "make one final semantic choice" in prompt
-    assert "only when no garment remains worn or attached" in prompt
-    assert "describe the exact exposure without terminal wording" in prompt
-    assert "do not also describe it as worn, open, unhooked" in prompt
-    assert "summarizes coverage only" in prompt
-    assert "never erases an explicitly remaining displaced garment" in prompt
+    assert "Do not combine mutually exclusive intermediate and terminal states" in prompt
+    assert "lowered, pooled around the thighs or ankles, displaced" in prompt
+    assert "First resolve each CURRENT character's coherent wardrobe, coverage, exposure, and continuity-relevant carried/nearby-garment state" in prompt
+    assert "`nude`: no clothing provides coverage of the groin, chest, or other normally covered areas" in prompt
+    assert "Do not euphemize an explicit body part or visible result" in prompt
+    assert "do not reduce a compound change to only one intermediate gesture" in prompt
+    assert "Track nude, topless, bottomless, underwear-only, open, displaced, and partially removed clothing as real wardrobe states" in prompt
+    assert "Pick `state_after` by whether the relevant body area is still covered, not by whether the garment came fully off the body" in prompt
 
 
 def test_call1_restored_semantic_sections_cover_actual_isomorphic_and_opposite_states():
@@ -61,24 +61,24 @@ def test_call1_restored_semantic_sections_cover_actual_isomorphic_and_opposite_s
 
     # Actual regression class: a terminal state cannot coexist with a garment
     # that remains open, unhooked, lowered, draped, or otherwise attached.
-    assert "WARDROBE AT START" in prompt
-    assert "make one final semantic choice" in prompt
-    assert "Use `fully unclothed`, `wearing nothing`" in prompt
-    assert "only when no garment remains worn or attached" in prompt
+    assert '"wardrobe_at_start"' in prompt
+    assert "Do not combine mutually exclusive intermediate and terminal states" in prompt
+    assert 'An empty outfit is not "unknown" when nudity is established' in prompt
+    assert "`nude`: no clothing provides coverage of the groin, chest, or other normally covered areas" in prompt
 
     # Isomorphic transitions remain separate decisions instead of one coarse
     # state: adding, replacing, opening, and losing coverage are not synonyms.
-    assert "CURRENT WARDROBE EVENTS" in prompt
-    assert "Putting a shirt over a swimsuit adds the shirt" in prompt
-    assert "A replacement ends the previous worn outfit as a whole" in prompt
-    assert "the same garment stays worn but its worn state changes" in prompt
-    assert "COVERAGE AND PHYSICAL STATE" in prompt
+    assert "`wardrobe_events` is a sparse, evidence-bearing change history" in prompt
+    assert "putting a shirt over a swimsuit adds the shirt" in prompt
+    assert "A `replace` ends the prior worn outfit as a whole" in prompt
+    assert "when the garment stays worn but its worn state changes" in prompt
+    assert "Pick `state_after` by whether the relevant body area is still covered" in prompt
     assert "pooled around the thighs or ankles" in prompt
 
     # Opposite valid cases keep their meaning: off-camera fabric is not removed,
     # and disordered tied hair is not silently converted to hair-down.
     assert "A garment absent from a camera view is not removed" in prompt
-    assert "HAIRSTYLE EVENTS" in prompt
-    assert "A disheveled ponytail is still a ponytail" in prompt
-    assert "unless the narrative establishes that it was undone" in prompt
-    assert "messy, tousled, spread, swaying, or loose-looking hair" in prompt
+    assert "`hairstyle_events` tracks only hairstyle arrangement transitions" in prompt
+    assert '"a girl with disheveled long twintails" still has twintails' in prompt
+    assert "Emit an event only when the narrative itself establishes that the arrangement was actually undone, released, replaced, added, or restored" in prompt
+    assert "messy, disheveled, tousled, spread around the body, or loose-looking" in prompt

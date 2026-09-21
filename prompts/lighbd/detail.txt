@@ -1,48 +1,25 @@
 PURPOSE
 
-Expand each assigned plan into one complete, immersive image descriptor faithful to the prose without reselecting, adding, removing, or moving a scene.
+Expand each assigned scene plan into one complete image descriptor without reselecting, adding, removing, or moving a scene.
 
-ASSIGNMENT AND EVENT AUTHORITY
+HARD REQUIREMENTS
 
-1. Copy every assigned slot exactly once in plan order and omit the Key Visual. The server owns `plan_id`. Emit the assigned `characters` roster in order; those names remain the exact identity/LoRA subjects. When empty, keep `characters: []` and describe only the non-character scene. An anonymous participant never replaces or becomes a named focal subject.
-
-2. `anchor_passage` is event authority for action, location, and story time, and `scene_brief` identifies the one primary visible fact inside it. Neither is wardrobe authority. Surrounding context may resolve identity and continuity but may not add another event. State the assigned core action, pose, reaction, or local contact before secondary detail and let it own the crop. Preserve only secondary detail that naturally fits the same visible region and instant.
-
-CAMERA AND VISIBLE EVENT
-
-3. Resolve spatial projection in this order: reconstruct every involved person as one coherent body in the scene; establish the body arrangement and contact; choose the camera position and viewing direction; establish foreground/background depth, overlap, and natural occlusion; only then apply the frame as a window through that already coherent scene. The crop determines which connected portion remains visible and which boundary it continues beyond. `Above`, `below`, `behind`, `in front of`, and `on top of` remain scene-space relations until projected; never copy one directly into image-top, image-bottom, or image-side placement. Use a contact-centered camera when a local contact is the complete assigned fact. Use a reaction-centered camera only when the reaction is independently complete and omit its off-frame cause. When the named subject's face/expression and one physical contact jointly carry the assigned fact, keep the readable face primary and show the contact inside the same wider oblique or body-spanning composition, connected by the subject's pose. Never use a face close-up while describing required contact as implied outside the crop, and never reduce a joint fact to a detached contact-only insert. Repair camera and crop only—never replace the assigned event, change its actor/receiver relation, or widen the anonymous participant to rescue an incompatible plan.
-
-4. Preserve established body support, orientation, and relative placement; transient arching, jolting, trembling, or stillness does not invent a seated, standing, turned, or otherwise changed support state. Preserve visible evidence of story-critical orientation, support, coverage, and spatial relation even in a tight crop through the few useful body-direction, viewpoint, and environment anchors that remain inside the frame.
-
-WARDROBE AUTHORITY
-
-5. `continuity_note` is the sole complete wardrobe and coverage authority. Express one physically coherent state across `outfit_state`, `positive`, `camera`, `scene`, and `supplement`; do not blend it with conflicting garment wording from the anchor, scene brief, profile, or default. A later complete state supersedes an earlier fastening, opening, displacement, or removal intermediate unless the note says fabric remains worn or attached. A coarse word such as `nude` describes coverage and does not erase a garment that the same continuity note says remains attached, draped, lowered, or pooled. A note labeled as conditional anonymous-participant physical state applies only when that person is already the partner involved in the assigned event. It preserves the physical state of the permitted crop; it never authorizes another named subject, identity, face, silhouette, body region, or person-count tag.
-
-6. Put the complete logical state in `outfit_state`, including off-frame items, underlayers, accessories, damage, displacement, removal, and carried garments, but put only visible or coverage-defining state in `positive`. If the crop shows a coverage-bearing region, specify its authoritative coarse coverage; otherwise crop that region fully out. Never reintroduce removed fabric through `positive`, `scene`, or `supplement`. Never redesign a garment, restore a superseded default, or advance wardrobe beyond the assigned passage.
-
-VISIBLE ATTRIBUTES
-
-7. Apply fixed appearance only where visible or useful for identity. Omit face, hair, eye, expression, clothing, and local detail outside the chosen crop. Retain a small attribute when it is the visible hinge of identity, gaze, action, contact, or story meaning; otherwise prefer the action, pose, silhouette, ownership, and spatial relation that the chosen scale can render. Source completeness and logical wardrobe continuity are not display quotas.
-
-ANONYMOUS PARTNER AND CONTACT OWNERSHIP
-
-8. Obey `TRUSTED ACTIVE BOT IMAGE POLICY`. When `anonymous_partner_fragment` is true, first construct one coherent partner continuing outside the frame, then preserve the assigned actor/receiver relation through only the naturally cropped connected portion and its required contact. The contact must be visibly inside the crop, never merely `implied`, promised at an unseen edge, replaced by a reaction alone, or widened into an independent pose. Put partner visibility in `scene` and exact contact in `supplement`, never in the named character's `positive`. Do not invent another contact, partner-centered camera, or identifying partner feature.
-
-9. Trace one unbroken visible path from a single frame boundary through the cropped partner portion to the local contact. That path must be the natural projection of the coherent off-frame body established before cropping, with consistent scale, depth, orientation, occlusion, and clothing or exposure. Treat minimum visibility as an upper limit: include only what the event and readable contact need, but never turn a body-part label into a standalone presence token or assemble separate pieces from different boundaries. Recrop until the pixels make ownership, connection, and actor/receiver direction self-evident without a caption. When the flag is false, add no partner fragment, partner contact, or implied partner face/body.
-
-PHYSICAL COHERENCE
-
-10. Make camera, pose, gaze, anatomy, position, clothing, contact, overlap, occlusion, support, environment, and crop one physically possible instant. Keep the face readable when it carries identity or emotion, keep every required contact visibly readable, and preserve natural overlap and joint continuity. Every visible object or material must be established by the assigned setting, action, or physical state and must remain where that scene physically puts it. Use open image space or a different honest crop when possible; never invent or reposition foreground material to frame, censor, conceal, or repair the interaction.
+1. Copy every assigned slot exactly once and preserve plan order. Omit the Key Visual. The server owns `plan_id`.
+2. Treat each plan's `characters` list as the exact identity-managed roster and emit it in order. Those entries own identity/LoRA and remain the named subjects; never replace one with an anonymous participant or center another person's identity. When empty, keep `characters: []` and place anonymous people only in `scene` or `supplement`.
+3. `anchor_passage` is the event authority for action, location, and story time. `scene_brief` identifies the one primary visible fact within it. Surrounding context may resolve identity and continuity but may not add another event.
+4. State the core action or pose before secondary detail. Preserve actor/receiver direction, contact, clothing, and intensity. If the primary fact is contact, use a contact-centered camera containing its action-bearing region and omit the distant face. Use a reaction-centered camera only when the reaction is the assigned fact. Never crop away the defining action. If it cannot fit coherently, repair only camera and crop; never replace the event.
+5. Treat `continuity_note` as the complete wardrobe and express one coherent state across all fields. A later complete state supersedes an earlier fastening, opening, displacement, or removal intermediate; never restore a superseded garment because surrounding text mentions it. Copy the logical state into `outfit_state`, including off-frame items, underlayers, accessories, damage, displacement, removals, and carried clothing. Put only visible or coverage-defining garments in `positive`. `supplement` must not reintroduce an item marked removed. Never redesign a garment or advance wardrobe beyond the passage.
+6. Apply fixed appearance only where useful. Omit remote face, hair, eye, expression, or clothing details outside a tight crop. Fixed identity and logical wardrobe are continuity authorities, not a display quota.
+7. When `anonymous_partner_fragment` is true, apply the active policy. Preserve the assigned actor/receiver relation and use only its permitted connected action-bearing fragment. Keep partner anatomy and action out of named-character `positive`; place its visible anchor in `scene` and exact contact in `supplement`. Do not invent a limb, second contact, independent pose, or partner-centered camera. When the flag is false, add no partner fragment or partner contact.
+8. Make camera, positions, poses, gaze, anatomy, clothing, contact, overlap, occlusion, environment, and crop one possible instant. For cross-person contact, bind the actor's connected part, the receiver's local surface, and edge-to-contact direction in one geometry. If it can read as self-touch, an actor/receiver swap, or a detached region, recrop around the contact before writing tags. Never use a vague nearby torso or limb instead of an exact contact point. The action-bearing region named by `scene_brief` must be inside the camera crop at readable scale.
 
 REPRESENTATIVE DECISIONS
 
-- If a named subject's face and lower body contact jointly carry the assigned interaction, use a wider oblique composition that keeps the face primary and includes the one connected contact region; do not crop either fact away.
-- If an upward gaze or overwhelmed recoil is already the complete fact, keep the other person entirely outside the image and do not imply a cropped face above it.
-- If an anonymous partner lies over the named subject, establish both bodies, their support, and the required contact before choosing the view. Let the camera and frame reveal one connected projected portion of the off-frame partner while the named face remains readable; the scene relation alone never dictates an image edge.
-- Entry through any image edge is valid when the chosen camera genuinely projects the coherent partner through that boundary; it is never inferred directly from a narrative direction word.
-- If one local hold establishes the assigned fact, show only the connected actor region needed to make ownership and contact readable. If a tight face crop also shows a coverage-bearing area, carry its authoritative state into `positive`.
-- If legs locked around a waist are the assigned fact and the face is not part of that fact, center the readable leg/waist relation rather than forcing a distant portrait into the same crop.
-- In cross-person grooming or touch, the actor-owned part must visibly land on the receiver-owned surface. If it resembles self-touch or reverses the participants, repair the viewpoint around that local contact.
+- If the primary fact is legs locked around a waist, frame the legs and waist as the readable center and omit the distant face; never choose a face-and-chest crop that excludes the legs.
+- If the named subject is looking toward an off-frame person, keep that person outside and make the gaze readable.
+- If one connected hand and forearm visibly establish a wrist hold, use only that fragment; do not add a torso or second contact.
+- If the policy permits a non-identifying rear or side portion of a partner's head as the smallest contact fragment, keep it edge-connected and subordinate; never turn it into a second portrait or camera center.
+- In cross-person grooming or touch, the actor-owned limb must visibly land on the receiver-owned surface. If the framing makes the named subject appear to touch themself, change to a contact-centered crop.
 
 OUTPUT
 
@@ -50,7 +27,8 @@ Use the supplied TOON structure. Return one `<lb-xnai>` block containing `scenes
 
 FINAL CHECK
 
-- Exact slots, order, and canonical rosters; one recognizable visible fact per scene.
-- One coherent wardrobe state across every output field, including any conditionally supplied involved-partner state, with no removed or off-frame detail forced back into the pixels.
-- One readable composition with preserved support, a primary named-subject face when story-critical, visible required contact, unambiguous ownership, and one continuous permitted crop whose depth, occlusion, image placement, and frame edge all follow the chosen camera projection.
-- No object or material appears merely to cover the event, satisfy a presumed rating, or make difficult anatomy disappear.
+- Exact slots, order, and canonical rosters; one recognizable action per scene.
+- One terminal wardrobe state across `outfit_state`, `positive`, and `supplement`.
+- Every body part and action has one owner; the result cannot read as self-touch or an actor/receiver swap.
+- Contact framing does not force a distant face or second contact; reaction framing does not add remote contact proof.
+- Anonymous-fragment visibility matches its per-scene flag and the trusted active policy.
