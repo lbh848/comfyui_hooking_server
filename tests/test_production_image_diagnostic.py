@@ -831,6 +831,34 @@ def test_stable_reuse_returns_first_equivalent_patcher() -> None:
     assert second_result is first
 
 
+def test_tensor_diagnostics_support_inference_tensors_without_private_version() -> None:
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "comfy"
+        / "custom_nodes"
+        / "comfyui-soya-custom-nodes"
+        / "soya_image_diagnostic.py"
+    )
+    spec = importlib.util.spec_from_file_location(
+        "test_soya_tensor_diagnostics", source
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    with module.torch.inference_mode():
+        tensor = module.torch.tensor([1.0, 2.0])
+        metadata = module._argument_metadata({"result": tensor})["result"]
+        sample = module._tensor_sample(tensor)
+
+    assert metadata["type"] == "tensor"
+    assert metadata["shape"] == [2]
+    assert "version" not in metadata
+    assert sample["sampled_numel"] == 2
+    assert sample["sampled_finite_count"] == 2
+    assert "version" not in sample
+
+
 def test_lifecycle_method_wrapper_emits_identity_and_uuid_state(monkeypatch) -> None:
     source = (
         Path(__file__).resolve().parents[1]
