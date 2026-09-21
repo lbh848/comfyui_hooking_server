@@ -4,6 +4,7 @@ import copy
 import importlib.util
 import json
 from pathlib import Path
+from threading import Event
 from types import SimpleNamespace
 
 import numpy as np
@@ -307,6 +308,183 @@ def test_conclusions_treat_stable_reuse_only_recovery_as_actionable() -> None:
     conclusions = diagnostic._conclusions(cases)
 
     assert any("D만 ModelPatcher 반복 재구성을 제거해 안정화" in line for line in conclusions)
+
+
+def test_transient_memory_profiles_isolate_one_runtime_variable() -> None:
+    base = {
+        "auto_start": True,
+        "enable_cors": True,
+        "listen_all": True,
+        "fast": False,
+        "disable_dynamic_vram": False,
+        "vram_mode": "highvram",
+        "cuda_device": None,
+        "extra_args": "--preview-method none --async-offload 3 --disable-smart-memory",
+    }
+
+    dynamic_on = diagnostic._profile_with_memory_intervention(
+        base,
+        dynamic_vram=True,
+    )
+    assert dynamic_on["vram_mode"] == "auto"
+    assert dynamic_on["disable_dynamic_vram"] is False
+    assert "--async-offload 3" in dynamic_on["extra_args"]
+    assert "--disable-smart-memory" in dynamic_on["extra_args"]
+
+    async_off = diagnostic._profile_with_memory_intervention(
+        base,
+        disable_async_offload=True,
+    )
+    assert async_off["vram_mode"] == "highvram"
+    assert "--async-offload" not in async_off["extra_args"]
+    assert "--disable-async-offload" in async_off["extra_args"]
+    assert "--disable-smart-memory" in async_off["extra_args"]
+    assert "--preview-method none" in async_off["extra_args"]
+    assert base["extra_args"].endswith("--disable-smart-memory")
+
+
+def test_server_case_contract_contains_every_adaptive_memory_profile() -> None:
+    assert diagnostic.PRODUCTION_IMAGE_DIAGNOSTIC_CASE_NAMES == {
+        "production_patch_on",
+        "production_model_refresh",
+        "production_patch_off",
+        "production_stable_model_reuse",
+        "runtime_dynamic_on",
+        "runtime_dynamic_off",
+        "runtime_async_offload_off",
+        "runtime_smart_memory_off",
+        "runtime_pinned_memory_off",
+    }
+
+
+def test_adaptive_memory_plans_use_the_reproducing_workflow_case() -> None:
+    base = {
+        "disable_dynamic_vram": False,
+        "vram_mode": "highvram",
+        "extra_args": "--disable-smart-memory",
+    }
+    source = {
+        "name": "production_model_refresh",
+        "dcw_cwm_smc_enabled": True,
+        "model_patcher_refresh": True,
+        "stable_model_reuse": False,
+    }
+
+    plans, skipped = diagnostic._adaptive_memory_plans(base, source)
+
+    assert all(plan["source_case"] == "production_model_refresh" for plan in plans)
+    assert all(plan["model_patcher_refresh"] is True for plan in plans)
+    assert "runtime_smart_memory_off" not in {plan["name"] for plan in plans}
+    assert skipped == [
+        {
+            "name": "runtime_smart_memory_off",
+            "reason": "원래 실행 프로필에 이미 같은 메모리 설정이 적용되어 별도 실행을 생략했습니다.",
+        }
+    ]
+
+
+def test_restart_applies_transient_profile_without_mutating_restore_token() -> None:
+    original_profile = {
+        "disable_dynamic_vram": False,
+        "vram_mode": "highvram",
+        "extra_args": "",
+    }
+    transient_profile = {
+        "disable_dynamic_vram": False,
+        "vram_mode": "auto",
+        "extra_args": "--disable-async-offload",
+    }
+    paused = {
+        "instances": {
+            "1": {
+                "instance_id": 1,
+                "port": 8188,
+                "profile": copy.deepcopy(original_profile),
+            }
+        }
+    }
+    resumed_tokens = []
+
+    def production_call(request: dict) -> dict:
+        return {
+            "queue_idle": True,
+            "runtime_running": True,
+            "runtime_ready": True,
+            "instance_id": 1,
+            "runtime": {
+                "profile": copy.deepcopy(transient_profile),
+                "command": ["python", "main.py", "--disable-async-offload"],
+            },
+            "comfy_log": "ready" if request.get("include_logs") else "",
+        }
+
+    def resume(token: dict) -> dict:
+        resumed_tokens.append(copy.deepcopy(token))
+        return {"status": "resumed"}
+
+    result = diagnostic._restart_managed_runtime(
+        production_call=production_call,
+        pause_managed_comfy=lambda: copy.deepcopy(paused),
+        resume_managed_comfy=resume,
+        cancel_event=Event(),
+        log=None,
+        case_name="runtime_async_offload_off",
+        runtime_profile=transient_profile,
+    )
+
+    assert result["pause"]["instances"]["1"]["profile"] == original_profile
+    assert resumed_tokens[0]["instances"]["1"]["profile"] == transient_profile
+    assert paused["instances"]["1"]["profile"] == original_profile
+
+
+def test_conclusions_identify_async_offload_as_independent_recovery() -> None:
+    cases = []
+    for name in (
+        "production_patch_on",
+        "production_model_refresh",
+        "production_patch_off",
+        "production_stable_model_reuse",
+        "runtime_dynamic_on",
+        "runtime_dynamic_off",
+        "runtime_async_offload_off",
+        "runtime_smart_memory_off",
+        "runtime_pinned_memory_off",
+    ):
+        abnormal = name not in {
+            "production_stable_model_reuse",
+            "runtime_async_offload_off",
+        }
+        cases.append(
+            {
+                "name": name,
+                "dcw_cwm_smc_enabled": name != "production_patch_off",
+                "model_patcher_refresh": name == "production_model_refresh",
+                "stable_model_reuse": name == "production_stable_model_reuse",
+                "source_case": (
+                    "production_patch_on" if name.startswith("runtime_") else None
+                ),
+                "runs": [
+                    {
+                        "index": 7,
+                        "phase": "measurement",
+                        "abnormal": abnormal,
+                        "abnormal_reasons": ["non-finite"] if abnormal else [],
+                        "probe_summary": {},
+                    }
+                ],
+            }
+        )
+
+    conclusions = diagnostic._conclusions(cases)
+
+    assert any(
+        "이상을 회피한 단독 런타임 개입: async offload OFF" in line
+        for line in conclusions
+    )
+    assert any(
+        "DynamicVRAM 하나만으로는 설명되지 않습니다" in line
+        for line in conclusions
+    )
 
 
 def test_stable_reuse_returns_first_equivalent_patcher() -> None:

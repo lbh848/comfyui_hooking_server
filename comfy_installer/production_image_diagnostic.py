@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import datetime
 import hashlib
 import json
@@ -17,6 +18,8 @@ from typing import Any
 
 import numpy as np
 from PIL import Image
+
+from comfy_runtime import parse_comfy_extra_args
 
 from .e2e import ComfyE2ECancelled
 from .runtime_state import git_head
@@ -66,6 +69,23 @@ _EXPECTED_PROBE_STAGES = {
     "latent_after_sampler",
 }
 
+_MEMORY_CASE_LABELS = {
+    "runtime_dynamic_on": "DynamicVRAM ON",
+    "runtime_dynamic_off": "DynamicVRAM OFF",
+    "runtime_async_offload_off": "async offload OFF",
+    "runtime_smart_memory_off": "Smart Memory OFF",
+    "runtime_pinned_memory_off": "pinned memory OFF",
+}
+PRODUCTION_IMAGE_DIAGNOSTIC_CASE_NAMES = frozenset(
+    {
+        "production_patch_on",
+        "production_model_refresh",
+        "production_patch_off",
+        "production_stable_model_reuse",
+        *_MEMORY_CASE_LABELS,
+    }
+)
+
 
 def _log(callback: LogCallback | None, message: str, level: str = "info") -> None:
     if callback is None:
@@ -74,6 +94,140 @@ def _log(callback: LogCallback | None, message: str, level: str = "info") -> Non
         callback(message, level)
     except TypeError:
         callback(message)
+
+
+def _profile_with_memory_intervention(
+    base: Mapping[str, Any],
+    *,
+    dynamic_vram: bool | None = None,
+    disable_async_offload: bool | None = None,
+    disable_smart_memory: bool | None = None,
+    disable_pinned_memory: bool | None = None,
+) -> dict[str, Any]:
+    """Build a transient runtime profile without changing persisted settings."""
+
+    profile = copy.deepcopy(dict(base))
+    if dynamic_vram is not None:
+        # Current ComfyUI implicitly disables DynamicVRAM in --highvram and
+        # --novram.  AUTO + the managed disable flag is the unambiguous ON/OFF
+        # pair supported by the runtime profile contract.
+        profile["vram_mode"] = "auto"
+        profile["disable_dynamic_vram"] = not dynamic_vram
+
+    arguments = list(parse_comfy_extra_args(str(profile.get("extra_args") or "")))
+
+    def replace_boolean_flag(flag: str, enabled: bool) -> None:
+        nonlocal arguments
+        arguments = [argument for argument in arguments if argument != flag]
+        if enabled:
+            arguments.append(flag)
+
+    if disable_async_offload is not None:
+        filtered: list[str] = []
+        skip_optional_stream_count = False
+        for argument in arguments:
+            if skip_optional_stream_count:
+                skip_optional_stream_count = False
+                try:
+                    int(argument)
+                except (TypeError, ValueError):
+                    filtered.append(argument)
+                continue
+            if argument == "--async-offload":
+                skip_optional_stream_count = True
+                continue
+            if argument.startswith("--async-offload="):
+                continue
+            if argument == "--disable-async-offload":
+                continue
+            filtered.append(argument)
+        arguments = filtered
+        if disable_async_offload:
+            arguments.append("--disable-async-offload")
+    if disable_smart_memory is not None:
+        replace_boolean_flag("--disable-smart-memory", disable_smart_memory)
+    if disable_pinned_memory is not None:
+        replace_boolean_flag("--disable-pinned-memory", disable_pinned_memory)
+    profile["extra_args"] = subprocess.list2cmdline(arguments)
+    return profile
+
+
+def _adaptive_memory_plans(
+    base_profile: Mapping[str, Any],
+    source_case: Mapping[str, Any],
+) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+    """Return single-variable runtime controls for a reproduced failure."""
+
+    shared = {
+        "patch_enabled": bool(source_case.get("dcw_cwm_smc_enabled")),
+        "model_patcher_refresh": bool(source_case.get("model_patcher_refresh")),
+        "stable_model_reuse": bool(source_case.get("stable_model_reuse")),
+        "source_case": str(source_case.get("name") or "unknown"),
+    }
+    candidates = (
+        (
+            "runtime_dynamic_on",
+            {"dynamic_vram": True},
+            _profile_with_memory_intervention(base_profile, dynamic_vram=True),
+        ),
+        (
+            "runtime_dynamic_off",
+            {"dynamic_vram": False},
+            _profile_with_memory_intervention(base_profile, dynamic_vram=False),
+        ),
+        (
+            "runtime_async_offload_off",
+            {"disable_async_offload": True},
+            _profile_with_memory_intervention(
+                base_profile,
+                disable_async_offload=True,
+            ),
+        ),
+        (
+            "runtime_smart_memory_off",
+            {"disable_smart_memory": True},
+            _profile_with_memory_intervention(
+                base_profile,
+                disable_smart_memory=True,
+            ),
+        ),
+        (
+            "runtime_pinned_memory_off",
+            {"disable_pinned_memory": True},
+            _profile_with_memory_intervention(
+                base_profile,
+                disable_pinned_memory=True,
+            ),
+        ),
+    )
+    plans: list[dict[str, Any]] = []
+    skipped: list[dict[str, str]] = []
+    base_arguments = set(
+        parse_comfy_extra_args(str(base_profile.get("extra_args") or ""))
+    )
+    already_applied = {
+        "runtime_async_offload_off": "--disable-async-offload" in base_arguments,
+        "runtime_smart_memory_off": "--disable-smart-memory" in base_arguments,
+        "runtime_pinned_memory_off": "--disable-pinned-memory" in base_arguments,
+    }
+    for name, intervention, profile in candidates:
+        if profile == dict(base_profile) or already_applied.get(name, False):
+            skipped.append(
+                {
+                    "name": name,
+                    "reason": "원래 실행 프로필에 이미 같은 메모리 설정이 적용되어 별도 실행을 생략했습니다.",
+                }
+            )
+            continue
+        plans.append(
+            {
+                "name": name,
+                **shared,
+                "runtime_profile": profile,
+                "memory_intervention": intervention,
+            }
+        )
+    return plans, skipped
 
 
 def _write_json(path: Path, value: Any) -> None:
@@ -577,6 +731,7 @@ def _restart_managed_runtime(
     cancel_event: Event,
     log: LogCallback | None,
     case_name: str,
+    runtime_profile: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     before = production_call({"action": "status"})
     if not before.get("queue_idle"):
@@ -589,10 +744,34 @@ def _restart_managed_runtime(
             "실제 프로그램이 관리하는 로컬 Comfy가 실행 중이 아닙니다: "
             f"case={case_name}, status={before}"
         )
-    token = pause_managed_comfy()
+    original_token = pause_managed_comfy()
+    resume_token = copy.deepcopy(original_token)
+    if runtime_profile is not None:
+        instances = resume_token.get("instances") if isinstance(resume_token, dict) else None
+        instance_key = str(before.get("instance_id"))
+        item = instances.get(instance_key) if isinstance(instances, dict) else None
+        if not isinstance(item, dict):
+            print(
+                "[COMFY_INSTALL][PRODUCTION_IMAGE_DIAGNOSTIC] "
+                "임시 런타임 프로필 적용 대상 없음: "
+                f"case={case_name}, instance={instance_key}, token={resume_token}"
+            )
+            try:
+                resume_managed_comfy(original_token)
+            except Exception as resume_exc:
+                print(
+                    "[COMFY_INSTALL][PRODUCTION_IMAGE_DIAGNOSTIC] "
+                    f"프로필 적용 거부 후 원래 런타임 복구 실패: {resume_exc}"
+                )
+                traceback.print_exc()
+            raise RuntimeError(
+                "임시 런타임 프로필을 적용할 관리 Comfy 인스턴스가 없습니다: "
+                f"case={case_name}, instance={instance_key}"
+            )
+        item["profile"] = copy.deepcopy(dict(runtime_profile))
     resumed = False
     try:
-        resumed_result = resume_managed_comfy(token)
+        resumed_result = resume_managed_comfy(resume_token)
         resumed = True
         ready = _wait_until_ready(
             production_call,
@@ -607,24 +786,106 @@ def _restart_managed_runtime(
                 f"case={case_name}, status={ready_with_logs}"
             )
         ready = ready_with_logs
+        if runtime_profile is not None:
+            actual_profile = (ready.get("runtime") or {}).get("profile")
+            if actual_profile != dict(runtime_profile):
+                raise RuntimeError(
+                    "요청한 임시 런타임 프로필과 실제 기동 프로필이 다릅니다: "
+                    f"case={case_name}, requested={dict(runtime_profile)}, "
+                    f"actual={actual_profile}"
+                )
         _log(
             log,
-            f"[이미지 진단] {case_name}: 관리 Comfy 동일 설정 재시작 및 준비 완료",
+            f"[이미지 진단] {case_name}: 관리 Comfy 진단 설정 재시작 및 준비 완료",
         )
         return {
             "before": before,
-            "pause": token,
+            "pause": original_token,
+            "resume_token": resume_token,
             "resume": resumed_result,
             "ready": ready,
         }
     except Exception:
-        if not resumed:
+        try:
+            if resumed:
+                pause_managed_comfy()
+            resume_managed_comfy(original_token)
+        except Exception as resume_exc:
+            print(
+                "[COMFY_INSTALL][PRODUCTION_IMAGE_DIAGNOSTIC] "
+                f"재시작 실패 후 원래 관리 Comfy 복구 실패: {resume_exc}"
+            )
+            traceback.print_exc()
+        raise
+
+
+def _restore_original_runtime(
+    *,
+    production_call: ProductionCall,
+    pause_managed_comfy: Callable[[], Any],
+    resume_managed_comfy: Callable[[Any], Any],
+    original_token: Mapping[str, Any],
+    log: LogCallback | None,
+) -> dict[str, Any]:
+    """Restore every managed instance to the profiles present before diagnosis."""
+
+    before = production_call({"action": "status"})
+    if not before.get("queue_idle"):
+        raise RuntimeError(
+            "원래 Comfy 설정 복구 시 작업 큐가 비어 있지 않습니다: "
+            f"status={before}"
+        )
+    diagnostic_token = pause_managed_comfy()
+    original_started = False
+    try:
+        resumed = resume_managed_comfy(copy.deepcopy(dict(original_token)))
+        original_started = True
+        ready = _wait_until_ready(
+            production_call,
+            # Cancellation must not leave the user's managed Comfy on a
+            # transient diagnostic profile.
+            cancel_event=Event(),
+        )
+        instance_key = str(ready.get("instance_id"))
+        instances = original_token.get("instances")
+        original_item = (
+            instances.get(instance_key) if isinstance(instances, Mapping) else None
+        )
+        expected_profile = (
+            original_item.get("profile") if isinstance(original_item, Mapping) else None
+        )
+        actual_profile = (ready.get("runtime") or {}).get("profile")
+        if expected_profile is not None and actual_profile != expected_profile:
+            raise RuntimeError(
+                "진단 후 원래 런타임 프로필 복구 확인 실패: "
+                f"expected={expected_profile}, actual={actual_profile}"
+            )
+        _log(log, "[이미지 진단] 관리 Comfy 원래 실행 프로필 복구 완료")
+        return {
+            "before": before,
+            "paused_diagnostic_profile": diagnostic_token,
+            "resume": resumed,
+            "ready": ready,
+        }
+    except Exception:
+        try:
+            if original_started:
+                pause_managed_comfy()
+            resume_managed_comfy(copy.deepcopy(dict(original_token)))
+        except Exception as retry_exc:
+            print(
+                "[COMFY_INSTALL][PRODUCTION_IMAGE_DIAGNOSTIC] "
+                f"원래 설정 복구 재시도 실패: {retry_exc}"
+            )
+            traceback.print_exc()
             try:
-                resume_managed_comfy(token)
-            except Exception as resume_exc:
+                pause_managed_comfy()
+                resume_managed_comfy(diagnostic_token)
+            except Exception as fallback_exc:
                 print(
                     "[COMFY_INSTALL][PRODUCTION_IMAGE_DIAGNOSTIC] "
-                    f"재시작 실패 후 원래 관리 Comfy 복구 실패: {resume_exc}"
+                    "원래 설정 복구 실패 후 진단 직전 런타임도 복구 실패: "
+                    f"{fallback_exc}"
                 )
                 traceback.print_exc()
         raise
@@ -679,6 +940,10 @@ def _case_summary(case: Mapping[str, Any]) -> dict[str, Any]:
         "dcw_cwm_smc_enabled": case.get("dcw_cwm_smc_enabled"),
         "model_patcher_refresh": case.get("model_patcher_refresh"),
         "stable_model_reuse": case.get("stable_model_reuse"),
+        "source_case": case.get("source_case"),
+        "memory_intervention": case.get("memory_intervention"),
+        "runtime_profile": case.get("runtime_profile"),
+        "runtime_command": case.get("runtime_command"),
         "completed": len(runs),
         "abnormal": len(abnormal),
         "first_abnormal": abnormal[0].get("index") if abnormal else None,
@@ -691,6 +956,59 @@ def _case_summary(case: Mapping[str, Any]) -> dict[str, Any]:
         ),
         "model_reuse": _model_reuse_summary(case),
     }
+
+
+def _memory_conclusions(
+    summaries: Mapping[str, Mapping[str, Any]],
+) -> list[str]:
+    observed = {
+        name: summaries[name]
+        for name in _MEMORY_CASE_LABELS
+        if name in summaries
+    }
+    if not observed:
+        return []
+    stable = [
+        _MEMORY_CASE_LABELS[name]
+        for name, summary in observed.items()
+        if int(summary.get("completed") or 0) > 0
+        and int(summary.get("abnormal") or 0) == 0
+    ]
+    findings = [
+        "런타임 메모리/offload 비교는 원래 설정을 저장한 뒤 임시 프로필로만 실행했고, 검사 후 원래 프로필을 복구했습니다."
+    ]
+    if stable:
+        findings.append(
+            "같은 실제 워크플로와 입력에서 이상을 회피한 단독 런타임 개입: "
+            + ", ".join(stable)
+        )
+    else:
+        findings.append(
+            "실행된 DynamicVRAM/async offload/Smart Memory/pinned memory 단독 개입에서는 이상이 회피되지 않았습니다."
+        )
+
+    dynamic_on = observed.get("runtime_dynamic_on")
+    dynamic_off = observed.get("runtime_dynamic_off")
+    if dynamic_on and dynamic_off:
+        on_bad = int(dynamic_on.get("abnormal") or 0) > 0
+        off_bad = int(dynamic_off.get("abnormal") or 0) > 0
+        if on_bad and not off_bad:
+            findings.append(
+                "AUTO VRAM 조건에서 DynamicVRAM ON만 실패하고 OFF는 유지되어 DynamicVRAM 상호작용을 지지합니다."
+            )
+        elif not on_bad and off_bad:
+            findings.append(
+                "AUTO VRAM 조건에서 DynamicVRAM OFF만 실패해 DynamicVRAM 비활성화를 회피책으로 볼 수 없습니다."
+            )
+        elif on_bad and off_bad:
+            findings.append(
+                "AUTO VRAM의 DynamicVRAM ON/OFF 양쪽에서 재현되어 DynamicVRAM 하나만으로는 설명되지 않습니다."
+            )
+        else:
+            findings.append(
+                "AUTO VRAM의 DynamicVRAM ON/OFF 양쪽이 유지되어 원래 VRAM 모드와의 상호작용을 별도로 봐야 합니다."
+            )
+    return findings
 
 
 def _model_reuse_summary(case: Mapping[str, Any]) -> dict[str, Any]:
@@ -811,6 +1129,7 @@ def _model_reuse_summary(case: Mapping[str, Any]) -> dict[str, Any]:
 
 def _conclusions(cases: list[dict[str, Any]]) -> list[str]:
     summaries = {case["name"]: _case_summary(case) for case in cases}
+    memory_findings = _memory_conclusions(summaries)
     baseline = summaries.get("production_patch_on", {})
     refreshed = summaries.get("production_model_refresh", {})
     patch_off = summaries.get("production_patch_off", {})
@@ -883,7 +1202,7 @@ def _conclusions(cases: list[dict[str, Any]]) -> list[str]:
                 "계측에서 최초로 확인된 비정상 텐서 단계: "
                 + ", ".join(sorted(str(stage) for stage in stages))
             )
-        return conclusions + state_findings
+        return conclusions + memory_findings + state_findings
 
     intervention_failures = []
     if refresh_bad:
@@ -897,12 +1216,12 @@ def _conclusions(cases: list[dict[str, Any]]) -> list[str]:
             "기존 실제 경로(A)는 정상이지만 다음 개입 케이스에서만 이상이 검출되었습니다: "
             + ", ".join(intervention_failures),
             "해당 개입을 해결책으로 적용하면 안 됩니다. 케이스 로그와 tensor telemetry를 우선 확인해야 합니다.",
-        ] + state_findings
+        ] + memory_findings + state_findings
     return [
         "A/B/C/D 모두 검정·컬러 노이즈·디코드 실패·NaN/Inf 계측에서 이상이 발견되지 않았습니다.",
         "프롬프트 무시·미완성 전조는 images/의 같은 번호 A/B/C/D 이미지와 실제 prompt JSON을 직접 대조해야 합니다.",
         "이 결과는 사용자가 실제로 쓰는 관리 Comfy와 AssetMode 생성 경로에서 얻었습니다.",
-    ] + state_findings
+    ] + memory_findings + state_findings
 
 
 def _write_report(
@@ -923,6 +1242,8 @@ def _write_report(
         "- 사용자 선택 LoRA/캐릭터·얼굴·그림체 LoRA/Face ID/Style/Pose/Hires/Detailer: 모두 OFF",
         "- 팩 워크플로에 고정된 모델·LoRA 노드는 실제 배포 경로 보존을 위해 제거하지 않음",
         "- 비교: 동일한 warmup 1개+측정 15개 프롬프트와 동일 seed로 A 실제 경로 / B sampler 직전 Refresh / C DCW OFF / D LoRA 완료 ModelPatcher 고정 재사용",
+        "- A/B/C/D에서 이상이 재현되면 같은 실패 경로로 AUTO VRAM의 DynamicVRAM ON/OFF, async offload OFF, Smart Memory OFF, pinned memory OFF를 각각 단독 비교",
+        "- 메모리 비교는 저장된 설정 파일을 바꾸지 않는 임시 런타임 프로필이며 검사 종료·실패·중단 시 원래 관리 Comfy 프로필을 복구",
         "- Refresh는 model.clone() wrapper만 새로 만들며 모델 unload·VRAM 정리·weight patch 삭제를 하지 않음",
         "- D는 LoRA 적용 완료 지점의 첫 ModelPatcher를 같은 케이스 안에서 재사용하고 DCW와 sampler는 매 요청 실행",
         "- 모든 케이스에서 conditioning / sampler 입력·출력 latent / VAE 출력의 NaN·Inf와 ModelPatcher UUID·상주 UUID·patch·backup 상태를 기록",
@@ -951,6 +1272,29 @@ def _write_report(
             f"{summary['first_abnormal'] or '-'} | "
             f"{summary['first_nonfinite_stage'] or '-'} |"
         )
+    memory_cases = [
+        case for case in cases if case.get("name") in _MEMORY_CASE_LABELS
+    ]
+    if memory_cases:
+        lines.extend(
+            [
+                "",
+                "## 런타임 메모리/offload 단독 변수 비교",
+                "",
+                "각 행은 원래 실행 프로필에서 표시된 항목 하나만 바꿉니다. DynamicVRAM 비교만 ON/OFF를 명확히 하기 위해 두 행 모두 AUTO VRAM을 사용합니다.",
+                "",
+                "| 케이스 | 원본 실패 케이스 | 단독 개입 | 실제 실행 명령 | 완료 | 이상 |",
+                "|---|---|---|---|---:|---:|",
+            ]
+        )
+        for case in memory_cases:
+            summary = _case_summary(case)
+            command = " ".join(str(value) for value in summary["runtime_command"] or [])
+            lines.append(
+                f"| {summary['name']} | {summary['source_case']} | "
+                f"{_MEMORY_CASE_LABELS[str(summary['name'])]} | `{command}` | "
+                f"{summary['completed']} | {summary['abnormal']} |"
+            )
     lines.extend(
         [
             "",
@@ -1029,7 +1373,7 @@ def _write_report(
             "- `images/`: 실제 프로그램이 저장한 결과 이미지와 대응 프롬프트",
             "- `logs/`: 케이스별 관리 Comfy 시작 로그와 실행별 원본 로그 조각",
             "- `telemetry/`: 실행별 구조화된 ModelPatcher·conditioning·latent·VAE 계측 JSON",
-            "- `workflows/`: 네 케이스 warmup에서 실제 Comfy에 제출한 최종 API 워크플로",
+            "- `workflows/`: 각 케이스 warmup에서 실제 Comfy에 제출한 최종 API 워크플로",
             "- `runs.json`: GPU 전후 상태, 이미지 수치, 유효 개입 값, 구조화 계측 요약",
             "- `environment.json`: 실행 명령·GPU·Python 패키지·custom-node Git revision·모델/LoRA SHA256",
         ]
@@ -1082,6 +1426,27 @@ def run_production_image_diagnostic(
         "python_packages": {},
         "workflow_artifacts": {},
     }
+    original_runtime_token: dict[str, Any] | None = None
+    runtime_profile_changed = False
+    runtime_restored = False
+
+    def restore_runtime_if_needed() -> None:
+        nonlocal runtime_restored
+        if (
+            not runtime_profile_changed
+            or runtime_restored
+            or original_runtime_token is None
+        ):
+            return
+        environment["runtime_restore"] = _restore_original_runtime(
+            production_call=production_call,
+            pause_managed_comfy=pause_managed_comfy,
+            resume_managed_comfy=resume_managed_comfy,
+            original_token=original_runtime_token,
+            log=log,
+        )
+        runtime_restored = True
+
     started = time.monotonic()
     try:
         initial = production_call({"action": "status"})
@@ -1096,21 +1461,56 @@ def run_production_image_diagnostic(
                 "에셋 생성 대상이 로컬 관리 Comfy가 아닙니다: "
                 f"target={initial.get('execution_target')!r}"
             )
-
-        plans = (
-            ("production_patch_on", True, False, False),
-            ("production_model_refresh", True, True, False),
-            ("production_patch_off", False, False, False),
-            ("production_stable_model_reuse", True, False, True),
+        initial_runtime = initial.get("runtime")
+        base_runtime_profile = (
+            initial_runtime.get("profile")
+            if isinstance(initial_runtime, Mapping)
+            else None
         )
+        if not isinstance(base_runtime_profile, Mapping):
+            raise RuntimeError(
+                "관리 Comfy의 현재 실행 프로필을 확인할 수 없습니다: "
+                f"runtime={initial_runtime}"
+            )
+        base_runtime_profile = copy.deepcopy(dict(base_runtime_profile))
+        plans: list[dict[str, Any]] = [
+            {
+                "name": "production_patch_on",
+                "patch_enabled": True,
+                "model_patcher_refresh": False,
+                "stable_model_reuse": False,
+            },
+            {
+                "name": "production_model_refresh",
+                "patch_enabled": True,
+                "model_patcher_refresh": True,
+                "stable_model_reuse": False,
+            },
+            {
+                "name": "production_patch_off",
+                "patch_enabled": False,
+                "model_patcher_refresh": False,
+                "stable_model_reuse": False,
+            },
+            {
+                "name": "production_stable_model_reuse",
+                "patch_enabled": True,
+                "model_patcher_refresh": False,
+                "stable_model_reuse": True,
+            },
+        ]
+        base_plan_count = len(plans)
         total_runs = len(plans) * (1 + len(MEASUREMENT_VARIANTS))
         completed_runs = 0
-        for (
-            case_name,
-            patch_enabled,
-            model_patcher_refresh,
-            stable_model_reuse,
-        ) in plans:
+        for plan_index, plan in enumerate(plans):
+            case_name = str(plan["name"])
+            patch_enabled = bool(plan["patch_enabled"])
+            model_patcher_refresh = bool(plan["model_patcher_refresh"])
+            stable_model_reuse = bool(plan["stable_model_reuse"])
+            runtime_profile = plan.get("runtime_profile")
+            if isinstance(runtime_profile, Mapping):
+                runtime_profile_changed = True
+                runtime_restored = False
             restart = _restart_managed_runtime(
                 production_call=production_call,
                 pause_managed_comfy=pause_managed_comfy,
@@ -1118,12 +1518,26 @@ def run_production_image_diagnostic(
                 cancel_event=cancel_event,
                 log=log,
                 case_name=case_name,
+                runtime_profile=(
+                    runtime_profile
+                    if isinstance(runtime_profile, Mapping)
+                    else None
+                ),
             )
+            if original_runtime_token is None:
+                pause_token = restart.get("pause")
+                if isinstance(pause_token, dict):
+                    original_runtime_token = copy.deepcopy(pause_token)
+            ready_runtime = (restart.get("ready") or {}).get("runtime") or {}
             case: dict[str, Any] = {
                 "name": case_name,
                 "dcw_cwm_smc_enabled": patch_enabled,
                 "model_patcher_refresh": model_patcher_refresh,
                 "stable_model_reuse": stable_model_reuse,
+                "source_case": plan.get("source_case"),
+                "memory_intervention": plan.get("memory_intervention"),
+                "runtime_profile": ready_runtime.get("profile"),
+                "runtime_command": ready_runtime.get("command"),
                 "restart": restart,
                 "runs": [],
             }
@@ -1283,6 +1697,64 @@ def run_production_image_diagnostic(
                         "warning",
                     )
 
+            if plan_index == base_plan_count - 1:
+                source_case = next(
+                    (
+                        case
+                        for case in cases
+                        if case.get("name") == "production_patch_on"
+                        and any(run.get("abnormal") for run in case.get("runs", []))
+                    ),
+                    None,
+                )
+                if source_case is None:
+                    source_case = next(
+                        (
+                            case
+                            for case in cases
+                            if any(
+                                run.get("abnormal")
+                                for run in case.get("runs", [])
+                            )
+                        ),
+                        None,
+                    )
+                if source_case is not None:
+                    adaptive, skipped = _adaptive_memory_plans(
+                        base_runtime_profile,
+                        source_case,
+                    )
+                    plans.extend(adaptive)
+                    total_runs += len(adaptive) * (
+                        1 + len(MEASUREMENT_VARIANTS)
+                    )
+                    environment["adaptive_memory_diagnostic"] = {
+                        "triggered": True,
+                        "source_case": source_case.get("name"),
+                        "base_runtime_profile": base_runtime_profile,
+                        "planned": [
+                            {
+                                "name": value["name"],
+                                "memory_intervention": value["memory_intervention"],
+                                "runtime_profile": value["runtime_profile"],
+                            }
+                            for value in adaptive
+                        ],
+                        "skipped": skipped,
+                    }
+                    _log(
+                        log,
+                        "[이미지 진단] 이상 재현으로 DynamicVRAM/async offload/"
+                        "Smart Memory/pinned memory 단독 변수 비교를 시작합니다.",
+                        "warning",
+                    )
+                else:
+                    environment["adaptive_memory_diagnostic"] = {
+                        "triggered": False,
+                        "reason": "A/B/C/D에서 자동 판정 이상이 재현되지 않았습니다.",
+                    }
+
+        restore_runtime_if_needed()
         conclusions = _conclusions(cases)
         environment["gpu_at_end"] = _gpu_snapshot()
         environment["duration_seconds"] = round(time.monotonic() - started, 3)
@@ -1308,6 +1780,14 @@ def run_production_image_diagnostic(
             "case_summaries": [_case_summary(case) for case in cases],
         }
     except ComfyE2ECancelled:
+        try:
+            restore_runtime_if_needed()
+        except Exception as restore_exc:
+            print(
+                "[COMFY_INSTALL][PRODUCTION_IMAGE_DIAGNOSTIC] "
+                f"진단 중단 후 원래 런타임 복구 실패: {restore_exc}"
+            )
+            traceback.print_exc()
         raise
     except Exception as exc:
         message = f"{type(exc).__name__}: {exc}"
@@ -1317,6 +1797,19 @@ def run_production_image_diagnostic(
             f"{message}"
         )
         traceback.print_exc()
+        try:
+            restore_runtime_if_needed()
+        except Exception as restore_exc:
+            restore_message = (
+                "관리 Comfy 원래 실행 프로필 복구 실패: "
+                f"{type(restore_exc).__name__}: {restore_exc}"
+            )
+            errors.append(restore_message)
+            print(
+                "[COMFY_INSTALL][PRODUCTION_IMAGE_DIAGNOSTIC] "
+                f"{restore_message}"
+            )
+            traceback.print_exc()
         conclusions = [
             "실제 프로그램 경로 진단을 끝까지 수행하지 못했습니다. REPORT.md와 runs.json의 실패 위치 및 관리 Comfy 로그를 확인해야 합니다."
         ]
@@ -1345,6 +1838,16 @@ def run_production_image_diagnostic(
             "errors": errors,
         }
     finally:
+        if runtime_profile_changed and not runtime_restored:
+            try:
+                restore_runtime_if_needed()
+            except Exception as restore_exc:
+                print(
+                    "[COMFY_INSTALL][PRODUCTION_IMAGE_DIAGNOSTIC] "
+                    "마지막 원래 런타임 복구 시도 실패: "
+                    f"{type(restore_exc).__name__}: {restore_exc}"
+                )
+                traceback.print_exc()
         asset_root = (project_root / "asset").resolve()
         try:
             if generated_root.parent != asset_root:

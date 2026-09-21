@@ -181,6 +181,9 @@ import importlib.util
 from comfy_installer.http_api import register_comfy_installer_routes
 from comfy_installer.input_patcher import patch_comfy_input
 from comfy_installer.patch_importer import register_patch_import_routes
+from comfy_installer.production_image_diagnostic import (
+    PRODUCTION_IMAGE_DIAGNOSTIC_CASE_NAMES,
+)
 from comfy_installer.workflow_library import migrate_legacy_workflow_layout
 from modal_backend import register_modal_routes
 from modal_backend.settings import ModalSettings
@@ -22184,12 +22187,7 @@ async def _production_image_diagnostic_async(
     stable_model_reuse = request.get("stable_model_reuse")
     if not character or not re.fullmatch(r"[A-Za-z0-9_-]{1,96}", character):
         raise ValueError(f"진단 임시 캐릭터 이름 형식 오류: {character!r}")
-    if case_name not in {
-        "production_patch_on",
-        "production_model_refresh",
-        "production_patch_off",
-        "production_stable_model_reuse",
-    }:
+    if case_name not in PRODUCTION_IMAGE_DIAGNOSTIC_CASE_NAMES:
         raise ValueError(f"진단 케이스 이름 오류: {case_name!r}")
     if phase not in {"warmup", "measurement"}:
         raise ValueError(f"진단 실행 phase 오류: {phase!r}")
