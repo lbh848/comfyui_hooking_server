@@ -2851,7 +2851,7 @@ scenes: []
     assert "Treat `TRUSTED ACTIVE BOT IMAGE POLICY` as the single renderability and partner-visibility contract" in plan_request
     assert "materially different supported actions" in plan_request
     assert "Thought, metaphor, environment, aftermath, fluid, physiological effect, or micro-motion alone is insufficient" in plan_request
-    assert "each primary fact remains readable from the visible crop alone" in plan_request
+    assert pipeline.load_prompt_files()['call2_plan'].strip() in plan_request
     assert "Preserve who acts on whom, the direction and intensity of contact" in plan_request
     assert "natural overlap, and every story-essential exposure or displaced-clothing state" in plan_request
     assert "Express these as scene-space body relations" not in plan_request
@@ -2950,7 +2950,7 @@ scenes: []
     assert "never choose a face-and-chest crop that excludes the legs" in detail_request
     assert "The action-bearing region named by `scene_brief` must be inside the camera crop at readable scale" in detail_request
     assert "Make camera, positions, poses, gaze, anatomy" in detail_request
-    assert "bind the actor's connected part, the receiver's local surface, and edge-to-contact direction in one geometry" in detail_request
+    assert pipeline.load_prompt_files()['call2_detail'].strip() in detail_request
     assert "first construct one coherent partner continuing outside the frame" not in detail_request
     assert "one unbroken visible path from a single frame boundary" not in detail_request
     assert "Never use a vague nearby torso or limb instead of an exact contact point" in detail_request

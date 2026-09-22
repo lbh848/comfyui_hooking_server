@@ -34,6 +34,6 @@ FINAL CHECK
 - Every scene is directly supported by its own anchor passage.
 - Every canonical roster is resolved from the full narrative.
 - When a single-preset subject authority is supplied, every scene contains exactly one authorized named subject and keeps that subject as the visible identity and camera owner.
-- With dialogue and explanatory prose mentally removed, each primary fact remains readable from the visible crop alone; no scene depends on an internal-only effect, off-frame action-bearing region, identifiable partner face, focal-subject swap, or incompatible distant regions.
+- Reconcile each `scene_brief` with its fragment flag: retain a fragment only for the visible contact that establishes the selected fact; a self-contained reaction needs none, and a fact requiring forbidden partner visibility needs another supported instant.
 - The requested count is met with materially different visible moments from the same events when necessary, never by forcing an unrenderable beat.
 - No scene contains a planner-authored wardrobe state or `continuity_note`; the server attaches the authoritative upstream timeline after selection.
