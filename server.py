@@ -18,6 +18,7 @@ import base64
 import shutil
 import socket
 import mimetypes
+import tomllib
 from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
@@ -3843,6 +3844,10 @@ async def generate_image_with_prompt(
             "conversion_info": copy.deepcopy(current_conversion_info),
         }
         risu_prompt = build_prompt(positive, negative)
+        # 비교 진단은 캐시용 API 그래프가 아니라 Comfy에 실제로 제출된 최종
+        # 그래프를 비교해야 한다. ContextVar에만 보관해 일반 응답/백업에는
+        # 노출하거나 저장하지 않는다.
+        workflow_snapshot["submitted_workflow"] = copy.deepcopy(risu_prompt)
     CURRENT_ILLUSTRATION_WORKFLOW_SNAPSHOT.set(workflow_snapshot)
     api_workflow_snapshot = workflow_snapshot["api_workflow"]
     illust_port = None
@@ -4104,11 +4109,20 @@ async def submit_workflow_to_comfy(
     progress_callback=None,
     *,
     task_key: str = "asset_generation",
+    local_port: int | None = None,
     input_paths: list[str] | tuple[str, ...] | None = None,
     capture_input_paths: list[str] | tuple[str, ...] | None = None,
 ) -> tuple[bytes | None, str | dict]:
     """임의의 API 워크플로우를 ComfyUI에 제출하고 이미지를 반환한다."""
-    execution_target = effective_execution_target(task_key)
+    if local_port is not None:
+        if isinstance(local_port, bool) or not 1 <= int(local_port) <= 65535:
+            print(
+                "[WORKFLOW:LOCAL] 명시 포트 검증 실패: "
+                f"task={task_key}, port={local_port!r}"
+            )
+            raise ValueError(f"ComfyUI 포트 범위 오류: {local_port!r}")
+        local_port = int(local_port)
+    execution_target = "" if local_port is not None else effective_execution_target(task_key)
     if execution_target in REMOTE_COMFY_TARGETS:
         provider_label = (
             "Modal" if execution_target == MODAL_COMFY_TARGET else "Vast"
@@ -4165,7 +4179,7 @@ async def submit_workflow_to_comfy(
                 f"{provider_label} 원격 워크플로우 실패: "
                 f"{type(e).__name__}: {e}"
             )
-    target_port = resolve_comfy_port(task_key)
+    target_port = local_port if local_port is not None else resolve_comfy_port(task_key)
     ws_url = (
         f"ws://{REAL_COMFY_HOST}:{target_port}/ws"
         f"?clientId=asset_{uuid.uuid4().hex[:8]}"
@@ -4834,6 +4848,17 @@ def init_queue_manager():
     queue_manager.process_illustration_easy_edit = process_illustration_easy_edit_queue_item
     queue_manager.save_backup = save_backup
     queue_manager.generate_image_with_prompt = generate_image_with_prompt
+    queue_manager.run_image_comparison_direct = (
+        lambda workflow, port, progress_callback=None: submit_workflow_to_comfy(
+            workflow,
+            progress_callback=progress_callback,
+            task_key="asset_generation",
+            local_port=port,
+        )
+    )
+    queue_manager.get_current_illustration_workflow_snapshot = lambda: copy.deepcopy(
+        CURRENT_ILLUSTRATION_WORKFLOW_SNAPSHOT.get() or {}
+    )
     queue_manager.run_data_patch_utility = _run_data_patch_utility
     print("[QUEUE] 통합 큐 매니저 초기화 완료")
 
@@ -22090,6 +22115,928 @@ def _apply_repaired_workflow_runtime(bindings: dict[str, str]) -> None:
         raise
 
 
+def _image_comparison_asset_source_path(workflow_type: str) -> str:
+    normalized = workflow_profiles.normalize_asset_workflow_type(workflow_type)
+    return str(
+        {
+            workflow_profiles.ASSET_ILXL: asset_mode.workflow_source_path,
+            workflow_profiles.ASSET_ANIMA_ILXL: asset_mode.anima_workflow_source_path,
+            workflow_profiles.ASSET_ANIMA_ONLY: asset_mode.anima_only_workflow_source_path,
+        }[normalized]
+        or ""
+    )
+
+
+def _image_comparison_raw_node_declarations(
+    raw_workflow: dict[str, Any],
+) -> dict[str, list[dict[str, Any]]]:
+    """Return only package metadata declared by nodes used in this workflow."""
+    declarations: dict[str, list[dict[str, Any]]] = {}
+    raw_nodes = raw_workflow.get("nodes")
+    if not isinstance(raw_nodes, list):
+        return declarations
+    for raw_node in raw_nodes:
+        if not isinstance(raw_node, dict):
+            continue
+        class_type = str(raw_node.get("type") or "").strip()
+        if not class_type:
+            continue
+        properties = raw_node.get("properties")
+        if not isinstance(properties, dict):
+            properties = {}
+        declared = {
+            key: properties[key]
+            for key in ("cnr_id", "ver", "aux_id")
+            if key in properties
+        }
+        declarations.setdefault(class_type, []).append(
+            {
+                "node_id": str(raw_node.get("id") or ""),
+                "declared_package": declared,
+            }
+        )
+    return declarations
+
+
+def _image_comparison_git_head(package_dir: Path) -> str:
+    """Read a custom-node checkout revision without invoking Git or changing it."""
+    try:
+        git_marker = package_dir / ".git"
+        git_dir = git_marker
+        if git_marker.is_file():
+            marker = git_marker.read_text(encoding="utf-8", errors="replace").strip()
+            if not marker.startswith("gitdir:"):
+                return ""
+            git_dir = Path(marker.split(":", 1)[1].strip())
+            if not git_dir.is_absolute():
+                git_dir = (package_dir / git_dir).resolve()
+        head_path = git_dir / "HEAD"
+        if not head_path.is_file():
+            return ""
+        head = head_path.read_text(encoding="utf-8", errors="replace").strip()
+        if not head.startswith("ref:"):
+            return head
+        ref_name = head.split(":", 1)[1].strip()
+        ref_path = git_dir / Path(ref_name)
+        if ref_path.is_file():
+            return ref_path.read_text(encoding="utf-8", errors="replace").strip()
+        packed_refs = git_dir / "packed-refs"
+        if packed_refs.is_file():
+            for line in packed_refs.read_text(
+                encoding="utf-8", errors="replace"
+            ).splitlines():
+                if line.startswith(("#", "^")):
+                    continue
+                parts = line.split(" ", 1)
+                if len(parts) == 2 and parts[1].strip() == ref_name:
+                    return parts[0].strip()
+        print(
+            "[IMAGE_COMPARISON] 커스텀 노드 Git ref를 찾지 못함: "
+            f"package={package_dir}, ref={ref_name}"
+        )
+        return ""
+    except Exception as exc:
+        print(
+            "[IMAGE_COMPARISON] 커스텀 노드 Git 버전 읽기 실패: "
+            f"package={package_dir}, error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        return ""
+
+
+def _image_comparison_custom_node_package(
+    *,
+    comfy_root: Path | None,
+    python_module: str,
+) -> dict[str, Any]:
+    if comfy_root is None or not python_module.startswith("custom_nodes."):
+        return {}
+    package_name = python_module[len("custom_nodes.") :].split(".", 1)[0]
+    if not package_name:
+        return {}
+    custom_nodes_root = (comfy_root / "custom_nodes").resolve()
+    package_candidate = custom_nodes_root / package_name
+    if package_candidate.parent.resolve() != custom_nodes_root:
+        print(
+            "[IMAGE_COMPARISON] 커스텀 노드 패키지 경로 이탈 거부: "
+            f"module={python_module!r}, candidate={package_candidate}"
+        )
+        return {"name": package_name, "present": False, "path_error": "path escape"}
+    package_dir = package_candidate.resolve()
+    if not package_dir.is_dir():
+        print(
+            "[IMAGE_COMPARISON] 사용 중인 커스텀 노드 폴더 확인 실패: "
+            f"module={python_module!r}, path={package_dir}"
+        )
+        return {"name": package_name, "path": str(package_dir), "present": False}
+    result: dict[str, Any] = {
+        "name": package_name,
+        "path": str(package_dir),
+        "present": True,
+    }
+    pyproject_path = package_dir / "pyproject.toml"
+    if pyproject_path.is_file():
+        try:
+            pyproject = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
+            project_data = pyproject.get("project") if isinstance(pyproject, dict) else None
+            if isinstance(project_data, dict) and project_data.get("version") is not None:
+                result["version"] = str(project_data["version"])
+        except Exception as exc:
+            print(
+                "[IMAGE_COMPARISON] 사용 중인 커스텀 노드 pyproject 읽기 실패: "
+                f"path={pyproject_path}, error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            result["version_error"] = f"{type(exc).__name__}: {exc}"
+    package_json_path = package_dir / "package.json"
+    if "version" not in result and package_json_path.is_file():
+        try:
+            package_json = json.loads(package_json_path.read_text(encoding="utf-8"))
+            if isinstance(package_json, dict) and package_json.get("version") is not None:
+                result["version"] = str(package_json["version"])
+        except Exception as exc:
+            print(
+                "[IMAGE_COMPARISON] 사용 중인 커스텀 노드 package.json 읽기 실패: "
+                f"path={package_json_path}, error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            result["version_error"] = f"{type(exc).__name__}: {exc}"
+    git_head = _image_comparison_git_head(package_dir)
+    if git_head:
+        result["git_head"] = git_head
+    return result
+
+
+async def _image_comparison_runtime_snapshot(
+    *,
+    port: int,
+    api_workflow: dict[str, Any],
+    raw_workflow: dict[str, Any],
+) -> dict[str, Any]:
+    """Inspect only runtime data needed by node classes in the selected workflow."""
+    if not 1 <= int(port) <= 65535:
+        raise ValueError(f"이미지 비교 Comfy 포트 범위 오류: {port!r}")
+    timeout = aiohttp.ClientTimeout(total=30.0, connect=3.0)
+    base_url = f"http://{REAL_COMFY_HOST}:{int(port)}"
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        async with session.get(f"{base_url}/system_stats") as response:
+            if response.status != 200:
+                detail = await response.text()
+                print(
+                    "[IMAGE_COMPARISON] Comfy system_stats 실패: "
+                    f"port={port}, status={response.status}, detail={detail[:500]}"
+                )
+                raise RuntimeError(
+                    f"Comfy system_stats HTTP {response.status}: {detail[:200]}"
+                )
+            system_stats = await response.json()
+        async with session.get(f"{base_url}/object_info") as response:
+            if response.status != 200:
+                detail = await response.text()
+                print(
+                    "[IMAGE_COMPARISON] Comfy object_info 실패: "
+                    f"port={port}, status={response.status}, detail={detail[:500]}"
+                )
+                raise RuntimeError(
+                    f"Comfy object_info HTTP {response.status}: {detail[:200]}"
+                )
+            object_info = await response.json()
+    if not isinstance(system_stats, dict) or not isinstance(object_info, dict):
+        print(
+            "[IMAGE_COMPARISON] Comfy 진단 응답 형식 오류: "
+            f"port={port}, system={type(system_stats).__name__}, "
+            f"object_info={type(object_info).__name__}"
+        )
+        raise RuntimeError("Comfy 런타임 진단 응답 형식이 올바르지 않습니다.")
+
+    declarations = _image_comparison_raw_node_declarations(raw_workflow)
+    node_classes = sorted(
+        {
+            str(node.get("class_type") or "")
+            for node in api_workflow.values()
+            if isinstance(node, dict) and str(node.get("class_type") or "")
+        }
+        | set(declarations)
+    )
+    system_data = system_stats.get("system")
+    if not isinstance(system_data, dict):
+        system_data = {}
+    argv = system_data.get("argv")
+    comfy_root: Path | None = None
+    if isinstance(argv, list) and argv and isinstance(argv[0], str):
+        main_path = Path(argv[0]).resolve()
+        if main_path.name.lower() == "main.py":
+            comfy_root = main_path.parent
+    package_cache: dict[str, dict[str, Any]] = {}
+    nodes: list[dict[str, Any]] = []
+    missing: list[str] = []
+    for class_type in node_classes:
+        info = object_info.get(class_type)
+        if not isinstance(info, dict):
+            missing.append(class_type)
+            nodes.append(
+                {
+                    "class_type": class_type,
+                    "registered": False,
+                    "workflow_declarations": declarations.get(class_type, []),
+                }
+            )
+            continue
+        python_module = str(info.get("python_module") or "")
+        package = package_cache.get(python_module)
+        if package is None:
+            package = _image_comparison_custom_node_package(
+                comfy_root=comfy_root,
+                python_module=python_module,
+            )
+            package_cache[python_module] = package
+        nodes.append(
+            {
+                "class_type": class_type,
+                "registered": True,
+                "display_name": str(info.get("display_name") or ""),
+                "python_module": python_module,
+                "workflow_declarations": declarations.get(class_type, []),
+                "package": package,
+            }
+        )
+    return {
+        "port": int(port),
+        "comfy_root": str(comfy_root) if comfy_root else "",
+        "system": system_data,
+        "devices": system_stats.get("devices") or [],
+        "node_classes": node_classes,
+        "missing_node_classes": missing,
+        "nodes": nodes,
+    }
+
+
+async def _image_comparison_convert_at_port(
+    raw_workflow: dict[str, Any],
+    *,
+    port: int,
+) -> dict[str, Any]:
+    if is_api_format(raw_workflow):
+        return copy.deepcopy(raw_workflow)
+    timeout = aiohttp.ClientTimeout(total=60.0, connect=3.0)
+    url = f"http://{REAL_COMFY_HOST}:{int(port)}/workflow/convert"
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        async with session.post(url, json=raw_workflow) as response:
+            if response.status != 200:
+                detail = await response.text()
+                print(
+                    "[IMAGE_COMPARISON] 원본 워크플로우 직접 변환 실패: "
+                    f"port={port}, status={response.status}, detail={detail[:1000]}"
+                )
+                raise RuntimeError(
+                    f"Comfy 워크플로우 변환 HTTP {response.status}: {detail[:300]}"
+                )
+            converted = await response.json()
+    if not isinstance(converted, dict) or not converted:
+        print(
+            "[IMAGE_COMPARISON] 원본 워크플로우 직접 변환 결과가 비어 있음: "
+            f"port={port}, type={type(converted).__name__}"
+        )
+        raise RuntimeError("Comfy 워크플로우 변환 결과가 비어 있습니다.")
+    return converted
+
+
+async def _image_comparison_wait_for_comfy(
+    *,
+    instance_id: int,
+    port: int,
+    timeout_seconds: float = 180.0,
+) -> dict[str, Any]:
+    """Wait for an auto-starting managed Comfy to expose its HTTP API."""
+    try:
+        profiles = normalize_comfy_launch_profiles(
+            app_config.get("comfy_launch_profiles")
+        )
+        auto_start = bool(profiles[str(instance_id)].get("auto_start"))
+    except Exception as exc:
+        print(
+            "[IMAGE_COMPARISON] Comfy 자동 시작 설정 확인 실패: "
+            f"instance={instance_id}, port={port}, "
+            f"error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        auto_start = False
+
+    runtime_status: dict[str, Any] = {}
+    try:
+        runtime_status = comfy_runtime_manager.status(
+            instance_id=instance_id,
+            after=0,
+        )
+    except Exception as exc:
+        print(
+            "[IMAGE_COMPARISON] 관리 Comfy 상태 확인 실패: "
+            f"instance={instance_id}, port={port}, "
+            f"error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+    managed_running = bool(runtime_status.get("running"))
+    timeout = aiohttp.ClientTimeout(total=3.0, connect=1.0)
+    url = f"http://{REAL_COMFY_HOST}:{int(port)}/system_stats"
+    last_error = ""
+
+    async def probe() -> dict[str, Any] | None:
+        nonlocal last_error
+        try:
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(url) as response:
+                    if response.status != 200:
+                        detail = await response.text()
+                        last_error = f"HTTP {response.status}: {detail[:200]}"
+                        return None
+                    payload = await response.json()
+                    if not isinstance(payload, dict):
+                        last_error = (
+                            "system_stats 응답이 객체가 아님: "
+                            f"{type(payload).__name__}"
+                        )
+                        return None
+                    return payload
+        except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as exc:
+            last_error = f"{type(exc).__name__}: {exc}"
+            return None
+
+    ready = await probe()
+    if ready is not None:
+        return ready
+    if not managed_running and not auto_start:
+        message = (
+            f"Comfy #{instance_id}가 실행 중이 아니며 자동 시작도 꺼져 있습니다. "
+            f"Comfy #{instance_id}({REAL_COMFY_HOST}:{port})를 시작한 뒤 다시 검사하세요."
+        )
+        print(
+            "[IMAGE_COMPARISON] Comfy 준비 대기 생략: "
+            f"{message} last_error={last_error}"
+        )
+        raise RuntimeError(message)
+
+    print(
+        "[IMAGE_COMPARISON] Comfy HTTP 준비 대기 시작: "
+        f"instance={instance_id}, port={port}, managed_running={managed_running}, "
+        f"auto_start={auto_start}, timeout={timeout_seconds:.0f}s, "
+        f"first_error={last_error}"
+    )
+    deadline = asyncio.get_running_loop().time() + timeout_seconds
+    next_log_at = asyncio.get_running_loop().time() + 15.0
+    while asyncio.get_running_loop().time() < deadline:
+        await asyncio.sleep(1.0)
+        ready = await probe()
+        if ready is not None:
+            print(
+                "[IMAGE_COMPARISON] Comfy HTTP 준비 완료: "
+                f"instance={instance_id}, port={port}"
+            )
+            return ready
+        try:
+            runtime_status = comfy_runtime_manager.status(
+                instance_id=instance_id,
+                after=0,
+            )
+        except Exception as exc:
+            print(
+                "[IMAGE_COMPARISON] 준비 대기 중 관리 Comfy 상태 확인 실패: "
+                f"instance={instance_id}, port={port}, "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            runtime_status = {}
+        runtime_state = str(runtime_status.get("state") or "")
+        if runtime_state in {"exited", "stopped"} and not runtime_status.get("running"):
+            log_tail = "".join(
+                str(entry.get("text") or "")
+                for entry in (runtime_status.get("logs") or [])[-20:]
+                if isinstance(entry, dict)
+            )[-4000:]
+            message = (
+                f"Comfy #{instance_id}가 준비되기 전에 종료되었습니다: "
+                f"state={runtime_state}, exit_code={runtime_status.get('exit_code')}, "
+                f"last_error={last_error}"
+            )
+            print(
+                "[IMAGE_COMPARISON] Comfy 준비 대기 중 프로세스 종료: "
+                f"{message}\n{log_tail}"
+            )
+            raise RuntimeError(message)
+        now = asyncio.get_running_loop().time()
+        if now >= next_log_at:
+            print(
+                "[IMAGE_COMPARISON] Comfy HTTP 준비 대기 중: "
+                f"instance={instance_id}, port={port}, state={runtime_state!r}, "
+                f"last_error={last_error}"
+            )
+            next_log_at = now + 15.0
+
+    message = (
+        f"Comfy #{instance_id}가 {timeout_seconds:.0f}초 안에 준비되지 않았습니다: "
+        f"{REAL_COMFY_HOST}:{port}, last_error={last_error}"
+    )
+    print(f"[IMAGE_COMPARISON] Comfy 준비 대기 시간 초과: {message}")
+    raise RuntimeError(message)
+
+
+def _image_comparison_runtime_log(instance_id: int, after: int) -> tuple[str, dict[str, Any]]:
+    try:
+        status = comfy_runtime_manager.status(instance_id=instance_id, after=after)
+    except Exception as exc:
+        print(
+            "[IMAGE_COMPARISON] 관리 Comfy 로그 수집 실패: "
+            f"instance={instance_id}, after={after}, "
+            f"error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        return "", {"log_error": f"{type(exc).__name__}: {exc}"}
+    logs = status.get("logs") if isinstance(status, dict) else []
+    log_text = "".join(
+        str(entry.get("text") or "")
+        for entry in (logs or [])
+        if isinstance(entry, dict)
+    )
+    return log_text, {
+        key: value for key, value in status.items() if key != "logs"
+    }
+
+
+async def _image_comparison_diagnostic_async(
+    request: dict[str, Any],
+) -> dict[str, Any]:
+    action = str(request.get("action") or "").strip()
+    diagnostic_id = str(request.get("diagnostic_id") or "").strip()
+    if not re.fullmatch(r"[0-9]{8}_[0-9]{6}-[0-9a-f]{8}", diagnostic_id):
+        print(
+            "[IMAGE_COMPARISON] 진단 ID 검증 실패: "
+            f"action={action!r}, diagnostic_id={diagnostic_id!r}"
+        )
+        raise ValueError(f"이미지 비교 진단 ID 형식 오류: {diagnostic_id!r}")
+
+    if action == "comparison_snapshot":
+        session_state = character_maker.public_session(SINGLE_SESSION_ID)
+        settings = session_state.get("settings") or {}
+        if not isinstance(settings, dict):
+            print(
+                "[IMAGE_COMPARISON] 캐릭터 메이커 설정 형식 오류: "
+                f"type={type(settings).__name__}, value={settings!r}"
+            )
+            raise RuntimeError("캐릭터 메이커 설정이 올바르지 않습니다.")
+        generation_workflow = str(
+            settings.get("generation_workflow") or "asset"
+        ).strip().lower()
+        if generation_workflow == "asset":
+            workflow_profile = workflow_profiles.normalize_asset_workflow_type(
+                settings.get("asset_workflow_type")
+                or app_config.get("asset_workflow_type")
+            )
+            source_value = _image_comparison_asset_source_path(workflow_profile)
+            task_key = "asset_generation"
+        elif generation_workflow == "illustration":
+            workflow_profile = workflow_profiles.normalize_illustration_workflow_type(
+                app_config.get("illustration_workflow_type")
+            )
+            provider = workflow_profiles.illustration_provider_for_slot(
+                workflow_profile,
+                1,
+            )
+            if provider != "comfy":
+                print(
+                    "[IMAGE_COMPARISON] 현재 CM 삽화 공급자가 Comfy가 아님: "
+                    f"profile={workflow_profile}, provider={provider}"
+                )
+                raise RuntimeError(
+                    "현재 캐릭터 메이커 삽화 공급자가 Comfy가 아니어서 "
+                    "Comfy 직접 실행과 비교할 수 없습니다."
+                )
+            source_value = str(get_workflow_file(workflow_profile) or "")
+            task_key = "illustration"
+        else:
+            print(
+                "[IMAGE_COMPARISON] 지원하지 않는 CM 생성 방식: "
+                f"generation_workflow={generation_workflow!r}"
+            )
+            raise ValueError(
+                f"지원하지 않는 캐릭터 메이커 생성 방식: {generation_workflow!r}"
+            )
+        source_path = Path(source_value).resolve()
+        if not source_value or not source_path.is_file():
+            print(
+                "[IMAGE_COMPARISON] 선택 워크플로우 파일 없음: "
+                f"generation={generation_workflow}, profile={workflow_profile}, "
+                f"path={source_value!r}"
+            )
+            raise FileNotFoundError(
+                f"현재 캐릭터 메이커 워크플로우 파일이 없습니다: {source_value}"
+            )
+        source_bytes = source_path.read_bytes()
+        try:
+            raw_workflow = json.loads(source_bytes.decode("utf-8-sig"))
+        except Exception as exc:
+            print(
+                "[IMAGE_COMPARISON] 선택 워크플로우 JSON 읽기 실패: "
+                f"path={source_path}, error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            raise
+        if not isinstance(raw_workflow, dict):
+            print(
+                "[IMAGE_COMPARISON] 선택 워크플로우 최상위 형식 오류: "
+                f"path={source_path}, type={type(raw_workflow).__name__}"
+            )
+            raise RuntimeError("선택 워크플로우 JSON 최상위가 객체가 아닙니다.")
+
+        try:
+            direct_port = int(app_config.get("comfyui_port", REAL_COMFY_PORT))
+        except (TypeError, ValueError) as exc:
+            print(
+                "[IMAGE_COMPARISON] Comfy 직접 실행 포트 검증 실패: "
+                f"value={app_config.get('comfyui_port')!r}, error={exc}"
+            )
+            traceback.print_exc()
+            raise ValueError("Comfy #1 포트 설정이 올바르지 않습니다.") from exc
+        if not 1 <= direct_port <= 65535:
+            raise ValueError(f"Comfy #1 포트 범위 오류: {direct_port}")
+        await _image_comparison_wait_for_comfy(
+            instance_id=1,
+            port=direct_port,
+        )
+        converted_workflow = await _image_comparison_convert_at_port(
+            raw_workflow,
+            port=direct_port,
+        )
+        direct_positive = extract_prompts_by_title(
+            converted_workflow,
+            "긍정프롬프트",
+        )
+        direct_negative = extract_prompts_by_title(
+            converted_workflow,
+            "부정프롬프트",
+        )
+        if not isinstance(direct_positive, str) or not direct_positive.strip():
+            print(
+                "[IMAGE_COMPARISON] 변환 워크플로우 긍정 프롬프트 누락: "
+                f"path={source_path}, port={direct_port}"
+            )
+            raise RuntimeError("원본 워크플로우의 긍정 프롬프트를 찾지 못했습니다.")
+        if not isinstance(direct_negative, str):
+            print(
+                "[IMAGE_COMPARISON] 변환 워크플로우 부정 프롬프트 누락: "
+                f"path={source_path}, port={direct_port}"
+            )
+            raise RuntimeError("원본 워크플로우의 부정 프롬프트를 찾지 못했습니다.")
+
+        direct_dependencies = await _image_comparison_runtime_snapshot(
+            port=direct_port,
+            api_workflow=converted_workflow,
+            raw_workflow=raw_workflow,
+        )
+        program_target = effective_execution_target(task_key) or "local"
+        program_instance: int | None = None
+        program_port: int | None = None
+        dependency_sets: dict[str, Any] = {"direct": direct_dependencies}
+        if program_target == "local":
+            program_instance, program_port = resolve_comfy_instance(task_key)
+            if program_port == direct_port:
+                dependency_sets["program"] = copy.deepcopy(direct_dependencies)
+            else:
+                await _image_comparison_wait_for_comfy(
+                    instance_id=program_instance,
+                    port=program_port,
+                )
+                dependency_sets["program"] = await _image_comparison_runtime_snapshot(
+                    port=program_port,
+                    api_workflow=converted_workflow,
+                    raw_workflow=raw_workflow,
+                )
+        else:
+            dependency_sets["program"] = {
+                "execution_target": program_target,
+                "inspection": (
+                    "원격 실행처는 로컬 object_info를 공유하지 않으므로 "
+                    "실제 프로그램 실행 결과와 제출 워크플로우를 비교합니다."
+                ),
+            }
+        direct_runtime = {
+            "execution_target": "local",
+            "instance_id": 1,
+            "port": direct_port,
+            "system": direct_dependencies.get("system") or {},
+            "devices": direct_dependencies.get("devices") or [],
+        }
+        program_dependency = dependency_sets.get("program") or {}
+        program_runtime = {
+            "execution_target": program_target,
+            "instance_id": program_instance,
+            "port": program_port,
+            "system": program_dependency.get("system") or {},
+            "devices": program_dependency.get("devices") or [],
+        }
+        summary = {
+            "diagnostic_id": diagnostic_id,
+            "generation_workflow": generation_workflow,
+            "workflow_profile": workflow_profile,
+            "source_path": str(source_path),
+            "source_sha256": hashlib.sha256(source_bytes).hexdigest(),
+            "character_maker_settings": copy.deepcopy(settings),
+            "direct_runtime": direct_runtime,
+            "program_runtime": program_runtime,
+        }
+        return {
+            **summary,
+            "summary": summary,
+            "converted_workflow": converted_workflow,
+            "direct_positive": direct_positive,
+            "direct_negative": direct_negative,
+            "dependency_sets": dependency_sets,
+        }
+
+    if action == "comparison_cleanup":
+        character = str(request.get("diagnostic_character") or "").strip()
+        expected = f"image_comparison_{diagnostic_id.replace('-', '_')}"
+        if character != expected or not re.fullmatch(
+            r"image_comparison_[0-9]{8}_[0-9]{6}_[0-9a-f]{8}",
+            character,
+        ):
+            print(
+                "[IMAGE_COMPARISON] 임시 생성물 정리 대상 검증 실패: "
+                f"expected={expected!r}, received={character!r}"
+            )
+            raise ValueError("이미지 비교 임시 생성물 정리 대상이 올바르지 않습니다.")
+        asset_root = Path(ASSET_DIR).resolve()
+        cleanup_path = (asset_root / character).resolve()
+        if cleanup_path.parent != asset_root:
+            print(
+                "[IMAGE_COMPARISON] 임시 생성물 정리 경로 이탈: "
+                f"path={cleanup_path}, root={asset_root}"
+            )
+            raise RuntimeError("이미지 비교 임시 생성물 경로가 asset 폴더 밖입니다.")
+        if cleanup_path.is_dir():
+            shutil.rmtree(cleanup_path)
+            print(f"[IMAGE_COMPARISON] 임시 에셋 생성물 정리 완료: {cleanup_path}")
+            return {"success": True, "removed": True, "path": str(cleanup_path)}
+        print(f"[IMAGE_COMPARISON] 정리할 임시 에셋 생성물 없음: {cleanup_path}")
+        return {"success": True, "removed": False, "path": str(cleanup_path)}
+
+    if action != "comparison_generate":
+        print(
+            "[IMAGE_COMPARISON] 지원하지 않는 action: "
+            f"action={action!r}, request={request!r}"
+        )
+        raise ValueError(f"지원하지 않는 이미지 비교 action: {action!r}")
+
+    case_name = str(request.get("case") or "").strip()
+    route = str(request.get("route") or "").strip()
+    generation_workflow = str(request.get("generation_workflow") or "").strip()
+    workflow_profile = str(request.get("workflow_profile") or "").strip()
+    positive = request.get("positive")
+    negative = request.get("negative")
+    if case_name not in {
+        "direct_comfy_prompt",
+        "program_comfy_prompt",
+        "direct_character_maker_prompt",
+        "program_character_maker_prompt",
+    }:
+        raise ValueError(f"이미지 비교 케이스 이름 오류: {case_name!r}")
+    if route not in {"direct", "program"}:
+        raise ValueError(f"이미지 비교 실행 경로 오류: {route!r}")
+    if generation_workflow not in {"asset", "illustration"}:
+        raise ValueError(f"이미지 비교 생성 방식 오류: {generation_workflow!r}")
+    if not isinstance(positive, str) or not positive.strip():
+        raise ValueError("이미지 비교 긍정 프롬프트가 비어 있습니다.")
+    if not isinstance(negative, str):
+        raise ValueError("이미지 비교 부정 프롬프트가 문자열이 아닙니다.")
+    try:
+        seed = int(request.get("seed"))
+        width = int(request.get("width") or 700)
+        height = int(request.get("height") or 1024)
+    except (TypeError, ValueError) as exc:
+        print(
+            "[IMAGE_COMPARISON] 생성 수치 입력 변환 실패: "
+            f"case={case_name}, seed={request.get('seed')!r}, "
+            f"width={request.get('width')!r}, height={request.get('height')!r}, "
+            f"error={exc}"
+        )
+        traceback.print_exc()
+        raise ValueError("이미지 비교 seed/크기가 올바르지 않습니다.") from exc
+    if not 0 <= seed <= 2**32 - 1:
+        raise ValueError(f"이미지 비교 seed 범위 오류: {seed}")
+    if not 256 <= width <= 4096 or not 256 <= height <= 4096:
+        raise ValueError(f"이미지 비교 크기 범위 오류: {width}x{height}")
+
+    if route == "direct":
+        workflow = request.get("workflow")
+        if not isinstance(workflow, dict) or not workflow:
+            print(
+                "[IMAGE_COMPARISON] 직접 실행 워크플로우 누락: "
+                f"case={case_name}, type={type(workflow).__name__}"
+            )
+            raise ValueError("Comfy 직접 실행 워크플로우가 비어 있습니다.")
+        direct_port = int(app_config.get("comfyui_port", REAL_COMFY_PORT))
+        log_start = 0
+        try:
+            direct_status = comfy_runtime_manager.status(instance_id=1, after=0)
+            log_start = int(direct_status.get("log_seq") or 0)
+        except Exception as exc:
+            print(
+                "[IMAGE_COMPARISON] 직접 Comfy 로그 시작점 확인 실패: "
+                f"port={direct_port}, error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+        item = await queue_manager.add_item(
+            "image_comparison_direct",
+            f"이미지 비교 직접 실행 {case_name}",
+            {"workflow": copy.deepcopy(workflow), "port": direct_port},
+        )
+        result = await asyncio.wait_for(
+            asyncio.shield(item.completion_future),
+            timeout=3600.0,
+        )
+        image_bytes = getattr(item, "generated_image_bytes", None)
+        if not isinstance(result, dict) or not result.get("success") or not image_bytes:
+            print(
+                "[IMAGE_COMPARISON] 직접 Comfy 큐 결과 실패: "
+                f"item={item.id}, case={case_name}, result={result!r}, "
+                f"has_image={bool(image_bytes)}"
+            )
+            raise RuntimeError(f"Comfy 직접 실행 실패: {result!r}")
+        comfy_log, runtime = _image_comparison_runtime_log(1, log_start)
+        return {
+            "image_bytes": image_bytes,
+            "submitted_workflow": copy.deepcopy(workflow),
+            "queue_item_id": item.id,
+            "result": result,
+            "comfy_log": comfy_log,
+            "runtime": runtime,
+            "execution_target": "local",
+            "port": direct_port,
+        }
+
+    task_key = "asset_generation" if generation_workflow == "asset" else "illustration"
+    program_target = effective_execution_target(task_key) or "local"
+    program_instance: int | None = None
+    program_port: int | None = None
+    log_start = 0
+    if program_target == "local":
+        program_instance, program_port = resolve_comfy_instance(task_key)
+        try:
+            program_status = comfy_runtime_manager.status(
+                instance_id=program_instance,
+                after=0,
+            )
+            log_start = int(program_status.get("log_seq") or 0)
+        except Exception as exc:
+            print(
+                "[IMAGE_COMPARISON] 프로그램 Comfy 로그 시작점 확인 실패: "
+                f"instance={program_instance}, port={program_port}, "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+    if generation_workflow == "asset":
+        character = str(request.get("diagnostic_character") or "").strip()
+        expected_character = f"image_comparison_{diagnostic_id.replace('-', '_')}"
+        if character != expected_character:
+            raise ValueError(
+                f"이미지 비교 임시 캐릭터 이름 오류: {character!r}"
+            )
+        body = {
+            "character": character,
+            "appearance": case_name,
+            "outfit": "comparison",
+            "expression": "result",
+            "asset_workflow_type": workflow_profile,
+            "face_id_enabled": False,
+            "style_ref_enabled": False,
+            "lora_activate": False,
+            "pose_enabled": False,
+            "positive_prompt": positive,
+            "negative_prompt": negative,
+            "img_w": width,
+            "img_h": height,
+            "storage_group": "",
+            "storage_session": "",
+            "diagnostic_capture_workflow": True,
+        }
+        item = await queue_manager.add_item(
+            "asset_generation",
+            f"이미지 비교 프로그램 실행 {case_name}",
+            {"body": body},
+        )
+    else:
+        item = await queue_manager.add_item(
+            "character_maker_illustration",
+            f"이미지 비교 프로그램 실행 {case_name}",
+            {
+                "positive": positive,
+                "negative": negative,
+                "provider": "comfy",
+                "illustration_workflow_type": workflow_profile,
+                "width": width,
+                "height": height,
+                "chansub_quality_tag_start": 0,
+                "chansub_quality_tag_count": 0,
+                "diagnostic_capture_workflow": True,
+            },
+            priority=0,
+        )
+    result = await asyncio.wait_for(
+        asyncio.shield(item.completion_future),
+        timeout=3600.0,
+    )
+    actual_program_target = str(
+        getattr(item, "comfy_execution_target", None) or program_target
+    )
+    if not isinstance(result, dict) or not result.get("success"):
+        print(
+            "[IMAGE_COMPARISON] 프로그램 생성 큐 결과 실패: "
+            f"item={item.id}, case={case_name}, result={result!r}"
+        )
+        raise RuntimeError(f"프로그램 생성 실패: {result!r}")
+    submitted_workflow = result.get("diagnostic_workflow")
+    if not isinstance(submitted_workflow, dict) or not submitted_workflow:
+        print(
+            "[IMAGE_COMPARISON] 프로그램 최종 제출 워크플로우 누락: "
+            f"item={item.id}, case={case_name}, keys={sorted(result)}"
+        )
+        raise RuntimeError("프로그램의 최종 제출 워크플로우가 수집되지 않았습니다.")
+    if generation_workflow == "illustration":
+        image_bytes = getattr(item, "generated_image_bytes", None)
+    else:
+        image_bytes = getattr(item, "generated_image_bytes", None)
+        filename = str(result.get("filename") or "")
+        local_path = (
+            Path(ASSET_DIR)
+            / asset_mode._safe_dirname(str(request.get("diagnostic_character") or ""))
+            / asset_mode._safe_dirname("comparison")
+            / asset_mode._safe_dirname("result")
+            / filename
+        ).resolve()
+        asset_root = Path(ASSET_DIR).resolve()
+        if not filename or asset_root not in local_path.parents or not local_path.is_file():
+            print(
+                "[IMAGE_COMPARISON] 프로그램 에셋 이미지 경로 확인 실패: "
+                f"item={item.id}, filename={filename!r}, path={local_path}, "
+                f"result={result!r}"
+            )
+            raise RuntimeError("프로그램 에셋 진단 이미지 파일을 찾지 못했습니다.")
+        if not isinstance(image_bytes, bytes) or not image_bytes:
+            print(
+                "[IMAGE_COMPARISON] 프로그램 에셋 원본 바이트 누락: "
+                f"item={item.id}, saved_path={local_path}"
+            )
+            raise RuntimeError("프로그램 에셋 진단의 원본 이미지 바이트가 누락되었습니다.")
+    if not isinstance(image_bytes, bytes) or not image_bytes:
+        raise RuntimeError("프로그램 생성 이미지 바이트가 비어 있습니다.")
+    comfy_log = ""
+    runtime: dict[str, Any] = {}
+    if actual_program_target == "local" and program_instance is not None:
+        comfy_log, runtime = _image_comparison_runtime_log(
+            program_instance,
+            log_start,
+        )
+    public_result = {
+        key: value
+        for key, value in result.items()
+        if key not in {"diagnostic_workflow", "local_path", "prompt_record_path"}
+    }
+    return {
+        "image_bytes": image_bytes,
+        "submitted_workflow": copy.deepcopy(submitted_workflow),
+        "queue_item_id": item.id,
+        "result": public_result,
+        "comfy_log": comfy_log,
+        "runtime": runtime,
+        "execution_target": actual_program_target,
+        "port": program_port if actual_program_target == "local" else None,
+    }
+
+
+def _image_comparison_diagnostic_call(
+    request: dict[str, Any],
+) -> dict[str, Any]:
+    loop = _main_event_loop
+    if loop is None or loop.is_closed():
+        print(
+            "[IMAGE_COMPARISON] 서버 메인 이벤트 루프가 준비되지 않음: "
+            f"request={request!r}"
+        )
+        raise RuntimeError("서버 메인 이벤트 루프가 준비되지 않았습니다.")
+    future = asyncio.run_coroutine_threadsafe(
+        _image_comparison_diagnostic_async(request),
+        loop,
+    )
+    try:
+        return future.result(timeout=3700.0)
+    except Exception as exc:
+        print(
+            "[IMAGE_COMPARISON] 서버 비교 진단 경로 호출 실패: "
+            f"action={request.get('action')!r}, request={request!r}, "
+            f"error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        raise
+
+
 async def _production_image_diagnostic_async(
     request: dict[str, Any],
 ) -> dict[str, Any]:
@@ -22388,6 +23335,7 @@ comfy_installer_service = register_comfy_installer_routes(
     pause_managed_comfy=_pause_managed_comfy_for_update,
     resume_managed_comfy=_resume_managed_comfy_after_update,
     production_image_diagnostic_call=_production_image_diagnostic_call,
+    production_image_comparison_call=_image_comparison_diagnostic_call,
     apply_repaired_workflow_runtime=_apply_repaired_workflow_runtime,
 )
 register_patch_import_routes(

@@ -438,6 +438,8 @@ class QueueManager:
         self.prepare_local_gpu_target = None    # async def(target, item) -> None
         # 삽화 생성 콜백 (server.py에서 주입)
         self.generate_image_with_prompt = None  # async def(positive, negative) -> (bytes, errors)
+        self.run_image_comparison_direct = None  # async def(workflow, port, progress_callback) -> (bytes, errors)
+        self.get_current_illustration_workflow_snapshot = None  # def() -> dict
         self.process_prompt_full = None         # async def(prompt_id, prompt_data, positive, negative) -> None
         self.process_illustration_context = None # async def(queue_item) -> dict
         self.process_illustration_easy_edit = None # async def(queue_item) -> dict
@@ -2846,6 +2848,7 @@ class QueueManager:
             "illustration_quality_inspection": self._handle_runtime_llm_task,
             "preset_import_classify": self._handle_runtime_llm_task,
             "character_maker_illustration": self._handle_character_maker_illustration,
+            "image_comparison_direct": self._handle_image_comparison_direct,
             "asset_generation": self._handle_asset_generation,
             "qwen_edit": self._handle_qwen_edit,
             "qwen_edit_translate": self._handle_qwen_edit_translate,
@@ -3599,12 +3602,94 @@ class QueueManager:
             f"workflow={workflow_type}, provider={provider}, "
             f"bytes={len(img_bytes):,}, elapsed={elapsed_time:.1f}s"
         )
-        return {
+        result = {
             "success": True,
             "image_size": len(img_bytes),
             "generation_time": elapsed_time,
             "provider": provider,
             "illustration_workflow_type": workflow_type,
+        }
+        if params.get("diagnostic_capture_workflow") is True:
+            if not callable(self.get_current_illustration_workflow_snapshot):
+                print(
+                    "[QUEUE:CHARACTER_MAKER_ILLUST] 진단 워크플로우 캡처 실패: "
+                    f"item={item.id}, snapshot callback 미주입"
+                )
+                raise RuntimeError("삽화 진단 워크플로우 캡처 콜백이 설정되지 않았습니다")
+            snapshot = self.get_current_illustration_workflow_snapshot()
+            submitted = (
+                snapshot.get("submitted_workflow")
+                if isinstance(snapshot, dict)
+                else None
+            )
+            if not isinstance(submitted, dict) or not submitted:
+                print(
+                    "[QUEUE:CHARACTER_MAKER_ILLUST] 진단 제출 워크플로우 누락: "
+                    f"item={item.id}, snapshot_type={type(snapshot).__name__}"
+                )
+                raise RuntimeError("삽화 진단의 최종 제출 워크플로우가 누락되었습니다")
+            result["diagnostic_workflow"] = copy.deepcopy(submitted)
+        return result
+
+    async def _handle_image_comparison_direct(self, item: QueueItem) -> dict:
+        """진단 스냅샷 API 그래프를 프로그램 프롬프트 처리 없이 Comfy에 제출한다."""
+        params = item.params if isinstance(item.params, dict) else {}
+        workflow = params.get("workflow")
+        if not isinstance(workflow, dict) or not workflow:
+            print(
+                "[QUEUE:IMAGE_COMPARISON] 직접 실행 거부: "
+                f"item={item.id}, workflow_type={type(workflow).__name__}"
+            )
+            raise ValueError("이미지 비교 직접 실행 워크플로우가 비어 있습니다")
+        try:
+            port = int(params.get("port"))
+        except (TypeError, ValueError) as exc:
+            print(
+                "[QUEUE:IMAGE_COMPARISON] 직접 실행 포트 오류: "
+                f"item={item.id}, value={params.get('port')!r}, error={exc}"
+            )
+            traceback.print_exc()
+            raise ValueError("이미지 비교 직접 실행 Comfy 포트가 올바르지 않습니다") from exc
+        if not callable(self.run_image_comparison_direct):
+            print(
+                "[QUEUE:IMAGE_COMPARISON] 직접 실행 콜백 미주입: "
+                f"item={item.id}, port={port}"
+            )
+            raise RuntimeError("이미지 비교 직접 실행 콜백이 설정되지 않았습니다")
+
+        async def _on_progress(value, max_value):
+            await self._notify_progress(
+                item,
+                {
+                    "phase": "generating",
+                    "value": value,
+                    "max": max_value,
+                    "current": value,
+                    "total": max_value,
+                },
+            )
+
+        image_bytes, detail = await self.run_image_comparison_direct(
+            copy.deepcopy(workflow),
+            port=port,
+            progress_callback=_on_progress,
+        )
+        if not image_bytes:
+            print(
+                "[QUEUE:IMAGE_COMPARISON] Comfy 직접 실행 결과 없음: "
+                f"item={item.id}, port={port}, detail={detail!r}"
+            )
+            raise RuntimeError(f"Comfy 직접 실행 실패: {detail}")
+        item.generated_image_bytes = image_bytes
+        print(
+            "[QUEUE:IMAGE_COMPARISON] Comfy 직접 실행 완료: "
+            f"item={item.id}, port={port}, bytes={len(image_bytes):,}"
+        )
+        return {
+            "success": True,
+            "image_size": len(image_bytes),
+            "port": port,
+            "detail": detail,
         }
 
     async def _handle_regenerate(self, item: QueueItem) -> dict:
@@ -3860,6 +3945,16 @@ class QueueManager:
                 body.get("diagnostic_capture_workflow") is True
             ),
         )
+
+        if body.get("diagnostic_capture_workflow") is True:
+            diagnostic_image_bytes = result.pop("_diagnostic_image_bytes", None)
+            if not isinstance(diagnostic_image_bytes, bytes) or not diagnostic_image_bytes:
+                print(
+                    "[QUEUE:ASSET] 비교 진단 원본 이미지 바이트 누락: "
+                    f"item={item.id}, result_keys={sorted(result)}"
+                )
+                raise RuntimeError("에셋 비교 진단의 원본 이미지 바이트가 누락되었습니다")
+            item.generated_image_bytes = diagnostic_image_bytes
 
         # 저장 전에 실패한 경우에도 오토매치 UI가 해당 큐 항목을 완료 처리할 수 있도록
         # 요청 식별 정보를 결과에 유지한다.

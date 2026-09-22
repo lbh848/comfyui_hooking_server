@@ -995,7 +995,11 @@ async def test_queue_forwards_all_diagnostic_controls_to_asset_mode() -> None:
     class FakeAssetMode:
         async def generate(self, **kwargs):
             captured.update(kwargs)
-            return {"success": True, "filename": "result.webp"}
+            return {
+                "success": True,
+                "filename": "result.webp",
+                "_diagnostic_image_bytes": b"raw-comfy-image",
+            }
 
     manager = QueueManager()
     manager.asset_mode = FakeAssetMode()
@@ -1027,3 +1031,5 @@ async def test_queue_forwards_all_diagnostic_controls_to_asset_mode() -> None:
     assert captured["diagnostic_session_key"] == "session-D"
     assert captured["diagnostic_run_key"] == "run-D-04"
     assert captured["diagnostic_capture_workflow"] is True
+    assert item.generated_image_bytes == b"raw-comfy-image"
+    assert "_diagnostic_image_bytes" not in result

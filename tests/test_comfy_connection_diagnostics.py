@@ -101,3 +101,24 @@ def test_preflight_waits_for_instances_to_settle():
     body = _slice_function(_source(), "_log_comfy_allocation_preflight")
     assert "settle_seconds" in body
     assert "time.monotonic()" in body
+
+
+def test_image_comparison_waits_for_comfy_before_workflow_conversion():
+    """자동 시작 직후의 연결 거부를 진단 실패로 확정하지 않는다."""
+    body = _slice_function(_source(), "_image_comparison_diagnostic_async")
+    snapshot = body[body.index('if action == "comparison_snapshot":') :]
+    wait_call = snapshot.index("await _image_comparison_wait_for_comfy(")
+    convert_call = snapshot.index("await _image_comparison_convert_at_port(")
+    assert wait_call < convert_call, (
+        "이미지 비교가 Comfy HTTP 준비를 기다리기 전에 워크플로우 변환을 시도한다"
+    )
+
+
+def test_image_comparison_wait_is_bounded_and_does_not_change_ports():
+    """준비 대기는 유한하며 다른 포트로 조용히 우회하지 않는다."""
+    body = _slice_function(_source(), "_image_comparison_wait_for_comfy")
+    assert "timeout_seconds" in body
+    assert "deadline" in body
+    assert "not managed_running and not auto_start" in body
+    assert "시작한 뒤 다시 검사하세요" in body
+    assert "resolve_comfy_port" not in body

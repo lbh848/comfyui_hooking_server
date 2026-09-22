@@ -1240,6 +1240,62 @@ async def _check_character_maker_illustration_uses_selected_provider_lane_and_ke
 
 
 @pytest.mark.asyncio
+async def test_character_maker_illustration_diagnostic_captures_submitted_workflow():
+    manager = QueueManager()
+    submitted = {"10": {"class_type": "KSampler", "inputs": {"seed": 42}}}
+
+    async def fake_generate(_positive, _negative, **_kwargs):
+        return b"generated-image", None
+
+    manager.generate_image_with_prompt = fake_generate
+    manager.get_current_illustration_workflow_snapshot = lambda: {
+        "submitted_workflow": submitted
+    }
+    item = _item(
+        "character_maker_illustration",
+        {
+            "positive": "[SEED]\n42\n[END]",
+            "negative": "bad",
+            "provider": "comfy",
+            "illustration_workflow_type": "v3",
+            "diagnostic_capture_workflow": True,
+        },
+    )
+
+    result = await manager._handle_character_maker_illustration(item)
+
+    assert result["diagnostic_workflow"] == submitted
+    assert result["diagnostic_workflow"] is not submitted
+    assert item.generated_image_bytes == b"generated-image"
+
+
+@pytest.mark.asyncio
+async def test_image_comparison_direct_handler_keeps_image_bytes_off_result():
+    manager = QueueManager()
+    observed = {}
+
+    async def fake_direct(workflow, *, port, progress_callback):
+        observed.update({"workflow": workflow, "port": port})
+        await progress_callback(1, 1)
+        return b"direct-image", {"prompt_id": "p1"}
+
+    manager.run_image_comparison_direct = fake_direct
+    workflow = {"1": {"class_type": "KSampler", "inputs": {"seed": 9}}}
+    item = _item(
+        "image_comparison_direct",
+        {"workflow": workflow, "port": 8188},
+    )
+
+    result = await manager._handle_image_comparison_direct(item)
+
+    assert result["success"] is True
+    assert result["detail"] == {"prompt_id": "p1"}
+    assert "generated_image_bytes" not in result
+    assert item.generated_image_bytes == b"direct-image"
+    assert observed == {"workflow": workflow, "port": 8188}
+
+
+@pytest.mark.asyncio
 async def _check_character_maker_handler_calls_revise_and_returns_result():
     manager = QueueManager()
     received = {}

@@ -26653,7 +26653,7 @@
                                 <button type="button" class="comfy-installer-btn" id="comfy-installer-update-btn" onclick="comfyInstallerStartUpdate()">업데이트</button>
                                 <button type="button" class="comfy-installer-btn" id="comfy-installer-integrity-btn" onclick="comfyInstallerOpenIntegrityModal()">무결성 검사</button>
                                 <button type="button" class="comfy-installer-btn" id="comfy-installer-e2e-btn" onclick="comfyInstallerOpenE2EModal()">E2E 검사</button>
-                                <button type="button" class="comfy-installer-btn" id="comfy-installer-image-diagnostic-btn" onclick="comfyInstallerStartImageDiagnostic()" title="실제 프로그램 작업 큐에서 A/B/C/E와 조건부 D를 비교하고, 이상 재현 시 DynamicVRAM·async offload·Smart Memory·pinned memory를 단독 변수로 추가 비교합니다.">이미지 깨짐 검사</button>
+                                <button type="button" class="comfy-installer-btn" id="comfy-installer-image-diagnostic-btn" onclick="comfyInstallerOpenImageDiagnosticModal()" title="이미지 깨짐 검사 또는 Comfy 직접 실행/프로그램 실행 비교 검사를 선택합니다.">이미지 검사</button>
                                 <button type="button" class="comfy-installer-btn" id="comfy-installer-image-diagnostic-download-btn" onclick="comfyInstallerDownloadImageDiagnostic()" style="display:none;">진단 ZIP 내려받기</button>
                                 <button type="button" class="comfy-installer-btn danger" id="comfy-installer-cancel-btn" onclick="comfyInstallerCancel()" disabled>안전하게 중단</button>
                             </div>
@@ -26664,7 +26664,7 @@
                             </div>
                             <p class="comfy-installer-note" style="margin-top:9px;">
                                 설치는 선택한 워크플로우에 필요한 모델만 받고 E2E 없이 완료됩니다. 업데이트도 워크플로우 실행 검사를 하지 않으며,
-                                후킹 서버가 바뀌면 재시작 후 한 번 더 눌러야 합니다. 무결성 검사는 현재 설정된 워크플로우와 읽기 전용 팩 원본을 비교하며, 복구는 결과 모달에서 사용자가 선택한 항목만 비파괴 방식으로 처리합니다. E2E 검사는 설치 완료 후 지원되는 배포 원본을 선택해 실제 실행합니다. 이미지 깨짐 검사는 관리 Comfy를 같은 설정으로 새로 시작한 뒤 실제 프로그램 작업 큐에서 전체 에셋 워크플로를 실행합니다. 수십 분 걸릴 수 있으며, 동일 프롬프트·seed로 A 기존 경로, B sampler 직전 ModelPatcher Refresh, C DCW/CWM OFF, E 텍스트 인코더 CPU 고정을 각각 warmup 1장+15장 비교합니다. D LoRA 완료 ModelPatcher 고정 재사용은 실제 제출 워크플로에 production Stable ModelPatcher Reuse가 없을 때만 실행하며, 이미 있으면 중복 캐시를 피하기 위해 자동 생략합니다. E에서는 UNet과 VAE는 기존 GPU 경로를 유지합니다. 이상이 재현되면 같은 실패 경로에서 DynamicVRAM ON/OFF, async offload OFF, Smart Memory OFF, pinned memory OFF를 각각 단독 비교하고, 검사가 끝나거나 실패·중단되어도 원래 Comfy 실행 프로필을 복구합니다. 모든 케이스에서 ModelPatcher UUID·상주 패치 UUID와 conditioning·sampler latent·VAE 출력의 NaN/Inf를 기록합니다. 결과 이미지·실제 프롬프트·최종 제출 워크플로·모델/LoRA 해시·환경·원본 로그·구조화 계측·MD 보고서를 ZIP으로 만듭니다.
+                                후킹 서버가 바뀌면 재시작 후 한 번 더 눌러야 합니다. 무결성 검사는 현재 설정된 워크플로우와 읽기 전용 팩 원본을 비교하며, 복구는 결과 모달에서 사용자가 선택한 항목만 비파괴 방식으로 처리합니다. E2E 검사는 설치 완료 후 지원되는 배포 원본을 선택해 실제 실행합니다. 이미지 검사에서는 아래 두 진단 중 하나를 선택합니다. 이미지 깨짐 검사는 관리 Comfy를 같은 설정으로 새로 시작한 뒤 실제 프로그램 작업 큐에서 전체 에셋 워크플로를 실행합니다. 수십 분 걸릴 수 있으며, 동일 프롬프트·seed로 A 기존 경로, B sampler 직전 ModelPatcher Refresh, C DCW/CWM OFF, E 텍스트 인코더 CPU 고정을 각각 warmup 1장+15장 비교합니다. D LoRA 완료 ModelPatcher 고정 재사용은 실제 제출 워크플로에 production Stable ModelPatcher Reuse가 없을 때만 실행하며, 이미 있으면 중복 캐시를 피하기 위해 자동 생략합니다. E에서는 UNet과 VAE는 기존 GPU 경로를 유지합니다. 이상이 재현되면 같은 실패 경로에서 DynamicVRAM ON/OFF, async offload OFF, Smart Memory OFF, pinned memory OFF를 각각 단독 비교하고, 검사가 끝나거나 실패·중단되어도 원래 Comfy 실행 프로필을 복구합니다. 모든 케이스에서 ModelPatcher UUID·상주 패치 UUID와 conditioning·sampler latent·VAE 출력의 NaN/Inf를 기록합니다. 결과 이미지·실제 프롬프트·최종 제출 워크플로·모델/LoRA 해시·환경·원본 로그·구조화 계측·MD 보고서를 ZIP으로 만듭니다.
                             </p>
                             <p class="comfy-installer-note" id="comfy-installer-compatibility-note" style="margin-top:7px;">
                                 <strong>호환 설치:</strong> RTX 2070/2080 같은 Turing(sm75)부터 사용할 수 있도록 SageAttention과 전용 Triton을 제외합니다.
@@ -26898,6 +26898,34 @@
             <div class="modal-footer">
                 <button class="cancel" type="button" onclick="comfyInstallerCloseE2EModal()">검사 안 함</button>
                 <button class="confirm" type="button" id="comfy-installer-e2e-run-btn" onclick="comfyInstallerStartE2E()" disabled>선택 항목 검사</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 이미지 진단 종류 선택 모달 -->
+    <div class="modal" id="comfy-installer-image-diagnostic-modal" onclick="if (event.target === this) comfyInstallerCloseImageDiagnosticModal()">
+        <div class="modal-content comfy-installer-e2e-content" role="dialog" aria-modal="true" aria-labelledby="comfy-installer-image-diagnostic-title">
+            <div class="modal-header">
+                <div>
+                    <h2 id="comfy-installer-image-diagnostic-title">이미지 검사</h2>
+                    <div class="comfy-installer-note" style="margin-top:5px;">증상에 맞는 검사만 실행합니다. 두 검사는 서로 독립적입니다.</div>
+                </div>
+                <button class="modal-close" onclick="comfyInstallerCloseImageDiagnosticModal()" aria-label="이미지 검사 닫기">&times;</button>
+            </div>
+            <div class="comfy-installer-e2e-body" style="display:grid; gap:12px;">
+                <section class="comfy-installer-card" style="margin:0;">
+                    <h3 class="comfy-installer-title">이미지 깨짐 검사</h3>
+                    <p class="comfy-installer-note">반복 생성 중 이미지가 손상되는 문제를 기존 A/B/C/E 및 조건부 D 진단으로 검사합니다. 관리 Comfy 재시작과 반복 생성이 포함됩니다.</p>
+                    <button type="button" class="comfy-installer-btn" id="comfy-installer-image-corruption-choice-btn" onclick="comfyInstallerStartImageDiagnostic()">이미지 깨짐 검사 시작</button>
+                </section>
+                <section class="comfy-installer-card" style="margin:0;">
+                    <h3 class="comfy-installer-title">Comfy와 프로그램에서 생성하는 이미지가 다름 검사</h3>
+                    <p class="comfy-installer-note">캐릭터 메이커의 현재 워크플로우를 읽기 전용으로 복사하고, 같은 seed에서 Comfy 저장 프롬프트와 캐릭터 메이커 프롬프트를 각각 직접 경로·프로그램 경로로 실행해 총 4장을 비교합니다. 원본 워크플로우와 설정은 수정하지 않으며 Comfy를 재시작하지 않습니다.</p>
+                    <button type="button" class="comfy-installer-btn primary" id="comfy-installer-image-comparison-choice-btn" onclick="comfyInstallerStartImageComparisonDiagnostic()">생성 차이 검사 시작</button>
+                </section>
+            </div>
+            <div class="modal-footer">
+                <button class="cancel" type="button" onclick="comfyInstallerCloseImageDiagnosticModal()">닫기</button>
             </div>
         </div>
     </div>
@@ -39288,6 +39316,7 @@
         let comfyInstallerIntegrityReport = { release_version: '', items: [], counts: {} };
         let comfyInstallerE2ECatalog = { release_version: '', items: [] };
         let comfyInstallerLatestDiagnosticId = '';
+        let comfyInstallerLatestDiagnosticKind = 'image_diagnostic';
         let comfyInstallerLastState = 'idle';
         let comfyInstallerShutdownRequested = false;
         let comfyInstallerPatchSageModeBusy = false;
@@ -39757,12 +39786,21 @@
             }
         }
 
+        function comfyInstallerOpenImageDiagnosticModal() {
+            document.getElementById('comfy-installer-image-diagnostic-modal')?.classList.add('visible');
+        }
+
+        function comfyInstallerCloseImageDiagnosticModal() {
+            document.getElementById('comfy-installer-image-diagnostic-modal')?.classList.remove('visible');
+        }
+
         async function comfyInstallerStartImageDiagnostic() {
-            const button = document.getElementById('comfy-installer-image-diagnostic-btn');
+            const button = document.getElementById('comfy-installer-image-corruption-choice-btn');
             const downloadButton = document.getElementById('comfy-installer-image-diagnostic-download-btn');
             if (button) button.disabled = true;
             if (downloadButton) downloadButton.style.display = 'none';
             comfyInstallerLatestDiagnosticId = '';
+            comfyInstallerLatestDiagnosticKind = 'image_diagnostic';
             comfyInstallerSetError('');
             try {
                 comfyInstallerLastLogSeq = 0;
@@ -39773,6 +39811,7 @@
                     body: JSON.stringify({}),
                 });
                 comfyInstallerRenderStatus(started);
+                comfyInstallerCloseImageDiagnosticModal();
                 showToast('이미지 깨짐 검사를 시작했습니다 · A/B/C/E + 조건부 D 후 이상 재현 시 메모리/offload 단독 변수를 비교합니다', 'success');
                 clearTimeout(comfyInstallerPollTimer);
                 comfyInstallerPollTimer = setTimeout(() => comfyInstallerRefreshStatus(false), 500);
@@ -39784,13 +39823,76 @@
             }
         }
 
+        async function comfyInstallerStartImageComparisonDiagnostic() {
+            const button = document.getElementById('comfy-installer-image-comparison-choice-btn');
+            const downloadButton = document.getElementById('comfy-installer-image-diagnostic-download-btn');
+            if (button) button.disabled = true;
+            if (downloadButton) downloadButton.style.display = 'none';
+            comfyInstallerLatestDiagnosticId = '';
+            comfyInstallerLatestDiagnosticKind = 'image_comparison_diagnostic';
+            comfyInstallerSetError('');
+            try {
+                if (!assetTags) {
+                    await loadAssetData();
+                }
+                if (!assetTags) {
+                    throw new Error('캐릭터 메이커 에셋 프리셋 데이터를 불러오지 못했습니다.');
+                }
+                if (!cmSession) {
+                    await cmLoadOrCreateSession();
+                    cmPopulatePresetOptions();
+                    cmApplySettingsToUI();
+                    cmRenderSeedControl();
+                }
+                cmPrepareSeedForGenerate();
+                const synced = await cmRequest(
+                    `/api/character_maker/session/${encodeURIComponent(cmSession.id)}`,
+                    {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(cmCurrentPayload()),
+                    },
+                );
+                if (synced?.session) cmSession = synced.session;
+                const promptData = await cmBuildPromptData('user');
+                const settings = cmCollectSettings();
+                comfyInstallerLastLogSeq = 0;
+                const logBox = document.getElementById('comfy-installer-log');
+                if (logBox) logBox.textContent = '';
+                const started = await fetchJSON('/api/comfy-installer/image-comparison-diagnostic', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        positive: promptData.positive,
+                        negative: promptData.negative || '',
+                        seed: settings.seed,
+                        width: settings.img_w,
+                        height: settings.img_h,
+                    }),
+                });
+                comfyInstallerRenderStatus(started);
+                comfyInstallerCloseImageDiagnosticModal();
+                showToast('Comfy 직접 실행과 프로그램 실행의 2×2 이미지 비교를 시작했습니다', 'success');
+                clearTimeout(comfyInstallerPollTimer);
+                comfyInstallerPollTimer = setTimeout(() => comfyInstallerRefreshStatus(false), 500);
+            } catch (error) {
+                console.error('[COMFY_INSTALL] 이미지 생성 차이 검사 시작 실패:', error);
+                comfyInstallerSetError(error.message || error);
+                showToast(`이미지 생성 차이 검사 시작 실패: ${error.message || error}`, 'error');
+                if (button) button.disabled = false;
+            }
+        }
+
         function comfyInstallerDownloadImageDiagnostic() {
             if (!comfyInstallerLatestDiagnosticId) {
                 showToast('내려받을 이미지 진단 ZIP이 없습니다', 'warning');
                 return;
             }
             const safeId = encodeURIComponent(comfyInstallerLatestDiagnosticId);
-            window.location.assign(`/api/comfy-installer/image-diagnostic/${safeId}/archive`);
+            const endpoint = comfyInstallerLatestDiagnosticKind === 'image_comparison_diagnostic'
+                ? 'image-comparison-diagnostic'
+                : 'image-diagnostic';
+            window.location.assign(`/api/comfy-installer/${endpoint}/${safeId}/archive`);
         }
 
         function comfyInstallerToggleAllWorkflows(checked) {
@@ -39923,7 +40025,11 @@
                         ? '이사 중'
                         : (data.operation === 'e2e'
                             ? 'E2E 검사 중'
-                            : (data.operation === 'image_diagnostic' ? '이미지 깨짐 검사 중' : '설치 중'))),
+                            : (data.operation === 'image_diagnostic'
+                                ? '이미지 깨짐 검사 중'
+                                : (data.operation === 'image_comparison_diagnostic'
+                                    ? '이미지 생성 차이 검사 중'
+                                    : '설치 중')))),
                 succeeded: '성공',
                 failed: '실패',
                 cancelled: '중단됨',
@@ -39949,6 +40055,11 @@
                 state === 'succeeded' &&
                 data.operation === 'image_diagnostic'
             );
+            const imageComparisonJustSucceeded = (
+                comfyInstallerLastState === 'running' &&
+                state === 'succeeded' &&
+                data.operation === 'image_comparison_diagnostic'
+            );
             const compatibilityInstallJustSucceeded = (
                 comfyInstallerLastState === 'running' &&
                 state === 'succeeded' &&
@@ -39966,6 +40077,8 @@
             const e2eButton = document.getElementById('comfy-installer-e2e-btn');
             const imageDiagnosticButton = document.getElementById('comfy-installer-image-diagnostic-btn');
             const imageDiagnosticDownloadButton = document.getElementById('comfy-installer-image-diagnostic-download-btn');
+            const imageCorruptionChoiceButton = document.getElementById('comfy-installer-image-corruption-choice-btn');
+            const imageComparisonChoiceButton = document.getElementById('comfy-installer-image-comparison-choice-btn');
             const sageEnableButton = document.getElementById('comfy-installer-sage-enable-btn');
             const sageDisableButton = document.getElementById('comfy-installer-sage-disable-btn');
             const unpackButton = document.getElementById('comfy-installer-unpack-btn');
@@ -40060,6 +40173,8 @@
             if (e2eButton) e2eButton.disabled = running;
             if (imageDiagnosticButton) imageDiagnosticButton.disabled = running;
             if (imageDiagnosticDownloadButton) imageDiagnosticDownloadButton.disabled = running;
+            if (imageCorruptionChoiceButton) imageCorruptionChoiceButton.disabled = running;
+            if (imageComparisonChoiceButton) imageComparisonChoiceButton.disabled = running;
             if (sageEnableButton) sageEnableButton.disabled = running || comfyInstallerPatchSageModeBusy;
             if (sageDisableButton) sageDisableButton.disabled = running || comfyInstallerPatchSageModeBusy;
             if (unpackButton) unpackButton.disabled = running;
@@ -40088,6 +40203,12 @@
             }
             if (data.operation === 'image_diagnostic' && data.result?.archive_id) {
                 comfyInstallerLatestDiagnosticId = String(data.result.archive_id);
+                comfyInstallerLatestDiagnosticKind = 'image_diagnostic';
+                if (imageDiagnosticDownloadButton) imageDiagnosticDownloadButton.style.display = '';
+            }
+            if (data.operation === 'image_comparison_diagnostic' && data.result?.archive_id) {
+                comfyInstallerLatestDiagnosticId = String(data.result.archive_id);
+                comfyInstallerLatestDiagnosticKind = 'image_comparison_diagnostic';
                 if (imageDiagnosticDownloadButton) imageDiagnosticDownloadButton.style.display = '';
             }
             if (imageDiagnosticJustSucceeded) {
@@ -40098,6 +40219,16 @@
                     showToast(`이미지 진단 일부 실패 · 원인과 로그가 든 ZIP을 내려받으세요: ${summary}`, 'warning');
                 } else {
                     showToast(`이미지 깨짐 검사 완료 · ZIP을 내려받으세요: ${summary}`, 'success');
+                }
+            }
+            if (imageComparisonJustSucceeded) {
+                const result = data.result || {};
+                const conclusions = Array.isArray(result.conclusions) ? result.conclusions : [];
+                const summary = conclusions[0] || '비교 진단 ZIP 생성 완료';
+                if (result.incomplete) {
+                    showToast(`이미지 생성 차이 검사 일부 실패 · 부분 결과 ZIP을 내려받으세요: ${summary}`, 'warning');
+                } else {
+                    showToast(`이미지 생성 차이 검사 완료 · ZIP을 내려받으세요: ${summary}`, 'success');
                 }
             }
             if (compatibilityInstallJustSucceeded) {
@@ -40502,7 +40633,7 @@
         }
 
         async function comfyInstallerCancel() {
-            if (!window.confirm('현재 설치·업데이트·E2E·이미지 깨짐 검사·이사 작업을 안전하게 중단할까요? 다운로드 .part 파일은 재시도에 사용하고, 이사 중 생성된 불완전 파일은 정리합니다.')) return;
+            if (!window.confirm('현재 설치·업데이트·E2E·이미지 검사·이사 작업을 안전하게 중단할까요? 다운로드 .part 파일은 재시도에 사용하고, 이사 중 생성된 불완전 파일은 정리합니다.')) return;
             try {
                 const data = await fetchJSON('/api/comfy-installer/cancel', { method: 'POST' });
                 comfyInstallerRenderStatus(data);

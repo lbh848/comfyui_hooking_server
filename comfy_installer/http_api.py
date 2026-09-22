@@ -26,6 +26,7 @@ PauseManagedComfyCallback = Callable[[], Any]
 ResumeManagedComfyCallback = Callable[[Any], Any]
 ApplyRepairedWorkflowRuntimeCallback = Callable[[dict[str, str]], None]
 ProductionImageDiagnosticCallback = Callable[[dict[str, Any]], dict[str, Any]]
+ProductionImageComparisonCallback = Callable[[dict[str, Any]], dict[str, Any]]
 
 
 def _json_error(message: str, *, status: int = 400) -> web.Response:
@@ -383,6 +384,54 @@ async def handle_image_diagnostic_archive(request: web.Request) -> web.Response:
         return _json_error(str(exc), status=500)
 
 
+async def handle_image_comparison_diagnostic_start(
+    request: web.Request,
+) -> web.Response:
+    service = request.app[APP_SERVICE_KEY]
+    try:
+        body = await _read_json_object(request)
+        result = service.start_image_comparison_diagnostic(body)
+        return web.json_response({"ok": True, **result})
+    except InstallerServiceError as exc:
+        print(f"[COMFY_INSTALL][API] 이미지 비교 검사 시작 거부: {exc}")
+        traceback.print_exc()
+        return _json_error(str(exc), status=409)
+    except Exception as exc:
+        print(f"[COMFY_INSTALL][API] 이미지 비교 검사 시작 실패: {exc}")
+        traceback.print_exc()
+        return _json_error(str(exc), status=500)
+
+
+async def handle_image_comparison_diagnostic_archive(
+    request: web.Request,
+) -> web.Response:
+    service = request.app[APP_SERVICE_KEY]
+    diagnostic_id = request.match_info.get("diagnostic_id", "")
+    try:
+        archive = service.image_comparison_diagnostic_archive(diagnostic_id)
+        return web.FileResponse(
+            archive,
+            headers={
+                "Content-Type": "application/zip",
+                "Content-Disposition": f'attachment; filename="{archive.name}"',
+            },
+        )
+    except InstallerServiceError as exc:
+        print(
+            "[COMFY_INSTALL][API] 이미지 비교 진단 ZIP 조회 거부: "
+            f"diagnostic_id={diagnostic_id!r}, error={exc}"
+        )
+        traceback.print_exc()
+        return _json_error(str(exc), status=404)
+    except Exception as exc:
+        print(
+            "[COMFY_INSTALL][API] 이미지 비교 진단 ZIP 조회 실패: "
+            f"diagnostic_id={diagnostic_id!r}, error={exc}"
+        )
+        traceback.print_exc()
+        return _json_error(str(exc), status=500)
+
+
 async def handle_unpack_workflow_pack(request: web.Request) -> web.Response:
     service = request.app[APP_SERVICE_KEY]
     workflow_key = ""
@@ -542,6 +591,7 @@ def register_comfy_installer_routes(
     pause_managed_comfy: PauseManagedComfyCallback | None = None,
     resume_managed_comfy: ResumeManagedComfyCallback | None = None,
     production_image_diagnostic_call: ProductionImageDiagnosticCallback | None = None,
+    production_image_comparison_call: ProductionImageComparisonCallback | None = None,
     apply_repaired_workflow_runtime: (
         ApplyRepairedWorkflowRuntimeCallback | None
     ) = None,
@@ -553,6 +603,7 @@ def register_comfy_installer_routes(
         pause_managed_comfy=pause_managed_comfy,
         resume_managed_comfy=resume_managed_comfy,
         production_image_diagnostic_call=production_image_diagnostic_call,
+        production_image_comparison_call=production_image_comparison_call,
         apply_repaired_workflow_runtime=apply_repaired_workflow_runtime,
     )
     app[APP_SERVICE_KEY] = service
@@ -653,6 +704,14 @@ def register_comfy_installer_routes(
     app.router.add_get(
         "/api/comfy-installer/image-diagnostic/{diagnostic_id}/archive",
         handle_image_diagnostic_archive,
+    )
+    app.router.add_post(
+        "/api/comfy-installer/image-comparison-diagnostic",
+        handle_image_comparison_diagnostic_start,
+    )
+    app.router.add_get(
+        "/api/comfy-installer/image-comparison-diagnostic/{diagnostic_id}/archive",
+        handle_image_comparison_diagnostic_archive,
     )
     app.router.add_post(
         "/api/comfy-installer/unpack-workflow-pack",

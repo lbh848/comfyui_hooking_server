@@ -2397,6 +2397,10 @@ class AssetMode:
                 # Evidence only: return the exact API graph already submitted.
                 # This does not alter, clone, or instrument the graph itself.
                 result["diagnostic_workflow"] = workflow
+                # QueueManager가 즉시 pop해 QueueItem에만 보관한다. 저장된 WebP를
+                # 다시 읽으면 손실 압축 차이를 생성 차이로 오판할 수 있으므로,
+                # 비교 진단에서만 Comfy가 반환한 원본 바이트를 함께 넘긴다.
+                result["_diagnostic_image_bytes"] = img_bytes
             return result
         finally:
             # 임시 선택 워크플로우 경로 복원

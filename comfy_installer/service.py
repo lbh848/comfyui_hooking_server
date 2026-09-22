@@ -70,6 +70,7 @@ from .manifest import (
 from .manager_dependencies import install_manager_dependencies
 from .input_patcher import patch_comfy_input
 from .production_image_diagnostic import run_production_image_diagnostic
+from .image_comparison_diagnostic import run_image_comparison_diagnostic
 from .migration import ComfyMigrationCancelled, migrate_user_data
 from .model_installer import install_models
 from .model_scope import (
@@ -174,6 +175,11 @@ _IMAGE_DIAGNOSTIC_PHASES = (
     ("complete", "진단 판정 및 ZIP 기록"),
 )
 
+_IMAGE_COMPARISON_DIAGNOSTIC_PHASES = (
+    ("image_comparison", "Comfy 직접 실행과 프로그램 실행 2×2 비교"),
+    ("complete", "차이 판정 및 ZIP 기록"),
+)
+
 _MIGRATE_PHASES = (
     ("migration_backup", "config.json 이사 전 백업"),
     ("migration_scan", "기존 사용자 데이터 확인"),
@@ -213,6 +219,9 @@ class ComfyInstallerService:
         pause_managed_comfy: Callable[[], Any] | None = None,
         resume_managed_comfy: Callable[[Any], Any] | None = None,
         production_image_diagnostic_call: (
+            Callable[[dict[str, Any]], dict[str, Any]] | None
+        ) = None,
+        production_image_comparison_call: (
             Callable[[dict[str, Any]], dict[str, Any]] | None
         ) = None,
         apply_repaired_workflow_runtime: (
@@ -260,6 +269,7 @@ class ComfyInstallerService:
         self.pause_managed_comfy = pause_managed_comfy
         self.resume_managed_comfy = resume_managed_comfy
         self.production_image_diagnostic_call = production_image_diagnostic_call
+        self.production_image_comparison_call = production_image_comparison_call
         self.apply_repaired_workflow_runtime = apply_repaired_workflow_runtime
         self._lock = RLock()
         self._cancel = Event()
@@ -1644,7 +1654,7 @@ class ComfyInstallerService:
         with self._lock:
             if self._thread is not None and self._thread.is_alive():
                 raise InstallerServiceError(
-                    "ComfyUI 설치·업데이트·E2E·이미지 깨짐 검사·이사 작업이 이미 진행 중입니다."
+                    "ComfyUI 설치·업데이트·E2E·이미지 검사·이사 작업이 이미 진행 중입니다."
                 )
             self._cancel = Event()
             self._logs.clear()
@@ -1781,6 +1791,62 @@ class ComfyInstallerService:
             kwargs={},
         )
 
+    def start_image_comparison_diagnostic(self, request: Mapping[str, Any]) -> dict:
+        if self.production_image_comparison_call is None:
+            raise InstallerServiceError(
+                "Comfy/프로그램 이미지 비교 경로가 진단기에 연결되지 않았습니다."
+            )
+        if not isinstance(request, Mapping):
+            raise InstallerServiceError("이미지 비교 진단 요청은 객체여야 합니다.")
+        positive = request.get("positive")
+        negative = request.get("negative")
+        if not isinstance(positive, str) or not positive.strip():
+            raise InstallerServiceError("캐릭터 메이커 긍정 프롬프트가 비어 있습니다.")
+        if len(positive) > 500_000:
+            raise InstallerServiceError("캐릭터 메이커 긍정 프롬프트가 너무 깁니다.")
+        if not isinstance(negative, str):
+            raise InstallerServiceError("캐릭터 메이커 부정 프롬프트는 문자열이어야 합니다.")
+        if len(negative) > 500_000:
+            raise InstallerServiceError("캐릭터 메이커 부정 프롬프트가 너무 깁니다.")
+        try:
+            seed = int(request.get("seed"))
+        except (TypeError, ValueError) as exc:
+            print(
+                "[COMFY_INSTALL][IMAGE_COMPARISON] seed 검증 실패: "
+                f"value={request.get('seed')!r}, error={exc}"
+            )
+            traceback.print_exc()
+            raise InstallerServiceError("캐릭터 메이커 seed가 정수가 아닙니다.") from exc
+        if not 0 <= seed <= 2**32 - 1:
+            raise InstallerServiceError("캐릭터 메이커 seed 범위가 올바르지 않습니다.")
+        width = request.get("width")
+        height = request.get("height")
+        try:
+            width = int(width)
+            height = int(height)
+        except (TypeError, ValueError) as exc:
+            print(
+                "[COMFY_INSTALL][IMAGE_COMPARISON] 이미지 크기 검증 실패: "
+                f"width={width!r}, height={height!r}, error={exc}"
+            )
+            traceback.print_exc()
+            raise InstallerServiceError("캐릭터 메이커 이미지 크기가 정수가 아닙니다.") from exc
+        if not 256 <= width <= 4096 or not 256 <= height <= 4096:
+            raise InstallerServiceError("캐릭터 메이커 이미지 크기는 256~4096이어야 합니다.")
+        normalized_request = {
+            "positive": positive,
+            "negative": negative,
+            "seed": seed,
+            "width": width,
+            "height": height,
+        }
+        return self._start_operation(
+            operation="image_comparison_diagnostic",
+            phases=_IMAGE_COMPARISON_DIAGNOSTIC_PHASES,
+            target=self._run_image_comparison_diagnostic,
+            kwargs={"request": normalized_request},
+        )
+
     def image_diagnostic_archive(self, diagnostic_id: str) -> Path:
         candidate_id = str(diagnostic_id or "").strip()
         if not re.fullmatch(r"[0-9]{8}_[0-9]{6}-[0-9a-f]{8}", candidate_id):
@@ -1802,6 +1868,29 @@ class ComfyInstallerService:
                 f"diagnostic_id={candidate_id}, path={path}"
             )
             raise InstallerServiceError("이미지 진단 ZIP 파일이 없습니다.")
+        return path
+
+    def image_comparison_diagnostic_archive(self, diagnostic_id: str) -> Path:
+        candidate_id = str(diagnostic_id or "").strip()
+        if not re.fullmatch(r"[0-9]{8}_[0-9]{6}-[0-9a-f]{8}", candidate_id):
+            print(
+                "[COMFY_INSTALL][IMAGE_COMPARISON] ZIP ID 형식 거부: "
+                f"diagnostic_id={candidate_id!r}"
+            )
+            raise InstallerServiceError("이미지 비교 진단 ZIP ID 형식이 잘못되었습니다.")
+        root = (
+            self.project_root
+            / ".work"
+            / "comfy-installer"
+            / "image-comparison-diagnostics"
+        ).resolve()
+        path = (root / f"{candidate_id}.zip").resolve()
+        if path.parent != root or not path.is_file():
+            print(
+                "[COMFY_INSTALL][IMAGE_COMPARISON] ZIP 파일 조회 실패: "
+                f"diagnostic_id={candidate_id}, path={path}"
+            )
+            raise InstallerServiceError("이미지 비교 진단 ZIP 파일이 없습니다.")
         return path
 
     def start_migration(
@@ -2082,6 +2171,72 @@ class ComfyInstallerService:
                 )
         except Exception as exc:
             print(f"[COMFY_INSTALL][SERVICE] 이미지 깨짐 진단 실패: {exc}")
+            traceback.print_exc()
+            self._log(f"[실패] {exc}", "error")
+            with self._lock:
+                self._state.update(
+                    {
+                        "state": "failed",
+                        "finished_at": _now_iso(),
+                        "error": str(exc),
+                    }
+                )
+
+    def _run_image_comparison_diagnostic(
+        self, *, request: Mapping[str, Any]
+    ) -> None:
+        started_monotonic = time.monotonic()
+        try:
+            self._set_phase("image_comparison")
+            if self.production_image_comparison_call is None:
+                raise InstallerServiceError(
+                    "Comfy/프로그램 이미지 비교 경로가 진단기에 연결되지 않았습니다."
+                )
+            result = run_image_comparison_diagnostic(
+                project_root=self.project_root,
+                cancel_event=self._cancel,
+                request=request,
+                production_call=self.production_image_comparison_call,
+                log=lambda message, level="info": self._log(message, level),
+                progress=self._set_progress,
+            )
+            self._set_phase("complete")
+            result["duration_seconds"] = round(
+                time.monotonic() - started_monotonic, 3
+            )
+            result_path = self._write_result(
+                result,
+                prefix="image-comparison-diagnostic-result",
+            )
+            result["result_path"] = str(result_path)
+            terminal_state = "cancelled" if result.get("cancelled") else "succeeded"
+            with self._lock:
+                self._state.update(
+                    {
+                        "state": terminal_state,
+                        "finished_at": _now_iso(),
+                        "progress": {
+                            "event": "complete",
+                            "current": len(result.get("cases") or []),
+                            "total": 4,
+                        },
+                        "error": None,
+                        "result": result,
+                    }
+                )
+            if result.get("incomplete"):
+                self._log(
+                    "[완료/주의] 이미지 비교 진단에 실패 또는 중단된 항목이 있습니다. "
+                    f"부분 결과 ZIP을 기록했습니다: {result.get('archive_name')}",
+                    "warning",
+                )
+            else:
+                self._log(
+                    "[완료] Comfy/프로그램 이미지 비교 진단 ZIP 생성 완료: "
+                    f"{result.get('archive_name')}"
+                )
+        except Exception as exc:
+            print(f"[COMFY_INSTALL][SERVICE] 이미지 비교 진단 실패: {exc}")
             traceback.print_exc()
             self._log(f"[실패] {exc}", "error")
             with self._lock:

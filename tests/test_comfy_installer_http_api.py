@@ -169,6 +169,70 @@ async def test_image_diagnostic_start_and_archive_routes(
 
 
 @pytest.mark.asyncio
+async def test_image_comparison_diagnostic_start_and_archive_routes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = tmp_path / "config.json"
+    config.write_text("{}\n", encoding="utf-8")
+    app = web.Application()
+    service = register_comfy_installer_routes(
+        app,
+        project_root=tmp_path,
+        config_path=config,
+        requirements_dir=tmp_path / "requirements",
+    )
+    archive = tmp_path / "comparison.zip"
+    archive.write_bytes(b"PK\x05\x06" + b"\x00" * 18)
+    received: list[dict] = []
+
+    def fake_start(body: dict) -> dict:
+        received.append(dict(body))
+        return {
+            "state": "running",
+            "operation": "image_comparison_diagnostic",
+        }
+
+    monkeypatch.setattr(service, "start_image_comparison_diagnostic", fake_start)
+    monkeypatch.setattr(
+        service,
+        "image_comparison_diagnostic_archive",
+        lambda _value: archive,
+    )
+    client = TestClient(TestServer(app))
+    await client.start_server()
+    try:
+        body = {
+            "positive": "[SEED]\n123\n[END]",
+            "negative": "bad",
+            "seed": 123,
+            "width": 700,
+            "height": 1024,
+        }
+        response = await client.post(
+            "/api/comfy-installer/image-comparison-diagnostic",
+            json=body,
+        )
+        assert response.status == 200
+        assert await response.json() == {
+            "ok": True,
+            "state": "running",
+            "operation": "image_comparison_diagnostic",
+        }
+        assert received == [body]
+
+        response = await client.get(
+            "/api/comfy-installer/image-comparison-diagnostic/"
+            "20260920_120000-1234abcd/archive"
+        )
+        assert response.status == 200
+        assert response.headers["Content-Type"] == "application/zip"
+        assert await response.read() == archive.read_bytes()
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
 async def test_workflow_integrity_routes_keep_repair_as_explicit_second_request(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
