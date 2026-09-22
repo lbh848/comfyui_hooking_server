@@ -69061,6 +69061,24 @@
             catch (error) { showToast('자연어 선택 기준 저장 실패: ' + error.message, 'error'); }
         }
 
+        function resizeVisualCardMetadataGroup(group) {
+            if (!group) {
+                console.error('[VISUAL_CARD] 높이를 맞출 메타데이터 영역이 없습니다.');
+                return;
+            }
+            const textareas = [...group.querySelectorAll('.visual-card-metadata-textarea')];
+            if (!textareas.length) {
+                console.error('[VISUAL_CARD] 높이를 맞출 메타데이터 입력창이 없습니다.');
+                return;
+            }
+            textareas.forEach(textarea => { textarea.style.height = 'auto'; });
+            const sharedHeight = Math.max(...textareas.map(textarea => {
+                const borderHeight = textarea.offsetHeight - textarea.clientHeight;
+                return textarea.scrollHeight + borderHeight;
+            }));
+            textareas.forEach(textarea => { textarea.style.height = `${sharedHeight}px`; });
+        }
+
         async function updateVisualCardVisualContext(charName, value) {
             const profile = _visualCardProfile(charName);
             if (!profile) return;
@@ -69072,7 +69090,7 @@
         async function updateVisualCardAliases(charName, value) {
             const profile = _visualCardProfile(charName);
             if (!profile) return;
-            profile.aliases = [...new Set(String(value || '').split(',').map(v => v.trim()).filter(Boolean))];
+            profile.aliases = [...new Set(String(value || '').split(/[\r\n,]+/).map(v => v.trim()).filter(Boolean))];
             try { await _saveVisualCardState(charName, {quiet:true}); }
             catch (error) { showToast('작중 별칭 저장 실패: ' + error.message, 'error'); }
         }
@@ -70125,10 +70143,10 @@
                             <span class="patch-label">확인중</span>
                         </span>
                     </div>
-                    <div class="card-section" style="display:grid;grid-template-columns:minmax(180px,.55fr) minmax(280px,1fr) minmax(280px,1fr);gap:12px">
-                        <label style="display:block"><span class="card-section-title" style="display:block;margin-bottom:5px">작중 별칭</span><input value="${escAttr((activeProfile?.aliases || []).join(', '))}" onchange="updateVisualCardAliases('${escAttr(char.name)}',this.value)" placeholder="쉼표로 구분" style="width:100%;box-sizing:border-box;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--text)"></label>
-                        <label style="display:block"><span class="card-section-title" style="display:block;margin-bottom:5px">자연어 선택 기준</span><textarea rows="2" onchange="updateVisualCardGuide('${escAttr(char.name)}',this.value)" placeholder="이 카드의 모습이 언제 성립하고 유지되는지 자연어로 입력" style="width:100%;box-sizing:border-box;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--text);resize:vertical">${escHtml(activeProfile?.selection_guide || '')}</textarea></label>
-                        <label style="display:block"><span class="card-section-title" style="display:block;margin-bottom:5px">대표 이미지 외형 참고</span><textarea rows="2" onchange="updateVisualCardVisualContext('${escAttr(char.name)}',this.value)" placeholder="대표 이미지에서 보이는 외형 식별 정보를 자연어로 입력" style="width:100%;box-sizing:border-box;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--text);resize:vertical">${escHtml(activeProfile?.visual_context || '')}</textarea></label>
+                    <div class="card-section visual-card-metadata-grid" style="display:grid;grid-template-columns:minmax(180px,.55fr) minmax(280px,1fr) minmax(280px,1fr);gap:12px">
+                        <label style="display:block"><span class="card-section-title" style="display:block;margin-bottom:5px">작중 별칭</span><textarea class="visual-card-metadata-textarea" rows="2" oninput="resizeVisualCardMetadataGroup(this.closest('.visual-card-metadata-grid'))" onchange="updateVisualCardAliases('${escAttr(char.name)}',this.value)" placeholder="한 줄에 별칭 하나씩 입력" style="width:100%;box-sizing:border-box;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--text);overflow-y:hidden;resize:none">${escHtml((activeProfile?.aliases || []).join('\n'))}</textarea></label>
+                        <label style="display:block"><span class="card-section-title" style="display:block;margin-bottom:5px">자연어 선택 기준</span><textarea class="visual-card-metadata-textarea" rows="2" oninput="resizeVisualCardMetadataGroup(this.closest('.visual-card-metadata-grid'))" onchange="updateVisualCardGuide('${escAttr(char.name)}',this.value)" placeholder="이 카드의 모습이 언제 성립하고 유지되는지 자연어로 입력" style="width:100%;box-sizing:border-box;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--text);overflow-y:hidden;resize:none">${escHtml(activeProfile?.selection_guide || '')}</textarea></label>
+                        <label style="display:block"><span class="card-section-title" style="display:block;margin-bottom:5px">대표 이미지 외형 참고</span><textarea class="visual-card-metadata-textarea" rows="2" oninput="resizeVisualCardMetadataGroup(this.closest('.visual-card-metadata-grid'))" onchange="updateVisualCardVisualContext('${escAttr(char.name)}',this.value)" placeholder="대표 이미지에서 보이는 외형 식별 정보를 자연어로 입력" style="width:100%;box-sizing:border-box;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--text);overflow-y:hidden;resize:none">${escHtml(activeProfile?.visual_context || '')}</textarea></label>
                     </div>
                     <div class="card-section" id="char-data-section-${charIdx}">
                         <div class="card-section-title">캐릭터 데이터</div>
@@ -70286,6 +70304,7 @@
                 }
             }
             showBotView('chars');
+            grid.querySelectorAll('.visual-card-metadata-grid').forEach(resizeVisualCardMetadataGroup);
             const searchEmpty = document.createElement('div');
             searchEmpty.id = 'bot-character-search-empty';
             searchEmpty.className = 'character-search-empty';

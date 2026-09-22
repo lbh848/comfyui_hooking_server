@@ -43,7 +43,7 @@ def test_card_metadata_and_flat_lb_extra_editor_are_on_the_character_card():
     assert "자연어 선택 기준" in FRONTEND
     assert "대표 이미지 외형 참고" in FRONTEND
     assert "작중 별칭" in FRONTEND
-    card_metadata = FRONTEND[FRONTEND.index('<div class="card-section" style="display:grid;grid-template-columns:minmax(180px,.55fr) minmax(280px,1fr) minmax(280px,1fr)'):]
+    card_metadata = FRONTEND[FRONTEND.index('<div class="card-section visual-card-metadata-grid" style="display:grid;grid-template-columns:minmax(180px,.55fr) minmax(280px,1fr) minmax(280px,1fr)'):]
     assert card_metadata.index("작중 별칭") < card_metadata.index("자연어 선택 기준")
     assert card_metadata.index("자연어 선택 기준") < card_metadata.index("대표 이미지 외형 참고")
     assert "updateVisualCardVisualContext" in card_metadata
@@ -61,6 +61,28 @@ def test_card_metadata_and_flat_lb_extra_editor_are_on_the_character_card():
     assert "visual_card_id: _visualCardFocusSession?.profileId" in FRONTEND
     assert "openVisualOutfitEditor" not in FRONTEND
     assert "visual-outfit-overlay" not in FRONTEND
+
+
+def test_character_card_metadata_fields_share_auto_height_without_equal_widths():
+    assert "function resizeVisualCardMetadataGroup(group)" in FRONTEND
+    assert "textareas.forEach(textarea => { textarea.style.height = 'auto'; })" in FRONTEND
+    assert "const sharedHeight = Math.max(...textareas.map(textarea =>" in FRONTEND
+    assert "textarea.scrollHeight + borderHeight" in FRONTEND
+    assert FRONTEND.count('class="visual-card-metadata-textarea"') == 3
+    assert FRONTEND.count("resizeVisualCardMetadataGroup(this.closest('.visual-card-metadata-grid'))") == 3
+    assert FRONTEND.count("overflow-y:hidden;resize:none") >= 3
+    assert "grid-template-columns:minmax(180px,.55fr) minmax(280px,1fr) minmax(280px,1fr)" in FRONTEND
+    assert "(activeProfile?.aliases || []).join('\\n')" in FRONTEND
+    assert ".split(/[\\r\\n,]+/)" in FRONTEND
+    assert "한 줄에 별칭 하나씩 입력" in FRONTEND
+    render_start = FRONTEND.index("async function renderBotCharacters()")
+    render_end = FRONTEND.index("function renderBotCharLoraList", render_start)
+    render_source = FRONTEND[render_start:render_end]
+    show_index = render_source.index("showBotView('chars')")
+    resize_index = render_source.index(
+        "grid.querySelectorAll('.visual-card-metadata-grid').forEach(resizeVisualCardMetadataGroup)"
+    )
+    assert show_index < resize_index
 
 
 def test_removed_profile_modal_and_raw_json_editor_do_not_return():
