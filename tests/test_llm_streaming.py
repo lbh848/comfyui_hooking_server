@@ -122,6 +122,15 @@ async def test_task_stream_event_contains_task_metadata(monkeypatch):
     assert all(event["call_name"] == "unit_task" for event in events)
     assert all(event["llm_slot"] == "llm2" for event in events)
 
+    monkeypatch.undo()
+    for check in (
+        _check_task_stream_inherits_pipeline_display_call_name,
+        _check_task_stream_observer_receives_request_local_partial_lengths,
+        _check_task_stream_observer_marks_non_streaming_request_without_partial_events,
+    ):
+        with monkeypatch.context() as isolated:
+            await check(isolated)
+
 
 @pytest.mark.asyncio
 async def test_task_metadata_sink_captures_stream_usage(monkeypatch):
@@ -164,9 +173,13 @@ async def test_task_metadata_sink_captures_stream_usage(monkeypatch):
     assert sink.get("prompt_tokens") == 128
     assert sink.get("tps") == 84.0
 
+    monkeypatch.undo()
+    with monkeypatch.context() as isolated:
+        await _check_task_metadata_sink_falls_back_to_approx_offline(isolated)
+
 
 @pytest.mark.asyncio
-async def test_task_metadata_sink_falls_back_to_approx_offline(monkeypatch):
+async def _check_task_metadata_sink_falls_back_to_approx_offline(monkeypatch):
     """비스트리밍 callLLMTask 는 usage 를 못 얻으므로 sink 를 근사치로 채운다."""
     config = _test_config()
     config["llm_stream"] = False
@@ -193,7 +206,7 @@ async def test_task_metadata_sink_falls_back_to_approx_offline(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_task_stream_inherits_pipeline_display_call_name(monkeypatch):
+async def _check_task_stream_inherits_pipeline_display_call_name(monkeypatch):
     config = _test_config()
     config["llm_stream2"] = True
     config["llm_routing"] = {
@@ -226,7 +239,7 @@ async def test_task_stream_inherits_pipeline_display_call_name(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_task_stream_observer_receives_request_local_partial_lengths(monkeypatch):
+async def _check_task_stream_observer_receives_request_local_partial_lengths(monkeypatch):
     config = _test_config()
     config["llm_stream"] = True
     config["llm_routing"] = {
@@ -261,7 +274,7 @@ async def test_task_stream_observer_receives_request_local_partial_lengths(monke
 
 
 @pytest.mark.asyncio
-async def test_task_stream_observer_marks_non_streaming_request_without_partial_events(monkeypatch):
+async def _check_task_stream_observer_marks_non_streaming_request_without_partial_events(monkeypatch):
     config = _test_config()
     config["llm_routing"] = {
         "unit_task": {"primary": "llm1", "fallback_target": None}
@@ -325,6 +338,14 @@ async def test_task_retries_none_empty_and_whitespace_responses(monkeypatch):
     assert result == "완료"
     assert len(calls) == 4
     assert sleeps == [2.5, 2.5, 2.5]
+
+    monkeypatch.undo()
+    for check in (
+        _check_task_retries_response_validator_failures,
+        _check_task_retries_raised_call_exception,
+    ):
+        with monkeypatch.context() as isolated:
+            await check(isolated)
 
 
 @pytest.mark.asyncio
@@ -397,7 +418,7 @@ async def test_task_exhausts_primary_then_uses_independent_fallback_policy(monke
 
 
 @pytest.mark.asyncio
-async def test_task_retries_response_validator_failures(monkeypatch):
+async def _check_task_retries_response_validator_failures(monkeypatch):
     config = _test_config()
     config["llm_routing"] = {
         "unit_task": {
@@ -431,7 +452,7 @@ async def test_task_retries_response_validator_failures(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_task_retries_raised_call_exception(monkeypatch):
+async def _check_task_retries_raised_call_exception(monkeypatch):
     config = _test_config()
     config["llm_routing"] = {
         "unit_task": {
@@ -908,6 +929,14 @@ async def test_manual_parallel_retry_keeps_original_and_uses_faster_success(monk
         "parallel",
     }
 
+    monkeypatch.undo()
+    for check in (
+        _check_manual_parallel_retry_rejects_when_slot_limit_has_no_room,
+        _check_manual_parallel_retry_waits_for_other_attempt_when_one_errors,
+    ):
+        with monkeypatch.context() as isolated:
+            await check(isolated)
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("cancel_role", ["original", "parallel"])
@@ -1008,7 +1037,7 @@ async def test_manual_parallel_retry_can_replace_a_cancelled_attempt(
 
 
 @pytest.mark.asyncio
-async def test_manual_parallel_retry_rejects_when_slot_limit_has_no_room(monkeypatch):
+async def _check_manual_parallel_retry_rejects_when_slot_limit_has_no_room(monkeypatch):
     config = _test_config()
     config["llm_stream"] = True
     config["llm_max_concurrency"] = 1
@@ -1055,7 +1084,7 @@ async def test_manual_parallel_retry_rejects_when_slot_limit_has_no_room(monkeyp
 
 
 @pytest.mark.asyncio
-async def test_manual_parallel_retry_waits_for_other_attempt_when_one_errors(monkeypatch):
+async def _check_manual_parallel_retry_waits_for_other_attempt_when_one_errors(monkeypatch):
     config = _test_config()
     config["llm_stream"] = True
     config["llm_max_concurrency"] = 2
@@ -1250,9 +1279,17 @@ async def test_openai_compat_finish_reason_ends_without_done_sentinel(monkeypatc
     assert request_headers["Accept"] == "text/event-stream"
     assert request_headers["Authorization"] == "Bearer stream-key"
 
+    monkeypatch.undo()
+    for check in (
+        _check_openai_compat_collects_usage_chunk_after_finish_reason,
+        _check_openai_compat_nonstream_stores_actual_usage,
+    ):
+        with monkeypatch.context() as isolated:
+            await check(isolated)
+
 
 @pytest.mark.asyncio
-async def test_openai_compat_collects_usage_chunk_after_finish_reason(monkeypatch):
+async def _check_openai_compat_collects_usage_chunk_after_finish_reason(monkeypatch):
     config = _test_config()
     monkeypatch.setattr(llm_service, "_current_config", config)
     consumed_lines = []
@@ -1304,7 +1341,7 @@ async def test_openai_compat_collects_usage_chunk_after_finish_reason(monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_openai_compat_nonstream_stores_actual_usage(monkeypatch):
+async def _check_openai_compat_nonstream_stores_actual_usage(monkeypatch):
     class FakeResponse:
         status_code = 200
         text = ""

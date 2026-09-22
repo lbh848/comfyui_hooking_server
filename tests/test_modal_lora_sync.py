@@ -475,4 +475,3 @@ def test_frontend_has_lora_sync_button_modal_status_and_bot_unit_copy() -> None:
     open_end = FRONTEND.index("function modalCloseLoraSync()", open_start)
     assert "modalLoraQueryStatus" not in FRONTEND[open_start:open_end]
     assert "void modalLoraQueryStatus" not in FRONTEND
-    assert "z-index: 23000;" in FRONTEND

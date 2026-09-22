@@ -377,8 +377,12 @@ def test_new_character_preserves_all_generation_state_and_clears_character_work(
     assert persisted["editable_preset_tags"] == expected_editable_tags
     assert persisted["editable_preset_enabled"] == expected_editable_enabled
 
+    latest_case = tmp_path / "validated-latest"
+    latest_case.mkdir()
+    _check_new_character_prefers_validated_latest_generation_state(latest_case)
 
-def test_new_character_prefers_validated_latest_generation_state(tmp_path):
+
+def _check_new_character_prefers_validated_latest_generation_state(tmp_path):
     service, _ = _service(tmp_path)
     session = service.public_session(character_maker_module.SINGLE_SESSION_ID)
     service.update_session(
@@ -541,6 +545,12 @@ async def test_revise_preserves_locked_field(monkeypatch, tmp_path):
     assert result["session"]["llm_fields"]["appearance"] == ["blue_eyes"]  # 잠금 보존
     assert result["session"]["llm_fields"]["outfit"] == ["tailored_coat"]
     assert result["diff"]["appearance"] == {"added": [], "removed": []}
+
+    monkeypatch.undo()
+    locked_case = tmp_path / "locked-natural-language"
+    locked_case.mkdir()
+    with monkeypatch.context() as isolated:
+        await _check_revise_preserves_locked_natural_language(isolated, locked_case)
 
 
 @pytest.mark.asyncio
@@ -1065,6 +1075,10 @@ def test_accept_copies_llm_result_to_user(tmp_path):
     assert accepted["llm_active_revision_id"] == llm_revision_id
     assert accepted["llm_fields"]["appearance"] == ["silver_hair"]
 
+    natural_case = tmp_path / "accept-natural-language"
+    natural_case.mkdir()
+    _check_accept_copies_llm_natural_language(natural_case)
+
 
 def test_accept_without_llm_result_errors(tmp_path):
     service, _ = _service(tmp_path)
@@ -1162,8 +1176,12 @@ def test_confirm_requires_current_user_image(tmp_path):
             },
         )
 
+    expression_case = tmp_path / "requires-expression"
+    expression_case.mkdir()
+    _check_confirm_requires_expression_for_character_card(expression_case)
 
-def test_confirm_requires_expression_for_character_card(tmp_path):
+
+def _check_confirm_requires_expression_for_character_card(tmp_path):
     service, _ = _service(tmp_path)
     session = service.create_session()
     service.update_session(
@@ -1983,8 +2001,11 @@ def test_parse_llm_payload_natural_language_optional():
     assert parsed_none is not None
     assert parsed_none["natural_language"] is None
 
+    _check_parse_llm_payload_lifts_nested_natural_language_out_of_fields()
+    _check_parse_llm_payload_returns_specific_reason_on_failure()
 
-def test_parse_llm_payload_lifts_nested_natural_language_out_of_fields():
+
+def _check_parse_llm_payload_lifts_nested_natural_language_out_of_fields():
     """LLM이 natural_language를 fields 안에 잘못 넣으면 최상위 키로 끌어올려 보정한다.
     이 실수 하나로 재시도를 소진하지 않도록(프롬프트로 줄이되 보정으로 흡수)."""
     nested = (
@@ -2017,7 +2038,7 @@ def test_parse_llm_payload_lifts_nested_natural_language_out_of_fields():
     assert parsed2["natural_language"] == "top-level wins"
 
 
-def test_parse_llm_payload_returns_specific_reason_on_failure():
+def _check_parse_llm_payload_returns_specific_reason_on_failure():
     # 실패 시 (None, 구체적 사유) — 사유는 자세히 로그/에러에 노출되므로
     # "형식이 올바르지 않습니다" 같은 뭉뚱그린 메시지여선 안 된다.
     parsed, reason = character_maker_module._parse_llm_payload(
@@ -2123,7 +2144,7 @@ async def test_revise_updates_llm_natural_language_and_preserves_user(
 
 
 @pytest.mark.asyncio
-async def test_revise_preserves_locked_natural_language(monkeypatch, tmp_path):
+async def _check_revise_preserves_locked_natural_language(monkeypatch, tmp_path):
     service, _ = _service(tmp_path)
     session = service.create_session()
     service.update_session(
@@ -2146,7 +2167,7 @@ async def test_revise_preserves_locked_natural_language(monkeypatch, tmp_path):
     assert result["session"]["llm_natural_language"] == "locked text"
 
 
-def test_accept_copies_llm_natural_language(tmp_path):
+def _check_accept_copies_llm_natural_language(tmp_path):
     service, _ = _service(tmp_path)
     session = service.create_session()
     service.update_session(

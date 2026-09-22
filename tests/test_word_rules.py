@@ -610,47 +610,40 @@ class ImageNameTagTest(unittest.TestCase):
             character_aliases={},
         )
 
-    def test_disabled_option_keeps_card_name_in_char(self):
-        sections = self._parse({
+    def test_image_name_option_covers_disabled_replacement_weight_and_fallback(self):
+        disabled = self._parse({
             "name": "Alisa",
             "use_image_name_tag": False,
             "image_name_tag": "alisa mikhailovna kujou",
         })
+        self.assertEqual(disabled["name"], "Alisa")
+        self.assertEqual(disabled["char"].split(",", 1)[0], "Alisa")
+        self.assertNotIn("alisa mikhailovna kujou", disabled["char"].casefold())
 
-        self.assertEqual(sections["name"], "Alisa")
-        self.assertEqual(sections["char"].split(",", 1)[0], "Alisa")
-        self.assertNotIn("alisa mikhailovna kujou", sections["char"].casefold())
-
-    def test_enabled_option_replaces_card_name_only_in_char(self):
-        sections = self._parse({
+        enabled = self._parse({
             "name": "Alisa",
             "use_image_name_tag": True,
             "image_name_tag": "alisa mikhailovna kujou",
         }, char_section="Alisa, silver hair, blue eyes")
+        enabled_tags = [tag.strip().casefold() for tag in enabled["char"].split(",")]
+        self.assertEqual(enabled["name"], "Alisa")
+        self.assertIn("alisa mikhailovna kujou", enabled_tags)
+        self.assertNotIn("alisa", enabled_tags)
 
-        char_tags = [tag.strip().casefold() for tag in sections["char"].split(",")]
-        self.assertEqual(sections["name"], "Alisa")
-        self.assertIn("alisa mikhailovna kujou", char_tags)
-        self.assertNotIn("alisa", char_tags)
-
-    def test_enabled_option_removes_weighted_card_name_tag(self):
-        sections = self._parse({
+        weighted = self._parse({
             "name": "Alisa",
             "use_image_name_tag": True,
             "image_name_tag": "alisa mikhailovna kujou",
         }, char_section="(Alisa:1.2), silver hair")
+        self.assertIn("alisa mikhailovna kujou", weighted["char"].casefold())
+        self.assertNotIn("(alisa:1.2)", weighted["char"].casefold())
 
-        self.assertIn("alisa mikhailovna kujou", sections["char"].casefold())
-        self.assertNotIn("(alisa:1.2)", sections["char"].casefold())
-
-    def test_enabled_empty_tag_falls_back_to_card_name(self):
-        sections = self._parse({
+        fallback = self._parse({
             "name": "Alisa",
             "use_image_name_tag": True,
             "image_name_tag": "",
         })
-
-        self.assertEqual(sections["char"].split(",", 1)[0], "Alisa")
+        self.assertEqual(fallback["char"].split(",", 1)[0], "Alisa")
 
     def test_blank_line_character_blocks_bind_by_authoritative_name_order(self):
         result = IllustPromptBuilder._insert_character_names(
@@ -927,89 +920,63 @@ class InsertRuleTest(unittest.TestCase):
             1,
         )
 
-    def test_inserts_after_quality_when_absent(self):
+    def test_insert_rules_cover_absent_existing_and_inactive_cases(self):
         rules = [{"type": "insert", "word": "blue eyes", "enabled": True}]
         result, applied = apply_insert_rules(self.SAMPLE, rules)
-
         self.assertEqual(applied, 1)
-        # ANIMA 품질 줄 바로 뒤에 삽입
         self.assertIn("[ANIMA_QUALITY]\nmasterpiece, best quality, blue eyes\n", result)
-        # SDXL 품질 줄 바로 뒤에 삽입
         self.assertIn("[SDXL_QUALITY]\nsdxl_q1, sdxl_q2, blue eyes\n", result)
 
-    def test_skips_when_present_as_plain_tag(self):
-        # 양쪽 영역(ANIMA/SDXL) 모두에 masterpiece 가 평문으로 존재
-        sample = self.SAMPLE.replace(
+        plain = self.SAMPLE.replace(
             "sdxl_q1, sdxl_q2\n[SDXL_ARTIST]",
             "sdxl_q1, sdxl_q2, masterpiece\n[SDXL_ARTIST]",
         )
-        rules = [{"type": "insert", "word": "masterpiece", "enabled": True}]
-        result, applied = apply_insert_rules(sample, rules)
+        unchanged, applied = apply_insert_rules(
+            plain,
+            [{"type": "insert", "word": "masterpiece", "enabled": True}],
+        )
+        self.assertEqual((unchanged, applied), (plain, 0))
 
-        self.assertEqual(applied, 0)
-        self.assertEqual(result, sample)
-
-    def test_skips_when_present_as_weighted_tag(self):
-        # 양쪽 영역 모두에 (blue eyes:1.2) 가 존재
-        sample = self.SAMPLE.replace(
+        weighted = self.SAMPLE.replace(
             "1girl, solo\n[ANIMA_ALL]",
             "(blue eyes:1.2), 1girl, solo\n[ANIMA_ALL]",
         ).replace(
             "1girl, solo\n[CHAR_LIST]",
             "(blue eyes:1.2), 1girl, solo\n[CHAR_LIST]",
         )
-        rules = [{"type": "insert", "word": "blue eyes", "enabled": True}]
-        result, applied = apply_insert_rules(sample, rules)
-
+        result, applied = apply_insert_rules(weighted, rules)
         self.assertEqual(applied, 0)
-        # 품질 줄에는 삽입되지 않음
         anima_quality = result.split("[ANIMA_QUALITY]\n")[1].split("\n")[0]
         sdxl_quality = result.split("[SDXL_QUALITY]\n")[1].split("\n")[0]
         self.assertNotIn("blue eyes", anima_quality)
         self.assertNotIn("blue eyes", sdxl_quality)
 
-    def test_skips_when_present_as_paren_wrapped_tag(self):
-        sample = self.SAMPLE.replace(
+        parenthesized = self.SAMPLE.replace(
             "sdxl_q1, sdxl_q2\n[SDXL_ARTIST]",
             "sdxl_q1, sdxl_q2, (blue eyes)\n[SDXL_ARTIST]",
         )
-        rules = [{"type": "insert", "word": "blue eyes", "enabled": True}]
-        result, applied = apply_insert_rules(sample, rules)
-
-        self.assertEqual(applied, 1)  # ANIMA엔 없어 삽입, SDXL엔 있어 스킵 → 규칙 1회 적용
-        # SDXL에는 이미 있으므로 추가 삽입 없음
+        result, applied = apply_insert_rules(parenthesized, rules)
+        self.assertEqual(applied, 1)
         sdxl_quality_line = result.split("[SDXL_QUALITY]\n")[1].split("\n")[0]
         self.assertEqual(sdxl_quality_line.count("blue eyes"), 1)
-        # ANIMA에는 삽입됨
         self.assertIn("[ANIMA_QUALITY]\nmasterpiece, best quality, blue eyes\n", result)
 
-    def test_substring_match_does_not_count_as_present(self):
-        # "deep blue eyes" 가 있어도 "blue eyes" 는 별개 태그 → 삽입
-        sample = self.SAMPLE.replace(
+        substring = self.SAMPLE.replace(
             "1girl, solo\n[ANIMA_ALL]",
             "deep blue eyes, 1girl, solo\n[ANIMA_ALL]",
         )
-        rules = [{"type": "insert", "word": "blue eyes", "enabled": True}]
-        result, applied = apply_insert_rules(sample, rules)
-
+        result, applied = apply_insert_rules(substring, rules)
         self.assertEqual(applied, 1)
         self.assertIn("[ANIMA_QUALITY]\nmasterpiece, best quality, blue eyes\n", result)
 
-    def test_disabled_rule_is_skipped(self):
-        rules = [{"type": "insert", "word": "blue eyes", "enabled": False}]
-        result, applied = apply_insert_rules(self.SAMPLE, rules)
+        for inactive_rule in (
+            {"type": "insert", "word": "blue eyes", "enabled": False},
+            {"type": "insert", "word": "", "enabled": True},
+        ):
+            unchanged, applied = apply_insert_rules(self.SAMPLE, [inactive_rule])
+            self.assertEqual((unchanged, applied), (self.SAMPLE, 0), inactive_rule)
 
-        self.assertEqual(applied, 0)
-        self.assertEqual(result, self.SAMPLE)
-
-    def test_empty_word_is_skipped(self):
-        rules = [{"type": "insert", "word": "", "enabled": True}]
-        result, applied = apply_insert_rules(self.SAMPLE, rules)
-
-        self.assertEqual(applied, 0)
-        self.assertEqual(result, self.SAMPLE)
-
-    def test_chansub_flat_prompt_inserts_after_quality_tags(self):
+    def test_chansub_flat_prompt_inserts_or_skips_existing_tag(self):
         positive = (
             "artist:sample, best quality, amazing quality, "
             "1girl, (red dress, blue ribbon)"
@@ -1031,7 +998,6 @@ class InsertRuleTest(unittest.TestCase):
             "1girl, (red dress, blue ribbon)",
         )
 
-    def test_chansub_flat_prompt_skips_existing_weighted_tag(self):
         positive = "best quality, 1girl, (series title:1.2)"
         rules = [{"type": "insert", "word": "series title", "enabled": True}]
 
@@ -1055,35 +1021,29 @@ class DetectCharactersFromNameTest(unittest.TestCase):
     detect_characters_from_name()이 차단하는지 확인한다.
     """
 
-    def test_name_exact_match_ignores_supplement_prose(self):
-        # [Name]은 reallife 하나만 지정, supplement 산문에 fantasy 이름이 언급됨.
+    def test_name_detection_covers_exact_multi_empty_and_unknown_inputs(self):
         name_section = "Angel-in-us_reallife"
         supplement = "This is the real-life version of Angel-in-us, bridging the two realities."
         char_names = ["Angel-in-us", "Angel-in-us_reallife"]
 
         detected = IllustPromptBuilder.detect_characters_from_name(name_section, char_names)
-
-        # reallife만 감지되어야 함. supplement의 "Angel-in-us" 는 무관.
         self.assertEqual(detected, ["Angel-in-us_reallife"])
         self.assertNotIn("Angel-in-us", detected)
-        # 폴백 detect_characters는 supplement 산문에서 fantasy를 잘못 잡음(대조용).
         fallback = IllustPromptBuilder.detect_characters([supplement], char_names)
         self.assertIn("Angel-in-us", fallback)
 
-    def test_name_exact_match_case_insensitive_and_multi(self):
-        char_names = ["Alice", "Bob"]
-        detected = IllustPromptBuilder.detect_characters_from_name("alice, BOB", char_names)
-        self.assertEqual(detected, ["Alice", "Bob"])
-
-    def test_name_empty_falls_back(self):
-        # [Name] 비어있으면 from_name 은 빈 리스트 → 호출측이 폴백으로 전환.
+        self.assertEqual(
+            IllustPromptBuilder.detect_characters_from_name(
+                "alice, BOB", ["Alice", "Bob"]
+            ),
+            ["Alice", "Bob"],
+        )
         self.assertEqual(IllustPromptBuilder.detect_characters_from_name("", ["Alice"]), [])
         self.assertEqual(IllustPromptBuilder.detect_characters_from_name(None, ["Alice"]), [])
-
-    def test_name_no_match_returns_empty(self):
-        char_names = ["Alice"]
-        detected = IllustPromptBuilder.detect_characters_from_name("Charlie", char_names)
-        self.assertEqual(detected, [])
+        self.assertEqual(
+            IllustPromptBuilder.detect_characters_from_name("Charlie", ["Alice"]),
+            [],
+        )
 
 
 class CharTagOverrideRulesTest(unittest.TestCase):
@@ -1095,59 +1055,64 @@ class CharTagOverrideRulesTest(unittest.TestCase):
             {"name": "Bob", "face_tags": "brown hair", "eye_tags": "green eyes"},
         ]
 
-    def test_eye_remove_fires_when_trigger_present(self):
-        rules = [{"type": "char_eye_remove", "trigger": "from behind", "enabled": True}]
-        out = apply_char_tag_override_rules(self.characters, rules, "viewed from behind")
-        self.assertEqual(out[0]["eye_tags"], "")
-        self.assertEqual(out[1]["eye_tags"], "")
+    def test_override_actions_share_one_trigger_contract(self):
+        cases = (
+            ("char_eye_remove", "from behind", None, "viewed from behind", "eye_tags", ""),
+            (
+                "char_face_replace",
+                "disguise",
+                "1boy, short hair, blonde hair",
+                "in disguise mode",
+                "face_tags",
+                "1boy, short hair, blonde hair",
+            ),
+            (
+                "char_eye_replace",
+                "hypnosis",
+                "red spiral eyes",
+                "under hypnosis",
+                "eye_tags",
+                "red spiral eyes",
+            ),
+            ("char_face_remove", "faceless", None, "a faceless figure", "face_tags", ""),
+        )
+        for rule_type, trigger, target, prompt, field, expected in cases:
+            rule = {"type": rule_type, "trigger": trigger, "enabled": True}
+            if target is not None:
+                rule["target"] = target
+            out = apply_char_tag_override_rules(self.characters, [rule], prompt)
+            self.assertEqual(out[0][field], expected, rule_type)
+            self.assertEqual(out[1][field], expected, rule_type)
 
-    def test_face_replace_fires_when_trigger_present(self):
-        rules = [{
-            "type": "char_face_replace",
-            "trigger": "disguise",
-            "target": "1boy, short hair, blonde hair",
-            "enabled": True,
-        }]
-        out = apply_char_tag_override_rules(self.characters, rules, "in disguise mode")
-        self.assertEqual(out[0]["face_tags"], "1boy, short hair, blonde hair")
-        self.assertEqual(out[1]["face_tags"], "1boy, short hair, blonde hair")
+        eye_replaced = apply_char_tag_override_rules(
+            self.characters,
+            [{
+                "type": "char_eye_replace",
+                "trigger": "hypnosis",
+                "target": "red spiral eyes",
+                "enabled": True,
+            }],
+            "under hypnosis",
+        )
+        self.assertEqual(eye_replaced[0]["face_tags"], "black hair, bob cut")
 
-    def test_eye_replace_fires_when_trigger_present(self):
-        rules = [{
-            "type": "char_eye_replace",
-            "trigger": "hypnosis",
-            "target": "red spiral eyes",
-            "enabled": True,
-        }]
-        out = apply_char_tag_override_rules(self.characters, rules, "under hypnosis")
-        self.assertEqual(out[0]["eye_tags"], "red spiral eyes")
-        self.assertEqual(out[1]["eye_tags"], "red spiral eyes")
-        # face_tags 는 미변경
-        self.assertEqual(out[0]["face_tags"], "black hair, bob cut")
+        face_removed = apply_char_tag_override_rules(
+            self.characters,
+            [{"type": "char_face_remove", "trigger": "faceless", "enabled": True}],
+            "a faceless figure",
+        )
+        self.assertEqual(face_removed[0]["eye_tags"], "blue eyes")
 
-    def test_face_remove_fires_when_trigger_present(self):
-        rules = [{"type": "char_face_remove", "trigger": "faceless", "enabled": True}]
-        out = apply_char_tag_override_rules(self.characters, rules, "a faceless figure")
-        self.assertEqual(out[0]["face_tags"], "")
-        self.assertEqual(out[1]["face_tags"], "")
-        # eye_tags 는 미변경
-        self.assertEqual(out[0]["eye_tags"], "blue eyes")
-
-    def test_no_match_leaves_tags_unchanged(self):
-        rules = [{"type": "char_eye_remove", "trigger": "from behind", "enabled": True}]
-        out = apply_char_tag_override_rules(self.characters, rules, "facing the camera")
-        self.assertEqual(out[0]["eye_tags"], "blue eyes")
-        self.assertEqual(out[1]["eye_tags"], "green eyes")
-
-    def test_empty_trigger_is_skipped(self):
-        rules = [{"type": "char_eye_remove", "trigger": "", "enabled": True}]
-        out = apply_char_tag_override_rules(self.characters, rules, "from behind")
-        self.assertEqual(out[0]["eye_tags"], "blue eyes")
-
-    def test_disabled_rule_is_skipped(self):
-        rules = [{"type": "char_eye_remove", "trigger": "from behind", "enabled": False}]
-        out = apply_char_tag_override_rules(self.characters, rules, "from behind")
-        self.assertEqual(out[0]["eye_tags"], "blue eyes")
+    def test_override_rules_skip_no_match_empty_trigger_and_disabled_rule(self):
+        cases = (
+            ({"type": "char_eye_remove", "trigger": "from behind", "enabled": True}, "facing the camera"),
+            ({"type": "char_eye_remove", "trigger": "", "enabled": True}, "from behind"),
+            ({"type": "char_eye_remove", "trigger": "from behind", "enabled": False}, "from behind"),
+        )
+        for rule, prompt in cases:
+            out = apply_char_tag_override_rules(self.characters, [rule], prompt)
+            self.assertEqual(out[0]["eye_tags"], "blue eyes", rule)
+            self.assertEqual(out[1]["eye_tags"], "green eyes", rule)
 
     def test_original_characters_not_mutated(self):
         # 빌드 직전 변수 상에서만 적용 — 원본 bot.json 캐릭터는 불변이어야 한다.
@@ -1194,94 +1159,48 @@ class ExcludeRuleTest(unittest.TestCase):
     규칙을 잘못 발동시키는 현상을 exclude 로 보호한다.
     """
 
-    def test_remove_rule_exclude_protects_half_closed_eyes(self):
-        rules = [{
-            "type": "remove",
-            "trigger": "closed eyes",
-            "pattern": "* eyes",
-            "remove_trigger": False,
-            "exclude": ["half-closed eyes"],
-            "enabled": True,
-        }]
-        positive = "half-closed eyes, blue eyes"
-        positive_out, _negative, applied = apply_prompt_rules(positive, "", rules)
-
-        self.assertEqual(applied, 0)
-        self.assertIn("half-closed eyes", positive_out)
-        # 규칙 자체가 미발동하여 다른 eye 태그도 보존된다.
-        self.assertIn("blue eyes", positive_out)
-
-    def test_remove_rule_without_exclude_still_removes_half_closed_eyes(self):
-        # exclude 가 없으면 기존 동작(부분매칭 발동)이 유지됨을 확인.
-        rules = [{
+    def test_remove_rule_exclude_covers_list_string_and_absent_forms(self):
+        base_rule = {
             "type": "remove",
             "trigger": "closed eyes",
             "pattern": "* eyes",
             "remove_trigger": False,
             "enabled": True,
-        }]
-        positive = "half-closed eyes"
-        positive_out, _negative, applied = apply_prompt_rules(positive, "", rules)
+        }
+        cases = (
+            (["half-closed eyes"], "half-closed eyes, blue eyes", 0, "blue eyes"),
+            (["half-closed eyes"], "half-closed eyes, closed eyes, blue eyes", 0, "blue eyes"),
+            ("half-closed eyes", "half-closed eyes, blue eyes", 0, "blue eyes"),
+            (None, "half-closed eyes", 1, None),
+        )
+        for exclude, positive, expected_applied, preserved in cases:
+            rule = dict(base_rule)
+            if exclude is not None:
+                rule["exclude"] = exclude
+            output, _negative, applied = apply_prompt_rules(positive, "", [rule])
+            self.assertEqual(applied, expected_applied, exclude)
+            if preserved is None:
+                self.assertNotIn("half-closed eyes", output)
+            else:
+                self.assertIn(preserved, output)
 
-        self.assertEqual(applied, 1)
-        self.assertNotIn("half-closed eyes", positive_out)
-
-    def test_remove_rule_exclude_keeps_genuine_closed_eyes_trigger_active(self):
-        # 예외 단어와 진짜 trigger 가 함께 있으면 exclude 가 우선해 억제한다.
-        rules = [{
-            "type": "remove",
-            "trigger": "closed eyes",
-            "pattern": "* eyes",
-            "remove_trigger": False,
-            "exclude": ["half-closed eyes"],
-            "enabled": True,
-        }]
-        positive = "half-closed eyes, closed eyes, blue eyes"
-        positive_out, _negative, applied = apply_prompt_rules(positive, "", rules)
-
-        self.assertEqual(applied, 0)
-        self.assertIn("blue eyes", positive_out)
-
-    def test_char_eye_replace_exclude_suppresses_activation(self):
+    def test_character_override_exclude_suppresses_only_configured_case(self):
         characters = [{"name": "Alice", "eye_tags": "blue eyes"}]
-        rules = [{
-            "type": "char_eye_replace",
-            "trigger": "closed eyes",
-            "target": "closed eyes",
-            "exclude": ["half-closed eyes"],
-            "enabled": True,
-        }]
-        out = apply_char_tag_override_rules(characters, rules, "half-closed eyes")
-
-        self.assertEqual(out[0]["eye_tags"], "blue eyes")
-
-    def test_char_eye_replace_without_exclude_overrides_on_partial_match(self):
-        characters = [{"name": "Alice", "eye_tags": "blue eyes"}]
-        rules = [{
+        base_rule = {
             "type": "char_eye_replace",
             "trigger": "closed eyes",
             "target": "closed eyes",
             "enabled": True,
-        }]
-        out = apply_char_tag_override_rules(characters, rules, "half-closed eyes")
-
-        self.assertEqual(out[0]["eye_tags"], "closed eyes")
-
-    def test_exclude_as_single_string_term_is_supported(self):
-        # 백엔드는 exclude 문자열을 단일 term으로 취급한다(쉼표 분리는 UI 담당).
-        rules = [{
-            "type": "remove",
-            "trigger": "closed eyes",
-            "pattern": "* eyes",
-            "remove_trigger": False,
-            "exclude": "half-closed eyes",
-            "enabled": True,
-        }]
-        positive = "half-closed eyes, blue eyes"
-        positive_out, _negative, applied = apply_prompt_rules(positive, "", rules)
-
-        self.assertEqual(applied, 0)
-        self.assertIn("blue eyes", positive_out)
+        }
+        protected = dict(base_rule, exclude=["half-closed eyes"])
+        protected_out = apply_char_tag_override_rules(
+            characters, [protected], "half-closed eyes"
+        )
+        unprotected_out = apply_char_tag_override_rules(
+            characters, [base_rule], "half-closed eyes"
+        )
+        self.assertEqual(protected_out[0]["eye_tags"], "blue eyes")
+        self.assertEqual(unprotected_out[0]["eye_tags"], "closed eyes")
 
 
 if __name__ == "__main__":

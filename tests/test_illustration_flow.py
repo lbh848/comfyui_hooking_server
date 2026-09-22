@@ -1,5 +1,6 @@
 import asyncio
 import json
+import re
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -10,15 +11,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import illustration_flow as flow
 
 
-def test_flow_dialog_is_pinned_to_viewport_center():
+def test_flow_dialogs_use_fixed_centering_and_ordered_layers():
     source = (Path(__file__).resolve().parents[1] / "frontend" / "illustration_flow.js").read_text(encoding="utf-8")
-    assert ".if-modal{position:fixed;inset:0;z-index:2147483644;margin:auto;" in source
 
+    def layer(selector: str) -> int:
+        match = re.search(rf"{re.escape(selector)}\{{[^}}]*z-index:(\d+)", source)
+        assert match, selector
+        return int(match.group(1))
 
-def test_flow_stays_below_memo_and_llm_layers():
-    source = (Path(__file__).resolve().parents[1] / "frontend" / "illustration_flow.js").read_text(encoding="utf-8")
-    assert ".if-layer-backdrop{position:fixed;inset:0;z-index:2147483643;" in source
-    assert ".if-detail{z-index:2147483645}" in source
+    assert ".if-modal{position:fixed;inset:0;" in source
+    assert "margin:auto;" in source
+    assert layer(".if-layer-backdrop") < layer(".if-modal")
+    assert layer(".if-modal") < layer(".if-detail") < layer(".if-developer")
     assert "showModal()" not in source
     assert "flowBackdrop.hidden = false; modal.show();" in source
 

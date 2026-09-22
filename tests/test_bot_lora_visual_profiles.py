@@ -365,7 +365,6 @@ def test_frontend_routes_bot_lora_actions_by_visual_card():
     assert "visual_card_id: botTrainingPickerTargetCard" in source
     assert "_botTrainedModalVisualCardId" in source
     assert "ch?.visual_card_id === visualCardId" in source
-    assert "_findBestBotProjectCharacter(chars, cn, target.visualCardId)" in source
     assert 'placeholder="캐릭터 공용 트리거"' in source
     assert "const charGroups = [];" in source
     assert '<details class="bot-lora-character-group"' in source

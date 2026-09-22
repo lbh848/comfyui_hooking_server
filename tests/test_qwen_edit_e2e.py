@@ -253,6 +253,40 @@ async def test_qwen_edit_requires_configured_library_workflow_path():
 
 
 @pytest.mark.asyncio
+async def test_qwen_edit_remote_execution_does_not_require_a_local_model(tmp_path):
+    mode, _source_path, input_dir = _configured_mode(tmp_path)
+    checkpoint = (
+        input_dir.parent
+        / "models"
+        / "checkpoints"
+        / "v19"
+        / "Qwen-Rapid-AIO-NSFW-v19.safetensors"
+    )
+    checkpoint.unlink()
+    staged = mode.stage_request(
+        character="alice",
+        outfit="uniform",
+        expression="smile",
+        filename="source.webp",
+        mask_data=_mask_bytes(),
+        edit_prompt="Replace the jacket while preserving the pose.",
+    )
+
+    async def submit(_workflow, **_kwargs):
+        return _png_bytes(), None
+
+    mode.submit_workflow_func = submit
+    token = qwen_module.CURRENT_COMFY_EXECUTION_TARGET.set("modal")
+    try:
+        result = await mode.execute(staged)
+    finally:
+        qwen_module.CURRENT_COMFY_EXECUTION_TARGET.reset(token)
+        mode.cleanup_staged_request(staged)
+
+    assert result["success"] is True
+
+
+@pytest.mark.asyncio
 async def test_qwen_edit_mocked_comfy_e2e_appends_result_and_metadata(tmp_path):
     mode, source_path, input_dir = _configured_mode(tmp_path)
     original_hash = hashlib.sha256(source_path.read_bytes()).hexdigest()

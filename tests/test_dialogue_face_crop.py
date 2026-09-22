@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from modes import postprocess
 import importlib
+import queue_manager as queue_module
 from queue_manager import QueueItem, QueueManager
 
 
@@ -41,6 +42,55 @@ def test_dialogue_face_crop_path_uses_face_crop_folder_and_suffix(tmp_path, monk
     ))
 
     assert path == tmp_path / "bot" / "sample-bot" / "alice" / "FACE CROP" / "alice_happy_face.png"
+
+
+@pytest.mark.asyncio
+async def test_remote_face_extract_with_empty_bytes_reports_the_real_failure(
+    tmp_path,
+    monkeypatch,
+):
+    comfy_input = tmp_path / "comfy-input"
+    comfy_input.mkdir()
+    source_path = tmp_path / "source.png"
+    source_path.write_bytes(_png_bytes())
+    workflow_path = tmp_path / "face-workflow.json"
+    workflow_path.write_text("{}", encoding="utf-8")
+
+    manager = QueueManager()
+    manager.get_config = lambda: {
+        "comfy_input_dir": str(comfy_input),
+        "face_extract_workflow_source_path": str(workflow_path),
+    }
+
+    async def convert_workflow(_raw, task_key):
+        assert task_key == "face_extract"
+        return {"1": {"inputs": {}, "_meta": {"title": "긍정프롬프트"}}}, None
+
+    async def run_remote(_workflow, **_kwargs):
+        return {"prompt_id": "remote-empty", "images": [{"bytes": None}]}
+
+    manager.convert_workflow_via_endpoint = convert_workflow
+    manager.run_modal_workflow = run_remote
+    monkeypatch.setattr(queue_module, "__file__", str(tmp_path / "queue_manager.py"))
+    item = QueueItem(
+        id="remote-face-empty",
+        type="instance_lora_face_extract",
+        label="remote face empty",
+        params={
+            "id": "sample-lora",
+            "image_type": "external",
+            "image_source": {"path": str(source_path)},
+        },
+    )
+
+    token = queue_module.CURRENT_COMFY_EXECUTION_TARGET.set(
+        queue_module.MODAL_COMFY_TARGET
+    )
+    try:
+        with pytest.raises(ValueError, match="추출 결과 이미지를 찾을 수 없음"):
+            await manager._handle_instance_lora_face_extract(item)
+    finally:
+        queue_module.CURRENT_COMFY_EXECUTION_TARGET.reset(token)
 
 
 @pytest.mark.asyncio

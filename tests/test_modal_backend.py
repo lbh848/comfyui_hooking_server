@@ -961,8 +961,15 @@ def test_selected_plan_requires_existing_bound_workflow(tmp_path: Path) -> None:
     assert plan["size_gib"] == 0.0
     assert plan["workflow_files"][0]["source_path"] == str(workflow.resolve())
 
+    version_case = tmp_path / "version-named"
+    version_case.mkdir()
+    _check_selected_plan_blocks_version_named_workflow_outside_soya_user(
+        version_case
+    )
+    _check_selected_plan_reports_missing_workflow_file()
 
-def test_selected_plan_blocks_version_named_workflow_outside_soya_user(
+
+def _check_selected_plan_blocks_version_named_workflow_outside_soya_user(
     tmp_path: Path,
 ) -> None:
     project_root, _user_root = _modal_test_project(tmp_path)
@@ -977,7 +984,7 @@ def test_selected_plan_blocks_version_named_workflow_outside_soya_user(
         )
 
 
-def test_selected_plan_reports_missing_workflow_file() -> None:
+def _check_selected_plan_reports_missing_workflow_file() -> None:
     with pytest.raises(FileNotFoundError, match="SOYA_USER 워크플로우 파일이 없습니다"):
         selected_install_plan(
             PROJECT_ROOT,
@@ -1016,8 +1023,15 @@ def test_plan_from_soya_user_names_uses_filename_as_id(tmp_path: Path) -> None:
     assert plan["workflow_files"][0]["remote_name"] == "foo.json"
     assert plan["workflow_files"][0]["source_path"].endswith("foo.json")
 
+    traversal_case = tmp_path / "traversal"
+    traversal_case.mkdir()
+    _check_plan_from_soya_user_names_rejects_path_traversal(traversal_case)
+    symlink_case = tmp_path / "symlink"
+    symlink_case.mkdir()
+    _check_plan_from_soya_user_names_blocks_symlink_escape(symlink_case)
 
-def test_plan_from_soya_user_names_rejects_path_traversal(tmp_path: Path) -> None:
+
+def _check_plan_from_soya_user_names_rejects_path_traversal(tmp_path: Path) -> None:
     project_root, user_root = _modal_test_project(tmp_path)
     (user_root / "inside.json").write_text("{}", encoding="utf-8")
     # workflows 루트(=SOYA_USER 밖)에 파일을 두어도 파일명만 받으므로 접근 불가
@@ -1037,7 +1051,7 @@ def test_plan_from_soya_user_names_rejects_path_traversal(tmp_path: Path) -> Non
         plan_from_soya_user_names(project_root, [])
 
 
-def test_plan_from_soya_user_names_blocks_symlink_escape(tmp_path: Path) -> None:
+def _check_plan_from_soya_user_names_blocks_symlink_escape(tmp_path: Path) -> None:
     """SOYA_USER 안의 심볼릭 링크가 밖을 가리키면 거부된다.
 
     _require_user_workflow의 Path.resolve()가 심볼릭 링크 대상을 따라가므로
@@ -1304,6 +1318,24 @@ def test_workflow_assets_ignore_loras_embedded_in_prompt_json(tmp_path: Path) ->
         item["source_path"] for item in assets["lora_files"]
     }
     assert all(len(item["sha256"]) == 64 for item in assets["model_files"] + assets["lora_files"])
+
+    checks = (
+        _check_workflow_assets_resolve_structured_lora_and_image_inputs,
+        _check_workflow_assets_resolve_soya_prompt_parser_cache_inputs,
+        _check_workflow_assets_resolve_direct_soya_cache_inputs,
+        _check_workflow_assets_skip_cache_for_asset_mode_ipa_node,
+        _check_workflow_assets_skip_cache_for_inline_asset_mode_names,
+        _check_workflow_assets_keep_cache_requirement_for_named_characters,
+        _check_workflow_assets_stage_face_embed_reference_directory,
+        _check_workflow_assets_ignore_non_path_reference_strings,
+        _check_workflow_assets_reject_missing_soya_cache_before_remote_call,
+        _check_workflow_assets_reject_invalid_soya_cache_json,
+        _check_workflow_assets_reject_soya_cache_outside_input_root,
+    )
+    for index, check in enumerate(checks):
+        case_dir = tmp_path / f"workflow-assets-{index}"
+        case_dir.mkdir()
+        check(case_dir)
 
 
 def test_modal_install_uploads_local_assets_without_remote_model_installer(
@@ -1767,7 +1799,7 @@ async def test_modal_service_install_plan_uses_current_soya_user_model_reference
     assert commands == [[sys.executable, "-m", "modal_backend.client_cli"]]
 
 
-def test_workflow_assets_resolve_structured_lora_and_image_inputs(tmp_path: Path) -> None:
+def _check_workflow_assets_resolve_structured_lora_and_image_inputs(tmp_path: Path) -> None:
     lora_root = tmp_path / "models" / "loras" / "SOYA_CHAR_LORA"
     lora_file = lora_root / "Alice" / "Lora" / "hero.safetensors"
     lora_file.parent.mkdir(parents=True)
@@ -1790,7 +1822,7 @@ def test_workflow_assets_resolve_structured_lora_and_image_inputs(tmp_path: Path
     assert inputs == [{"source_path": str(image_file), "remote_name": "refs/face.png"}]
 
 
-def test_workflow_assets_resolve_soya_prompt_parser_cache_inputs(tmp_path: Path) -> None:
+def _check_workflow_assets_resolve_soya_prompt_parser_cache_inputs(tmp_path: Path) -> None:
     input_root = tmp_path / "input"
     character_root = input_root / "soya_bot" / "sample_bot" / "alice"
     character_root.mkdir(parents=True)
@@ -1838,7 +1870,7 @@ def test_workflow_assets_resolve_soya_prompt_parser_cache_inputs(tmp_path: Path)
     ]
 
 
-def test_workflow_assets_resolve_direct_soya_cache_inputs(tmp_path: Path) -> None:
+def _check_workflow_assets_resolve_direct_soya_cache_inputs(tmp_path: Path) -> None:
     input_root = tmp_path / "input"
     cache_file = input_root / "soya_bot" / "sample_bot" / "alice" / "cache.pt"
     cache_file.parent.mkdir(parents=True)
@@ -1864,7 +1896,7 @@ def test_workflow_assets_resolve_direct_soya_cache_inputs(tmp_path: Path) -> Non
     ]
 
 
-def test_workflow_assets_skip_cache_for_asset_mode_ipa_node(tmp_path: Path) -> None:
+def _check_workflow_assets_skip_cache_for_asset_mode_ipa_node(tmp_path: Path) -> None:
     """에셋 워크플로우의 자리표시자 캐시 입력이 원격 제출을 막지 않아야 한다.
 
     SoyaIPAPatchMaker_mdsoya 는 character_names 에 asset_mode 가 있으면 캐시 입력을
@@ -1903,7 +1935,7 @@ def test_workflow_assets_skip_cache_for_asset_mode_ipa_node(tmp_path: Path) -> N
     assert resolve_input_files(workflow, {"comfy_input_dir": str(input_root)}) == []
 
 
-def test_workflow_assets_skip_cache_for_inline_asset_mode_names(tmp_path: Path) -> None:
+def _check_workflow_assets_skip_cache_for_inline_asset_mode_names(tmp_path: Path) -> None:
     """character_names 가 위젯 문자열로 직접 들어와도 같은 가드가 걸린다."""
 
     input_root = tmp_path / "input"
@@ -1921,7 +1953,7 @@ def test_workflow_assets_skip_cache_for_inline_asset_mode_names(tmp_path: Path) 
     assert resolve_input_files(workflow, {"comfy_input_dir": str(input_root)}) == []
 
 
-def test_workflow_assets_keep_cache_requirement_for_named_characters(
+def _check_workflow_assets_keep_cache_requirement_for_named_characters(
     tmp_path: Path,
 ) -> None:
     """에셋 가드가 삽화 경로의 필수 캐시 검사를 무력화하면 안 된다."""
@@ -1955,7 +1987,7 @@ def test_workflow_assets_keep_cache_requirement_for_named_characters(
 
 
 
-def test_workflow_assets_stage_face_embed_reference_directory(tmp_path: Path) -> None:
+def _check_workflow_assets_stage_face_embed_reference_directory(tmp_path: Path) -> None:
     """참조 이미지 폴더는 FACE-ID를 꺼도 원격에 올라가야 한다.
 
     SoyaFaceEmbedCache_mdsoya 는 path 폴더를 무조건 연다. build_prompts 가
@@ -1988,7 +2020,7 @@ def test_workflow_assets_stage_face_embed_reference_directory(tmp_path: Path) ->
     ]
 
 
-def test_workflow_assets_ignore_non_path_reference_strings(tmp_path: Path) -> None:
+def _check_workflow_assets_ignore_non_path_reference_strings(tmp_path: Path) -> None:
     """링크를 거슬러 오르다 잡히는 정규식·모드 문자열은 폴더로 오인하지 않는다."""
 
     input_root = tmp_path / "input"
@@ -2007,7 +2039,7 @@ def test_workflow_assets_ignore_non_path_reference_strings(tmp_path: Path) -> No
     assert resolve_input_files(workflow, {"comfy_input_dir": str(input_root)}) == []
 
 
-def test_workflow_assets_reject_missing_soya_cache_before_remote_call(
+def _check_workflow_assets_reject_missing_soya_cache_before_remote_call(
     tmp_path: Path,
 ) -> None:
     input_root = tmp_path / "input"
@@ -2027,7 +2059,7 @@ def test_workflow_assets_reject_missing_soya_cache_before_remote_call(
         resolve_input_files(workflow, {"comfy_input_dir": str(input_root)})
 
 
-def test_workflow_assets_reject_invalid_soya_cache_json(tmp_path: Path) -> None:
+def _check_workflow_assets_reject_invalid_soya_cache_json(tmp_path: Path) -> None:
     input_root = tmp_path / "input"
     input_root.mkdir()
     workflow = {
@@ -2041,7 +2073,7 @@ def test_workflow_assets_reject_invalid_soya_cache_json(tmp_path: Path) -> None:
         resolve_input_files(workflow, {"comfy_input_dir": str(input_root)})
 
 
-def test_workflow_assets_reject_soya_cache_outside_input_root(tmp_path: Path) -> None:
+def _check_workflow_assets_reject_soya_cache_outside_input_root(tmp_path: Path) -> None:
     input_root = tmp_path / "input"
     input_root.mkdir()
     workflow = {
@@ -2173,7 +2205,7 @@ async def test_disabled_modal_status_checks_account_but_skips_billing_and_runtim
 
 
 @pytest.mark.asyncio
-async def test_modal_worker_status_skips_remote_lookup_when_disabled(
+async def test_modal_worker_status_covers_disabled_runtime_and_failure_states(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2194,9 +2226,22 @@ async def test_modal_worker_status_skips_remote_lookup_when_disabled(
     assert worker["gpu_on"] is False
     assert worker["workers"] == 0
 
+    await _check_modal_worker_status_returns_lightweight_runtime_snapshot(
+        tmp_path, monkeypatch
+    )
+    for reason, error_type in (
+        ("app_not_deployed", "NotFoundError"),
+        ("network_unavailable", "ConnectionError"),
+    ):
+        await _check_modal_worker_status_exposes_specific_unavailable_reason(
+            tmp_path, monkeypatch, reason, error_type
+        )
+    await _check_modal_worker_status_does_not_treat_volume_sync_as_deployment(
+        tmp_path, monkeypatch
+    )
 
-@pytest.mark.asyncio
-async def test_modal_worker_status_returns_lightweight_runtime_snapshot(
+
+async def _check_modal_worker_status_returns_lightweight_runtime_snapshot(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2265,15 +2310,7 @@ async def test_modal_worker_status_returns_lightweight_runtime_snapshot(
     assert status["web"]["gpu"] == "RTX-PRO-6000"
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("reason", "error_type"),
-    [
-        ("app_not_deployed", "NotFoundError"),
-        ("network_unavailable", "ConnectionError"),
-    ],
-)
-async def test_modal_worker_status_exposes_specific_unavailable_reason(
+async def _check_modal_worker_status_exposes_specific_unavailable_reason(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     reason: str,
@@ -2301,8 +2338,7 @@ async def test_modal_worker_status_exposes_specific_unavailable_reason(
     assert worker["workers"] == 0
 
 
-@pytest.mark.asyncio
-async def test_modal_worker_status_does_not_treat_volume_sync_as_deployment(
+async def _check_modal_worker_status_does_not_treat_volume_sync_as_deployment(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2334,7 +2370,7 @@ async def test_modal_worker_status_does_not_treat_volume_sync_as_deployment(
 
 
 @pytest.mark.asyncio
-async def test_modal_web_url_returns_public_url_when_deployed(
+async def test_modal_web_url_covers_deployed_and_unavailable_states(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2376,9 +2412,15 @@ async def test_modal_web_url_returns_public_url_when_deployed(
         "app_name": "soya-comfy-worker-web",
     }
 
+    await _check_modal_web_url_reports_app_not_deployed_when_missing(
+        tmp_path, monkeypatch
+    )
+    await _check_modal_web_url_treats_none_url_as_not_deployed(tmp_path, monkeypatch)
+    await _check_modal_web_url_skips_remote_lookup_when_disabled(tmp_path, monkeypatch)
+    await _check_modal_web_url_requires_account_connection(tmp_path, monkeypatch)
 
-@pytest.mark.asyncio
-async def test_modal_web_url_reports_app_not_deployed_when_missing(
+
+async def _check_modal_web_url_reports_app_not_deployed_when_missing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2404,8 +2446,7 @@ async def test_modal_web_url_reports_app_not_deployed_when_missing(
     assert "comfy_web_server not found" in result["error"]
 
 
-@pytest.mark.asyncio
-async def test_modal_web_url_treats_none_url_as_not_deployed(
+async def _check_modal_web_url_treats_none_url_as_not_deployed(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2427,8 +2468,7 @@ async def test_modal_web_url_treats_none_url_as_not_deployed(
     assert result["state"] == "stopped"
 
 
-@pytest.mark.asyncio
-async def test_modal_web_url_skips_remote_lookup_when_disabled(
+async def _check_modal_web_url_skips_remote_lookup_when_disabled(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2446,8 +2486,7 @@ async def test_modal_web_url_skips_remote_lookup_when_disabled(
     assert result["state"] == "stopped"
 
 
-@pytest.mark.asyncio
-async def test_modal_web_url_requires_account_connection(
+async def _check_modal_web_url_requires_account_connection(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2469,10 +2508,10 @@ async def test_modal_web_url_requires_account_connection(
     assert result["state"] == "stopped"
 
 
-@pytest.mark.asyncio
-async def test_modal_client_web_url_action_reads_comfy_web_server_url(
+def test_modal_client_web_url_action_reads_comfy_web_server_url(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     payload = {
         "action": "web_url",
@@ -2505,8 +2544,18 @@ async def test_modal_client_web_url_action_reads_comfy_web_server_url(
         "url": "https://workspace--soya-comfy-worker-comfy-web-server.modal.run"
     }
 
+    monkeypatch.undo()
+    with monkeypatch.context() as isolated:
+        _check_modal_client_web_status_reads_dedicated_web_app_stats(isolated)
+    with monkeypatch.context() as isolated:
+        _check_modal_client_web_server_status_reads_url_and_deployed_app_tasks(isolated)
+    with monkeypatch.context() as isolated:
+        _check_modal_client_web_status_treats_missing_app_as_stopped(
+            isolated, capsys
+        )
 
-def test_modal_client_web_status_reads_dedicated_web_app_stats(
+
+def _check_modal_client_web_status_reads_dedicated_web_app_stats(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     payload = {
@@ -2541,7 +2590,7 @@ def test_modal_client_web_status_reads_dedicated_web_app_stats(
     assert result["runners"] == 1
 
 
-def test_modal_client_web_server_status_reads_url_and_deployed_app_tasks(
+def _check_modal_client_web_server_status_reads_url_and_deployed_app_tasks(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     observed: dict = {}
@@ -2612,7 +2661,7 @@ def test_modal_client_web_server_status_reads_url_and_deployed_app_tasks(
     }
 
 
-def test_modal_client_web_status_treats_missing_app_as_stopped(
+def _check_modal_client_web_status_treats_missing_app_as_stopped(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:

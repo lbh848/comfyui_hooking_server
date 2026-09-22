@@ -216,8 +216,11 @@ def test_video_postprocess_accepts_all_three_upscale_models() -> None:
             {"enabled": True, "scale": 2, "model": "unknown"}
         )
 
+    _check_video_postprocess_global_defaults_include_batch_export_controls()
+    _check_video_postprocess_normalizes_format_specific_encoder_defaults()
 
-def test_video_postprocess_global_defaults_include_batch_export_controls() -> None:
+
+def _check_video_postprocess_global_defaults_include_batch_export_controls() -> None:
     normalized = postprocess_module.normalize_video_postprocess_config(
         {
             "enabled": False,
@@ -239,7 +242,7 @@ def test_video_postprocess_global_defaults_include_batch_export_controls() -> No
     assert normalized["avif_gpu_preset"] == "p4"
 
 
-def test_video_postprocess_normalizes_format_specific_encoder_defaults() -> None:
+def _check_video_postprocess_normalizes_format_specific_encoder_defaults() -> None:
     normalized = postprocess_module.normalize_video_postprocess_config(
         {
             "webp_compression_level": "1",
@@ -398,8 +401,11 @@ def test_h3_candidate_selection_uses_one_ascii_digit() -> None:
         "1"
     ) == (True, "")
 
+    _check_h3_candidate_validator_accepts_any_nonempty_natural_language()
+    _check_h3_candidate_selector_receives_prose_and_never_requests_rewrite()
 
-def test_h3_candidate_validator_accepts_any_nonempty_natural_language() -> None:
+
+def _check_h3_candidate_validator_accepts_any_nonempty_natural_language() -> None:
     free_form = (
         "A complete video idea written as ordinary prose without protocol headings, "
         "shot markers, timestamps, or machine-readable fields."
@@ -448,7 +454,7 @@ def test_h3_candidate_selection_rejects_non_protocol_text(value: str) -> None:
     assert reason
 
 
-def test_h3_candidate_selector_receives_prose_and_never_requests_rewrite() -> None:
+def _check_h3_candidate_selector_receives_prose_and_never_requests_rewrite() -> None:
     candidates = [
         _valid_body().replace("A subject", f"Candidate {index} subject")
         for index in range(1, 4)
@@ -816,8 +822,13 @@ def test_ref_prompt_uses_six_section_body_without_keyframe_alignment() -> None:
     assert validate_h3_prompt(body, "ref2v") == (True, "")
     assert "aligns with" not in compose_h3_prompt(body, "ref2v")
 
+    _check_ref_prompt_accepts_official_multishot_timing_and_duration()
+    _check_ref_prompt_requires_picture_provenance_in_subject_definitions()
+    _check_ref_prompt_rejects_cut_at_or_after_duration()
+    _check_ref_prompt_requires_retention_shots_to_match_label_usage()
 
-def test_ref_prompt_accepts_official_multishot_timing_and_duration() -> None:
+
+def _check_ref_prompt_accepts_official_multishot_timing_and_duration() -> None:
     body = (
         "subject_definitions:\n"
         "<Subject 1> is the courier sourced from <Picture 1>.\n\n"
@@ -862,7 +873,7 @@ def test_ref_prompt_rejects_nonofficial_summary_retention_and_shot1(
     assert reason_fragment in reason
 
 
-def test_ref_prompt_requires_picture_provenance_in_subject_definitions() -> None:
+def _check_ref_prompt_requires_picture_provenance_in_subject_definitions() -> None:
     body = _valid_ref_body().replace(" sourced from <Picture 2>", "", 1).replace(
         "Soft footsteps and room ambience.",
         "Soft footsteps and room ambience from <Picture 2>.",
@@ -903,7 +914,7 @@ def test_ref_prompt_rejects_invalid_followup_shot_protocol(shot_lines: str) -> N
     assert validate_ref2v_prompt_body(body, 1, 8)[0] is False
 
 
-def test_ref_prompt_rejects_cut_at_or_after_duration() -> None:
+def _check_ref_prompt_rejects_cut_at_or_after_duration() -> None:
     body = (
         "subject_definitions:\n"
         "<Subject 1> is sourced from <Picture 1>.\n\n"
@@ -923,7 +934,7 @@ def test_ref_prompt_rejects_cut_at_or_after_duration() -> None:
     assert "종료 시각" in reason
 
 
-def test_ref_prompt_requires_retention_shots_to_match_label_usage() -> None:
+def _check_ref_prompt_requires_retention_shots_to_match_label_usage() -> None:
     body = _valid_ref_body().replace(
         "<Subject 2> (appears in [Shot 1])",
         "<Subject 2> (appears in [Shot 1], [Shot 2])",
@@ -995,8 +1006,13 @@ def test_final_prompt_writer_fully_choreographs_first_last_transition() -> None:
     assert "exact arrival at Picture 2" in combined
     assert "Do not merely say that the scene transitions" in combined
 
+    _check_final_prompt_writer_preserves_state_aspect_and_user_modifiers()
+    _check_final_prompt_writer_preserves_effectors_contacts_and_causal_handoffs()
+    _check_final_prompt_writer_limits_new_props_lighting_and_downstream_events()
+    _check_final_prompt_writer_locks_unrequested_camera_and_avoids_ambient_filler()
 
-def test_final_prompt_writer_preserves_state_aspect_and_user_modifiers() -> None:
+
+def _check_final_prompt_writer_preserves_state_aspect_and_user_modifiers() -> None:
     messages = VideoMode._prompt_messages(
         "i2v",
         "날개를 펼친 채 살짝 후퇴하고, 이후 조명이 점점 어두워진다",
@@ -1018,7 +1034,7 @@ def test_final_prompt_writer_preserves_state_aspect_and_user_modifiers() -> None
     assert "preserving all timing and intensity modifiers" in combined
 
 
-def test_final_prompt_writer_preserves_effectors_contacts_and_causal_handoffs() -> None:
+def _check_final_prompt_writer_preserves_effectors_contacts_and_causal_handoffs() -> None:
     messages = VideoMode._prompt_messages(
         "first_last",
         (
@@ -1067,7 +1083,7 @@ def test_final_prompt_writer_preserves_effectors_contacts_and_causal_handoffs() 
     assert "never leave that interval physically implicit" in i2v_user_content
 
 
-def test_final_prompt_writer_limits_new_props_lighting_and_downstream_events() -> None:
+def _check_final_prompt_writer_limits_new_props_lighting_and_downstream_events() -> None:
     messages = VideoMode._prompt_messages(
         "i2v",
         "소품을 앞으로 향하고 조명이 어두워진 뒤 에너지를 방출한다",
@@ -1086,7 +1102,7 @@ def test_final_prompt_writer_limits_new_props_lighting_and_downstream_events() -
     assert "A discharge does not imply an impact, explosion" in combined
 
 
-def test_final_prompt_writer_locks_unrequested_camera_and_avoids_ambient_filler() -> None:
+def _check_final_prompt_writer_locks_unrequested_camera_and_avoids_ambient_filler() -> None:
     messages = VideoMode._prompt_messages(
         "i2v",
         "인물이 강한 빛을 정면으로 방출한다",
@@ -1736,8 +1752,10 @@ def test_real_h3_i2v_workflow_exposes_positive_transport_node() -> None:
         "[PATH]\nsoya_video\n[PROMPT]\n"
     )
 
+    _check_real_h3_first_last_workflow_exposes_the_same_transport_contract()
 
-def test_real_h3_first_last_workflow_exposes_the_same_transport_contract() -> None:
+
+def _check_real_h3_first_last_workflow_exposes_the_same_transport_contract() -> None:
     workflow_path = (
         ROOT
         / "comfy"
@@ -1951,8 +1969,10 @@ def test_overlay_render_base_restores_recorded_width() -> None:
     # 영상 백업 재사용 시: 기록된 원본 렌더 폭으로 베이스가 복원된다.
     assert base.size == (1024, 1024)
 
+    _check_overlay_render_base_falls_back_to_crop_without_record()
 
-def test_overlay_render_base_falls_back_to_crop_without_record() -> None:
+
+def _check_overlay_render_base_falls_back_to_crop_without_record() -> None:
     crop = Image.new("RGBA", (512, 512), (10, 20, 30, 255))
 
     assert VideoMode._overlay_render_base(crop, {}).size == (512, 512)
@@ -2192,9 +2212,19 @@ async def test_i2v_build_uses_picture_only_and_program_adds_alignment(
     assert result["h3_selected_candidate"] == 2
     assert result["prompt_generation_mode"] == "best_of_three"
 
+    monkeypatch.undo()
+    for index, check in enumerate((
+        _check_i2v_build_defaults_to_one_prompt_without_selector,
+        _check_i2v_build_can_create_visual_context_from_core_positive_prompt,
+    )):
+        case_dir = tmp_path / f"i2v-build-{index}"
+        case_dir.mkdir()
+        with monkeypatch.context() as isolated:
+            await check(case_dir, isolated)
+
 
 @pytest.mark.asyncio
-async def test_i2v_build_defaults_to_one_prompt_without_selector(
+async def _check_i2v_build_defaults_to_one_prompt_without_selector(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -2470,7 +2500,7 @@ async def test_i2v_instruction_translation_failure_uses_original_without_retry(
 
 
 @pytest.mark.asyncio
-async def test_i2v_build_can_create_visual_context_from_core_positive_prompt(
+async def _check_i2v_build_can_create_visual_context_from_core_positive_prompt(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -3117,9 +3147,19 @@ async def test_video_postprocess_commits_verified_pair_and_metadata(
     assert not job_dir.exists()
     assert events[-1] == ("backup_created", {"name": base_name})
 
+    monkeypatch.undo()
+    for index, check in enumerate((
+        _check_video_postprocess_routes_asset_result_to_asset_commit_without_backup_copy,
+        _check_video_postprocess_routes_export_session_result_to_temporary_commit,
+    )):
+        case_dir = tmp_path / f"video-postprocess-{index}"
+        case_dir.mkdir()
+        with monkeypatch.context() as isolated:
+            await check(case_dir, isolated)
+
 
 @pytest.mark.asyncio
-async def test_video_postprocess_routes_asset_result_to_asset_commit_without_backup_copy(
+async def _check_video_postprocess_routes_asset_result_to_asset_commit_without_backup_copy(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -3228,7 +3268,7 @@ async def test_video_postprocess_routes_asset_result_to_asset_commit_without_bac
 
 
 @pytest.mark.asyncio
-async def test_video_postprocess_routes_export_session_result_to_temporary_commit(
+async def _check_video_postprocess_routes_export_session_result_to_temporary_commit(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -3544,18 +3584,30 @@ def _write_backup_image(
 
 
 def test_clean_source_predicate_accepts_raw_preserved_backup(tmp_path: Path) -> None:
-    raw_dir = tmp_path / "_raw"
+    raw_case = tmp_path / "raw"
+    raw_case.mkdir()
+    raw_dir = raw_case / "_raw"
     raw_dir.mkdir()
     Image.new("RGB", (32, 32), "red").save(
         raw_dir / "scene.webp", format="WEBP"
     )
 
     assert (
-        video_module.backup_clean_source_available(str(tmp_path), "scene") is True
+        video_module.backup_clean_source_available(str(raw_case), "scene") is True
     )
 
+    for name, check in (
+        ("dialogue_free", _check_clean_source_predicate_accepts_dialogue_free_backup),
+        ("composed", _check_clean_source_predicate_rejects_composed_backup_without_raw),
+        ("unknown", _check_clean_source_predicate_rejects_backup_without_info_proof),
+    ):
+        case_dir = tmp_path / name
+        case_dir.mkdir()
+        check(case_dir)
+    _check_clean_source_from_info_mirrors_filesystem_predicate()
 
-def test_clean_source_predicate_accepts_dialogue_free_backup(
+
+def _check_clean_source_predicate_accepts_dialogue_free_backup(
     tmp_path: Path,
 ) -> None:
     # key visual: 대사 합성이 적용되지 않아 _raw 없이 메인 이미지만 존재.
@@ -3570,7 +3622,7 @@ def test_clean_source_predicate_accepts_dialogue_free_backup(
     )
 
 
-def test_clean_source_predicate_rejects_composed_backup_without_raw(
+def _check_clean_source_predicate_rejects_composed_backup_without_raw(
     tmp_path: Path,
 ) -> None:
     _write_backup_image(tmp_path, "scene")
@@ -3584,7 +3636,7 @@ def test_clean_source_predicate_rejects_composed_backup_without_raw(
     )
 
 
-def test_clean_source_predicate_rejects_backup_without_info_proof(
+def _check_clean_source_predicate_rejects_backup_without_info_proof(
     tmp_path: Path,
 ) -> None:
     _write_backup_image(tmp_path, "unknown")
@@ -3595,7 +3647,7 @@ def test_clean_source_predicate_rejects_backup_without_info_proof(
     )
 
 
-def test_clean_source_from_info_mirrors_filesystem_predicate() -> None:
+def _check_clean_source_from_info_mirrors_filesystem_predicate() -> None:
     # raw 파일이 있으면 info 내용과 무관하게 항상 클린 원본.
     assert video_module.backup_clean_source_from_info(True, None) is True
     assert (
@@ -3624,26 +3676,37 @@ def test_clean_source_from_info_mirrors_filesystem_predicate() -> None:
 
 
 def test_resolve_reference_prefers_raw_original(tmp_path: Path) -> None:
-    _write_backup_image(tmp_path, "scene", color="blue")
-    raw_dir = tmp_path / "_raw"
+    raw_case = tmp_path / "raw"
+    raw_case.mkdir()
+    _write_backup_image(raw_case, "scene", color="blue")
+    raw_dir = raw_case / "_raw"
     raw_dir.mkdir()
     Image.new("RGB", (32, 32), "red").save(
         raw_dir / "scene.webp", format="WEBP"
     )
-    (tmp_path / "scene_info.json").write_text(
+    (raw_case / "scene_info.json").write_text(
         json.dumps({"speak_text": 'hero: "대사" #smile'}),
         encoding="utf-8",
     )
 
     mode = VideoMode()
-    mode.get_backup_dir = lambda: str(tmp_path)
+    mode.get_backup_dir = lambda: str(raw_case)
 
     resolved = mode._resolve_reference({"kind": "backup", "name": "scene"})
 
     assert resolved["path"] == str(raw_dir / "scene.webp")
 
+    dialogue_free = tmp_path / "dialogue_free"
+    dialogue_free.mkdir()
+    _check_resolve_reference_falls_back_to_main_image_for_dialogue_free_backup(
+        dialogue_free
+    )
+    composed = tmp_path / "composed"
+    composed.mkdir()
+    _check_resolve_reference_rejects_composed_backup_without_raw(composed)
 
-def test_resolve_reference_falls_back_to_main_image_for_dialogue_free_backup(
+
+def _check_resolve_reference_falls_back_to_main_image_for_dialogue_free_backup(
     tmp_path: Path,
 ) -> None:
     # key visual 백업: _raw 없지만 대사 합성도 없으므로 메인 이미지가 원본.
@@ -3668,7 +3731,7 @@ def test_resolve_reference_falls_back_to_main_image_for_dialogue_free_backup(
     )
 
 
-def test_resolve_reference_rejects_composed_backup_without_raw(
+def _check_resolve_reference_rejects_composed_backup_without_raw(
     tmp_path: Path,
 ) -> None:
     _write_backup_image(tmp_path, "scene", color="blue")

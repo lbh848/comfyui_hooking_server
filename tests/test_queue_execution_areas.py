@@ -66,9 +66,12 @@ async def test_illustration_llm_build_overlaps_modal_warm_lease_and_releases_it(
         f"illustration_llm_build:{item.id}",
     )
 
+    await _check_illustration_llm_build_skips_warm_lease_for_local_only_allocation()
+    await _check_illustration_llm_build_releases_warm_lease_after_pipeline_failure()
+
 
 @pytest.mark.asyncio
-async def test_illustration_llm_build_skips_warm_lease_for_local_only_allocation():
+async def _check_illustration_llm_build_skips_warm_lease_for_local_only_allocation():
     manager = QueueManager()
     manager.get_config = lambda: {
         "modal_enabled": True,
@@ -103,7 +106,7 @@ async def test_illustration_llm_build_skips_warm_lease_for_local_only_allocation
 
 
 @pytest.mark.asyncio
-async def test_illustration_llm_build_releases_warm_lease_after_pipeline_failure():
+async def _check_illustration_llm_build_releases_warm_lease_after_pipeline_failure():
     manager = QueueManager()
     manager.get_config = lambda: {
         "modal_enabled": True,
@@ -734,6 +737,14 @@ async def test_multi_char_mask_is_prepared_at_illustration_execution_time(monkey
     assert [event[0] for event in events] == ["mask", "process"]
     assert result == {"success": True, "prompt_id": "prompt-id"}
 
+    monkeypatch.undo()
+    restored_case = tmp_path / "restored-mask"
+    restored_case.mkdir()
+    with monkeypatch.context() as isolated:
+        await _check_multi_char_mask_is_restored_before_regenerate_and_inherited_by_backup(
+            isolated, restored_case
+        )
+
 
 def _regenerate_multi_char_fixture():
     from modes import multi_char_mask
@@ -780,7 +791,7 @@ def _regenerate_multi_char_fixture():
 
 
 @pytest.mark.asyncio
-async def test_multi_char_mask_is_restored_before_regenerate_and_inherited_by_backup(
+async def _check_multi_char_mask_is_restored_before_regenerate_and_inherited_by_backup(
     monkeypatch,
     tmp_path,
 ):
@@ -853,6 +864,8 @@ async def test_multi_char_regenerate_fails_before_generation_without_mask_snapsh
     assert snapshot["enable"] is True
     assert generated is False
 
+    await _check_multi_char_illustration_not_blocked_by_parent_llm_build()
+
 
 async def _run_process_loop_with_fake_pipeline(manager):
     """_process_loop를 돌리되 _run_item_pipeline을 즉시 완료 처리하는 stub로 교체.
@@ -870,7 +883,7 @@ async def _run_process_loop_with_fake_pipeline(manager):
 
 
 @pytest.mark.asyncio
-async def test_multi_char_illustration_not_blocked_by_parent_llm_build():
+async def _check_multi_char_illustration_not_blocked_by_parent_llm_build():
     """회귀: illustration_llm_build(priority 0, processing)가 다중 캐릭터 삽화
     (priority 1, pending)를 블록해 교착에 빠지지 않아야 한다.
 
@@ -1164,6 +1177,11 @@ async def test_character_maker_item_lands_in_llm_lane():
 
     assert manager.get_status()["items"][0]["execution_area"] == "llm"
 
+    await _check_character_maker_illustration_uses_selected_provider_lane_and_keeps_bytes_off_result()
+    await _check_character_maker_handler_calls_revise_and_returns_result()
+    await _check_character_maker_handler_raises_when_revise_raises()
+    await _check_character_maker_handler_errors_when_instance_not_injected()
+
 
 @pytest.mark.asyncio
 async def test_preset_import_classification_runs_in_llm_lane():
@@ -1189,7 +1207,7 @@ async def test_preset_import_classification_runs_in_llm_lane():
 
 
 @pytest.mark.asyncio
-async def test_character_maker_illustration_uses_selected_provider_lane_and_keeps_bytes_off_result():
+async def _check_character_maker_illustration_uses_selected_provider_lane_and_keeps_bytes_off_result():
     manager = QueueManager()
     observed = {}
 
@@ -1222,7 +1240,7 @@ async def test_character_maker_illustration_uses_selected_provider_lane_and_keep
 
 
 @pytest.mark.asyncio
-async def test_character_maker_handler_calls_revise_and_returns_result():
+async def _check_character_maker_handler_calls_revise_and_returns_result():
     manager = QueueManager()
     received = {}
 
@@ -1243,7 +1261,7 @@ async def test_character_maker_handler_calls_revise_and_returns_result():
 
 
 @pytest.mark.asyncio
-async def test_character_maker_handler_raises_when_revise_raises():
+async def _check_character_maker_handler_raises_when_revise_raises():
     manager = QueueManager()
 
     class FakeCM:
@@ -1258,7 +1276,7 @@ async def test_character_maker_handler_raises_when_revise_raises():
 
 
 @pytest.mark.asyncio
-async def test_character_maker_handler_errors_when_instance_not_injected():
+async def _check_character_maker_handler_errors_when_instance_not_injected():
     manager = QueueManager()
     item = _item("character_maker", {"session_id": "s1", "payload": {}})
 

@@ -2,6 +2,7 @@ import base64
 import io
 import json
 import pathlib
+import subprocess
 import sys
 from types import SimpleNamespace
 
@@ -16,6 +17,16 @@ from modes import illustration_quality_inspection as quality
 
 class QueueItem:
     id = "queue-inspection"
+
+
+def test_illustration_flow_javascript_has_valid_syntax() -> None:
+    result = subprocess.run(
+        ["node", "--check", str(ROOT / "frontend" / "illustration_flow.js")],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def _image_bytes(color: tuple[int, int, int], *, size=(2000, 1000)) -> bytes:

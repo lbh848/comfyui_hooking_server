@@ -83,7 +83,7 @@ def _system_font_is(filename: str) -> bool:
 
 
 class BubblePlacementTest(unittest.TestCase):
-    def test_all_low_confidence_faces_use_unanchored_fallback_without_tails(self):
+    def test_unanchored_fallback_covers_unreliable_and_individually_unmatched_faces(self):
         matched = [
             {
                 "segment": {"speaker": "Maria", "type": "speech"},
@@ -109,7 +109,6 @@ class BubblePlacementTest(unittest.TestCase):
                 "no_reliable_face_detection",
             )
 
-    def test_only_individually_unmatched_speaker_uses_unanchored_fallback(self):
         matched = [
             {
                 "segment": {"speaker": "Maria", "type": "speech"},
@@ -210,14 +209,10 @@ class BubblePlacementTest(unittest.TestCase):
         self.assertEqual(_face_detection_candidate_limit(20), 64)
         self.assertEqual(_face_detection_candidate_limit(2, per_character=3), 6)
 
-    def test_nested_low_confidence_giant_face_candidate_is_removed(self):
+    def test_nested_face_filter_covers_duplicates_slivers_and_distinct_faces(self):
         real = {"box": (620, 120, 780, 300), "conf": 0.24}
         giant = {"box": (520, 20, 965, 670), "conf": 0.00004}
         side_face = {"box": (430, 200, 555, 357), "conf": 0.00004}
-        filtered = _filter_nested_face_candidates([real, giant, side_face])
-        self.assertEqual(filtered, [real, side_face])
-
-    def test_nested_same_face_box_surviving_nms_is_removed_by_coverage(self):
         tight = {
             "box": (316.47, 137.37, 461.18, 309.32),
             "conf": 0.000107,
@@ -226,16 +221,6 @@ class BubblePlacementTest(unittest.TestCase):
             "box": (259.00, 23.80, 511.83, 310.33),
             "conf": 0.000069,
         }
-        filtered = _filter_nested_face_candidates([tight, wide])
-        self.assertEqual(filtered, [tight])
-
-    def test_nested_smaller_low_confidence_box_is_also_removed(self):
-        wide = {"box": (580, 125, 740, 335), "conf": 0.002}
-        tight = {"box": (596, 152, 673, 248), "conf": 0.00002}
-        filtered = _filter_nested_face_candidates([wide, tight])
-        self.assertEqual(filtered, [wide])
-
-    def test_similar_size_same_face_duplicate_is_removed(self):
         primary = {
             "box": (198.35, 193.51, 323.90, 321.71),
             "conf": 0.07275,
@@ -244,10 +229,6 @@ class BubblePlacementTest(unittest.TestCase):
             "box": (194.58, 155.55, 309.61, 273.47),
             "conf": 0.0000085,
         }
-        filtered = _filter_nested_face_candidates([primary, duplicate])
-        self.assertEqual(filtered, [primary])
-
-    def test_attached_low_confidence_sliver_is_removed(self):
         face = {
             "box": (570.50, 297.99, 662.08, 402.45),
             "conf": 0.0002218,
@@ -256,26 +237,26 @@ class BubblePlacementTest(unittest.TestCase):
             "box": (548.91, 315.49, 578.75, 388.83),
             "conf": 0.0000108,
         }
-        filtered = _filter_nested_face_candidates([face, sliver])
-        self.assertEqual(filtered, [face])
-
-    def test_independent_narrow_side_face_is_kept(self):
-        primary = {"box": (570, 298, 662, 402), "conf": 0.2}
-        side_face = {"box": (500, 315, 530, 389), "conf": 0.01}
-        filtered = _filter_nested_face_candidates([primary, side_face])
-        self.assertEqual(filtered, [primary, side_face])
-
-    def test_flat_hair_box_does_not_remove_lower_confidence_full_face(self):
         hair = {"box": (282, 80, 369, 138), "conf": 0.00017}
         full_face = {"box": (246, 8, 478, 276), "conf": 0.00012}
-        filtered = _filter_nested_face_candidates([hair, full_face])
-        self.assertEqual(filtered, [hair, full_face])
-
-    def test_partially_overlapping_distinct_faces_are_kept(self):
         left = {"box": (100, 100, 220, 240), "conf": 0.8}
         right = {"box": (180, 100, 300, 240), "conf": 0.7}
-        filtered = _filter_nested_face_candidates([left, right])
-        self.assertEqual(filtered, [left, right])
+        narrow_primary = {"box": (570, 298, 662, 402), "conf": 0.2}
+        narrow_side = {"box": (500, 315, 530, 389), "conf": 0.01}
+        smaller_wide = {"box": (580, 125, 740, 335), "conf": 0.002}
+        smaller_tight = {"box": (596, 152, 673, 248), "conf": 0.00002}
+        cases = (
+            ([real, giant, side_face], [real, side_face]),
+            ([tight, wide], [tight]),
+            ([smaller_wide, smaller_tight], [smaller_wide]),
+            ([primary, duplicate], [primary]),
+            ([face, sliver], [face]),
+            ([narrow_primary, narrow_side], [narrow_primary, narrow_side]),
+            ([hair, full_face], [hair, full_face]),
+            ([left, right], [left, right]),
+        )
+        for candidates, expected in cases:
+            self.assertEqual(_filter_nested_face_candidates(candidates), expected)
 
     def test_face_standardization_pads_without_cropping(self):
         image = Image.new("RGB", (40, 20), "black")
@@ -425,9 +406,10 @@ class BubblePlacementTest(unittest.TestCase):
             "".join(selected.lines).replace(" ", ""), text.replace(" ", "")
         )
 
-    def test_scaled_layout_nearly_doubles_font_and_reflows(self):
+    def test_scaled_layout_covers_scale_limits_and_preview_minimums(self):
+        text = "잠깐… 이게 정말 맞는 선택일까? 조금 더 생각해 보자…"
         selected, _ = choose_scaled_layout(
-            "잠깐… 이게 정말 맞는 선택일까? 조금 더 생각해 보자…",
+            text,
             (1056, 1536),
             font_scale=2.0,
         )
@@ -437,22 +419,18 @@ class BubblePlacementTest(unittest.TestCase):
         self.assertLessEqual(selected.font_size, 64)
         self.assertGreater(len(selected.lines), 3)
 
-    def test_scaled_layout_never_exceeds_user_limit(self):
-        text = "잠깐… 이게 정말 맞는 선택일까? 조금 더 생각해 보자…"
         base, _ = choose_layout(text, (1056, 1536))
         selected, _ = choose_scaled_layout(text, (1056, 1536), font_scale=1.5)
         self.assertLessEqual(selected.font_size, int(base.font_size * 1.5))
 
-    def test_scaled_layout_respects_user_minimum_font_size(self):
         selected, _ = choose_scaled_layout(
-            "잠깐… 이게 정말 맞는 선택일까? 조금 더 생각해 보자…",
+            text,
             (1056, 1536),
             font_scale=1.0,
             min_font_size=44,
         )
         self.assertGreaterEqual(selected.font_size, 44)
 
-    def test_preview_can_force_exact_minimum_font_size(self):
         selected, _ = choose_scaled_layout(
             "최소 크기 확인",
             (1056, 1536),
@@ -462,7 +440,6 @@ class BubblePlacementTest(unittest.TestCase):
         )
         self.assertEqual(selected.font_size, 44)
 
-    def test_preview_uses_canvas_minimum_when_setting_is_automatic(self):
         selected, _ = choose_scaled_layout(
             "자동 최소 크기 확인",
             (1056, 1536),

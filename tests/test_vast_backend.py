@@ -1040,8 +1040,10 @@ bbbbbbbbbbbb: Download complete
     ]
     assert progress["exact_progress_available"] is False
 
+    _check_vast_pull_progress_uses_latest_layer_state_after_retry()
 
-def test_vast_pull_progress_uses_latest_layer_state_after_retry() -> None:
+
+def _check_vast_pull_progress_uses_latest_layer_state_after_retry() -> None:
     states = parse_daemon_pull_states(
         "dddddddddddd: Download complete\n"
         "2026-08-14 15:04:56 UTC: dddddddddddd: Pulling fs layer\n"
@@ -1466,8 +1468,11 @@ def test_vast_actual_transfer_eta_uses_parallel_branch_bottleneck() -> None:
     assert estimate["download_completed_bytes"] == 200
     assert estimate["upload_completed_bytes"] == 200
 
+    _check_vast_actual_transfer_eta_waits_for_each_active_branch()
+    _check_vast_actual_transfer_eta_accepts_branch_without_targets()
 
-def test_vast_actual_transfer_eta_waits_for_each_active_branch() -> None:
+
+def _check_vast_actual_transfer_eta_waits_for_each_active_branch() -> None:
     download = actual_transfer_result(
         key="download",
         label="실제 모델 다운로드",
@@ -1516,7 +1521,7 @@ def test_vast_transfer_totals_route_sources_and_reject_unknown_size() -> None:
     assert totals["upload_total_known"] is True
 
 
-def test_vast_actual_transfer_eta_accepts_branch_without_targets() -> None:
+def _check_vast_actual_transfer_eta_accepts_branch_without_targets() -> None:
     download = actual_transfer_result(
         key="download",
         label="실제 모델 다운로드",

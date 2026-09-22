@@ -26,6 +26,7 @@ class _JsonRequest:
 class _MatchRequest:
     def __init__(self, match_info: dict):
         self.match_info = match_info
+        self.query = {}
 
 
 def _build_two_frame_animation(image_format: str) -> bytes:

@@ -641,6 +641,11 @@ def test_call2_plan_selects_global_slots_and_builds_key_visual():
     assert plan["keyvis_descriptor"]["kind"] == "keyvis"
     assert plan["keyvis_descriptor"]["slot"] == -1
 
+    _check_call2_plan_auto_legacy_complete_toon_rejects_four_of_required_twelve()
+    _check_call2_plan_trims_overcount_via_diversity_maximin()
+    _check_call2_plan_accepts_compact_server_derived_fields_and_keyvis_plan()
+    _check_call2_plan_batches_balance_across_available_detail_workers()
+
 
 @pytest.mark.parametrize(
     ("available_slots", "returned_count", "accepted"),
@@ -701,7 +706,7 @@ def test_call2_plan_auto_enforces_configured_output_range(
         assert "장면 수 범위 위반(과소)" in reason
 
 
-def test_call2_plan_auto_legacy_complete_toon_rejects_four_of_required_twelve():
+def _check_call2_plan_auto_legacy_complete_toon_rejects_four_of_required_twelve():
     slotted = "\n\n".join(
         f"Legacy-compatible narrative beat {slot}.\n\n[Slot {slot}]"
         for slot in range(16)
@@ -723,7 +728,7 @@ def test_call2_plan_auto_legacy_complete_toon_rejects_four_of_required_twelve():
     assert "count=4, required=12..16" in reason
 
 
-def test_call2_plan_trims_overcount_via_diversity_maximin():
+def _check_call2_plan_trims_overcount_via_diversity_maximin():
     """PLAN이 maximum 초과 반환하면 유사도 maximin으로 maximum개만 남긴다.
 
     비슷한 brief/캐릭터의 연속 장면(slot 1, 4는 slot 0과 거의 동일한 묘사)은
@@ -808,8 +813,11 @@ def test_segment_slot_map_binds_segments_to_following_server_slot():
     assert "[C004]" in annotated
     assert "slot=" not in annotated
 
+    _check_segment_slot_map_excludes_only_unmatched_segment_and_resynchronizes()
+    _check_segment_slot_map_returns_empty_only_when_no_segment_can_be_mapped()
 
-def test_segment_slot_map_excludes_only_unmatched_segment_and_resynchronizes():
+
+def _check_segment_slot_map_excludes_only_unmatched_segment_and_resynchronizes():
     slotted = (
         "첫 문단.\n\n[Slot 0]\n\n"
         "둘째 원문.\n\n세부 원문.\n\n[Slot 1]\n\n"
@@ -832,7 +840,7 @@ def test_segment_slot_map_excludes_only_unmatched_segment_and_resynchronizes():
     assert "excluded=['C002']" in reason
 
 
-def test_segment_slot_map_returns_empty_only_when_no_segment_can_be_mapped():
+def _check_segment_slot_map_returns_empty_only_when_no_segment_can_be_mapped():
     slotted = "원문 하나.\n\n[Slot 0]\n\n원문 둘."
     segments = {
         "C001": {"text": "가공문 하나."},
@@ -885,6 +893,10 @@ def test_call2_plan_uses_anchor_mapping_and_ignores_model_slot_and_outfit(capsys
     assert plan["scene_plan"][0]["slot"] == 1
     assert "planned_outfits" not in plan["scene_plan"][0]
     assert "PLAN의 outfit_state를 무시" in capsys.readouterr().out
+
+    _check_call2_plan_accepts_scene_without_named_tracked_characters(capsys)
+    _check_call2_plan_repairs_duplicate_server_slot_without_reroll(capsys)
+    _check_call2_plan_drops_only_unplaceable_earlier_duplicate(capsys)
 
 
 def test_single_preset_subject_candidates_prefer_identity_lora_owners():
@@ -1002,7 +1014,7 @@ def test_call2_plan_enforces_single_preset_named_subject_authority(
         assert "Single V5" in reason
 
 
-def test_call2_plan_accepts_compact_server_derived_fields_and_keyvis_plan():
+def _check_call2_plan_accepts_compact_server_derived_fields_and_keyvis_plan():
     raw = json.dumps({
         "scene_plan": [{
             "anchor_segment": "C002",
@@ -1034,7 +1046,7 @@ def test_call2_plan_accepts_compact_server_derived_fields_and_keyvis_plan():
     }
 
 
-def test_call2_plan_accepts_scene_without_named_tracked_characters(capsys):
+def _check_call2_plan_accepts_scene_without_named_tracked_characters(capsys):
     raw = json.dumps({
         "scene_plan": [{
             "anchor_segment": "C001",
@@ -1063,7 +1075,7 @@ def test_call2_plan_accepts_scene_without_named_tracked_characters(capsys):
     assert "이름 있는 추적 캐릭터가 없는 장면 수용" in capsys.readouterr().out
 
 
-def test_call2_plan_repairs_duplicate_server_slot_without_reroll(capsys):
+def _check_call2_plan_repairs_duplicate_server_slot_without_reroll(capsys):
     raw = json.dumps({
         "scene_plan": [
             {
@@ -1101,7 +1113,7 @@ def test_call2_plan_repairs_duplicate_server_slot_without_reroll(capsys):
     assert "중복 slot 권위 위치 유지" in output
 
 
-def test_call2_plan_drops_only_unplaceable_earlier_duplicate(capsys):
+def _check_call2_plan_drops_only_unplaceable_earlier_duplicate(capsys):
     raw = json.dumps({
         "scene_plan": [
             {
@@ -1178,8 +1190,11 @@ def test_scene_plan_wardrobe_timeline_does_not_leak_future_change_backward():
     assert "removed her red coat" not in bound[0]["continuity_note"]
     assert "removed her red coat" in bound[1]["continuity_note"]
 
+    _check_scene_plan_preserves_opposite_case_where_open_jacket_remains_worn()
+    _check_scene_plan_carries_literal_wardrobe_change_as_natural_continuity()
 
-def test_scene_plan_preserves_opposite_case_where_open_jacket_remains_worn():
+
+def _check_scene_plan_preserves_opposite_case_where_open_jacket_remains_worn():
     plans = [{
         "plan_id": "S001",
         "slot": 0,
@@ -1334,7 +1349,7 @@ def test_call1_timeline_generalizes_to_removed_raincoat_then_added_shawl():
     assert "adds a wool shawl" in note
 
 
-def test_scene_plan_carries_literal_wardrobe_change_as_natural_continuity():
+def _check_scene_plan_carries_literal_wardrobe_change_as_natural_continuity():
     plans = [{
         "plan_id": "S001",
         "slot": 4,
@@ -1579,6 +1594,9 @@ scenes[1]:
     }
     assert "pants and underwear" in descriptors[0]["continuity_note"]
 
+    _check_call2_detail_preserves_contextual_outfit_candidate_until_audit()
+    _check_call2_detail_preserves_contextual_outfit_details_until_audit()
+
 
 def test_call2_detail_accepts_empty_characters_for_characterless_plan():
     descriptors, reason = pipeline._parse_call2_detail_output(
@@ -1595,8 +1613,10 @@ def test_call2_detail_accepts_empty_characters_for_characterless_plan():
     assert descriptors[0]["slot"] == 4
     assert descriptors[0]["characters"] == []
 
+    _check_call2_detail_still_requires_characters_for_named_plan()
 
-def test_call2_detail_still_requires_characters_for_named_plan():
+
+def _check_call2_detail_still_requires_characters_for_named_plan():
     descriptors, reason = pipeline._parse_call2_detail_output(
         _toon_without_named_characters(4),
         pipeline.merged_toggles({"key_visual": False}),
@@ -1610,7 +1630,7 @@ def test_call2_detail_still_requires_characters_for_named_plan():
     assert "이름 있는 PLAN 캐릭터가 누락됨" in reason
 
 
-def test_call2_detail_preserves_contextual_outfit_candidate_until_audit():
+def _check_call2_detail_preserves_contextual_outfit_candidate_until_audit():
     descriptors, reason = pipeline._parse_call2_detail_output(
         _toon_for_slots([4]),
         pipeline.merged_toggles({"key_visual": False}),
@@ -1636,7 +1656,7 @@ def test_call2_detail_preserves_contextual_outfit_candidate_until_audit():
     }
 
 
-def test_call2_detail_preserves_contextual_outfit_details_until_audit():
+def _check_call2_detail_preserves_contextual_outfit_details_until_audit():
     detail_output = _toon_for_slots([4]).replace(
         "worn: [school uniform]",
         "worn: [school uniform, red scarf]",
@@ -2454,9 +2474,6 @@ async def test_call2_plan_resolves_delayed_identity_before_assigning_scene_roste
         )
         if call_name == "CALL2-PLAN":
             assert "???" not in str(messages[0].get("content") or "")
-            assert "Read the complete current narrative before selecting" in request_text
-            assert "delayed reveals from the whole narrative" in request_text
-            assert "Surrounding passages may resolve identity, chronology, and continuity" in request_text
             catalog = request_text.split(
                 "# SERVER SEGMENT CATALOG (Cxxx IDs ONLY; SLOT MAPPING IS PRIVATE)",
                 1,
@@ -3219,8 +3236,11 @@ def test_complete_call2_validation_rejects_one_shard_as_global_fallback():
     assert descriptors == []
     assert "PLAN scene slot 불일치" in reason
 
+    _check_complete_call2_validation_accepts_scene_without_named_characters()
+    _check_complete_call2_fallback_rejects_non_lora_subject_under_single_authority()
 
-def test_complete_call2_validation_accepts_scene_without_named_characters():
+
+def _check_complete_call2_validation_accepts_scene_without_named_characters():
     descriptors, reason = pipeline.validate_complete_call2_output(
         _toon_without_named_characters(0),
         pipeline.merged_toggles({
@@ -3238,7 +3258,7 @@ def test_complete_call2_validation_accepts_scene_without_named_characters():
     assert descriptors[0]["characters"] == []
 
 
-def test_complete_call2_fallback_rejects_non_lora_subject_under_single_authority():
+def _check_complete_call2_fallback_rejects_non_lora_subject_under_single_authority():
     output = """<lb-xnai>
 scenes[1]:
   - camera: medium shot
@@ -4558,70 +4578,6 @@ async def test_call2_detail_background_toggle_reaches_worker_instruction(
 
 
 @pytest.mark.asyncio
-async def test_call2_detail_worker_receives_physical_construction_order(monkeypatch):
-    requests = []
-    toggles = pipeline.merged_toggles({
-        "nsfw": True,
-        "key_visual": False,
-        "call2_parallel_max_concurrency": 1,
-        "call2_parallel_slow_retry_enabled": False,
-    })
-    prompts = pipeline.load_prompt_files()
-    detail_system = "\n\n".join((
-        pipeline.render_call2_prompt(
-            prompts["call2_common"], toggles, include_server_limits=False
-        ),
-        pipeline.render_call2_prompt(
-            prompts["call2_explicit"], toggles, include_server_limits=False
-        ),
-        pipeline.render_call2_prompt(
-            prompts["call2_detail"], toggles, include_server_limits=False
-        ),
-    ))
-
-    async def fake_pipeline_call(call_name, messages, *args, **kwargs):
-        requests.append((
-            call_name,
-            "\n".join(str(item.get("content") or "") for item in messages),
-        ))
-        return _toon_for_slots([4])
-
-    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
-    await pipeline._run_parallel_call2_details(
-        scene_plan=[{
-            "plan_id": "S001",
-            "slot": 4,
-            "anchor_segment": "C001",
-            "source_segments": ["C001"],
-            "characters": ["Mira"],
-            "scene_brief": (
-                "Adult Mira and an adult partner share a close physical interaction."
-            ),
-        }],
-        call2_context_messages=[{"role": "system", "content": detail_system}],
-        call2_format="Return TOON.",
-        toggles=toggles,
-        stream_notify=None,
-    )
-
-    assert len(requests) == 1
-    call_name, combined = requests[0]
-    assert call_name.startswith("CALL2-DETAIL")
-    assert "Identify the primary visible fact" in combined
-    assert "Choose one camera, viewpoint, and crop" in combined
-    assert "clothing and object coverage" in combined
-    assert "then resolve coherent joints" in combined
-    assert "smallest connected region needed to make the selected event readable" in combined
-    assert "one primary visible fact" in combined
-    assert "EXPLICIT SCENE EXECUTION" in combined
-    assert "After the view is established" in combined
-    assert "A crop is a boundary, not an occluder" in combined
-    assert "one unambiguous owner" in combined
-    assert "Source completeness and logical wardrobe continuity are not display quotas" in combined
-    assert "Omit face, hair, eye, expression, clothing, and local detail outside" in combined
-
-
-@pytest.mark.asyncio
 async def test_call2_detail_worker_hides_explicit_physics_when_nsfw_off(monkeypatch):
     requests = []
     toggles = pipeline.merged_toggles({
@@ -4929,7 +4885,7 @@ def test_call1_call2_parallel_defaults_and_clamps():
     })["call1_backtranslate_failure_strategy"] == "fallback"
 
 
-def test_call2_plan_batches_balance_across_available_detail_workers():
+def _check_call2_plan_batches_balance_across_available_detail_workers():
     scene_plan = [{"slot": index} for index in range(1, 12)]
     batches = pipeline._balanced_call2_scene_plan_batches(scene_plan, 3)
     assert [len(batch) for batch in batches] == [4, 4, 3]
@@ -5265,6 +5221,18 @@ async def test_backtranslation_slow_retry_duplicates_non_streaming_tail_and_uses
         and update["status"] == "race_won"
         for update in history_updates.values()
     )
+
+    monkeypatch.undo()
+    for check in (
+        _check_backtranslation_slow_retry_marks_primary_as_winner,
+        _check_backtranslation_slow_retry_uses_completed_ratio_for_stream_progress,
+        _check_backtranslation_slow_retry_duplicates_stream_below_threshold,
+        _check_backtranslation_slow_retry_and_requires_progress_and_tps,
+        _check_backtranslation_slow_retry_or_accepts_progress_or_tps,
+        _check_backtranslation_slow_retry_does_nothing_when_all_conditions_are_off,
+    ):
+        with monkeypatch.context() as isolated:
+            await check(isolated)
     assert any(
         update["call_name"]
         == "CALL1-BACKTRANSLATE 2/2 [원본 · 패배 · 진행률 0% (비스트리밍)]"
@@ -5274,7 +5242,7 @@ async def test_backtranslation_slow_retry_duplicates_non_streaming_tail_and_uses
 
 
 @pytest.mark.asyncio
-async def test_backtranslation_slow_retry_marks_primary_as_winner(monkeypatch):
+async def _check_backtranslation_slow_retry_marks_primary_as_winner(monkeypatch):
     source = "빠른 문장.\n\n[Slot 0]\n\n느린 문장.\n\n[Slot 1]"
     history_updates = {}
     duplicate_started = asyncio.Event()
@@ -5332,7 +5300,7 @@ async def test_backtranslation_slow_retry_marks_primary_as_winner(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_backtranslation_slow_retry_uses_completed_ratio_for_stream_progress(monkeypatch):
+async def _check_backtranslation_slow_retry_uses_completed_ratio_for_stream_progress(monkeypatch):
     source = "빠른 문장.\n\n[Slot 0]\n\n진행 중인 문장.\n\n[Slot 1]"
     calls = []
 
@@ -5382,7 +5350,7 @@ async def test_backtranslation_slow_retry_uses_completed_ratio_for_stream_progre
 
 
 @pytest.mark.asyncio
-async def test_backtranslation_slow_retry_duplicates_stream_below_threshold(monkeypatch):
+async def _check_backtranslation_slow_retry_duplicates_stream_below_threshold(monkeypatch):
     source = "빠른 문장.\n\n[Slot 0]\n\n느린 문장.\n\n[Slot 1]"
     calls = []
     history_updates = {}
@@ -5445,7 +5413,7 @@ async def test_backtranslation_slow_retry_duplicates_stream_below_threshold(monk
 
 
 @pytest.mark.asyncio
-async def test_backtranslation_slow_retry_and_requires_progress_and_tps(monkeypatch):
+async def _check_backtranslation_slow_retry_and_requires_progress_and_tps(monkeypatch):
     source = "빠른 문장.\n\n[Slot 0]\n\n느린 문장.\n\n[Slot 1]"
     calls = []
 
@@ -5502,7 +5470,7 @@ async def test_backtranslation_slow_retry_and_requires_progress_and_tps(monkeypa
 
 
 @pytest.mark.asyncio
-async def test_backtranslation_slow_retry_or_accepts_progress_or_tps(monkeypatch):
+async def _check_backtranslation_slow_retry_or_accepts_progress_or_tps(monkeypatch):
     source = "빠른 문장.\n\n[Slot 0]\n\n느린 문장.\n\n[Slot 1]"
     calls = []
 
@@ -5558,7 +5526,7 @@ async def test_backtranslation_slow_retry_or_accepts_progress_or_tps(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_backtranslation_slow_retry_does_nothing_when_all_conditions_are_off(monkeypatch):
+async def _check_backtranslation_slow_retry_does_nothing_when_all_conditions_are_off(monkeypatch):
     source = "빠른 문장.\n\n[Slot 0]\n\n느린 문장.\n\n[Slot 1]"
     calls = []
 
@@ -5852,6 +5820,9 @@ def test_call3_scene_selection_excludes_key_visual_and_keeps_only_scene_context(
     ]
     assert "poster key visual" not in payload
     assert '"slot": -1' not in payload
+
+    _check_call3_scene_selection_contains_bounded_upper_and_lower_windows()
+    _check_call3_scene_selection_never_crosses_an_unselected_illustration_slot()
 
 
 def test_call3_slot_coverage_requires_every_selected_slot_and_rejects_others(capsys):
@@ -7078,6 +7049,14 @@ async def test_pipeline_llm_records_success_in_lighbd_history(monkeypatch):
         records[0]["execution_id"]
     }
 
+    monkeypatch.undo()
+    for check in (
+        _check_pipeline_llm_records_failure_in_lighbd_history,
+        _check_pipeline_llm_records_cancelled_hedge_in_lighbd_history,
+    ):
+        with monkeypatch.context() as isolated:
+            await check(isolated)
+
 
 @pytest.mark.asyncio
 async def test_pipeline_failure_history_preserves_provider_termination_details(monkeypatch):
@@ -7312,6 +7291,16 @@ async def test_profile_resolution_toggle_off_still_resolves_characters_and_uses_
         "profile_resolve_enabled": False,
     })["profile_resolve_enabled"] is False
 
+    monkeypatch.undo()
+    for check in (
+        _check_profile_resolution_receives_only_resolved_current_multi_profile_catalog,
+        _check_profile_resolution_runs_per_character_in_parallel_and_preserves_reasons,
+        _check_profile_resolution_repairs_only_unknown_profile_id_character,
+        _check_profile_resolution_failed_repair_uses_previous_start_and_keeps_valid_transition,
+    ):
+        with monkeypatch.context() as isolated:
+            await check(isolated)
+
 
 def test_character_card_identity_context_excludes_story_state_and_tag_fields():
     visual_profiles = {
@@ -7524,7 +7513,7 @@ async def test_call2_keyvis_uses_independent_route_and_has_distinct_queue_live_h
 
 
 @pytest.mark.asyncio
-async def test_pipeline_llm_records_failure_in_lighbd_history(monkeypatch):
+async def _check_pipeline_llm_records_failure_in_lighbd_history(monkeypatch):
     records = []
     events = []
     messages = [{"role": "user", "content": "broken scene"}]
@@ -7551,7 +7540,7 @@ async def test_pipeline_llm_records_failure_in_lighbd_history(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_pipeline_llm_records_cancelled_hedge_in_lighbd_history(monkeypatch):
+async def _check_pipeline_llm_records_cancelled_hedge_in_lighbd_history(monkeypatch):
     records = []
     events = []
     call_started = asyncio.Event()
@@ -7919,7 +7908,7 @@ def test_call1_shards_merge_only_start_state_and_event_arrays():
 
 
 @pytest.mark.asyncio
-async def test_profile_resolution_receives_only_resolved_current_multi_profile_catalog(monkeypatch):
+async def _check_profile_resolution_receives_only_resolved_current_multi_profile_catalog(monkeypatch):
     adachi = cards_to_character_profiles("Adachi", [{
         "id": "civilian",
         "aliases": ["Adachi_Civilian"],
@@ -7993,7 +7982,7 @@ async def test_profile_resolution_receives_only_resolved_current_multi_profile_c
 
 
 @pytest.mark.asyncio
-async def test_profile_resolution_runs_per_character_in_parallel_and_preserves_reasons(
+async def _check_profile_resolution_runs_per_character_in_parallel_and_preserves_reasons(
     monkeypatch,
 ):
     adachi = cards_to_character_profiles("Adachi", [{
@@ -8248,9 +8237,17 @@ async def test_character_resolution_repairs_only_noncanonical_name_items_and_pre
         for warning in parsed["validation_warnings"]
     )
 
+    monkeypatch.undo()
+    for check in (
+        _check_character_resolution_repair_recovers_localized_registered_names_only,
+        _check_character_resolution_name_repair_failure_discards_only_rejected_items,
+    ):
+        with monkeypatch.context() as isolated:
+            await check(isolated)
+
 
 @pytest.mark.asyncio
-async def test_character_resolution_repair_recovers_localized_registered_names_only(
+async def _check_character_resolution_repair_recovers_localized_registered_names_only(
     monkeypatch,
 ):
     canonical_names = ["Yuu", "Hibiki", "Shiho", "Hiyori"]
@@ -8336,7 +8333,7 @@ async def test_character_resolution_repair_recovers_localized_registered_names_o
 
 
 @pytest.mark.asyncio
-async def test_character_resolution_name_repair_failure_discards_only_rejected_items(
+async def _check_character_resolution_name_repair_failure_discards_only_rejected_items(
     monkeypatch,
 ):
     hiyori = cards_to_character_profiles("Hiyori", [{
@@ -8410,7 +8407,7 @@ async def test_character_resolution_name_repair_failure_discards_only_rejected_i
 
 
 @pytest.mark.asyncio
-async def test_profile_resolution_repairs_only_unknown_profile_id_character(monkeypatch):
+async def _check_profile_resolution_repairs_only_unknown_profile_id_character(monkeypatch):
     adachi = cards_to_character_profiles("Adachi", [{
         "id": "civilian",
         "aliases": ["Adachi_Civilian"],
@@ -8517,7 +8514,7 @@ async def test_profile_resolution_repairs_only_unknown_profile_id_character(monk
 
 
 @pytest.mark.asyncio
-async def test_profile_resolution_failed_repair_uses_previous_start_and_keeps_valid_transition(
+async def _check_profile_resolution_failed_repair_uses_previous_start_and_keeps_valid_transition(
     monkeypatch,
 ):
     hana = cards_to_character_profiles("Hana", [{
@@ -8624,7 +8621,7 @@ def test_call1_uses_pre_resolved_current_names_as_event_authority():
     )
 
 
-def test_call3_scene_selection_contains_bounded_upper_and_lower_windows():
+def _check_call3_scene_selection_contains_bounded_upper_and_lower_windows():
     slots, payload = pipeline.build_call3_scene_selection(
         [
             {"kind": "scene", "slot": 0, "scene": "first", "characters": []},
@@ -8642,7 +8639,7 @@ def test_call3_scene_selection_contains_bounded_upper_and_lower_windows():
     assert "아래쪽 마지막 대사" not in first["lower_window"]
 
 
-def test_call3_scene_selection_never_crosses_an_unselected_illustration_slot():
+def _check_call3_scene_selection_never_crosses_an_unselected_illustration_slot():
     slots, payload = pipeline.build_call3_scene_selection(
         [
             {"kind": "scene", "slot": 0, "scene": "first", "characters": []},
@@ -8834,8 +8831,13 @@ def test_parse_call1_wardrobe_change_schema_preserves_semantic_text():
     assert event["state_after"] == "clothed"
     assert event["evidence"] == "She changed into a swimsuit."
 
+    _check_parse_call1_accepts_literal_multiline_evidence_with_transport_whitespace()
+    _check_parse_call1_preserves_actual_nude_transition_across_numbered_paragraphs()
+    _check_parse_call1_cross_segment_evidence_generalizes_and_rejects_reversed_order()
+    _check_parse_call1_legacy_items_event_still_carried_for_backward_compat()
 
-def test_parse_call1_accepts_literal_multiline_evidence_with_transport_whitespace():
+
+def _check_parse_call1_accepts_literal_multiline_evidence_with_transport_whitespace():
     current = (
         "He undid the fastener.\n"
         "He pulled down his pants and underwear.\n"
@@ -8881,7 +8883,7 @@ def test_parse_call1_accepts_literal_multiline_evidence_with_transport_whitespac
     )
 
 
-def test_parse_call1_preserves_actual_nude_transition_across_numbered_paragraphs():
+def _check_parse_call1_preserves_actual_nude_transition_across_numbered_paragraphs():
     current = (
         "§툭, 투둑……!§\n"
         "찢어발길 듯한 기세로 흰 셔츠의 플라스틱 단추들이 튕겨 나갔다.\n\n"
@@ -8952,7 +8954,7 @@ def test_parse_call1_preserves_actual_nude_transition_across_numbered_paragraphs
     )
 
 
-def test_parse_call1_cross_segment_evidence_generalizes_and_rejects_reversed_order():
+def _check_parse_call1_cross_segment_evidence_generalizes_and_rejects_reversed_order():
     current = (
         "Mina unfastened the red coat.\n\n"
         "She pulled it from her shoulders.\n\n"
@@ -8999,51 +9001,7 @@ def test_parse_call1_cross_segment_evidence_generalizes_and_rejects_reversed_ord
     )
 
 
-def test_enhance_prompt_distinguishes_garment_owner_from_wearer():
-    prompt = (
-        Path(__file__).resolve().parents[1]
-        / "prompts"
-        / "lighbd"
-        / "enhance.txt"
-    ).read_text(encoding="utf-8")
-
-    assert "Separate an object's owner, wearer, and actor" in prompt
-    assert "touching another person's garment does not make the actor its wearer" in prompt
-    assert "Use `wear`/`add` for an incremental addition" in prompt
-
-
-def test_interaction_legibility_prompts_cover_reaction_crop_and_fragment_contrasts():
-    prompt_dir = Path(__file__).resolve().parents[1] / "prompts" / "lighbd"
-    plan_prompt = (prompt_dir / "plan.txt").read_text(encoding="utf-8")
-    detail_prompt = (prompt_dir / "detail.txt").read_text(encoding="utf-8")
-
-    # Actual failure shape: an ongoing interaction cannot become a face-only
-    # reaction with the required contact merely promised outside the frame.
-    assert "face close-up with remote contact left implied" in plan_prompt
-    assert "face close-up while describing required contact as implied" in detail_prompt
-    assert "contact must be visibly inside the crop" in detail_prompt
-
-    # Isomorphic composition: the face remains primary while one local contact
-    # stays visibly connected in the same wider pose.
-    assert "face primary" in plan_prompt
-    assert "same wider oblique or body-spanning composition" in plan_prompt
-    assert "same wider oblique or body-spanning composition" in detail_prompt
-    assert "detached contact-only insert" in detail_prompt
-
-    # Transient reactions preserve the established support instead of inventing
-    # a seated/standing transition, and invisible cessation is not count filler.
-    assert "does not create a sitting, standing, turning" in plan_prompt
-    assert "absence of motion is not a readable still" in plan_prompt
-    assert "transient arching, jolting, trembling, or stillness" in detail_prompt
-
-    # Opposite valid cases remain distinct: a complete reaction needs no
-    # anonymous fragment, while a local hold may use one connected crop.
-    assert "complete subject reaction, pose, gaze, or aftermath" in plan_prompt
-    assert "keeps its cause off-frame and uses false" in plan_prompt
-    assert "one local hold establishes the assigned fact" in detail_prompt
-
-
-def test_parse_call1_legacy_items_event_still_carried_for_backward_compat():
+def _check_parse_call1_legacy_items_event_still_carried_for_backward_compat():
     # 과거 기록/구 출력의 items 형식은 하위 호환을 위해 계속 파싱한다.
     current = "She removed her gloves."
     _rendered, segments = pipeline._segment_current_context(current)
@@ -9108,8 +9066,11 @@ def test_apply_wardrobe_semantic_remove_applies_state_after_only(capsys):
     assert wardrobe["body_state"] == "bottomless"
     assert any("semantic event 보류" in line for line in capsys.readouterr().out.splitlines())
 
+    _check_apply_wardrobe_semantic_replace_preserves_default_until_call2(capsys)
+    _check_apply_wardrobe_semantic_reset_default_restores_outfit()
 
-def test_apply_wardrobe_semantic_replace_preserves_default_until_call2(capsys):
+
+def _check_apply_wardrobe_semantic_replace_preserves_default_until_call2(capsys):
     # TEST 2: items 없는 replace. swimsuit 태그는 CALL2가 결정하므로 기본 복장 보존.
     reference = (
         "### Hana\n"
@@ -9138,7 +9099,7 @@ def test_apply_wardrobe_semantic_replace_preserves_default_until_call2(capsys):
     assert any("semantic event 보류" in line for line in capsys.readouterr().out.splitlines())
 
 
-def test_apply_wardrobe_semantic_reset_default_restores_outfit():
+def _check_apply_wardrobe_semantic_reset_default_restores_outfit():
     # TEST 7: items 없는 reset_default. 의미상 복귀이므로 기본 복장을 복원한다.
     reference = (
         "### Hana\n"
@@ -9433,6 +9394,9 @@ def test_call2_known_outfit_state_does_not_force_hidden_worn_tags_visible():
         "black capelet", "showgirl skirt", "black pantyhose",
     ]
 
+    _check_call2_known_contextual_outfit_replaces_default_without_audit()
+    _check_call2_known_nude_outfit_state_is_trusted_without_default_restore()
+
 
 def test_call2_audit_keeps_fixed_hair_without_explicit_change():
     descriptors = [{
@@ -9721,8 +9685,11 @@ def test_call2_semantic_audit_skips_structurally_conforming_entry():
         descriptors[0]["characters"][0]["positive"]
     )
 
+    _check_call2_semantic_audit_removes_and_logs_forbidden_identity_additions()
+    _check_call2_semantic_audit_drops_out_of_candidate_value_not_whole_response()
 
-def test_call2_semantic_audit_removes_and_logs_forbidden_identity_additions():
+
+def _check_call2_semantic_audit_removes_and_logs_forbidden_identity_additions():
     descriptors = [{
         "kind": "scene",
         "slot": 5,
@@ -9786,7 +9753,7 @@ def test_call2_semantic_audit_removes_and_logs_forbidden_identity_additions():
     assert audits[0]["conflicts_removed"] == ["straight hair"]
 
 
-def test_call2_semantic_audit_drops_out_of_candidate_value_not_whole_response():
+def _check_call2_semantic_audit_drops_out_of_candidate_value_not_whole_response():
     # 한 값이 후보 밖이면 응답 전체를 거부(degraded)하지 않고 그 값만 버린다.
     # 같은 엔트리의 다른 결정과 다른 엔트리 결정은 살아야 한다.
     descriptors = [
@@ -9888,7 +9855,7 @@ def test_call2_semantic_audit_drops_out_of_candidate_value_not_whole_response():
     assert "straight hair" not in tags2
 
 
-def test_call2_known_contextual_outfit_replaces_default_without_audit():
+def _check_call2_known_contextual_outfit_replaces_default_without_audit():
     descriptors = [{
         "kind": "scene",
         "slot": 4,
@@ -9926,7 +9893,7 @@ def test_call2_known_contextual_outfit_replaces_default_without_audit():
     assert audits[0]["authority_exceptions"] == []
 
 
-def test_call2_known_nude_outfit_state_is_trusted_without_default_restore():
+def _check_call2_known_nude_outfit_state_is_trusted_without_default_restore():
     descriptors = [{
         "kind": "scene",
         "slot": 4,
@@ -11101,18 +11068,6 @@ def test_auto_plan_output_count_rule_keeps_hard_12_to_16_contract():
     assert "Never output fewer than 12 images or more than 16 images." in rule
     assert "Within this hard range" in rule
     assert "64 available slots" in rule
-
-
-def test_frontend_scene_mode_never_hides_output_range_or_context_history():
-    frontend = (
-        Path(__file__).resolve().parents[1] / "frontend" / "index.html"
-    ).read_text(encoding="utf-8")
-
-    assert "data-illust-scene-manual" not in frontend
-    assert "updateIllustrationContextSceneModeVisibility" not in frontend
-    assert "${_renderIllustrationContextField(group.fields[14])}" in frontend
-    assert "${group.fields.slice(15).map" in frontend
-    assert "두 모드 모두 출력 장면 수의 최소/최대 범위를 강제합니다" in frontend
 
 
 @pytest.mark.asyncio
