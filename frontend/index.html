@@ -52584,10 +52584,13 @@
                 return;
             }
 
-            const previewSlot = { ...atFillSlot, expression: targets[0] };
+            const previewSlot = {
+                ...atFillSlot,
+                expression: targets[0],
+                asset_workflow_type: normalizeAssetWorkflowType(currentConfig?.asset_workflow_type),
+            };
             targetLabel.textContent = `${atFillMatchTypeLabel(previewMatchType)} 기준 · ${targets[0]} (${targets.length}개 대상)`;
-            positive.innerHTML = previewBatchSlotPrompt(previewSlot);
-            negative.textContent = previewBatchSlotNegativePrompt(previewSlot);
+            renderAssetPromptPreview(previewSlot, positive, negative);
         }
 
         function atUpdateFillAvailability() {
@@ -52699,9 +52702,13 @@
             atSetFillProgress(matchType, `${targets.length}개 기본 이미지를 큐에 추가하는 중…`);
 
             for (const expression of targets) {
-                const slot = { ...fillSlotSnapshot, expression };
+                const slot = {
+                    ...fillSlotSnapshot,
+                    expression,
+                    asset_workflow_type: normalizeAssetWorkflowType(currentConfig?.asset_workflow_type),
+                };
                 try {
-                    const promptData = await buildBatchSlotPromptData(slot);
+                    const promptData = await buildAssetPromptData(slot);
                     if (!promptData) throw new Error('프롬프트 생성 결과가 비어있습니다');
                     const payload = {
                         character: slot.character,
@@ -60008,7 +60015,7 @@
             const naturalLanguage = source === 'llm'
                 ? (cmSession?.llm_natural_language ?? cmSession?.natural_language ?? '')
                 : (cmSession?.natural_language ?? '');
-            const promptData = await buildBatchSlotPromptData(
+            const promptData = await buildAssetPromptData(
                 cmBuildGenerationSlot(fields, naturalLanguage)
             );
             if (!promptData?.positive) {
@@ -87409,259 +87416,79 @@
             return parts.join(', ');
         }
 
-        // ─── 프롬프트 빌드 (미리보기 + 전송 공통) ───────────────
+        // ─── 단일 에셋 UI 상태를 공통 프롬프트 슬롯으로 변환 ──────────
         async function buildAssetPromptFromUI() {
             if (!assetTags) return null;
+            const capabilities = getAssetWorkflowCapabilities();
+            const hasAnima = capabilities.anima;
             const app = getAssetSelectValue('asset-appearance-select');
             const outfit = getAssetSelectValue('asset-outfit-select');
             const expr = getAssetSelectValue('asset-expression-select');
-            const capabilities = getAssetWorkflowCapabilities();
-            const hasAnima = capabilities.anima;
-            const hasIlxl = capabilities.ilxl;
-            const isDual = capabilities.dual;
-            const refEnabled = capabilities.ipadapter && document.getElementById('asset-ref-toggle').checked;
-            const refStrength = parseFloat(document.getElementById('asset-ref-strength').value) || 0.55;
-            const styleRefEnabled = capabilities.ipadapter && document.getElementById('asset-style-ref-toggle').checked;
-            const styleRefStrength = parseFloat(document.getElementById('asset-style-ref-strength').value) || 0.55;
-            const loraEnabled = document.getElementById('asset-lora-toggle').checked;
-            const poseEnabled = capabilities.pose && document.getElementById('asset-pose-toggle').checked;
-            const sdxlFdActivate = hasIlxl && document.getElementById('asset-sdxl-fd').checked;
-            const sdxlHdActivate = hasIlxl && document.getElementById('asset-sdxl-hd').checked;
-            const sdxlEdActivate = hasIlxl && document.getElementById('asset-sdxl-ed').checked;
-            const animaFdActivate = hasAnima && document.getElementById('asset-anima-fd').checked;
-            const animaHdActivate = hasAnima && document.getElementById('asset-anima-hd').checked;
-            const animaEdActivate = hasAnima && document.getElementById('asset-anima-ed').checked;
-            const hrfSdxl = hasIlxl && document.getElementById('asset-hrf-sdxl').checked;
-            const hrfAnima = hasAnima && document.getElementById('asset-hrf-anima').checked;
-            const hrfSize = parseFloat(document.getElementById('asset-hrf-size').value) || 2.0;
-            const hrfRestoreSize = document.getElementById('asset-hrf-restore-size').checked;
-            const hrfControlNet = document.getElementById('asset-hrf-control-net').checked;
-            const imgW = parseInt(document.getElementById('asset-img-w').value) || 700;
-            const imgH = parseInt(document.getElementById('asset-img-h').value) || 1024;
-
-            const qTags = (assetTags.quality || []).filter(t => t.trim());
-            const cTags = (assetTags.composition || []).filter(t => t.trim());
             const artistName = getAssetSelectValue('asset-artist-preset-select') || '';
-            const artistTags = artistName ? (assetTags.artist_presets?.[artistName] || []).filter(t => t.trim()) : [];
-            const appTags = app ? (assetTags.appearances?.[app] || []).filter(t => t.trim()) : [];
-            const exprTags = expr ? (assetTags.expressions?.[expr] || []).filter(t => t.trim()) : [];
-            const outfitTags = outfit ? (assetTags.outfits?.[outfit] || []).filter(t => t.trim()) : [];
-            const naturalLanguage = document.getElementById('asset-natural-language-text')?.value?.trim() || '';
-            const styleLoraEnabled = document.getElementById('asset-style-lora-toggle')?.checked || false;
-            // 일반 LoRA + 스타일(그림체) LoRA 트리거를 BASE별로 병합 — 스타일 토글이 ON일 때만 스타일 포함.
-            // (스타일 LoRA 트리거도 일반 LoRA와 동일 위치에 주입)
-            const triggerSrc = filterAssetLorasForCapabilities(
-                [...(loraEnabled ? assetLoraList : []), ...(styleLoraEnabled ? styleLoraList : [])],
-                capabilities,
-            );
-            const loraTriggerWords = triggerSrc.map(l => l.trigger).filter(t => t && t.trim()).join(', ');
-            const animaLoraTriggerWords = triggerSrc.filter(l => (l.BASE || 'anima') === 'anima').map(l => l.trigger).filter(t => t && t.trim()).join(', ');
-            const sdxlLoraTriggerWords = triggerSrc.filter(l => l.BASE === 'sdxl').map(l => l.trigger).filter(t => t && t.trim()).join(', ');
             const animaArtistName = getAssetSelectValue('anima-artist-preset-select') || '';
-            const animaArtistTags = animaArtistName ? (assetTags.artist_presets?.[animaArtistName] || []).filter(t => t.trim()) : [];
-            const animaQTags = (assetTags.anima_quality || []).filter(t => t.trim());
-            const animaNTags = (assetTags.anima_negative || []).filter(t => t.trim());
-            const cnTags = (assetTags.character_negative || []).filter(t => t.trim());
-            const nTags = (assetTags.negative || []).filter(t => t.trim());
-
-            let positive = '';
-            let positiveColored = '';
-
-            if (hasAnima) {
-                const animaQuality = animaQTags;
-                const animaArtist = animaArtistTags;
-                const sdxlQuality = qTags;
-                const sdxlArtist = artistTags;
-                const section1Rest = [
-                    ...(animaLoraTriggerWords ? [animaLoraTriggerWords] : []),
-                    ...animaArtistTags, ...animaQTags,
-                    ...cTags, ...appTags, ...exprTags, ...outfitTags,
-                    ...(naturalLanguage ? [naturalLanguage] : []),
-                ].join(', ');
-                const section2Rest = [
-                    ...(sdxlLoraTriggerWords ? [sdxlLoraTriggerWords] : []),
-                    ...artistTags, ...qTags,
-                    ...cTags, ...appTags, ...exprTags, ...outfitTags,
-                ].join(', ');
-                positive = '[ANIMA_QUALITY]\n' + animaQuality.join(', ')
-                    + '\n[ANIMA_ARTIST]\n' + animaArtist.join(', ')
-                    + '\n[ANIMA]\n' + section1Rest
-                    + (isDual ? '\n[SDXL_QUALITY]\n' + sdxlQuality.join(', ')
-                        + '\n[SDXL_ARTIST]\n' + sdxlArtist.join(', ')
-                        + '\n[SDXL]\n' + section2Rest : '')
-                    + '\n[CHAR_LIST]\nasset_mode';
-
-                const animaQualityData = [{ key: 'anima_quality', tags: animaQuality }];
-                const animaArtistData = [{ key: 'anima_artist', tags: animaArtist }];
-                const section1RestData = [
-                    { key: 'anima_lora',    tags: animaLoraTriggerWords ? [animaLoraTriggerWords] : [] },
-                    { key: 'anima_artist',  tags: animaArtistTags },
-                    { key: 'anima_quality', tags: animaQTags },
-                    { key: 'composition',  tags: cTags },
-                    { key: 'appearance',   tags: appTags },
-                    { key: 'expression',   tags: exprTags },
-                    { key: 'outfit',       tags: outfitTags },
-                    { key: 'nl',           tags: naturalLanguage ? [naturalLanguage] : [] },
-                ];
-                const sdxlQualityData = [{ key: 'sdxl_quality', tags: sdxlQuality }];
-                const sdxlArtistData = [{ key: 'sdxl_artist', tags: sdxlArtist }];
-                const section2RestData = [
-                    { key: 'sdxl_lora',     tags: sdxlLoraTriggerWords ? [sdxlLoraTriggerWords] : [] },
-                    { key: 'sdxl_artist',   tags: artistTags },
-                    { key: 'sdxl_quality', tags: qTags },
-                    { key: 'composition',  tags: cTags },
-                    { key: 'appearance',   tags: appTags },
-                    { key: 'expression',   tags: exprTags },
-                    { key: 'outfit',       tags: outfitTags },
-                ];
-                positiveColored = '<span style="color:#0ff;font-weight:bold;">[ANIMA_QUALITY]</span>\n' + renderColoredPrompt(animaQualityData)
-                    + '\n<span style="color:#0ff;font-weight:bold;">[ANIMA_ARTIST]</span>\n' + renderColoredPrompt(animaArtistData)
-                    + '\n<span style="color:#0ff;font-weight:bold;">[ANIMA]</span>\n' + renderColoredPrompt(section1RestData)
-                    + (isDual ? '\n<span style="color:#0ff;font-weight:bold;">[SDXL_QUALITY]</span>\n' + renderColoredPrompt(sdxlQualityData)
-                        + '\n<span style="color:#0ff;font-weight:bold;">[SDXL_ARTIST]</span>\n' + renderColoredPrompt(sdxlArtistData)
-                        + '\n<span style="color:#ff0;font-weight:bold;">[SDXL]</span>\n' + renderColoredPrompt(section2RestData) : '')
-                    + '\n<span style="color:#0ff;font-weight:bold;">[CHAR_LIST]</span>\n<span class="prompt-cat-composition">asset_mode</span>';
-            } else {
-                positive = [
-                    ...(loraTriggerWords ? [loraTriggerWords] : []),
-                    ...artistTags, ...qTags, ...cTags, ...appTags, ...exprTags, ...outfitTags,
-                    ...(naturalLanguage ? [naturalLanguage] : []),
-                ].join(', ');
-
-                const categoryData = [
-                    { key: 'lora',        tags: loraTriggerWords ? [loraTriggerWords] : [] },
-                    { key: 'artist',      tags: artistTags },
-                    { key: 'quality',     tags: qTags },
-                    { key: 'composition', tags: cTags },
-                    { key: 'appearance',  tags: appTags },
-                    { key: 'expression',  tags: exprTags },
-                    { key: 'outfit',      tags: outfitTags },
-                    { key: 'nl',          tags: naturalLanguage ? [naturalLanguage] : [] },
-                ];
-                positiveColored = renderColoredPrompt(categoryData);
+            const slot = {
+                asset_workflow_type: capabilities.type,
+                raw_quality_tags: [...(assetTags.quality || [])],
+                raw_composition_tags: [...(assetTags.composition || [])],
+                raw_artist_tags: artistName
+                    ? [...(assetTags.artist_presets?.[artistName] || [])]
+                    : [],
+                raw_anima_artist_tags: animaArtistName
+                    ? [...(assetTags.artist_presets?.[animaArtistName] || [])]
+                    : [],
+                raw_appearance_tags: app ? [...(assetTags.appearances?.[app] || [])] : [],
+                raw_expression_tags: expr ? [...(assetTags.expressions?.[expr] || [])] : [],
+                raw_outfit_tags: outfit ? [...(assetTags.outfits?.[outfit] || [])] : [],
+                raw_character_negative_tags: [...(assetTags.character_negative || [])],
+                raw_negative_tags: [...(assetTags.negative || [])],
+                raw_anima_quality_tags: [...(assetTags.anima_quality || [])],
+                raw_anima_negative_tags: [...(assetTags.anima_negative || [])],
+                natural_language: document.getElementById('asset-natural-language-text')?.value?.trim() || '',
+                lora_enabled: document.getElementById('asset-lora-toggle')?.checked || false,
+                lora_list: assetLoraList,
+                style_lora_enabled: document.getElementById('asset-style-lora-toggle')?.checked || false,
+                style_lora_list: styleLoraList,
+                face_lora_enabled: hasAnima && (document.getElementById('asset-face-lora-toggle')?.checked || false),
+                face_lora_list: faceLoraList,
+                face_lora_upscale_size: document.getElementById('asset-face-lora-upscale')?.value || '',
+                face_tags: document.getElementById('asset-face-tags')?.value.trim() || '',
+                eye_tags: document.getElementById('asset-eye-tags')?.value.trim() || '',
+                ref_enabled: capabilities.ipadapter && (document.getElementById('asset-ref-toggle')?.checked || false),
+                ref_strength: parseFloat(document.getElementById('asset-ref-strength')?.value) || 0.55,
+                ref_dir: document.getElementById('asset-ref-folder-hash-text')?.textContent || '',
+                style_ref_enabled: capabilities.ipadapter && (document.getElementById('asset-style-ref-toggle')?.checked || false),
+                style_ref_strength: parseFloat(document.getElementById('asset-style-ref-strength')?.value) || 0.55,
+                style_ref_dir: document.getElementById('asset-style-ref-folder-hash-text')?.textContent || '',
+                pose_enabled: capabilities.pose && (document.getElementById('asset-pose-toggle')?.checked || false),
+                pose_id: assetSelectedPoseId || '',
+                hrf_sdxl: capabilities.ilxl && (document.getElementById('asset-hrf-sdxl')?.checked || false),
+                hrf_anima: hasAnima && (document.getElementById('asset-hrf-anima')?.checked || false),
+                hrf_size: parseFloat(document.getElementById('asset-hrf-size')?.value) || 2.0,
+                hrf_restore_size: document.getElementById('asset-hrf-restore-size')?.checked || false,
+                hrf_control_net: document.getElementById('asset-hrf-control-net')?.checked || false,
+                img_w: parseInt(document.getElementById('asset-img-w')?.value) || 700,
+                img_h: parseInt(document.getElementById('asset-img-h')?.value) || 1024,
+                sdxl_fd_enabled: capabilities.ilxl && (document.getElementById('asset-sdxl-fd')?.checked || false),
+                sdxl_hd_enabled: capabilities.ilxl && (document.getElementById('asset-sdxl-hd')?.checked || false),
+                sdxl_ed_enabled: capabilities.ilxl && (document.getElementById('asset-sdxl-ed')?.checked || false),
+                anima_fd_enabled: hasAnima && (document.getElementById('asset-anima-fd')?.checked || false),
+                anima_hd_enabled: hasAnima && (document.getElementById('asset-anima-hd')?.checked || false),
+                anima_ed_enabled: hasAnima && (document.getElementById('asset-anima-ed')?.checked || false),
+                face_crop_top: parseFloat(document.getElementById('asset-face-crop-top')?.value) || 2.5,
+                face_crop_bottom: parseFloat(document.getElementById('asset-face-crop-bottom')?.value) || 1,
+                seed: parseInt(document.getElementById('asset-seed-input')?.value) || -1,
+            };
+            const promptData = await buildAssetPromptData(slot);
+            if (!promptData) {
+                console.error('[ASSET] 공통 프롬프트 빌더가 빈 결과를 반환했습니다:', slot);
+                return null;
             }
-
-            const positiveLength = positive.length;
-
-            let positiveFull = positive;
-            positiveFull += `\n[FACE_ID_ACTIVATE]\n${refEnabled ? 'true' : 'false'}`;
-            positiveFull += `\n[FACE_ID_STR]\n${refStrength}`;
-            const refDir = document.getElementById('asset-ref-folder-hash-text')?.textContent || '';
-            positiveFull += `\n[FACE_ID_DIR]\n${refDir || 'soya_char_ref/fallback'}`;
-            positiveFull += `\n[STYLE_ACTIVATE]\n${styleRefEnabled ? 'true' : 'false'}`;
-            positiveFull += `\n[STYLE_STR]\n${styleRefStrength}`;
-            const styleDir = document.getElementById('asset-style-ref-folder-hash-text')?.textContent || '';
-            positiveFull += `\n[STYLE_DIR]\n${styleDir || 'soya_style_ref/fallback'}`;
-            const compatibleRegularLoras = filterAssetLorasForCapabilities(assetLoraList, capabilities);
-            const compatibleStyleLoras = filterAssetLorasForCapabilities(styleLoraList, capabilities);
-            const loraActive = loraEnabled && compatibleRegularLoras.length > 0;
-            const styleLoraActive = styleLoraEnabled && compatibleStyleLoras.length > 0;
-            const regularLoraData = compatibleRegularLoras.map(l => ({lora_path: resolveLoraPath(l), str: l.strength, BASE: l.BASE || 'anima'}));
-            const styleLoraData = compatibleStyleLoras.map(l => ({lora_path: resolveLoraPath(l), str: l.strength, BASE: l.BASE || 'anima'}));
-            if (hasAnima) {
-                // ANIMA: 일반/스타일 LoRA 분리 (워크플로우에 별도 STYLE_LORA 로더 노드 존재)
-                positiveFull += `\n[LORA_ACTIVATE]\n${loraActive ? 'true' : 'false'}`;
-                positiveFull += `\n[LORA_DATA]\n${JSON.stringify({list: regularLoraData})}`;
-            } else {
-                // ILXL: 스타일 LoRA를 LORA_DATA에 합쳐서 단일 로더로 처리 (둘 중 하나만 ON이어도 활성화)
-                const mergedActive = loraActive || styleLoraActive;
-                positiveFull += `\n[LORA_ACTIVATE]\n${mergedActive ? 'true' : 'false'}`;
-                positiveFull += `\n[LORA_DATA]\n${JSON.stringify({list: [...regularLoraData, ...styleLoraData]})}`;
-            }
-            // FACE_CROP (ANIMA only)
-            if (hasAnima) {
-                const faceCropTop = parseFloat(document.getElementById('asset-face-crop-top').value) || 2.5;
-                const faceCropBottom = parseFloat(document.getElementById('asset-face-crop-bottom').value) || 1;
-                positiveFull += `\n[FACE_CROP_TOP]\n${faceCropTop}`;
-                positiveFull += `\n[FACE_CROP_BOTTOM]\n${faceCropBottom}`;
-            }
-            positiveFull += `\n[POSE_ACTIVATE]\n${poseEnabled ? 'true' : 'false'}`;
-            if (poseEnabled && assetSelectedPoseId) {
-                try {
-                    const resp = await fetch(`/api/pose_mode/poses/${encodeURIComponent(assetSelectedPoseId)}`);
-                    const poseResult = await resp.json();
-                    const poseJson = poseResult.keypoints || poseResult;
-                    positiveFull += `\n[POSE_DATA]\n${JSON.stringify(poseJson)}`;
-                } catch (e) {
-                    positiveFull += `\n[POSE_DATA]\n(포즈 데이터 로드 실패: ${assetSelectedPoseId})`;
-                }
-            } else {
-                positiveFull += `\n[POSE_DATA]\n{"people":[{"pose_keypoints_2d":[381.10,379.86,1,413.21,506.58,1,223.64,436.41,1,55.33,624.12,1,64.77,454.24,1,579.09,575.30,1,362.22,935.42,1,331.06,972.15,1,196.97,797.67,1,264.96,1013.47,1,257.41,1024.49,1,350.89,820.63,1,419.82,1011.63,1,419.82,1024.49,1,315.95,343.13,1,462.31,294.46,1,263.07,365.17,1,546.35,301.80,1]}],"canvas_height":1024,"canvas_width":700}`;
-            }
-            // Face LoRA (ANIMA only)
-            if (hasAnima) {
-                const faceLoraEnabled = document.getElementById('asset-face-lora-toggle').checked;
-                const compatibleFaceLoras = filterAssetLorasForCapabilities(faceLoraList, capabilities);
-                const faceLoraActive = faceLoraEnabled && compatibleFaceLoras.length > 0;
-                const faceLoraUpscaleSize = (document.getElementById('asset-face-lora-upscale')?.value || '').trim();
-                positiveFull += `\n[FACE_LORA_ACTIVATE]\n${faceLoraActive ? 'true' : 'false'}`;
-                if (faceLoraActive) {
-                    positiveFull += `\n[FACE_LORA_DATA]\n${JSON.stringify({list: compatibleFaceLoras.map(l => {
-                        const item = {lora_path: resolveLoraPath(l), str: l.strength, BASE: l.BASE || 'anima', CHAR: 'asset_mode'};
-                        if (faceLoraUpscaleSize) item.UPSCALE_SIZE = faceLoraUpscaleSize;
-                        return item;
-                    })})}`;
-                } else {
-                    positiveFull += `\n[FACE_LORA_DATA]\n{"list":[]}`;
-                }
-                // CHAR_FACE_TAG_INFORM
-                const faceTags = document.getElementById('asset-face-tags')?.value.trim() || '';
-                const eyeTags = document.getElementById('asset-eye-tags')?.value.trim() || '';
-                const faceAnimaTriggers = compatibleFaceLoras.filter(l => (l.BASE || 'anima') === 'anima').map(l => l.trigger).filter(t => t && t.trim()).join(', ');
-                const faceSdxlTriggers = compatibleFaceLoras.filter(l => l.BASE === 'sdxl').map(l => l.trigger).filter(t => t && t.trim()).join(', ');
-                positiveFull += `\n[CHAR_FACE_TAG_INFORM]\n${JSON.stringify({list: [{FACE_TAGS: faceTags, EYE_TAGS: eyeTags, POSITIVE: "", TRIGGER_ANIMA: faceAnimaTriggers, TRIGGER_SDXL: faceSdxlTriggers, CHAR: "asset_mode"}]})}`;
-            }
-            // Style(그림체) LoRA — ANIMA는 별도 토큰(분리 로더).
-                // ILXL 모드는 스타일 LoRA가 LORA_DATA에 흡수되므로 이 토큰들을 출력하지 않음.
-            if (hasAnima) {
-                positiveFull += `\n[STYLE_LORA_ACTIVATE]\n${styleLoraActive ? 'true' : 'false'}`;
-                positiveFull += `\n[STYLE_LORA_DATA]\n${JSON.stringify({list: styleLoraData})}`;
-            }
-            // HRF
-            positiveFull += `\n[HRF_ACTIVATE]\n${hrfSdxl ? 'true' : 'false'}`;
-            if (hasAnima) positiveFull += `\n[ANIMA_HRF_ACTIVATE]\n${hrfAnima ? 'true' : 'false'}`;
-            positiveFull += `\n[HRF_SIZE]\n${hrfSize}`;
-            positiveFull += `\n[HRF_RESTORE_SIZE]\n${hrfRestoreSize ? 'true' : 'false'}`;
-            positiveFull += `\n[HRF_CONTROL_NET]\n${hrfControlNet ? 'true' : 'false'}`;
-            positiveFull += `\n[IMG_W]\n${imgW}`;
-            positiveFull += `\n[IMG_H]\n${imgH}`;
-            if (hasAnima) {
-                positiveFull += `\n[ANIMA_FD_ACTIVATE]\n${animaFdActivate ? 'true' : 'false'}`;
-                positiveFull += `\n[ANIMA_HD_ACTIVATE]\n${animaHdActivate ? 'true' : 'false'}`;
-                positiveFull += `\n[ANIMA_ED_ACTIVATE]\n${animaEdActivate ? 'true' : 'false'}`;
-            }
-            positiveFull += `\n[FD_ACTIVATE]\n${sdxlFdActivate ? 'true' : 'false'}`;
-            positiveFull += `\n[HD_ACTIVATE]\n${sdxlHdActivate ? 'true' : 'false'}`;
-            positiveFull += `\n[ED_ACTIVATE]\n${sdxlEdActivate ? 'true' : 'false'}`;
-            if (hasAnima) {
-                const seed = parseInt(document.getElementById('asset-seed-input').value) || -1;
-                positiveFull += `\n[SEED]\n${seed}`;
-            }
-            positiveFull += '\n[END]';
-
-            let negative;
-            let negativeColored;
-            if (hasAnima) {
-                const animaNegParts = [...cnTags, ...animaNTags].filter(t => t.trim());
-                const sdxlNegParts = [...cnTags, ...nTags].filter(t => t.trim());
-                negative = animaNegParts.join(', ') + (isDual ? '\n[SDXL]\n' + sdxlNegParts.join(', ') : '');
-                const animaNegData = [
-                    { key: 'negative', tags: cnTags },
-                    { key: 'anima_negative', tags: animaNTags },
-                ];
-                const sdxlNegData = [
-                    { key: 'negative', tags: cnTags },
-                    { key: 'sdxl_negative', tags: nTags },
-                ];
-                negativeColored = renderColoredPrompt(animaNegData) + (isDual
-                    ? '\n<span style="color:#ff0;font-weight:bold;">[SDXL]</span>\n' + renderColoredPrompt(sdxlNegData)
-                    : '');
-            } else {
-                negative = [...cnTags, ...nTags].join(', ');
-                negativeColored = null;
-            }
-
-            return { positive: positiveFull, negative, positiveLength, positiveColored, negativeColored };
+            return {
+                ...promptData,
+                positiveColored: colorBlockHeaders(promptData.positive),
+                negativeColored: colorBlockHeaders(promptData.negative),
+                positiveLength: promptData.positive.length,
+            };
         }
 
         // ─── 설정 저장/불러오기 ────────────────────────────────
@@ -100323,6 +100150,7 @@
             });
             container.querySelectorAll('.batch-slot').forEach((slotEl, idx) => {
                 bindBatchSlotEvents(slotEl, idx);
+                updateBatchPreview(slotEl, idx);
                 // 기존 FACE-IPAdapter가 있으면 해시 표시
                 if (batchChains[idx]?.ref_images?.length) {
                     updateBatchRefFolderHash(idx);
@@ -100675,11 +100503,11 @@
                     </div>
                 <div class="batch-prompt-preview-wrap">
                     <div class="batch-field-label" style="cursor:pointer; user-select:none; margin-bottom:4px;" onclick="toggleBatchPreview(this)">긍정 프롬프트 ▼</div>
-                    <div class="batch-prompt-preview collapsed" data-preview>${previewBatchSlotPrompt(slot)}</div>
+                    <div class="batch-prompt-preview collapsed" data-preview>공통 프롬프트 빌더로 미리보기를 만드는 중...</div>
                 </div>
                 <div class="batch-prompt-preview-wrap">
                     <div class="batch-field-label" style="cursor:pointer; user-select:none; margin-bottom:4px; color:var(--error);" onclick="toggleBatchPreview(this)">부정 프롬프트 미리보기 ▼</div>
-                    <div class="batch-prompt-preview collapsed" data-negative-preview>${escapeHtml(previewBatchSlotNegativePrompt(slot))}</div>
+                    <div class="batch-prompt-preview collapsed" data-negative-preview>공통 프롬프트 빌더로 미리보기를 만드는 중...</div>
                 </div>
                 </section>
             </div>`;
@@ -101965,18 +101793,26 @@
 
         function updateBatchPreview(slotEl, idx) {
             const preview = slotEl.querySelector('[data-preview]');
-            if (preview) preview.innerHTML = previewBatchSlotPrompt(batchChains[idx]);
             const negPreview = slotEl.querySelector('[data-negative-preview]');
-            if (negPreview) negPreview.textContent = previewBatchSlotNegativePrompt(batchChains[idx]);
+            const slot = batchChains[idx];
+            if (!slot) {
+                console.error('[BATCH] 프롬프트 미리보기 갱신 실패: 슬롯 없음', { idx });
+                return;
+            }
+            renderAssetPromptPreview({
+                ...slot,
+                asset_workflow_type: normalizeAssetWorkflowType(currentConfig?.asset_workflow_type),
+            }, preview, negPreview);
         }
 
-        // ─── 배치 프롬프트 빌드 (미리보기 + 전송 공통) ──────────
-        function _resolveBatchSlotTags(slot) {
-            // LoRA + 스타일(그림체) LoRA 중 현재 에셋 프로필과 호환되는 BASE만 병합한다.
+        // ─── 에셋 공통 프롬프트 빌드 (단일·일괄·오토매치·캐릭터 메이커 공통) ───
+        function _resolveAssetPromptSlotTags(slot) {
+            const capabilities = getAssetWorkflowCapabilities(slot.asset_workflow_type);
+            // 활성화된 LoRA 중 현재 에셋 프로필과 호환되는 BASE만 병합한다.
             const triggerSrc = filterAssetLorasForCapabilities([
-                ...(slot.lora_list || []),
+                ...(slot.lora_enabled ? (slot.lora_list || []) : []),
                 ...(slot.style_lora_enabled ? (slot.style_lora_list || []) : []),
-            ]);
+            ], capabilities);
             const loraTriggerWords = triggerSrc.map(l => l.trigger).filter(t => t && t.trim()).join(', ');
             const animaLoraTriggerWords = triggerSrc.filter(l => (l.BASE || 'anima') === 'anima').map(l => l.trigger).filter(t => t && t.trim()).join(', ');
             const sdxlLoraTriggerWords = triggerSrc.filter(l => l.BASE === 'sdxl').map(l => l.trigger).filter(t => t && t.trim()).join(', ');
@@ -102019,9 +101855,9 @@
             return { loraTriggerWords, animaLoraTriggerWords, sdxlLoraTriggerWords, artistTags, animaArtistTags, qTags, cTags, appTags, exprTags, outfitTags, naturalLanguage, cnTags, nTags, animaQTags, animaNTags };
         }
 
-        async function buildBatchSlotPromptData(slot) {
+        async function buildAssetPromptData(slot) {
             if (!assetTags) return null;
-            const t = _resolveBatchSlotTags(slot);
+            const t = _resolveAssetPromptSlotTags(slot);
             const capabilities = getAssetWorkflowCapabilities(slot.asset_workflow_type);
             const isAnima = capabilities.anima;
             const isDual = capabilities.dual;
@@ -102150,7 +101986,9 @@
             if (isAnima) {
                 const animaNegParts = [...t.cnTags, ...t.animaNTags].filter(v => v.trim());
                 const sdxlNegParts = [...t.cnTags, ...t.nTags].filter(v => v.trim());
-                negative = animaNegParts.join(', ') + (isDual ? '\n[SDXL]\n' + sdxlNegParts.join(', ') : '');
+                // ANIMA-only 워크플로도 이 구분자를 ANIMA 부정 프롬프트의 끝 표식으로 사용한다.
+                negative = animaNegParts.join(', ') + '\n[SDXL]\n'
+                    + (isDual ? sdxlNegParts.join(', ') : '');
             } else {
                 negative = [...t.cnTags, ...t.nTags].filter(v => v.trim()).join(', ');
             }
@@ -102158,147 +101996,17 @@
             return { positive: positiveFull, negative, positiveLength: positiveTags.length };
         }
 
-        function previewBatchSlotPrompt(slot) {
-            if (!assetTags) return '(태그 데이터 로딩중)';
-            const t = _resolveBatchSlotTags(slot);
-            const capabilities = getAssetWorkflowCapabilities();
-            const isAnima = capabilities.anima;
-            const isDual = capabilities.dual;
-            const poseEnabled = capabilities.pose && (slot.pose_enabled || false);
-
-            let positiveColored = '';
-
-            if (isAnima) {
-                const animaQualityData = [{ key: 'anima_quality', tags: t.animaQTags }];
-                const animaArtistData = [{ key: 'anima_artist', tags: t.animaArtistTags }];
-                const section1RestData = [
-                    { key: 'anima_lora',    tags: t.animaLoraTriggerWords ? [t.animaLoraTriggerWords] : [] },
-                    { key: 'anima_artist',  tags: t.animaArtistTags },
-                    { key: 'anima_quality', tags: t.animaQTags },
-                    { key: 'composition',  tags: t.cTags },
-                    { key: 'appearance',   tags: t.appTags },
-                    { key: 'expression',   tags: t.exprTags },
-                    { key: 'outfit',       tags: t.outfitTags },
-                    { key: 'nl',           tags: t.naturalLanguage ? [t.naturalLanguage] : [] },
-                ];
-                const sdxlQualityData = [{ key: 'sdxl_quality', tags: t.qTags }];
-                const sdxlArtistData = [{ key: 'sdxl_artist', tags: t.artistTags }];
-                const section2RestData = [
-                    { key: 'sdxl_lora',     tags: t.sdxlLoraTriggerWords ? [t.sdxlLoraTriggerWords] : [] },
-                    { key: 'sdxl_artist',   tags: t.artistTags },
-                    { key: 'sdxl_quality', tags: t.qTags },
-                    { key: 'composition',  tags: t.cTags },
-                    { key: 'appearance',   tags: t.appTags },
-                    { key: 'expression',   tags: t.exprTags },
-                    { key: 'outfit',       tags: t.outfitTags },
-                ];
-                positiveColored = '<span style="color:#0ff;font-weight:bold;">[ANIMA_QUALITY]</span>\n' + renderColoredPrompt(animaQualityData)
-                    + '\n<span style="color:#0ff;font-weight:bold;">[ANIMA_ARTIST]</span>\n' + renderColoredPrompt(animaArtistData)
-                    + '\n<span style="color:#0ff;font-weight:bold;">[ANIMA]</span>\n' + renderColoredPrompt(section1RestData)
-                    + (isDual ? '\n<span style="color:#0ff;font-weight:bold;">[SDXL_QUALITY]</span>\n' + renderColoredPrompt(sdxlQualityData)
-                        + '\n<span style="color:#0ff;font-weight:bold;">[SDXL_ARTIST]</span>\n' + renderColoredPrompt(sdxlArtistData)
-                        + '\n<span style="color:#ff0;font-weight:bold;">[SDXL]</span>\n' + renderColoredPrompt(section2RestData) : '')
-                    + '\n<span style="color:#0ff;font-weight:bold;">[CHAR_LIST]</span>\n<span class="prompt-cat-composition">asset_mode</span>';
-            } else {
-                const categoryData = [
-                    { key: 'lora',        tags: t.loraTriggerWords ? [t.loraTriggerWords] : [] },
-                    { key: 'artist',      tags: t.artistTags },
-                    { key: 'quality',     tags: t.qTags },
-                    { key: 'composition', tags: t.cTags },
-                    { key: 'appearance',  tags: t.appTags },
-                    { key: 'expression',  tags: t.exprTags },
-                    { key: 'outfit',      tags: t.outfitTags },
-                    { key: 'nl',          tags: t.naturalLanguage ? [t.naturalLanguage] : [] },
-                ];
-                positiveColored = renderColoredPrompt(categoryData);
+        async function renderAssetPromptPreview(slot, positiveElement, negativeElement) {
+            try {
+                const promptData = await buildAssetPromptData(slot);
+                if (!promptData) throw new Error('공통 프롬프트 빌더 결과가 비어 있습니다');
+                if (positiveElement) positiveElement.innerHTML = colorBlockHeaders(promptData.positive);
+                if (negativeElement) negativeElement.textContent = promptData.negative || '(없음)';
+            } catch (error) {
+                console.error('[ASSET] 공통 프롬프트 미리보기 생성 실패:', { slot, error });
+                if (positiveElement) positiveElement.textContent = `미리보기 생성 실패: ${error.message}`;
+                if (negativeElement) negativeElement.textContent = `미리보기 생성 실패: ${error.message}`;
             }
-
-            // 컨트롤 섹션 (포즈는 placeholder)
-            let controlPart = '';
-            controlPart += `\n[FACE_ID_ACTIVATE]\n${capabilities.ipadapter && slot.ref_enabled ? 'true' : 'false'}`;
-            controlPart += `\n[FACE_ID_STR]\n${slot.ref_strength}`;
-            controlPart += `\n[FACE_ID_DIR]\n${slot.ref_dir || 'soya_char_ref/fallback'}`;
-            controlPart += `\n[STYLE_ACTIVATE]\n${capabilities.ipadapter && slot.style_ref_enabled ? 'true' : 'false'}`;
-            controlPart += `\n[STYLE_STR]\n${slot.style_ref_strength || 0.55}`;
-            controlPart += `\n[STYLE_DIR]\n${slot.style_ref_dir || 'soya_style_ref/fallback'}`;
-            if (isAnima) {
-                controlPart += `\n[FACE_CROP_TOP]\n${slot.face_crop_top ?? 2.5}`;
-                controlPart += `\n[FACE_CROP_BOTTOM]\n${slot.face_crop_bottom ?? 1}`;
-            }
-            const compatibleRegularLoras = filterAssetLorasForCapabilities(slot.lora_list, capabilities);
-            const compatibleStyleLoras = filterAssetLorasForCapabilities(slot.style_lora_list, capabilities);
-            const loraActive = slot.lora_enabled && compatibleRegularLoras.length > 0;
-            const styleLoraActive = slot.style_lora_enabled && compatibleStyleLoras.length > 0;
-            const regularLoraData = compatibleRegularLoras.map(l => ({lora_path: resolveLoraPath(l), str: l.strength, BASE: l.BASE || 'anima'}));
-            const styleLoraData = compatibleStyleLoras.map(l => ({lora_path: resolveLoraPath(l), str: l.strength, BASE: l.BASE || 'anima'}));
-            if (isAnima) {
-                controlPart += `\n[LORA_ACTIVATE]\n${loraActive ? 'true' : 'false'}`;
-                controlPart += `\n[LORA_DATA]\n${JSON.stringify({list: regularLoraData})}`;
-            } else {
-                const mergedActive = loraActive || styleLoraActive;
-                controlPart += `\n[LORA_ACTIVATE]\n${mergedActive ? 'true' : 'false'}`;
-                controlPart += `\n[LORA_DATA]\n${JSON.stringify({list: [...regularLoraData, ...styleLoraData]})}`;
-            }
-            if (isAnima) {
-                const compatibleFaceLoras = filterAssetLorasForCapabilities(slot.face_lora_list, capabilities);
-                const faceLoraActive = slot.face_lora_enabled && compatibleFaceLoras.length > 0;
-                const ctrlFaceLoraUpscale = (slot.face_lora_upscale_size || '').toString().trim();
-                controlPart += `\n[FACE_LORA_ACTIVATE]\n${faceLoraActive ? 'true' : 'false'}`;
-                controlPart += `\n[FACE_LORA_DATA]\n${faceLoraActive ? JSON.stringify({list: compatibleFaceLoras.map(l => {
-                    const item = {lora_path: resolveLoraPath(l), str: l.strength, BASE: l.BASE || 'anima', CHAR: 'asset_mode'};
-                    if (ctrlFaceLoraUpscale) item.UPSCALE_SIZE = ctrlFaceLoraUpscale;
-                    return item;
-                })}) : '{"list":[]}'}`;
-                const previewFaceLoraList = compatibleFaceLoras;
-                const previewFaceAnimaTriggers = previewFaceLoraList.filter(l => (l.BASE || 'anima') === 'anima').map(l => l.trigger).filter(t => t && t.trim()).join(', ');
-                const previewFaceSdxlTriggers = previewFaceLoraList.filter(l => l.BASE === 'sdxl').map(l => l.trigger).filter(t => t && t.trim()).join(', ');
-                controlPart += `\n[CHAR_FACE_TAG_INFORM]\n${JSON.stringify({list: [{FACE_TAGS: slot.face_tags || '', EYE_TAGS: slot.eye_tags || '', POSITIVE: "", TRIGGER_ANIMA: previewFaceAnimaTriggers, TRIGGER_SDXL: previewFaceSdxlTriggers, CHAR: "asset_mode"}]})}`;
-            }
-            // Style(그림체) LoRA — ILXL 모드는 LORA_DATA에 흡수되므로 ANIMA만 출력
-            if (isAnima) {
-                controlPart += `\n[STYLE_LORA_ACTIVATE]\n${styleLoraActive ? 'true' : 'false'}`;
-                controlPart += `\n[STYLE_LORA_DATA]\n${JSON.stringify({list: styleLoraData})}`;
-            }
-            controlPart += `\n[POSE_ACTIVATE]\n${poseEnabled ? 'true' : 'false'}`;
-            controlPart += `\n[POSE_DATA]\n${poseEnabled && slot.pose_id ? '(포즈: ' + slot.pose_id + ')' : '{"people":[{"pose_keypoints_2d":[...]}],"canvas_height":1024,"canvas_width":700}'}`;
-            controlPart += `\n[HRF_ACTIVATE]\n${capabilities.ilxl && slot.hrf_sdxl ? 'true' : 'false'}`;
-            if (isAnima) controlPart += `\n[ANIMA_HRF_ACTIVATE]\n${slot.hrf_anima ? 'true' : 'false'}`;
-            controlPart += `\n[HRF_SIZE]\n${slot.hrf_size || 2.0}`;
-            controlPart += `\n[HRF_RESTORE_SIZE]\n${slot.hrf_restore_size !== false ? 'true' : 'false'}`;
-            controlPart += `\n[HRF_CONTROL_NET]\n${slot.hrf_control_net ? 'true' : 'false'}`;
-            controlPart += `\n[IMG_W]\n${slot.img_w || 700}`;
-            controlPart += `\n[IMG_H]\n${slot.img_h || 1024}`;
-            if (isAnima) {
-                controlPart += `\n[ANIMA_FD_ACTIVATE]\n${slot.anima_fd_enabled ? 'true' : 'false'}`;
-                controlPart += `\n[ANIMA_HD_ACTIVATE]\n${slot.anima_hd_enabled ? 'true' : 'false'}`;
-                controlPart += `\n[ANIMA_ED_ACTIVATE]\n${slot.anima_ed_enabled ? 'true' : 'false'}`;
-            }
-            controlPart += `\n[FD_ACTIVATE]\n${capabilities.ilxl && slot.sdxl_fd_enabled ? 'true' : 'false'}`;
-            controlPart += `\n[HD_ACTIVATE]\n${capabilities.ilxl && slot.sdxl_hd_enabled ? 'true' : 'false'}`;
-            controlPart += `\n[ED_ACTIVATE]\n${capabilities.ilxl && slot.sdxl_ed_enabled ? 'true' : 'false'}`;
-            if (isAnima) {
-                controlPart += `\n[SEED]\n${slot.seed ?? -1}`;
-            }
-            controlPart += '\n[END]';
-
-            return positiveColored + colorBlockHeaders(controlPart);
-        }
-
-        function previewBatchSlotNegativePrompt(slot) {
-            if (!assetTags) return '(태그 데이터 로딩중)';
-            const cnTags = (slot.character_negative_preset && assetTags.character_negative_presets?.[slot.character_negative_preset]) || [];
-            const nTags = (slot.negative_preset && assetTags.negative_presets?.[slot.negative_preset]) || [];
-            const animaNTags = (slot.anima_negative_preset && assetTags.negative_presets?.[slot.anima_negative_preset]) || [];
-            const capabilities = getAssetWorkflowCapabilities();
-            const isAnima = capabilities.anima;
-
-            if (isAnima) {
-                const animaNeg = [...cnTags, ...animaNTags].filter(t => t.trim()).join(', ');
-                const sdxlNeg = [...cnTags, ...nTags].filter(t => t.trim()).join(', ');
-                return (animaNeg || '(없음)') + (capabilities.dual ? ' | [SDXL] | ' + (sdxlNeg || '(없음)') : '');
-            }
-            const negative = [...cnTags, ...nTags].filter(t => t.trim()).join(', ');
-            return negative || '(없음)';
         }
 
         async function loadBatchPoseList() {
@@ -102333,10 +102041,11 @@
             for (let round = 0; round < repeatCount; round++) {
                 for (let ci = 0; ci < batchChains.length; ci++) {
                     const slot = batchChains[ci];
+                    const promptSlot = { ...slot, asset_workflow_type: assetWorkflowType };
                     const label = `일괄 [${round + 1}/${repeatCount}] ${slot.character}/${slot.outfit}/${slot.expression}`;
 
                     // 프롬프트 빌드 (단일 소스)
-                    const promptData = await buildBatchSlotPromptData(slot);
+                    const promptData = await buildAssetPromptData(promptSlot);
                     if (!promptData) {
                         console.error('[BATCH] 프롬프트 빌드 실패:', slot);
                         continue;

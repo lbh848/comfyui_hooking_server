@@ -1286,10 +1286,12 @@ class AssetMode:
 
         if is_anima:
             anima_neg_parts = [t.strip() for t in cn_tags if t.strip()] + [t.strip() for t in anima_n_tags if t.strip()]
-            negative = ", ".join(anima_neg_parts)
+            # ANIMA-only 워크플로도 [SDXL]을 ANIMA 부정 프롬프트의 끝
+            # 구분자로 사용하므로 빈 SDXL 영역을 유지한다.
+            negative = ", ".join(anima_neg_parts) + "\n[SDXL]\n"
             if is_dual:
                 sdxl_neg_parts = [t.strip() for t in cn_tags if t.strip()] + [t.strip() for t in n_tags if t.strip()]
-                negative += "\n[SDXL]\n" + ", ".join(sdxl_neg_parts)
+                negative += ", ".join(sdxl_neg_parts)
         else:
             negative_parts = [t.strip() for t in cn_tags if t.strip()] + [t.strip() for t in n_tags if t.strip()]
             negative = ", ".join(negative_parts)

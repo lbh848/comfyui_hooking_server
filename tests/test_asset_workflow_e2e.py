@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import importlib
+import re
 import sys
 from pathlib import Path
 
@@ -38,18 +39,25 @@ def _configured_mode() -> AssetMode:
 
 
 @pytest.mark.parametrize(
-    ("profile", "has_anima", "has_ilxl", "has_sdxl_separator"),
+    (
+        "profile",
+        "has_anima",
+        "has_ilxl",
+        "has_positive_sdxl",
+        "has_negative_separator",
+    ),
     [
-        ("ilxl", False, True, False),
-        ("anima_ilxl", True, True, True),
-        ("anima_only", True, False, False),
+        ("ilxl", False, True, False, False),
+        ("anima_ilxl", True, True, True, True),
+        ("anima_only", True, False, False, True),
     ],
 )
 def test_asset_prompt_builder_covers_all_three_workflows(
     profile,
     has_anima,
     has_ilxl,
-    has_sdxl_separator,
+    has_positive_sdxl,
+    has_negative_separator,
 ):
     mode = _configured_mode()
 
@@ -67,12 +75,39 @@ def test_asset_prompt_builder_covers_all_three_workflows(
 
     assert ("[ANIMA]" in positive) is has_anima
     assert ("ilxl quality" in positive) is has_ilxl
-    assert ("[SDXL]" in positive) is has_sdxl_separator
-    assert ("[SDXL]" in negative) is has_sdxl_separator
+    assert ("[SDXL]" in positive) is has_positive_sdxl
+    assert ("[SDXL]" in negative) is has_negative_separator
     if profile == "anima_only":
         assert "[FACE_ID_ACTIVATE]\nfalse" in positive
         assert "[POSE_ACTIVATE]\nfalse" in positive
         assert "ilxl bad" not in negative
+        assert negative.endswith("\n[SDXL]\n")
+
+
+@pytest.mark.parametrize(
+    "anima_negative",
+    [
+        "worst quality, bad hands",
+        "blurred background, malformed fingers",
+    ],
+)
+def test_anima_only_negative_remains_extractable_without_sdxl_content(
+    anima_negative,
+):
+    mode = _configured_mode()
+    mode._tags["anima_negative"] = [anima_negative]
+
+    _positive, negative = mode.build_prompts(
+        appearance="look",
+        outfit="uniform",
+        expression="smile",
+        asset_workflow_type="anima_only",
+    )
+
+    match = re.search(r"[\s\S]*?(?=\[SDXL\])", negative, re.IGNORECASE)
+    assert match is not None
+    assert match.group(0).strip() == f"bad anatomy, {anima_negative}"
+    assert negative.endswith("\n[SDXL]\n")
 
 
 def test_ilxl_builder_disables_anima_only_runtime_options():
@@ -176,6 +211,8 @@ async def test_queue_asset_entrypoint_preserves_selected_profile(profile):
                 "outfit": "uniform",
                 "expression": "smile",
                 "asset_workflow_type": profile,
+                "positive_prompt": f"positive-{profile}",
+                "negative_prompt": f"negative-{profile}",
             }
         },
     )
@@ -184,6 +221,8 @@ async def test_queue_asset_entrypoint_preserves_selected_profile(profile):
 
     assert result["success"] is True
     assert captured["asset_workflow_type"] == profile
+    assert captured["positive_prompt"] == f"positive-{profile}"
+    assert captured["negative_prompt"] == f"negative-{profile}"
 
 
 @pytest.mark.asyncio
@@ -263,10 +302,15 @@ def test_frontend_covers_single_batch_bulk_and_automatch_asset_lines():
     assert '<option value="anima_only">ONLY ANIMA 에셋 생성 워크플로우</option>' in source
     assert 'id="setting-anima-only-asset-workflow-source-path"' in source
     assert "function buildAssetPromptFromUI()" in source
+    assert "async function buildAssetPromptData(slot)" in source
+    assert "async function buildBatchSlotPromptData(slot)" not in source
+    assert "async function renderAssetPromptPreview(slot, positiveElement, negativeElement)" in source
+    assert "function previewBatchSlotPrompt(slot)" not in source
+    assert "function previewBatchSlotNegativePrompt(slot)" not in source
+    assert source.count("await buildAssetPromptData(") == 5
     assert "async function startBatchGeneration()" in source
     assert "에셋 일괄 생성 설정" in source
     assert "storage_group: 'automatch_defaults'" in source
-    assert "function buildBatchSlotPromptData(slot)" in source
     assert "asset_workflow_type: capabilities.type" in source
     assert "asset_workflow_type: assetWorkflowType" in source
     assert "asset_workflow_type: normalizeAssetWorkflowType(currentConfig?.asset_workflow_type)" in source
