@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime
 import json
 import os
 import sqlite3
@@ -13,12 +14,156 @@ import comfy_installer.runtime_state as runtime_state_module
 from comfy_installer.manifest import InstallManifest
 from comfy_installer.runtime_state import (
     RuntimeStateError,
+    cleanup_old_runtime_transaction_venvs,
     create_runtime_transaction,
     inspect_runtime,
     load_runtime_receipt,
     rollback_runtime_transaction,
     write_runtime_receipt,
 )
+
+
+def _make_transaction_venv(
+    comfy_root: Path,
+    transaction_id: str,
+    *,
+    modified_at: datetime.datetime,
+    content: bytes,
+) -> Path:
+    transaction = (
+        comfy_root / ".installer-state" / "transactions" / transaction_id
+    )
+    venv = transaction / "venv"
+    venv.mkdir(parents=True)
+    (venv / "payload.bin").write_bytes(content)
+    (transaction / "snapshot.json").write_text(
+        json.dumps({"transaction_id": transaction_id}),
+        encoding="utf-8",
+    )
+    timestamp = modified_at.timestamp()
+    os.utime(transaction, (timestamp, timestamp))
+    return transaction
+
+
+def test_cleanup_old_transaction_venvs_preserves_current_and_metadata(
+    tmp_path: Path,
+) -> None:
+    now = datetime.datetime(2026, 9, 23, 12, tzinfo=datetime.timezone.utc)
+    comfy = tmp_path / "comfy"
+    current_venv = comfy / ".venv"
+    current_venv.mkdir(parents=True)
+    (current_venv / "current.txt").write_text("keep", encoding="utf-8")
+    old = _make_transaction_venv(
+        comfy,
+        "old",
+        modified_at=now - datetime.timedelta(hours=72),
+        content=b"12345678",
+    )
+    recent = _make_transaction_venv(
+        comfy,
+        "recent",
+        modified_at=now - datetime.timedelta(hours=2),
+        content=b"recent",
+    )
+    latest = _make_transaction_venv(
+        comfy,
+        "latest",
+        modified_at=now - datetime.timedelta(hours=1),
+        content=b"latest",
+    )
+    logs: list[str] = []
+
+    result = cleanup_old_runtime_transaction_venvs(
+        comfy_root=comfy,
+        now=now,
+        log=logs.append,
+    )
+
+    assert result["deleted_count"] == 1
+    assert result["bytes_reclaimed"] == 8
+    assert result["kept_latest_transaction"] == "latest"
+    assert result["errors"] == []
+    assert not (old / "venv").exists()
+    assert (old / "snapshot.json").is_file()
+    assert old.is_dir()
+    assert (recent / "venv").is_dir()
+    assert (latest / "venv").is_dir()
+    assert (current_venv / "current.txt").read_text(encoding="utf-8") == "keep"
+    assert any("transaction_id=old" in message for message in logs)
+    assert any("state=younger_than_minimum_age" in message for message in logs)
+    assert any("state=latest_transaction" in message for message in logs)
+
+
+def test_cleanup_keeps_latest_transaction_even_when_both_are_old(
+    tmp_path: Path,
+) -> None:
+    now = datetime.datetime(2026, 9, 23, 12, tzinfo=datetime.timezone.utc)
+    comfy = tmp_path / "comfy"
+    older = _make_transaction_venv(
+        comfy,
+        "older",
+        modified_at=now - datetime.timedelta(hours=72),
+        content=b"older",
+    )
+    latest = _make_transaction_venv(
+        comfy,
+        "latest-but-old",
+        modified_at=now - datetime.timedelta(hours=48),
+        content=b"keep",
+    )
+
+    result = cleanup_old_runtime_transaction_venvs(
+        comfy_root=comfy,
+        now=now,
+    )
+
+    assert not (older / "venv").exists()
+    assert (latest / "venv").is_dir()
+    assert result["kept_latest_transaction"] == "latest-but-old"
+    assert result["deleted_count"] == 1
+
+
+def test_cleanup_reports_delete_failure_without_removing_other_state(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    now = datetime.datetime(2026, 9, 23, 12, tzinfo=datetime.timezone.utc)
+    comfy = tmp_path / "comfy"
+    failed = _make_transaction_venv(
+        comfy,
+        "failed",
+        modified_at=now - datetime.timedelta(hours=72),
+        content=b"locked",
+    )
+    _make_transaction_venv(
+        comfy,
+        "latest",
+        modified_at=now - datetime.timedelta(hours=48),
+        content=b"keep",
+    )
+
+    def fail_delete(_path: Path) -> None:
+        raise PermissionError("locked for test")
+
+    monkeypatch.setattr(
+        runtime_state_module,
+        "_remove_tree_force_writable",
+        fail_delete,
+    )
+
+    result = cleanup_old_runtime_transaction_venvs(
+        comfy_root=comfy,
+        now=now,
+    )
+
+    assert result["deleted_count"] == 0
+    assert result["errors"][0]["transaction_id"] == "failed"
+    assert (failed / "venv").is_dir()
+    assert (failed / "snapshot.json").is_file()
+    captured = capsys.readouterr()
+    assert "state=delete_failed" in captured.out
+    assert "PermissionError: locked for test" in captured.err
 
 
 def _git(path: Path, *args: str) -> str:

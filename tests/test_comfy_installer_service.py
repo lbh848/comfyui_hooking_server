@@ -68,6 +68,66 @@ def test_hooking_server_restart_not_required_for_current_process() -> None:
     )
 
 
+def test_update_bootstrap_runs_transaction_cleanup_and_records_result(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+    cleanup_result = {
+        "transactions_root": str(
+            tmp_path / "comfy" / ".installer-state" / "transactions"
+        ),
+        "minimum_age_seconds": 86400.0,
+        "kept_latest_transaction": "latest",
+        "scanned_count": 3,
+        "deleted_count": 2,
+        "bytes_reclaimed": 1234,
+        "deleted": [],
+        "skipped": [],
+        "errors": [],
+    }
+
+    def fake_cleanup(**_kwargs):
+        events.append("cleanup")
+        return cleanup_result
+
+    def fake_backup(**_kwargs):
+        events.append("backup")
+        return {"backup_path": str(tmp_path / "config.backup.json")}
+
+    def fake_update(**_kwargs):
+        events.append("hooking_server")
+        return {"changed": True, "before": "a" * 40, "after": "b" * 40}
+
+    monkeypatch.setattr(service_module, "git_head", lambda _path: "a" * 40)
+    monkeypatch.setattr(
+        service_module,
+        "cleanup_old_runtime_transaction_venvs",
+        fake_cleanup,
+    )
+    monkeypatch.setattr(service_module, "backup_current_config", fake_backup)
+    monkeypatch.setattr(
+        service_module,
+        "update_hooking_server_main",
+        fake_update,
+    )
+    service = ComfyInstallerService(
+        project_root=tmp_path,
+        config_path=tmp_path / "config.json",
+        requirements_dir=tmp_path / "requirements",
+    )
+    service._phases = _UPDATE_PHASES
+
+    service._run_update(install_mode="standard")
+
+    status = service.status()
+    assert events == ["cleanup", "backup", "hooking_server"]
+    assert _UPDATE_PHASES[0][0] == "transaction_cleanup"
+    assert status["state"] == "succeeded"
+    assert status["result"]["update_kind"] == "application_bootstrap"
+    assert status["result"]["transaction_cleanup"] == cleanup_result
+
+
 def test_workflow_integrity_repair_preserves_changed_copy_and_rebinds_clean_copy(
     tmp_path: Path,
 ) -> None:

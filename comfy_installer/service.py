@@ -88,6 +88,7 @@ from .operations import uv_python_path
 from .pack_cli import collect_workflow_bindings
 from .runtime_state import (
     RuntimeStateError,
+    cleanup_old_runtime_transaction_venvs,
     complete_runtime_transaction,
     create_runtime_transaction,
     git_head,
@@ -142,6 +143,7 @@ _INSTALL_PHASES = (
 )
 
 _UPDATE_PHASES = (
+    ("transaction_cleanup", "오래된 업데이트 가상환경 백업 정리"),
     ("config_backup", "config.json 업데이트 전 백업"),
     ("hooking_server", "후킹 서버 origin/main 수동 업데이트"),
     ("manifest", "새 설치 매니페스트 로드"),
@@ -3061,6 +3063,7 @@ class ComfyInstallerService:
     def _run_update(self, *, install_mode: str) -> None:
         process: ComfyProcess | None = None
         transaction: dict[str, Any] | None = None
+        transaction_cleanup: dict[str, Any] | None = None
         rollback_result: dict[str, Any] | None = None
         runtime_pause_token: Any = None
         runtime_was_paused = False
@@ -3161,6 +3164,52 @@ class ComfyInstallerService:
             return restored
 
         try:
+            self._set_phase("transaction_cleanup")
+            try:
+                transaction_cleanup = cleanup_old_runtime_transaction_venvs(
+                    comfy_root=self.comfy_root,
+                    log=self._log,
+                )
+                if transaction_cleanup["errors"]:
+                    self._log(
+                        "[업데이트][정리 경고] 일부 오래된 가상환경 백업을 "
+                        f"정리하지 못했습니다: {transaction_cleanup['errors']}",
+                        "warning",
+                    )
+            except Exception as cleanup_exc:
+                print(
+                    "[COMFY_INSTALL][SERVICE] 오래된 트랜잭션 venv 정리 단계 실패: "
+                    f"comfy_root={self.comfy_root}, "
+                    f"error={type(cleanup_exc).__name__}: {cleanup_exc}"
+                )
+                traceback.print_exc()
+                transaction_cleanup = {
+                    "transactions_root": str(
+                        self.comfy_root / ".installer-state" / "transactions"
+                    ),
+                    "minimum_age_seconds": 86400.0,
+                    "kept_latest_transaction": None,
+                    "scanned_count": 0,
+                    "deleted_count": 0,
+                    "bytes_reclaimed": 0,
+                    "deleted": [],
+                    "skipped": [],
+                    "errors": [
+                        {
+                            "transaction_id": None,
+                            "path": str(self.comfy_root),
+                            "error": (
+                                f"{type(cleanup_exc).__name__}: {cleanup_exc}"
+                            ),
+                        }
+                    ],
+                }
+                self._log(
+                    "[업데이트][정리 경고] 오래된 가상환경 백업 정리 단계가 "
+                    f"실패했지만 업데이트는 계속합니다: {cleanup_exc}",
+                    "warning",
+                )
+
             warning = compatibility_warning(mode)
             if warning:
                 self._log(
@@ -3208,6 +3257,7 @@ class ComfyInstallerService:
                         time.monotonic() - started_monotonic, 3
                     ),
                     "hooking_server": hooking_result,
+                    "transaction_cleanup": transaction_cleanup,
                     "manifest_before": old_manifest.sha256,
                     "manifest_after": None,
                     "changes": {
@@ -3311,6 +3361,7 @@ class ComfyInstallerService:
                         time.monotonic() - started_monotonic, 3
                     ),
                     "hooking_server": hooking_result,
+                    "transaction_cleanup": transaction_cleanup,
                     "manifest_before": old_manifest.sha256,
                     "manifest_after": new_manifest.sha256,
                     "inventory": inventory,
@@ -3587,6 +3638,7 @@ class ComfyInstallerService:
                     time.monotonic() - started_monotonic, 3
                 ),
                 "hooking_server": hooking_result,
+                "transaction_cleanup": transaction_cleanup,
                 "manifest_before": old_manifest.sha256,
                 "manifest_after": new_manifest.sha256,
                 "inventory": inventory,
@@ -3662,7 +3714,10 @@ class ComfyInstallerService:
                         "state": "cancelled",
                         "finished_at": _now_iso(),
                         "error": str(exc),
-                        "result": {"rollback": rollback_result},
+                        "result": {
+                            "transaction_cleanup": transaction_cleanup,
+                            "rollback": rollback_result,
+                        },
                     }
                 )
         except Exception as exc:
@@ -3687,6 +3742,7 @@ class ComfyInstallerService:
                         "finished_at": _now_iso(),
                         "error": str(exc),
                         "result": {
+                            "transaction_cleanup": transaction_cleanup,
                             "rollback": rollback_result,
                             "rollback_error": rollback_error,
                         },

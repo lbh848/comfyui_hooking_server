@@ -29,6 +29,7 @@ class RuntimeStateError(RuntimeError):
 LogCallback = Callable[[str], None]
 RECEIPT_SCHEMA_VERSION = 1
 _REUSE_IF_SAME_ORIGIN = "reuse_if_same_origin"
+OLD_TRANSACTION_VENV_MINIMUM_AGE = datetime.timedelta(hours=24)
 
 
 def _now_iso() -> str:
@@ -673,6 +674,335 @@ def _remove_tree_force_writable(path: Path) -> None:
             raise
 
     shutil.rmtree(path, onexc=make_writable_and_retry)
+
+
+def _emit_transaction_cleanup_log(
+    message: str,
+    log: LogCallback | None,
+) -> None:
+    print(message)
+    if log is None:
+        return
+    try:
+        log(message)
+    except Exception as exc:
+        print(
+            "[COMFY_INSTALL][RUNTIME_STATE] 트랜잭션 정리 로그 전달 실패: "
+            f"message={message}, error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+
+
+def _is_link_or_reparse_point(path: Path, details: os.stat_result) -> bool:
+    reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+    file_attributes = getattr(details, "st_file_attributes", 0)
+    return stat.S_ISLNK(details.st_mode) or bool(
+        reparse_flag and file_attributes & reparse_flag
+    )
+
+
+def _tree_logical_file_bytes(path: Path) -> int:
+    total = 0
+    for current_root, directory_names, file_names in os.walk(
+        path,
+        topdown=True,
+        followlinks=False,
+    ):
+        current = Path(current_root)
+        safe_directory_names: list[str] = []
+        for directory_name in directory_names:
+            child = current / directory_name
+            details = child.lstat()
+            if not _is_link_or_reparse_point(child, details):
+                safe_directory_names.append(directory_name)
+        directory_names[:] = safe_directory_names
+        for file_name in file_names:
+            child = current / file_name
+            details = child.lstat()
+            if stat.S_ISREG(details.st_mode):
+                total += details.st_size
+    return total
+
+
+def cleanup_old_runtime_transaction_venvs(
+    *,
+    comfy_root: str | os.PathLike[str],
+    minimum_age: datetime.timedelta = OLD_TRANSACTION_VENV_MINIMUM_AGE,
+    now: datetime.datetime | None = None,
+    log: LogCallback | None = None,
+) -> dict[str, Any]:
+    """Delete only stale copied venvs while retaining transaction metadata."""
+    root = Path(comfy_root).resolve()
+    installer_state_root = root / ".installer-state"
+    transactions_root = installer_state_root / "transactions"
+    minimum_age_seconds = minimum_age.total_seconds()
+    summary: dict[str, Any] = {
+        "transactions_root": str(transactions_root),
+        "minimum_age_seconds": minimum_age_seconds,
+        "kept_latest_transaction": None,
+        "scanned_count": 0,
+        "deleted_count": 0,
+        "bytes_reclaimed": 0,
+        "deleted": [],
+        "skipped": [],
+        "errors": [],
+    }
+
+    if minimum_age_seconds < 0:
+        message = (
+            "[COMFY_INSTALL][RUNTIME_STATE] 오래된 트랜잭션 venv 정리 실패: "
+            f"minimum_age_seconds={minimum_age_seconds}, state=invalid_age"
+        )
+        _emit_transaction_cleanup_log(message, log)
+        raise ValueError("minimum_age는 음수일 수 없습니다.")
+
+    if now is None:
+        current_time = datetime.datetime.now(datetime.timezone.utc)
+    elif now.tzinfo is None:
+        current_time = now.astimezone(datetime.timezone.utc)
+    else:
+        current_time = now.astimezone(datetime.timezone.utc)
+
+    if not transactions_root.exists():
+        summary["skipped"].append(
+            {"transaction_id": None, "reason": "transactions_root_missing"}
+        )
+        _emit_transaction_cleanup_log(
+            "[COMFY_INSTALL][RUNTIME_STATE] 오래된 트랜잭션 venv 정리 생략: "
+            f"path={transactions_root}, state=transactions_root_missing",
+            log,
+        )
+        return summary
+    for fixed_root in (installer_state_root, transactions_root):
+        try:
+            fixed_root_details = fixed_root.lstat()
+        except Exception as exc:
+            summary["errors"].append(
+                {
+                    "transaction_id": None,
+                    "path": str(fixed_root),
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+            )
+            _emit_transaction_cleanup_log(
+                "[COMFY_INSTALL][RUNTIME_STATE] 트랜잭션 정리 루트 조회 실패: "
+                f"path={fixed_root}, state=root_stat_failed, "
+                f"error={type(exc).__name__}: {exc}",
+                log,
+            )
+            traceback.print_exc()
+            return summary
+        if _is_link_or_reparse_point(fixed_root, fixed_root_details):
+            summary["errors"].append(
+                {
+                    "transaction_id": None,
+                    "path": str(fixed_root),
+                    "error": "unsafe_root_link_or_reparse_point",
+                }
+            )
+            _emit_transaction_cleanup_log(
+                "[COMFY_INSTALL][RUNTIME_STATE] 트랜잭션 정리 루트 거부: "
+                f"path={fixed_root}, state=unsafe_root_link_or_reparse_point",
+                log,
+            )
+            return summary
+    if not transactions_root.is_dir():
+        summary["errors"].append(
+            {
+                "transaction_id": None,
+                "path": str(transactions_root),
+                "error": "transactions_root_not_directory",
+            }
+        )
+        _emit_transaction_cleanup_log(
+            "[COMFY_INSTALL][RUNTIME_STATE] 오래된 트랜잭션 venv 정리 실패: "
+            f"path={transactions_root}, state=transactions_root_not_directory",
+            log,
+        )
+        return summary
+
+    transaction_entries: list[tuple[Path, os.stat_result]] = []
+    try:
+        entries = sorted(transactions_root.iterdir(), key=lambda item: item.name)
+    except Exception as exc:
+        _emit_transaction_cleanup_log(
+            "[COMFY_INSTALL][RUNTIME_STATE] 트랜잭션 목록 조회 실패: "
+            f"path={transactions_root}, state=list_failed, "
+            f"error={type(exc).__name__}: {exc}",
+            log,
+        )
+        traceback.print_exc()
+        raise
+
+    for entry in entries:
+        try:
+            details = entry.lstat()
+            if _is_link_or_reparse_point(entry, details):
+                summary["skipped"].append(
+                    {"transaction_id": entry.name, "reason": "unsafe_link"}
+                )
+                _emit_transaction_cleanup_log(
+                    "[COMFY_INSTALL][RUNTIME_STATE] 트랜잭션 정리 생략: "
+                    f"path={entry}, state=unsafe_link_or_reparse_point",
+                    log,
+                )
+                continue
+            if not stat.S_ISDIR(details.st_mode):
+                summary["skipped"].append(
+                    {"transaction_id": entry.name, "reason": "not_directory"}
+                )
+                _emit_transaction_cleanup_log(
+                    "[COMFY_INSTALL][RUNTIME_STATE] 트랜잭션 정리 생략: "
+                    f"path={entry}, state=not_directory",
+                    log,
+                )
+                continue
+            transaction_entries.append((entry, details))
+        except Exception as exc:
+            summary["errors"].append(
+                {
+                    "transaction_id": entry.name,
+                    "path": str(entry),
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+            )
+            _emit_transaction_cleanup_log(
+                "[COMFY_INSTALL][RUNTIME_STATE] 트랜잭션 상태 조회 실패: "
+                f"path={entry}, state=stat_failed, "
+                f"error={type(exc).__name__}: {exc}",
+                log,
+            )
+            traceback.print_exc()
+
+    summary["scanned_count"] = len(transaction_entries)
+    if not transaction_entries:
+        _emit_transaction_cleanup_log(
+            "[COMFY_INSTALL][RUNTIME_STATE] 오래된 트랜잭션 venv 정리 생략: "
+            f"path={transactions_root}, state=no_transaction_directories",
+            log,
+        )
+        return summary
+
+    latest_entry, _latest_details = max(
+        transaction_entries,
+        key=lambda item: (item[1].st_mtime, item[0].name),
+    )
+    summary["kept_latest_transaction"] = latest_entry.name
+
+    for transaction_dir, details in transaction_entries:
+        transaction_id = transaction_dir.name
+        venv_backup = transaction_dir / "venv"
+        if transaction_dir == latest_entry:
+            summary["skipped"].append(
+                {"transaction_id": transaction_id, "reason": "latest_transaction"}
+            )
+            _emit_transaction_cleanup_log(
+                "[COMFY_INSTALL][RUNTIME_STATE] 트랜잭션 venv 정리 생략: "
+                f"transaction_id={transaction_id}, path={venv_backup}, "
+                "state=latest_transaction",
+                log,
+            )
+            continue
+
+        age_seconds = max(0.0, current_time.timestamp() - details.st_mtime)
+        if age_seconds < minimum_age_seconds:
+            summary["skipped"].append(
+                {
+                    "transaction_id": transaction_id,
+                    "reason": "younger_than_minimum_age",
+                    "age_seconds": round(age_seconds, 3),
+                }
+            )
+            _emit_transaction_cleanup_log(
+                "[COMFY_INSTALL][RUNTIME_STATE] 트랜잭션 venv 정리 생략: "
+                f"transaction_id={transaction_id}, path={venv_backup}, "
+                f"age_seconds={age_seconds:.3f}, "
+                f"minimum_age_seconds={minimum_age_seconds:.3f}, "
+                "state=younger_than_minimum_age",
+                log,
+            )
+            continue
+
+        try:
+            if not venv_backup.exists():
+                summary["skipped"].append(
+                    {"transaction_id": transaction_id, "reason": "venv_missing"}
+                )
+                _emit_transaction_cleanup_log(
+                    "[COMFY_INSTALL][RUNTIME_STATE] 트랜잭션 venv 정리 생략: "
+                    f"transaction_id={transaction_id}, path={venv_backup}, "
+                    "state=venv_missing",
+                    log,
+                )
+                continue
+            venv_details = venv_backup.lstat()
+            if _is_link_or_reparse_point(venv_backup, venv_details):
+                summary["skipped"].append(
+                    {"transaction_id": transaction_id, "reason": "unsafe_venv_link"}
+                )
+                _emit_transaction_cleanup_log(
+                    "[COMFY_INSTALL][RUNTIME_STATE] 트랜잭션 venv 정리 생략: "
+                    f"transaction_id={transaction_id}, path={venv_backup}, "
+                    "state=unsafe_venv_link_or_reparse_point",
+                    log,
+                )
+                continue
+            if not stat.S_ISDIR(venv_details.st_mode):
+                summary["skipped"].append(
+                    {"transaction_id": transaction_id, "reason": "venv_not_directory"}
+                )
+                _emit_transaction_cleanup_log(
+                    "[COMFY_INSTALL][RUNTIME_STATE] 트랜잭션 venv 정리 생략: "
+                    f"transaction_id={transaction_id}, path={venv_backup}, "
+                    "state=venv_not_directory",
+                    log,
+                )
+                continue
+            if venv_backup.parent != transaction_dir or venv_backup.name != "venv":
+                raise RuntimeStateError(
+                    f"안전하지 않은 트랜잭션 venv 정리 경로입니다: {venv_backup}"
+                )
+
+            backup_bytes = _tree_logical_file_bytes(venv_backup)
+            _remove_tree_force_writable(venv_backup)
+            summary["deleted_count"] += 1
+            summary["bytes_reclaimed"] += backup_bytes
+            summary["deleted"].append(
+                {"transaction_id": transaction_id, "bytes": backup_bytes}
+            )
+            _emit_transaction_cleanup_log(
+                "[COMFY_INSTALL][RUNTIME_STATE] 오래된 트랜잭션 venv 정리 완료: "
+                f"transaction_id={transaction_id}, path={venv_backup}, "
+                f"age_seconds={age_seconds:.3f}, bytes_reclaimed={backup_bytes}",
+                log,
+            )
+        except Exception as exc:
+            summary["errors"].append(
+                {
+                    "transaction_id": transaction_id,
+                    "path": str(venv_backup),
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+            )
+            _emit_transaction_cleanup_log(
+                "[COMFY_INSTALL][RUNTIME_STATE] 오래된 트랜잭션 venv 정리 실패: "
+                f"transaction_id={transaction_id}, path={venv_backup}, "
+                f"age_seconds={age_seconds:.3f}, state=delete_failed, "
+                f"error={type(exc).__name__}: {exc}",
+                log,
+            )
+            traceback.print_exc()
+
+    _emit_transaction_cleanup_log(
+        "[COMFY_INSTALL][RUNTIME_STATE] 오래된 트랜잭션 venv 정리 요약: "
+        f"scanned={summary['scanned_count']}, "
+        f"deleted={summary['deleted_count']}, "
+        f"bytes_reclaimed={summary['bytes_reclaimed']}, "
+        f"errors={len(summary['errors'])}, "
+        f"kept_latest={summary['kept_latest_transaction']}",
+        log,
+    )
+    return summary
 
 
 def _restore_worktree_patch(
