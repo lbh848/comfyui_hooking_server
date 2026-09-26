@@ -3390,9 +3390,10 @@ class AssetMode:
         )
         os.makedirs(img_dir, exist_ok=True)
 
-        # 안전한 파일명 생성
+        # 안전한 파일명 생성. 선두 '_'는 내부 관리 파일 접두사이므로 업로드명에서 제거한다.
         safe_name = os.path.splitext(filename)[0]
-        safe_name = re.sub(r'[^\w\s\-\.]', '', safe_name).strip() or "upload"
+        safe_name = re.sub(r'[^\w\s\-\.]', '', safe_name).strip()
+        safe_name = safe_name.lstrip("_") or "upload"
         ext = os.path.splitext(filename)[1].lower() or ".png"
         safe_filename = f"{safe_name}{ext}"
 
