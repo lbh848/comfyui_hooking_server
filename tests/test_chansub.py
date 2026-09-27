@@ -2,6 +2,7 @@ import io
 import unittest
 import zipfile
 import copy
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import aiohttp
@@ -163,6 +164,17 @@ class ChansubServiceTest(unittest.TestCase):
         self.assertEqual(
             chansub_service.CHANSUB_URL,
             "https://inference.square1.dev/v1/images/nai/generate-image",
+        )
+
+    def test_settings_display_matches_current_generation_endpoint(self):
+        source = (
+            Path(__file__).resolve().parents[1] / "frontend" / "index.html"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn(f'value="{chansub_service.CHANSUB_URL}"', source)
+        self.assertNotIn(
+            "https://wellspring.encrypt.gay/v1/images/nai/generate-image",
+            source,
         )
 
     def test_request_body_matches_nai_shape(self):
