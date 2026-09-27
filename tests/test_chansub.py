@@ -159,6 +159,12 @@ class ChansubPromptBuilderTest(unittest.TestCase):
 
 
 class ChansubServiceTest(unittest.TestCase):
+    def test_uses_current_square1_generation_endpoint(self):
+        self.assertEqual(
+            chansub_service.CHANSUB_URL,
+            "https://inference.square1.dev/v1/images/nai/generate-image",
+        )
+
     def test_request_body_matches_nai_shape(self):
         body = build_request_body("positive", "negative", 640, 960)
         self.assertEqual(body["action"], "generate")

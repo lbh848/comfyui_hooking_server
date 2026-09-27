@@ -11,7 +11,7 @@ import zipfile
 import aiohttp
 
 
-CHANSUB_URL = "https://wellspring.encrypt.gay/v1/images/nai/generate-image"
+CHANSUB_URL = "https://inference.square1.dev/v1/images/nai/generate-image"
 CHANSUB_MODEL = "nai-diffusion-4-5-full"
 CHANSUB_BUILTIN_QUALITY_TAGS = frozenset(
     {"masterpiece", "best quality", "highres"}
