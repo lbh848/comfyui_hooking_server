@@ -287,10 +287,14 @@ async def test_remote_hybrid_regeneration_updates_session_and_prompt(
         *,
         _body=None,
         _return_queue_result=False,
+        _raw_batch_id="",
+        _raw_batch_session_id="",
     ):
         assert request is None
         assert _body == {"name": "source-backup"}
         assert _return_queue_result is True
+        assert _raw_batch_id == ""
+        assert _raw_batch_session_id == session_id
         return {
             "success": True,
             "image_bytes": b"new-image",

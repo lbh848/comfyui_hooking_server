@@ -698,6 +698,7 @@ DEFAULT_CONFIG = {
     # 작업별 LLM1/LLM2/LLM3 라우팅 및 메인/폴백 재시도 정책(외부 LLM 분기 탭).
     "llm_routing": {
         "illustration_quality_inspection": _llm_route_defaults(json_mode=True),
+        "illustration_quality_translation": _llm_route_defaults(json_mode=True),
         "extract_outfit":          _llm_route_defaults(fallback=True),
         "enhance_outfit":          _llm_route_defaults(fallback=True),
         "restore_workflow":        _llm_route_defaults(fallback=True),
@@ -5643,6 +5644,7 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
     prompts[prompt_id]["save_node_id"] = save_node_id
     regen_session_id = str(raw_body.get("illustration_regenerate_session_id") or "")
     regen_slot = raw_body.get("illustration_regenerate_slot")
+    raw_batch_id = str(raw_body.get("illustration_raw_batch_id") or "")
 
     try:
         runtime_snapshot = _take_prompt_runtime_snapshot(prompt_id)
@@ -6482,6 +6484,11 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                     f"[ILLUST_CONTEXT] 재생성 이미지는 반환하지만 캐시 갱신 실패: "
                     f"session={regen_session_id}, slot={regen_slot}"
                 )
+            batch_run = illustration_flow.raw_batch(raw_batch_id) if raw_batch_id else None
+            if batch_run and batch_run["cancel_requested"]:
+                illustration_context_pipeline.set_session_regenerate_cancelled(
+                    regen_session_id, regen_slot
+                )
 
         # WS: executed + executing(null)
         executed_msg = {
@@ -6513,14 +6520,25 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
         tb = traceback.format_exc()
         print(f"[ERROR] process_prompt 실패: {e}\n{tb}")
         log_to_file("proxy.log", f"ERROR in process_prompt: {e}\n{tb}")
-        prompts[prompt_id]["status"] = "completed"
+        batch_run = illustration_flow.raw_batch(raw_batch_id) if raw_batch_id else None
+        if raw_batch_id:
+            prompts[prompt_id]["status"] = "cancelled" if batch_run and batch_run["cancel_requested"] else "failed"
+            prompts[prompt_id]["error"] = (
+                illustration_flow.RAW_BATCH_CANCEL_REASON
+                if batch_run and batch_run["cancel_requested"] else str(e)
+            )
+        else:
+            prompts[prompt_id]["status"] = "completed"
         prompts[prompt_id]["outputs"] = {"images": []}
         if regen_session_id and regen_slot is not None:
-            illustration_context_pipeline.set_session_regenerate_error(
-                regen_session_id,
-                regen_slot,
-                str(e),
-            )
+            if batch_run and batch_run["cancel_requested"]:
+                illustration_context_pipeline.set_session_regenerate_cancelled(regen_session_id, regen_slot)
+            else:
+                illustration_context_pipeline.set_session_regenerate_error(
+                    regen_session_id,
+                    regen_slot,
+                    str(e),
+                )
         raise
 
 
@@ -9326,6 +9344,83 @@ async def handle_illustration_quality_inspection_review(request: web.Request) ->
         return web.json_response({"status": "error", "error": str(exc)}, status=500)
 
 
+async def handle_illustration_quality_inspection_translation(
+    request: web.Request,
+) -> web.Response:
+    history_id = str(request.match_info.get("history_id") or "").strip()
+    try:
+        translation_request = illustration_quality_inspection.load_translation_request(
+            history_id
+        )
+        cached = translation_request.get("cached_translation")
+        if isinstance(cached, dict):
+            print(
+                "[ILLUST_INSPECTION:TRANSLATION] 캐시 사용: "
+                f"history_id={history_id!r}, "
+                f"translation_history_id={cached.get('translation_history_id')!r}"
+            )
+            return web.json_response({**cached, "cached": True})
+        source = translation_request.get("source")
+        if not isinstance(source, dict):
+            print(
+                "[ILLUST_INSPECTION:TRANSLATION] 번역 원본 형식 오류: "
+                f"history_id={history_id!r}, source={source!r}"
+            )
+            raise RuntimeError("번역 원본을 준비하지 못했습니다.")
+
+        async def translate(queue_item):
+            return await illustration_quality_inspection.execute_translation(
+                queue_item,
+                source=source,
+            )
+
+        slots = [image.get("slot") for image in source.get("images") or []]
+        item = await queue_manager.add_item(
+            illustration_quality_inspection.TRANSLATION_TASK_KEY,
+            f"품질 검사 한글 번역 · {len(slots)}장",
+            {
+                "source_inspection_history_id": history_id,
+                "session_id": str(source.get("inspection_session_id") or ""),
+                "slots": slots,
+            },
+            priority=0,
+            runtime_handler=translate,
+        )
+        print(
+            "[ILLUST_INSPECTION:TRANSLATION] 번역 큐 등록 및 완료 대기: "
+            f"history_id={history_id!r}, queue={item.id!r}, slots={slots}"
+        )
+        result = await item.completion_future
+        if not isinstance(result, dict):
+            print(
+                "[ILLUST_INSPECTION:TRANSLATION] 번역 큐 결과 형식 오류: "
+                f"history_id={history_id!r}, queue={item.id!r}, result={result!r}"
+            )
+            raise RuntimeError("번역 결과 형식이 올바르지 않습니다.")
+        return web.json_response({**result, "cached": False})
+    except LookupError as exc:
+        print(
+            "[ILLUST_INSPECTION:TRANSLATION] 검사 기록 조회 실패: "
+            f"history_id={history_id!r}, error={exc}"
+        )
+        traceback.print_exc()
+        return web.json_response({"status": "error", "error": str(exc)}, status=404)
+    except ValueError as exc:
+        print(
+            "[ILLUST_INSPECTION:TRANSLATION] 번역 요청 거부: "
+            f"history_id={history_id!r}, error={exc}"
+        )
+        traceback.print_exc()
+        return web.json_response({"status": "error", "error": str(exc)}, status=400)
+    except Exception as exc:
+        print(
+            "[ILLUST_INSPECTION:TRANSLATION] 번역 처리 실패: "
+            f"history_id={history_id!r}, error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        return web.json_response({"status": "error", "error": str(exc)}, status=500)
+
+
 async def handle_illustration_flow(request: web.Request) -> web.Response:
     node_id = request.query.get("node")
     if node_id:
@@ -9394,6 +9489,26 @@ async def handle_video_input_flow_event(request: web.Request) -> web.Response:
         return web.json_response({"success": False, "error": str(exc)}, status=500)
 
 
+def _settle_cancelled_raw_batch(run: dict, result: dict) -> None:
+    reason = illustration_flow.raw_batch_reason(run)
+    for item in queue_manager.items:
+        binding = getattr(item, "_illustration_flow", None)
+        if not binding or binding[0] is not run or item.status != "cancelled":
+            continue
+        prompt_id = str((item.params or {}).get("prompt_id") or "")
+        if prompt_id:
+            _finish_cancelled_raw_prompt(
+                prompt_id, run["raw_batch_session_id"],
+                (item.params or {}).get("raw_batch_slot"), reason=reason,
+            )
+    illustration_context_pipeline.set_session_regenerate_cancelled(
+        run["raw_batch_session_id"], run.get("raw_batch_current_slot", -1),
+        finishing=bool(result.get("active_finishing")),
+    )
+    if not result.get("active_finishing") and not result.get("active_cancelled"):
+        illustration_flow.finish_cancelled_raw_batch(run["raw_batch_id"])
+
+
 async def handle_illustration_flow_cancel(request: web.Request) -> web.Response:
     try:
         body = await request.json()
@@ -9405,6 +9520,9 @@ async def handle_illustration_flow_cancel(request: web.Request) -> web.Response:
         if not result.get("found"):
             print(f"[ILLUST_FLOW] 중단 API 대상 없음: run={run_id}")
             return web.json_response({"success": False, "error": "실행 중인 흐름을 찾을 수 없습니다"}, status=404)
+        batch_run = illustration_flow.raw_batch_for_run(run_id)
+        if batch_run is not None:
+            _settle_cancelled_raw_batch(batch_run, result)
         return web.json_response({
             "success": True,
             **result,
@@ -9414,6 +9532,48 @@ async def handle_illustration_flow_cancel(request: web.Request) -> web.Response:
         print(f"[ILLUST_FLOW] 중단 API 실패: error={type(exc).__name__}: {exc}")
         traceback.print_exc()
         return web.json_response({"success": False, "error": str(exc)}, status=500)
+
+
+async def handle_raw_batch_status(request: web.Request) -> web.Response:
+    """Short, no-cache control channel for the saved-RAW whole-generation module."""
+    batch_id = str(request.match_info.get("batch_id") or "")
+    if not re.fullmatch(r"[0-9a-f]{24}", batch_id):
+        print(f"[ILLUST_FLOW:RAW_BATCH] 상태 조회 토큰 오류: batch={batch_id!r}")
+        return web.json_response({"error": "잘못된 저장 RAW 전체 생성 토큰입니다"}, status=400)
+    run = illustration_flow.raw_batch(batch_id)
+    if run is None:
+        print(f"[ILLUST_FLOW:RAW_BATCH] 상태 조회 실행 없음: batch={batch_id}")
+        return web.json_response({"error": "저장 RAW 전체 생성 실행을 찾을 수 없습니다"}, status=404)
+    operation = next((name for name in ("p", "f", "a") if name in request.query), "")
+    if operation and (request.query.get(operation) != "1" or len(request.query) != 1):
+        print(f"[ILLUST_FLOW:RAW_BATCH] 상태 전이 요청 오류: batch={batch_id}, query={dict(request.query)}")
+        return web.json_response({"error": "잘못된 저장 RAW 전체 생성 상태 요청입니다"}, status=400)
+    if not operation and request.query:
+        print(f"[ILLUST_FLOW:RAW_BATCH] 알 수 없는 상태 요청: batch={batch_id}, query={dict(request.query)}")
+        return web.json_response({"error": "지원하지 않는 저장 RAW 전체 생성 상태 요청입니다"}, status=400)
+    if operation == "a" and run["raw_batch_state"] == "active":
+        reason = "모듈의 저장 RAW 전체 생성 처리 실패"
+        result = await queue_manager.cancel_illustration_flow(run["id"], reason=reason)
+        if not result.get("found"):
+            print(f"[ILLUST_FLOW:RAW_BATCH] 실패 실행 정리 실패: batch={batch_id}, run={run['id']}")
+            return web.json_response({"error": "저장 RAW 전체 생성 작업을 정리할 수 없습니다"}, status=409)
+        _settle_cancelled_raw_batch(run, result)
+    elif operation:
+        state = {"p": "finalizing", "f": "completed", "a": "failed"}[operation]
+        if not illustration_flow.finish_raw_batch(batch_id, state,
+                                                  "모듈의 저장 RAW 전체 생성 처리 실패" if state == "failed" else ""):
+            return web.json_response({
+                "error": illustration_flow.raw_batch_reason(run) if run["cancel_requested"] else (
+                    "저장 RAW 전체 생성 상태를 변경할 수 없습니다"
+                ),
+                "state": run["raw_batch_state"],
+            }, status=409, headers={"Cache-Control": "no-store"})
+    return web.json_response({
+        "state": run["raw_batch_state"], "run": run["id"],
+        "error": illustration_flow.raw_batch_reason(run) if run["cancel_requested"] else (
+            run.get("raw_batch_error") or ""
+        ),
+    }, headers={"Cache-Control": "no-store"})
 
 
 async def handle_illustration_flow_script(request: web.Request) -> web.Response:
@@ -9506,6 +9666,7 @@ async def handle_api_illustration_context_bridge_health(request: web.Request) ->
         "slot_animation_metadata": True,
         "asset_display_metadata": True,
         "asset_reroll": True,
+        "raw_batch_stop": True,
         "lookup_key_length": 24,
         "max_slot_manifest_count": illustration_context_pipeline.MAX_ILLUSTRATION_SLOT_COUNT,
         "progress_phases": ["call1", "call2", "call2_plan", "call2_keyvis", "call2_detail", "call2_authority_audit", "call2_fallback", "call3", "multi_char_mask", "asset_reroll", "enqueue", "generating", "retrying", "regenerating", "ready", "error"],
@@ -11221,6 +11382,33 @@ def _serve_illustration_session_result(
     return web.json_response({"prompt_id": prompt_id, "number": len(prompts), "node_errors": {}})
 
 
+def _finish_cancelled_raw_prompt(
+    prompt_id: str, session_id: str, slot: int | None, *, reason: str = ""
+) -> None:
+    entry = prompts.get(prompt_id)
+    if not isinstance(entry, dict):
+        print(
+            f"[ILLUST_FLOW:RAW_BATCH] 취소 prompt 정리 실패 - 없음: "
+            f"prompt={prompt_id}, session={session_id}, slot={slot}"
+        )
+        return
+    if entry.get("status") != "running":
+        print(
+            f"[ILLUST_FLOW:RAW_BATCH] 이미 종료된 prompt 유지: "
+            f"prompt={prompt_id}, session={session_id}, slot={slot}, status={entry.get('status')}"
+        )
+        return
+    reason = reason or illustration_flow.RAW_BATCH_CANCEL_REASON
+    entry.update(status="cancelled", error=reason, outputs={"images": []}, image_bytes=None)
+    illustration_context_pipeline.set_session_regenerate_cancelled(
+        session_id, slot if slot is not None else -1
+    )
+    print(
+        f"[ILLUST_FLOW:RAW_BATCH] 대기 prompt 중단 완료: "
+        f"prompt={prompt_id}, session={session_id}, slot={slot}, reason={reason}"
+    )
+
+
 async def _serve_priority_reservation_for_illustration_slot(
     body: dict,
     prompt_id: str,
@@ -11228,6 +11416,8 @@ async def _serve_priority_reservation_for_illustration_slot(
     session_id: str,
     slot: int,
     raw_positive: str,
+    *,
+    raw_batch_id: str = "",
 ) -> web.Response | None:
     """예약 이미지가 있으면 한 슬롯의 실제 생성보다 먼저 반환한다.
 
@@ -11235,6 +11425,13 @@ async def _serve_priority_reservation_for_illustration_slot(
     않는다. 이 함수는 저장 RAW로 한 장을 생성하려는 요청에서만 호출한다.
     """
     global reschedule_queue
+
+    if raw_batch_id and illustration_flow.raw_batch(raw_batch_id)["cancel_requested"]:
+        print(
+            f"[ILLUST_FLOW:RAW_BATCH] 예약 이미지 조회 전 중단: "
+            f"batch={raw_batch_id}, session={session_id}, slot={slot}"
+        )
+        return web.json_response({"error": illustration_flow.RAW_BATCH_CANCEL_REASON}, status=409)
 
     image_bytes = None
     reservation_kind = ""
@@ -11248,11 +11445,12 @@ async def _serve_priority_reservation_for_illustration_slot(
             reservation_kind = "single"
             reservation_detail = scheduled_name
             reschedule_queue = None
-            await notify_frontend("reschedule_used", {"name": scheduled_name})
-            await notify_frontend(
-                "reschedule_changed",
-                {"scheduled": False, "name": None},
-            )
+            if not raw_batch_id:
+                await notify_frontend("reschedule_used", {"name": scheduled_name})
+                await notify_frontend(
+                    "reschedule_changed",
+                    {"scheduled": False, "name": None},
+                )
         else:
             print(
                 f"[ILLUST_CONTEXT] 예약 우선 처리 실패 - 이미지 bytes 없음: "
@@ -11297,6 +11495,9 @@ async def _serve_priority_reservation_for_illustration_slot(
     asyncio.create_task(
         complete_prompt_from_reschedule(prompt_id, save_node or "9", filename)
     )
+    if raw_batch_id:
+        await notify_frontend("reschedule_used", {"name": reservation_detail})
+        await notify_frontend("reschedule_changed", {"scheduled": False, "name": None})
     return web.json_response(
         {"prompt_id": prompt_id, "number": len(prompts), "node_errors": {}}
     )
@@ -11312,6 +11513,7 @@ async def _enqueue_illustration_session_slot(
     attach_context: bool,
     operation_label: str,
     whole_session: bool = False,
+    raw_batch_id: str = "",
 ) -> web.Response:
     """저장된 RAW descriptor로 한 슬롯을 생성한다. CALL1/2/3은 실행하지 않는다."""
     descriptor = illustration_context_pipeline.session_item_by_slot(session_id, slot)
@@ -11324,6 +11526,13 @@ async def _enqueue_illustration_session_slot(
             {"error": "illustration full generation unavailable: session or slot not found"},
             status=409,
         )
+
+    if raw_batch_id and illustration_flow.raw_batch(raw_batch_id)["raw_batch_state"] != "active":
+        print(
+            f"[ILLUST_FLOW:RAW_BATCH] 큐 접수 전 중단: "
+            f"batch={raw_batch_id}, session={session_id}, slot={slot}"
+        )
+        return web.json_response({"error": illustration_flow.RAW_BATCH_CANCEL_REASON}, status=409)
 
     generated_prompt = copy.deepcopy(prompt_data)
     if not set_prompt_by_title(generated_prompt, "긍정프롬프트", descriptor.get("raw_positive", "")):
@@ -11339,6 +11548,8 @@ async def _enqueue_illustration_session_slot(
         "image_bytes": None, "timestamp": time.time(),
         "_llm_final_result": _build_llm_final_result(descriptor),
     }
+    if raw_batch_id:
+        prompts[prompt_id]["raw_batch_id"] = raw_batch_id
     generated_body = {
         "prompt": generated_prompt,
         "client_id": body.get("client_id", ""),
@@ -11353,6 +11564,8 @@ async def _enqueue_illustration_session_slot(
     if attach_context:
         session = illustration_context_pipeline.get_session(session_id) or {}
         generated_body["illustration_context"] = session.get("context", "")
+    if raw_batch_id:
+        generated_body["illustration_raw_batch_id"] = raw_batch_id
 
     illustration_context_pipeline.set_session_regenerate_started(
         session_id,
@@ -11360,14 +11573,29 @@ async def _enqueue_illustration_session_slot(
         operation_label,
         whole_session=whole_session,
     )
-    backup_name = str(descriptor.get("backup_name") or "").strip()
-    if backup_name and _backup_uses_hybrid_regeneration(backup_name):
+    try:
+        backup_name = str(descriptor.get("backup_name") or "").strip()
+        hybrid_regeneration = bool(backup_name and _backup_uses_hybrid_regeneration(backup_name))
+    except Exception as exc:
+        print(
+            f"[ILLUST_FLOW:RAW_BATCH] 백업 확인 실패: batch={raw_batch_id}, "
+            f"session={session_id}, slot={slot}, error={exc}"
+        )
+        traceback.print_exc()
+        if raw_batch_id:
+            prompts[prompt_id].update(
+                status="failed", error=str(exc), outputs={"images": []}, image_bytes=None,
+            )
+            illustration_context_pipeline.set_session_regenerate_error(session_id, slot, str(exc))
+        raise
+    if hybrid_regeneration:
         asyncio.create_task(process_illustration_remote_regenerate(
             prompt_id,
             session_id,
             slot,
             backup_name,
             operation_label,
+            raw_batch_id=raw_batch_id,
         ))
         print(
             f"[ILLUST_CONTEXT:REMOTE_REGEN] 하이브리드 백업 접수: "
@@ -11377,12 +11605,47 @@ async def _enqueue_illustration_session_slot(
         return web.json_response(
             {"prompt_id": prompt_id, "number": len(prompts), "node_errors": {}}
         )
-    asyncio.create_task(queue_manager.add_item(
-        "illustration",
-        f"삽화 {operation_label} · slot {slot}",
-        {"prompt_id": prompt_id, "prompt_data": generated_prompt, "raw_body": generated_body},
-        priority=0,
-    ))
+    queue_params = {
+        "prompt_id": prompt_id, "prompt_data": generated_prompt, "raw_body": generated_body,
+    }
+    if raw_batch_id:
+        queue_params.update(
+            raw_batch_id=raw_batch_id, raw_batch_session_id=session_id,
+            raw_batch_slot=slot,
+        )
+        # Await queue admission for this batch: Stop must not cross an unbound
+        # fire-and-forget add_item() and let a cancelled slot start later.
+        try:
+            item = await queue_manager.add_item(
+                "illustration", f"삽화 {operation_label} · slot {slot}", queue_params, priority=0,
+            )
+        except Exception as exc:
+            print(
+                f"[ILLUST_FLOW:RAW_BATCH] 큐 접수 실패: batch={raw_batch_id}, "
+                f"session={session_id}, slot={slot}, error={exc}"
+            )
+            traceback.print_exc()
+            prompts[prompt_id].update(
+                status="failed", error=str(exc), outputs={"images": []}, image_bytes=None,
+            )
+            illustration_context_pipeline.set_session_regenerate_error(session_id, slot, str(exc))
+            raise
+        if item.status == "cancelled":
+            _finish_cancelled_raw_prompt(prompt_id, session_id, slot, reason=item.error)
+            return web.json_response({"error": item.error or illustration_flow.RAW_BATCH_CANCEL_REASON}, status=409)
+        # A worker may claim the item before its image Task starts. Stop cancels
+        # that item without entering process_prompt(), so settle /history here too.
+        def on_batch_item_done(_future):
+            if item.status == "cancelled":
+                _finish_cancelled_raw_prompt(prompt_id, session_id, slot, reason=item.error)
+        item.completion_future.add_done_callback(on_batch_item_done)
+    else:
+        asyncio.create_task(queue_manager.add_item(
+            "illustration",
+            f"삽화 {operation_label} · slot {slot}",
+            queue_params,
+            priority=0,
+        ))
     print(f"[ILLUST_CONTEXT] {operation_label} 접수: session={session_id}, slot={slot}")
     return web.json_response({"prompt_id": prompt_id, "number": len(prompts), "node_errors": {}})
 
@@ -11610,13 +11873,47 @@ async def handle_prompt(request: web.Request) -> web.Response:
                     slot=context_payload["slot"],
                 )
             if context_action == "generate":
-                # 현재 응답 전체 생성은 기존 RAW descriptor만 사용한다.
-                # CONTEXT 재생성으로 폴백하지 않으며, RAW 로그에도 CONTEXT를 붙이지 않는다.
+                # Only the saved-server-RAW whole-generation module sends a batch
+                # token. Legacy/single-slot generate requests retain their path.
                 slot = context_payload["slot"]
+                raw_batch_id = context_payload.get("raw_batch_id")
+                has_batch_index = "raw_batch_index" in context_payload
+                if (raw_batch_id is None) != (not has_batch_index):
+                    print(
+                        f"[ILLUST_FLOW:RAW_BATCH] 누락된 토큰/순번: "
+                        f"session={session_id}, slot={slot}, batch={raw_batch_id!r}, "
+                        f"index={context_payload.get('raw_batch_index')!r}"
+                    )
+                    return web.json_response({"error": "저장 RAW 전체 생성 토큰과 순번이 필요합니다"}, status=400)
+                if raw_batch_id is not None:
+                    batch_index = context_payload["raw_batch_index"]
+                    if (not isinstance(raw_batch_id, str)
+                        or not re.fullmatch(r"[0-9a-f]{24}", raw_batch_id)
+                        or isinstance(batch_index, bool)
+                        or not isinstance(batch_index, int) or batch_index < 0):
+                        print(
+                            f"[ILLUST_FLOW:RAW_BATCH] 잘못된 토큰/순번: "
+                            f"session={session_id}, slot={slot}, batch={raw_batch_id!r}, "
+                            f"index={batch_index!r}"
+                        )
+                        return web.json_response({"error": "잘못된 저장 RAW 전체 생성 토큰 또는 순번입니다"}, status=400)
+                    batch_run, admission_error = illustration_flow.admit_raw_batch(
+                        raw_batch_id, session_id, batch_index
+                    )
+                    if batch_run is None:
+                        return web.json_response({"error": admission_error}, status=409)
+                    batch_run["raw_batch_current_slot"] = slot
+                    illustration_flow.changed(batch_run)
                 descriptor = illustration_context_pipeline.session_item_by_slot(
                     session_id,
                     slot,
                 )
+                if raw_batch_id is not None and illustration_flow.raw_batch(raw_batch_id)["cancel_requested"]:
+                    print(
+                        f"[ILLUST_FLOW:RAW_BATCH] descriptor 조회 중 중단: "
+                        f"session={session_id}, slot={slot}, batch={raw_batch_id}"
+                    )
+                    return web.json_response({"error": illustration_flow.RAW_BATCH_CANCEL_REASON}, status=409)
                 if descriptor is not None:
                     reservation_response = await _serve_priority_reservation_for_illustration_slot(
                         body,
@@ -11625,6 +11922,7 @@ async def handle_prompt(request: web.Request) -> web.Response:
                         session_id,
                         slot,
                         descriptor.get("raw_positive", ""),
+                        raw_batch_id=raw_batch_id or "",
                     )
                     if reservation_response is not None:
                         return reservation_response
@@ -11637,6 +11935,7 @@ async def handle_prompt(request: web.Request) -> web.Response:
                     attach_context=False,
                     operation_label="전체 생성",
                     whole_session=True,
+                    raw_batch_id=raw_batch_id or "",
                 )
             if context_action == "asset_reroll":
                 session = illustration_context_pipeline.get_session(session_id)
@@ -11802,21 +12101,37 @@ async def handle_history(request: web.Request) -> web.Response:
         node_outputs = {}
         if save_node:
             node_outputs[str(save_node)] = {"images": img_list}
+        status_error = bool(entry.get("raw_batch_id")) and entry.get("status") in ("cancelled", "failed")
+        reason = str(entry.get("error") or (
+            illustration_flow.RAW_BATCH_CANCEL_REASON if entry.get("status") == "cancelled"
+            else "삽화 생성 작업에 실패했습니다"
+        )) if status_error else ""
         return {
             "prompt": [0, pid, entry["prompt"] if include_workflow else {}, {}, []],
             "outputs": node_outputs,
-            "status": {"status_str": "success", "completed": True, "messages": []},
+            "status": {
+                "status_str": "error" if status_error else "success",
+                "completed": True,
+                "messages": [["execution_error", {"exception_message": reason}]] if status_error else [],
+            },
         }
 
     if not prompt_id:
         res = {
             pid: build_entry(pid, e, include_workflow=False)
             for pid, e in prompts.items()
-            if e["status"] == "completed"
+            if e["status"] == "completed" or (
+                e.get("raw_batch_id") and e["status"] in ("cancelled", "failed")
+            )
         }
         return web.json_response(res)
 
-    if prompt_id in prompts and prompts[prompt_id]["status"] == "completed":
+    if prompt_id in prompts and (
+        prompts[prompt_id]["status"] == "completed" or (
+            prompts[prompt_id].get("raw_batch_id")
+            and prompts[prompt_id]["status"] in ("cancelled", "failed")
+        )
+    ):
         return web.json_response(
             {prompt_id: build_entry(prompt_id, prompts[prompt_id])}
         )
@@ -12607,6 +12922,8 @@ async def _run_regeneration_attempts(
     illustration_visual_states: dict | None = None,
     regeneration_request_id: str = "",
     first_item_future: asyncio.Future | None = None,
+    raw_batch_id: str = "",
+    raw_batch_session_id: str = "",
 ) -> tuple[dict, object]:
     """공급자 레인을 점유하지 않는 위치에서 재생성 시도를 순차 조정한다.
 
@@ -12644,6 +12961,16 @@ async def _run_regeneration_attempts(
 
     failures: list[tuple[str, str]] = []
     for attempt_index, provider in enumerate(providers, start=1):
+        if raw_batch_id:
+            batch_run = illustration_flow.raw_batch(raw_batch_id)
+            if batch_run is None or batch_run["raw_batch_state"] != "active":
+                print(
+                    f"[ILLUST_FLOW:RAW_BATCH] 새 공급자 시도 차단: "
+                    f"batch={raw_batch_id}, session={raw_batch_session_id}, "
+                    f"backup={backup_name}, provider={provider}, "
+                    f"state={batch_run['raw_batch_state'] if batch_run else 'missing'}"
+                )
+                raise asyncio.CancelledError(illustration_flow.RAW_BATCH_CANCEL_REASON)
         is_fallback = attempt_index > 1
         attempt_label = (
             f"{label} 폴백({provider}): {backup_name}"
@@ -12661,25 +12988,28 @@ async def _run_regeneration_attempts(
             f"mode={provider_mode}, fallback={is_fallback}"
         )
         try:
+            queue_params = {
+                "backup_name": backup_name,
+                "positive": positive,
+                "negative": negative,
+                "bot_name": bot_name or "",
+                "postprocess_settings": postprocess_settings,
+                "speak_text": speak_text or "",
+                "provider": provider,
+                "provider_mode": provider_mode,
+                "prompt_provider": prompt_provider,
+                "generation_params": attempt_params,
+                "illustration_multi_char": illustration_multi_char,
+                "illustration_visual_states": illustration_visual_states,
+                "regeneration_request_id": regeneration_request_id,
+            }
+            if raw_batch_id:
+                queue_params.update(
+                    raw_batch_id=raw_batch_id,
+                    raw_batch_session_id=raw_batch_session_id,
+                )
             queue_item = await queue_manager.add_item(
-                "regenerate",
-                attempt_label,
-                {
-                    "backup_name": backup_name,
-                    "positive": positive,
-                    "negative": negative,
-                    "bot_name": bot_name or "",
-                    "postprocess_settings": postprocess_settings,
-                    "speak_text": speak_text or "",
-                    "provider": provider,
-                    "provider_mode": provider_mode,
-                    "prompt_provider": prompt_provider,
-                    "generation_params": attempt_params,
-                    "illustration_multi_char": illustration_multi_char,
-                    "illustration_visual_states": illustration_visual_states,
-                    "regeneration_request_id": regeneration_request_id,
-                },
-                priority=0,
+                "regenerate", attempt_label, queue_params, priority=0,
             )
             if first_item_future is not None and not first_item_future.done():
                 first_item_future.set_result(queue_item)
@@ -16498,6 +16828,8 @@ async def handle_api_regenerate(
     *,
     _body: dict | None = None,
     _return_queue_result: bool = False,
+    _raw_batch_id: str = "",
+    _raw_batch_session_id: str = "",
 ) -> web.Response | dict:
     """백업의 프롬프트 + 현재 워크플로우로 이미지를 재생성해 반환한다.
 
@@ -16591,6 +16923,11 @@ async def handle_api_regenerate(
             "illustration_visual_states": src_visual_states,
             "label": "재생성",
         }
+        if _raw_batch_id:
+            attempt_kwargs.update(
+                raw_batch_id=_raw_batch_id,
+                raw_batch_session_id=_raw_batch_session_id,
+            )
         if not _return_queue_result:
             request_id, item = await _enqueue_regeneration_request(**attempt_kwargs)
             return web.json_response(
@@ -17971,13 +18308,25 @@ async def process_illustration_remote_regenerate(
     slot: int,
     backup_name: str,
     operation_label: str = "재생성",
+    *,
+    raw_batch_id: str = "",
 ) -> dict:
     """원격 슬롯의 하이브리드 백업을 공통 재생성 폴백 경로로 처리한다."""
     try:
+        if raw_batch_id:
+            run = illustration_flow.raw_batch(raw_batch_id)
+            if run is None or run["raw_batch_state"] != "active":
+                print(
+                    f"[ILLUST_FLOW:RAW_BATCH] 하이브리드 생성 전 중단: "
+                    f"batch={raw_batch_id}, session={session_id}, slot={slot}"
+                )
+                raise asyncio.CancelledError(illustration_flow.RAW_BATCH_CANCEL_REASON)
         regenerate_result = await handle_api_regenerate(
             None,
             _body={"name": backup_name},
             _return_queue_result=True,
+            _raw_batch_id=raw_batch_id,
+            _raw_batch_session_id=session_id,
         )
         if isinstance(regenerate_result, web.Response):
             _internal_json_response_payload(
@@ -18008,6 +18357,9 @@ async def process_illustration_remote_regenerate(
             raise RuntimeError(
                 f"원격 {operation_label} 이미지를 세션 슬롯에 반영하지 못했습니다"
             )
+        batch_run = illustration_flow.raw_batch(raw_batch_id) if raw_batch_id else None
+        if batch_run and batch_run["cancel_requested"]:
+            illustration_context_pipeline.set_session_regenerate_cancelled(session_id, slot)
 
         prompt_entry = prompts.get(prompt_id)
         if not isinstance(prompt_entry, dict):
@@ -18032,6 +18384,24 @@ async def process_illustration_remote_regenerate(
             "provider": regenerate_result.get("provider"),
             "fallback_used": bool(regenerate_result.get("fallback_used")),
         }
+    except asyncio.CancelledError:
+        if not raw_batch_id:
+            raise
+        run = illustration_flow.raw_batch(raw_batch_id)
+        reason = (illustration_flow.RAW_BATCH_CANCEL_REASON if run and run["cancel_requested"]
+                  else "원격 저장 RAW 이미지 생성 작업이 취소되었습니다")
+        print(
+            f"[ILLUST_FLOW:RAW_BATCH] 하이브리드 중단: "
+            f"batch={raw_batch_id}, session={session_id}, slot={slot}, reason={reason}"
+        )
+        if run and run["cancel_requested"]:
+            _finish_cancelled_raw_prompt(prompt_id, session_id, slot)
+        else:
+            prompt_entry = prompts.get(prompt_id)
+            if isinstance(prompt_entry, dict):
+                prompt_entry.update(status="failed", error=reason, outputs={"images": []}, image_bytes=None)
+            illustration_context_pipeline.set_session_regenerate_error(session_id, slot, reason)
+        return {"success": False, "prompt_id": prompt_id, "error": reason}
     except Exception as exc:
         print(
             f"[ILLUST_CONTEXT:REMOTE_REGEN] 실패: "
@@ -18039,14 +18409,26 @@ async def process_illustration_remote_regenerate(
             f"backup={backup_name}, error={exc}"
         )
         traceback.print_exc()
-        illustration_context_pipeline.set_session_regenerate_error(
-            session_id,
-            slot,
-            str(exc),
-        )
+        batch_run = illustration_flow.raw_batch(raw_batch_id) if raw_batch_id else None
+        if batch_run and batch_run["cancel_requested"]:
+            illustration_context_pipeline.set_session_regenerate_cancelled(session_id, slot)
+        else:
+            illustration_context_pipeline.set_session_regenerate_error(
+                session_id,
+                slot,
+                str(exc),
+            )
         prompt_entry = prompts.get(prompt_id)
         if isinstance(prompt_entry, dict):
-            prompt_entry["status"] = "completed"
+            prompt_entry["status"] = (
+                "cancelled" if batch_run and batch_run["cancel_requested"]
+                else "failed" if raw_batch_id else "completed"
+            )
+            if raw_batch_id:
+                prompt_entry["error"] = (
+                    illustration_flow.RAW_BATCH_CANCEL_REASON
+                    if batch_run and batch_run["cancel_requested"] else str(exc)
+                )
             prompt_entry["outputs"] = {"images": []}
             prompt_entry["image_bytes"] = None
         return {
@@ -21826,7 +22208,12 @@ app.router.add_post(
     "/api/illustration_quality_inspection/review/{history_id}",
     handle_illustration_quality_inspection_review,
 )
+app.router.add_post(
+    "/api/illustration_quality_inspection/translation/{history_id}",
+    handle_illustration_quality_inspection_translation,
+)
 app.router.add_post("/api/illustration_flow/cancel", handle_illustration_flow_cancel)
+app.router.add_get("/b/{batch_id}", handle_raw_batch_status)
 app.router.add_get("/illustration_flow.js", handle_illustration_flow_script)
 app.router.add_get("/api/config", handle_api_config)
 app.router.add_post("/api/config", handle_api_config)

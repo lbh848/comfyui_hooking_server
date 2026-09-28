@@ -337,7 +337,143 @@ async def test_quality_type_runs_through_unified_runtime_handler_and_background_
 
     assert quality.TASK_KEY in queue_module.LLM_TYPES
     assert quality.TASK_KEY in illustration_flow.BACKGROUND_LLM_TYPES
+    assert quality.TRANSLATION_TASK_KEY in queue_module.LLM_TYPES
+    assert quality.TRANSLATION_TASK_KEY in illustration_flow.BACKGROUND_LLM_TYPES
+    assert quality.TRANSLATION_TASK_KEY in server.DEFAULT_CONFIG["llm_routing"]
+    frontend = (ROOT / "frontend" / "index.html").read_text(encoding="utf-8")
+    assert f"key: '{quality.TRANSLATION_TASK_KEY}'" in frontend
     assert await manager._handle_runtime_llm_task(item) == {"success": True}
+
+
+@pytest.mark.asyncio
+async def test_quality_translation_endpoint_queues_separate_task_after_saved_english_results(
+    tmp_path, monkeypatch
+):
+    history_path = tmp_path / "logs" / "lighbd_history.jsonl"
+    history_path.parent.mkdir()
+    records = [
+        {
+            "history_id": "inspection-image-2",
+            "task_key": quality.TASK_KEY,
+            "inspection_scope": quality.IMAGE_SCOPE,
+            "inspection_session_id": "session-translation",
+            "inspection_flow_run_id": "flow-translation",
+            "inspection_images": [{"slot": 2, "backup_name": "scene-2", "prompt_id": "prompt-2"}],
+            "status": "ok",
+            "output": json.dumps({"feedback": "Contact is unclear.", "continuity_observation": "Blue coat."}),
+        },
+        {
+            "history_id": "inspection-overall",
+            "task_key": quality.TASK_KEY,
+            "inspection_scope": quality.OVERALL_SCOPE,
+            "inspection_session_id": "session-translation",
+            "inspection_flow_run_id": "flow-translation",
+            "inspection_images": [{"slot": 2, "backup_name": "scene-2", "prompt_id": "prompt-2"}],
+            "status": "ok",
+            "output": json.dumps({"overall_feedback": "The set is coherent."}),
+        },
+    ]
+    history_path.write_text(
+        "".join(json.dumps(record) + "\n" for record in records),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(lighbd_service, "LIGHBD_HISTORY_PATH", str(history_path))
+    captured: dict = {}
+
+    async def fake_execute(queue_item, *, source):
+        captured["source"] = source
+        return {
+            "overall_feedback_ko": "전체 세트는 일관됩니다.",
+            "images": [
+                {"slot": 2, "feedback_ko": "접촉이 불명확합니다.", "continuity_observation_ko": "파란 코트입니다."}
+            ],
+            "translation_history_id": "translation-history",
+        }
+
+    async def fake_add_item(item_type, label, params, **kwargs):
+        captured.update(item_type=item_type, label=label, params=params)
+        future = asyncio.get_running_loop().create_future()
+        item = SimpleNamespace(id="translation-queue", completion_future=future)
+        future.set_result(await kwargs["runtime_handler"](item))
+        return item
+
+    monkeypatch.setattr(quality, "execute_translation", fake_execute)
+    monkeypatch.setattr(server.queue_manager, "add_item", fake_add_item)
+
+    response = await server.handle_illustration_quality_inspection_translation(
+        _Request("POST", history_id="inspection-overall")
+    )
+    payload = json.loads(response.text)
+
+    assert response.status == 200
+    assert payload["cached"] is False
+    assert payload["overall_feedback_ko"] == "전체 세트는 일관됩니다."
+    assert captured["item_type"] == quality.TRANSLATION_TASK_KEY
+    assert captured["params"]["source_inspection_history_id"] == "inspection-overall"
+    assert captured["source"]["overall_feedback"] == "The set is coherent."
+    assert captured["source"]["images"][0]["feedback"] == "Contact is unclear."
+
+
+@pytest.mark.asyncio
+async def test_quality_translation_endpoint_reuses_lb_details_cache(
+    tmp_path, monkeypatch
+):
+    history_path = tmp_path / "logs" / "lighbd_history.jsonl"
+    history_path.parent.mkdir()
+    translated = {
+        "overall_feedback_ko": "전체 세트는 일관됩니다.",
+        "images": [
+            {"slot": 2, "feedback_ko": "문제가 없습니다.", "continuity_observation_ko": "파란 코트입니다."}
+        ],
+    }
+    records = [
+        {
+            "history_id": "inspection-image-2",
+            "task_key": quality.TASK_KEY,
+            "inspection_scope": quality.IMAGE_SCOPE,
+            "inspection_session_id": "session-cache",
+            "inspection_flow_run_id": "flow-cache",
+            "inspection_images": [{"slot": 2, "backup_name": "scene-2", "prompt_id": "prompt-2"}],
+            "status": "ok",
+            "output": json.dumps({"feedback": "No issue.", "continuity_observation": "Blue coat."}),
+        },
+        {
+            "history_id": "inspection-overall-cache",
+            "task_key": quality.TASK_KEY,
+            "inspection_scope": quality.OVERALL_SCOPE,
+            "inspection_session_id": "session-cache",
+            "inspection_flow_run_id": "flow-cache",
+            "inspection_images": [{"slot": 2, "backup_name": "scene-2", "prompt_id": "prompt-2"}],
+            "status": "ok",
+            "output": json.dumps({"overall_feedback": "The set is coherent."}),
+        },
+        {
+            "history_id": "translation-cache",
+            "task_key": quality.TRANSLATION_TASK_KEY,
+            "source_inspection_history_id": "inspection-overall-cache",
+            "status": "ok",
+            "output": json.dumps(translated, ensure_ascii=False),
+        },
+    ]
+    history_path.write_text(
+        "".join(json.dumps(record, ensure_ascii=False) + "\n" for record in records),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(lighbd_service, "LIGHBD_HISTORY_PATH", str(history_path))
+
+    async def unexpected_add(*_args, **_kwargs):
+        pytest.fail("cached translation must not enqueue another LLM task")
+
+    monkeypatch.setattr(server.queue_manager, "add_item", unexpected_add)
+    response = await server.handle_illustration_quality_inspection_translation(
+        _Request("POST", history_id="inspection-overall-cache")
+    )
+    payload = json.loads(response.text)
+
+    assert response.status == 200
+    assert payload["cached"] is True
+    assert payload["translation_history_id"] == "translation-cache"
+    assert payload["images"][0]["feedback_ko"] == "문제가 없습니다."
 
 
 @pytest.mark.asyncio
@@ -955,6 +1091,23 @@ async def test_overall_human_review_loads_and_saves_all_image_evaluations(
             "status": "ok",
             "output": json.dumps({"overall_feedback": "The set is consistent."}),
         },
+        {
+            "ts": "2026-09-10T12:10:06",
+            "history_id": "translation-overall-batch",
+            "task_key": quality.TRANSLATION_TASK_KEY,
+            "source_inspection_history_id": "inspection-overall-batch",
+            "status": "ok",
+            "output": json.dumps(
+                {
+                    "overall_feedback_ko": "전체 세트는 일관됩니다.",
+                    "images": [
+                        {"slot": 1, "feedback_ko": "A 최종 피드백입니다.", "continuity_observation_ko": ""},
+                        {"slot": 2, "feedback_ko": "B 최종 피드백입니다.", "continuity_observation_ko": ""},
+                    ],
+                },
+                ensure_ascii=False,
+            ),
+        },
     ]
     history_path.write_text(
         "".join(json.dumps(record) + "\n" for record in records),
@@ -985,6 +1138,7 @@ async def test_overall_human_review_loads_and_saves_all_image_evaluations(
     ]
     assert "Final A feedback." in get_payload["images"][0]["automatic_output"]
     assert "retry failure" not in get_payload["images"][0]["automatic_output"]
+    assert get_payload["automatic_translation"]["overall_feedback_ko"] == "전체 세트는 일관됩니다."
 
     post_response = await server.handle_illustration_quality_inspection_review(
         _Request(
@@ -1026,6 +1180,7 @@ async def test_overall_human_review_loads_and_saves_all_image_evaluations(
         "inspection-a",
         "inspection-b",
         "inspection-overall-batch",
+        "translation-overall-batch",
     ):
         assert set(saved[history_id]["human_review_case_ids"]) == {
             "inspection-a",

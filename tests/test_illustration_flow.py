@@ -124,6 +124,29 @@ def test_flow_detail_falls_back_to_error_and_latest_raw_response():
     assert "const output = detailOutput(n);" in source
 
 
+def test_main_flow_modal_uses_approved_one_point_five_size_target():
+    source = (Path(__file__).resolve().parents[1] / "frontend" / "illustration_flow.js").read_text(encoding="utf-8")
+    assert "#illustration-flow-modal{width:min(1860px,calc(100vw - 32px));max-width:calc(100vw - 32px)}" in source
+    assert ".if-viewport{height:min(97.5vh,990px);" in source
+    assert ".if-detail{width:min(900px,94vw)}" in source
+    assert ".if-developer{z-index:490;width:min(620px,94vw)}" in source
+
+
+def test_quality_review_shows_readable_ai_results_beside_human_review():
+    source = (Path(__file__).resolve().parents[1] / "frontend" / "illustration_flow.js").read_text(encoding="utf-8")
+    assert "function parsedInspectionOutput(value)" in source
+    assert "function automaticInspectionCard(output" in source
+    assert "'전체 세트 AI 검사 결과'" in source
+    assert "['문제 피드백', result.feedback]" in source
+    assert "['연속성 관찰', result.continuity_observation]" in source
+    assert "automaticInspectionCard(image.automatic_output" in source
+    assert "element('details', 'if-review-auto')" not in source
+    assert "appendRows('한국어 번역', koreanRows);" in source
+    assert "appendRows('영어 원문', englishRows);" in source
+    assert "/api/illustration_quality_inspection/translation/" in source
+    assert "method: 'POST'" in source
+
+
 @pytest.mark.asyncio
 async def test_flow_nodes_can_share_explicit_layout_group():
     job = item(); flow.queue_added(job)

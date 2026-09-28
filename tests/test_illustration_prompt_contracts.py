@@ -58,20 +58,14 @@ def test_model_facing_prompts_do_not_expose_internal_stage_names() -> None:
 
 def test_call1_prompt_keeps_only_the_schema_consumed_by_the_pipeline() -> None:
     prompt = _read("enhance.txt")
+    schema = prompt.split("Required JSON shape", 1)[1].split("Wardrobe rules:", 1)[0]
 
-    for field in (
-        '"wardrobe_at_start"',
-        '"wardrobe_events"',
-        '"hairstyle_events"',
-        '"wardrobe_change"',
-        '"state_after"',
-    ):
-        assert field in prompt
-    assert (
-        '"operation": "wear|add|remove|replace|open|close|adjust|nude|topless|bottomless|reset_default"'
-        in prompt
-    )
-    assert "`set`" in prompt and "`contextual_reset`" in prompt
+    for field in ('"wardrobe_at_start"', '"wardrobe_events"', '"hairstyle_events"'):
+        assert field in schema
+    assert re.search(r'"wardrobe_at_start":\s*\[\s*\{[^}]*"character"[^}]*"worn"[^}]*"removed"', schema)
+    assert re.search(r'"wardrobe_events":\s*\[\s*\{[^}]*"segment_id"[^}]*"character"[^}]*"worn"[^}]*"removed"[^}]*"evidence"', schema)
+    assert '"hairstyle_change"' in schema and '"operation": "replace|add|remove|reset_default"' in schema
+    assert all(field not in schema for field in ('"wardrobe_change"', '"state_after"', '"body_state"'))
 
 
 @pytest.mark.parametrize(

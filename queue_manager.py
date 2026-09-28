@@ -82,6 +82,7 @@ RESERVED_ILLUSTRATION_TYPE_ORDER = {
     "illustration_easy_edit": 2,
     "illustration_auto_feedback_llm": 2,
     "illustration_quality_inspection": 2,
+    "illustration_quality_translation": 2,
     "restore_manual": 3,
 }
 
@@ -255,6 +256,7 @@ LLM_TYPES = frozenset({
     "illustration_easy_edit",       # 저장 슬롯 -> 기존 편하게 수정 LLM -> 수정 재생성
     "illustration_auto_feedback_llm", # 편하게 수정 오토피드백의 프롬프트 수정/비전 검수
     "illustration_quality_inspection", # 생성 직후 개별 검사 및 완성 세트 전체 품질 검사
+    "illustration_quality_translation", # 완료된 영어 품질 검사 결과의 한국어 번역
     "instance_lora_prompt_refine",  # 태그 정제 / test_setup (instance·style·bot·asset 전부 LLM 호출)
     "lora_prompt_review",           # 1차 정제 + 설정된 route의 선택적 2차 비전 검수
     "bot_llm_face_tag_analysis",    # 비전 LLM 기반 얼굴/눈 태그 자동 분류
@@ -461,7 +463,8 @@ class QueueManager:
             if getattr(item, "_return_result_on_cancel", False):
                 fut.set_result(item.result)
             else:
-                fut.set_exception(RuntimeError("큐 항목이 취소되었습니다"))
+                reason = item.error if (item.params or {}).get("raw_batch_id") else ""
+                fut.set_exception(RuntimeError(reason or "큐 항목이 취소되었습니다"))
 
     @staticmethod
     def _mark_completion_future_observed(fut: asyncio.Future) -> None:
@@ -789,16 +792,19 @@ class QueueManager:
                 return False
         return False
 
-    async def cancel_illustration_flow(self, run_id: str) -> dict:
+    async def cancel_illustration_flow(self, run_id: str, *, reason: str = "") -> dict:
         """삽화 처리 흐름 하나만 중단한다. 워커는 유지하고 해당 실행 Task만 취소한다."""
         normalized = str(run_id or "").strip()
         if not normalized:
             print(f"[QUEUE:ILLUST_FLOW] 중단 실패: run_id={run_id!r}")
             raise ValueError("illustration flow run id가 필요합니다")
-        if not illustration_flow.request_cancel(normalized):
+        if not illustration_flow.request_cancel(normalized, reason=reason):
             return {"found": False, "pending_cancelled": 0, "active_cancelled": 0}
 
-        reason = "사용자가 삽화 처리 흐름을 중단했습니다"
+        batch_run = illustration_flow.raw_batch_for_run(normalized)
+        reason = illustration_flow.raw_batch_reason(batch_run) if batch_run else (
+            reason or "사용자가 삽화 처리 흐름을 중단했습니다"
+        )
         pending_cancelled = 0
         active_cancelled = 0
         active_finishing = 0
@@ -807,9 +813,13 @@ class QueueManager:
             binding = getattr(item, "_illustration_flow", None)
             if not binding or binding[0].get("id") != normalized:
                 continue
+            raw_batch_item = bool(
+                binding[0].get("raw_batch_id")
+                and (item.params or {}).get("raw_batch_id") == binding[0]["raw_batch_id"]
+            )
             execution_task = getattr(item, "_illustration_execution_task", None)
             if execution_task is not None and not execution_task.done():
-                if item.type in image_types:
+                if item.type in image_types or (raw_batch_item and item.type == "regenerate"):
                     active_finishing += 1
                     print(
                         f"[QUEUE:ILLUST_FLOW] 실행 중 이미지 마무리 허용: "
@@ -825,6 +835,22 @@ class QueueManager:
                         f"run={normalized}, item={item.id}, type={item.type}, "
                         f"status={item.status}"
                     )
+                continue
+            if raw_batch_item and item.status == "processing":
+                # Claimed by a worker but no provider execution Task exists yet.
+                # Resolve its proxy prompt now; the pre-execution guard also
+                # prevents generation if worker preparation later returns.
+                item._illustration_cancel_requested = True
+                item._illustration_cancel_reason = reason
+                item.status = "cancelled"
+                item.error = reason
+                item.completed_at = time.time()
+                self._settle_future(item)
+                pending_cancelled += 1
+                print(
+                    f"[QUEUE:ILLUST_FLOW] 시작 전 RAW 작업 중단: "
+                    f"run={normalized}, item={item.id}, type={item.type}"
+                )
                 continue
             if item.status in ("pending", "waiting"):
                 item.status = "cancelled"
@@ -1745,7 +1771,19 @@ class QueueManager:
                 )
             illustration_execution_task = None
             cancelled_by_flow = False
-            if getattr(item, "_illustration_flow", None):
+            binding = getattr(item, "_illustration_flow", None)
+            if binding and binding[0].get("raw_batch_id") and binding[0].get("cancel_requested"):
+                # Stop can arrive while the worker is being prepared, before its
+                # image Task exists. Do not launch generation in that window.
+                cancelled_by_flow = True
+                item.result = None
+                item.status = "cancelled"
+                item.error = illustration_flow.raw_batch_reason(binding[0])
+                print(
+                    f"[QUEUE:ILLUST_FLOW] 시작 전 RAW 이미지 차단: "
+                    f"batch={binding[0]['raw_batch_id']}, item={item.id}"
+                )
+            elif getattr(item, "_illustration_flow", None):
                 illustration_execution_task = asyncio.create_task(
                     self._execute_item(item),
                     name=f"illustration-flow-item-{item.id}",
@@ -1800,6 +1838,17 @@ class QueueManager:
         item.completed_at = time.time()
         # 대기 중인 HTTP 핸들러 등에게 완료/실패 알림
         self._settle_future(item)
+        binding = getattr(item, "_illustration_flow", None)
+        if binding and binding[0].get("raw_batch_id") and binding[0].get("cancel_requested"):
+            run = binding[0]
+            if not any(
+                other is not item
+                and getattr(other, "_illustration_flow", None)
+                and other._illustration_flow[0] is run
+                and other.status in ("processing", "waiting")
+                for other in self.items
+            ):
+                illustration_flow.finish_cancelled_raw_batch(run["raw_batch_id"])
         if is_gpu:
             self.current_item = None
         was_illustration = item.type == "illustration"
@@ -2846,6 +2895,7 @@ class QueueManager:
             "illustration_easy_edit": self._handle_illustration_easy_edit,
             "illustration_auto_feedback_llm": self._handle_runtime_llm_task,
             "illustration_quality_inspection": self._handle_runtime_llm_task,
+            "illustration_quality_translation": self._handle_runtime_llm_task,
             "preset_import_classify": self._handle_runtime_llm_task,
             "character_maker_illustration": self._handle_character_maker_illustration,
             "image_comparison_direct": self._handle_image_comparison_direct,

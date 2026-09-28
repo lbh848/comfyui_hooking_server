@@ -17,8 +17,14 @@ _latest = None
 _latest_video = None
 _latest_video_input = None
 _notify = None
+_raw_batches = {}
+_RAW_BATCH_RETENTION_SECONDS = 6 * 60 * 60
+RAW_BATCH_CANCEL_REASON = "사용자가 저장 RAW 전체 생성을 중단했습니다"
 ROOT_TYPES = {"illustration", "illustration_llm_build", "illustration_easy_edit", "character_maker_illustration"}
-BACKGROUND_LLM_TYPES = {"illustration_quality_inspection"}
+BACKGROUND_LLM_TYPES = {
+    "illustration_quality_inspection",
+    "illustration_quality_translation",
+}
 VIDEO_INPUT_TYPES = {
     "video_instruction_draft", "video_instruction_refine", "video_instruction_direct",
 }
@@ -49,7 +55,7 @@ def snapshot(run=None, *, kind="illustration"):
     run = run if run is not None else latest_by_kind.get(kind)
     if run is None:
         return None
-    return {key: copy.deepcopy(value) for key, value in run.items() if key not in {"nodes", "publish_pending", "_active_llm_tasks", "_frontier"}} | {
+    return {key: copy.deepcopy(value) for key, value in run.items() if key not in {"nodes", "publish_pending", "_active_llm_tasks", "_frontier", "_raw_batch_frontier"}} | {
         "nodes": [{k: copy.deepcopy(v) for k, v in node.items()
                    if k not in {"input", "output", "attempts"}} for node in run["nodes"].values()]
     }
@@ -63,34 +69,165 @@ def detail(run_id, node_id):
     return None
 
 
-def request_cancel(run_id):
+def _prune_raw_batches():
+    cutoff = time.time() - _RAW_BATCH_RETENTION_SECONDS
+    for batch_id, run in list(_raw_batches.items()):
+        if run["updated_at"] >= cutoff:
+            continue
+        if run["status"] not in TERMINAL:
+            print(f"[ILLUST_FLOW:RAW_BATCH] 만료된 실행 종료: batch={batch_id}, run={run['id']}")
+            if run["cancel_requested"]:
+                finish_cancelled_raw_batch(batch_id)
+            else:
+                finish_raw_batch(batch_id, "failed", "저장 RAW 전체 생성 응답 시간이 만료되었습니다")
+        del _raw_batches[batch_id]
+
+
+def raw_batch(batch_id):
+    return _raw_batches.get(str(batch_id or ""))
+
+
+def raw_batch_reason(run):
+    return str(run.get("raw_batch_error") or RAW_BATCH_CANCEL_REASON)
+
+
+def raw_batch_for_run(run_id):
+    return next((run for run in _raw_batches.values() if run["id"] == run_id), None)
+
+
+def admit_raw_batch(batch_id, session_id, index):
+    """Admit only the next slot of this particular module invocation."""
+    _prune_raw_batches()
+    run = raw_batch(batch_id)
+    if run is None:
+        if index != 0:
+            print(
+                f"[ILLUST_FLOW:RAW_BATCH] 미등록 후속 슬롯 거절: "
+                f"batch={batch_id}, session={session_id}, index={index}"
+            )
+            return None, "등록되지 않은 저장 RAW 전체 생성 실행입니다"
+        now = time.time()
+        run = {
+            "id": uuid.uuid4().hex, "kind": "illustration",
+            "label": "저장 RAW 전체 생성", "status": "processing",
+            "cancel_requested": False, "created_at": now, "updated_at": now,
+            "revision": 0, "nodes": {}, "_active_llm_tasks": set(),
+            "raw_batch_id": batch_id, "raw_batch_session_id": session_id,
+            "raw_batch_state": "active", "raw_batch_next_index": 0,
+        }
+        _raw_batches[batch_id] = run
+        global _latest
+        _latest = run
+        parent_id = add_node(
+            run, "저장 RAW 전체 생성", kind="request", executor="process",
+            status="processing", started_at=now,
+        )
+        run["_raw_batch_frontier"] = (parent_id,)
+        print(f"[ILLUST_FLOW:RAW_BATCH] 실행 시작: batch={batch_id}, session={session_id}, run={run['id']}")
+    if run["raw_batch_session_id"] != session_id:
+        print(
+            f"[ILLUST_FLOW:RAW_BATCH] 다른 세션의 토큰 거절: batch={batch_id}, "
+            f"original={run['raw_batch_session_id']}, received={session_id}"
+        )
+        return None, "저장 RAW 전체 생성 실행의 세션이 일치하지 않습니다"
+    if run["raw_batch_state"] != "active":
+        print(
+            f"[ILLUST_FLOW:RAW_BATCH] 종료된 실행의 슬롯 거절: "
+            f"batch={batch_id}, index={index}, state={run['raw_batch_state']}"
+        )
+        return None, RAW_BATCH_CANCEL_REASON if run["cancel_requested"] else "저장 RAW 전체 생성 실행이 종료되었습니다"
+    if index != run["raw_batch_next_index"]:
+        print(
+            f"[ILLUST_FLOW:RAW_BATCH] 순서가 다른 슬롯 거절: batch={batch_id}, "
+            f"index={index}, expected={run['raw_batch_next_index']}"
+        )
+        return None, "저장 RAW 전체 생성 슬롯 순서가 일치하지 않습니다"
+    run["raw_batch_next_index"] += 1
+    changed(run)
+    return run, ""
+
+
+def finish_raw_batch(batch_id, state, reason=""):
+    run = raw_batch(batch_id)
+    if run is None:
+        print(f"[ILLUST_FLOW:RAW_BATCH] 종료할 실행 없음: batch={batch_id}, state={state}")
+        return False
+    current = run["raw_batch_state"]
+    if state == "finalizing" and current == "active":
+        run["raw_batch_state"] = "finalizing"
+        changed(run)
+        return True
+    if state == "completed" and current == "finalizing":
+        status = "completed"
+    elif state == "failed" and current in ("active", "finalizing"):
+        status = "failed"
+    else:
+        print(
+            f"[ILLUST_FLOW:RAW_BATCH] 종료 전이 거절: "
+            f"batch={batch_id}, state={state}, current={current}"
+        )
+        return False
+    run["raw_batch_state"] = status
+    run["status"] = status
+    if status == "failed":
+        run["raw_batch_error"] = reason
+    parent_id = next(iter(run["nodes"]))
+    update(run, parent_id, status=status, error=reason,
+           output={"error": reason} if reason else {"status": status})
+    print(f"[ILLUST_FLOW:RAW_BATCH] 실행 종료: batch={batch_id}, status={status}, reason={reason}")
+    changed(run)
+    return True
+
+
+def finish_cancelled_raw_batch(batch_id):
+    run = raw_batch(batch_id)
+    if run is None or not run["cancel_requested"] or run["status"] in TERMINAL:
+        return
+    run["raw_batch_state"] = "cancelled"
+    run["status"] = "cancelled"
+    parent_id = next(iter(run["nodes"]))
+    reason = raw_batch_reason(run)
+    update(run, parent_id, status="cancelled", error=reason,
+           output={"error": reason})
+    print(f"[ILLUST_FLOW:RAW_BATCH] 중단 완료: batch={batch_id}, run={run['id']}")
+    changed(run)
+
+
+def request_cancel(run_id, *, reason=""):
     normalized = str(run_id or "").strip()
     if not normalized:
         print(f"[ILLUST_FLOW] 중단 요청 실패: run_id={run_id!r}")
         return False
-    if _latest is None or _latest["id"] != normalized:
+    run = _latest if _latest is not None and _latest["id"] == normalized else next(
+        (candidate for candidate in _raw_batches.values() if candidate["id"] == normalized), None
+    )
+    if run is None:
         print(f"[ILLUST_FLOW] 중단할 실행 없음: run={normalized}")
         return False
-    if _latest["status"] in TERMINAL:
+    if run["status"] in TERMINAL or run.get("raw_batch_state") == "finalizing":
         print(
-            f"[ILLUST_FLOW] 이미 종료된 실행 중단 생략: "
-            f"run={normalized}, status={_latest['status']}"
+            f"[ILLUST_FLOW] 이미 종료되었거나 결과 반영 중인 실행 중단 생략: "
+            f"run={normalized}, status={run['status']}, batch_state={run.get('raw_batch_state')}"
         )
         return False
-    _latest["cancel_requested"] = True
-    _latest["status"] = "cancelling"
-    active_llm_tasks = [
+    run["cancel_requested"] = True
+    run["status"] = "cancelling"
+    if run.get("raw_batch_id"):
+        run["raw_batch_state"] = "cancelled"
+        if reason:
+            run["raw_batch_error"] = reason
+    active_llm_tasks = [] if run.get("raw_batch_id") else [
         task
-        for task in list(_latest.get("_active_llm_tasks") or ())
+        for task in list(run.get("_active_llm_tasks") or ())
         if task is not None and not task.done()
     ]
     for task in active_llm_tasks:
         task.cancel("사용자가 삽화 처리 흐름을 중단했습니다")
     print(
         f"[ILLUST_FLOW] 사용자 중단 요청 등록: run={normalized}, "
-        f"active_llm_cancelled={len(active_llm_tasks)}"
+        f"batch={run.get('raw_batch_id')}, active_llm_cancelled={len(active_llm_tasks)}"
     )
-    changed(_latest)
+    changed(run)
     return True
 
 
@@ -332,6 +469,35 @@ def stage(label, *, executor="process", layout_group=None):
 def queue_added(item):
     global _latest, _latest_video, _latest_video_input
     run = _run.get()
+    params = item.params if isinstance(item.params, dict) else {}
+    batch_id = str(params.get("raw_batch_id") or "")
+    if batch_id and item.type in {"illustration", "regenerate"}:
+        batch_run = raw_batch(batch_id)
+        if batch_run is None or batch_run["raw_batch_state"] != "active" or (
+            str(params.get("raw_batch_session_id") or "") != batch_run["raw_batch_session_id"]
+        ):
+            item.status = "cancelled"
+            item.completed_at = time.time()
+            item.error = raw_batch_reason(batch_run) if batch_run and batch_run["cancel_requested"] else (
+                "저장 RAW 전체 생성 실행이 종료되었거나 세션이 일치하지 않습니다"
+            )
+            item._illustration_cancelled_on_add = True
+            print(
+                f"[ILLUST_FLOW:RAW_BATCH] 큐 등록 차단: batch={batch_id}, "
+                f"session={params.get('raw_batch_session_id')}, type={item.type}, "
+                f"item={item.id}, reason={item.error}"
+            )
+            return
+        node_id = add_node(
+            batch_run, item.label, dependencies=batch_run["_raw_batch_frontier"],
+            node_id=item.id, kind="image", task_key=item.type,
+            executor="comfy" if item.type == "illustration" else "process",
+            layout_group="illustration_images",
+            input={key: params[key] for key in ("prompt_data", "provider", "raw_batch_session_id") if key in params},
+        )
+        batch_run["_raw_batch_frontier"] = (node_id,)
+        item._illustration_flow = (batch_run, node_id, False)
+        return
     if item.type in VIDEO_INPUT_TYPES:
         session_id = str((item.params or {}).get("video_input_session_id") or item.id).strip()
         nested = run is not None and run.get("kind") == "video_input"
@@ -525,6 +691,14 @@ def queue_execution(fn):
             run["status"] = "processing"
             changed(run)
         try:
+            if run.get("raw_batch_id") and run.get("cancel_requested"):
+                item._illustration_cancel_requested = True
+                item._illustration_cancel_reason = raw_batch_reason(run)
+                print(
+                    f"[ILLUST_FLOW:RAW_BATCH] 시작 직전 작업 취소: "
+                    f"batch={run['raw_batch_id']}, item={item.id}"
+                )
+                raise asyncio.CancelledError(raw_batch_reason(run))
             result = await fn(self, item)
             failed = isinstance(result, dict) and result.get("success") is False
             cancelled = bool(root and run.get("cancel_requested"))
@@ -601,7 +775,10 @@ def llm_call(fn):
         token = _node.set(node_id)
         registration = register_active_llm_task()
         try:
-            raise_if_cancel_requested(run)
+            # An already executing saved-RAW image (including its current LLM
+            # work) finishes normally; queue admission blocks future images.
+            if not run.get("raw_batch_id"):
+                raise_if_cancel_requested(run)
             result = await fn(call_name, messages, *args, **kwargs)
             update(run, node_id, status="completed", output=result, summary=str(result)[:220])
             return result

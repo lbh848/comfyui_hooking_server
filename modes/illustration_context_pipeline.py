@@ -20,6 +20,7 @@ import traceback
 import datetime
 import uuid
 from copy import deepcopy
+from difflib import get_close_matches
 from urllib.parse import quote
 
 import yaml
@@ -976,6 +977,33 @@ def set_session_regenerate_started(
         value,
         done,
         total,
+    )
+
+
+def set_session_regenerate_cancelled(session_id: str, slot: int, *, finishing: bool = False) -> None:
+    """Keep existing RAW images while exposing this batch's cancellation state."""
+    session = get_session(session_id)
+    if session is None:
+        print(f"[ILLUST_CONTEXT] 저장 RAW 전체 생성 중단 표시 실패: session={session_id}, slot={slot}")
+        return
+    session.pop("_active_slot_progress", None)
+    slot_label = "키비주얼" if slot == -1 else f"슬롯 {slot}"
+    label = (
+        f"저장 RAW 전체 생성 중단 중 · {slot_label} 이미지 마무리 중"
+        if finishing else "저장 RAW 전체 생성 중단 완료"
+    )
+    progress = session.get("progress") or {}
+    session["progress"] = {
+        "phase": "cancelling" if finishing else "cancelled",
+        "label": label,
+        "value": progress.get("value", 0),
+        "done": progress.get("done", 0),
+        "total": progress.get("total", 1),
+    }
+    session["updated_at"] = time.time()
+    print(
+        f"[ILLUST_CONTEXT] 저장 RAW 전체 생성 중단 표시: "
+        f"session={session_id}, slot={slot}, finishing={finishing}"
     )
 
 
@@ -2699,7 +2727,7 @@ def parse_call1_analysis(
     visual_profiles: dict[str, dict] | None = None,
     resolved_characters: dict | None = None,
 ) -> dict | None:
-    """Validate CALL1 wardrobe/hairstyle output with optional pre-resolved entities."""
+    """Read CALL1 wardrobe prose and hairstyle changes, including archived replies."""
     raw = _json_object_from_text(text)
     if raw is None:
         return None
@@ -2833,6 +2861,12 @@ def parse_call1_analysis(
             continue
         name = normalize_name(item.get("character") or item.get("name"))
         state = str(item.get("state") or item.get("wardrobe_state") or "").strip()
+        if not state and ("worn" in item or "removed" in item):
+            archived_outfit, reason = _fresh_outfit_state(item)
+            if archived_outfit is not None:
+                state = _wardrobe_snapshot_summary(archived_outfit)
+            else:
+                warnings.append(f"구 시작 복장 형식 오류: index={index}, reason={reason}")
         if not name or not state:
             warnings.append(
                 f"CURRENT 시작 복장 필수값 오류로 폐기: "
@@ -4468,18 +4502,9 @@ def apply_wardrobe_events(
     selected_reference: str = "",
     default_outfits: dict[str, list[str]] | None = None,
     hairstyle_events: list[dict] | None = None,
+    wardrobe_at_start: list[dict] | None = None,
 ) -> dict:
-    """Apply CALL1 events as sparse deltas over the complete default outfit.
-
-    CALL1 intentionally emits compact changed items, not a complete visual tag
-    snapshot. Therefore omitted default items are never removed implicitly by a
-    short ``set``/``replace`` payload.
-
-    ``hairstyle_events`` are stored verbatim into each character's
-    ``hairstyle_timeline`` (append-only, capped). The server never interprets
-    hairstyle semantics; CALL2 may replace a conflicting fixed arrangement only
-    when the stored event carries direct literal narrative evidence.
-    """
+    """Project fresh complete CALL1 snapshots; retain archived delta handling."""
     states = deepcopy(state_before or {})
     parsed_defaults = (
         deepcopy(default_outfits)
@@ -4573,7 +4598,8 @@ def apply_wardrobe_events(
             )
         else:
             wardrobe = _normalize_outfit_state(raw_wardrobe)
-        if default_items and wardrobe["body_state"] not in {"nude", "underwear_only"}:
+        if (default_items and raw_wardrobe.get("source") != "call1_confirmed"
+                and wardrobe["body_state"] not in {"nude", "underwear_only"}):
             removed_folded = {item.casefold() for item in wardrobe["removed"]}
             existing_folded = {item.casefold() for item in wardrobe["worn"]}
             restored = [
@@ -4596,6 +4622,8 @@ def apply_wardrobe_events(
             if wardrobe["body_state"] == "unknown":
                 wardrobe["body_state"] = "clothed"
         wardrobe.update(wardrobe_metadata)
+        if raw_wardrobe.get("source") == "call1_confirmed":
+            wardrobe["source"] = "call1_confirmed"
         tracked["current_wardrobe"] = wardrobe
         tracked.setdefault("wardrobe_timeline", [])
         tracked.setdefault("hairstyle_timeline", [])
@@ -4608,12 +4636,47 @@ def apply_wardrobe_events(
         key = ensure_state(name)
         states[key]["last_seen_message_id"] = str(current_message_id or "")
 
+    for initial in wardrobe_at_start or []:
+        if not isinstance(initial, dict) or set(initial) != {"character", "worn", "removed"}:
+            print(f"[ILLUST_CONTEXT:WARDROBE_BASE] 새 시작 스냅샷 형식 오류: item={initial!r}")
+            raise ValueError(f"CALL1 시작 복장 스냅샷 형식 오류: {initial!r}")
+        name = initial["character"]
+        key = ensure_state(name)
+        outfit, reason = _fresh_outfit_state(initial)
+        if reason:
+            print(f"[ILLUST_CONTEXT:WARDROBE_BASE] 시작 복장 검증 실패: character={name!r}, reason={reason}")
+            raise ValueError(f"CALL1 시작 복장 {name!r}: {reason}")
+        previous = states[key].get("current_wardrobe") or {}
+        states[key]["current_wardrobe"] = {
+            **{field: deepcopy(value) for field, value in previous.items()
+               if field not in {"body_state", "worn", "removed", "source"}},
+            "body_state": ("nude" if outfit["worn"] == ["nude"] else
+                           "clothed" if outfit["worn"] else "unknown"),
+            **deepcopy(outfit), "source": "call1_confirmed",
+        }
+
     for event in wardrobe_events or []:
         name = str(event.get("character") or "").strip()
         if not name:
             print(f"[ILLUST_CONTEXT:WARDROBE_DELTA] 캐릭터 없는 이벤트 스킵: event={event!r}")
             continue
         key = ensure_state(name)
+        if "worn" in event or "removed" in event:
+            snapshot, reason = _fresh_outfit_state(event)
+            if reason:
+                print(f"[ILLUST_CONTEXT:WARDROBE_DELTA] 새 스냅샷 검증 실패: event={event!r}, reason={reason}")
+                raise ValueError(f"CALL1 복장 사건 {name!r}: {reason}")
+            states[key]["current_wardrobe"] = {
+                "body_state": ("nude" if snapshot["worn"] == ["nude"] else
+                               "clothed" if snapshot["worn"] else "unknown"),
+                **deepcopy(snapshot), "source": "call1_confirmed",
+                "last_event": deepcopy(event),
+            }
+            timeline = list(states[key].get("wardrobe_timeline") or [])
+            timeline.append(deepcopy(event))
+            states[key]["wardrobe_timeline"] = timeline[-50:]
+            states[key]["last_seen_message_id"] = str(current_message_id or "")
+            continue
         wardrobe = deepcopy(states[key].get("current_wardrobe") or {})
         worn = [str(value) for value in wardrobe.get("worn") or [] if str(value).strip()]
         removed = [str(value) for value in wardrobe.get("removed") or [] if str(value).strip()]
@@ -4722,6 +4785,13 @@ def record_wardrobe_start_resolution(
             continue
         name = str(item.get("character") or "").strip()
         state = str(item.get("state") or "").strip()
+        fresh_outfit = None
+        if "worn" in item or "removed" in item:
+            fresh_outfit, reason = _fresh_outfit_state(item)
+            if reason:
+                print(f"[ILLUST_CONTEXT:WARDROBE_BASELINE] 시작 복장 검증 실패: character={name!r}, reason={reason}")
+                raise ValueError(f"CALL1 시작 복장 {name!r}: {reason}")
+            state = _wardrobe_snapshot_summary(fresh_outfit)
         if not name or not state:
             print(
                 "[ILLUST_CONTEXT:WARDROBE_BASELINE] 저장할 시작 복장 필수값 없어 스킵: "
@@ -4745,6 +4815,8 @@ def record_wardrobe_start_resolution(
             "message_id": str(current_message_id or ""),
             "state": state,
         }
+        if fresh_outfit is not None:
+            result[matched_key]["last_resolved_wardrobe_start"]["outfit_state"] = deepcopy(fresh_outfit)
     return result
 
 
@@ -4782,10 +4854,52 @@ def _normalize_outfit_state(value) -> dict:
     }
 
 
+def _normalize_output_outfit_state(value) -> dict:
+    """Preserve archived enum snapshots, but do not add an enum to new LLM output."""
+    normalized = _normalize_outfit_state(value)
+    if isinstance(value, dict) and "body_state" in value:
+        return normalized
+    return {field: normalized[field] for field in ("worn", "removed")}
+
+
+def _fresh_outfit_state(value) -> tuple[dict | None, str]:
+    """Check a fresh outfit's machine-readable contract without judging garment prose."""
+    if (not isinstance(value, dict) or "body_state" in value
+            or not all(field in value for field in ("worn", "removed"))):
+        return None, "outfit_state에 worn/removed 배열이 필요하며 독립 body_state는 금지"
+    if any(not isinstance(value[field], list)
+           or any(not isinstance(tag, str) or not tag.strip() for tag in value[field])
+           for field in ("worn", "removed")):
+        return None, "worn/removed 배열 형식 오류"
+    normalized = _normalize_output_outfit_state(value)
+    if any(len(normalized[field]) != len(value[field]) for field in ("worn", "removed")):
+        return None, "중복 복장 태그"
+    worn = {tag.casefold() for tag in normalized["worn"]}
+    if "nude" in worn and len(worn) != 1:
+        return None, "nude와 착용 의상 동시 선언"
+    if "nude" in worn and normalized["worn"] != ["nude"]:
+        return None, "nude는 worn: ['nude'] 단독 표기만 허용"
+    if "nude" in {tag.casefold() for tag in normalized["removed"]}:
+        return None, "nude는 제거 의상 목록에 넣을 수 없음"
+    if worn & {tag.casefold() for tag in normalized["removed"]}:
+        return None, "착용/벗음 태그 동시 선언"
+    return normalized, ""
+
+
+def _wardrobe_snapshot_summary(outfit: dict) -> str:
+    """Display only the confirmed lists; never reinterpret their garment meaning."""
+    worn = list(outfit.get("worn") or [])
+    removed = list(outfit.get("removed") or [])
+    parts = ["Worn: " + (", ".join(worn) if worn else "unresolved")]
+    if removed:
+        parts.append("Removed: " + ", ".join(removed))
+    return "; ".join(parts) + "."
+
+
 def _outfit_state_is_known(value) -> bool:
-    state = _normalize_outfit_state(value)
+    state = _normalize_output_outfit_state(value)
     return bool(
-        state["body_state"] != "unknown"
+        state.get("body_state", "unknown") != "unknown"
         or state["worn"]
         or state["removed"]
     )
@@ -4818,10 +4932,16 @@ def _resolved_wardrobe_continuity_note(wardrobe_snapshot: dict) -> str:
 
 
 def _outfit_states_equal(left, right) -> bool:
-    left_state = _normalize_outfit_state(left)
-    right_state = _normalize_outfit_state(right)
+    if isinstance(right, dict) and set(right) == {"worn", "removed"}:
+        if (not isinstance(left, dict) or set(left) != {"worn", "removed"}
+                or any(not isinstance(left[field], list)
+                       or any(not isinstance(tag, str) or not tag.strip()
+                              for tag in left[field]) for field in ("worn", "removed"))):
+            return False
+    left_state = _normalize_output_outfit_state(left)
+    right_state = _normalize_output_outfit_state(right)
     return (
-        left_state["body_state"] == right_state["body_state"]
+        left_state.get("body_state") == right_state.get("body_state")
         and {item.casefold() for item in left_state["worn"]}
         == {item.casefold() for item in right_state["worn"]}
         and {item.casefold() for item in left_state["removed"]}
@@ -4831,15 +4951,15 @@ def _outfit_states_equal(left, right) -> bool:
 
 def _outfit_contract_conflict(expected, actual) -> str:
     """Return a structural PLAN/DETAIL wardrobe conflict without tag heuristics."""
-    expected_state = _normalize_outfit_state(expected)
-    actual_state = _normalize_outfit_state(actual)
+    expected_state = _normalize_output_outfit_state(expected)
+    actual_state = _normalize_output_outfit_state(actual)
     if (
-        expected_state["body_state"] != "unknown"
-        and actual_state["body_state"] != expected_state["body_state"]
+        expected_state.get("body_state", "unknown") != "unknown"
+        and actual_state.get("body_state") != expected_state["body_state"]
     ):
         return (
             f"body_state expected={expected_state['body_state']!r}, "
-            f"actual={actual_state['body_state']!r}"
+            f"actual={actual_state.get('body_state')!r}"
         )
 
     actual_worn = {item.casefold() for item in actual_state["worn"]}
@@ -5219,6 +5339,7 @@ def bind_scene_plan_wardrobes(
     visual_profiles: dict[str, dict] | None = None,
     visual_base_events: list[dict] | None = None,
     wardrobe_at_start: list[dict] | None = None,
+    wardrobe_authority: dict | None = None,
 ) -> list[dict]:
     """Bind CALL1's wardrobe timeline to each PLAN-selected story instant."""
     rank = {str(segment_id): index for index, segment_id in enumerate(segment_order)}
@@ -5265,11 +5386,14 @@ def bind_scene_plan_wardrobes(
 
         plan_names = [str(name or "").strip() for name in plan.get("characters") or []]
         plan_names = [name for name in plan_names if name]
-        continuity_note, continuity_characters = _scene_wardrobe_continuity_note(
-            list(wardrobe_at_start or []),
-            applicable_events,
-            plan_names,
-        )
+        if wardrobe_authority is None:
+            continuity_note, continuity_characters = _scene_wardrobe_continuity_note(
+                list(wardrobe_at_start or []),
+                applicable_events,
+                plan_names,
+            )
+        else:
+            continuity_note, continuity_characters = "", []
         all_current = list(current_characters or []) + [
             {"name": name, "confidence": 1.0}
             for name in plan_names
@@ -5289,6 +5413,55 @@ def bind_scene_plan_wardrobes(
         scene_default_outfits = deepcopy(default_outfits or {})
         for name, base in scene_visual_bases.items():
             scene_default_outfits[name] = visual_tag_values(base.get("outfit") or [])
+        if wardrobe_authority is not None:
+            # Audit owns only the corrected scene. Reproject from CALL1 at its FINAL
+            # anchor here as well, so no audit row, draft prose or profile default
+            # can become a second wardrobe resolver for DETAIL/Key Visual/FIX.
+            confirmed_wardrobe = {}
+            wardrobe_snapshot = {}
+            wardrobe_sources = {}
+            for name in plan_names:
+                entry, origin = _source_time_wardrobe(
+                    name, anchor_segment, wardrobe_authority,
+                    list(wardrobe_authority.get("canonical_names") or []),
+                )
+                supplied = _authority_values_for_name(plan.get("wardrobe_state") or {}, name)
+                if not isinstance(supplied, dict) or not _outfit_states_equal(
+                    supplied.get("outfit_state"), entry["outfit_state"],
+                ):
+                    reason = (f"감사 이후 복장 계약 불일치: plan={plan_index}, "
+                              f"anchor={anchor_segment}, character={name!r}, "
+                              f"audit={supplied!r}, projected={entry!r}")
+                    print(f"[ILLUST_CONTEXT:CALL2_PLAN] {reason}")
+                    raise ValueError(reason)
+                confirmed_wardrobe[name] = entry
+                wardrobe_snapshot[name] = deepcopy(entry["outfit_state"])
+                wardrobe_sources[name] = origin
+            if set(plan.get("wardrobe_state") or {}) != set(plan_names):
+                reason = (f"감사 이후 복장 소유자 불일치: plan={plan_index}, "
+                          f"characters={plan_names!r}, wardrobe={plan.get('wardrobe_state')!r}")
+                print(f"[ILLUST_CONTEXT:CALL2_PLAN] {reason}")
+                raise ValueError(reason)
+            plan["wardrobe_state"] = confirmed_wardrobe
+            plan["wardrobe_snapshot"] = wardrobe_snapshot
+            plan["wardrobe_sources"] = wardrobe_sources
+            plan["visual_base_snapshot"] = scene_visual_bases
+            authority_note = _visual_base_authority_note(scene_visual_bases)
+            if authority_note:
+                plan["visual_base_authority"] = authority_note
+            if confirmed_wardrobe:
+                label = ("Tracked/default fallback (no source-time snapshots)"
+                         if wardrobe_authority.get("allow_fallback")
+                         else "Source-time wardrobe")
+                plan["continuity_note"] = (
+                    f"{label} at final {anchor_segment}. Copy each complete outfit_state "
+                    "exactly; unresolved worn: [] is not nudity.\n"
+                    + "\n".join(f"{name}: {entry['summary']}"
+                                for name, entry in confirmed_wardrobe.items())
+                )
+                plan["_continuity_characters"] = list(plan_names)
+            normalized_plan.append(plan)
+            continue
         states_at_scene = apply_wardrobe_events(
             visual_states_at_scene,
             all_current,
@@ -5306,9 +5479,27 @@ def bind_scene_plan_wardrobes(
             )
         wardrobe_snapshot = {}
         wardrobe_sources = {}
+        audited_wardrobe = plan.get("wardrobe_state") or {}
+        if audited_wardrobe:
+            continuity_note = (
+                "PLAN-AUDIT confirmed wardrobe for this story instant. Copy its complete "
+                "outfit_state exactly; the source passage supersedes incorrect CALL1 guesses.\n"
+                + "\n".join(
+                    f"{name}: {_authority_values_for_name(audited_wardrobe, name)['summary']}"
+                    for name in plan_names
+                )
+            )
+            continuity_characters = list(plan_names)
         natural_names = {name.casefold() for name in continuity_characters}
         for name in plan_names:
             folded_name = name.casefold()
+            audited = _authority_values_for_name(audited_wardrobe, name)
+            if isinstance(audited, dict):
+                outfit = deepcopy(audited["outfit_state"])
+                wardrobe_snapshot[name] = outfit
+                wardrobe_sources[name] = "plan_audit_source_grounded"
+                resolved_outfits[folded_name] = deepcopy(outfit)
+                continue
             if folded_name in natural_names:
                 wardrobe_sources[name] = "call1_natural_language_timeline"
                 continue
@@ -5339,8 +5530,8 @@ def bind_scene_plan_wardrobes(
         authority_note = _visual_base_authority_note(scene_visual_bases)
         if authority_note:
             plan["visual_base_authority"] = authority_note
-        resolved_wardrobe_note = _resolved_wardrobe_continuity_note(
-            wardrobe_snapshot
+        resolved_wardrobe_note = (
+            "" if audited_wardrobe else _resolved_wardrobe_continuity_note(wardrobe_snapshot)
         )
         if continuity_note:
             plan["continuity_note"] = continuity_note
@@ -5378,6 +5569,10 @@ def _public_call2_scene_plan(plan: dict) -> dict:
             plan.get("anonymous_partner_fragment", False)
         ),
     }
+    if plan.get("interaction_contract"):
+        public["interaction_contract"] = str(plan["interaction_contract"])
+    if plan.get("wardrobe_state"):
+        public["wardrobe_state"] = deepcopy(plan["wardrobe_state"])
     anchor_passage = str(plan.get("anchor_passage") or "").strip()
     if anchor_passage:
         public["anchor_passage"] = anchor_passage
@@ -5390,16 +5585,33 @@ def _public_call2_scene_plan(plan: dict) -> dict:
     return public
 
 
-def _keyvis_wardrobe_reference(scene_plan: list[dict]) -> str:
-    """Keep wardrobe resolutions tied to their own natural-language story instants."""
+def _keyvis_wardrobe_reference(
+    scene_plan: list[dict], wardrobe_authority: dict | None = None,
+    actor_names: list[str] | None = None,
+) -> str:
+    """Keep CALL1-projected outfit lists tied to their final story instants."""
     blocks: list[str] = []
     for plan_index, plan in enumerate(scene_plan, start=1):
-        continuity_note = str(plan.get("continuity_note") or "").strip()
-        if not continuity_note:
+        continuity_note = (str(plan.get("continuity_note") or "").strip()
+                           if wardrobe_authority is None else "")
+        audited_wardrobe = plan.get("wardrobe_state") or {}
+        confirmed_outfits = {}
+        for name in (actor_names if wardrobe_authority is not None and actor_names is not None
+                     else plan.get("characters") or []):
+            if wardrobe_authority is not None:
+                entry, _origin = _source_time_wardrobe(
+                    name, str(plan.get("anchor_segment") or "").strip(),
+                    wardrobe_authority, list(wardrobe_authority.get("canonical_names") or []),
+                )
+            else:
+                entry = _authority_values_for_name(audited_wardrobe, name)
+            if isinstance(entry, dict) and isinstance(entry.get("outfit_state"), dict):
+                confirmed_outfits[name] = deepcopy(entry["outfit_state"])
+        if not continuity_note and not confirmed_outfits:
             print(
                 "[ILLUST_CONTEXT:CALL2_KEYVIS] 복장 시점 참조 생략: "
                 f"plan={plan_index}, anchor={plan.get('anchor_segment')!r}, "
-                "reason=continuity_note empty"
+                "reason=continuity_note and audited outfits empty"
             )
             continue
         anchor_segment = str(plan.get("anchor_segment") or "").strip()
@@ -5408,11 +5620,15 @@ def _keyvis_wardrobe_reference(scene_plan: list[dict]) -> str:
         block = f"Story instant {instant_label}"
         if scene_brief:
             block += f" — {scene_brief}"
-        blocks.append(
-            block
-            + "\nResolved wardrobe at this instant:\n"
-            + continuity_note
-        )
+        if continuity_note:
+            block += "\nResolved wardrobe at this instant:\n" + continuity_note
+        if confirmed_outfits:
+            label = ("Source-time wardrobe outfit_state by character at this instant:"
+                     if wardrobe_authority is not None
+                     else "Confirmed outfit_state by character at this instant:")
+            block += ("\n" + label + "\n"
+                      + json.dumps(confirmed_outfits, ensure_ascii=False))
+        blocks.append(block)
     return "\n\n".join(blocks)
 
 
@@ -6204,7 +6420,9 @@ def _descriptor(raw: dict, kind: str, fallback_slot: int) -> dict:
     }
 
 
-def parse_toon_plan(text: str, toggles: dict, source: str = "CALL2") -> list[dict]:
+def parse_toon_plan(
+    text: str, toggles: dict, source: str = "CALL2", *, preserve_all_scenes: bool = False,
+) -> list[dict]:
     source = re.sub(r"[^A-Za-z0-9_-]", "", str(source or "TOON").upper()) or "TOON"
     inner = _extract_lb_block(text)
     if not inner:
@@ -6230,11 +6448,16 @@ def parse_toon_plan(text: str, toggles: dict, source: str = "CALL2") -> list[dic
     if not isinstance(scenes, list):
         print(f"[ILLUST_CONTEXT:{source}] scenes가 list가 아님: {type(scenes).__name__}")
         scenes = []
-    # output_count_max는 scene_mode와 무관한 유일한 장면 수 상한이다.
-    # auto는 범위 안의 수량 선택만 LLM에 맡기며 범위 자체를 해제하지 않는다.
+    # Historical callers cap generated scenes here. A fallback expanding an
+    # audited PLAN must expose every raw scene to strict slot validation instead
+    # of silently hiding unauthorized entries beyond output_count_max.
     scene_cap = int(toggles["output_count_max"])
-    capped = scenes[:scene_cap]
-    for index, raw in enumerate(capped, start=1):
+    if preserve_all_scenes and any(not isinstance(raw, dict) for raw in scenes):
+        print(f"[ILLUST_CONTEXT:{source}] 감사 확정 PLAN 장면의 object 형식 오류: "
+              f"scenes={scenes!r}")
+        return []
+    included = scenes if preserve_all_scenes else scenes[:scene_cap]
+    for index, raw in enumerate(included, start=1):
         if isinstance(raw, dict):
             out.append(_descriptor(raw, "scene", index))
     if not out:
@@ -6281,7 +6504,9 @@ def validate_complete_call2_output(
         print(f"[ILLUST_CONTEXT:{source}] 전체 CALL2 검증 실패: {reason}")
         return [], reason
 
-    descriptors = parse_toon_plan(text, toggles, source)
+    descriptors = parse_toon_plan(
+        text, toggles, source, preserve_all_scenes=expected_slots is not None,
+    )
     if not descriptors:
         return fail(f"{source} TOON 파싱 실패")
 
@@ -6419,6 +6644,10 @@ def _parse_call2_keyvis_output(
             return fail(f"characters[{index}].positive가 비어 있음")
         if name.casefold() in {value.casefold() for value in actual_names}:
             return fail(f"캐릭터 이름이 중복됨: name={name!r}")
+        outfit, outfit_reason = _fresh_outfit_state(character.get("outfit_state"))
+        if outfit_reason:
+            return fail(f"characters[{index}] {name!r} {outfit_reason}")
+        character["outfit_state"] = outfit
         actual_names.append(name)
 
     allowed = {
@@ -6951,6 +7180,495 @@ def parse_call2_plan(
     }, ""
 
 
+def _source_time_wardrobe(
+    name: str, anchor: str, authority: dict, allowed_names: list[str],
+) -> tuple[dict, str]:
+    """Select CALL1's latest complete snapshot by source Cxxx, not draft scene index."""
+    rank = {segment_id: index for index, segment_id in enumerate(authority["segment_order"])}
+    if anchor not in rank:
+        print(f"[ILLUST_CONTEXT:WARDROBE_PROJECT] anchor 없음: character={name!r}, anchor={anchor!r}")
+        raise ValueError(f"복장 시점 anchor 없음: {anchor!r}")
+    folded = name.casefold()
+    start = next((item for item in authority["wardrobe_at_start"]
+                  if item["character"].casefold() == folded), None)
+    source = "call1_confirmed"
+    if start is None:
+        if folded not in {item.casefold() for item in allowed_names}:
+            print(f"[ILLUST_CONTEXT:WARDROBE_PROJECT] source-only 배우 복장 미해결: character={name!r}, anchor={anchor!r}, reason=CALL1 대상 밖")
+            return {"summary": _wardrobe_snapshot_summary({"worn": [], "removed": []}),
+                    "outfit_state": {"worn": [], "removed": []}}, "source_only_unknown"
+        if not authority.get("allow_fallback"):
+            reason = f"CALL1 시작 복장 없는 canonical 캐릭터: character={name!r}, anchor={anchor!r}"
+            print(f"[ILLUST_CONTEXT:WARDROBE_PROJECT] {reason}")
+            raise ValueError(reason)
+        tracked = _character_state(authority.get("state_before") or {}, name)
+        raw_outfit = tracked.get("current_wardrobe") if isinstance(tracked, dict) else {}
+        normalized = _normalize_output_outfit_state(raw_outfit)
+        if isinstance(raw_outfit, dict) and raw_outfit.get("source") == "call1_confirmed":
+            outfit = {field: list(normalized[field]) for field in ("worn", "removed")}
+            source = "tracked_call1_snapshot_call1_disabled"
+        elif _outfit_state_is_known(normalized):
+            worn = list(normalized["worn"])
+            if normalized.get("body_state") == "nude" and not worn:
+                worn = ["nude"]
+            outfit = {"worn": worn, "removed": list(normalized["removed"])}
+            source = "tracked_fallback_call1_disabled"
+        else:
+            worn = list(_authority_values_for_name(
+                authority.get("default_outfits") or {}, name,
+            ) or [])
+            outfit = {"worn": worn, "removed": []}
+            source = "default_fallback_call1_disabled" if worn else "unknown_call1_disabled"
+        print(f"[ILLUST_CONTEXT:WARDROBE_PROJECT] CALL1 비활성 폴백: character={name!r}, anchor={anchor!r}, source={source}, outfit={outfit!r}")
+    else:
+        outfit = {field: list(start[field]) for field in ("worn", "removed")}
+        for event in authority["wardrobe_events"]:
+            segment_id = event["segment_id"]
+            if segment_id not in rank:
+                print(f"[ILLUST_CONTEXT:WARDROBE_PROJECT] 변경 사건 Cxxx 없음: event={event!r}")
+                raise ValueError(f"CALL1 변경 사건 Cxxx 없음: {segment_id!r}")
+            if event["character"].casefold() == folded and rank[segment_id] <= rank[anchor]:
+                outfit = {field: list(event[field]) for field in ("worn", "removed")}
+    return {"summary": _wardrobe_snapshot_summary(outfit), "outfit_state": outfit}, source
+
+
+def parse_call2_plan_audit(text: str, toggles: dict, target_slotted: str,
+                           segment_slot_map: dict[str, int], draft_scenes: list[dict],
+                           allowed_names: list[str], named_subject_candidates: list[str] | None = None,
+                           *, segments: dict[str, dict] | None = None,
+                           wardrobe_authority: dict | None = None,
+                           ) -> tuple[dict | None, str]:
+    """Merge scene audit corrections; project fresh CALL1 wardrobe at final anchors."""
+    def fail(reason: str):
+        print(f"[ILLUST_CONTEXT:CALL2_PLAN_AUDIT] 교정 PLAN 거부: {reason}")
+        return None, reason
+
+    source = str(text or "").strip()
+    # A complete JSON fence is only an envelope; malformed or partial JSON is not repaired.
+    fence = re.fullmatch(r"```(?:json)?[ \t]*\r?\n([\s\S]*?)\r?\n```", source, re.I)
+    if fence:
+        source = fence.group(1).strip()
+    try:
+        raw = json.loads(source)
+    except Exception as e:
+        print(f"[ILLUST_CONTEXT:CALL2_PLAN_AUDIT] JSON 파싱 실패: error={e}, raw={str(text or '')[:1000]!r}")
+        traceback.print_exc()
+        return None, f"CALL2 PLAN 감사 JSON 파싱 실패: {e}"
+    fresh = wardrobe_authority is not None
+    if not isinstance(raw, dict) or not isinstance(raw.get("scenes"), list):
+        return fail("scenes JSON 배열 누락")
+    if fresh:
+        if "wardrobes" in raw:
+            if not isinstance(raw["wardrobes"], list):
+                return fail("구 wardrobes 참고 필드가 배열이 아님")
+            print(f"[ILLUST_CONTEXT:CALL2_PLAN_AUDIT] 구 wardrobes 출력 무시: rows={len(raw['wardrobes'])}, reason=CALL1 권위")
+        if "actor_evidence" in raw and not isinstance(raw["actor_evidence"], list):
+            return fail("actor_evidence 배열 형식 오류")
+    elif not isinstance(raw.get("wardrobes"), list):
+        return fail("구 scenes/wardrobes JSON 배열 누락 (보관된 PLAN 감사 계약)")
+    if any(field in raw for field in ("keyvis", "keyvis_plan", "scene_plan")):
+        return fail("독립 Key Visual/기존 scene_plan을 PLAN 감사에서 출력할 수 없음")
+    if not isinstance(draft_scenes, list) or not all(isinstance(item, dict) for item in draft_scenes):
+        return fail(f"서버 초안 형식 오류: draft={draft_scenes!r}")
+    draft_count = len(draft_scenes)
+    rows = raw["scenes"]
+    if len(rows) != draft_count:
+        return fail(f"장면 수 변경 금지: draft={draft_count}, audited={len(rows)}")
+
+    def row_index(row: dict, kind: str) -> tuple[int | None, str]:
+        value = row.get("i")
+        if type(value) is not int or not 1 <= value <= draft_count:
+            return None, f"{kind} i는 1..{draft_count} 정수여야 함: {value!r}"
+        return value, ""
+
+    draft_fields = ("anchor_segment", "characters", "scene_brief", "anonymous_partner_fragment")
+    protected_fields = {"slot", "source_segments", "plan_id", "wardrobe_state",
+                        "outfit_state", "source_only_character_evidence"}
+    merged_by_index: dict[int, dict] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            return fail(f"scenes 행이 object가 아님: {row!r}")
+        index, reason = row_index(row, "scenes")
+        if reason:
+            return fail(reason)
+        if index in merged_by_index:
+            return fail(f"scenes 중복 i: {index}")
+        blocked = protected_fields & row.keys()
+        if blocked:
+            return fail(f"scenes[{index}] 서버 관리/기존 계약 필드 금지: {sorted(blocked)}")
+        for field in row.keys() - {*draft_fields, "i", "interaction_contract"}:
+            suggestion = get_close_matches(field, draft_fields, n=1, cutoff=0.8) if isinstance(field, str) else []
+            if suggestion:
+                return fail(f"scenes[{index}] 교정 필드 오타 가능성: {field!r}, intended={suggestion[0]!r}")
+        interaction = row.get("interaction_contract")
+        if not isinstance(interaction, str) or not interaction.strip():
+            return fail(f"scenes[{index}] interaction_contract 누락")
+        draft = draft_scenes[index - 1]
+        if any(field not in draft for field in draft_fields):
+            return fail(f"서버 초안 scenes[{index}] 필수 필드 누락: {draft!r}")
+        merged = {field: deepcopy(row[field] if field in row else draft[field]) for field in draft_fields}
+        merged["interaction_contract"] = interaction
+        merged_by_index[index] = merged
+    expected_indices = set(range(1, draft_count + 1))
+    if set(merged_by_index) != expected_indices:
+        return fail(f"scenes i 누락/불일치: expected={sorted(expected_indices)}, actual={sorted(merged_by_index)}")
+    scenes = [merged_by_index[index] for index in range(1, draft_count + 1)]
+
+    canonical_names: dict[str, str] = {}
+    for supplied_name in allowed_names:
+        name = str(supplied_name).strip()
+        if name:
+            canonical_names.setdefault(name.casefold(), name)
+    root_evidence: dict[str, dict] = {}
+    if fresh:
+        for row in raw.get("actor_evidence") or []:
+            if not isinstance(row, dict) or set(row) != {"name", "source_segment", "source_quote"}:
+                return fail(f"actor_evidence 형식 오류: {row!r}")
+            name, segment_id, quote = row["name"], row["source_segment"], row["source_quote"]
+            if not isinstance(name, str) or not name.strip():
+                return fail(f"actor_evidence 이름 오류: {name!r}")
+            if name.casefold() in canonical_names:
+                print(f"[ILLUST_CONTEXT:CALL2_PLAN_AUDIT] 정식 캐릭터 보조 인용 미사용: character={name!r}, reason=not_source_only_in_final_cast")
+                continue
+            if name.casefold() in root_evidence:
+                return fail(f"source-only 배우 근거 중복: character={name!r}")
+            source_segment = (segments or {}).get(segment_id) if isinstance(segment_id, str) else None
+            if (not isinstance(segment_id, str) or segment_id not in segment_slot_map
+                    or not isinstance(source_segment, dict)
+                    or not isinstance(quote, str)
+                    or not _analysis_evidence_matches_segment(
+                        quote, str(source_segment.get("text") or ""))
+                    or _contains_canonical_name(quote, name) is False):
+                return fail(f"source-only 인용이 CURRENT 원문/배우 이름과 불일치: character={name!r}, segment={segment_id!r}, quote={quote!r}")
+            root_evidence[name.casefold()] = {"name": name, "anchor_segment": segment_id, "quote": quote}
+    checkpoints: dict[int, dict[str, dict]] = {index: {} for index in merged_by_index}
+    for row in ([] if fresh else raw["wardrobes"]):
+        if not isinstance(row, dict):
+            return fail(f"wardrobes 행이 object가 아님: {row!r}")
+        index, reason = row_index(row, "wardrobes")
+        if reason:
+            return fail(reason)
+        blocked = protected_fields & row.keys()
+        if blocked:
+            return fail(f"wardrobes[{index}] 서버 관리/기존 계약 필드 금지: {sorted(blocked)}")
+        if "body_state" in row:
+            return fail(f"wardrobes[{index}] 독립 body_state 필드 금지; worn 배열에 복장 상태 기록")
+        missing = {"name", "summary", "worn", "removed"} - row.keys()
+        if missing:
+            return fail(f"wardrobes[{index}] 필수 필드 누락: {sorted(missing)}")
+        name = row["name"]
+        if not isinstance(name, str) or not name.strip():
+            return fail(f"wardrobes[{index}] 이름 누락/형식 오류: {name!r}")
+        folded = name.strip().casefold()
+        if folded in checkpoints[index]:
+            return fail(f"wardrobes[{index}] 중복 소유자: {name!r}")
+        checkpoints[index][folded] = row
+
+    # Check scene identity before parse_call2_plan can sort, cap, or drop colliding slots.
+    candidates = candidate_slots(target_slotted)
+    ordered_slots: list[int] = []
+    for index, scene in enumerate(scenes, start=1):
+        anchor = scene.get("anchor_segment")
+        if not isinstance(anchor, str) or anchor not in segment_slot_map:
+            return fail(f"scene_plan[{index}] 원문 밖 anchor: {anchor!r}")
+        slot = segment_slot_map[anchor]
+        if slot not in candidates:
+            return fail(f"scene_plan[{index}] 후보 밖 slot: anchor={anchor!r}, slot={slot}")
+        if slot in ordered_slots:
+            return fail(f"scene_plan[{index}] 중복 anchor/slot: anchor={anchor!r}, slot={slot}")
+        ordered_slots.append(slot)
+    if ordered_slots != sorted(ordered_slots, key=candidates.index):
+        return fail(f"원문 순서 이탈: slots={ordered_slots}")
+
+    source_only_names: dict[str, str] = {}
+    seen_slots: set[int] = set()
+    contracts: dict[str, dict] = {}
+    confirmed_wardrobes: dict[str, dict] = {}
+    confirmed_evidence: dict[str, dict] = {}
+    for index, scene in enumerate(scenes, start=1):
+        if not isinstance(scene, dict):
+            return fail(f"scene_plan[{index}]이 object가 아님: {scene!r}")
+        if "slot" in scene:
+            return fail(f"scene_plan[{index}]의 모델 작성 slot 금지: {scene['slot']!r}")
+        anchor = scene.get("anchor_segment")
+        if not isinstance(anchor, str) or anchor not in segment_slot_map:
+            return fail(f"scene_plan[{index}] 원문 밖 anchor: {anchor!r}")
+        slot = segment_slot_map[anchor]
+        if slot in seen_slots:
+            return fail(f"scene_plan[{index}] 중복 anchor/slot: anchor={anchor!r}, slot={slot}")
+        seen_slots.add(slot)
+        if not isinstance(scene.get("scene_brief"), str) or not scene["scene_brief"].strip():
+            return fail(f"scene_plan[{index}] scene_brief 누락")
+        if type(scene.get("anonymous_partner_fragment")) is not bool:
+            return fail(f"scene_plan[{index}] fragment boolean 누락/형식 오류")
+        interaction = scene.get("interaction_contract")
+        if not isinstance(interaction, str) or not interaction.strip():
+            return fail(f"scene_plan[{index}] interaction_contract 누락")
+        names = scene.get("characters")
+        if not isinstance(names, list) or any(not isinstance(name, str) or not name.strip() for name in names):
+            return fail(f"scene_plan[{index}] characters 배열 형식 오류: {names!r}")
+        folded_names = [name.strip().casefold() for name in names]
+        if (len(set(folded_names)) != len(folded_names)
+                or any(name.strip() != canonical_names[folded]
+                       for name, folded in zip(names, folded_names) if folded in canonical_names)):
+            return fail(f"scene_plan[{index}] 중복/비표준 캐릭터: {names!r}, allowed={allowed_names!r}")
+        # Only archived audits may supply wardrobe checkpoints. Fresh plans obtain
+        # each actor's source-time snapshot after corrected cast and anchor are known.
+        scene_checkpoints = checkpoints[index]
+        if not fresh:
+            if set(scene_checkpoints) - set(folded_names):
+                return fail(f"scene_plan[{index}] wardrobe_state 소유자 불일치: characters={names!r}, checkpoints={scene_checkpoints!r}")
+            missing_initial = set(folded_names) - set(confirmed_wardrobes) - set(scene_checkpoints)
+            if missing_initial:
+                return fail(f"scene_plan[{index}] wardrobe_state 최초 체크포인트 누락: characters={names!r}, missing={sorted(missing_initial)}")
+            for folded, row in scene_checkpoints.items():
+                confirmed_wardrobes[folded] = {
+                    "summary": row["summary"],
+                    "outfit_state": {field: row[field] for field in ("worn", "removed")},
+                }
+                if "source_segment" in row or "source_quote" in row:
+                    if folded in canonical_names:
+                        print(f"[ILLUST_CONTEXT:CALL2_PLAN_AUDIT] 근거 참고 정보 미사용: "
+                              f"scene={index}, character={row['name']!r}, reason=not_source_only_in_final_cast")
+                    else:
+                        confirmed_evidence[folded] = {
+                            "anchor_segment": row.get("source_segment"), "quote": row.get("source_quote"),
+                        }
+        else:
+            scene["_wardrobe_provenance"] = {}
+            for name in names:
+                try:
+                    entry, origin = _source_time_wardrobe(
+                        name, anchor, wardrobe_authority, allowed_names,
+                    )
+                except ValueError as exc:
+                    return fail(f"scene_plan[{index}] {exc}")
+                confirmed_wardrobes[name.casefold()] = entry
+                scene["_wardrobe_provenance"][name] = origin
+        scene["wardrobe_state"] = {
+            name.strip(): deepcopy(confirmed_wardrobes[folded])
+            for name, folded in zip(names, folded_names)
+        }
+        if fresh:
+            for name, folded in zip(names, folded_names):
+                proof = root_evidence.get(folded)
+                if folded not in canonical_names and proof is not None:
+                    if proof["name"] != name:
+                        return fail(f"scene_plan[{index}] source-only 배우 표기 불일치: name={name!r}, proof={proof['name']!r}")
+                    confirmed_evidence[folded] = {
+                        "anchor_segment": proof["anchor_segment"], "quote": proof["quote"],
+                    }
+        carried_evidence = {
+            name.strip(): deepcopy(confirmed_evidence[folded])
+            for name, folded in zip(names, folded_names)
+            if folded not in canonical_names and folded in confirmed_evidence
+        }
+        if carried_evidence:
+            scene["source_only_character_evidence"] = carried_evidence
+        source_only = [name.strip() for name, folded in zip(names, folded_names)
+                       if folded not in canonical_names]
+        evidence_by_name = scene.get("source_only_character_evidence")
+        if source_only:
+            if not isinstance(evidence_by_name, dict) or set(evidence_by_name) != set(source_only):
+                return fail(f"scene_plan[{index}] source-only 배우 근거 누락/소유자 불일치: "
+                            f"characters={source_only!r}, evidence={evidence_by_name!r}")
+            for name in source_only:
+                folded = name.casefold()
+                if folded in source_only_names and source_only_names[folded] != name:
+                    return fail(f"scene_plan[{index}] source-only 배우 표기 불일치: "
+                                f"name={name!r}, established={source_only_names[folded]!r}")
+                evidence = evidence_by_name[name]
+                if not isinstance(evidence, dict):
+                    return fail(f"scene_plan[{index}] source-only 근거 형식 오류: "
+                                f"character={name!r}, evidence={evidence!r}")
+                evidence_anchor = evidence.get("anchor_segment")
+                quote = evidence.get("quote")
+                source_segment = (
+                    (segments or {}).get(evidence_anchor)
+                    if isinstance(evidence_anchor, str) else None
+                )
+                if (not isinstance(evidence_anchor, str)
+                        or evidence_anchor not in segment_slot_map
+                        or not isinstance(source_segment, dict)
+                        or not isinstance(quote, str)
+                        or not _analysis_evidence_matches_segment(
+                            quote, str(source_segment.get("text") or ""))):
+                    return fail(f"scene_plan[{index}] source-only 인용이 CURRENT 원문과 불일치: "
+                                f"character={name!r}, segment={evidence_anchor!r}, quote={quote!r}")
+                source_only_names[folded] = name
+                print(f"[ILLUST_CONTEXT:CALL2_PLAN_AUDIT] source-only 배우 인용 확인: "
+                      f"scene={index}, character={name!r}, segment={evidence_anchor!r}")
+        elif evidence_by_name not in (None, {}):
+            return fail(f"scene_plan[{index}] source-only 대상 없는 근거: {evidence_by_name!r}")
+        wardrobe = scene.get("wardrobe_state")
+        if (not isinstance(wardrobe, dict) or len(wardrobe) != len(names)
+                or {str(name).strip().casefold() for name in wardrobe} != set(folded_names)):
+            return fail(f"scene_plan[{index}] wardrobe_state 소유자 불일치: characters={names!r}, wardrobe={wardrobe!r}")
+        normalized_wardrobe: dict[str, dict] = {}
+        for name in names:
+            entry = _authority_values_for_name(wardrobe, name)
+            if not isinstance(entry, dict) or not isinstance(entry.get("summary"), str) or not entry["summary"].strip():
+                return fail(f"scene_plan[{index}] {name!r} 복장 상태 요약 누락")
+            outfit = entry.get("outfit_state")
+            if not isinstance(outfit, dict) or set(outfit) != {"worn", "removed"}:
+                return fail(f"scene_plan[{index}] {name!r} outfit_state 필드는 worn/removed만 허용")
+            normalized, outfit_reason = _fresh_outfit_state(outfit)
+            if outfit_reason:
+                return fail(f"scene_plan[{index}] {name!r} {outfit_reason}")
+            normalized_wardrobe[name.strip()] = {"summary": entry["summary"].strip(), "outfit_state": normalized}
+        contracts[anchor] = {"interaction_contract": interaction.strip(), "wardrobe_state": normalized_wardrobe}
+        if fresh:
+            contracts[anchor]["_wardrobe_provenance"] = deepcopy(scene["_wardrobe_provenance"])
+        if evidence_by_name:
+            contracts[anchor]["source_only_character_evidence"] = deepcopy(evidence_by_name)
+
+    if fresh and set(root_evidence) != set(source_only_names):
+        return fail(f"source-only 배우 근거 소유자 불일치: final={list(source_only_names.values())!r}, proof={[item['name'] for item in root_evidence.values()]!r}")
+    planned, reason = parse_call2_plan(
+        json.dumps({"scene_plan": scenes}, ensure_ascii=False), toggles, target_slotted,
+        segment_slot_map=segment_slot_map, named_subject_candidates=named_subject_candidates,
+        log_errors=False)
+    if planned is None or planned.get("mode") != "plan":
+        return fail(reason or "감사 결과가 완성된 PLAN JSON이 아님")
+    corrected = planned["scene_plan"]
+    if len(corrected) != draft_count or {int(scene["slot"]) for scene in corrected} != seen_slots:
+        return fail("PLAN 파서가 감사 장면을 조용히 제거/재배치함")
+    for scene in corrected:
+        scene.update(deepcopy(contracts[scene["anchor_segment"]]))
+    return planned, ""
+
+
+async def _run_call2_plan_audit(
+    *, draft_plan: dict, toggles: dict, target_slotted: str,
+    segment_slot_map: dict[str, int], segments: dict[str, dict],
+    current_context: str, history_text: str, active_policy: str,
+    named_subject_candidates: list[str],
+    allowed_names: list[str], wardrobe_at_start: list[dict],
+    wardrobe_events: list[dict], state_before: dict, default_outfits: dict,
+    stream_notify, wardrobe_authority: dict | None = None,
+) -> tuple[dict, str]:
+    """Correct scenes once; source-time CALL1 wardrobe is bound after final anchors."""
+    if wardrobe_authority is None:
+        print("[ILLUST_CONTEXT:CALL2_PLAN_AUDIT] fresh wardrobe authority 누락: 구 audit 출력 재사용 불가")
+        raise ValueError("PLAN 감사에 CALL1 source-time wardrobe authority가 없습니다")
+    draft_scenes = [{
+        "i": index,
+        "anchor_segment": scene["anchor_segment"],
+        "characters": scene["characters"],
+        "scene_brief": scene["scene_brief"],
+        "anonymous_partner_fragment": scene["anonymous_partner_fragment"],
+    } for index, scene in enumerate(draft_plan["scene_plan"], start=1)]
+    if not segments or not current_context.strip():
+        print("[ILLUST_CONTEXT:CALL2_PLAN_AUDIT] 원문 Cxxx 세그먼트/현재 문맥이 비어 있음")
+        raise ValueError("PLAN 감사에 필요한 현재 원문 Cxxx 세그먼트가 없습니다")
+    # Anchor markers navigate the one CURRENT source; they are not story or wardrobe evidence.
+    draft_indices_by_anchor: dict[str, list[int]] = {}
+    for scene in draft_scenes:
+        draft_indices_by_anchor.setdefault(scene["anchor_segment"], []).append(scene["i"])
+    complete_source = "\n\n".join(
+        (f"Draft anchor metadata (not story or evidence): scene indices "
+         f"{json.dumps(draft_indices_by_anchor[segment_id])}\n"
+         if segment_id in draft_indices_by_anchor else "")
+        + f"[{segment_id}]\n{segment['text']}"
+        for segment_id, segment in segments.items()
+    )
+    eligible = [segment_id for segment_id in segments if segment_id in segment_slot_map]
+    if not eligible:
+        print("[ILLUST_CONTEXT:CALL2_PLAN_AUDIT] 매핑된 Cxxx anchor가 없음")
+        raise ValueError("PLAN 감사에 사용 가능한 Cxxx anchor가 없습니다")
+    eligible_reference = (
+        "\n\n# ELIGIBLE ANCHOR Cxxx IDS\n" + json.dumps(eligible)
+        if len(eligible) != len(segments) else ""
+    )
+    system = (
+        "PURPOSE: Confirm each draft scene's supported actor, receiver, contact, "
+        "visibility, and source anchor using PAST then CURRENT Cxxx. The supplied "
+        "wardrobe timeline already resolves physical clothing at source time. Do not "
+        "generate wardrobe rows, reinterpret its lists, use draft clothing to override "
+        "it, or treat profile/default information as stronger source evidence. Correct "
+        "a draft scene_brief with unsupported clothing while preserving its supported "
+        "visible action. Opening is not removal; a later source assertion may change "
+        "clothing without describing a dressing action. After any anchor correction "
+        "the server selects the state at that FINAL Cxxx, not the draft index. "
+        "If fresh snapshots are unavailable, call1_disabled_fallback is labeled "
+        "tracked/default reference, not source proof; do not convert it into a new outfit.\n\n"
+        "SCENES: Follow the trusted active policy and complete source. Only if a "
+        "draft instant cannot satisfy the policy, choose another distinct supported "
+        "Cxxx instant. Preserve named subject, connected contact, actor/receiver "
+        "ownership and source-supported garments; do not invent actions, swap owners, "
+        "hide explicit contact, or replace an interaction with an unrelated portrait.\n\n"
+        "OUTPUT: Return one bare JSON object with scenes only. Give each draft scene "
+        "one row with integer i and a nonempty interaction_contract stating actor, "
+        "receiver, contact and visibility, or no interaction. Copy the four draft "
+        "fields unless corrected; include only corrected anchor_segment, characters, "
+        "scene_brief, or anonymous_partner_fragment. Preserve canonical spelling "
+        "and the draft's scene-description language. Never output outfit_state, "
+        "wardrobe_state, wardrobe summaries or wardrobe checkpoints.\n\n"
+        "For a final actor outside CURRENT CANONICAL NAMES, add one optional ROOT "
+        "actor_evidence array with one {name,source_segment,source_quote} per such "
+        "actor, not per scene. Quote a mapped CURRENT Cxxx passage that literally "
+        "names that actor; its segment need not be the scene anchor. Do not infer cast "
+        "from evidence or supply dummy proof for canonical actors. When all actors "
+        "are canonical, omit actor_evidence entirely. Do not output server slots, "
+        "other PLAN metadata, keyvis, Markdown fences, or explanatory prose.\n\n"
+        'Example: {"scenes":[{"i":1,"interaction_contract":"A waits alone."},'
+        '{"i":2,"scene_brief":"A opens the door.",'
+        '"interaction_contract":"A opens the door alone."}]}.'
+    )
+    # The model may correct scenes against this chronology, but only the server
+    # projects its lists at the final anchor. Do not present a competing default
+    # or draft-derived outfit when CALL1 is enabled.
+    timeline = {
+        "wardrobe_at_start": wardrobe_authority["wardrobe_at_start"],
+        "wardrobe_events": wardrobe_authority["wardrobe_events"],
+    }
+    if wardrobe_authority.get("allow_fallback"):
+        timeline["call1_disabled_fallback"] = {
+            name: _source_time_wardrobe(name, eligible[0], wardrobe_authority, allowed_names)[0]
+            for name in allowed_names
+        }
+    messages = [{"role": "system", "content": system}, {"role": "user", "content": (
+        "# TRUSTED ACTIVE BOT IMAGE POLICY\n" + (active_policy or "(none provided)")
+        + "\n\n# SINGLE-PRESET NAMED SUBJECT AUTHORITY\n"
+        + json.dumps(named_subject_candidates, ensure_ascii=False)
+        + "\n\n# CURRENT CANONICAL NAMES\n"
+        + json.dumps(allowed_names, ensure_ascii=False)
+        + "\n\n# SOURCE-TIME WARDROBE AUTHORITY (STATE DATA; NOT AN AUDIT OUTPUT)\n"
+        + json.dumps(timeline, ensure_ascii=False)
+        + eligible_reference
+        + "\n\n# DRAFT PLAN (CORRECT, DO NOT JUST CRITIQUE)\n"
+        + json.dumps({"scene_plan": draft_scenes}, ensure_ascii=False)
+        + "\n\n# PAST HISTORY (EARLIER STORY SOURCE; READ BEFORE CURRENT)\n"
+        + (history_text or "(no earlier story supplied)")
+        + "\n\n# COMPLETE Cxxx SOURCE REFERENCE (CURRENT IN STORY ORDER)\n" + complete_source
+    )}]
+
+    def validate(result):
+        _plan, reason = parse_call2_plan_audit(
+            result, toggles, target_slotted, segment_slot_map, draft_scenes,
+            allowed_names, named_subject_candidates or None, segments=segments,
+            wardrobe_authority=wardrobe_authority,
+        )
+        return bool(_plan), reason or "CALL2 PLAN 감사 검증 실패"
+
+    raw_output = await _call_pipeline_llm(
+        "CALL2-PLAN-AUDIT", _normalize_messages(messages), stream_notify,
+        result_validator=validate, json_mode=True,
+    )
+    corrected, reason = parse_call2_plan_audit(
+        raw_output, toggles, target_slotted, segment_slot_map, draft_scenes,
+        allowed_names, named_subject_candidates or None, segments=segments,
+        wardrobe_authority=wardrobe_authority,
+    )
+    if corrected is None:
+        print(f"[ILLUST_CONTEXT:CALL2_PLAN_AUDIT] 최종 검사 실패: {reason}")
+        raise ValueError(reason or "CALL2 PLAN 감사 결과가 유효하지 않습니다")
+    print("[ILLUST_CONTEXT:CALL2_PLAN_AUDIT] PLAN 확정: "
+          f"draft={[(scene['anchor_segment'], scene['slot']) for scene in draft_plan['scene_plan']]}, "
+          f"confirmed={[(scene['anchor_segment'], scene['slot']) for scene in corrected['scene_plan']]}")
+    return corrected, raw_output
+
+
 def _match_call2_detail_characters(
     item: dict,
     expected_names: list[str],
@@ -7140,6 +7858,12 @@ def _parse_call2_detail_output(
         item["continuity_note"] = str(
             assigned_scene_context.get("continuity_note") or ""
         ).strip()
+        item["interaction_contract"] = str(
+            assigned_scene_context.get("interaction_contract") or ""
+        ).strip()
+        item["wardrobe_state"] = deepcopy(
+            assigned_scene_context.get("wardrobe_state") or {}
+        )
         item["anonymous_partner_fragment"] = bool(
             assigned_scene_context.get("anonymous_partner_fragment", False)
         )
@@ -7149,7 +7873,7 @@ def _parse_call2_detail_output(
         expected_wardrobes = (assigned_wardrobes_by_slot or {}).get(slot) or {}
         if expected_wardrobes:
             expected_by_name = {
-                str(name).strip().casefold(): (str(name).strip(), _normalize_outfit_state(outfit))
+                str(name).strip().casefold(): (str(name).strip(), _normalize_output_outfit_state(outfit))
                 for name, outfit in expected_wardrobes.items()
                 if str(name).strip()
             }
@@ -7169,15 +7893,28 @@ def _parse_call2_detail_output(
             for folded, (expected_name, expected_outfit) in expected_by_name.items():
                 character = actual_by_name[folded]
                 actual_outfit = character.get("outfit_state")
+                if ("body_state" not in expected_outfit
+                        and (not isinstance(actual_outfit, dict)
+                             or set(actual_outfit) != {"worn", "removed"}
+                             or any(not isinstance(actual_outfit[field], list)
+                                    or any(not isinstance(tag, str) or not tag.strip()
+                                           for tag in actual_outfit[field])
+                                    for field in ("worn", "removed")))):
+                    print(
+                        f"[ILLUST_CONTEXT:CALL2_DETAIL] 감사 확정 복장 필드 형식 불일치: "
+                        f"slot={slot}, character={expected_name}, actual={actual_outfit!r}"
+                    )
+                    discarded_slots.add(slot)
+                    break
                 conflict = _outfit_contract_conflict(expected_outfit, actual_outfit)
                 if conflict:
                     print(
                         f"[ILLUST_CONTEXT:CALL2_DETAIL] 참고 복장과 다른 contextual 후보를 "
                         f"그대로 보존: slot={slot}, character={expected_name}, "
-                        f"reference={expected_outfit}, actual={_normalize_outfit_state(actual_outfit)}, "
+                        f"reference={expected_outfit}, actual={_normalize_output_outfit_state(actual_outfit)},"
                         f"difference={conflict}"
                     )
-                normalized_actual = _normalize_outfit_state(actual_outfit)
+                normalized_actual = _normalize_output_outfit_state(actual_outfit)
                 if not _outfit_states_equal(normalized_actual, expected_outfit):
                     print(
                         f"[ILLUST_CONTEXT:CALL2_DETAIL] DETAIL contextual 복장 보존: "
@@ -7189,10 +7926,7 @@ def _parse_call2_detail_output(
                 # audit does not judge wardrobe, and this parser does not infer it.
                 character["outfit_state"] = (
                     deepcopy(normalized_actual)
-                    if _outfit_state_is_known(normalized_actual) or (
-                        expected_outfit["body_state"] == "unknown"
-                        and not _outfit_state_is_known(expected_outfit)
-                    )
+                    if _outfit_state_is_known(normalized_actual) or not _outfit_state_is_known(expected_outfit)
                     else deepcopy(expected_outfit)
                 )
     return keyvis_descriptors + [
@@ -7200,6 +7934,48 @@ def _parse_call2_detail_output(
         for slot in assigned_slots
         if slot not in discarded_slots
     ], ""
+
+
+def bind_audited_plan_descriptors(
+    descriptors: list[dict], scene_plan: list[dict], source: str,
+) -> tuple[list[dict], str]:
+    """Require every final scene (including fallback/FIX) to match the corrected PLAN."""
+    def fail(reason: str):
+        print(f"[ILLUST_CONTEXT:CALL2_PLAN_AUDIT] {source} 결과 거부: {reason}")
+        return [], reason
+
+    expected = {int(plan["slot"]): plan for plan in scene_plan}
+    scenes = [item for item in descriptors if str(item.get("kind") or "") == "scene"]
+    actual_slots = [int(item.get("slot") or 0) for item in scenes]
+    if len(actual_slots) != len(expected) or set(actual_slots) != set(expected):
+        return fail(f"확정 PLAN 슬롯 누락/중복: expected={list(expected)}, actual={actual_slots}")
+    for item in scenes:
+        slot = int(item["slot"])
+        plan = expected[slot]
+        names = list(plan.get("characters") or [])
+        actual_by_name, reason = _match_call2_detail_characters(item, names, f"{source} slot={slot}")
+        if reason:
+            return fail(reason)
+        for name in names:
+            confirmed = _authority_values_for_name(plan.get("wardrobe_state") or {}, name)
+            if not isinstance(confirmed, dict):
+                return fail(f"slot={slot} {name!r} 감사 확정 복장 누락")
+            actual = actual_by_name[name.casefold()].get("outfit_state")
+            if not _outfit_states_equal(actual, confirmed["outfit_state"]):
+                return fail(f"slot={slot} {name!r} 감사 확정 복장 불일치: "
+                            f"confirmed={confirmed['outfit_state']}, actual={actual}")
+        for name in names:
+            confirmed = _authority_values_for_name(plan["wardrobe_state"], name)
+            actual_by_name[name.casefold()]["outfit_state"] = deepcopy(confirmed["outfit_state"])
+        item["plan_id"] = plan["plan_id"]
+        item["scene_brief"] = plan["scene_brief"]
+        item["anchor_segment"] = plan["anchor_segment"]
+        item["continuity_note"] = plan.get("continuity_note") or ""
+        item["interaction_contract"] = plan["interaction_contract"]
+        item["wardrobe_state"] = deepcopy(plan["wardrobe_state"])
+        item["anonymous_partner_fragment"] = plan["anonymous_partner_fragment"]
+        item["visual_base_snapshot"] = deepcopy(plan.get("visual_base_snapshot") or {})
+    return descriptors, ""
 
 
 def _parse_call2_detail_partial(
@@ -7288,6 +8064,7 @@ def _parse_call2_detail_partial(
 
     # 보존된 슬롯에 대해 plan_id 주입 + 복장 확정(strict 경로와 동일 규칙).
     discarded_slots: set[int] = set()
+    wardrobe_mismatch_slots: set[int] = set()
     for slot, item in kept_by_slot.items():
         item["plan_id"] = plan_id_by_slot.get(slot, "")
         assigned_scene_context = (
@@ -7299,6 +8076,12 @@ def _parse_call2_detail_partial(
         item["continuity_note"] = str(
             assigned_scene_context.get("continuity_note") or ""
         ).strip()
+        item["interaction_contract"] = str(
+            assigned_scene_context.get("interaction_contract") or ""
+        ).strip()
+        item["wardrobe_state"] = deepcopy(
+            assigned_scene_context.get("wardrobe_state") or {}
+        )
         item["anonymous_partner_fragment"] = bool(
             assigned_scene_context.get("anonymous_partner_fragment", False)
         )
@@ -7350,10 +8133,26 @@ def _parse_call2_detail_partial(
                 actual_by_name[name.casefold()]
                 for name in expected_character_names
             ]
+        audited_wardrobe = item.get("wardrobe_state") or {}
+        incompatible = []
+        for name in expected_character_names:
+            confirmed = _authority_values_for_name(audited_wardrobe, name)
+            if not isinstance(confirmed, dict):
+                continue
+            actual = (actual_by_name.get(name.casefold()) or {}).get("outfit_state")
+            if not _outfit_states_equal(actual, confirmed["outfit_state"]):
+                incompatible.append((name, confirmed["outfit_state"], actual))
+        if incompatible:
+            print(
+                "[ILLUST_CONTEXT:CALL2_DETAIL_PARTIAL] 감사 확정 복장과 DETAIL 충돌, "
+                f"슬롯 재시도: slot={slot}, conflicts={incompatible}"
+            )
+            wardrobe_mismatch_slots.add(slot)
+            continue
         if not expected_wardrobes:
             continue
         expected_by_name = {
-            str(name).strip().casefold(): (str(name).strip(), _normalize_outfit_state(outfit))
+            str(name).strip().casefold(): (str(name).strip(), _normalize_output_outfit_state(outfit))
             for name, outfit in expected_wardrobes.items()
             if str(name).strip()
         }
@@ -7371,10 +8170,10 @@ def _parse_call2_detail_partial(
                 print(
                     f"[ILLUST_CONTEXT:CALL2_DETAIL_PARTIAL] 참고 복장과 다른 contextual "
                     f"후보를 그대로 보존: slot={slot}, character={expected_name}, "
-                    f"reference={expected_outfit}, actual={_normalize_outfit_state(actual_outfit)}, "
+                    f"reference={expected_outfit}, actual={_normalize_output_outfit_state(actual_outfit)},"
                     f"difference={conflict}"
                 )
-            normalized_actual = _normalize_outfit_state(actual_outfit)
+            normalized_actual = _normalize_output_outfit_state(actual_outfit)
             if not _outfit_states_equal(normalized_actual, expected_outfit):
                 print(
                     f"[ILLUST_CONTEXT:CALL2_DETAIL_PARTIAL] DETAIL contextual 복장 보존: "
@@ -7384,14 +8183,11 @@ def _parse_call2_detail_partial(
             # Preserve usable shared wardrobe resolution over the stale baseline.
             character["outfit_state"] = (
                 deepcopy(normalized_actual)
-                if _outfit_state_is_known(normalized_actual) or (
-                    expected_outfit["body_state"] == "unknown"
-                    and not _outfit_state_is_known(expected_outfit)
-                )
+                if _outfit_state_is_known(normalized_actual) or not _outfit_state_is_known(expected_outfit)
                 else deepcopy(expected_outfit)
             )
 
-    for slot in discarded_slots:
+    for slot in discarded_slots | wardrobe_mismatch_slots:
         kept_by_slot.pop(slot, None)
     missing_slots = [
         slot
@@ -7966,8 +8762,14 @@ def apply_call2_authority_base(
                 )
 
             raw_outfit_state = character.get("outfit_state")
-            outfit_state = _normalize_outfit_state(raw_outfit_state)
-            outfit_state_known = _outfit_state_is_known(raw_outfit_state)
+            outfit_state = (
+                _normalize_output_outfit_state(raw_outfit_state)
+                if isinstance(raw_outfit_state, dict)
+                else _normalize_outfit_state(raw_outfit_state)
+            )
+            outfit_state_known = _outfit_state_is_known(raw_outfit_state) or isinstance(
+                _authority_values_for_name(descriptor.get("wardrobe_state") or {}, name), dict
+            )
             wardrobe_authority = [] if outfit_state_known else default_tags
             if not outfit_state_known:
                 print(
@@ -8224,7 +9026,7 @@ def apply_call2_authority_base(
                     or _authority_tag_identity(tag) in exception_ids
                 )
             ]
-            if mandatory_wardrobe and not outfit_state_known:
+            if mandatory_wardrobe and not outfit_state_known and "body_state" in outfit_state:
                 outfit_state["body_state"] = "clothed"
             character["outfit_state"] = outfit_state
 
@@ -8315,7 +9117,6 @@ async def _run_call2_keyvis(
             "      name: canonical name\n"
             "      position: ...\n"
             "      outfit_state:\n"
-            "        body_state: clothed|partial|nude|topless|bottomless|underwear_only|unknown\n"
             "        worn: [...]\n"
             "        removed: [...]\n"
             "  scene: ...\n"
@@ -8443,6 +9244,8 @@ async def _run_parallel_call2_details(
             int(item["slot"]): {
                 "scene_brief": str(item.get("scene_brief") or "").strip(),
                 "continuity_note": str(item.get("continuity_note") or "").strip(),
+                "interaction_contract": str(item.get("interaction_contract") or "").strip(),
+                "wardrobe_state": deepcopy(item.get("wardrobe_state") or {}),
                 "anonymous_partner_fragment": bool(
                     item.get("anonymous_partner_fragment", False)
                 ),
@@ -8800,12 +9603,7 @@ async def _run_call2_character_mismatch_fixes(
         plan_id = str(candidate.get("plan_id") or "").strip()
         assigned_wardrobe = deepcopy(candidate.get("assigned_wardrobe") or {})
         raw_scene_context = candidate.get("scene_context") or {}
-        scene_context = {
-            "scene_brief": str(raw_scene_context.get("scene_brief") or "").strip(),
-            "continuity_note": str(
-                raw_scene_context.get("continuity_note") or ""
-            ).strip(),
-        }
+        scene_context = deepcopy(raw_scene_context)
         rejected_descriptor = candidate.get("descriptor") or {}
         rejected_scene = {
             key: deepcopy(rejected_descriptor.get(key))
@@ -8829,9 +9627,17 @@ async def _run_call2_character_mismatch_fixes(
         }, {
             "role": "user",
             "content": (
-                "Repair only this rejected scene. Preserve its valid visual content, but make "
-                "characters[] contain exactly the supplied canonical roster in the supplied order. "
-                "Return exactly one <lb-xnai> block containing exactly this scene and no keyvis.\n\n"
+                "Repair this rejected scene against its confirmed source-grounded PLAN. "
+                "Preserve unrelated valid camera, negative, position, action, expression, and "
+                "other visual content, but do not treat rejected names, wardrobe, or actor/contact "
+                "text as authority. Make characters[] exactly the supplied canonical roster in "
+                "order. The confirmed scene_context (scene_brief, interaction_contract, "
+                "wardrobe_state, fragment flag) overrides conflicts in rejected_scene; "
+                "copy each confirmed outfit_state exactly and repair conflicting positive, "
+                "scene, and supplement text without inventing another event. "
+                "The assigned_wardrobe is a snapshot of the confirmed scene, not a profile "
+                "default to restore. Return exactly one <lb-xnai> block containing exactly "
+                "this scene and no keyvis.\n\n"
                 + json.dumps(request, ensure_ascii=False, indent=2)
             ),
         }]
@@ -8915,10 +9721,14 @@ async def _run_call2_character_mismatch_fixes(
             traceback.print_exc()
             return None, "", slot
 
-    results = await illustration_flow.gather(*(
+    repairs = (
         repair_one(index, candidate)
         for index, candidate in enumerate(candidates, start=1)
-    ))
+    )
+    if toggles.get("call2_parallel_enabled"):
+        results = await illustration_flow.gather(*repairs)
+    else:
+        results = [await repair for repair in repairs]
     repaired = [descriptor for descriptor, _raw, _failed in results if descriptor]
     raw_outputs = [raw for _descriptor, raw, _failed in results if raw]
     failed_slots = [int(failed) for _descriptor, _raw, failed in results if failed is not None]
@@ -9705,6 +10515,7 @@ _CALL_TASK_KEYS = {
     "CALL2-PLAN": "illustration_call2_plan",
     "CALL2-KEYVIS": "illustration_call2_keyvis",
     "CALL2-AUTHORITY-AUDIT": "illustration_call2_authority_audit",
+    "CALL2-PLAN-AUDIT": "illustration_call2_authority_audit",
     "CALL2-FALLBACK": "illustration_call2",
     "CALL2-FIX": "illustration_call2_fix",
     "CALL3": "illustration_call3",
@@ -9746,6 +10557,10 @@ _CALL_QUEUE_SUBTASK_GROUPS = {
     "CALL2-AUTHORITY-AUDIT": (
         "call2_authority_audit",
         "CALL2 고정 외형 예외 감사",
+    ),
+    "CALL2-PLAN-AUDIT": (
+        "call2_authority_audit",
+        "CALL2 PLAN 검토·교정",
     ),
     "CALL2-FALLBACK": ("call2", "CALL2 폴백"),
     "CALL2-FIX": ("call2_fix", "CALL2-FIX TOON 교정"),
@@ -10742,6 +11557,7 @@ async def _run_parallel_pipeline_jobs(
 def _merge_call1_shard_values(
     shard_values: list[dict],
     segment_order: list[str],
+    require_fresh_wardrobe: bool = False,
 ) -> tuple[dict, list[str], list[str]]:
     """Merge disjoint CALL1 shard JSON without semantic keyword inference."""
     merged = {
@@ -10752,6 +11568,7 @@ def _merge_call1_shard_values(
     warnings = []
     fallback_errors = []
     wardrobe_seen = set()
+    wardrobe_owners = set()
     hairstyle_seen = set()
     segment_rank = {segment_id: index for index, segment_id in enumerate(segment_order)}
     selected_baseline = None
@@ -10772,7 +11589,23 @@ def _merge_call1_shard_values(
             if selected_baseline is None:
                 selected_baseline = normalized_baseline
                 merged["wardrobe_at_start"] = deepcopy(shard_baseline)
-            elif normalized_baseline != selected_baseline:
+            elif require_fresh_wardrobe:
+                first_by_name = {
+                    row["character"].casefold(): row for row in merged["wardrobe_at_start"]
+                }
+                shard_by_name = {
+                    row["character"].casefold(): row for row in shard_baseline
+                }
+                if (set(first_by_name) != set(shard_by_name) or any(
+                    not _outfit_states_equal(
+                        {field: shard_by_name[name][field] for field in ("worn", "removed")},
+                        {field: first_by_name[name][field] for field in ("worn", "removed")},
+                    ) for name in first_by_name
+                )):
+                    reason = f"CALL1 shard {shard_index} pre-C001 복장 스냅샷 불일치"
+                    print(f"[ILLUST_CONTEXT:CALL1_PARALLEL] {reason}")
+                    raise ValueError(reason)
+            elif normalized_baseline != selected_baseline and not require_fresh_wardrobe:
                 warnings.append(
                     f"CALL1 shard {shard_index} 시작 복장 판정이 선행 shard와 달라 "
                     "선행 판정을 유지"
@@ -10789,6 +11622,13 @@ def _merge_call1_shard_values(
                 )
                 continue
             key = json.dumps(item, ensure_ascii=False, sort_keys=True)
+            owner = (segment_id, str(item.get("character") or "").casefold())
+            if require_fresh_wardrobe and owner in wardrobe_owners:
+                reason = (f"CALL1 shard 간 중복 복장 변경: segment={segment_id!r}, "
+                          f"character={item.get('character')!r}")
+                print(f"[ILLUST_CONTEXT:CALL1_PARALLEL] {reason}")
+                raise ValueError(reason)
+            wardrobe_owners.add(owner)
             if key not in wardrobe_seen:
                 wardrobe_seen.add(key)
                 merged["wardrobe_events"].append(deepcopy(item))
@@ -10828,7 +11668,9 @@ async def _run_parallel_call1_analysis(
     call1_system: str,
     segmented_current: str,
     current_segments: dict[str, dict],
+    current_context: str,
     history_text: str,
+    expected_names: list[str],
     toggles: dict,
     stream_notify,
 ) -> tuple[str, list[str], list[str]]:
@@ -10873,10 +11715,11 @@ async def _run_parallel_call1_analysis(
         shard_instruction = (
             "\n\n# Parallel shard contract\n"
             f"This is shard {index}/{total}. Read the full context for discourse understanding, "
-            "emit the complete wardrobe_at_start for every resolved CURRENT character, but emit "
-            "wardrobe_events and hairstyle_events only "
+            "emit the complete pre-C001 wardrobe_at_start snapshot for every resolved CURRENT "
+            "character, then emit complete AFTER-state wardrobe_events and hairstyle_events only "
             f"for these assigned segment IDs: {json.dumps(assigned, ensure_ascii=False)}.\n"
-            "Use only the resolved CURRENT canonical names supplied by the system prompt. "
+            "Read earlier CURRENT segments to resolve every assigned event's before-state; "
+            "never include a later change in an earlier snapshot. "
             "Return one JSON object with exactly those three arrays."
         )
         messages = _normalize_messages([
@@ -10898,10 +11741,9 @@ async def _run_parallel_call1_analysis(
             raw = _json_object_from_text(result)
             if raw is None:
                 return False, "CALL1 shard JSON object 없음"
-            for key in ("wardrobe_at_start", "wardrobe_events", "hairstyle_events"):
-                if key not in raw or not isinstance(raw.get(key), list):
-                    return False, f"CALL1 shard {key}가 list가 아님"
-            return True, ""
+            return _validate_fresh_call1_wardrobe(
+                raw, expected_names, current_segments, current_context, set(assigned),
+            )
 
         call_name = f"CALL1 {index}/{total}"
         if attempt_kind == "duplicate":
@@ -10916,8 +11758,10 @@ async def _run_parallel_call1_analysis(
             history_id=history_id,
         )
         raw_value = _json_object_from_text(raw_output)
-        if raw_value is None:
-            raise ValueError(f"CALL1 shard {index}/{total} JSON 파싱 실패")
+        valid, reason = validate(raw_output)
+        if raw_value is None or not valid:
+            print(f"[ILLUST_CONTEXT:CALL1_PARALLEL] shard 결과 거부: index={index}, reason={reason}")
+            raise ValueError(f"CALL1 shard {index}/{total} 검증 실패: {reason}")
         return {
             "raw": raw_output,
             "value": raw_value,
@@ -10960,12 +11804,17 @@ async def _run_parallel_call1_analysis(
             print(f"[ILLUST_CONTEXT:CALL1_PARALLEL] {warning}")
         if not shard_values:
             print(
-                "[ILLUST_CONTEXT:CALL1_PARALLEL] 모든 shard가 실패해 빈 사건 목록으로 "
-                f"계속 진행: failures={group_error.failures}"
+                "[ILLUST_CONTEXT:CALL1_PARALLEL] 모든 shard 실패: "
+                f"failures={group_error.failures}"
             )
+        raise RuntimeError(
+            "CALL1 담당 CURRENT 범위가 누락되어 불완전한 wardrobe를 바인딩할 수 없음: "
+            f"failures={group_error.failures}"
+        ) from group_error
     merged, merge_warnings, merge_fallback_errors = _merge_call1_shard_values(
         shard_values,
         segment_ids,
+        require_fresh_wardrobe=True,
     )
     merge_warnings.extend(failed_shard_warnings)
     compact = {
@@ -13363,20 +14212,24 @@ async def build_from_context(
         "fallback_required": bool(profile_result.get("uncertainties") or []),
     }
     if toggles.get("call1_enabled"):
-        # CALL1에는 lb.extra 중 시스템 프롬프트를 빼고 캐릭터 복장 정보만 넘긴다.
-        # enhance 프롬프트의 {lb_extra_costume} 자리표시자를 치환한다.
-        # (자리표시자가 없으면 복장 정보를 뒤에 덧붙여 정보 유실을 막는다.)
+        # 확정된 CURRENT 명단이 있으면 복장 폴백도 그 명단으로 제한한다.
+        # 프로필 선택 이유의 자유 서술은 CURRENT 착용 시점의 근거가 아니다.
         call1_system = prompts.get("call1_enhance", "")
-        costume = effective_profile_costume
+        costume = (
+            _filter_character_reference(effective_profile_costume, call1_character_names)
+            if has_pre_resolved_characters
+            else effective_profile_costume
+        )
         if "{lb_extra_costume}" in call1_system:
             call1_system = call1_system.replace("{lb_extra_costume}", costume)
         elif costume:
             call1_system = call1_system + "\n\n" + costume
-        if selected_profile_authority:
-            call1_system += (
-                "\n\n# PRESELECTED PROFILE AUTHORITY\n"
-                + selected_profile_authority
-            )
+        call1_card_identity = _character_card_identity_context(
+            visual_profiles,
+            call1_character_names,
+        )
+        if call1_card_identity:
+            call1_system += "\n\n" + call1_card_identity
         call1_persona_context = _persona_identity_context(
             visual_profiles,
             call1_character_names,
@@ -13416,7 +14269,9 @@ async def build_from_context(
                     call1_system=call1_system,
                     segmented_current=segmented_current,
                     current_segments=current_segments,
+                    current_context=enhanced,
                     history_text=history_text,
+                    expected_names=call1_character_names,
                     toggles=toggles,
                     stream_notify=stream_notify,
                 )
@@ -13444,14 +14299,9 @@ async def build_from_context(
                 raw = _json_object_from_text(result)
                 if raw is None:
                     return False, "CALL1 JSON object 없음"
-                for key in (
-                    "wardrobe_at_start",
-                    "wardrobe_events",
-                    "hairstyle_events",
-                ):
-                    if key not in raw or not isinstance(raw.get(key), list):
-                        return False, f"CALL1 {key}가 list가 아님"
-                return True, ""
+                return _validate_fresh_call1_wardrobe(
+                    raw, call1_character_names, current_segments, enhanced,
+                )
 
             call1_output = await _call_pipeline_llm(
                 "CALL1",
@@ -13471,12 +14321,14 @@ async def build_from_context(
             resolved_characters=(
                 profile_result if has_pre_resolved_characters else None
             ),
+            require_fresh_wardrobe=True,
         )
         if parsed_call1 is None:
-            balanced_fallback = True
             print(
-                "[ILLUST_CONTEXT:CALL1] 구조화 분석 실패로 균형형 CALL2 폴백 사용"
+                "[ILLUST_CONTEXT:CALL1] 새 복장 스냅샷/초기 캐릭터 검증 실패; "
+                "구 캐시 응답 또는 누락 데이터를 후속 단계에 전달하지 않음"
             )
+            raise RuntimeError("CALL1 현재 복장 계약 검증 실패: 누락/구형 응답은 재사용할 수 없습니다")
         else:
             call1_result = parsed_call1
             if parallel_merge_warnings:
@@ -13914,6 +14766,25 @@ async def build_from_context(
             "role": "user",
             "content": fixed_appearance_content,
         }, include_fallback=True, include_plan=False, include_detail=False)
+    fresh_wardrobe = bool(toggles.get("call1_enabled") and call1_result)
+    if fresh_wardrobe:
+        # Fallback may have no confirmed plan (PLAN itself can fail). Give it
+        # the same complete source-time snapshots used for scene projection;
+        # Key Visual instead receives only the projected, instant-labeled lists.
+        append_call2_context({
+            "role": "user",
+            "content": (
+                "# SOURCE-TIME WARDROBE SNAPSHOTS\n"
+                "The start lists are complete before the first CURRENT passage. Each "
+                "event has complete worn/removed lists after its Cxxx passage; carry "
+                "that state forward until the next event for that actor. Use these "
+                "snapshots, not tracked or profile defaults, for source-time attire.\n\n"
+                + json.dumps({
+                    "wardrobe_at_start": call1_result.get("wardrobe_at_start") or [],
+                    "wardrobe_events": wardrobe_events,
+                }, ensure_ascii=False, indent=2)
+            ),
+        }, include_fallback=True, include_plan=False, include_keyvis=False, include_detail=False)
     if persistent_history:
         recent_continuity_text = _history_messages_text(
             persistent_history.get("call2_fallback_history") or []
@@ -13930,7 +14801,7 @@ async def build_from_context(
                     + recent_continuity_text
                 ),
             }, include_fallback=False, include_plan=True, include_keyvis=False, include_detail=False)
-        if selected_states:
+        if selected_states and not fresh_wardrobe:
             projected_states = _state_without_generated_visual_references(
                 selected_states,
                 source="CALL2_DETAIL_KEYVIS",
@@ -13938,7 +14809,7 @@ async def build_from_context(
             append_call2_context({
                 "role": "user",
                 "content": (
-                    "# TRACKED WARDROBE CONTINUITY AND DEFAULT REFERENCE\n"
+                    "# ARCHIVED TRACKED WARDROBE REFERENCE (NO FRESH SNAPSHOTS)\n"
                     "The stored garment tags are a reference baseline, not a resolved current outfit. "
                     "Natural-language wardrobe_timeline events may supersede those tags without updating "
                     "the stored list. Reconstruct the active outfit from story evidence in chronological "
@@ -13947,11 +14818,11 @@ async def build_from_context(
                     + json.dumps(projected_states, ensure_ascii=False, indent=2)
                 ),
             }, include_fallback=True, include_plan=False, include_detail=False)
-        if wardrobe_events:
+        if wardrobe_events and not fresh_wardrobe:
             append_call2_context({
                 "role": "user",
                 "content": (
-                    "# SPARSE CURRENT WARDROBE CHANGE HISTORY\n"
+                    "# ARCHIVED SPARSE WARDROBE CHANGE HISTORY (NO FRESH SNAPSHOTS)\n"
                     "Each event is a semantic instruction with `operation`, `wardrobe_change` "
                     "(a short natural-language description of what changed), and `state_after`; "
                     "`items` may be empty and that is expected. It is not a ready-made tag list and "
@@ -14154,6 +15025,7 @@ async def build_from_context(
     call2_output = ""
     call2_fix_output = ""
     call2_plan_output = ""
+    call2_plan_audit_output = ""
     call2_keyvis_output = ""
     call2_detail_outputs: list[str] = []
     call2_authority_audit: list[dict] = []
@@ -14235,7 +15107,16 @@ async def build_from_context(
         descriptor, raw_output = await illustration_flow.join(task)
         return await finalize_independent_keyvis(descriptor, raw_output, total_count)
 
-    if toggles.get("call2_parallel_enabled"):
+    serial_call2 = not bool(toggles.get("call2_parallel_enabled"))
+    detail_toggles = (
+        {**toggles, "call2_parallel_max_concurrency": 1}
+        if serial_call2 else toggles
+    )
+    if serial_call2:
+        print("[ILLUST_CONTEXT:CALL2_PLAN_AUDIT] 비병렬 설정: PLAN 감사 후 "
+              "Key Visual과 단일 DETAIL worker를 순서대로 실행")
+    # Both execution modes require the same audited PLAN; only scheduling differs.
+    if toggles is not None:
         parallel_stage = "CALL2-PLAN"
         plan_task: asyncio.Task | None = None
         keyvis_task: asyncio.Task | None = None
@@ -14397,6 +15278,61 @@ async def build_from_context(
             )
             if parsed_plan is None:
                 raise ValueError(plan_reason or "CALL2-PLAN 파싱 실패")
+            if parsed_plan.get("mode") != "plan":
+                print("[ILLUST_CONTEXT:CALL2_PLAN_AUDIT] legacy 완성 TOON에는 PLAN 감사 근거가 없어 중단")
+                raise ValueError("CALL2-PLAN 완성 TOON은 PLAN 감사 없이 사용할 수 없습니다")
+            parallel_stage = "CALL2-PLAN-AUDIT"
+            if progress:
+                await progress(34, "call2_plan_audit", "CALL2 PLAN 원문·복장·상호작용 검토")
+            # The draft is an untrusted proposal, not an identity authority.
+            # CALL1 is a fallible wardrobe observer, not an identity authority:
+            # even its raw entries discarded by parse_call1_analysis may mention names.
+            # Only the independently resolved CURRENT roster or explicitly supplied
+            # names/profile headings can establish canonical spelling. A source-only
+            # actor must instead provide literal evidence in this same PLAN audit.
+            direct_roster = [] if resolver_result_available else [
+                *[name.strip() for name in str(extra_names or "").split(",") if name.strip()],
+                *[
+                    match.group(1).strip()
+                    for match in re.finditer(r"(?m)^###\s+([^\r\n]+)\s*$", call2_reference)
+                    if match.group(1).strip()
+                ],
+            ]
+            audit_allowed_names = []
+            seen_audit_names: set[str] = set()
+            for name in [*resolved_current_names, *direct_roster]:
+                name = str(name).strip()
+                if name and name.casefold() not in seen_audit_names:
+                    seen_audit_names.add(name.casefold())
+                    audit_allowed_names.append(name)
+            if not audit_allowed_names:
+                print("[ILLUST_CONTEXT:CALL2_PLAN_AUDIT] 독립 canonical roster 없음: "
+                      "source-only 배우는 감사 응답의 원문 인용 필수, 초안 이름 승격 금지")
+            audit_state_before = _state_without_generated_visual_references(
+                selected_states, source="CALL2_PLAN_AUDIT"
+            )
+            wardrobe_authority = {
+                "segment_order": list(_call2_segments),
+                "canonical_names": list(audit_allowed_names),
+                "wardrobe_at_start": deepcopy(call1_result.get("wardrobe_at_start") or []),
+                "wardrobe_events": deepcopy(wardrobe_events),
+                "allow_fallback": not bool(toggles.get("call1_enabled")),
+                "state_before": audit_state_before,
+                "default_outfits": default_outfits,
+            }
+            parsed_plan, call2_plan_audit_output = await _run_call2_plan_audit(
+                draft_plan=parsed_plan, toggles=plan_toggles,
+                target_slotted=original_slotted, segment_slot_map=call2_segment_slots,
+                segments=_call2_segments,
+                current_context=enhanced, history_text=history_text,
+                active_policy=call2_instruction, named_subject_candidates=single_subject_names,
+                allowed_names=audit_allowed_names,
+                wardrobe_at_start=call1_result.get("wardrobe_at_start") or [],
+                wardrobe_events=wardrobe_events,
+                state_before=audit_state_before,
+                default_outfits=default_outfits, stream_notify=stream_notify,
+                wardrobe_authority=wardrobe_authority,
+            )
 
             if parsed_plan.get("mode") != "legacy":
                 parallel_stage = "CALL2-PLAN"
@@ -14416,6 +15352,7 @@ async def build_from_context(
                     visual_profiles=visual_profiles,
                     visual_base_events=visual_base_events,
                     wardrobe_at_start=call1_result.get("wardrobe_at_start") or [],
+                    wardrobe_authority=wardrobe_authority,
                 )
 
             if parsed_plan.get("mode") == "legacy":
@@ -14448,22 +15385,6 @@ async def build_from_context(
                     raise
 
             if toggles.get("key_visual"):
-                wardrobe_reference = _keyvis_wardrobe_reference(
-                    list(parsed_plan.get("scene_plan") or [])
-                )
-                if wardrobe_reference:
-                    call2_keyvis_context_messages.append({
-                        "role": "user",
-                        "content": (
-                            "# CHRONOLOGICAL WARDROBE REFERENCES BY STORY INSTANT "
-                            "(STATE DATA ONLY)\n\n"
-                            "These labeled states are alternatives tied to their own story "
-                            "instants. After choosing one supported Key Visual time, use only "
-                            "the wardrobe resolution for that same instant and do not merge "
-                            "garments across blocks.\n\n"
-                            + wardrobe_reference
-                        ),
-                    })
                 keyvis_allowed_names = list(current_character_names)
                 if not keyvis_allowed_names:
                     keyvis_allowed_names = [
@@ -14474,6 +15395,25 @@ async def build_from_context(
                         )
                         if match.group(1).strip()
                     ]
+                wardrobe_reference = _keyvis_wardrobe_reference(
+                    list(parsed_plan.get("scene_plan") or []),
+                    wardrobe_authority, keyvis_allowed_names,
+                )
+                if wardrobe_reference:
+                    call2_keyvis_context_messages.append({
+                        "role": "user",
+                        "content": (
+                            "# CHRONOLOGICAL WARDROBE REFERENCES BY STORY INSTANT "
+                            "(STATE DATA ONLY)\n\n"
+                            "These labeled states are alternatives tied to their own story "
+                            "instants. Choose one of the supplied labeled instants for the "
+                            "Key Visual. Use only its server-projected outfit_state "
+                            "for each depicted actor; do not infer an independent outfit "
+                            "from a draft, profile, or another instant, and do not merge "
+                            "garments across blocks.\n\n"
+                            + wardrobe_reference
+                        ),
+                    })
                 keyvis_task = illustration_flow.create_task(
                     _run_call2_keyvis(
                         call2_context_messages=call2_keyvis_context_messages,
@@ -14484,8 +15424,8 @@ async def build_from_context(
                     name="call2-keyvis",
                 )
             print(
-                "[ILLUST_CONTEXT:CALL2_PARALLEL] 장면 PLAN과 CALL1 복장 바인딩 완료, "
-                "DETAIL/KEYVIS 병렬 준비: "
+                "[ILLUST_CONTEXT:CALL2_PLAN_AUDIT] 장면 PLAN과 CALL1 복장 바인딩 완료, "
+                f"DETAIL/KEYVIS {'직렬' if serial_call2 else '병렬'} 준비: "
                 f"keyvis={1 if keyvis_task else 0}"
             )
             if parsed_plan["mode"] == "legacy":
@@ -14526,19 +15466,31 @@ async def build_from_context(
                         f"CALL2 상세 장면 {len(parsed_plan['scene_plan'])}개 병렬 생성",
                     )
                 if keyvis_task is not None:
-                    keyvis_finalize_task = illustration_flow.create_task(
-                        await_and_finalize_independent_keyvis(
+                    if serial_call2:
+                        parallel_stage = "CALL2-KEYVIS"
+                        (
+                            call2_preserved_keyvis_descriptor,
+                            call2_keyvis_output,
+                        ) = await await_and_finalize_independent_keyvis(
                             keyvis_task,
                             1 + len(parsed_plan["scene_plan"]),
-                        ),
-                        name="call2-keyvis-finalize",
-                    )
+                        )
+                        keyvis_task = None
+                        parallel_stage = "CALL2-DETAIL"
+                    else:
+                        keyvis_finalize_task = illustration_flow.create_task(
+                            await_and_finalize_independent_keyvis(
+                                keyvis_task,
+                                1 + len(parsed_plan["scene_plan"]),
+                            ),
+                            name="call2-keyvis-finalize",
+                        )
                 detail_task = illustration_flow.create_task(
                     _run_parallel_call2_details(
                         scene_plan=list(parsed_plan["scene_plan"]),
                         call2_context_messages=call2_context_messages,
                         call2_format=prompts.get("call2_format", ""),
-                        toggles=toggles,
+                        toggles=detail_toggles,
                         stream_notify=stream_notify,
                         fixed_appearance_by_name=fixed_appearance,
                     ),
@@ -14618,19 +15570,12 @@ async def build_from_context(
                 if final_failed_slots:
                     failed_count = len(final_failed_slots)
                     planned_count = len(planned_slots)
-                    if failed_count * 3 >= planned_count:
-                        call2_preserved_scene_descriptors = deepcopy(descriptors)
-                        parallel_stage = "CALL2-DETAIL-FAILURE-THRESHOLD"
-                        raise RuntimeError(
-                            "CALL2 DETAIL 실패 장면이 전체의 1/3 이상이라 극단적 전체 "
-                            f"폴백 사용: failed={final_failed_slots}, "
-                            f"success={sorted(descriptor_by_slot)}, total={planned_count}"
-                        )
-                    print(
-                        "[ILLUST_CONTEXT:CALL2_DETAIL] 실패 장면이 전체의 1/3 미만이라 "
-                        "해당 슬롯만 버리고 성공 장면을 후속 단계로 전달: "
-                        f"failed={final_failed_slots}, success={sorted(descriptor_by_slot)}, "
-                        f"total={planned_count}"
+                    call2_preserved_scene_descriptors = deepcopy(descriptors)
+                    parallel_stage = "CALL2-DETAIL-INCOMPLETE"
+                    raise RuntimeError(
+                        "CALL2 DETAIL이 감사 확정 장면을 모두 생성하지 못해 전체 "
+                        f"폴백 사용: failed={final_failed_slots}, "
+                        f"success={sorted(descriptor_by_slot)}, total={planned_count}"
                     )
                 if call2_preserved_keyvis_descriptor is not None:
                     descriptors = [
@@ -14647,7 +15592,7 @@ async def build_from_context(
             print("[ILLUST_CONTEXT:CALL2_PARALLEL] 상위 작업 취소로 병렬 CALL2 중단")
             raise
         except Exception as e:
-            if parallel_stage == "CALL2-PLAN":
+            if parallel_stage in {"CALL2-PLAN", "CALL2-PLAN-AUDIT"}:
                 await cancel_call2_task(keyvis_finalize_task, "CALL2-KEYVIS-FINALIZE")
                 await cancel_call2_task(keyvis_task, "CALL2-KEYVIS")
                 call2_preserved_keyvis_descriptor = None
@@ -14664,6 +15609,9 @@ async def build_from_context(
                 f"reason={call2_parallel_fallback_reason}"
             )
             traceback.print_exc()
+            if parallel_stage in {"CALL2-PLAN", "CALL2-PLAN-AUDIT"}:
+                print("[ILLUST_CONTEXT:CALL2_PLAN_AUDIT] 검증되지 않은 PLAN은 CALL2 전체 폴백으로 우회할 수 없음")
+                raise
             call2_output = ""
             if parallel_stage == "CALL2-PLAN":
                 call2_plan_output = ""
@@ -14757,6 +15705,10 @@ async def build_from_context(
                 call2_fallback_expected_slots,
                 named_subject_candidates=(single_subject_names or None),
             )
+            if parsed and call2_fallback_scene_plan:
+                parsed, reason = bind_audited_plan_descriptors(
+                    parsed, call2_fallback_scene_plan, f"{call2_call_name}-RETRY-CHECK",
+                )
             return bool(parsed), reason or f"{call2_call_name} TOON 검증 실패"
 
         fallback_messages = deepcopy(call2_messages)
@@ -14776,12 +15728,14 @@ async def build_from_context(
             fallback_messages.append({
                 "role": "user",
                 "content": (
-                    "# PRESERVED GLOBAL SCENE PLAN AFTER DETAIL FAILURE\n"
-                    "The planner already completed successfully. Expand every scene below into the final "
-                    "<lb-xnai> block. Use every supplied slot exactly once, preserve character coverage and "
-                    "the natural meaning of scene_brief and continuity_note, and do not reselect, omit, or "
-                    "add scenes. Resolve wardrobe against the authoritative bases and event history already "
-                    "present in this context; the server retains its structured snapshot internally. "
+                    "# CONFIRMED SOURCE-GROUNDED SCENE PLAN AFTER DETAIL FAILURE\n"
+                    "The scene audit already corrected these scenes, and the server projected "
+                    "source-time wardrobe at each final anchor. Expand every scene into the final "
+                    "<lb-xnai> block. Use every supplied slot exactly once, preserve the exact character roster, "
+                    "scene_brief, interaction_contract, anonymous_partner_fragment, and wardrobe_state. "
+                    "Copy each named character's complete outfit_state exactly, including worn and removed items; "
+                    "do not reselect, omit, or add scenes. The source passage and the projected outfit "
+                    "contract supersede conflicting draft wardrobe prose or profile defaults. "
                     + keyvis_fallback_rule
                     + "\n\n"
                     + json.dumps(preserved_plan_payload, ensure_ascii=False, indent=2)
@@ -14802,6 +15756,10 @@ async def build_from_context(
                 call2_fallback_expected_slots,
                 named_subject_candidates=(single_subject_names or None),
             )
+            if descriptors and call2_fallback_scene_plan:
+                descriptors, fallback_validation_reason = bind_audited_plan_descriptors(
+                    descriptors, call2_fallback_scene_plan, call2_parse_source,
+                )
             if not descriptors:
                 print(
                     f"[ILLUST_CONTEXT:{call2_call_name}] 최종 폴백 검증 실패: "
@@ -14825,36 +15783,12 @@ async def build_from_context(
             print(f"[ILLUST_CONTEXT:{call2_call_name}] 폴백 중 상위 작업 취소")
             raise
         except Exception as fallback_error:
-            if (
-                call2_parallel_fallback_stage == "CALL2-DETAIL-FAILURE-THRESHOLD"
-                and (
-                    call2_preserved_scene_descriptors
-                    or call2_preserved_keyvis_descriptor is not None
-                )
-            ):
-                descriptors = deepcopy(call2_preserved_scene_descriptors)
-                if call2_preserved_keyvis_descriptor is not None:
-                    descriptors.insert(
-                        0,
-                        deepcopy(call2_preserved_keyvis_descriptor),
-                    )
-                call2_output = descriptors_to_toon(descriptors)
-                call2_detail_completed = True
-                print(
-                    "[ILLUST_CONTEXT:CALL2_FALLBACK] 극단적 전체 폴백도 실패해 "
-                    "이전에 검증된 성공 항목으로 계속 진행: "
-                    f"preserved_scenes={len(call2_preserved_scene_descriptors)}, "
-                    f"preserved_keyvis={call2_preserved_keyvis_descriptor is not None}, "
-                    f"error={fallback_error}"
-                )
-                traceback.print_exc()
-            else:
-                print(
-                    f"[ILLUST_CONTEXT:{call2_call_name}] 복구 가능한 성공 장면 없이 "
-                    f"폴백 실패: error={fallback_error}"
-                )
-                traceback.print_exc()
-                raise
+            print(
+                f"[ILLUST_CONTEXT:{call2_call_name}] 확정 PLAN 전체를 복구하지 못해 중단: "
+                f"error={fallback_error}"
+            )
+            traceback.print_exc()
+            raise
 
     # CALL1의 current_character_names는 등록 캐릭터의 프로필·복장 권위를 고르는
     # 범위이지, 현재 장면에 등장할 수 있는 전체 인물 allowlist가 아니다. 특히
@@ -14882,6 +15816,16 @@ async def build_from_context(
             print("[ILLUST_CONTEXT:CALL2] 슬롯 보정 후 생성할 descriptor가 없음")
             raise RuntimeError("CALL2 결과에 유효한 장면 슬롯이 없습니다")
 
+    if call2_fallback_scene_plan:
+        descriptors, audit_binding_reason = bind_audited_plan_descriptors(
+            descriptors, call2_fallback_scene_plan, "FINAL",
+        )
+        if audit_binding_reason:
+            raise RuntimeError(audit_binding_reason)
+    else:
+        print("[ILLUST_CONTEXT:CALL2_PLAN_AUDIT] 최종 장면에 감사 확정 PLAN이 없어 중단")
+        raise RuntimeError("CALL2 PLAN 감사 확정 결과가 없습니다")
+
     plan_visual_by_slot = {
         int(plan.get("slot") or 0): deepcopy(plan.get("visual_base_snapshot") or {})
         for plan in call2_fallback_scene_plan
@@ -14897,77 +15841,26 @@ async def build_from_context(
             )
         bind_visual_base_snapshot(descriptor, candidate_snapshot)
 
-    if progress:
-        await progress(49, "call2_authority_audit", "CALL2 일반 장면 고정 외형 예외 감사")
-    # AUDIT에 hairstyle history(누적 timeline + 이번 턴 events)를 전달한다. 서버는
-    # 의미 해석 없이 전달만 하고, AUDIT은 literal evidence가 fixed appearance의 정확한
-    # 충돌 태그를 직접 변경했는지 판단한다. 없으면 빈 dict로 전달된다.
-    audit_hairstyle_history: dict[str, list] = {}
-    for value in (selected_states or {}).values():
-        if not isinstance(value, dict):
-            continue
-        hair_name = str(value.get("canonical_name") or "").strip()
-        if not hair_name:
-            continue
-        audit_hairstyle_history[hair_name.casefold()] = [
-            deepcopy(event) for event in (value.get("hairstyle_timeline") or [])
-            if isinstance(event, dict)
-        ]
-    for event in hairstyle_events or []:
-        hair_name = str(event.get("character") or "").strip()
-        if not hair_name:
-            continue
-        audit_hairstyle_history.setdefault(hair_name.casefold(), [])
-        audit_hairstyle_history[hair_name.casefold()].append(deepcopy(event))
-    audit_hairstyle_history = {
-        name: events for name, events in audit_hairstyle_history.items() if events
-    }
+    # The one LLM audit now corrects PLAN before DETAIL. Keep the existing
+    # deterministic identity/default-outfit baseline here without another LLM call.
     authority_audit_descriptors = [
         descriptor for descriptor in descriptors
-        if not (
-            str(descriptor.get("kind") or "") == "keyvis"
-            and descriptor.get("_trusted_independent_keyvis") is True
-        )
+        if not (str(descriptor.get("kind") or "") == "keyvis"
+                and descriptor.get("_trusted_independent_keyvis") is True)
     ]
-    skipped_keyvis_count = len(descriptors) - len(authority_audit_descriptors)
-    if skipped_keyvis_count:
-        print(
-            "[ILLUST_CONTEXT:CALL2_AUTHORITY_AUDIT] 독립 KEYVIS 결과 신뢰로 감사 제외: "
-            f"count={skipped_keyvis_count}"
-        )
-    (
-        semantic_authority_decisions,
-        call2_authority_audit_output,
-        call2_authority_audit_status,
-        call2_authority_audit_metrics,
-    ) = await _run_call2_authority_audit(
-        authority_audit_descriptors,
-        fixed_appearance,
-        default_outfits,
-        slotted,
-        stream_notify,
-        hairstyle_history=audit_hairstyle_history,
-        toggles=toggles,
-    )
+    call2_authority_audit_status = "code_only"
     call2_authority_audit = apply_call2_authority_base(
-        authority_audit_descriptors,
-        fixed_appearance,
-        default_outfits,
-        semantic_authority_decisions,
-        call2_authority_audit_status,
+        authority_audit_descriptors, fixed_appearance, default_outfits,
     )
-    call2_authority_audit_metrics["applied_change_entries"] = sum(
-        1
-        for audit in call2_authority_audit
-        if any(audit.get(field) for field in (
-            "missing_fixed_added",
-            "missing_wardrobe_added",
-            "authority_exceptions",
-            "forbidden_added_removed",
-            "conflicts_removed",
-            "required_additions",
-        ))
-    )
+    call2_authority_audit_metrics = {
+        "total_characters": sum(len(descriptor.get("characters") or [])
+                                for descriptor in authority_audit_descriptors),
+        "llm_calls": 0,
+        "applied_change_entries": sum(
+            1 for entry in call2_authority_audit
+            if entry.get("missing_fixed_added") or entry.get("missing_wardrobe_added")
+        ),
+    }
     # 일반 장면의 권위 감사 결과는 모든 후속 소비자에 동일하게 반영한다. 독립
     # KEYVIS는 전용 LLM의 검증된 출력을 신뢰하므로 이 감사에서 변경하지 않는다.
     call2_output = descriptors_to_toon(descriptors)
@@ -15018,6 +15911,7 @@ async def build_from_context(
             selected_reference=call2_reference,
             default_outfits=final_default_outfits,
             hairstyle_events=hairstyle_events,
+            wardrobe_at_start=call1_result.get("wardrobe_at_start") or [],
         )
         character_states_after = merge_last_visual_into_states(
             character_states_after,
@@ -15233,6 +16127,7 @@ async def build_from_context(
         "balanced_fallback_used": balanced_fallback,
         "call2_output": call2_output,
         "call2_plan_output": call2_plan_output,
+        "call2_plan_audit_output": call2_plan_audit_output,
         "call2_keyvis_output": call2_keyvis_output,
         "call2_detail_outputs": call2_detail_outputs,
         "call2_detail_failed_slots": call2_detail_failed_slots,
