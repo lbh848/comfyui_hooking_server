@@ -1,6 +1,5 @@
 import ast
 import asyncio
-from copy import deepcopy
 import json
 import re
 import sys
@@ -24,17 +23,18 @@ def _isolate_lighbd_history_writes(monkeypatch):
     )
 
 
-def _toon_for_slots(slots, *, outfit="school uniform", name_by_slot=None):
+def _toon_for_slots(slots):
     rows = []
     for slot in slots:
         rows.append(
             "  - camera: medium shot\n"
             "    characters[1]:\n"
-            f"      - name: {(name_by_slot or {}).get(slot, 'Hana')}\n"
+            "      - name: Hana\n"
             "        positive: 1girl, black hair\n"
             "        negative: lowres\n"
             "        outfit_state:\n"
-            f"          worn: [{outfit}]\n"
+            "          body_state: clothed\n"
+            "          worn: [school uniform]\n"
             "          removed: []\n"
             "    scene: classroom\n"
             f"    plan_id: S{slot + 1:03d}\n"
@@ -55,6 +55,42 @@ def _toon_without_named_characters(slot=0):
         "    supplement: Students rise while the teacher exits through a wooden door.\n"
         "</lb-xnai>"
     )
+
+
+def _audit_pass_for_plan(messages):
+    request = messages[-1]["content"]
+    plan = json.loads(request.split("# SELECTED PLAN (COUNT/ORDER/ANCHORS/CHARACTERS FIXED)\n", 1)[1]
+                      .split("\n\n# ORIGINAL CURRENT SOURCE", 1)[0])["scene_plan"]
+    return json.dumps({"audited_scene_plan": [
+        {"anchor_segment": item["anchor_segment"], "brief": "PASS"} for item in plan
+    ]})
+
+
+def _scene_from_detail_request(messages):
+    return json.loads(messages[-1]["content"].split("# ONLY THIS SCENE'S PREPARED DATA\n", 1)[1]
+                      .split("\n\nReturn only", 1)[0])
+
+
+def _detail_for_scene(messages, *, positive="selected visual tags", scene_text="source-grounded scene"):
+    prepared = _scene_from_detail_request(messages)
+    return "<lb-xnai>\n" + json.dumps({"scenes": [{
+        "slot": prepared["slot"], "camera": "medium shot",
+        "characters": [{"name": character["name"], "positive": positive,
+                        "negative": "lowres", "position": "center"}
+                       for character in prepared["characters"]],
+        "scene": scene_text, "supplement": prepared["brief"],
+    }]}, ensure_ascii=False) + "\n</lb-xnai>"
+
+
+def _state_response(*names, status="clothes and hair in their established state", events=None):
+    return json.dumps({"state_at_start": [
+        {"character": name, "status": status} for name in names
+    ], "events": list(events or [])})
+
+
+def _plan_response(anchor="C001", characters=("Hana",), brief="A grounded visible scene"):
+    return json.dumps({"scene_plan": [{"anchor_segment": anchor,
+                                       "characters": list(characters), "scene_brief": brief}]})
 
 
 def _call_name(task_key):
@@ -85,24 +121,6 @@ def _authority_audit_response(
             "camera_replacement": str(camera_replacement or ""),
         } for entry in entries],
     })
-
-
-def _confirmed_test_plan_audit_response(messages, outfit_by_name=None):
-    """Return scene-only corrections for mocked fresh PLAN callers."""
-    request = str(messages[-1].get("content") or "")
-    draft = json.loads(request.split("# DRAFT PLAN (CORRECT, DO NOT JUST CRITIQUE)\n", 1)[1].split(
-        "\n\n# PAST HISTORY", 1,
-    )[0])
-    scenes = []
-    for scene in draft["scene_plan"]:
-        scenes.append({
-            "i": scene["i"],
-            "interaction_contract": (
-                "Keep the source action, actor and receiver, contact, and one coherent camera crop; "
-                "do not add off-frame anatomy."
-            ),
-        })
-    return json.dumps({"scenes": scenes}, ensure_ascii=False)
 
 
 def test_context_and_result_transport_markers():
@@ -354,19 +372,18 @@ async def test_output_only_current_uses_call2_plan_instead_of_empty_context_fall
         requests[call_name] = "\n".join(
             str(message.get("content") or "") for message in messages
         )
-        if call_name == "CALL2-PLAN-AUDIT":
-            return _confirmed_test_plan_audit_response(messages)
         if call_name == "CALL2-PLAN":
             return json.dumps({
                 "scene_plan": [{
                     "anchor_segment": "C001",
                     "characters": ["Hana"],
                     "scene_brief": "Hana waits beside the old door.",
-                    "continuity_note": "Hana wears her school uniform.",
                 }],
             })
-        if call_name.startswith("CALL2-DETAIL 1/1"):
-            return _toon_for_slots([0])
+        if call_name == "CALL2-AUDIT":
+            return _audit_pass_for_plan(messages)
+        if call_name == "CALL2-DETAIL":
+            return _detail_for_scene(messages, positive="black hair, school uniform", scene_text="old door")
         raise AssertionError(f"unexpected call: {call_name}")
 
     monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
@@ -397,7 +414,7 @@ async def test_output_only_current_uses_call2_plan_instead_of_empty_context_fall
         backtranslate_names="Hana",
     )
 
-    assert call_names[0] == "CALL2-PLAN"
+    assert call_names == ["CALL2-PLAN", "CALL2-AUDIT", "CALL2-DETAIL"]
     assert "CALL2-FALLBACK" not in call_names
     assert "Hana waits beside the old door." in requests["CALL2-PLAN"]
     assert "<output target=input" in requests["CALL2-PLAN"]
@@ -418,8 +435,6 @@ async def test_plan_selects_the_final_readable_set_before_detail(
             str(message.get("content") or "") for message in messages
         )
         requests[call_name] = request
-        if call_name == "CALL2-PLAN-AUDIT":
-            return _confirmed_test_plan_audit_response(messages)
         if call_name == "CALL2-PLAN":
             assert "Hana looks upward toward an off-frame voice." in request
             assert "Mira sets the lantern on the map" in request
@@ -429,39 +444,24 @@ async def test_plan_selects_the_final_readable_set_before_detail(
                     "anchor_segment": "C002",
                     "characters": ["Hana"],
                     "scene_brief": "Hana pulls the door shut with both hands on the rope.",
-                    "anonymous_partner_fragment": False,
                 }, {
                     "anchor_segment": "C003",
                     "characters": ["Mira"],
                     "scene_brief": "Mira sets the lit lantern on the map, revealing the marked route.",
-                    "anonymous_partner_fragment": False,
                 }],
             })
-        if call_name.startswith("CALL2-DETAIL 1/1"):
+        if call_name == "CALL2-AUDIT":
+            return _audit_pass_for_plan(messages)
+        if call_name == "CALL2-DETAIL":
+            selected = _scene_from_detail_request(messages)
             assert "Hana looks upward toward an off-frame voice." not in request
-            assert "Hana pulls the door shut with both hands on the rope." in request
-            assert "Mira sets the lit lantern on the map" in request
-            return """<lb-xnai>
-scenes[2]:
-  - camera: medium shot
-    characters[1]:
-      - name: Hana
-        positive: 1girl, black hair, pulling rope
-        outfit_state:
-          worn: []
-          removed: []
-    scene: wooden door, taut rope
-    slot: 1
-  - camera: medium shot
-    characters[1]:
-      - name: Mira
-        positive: 1girl, silver hair, placing lantern
-        outfit_state:
-          worn: []
-          removed: []
-    scene: table, map, lit lantern, marked route
-    slot: 2
-</lb-xnai>"""
+            assert selected["brief"] in (
+                "Hana pulls the door shut with both hands on the rope.",
+                "Mira sets the lit lantern on the map, revealing the marked route.",
+            )
+            assert len(selected["characters"]) == 1
+            return _detail_for_scene(messages, positive=f"{selected['characters'][0]['name']} illustrated action",
+                                     scene_text=selected["brief"])
         raise AssertionError(f"unexpected call: {call_name}")
 
     monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
@@ -503,12 +503,11 @@ scenes[2]:
         backtranslate_names="Hana, Mira",
     )
 
-    assert calls[0] == "CALL2-PLAN"
-    assert calls[1] == "CALL2-PLAN-AUDIT"
-    assert calls[2].startswith("CALL2-DETAIL 1/1 [FULL c1/")
+    assert calls == ["CALL2-PLAN", "CALL2-AUDIT", "CALL2-DETAIL", "CALL2-DETAIL"]
     assert [item["slot"] for item in result["items"]] == [1, 2]
     assert "off-frame voice" not in result["call2_plan_output"]
     assert '"Mira"' in result["call2_plan_output"]
+    assert all("outfit_state" not in item["characters"][0] for item in result["items"])
 
 
 @pytest.mark.asyncio
@@ -521,16 +520,7 @@ async def test_persona_identity_reaches_call1_call2_and_call3(monkeypatch):
         )
         requests[call_name] = request
         if call_name == "CALL1":
-            return json.dumps({
-                "wardrobe_at_start": [{
-                    "character": "Mira",
-                    "worn": ["coat"], "removed": [],
-                }],
-                "wardrobe_events": [],
-                "hairstyle_events": [],
-            })
-        if call_name == "CALL2-PLAN-AUDIT":
-            return _confirmed_test_plan_audit_response(messages)
+            return _state_response("Mira", status="Mira wears her coat and keeps her hair tied.")
         if call_name == "CALL2-PLAN":
             return json.dumps({
                 "scene_plan": [{
@@ -539,22 +529,11 @@ async def test_persona_identity_reaches_call1_call2_and_call3(monkeypatch):
                     "scene_brief": "Mira closes her umbrella and enters the foyer.",
                 }],
             })
-        if call_name.startswith("CALL2-DETAIL 1/1"):
-            return """<lb-xnai>
-scenes[1]:
-  - camera: medium shot
-    characters[1]:
-      - name: Mira
-        positive: 1girl, black hair, holding closed umbrella
-        outfit_state:
-          worn: [coat]
-          removed: []
-    scene: foyer, rainy doorway
-    slot: 0
-    supplement: The girl has just stepped in from the rain.
-</lb-xnai>"""
-        if call_name == "CALL2-AUTHORITY-AUDIT":
-            return _authority_audit_response(messages)
+        if call_name == "CALL2-AUDIT":
+            return _audit_pass_for_plan(messages)
+        if call_name == "CALL2-DETAIL":
+            return _detail_for_scene(messages, positive="1girl, black hair, holding closed umbrella",
+                                     scene_text="foyer, rainy doorway")
         if call_name == "CALL3":
             return '[Scene slot=0]\nMira: "이제 안으로 들어왔네."'
         raise AssertionError(f"unexpected call: {call_name}")
@@ -611,15 +590,16 @@ scenes[1]:
         pre_resolved_profile_result=pre_resolved,
     )
 
-    detail_call = next(
-        name for name in requests if name.startswith("CALL2-DETAIL 1/1")
-    )
-    for call_name in ["CALL1", "CALL2-PLAN", "CALL3"]:
-        assert "# REGISTERED USER PERSONA IDENTITY" in requests[call_name]
-        assert "`Mira` is the configured user persona" in requests[call_name]
-    assert "# REGISTERED USER PERSONA IDENTITY" not in requests[detail_call]
-    assert "# ASSIGNED SCENE PLAN DATA" in requests[detail_call]
-    assert "Mira" in requests[detail_call]
+    detail_request = requests["CALL2-DETAIL"]
+    assert "Mira" in requests["CALL1"]
+    assert "Mira" in requests["CALL2-PLAN"]
+    assert "Mira" in requests["CALL3"]
+    assert "# ONLY THIS SCENE'S PREPARED DATA" in detail_request
+    prepared = json.loads(detail_request.split("# ONLY THIS SCENE'S PREPARED DATA\n", 1)[1]
+                          .split("\n\nReturn only", 1)[0])
+    assert prepared["characters"][0]["name"] == "Mira"
+    assert "black hair" in str(prepared["characters"][0]["profile"])
+    assert "# REGISTERED USER PERSONA IDENTITY" not in detail_request
     assert result["items"][0]["characters"][0]["name"] == "Mira"
     assert result["items"][0]["speak"] == 'Mira: "이제 안으로 들어왔네."'
 
@@ -1680,6 +1660,7 @@ def _check_call2_detail_preserves_contextual_outfit_candidate_until_audit():
 
     assert reason == ""
     assert descriptors[0]["characters"][0]["outfit_state"] == {
+        "body_state": "clothed",
         "worn": ["school uniform"],
         "removed": [],
     }
@@ -1709,6 +1690,7 @@ def _check_call2_detail_preserves_contextual_outfit_details_until_audit():
 
     assert reason == ""
     assert descriptors[0]["characters"][0]["outfit_state"] == {
+        "body_state": "clothed",
         "worn": ["school uniform", "red scarf"],
         "removed": [],
     }
@@ -1756,6 +1738,7 @@ def test_call2_detail_discards_only_slot_with_character_mismatch(capsys):
         "        positive: 1girl, silver hair\n"
         "        negative: lowres\n"
         "        outfit_state:\n"
+        "          body_state: clothed\n"
         "          worn: [school uniform]\n"
         "          removed: []\n"
         + slot_nine_marker,
@@ -2158,7 +2141,7 @@ async def test_call2_detail_partial_loop_fills_only_missing_slot(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_call2_pipeline_repairs_character_mismatch_without_global_fallback(
+async def test_call2_plan_rejects_character_mismatch_without_fix_or_fallback(
     monkeypatch,
     capsys,
 ):
@@ -2166,8 +2149,6 @@ async def test_call2_pipeline_repairs_character_mismatch_without_global_fallback
 
     async def fake_pipeline_call(call_name, messages, *args, **kwargs):
         call_names.append(call_name)
-        if call_name == "CALL2-PLAN-AUDIT":
-            return _confirmed_test_plan_audit_response(messages, {"Maria": ["school uniform"]})
         if call_name == "CALL2-PLAN":
             return json.dumps({
                 "scene_plan": [{
@@ -2175,22 +2156,18 @@ async def test_call2_pipeline_repairs_character_mismatch_without_global_fallback
                     "characters": ["Maria"],
                     "scene_brief": "Maria stands alone",
                 }],
-                "keyvis_plan": None,
             })
-        if call_name.startswith("CALL2-DETAIL 1/1"):
-            return _toon_for_slots([0])
-        if call_name.startswith("CALL2-FIX slot=0"):
-            return _toon_for_slots([0]).replace("name: Hana", "name: Maria")
-        raise AssertionError(f"unexpected call: {call_name}")
+        raise AssertionError(f"unexpected call after invalid PLAN: {call_name}")
 
     monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
-    result = await pipeline.build_from_context(
+    with pytest.raises(ValueError, match="CALL2-PLAN"):
+        await pipeline.build_from_context(
         {
             "session_id": "call2_all_character_mismatch_discard_test",
-            "target_slotted": "Maria waits.\n\n[Slot 0]",
+            "target_slotted": "Hana waits.\n\n[Slot 0]",
             "chats": [
                 {"role": "user", "data": "Continue."},
-                {"role": "char", "data": "Maria waits."},
+                {"role": "char", "data": "Hana waits."},
             ],
         },
         {
@@ -2204,25 +2181,18 @@ async def test_call2_pipeline_repairs_character_mismatch_without_global_fallback
             "call3_enabled": False,
             "speak_enabled": False,
         },
-        "### Maria\n-default_outfit\nschool uniform",
-        extra_costume="### Maria\n-default_outfit\nschool uniform",
-        extra_names="Maria",
-        backtranslate_names="Maria",
+        "### Hana\n-default_outfit\nschool uniform",
+        extra_costume="### Hana\n-default_outfit\nschool uniform",
+        extra_names="Hana",
+        backtranslate_names="Hana",
     )
 
-    assert call_names[0] == "CALL2-PLAN"
-    assert sum(name.startswith("CALL2-DETAIL") for name in call_names) == 1
-    assert sum(name.startswith("CALL2-FIX slot=0") for name in call_names) == 1
-    assert "CALL2-FALLBACK" not in call_names
-    assert [item["slot"] for item in result["items"]] == [0]
-    assert result["items"][0]["characters"][0]["name"] == "Maria"
-    assert "name: Maria" in result["call2_fix_output"]
-    assert result["call2_fallback_stage"] == ""
-    assert "캐릭터 불일치 슬롯 교정 성공" in capsys.readouterr().out
+    assert call_names == ["CALL2-PLAN"]
+    assert "CALL2-PLAN" in capsys.readouterr().out
 
 
 @pytest.mark.asyncio
-async def test_call2_plan_marks_balanced_fallback_past_as_non_candidate_reference(
+async def test_call2_plan_uses_current_only_and_audit_sees_bounded_past_reference(
     monkeypatch,
 ):
     requests = {}
@@ -2231,8 +2201,6 @@ async def test_call2_plan_marks_balanced_fallback_past_as_non_candidate_referenc
         requests[call_name] = "\n".join(
             str(message.get("content") or "") for message in messages
         )
-        if call_name == "CALL2-PLAN-AUDIT":
-            return _confirmed_test_plan_audit_response(messages)
         if call_name == "CALL2-PLAN":
             return json.dumps({
                 "scene_plan": [{
@@ -2241,8 +2209,10 @@ async def test_call2_plan_marks_balanced_fallback_past_as_non_candidate_referenc
                     "scene_brief": "Hana waits in the current hallway",
                 }],
             })
-        if call_name.startswith("CALL2-DETAIL 1/1"):
-            return _toon_for_slots([0])
+        if call_name == "CALL2-AUDIT":
+            return _audit_pass_for_plan(messages)
+        if call_name == "CALL2-DETAIL":
+            return _detail_for_scene(messages, scene_text="current hallway")
         raise AssertionError(f"unexpected call: {call_name}")
 
     monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
@@ -2275,38 +2245,32 @@ async def test_call2_plan_marks_balanced_fallback_past_as_non_candidate_referenc
             "operation": "append",
             "current_message_id": "msg_current",
             "state_before": {},
-            "call1_history": [],
-            "call2_fallback_history": [{
-                "role": "char",
-                "data": "PAST SCENE MARKER: Hana cooked ramen in the old kitchen.",
+            "call1_history": [{
+                "role": "char", "data": "PAST SCENE MARKER: Hana cooked ramen in the old kitchen.",
             }],
+            "call2_fallback_history": [],
             "call3_fallback_history": [],
             "record_before": {"last_pipeline": {}},
         },
     )
 
     plan_request = requests["CALL2-PLAN"]
-    detail_request = next(
-        content
-        for name, content in requests.items()
-        if name.startswith("CALL2-DETAIL 1/1")
-    )
-    assert "# SERVER SEGMENT CATALOG" in plan_request
+    audit_request = requests["CALL2-AUDIT"]
+    detail_request = requests["CALL2-DETAIL"]
+    assert "# FULL CURRENT CANDIDATE SEGMENTS" in plan_request
     assert "Hana waits in the current hallway." in plan_request
-    assert "# RECENT STORY CONTINUITY REFERENCE (NOT SCENE CANDIDATES)" in plan_request
-    assert "PAST SCENE MARKER" in plan_request
-    assert "Never select an action or visual beat from this block" in plan_request
-    assert "# BALANCED FALLBACK PAST HISTORY" not in plan_request
-    assert "# BALANCED FALLBACK PAST HISTORY" not in detail_request
+    assert "PAST SCENE MARKER" not in plan_request
+    assert "PAST SCENE MARKER" in audit_request
+    assert "# BOUNDED EARLIER CONTEXT" in audit_request
     assert "PAST SCENE MARKER" not in detail_request
-    assert "# ASSIGNED SCENE PLAN DATA" in detail_request
-    assert "Hana waits in the current hallway." in detail_request
-    assert result["balanced_fallback_used"] is True
+    assert "# ONLY THIS SCENE'S PREPARED DATA" in detail_request
+    assert "Hana waits in the current hallway" in detail_request
+    assert result["balanced_fallback_used"] is False
     assert [item["slot"] for item in result["items"]] == [0]
 
 
 @pytest.mark.asyncio
-async def test_call2_plan_allows_unregistered_current_character_without_global_retry(
+async def test_call2_plan_rejects_unregistered_name_outside_resolved_current_roster(
     monkeypatch,
 ):
     call_names = []
@@ -2314,55 +2278,14 @@ async def test_call2_plan_allows_unregistered_current_character_without_global_r
     async def fake_pipeline_call(call_name, messages, *args, **kwargs):
         call_names.append(call_name)
         if call_name == "CALL1":
-            return json.dumps({
-                "wardrobe_at_start": [{
-                    "character": "Hiyori",
-                    "worn": ["yellow dress"], "removed": [],
-                }],
-                "wardrobe_events": [],
-                "hairstyle_events": [],
-            })
-        if call_name == "CALL2-PLAN-AUDIT":
-            request = messages[-1]["content"]
-            canonical = json.loads(request.split(
-                "# CURRENT CANONICAL NAMES\n", 1,
-            )[1].split("\n\n# SOURCE-TIME WARDROBE AUTHORITY", 1)[0])
-            assert canonical == ["Hiyori"]
-            audited = json.loads(_confirmed_test_plan_audit_response(messages))
-            audited["actor_evidence"] = [{
-                "name": "Doyoon", "source_segment": "C001",
-                "source_quote": "Doyoon studies alone at his desk.",
-            }]
-            response = json.dumps(audited)
-            assert kwargs["result_validator"](response)[0] is True
-            return response
+            return _state_response("Hiyori")
         if call_name == "CALL2-PLAN":
-            return json.dumps({
-                "scene_plan": [{
-                    "anchor_segment": "C001",
-                    "characters": ["Doyoon"],
-                    "scene_brief": "Doyoon studies alone at his desk.",
-                }],
-            })
-        if call_name.startswith("CALL2-DETAIL 1/1"):
-            return """<lb-xnai>
-scenes[1]:
-  - camera: from side, upper body
-    characters[1]:
-      - positive: boy, sitting at desk, studying
-        name: Doyoon
-        position: center
-        outfit_state:
-          worn: []
-          removed: []
-    scene: 1boy, interior, small room
-    slot: 0
-    supplement: parallel detail marker
-</lb-xnai>"""
-        raise AssertionError(f"unexpected call: {call_name}")
+            return _plan_response(characters=("Doyoon",), brief="Doyoon studies alone at his desk.")
+        raise AssertionError(f"unexpected call after invalid PLAN: {call_name}")
 
     monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
-    result = await pipeline.build_from_context(
+    with pytest.raises(ValueError, match="CALL2-PLAN"):
+        await pipeline.build_from_context(
         {
             "session_id": "call2_unregistered_current_character_test",
             "target_slotted": "Doyoon studies alone at his desk.\n\n[Slot 0]",
@@ -2416,13 +2339,7 @@ scenes[1]:
         },
     )
 
-    assert call_names[0] == "CALL1"
-    assert call_names[1] == "CALL2-PLAN"
-    assert sum(name.startswith("CALL2-DETAIL 1/1") for name in call_names) == 1
-    assert "CALL2" not in call_names
-    assert result["balanced_fallback_used"] is False
-    assert result["items"][0]["characters"][0]["name"] == "Doyoon"
-    assert result["items"][0]["supplement"] == "parallel detail marker"
+    assert call_names == ["CALL1", "CALL2-PLAN"]
 
 
 @pytest.mark.asyncio
@@ -2432,8 +2349,6 @@ async def test_call2_pipeline_generates_characterless_scene_without_fallback(mon
 
     async def fake_pipeline_call(call_name, messages, *args, **kwargs):
         call_names.append(call_name)
-        if call_name == "CALL2-PLAN-AUDIT":
-            return _confirmed_test_plan_audit_response(messages)
         if call_name == "CALL2-PLAN":
             return json.dumps({
                 "scene_plan": [{
@@ -2443,11 +2358,12 @@ async def test_call2_pipeline_generates_characterless_scene_without_fallback(mon
                         "Wide classroom establishing shot with students rising and the teacher exiting"
                     ),
                 }],
-                "keyvis_plan": None,
             })
-        if call_name.startswith("CALL2-DETAIL 1/1"):
+        if call_name == "CALL2-AUDIT":
+            return _audit_pass_for_plan(messages)
+        if call_name == "CALL2-DETAIL":
             detail_messages.extend(messages)
-            return _toon_without_named_characters(0)
+            return _detail_for_scene(messages, scene_text="interior, classroom, students, teacher")
         raise AssertionError(f"unexpected call: {call_name}")
 
     monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
@@ -2482,15 +2398,14 @@ async def test_call2_pipeline_generates_characterless_scene_without_fallback(mon
         backtranslate_names="Hana",
     )
 
-    assert call_names[0] == "CALL2-PLAN"
-    assert sum(name.startswith("CALL2-DETAIL 1/1") for name in call_names) == 1
-    assert "CALL2-FALLBACK" not in call_names
+    assert call_names == ["CALL2-PLAN", "CALL2-AUDIT", "CALL2-DETAIL"]
     assert len(result["items"]) == 1
     assert result["items"][0]["characters"] == []
     assert result["call2_fallback_stage"] == ""
     assert "students" in result["items"][0]["scene"]
     detail_prompt = "\n".join(str(message.get("content") or "") for message in detail_messages)
-    assert "When empty, keep `characters: []`" in detail_prompt
+    assert '"characters": []' in detail_prompt
+    assert "# ONLY THIS SCENE'S PREPARED DATA" in detail_prompt
 
 
 @pytest.mark.asyncio
@@ -2518,44 +2433,18 @@ async def test_call2_plan_resolves_delayed_identity_before_assigning_scene_roste
         request_text = "\n".join(
             str(message.get("content") or "") for message in messages
         )
-        if call_name == "CALL2-PLAN-AUDIT":
-            return _confirmed_test_plan_audit_response(messages)
         if call_name == "CALL2-PLAN":
+            catalog = request_text.split("# FULL CURRENT CANDIDATE SEGMENTS", 1)[1]
             assert "???" not in str(messages[0].get("content") or "")
-            catalog = request_text.split(
-                "# SERVER SEGMENT CATALOG (Cxxx IDs ONLY; SLOT MAPPING IS PRIVATE)",
-                1,
-            )[1]
-            plan_contract = str(messages[-1].get("content") or "").split(
-                "# SERVER SEGMENT CATALOG (Cxxx IDs ONLY; SLOT MAPPING IS PRIVATE)",
-                1,
-            )[0]
-            assert "???" not in plan_contract
             assert catalog.index("후지노 아야(Aya)") < catalog.index("정체불명의 마법소녀")
             assert catalog.index("정체불명의 마법소녀") < catalog.index("그 선배인가?")
-            return json.dumps({
-                "scene_plan": [{
-                    "anchor_segment": aya_anchor,
-                    "characters": ["Aya"],
-                    "scene_brief": "The wounded magical girl Aya lies beside the collapsed wall.",
-                }],
-            })
-        if call_name.startswith("CALL2-DETAIL 1/1"):
-            return f"""<lb-xnai>
-scenes[1]:
-  - camera: medium shot, eye level
-    characters[1]:
-      - name: Aya
-        positive: 1girl, pink hair, wounded, magical girl
-        outfit_state:
-          worn: [magical girl uniform]
-          removed: []
-    scene: Aya lies wounded beside a collapsed wall at night
-    slot: {aya_slot}
-    supplement: She raises her head with difficulty.
-</lb-xnai>"""
-        if call_name == "CALL2-AUTHORITY-AUDIT":
-            return _authority_audit_response(messages)
+            return _plan_response(aya_anchor, ("Aya",),
+                                  "The wounded magical girl Aya lies beside the collapsed wall.")
+        if call_name == "CALL2-AUDIT":
+            return _audit_pass_for_plan(messages)
+        if call_name == "CALL2-DETAIL":
+            return _detail_for_scene(messages, positive="1girl, pink hair, wounded, magical girl",
+                                     scene_text="Aya lies wounded beside a collapsed wall at night")
         raise AssertionError(f"unexpected call: {call_name}")
 
     monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
@@ -2585,48 +2474,24 @@ scenes[1]:
         backtranslate_names="Aya",
     )
 
-    assert call_names[0] == "CALL2-PLAN"
-    assert sum(name.startswith("CALL2-DETAIL 1/1") for name in call_names) == 1
-    assert sum(name.startswith("CALL2-FIX") for name in call_names) == 0
+    assert call_names == ["CALL2-PLAN", "CALL2-AUDIT", "CALL2-DETAIL"]
     assert [item["slot"] for item in result["items"]] == [aya_slot]
     assert result["items"][0]["characters"][0]["name"] == "Aya"
     assert result["call2_fix_output"] == ""
 
 
 @pytest.mark.asyncio
-async def test_call2_pipeline_continues_with_partial_segment_slot_map(monkeypatch, capsys):
+async def test_call2_pipeline_rejects_partial_segment_slot_map_before_plan(monkeypatch, capsys):
     call_names = []
     plan_requests = []
 
     async def fake_pipeline_call(call_name, messages, *args, **kwargs):
         call_names.append(call_name)
-        if call_name == "CALL2-PLAN-AUDIT":
-            return _confirmed_test_plan_audit_response(messages)
-        if call_name == "CALL2-PLAN":
-            plan_requests.append(
-                "\n".join(str(message.get("content") or "") for message in messages)
-            )
-            return json.dumps({
-                "scene_plan": [
-                    {
-                        "anchor_segment": "C001",
-                        "characters": ["Hana"],
-                        "scene_brief": "Hana at the first moment",
-                    },
-                    {
-                        "anchor_segment": "C003",
-                        "characters": ["Hana"],
-                        "scene_brief": "Hana at the final moment",
-                    },
-                ],
-                "keyvis_plan": None,
-            })
-        if call_name.startswith("CALL2-DETAIL 1/1"):
-            return _toon_for_slots([0, 1])
-        raise AssertionError(f"unexpected call: {call_name}")
+        raise AssertionError(f"No LLM may receive a partially mapped CURRENT: {call_name}")
 
     monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
-    result = await pipeline.build_from_context(
+    with pytest.raises(ValueError, match="CURRENT segment-slot"):
+        await pipeline.build_from_context(
         {
             "session_id": "call2_partial_segment_slot_map_test",
             "target_slotted": (
@@ -2661,23 +2526,8 @@ async def test_call2_pipeline_continues_with_partial_segment_slot_map(monkeypatc
         backtranslate_names="Hana",
     )
 
-    assert call_names[0] == "CALL2-PLAN"
-    assert sum(name.startswith("CALL2-DETAIL 1/1") for name in call_names) == 1
-    assert "CALL2-FALLBACK" not in call_names
-    assert result["call2_fallback_stage"] == ""
-    assert [item["slot"] for item in result["items"]] == [0, 1]
-    assert plan_requests
-    assert "[C001]" in plan_requests[0]
-    assert "[C002" not in plan_requests[0]
-    assert "[C003]" in plan_requests[0]
-    assert "[C001 slot=" not in plan_requests[0]
-    assert "[C003 slot=" not in plan_requests[0]
-    assert "[Slot " not in plan_requests[0]
-    assert "[Last log entry]" not in plan_requests[0]
-    assert "minimum of 2 and a maximum of 2" in plan_requests[0]
-    output = capsys.readouterr().out
-    assert "부분 segment-slot 매핑으로 계속 진행" in output
-    assert "effective=2..2" in output
+    assert call_names == []
+    assert "CURRENT segment-slot 완전 매핑 실패" in capsys.readouterr().out
 
 
 @pytest.mark.asyncio
@@ -2691,9 +2541,6 @@ async def test_independent_call2_keyvis_returns_one_object_and_rejects_scenes(mo
         "    - name: Hana\n"
         "      positive: 1girl, black hair, school uniform\n"
         "      negative: lowres\n"
-        "      outfit_state:\n"
-        "        worn: [school uniform]\n"
-        "        removed: []\n"
         "  scene: classroom, daylight\n"
         "  supplement: Hana stands at the center of the classroom.\n"
         "scenes: []\n"
@@ -2717,9 +2564,6 @@ async def test_independent_call2_keyvis_returns_one_object_and_rejects_scenes(mo
 
     assert descriptor["kind"] == "keyvis"
     assert descriptor["slot"] == -1
-    assert descriptor["characters"][0]["outfit_state"] == {
-        "worn": ["school uniform"], "removed": [],
-    }
     assert raw_output == keyvis_output
     combined = "\n".join(str(message.get("content") or "") for message in seen_messages)
     assert "# KEY VISUAL TASK" in combined
@@ -2752,41 +2596,6 @@ async def test_independent_call2_keyvis_returns_one_object_and_rejects_scenes(mo
     assert "KEYVIS 전용 응답에 scene이 포함됨" in reason
 
 
-@pytest.mark.parametrize("outfit_fields, expected_error, expected_outfit", [
-    ("", "worn/removed", None),
-    ("      outfit_state:\n        body_state: nude\n        worn: [shirt]\n        removed: []\n",
-     "body_state", None),
-    ("      outfit_state:\n        worn: [nude, shirt]\n        removed: []\n",
-     "nude와 착용 의상 동시 선언", None),
-    ("      outfit_state:\n        worn: [shirt]\n        removed: [SHIRT]\n",
-     "착용/벗음 태그 동시 선언", None),
-    ("      outfit_state:\n        worn: [shirt, SHIRT]\n        removed: []\n",
-     "중복 복장 태그", None),
-    ("      outfit_state:\n        worn: [nude]\n        removed: [shirt]\n"
-     "        note: poster colors\n", "", {"worn": ["nude"], "removed": ["shirt"]}),
-    ("      outfit_state:\n        worn: [open shirt]\n        removed: []\n",
-     "", {"worn": ["open shirt"], "removed": []}),
-])
-def test_fresh_keyvis_outfit_uses_audit_contract_without_changing_archived_parsing(
-    outfit_fields, expected_error, expected_outfit,
-):
-    raw = ("<lb-xnai>\nkeyvis:\n  camera: portrait\n  characters[1]:\n"
-           "    - name: Mira\n      positive: 1girl, black hair\n"
-           + outfit_fields + "  scene: poster scene\nscenes: []\n</lb-xnai>")
-    toggles = pipeline.merged_toggles({"key_visual": True})
-    descriptor, reason = pipeline._parse_call2_keyvis_output(
-        raw, toggles, ["Mira"], "TEST-KEYVIS-FRESH",
-    )
-    if expected_error:
-        assert descriptor is None and expected_error in reason
-    else:
-        assert not reason
-        assert descriptor["characters"][0]["outfit_state"] == expected_outfit
-    if "body_state" in outfit_fields:
-        archived = pipeline.parse_toon_plan(raw, toggles, "TEST-KEYVIS-ARCHIVED")
-        assert archived[0]["characters"][0]["outfit_state"]["body_state"] == "nude"
-
-
 @pytest.mark.asyncio
 async def test_call2_role_inputs_are_isolated_without_mutating_stored_state(monkeypatch):
     request_by_call = {}
@@ -2817,19 +2626,9 @@ async def test_call2_role_inputs_are_isolated_without_mutating_stored_state(monk
             str(message.get("content") or "") for message in messages
         )
         if call_name == "CALL1":
-            return json.dumps({
-                "reference_assignments": [],
-                "history_characters": ["Hana"],
-                "current_characters": [{"name": "Hana", "confidence": 0.99}],
-                "wardrobe_at_start": [{
-                    "character": "Hana", "worn": ["blue dress"], "removed": [],
-                }],
-                "wardrobe_events": [],
-                "hairstyle_events": [],
-                "unresolved_references": [],
-            })
-        if call_name == "CALL2-PLAN-AUDIT":
-            return _confirmed_test_plan_audit_response(messages, {"Hana": ["blue dress"]})
+            return _state_response("Hana", status="Hana wears a blue dress with her hair tied.",
+                                   events=[{"segment_id": "C001", "character": "Hana",
+                                            "status": "Hana still wears the blue dress; hair tied."}])
         if call_name == "CALL2-PLAN":
             return json.dumps({
                 "scene_plan": [{
@@ -2846,14 +2645,18 @@ keyvis:
     - name: Hana
       positive: 1girl, black hair, blue dress
       outfit_state:
+        body_state: clothed
         worn: [blue dress]
         removed: []
   scene: bedroom, window, daylight
   supplement: Hana waits beside the window.
 scenes: []
 </lb-xnai>"""
-        if call_name.startswith("CALL2-DETAIL 1/1"):
-            return _toon_for_slots([0]).replace("school uniform", "blue dress")
+        if call_name == "CALL2-AUDIT":
+            return _audit_pass_for_plan(messages)
+        if call_name == "CALL2-DETAIL":
+            return _detail_for_scene(messages, positive="1girl, black hair, blue dress",
+                                     scene_text="bedroom, window, daylight")
         raise AssertionError(f"unexpected call: {call_name}")
 
     monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
@@ -2927,159 +2730,51 @@ scenes: []
     )
 
     plan_request = request_by_call["CALL2-PLAN"]
-    assert "Select the global semantic visual beats that should become illustrations" in plan_request
     assert "# TRUSTED ACTIVE BOT IMAGE POLICY" in plan_request
     assert "ACTIVE BOT INSTRUCTION MARKER" in plan_request
     assert "### Nested instruction heading" in plan_request
-    assert "Treat `TRUSTED ACTIVE BOT IMAGE POLICY` as the single renderability and partner-visibility contract" in plan_request
-    assert "materially different supported actions" in plan_request
-    assert "Thought, metaphor, environment, aftermath, fluid, physiological effect, or micro-motion alone is insufficient" in plan_request
-    assert pipeline.load_prompt_files()['call2_plan'].strip() in plan_request
-    assert "Preserve who acts on whom, the direction and intensity of contact" in plan_request
-    assert "natural overlap, and every story-essential exposure or displaced-clothing state" in plan_request
-    assert "Express these as scene-space body relations" not in plan_request
-    assert "Do not convert a scene-space direction into an image-top" not in plan_request
-    assert "Describe body arrangement in scene space" not in plan_request
-    assert "DETAIL chooses the camera and projects that relation" not in plan_request
-    assert "If the fact needs separated regions, an identifiable partner face, a focal-subject change" in plan_request
-    assert "can reverse actor and receiver or read as self-touch" in plan_request
-    assert "one connected partner region reaching the named subject at its contact point" in plan_request
-    assert "narrative participation alone is insufficient" in plan_request
-    assert "For a complete reaction, gaze, or posture, keep an unnecessary partner fragment off-frame" in plan_request
-    assert "A named subject looking toward an addressed off-frame person is a reaction-centered still" in plan_request
-    assert "Preserve the requested count through other supported visible instants" in plan_request
-    assert "never by forcing an unrenderable beat" in plan_request
-    assert "selection also has a set-level coverage duty" not in plan_request
-    assert "each authorized name that has at least one distinct, independently readable CURRENT beat" not in plan_request
-    assert "Authority alone does not establish current participation" not in plan_request
-    assert "dialogue, an off-frame cause, or an unreadable candidate does not force a scene" not in plan_request
-    assert "the next PLAN audit corrects scenes only before the server projects that state at each final anchor" in plan_request
-    assert "Do not reconstruct, summarize, or output clothing" in plan_request
-    assert "No draft scene contains a planner-authored wardrobe state" in plan_request
-    assert "Every scene is directly supported by its own anchor passage" in plan_request
-    assert "# RECENT STORY CONTINUITY REFERENCE (NOT SCENE CANDIDATES)" in plan_request
-    assert "BRANCH-SCOPED PRIOR NARRATIVE" in plan_request
-    assert "# CURRENT CANONICAL CHARACTER ROSTER (IDENTITY LABELS ONLY)" in plan_request
-    assert '["Hana"]' in plan_request
-    assert "# CHARACTER DICTIONARY" not in plan_request
-    assert "# PRESELECTED PROFILE AUTHORITY" not in plan_request
-    assert "# TRACKED WARDROBE CONTINUITY AND DEFAULT REFERENCE" not in plan_request
-    assert "# SPARSE CURRENT WARDROBE CHANGE HISTORY" not in plan_request
-    assert "profile-only cerulean gown" not in plan_request
+    assert pipeline.load_prompt_files()["call2_plan"].strip() in plan_request
+    assert "# CURRENT CANONICAL NAMES\n[\"Hana\"]" in plan_request
+    assert "# FULL CURRENT CANDIDATE SEGMENTS" in plan_request
     assert "### Bob" not in plan_request
-    assert "# AUTHORITATIVE FIXED APPEARANCE" not in plan_request
-    assert "# AUTHORITATIVE WARDROBE CONTINUITY STATE" not in plan_request
-    assert "# CURRENT WARDROBE EVENT TIMELINE" not in plan_request
-    assert "# CLASSIFIED LAST VISUAL REFERENCE" not in plan_request
+    assert "profile-only cerulean gown" not in plan_request
     assert "nested generated visual marker" not in plan_request
     assert "dedicated last visual marker" not in plan_request
-    assert "timeline event marker" not in plan_request
+    assert "BRANCH-SCOPED PRIOR NARRATIVE" not in plan_request
 
-    audit_request = request_by_call["CALL2-PLAN-AUDIT"]
-    assert "# DRAFT PLAN (CORRECT, DO NOT JUST CRITIQUE)" in audit_request
-    assert "# COMPLETE Cxxx SOURCE REFERENCE (CURRENT IN STORY ORDER)" in audit_request
-    assert '"wardrobe_at_start"' in audit_request
+    audit_request = request_by_call["CALL2-AUDIT"]
+    assert "# SELECTED PLAN" in audit_request
+    assert "Hana wears a blue dress with her hair tied" in audit_request
+    assert "dedicated last visual marker" not in audit_request
+    assert "nested generated visual marker" not in audit_request
+    assert "BRANCH-SCOPED PRIOR NARRATIVE" not in audit_request
 
     keyvis_request = request_by_call["CALL2-KEYVIS"]
-    assert "Create exactly one standalone promotional Key Visual" in keyvis_request
     assert "# KEY VISUAL TASK" in keyvis_request
-    assert "exactly one `keyvis` object and `scenes: []`" in keyvis_request
-    assert "# ASSIGNED SCENE PLAN DATA" not in keyvis_request
-    assert "# Server limits" not in keyvis_request
     assert "# TRUSTED ACTIVE BOT IMAGE POLICY" in keyvis_request
     assert "ACTIVE BOT INSTRUCTION MARKER" in keyvis_request
-    assert "### Nested instruction heading" in keyvis_request
     assert "# CHARACTER DICTIONARY" in keyvis_request
     assert "### Hana" in keyvis_request
     assert "### Bob" not in keyvis_request
-    assert "# AUTHORITATIVE FIXED APPEARANCE" in keyvis_request
-    assert "# TRACKED WARDROBE CONTINUITY AND DEFAULT REFERENCE" not in keyvis_request
-    assert "# ARCHIVED TRACKED WARDROBE REFERENCE" not in keyvis_request
-    assert "# SPARSE CURRENT WARDROBE CHANGE HISTORY" not in keyvis_request
-    assert "does not contain a complete outfit" not in keyvis_request
-    assert "# SOURCE-TIME WARDROBE SNAPSHOTS" not in keyvis_request
-    assert "# CHRONOLOGICAL WARDROBE REFERENCES BY STORY INSTANT" in keyvis_request
-    assert '"Hana": {"worn": ["blue dress"], "removed": []}' in keyvis_request
-    assert "blue dress" in keyvis_request
-    assert "profile-only cerulean gown" in keyvis_request
-    assert "BRANCH-SCOPED PRIOR NARRATIVE" not in keyvis_request
-    assert "# CLASSIFIED LAST VISUAL REFERENCE" not in keyvis_request
+    assert "# AUTHORITATIVE FIXED APPEARANCE BY STORY INSTANT" in keyvis_request
+    assert "Hana wears a blue dress with her hair tied" in keyvis_request
     assert "nested generated visual marker" not in keyvis_request
     assert "dedicated last visual marker" not in keyvis_request
-    assert "negative: ..." not in keyvis_request
 
-    detail_request = next(
-        content
-        for name, content in request_by_call.items()
-        if name.startswith("CALL2-DETAIL 1/1")
-    )
-    assert "Expand each source-audited, confirmed scene plan into one complete image descriptor without reselecting, adding, removing, or moving a scene" in detail_request
-    assert "# ASSIGNED SCENE PLAN DATA" in detail_request
-    assert "Return one `<lb-xnai>` block containing `scenes` only" in detail_request
-    assert "\nkeyvis:\n" not in detail_request
-    assert "negative: ..." not in detail_request
-    assert "\n        name: ...\n        position: ..." in detail_request
-    assert "\nname: ...\n" not in detail_request
-    assert "# TRUSTED ACTIVE BOT IMAGE POLICY" in detail_request
+    detail_request = request_by_call["CALL2-DETAIL"]
+    detail_scene = _scene_from_detail_request(messages_by_call["CALL2-DETAIL"])
+    assert "# ONLY THIS SCENE'S PREPARED DATA" in detail_request
+    assert pipeline.load_prompt_files()["call2_detail"].strip() in detail_request
     assert "ACTIVE BOT INSTRUCTION MARKER" in detail_request
-    assert "### Nested instruction heading" in detail_request
-    assert "# CHARACTER DICTIONARY" not in detail_request
-    assert "# AUTHORITATIVE FIXED APPEARANCE FOR ASSIGNED SLOTS" in detail_request
-    assert "Applies to every assigned slot containing these characters" in detail_request
-    assert '"Hana"' in detail_request
-    assert "# PRESELECTED PROFILE AUTHORITY" not in detail_request
-    assert "# TRACKED WARDROBE CONTINUITY AND DEFAULT REFERENCE" not in detail_request
-    assert "# SPARSE CURRENT WARDROBE CHANGE HISTORY" not in detail_request
-    assert "# CLASSIFIED LAST VISUAL REFERENCE" not in detail_request
-    assert "[Last log entry]" not in detail_request
-    assert "`anchor_passage` is the event authority for action, location, and story time" in detail_request
-    assert "repair only camera and crop; never replace the event" in detail_request
-    assert "Resolve spatial projection in this order" not in detail_request
-    assert "# PROJECTION ORDER" not in detail_request
-    assert "Choose the camera first, then resolve depth, overlap, and occlusion" not in detail_request
-    assert "only then apply the frame as a window" not in detail_request
-    assert "If the primary fact is legs locked around a waist, frame the legs and waist as the readable center and omit the distant face" in detail_request
-    assert "never choose a face-and-chest crop that excludes the legs" in detail_request
-    assert "The action-bearing region named by `scene_brief` must be inside the camera crop at readable scale" in detail_request
-    assert "Make camera, positions, poses, gaze, anatomy" in detail_request
-    assert pipeline.load_prompt_files()['call2_detail'].strip() in detail_request
-    assert "first construct one coherent partner continuing outside the frame" not in detail_request
-    assert "one unbroken visible path from a single frame boundary" not in detail_request
-    assert "Never use a vague nearby torso or limb instead of an exact contact point" in detail_request
-    assert "Do not invent a limb, second contact, independent pose, or partner-centered camera" in detail_request
-    detail_messages = next(
-        messages
-        for name, messages in messages_by_call.items()
-        if name.startswith("CALL2-DETAIL 1/1")
-    )
-    assert any(
-        message["role"] == "system"
-        and "Expand each source-audited, confirmed scene plan" in message["content"]
-        for message in detail_messages
-    )
-    assert '"anonymous_partner_fragment": false' in detail_request
-    assert "When the flag is false, add no partner fragment or partner contact" in detail_request
-    assert "`wardrobe_state` is the server-projected source-time state at that final anchor" in detail_request
-    assert "interaction_contract" in detail_request
-    assert "blue dress" in detail_request
-    assert "Put only visible or coverage-defining state in `positive`" in detail_request
-    assert "Omit remote face, hair, eye, expression, or clothing details outside a tight crop" in detail_request
-    assert "place its visible anchor in `scene` and exact contact in `supplement`" in detail_request
-    assert "never replace one with an anonymous participant or center another person's identity" in detail_request
-    assert "keep it edge-connected and subordinate" in detail_request
-    assert "clothing, contact, overlap, occlusion, environment, and crop one possible instant" in detail_request
-    assert "severe foreshortening" not in detail_request
-    assert "Keep remote ongoing contact as context rather than demanding" not in detail_request
-    assert "nested generated visual marker" not in detail_request
-    assert "dedicated last visual marker" not in detail_request
-    assert "timeline event marker" not in detail_request
-    assert "BRANCH-SCOPED PRIOR NARRATIVE" not in detail_request
-    assert result["last_visual_reference_classification"]["reference_type"] == "CONTINUITY"
+    assert detail_scene["characters"][0]["name"] == "Hana"
+    assert detail_scene["characters"][0]["anchor_event"] == [
+        "Hana still wears the blue dress; hair tied."]
+    assert "profile-only cerulean gown" in detail_request
+    for forbidden in ("### Bob", "nested generated visual marker", "dedicated last visual marker",
+                      "BRANCH-SCOPED PRIOR NARRATIVE", "[Last log entry]", '"anonymous_partner_fragment"'):
+        assert forbidden not in detail_request
     assert state_before == original_state
     assert [item["kind"] for item in result["items"]] == ["keyvis", "scene"]
-    assert result["items"][1]["wardrobe_state"]["Hana"]["outfit_state"] == {
-        "worn": ["blue dress"], "removed": [],
-    }
 
 
 @pytest.mark.asyncio
@@ -3090,8 +2785,6 @@ async def test_call2_plan_roster_contains_only_resolver_current_identity_labels(
         request_by_call[call_name] = "\n".join(
             str(message.get("content") or "") for message in messages
         )
-        if call_name == "CALL2-PLAN-AUDIT":
-            return _confirmed_test_plan_audit_response(messages)
         if call_name == "CALL2-PLAN":
             return json.dumps({
                 "scene_plan": [{
@@ -3100,28 +2793,11 @@ async def test_call2_plan_roster_contains_only_resolver_current_identity_labels(
                     "scene_brief": "Hana and Mira wait while a stranger passes behind them",
                 }],
             })
-        if call_name.startswith("CALL2-DETAIL 1/1"):
-            return """<lb-xnai>
-scenes[1]:
-  - camera: medium shot
-    characters[2]:
-      - name: Hana
-        positive: girl, black hair, blue dress
-        position: on the left
-        outfit_state:
-          worn: [blue dress]
-          removed: []
-      - name: Mira
-        positive: girl, silver hair, white coat
-        position: on the right
-        outfit_state:
-          worn: [white coat]
-          removed: []
-    scene: 2girls, station platform
-    slot: 0
-</lb-xnai>"""
-        if call_name == "CALL2-AUTHORITY-AUDIT":
-            return _authority_audit_response(messages)
+        if call_name == "CALL2-AUDIT":
+            return _audit_pass_for_plan(messages)
+        if call_name == "CALL2-DETAIL":
+            return _detail_for_scene(messages, positive="girl, selected character tags",
+                                     scene_text="station platform")
         raise AssertionError(f"unexpected call: {call_name}")
 
     monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
@@ -3168,36 +2844,20 @@ scenes[1]:
     )
 
     plan_request = request_by_call["CALL2-PLAN"]
-    plan_roster = plan_request.split(
-        "# CURRENT CANONICAL CHARACTER ROSTER (IDENTITY LABELS ONLY)",
-        1,
-    )[1].split(
-        "# SCENE-PLAN TASK",
-        1,
-    )[0]
-    assert '"Hana"' in plan_roster
-    assert '"Mira"' in plan_roster
-    assert '"Bob"' not in plan_roster
-    assert "Appearance" not in plan_roster
-    assert "default_outfit" not in plan_roster
-    assert "black hair" not in plan_roster
-    assert "blue dress" not in plan_roster
+    plan_roster = plan_request.split("# CURRENT CANONICAL NAMES\n", 1)[1].split("\n\n# REQUESTED COUNT", 1)[0]
+    assert json.loads(plan_roster) == ["Hana", "Mira"]
+    for forbidden in ("Bob", "Appearance", "default_outfit", "black hair", "blue dress"):
+        assert forbidden not in plan_roster
     assert "# CHARACTER DICTIONARY" not in plan_request
-    assert "# PRESELECTED PROFILE AUTHORITY" not in plan_request
 
-    detail_request = next(
-        content
-        for name, content in request_by_call.items()
-        if name.startswith("CALL2-DETAIL 1/1")
-    )
-    assert "# CHARACTER DICTIONARY" not in detail_request
-    assert "# AUTHORITATIVE FIXED APPEARANCE FOR ASSIGNED SLOTS" in detail_request
-    assert "Hana" in detail_request
-    assert "black hair" in detail_request
-    assert "Mira" in detail_request
-    assert "silver hair" in detail_request
-    assert "Bob" not in detail_request
-    assert "brown hair" not in detail_request
+    detail_request = request_by_call["CALL2-DETAIL"]
+    assert "# ONLY THIS SCENE'S PREPARED DATA" in detail_request
+    assert "Hana" in detail_request and "black hair" in detail_request
+    assert "Mira" in detail_request and "silver hair" in detail_request
+    assert "Bob" not in detail_request and "brown hair" not in detail_request
+    prepared = json.loads(detail_request.split("# ONLY THIS SCENE'S PREPARED DATA\n", 1)[1]
+                          .split("\n\nReturn only", 1)[0])
+    assert [character["name"] for character in prepared["characters"]] == ["Hana", "Mira"]
 
 
 @pytest.mark.asyncio
@@ -3210,34 +2870,19 @@ async def test_single_v5_plan_receives_lora_subject_authority_separate_from_rost
         requests[call_name] = "\n".join(
             str(message.get("content") or "") for message in messages
         )
-        if call_name == "CALL2-PLAN-AUDIT":
-            return _confirmed_test_plan_audit_response(messages, {"Shoko": ["white shirt"]})
         if call_name == "CALL2-PLAN":
             return json.dumps({
                 "scene_plan": [{
                     "anchor_segment": "C001",
                     "characters": ["Shoko"],
                     "scene_brief": "Shoko recoils from an off-frame touch.",
-                    "anonymous_partner_fragment": False,
                 }],
             })
-        if call_name.startswith("CALL2-DETAIL 1/1"):
-            return """<lb-xnai>
-scenes[1]:
-  - camera: close-up
-    characters[1]:
-      - name: Shoko
-        positive: 1girl, black hair, recoiling
-        position: center
-        outfit_state:
-          worn: [white shirt]
-          removed: []
-    scene: 1girl, bedroom
-    supplement: Shoko recoils while the other person remains off-frame.
-    slot: 0
-</lb-xnai>"""
-        if call_name == "CALL2-AUTHORITY-AUDIT":
-            return _authority_audit_response(messages)
+        if call_name == "CALL2-AUDIT":
+            return _audit_pass_for_plan(messages)
+        if call_name == "CALL2-DETAIL":
+            return _detail_for_scene(messages, positive="1girl, black hair, recoiling",
+                                     scene_text="Shoko recoils from the permitted off-frame touch")
         raise AssertionError(f"unexpected call: {call_name}")
 
     doyun = cards_to_character_profiles("Doyun", [{
@@ -3297,20 +2942,12 @@ scenes[1]:
     )
 
     plan_request = requests["CALL2-PLAN"]
-    roster_block = plan_request.split(
-        "# CURRENT CANONICAL CHARACTER ROSTER (IDENTITY LABELS ONLY)",
-        1,
-    )[1].split("# SINGLE-PRESET NAMED SUBJECT AUTHORITY", 1)[0]
-    authority_block = plan_request.split(
-        "# SINGLE-PRESET NAMED SUBJECT AUTHORITY",
-        1,
-    )[1].split("# SCENE-PLAN TASK", 1)[0]
-    assert '"Doyun"' in roster_block
-    assert '"Shoko"' in roster_block
-    assert '"Shoko"' in authority_block
-    assert '"Doyun"' not in authority_block
-    assert "configured character-identity LoRAs" in authority_block
+    roster_block = plan_request.split("# CURRENT CANONICAL NAMES\n", 1)[1].split("\n# SINGLE SUBJECTS", 1)[0]
+    authority_block = plan_request.split("# SINGLE SUBJECTS\n", 1)[1].split("\n\n# REQUESTED COUNT", 1)[0]
+    assert json.loads(roster_block) == ["Doyun", "Shoko"]
+    assert json.loads(authority_block) == ["Shoko"]
     assert result["items"][0]["characters"][0]["name"] == "Shoko"
+    assert '"anonymous_partner_fragment"' not in requests["CALL2-DETAIL"]
 
 
 def test_complete_call2_validation_rejects_one_shard_as_global_fallback():
@@ -3365,6 +3002,7 @@ scenes[1]:
         positive: 1boy, black hair
         position: center
         outfit_state:
+          body_state: clothed
           worn: [shirt]
           removed: []
     scene: 1boy, bedroom
@@ -3426,7 +3064,7 @@ def test_complete_call2_validation_auto_enforces_configured_output_range(
 
 
 @pytest.mark.asyncio
-async def test_call2_invalid_plan_fails_closed_and_logs_reason(
+async def test_invalid_plan_aborts_without_legacy_fallback_and_logs_reason(
     monkeypatch,
     capsys,
 ):
@@ -3434,127 +3072,87 @@ async def test_call2_invalid_plan_fails_closed_and_logs_reason(
 
     async def fake_pipeline_call(call_name, messages, *args, **kwargs):
         call_names.append(call_name)
-        if call_name == "CALL2-PLAN-AUDIT":
-            return _confirmed_test_plan_audit_response(messages)
         if call_name == "CALL2-PLAN":
             return "not valid plan json"
-        if call_name == "CALL2-FALLBACK":
-            return _toon_for_slots([0])
-        if call_name == "CALL2-AUTHORITY-AUDIT":
-            return json.dumps({
-                "entries": [{
-                    "id": 1,
-                    "authority_exceptions": [],
-                    "conflicts": [],
-                }],
-            })
-        raise AssertionError(f"unexpected call: {call_name}")
+        raise AssertionError(f"unexpected call after invalid PLAN: {call_name}")
 
     monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
-    with pytest.raises(ValueError, match="CALL2-PLAN JSON object"):
+    with pytest.raises(ValueError, match="CALL2-PLAN"):
         await pipeline.build_from_context(
-            {
-                "session_id": "call2_fallback_reason_test",
-                "target_slotted": "Hana waits.\n\n[Slot 0]",
-                "chats": [
-                    {"role": "user", "data": "Continue."},
-                    {"role": "char", "data": "Hana waits."},
-                ],
-            },
-            {
-                "call1_enabled": False,
-                "call2_parallel_enabled": True,
-                "output_count_min": 1,
-                "output_count_max": 1,
-                "key_visual": False,
-                "call3_enabled": False,
-                "speak_enabled": False,
-            },
-            "### Hana\n-default_outfit\nschool uniform",
-            extra_costume="### Hana\n-default_outfit\nschool uniform",
-            extra_names="Hana",
-            backtranslate_names="Hana",
-        )
+        {
+            "session_id": "call2_fallback_reason_test",
+            "target_slotted": "Hana waits.\n\n[Slot 0]",
+            "chats": [
+                {"role": "user", "data": "Continue."},
+                {"role": "char", "data": "Hana waits."},
+            ],
+        },
+        {
+            "call1_enabled": False,
+            "call2_parallel_enabled": True,
+            "output_count_min": 1,
+            "output_count_max": 1,
+            "key_visual": False,
+            "call3_enabled": False,
+            "speak_enabled": False,
+        },
+        "### Hana\n-default_outfit\nschool uniform",
+        extra_costume="### Hana\n-default_outfit\nschool uniform",
+        extra_names="Hana",
+        backtranslate_names="Hana",
+    )
 
     output = capsys.readouterr().out
-    assert call_names == [
-        "CALL2-PLAN",
-    ]
-    assert "[ILLUST_CONTEXT:CALL2-FALLBACK] 폴백 시작" in output
-    assert "failed_stage=CALL2-PLAN" in output
-    assert "CALL2-PLAN JSON object를 찾지 못함" in output
-    assert "검증되지 않은 PLAN은 CALL2 전체 폴백으로 우회할 수 없음" in output
+    assert call_names == ["CALL2-PLAN"]
+    assert "CALL2-PLAN" in output
+    assert "JSON object 응답 없음" in output
 
 
 @pytest.mark.asyncio
 async def test_call2_plan_failure_does_not_start_keyvis_without_shared_resolution(monkeypatch):
-    keyvis_started = asyncio.Event()
-    keyvis_cancelled = asyncio.Event()
-
-    async def fake_pipeline_call(call_name, messages, *args, **kwargs):
-        if call_name == "CALL2-PLAN-AUDIT":
-            return _confirmed_test_plan_audit_response(messages)
-        if call_name == "CALL2-PLAN":
-            return "not valid plan json"
-        if call_name == "CALL2-KEYVIS":
-            keyvis_started.set()
-            try:
-                await asyncio.Future()
-            except asyncio.CancelledError:
-                keyvis_cancelled.set()
-                raise
-        if call_name == "CALL2-FALLBACK":
-            return _toon_for_slots([0]).replace(
-                "<lb-xnai>\n",
-                "<lb-xnai>\n"
-                "keyvis:\n"
-                "  camera: full body\n"
-                "  characters[1]:\n"
-                "    - name: Hana\n"
-                "      positive: 1girl, black hair, school uniform\n"
-                "  scene: classroom\n"
-                "  supplement: daylight\n",
-            )
-        raise AssertionError(f"unexpected call: {call_name}")
-
-    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
-    with pytest.raises(ValueError, match="CALL2-PLAN JSON object"):
-        await pipeline.build_from_context(
-            {
-                "session_id": "call2_plan_failure_cancels_keyvis_test",
-                "target_slotted": "Hana waits.\n\n[Slot 0]",
-                "chats": [
-                    {"role": "user", "data": "Continue."},
-                    {"role": "char", "data": "Hana waits."},
-                ],
-            },
-            {
-                "call1_enabled": False,
-                "call2_parallel_enabled": True,
-                "output_count_min": 1,
-                "output_count_max": 1,
-                "key_visual": True,
-                "call3_enabled": False,
-                "speak_enabled": False,
-            },
-            "### Hana\n-Appearance\n1girl, black hair\n-default_outfit\nschool uniform",
-            extra_costume="### Hana\n-default_outfit\nschool uniform",
-            extra_names="Hana",
-            backtranslate_names="Hana",
-        )
-
-    assert not keyvis_started.is_set()
-    assert not keyvis_cancelled.is_set()
-
-
-@pytest.mark.asyncio
-async def test_call2_detail_failure_reuses_preserved_plan_in_global_fallback(monkeypatch):
     call_names = []
 
     async def fake_pipeline_call(call_name, messages, *args, **kwargs):
         call_names.append(call_name)
-        if call_name == "CALL2-PLAN-AUDIT":
-            return _confirmed_test_plan_audit_response(messages)
+        if call_name == "CALL2-PLAN":
+            return "not valid plan json"
+        raise AssertionError(f"invalid PLAN must stop before Key Visual: {call_name}")
+
+    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
+    with pytest.raises(ValueError, match="CALL2-PLAN"):
+        await pipeline.build_from_context(
+        {
+            "session_id": "call2_plan_failure_cancels_keyvis_test",
+            "target_slotted": "Hana waits.\n\n[Slot 0]",
+            "chats": [
+                {"role": "user", "data": "Continue."},
+                {"role": "char", "data": "Hana waits."},
+            ],
+        },
+        {
+            "call1_enabled": False,
+            "call2_parallel_enabled": True,
+            "output_count_min": 1,
+            "output_count_max": 1,
+            "key_visual": True,
+            "call3_enabled": False,
+            "speak_enabled": False,
+        },
+        "### Hana\n-Appearance\n1girl, black hair\n-default_outfit\nschool uniform",
+        extra_costume="### Hana\n-default_outfit\nschool uniform",
+        extra_names="Hana",
+        backtranslate_names="Hana",
+    )
+
+    assert call_names == ["CALL2-PLAN"]
+
+
+@pytest.mark.asyncio
+async def test_call2_detail_failure_aborts_without_reusing_plan_in_legacy_fallback(monkeypatch):
+    call_names = []
+
+    async def fake_pipeline_call(call_name, messages, *args, **kwargs):
+        call_names.append(call_name)
         if call_name == "CALL2-PLAN":
             return json.dumps({
                 "scene_plan": [{
@@ -3562,29 +3160,17 @@ async def test_call2_detail_failure_reuses_preserved_plan_in_global_fallback(mon
                     "characters": ["Hana"],
                     "scene_brief": "Hana waits",
                 }],
-                "keyvis_plan": None,
             })
-        if call_name.startswith("CALL2-DETAIL"):
+        if call_name == "CALL2-AUDIT":
+            return _audit_pass_for_plan(messages)
+        if call_name == "CALL2-DETAIL":
+            assert _scene_from_detail_request(messages)["brief"] == "Hana waits"
             return "not toon"
-        if call_name == "CALL2-FALLBACK":
-            combined = "\n".join(str(message.get("content") or "") for message in messages)
-            assert "# CONFIRMED SOURCE-GROUNDED SCENE PLAN AFTER DETAIL FAILURE" in combined
-            assert '"slot": 0' in combined
-            assert '"scene_brief": "Hana waits"' in combined
-            assert '"wardrobe_snapshot"' not in combined
-            return _toon_for_slots([0])
-        if call_name == "CALL2-AUTHORITY-AUDIT":
-            return json.dumps({
-                "entries": [{
-                    "id": 1,
-                    "authority_exceptions": [],
-                    "conflicts": [],
-                }],
-            })
-        raise AssertionError(f"unexpected call: {call_name}")
+        raise AssertionError(f"invalid DETAIL must not trigger fallback: {call_name}")
 
     monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
-    result = await pipeline.build_from_context(
+    with pytest.raises(ValueError, match="CALL2-DETAIL"):
+        await pipeline.build_from_context(
         {
             "session_id": "call2_preserved_plan_fallback_test",
             "target_slotted": "Hana waits.\n\n[Slot 0]",
@@ -3610,22 +3196,15 @@ async def test_call2_detail_failure_reuses_preserved_plan_in_global_fallback(mon
         backtranslate_names="Hana",
     )
 
-    assert call_names[0] == "CALL2-PLAN"
-    assert call_names[-1] == "CALL2-FALLBACK"
-    assert sum(name.startswith("CALL2-DETAIL 1/1") for name in call_names) == 2
-    assert not any("FAILED-SHARD-RETRY" in name for name in call_names)
-    assert any("[FULL" in name for name in call_names)
-    assert any("[PARTIAL" in name for name in call_names)
-    assert [item["slot"] for item in result["items"]] == [0]
-    assert result["call2_plan_output"]
-    assert result["call2_fallback_stage"] == "CALL2-DETAIL-INCOMPLETE"
+    assert call_names == ["CALL2-PLAN", "CALL2-AUDIT", "CALL2-DETAIL"]
 
 
 @pytest.mark.asyncio
-async def test_call2_detail_failure_preserves_independent_keyvis_in_scene_only_fallback(
+async def test_call2_detail_failure_keeps_independent_keyvis_early_registration_but_aborts(
     monkeypatch,
 ):
     call_names = []
+    early_keyvis = []
     keyvis_output = """<lb-xnai>
 keyvis:
   camera: full body
@@ -3633,6 +3212,7 @@ keyvis:
     - name: Hana
       positive: 1girl, black hair, school uniform
       outfit_state:
+        body_state: clothed
         worn: [school uniform]
         removed: []
   scene: classroom, daylight
@@ -3642,8 +3222,6 @@ scenes: []
 
     async def fake_pipeline_call(call_name, messages, *args, **kwargs):
         call_names.append(call_name)
-        if call_name == "CALL2-PLAN-AUDIT":
-            return _confirmed_test_plan_audit_response(messages)
         if call_name == "CALL2-PLAN":
             return json.dumps({
                 "scene_plan": [{
@@ -3654,27 +3232,19 @@ scenes: []
             })
         if call_name == "CALL2-KEYVIS":
             return keyvis_output
-        if call_name.startswith("CALL2-DETAIL"):
+        if call_name == "CALL2-AUDIT":
+            return _audit_pass_for_plan(messages)
+        if call_name == "CALL2-DETAIL":
+            assert early_keyvis and early_keyvis[0]["items"][0]["kind"] == "keyvis"
             return "not toon"
-        if call_name == "CALL2-FALLBACK":
-            combined = "\n".join(
-                str(message.get("content") or "") for message in messages
-            )
-            assert "A separately validated Key Visual is already preserved" in combined
-            assert "Omit keyvis completely" in combined
-            return _toon_for_slots([0])
-        if call_name == "CALL2-AUTHORITY-AUDIT":
-            return json.dumps({
-                "entries": [{
-                    "id": 1,
-                    "authority_exceptions": [],
-                    "conflicts": [],
-                }],
-            })
-        raise AssertionError(f"unexpected call: {call_name}")
+        raise AssertionError(f"invalid DETAIL must not trigger fallback: {call_name}")
+
+    async def on_keyvis_ready(data):
+        early_keyvis.append(data)
 
     monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
-    result = await pipeline.build_from_context(
+    with pytest.raises(ValueError, match="CALL2-DETAIL"):
+        await pipeline.build_from_context(
         {
             "session_id": "call2_preserved_keyvis_scene_fallback_test",
             "target_slotted": "Hana waits.\n\n[Slot 0]",
@@ -3698,16 +3268,12 @@ scenes: []
         extra_costume="### Hana\n-default_outfit\nschool uniform",
         extra_names="Hana",
         backtranslate_names="Hana",
+        on_keyvis_ready=on_keyvis_ready,
     )
 
-    assert call_names.count("CALL2-KEYVIS") == 1
-    assert any(name.startswith("CALL2-DETAIL 1/1") for name in call_names)
-    assert not any("FAILED-SHARD-RETRY" in name for name in call_names)
-    assert call_names[-1] == "CALL2-FALLBACK"
-    assert result["call2_keyvis_output"] == keyvis_output
-    assert result["call2_fallback_stage"] == "CALL2-DETAIL-INCOMPLETE"
-    assert [item["kind"] for item in result["items"]] == ["keyvis", "scene"]
-    assert "Hana stands alone in the classroom." in result["call2_output"]
+    assert call_names == ["CALL2-PLAN", "CALL2-AUDIT", "CALL2-KEYVIS", "CALL2-DETAIL"]
+    assert len(early_keyvis) == 1
+    assert early_keyvis[0]["items"][0]["characters"][0]["positive"] == "1girl, black hair, school uniform"
 
 
 @pytest.mark.asyncio
@@ -3762,7 +3328,7 @@ async def test_parallel_job_tail_hedge_uses_shared_concurrency_and_duplicate_win
 
 
 @pytest.mark.asyncio
-async def test_call1_parallel_then_shared_plan_then_parallel_keyvis_and_details(monkeypatch):
+async def test_single_call1_then_shared_plan_audit_keyvis_and_parallel_details(monkeypatch):
     paragraphs = [f"Hana paragraph {index}." for index in range(10)]
     narrative = "\n\n".join(paragraphs)
     target_slotted = pipeline.insert_slots(narrative)
@@ -3788,29 +3354,14 @@ async def test_call1_parallel_then_shared_plan_then_parallel_keyvis_and_details(
             call1_max_active = max(call1_max_active, call1_active)
             try:
                 await asyncio.sleep(0.02)
-                assigned_match = re.search(
-                    r"# ASSIGNED SEGMENT IDS\s*(\[[^\n]+\])",
-                    text,
-                )
-                assert assigned_match
-                assigned = json.loads(assigned_match.group(1))
-                return json.dumps({
-                    "reference_assignments": [],
-                    "history_characters": [],
-                    "current_characters": [{"name": "Hana", "confidence": 0.99}],
-                    "wardrobe_at_start": [{
-                        "character": "Hana", "worn": ["school uniform"], "removed": [],
-                    }],
-                    "wardrobe_events": [],
-                    "hairstyle_events": [],
-                    "unresolved_references": [],
-                    "assigned": assigned,
-                })
+                assert "# CURRENT SEGMENTS" in text
+                assert "# PREVIOUS SAVED CALL1 STATE" in text
+                return _state_response("Hana", status=(
+                    "Hana wears the same blue dress with short sleeves and a round neckline; hair tied."
+                ))
             finally:
                 call1_active -= 1
 
-        if call_name == "CALL2-PLAN-AUDIT":
-            return _confirmed_test_plan_audit_response(messages)
         if call_name == "CALL2-PLAN":
             assert task_key == "illustration_call2_plan"
             assert "Follow these steps and output each and all step" not in text
@@ -3836,11 +3387,15 @@ async def test_call1_parallel_then_shared_plan_then_parallel_keyvis_and_details(
             finally:
                 plan_keyvis_active -= 1
 
+        if call_name == "CALL2-AUDIT":
+            assert task_key == "illustration_call2_plan"
+            assert not keyvis_started.is_set()
+            return _audit_pass_for_plan(messages)
+
         if call_name == "CALL2-KEYVIS":
             assert task_key == "illustration_call2_keyvis"
             assert "# KEY VISUAL TASK" in text
-            assert '"worn": ["school uniform"]' in text
-            assert '"removed": []' in text
+            assert "Hana wears the same blue dress with short sleeves and a round neckline; hair tied." in text
             assert "# ASSIGNED SCENE PLAN DATA" not in text
             plan_keyvis_active += 1
             plan_keyvis_max_active = max(plan_keyvis_max_active, plan_keyvis_active)
@@ -3856,6 +3411,7 @@ keyvis:
       positive: 1girl, black hair, school uniform
       negative: lowres
       outfit_state:
+        body_state: clothed
         worn: [school uniform]
         removed: []
   scene: classroom
@@ -3866,25 +3422,17 @@ scenes: []
                 plan_keyvis_active -= 1
 
         assert task_key == "illustration_call2"
-        assert call_name.startswith("CALL2-DETAIL")
-        assert "# ASSIGNED SCENE PLAN DATA" in text
-        assert "Omit keyvis" in text
+        assert call_name == "CALL2-DETAIL"
+        assert "# ONLY THIS SCENE'S PREPARED DATA" in text
         assert "# KEY VISUAL TASK" not in text
-        plan_match = re.search(
-            r"# ASSIGNED SCENE PLAN DATA\s*(\[[\s\S]*?\])\s*\n\n# SERVER SCOPE",
-            text,
-        )
-        assert plan_match
-        plans = json.loads(plan_match.group(1))
-        assert all(
-            plan["wardrobe_state"]["Hana"]["outfit_state"]["worn"] == ["school uniform"]
-            and "Worn: school uniform." in plan["continuity_note"] for plan in plans
-        )
+        prepared = _scene_from_detail_request(messages)
+        assert prepared["characters"][0]["state"] == [
+            "Hana wears the same blue dress with short sleeves and a round neckline; hair tied."]
         detail_active += 1
         detail_max_active = max(detail_max_active, detail_active)
         try:
             await asyncio.sleep(0.02)
-            return _toon_for_slots([int(item["slot"]) for item in plans])
+            return _detail_for_scene(messages, positive="1girl, black hair, blue dress")
         finally:
             detail_active -= 1
 
@@ -3921,27 +3469,23 @@ scenes: []
         },
     )
 
-    assert call1_max_active == 3
+    assert call1_max_active == 1
+    assert call_names.count("CALL1") == 1
     assert plan_keyvis_max_active == 1
     assert detail_max_active == 3
-    assert len(result["call2_detail_outputs"]) == 3
+    assert len(result["call2_detail_outputs"]) == 9
     assert len(result["items"]) == 10
     assert result["items"][0]["kind"] == "keyvis"
     assert result["call2_keyvis_output"].startswith("<lb-xnai>")
     assert [item["slot"] for item in result["items"][1:]] == list(range(9))
-    reparsed = pipeline.parse_toon_plan(
-        result["call2_output"],
-        pipeline.merged_toggles({"output_count_min": 9, "output_count_max": 9}),
-        "TEST-MERGED-CALL2",
-    )
-    assert len(reparsed) == 10
-    assert [item["plan_id"] for item in reparsed[1:]] == [
-        f"S{index:03d}" for index in range(1, 10)
-    ]
-    assert "CALL2-PLAN" in call_names
-    assert "CALL2-KEYVIS" in call_names
-    assert call_names.index("CALL2-PLAN") < call_names.index("CALL2-KEYVIS")
-    assert sum(name.startswith("CALL2-DETAIL") for name in call_names) >= 3
+    assert all("outfit_state" not in item for item in result["items"][1:])
+    assert "plan_id" not in result["call2_output"]
+    assert call_names.count("CALL2-PLAN") == 1
+    assert call_names.count("CALL2-AUDIT") == 1
+    assert call_names.count("CALL2-KEYVIS") == 1
+    assert call_names.count("CALL2-DETAIL") == 9
+    assert call_names.index("CALL2-PLAN") < call_names.index("CALL2-AUDIT")
+    assert call_names.index("CALL2-AUDIT") < call_names.index("CALL2-DETAIL")
 
 
 def test_descriptor_slots_trust_call2_with_light_sanitization():
@@ -6099,37 +5643,17 @@ async def test_call3_total_failure_becomes_silent_without_raising(monkeypatch, c
 @pytest.mark.asyncio
 async def test_build_from_context_uses_selected_manga_prompt(monkeypatch):
     calls = []
-    responses = [
-        """<lb-xnai>
-scenes[1]:
-  - camera: close-up
-    characters[1]:
-      - name: hana
-        positive: 1girl, hana, black hair
-        outfit_state:
-          worn: []
-          removed: []
-    scene: classroom
-    slot: 0
-</lb-xnai>""",
-        """[Scene slot=0]
-Hana: "No way!" #burst""",
-    ]
-
     async def fake_call(task_key, messages, **kwargs):
         calls.append(messages)
-        call_name = _call_name(task_key)
-        if call_name == "CALL2-PLAN":
-            return json.dumps({"scene_plan": [{
-                "anchor_segment": "C001", "characters": ["hana"],
-                "scene_brief": "Hana reacts in the classroom",
-            }]})
-        if call_name == "CALL2-PLAN-AUDIT":
-            return _confirmed_test_plan_audit_response(messages)
-        if call_name.startswith("CALL2-DETAIL"):
-            return responses[0]
+        if _call_name(task_key) == "CALL2-PLAN":
+            return _plan_response(characters=("Hana",))
+        if _call_name(task_key) == "CALL2-AUDIT":
+            return _audit_pass_for_plan(messages)
+        if _call_name(task_key) == "CALL2-DETAIL":
+            return _detail_for_scene(messages, positive="1girl, Hana, black hair")
         assert task_key == "illustration_call3"
-        return responses[1]
+        return """[Scene slot=0]
+Hana: "No way!" #burst"""
 
     monkeypatch.setattr(pipeline.llm_service, "callLLMTask", fake_call)
     result = await pipeline.build_from_context(
@@ -6149,11 +5673,12 @@ Hana: "No way!" #burst""",
             "key_visual": False,
         },
         "### hana\n-Appearance: 1girl, black hair",
+        extra_names="Hana",
     )
 
     assert len(calls) == 4
-    assert "Write concise character dialogue and choose balloon styles" in calls[3][0]["content"]
-    assert "#normal" in calls[3][0]["content"]
+    assert "Write concise character dialogue and choose balloon styles" in calls[-1][0]["content"]
+    assert "#normal" in calls[-1][0]["content"]
     assert result["items"][0]["speak"] == 'Hana: "No way!" #burst'
     assert '[SPEAK]\nHana: "No way!" #burst' in result["items"][0]["raw_positive"]
 
@@ -6177,14 +5702,14 @@ async def test_call3_uses_original_narrative_and_only_call2_selected_scene_slots
                 "원문의 둘째 문장.",
                 "Translated second sentence.",
             )
-        if call_name == "CALL2-PLAN-AUDIT":
-            assert task_key == "illustration_call2_authority_audit"
-            return _confirmed_test_plan_audit_response(messages)
         if task_key in {
             "illustration_call2_plan",
             "illustration_call2",
             "illustration_call2_keyvis",
         }:
+            if call_name == "CALL2-AUDIT":
+                assert task_key == "illustration_call2_plan"
+                return _audit_pass_for_plan(messages)
             if call_name == "CALL2-PLAN":
                 assert task_key == "illustration_call2_plan"
                 return json.dumps({
@@ -6204,29 +5729,14 @@ async def test_call3_uses_original_narrative_and_only_call2_selected_scene_slots
 keyvis:
   camera: portrait
   characters[1]:
-    - name: Hana
-      positive: 1girl, Hana, black hair
-      outfit_state:
-        worn: []
-        removed: []
+    - name: hana
+      positive: 1girl, hana, black hair
   scene: poster key visual
 scenes: []
 </lb-xnai>"""
             assert task_key == "illustration_call2"
-            assert call_name.startswith("CALL2-DETAIL")
-            detail_text = "\n".join(
-                str(message.get("content") or "") for message in messages
-            )
-            plan_match = re.search(
-                r"# ASSIGNED SCENE PLAN DATA\s*(\[[\s\S]*?\])\s*\n\n# SERVER SCOPE",
-                detail_text,
-            )
-            assert plan_match
-            assigned = json.loads(plan_match.group(1))
-            assert all(plan["wardrobe_state"]["Hana"]["outfit_state"] == {
-                "worn": [], "removed": [],
-            } for plan in assigned)
-            return _toon_for_slots([int(item["slot"]) for item in assigned], outfit="")
+            assert call_name == "CALL2-DETAIL"
+            return _detail_for_scene(messages, positive="1girl, hana, black hair")
 
         assert task_key == "illustration_call3"
         request = messages[-1]["content"]
@@ -6269,7 +5779,7 @@ Hana: (다음은 어떤 장면일까?) #thought_cloud"""
             "call3_prompt_mode": "manga",
             "key_visual": True,
         },
-        "### Hana\n-Appearance: 1girl, black hair",
+        "### hana\n-Appearance: 1girl, black hair",
         extra_names="Hana",
         backtranslate_names="Hana",
     )
@@ -6277,14 +5787,13 @@ Hana: (다음은 어떤 장면일까?) #thought_cloud"""
     task_keys = [task_key for task_key, _messages, _kwargs in calls]
     assert task_keys[0] == "illustration_call1_backtranslate"
     assert task_keys[-1] == "illustration_call3"
-    assert task_keys.count("illustration_call2_plan") == 1
-    assert task_keys.count("illustration_call2_authority_audit") == 1
+    assert task_keys.count("illustration_call2_plan") == 2
     assert task_keys.count("illustration_call2_keyvis") == 1
     assert task_keys.count("illustration_call2") == 2
     assert "CALL2-PLAN" in call_names
-    assert "CALL2-PLAN-AUDIT" in call_names
-    assert call_names.index("CALL2-PLAN") < call_names.index("CALL2-PLAN-AUDIT") < call_names.index("CALL2-KEYVIS")
-    assert sum(name.startswith("CALL2-DETAIL") for name in call_names) == 2
+    assert "CALL2-AUDIT" in call_names
+    assert "CALL2-KEYVIS" in call_names
+    assert call_names.count("CALL2-DETAIL") == 2
     assert [item["kind"] for item in result["items"]] == ["keyvis", "scene", "scene"]
     assert result["items"][0]["slot"] == -1
     assert result["items"][0]["speak"] == ""
@@ -6298,21 +5807,17 @@ async def test_call3_retries_once_when_a_selected_slot_is_missing(monkeypatch, c
 
     async def fake_call(task_key, messages, **kwargs):
         nonlocal call3_attempts
-        call_name = _call_name(task_key)
-        if call_name == "CALL2-PLAN":
-            return json.dumps({"scene_plan": [{
-                "anchor_segment": f"C{slot + 1:03d}",
-                "characters": ["Hana"],
-                "scene_brief": f"selected moment {slot}",
-            } for slot in range(2)]})
-        if call_name == "CALL2-PLAN-AUDIT":
-            return _confirmed_test_plan_audit_response(messages)
-        if task_key == "illustration_call2":
-            assert call_name.startswith("CALL2-DETAIL")
-            assigned = json.loads(messages[-1]["content"].split(
-                "# ASSIGNED SCENE PLAN DATA\n", 1,
-            )[1].split("\n\n# SERVER SCOPE", 1)[0])
-            return _toon_for_slots([int(plan["slot"]) for plan in assigned], outfit="")
+        if _call_name(task_key) == "CALL2-PLAN":
+            return json.dumps({"scene_plan": [
+                {"anchor_segment": anchor, "characters": ["Hana"],
+                 "scene_brief": brief}
+                for anchor, brief in (("C001", "first moment"),
+                                      ("C002", "second moment"))
+            ]})
+        if _call_name(task_key) == "CALL2-AUDIT":
+            return _audit_pass_for_plan(messages)
+        if _call_name(task_key) == "CALL2-DETAIL":
+            return _detail_for_scene(messages, positive="1girl, Hana, black hair")
 
         assert task_key == "illustration_call3"
         call3_attempts += 1
@@ -6347,7 +5852,7 @@ async def test_call3_retries_once_when_a_selected_slot_is_missing(monkeypatch, c
             "call3_prompt_mode": "manga",
             "key_visual": False,
         },
-        "### Hana\n-Appearance: 1girl, black hair",
+        "### hana\n-Appearance: 1girl, black hair",
         extra_names="Hana",
     )
 
@@ -6373,33 +5878,13 @@ async def test_call3_retries_when_internal_roster_id_leaks_into_korean_dialogue(
 
     async def fake_call(task_key, messages, **kwargs):
         nonlocal call3_attempts
-        call_name = _call_name(task_key)
-        if call_name == "CALL2-PLAN":
-            return json.dumps({"scene_plan": [{
-                "anchor_segment": "C001", "characters": ["Maria", "Masachika"],
-                "scene_brief": "Maria checks Masachika's notebook",
-            }]})
-        if call_name == "CALL2-PLAN-AUDIT":
-            return _confirmed_test_plan_audit_response(messages)
-        if task_key == "illustration_call2":
-            assert call_name.startswith("CALL2-DETAIL")
-            return """<lb-xnai>
-scenes[1]:
-  - camera: medium shot
-    characters[2]:
-      - name: Maria
-        positive: 1girl, Maria, blonde hair
-        outfit_state:
-          worn: []
-          removed: []
-      - name: Masachika
-        positive: 1boy, Masachika, black hair
-        outfit_state:
-          worn: []
-          removed: []
-    scene: Maria checks Masachika's notebook
-    slot: 0
-</lb-xnai>"""
+        if _call_name(task_key) == "CALL2-PLAN":
+            return _plan_response(characters=("Maria", "Masachika"),
+                                  brief="Maria checks Masachika's notebook")
+        if _call_name(task_key) == "CALL2-AUDIT":
+            return _audit_pass_for_plan(messages)
+        if _call_name(task_key) == "CALL2-DETAIL":
+            return _detail_for_scene(messages, positive="canonical appearance")
 
         assert task_key == "illustration_call3"
         call3_attempts += 1
@@ -6468,54 +5953,17 @@ async def test_call3_correction_exhaustion_drops_only_leaking_dialogue_and_conti
 
     async def fake_call(task_key, messages, **kwargs):
         nonlocal call3_attempts
-        call_name = _call_name(task_key)
-        if call_name == "CALL2-PLAN":
-            return json.dumps({"scene_plan": [{
-                "anchor_segment": "C001", "characters": ["Maria", "Alisa"],
-                "scene_brief": "first conversation",
-            }, {
-                "anchor_segment": "C002", "characters": ["Alisa"],
-                "scene_brief": "second conversation",
-            }]})
-        if call_name == "CALL2-PLAN-AUDIT":
-            return _confirmed_test_plan_audit_response(messages)
-        if task_key == "illustration_call2":
-            assert call_name.startswith("CALL2-DETAIL")
-            assigned = json.loads(messages[-1]["content"].split(
-                "# ASSIGNED SCENE PLAN DATA\n", 1,
-            )[1].split("\n\n# SERVER SCOPE", 1)[0])
-            assert len(assigned) == 1
-            if assigned[0]["slot"] == 0:
-                return """<lb-xnai>
-scenes[1]:
-  - camera: medium shot
-    characters[2]:
-      - name: Maria
-        positive: 1girl, Maria, blonde hair
-        outfit_state:
-          worn: []
-          removed: []
-      - name: Alisa
-        positive: 1girl, Alisa, silver hair
-        outfit_state:
-          worn: []
-          removed: []
-    scene: first conversation
-    slot: 0
-</lb-xnai>"""
-            assert assigned[0]["slot"] == 1
-            return """<lb-xnai>
-scenes[1]:
-  - camera: close-up
-    characters[1]:
-      - name: Alisa
-        positive: 1girl, Alisa, silver hair
-        outfit_state:
-          worn: []
-          removed: []
-    scene: second conversation
-    slot: 1
-</lb-xnai>"""
+        if _call_name(task_key) == "CALL2-PLAN":
+            return json.dumps({"scene_plan": [
+                {"anchor_segment": "C001", "characters": ["Maria", "Alisa"],
+                 "scene_brief": "first conversation"},
+                {"anchor_segment": "C002", "characters": ["Alisa"],
+                 "scene_brief": "second conversation"},
+            ]})
+        if _call_name(task_key) == "CALL2-AUDIT":
+            return _audit_pass_for_plan(messages)
+        if _call_name(task_key) == "CALL2-DETAIL":
+            return _detail_for_scene(messages, positive="canonical appearance")
 
         assert task_key == "illustration_call3"
         call3_attempts += 1
@@ -6583,100 +6031,53 @@ Alisa: (Alisa라면 어떻게 했을까?) #thought_cloud"""
 
 
 @pytest.mark.asyncio
-async def test_call3_does_not_run_for_keyvisual_only_when_confirmed_scene_recovery_fails(monkeypatch, capsys):
+async def test_call3_does_not_run_when_detail_fails_after_independent_key_visual(monkeypatch, capsys):
     call_names = []
 
     async def fake_call(call_name, messages, *args, **kwargs):
         call_names.append(call_name)
-        if call_name == "CALL2-PLAN-AUDIT":
-            return _confirmed_test_plan_audit_response(messages)
         if call_name == "CALL2-PLAN":
-            return json.dumps({
-                "scene_plan": [{
-                    "anchor_segment": "C001",
-                    "characters": ["Maria"],
-                    "scene_brief": "Maria appears in the poster scene",
-                }],
-            })
+            return _plan_response(characters=("Maria",), brief="Maria poses for the poster")
+        if call_name == "CALL2-AUDIT":
+            return _audit_pass_for_plan(messages)
         if call_name == "CALL2-KEYVIS":
-            request_text = "\n".join(str(message.get("content") or "") for message in messages)
-            assert "# ARCHIVED TRACKED WARDROBE REFERENCE (NO FRESH SNAPSHOTS)" in request_text
-            assert "# SOURCE-TIME WARDROBE SNAPSHOTS" not in request_text
             return """<lb-xnai>
 keyvis:
   camera: portrait
   characters[1]:
-    - name: hana
-      positive: 1girl, hana, black hair
-      outfit_state:
-        worn: []
-        removed: []
+    - name: Maria
+      positive: 1girl, Maria, blonde hair
   scene: poster key visual
 scenes: []
 </lb-xnai>"""
-        if call_name.startswith("CALL2-DETAIL"):
-            return _toon_for_slots([0])
-        if call_name.startswith("CALL2-FIX"):
-            raise RuntimeError("character repair failed")
-        if call_name == "CALL2-FALLBACK":
-            raise RuntimeError("extreme fallback failed")
-        raise AssertionError(f"unexpected call: {call_name}")
+        if call_name == "CALL2-DETAIL":
+            return _detail_for_scene(messages).replace("position", "unapproved_position")
+        raise AssertionError(f"retired fallback or dialogue call: {call_name}")
 
     monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_call)
-    failures = await asyncio.gather(pipeline.build_from_context(
-        {
-            "session_id": "call3_key_visual_only_test",
-            "target_slotted": "Maria stands by the poster.\n\n[Slot 0]",
-            "chats": [
-                {"role": "user", "data": "포스터를 보여줘."},
-                {"role": "char", "data": "Maria stands by the poster."},
-            ],
-        },
-        {
-            "call1_enabled": False,
-            "call3_enabled": True,
-            "speak_enabled": True,
-            "call3_prompt_mode": "manga",
-            "key_visual": True,
-        },
-        (
-            "### hana\n-Appearance: 1girl, black hair\n\n"
-            "### Maria\n-Appearance: 1girl, blonde hair\n"
-            "-default_outfit\nschool uniform"
-        ),
-        extra_names="Hana, Maria",
-        history_plan={
-            "state_before": {
-                "maria": {
-                    "canonical_name": "Maria",
-                    "current_wardrobe": {
-                        "body_state": "clothed",
-                        "worn": ["school uniform"],
-                        "removed": [],
-                    },
-                    "wardrobe_timeline": [],
-                },
+    with pytest.raises(ValueError, match="CALL2-DETAIL"):
+        await pipeline.build_from_context(
+            {
+                "session_id": "call3_key_visual_detail_failure_test",
+                "target_slotted": "포스터 장면.\n\n[Slot 0]",
+                "chats": [
+                    {"role": "user", "data": "포스터를 보여줘."},
+                    {"role": "char", "data": "포스터 장면."},
+                ],
             },
-            "call1_history": [],
-            "call2_fallback_history": [],
-            "record_before": {"last_pipeline": {}},
-            "current_message_id": "msg-keyvis-only",
-        },
-    ), return_exceptions=True)
+            {"call1_enabled": False, "call3_enabled": True, "speak_enabled": True,
+             "call3_prompt_mode": "manga", "key_visual": True},
+            "### Maria\n-Appearance: 1girl, blonde hair\n-default_outfit\nschool uniform",
+            extra_names="Maria",
+        )
 
-    assert len(failures) == 1
-    assert isinstance(failures[0], RuntimeError)
-    assert "extreme fallback failed" in str(failures[0])
-    assert "CALL2-PLAN" in call_names
-    assert "CALL2-PLAN-AUDIT" in call_names
-    assert call_names.index("CALL2-PLAN") < call_names.index("CALL2-PLAN-AUDIT")
-    assert "CALL2-KEYVIS" in call_names
-    assert sum(name.startswith("CALL2-DETAIL") for name in call_names) == 1
-    assert sum(name.startswith("CALL2-FIX") for name in call_names) == 1
-    assert "CALL2-FALLBACK" in call_names
-    assert "CALL3" not in call_names
-    assert "CALL2-AUTHORITY-AUDIT" not in call_names
-    assert "확정 PLAN 전체를 복구하지 못해 중단" in capsys.readouterr().out
+    assert call_names.count("CALL2-PLAN") == 1
+    assert call_names.count("CALL2-AUDIT") == 1
+    assert call_names.count("CALL2-KEYVIS") == 1
+    assert call_names.count("CALL2-DETAIL") == 1
+    assert not any(name.startswith(("CALL2-FIX", "CALL2-FALLBACK", "CALL3"))
+                   for name in call_names)
+    assert "CALL2-DETAIL" in capsys.readouterr().out
 
 
 @pytest.mark.asyncio
@@ -6689,31 +6090,17 @@ async def test_call2_ready_callback_runs_before_call3_and_receives_generation_ra
         call_name = _call_name(task_key)
         if call_name == "CALL2-PLAN":
             assert task_key == "illustration_call2_plan"
-            return json.dumps({"scene_plan": [{
-                "anchor_segment": "C001", "characters": ["hana"],
-                "scene_brief": "Hana looks around the classroom",
-            }]})
-        if call_name == "CALL2-PLAN-AUDIT":
-            assert task_key == "illustration_call2_authority_audit"
-            return _confirmed_test_plan_audit_response(messages)
-        if call_name.startswith("CALL2-DETAIL"):
+            return _plan_response(characters=("Hana",), brief="Hana surveys the classroom")
+        if call_name == "CALL2-AUDIT":
+            assert task_key == "illustration_call2_plan"
+            return _audit_pass_for_plan(messages)
+        if call_name == "CALL2-DETAIL":
             assert task_key == "illustration_call2"
-            return """<lb-xnai>
-scenes[1]:
-  - camera: close-up
-    characters[1]:
-      - name: hana
-        positive: 1girl, hana, black hair
-        outfit_state:
-          worn: []
-          removed: []
-    scene: classroom
-    slot: 0
-</lb-xnai>"""
+            return _detail_for_scene(messages, positive="1girl, Hana, black hair")
         assert task_key == "illustration_call3"
         assert events == [
             "illustration_call2_plan",
-            "illustration_call2_authority_audit",
+            "illustration_call2_plan",
             "illustration_call2",
             "dispatch",
             "illustration_call3",
@@ -6744,18 +6131,18 @@ scenes[1]:
             "key_visual": False,
         },
         "### hana\n-Appearance: 1girl, black hair",
+        extra_names="Hana",
         on_call2_ready=on_call2_ready,
     )
 
     assert events == [
         "illustration_call2_plan",
-        "illustration_call2_authority_audit",
+        "illustration_call2_plan",
         "illustration_call2",
         "dispatch",
         "illustration_call3",
     ]
     assert len(early_payloads) == 1
-    assert early_payloads[0]["items"][0]["scene_brief"] == "Hana looks around the classroom"
     assert result["items"][0]["speak"] == 'Hana: "Ready." #normal'
     assert '[SPEAK]\nHana: "Ready." #normal' in result["items"][0]["raw_positive"]
 
@@ -6773,6 +6160,7 @@ keyvis:
     - name: Hana
       positive: 1girl, red dress
       outfit_state:
+        body_state: clothed
         worn: [red dress]
         removed: []
   scene: promotional poster
@@ -6782,8 +6170,6 @@ scenes: []
 
     async def fake_pipeline_call(call_name, messages, *args, **kwargs):
         events.append(call_name)
-        if call_name == "CALL2-PLAN-AUDIT":
-            return _confirmed_test_plan_audit_response(messages)
         if call_name == "CALL2-PLAN":
             return json.dumps({
                 "scene_plan": [{
@@ -6792,17 +6178,15 @@ scenes: []
                     "scene_brief": "Hana waits in the classroom",
                 }],
             })
+        if call_name == "CALL2-AUDIT":
+            return _audit_pass_for_plan(messages)
         if call_name == "CALL2-KEYVIS":
             return keyvis_output
-        if call_name.startswith("CALL2-DETAIL"):
+        if call_name == "CALL2-DETAIL":
             events.append("detail-waiting-for-keyvis")
             await keyvis_dispatched.wait()
             events.append("detail-resumed")
-            return _toon_for_slots([0])
-        if call_name == "CALL2-AUTHORITY-AUDIT":
-            audit_request = "\n".join(str(message.get("content") or "") for message in messages)
-            assert '"kind":"keyvis"' not in audit_request
-            return _authority_audit_response(messages)
+            return _detail_for_scene(messages, positive="1girl, black hair, school uniform")
         raise AssertionError(f"unexpected call: {call_name}")
 
     async def on_keyvis_ready(payload):
@@ -6846,11 +6230,12 @@ scenes: []
     )
 
     assert events.index("keyvis-dispatch") < events.index("detail-resumed")
+    assert "CALL2-AUDIT" in events
     assert "CALL2-AUTHORITY-AUDIT" not in events
     assert len(keyvis_payloads) == 1
     assert [item["kind"] for item in result["items"]] == ["keyvis", "scene"]
     assert result["items"][0]["characters"][0]["positive"] == "1girl, red dress"
-    assert all(audit.get("kind") == "scene" for audit in result["call2_authority_audit"])
+    assert result["call2_authority_audit"] == []
 
 
 @pytest.mark.asyncio
@@ -6874,27 +6259,14 @@ async def test_build_from_context_uses_backtranslated_current_response_only(monk
         call_name = _call_name(task_key)
         if call_name == "CALL2-PLAN":
             assert task_key == "illustration_call2_plan"
-            return json.dumps({"scene_plan": [{
-                "anchor_segment": "C001", "characters": ["Bbyakbbyak"],
-                "scene_brief": "Bbyakbbyak opens the door",
-            }]})
-        if call_name == "CALL2-PLAN-AUDIT":
-            assert task_key == "illustration_call2_authority_audit"
-            return _confirmed_test_plan_audit_response(messages)
-        assert call_name.startswith("CALL2-DETAIL")
+            return _plan_response(characters=("Bbyakbbyak",),
+                                  brief="Bbyakbbyak opens the door")
+        if call_name == "CALL2-AUDIT":
+            assert task_key == "illustration_call2_plan"
+            return _audit_pass_for_plan(messages)
+        assert call_name == "CALL2-DETAIL"
         assert task_key == "illustration_call2"
-        return """<lb-xnai>
-scenes[1]:
-  - camera: medium shot
-    characters[1]:
-      - name: Bbyakbbyak
-        positive: 1girl, Bbyakbbyak, white hair
-        outfit_state:
-          worn: []
-          removed: []
-    scene: Bbyakbbyak opens the door
-    slot: 0
-</lb-xnai>"""
+        return _detail_for_scene(messages, positive="1girl, Bbyakbbyak, white hair")
 
     monkeypatch.setattr(pipeline.llm_service, "callLLMTask", fake_call)
     result = await pipeline.build_from_context(
@@ -6928,19 +6300,23 @@ scenes[1]:
     assert [task_key for task_key, _messages in calls].count(
         "illustration_call1_backtranslate"
     ) == 2
-    call2_text = "\n".join(
-        message["content"]
+    plan_request = "\n".join(
+        str(message.get("content") or "")
         for task_key, messages in calls
-        if task_key in {"illustration_call2_plan", "illustration_call2"}
-        and not any(
-            "CALL2-AUTHORITY-AUDIT" in str(message.get("content") or "")
-            for message in messages
-        )
+        if task_key == "illustration_call2_plan"
+        and "# FULL CURRENT CANDIDATE SEGMENTS" in str(messages[-1].get("content") or "")
         for message in messages
     )
-    assert "과거 답변도 한국어다." in call2_text
-    assert "Bbyakbbyak opens the door." in call2_text
-    assert "뺙뺙이 문을 연다." not in call2_text
+    assert "Bbyakbbyak opens the door." in plan_request
+    assert "뺙뺙이 문을 연다." not in plan_request
+    audit_request = "\n".join(
+        str(message.get("content") or "")
+        for task_key, messages in calls if task_key == "illustration_call2_plan"
+        and "# ORIGINAL CURRENT SOURCE" in str(messages[-1].get("content") or "")
+        for message in messages
+    )
+    assert "과거 답변도 한국어다." in audit_request
+    assert "Bbyakbbyak opens the door." in audit_request
     assert "[CHAT]\nBbyakbbyak opens the door." in result["items"][0]["raw_positive"]
     assert "[CHAR]\n과거 답변도 한국어다." in result["context"]
     assert "[CHAR]\nBbyakbbyak opens the door." in result["context"]
@@ -7822,34 +7198,16 @@ async def test_call1_compact_json_preserves_original_context_and_slots(monkeypat
         call_name = _call_name(task_key)
         calls.append((call_name, messages, kwargs))
         if task_key == "illustration_call1":
-            return json.dumps({
-                "wardrobe_at_start": [{"character": "hana", "worn": [], "removed": []}],
-                "wardrobe_events": [],
-                "hairstyle_events": [],
-            })
+            return _state_response("hana", status="Hana wears her usual outfit with black hair")
         if call_name == "CALL2-PLAN":
             assert task_key == "illustration_call2_plan"
-            return json.dumps({"scene_plan": [{
-                "anchor_segment": "C001", "characters": ["hana"],
-                "scene_brief": "Hana looks out of the classroom",
-            }]})
-        if call_name == "CALL2-PLAN-AUDIT":
-            assert task_key == "illustration_call2_authority_audit"
-            return _confirmed_test_plan_audit_response(messages)
+            return _plan_response(characters=("hana",), brief="Hana sees the classroom")
+        if call_name == "CALL2-AUDIT":
+            assert task_key == "illustration_call2_plan"
+            return _audit_pass_for_plan(messages)
+        assert call_name == "CALL2-DETAIL"
         assert task_key == "illustration_call2"
-        assert call_name.startswith("CALL2-DETAIL")
-        return """<lb-xnai>
-scenes[1]:
-  - camera: medium shot
-    characters[1]:
-      - name: hana
-        positive: 1girl, black hair
-        outfit_state:
-          worn: []
-          removed: []
-    scene: classroom
-    slot: 0
-</lb-xnai>"""
+        return _detail_for_scene(messages, positive="1girl, black hair")
 
     monkeypatch.setattr(pipeline.llm_service, "callLLMTask", fake_call)
     result = await pipeline.build_from_context(
@@ -7889,21 +7247,14 @@ scenes[1]:
 
     call1_text = "\n".join(message["content"] for message in calls[0][1])
     call2_text = "\n".join(message["content"] for message in calls[1][1])
-    assert [call_name for call_name, _messages, _kwargs in calls[:3]] == [
-        "CALL1", "CALL2-PLAN", "CALL2-PLAN-AUDIT",
-    ]
-    assert len(calls) == 4
-    assert calls[3][0].startswith("CALL2-DETAIL 1/1")
-    assert "Hana looks out of the classroom" in "\n".join(
-        message["content"] for message in calls[3][1]
-    )
     assert "[Slot 0]" not in call1_text
     assert "__SLOT_" not in call1_text
-    assert '"wardrobe_at_start"' in call1_text
-    assert '"wardrobe_events"' in call1_text
+    assert '"state_at_start"' in call1_text
+    assert '"events"' in call1_text
+    assert '"wardrobe_at_start"' not in call1_text
     assert '"reference_assignments"' not in call1_text
+    assert "# FULL CURRENT CANDIDATE SEGMENTS" in call2_text
     assert "[Slot 0]" not in call2_text
-    assert '"slot": 0' in "\n".join(message["content"] for message in calls[3][1])
     assert "첫 문장." in call2_text
     assert "둘째 문장." in call2_text
     assert "[Visual Content #01]" not in call2_text
@@ -10276,7 +9627,7 @@ def test_call1_prompt_state_preserves_default_when_lb_extra_character_is_missing
 
 
 @pytest.mark.asyncio
-async def test_persistent_history_path_uses_compact_call2_and_updates_wardrobe(monkeypatch):
+async def test_persistent_history_path_preserves_raw_status_chain_and_selected_profile(monkeypatch):
     calls = []
     hana_profiles = cards_to_character_profiles("Hana", [{
         "id": "ordinary",
@@ -10308,19 +9659,11 @@ async def test_persistent_history_path_uses_compact_call2_and_updates_wardrobe(m
             assert "generated visual contamination marker" not in request_text
             assert "duplicate default marker" not in request_text
             assert "blue dress" in request_text
-            assert "# PRESELECTED PROFILE AUTHORITY" in request_text
+            assert "# SELECTED PROFILE / LB.EXTRA BASELINE" in request_text
             assert "Hana_Ordinary" in request_text
-            return json.dumps({
-                "wardrobe_at_start": [{
-                    "character": "Hana", "worn": ["blue dress"], "removed": [],
-                }],
-                "wardrobe_events": [{
-                    "segment_id": "C002", "character": "Hana",
-                    "worn": ["nude"], "removed": ["blue dress"],
-                    "evidence": "Hana removes the blue dress.",
-                }],
-                "hairstyle_events": [],
-            })
+            return _state_response("Hana", status="Hana wears a blue dress with tied hair",
+                                   events=[{"segment_id": "C002", "character": "Hana",
+                                            "status": "Hana removed the blue dress; she is nude, hair stays tied"}])
         if task_key == "illustration_profile_resolve":
             request_text = "\n".join(message["content"] for message in messages)
             assert "Hana_Ordinary" not in request_text
@@ -10338,42 +9681,29 @@ async def test_persistent_history_path_uses_compact_call2_and_updates_wardrobe(m
                 "uncertainties": [],
             })
         call_name = _call_name(task_key)
+        request_text = "\n".join(message["content"] for message in messages)
         if call_name == "CALL2-PLAN":
             assert task_key == "illustration_call2_plan"
-            return json.dumps({"scene_plan": [{
-                "anchor_segment": "C002", "characters": ["Hana"],
-                "scene_brief": "Hana removes the blue dress in the bedroom",
-            }]})
-        if call_name == "CALL2-PLAN-AUDIT":
-            assert task_key == "illustration_call2_authority_audit"
-            return _confirmed_test_plan_audit_response(messages)
+            assert "very old fallback history" not in request_text
+            assert "She enters the room." in request_text
+            assert "[Slot 0]" not in request_text
+            return _plan_response(anchor="C002", characters=("Hana",),
+                                  brief="Hana removes her blue dress")
+        if call_name == "CALL2-AUDIT":
+            assert task_key == "illustration_call2_plan"
+            assert "Hana_Ordinary" in request_text
+            assert "very old fallback history" not in request_text
+            assert "Hana removes the blue dress." in request_text
+            return _audit_pass_for_plan(messages)
+        assert call_name == "CALL2-DETAIL"
         assert task_key == "illustration_call2"
-        assert call_name.startswith("CALL2-DETAIL")
-        request_text = "\n".join(message["content"] for message in messages)
-        assert "very old fallback history" not in request_text
-        assert "# ASSIGNED SCENE PLAN DATA" in request_text
-        assert "Worn: nude; Removed: blue dress." in request_text
-        assert '"slot": 1' in request_text
-        assigned = json.loads(request_text.split("# ASSIGNED SCENE PLAN DATA\n", 1)[1].split(
-            "\n\n# SERVER SCOPE", 1,
-        )[0])
-        assert assigned[0]["wardrobe_state"]["Hana"]["outfit_state"] == {
-            "worn": ["nude"], "removed": ["blue dress"],
-        }
+        prepared = _scene_from_detail_request(messages)
+        assert prepared["characters"][0]["state"] == ["Hana wears a blue dress with tied hair"]
+        assert prepared["characters"][0]["anchor_event"] == [
+            "Hana removed the blue dress; she is nude, hair stays tied"]
+        assert prepared["characters"][0]["profile"]["id"] == "ordinary"
         assert "### Bob" not in request_text
-        assert "Hana removes the blue dress." in request_text
-        return """<lb-xnai>
-scenes[1]:
-  - camera: full body
-    characters[1]:
-      - name: Hana
-        positive: 1girl, nude
-        outfit_state:
-          worn: [nude]
-          removed: [blue dress]
-    scene: bedroom
-    slot: 1
-</lb-xnai>"""
+        return _detail_for_scene(messages, positive="1girl, nude, tied hair")
 
     monkeypatch.setattr(pipeline.llm_service, "callLLMTask", fake_call)
     state_before = {
@@ -10445,207 +9775,55 @@ scenes[1]:
         "illustration_profile_resolve",
         "illustration_call1",
         "illustration_call2_plan",
-        "illustration_call2_authority_audit",
+        "illustration_call2_plan",
         "illustration_call2",
     ]
-    assert "Hana removes the blue dress." in "\n".join(
-        message["content"] for message in calls[4][1]
-    )
-    assert result["items"][0]["wardrobe_state"]["Hana"]["outfit_state"] == {
-        "worn": ["nude"], "removed": ["blue dress"],
-    }
     assert result["balanced_fallback_used"] is False
     assert result["reference_provenance"]["turn_relation"] == "PRIOR_COMMITTED_TURN"
     assert result["enhanced_narrative"].startswith("She enters")
     assert result["profile_result"]["initial_visual_bases"][0][
         "target_visual_profile_id"
     ] == "ordinary"
-    wardrobe = result["character_states_after"]["hana"]["current_wardrobe"]
-    assert wardrobe["body_state"] == "nude"
-    assert wardrobe["worn"] == ["nude"]
-    assert wardrobe["source"] == "call1_confirmed"
-    assert "blue dress" in wardrobe["removed"]
-    assert result["last_visual_by_character"]["Hana"]["outfit_state"] == {
-        "worn": ["nude"], "removed": ["blue dress"],
-    }
+    stored = result["character_states_after"]["hana"]
+    assert stored["call1_status_history"] == [
+        "Hana wears a blue dress with tied hair",
+        "Hana removed the blue dress; she is nude, hair stays tied",
+    ]
+    assert stored["call1_status"] == stored["call1_status_history"][-1]
+    assert stored["current_wardrobe"] == state_before["hana"]["current_wardrobe"]
+    assert result["last_visual_by_character"] == {}
+    assert "outfit_state" not in result["items"][0]["characters"][0]
 
 
 @pytest.mark.asyncio
-async def test_fresh_persistent_wardrobe_reaches_keyvis_and_detail_fallback_without_legacy_instructions(
-    monkeypatch,
-):
-    messages_by_call = {}
-
-    async def fake_call(call_name, messages, *args, **kwargs):
-        messages_by_call[call_name] = deepcopy(messages)
-        if call_name == "CALL1":
-            return json.dumps({
-                "current_characters": [{"name": "Mira", "confidence": 0.99}],
-                "wardrobe_at_start": [{
-                    "character": "Mira", "worn": ["open jacket", "shirt"], "removed": [],
-                }],
-                "wardrobe_events": [{
-                    "segment_id": "C002", "character": "Mira", "worn": ["shirt"],
-                    "removed": ["open jacket"],
-                    "evidence": "Mira removes the jacket and keeps the shirt.",
-                }],
-                "hairstyle_events": [],
-            })
-        if call_name == "CALL2-PLAN":
-            return json.dumps({"scene_plan": [{
-                "anchor_segment": "C002", "characters": ["Mira"],
-                "scene_brief": "Mira removes her jacket while keeping the shirt",
-            }]})
-        if call_name == "CALL2-PLAN-AUDIT":
-            return _confirmed_test_plan_audit_response(messages)
-        if call_name == "CALL2-KEYVIS":
-            return """<lb-xnai>
-keyvis:
-  camera: portrait
-  characters[1]:
-    - name: Mira
-      positive: 1girl, dark hair, shirt
-      outfit_state:
-        worn: [shirt]
-        removed: [open jacket]
-  scene: Mira near the door
-scenes: []
-</lb-xnai>"""
-        if call_name == "CALL2-FALLBACK":
-            return _toon_for_slots([1], outfit="shirt", name_by_slot={1: "Mira"}).replace(
-                "1girl, black hair", "1girl, black hair, shirt",
-            ).replace("          removed: []", "          removed: [open jacket]")
-        raise AssertionError(f"unexpected call: {call_name}")
-
-    async def fail_details(**kwargs):
-        return [], [], [1], []
-
-    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_call)
-    monkeypatch.setattr(pipeline, "_run_parallel_call2_details", fail_details)
-    result = await pipeline.build_from_context(
-        {
-            "session_id": "fresh_persistent_keyvis_fallback_test",
-            "target_slotted": (
-                "Mira wears an open jacket and shirt.\n\n[Slot 0]\n\n"
-                "Mira removes the jacket and keeps the shirt.\n\n[Slot 1]"
-            ),
-            "chats": [{"role": "char", "data": (
-                "Mira wears an open jacket and shirt.\n\n"
-                "Mira removes the jacket and keeps the shirt."
-            )}],
-        },
-        {
-            "call1_enabled": True, "call1_parallel_enabled": False,
-            "call2_parallel_enabled": True, "call2_parallel_max_concurrency": 1,
-            "call2_parallel_slow_retry_enabled": False,
-            "output_count_min": 1, "output_count_max": 1,
-            "key_visual": True, "call3_enabled": False, "speak_enabled": False,
-        },
-        "### Mira\n-Appearance\n1girl, dark hair\n-default_outfit\nwinter coat",
-        extra_names="Mira",
-        extra_instruction="Keep Mira as the only named visual subject.",
-        history_plan={
-            "state_before": {"mira": {
-                "canonical_name": "Mira", "default_outfit_reference": "winter coat",
-                "current_wardrobe": {"body_state": "clothed", "worn": ["winter coat"], "removed": []},
-                "wardrobe_timeline": [],
-                "hairstyle_timeline": [{
-                    "segment_id": "P001", "operation": "change",
-                    "hairstyle_change": "hair pinned", "evidence": "Mira pins her hair.",
-                }],
-            }},
-            "call1_history": [], "call2_fallback_history": [],
-            "record_before": {"last_pipeline": {}},
-            "current_message_id": "msg-mira-current",
-        },
-    )
-
-    keyvis_messages = messages_by_call["CALL2-KEYVIS"]
-    fallback_messages = messages_by_call["CALL2-FALLBACK"]
-    keyvis_text = "\n".join(message["content"] for message in keyvis_messages)
-    fallback_text = "\n".join(message["content"] for message in fallback_messages)
-    for request in (keyvis_text, fallback_text):
-        assert "# TRUSTED ACTIVE BOT IMAGE POLICY" in request
-        assert "Keep Mira as the only named visual subject." in request
-        assert "# SPARSE HAIRSTYLE CHANGE HISTORY" in request
-        assert "Mira pins her hair." in request
-        assert "# ARCHIVED TRACKED WARDROBE REFERENCE" not in request
-        assert "# ARCHIVED SPARSE WARDROBE CHANGE HISTORY" not in request
-        assert "Reconstruct the active outfit" not in request
-        assert "does not contain a complete outfit" not in request
-    assert "# CHRONOLOGICAL WARDROBE REFERENCES BY STORY INSTANT" in keyvis_text
-    assert "Story instant C002" in keyvis_text
-    assert '"Mira": {"worn": ["shirt"], "removed": ["open jacket"]}' in keyvis_text
-    assert "# SOURCE-TIME WARDROBE SNAPSHOTS" not in keyvis_text
-    snapshot_message = next(
-        message["content"] for message in fallback_messages
-        if message["content"].startswith("# SOURCE-TIME WARDROBE SNAPSHOTS")
-    )
-    snapshots = json.loads(snapshot_message.split("\n\n", 1)[1])
-    assert snapshots["wardrobe_at_start"] == [{
-        "character": "Mira", "worn": ["open jacket", "shirt"], "removed": [],
-    }]
-    assert snapshots["wardrobe_events"][0]["worn"] == ["shirt"]
-    assert snapshots["wardrobe_events"][0]["removed"] == ["open jacket"]
-    confirmed_plan = next(
-        message["content"] for message in fallback_messages
-        if message["content"].startswith("# CONFIRMED SOURCE-GROUNDED SCENE PLAN AFTER DETAIL FAILURE")
-    )
-    assigned = json.loads(confirmed_plan.rsplit("\n\n", 1)[1])["scene_plan"]
-    assert assigned[0]["wardrobe_state"]["Mira"]["outfit_state"] == {
-        "worn": ["shirt"], "removed": ["open jacket"],
-    }
-    assert [item["kind"] for item in result["items"]] == ["keyvis", "scene"]
-    assert result["items"][1]["wardrobe_state"]["Mira"]["outfit_state"] == {
-        "worn": ["shirt"], "removed": ["open jacket"],
-    }
-
-
-@pytest.mark.asyncio
-async def test_persistent_call2_only_uses_bounded_history_and_visual_candidate(monkeypatch):
+async def test_persistent_call2_only_sends_bounded_history_to_audit_and_baseline_to_detail(monkeypatch):
     calls = []
 
     async def fake_call(task_key, messages, **kwargs):
         calls.append((task_key, messages))
         call_name = _call_name(task_key)
-        if call_name == "CALL2-AUTHORITY-AUDIT":
-            assert task_key == "illustration_call2"
-            return _authority_audit_response(messages)
         request_text = "\n".join(message["content"] for message in messages)
-        if call_name == "CALL2-PLAN-AUDIT":
-            return _confirmed_test_plan_audit_response(messages)
         if call_name == "CALL2-PLAN":
             assert task_key == "illustration_call2_plan"
-            assert "# RECENT STORY CONTINUITY REFERENCE (NOT SCENE CANDIDATES)" in request_text
+            assert "bounded past marker" not in request_text
+            return _plan_response(characters=("Hana",),
+                                  brief="Hana waits by the current door")
+        if call_name == "CALL2-AUDIT":
+            assert task_key == "illustration_call2_plan"
+            assert "# BOUNDED EARLIER CONTEXT" in request_text
             assert "bounded past marker" in request_text
-            assert "selectable scenes come only from the current Cxxx segment catalog" in request_text
-            return json.dumps({
-                "scene_plan": [{
-                    "anchor_segment": "C001",
-                    "characters": ["Hana"],
-                    "scene_brief": "Hana waits by the current door",
-                }],
-            })
+            assert "obsolete fallback marker" not in request_text
+            return _audit_pass_for_plan(messages)
+        assert call_name == "CALL2-DETAIL"
         assert task_key == "illustration_call2"
         assert "bounded past marker" not in request_text
         assert "# CHARACTER DICTIONARY" not in request_text
-        assert "# ASSIGNED SCENE PLAN DATA" in request_text
-        assert "Hana" in request_text
+        prepared = _scene_from_detail_request(messages)
+        assert prepared["characters"][0]["name"] == "Hana"
         assert "white shirt" in request_text
         assert "black skirt" in request_text
-        assert "She waits by the door." in request_text
-        return """<lb-xnai>
-scenes[1]:
-  - camera: full body
-    characters[1]:
-      - name: Hana
-        positive: 1girl, white shirt, black skirt
-        outfit_state:
-          worn: [white shirt, black skirt]
-          removed: []
-    scene: hallway
-    slot: 0
-</lb-xnai>"""
+        assert prepared["brief"] == "Hana waits by the current door"
+        return _detail_for_scene(messages, positive="1girl, white shirt, black skirt")
 
     monkeypatch.setattr(pipeline.llm_service, "callLLMTask", fake_call)
     result = await pipeline.build_from_context(
@@ -10674,8 +9852,8 @@ scenes[1]:
             "current_context_hash": "current",
             "base_context_hash": "base",
             "state_before": {},
-            "call1_history": [],
-            "call2_fallback_history": [{"role": "char", "data": "bounded past marker"}],
+            "call1_history": [{"role": "char", "data": "bounded past marker"}],
+            "call2_fallback_history": [{"role": "char", "data": "obsolete fallback marker"}],
             "call3_fallback_history": [],
             "record_before": {"last_pipeline": {}},
         },
@@ -10683,78 +9861,55 @@ scenes[1]:
 
     assert [task_key for task_key, _messages in calls] == [
         "illustration_call2_plan",
-        "illustration_call2_authority_audit",
+        "illustration_call2_plan",
         "illustration_call2",
     ]
-    assert result["balanced_fallback_used"] is True
+    assert result["balanced_fallback_used"] is False
     assert result["enhanced_narrative"] == "She waits by the door."
     state = result["character_states_after"]["hana"]
-    assert state["current_wardrobe"]["worn"] == ["white shirt", "black skirt"]
-    assert "source" not in state["current_wardrobe"]
-    assert state["last_visual_reference"]["outfit_state"]["worn"] == [
-        "white shirt", "black skirt",
-    ]
+    assert len(state["call1_status_history"]) == 1
+    assert "white shirt" in state["call1_status_history"][0]
+    assert "black skirt" in state["call1_status_history"][0]
+    assert "last_visual_reference" not in state
+    assert result["last_visual_by_character"] == {}
+    assert "outfit_state" not in result["items"][0]["characters"][0]
 
 
 @pytest.mark.asyncio
-async def test_persistent_history_recovers_missing_prior_wardrobe_with_balanced_fallback(monkeypatch):
+async def test_persistent_history_uses_profile_baseline_when_prior_raw_state_is_missing(monkeypatch):
     calls = []
 
     async def fake_call(task_key, messages, **kwargs):
         calls.append((task_key, messages))
         if task_key == "illustration_call1":
-            return json.dumps({
-                "reference_assignments": [],
-                "history_characters": ["Hana"],
-                "current_characters": [{"name": "Hana", "confidence": 0.99}],
-                "wardrobe_at_start": [{
-                    "character": "Hana", "worn": ["red cardigan", "pleated skirt"],
-                    "removed": [],
-                }],
-                "wardrobe_events": [],
-                "hairstyle_events": [],
-                "unresolved_references": [],
-            })
+            request_text = "\n".join(message["content"] for message in messages)
+            assert "past wardrobe recovery marker: Hana arrived." in request_text
+            assert "# SELECTED PROFILE / LB.EXTRA BASELINE" in request_text
+            assert "red cardigan" in request_text
+            assert "black suit" not in request_text
+            return _state_response("Hana", status=(
+                "Without saved state, Hana starts in her profile-default red cardigan "
+                "and pleated skirt, with her usual hair."))
         call_name = _call_name(task_key)
-        if call_name == "CALL2-AUTHORITY-AUDIT":
-            assert task_key == "illustration_call2"
-            return _authority_audit_response(messages)
         request_text = "\n".join(message["content"] for message in messages)
-        if call_name == "CALL2-PLAN-AUDIT":
-            return _confirmed_test_plan_audit_response(messages)
         if call_name == "CALL2-PLAN":
             assert task_key == "illustration_call2_plan"
-            assert "# RECENT STORY CONTINUITY REFERENCE (NOT SCENE CANDIDATES)" in request_text
+            assert "past wardrobe recovery marker" not in request_text
+            return _plan_response(characters=("Hana",),
+                                  brief="Hana looks outside in the current scene")
+        if call_name == "CALL2-AUDIT":
+            assert task_key == "illustration_call2_plan"
             assert "past wardrobe recovery marker" in request_text
-            assert "selectable scenes come only from the current Cxxx segment catalog" in request_text
-            return json.dumps({
-                "scene_plan": [{
-                    "anchor_segment": "C001",
-                    "characters": ["Hana"],
-                    "scene_brief": "Hana looks outside in the current scene",
-                }],
-            })
+            return _audit_pass_for_plan(messages)
         assert task_key == "illustration_call2"
+        assert call_name == "CALL2-DETAIL"
         assert "past wardrobe recovery marker" not in request_text
         assert "# CHARACTER DICTIONARY" not in request_text
-        assert "# ASSIGNED SCENE PLAN DATA" in request_text
-        assert "Hana" in request_text
         assert "red cardigan" in request_text
         assert "pleated skirt" in request_text
         assert "Bob" not in request_text
         assert "black suit" not in request_text
-        return """<lb-xnai>
-scenes[1]:
-  - camera: full body
-    characters[1]:
-      - name: Hana
-        positive: 1girl, red cardigan, pleated skirt
-        outfit_state:
-          worn: [red cardigan, pleated skirt]
-          removed: []
-    scene: classroom
-    slot: 0
-</lb-xnai>"""
+        return _detail_for_scene(messages, positive="1girl, red cardigan, pleated skirt")
 
     monkeypatch.setattr(pipeline.llm_service, "callLLMTask", fake_call)
     result = await pipeline.build_from_context(
@@ -10778,8 +9933,8 @@ scenes[1]:
             "### Bob\n-default_outfit\nblack suit"
         ),
         extra_costume="### Hana\n-default_outfit\nred cardigan, pleated skirt",
-        extra_names="Hana, Bob",
-        backtranslate_names="Hana, Bob",
+        extra_names="Hana",
+        backtranslate_names="Hana",
         history_plan={
             "history_id": "hist_missing_state",
             "operation": "new",
@@ -10797,18 +9952,18 @@ scenes[1]:
     assert [task_key for task_key, _messages in calls] == [
         "illustration_call1",
         "illustration_call2_plan",
-        "illustration_call2_authority_audit",
+        "illustration_call2_plan",
         "illustration_call2",
     ]
-    assert result["balanced_fallback_used"] is True
+    assert result["balanced_fallback_used"] is False
     state = result["character_states_after"]["hana"]
-    assert state["current_wardrobe"]["worn"] == ["red cardigan", "pleated skirt"]
-    assert state["current_wardrobe"]["source"] == "call1_confirmed"
-    assert state["last_resolved_wardrobe_start"] == {
-        "message_id": "msg_current",
-        "state": "Worn: red cardigan, pleated skirt.",
-        "outfit_state": {"worn": ["red cardigan", "pleated skirt"], "removed": []},
-    }
+    assert state["call1_status_history"] == [
+        "Without saved state, Hana starts in her profile-default red cardigan "
+        "and pleated skirt, with her usual hair."]
+    assert state["call1_status"] == state["call1_status_history"][0]
+    assert "current_wardrobe" not in state
+    assert "last_resolved_wardrobe_start" not in state
+    assert "outfit_state" not in result["items"][0]["characters"][0]
 
 
 @pytest.mark.asyncio
@@ -10818,37 +9973,21 @@ async def test_persistent_backtranslation_off_keeps_original_text_across_calls(m
     async def fake_call(task_key, messages, **kwargs):
         calls.append((task_key, messages))
         if task_key == "illustration_call1":
-            return json.dumps({
-                "wardrobe_at_start": [{
-                    "character": "Hana", "worn": ["blue dress"], "removed": [],
-                }],
-                "wardrobe_events": [],
-                "hairstyle_events": [],
-            })
+            assert "She waits by the door." in messages[-1]["content"]
+            return _state_response("Hana", status="Hana wears a blue dress with her usual hair")
         call_name = _call_name(task_key)
         if call_name == "CALL2-PLAN":
             assert task_key == "illustration_call2_plan"
-            return json.dumps({"scene_plan": [{
-                "anchor_segment": "C001", "characters": ["Hana"],
-                "scene_brief": "Hana waits by the door",
-            }]})
-        if call_name == "CALL2-PLAN-AUDIT":
-            assert task_key == "illustration_call2_authority_audit"
-            return _confirmed_test_plan_audit_response(messages)
-        if call_name.startswith("CALL2-DETAIL"):
+            assert "She waits by the door." in messages[-1]["content"]
+            return _plan_response(characters=("Hana",), brief="Hana waits by the door")
+        if call_name == "CALL2-AUDIT":
+            assert task_key == "illustration_call2_plan"
+            assert "She waits by the door." in messages[-1]["content"]
+            return _audit_pass_for_plan(messages)
+        if call_name == "CALL2-DETAIL":
             assert task_key == "illustration_call2"
-            return """<lb-xnai>
-scenes[1]:
-  - camera: medium shot
-    characters[1]:
-      - name: Hana
-        positive: 1girl, blue dress
-        outfit_state:
-          worn: [blue dress]
-          removed: []
-    scene: hallway
-    slot: 0
-</lb-xnai>"""
+            assert _scene_from_detail_request(messages)["brief"] == "Hana waits by the door"
+            return _detail_for_scene(messages, positive="1girl, blue dress")
         assert task_key == "illustration_call3"
         request_text = "\n".join(message["content"] for message in messages)
         assert "[Original narrative]\nShe waits by the door." in request_text
@@ -10916,59 +10055,43 @@ scenes[1]:
     assert [task_key for task_key, _messages in calls] == [
         "illustration_call1",
         "illustration_call2_plan",
-        "illustration_call2_authority_audit",
+        "illustration_call2_plan",
         "illustration_call2",
         "illustration_call3",
     ]
     assert result["balanced_fallback_used"] is False
+    assert result["enhanced_narrative"] == "She waits by the door."
     assert result["items"][0]["speak"] == 'Hana: "I will wait." #normal'
 
 
 @pytest.mark.asyncio
-async def test_persistent_call1_off_keeps_call2_call3_with_separate_bounded_histories(monkeypatch):
+async def test_persistent_call1_off_keeps_audit_and_call3_history_scopes_separate(monkeypatch):
     calls = []
 
     async def fake_call(task_key, messages, **kwargs):
         calls.append((task_key, messages))
         request_text = "\n".join(message["content"] for message in messages)
         call_name = _call_name(task_key)
-        if call_name == "CALL2-PLAN-AUDIT":
-            assert task_key == "illustration_call2_authority_audit"
-            return _confirmed_test_plan_audit_response(messages)
-        if task_key in {
-            "illustration_call2_plan",
-            "illustration_call2",
-        }:
+        if task_key in {"illustration_call2_plan", "illustration_call2"}:
             if call_name == "CALL2-PLAN":
                 assert task_key == "illustration_call2_plan"
-                assert "# RECENT STORY CONTINUITY REFERENCE (NOT SCENE CANDIDATES)" in request_text
+                assert "call2 bounded marker" not in request_text
+                assert "call3 bounded marker" not in request_text
+                return _plan_response(characters=("Hana",),
+                                      brief="Hana waits by the current door")
+            if call_name == "CALL2-AUDIT":
+                assert task_key == "illustration_call2_plan"
                 assert "call2 bounded marker" in request_text
                 assert "call3 bounded marker" not in request_text
-                return json.dumps({
-                    "scene_plan": [{
-                        "anchor_segment": "C001",
-                        "characters": ["Hana"],
-                        "scene_brief": "Hana waits by the current door",
-                    }],
-                })
+                assert "unused fallback marker" not in request_text
+                return _audit_pass_for_plan(messages)
+            assert call_name == "CALL2-DETAIL"
             assert task_key == "illustration_call2"
             assert "call2 bounded marker" not in request_text
             assert "call3 bounded marker" not in request_text
-            assert "# ASSIGNED SCENE PLAN DATA" in request_text
             assert "blue dress" in request_text
-            assert "She waits by the door." in request_text
-            return """<lb-xnai>
-scenes[1]:
-  - camera: medium shot
-    characters[1]:
-      - name: Hana
-        positive: 1girl, blue dress
-        outfit_state:
-          worn: [blue dress]
-          removed: []
-    scene: hallway
-    slot: 0
-</lb-xnai>"""
+            assert _scene_from_detail_request(messages)["brief"] == "Hana waits by the current door"
+            return _detail_for_scene(messages, positive="1girl, blue dress")
         assert task_key == "illustration_call3"
         assert "call3 bounded marker" in request_text
         assert "[Original narrative]\nShe waits by the door." in request_text
@@ -11000,8 +10123,8 @@ scenes[1]:
             "current_context_hash": "current",
             "base_context_hash": "base",
             "state_before": {},
-            "call1_history": [],
-            "call2_fallback_history": [{"role": "char", "data": "call2 bounded marker"}],
+            "call1_history": [{"role": "char", "data": "call2 bounded marker"}],
+            "call2_fallback_history": [{"role": "char", "data": "unused fallback marker"}],
             "call3_fallback_history": [{"role": "char", "data": "call3 bounded marker"}],
             "record_before": {"last_pipeline": {}},
         },
@@ -11009,17 +10132,17 @@ scenes[1]:
 
     assert [task_key for task_key, _messages in calls] == [
         "illustration_call2_plan",
-        "illustration_call2_authority_audit",
+        "illustration_call2_plan",
         "illustration_call2",
         "illustration_call3",
     ]
-    assert result["balanced_fallback_used"] is True
+    assert result["balanced_fallback_used"] is False
     assert result["enhanced_narrative"] == "She waits by the door."
     assert result["items"][0]["speak"] == 'Hana: "Still here." #normal'
 
 
 @pytest.mark.asyncio
-async def test_call1_parallel_failed_shard_rejects_partial_source_coverage(monkeypatch, capsys):
+async def test_call1_parallel_keeps_successful_shard_when_another_shard_exhausts(monkeypatch):
     async def fail_one_shard(*args, **kwargs):
         raise pipeline.ParallelPipelineJobsError(
             "one shard failed",
@@ -11028,9 +10151,15 @@ async def test_call1_parallel_failed_shard_rejects_partial_source_coverage(monke
                     "raw": "",
                     "value": {
                         "wardrobe_at_start": [{
-                            "character": "Hana", "worn": ["blue coat"], "removed": [],
+                            "character": "Hana",
+                            "state": "Hana wears her previous outfit.",
                         }],
-                        "wardrobe_events": [],
+                        "wardrobe_events": [{
+                            "segment_id": "C001",
+                            "character": "Hana",
+                            "operation": "set",
+                            "wardrobe_change": "Hana put on a blue coat.",
+                        }],
                         "hairstyle_events": [],
                     },
                     "assigned_segment_ids": ["C001"],
@@ -11040,30 +10169,35 @@ async def test_call1_parallel_failed_shard_rejects_partial_source_coverage(monke
         )
 
     monkeypatch.setattr(pipeline, "_run_parallel_pipeline_jobs", fail_one_shard)
-    with pytest.raises(RuntimeError, match="불완전한 wardrobe"):
-        await pipeline._run_parallel_call1_analysis(
-            call1_system="Analyze wardrobe changes.",
-            segmented_current="[C001] First.\n[C002] Second.",
-            current_segments={"C001": {"text": "First."}, "C002": {"text": "Second."}},
-            current_context="First.\n\nSecond.",
-            history_text="", expected_names=["Hana"],
-            toggles=pipeline.merged_toggles({
-                "call1_parallel_max_concurrency": 2,
-                "call1_parallel_slow_retry_enabled": False,
-            }),
-            stream_notify=None,
-        )
-    assert "segments=['C002']" in capsys.readouterr().out
+    raw, warnings, fallback_errors = await pipeline._run_parallel_call1_analysis(
+        call1_system="Analyze wardrobe changes.",
+        segmented_current="[C001] First.\n[C002] Second.",
+        current_segments={"C001": {}, "C002": {}},
+        history_text="",
+        toggles=pipeline.merged_toggles({
+            "call1_parallel_max_concurrency": 2,
+            "call1_parallel_slow_retry_enabled": False,
+        }),
+        stream_notify=None,
+    )
+
+    parsed = json.loads(raw)
+    assert parsed["wardrobe_at_start"] == [{
+        "character": "Hana",
+        "state": "Hana wears her previous outfit.",
+    }]
+    assert [event["segment_id"] for event in parsed["wardrobe_events"]] == ["C001"]
+    assert parsed["hairstyle_events"] == []
+    assert any("segments=['C002']" in warning for warning in warnings)
+    assert fallback_errors == []
 
 
 @pytest.mark.asyncio
-async def test_call2_generic_detail_failure_recovers_all_confirmed_scenes(monkeypatch):
+async def test_one_invalid_detail_aborts_all_scenes_without_fallback(monkeypatch):
     call_names = []
 
     async def fake_pipeline_call(call_name, messages, *args, **kwargs):
         call_names.append(call_name)
-        if call_name == "CALL2-PLAN-AUDIT":
-            return _confirmed_test_plan_audit_response(messages)
         if call_name == "CALL2-PLAN":
             return json.dumps({
                 "scene_plan": [{
@@ -11072,23 +10206,17 @@ async def test_call2_generic_detail_failure_recovers_all_confirmed_scenes(monkey
                     "scene_brief": f"Hana scene {slot}",
                 } for slot in range(4)],
             })
-        if call_name.startswith("CALL2-DETAIL"):
-            shard = int(re.search(r"CALL2-DETAIL (\d+)/4", call_name).group(1))
-            return (
-                "not toon"
-                if shard == 2
-                else _toon_for_slots([shard - 1]).replace(
-                    "black hair", "black hair, school uniform"
-                )
-            )
-        if call_name == "CALL2-FALLBACK":
-            assert "# CONFIRMED SOURCE-GROUNDED SCENE PLAN AFTER DETAIL FAILURE" in messages[-1]["content"]
-            assert all(f'"slot": {slot}' in messages[-1]["content"] for slot in range(4))
-            return _toon_for_slots(range(4)).replace("black hair", "black hair, school uniform")
-        raise AssertionError(f"unexpected call: {call_name}")
+        if call_name == "CALL2-AUDIT":
+            return _audit_pass_for_plan(messages)
+        if call_name == "CALL2-DETAIL":
+            slot = _scene_from_detail_request(messages)["slot"]
+            return "not toon" if slot == 1 else _detail_for_scene(
+                messages, positive="1girl, black hair, school uniform")
+        raise AssertionError(f"retired fallback call: {call_name}")
 
     monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
-    result = await pipeline.build_from_context(
+    with pytest.raises(ValueError, match="CALL2-DETAIL"):
+        await pipeline.build_from_context(
         {
             "session_id": "call2_below_threshold_drop_test",
             "target_slotted": (
@@ -11116,22 +10244,18 @@ async def test_call2_generic_detail_failure_recovers_all_confirmed_scenes(monkey
         extra_names="Hana",
     )
 
-    assert [item["slot"] for item in result["items"]] == [0, 1, 2, 3]
-    assert result["call2_detail_failed_slots"] == [1]
-    assert call_names.count("CALL2-FALLBACK") == 1
-    assert result["call2_fallback_stage"] == "CALL2-DETAIL-INCOMPLETE"
-    assert all(item["wardrobe_state"]["Hana"]["outfit_state"]["worn"] == ["school uniform"]
-               for item in result["items"])
+    assert call_names.count("CALL2-PLAN") == 1
+    assert call_names.count("CALL2-AUDIT") == 1
+    assert call_names.count("CALL2-DETAIL") == 4
+    assert not any(name.startswith(("CALL2-FIX", "CALL2-FALLBACK")) for name in call_names)
 
 
 @pytest.mark.asyncio
-async def test_character_roster_fix_failure_recovers_all_confirmed_scenes(monkeypatch):
+async def test_detail_roster_mismatch_aborts_without_character_repair(monkeypatch):
     call_names = []
 
     async def fake_pipeline_call(call_name, messages, *args, **kwargs):
         call_names.append(call_name)
-        if call_name == "CALL2-PLAN-AUDIT":
-            return _confirmed_test_plan_audit_response(messages)
         if call_name == "CALL2-PLAN":
             return json.dumps({
                 "scene_plan": [{
@@ -11140,22 +10264,19 @@ async def test_character_roster_fix_failure_recovers_all_confirmed_scenes(monkey
                     "scene_brief": f"Scene {slot}",
                 } for slot in range(4)],
             })
-        if call_name.startswith("CALL2-DETAIL"):
-            shard = int(re.search(r"CALL2-DETAIL (\d+)/4", call_name).group(1))
-            return _toon_for_slots([shard - 1]).replace(
-                "black hair", "black hair, school uniform"
-            )
-        if call_name.startswith("CALL2-FIX slot=1"):
-            raise RuntimeError("one bounded roster repair failed")
-        if call_name == "CALL2-FALLBACK":
-            assert "# CONFIRMED SOURCE-GROUNDED SCENE PLAN AFTER DETAIL FAILURE" in messages[-1]["content"]
-            return _toon_for_slots(range(4), name_by_slot={1: "Maria"}).replace(
-                "black hair", "black hair, school uniform"
-            )
-        raise AssertionError(f"unexpected call: {call_name}")
+        if call_name == "CALL2-AUDIT":
+            return _audit_pass_for_plan(messages)
+        if call_name == "CALL2-DETAIL":
+            response = _detail_for_scene(messages,
+                                         positive="1girl, black hair, school uniform")
+            if _scene_from_detail_request(messages)["slot"] == 1:
+                return response.replace('"name": "Maria"', '"name": "Hana"')
+            return response
+        raise AssertionError(f"retired roster repair call: {call_name}")
 
     monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
-    result = await pipeline.build_from_context(
+    with pytest.raises(ValueError, match="CALL2-DETAIL"):
+        await pipeline.build_from_context(
         {
             "session_id": "call2_roster_fix_drop_test",
             "target_slotted": (
@@ -11189,22 +10310,18 @@ async def test_character_roster_fix_failure_recovers_all_confirmed_scenes(monkey
         extra_names="Hana, Maria",
     )
 
-    assert [item["slot"] for item in result["items"]] == [0, 1, 2, 3]
-    assert result["call2_fix_failed_slots"] == [1]
-    assert sum(name.startswith("CALL2-FIX slot=1") for name in call_names) == 1
-    assert call_names.count("CALL2-FALLBACK") == 1
-    assert result["call2_fallback_stage"] == "CALL2-DETAIL-INCOMPLETE"
-    assert [character["name"] for character in result["items"][1]["characters"]] == ["Maria"]
+    assert call_names.count("CALL2-PLAN") == 1
+    assert call_names.count("CALL2-AUDIT") == 1
+    assert call_names.count("CALL2-DETAIL") == 4
+    assert not any(name.startswith(("CALL2-FIX", "CALL2-FALLBACK")) for name in call_names)
 
 
 @pytest.mark.asyncio
-async def test_call2_global_fallback_restores_all_scenes_when_one_third_fail(monkeypatch):
+async def test_one_third_invalid_details_abort_without_global_fallback(monkeypatch):
     call_names = []
 
     async def fake_pipeline_call(call_name, messages, *args, **kwargs):
         call_names.append(call_name)
-        if call_name == "CALL2-PLAN-AUDIT":
-            return _confirmed_test_plan_audit_response(messages)
         if call_name == "CALL2-PLAN":
             return json.dumps({
                 "scene_plan": [{
@@ -11213,23 +10330,17 @@ async def test_call2_global_fallback_restores_all_scenes_when_one_third_fail(mon
                     "scene_brief": f"Hana scene {slot}",
                 } for slot in range(3)],
             })
-        if call_name.startswith("CALL2-DETAIL"):
-            shard = int(re.search(r"CALL2-DETAIL (\d+)/3", call_name).group(1))
-            return (
-                "not toon"
-                if shard == 2
-                else _toon_for_slots([shard - 1]).replace(
-                    "black hair", "black hair, school uniform"
-                )
-            )
-        if call_name == "CALL2-FALLBACK":
-            return _toon_for_slots([0, 1, 2]).replace(
-                "black hair", "black hair, school uniform"
-            )
-        raise AssertionError(f"unexpected call: {call_name}")
+        if call_name == "CALL2-AUDIT":
+            return _audit_pass_for_plan(messages)
+        if call_name == "CALL2-DETAIL":
+            slot = _scene_from_detail_request(messages)["slot"]
+            return "not toon" if slot == 1 else _detail_for_scene(
+                messages, positive="1girl, black hair, school uniform")
+        raise AssertionError(f"retired global fallback call: {call_name}")
 
     monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
-    result = await pipeline.build_from_context(
+    with pytest.raises(ValueError, match="CALL2-DETAIL"):
+        await pipeline.build_from_context(
         {
             "session_id": "call2_exact_threshold_fallback_test",
             "target_slotted": (
@@ -11253,9 +10364,10 @@ async def test_call2_global_fallback_restores_all_scenes_when_one_third_fail(mon
         extra_names="Hana",
     )
 
-    assert "CALL2-FALLBACK" in call_names
-    assert result["call2_fallback_stage"] == "CALL2-DETAIL-INCOMPLETE"
-    assert [item["slot"] for item in result["items"]] == [0, 1, 2]
+    assert call_names.count("CALL2-PLAN") == 1
+    assert call_names.count("CALL2-AUDIT") == 1
+    assert call_names.count("CALL2-DETAIL") == 3
+    assert "CALL2-FALLBACK" not in call_names
 
 
 @pytest.mark.asyncio
@@ -11419,8 +10531,8 @@ async def test_character_roster_repair_messages_describe_purpose_without_stage_n
     model_input = json.dumps(captured_messages, ensure_ascii=False)
     assert [item["slot"] for item in repaired] == [5]
     assert failed == []
-    assert "repair one rejected illustration scene's character roster" in model_input.lower()
-    assert "exact canonical character roster" in model_input
+    assert "repair the character roster of one rejected illustration scene" in model_input.lower()
+    assert "authoritative canonical roster" in model_input
     assert "plan_id" not in model_input
     assert "visual_base_snapshot" not in model_input
     assert not re.search(r"\bCALL[1235](?:-[A-Z-]+)?\b", model_input, re.IGNORECASE)
@@ -11494,1984 +10606,3 @@ async def test_authority_audit_keeps_valid_entries_when_another_entry_is_missing
         "valid_decisions": 1,
         "degraded_entries": 1,
     }
-
-
-def _confirmed_plan_scene(anchor="C001"):
-    return {
-        "anchor_segment": anchor,
-        "characters": ["Mira"],
-        "scene_brief": "Mira reaches toward the door with her jacket open.",
-        "anonymous_partner_fragment": False,
-        "interaction_contract": "Mira reaches toward the door; no other person is visible.",
-        "wardrobe_state": {
-            "Mira": {
-                "summary": "Mira still wears her open jacket; she has not removed it.",
-                "outfit_state": {"worn": ["open jacket"], "removed": []},
-            },
-        },
-    }
-
-
-def _audit_wire_from_confirmed(*scenes):
-    """Project complete internal-scene test fixtures into the approved wire format."""
-    scene_rows, wardrobes = [], []
-    for index, scene in enumerate(scenes, start=1):
-        scene_rows.append({
-            "i": index,
-            **{field: scene[field] for field in (
-                "anchor_segment", "characters", "scene_brief", "anonymous_partner_fragment",
-                "interaction_contract",
-            ) if field in scene},
-        })
-        for name, entry in scene["wardrobe_state"].items():
-            row = {"i": index, "name": name, "summary": entry["summary"],
-                   **entry["outfit_state"]}
-            evidence = scene.get("source_only_character_evidence", {}).get(name)
-            if evidence is not None:
-                row.update(source_segment=evidence["anchor_segment"], source_quote=evidence["quote"])
-            wardrobes.append(row)
-    return {"scenes": scene_rows, "wardrobes": wardrobes}
-
-
-def _audit_draft(*scenes):
-    return [{"i": index, **{field: scene[field] for field in (
-        "anchor_segment", "characters", "scene_brief", "anonymous_partner_fragment",
-    )}} for index, scene in enumerate(scenes, start=1)]
-
-
-def test_confirmed_plan_audit_rejects_partial_and_conflicting_structures():
-    slotted = "Mira opens her jacket.\n\n[Slot 0]\n\nMira reaches for the door.\n\n[Slot 1]"
-    toggles = pipeline.merged_toggles({"output_count_min": 2, "output_count_max": 2, "key_visual": False})
-    mapping = {"C001": 0, "C002": 1}
-    drafts = [_confirmed_plan_scene("C001"), _confirmed_plan_scene("C002")]
-    valid = _audit_wire_from_confirmed(*drafts)
-    args = (toggles, slotted, mapping, _audit_draft(*drafts), ["Mira"], ["Mira"])
-    parsed, reason = pipeline.parse_call2_plan_audit(json.dumps(valid), *args)
-    assert not reason
-    assert [scene["slot"] for scene in parsed["scene_plan"]] == [0, 1]
-    assert parsed["scene_plan"][0]["wardrobe_state"]["Mira"]["outfit_state"]["worn"] == ["open jacket"]
-    for broken in (
-        {**valid, "scenes": valid["scenes"][:1]},
-        {**valid, "scenes": [valid["scenes"][0], valid["scenes"][0]]},
-        {**valid, "scenes": [{**valid["scenes"][0], "slot": 0}, valid["scenes"][1]]},
-        {**valid, "scenes": [{**valid["scenes"][0], "wardrobe_state": {}}, valid["scenes"][1]]},
-        {**valid, "scenes": [{**valid["scenes"][0], "i": True}, valid["scenes"][1]]},
-        {**valid, "scenes": [{**valid["scenes"][0], "i": 3}, valid["scenes"][1]]},
-        {"scene_plan": drafts},
-    ):
-        rejected, reason = pipeline.parse_call2_plan_audit(json.dumps(broken), *args)
-        assert rejected is None and reason
-
-
-def test_audit_shuffled_scene_and_wardrobe_rows_keep_identical_canonical_plan():
-    first, second = _confirmed_plan_scene("C001"), _confirmed_plan_scene("C002")
-    first["characters"] = ["Mira", "Noa"]
-    first["wardrobe_state"]["Noa"] = {
-        "summary": "Noa wears her coat.",
-        "outfit_state": {"worn": ["coat"], "removed": []},
-    }
-    wire = _audit_wire_from_confirmed(first, second)
-    shuffled = {
-        "scenes": list(reversed(wire["scenes"])),
-        "wardrobes": [wire["wardrobes"][2], wire["wardrobes"][1], wire["wardrobes"][0]],
-    }
-    args = (
-        pipeline.merged_toggles({"output_count_min": 2, "output_count_max": 2, "key_visual": False}),
-        "Mira and Noa wait by the door.\n\n[Slot 0]\n\nMira reaches the door.\n\n[Slot 1]",
-        {"C001": 0, "C002": 1}, _audit_draft(first, second), ["Mira", "Noa"],
-    )
-    ordered_plan, ordered_reason = pipeline.parse_call2_plan_audit(json.dumps(wire), *args)
-    wardrobes_first = {"wardrobes": wire["wardrobes"], "scenes": wire["scenes"]}
-    wardrobes_first_plan, wardrobes_first_reason = pipeline.parse_call2_plan_audit(
-        json.dumps(wardrobes_first), *args,
-    )
-    shuffled_plan, shuffled_reason = pipeline.parse_call2_plan_audit(json.dumps(shuffled), *args)
-    assert not ordered_reason and not wardrobes_first_reason and not shuffled_reason
-    assert ordered_plan == wardrobes_first_plan == shuffled_plan
-    assert json.dumps(ordered_plan, ensure_ascii=False) == json.dumps(shuffled_plan, ensure_ascii=False)
-    assert [scene["slot"] for scene in shuffled_plan["scene_plan"]] == [0, 1]
-    assert list(shuffled_plan["scene_plan"][0]["wardrobe_state"]) == ["Mira", "Noa"]
-
-
-def test_sparse_audit_checkpoints_expand_independently_in_scene_order():
-    drafts = [_confirmed_plan_scene(f"C{i:03d}") for i in range(1, 5)]
-    for scene in (drafts[0], drafts[2], drafts[3]):
-        scene["characters"] = ["Mira", "Noa"]
-    wire = {"scenes": [{"i": i, "interaction_contract": "Both remain in view."}
-                        for i in range(1, 5)], "wardrobes": [
-        {"i": 1, "name": "Mira", "summary": "Mira wears an open jacket.",
-         "worn": ["open jacket"], "removed": []},
-        {"i": 1, "name": "Noa", "summary": "Noa wears a scarf and shirt.",
-         "worn": ["scarf", "shirt"], "removed": []},
-        {"i": 3, "name": "Mira", "summary": "Mira removed her jacket.",
-         "worn": ["nude"], "removed": ["open jacket"]},
-        {"i": 4, "name": "Noa", "summary": "Noa removed the scarf but kept her shirt.",
-         "worn": ["shirt"], "removed": ["scarf"]},
-    ]}
-    args = (
-        pipeline.merged_toggles({"output_count_min": 4, "output_count_max": 4, "key_visual": False}),
-        "\n\n".join(f"Scene {i}.\n\n[Slot {i - 1}]" for i in range(1, 5)),
-        {f"C{i:03d}": i - 1 for i in range(1, 5)}, _audit_draft(*drafts), ["Mira", "Noa"],
-    )
-    ordered, reason = pipeline.parse_call2_plan_audit(json.dumps(wire), *args)
-    shuffled = {"wardrobes": list(reversed(wire["wardrobes"])),
-                "scenes": list(reversed(wire["scenes"]))}
-    reordered, reordered_reason = pipeline.parse_call2_plan_audit(json.dumps(shuffled), *args)
-    assert not reason and not reordered_reason and ordered == reordered
-    scenes = ordered["scene_plan"]
-    assert [list(scene["wardrobe_state"]) for scene in scenes] == [
-        ["Mira", "Noa"], ["Mira"], ["Mira", "Noa"], ["Mira", "Noa"],
-    ]
-    assert [scene["wardrobe_state"]["Mira"]["outfit_state"]["worn"] for scene in scenes] == [
-        ["open jacket"], ["open jacket"], ["nude"], ["nude"],
-    ]
-    assert [scenes[i]["wardrobe_state"]["Noa"]["outfit_state"]["worn"] for i in (0, 2, 3)] == [
-        ["scarf", "shirt"], ["scarf", "shirt"], ["shirt"],
-    ]
-    assert scenes[2]["wardrobe_state"]["Noa"]["outfit_state"]["removed"] == []
-    assert all("body_state" not in entry["outfit_state"]
-               for scene in scenes for entry in scene["wardrobe_state"].values())
-    bound = pipeline.bind_scene_plan_wardrobes(
-        scenes, list(args[2]), {}, [], [], "mock-current",
-        default_outfits={"Mira": ["default coat"], "Noa": ["default suit"]},
-    )
-    assert bound[1]["wardrobe_snapshot"]["Mira"]["worn"] == ["open jacket"]
-    assert bound[2]["wardrobe_snapshot"]["Noa"]["worn"] == ["scarf", "shirt"]
-    assert all("default" not in scene.get("continuity_note", "") for scene in bound)
-    keyvis = pipeline._keyvis_wardrobe_reference(bound)
-    assert '"worn": ["open jacket"]' in keyvis.split("Story instant C002", 1)[1].split("Story instant C003", 1)[0]
-    assert '"worn": ["scarf", "shirt"]' in keyvis.split("Story instant C003", 1)[1].split("Story instant C004", 1)[0]
-    scenes[0]["wardrobe_state"]["Mira"]["outfit_state"]["worn"].append("mutated")
-    assert scenes[1]["wardrobe_state"]["Mira"]["outfit_state"]["worn"] == ["open jacket"]
-    assert wire["wardrobes"][0]["worn"] == ["open jacket"]
-
-
-def test_sparse_audit_requires_first_checkpoint_and_rejects_absent_or_duplicate_owner():
-    first, second, third = (_confirmed_plan_scene(f"C{i:03d}") for i in range(1, 4))
-    second["characters"] = []
-    wire = {"scenes": [{"i": i, "interaction_contract": "No interaction."}
-                        for i in (1, 2, 3)], "wardrobes": [
-        {"i": 1, "name": "Mira", "summary": "Jacket is worn.",
-         "worn": ["jacket"], "removed": []},
-    ]}
-    args = (
-        pipeline.merged_toggles({"output_count_min": 3, "output_count_max": 3, "key_visual": False}),
-        "First.\n\n[Slot 0]\n\nSecond.\n\n[Slot 1]\n\nThird.\n\n[Slot 2]",
-        {"C001": 0, "C002": 1, "C003": 2}, _audit_draft(first, second, third), ["Mira"],
-    )
-    accepted, reason = pipeline.parse_call2_plan_audit(json.dumps(wire), *args)
-    assert not reason and accepted["scene_plan"][2]["wardrobe_state"]["Mira"]["outfit_state"]["worn"] == ["jacket"]
-    cases = (
-        ([], "최초 체크포인트 누락"),
-        ([*wire["wardrobes"], {**wire["wardrobes"][0], "i": 2}], "소유자 불일치"),
-        ([{**wire["wardrobes"][0], "i": 4}], "정수여야 함"),
-        ([*wire["wardrobes"], {**wire["wardrobes"][0], "name": "mira"}], "중복 소유자"),
-    )
-    for rows, expected in cases:
-        rejected, reason = pipeline.parse_call2_plan_audit(
-            json.dumps({**wire, "wardrobes": rows}), *args,
-        )
-        assert rejected is None and expected in reason
-
-
-def test_audit_keeps_omitted_draft_fields_and_accepts_explicit_unchanged_values():
-    first, second = _confirmed_plan_scene("C001"), _confirmed_plan_scene("C002")
-    second["scene_brief"] = "Mira holds the door open."
-    drafts = _audit_draft(first, second)
-    drafts[1]["slot"] = 99
-    drafts[1]["source_segments"] = ["C001"]  # Never reuse stale server metadata after an anchor edit.
-    wire = _audit_wire_from_confirmed(first, second)
-    wire["scenes"][0] = {"i": 1, "interaction_contract": first["interaction_contract"]}
-    slotted = "Mira opens her jacket.\n\n[Slot 0]\n\nMira holds the door open.\n\n[Slot 1]"
-    parsed, reason = pipeline.parse_call2_plan_audit(
-        json.dumps(wire), pipeline.merged_toggles({
-            "output_count_min": 2, "output_count_max": 2, "key_visual": False,
-        }), slotted, {"C001": 0, "C002": 1}, drafts, ["Mira"], ["Mira"],
-    )
-    assert not reason
-    assert [scene["scene_brief"] for scene in parsed["scene_plan"]] == [
-        first["scene_brief"], second["scene_brief"],
-    ]
-    assert [scene["slot"] for scene in parsed["scene_plan"]] == [0, 1]
-    assert parsed["scene_plan"][1]["source_segments"] == ["C002"]
-    assert parsed["scene_plan"][1]["wardrobe_state"]["Mira"] == second["wardrobe_state"]["Mira"]
-
-
-@pytest.mark.parametrize("mutation, expected", [
-    (lambda wire: wire["wardrobes"].clear(), "wardrobe_state 최초 체크포인트 누락"),
-    (lambda wire: wire["wardrobes"][0].update(i=True), "정수여야 함"),
-    (lambda wire: wire["wardrobes"][0].update(i=2), "정수여야 함"),
-    (lambda wire: wire["wardrobes"][0].pop("summary"), "필수 필드 누락"),
-    (lambda wire: wire["wardrobes"][0].update(summary=" "), "복장 상태 요약 누락"),
-    (lambda wire: wire["wardrobes"][0].pop("worn"), "필수 필드 누락"),
-    (lambda wire: wire["wardrobes"][0].pop("removed"), "필수 필드 누락"),
-    (lambda wire: wire["wardrobes"][0].update(worn="open jacket"), "배열 형식 오류"),
-    (lambda wire: wire["wardrobes"][0].update(body_state="invented"), "독립 body_state 필드 금지"),
-    (lambda wire: wire["wardrobes"][0].update(worn=["nude", "open jacket"]), "nude와 착용 의상 동시 선언"),
-    (lambda wire: wire["wardrobes"][0].update(removed=["open jacket"]), "착용/벗음 태그 동시 선언"),
-    (lambda wire: wire["wardrobes"][0].update(worn=["coat", "coat"]), "중복 복장 태그"),
-    (lambda wire: wire["wardrobes"].append({**wire["wardrobes"][0], "name": "mira"}), "중복 소유자"),
-    (lambda wire: wire["scenes"][0].update(scene_breif="typo"), "오타 가능성"),
-    (lambda wire: wire["scenes"][0].update(interaction_contract=" "), "interaction_contract 누락"),
-])
-def test_audit_rejects_incomplete_or_ambiguous_state(mutation, expected):
-    draft = _confirmed_plan_scene()
-    wire = _audit_wire_from_confirmed(draft)
-    mutation(wire)
-    parsed, reason = pipeline.parse_call2_plan_audit(
-        json.dumps(wire), pipeline.merged_toggles({
-            "output_count_min": 1, "output_count_max": 1, "key_visual": False,
-        }), "Mira opens her jacket.\n\n[Slot 0]", {"C001": 0},
-        _audit_draft(draft), ["Mira"], ["Mira"],
-    )
-    assert parsed is None and expected in reason
-
-
-def test_audit_anchor_corrections_validate_order_collision_and_server_mapping():
-    first, second = _confirmed_plan_scene("C001"), _confirmed_plan_scene("C002")
-    drafts = _audit_draft(first, second)
-    slotted = "Mira waits.\n\n[Slot 0]\n\nMira turns.\n\n[Slot 1]\n\nMira exits.\n\n[Slot 2]"
-    args = (pipeline.merged_toggles({
-        "output_count_min": 2, "output_count_max": 2, "key_visual": False,
-    }), slotted, {"C001": 0, "C002": 1, "C003": 2}, drafts, ["Mira"], ["Mira"])
-    for first_anchor, second_anchor, expected in (
-        ("C003", "C002", "원문 순서 이탈"),
-        ("C001", "C001", "중복 anchor/slot"),
-        ("C001", "C999", "원문 밖 anchor"),
-    ):
-        wire = _audit_wire_from_confirmed(first, second)
-        wire["scenes"][0]["anchor_segment"] = first_anchor
-        wire["scenes"][1]["anchor_segment"] = second_anchor
-        if expected == "원문 순서 이탈":
-            wire["scenes"].reverse()  # Response row order is harmless; corrected anchor order is not.
-        rejected, reason = pipeline.parse_call2_plan_audit(json.dumps(wire), *args)
-        assert rejected is None and expected in reason
-    wire = _audit_wire_from_confirmed(first, second)
-    wire["scenes"][1]["anchor_segment"] = "C003"
-    merged, reason = pipeline.parse_call2_plan_audit(json.dumps(wire), *args)
-    assert not reason
-    assert [scene["slot"] for scene in merged["scene_plan"]] == [0, 2]
-    assert merged["scene_plan"][1]["source_segments"] == ["C003"]
-
-
-def test_audit_source_only_quote_may_cite_another_mapped_segment():
-    draft = _confirmed_plan_scene("C002")
-    draft["characters"] = ["Doyoon"]
-    draft["wardrobe_state"] = {"Doyoon": {
-        "summary": "Clothing is not established.",
-        "outfit_state": {"worn": [], "removed": []},
-    }}
-    wire = _audit_wire_from_confirmed(draft)
-    wire["scenes"][0] = {"i": 1, "interaction_contract": "Doyoon is alone."}
-    wire["wardrobes"][0].update(source_segment="C001", source_quote="Doyoon waits at the station.")
-    parsed, reason = pipeline.parse_call2_plan_audit(
-        json.dumps(wire), pipeline.merged_toggles({
-            "output_count_min": 1, "output_count_max": 1, "key_visual": False,
-        }), "Doyoon waits at the station.\n\n[Slot 0]\n\nHe crosses the platform.\n\n[Slot 1]",
-        {"C001": 0, "C002": 1}, _audit_draft(draft), ["Mira"],
-        segments={"C001": {"text": "Doyoon waits at the station."},
-                  "C002": {"text": "He crosses the platform."}},
-    )
-    assert not reason
-    assert parsed["scene_plan"][0]["slot"] == 1
-    assert parsed["scene_plan"][0]["characters"] == ["Doyoon"]
-
-
-def test_audit_empty_final_cast_requires_no_wardrobe_rows():
-    draft = _confirmed_plan_scene()
-    draft["characters"] = []
-    draft["wardrobe_state"] = {}
-    wire = _audit_wire_from_confirmed(draft)
-    args = (pipeline.merged_toggles({
-        "output_count_min": 1, "output_count_max": 1, "key_visual": False,
-    }), "An empty hallway.\n\n[Slot 0]", {"C001": 0}, _audit_draft(draft), ["Mira"])
-    parsed, reason = pipeline.parse_call2_plan_audit(json.dumps(wire), *args)
-    assert not reason
-    assert parsed["scene_plan"][0]["characters"] == []
-    wire["wardrobes"].append({"i": 1, "name": "Mira", "summary": "Unknown",
-                               "worn": [], "removed": []})
-    rejected, reason = pipeline.parse_call2_plan_audit(json.dumps(wire), *args)
-    assert rejected is None and "wardrobe_state 소유자 불일치" in reason
-
-
-@pytest.mark.asyncio
-async def test_audit_prompt_uses_one_complete_segmented_source_with_partial_mapping(monkeypatch):
-    captured = []
-
-    async def fake_call(name, messages, _notify, **kwargs):
-        assert name == "CALL2-PLAN-AUDIT" and kwargs["json_mode"] is True
-        captured.extend(messages)
-        response = _confirmed_test_plan_audit_response(messages)
-        assert kwargs["result_validator"](response)[0] is True
-        return response
-
-    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_call)
-    first = _confirmed_plan_scene("C001")
-    first["scene_brief"] = "Mira reads a letter."
-    last = _confirmed_plan_scene("C003")
-    last["scene_brief"] = "Mira opens the window."
-    draft = {"scene_plan": [
-        {"slot": 0, **_audit_draft(first)[0]},
-        {**_audit_draft(last)[0], "i": 2, "slot": 2},
-    ]}
-    source = ("Mira reads a letter.\n\n[Slot 0]\n\n"
-              "A long unrelated interlude.\n\n[Slot 1]\n\n"
-              "Mira opens the window.\n\n[Slot 2]")
-    plan, _raw = await pipeline._run_call2_plan_audit(
-        draft_plan=draft, toggles=pipeline.merged_toggles({
-            "output_count_min": 2, "output_count_max": 2, "key_visual": False,
-        }), target_slotted=source, segment_slot_map={"C001": 0, "C003": 2},
-        segments={"C001": {"text": "Mira reads a letter."},
-                  "C002": {"text": "A long unrelated interlude."},
-                  "C003": {"text": "Mira opens the window."}},
-        current_context=source, history_text="Mira left her coat behind before reaching the door.",
-        active_policy="Keep the visible scene intact.",
-        named_subject_candidates=["Mira"], allowed_names=["Mira"],
-        wardrobe_at_start=[{"character": "Mira", "state": "CALL1_START_GUESS"}],
-        wardrobe_events=[{"segment_id": "C003", "character": "Mira", "state": "CALL1_EVENT_GUESS"}],
-        state_before={"Mira": "TRACKED_REFERENCE"},
-        default_outfits={"Mira": ["open jacket"]}, stream_notify=None,
-        wardrobe_authority={
-            "segment_order": ["C001", "C002", "C003"], "canonical_names": ["Mira"],
-            "wardrobe_at_start": [{"character": "Mira", "worn": ["open jacket"],
-                                   "removed": []}],
-            "wardrobe_events": [], "allow_fallback": False,
-        },
-    )
-    system, request = captured[0]["content"], captured[-1]["content"]
-    assert "scenes only" in system
-    assert "actor_evidence" in system
-    past = "# PAST HISTORY (EARLIER STORY SOURCE; READ BEFORE CURRENT)\n"
-    current = "# COMPLETE Cxxx SOURCE REFERENCE (CURRENT IN STORY ORDER)\n"
-    for reference in ("# SOURCE-TIME WARDROBE AUTHORITY", "# ELIGIBLE ANCHOR Cxxx IDS",
-                      "# DRAFT PLAN (CORRECT, DO NOT JUST CRITIQUE)"):
-        assert request.index(reference) < request.index(past)
-    assert "# PROFILE DEFAULT OUTFIT REFERENCE" not in request
-    assert "# TRACKED STATE BEFORE CURRENT" not in request
-    assert "CALL1_START_GUESS" not in request and "CALL1_EVENT_GUESS" not in request
-    assert '"Mira": "TRACKED_REFERENCE"' not in request
-    assert '"worn": ["open jacket"]' in request
-    assert not re.search(r"\b(adult|age|minor|underage)\b", system + request, re.I)
-    assert request.index(past) < request.index(current)
-    assert past + "Mira left her coat behind before reaching the door." in request
-    assert "# ELIGIBLE ANCHOR Cxxx IDS\n[\"C001\", \"C003\"]" in request
-    assert request.split(current, 1)[1] == (
-        "Draft anchor metadata (not story or evidence): scene indices [1]\n"
-        "[C001]\nMira reads a letter.\n\n"
-        "[C002]\nA long unrelated interlude.\n\n"
-        "Draft anchor metadata (not story or evidence): scene indices [2]\n"
-        "[C003]\nMira opens the window."
-    )
-    assert request.count("[C001]\nMira reads a letter.") == 1
-    assert request.count("[C002]\nA long unrelated interlude.") == 1
-    assert request.count("[C003]\nMira opens the window.") == 1
-    assert "# SEGMENT CATALOG" not in request and "# FULL CURRENT SOURCE" not in request
-    assert [scene["slot"] for scene in plan["scene_plan"]] == [0, 2]
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("name, past, current, worn_by_anchor, removed_by_anchor", [
-    (
-        "Elena",
-        "Elena unbuttoned her blouse. Later she stood entirely unclothed.",
-        ("Elena stands by the window with nothing on.",
-         "Elena's old blouse is now open and hanging from her shoulders."),
-        (["nude"], ["open blouse"]),
-        (["blouse"], []),
-    ),
-    (
-        "Soraya",
-        "Soraya loosened her cloak. By evening she had no clothing on her body.",
-        ("Soraya waits by the lamp without any garments.",
-         "Her cloak now lies open over her shoulders as she picks up the lamp."),
-        (["nude"], ["open cloak"]),
-        (["cloak"], []),
-    ),
-    (
-        "Jules",
-        "Jules opened his jacket but left it on over his shirt.",
-        ("Jules reads in his open jacket.", "He stands, jacket still open over his shirt."),
-        (["open jacket", "shirt"], ["open jacket", "shirt"]),
-        ([], []),
-    ),
-])
-async def test_audit_source_chronology_reaches_detail_without_rewriting_attire(
-    monkeypatch, name, past, current, worn_by_anchor, removed_by_anchor,
-):
-    """Mock the semantic decision; check the actual audit-to-DETAIL structural handoff."""
-    source = f"{current[0]}\n\n[Slot 0]\n\n{current[1]}\n\n[Slot 1]"
-    draft = {"scene_plan": [{
-        "slot": slot, "anchor_segment": f"C{slot + 1:03d}", "characters": [name],
-        "scene_brief": f"{name} wears an unsupported default coat while turning.",
-        "anonymous_partner_fragment": False,
-    } for slot in (0, 1)]}
-    toggles = pipeline.merged_toggles({
-        "output_count_min": 2, "output_count_max": 2, "key_visual": False,
-    })
-
-    authority = {
-        "segment_order": ["C001", "C002"], "canonical_names": [name],
-        "wardrobe_at_start": [{"character": name, "worn": worn_by_anchor[0],
-                               "removed": removed_by_anchor[0]}],
-        "wardrobe_events": ([] if worn_by_anchor[0] == worn_by_anchor[1]
-                            and removed_by_anchor[0] == removed_by_anchor[1] else [{
-            "segment_id": "C002", "character": name, "worn": worn_by_anchor[1],
-            "removed": removed_by_anchor[1], "evidence": current[1],
-        }]),
-        "allow_fallback": False, "state_before": {}, "default_outfits": {name: ["default coat"]},
-    }
-
-    async def fake_call(call_name, messages, _notify, **kwargs):
-        assert call_name == "CALL2-PLAN-AUDIT"
-        request = messages[-1]["content"]
-        system = messages[0]["content"]
-        assert request.index(past) < request.index("# COMPLETE Cxxx SOURCE REFERENCE")
-        current_source = request.split("# COMPLETE Cxxx SOURCE REFERENCE (CURRENT IN STORY ORDER)\n", 1)[1]
-        assert current_source.index(current[0]) < current_source.index(current[1])
-        assert "a later source assertion" in system
-        assert "correct a draft scene_brief" in system.lower()
-        corrected = {"scenes": [{
-            "i": slot + 1, "scene_brief": current[slot],
-            "interaction_contract": f"{name} is alone; no interaction occurs.",
-        } for slot in (0, 1)]}
-        response = json.dumps(corrected)
-        assert kwargs["result_validator"](response)[0] is True
-        return response
-
-    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_call)
-    confirmed, _raw = await pipeline._run_call2_plan_audit(
-        draft_plan=draft, toggles=toggles, target_slotted=source,
-        segment_slot_map={"C001": 0, "C002": 1},
-        segments={"C001": {"text": current[0]}, "C002": {"text": current[1]}},
-        current_context=source, history_text=past, active_policy="Keep source order.",
-        named_subject_candidates=[name], allowed_names=[name],
-        wardrobe_at_start=[{"character": name, "state": "Stale coat estimate."}],
-        wardrobe_events=[], state_before={},
-        default_outfits={name: ["default coat"]}, stream_notify=None,
-        wardrobe_authority=authority,
-    )
-    bound = pipeline.bind_scene_plan_wardrobes(
-        confirmed["scene_plan"], ["C001", "C002"], {}, [{"name": name}], [],
-        "mock-current", default_outfits={name: ["default coat"]},
-        wardrobe_at_start=authority["wardrobe_at_start"], wardrobe_authority=authority,
-    )
-    for slot, plan in enumerate(bound):
-        expected = {"worn": worn_by_anchor[slot], "removed": removed_by_anchor[slot]}
-        assert plan["scene_brief"] == current[slot]
-        assert plan["wardrobe_state"][name]["outfit_state"] == expected
-        assert plan["wardrobe_snapshot"][name] == expected
-        assert "default coat" not in plan["continuity_note"]
-
-    keyvis_reference = pipeline._keyvis_wardrobe_reference(bound)
-    for slot in (0, 1):
-        instant = keyvis_reference.split(f"Story instant C{slot + 1:03d}", 1)[1]
-        instant = instant.split("\n\nStory instant ", 1)[0]
-        assert json.dumps({name: {
-            "worn": worn_by_anchor[slot], "removed": removed_by_anchor[slot],
-        }}) in instant
-        assert "Source-time wardrobe" in instant
-
-    documents = []
-    for slot in (0, 1):
-        outfit = {"worn": worn_by_anchor[slot], "removed": removed_by_anchor[slot]}
-        document = _toon_for_slots(
-            [slot], outfit=", ".join(outfit["worn"]), name_by_slot={slot: name},
-        ).replace("removed: []", f"removed: [{', '.join(outfit['removed'])}]")
-        document = document.replace("1girl, black hair", "1girl, black hair, " + outfit["worn"][0])
-        documents.append(document)
-    detailed, missing, discarded, reason = pipeline._parse_call2_detail_partial(
-        "\n\n".join(documents), toggles, [0, 1], ["S001", "S002"], "TEST-CHRONOLOGY",
-        {slot: bound[slot]["wardrobe_snapshot"] for slot in (0, 1)},
-        {slot: [name] for slot in (0, 1)},
-        {slot: bound[slot] for slot in (0, 1)},
-    )
-    assert not reason and not missing and not discarded
-    descriptors, reason = pipeline.bind_audited_plan_descriptors(
-        [detailed[slot] for slot in (0, 1)], bound, "TEST-CHRONOLOGY",
-    )
-    assert not reason
-    for slot, descriptor in enumerate(descriptors):
-        assert descriptor["characters"][0]["outfit_state"] == {
-            "worn": worn_by_anchor[slot], "removed": removed_by_anchor[slot],
-        }
-        assert "default coat" not in descriptor["characters"][0]["positive"]
-
-
-def test_keyvis_reference_keeps_confirmed_outfits_by_instant_and_actor():
-    plans = [{
-        "anchor_segment": "C001", "scene_brief": "Mira and Noa stand together.",
-        "characters": ["Mira", "Noa"], "continuity_note": "Mira's shirt is on; Noa's coat is on.",
-        "wardrobe_state": {
-            "Mira": {"summary": "Mira still wears a shirt.",
-                     "outfit_state": {"worn": ["shirt"], "removed": []}},
-            "Noa": {"summary": "Noa still wears a coat.",
-                    "outfit_state": {"worn": ["coat"], "removed": []}},
-        },
-    }, {
-        "anchor_segment": "C002", "scene_brief": "Noa leaves the coat on a chair.",
-        "characters": ["Noa"], "continuity_note": "Noa has taken off the coat.",
-        "wardrobe_state": {"Noa": {
-            "summary": "Noa has taken off the coat.",
-            "outfit_state": {"worn": ["nude"], "removed": ["coat"]},
-        }},
-    }]
-    reference = pipeline._keyvis_wardrobe_reference(plans)
-    first, second = reference.split("\n\nStory instant C002", 1)
-    assert "Story instant C001" in first
-    assert "Mira's shirt is on; Noa's coat is on." in first
-    assert json.dumps({
-        "Mira": {"worn": ["shirt"], "removed": []},
-        "Noa": {"worn": ["coat"], "removed": []},
-    }) in first
-    assert "Noa has taken off the coat." in second
-    assert json.dumps({"Noa": {"worn": ["nude"], "removed": ["coat"]}}) in second
-    assert '"Mira"' not in second and '"worn": ["coat"]' not in second
-
-
-def test_confirmed_plan_audit_unwraps_only_an_entire_json_fence():
-    source = "Mira opens her jacket.\n\n[Slot 0]"
-    toggles = pipeline.merged_toggles({
-        "output_count_min": 1, "output_count_max": 1, "key_visual": False,
-    })
-    draft = _confirmed_plan_scene()
-    plain = json.dumps(_audit_wire_from_confirmed(draft))
-    args = (toggles, source, {"C001": 0}, _audit_draft(draft), ["Mira"], ["Mira"])
-    expected, reason = pipeline.parse_call2_plan_audit(plain, *args)
-    assert expected is not None and not reason
-
-    fenced, reason = pipeline.parse_call2_plan_audit(f"```json\n{plain}\n```", *args)
-    assert fenced == expected and not reason
-    for invalid in (
-        f"Explanation:\n```json\n{plain}\n```",
-        f"```json\n{plain}\n```\nExplanation",
-        f"```json\n{plain}\n```\n```json\n{plain}\n```",
-    ):
-        rejected, reason = pipeline.parse_call2_plan_audit(invalid, *args)
-        assert rejected is None and "JSON 파싱 실패" in reason
-
-    broken = {**_audit_wire_from_confirmed(draft), "wardrobes": []}
-    rejected, reason = pipeline.parse_call2_plan_audit(json.dumps(broken), *args)
-    assert rejected is None and "wardrobe_state" in reason
-
-
-def test_confirmed_plan_audit_rejects_malformed_json_without_syntax_repair():
-    source = "Mira opens her jacket.\n\n[Slot 0]"
-    toggles = pipeline.merged_toggles({
-        "output_count_min": 1, "output_count_max": 1, "key_visual": False,
-    })
-    draft = _confirmed_plan_scene()
-    plain = json.dumps(_audit_wire_from_confirmed(draft))
-    args = (toggles, source, {"C001": 0}, _audit_draft(draft), ["Mira"], ["Mira"])
-    expected, reason = pipeline.parse_call2_plan_audit(plain, *args)
-    assert expected is not None and not reason
-
-    for malformed in (
-        plain[:-1],
-        plain + "]",
-        plain.replace('"wardrobes"', ']"wardrobes"', 1),
-        f"```json\n{plain + ']'}\n```",
-    ):
-        rejected, reason = pipeline.parse_call2_plan_audit(malformed, *args)
-        assert rejected is None and "JSON 파싱 실패" in reason
-
-
-def test_confirmed_plan_audit_does_not_drop_extra_wardrobe_owner():
-    draft = _confirmed_plan_scene()
-    wire = _audit_wire_from_confirmed(draft)
-    wire["wardrobes"].append({
-        "i": 1, "name": "Noa", "summary": "Noa is outside the frame.",
-        "worn": [], "removed": [],
-    })
-    raw = json.dumps(wire)
-    args = (
-        pipeline.merged_toggles({"output_count_min": 1, "output_count_max": 1, "key_visual": False}),
-        "Mira opens her jacket.\n\n[Slot 0]", {"C001": 0}, _audit_draft(draft),
-        ["Mira", "Noa"], ["Mira"],
-    )
-    rejected, reason = pipeline.parse_call2_plan_audit(raw, *args)
-    assert rejected is None and "wardrobe_state 소유자 불일치" in reason
-
-
-def test_audit_ignores_canonical_owner_reference_without_changing_detail_state(capsys):
-    draft = _confirmed_plan_scene()
-    args = (
-        pipeline.merged_toggles({"output_count_min": 1, "output_count_max": 1, "key_visual": False}),
-        "Mira reaches toward the door with her jacket open.\n\n[Slot 0]",
-        {"C001": 0}, _audit_draft(draft), ["Mira"], ["Mira"],
-    )
-    baseline_wire = _audit_wire_from_confirmed(draft)
-    baseline, reason = pipeline.parse_call2_plan_audit(json.dumps(baseline_wire), *args)
-    assert baseline is not None and not reason
-    decorated = _audit_wire_from_confirmed(draft)
-    decorated["wardrobes"][0].update(
-        source_segment="C999", source_quote="UNUSED_CANONICAL_REFERENCE",
-    )
-    confirmed, reason = pipeline.parse_call2_plan_audit(json.dumps(decorated), *args)
-    assert confirmed == baseline and not reason
-    assert pipeline._public_call2_scene_plan(confirmed["scene_plan"][0]) == pipeline._public_call2_scene_plan(
-        baseline["scene_plan"][0]
-    )
-    log = capsys.readouterr().out
-    assert "reason=not_source_only_in_final_cast" in log
-    assert "UNUSED_CANONICAL_REFERENCE" not in log
-
-    for mutation in (lambda rows: rows.clear(), lambda rows: rows.append({
-        "i": 1, "name": "Noa", "summary": "Noa is not in the final cast.",
-        "worn": [], "removed": [],
-    })):
-        invalid = _audit_wire_from_confirmed(draft)
-        invalid["wardrobes"][0].update(
-            source_segment="C999", source_quote="UNUSED_CANONICAL_REFERENCE",
-        )
-        mutation(invalid["wardrobes"])
-        rejected, reason = pipeline.parse_call2_plan_audit(json.dumps(invalid), *args)
-        assert rejected is None and ("wardrobe_state 소유자 불일치" in reason
-                                     or "wardrobe_state 최초 체크포인트 누락" in reason)
-
-
-def test_audit_mixed_cast_keeps_only_real_source_only_evidence():
-    draft = _confirmed_plan_scene()
-    draft["characters"] = ["Mira", "Doyoon"]
-    draft["scene_brief"] = "Mira and Doyoon reach the doorway."
-    draft["interaction_contract"] = "Mira and Doyoon reach the doorway together; both are visible."
-    draft["wardrobe_state"]["Doyoon"] = {
-        "summary": "Doyoon's clothing is not established.",
-        "outfit_state": {"worn": [], "removed": []},
-    }
-    quote = "Mira and Doyoon reach the doorway."
-    args = (
-        pipeline.merged_toggles({"output_count_min": 1, "output_count_max": 1, "key_visual": False}),
-        quote + " Mira's jacket is open.\n\n[Slot 0]", {"C001": 0}, _audit_draft(draft), ["Mira"],
-    )
-    segments = {"C001": {"text": quote + " Mira's jacket is open."}}
-    baseline_wire = _audit_wire_from_confirmed(draft)
-    baseline_wire["wardrobes"][1].update(source_segment="C001", source_quote=quote)
-    baseline, reason = pipeline.parse_call2_plan_audit(
-        json.dumps(baseline_wire), *args, segments=segments,
-    )
-    assert baseline is not None and not reason
-    decorated = _audit_wire_from_confirmed(draft)
-    decorated["wardrobes"][0].update(source_segment="C999", source_quote="unused")
-    decorated["wardrobes"][1].update(source_segment="C001", source_quote=quote)
-    confirmed, reason = pipeline.parse_call2_plan_audit(
-        json.dumps(decorated), *args, segments=segments,
-    )
-    assert confirmed == baseline and not reason
-    assert list(confirmed["scene_plan"][0]["wardrobe_state"]) == ["Mira", "Doyoon"]
-    assert pipeline._public_call2_scene_plan(confirmed["scene_plan"][0]) == pipeline._public_call2_scene_plan(
-        baseline["scene_plan"][0]
-    )
-
-    for proof in ({}, {"source_segment": "C999", "source_quote": quote},
-                  {"source_segment": "C001", "source_quote": "Not in the source."},
-                  {"source_segment": "C001"}):
-        invalid = _audit_wire_from_confirmed(draft)
-        invalid["wardrobes"][0].update(source_segment="C001", source_quote=quote)
-        invalid["wardrobes"][1].update(proof)
-        rejected, reason = pipeline.parse_call2_plan_audit(
-            json.dumps(invalid), *args, segments=segments,
-        )
-        assert rejected is None and "source-only" in reason
-
-
-@pytest.mark.parametrize(("proof", "expected_error"), [
-    ({"source_segment": "C001", "source_quote": "Doyoon closes the door."}, ""),
-    ({}, "source-only"),
-    ({"source_segment": "C999", "source_quote": "Doyoon closes the door."}, "source-only"),
-    ({"source_segment": "C001", "source_quote": "Another action."}, "source-only"),
-])
-def test_audit_corrected_cast_requires_new_source_only_actor_proof(proof, expected_error):
-    draft = _confirmed_plan_scene()
-    wire = _audit_wire_from_confirmed(draft)
-    wire["scenes"][0].update(
-        characters=["Doyoon"], scene_brief="Doyoon closes the door.",
-        interaction_contract="Doyoon closes the door alone; no other person is visible.",
-    )
-    wire["wardrobes"] = [{
-        "i": 1, "name": "Doyoon", "summary": "Clothing is not established.",
-        "worn": [], "removed": [], **proof,
-    }]
-    result, reason = pipeline.parse_call2_plan_audit(
-        json.dumps(wire), pipeline.merged_toggles({
-            "output_count_min": 1, "output_count_max": 1, "key_visual": False,
-        }), "Doyoon closes the door.\n\n[Slot 0]", {"C001": 0},
-        _audit_draft(draft), ["Mira"], segments={"C001": {"text": "Doyoon closes the door."}},
-    )
-    if expected_error:
-        assert result is None and expected_error in reason
-    else:
-        assert result is not None and not reason
-        assert result["scene_plan"][0]["characters"] == ["Doyoon"]
-        assert list(result["scene_plan"][0]["wardrobe_state"]) == ["Doyoon"]
-        assert pipeline._public_call2_scene_plan(result["scene_plan"][0])["characters"] == ["Doyoon"]
-
-
-def test_sparse_audit_corrected_source_only_cast_carries_literal_proof_on_return():
-    drafts = [_confirmed_plan_scene(f"C{i:03d}") for i in range(1, 4)]
-    quote = "Doyoon checks the arrivals board."
-    wire = {"scenes": [
-        {"i": 1, "characters": ["Doyoon"], "interaction_contract": "Doyoon waits alone."},
-        {"i": 2, "interaction_contract": "Mira waits alone."},
-        {"i": 3, "characters": ["Doyoon"], "interaction_contract": "Doyoon walks alone."},
-    ], "wardrobes": [
-        {"i": 1, "name": "Doyoon", "summary": "Clothing is unknown.",
-         "worn": [], "removed": [], "source_segment": "C001", "source_quote": quote},
-        {"i": 2, "name": "Mira", "summary": "Mira wears a coat.",
-         "worn": ["coat"], "removed": []},
-    ]}
-    args = (
-        pipeline.merged_toggles({"output_count_min": 3, "output_count_max": 3, "key_visual": False}),
-        "Doyoon checks the arrivals board.\n\n[Slot 0]\n\nMira waits.\n\n[Slot 1]\n\nDoyoon walks away.\n\n[Slot 2]",
-        {"C001": 0, "C002": 1, "C003": 2}, _audit_draft(*drafts), ["Mira"],
-    )
-    segments = {"C001": {"text": quote}, "C002": {"text": "Mira waits."},
-                "C003": {"text": "Doyoon walks away."}}
-    confirmed, reason = pipeline.parse_call2_plan_audit(json.dumps(wire), *args, segments=segments)
-    assert not reason
-    first, _, third = confirmed["scene_plan"]
-    assert first["characters"] == third["characters"] == ["Doyoon"]
-    assert first["source_only_character_evidence"] == third["source_only_character_evidence"] == {
-        "Doyoon": {"anchor_segment": "C001", "quote": quote},
-    }
-    assert first["source_only_character_evidence"] is not third["source_only_character_evidence"]
-    first["source_only_character_evidence"]["Doyoon"]["quote"] = "modified"
-    assert third["source_only_character_evidence"]["Doyoon"]["quote"] == quote
-    for mutation, expected in (
-        (lambda broken: broken["wardrobes"][0].pop("source_quote"), "source-only"),
-        (lambda broken: broken["wardrobes"].pop(0), "최초 체크포인트 누락"),
-        (lambda broken: broken["wardrobes"].append({**broken["wardrobes"][0],
-            "i": 3, "source_quote": "Not in the source."}), "source-only"),
-    ):
-        broken = deepcopy(wire)
-        mutation(broken)
-        rejected, reason = pipeline.parse_call2_plan_audit(
-            json.dumps(broken), *args, segments=segments,
-        )
-        assert rejected is None and expected in reason
-
-
-def test_source_only_plan_actor_requires_audited_literal_segment_evidence():
-    source = "Doyoon studies alone at his desk.\n\n[Slot 0]"
-    toggles = pipeline.merged_toggles({
-        "output_count_min": 1, "output_count_max": 1, "key_visual": False,
-    })
-    scene = {
-        "anchor_segment": "C001", "characters": ["Doyoon"],
-        "scene_brief": "Doyoon studies alone.", "anonymous_partner_fragment": False,
-        "interaction_contract": "Doyoon studies alone; no other person is visible.",
-        "wardrobe_state": {"Doyoon": {
-            "summary": "Clothing not established.",
-            "outfit_state": {"worn": [], "removed": []},
-        }},
-    }
-    args = (toggles, source, {"C001": 0}, _audit_draft(scene), ["Hiyori"])
-    segments = {"C001": {"text": "Doyoon studies alone at his desk."}}
-    for evidence in (
-        {},
-        {"source_segment": "C999", "source_quote": "Doyoon studies alone at his desk."},
-        {"source_segment": "C001", "source_quote": "Ghost opens the door."},
-    ):
-        response = _audit_wire_from_confirmed(scene)
-        response["wardrobes"][0].update(evidence)
-        rejected, reason = pipeline.parse_call2_plan_audit(
-            json.dumps(response), *args, segments=segments,
-        )
-        assert rejected is None and "source-only" in reason
-
-    response = _audit_wire_from_confirmed(scene)
-    response["wardrobes"][0].update(
-        source_segment="C001", source_quote="Doyoon studies alone at his desk.",
-    )
-    confirmed, reason = pipeline.parse_call2_plan_audit(
-        json.dumps(response), *args, segments=segments,
-    )
-    assert not reason
-    assert confirmed["scene_plan"][0]["characters"] == ["Doyoon"]
-
-
-def test_audited_wardrobe_overrides_stale_call1_and_detail_mismatch_retries():
-    audited = {"plan_id": "S001", "slot": 0, **_confirmed_plan_scene()}
-    bound = pipeline.bind_scene_plan_wardrobes(
-        [audited], ["C001"], {}, [], [{
-            "segment_id": "C001", "character": "Mira", "state": "Mira removed her jacket.",
-        }], "message-1", wardrobe_at_start=[{
-            "character": "Mira", "state": "Mira wears a jacket.",
-        }],
-    )[0]
-    assert bound["wardrobe_snapshot"]["Mira"]["worn"] == ["open jacket"]
-    assert bound["wardrobe_snapshot"]["Mira"]["removed"] == []
-    assert "removed her jacket" not in bound["continuity_note"]
-    assert _confirmed_plan_scene()["interaction_contract"] == pipeline._public_call2_scene_plan(bound)["interaction_contract"]
-    template = _toon_for_slots([0]).replace("Hana", "Mira")
-    context = {0: {
-        "scene_brief": bound["scene_brief"],
-        "interaction_contract": bound["interaction_contract"],
-        "wardrobe_state": bound["wardrobe_state"],
-    }}
-    wrong, missing, discarded, reason = pipeline._parse_call2_detail_partial(
-        template.replace("school uniform", "removed jacket"),
-        pipeline.merged_toggles({"key_visual": False}), [0], ["S001"], "TEST",
-        {0: bound["wardrobe_snapshot"]}, {0: ["Mira"]}, context,
-    )
-    assert not wrong and missing == [0] and discarded == [] and not reason
-    good, missing, discarded, reason = pipeline._parse_call2_detail_partial(
-        template.replace("school uniform", "open jacket"),
-        pipeline.merged_toggles({"key_visual": False}), [0], ["S001"], "TEST",
-        {0: bound["wardrobe_snapshot"]}, {0: ["Mira"]}, context,
-    )
-    assert good[0]["interaction_contract"] == bound["interaction_contract"]
-    assert good[0]["characters"][0]["outfit_state"]["worn"] == ["open jacket"]
-    assert missing == discarded == [] and not reason
-
-
-def test_audited_detail_copies_canonical_lists_after_equivalent_fresh_outfit():
-    plan = {"plan_id": "S001", "slot": 0, **_confirmed_plan_scene()}
-    confirmed = {"worn": ["Open Jacket", "shirt"], "removed": ["scarf", "belt"]}
-    plan["wardrobe_state"]["Mira"] = {
-        "summary": "Mira wears an open jacket and shirt, with scarf and belt removed.",
-        "outfit_state": deepcopy(confirmed),
-    }
-    original_plan = deepcopy(plan)
-    generated = _toon_for_slots(
-        [0], outfit="SHIRT, open jacket", name_by_slot={0: "Mira"},
-    ).replace("removed: []", "removed: [BELT, SCARF]")
-    kept, missing, discarded, reason = pipeline._parse_call2_detail_partial(
-        generated, pipeline.merged_toggles({"key_visual": False}),
-        [0], ["S001"], "TEST-EQUIVALENT-DETAIL",
-        {0: {"Mira": confirmed}}, {0: ["Mira"]}, {0: plan},
-    )
-    assert not reason and missing == discarded == []
-    assert kept[0]["characters"][0]["outfit_state"] == {
-        "worn": ["SHIRT", "open jacket"], "removed": ["BELT", "SCARF"],
-    }
-    descriptors, reason = pipeline.bind_audited_plan_descriptors(
-        [kept[0]], [plan], "TEST-EQUIVALENT-DETAIL",
-    )
-    assert not reason
-    character = descriptors[0]["characters"][0]
-    assert character["outfit_state"] == confirmed
-    assert character["outfit_state"] is not plan["wardrobe_state"]["Mira"]["outfit_state"]
-    assert character["positive"] == "1girl, black hair"
-    assert plan == original_plan
-    character["outfit_state"]["worn"].append("later edit")
-    assert plan == original_plan
-
-
-@pytest.mark.parametrize("invalid_outfit", [
-    "          body_state: clothed\n          worn: [open jacket]\n          removed: []\n",
-    "          removed: []\n",
-    "          worn: [nude, open jacket]\n          removed: []\n",
-])
-def test_audited_detail_cannot_normalize_malformed_fresh_outfit_into_valid_state(invalid_outfit):
-    scene = {"plan_id": "S001", "slot": 0, **_confirmed_plan_scene()}
-    expected = scene["wardrobe_state"]["Mira"]["outfit_state"]
-    valid = _toon_for_slots([0], outfit="open jacket", name_by_slot={0: "Mira"})
-    malformed = valid.replace(
-        "          worn: [open jacket]\n          removed: []\n", invalid_outfit,
-    )
-    assert malformed != valid
-    kept, missing, discarded, reason = pipeline._parse_call2_detail_partial(
-        malformed, pipeline.merged_toggles({"key_visual": False}),
-        [0], ["S001"], "TEST-MALFORMED-FRESH-WARDROBE",
-        {0: {"Mira": expected}}, {0: ["Mira"]}, {0: scene},
-    )
-    assert kept == {} and missing == [0] and discarded == [] and not reason
-    descriptor = pipeline.parse_toon_plan(
-        malformed, pipeline.merged_toggles({"key_visual": False}), "TEST-MALFORMED",
-    )[0]
-    rejected, reason = pipeline.bind_audited_plan_descriptors([descriptor], [scene], "TEST-MALFORMED")
-    assert rejected == [] and "복장 불일치" in reason
-
-
-@pytest.mark.asyncio
-async def test_pipeline_confirms_plan_before_detail_and_never_late_llm_audits(monkeypatch):
-    calls, requests = [], {}
-
-    async def fake_call(name, messages, *_args, **_kwargs):
-        calls.append(name)
-        requests[name] = "\n".join(str(item.get("content") or "") for item in messages)
-        if name == "CALL2-PLAN":
-            return json.dumps({"scene_plan": [{
-                "anchor_segment": "C001", "characters": ["Mira"],
-                "scene_brief": "Mira takes off her jacket.",
-                "anonymous_partner_fragment": False,
-            }]})
-        if name == "CALL2-PLAN-AUDIT":
-            return "```json\n" + json.dumps(_audit_wire_from_confirmed(_confirmed_plan_scene())) + "\n```"
-        if name.startswith("CALL2-DETAIL"):
-            return _toon_for_slots([0]).replace("Hana", "Mira").replace(
-                "school uniform", "open jacket",
-            )
-        raise AssertionError(f"Unexpected pipeline call: {name}")
-
-    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_call)
-    result = await pipeline.build_from_context(
-        {
-            "session_id": "plan_audit_order_1234",
-            "target_slotted": "Mira opens her jacket and reaches for the door.\n\n[Slot 0]",
-            "chats": [{"role": "char", "data": "Mira opens her jacket and reaches for the door."}],
-        },
-        {
-            "call1_enabled": False, "call2_parallel_enabled": True,
-            "call2_parallel_max_concurrency": 1, "call2_parallel_slow_retry_enabled": False,
-            "output_count_min": 1, "output_count_max": 1,
-            "key_visual": False, "call3_enabled": False, "speak_enabled": False,
-        },
-        "### Mira\n-default_outfit\nopen jacket",
-        extra_names="Mira", extra_costume="### Mira\n-default_outfit\nopen jacket",
-    )
-    assert calls[0:2] == ["CALL2-PLAN", "CALL2-PLAN-AUDIT"]
-    assert "Markdown fences" in requests["CALL2-PLAN-AUDIT"]
-    assert "Return one bare JSON object with scenes only" in requests["CALL2-PLAN-AUDIT"]
-    assert "Never output outfit_state, wardrobe_state" in requests["CALL2-PLAN-AUDIT"]
-    assert "# COMPLETE Cxxx SOURCE REFERENCE" in requests["CALL2-PLAN-AUDIT"]
-    assert "# FULL CURRENT SOURCE" not in requests["CALL2-PLAN-AUDIT"]
-    assert "the response must end with }]}" not in requests["CALL2-PLAN-AUDIT"]
-    assert calls[2].startswith("CALL2-DETAIL")
-    assert not any(name == "CALL2-AUTHORITY-AUDIT" for name in calls)
-    assert "Mira takes off her jacket" in result["call2_plan_output"]
-    assert "Mira reaches toward the door with her jacket open" in result["call2_plan_audit_output"]
-    assert "Mira reaches toward the door with her jacket open" in requests[calls[2]]
-    assert "interaction_contract" in requests[calls[2]]
-    assert "open jacket" in requests[calls[2]]
-    assert result["items"][0]["wardrobe_state"]["Mira"]["outfit_state"]["removed"] == []
-    assert "open jacket" in result["items"][0]["characters"][0]["outfit_state"]["worn"]
-
-
-@pytest.mark.asyncio
-async def test_pipeline_rejects_fallback_that_replaces_audited_wardrobe(monkeypatch):
-    calls = []
-
-    async def fake_call(name, _messages, *_args, **_kwargs):
-        calls.append(name)
-        if name == "CALL2-PLAN":
-            return json.dumps({"scene_plan": [{
-                "anchor_segment": "C001", "characters": ["Mira"],
-                "scene_brief": "Mira reaches toward the door.",
-                "anonymous_partner_fragment": False,
-            }]})
-        if name == "CALL2-PLAN-AUDIT":
-            return json.dumps(_audit_wire_from_confirmed(_confirmed_plan_scene()))
-        if name == "CALL2-FALLBACK":
-            return _toon_for_slots([0]).replace("Hana", "Mira").replace(
-                "school uniform", "removed jacket",
-            )
-        raise AssertionError(f"Unexpected pipeline call: {name}")
-
-    async def broken_detail(**_kwargs):
-        return [], [], [0], []
-
-    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_call)
-    monkeypatch.setattr(pipeline, "_run_parallel_call2_details", broken_detail)
-    with pytest.raises(RuntimeError, match="복장 불일치"):
-        await pipeline.build_from_context(
-            {
-                "session_id": "plan_audit_fallback_1234",
-                "target_slotted": "Mira opens her jacket and reaches for the door.\n\n[Slot 0]",
-                "chats": [{"role": "char", "data": "Mira opens her jacket and reaches for the door."}],
-            },
-            {
-                "call1_enabled": False, "call2_parallel_enabled": True,
-                "call2_parallel_max_concurrency": 1, "call2_parallel_slow_retry_enabled": False,
-                "output_count_min": 1, "output_count_max": 1,
-                "key_visual": False, "call3_enabled": False, "speak_enabled": False,
-            },
-            "### Mira\n-default_outfit\nopen jacket",
-            extra_names="Mira", extra_costume="### Mira\n-default_outfit\nopen jacket",
-        )
-    assert calls == ["CALL2-PLAN", "CALL2-PLAN-AUDIT", "CALL2-FALLBACK"]
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(("scene_slots", "reason_fragment"), [
-    ([0, 1, 2], "후보 밖 scene slot"),
-    ([0, 1, 1], "scene slot 중복"),
-    ([0], "PLAN scene slot 불일치"),
-])
-async def test_audited_global_fallback_rejects_raw_excess_duplicate_or_missing_scenes(
-    monkeypatch, scene_slots, reason_fragment,
-):
-    calls = []
-    dispatched = []
-
-    async def fake_call(name, _messages, *_args, **_kwargs):
-        calls.append(name)
-        if name == "CALL2-PLAN":
-            return json.dumps({"scene_plan": [{
-                "anchor_segment": f"C{index + 1:03d}", "characters": ["Mira"],
-                "scene_brief": f"Mira in source scene {index}",
-            } for index in range(2)]})
-        if name == "CALL2-PLAN-AUDIT":
-            return json.dumps(_audit_wire_from_confirmed(
-                _confirmed_plan_scene("C001"), _confirmed_plan_scene("C002"),
-            ))
-        if name == "CALL2-FALLBACK":
-            return _toon_for_slots(scene_slots, outfit="open jacket", name_by_slot={
-                slot: "Mira" for slot in scene_slots
-            })
-        raise AssertionError(f"unexpected call: {name}")
-
-    async def fail_detail(**_kwargs):
-        return [], [], [0, 1], []
-
-    async def on_call2_ready(payload):
-        dispatched.append(payload)
-
-    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_call)
-    monkeypatch.setattr(pipeline, "_run_parallel_call2_details", fail_detail)
-    with pytest.raises(RuntimeError, match=reason_fragment):
-        await pipeline.build_from_context(
-            {
-                "session_id": f"audited_fallback_raw_scenes_{len(scene_slots)}_1234",
-                "target_slotted": "Mira opens her jacket.\n\n[Slot 0]\n\nMira reaches the door.\n\n[Slot 1]",
-                "chats": [{"role": "char", "data": "Mira opens her jacket.\n\nMira reaches the door."}],
-            },
-            {
-                "call1_enabled": False, "call2_parallel_enabled": True,
-                "call2_parallel_max_concurrency": 1, "call2_parallel_slow_retry_enabled": False,
-                "output_count_min": 2, "output_count_max": 2,
-                "key_visual": False, "call3_enabled": False, "speak_enabled": False,
-            },
-            "### Mira\n-default_outfit\nopen jacket",
-            extra_names="Mira", extra_costume="### Mira\n-default_outfit\nopen jacket",
-            on_call2_ready=on_call2_ready,
-        )
-    assert calls == ["CALL2-PLAN", "CALL2-PLAN-AUDIT", "CALL2-FALLBACK"]
-    assert not dispatched
-
-
-def test_unscoped_toon_parser_retains_historical_scene_cap():
-    parsed = pipeline.parse_toon_plan(
-        _toon_for_slots([0, 1, 2]),
-        pipeline.merged_toggles({"output_count_max": 2}),
-        "TEST-HISTORICAL-CAP",
-    )
-    assert [item["slot"] for item in parsed] == [0, 1]
-
-
-@pytest.mark.asyncio
-async def test_pipeline_does_not_bypass_invalid_corrected_plan(monkeypatch):
-    calls = []
-
-    async def fake_call(name, _messages, *_args, **_kwargs):
-        calls.append(name)
-        if name == "CALL2-PLAN":
-            return json.dumps({"scene_plan": [{
-                "anchor_segment": "C001", "characters": ["Mira"],
-                "scene_brief": "Mira opens her jacket.",
-                "anonymous_partner_fragment": False,
-            }]})
-        if name == "CALL2-PLAN-AUDIT":
-            return json.dumps({"scenes": [], "wardrobes": []})
-        raise AssertionError(f"Unexpected pipeline call: {name}")
-
-    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_call)
-    with pytest.raises(ValueError, match="장면 수 변경 금지"):
-        await pipeline.build_from_context(
-            {
-                "session_id": "plan_audit_invalid_1234",
-                "target_slotted": "Mira opens her jacket.\n\n[Slot 0]",
-                "chats": [{"role": "char", "data": "Mira opens her jacket."}],
-            },
-            {
-                "call1_enabled": False, "call2_parallel_enabled": True,
-                "call2_parallel_max_concurrency": 1, "call2_parallel_slow_retry_enabled": False,
-                "output_count_min": 1, "output_count_max": 1,
-                "key_visual": False, "call3_enabled": False, "speak_enabled": False,
-            },
-            "### Mira\n-default_outfit\nopen jacket",
-            extra_names="Mira", extra_costume="### Mira\n-default_outfit\nopen jacket",
-        )
-    assert calls == ["CALL2-PLAN", "CALL2-PLAN-AUDIT"]
-
-
-@pytest.mark.asyncio
-async def test_resolver_authority_rejects_draft_created_ghost_at_plan_audit(monkeypatch):
-    calls = []
-
-    async def fake_call(name, messages, *_args, **_kwargs):
-        calls.append(name)
-        if name == "CALL2-PLAN":
-            return json.dumps({"scene_plan": [{
-                "anchor_segment": "C001", "characters": ["Ghost"],
-                "scene_brief": "Ghost reaches for Mira's jacket",
-            }]})
-        if name == "CALL2-PLAN-AUDIT":
-            request = messages[-1]["content"]
-            canonical_names = json.loads(request.split(
-                "# CURRENT CANONICAL NAMES\n", 1,
-            )[1].split("\n\n# SOURCE-TIME WARDROBE AUTHORITY", 1)[0])
-            assert canonical_names == ["Mira"]
-            corrected = _confirmed_plan_scene()
-            corrected["characters"] = ["Mira", "Ghost"]
-            corrected["wardrobe_state"]["Ghost"] = {
-                "summary": "Ghost is not present in the source.",
-                "outfit_state": {"worn": [], "removed": []},
-            }
-            return json.dumps(_audit_wire_from_confirmed(corrected))
-        raise AssertionError(f"unexpected call: {name}")
-
-    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_call)
-    with pytest.raises(ValueError, match="source-only"):
-        await pipeline.build_from_context(
-            {
-                "session_id": "resolver_plan_ghost_1234",
-                "target_slotted": "Mira opens her jacket and reaches for the door.\n\n[Slot 0]",
-                "chats": [{"role": "char", "data": "Mira opens her jacket and reaches for the door."}],
-            },
-            {
-                "call1_enabled": False, "call2_parallel_enabled": True,
-                "call2_parallel_max_concurrency": 1, "call2_parallel_slow_retry_enabled": False,
-                "output_count_min": 1, "output_count_max": 1,
-                "key_visual": False, "call3_enabled": False, "speak_enabled": False,
-            },
-            "### Mira\n-default_outfit\nopen jacket",
-            extra_names="Mira", extra_costume="### Mira\n-default_outfit\nopen jacket",
-            pre_resolved_profile_result={
-                "characters": [{"name": "Mira", "in_history": False, "profile_timeline": []}],
-                "history_characters": [],
-                "current_characters": [{"name": "Mira", "confidence": 1.0}],
-                "uncertainties": [], "profile_events": [], "initial_visual_bases": [],
-                "visual_base_events": [], "repair_requests": [],
-                "validation_warnings": [], "validation_errors": [],
-            },
-        )
-    assert calls == ["CALL2-PLAN", "CALL2-PLAN-AUDIT"]
-
-
-@pytest.mark.asyncio
-async def test_rejected_call1_ghost_cannot_authorize_audited_plan_or_dispatch(monkeypatch, capsys):
-    calls, dispatched = [], []
-
-    async def fake_call(name, messages, *_args, **kwargs):
-        calls.append(name)
-        if name == "CALL1":
-            return json.dumps({
-                "wardrobe_at_start": [
-                    {"character": "Ghost", "worn": ["coat"], "removed": []},
-                    {"character": "Mira", "worn": ["open jacket"], "removed": []},
-                ],
-                "wardrobe_events": [], "hairstyle_events": [],
-            })
-        if name == "CALL2-PLAN":
-            return json.dumps({"scene_plan": [{
-                "anchor_segment": "C001", "characters": ["Ghost"],
-                "scene_brief": "Ghost wears a coat.",
-            }]})
-        if name == "CALL2-PLAN-AUDIT":
-            request = messages[-1]["content"]
-            canonical = json.loads(request.split(
-                "# CURRENT CANONICAL NAMES\n", 1,
-            )[1].split("\n\n# PAST HISTORY", 1)[0])
-            assert canonical == ["Mira"]
-            scene = _confirmed_plan_scene()
-            scene["characters"] = ["Ghost"]
-            scene["wardrobe_state"] = {
-                "Ghost": {"summary": "Ghost wears a coat.", "outfit_state": {
-                    "worn": ["coat"], "removed": [],
-                }},
-            }
-            response = json.dumps(_audit_wire_from_confirmed(scene))
-            valid, reason = kwargs["result_validator"](response)
-            assert valid is False and "source-only" in reason
-            return response
-        raise AssertionError(f"No DETAIL or generation after invalid audit: {name}")
-
-    async def on_ready(data):
-        dispatched.append(data)
-
-    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_call)
-    with pytest.raises(RuntimeError, match="CALL1 현재 복장 계약 검증 실패"):
-        await pipeline.build_from_context(
-            {
-                "session_id": "call1_rejected_ghost_plan_1234",
-                "target_slotted": "Mira opens her jacket.\n\n[Slot 0]",
-                "chats": [{"role": "char", "data": "Mira opens her jacket."}],
-            },
-            {
-                "call1_backtranslate_enabled": False, "call1_enabled": True,
-                "call1_parallel_enabled": False, "call2_parallel_enabled": False,
-                "output_count_min": 1, "output_count_max": 1,
-                "key_visual": False, "call3_enabled": False, "speak_enabled": False,
-            },
-            "### Mira\n-default_outfit\nopen jacket",
-            extra_names="Mira", extra_costume="### Mira\n-default_outfit\nopen jacket",
-            on_call2_ready=on_ready,
-            pre_resolved_profile_result={
-                "characters": [{"name": "Mira", "in_history": False, "profile_timeline": []}],
-                "history_characters": [],
-                "current_characters": [{"name": "Mira", "confidence": 1.0}],
-                "uncertainties": [], "profile_events": [], "initial_visual_bases": [],
-                "visual_base_events": [], "repair_requests": [],
-                "validation_warnings": [], "validation_errors": [],
-            },
-        )
-    assert calls == ["CALL1"]
-    assert dispatched == []
-    assert "시작 복장 canonical 이름 오류" in capsys.readouterr().out
-
-
-@pytest.mark.parametrize("with_resolver", [False, True])
-@pytest.mark.asyncio
-async def test_rejected_call1_lowercase_cannot_change_mira_canonical_case(monkeypatch, with_resolver):
-    calls = []
-
-    async def fake_call(name, messages, *_args, **_kwargs):
-        calls.append(name)
-        if name == "CALL1":
-            response = json.dumps({
-                "wardrobe_at_start": [{"character": "mira", "worn": ["open jacket"], "removed": []}],
-                "wardrobe_events": [], "hairstyle_events": [],
-            })
-            assert "canonical 이름 오류" in _kwargs["result_validator"](response)[1]
-            return response
-        if name == "CALL2-PLAN":
-            return json.dumps({"scene_plan": [{
-                "anchor_segment": "C001", "characters": ["Mira"],
-                "scene_brief": "Mira opens her jacket.",
-            }]})
-        if name == "CALL2-PLAN-AUDIT":
-            request = messages[-1]["content"]
-            canonical = json.loads(request.split(
-                "# CURRENT CANONICAL NAMES\n", 1,
-            )[1].split("\n\n# PAST HISTORY", 1)[0])
-            assert canonical == ["Mira"]
-            return json.dumps(_audit_wire_from_confirmed(_confirmed_plan_scene()))
-        if name.startswith("CALL2-DETAIL"):
-            return _toon_for_slots([0]).replace("Hana", "Mira").replace(
-                "school uniform", "open jacket",
-            )
-        raise AssertionError(f"Unexpected pipeline call: {name}")
-
-    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_call)
-    with pytest.raises(RuntimeError, match="CALL1 현재 복장 계약 검증 실패"):
-        await pipeline.build_from_context(
-            {
-                "session_id": "call1_rejected_lowercase_mira_1234",
-                "target_slotted": "Mira opens her jacket and reaches for the door.\n\n[Slot 0]",
-                "chats": [{"role": "char", "data": "Mira opens her jacket and reaches for the door."}],
-            },
-            {
-                "call1_backtranslate_enabled": False, "call1_enabled": True,
-                "call1_parallel_enabled": False, "call2_parallel_enabled": True,
-                "call2_parallel_max_concurrency": 1, "call2_parallel_slow_retry_enabled": False,
-                "output_count_min": 1, "output_count_max": 1,
-                "key_visual": False, "call3_enabled": False, "speak_enabled": False,
-            },
-            "### mira\n-default_outfit\nopen jacket",
-            extra_names="Mira", extra_costume="### mira\n-default_outfit\nopen jacket",
-            backtranslate_names="Mira",
-            pre_resolved_profile_result={
-                "characters": [{"name": "Mira", "in_history": False, "profile_timeline": []}],
-                "history_characters": [],
-                "current_characters": [{"name": "Mira", "confidence": 1.0}],
-                "uncertainties": [], "profile_events": [], "initial_visual_bases": [],
-                "visual_base_events": [], "repair_requests": [],
-                "validation_warnings": [], "validation_errors": [],
-            } if with_resolver else None,
-        )
-    assert calls == ["CALL1"]
-
-
-@pytest.mark.asyncio
-async def test_character_fix_reuses_audited_interaction_and_wardrobe(monkeypatch):
-    requests = []
-
-    async def fake_call(name, messages, *_args, **_kwargs):
-        requests.append((name, messages))
-        return _toon_for_slots([0]).replace("Hana", "Mira").replace(
-            "school uniform", "open jacket",
-        )
-
-    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_call)
-    scene = _confirmed_plan_scene()
-    candidates = [{
-        "slot": 0, "plan_id": "S001", "expected_characters": ["Mira"],
-        "assigned_wardrobe": {"Mira": scene["wardrobe_state"]["Mira"]["outfit_state"]},
-        "scene_context": scene,
-        "descriptor": {"camera": "medium shot", "scene": "Mira reaches the door", "slot": 0},
-    }]
-    descriptors, _raw, failed = await pipeline._run_call2_character_mismatch_fixes(
-        candidates=candidates, fix_prompt="Restore the confirmed scene.",
-        toggles=pipeline.merged_toggles({"key_visual": False}), stream_notify=None,
-    )
-    assert not failed
-    assert descriptors[0]["interaction_contract"] == scene["interaction_contract"]
-    assert descriptors[0]["wardrobe_state"] == scene["wardrobe_state"]
-    request = requests[0][1][-1]["content"]
-    assert "open jacket" in request and "interaction_contract" in request
-
-
-@pytest.mark.asyncio
-async def test_character_fix_repairs_rejected_wardrobe_and_actor_text_from_confirmed_plan(monkeypatch):
-    calls = []
-
-    async def fake_call(name, messages, *_args, **kwargs):
-        calls.append(name)
-        if name == "CALL2-PLAN":
-            return json.dumps({"scene_plan": [{
-                "anchor_segment": "C001", "characters": ["Mira"],
-                "scene_brief": "Mira reaches the door with her jacket open.",
-            }]})
-        if name == "CALL2-PLAN-AUDIT":
-            return json.dumps(_audit_wire_from_confirmed(_confirmed_plan_scene()))
-        if name.startswith("CALL2-DETAIL"):
-            return """<lb-xnai>
-scenes[1]:
-  - camera: medium shot
-    characters[1]:
-      - name: Not Mira
-        positive: 1girl, black hair, jacket removed
-        negative: lowres
-        outfit_state:
-          worn: []
-          removed: [open jacket]
-    scene: Not Mira removed the jacket at the door
-    slot: 0
-    supplement: Not Mira owns the contact
-</lb-xnai>"""
-        if name.startswith("CALL2-FIX"):
-            system = messages[0]["content"]
-            request = json.loads(messages[1]["content"].rsplit("\n\n", 1)[-1])
-            assert "confirmed wardrobe_state" in system
-            assert "rejected_scene" in system
-            assert "positive, scene, and supplement" in system
-            assert "Copy camera, scene, supplement, and slot exactly" not in system
-            assert request["scene_context"]["interaction_contract"]
-            assert request["scene_context"]["wardrobe_state"]["Mira"]["outfit_state"]["worn"] == ["open jacket"]
-            assert request["assigned_wardrobe"]["Mira"]["worn"] == ["open jacket"]
-            corrected = """<lb-xnai>
-scenes[1]:
-  - camera: medium shot
-    characters[1]:
-      - name: Mira
-        positive: 1girl, black hair, open jacket
-        negative: lowres
-        outfit_state:
-          worn: [open jacket]
-          removed: []
-    scene: Mira reaches the door with her jacket open
-    slot: 0
-    supplement: Mira owns the reaching contact; jacket stays open
-</lb-xnai>"""
-            assert kwargs["result_validator"](corrected)[0] is True
-            return corrected
-        raise AssertionError(f"Unexpected pipeline call: {name}")
-
-    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_call)
-    result = await pipeline.build_from_context(
-        {
-            "session_id": "plan_audit_fix_rejected_wardrobe_1234",
-            "target_slotted": "Mira opens her jacket and reaches toward the door.\n\n[Slot 0]",
-            "chats": [{"role": "char", "data": "Mira opens her jacket and reaches toward the door."}],
-        },
-        {
-            "call1_enabled": False, "call2_parallel_enabled": True,
-            "call2_parallel_max_concurrency": 1, "call2_parallel_slow_retry_enabled": False,
-            "output_count_min": 1, "output_count_max": 1,
-            "key_visual": False, "call3_enabled": False, "speak_enabled": False,
-        },
-        "### Mira\n-default_outfit\nopen jacket",
-        extra_names="Mira", extra_costume="### Mira\n-default_outfit\nopen jacket",
-    )
-    assert calls[:2] == ["CALL2-PLAN", "CALL2-PLAN-AUDIT"]
-    assert sum(name.startswith("CALL2-FIX") for name in calls) == 1
-    assert "CALL2-FALLBACK" not in calls
-    assert result["call2_fix_failed_slots"] == []
-    item = result["items"][0]
-    assert item["characters"][0]["name"] == "Mira"
-    assert item["characters"][0]["negative"] == "lowres"
-    assert item["characters"][0]["outfit_state"] == {
-        "worn": ["open jacket"], "removed": [],
-    }
-    assert "Mira reaches the door" in item["scene"]
-    assert "jacket stays open" in item["supplement"]
-    assert "open jacket" in item["raw_positive"]
-
-
-@pytest.mark.asyncio
-async def test_one_missing_detail_scene_uses_complete_confirmed_fallback(monkeypatch):
-    calls = []
-    narrative = "Mira opens her jacket.\n\nMira reaches the door.\n\nMira enters the room."
-    slotted = "Mira opens her jacket.\n\n[Slot 0]\n\nMira reaches the door.\n\n[Slot 1]\n\nMira enters the room.\n\n[Slot 2]"
-
-    async def fake_call(name, _messages, *_args, **_kwargs):
-        calls.append(name)
-        if name == "CALL2-PLAN":
-            return json.dumps({"scene_plan": [{
-                "anchor_segment": f"C{i + 1:03d}", "characters": ["Mira"],
-                "scene_brief": f"Mira at instant {i}.", "anonymous_partner_fragment": False,
-            } for i in range(3)]})
-        if name == "CALL2-PLAN-AUDIT":
-            scenes = [_confirmed_plan_scene(f"C{i + 1:03d}") for i in range(3)]
-            for index, scene in enumerate(scenes):
-                scene["scene_brief"] = f"Mira changes position at instant {index}."
-            return json.dumps(_audit_wire_from_confirmed(*scenes))
-        if name == "CALL2-FALLBACK":
-            return _toon_for_slots([0, 1, 2]).replace("Hana", "Mira").replace(
-                "school uniform", "open jacket",
-            )
-        raise AssertionError(f"Unexpected pipeline call: {name}")
-
-    async def missing_one_detail(**_kwargs):
-        return [{"kind": "scene", "slot": 0}, {"kind": "scene", "slot": 1}], [], [2], []
-
-    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_call)
-    monkeypatch.setattr(pipeline, "_run_parallel_call2_details", missing_one_detail)
-    result = await pipeline.build_from_context(
-        {
-            "session_id": "plan_audit_one_failed_slot_1234",
-            "target_slotted": slotted,
-            "chats": [{"role": "char", "data": narrative}],
-        },
-        {
-            "call1_enabled": False, "call2_parallel_enabled": True,
-            "call2_parallel_max_concurrency": 1, "call2_parallel_slow_retry_enabled": False,
-            "output_count_min": 3, "output_count_max": 3,
-            "key_visual": False, "call3_enabled": False, "speak_enabled": False,
-        },
-        "### Mira\n-default_outfit\nopen jacket",
-        extra_names="Mira", extra_costume="### Mira\n-default_outfit\nopen jacket",
-    )
-    assert calls == ["CALL2-PLAN", "CALL2-PLAN-AUDIT", "CALL2-FALLBACK"]
-    assert [item["slot"] for item in result["items"]] == [0, 1, 2]
-    assert result["call2_fallback_stage"] == "CALL2-DETAIL-INCOMPLETE"
-    assert result["items"][2]["scene_brief"] == "Mira changes position at instant 2."
-
-
-@pytest.mark.asyncio
-async def test_corrected_anchor_reaches_assets_detail_and_result(monkeypatch):
-    requests = {}
-    planned_slots = []
-    narrative = "Mira hears a sound.\n\nMira opens her jacket and reaches the door."
-    slotted = "Mira hears a sound.\n\n[Slot 0]\n\nMira opens her jacket and reaches the door.\n\n[Slot 1]"
-
-    async def fake_call(name, messages, *_args, **_kwargs):
-        requests[name] = "\n".join(str(message.get("content") or "") for message in messages)
-        if name == "CALL2-PLAN":
-            return json.dumps({"scene_plan": [{
-                "anchor_segment": "C001", "characters": ["Mira"],
-                "scene_brief": "Mira hears a sound.", "anonymous_partner_fragment": False,
-            }]})
-        if name == "CALL2-PLAN-AUDIT":
-            return json.dumps(_audit_wire_from_confirmed(_confirmed_plan_scene("C002")))
-        if name.startswith("CALL2-DETAIL"):
-            return _toon_for_slots([1]).replace("Hana", "Mira").replace(
-                "school uniform", "open jacket",
-            )
-        raise AssertionError(f"Unexpected pipeline call: {name}")
-
-    async def plan_ready(payload):
-        planned_slots.extend(payload["scene_slots"])
-
-    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_call)
-    result = await pipeline.build_from_context(
-        {
-            "session_id": "corrected_anchor_regression_1234",
-            "target_slotted": slotted, "chats": [{"role": "char", "data": narrative}],
-        },
-        {
-            "call1_enabled": False, "call2_parallel_enabled": True,
-            "call2_parallel_max_concurrency": 1, "call2_parallel_slow_retry_enabled": False,
-            "output_count_min": 1, "output_count_max": 1,
-            "key_visual": False, "call3_enabled": False, "speak_enabled": False,
-        },
-        "### Mira\n-default_outfit\nopen jacket", on_call2_plan_ready=plan_ready,
-        extra_names="Mira", extra_costume="### Mira\n-default_outfit\nopen jacket",
-    )
-    assert planned_slots == [1]
-    assert [item["slot"] for item in result["items"]] == [1]
-    assert result["items"][0]["anchor_segment"] == "C002"
-    assert "Mira opens her jacket and reaches the door" in requests[next(
-        name for name in requests if name.startswith("CALL2-DETAIL")
-    )]
-    assert result["items"][0]["scene_brief"] == _confirmed_plan_scene()["scene_brief"]
-
-
-def test_confirmed_unknown_wardrobe_does_not_restore_profile_defaults():
-    descriptor = {
-        "kind": "scene", "slot": 0, "camera": "medium shot", "scene": "Mira opens a door",
-        "wardrobe_state": {"Mira": {
-            "summary": "The passage does not establish Mira's clothing.",
-            "outfit_state": {"worn": [], "removed": []},
-        }},
-        "characters": [{"name": "Mira", "positive": "1girl", "outfit_state": {
-            "worn": [], "removed": [],
-        }}],
-    }
-    pipeline.apply_call2_authority_base([descriptor], {"Mira": "1girl"}, {
-        "Mira": ["school uniform"],
-    })
-    assert "school uniform" not in descriptor["characters"][0]["positive"]
-    assert descriptor["characters"][0]["outfit_state"] == {"worn": [], "removed": []}
-
-
-def test_confirmed_nude_list_stays_exclusive_and_does_not_restore_default():
-    descriptor = {
-        "kind": "scene", "slot": 0, "camera": "upper body", "scene": "Mira at the doorway",
-        "wardrobe_state": {"Mira": {
-            "summary": "Mira is unclothed after removing her jacket.",
-            "outfit_state": {"worn": ["nude"], "removed": ["open jacket"]},
-        }},
-        "characters": [{"name": "Mira", "positive": "1girl, nude", "outfit_state": {
-            "worn": ["nude"], "removed": ["open jacket"],
-        }}],
-    }
-    pipeline.apply_call2_authority_base([descriptor], {"Mira": "1girl"}, {
-        "Mira": ["school uniform", "open jacket"],
-    })
-    character = descriptor["characters"][0]
-    assert character["outfit_state"] == {"worn": ["nude"], "removed": ["open jacket"]}
-    assert "nude" in character["positive"]
-    assert "school uniform" not in character["positive"]
-    assert "open jacket" not in character["positive"]
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("parallel", [False, True])
-async def test_keyvis_detail_overlap_respects_parallel_toggle(monkeypatch, parallel):
-    keyvis_started = asyncio.Event()
-    release_keyvis = asyncio.Event()
-    detail_started = asyncio.Event()
-    active_keyvis = False
-    overlaps = []
-    calls = []
-
-    async def fake_llm(name, messages, *_args, **_kwargs):
-        nonlocal active_keyvis
-        calls.append(name)
-        if name == "CALL2-PLAN":
-            return json.dumps({"scene_plan": [{
-                "anchor_segment": "C001", "characters": ["Mira"],
-                "scene_brief": "Mira opens her jacket by the door",
-            }]})
-        if name == "CALL2-PLAN-AUDIT":
-            return _confirmed_test_plan_audit_response(messages)
-        if name == "CALL2-KEYVIS":
-            active_keyvis = True
-            keyvis_started.set()
-            try:
-                await release_keyvis.wait()
-            finally:
-                active_keyvis = False
-            return """<lb-xnai>
-keyvis:
-  camera: portrait
-  characters[1]:
-    - name: Mira
-      positive: 1girl, open jacket
-      outfit_state:
-        worn: [open jacket]
-        removed: []
-  scene: poster illustration of Mira
-scenes: []
-</lb-xnai>"""
-        if name.startswith("CALL2-DETAIL"):
-            overlaps.append(active_keyvis)
-            detail_started.set()
-            return _toon_for_slots([0], outfit="open jacket", name_by_slot={0: "Mira"})
-        raise AssertionError(f"unexpected call: {name}")
-
-    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_llm)
-    task = asyncio.create_task(pipeline.build_from_context(
-        {
-            "session_id": f"keyvis_detail_overlap_{parallel}_1234",
-            "target_slotted": "Mira opens her jacket by the door.\n\n[Slot 0]",
-            "chats": [{"role": "char", "data": "Mira opens her jacket by the door."}],
-        },
-        {
-            "call1_enabled": False, "call2_parallel_enabled": parallel,
-            "call2_parallel_max_concurrency": 1, "call2_parallel_slow_retry_enabled": False,
-            "output_count_min": 1, "output_count_max": 1,
-            "key_visual": True, "call3_enabled": False, "speak_enabled": False,
-        },
-        "### Mira\n-default_outfit\nopen jacket",
-        extra_names="Mira", extra_costume="### Mira\n-default_outfit\nopen jacket",
-    ))
-    try:
-        await asyncio.wait_for(keyvis_started.wait(), timeout=2)
-        if parallel:
-            await asyncio.wait_for(detail_started.wait(), timeout=2)
-        else:
-            await asyncio.sleep(0)
-        detail_started_before_keyvis_finished = detail_started.is_set()
-    finally:
-        release_keyvis.set()
-    result = await asyncio.wait_for(task, timeout=3)
-    assert detail_started_before_keyvis_finished is parallel
-    assert overlaps == [parallel]
-    assert calls[:2] == ["CALL2-PLAN", "CALL2-PLAN-AUDIT"]
-    assert [item["kind"] for item in result["items"]] == ["keyvis", "scene"]
-
-
-@pytest.mark.asyncio
-async def test_nonparallel_path_audits_plan_before_one_detail_worker_and_dispatch(monkeypatch):
-    calls = []
-    dispatched = []
-
-    async def fake_llm(call_name, messages, *_args, **_kwargs):
-        calls.append(call_name)
-        if call_name == "CALL2-PLAN":
-            return json.dumps({"scene_plan": [{
-                "anchor_segment": "C001", "characters": ["Mira"],
-                "scene_brief": "Mira enters the room",
-            }, {
-                "anchor_segment": "C002", "characters": ["Mira"],
-                "scene_brief": "Mira opens her jacket",
-            }]})
-        if call_name == "CALL2-PLAN-AUDIT":
-            return _confirmed_test_plan_audit_response(messages)
-        if call_name.startswith("CALL2-DETAIL"):
-            assert call_name.startswith("CALL2-DETAIL 1/1")
-            assigned = json.loads(messages[-1]["content"].split(
-                "# ASSIGNED SCENE PLAN DATA\n", 1,
-            )[1].split("\n\n# SERVER SCOPE", 1)[0])
-            assert [plan["slot"] for plan in assigned] == [0, 1]
-            assert [plan["scene_brief"] for plan in assigned] == [
-                "Mira enters the room", "Mira opens her jacket",
-            ]
-            assert all(plan["interaction_contract"] and
-                       plan["wardrobe_state"]["Mira"]["outfit_state"]["worn"] == ["open jacket"]
-                       for plan in assigned)
-            return _toon_for_slots([0, 1], outfit="open jacket", name_by_slot={
-                0: "Mira", 1: "Mira",
-            }).replace("black hair", "black hair, open jacket")
-        raise AssertionError(f"unexpected LLM call: {call_name}")
-
-    async def on_call2_ready(payload):
-        dispatched.append(payload)
-
-    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_llm)
-    result = await pipeline.build_from_context(
-        {
-            "session_id": "plan_audit_nonparallel_1234",
-            "target_slotted": (
-                "Mira enters the room.\n\n[Slot 0]\n\n"
-                "Mira opens her jacket.\n\n[Slot 1]"
-            ),
-            "chats": [{"role": "char", "data": "Mira enters the room.\n\nMira opens her jacket."}],
-        },
-        {
-            "call1_enabled": False, "call2_parallel_enabled": False,
-            "output_count_min": 2, "output_count_max": 2,
-            "key_visual": False, "call3_enabled": False, "speak_enabled": False,
-        },
-        "### Mira\n-default_outfit\nopen jacket",
-        extra_names="Mira", extra_costume="### Mira\n-default_outfit\nopen jacket",
-        on_call2_ready=on_call2_ready,
-    )
-    assert calls[:2] == ["CALL2-PLAN", "CALL2-PLAN-AUDIT"]
-    assert len(calls) == 3
-    assert calls[2].startswith("CALL2-DETAIL 1/1")
-    assert [item["slot"] for item in result["items"]] == [0, 1]
-    assert result["call2_fallback_stage"] == ""
-    assert len(dispatched) == 1
-    assert [item["slot"] for item in dispatched[0]["items"]] == [0, 1]
-    assert all("open jacket" in item["raw_positive"] for item in dispatched[0]["items"])
-
-
-def test_fresh_call1_requires_complete_canonical_start_and_owned_source_events():
-    context = "Mira waits in her jacket.\n\nMira takes off the jacket."
-    _, segments = pipeline._segment_current_context(context)
-    raw = {
-        "wardrobe_at_start": [{"character": "Mira", "worn": ["jacket"], "removed": []}],
-        "wardrobe_events": [{"segment_id": "C002", "character": "Mira",
-                             "worn": ["shirt"], "removed": ["jacket"],
-                             "evidence": "Mira takes off the jacket."}],
-        "hairstyle_events": [],
-    }
-    resolved = {"current_characters": [{"name": "Mira", "confidence": 1.0}],
-                "history_characters": [], "uncertainties": []}
-    parsed = pipeline.parse_call1_analysis(
-        json.dumps(raw), context, segments, "Mira", resolved_characters=resolved,
-        require_fresh_wardrobe=True,
-    )
-    assert parsed["wardrobe_at_start"] == raw["wardrobe_at_start"]
-    assert parsed["wardrobe_events"] == raw["wardrobe_events"]
-    for change in (
-        lambda value: value.pop("wardrobe_at_start"),
-        lambda value: value["wardrobe_at_start"].clear(),
-        lambda value: value["wardrobe_at_start"][0].update(character="mira"),
-        lambda value: value["wardrobe_at_start"][0].update(worn=["nude", "jacket"]),
-        lambda value: value["wardrobe_events"][0].update(segment_id="C001"),
-        lambda value: value["wardrobe_events"][0].update(evidence="Not in source."),
-    ):
-        invalid = deepcopy(raw)
-        change(invalid)
-        assert pipeline.parse_call1_analysis(
-            json.dumps(invalid), context, segments, "Mira", resolved_characters=resolved,
-            require_fresh_wardrobe=True,
-        ) is None
-    archived = {"wardrobe_at_start": [{"character": "Mira", "state": "Mira wears a jacket."}],
-                "wardrobe_events": [], "hairstyle_events": []}
-    assert pipeline.parse_call1_analysis(
-        json.dumps(archived), context, segments, "Mira", resolved_characters=resolved,
-    ) is not None
-    assert pipeline.parse_call1_analysis(
-        json.dumps(archived), context, segments, "Mira", resolved_characters=resolved,
-        require_fresh_wardrobe=True,
-    ) is None
-    assert pipeline._validate_fresh_call1_wardrobe(
-        raw, ["Mira"], segments, context, {"C001"},
-    )[0] is False
-
-
-def test_parallel_call1_fresh_snapshots_reject_conflicting_baselines_and_duplicate_changes():
-    start = [{"character": "Mira", "worn": ["jacket"], "removed": []}]
-    event = {"segment_id": "C002", "character": "Mira", "worn": ["shirt"],
-             "removed": ["jacket"], "evidence": "Mira removes her jacket."}
-    first = {"assigned_segment_ids": ["C001"], "value": {
-        "wardrobe_at_start": start, "wardrobe_events": [], "hairstyle_events": []}}
-    second = {"assigned_segment_ids": ["C002"], "value": {
-        "wardrobe_at_start": deepcopy(start), "wardrobe_events": [event],
-        "hairstyle_events": []}}
-    merged, warnings, errors = pipeline._merge_call1_shard_values(
-        [first, second], ["C001", "C002"], require_fresh_wardrobe=True,
-    )
-    assert not warnings and not errors
-    assert merged["wardrobe_at_start"] == start
-    assert merged["wardrobe_events"] == [event]
-    conflicting = deepcopy(second)
-    conflicting["value"]["wardrobe_at_start"][0]["worn"] = ["nude"]
-    with pytest.raises(ValueError, match="pre-C001"):
-        pipeline._merge_call1_shard_values(
-            [first, conflicting], ["C001", "C002"], require_fresh_wardrobe=True,
-        )
-    with pytest.raises(ValueError, match="중복 복장 변경"):
-        pipeline._merge_call1_shard_values(
-            [second, deepcopy(second)], ["C001", "C002"], require_fresh_wardrobe=True,
-        )
-
-
-def test_parallel_call1_equivalent_shard_outfits_keep_first_lists_without_future_leakage():
-    first = {"assigned_segment_ids": ["C001"], "value": {
-        "wardrobe_at_start": [
-            {"character": "Mira", "worn": ["Open jacket", "shirt"], "removed": ["coat", "scarf"]},
-            {"character": "Noa", "worn": ["vest"], "removed": []},
-        ], "wardrobe_events": [], "hairstyle_events": [],
-    }}
-    second = {"assigned_segment_ids": ["C002", "C004"], "value": {
-        "wardrobe_at_start": [
-            {"character": "Noa", "worn": ["VEST"], "removed": []},
-            {"character": "Mira", "worn": ["SHIRT", "open JACKET"], "removed": ["SCARF", "COAT"]},
-        ], "wardrobe_events": [
-            {"segment_id": "C002", "character": "Mira", "worn": ["shirt"],
-             "removed": ["coat", "scarf", "jacket"], "evidence": "Mira takes off her jacket."},
-            {"segment_id": "C004", "character": "Mira", "worn": ["sweater"],
-             "removed": ["coat", "scarf", "jacket", "shirt"], "evidence": "Mira changes later."},
-        ], "hairstyle_events": [],
-    }}
-    for shards in ([first, second], [second, first]):
-        merged, warnings, errors = pipeline._merge_call1_shard_values(
-            shards, ["C001", "C002", "C003", "C004"], require_fresh_wardrobe=True,
-        )
-        assert not warnings and not errors
-        assert merged["wardrobe_at_start"] == shards[0]["value"]["wardrobe_at_start"]
-        authority = {"segment_order": ["C001", "C002", "C003", "C004"],
-                     "wardrobe_at_start": merged["wardrobe_at_start"],
-                     "wardrobe_events": merged["wardrobe_events"], "allow_fallback": False}
-        assert pipeline._source_time_wardrobe("Mira", "C001", authority, ["Mira", "Noa"])[0]["outfit_state"] == {
-            "worn": shards[0]["value"]["wardrobe_at_start"][0 if shards[0] is first else 1]["worn"],
-            "removed": shards[0]["value"]["wardrobe_at_start"][0 if shards[0] is first else 1]["removed"],
-        }
-        assert pipeline._source_time_wardrobe("Mira", "C003", authority, ["Mira", "Noa"])[0]["outfit_state"] == {
-            "worn": ["shirt"], "removed": ["coat", "scarf", "jacket"],
-        }
-        assert pipeline._source_time_wardrobe("Mira", "C004", authority, ["Mira", "Noa"])[0]["outfit_state"]["worn"] == ["sweater"]
-
-    different = deepcopy(second)
-    different["value"]["wardrobe_at_start"][1]["worn"] = ["shirt", "sweater"]
-    with pytest.raises(ValueError, match="pre-C001"):
-        pipeline._merge_call1_shard_values(
-            [first, different], ["C001", "C002", "C003", "C004"], require_fresh_wardrobe=True,
-        )
-    duplicate = deepcopy(second)
-    duplicate["value"]["wardrobe_events"][0]["character"] = "mira"
-    duplicate["value"]["wardrobe_events"][0]["removed"] = ["JACKET", "scarf", "coat"]
-    with pytest.raises(ValueError, match="중복 복장 변경"):
-        pipeline._merge_call1_shard_values(
-            [second, duplicate], ["C001", "C002", "C003", "C004"], require_fresh_wardrobe=True,
-        )
-
-
-def test_fresh_audit_corrected_anchor_carries_call1_state_across_absence_to_detail_keyvis():
-    passages = ["Mira wears a jacket.", "Mira removes the jacket.",
-                "Noa reads the notice.", "Mira returns by the door.",
-                "Mira puts on a hat."]
-    target = "\n\n".join(
-        f"{passage}\n\n[Slot {i}]" for i, passage in enumerate(passages)
-    )
-    segments = {f"C{i + 1:03d}": {"text": passage}
-                for i, passage in enumerate(passages)}
-    authority = {
-        "segment_order": list(segments), "canonical_names": ["Mira"],
-        "wardrobe_at_start": [{"character": "Mira", "worn": ["jacket"], "removed": []}],
-        "wardrobe_events": [
-            {"segment_id": "C002", "character": "Mira", "worn": ["shirt"],
-             "removed": ["jacket"], "evidence": passages[1]},
-            {"segment_id": "C005", "character": "Mira", "worn": ["shirt", "hat"],
-             "removed": ["jacket"], "evidence": passages[4]},
-        ],
-        "allow_fallback": False, "state_before": {}, "default_outfits": {"Mira": ["coat"]},
-    }
-    drafts = [{"anchor_segment": anchor, "characters": names,
-               "scene_brief": "A waiting scene.", "anonymous_partner_fragment": False}
-              for anchor, names in (("C001", ["Mira"]), ("C003", ["Noa"]),
-                                    ("C005", ["Mira"]))]
-    response = {"scenes": [
-        {"i": 1, "interaction_contract": "Mira waits alone."},
-        {"i": 2, "interaction_contract": "Noa reads alone."},
-        {"i": 3, "anchor_segment": "C004", "interaction_contract": "Mira returns alone."},
-    ], "wardrobes": [{"i": 1, "name": "Mira", "summary": "wrong draft outfit",
-                      "worn": ["coat"], "removed": []}],
-        "actor_evidence": [{"name": "Noa", "source_segment": "C003",
-                            "source_quote": passages[2]}]}
-    toggles = pipeline.merged_toggles(
-        {"output_count_min": 3, "output_count_max": 3, "key_visual": False}
-    )
-    planned, reason = pipeline.parse_call2_plan_audit(
-        json.dumps(response), toggles, target,
-        {f"C{i + 1:03d}": i for i in range(len(passages))}, drafts, ["Mira"],
-        segments=segments, wardrobe_authority=authority,
-    )
-    assert not reason
-    scenes = planned["scene_plan"]
-    assert [scene["anchor_segment"] for scene in scenes] == ["C001", "C003", "C004"]
-    assert [scene["wardrobe_state"][name]["outfit_state"] for scene, name in
-            zip(scenes, ["Mira", "Noa", "Mira"])] == [
-        {"worn": ["jacket"], "removed": []},
-        {"worn": [], "removed": []},
-        {"worn": ["shirt"], "removed": ["jacket"]},
-    ]
-    assert scenes[1]["source_only_character_evidence"]["Noa"]["quote"] == passages[2]
-    bound = pipeline.bind_scene_plan_wardrobes(
-        scenes, list(segments), {}, [{"name": "Mira"}], authority["wardrobe_events"],
-        "test-current", default_outfits={"Mira": ["coat"]},
-        wardrobe_at_start=authority["wardrobe_at_start"], wardrobe_authority=authority,
-    )
-    assert [scene["wardrobe_sources"] for scene in bound] == [
-        {"Mira": "call1_confirmed"}, {"Noa": "source_only_unknown"},
-        {"Mira": "call1_confirmed"},
-    ]
-    assert bound[2]["wardrobe_snapshot"]["Mira"] == {"worn": ["shirt"], "removed": ["jacket"]}
-    assert "coat" not in bound[2]["continuity_note"]
-    assert "hat" not in pipeline._keyvis_wardrobe_reference(bound)
-    assert pipeline._public_call2_scene_plan(bound[2])["wardrobe_state"] == bound[2]["wardrobe_state"]
-
-
-def test_fresh_audit_requires_separate_literal_proofs_for_two_source_only_actors():
-    segments = {"C001": {"text": "Lio enters."},
-                "C002": {"text": "Juno follows."}}
-    drafts = [{"anchor_segment": segment, "characters": [name],
-               "scene_brief": "They wait.", "anonymous_partner_fragment": False}
-              for segment, name in (("C001", "Lio"), ("C002", "Juno"))]
-    wire = {"scenes": [{"i": 1, "interaction_contract": "Lio is alone."},
-                       {"i": 2, "interaction_contract": "Juno is alone."}],
-            "actor_evidence": [
-                {"name": "Lio", "source_segment": "C001", "source_quote": "Lio enters."},
-                {"name": "Juno", "source_segment": "C002", "source_quote": "Juno follows."},
-            ]}
-    authority = {"segment_order": list(segments), "canonical_names": [],
-                 "wardrobe_at_start": [], "wardrobe_events": [], "allow_fallback": False}
-    arguments = (
-        pipeline.merged_toggles({"output_count_min": 2, "output_count_max": 2,
-                                 "key_visual": False}),
-        "Lio enters.\n\n[Slot 0]\n\nJuno follows.\n\n[Slot 1]",
-        {"C001": 0, "C002": 1}, drafts, [],
-    )
-    parsed, reason = pipeline.parse_call2_plan_audit(
-        json.dumps(wire), *arguments, segments=segments, wardrobe_authority=authority,
-    )
-    assert not reason
-    assert [scene["wardrobe_state"][name]["outfit_state"]["worn"] for scene, name in
-            zip(parsed["scene_plan"], ["Lio", "Juno"])] == [[], []]
-    for invalid in (
-        {**wire, "actor_evidence": wire["actor_evidence"][:1]},
-        {**wire, "actor_evidence": [wire["actor_evidence"][0],
-                                      {**wire["actor_evidence"][1], "source_quote": "Lio enters."}]},
-    ):
-        rejected, message = pipeline.parse_call2_plan_audit(
-            json.dumps(invalid), *arguments, segments=segments, wardrobe_authority=authority,
-        )
-        assert rejected is None and "source-only" in message
-
-
-def test_fresh_call1_persists_explicit_unknown_without_reintroducing_default():
-    start = [{"character": "Mira", "worn": [], "removed": []}]
-    event = {"segment_id": "C002", "character": "Mira", "worn": ["shirt"],
-             "removed": [], "evidence": "Mira puts on a shirt."}
-    before = {"mira": {"canonical_name": "Mira", "current_wardrobe": {
-        "worn": ["default coat"], "removed": [], "body_state": "clothed"}}}
-    kwargs = {"current_message_id": "m42", "default_outfits": {"Mira": ["default coat"]},
-              "wardrobe_at_start": start}
-    unknown = pipeline.apply_wardrobe_events(before, [{"name": "Mira"}], [], **kwargs)
-    assert unknown["mira"]["current_wardrobe"]["worn"] == []
-    assert unknown["mira"]["current_wardrobe"]["source"] == "call1_confirmed"
-    result = pipeline.apply_wardrobe_events(before, [{"name": "Mira"}], [event], **kwargs)
-    assert result["mira"]["current_wardrobe"]["worn"] == ["shirt"]
-    assert result["mira"]["wardrobe_timeline"][-1] == event
-    persisted = pipeline.record_wardrobe_start_resolution(result, start, "m42")
-    assert persisted["mira"]["last_resolved_wardrobe_start"]["outfit_state"] == {
-        "worn": [], "removed": [],
-    }
-
-
-def test_keyvis_receives_same_source_time_projection_for_nonselected_canonical_actor():
-    authority = {
-        "segment_order": ["C001", "C002"], "canonical_names": ["Mira", "Nia"],
-        "wardrobe_at_start": [
-            {"character": "Mira", "worn": ["shirt"], "removed": []},
-            {"character": "Nia", "worn": ["coat"], "removed": []},
-        ],
-        "wardrobe_events": [{"segment_id": "C002", "character": "Nia",
-                             "worn": ["open coat"], "removed": [],
-                             "evidence": "Nia opens the coat."}],
-        "allow_fallback": False,
-    }
-    plans = [{"anchor_segment": anchor, "scene_brief": "Mira waits.",
-              "characters": ["Mira"], "continuity_note": "Mira wears a shirt.",
-              "wardrobe_state": {"Mira": {"summary": "Worn: shirt.",
-                                            "outfit_state": {"worn": ["shirt"], "removed": []}}}}
-             for anchor in ("C001", "C002")]
-    reference = pipeline._keyvis_wardrobe_reference(plans, authority, ["Mira", "Nia"])
-    first, second = reference.split("Story instant C002")
-    assert '"Nia": {"worn": ["coat"], "removed": []}' in first
-    assert '"Nia": {"worn": ["open coat"], "removed": []}' in second
-
-
-def test_call1_disabled_fallback_is_labeled_and_audit_cannot_change_canonical_spelling():
-    authority = {
-        "segment_order": ["C001"], "canonical_names": ["Mira"],
-        "wardrobe_at_start": [], "wardrobe_events": [], "allow_fallback": True,
-        "state_before": {"mira": {"canonical_name": "Mira", "current_wardrobe": {
-            "body_state": "clothed", "worn": ["open jacket"], "removed": [],
-        }}},
-        "default_outfits": {"Mira": ["default coat"]},
-    }
-    draft = [{"anchor_segment": "C001", "characters": ["Mira"],
-              "scene_brief": "Mira waits.", "anonymous_partner_fragment": False}]
-    args = (pipeline.merged_toggles({"output_count_min": 1, "output_count_max": 1,
-                                     "key_visual": False}),
-            "Mira waits.\n\n[Slot 0]", {"C001": 0}, draft, ["Mira"])
-    wire = {"scenes": [{"i": 1, "interaction_contract": "Mira is alone."}]}
-    parsed, reason = pipeline.parse_call2_plan_audit(
-        json.dumps(wire), *args, segments={"C001": {"text": "Mira waits."}},
-        wardrobe_authority=authority,
-    )
-    assert not reason
-    assert parsed["scene_plan"][0]["wardrobe_state"]["Mira"]["outfit_state"] == {
-        "worn": ["open jacket"], "removed": [],
-    }
-    bound = pipeline.bind_scene_plan_wardrobes(
-        parsed["scene_plan"], ["C001"], authority["state_before"], [{"name": "Mira"}],
-        [], "m42", default_outfits=authority["default_outfits"],
-        wardrobe_authority=authority,
-    )
-    assert bound[0]["wardrobe_sources"]["Mira"] == "tracked_fallback_call1_disabled"
-    assert "Tracked/default fallback (no source-time snapshots)" in bound[0]["continuity_note"]
-    wire["scenes"][0]["characters"] = ["mira"]
-    rejected, message = pipeline.parse_call2_plan_audit(
-        json.dumps(wire), *args, segments={"C001": {"text": "Mira waits."}},
-        wardrobe_authority=authority,
-    )
-    assert rejected is None and "비표준 캐릭터" in message

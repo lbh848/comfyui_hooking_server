@@ -24,12 +24,10 @@ from modes import lighbd_service, llm_service
 
 
 TASK_KEY = "illustration_quality_inspection"
-TRANSLATION_TASK_KEY = "illustration_quality_translation"
 IMAGE_SCOPE = "image"
 OVERALL_SCOPE = "overall"
 IMAGE_CALL_NAME = "Illustration image quality inspection"
 OVERALL_CALL_NAME = "Illustration set quality inspection"
-TRANSLATION_CALL_NAME = "Illustration quality result Korean translation"
 HUMAN_RATINGS = {
     "good": "좋음",
     "normal": "보통",
@@ -57,13 +55,6 @@ Focus on material cross-image inconsistency. Do not repeat isolated anatomy or f
 Return JSON only, with exactly this machine-consumed shape:
 {"overall_feedback":"short set-level outfit, identity, chronology, and story-state feedback"}
 Do not add scores or extra fields."""
-
-
-_TRANSLATION_SYSTEM_PROMPT = """Translate completed English illustration quality-inspection results into natural Korean. This is translation only: preserve the original meaning, certainty, negatives, names, and distinctions without re-evaluating the images, adding advice, or correcting the conclusions. Keep image slots unchanged.
-
-Return JSON only, with exactly this machine-consumed shape:
-{"overall_feedback_ko":"Korean translation","images":[{"slot":1,"feedback_ko":"Korean translation","continuity_observation_ko":"Korean translation"}]}
-Return one images entry for every supplied slot in the same order. If a supplied English field is empty, return an empty string for its Korean field. Do not add fields."""
 
 
 _DUPLICATE_DESCRIPTOR_FIELDS = {
@@ -293,93 +284,6 @@ def _parse_inspection_response(raw: Any, scope: str, slot: int | None = None) ->
             "overall_feedback": overall.strip(),
         }
     raise ValueError(f"unsupported illustration inspection scope: {scope!r}")
-
-
-def _translation_messages(source: dict[str, Any]) -> list[dict[str, str]]:
-    sections = [
-        "OVERALL FEEDBACK\n" + str(source.get("overall_feedback") or "")
-    ]
-    for image in source.get("images") or []:
-        sections.append(
-            f"IMAGE SLOT {image.get('slot')}\n"
-            f"Problem feedback: {image.get('feedback') or ''}\n"
-            "Continuity observation: "
-            f"{image.get('continuity_observation') or ''}"
-        )
-    return [
-        {"role": "system", "content": _TRANSLATION_SYSTEM_PROMPT},
-        {
-            "role": "user",
-            "content": (
-                "Translate only the completed English inspection text below.\n\n"
-                + "\n\n".join(sections)
-            ),
-        },
-    ]
-
-
-def _parse_translation_response(raw: Any, source: dict[str, Any]) -> dict[str, Any]:
-    data = _json_object(raw)
-    overall_source = str(source.get("overall_feedback") or "").strip()
-    overall_ko = data.get("overall_feedback_ko")
-    if not isinstance(overall_ko, str) or (overall_source and not overall_ko.strip()):
-        raise ValueError("translation overall_feedback_ko is missing")
-
-    raw_images = data.get("images")
-    if not isinstance(raw_images, list):
-        raise ValueError("translation images must be a list")
-    translated_by_slot: dict[int, dict[str, Any]] = {}
-    for index, image in enumerate(raw_images, start=1):
-        if not isinstance(image, dict):
-            raise ValueError(f"translation image {index} is not an object")
-        slot = _slot_number(image.get("slot"), field=f"translation image {index} slot")
-        translated_by_slot[slot] = image
-
-    normalized_images: list[dict[str, Any]] = []
-    for source_image in source.get("images") or []:
-        slot = _slot_number(source_image.get("slot"), field="translation source slot")
-        translated = translated_by_slot.get(slot)
-        if translated is None:
-            raise ValueError(f"translation for slot {slot} is missing")
-        feedback_ko = translated.get("feedback_ko")
-        continuity_ko = translated.get("continuity_observation_ko")
-        if not isinstance(feedback_ko, str) or (
-            str(source_image.get("feedback") or "").strip() and not feedback_ko.strip()
-        ):
-            raise ValueError(f"translation feedback_ko for slot {slot} is missing")
-        if not isinstance(continuity_ko, str) or (
-            str(source_image.get("continuity_observation") or "").strip()
-            and not continuity_ko.strip()
-        ):
-            raise ValueError(
-                f"translation continuity_observation_ko for slot {slot} is missing"
-            )
-        normalized_images.append(
-            {
-                "slot": slot,
-                "feedback_ko": feedback_ko.strip(),
-                "continuity_observation_ko": continuity_ko.strip(),
-            }
-        )
-    return {
-        "overall_feedback_ko": overall_ko.strip(),
-        "images": normalized_images,
-    }
-
-
-def _validate_translation_response(
-    raw: Any, source: dict[str, Any]
-) -> tuple[bool, str]:
-    try:
-        _parse_translation_response(raw, source)
-        return True, ""
-    except Exception as exc:
-        print(
-            "[ILLUSTRATION_QUALITY:TRANSLATION] response validation failed: "
-            f"source={source!r}, error={type(exc).__name__}: {exc}"
-        )
-        traceback.print_exc()
-        return False, str(exc)
 
 
 def _validate_inspection_response(
@@ -693,123 +597,6 @@ def _preferred_individual_review_record(
     return candidates[-1] if candidates else None
 
 
-def _inspection_output_fields(
-    record: dict[str, Any] | None, scope: str
-) -> dict[str, str]:
-    if not record:
-        return {}
-    raw = record.get("output")
-    try:
-        parsed = _json_object(raw)
-    except Exception as exc:
-        print(
-            "[ILLUSTRATION_QUALITY:TRANSLATION] 검사 출력 JSON 해석 실패, "
-            f"원문을 피드백으로 사용: history_id={record.get('history_id')!r}, "
-            f"scope={scope!r}, output={raw!r}, error={type(exc).__name__}: {exc}"
-        )
-        traceback.print_exc()
-        fallback = _raw_text(raw).strip()
-        return {"overall_feedback" if scope == OVERALL_SCOPE else "feedback": fallback}
-    if scope == OVERALL_SCOPE:
-        return {"overall_feedback": str(parsed.get("overall_feedback") or "").strip()}
-    return {
-        "feedback": str(parsed.get("feedback") or "").strip(),
-        "continuity_observation": str(
-            parsed.get("continuity_observation") or ""
-        ).strip(),
-    }
-
-
-def _translation_source(
-    record: dict[str, Any], records: list[dict[str, Any]]
-) -> dict[str, Any]:
-    history_id = str(record.get("history_id") or "").strip()
-    if str(record.get("inspection_scope") or "") != OVERALL_SCOPE:
-        print(
-            "[ILLUSTRATION_QUALITY:TRANSLATION] 전체 검사 외 번역 요청 거부: "
-            f"history_id={history_id!r}, scope={record.get('inspection_scope')!r}"
-        )
-        raise ValueError("전체 이미지 품질 검사 결과만 일괄 번역할 수 있습니다.")
-    related = _related_inspection_records(records, record)
-    raw_refs = record.get("inspection_images") or []
-    if not isinstance(raw_refs, list):
-        print(
-            "[ILLUSTRATION_QUALITY:TRANSLATION] 이미지 참조 형식 오류: "
-            f"history_id={history_id!r}, value={raw_refs!r}"
-        )
-        raise ValueError("전체 검사 이미지 참조를 읽을 수 없습니다.")
-    source_ids = [history_id]
-    images: list[dict[str, Any]] = []
-    for index, raw_ref in enumerate(raw_refs, start=1):
-        if not isinstance(raw_ref, dict):
-            print(
-                "[ILLUSTRATION_QUALITY:TRANSLATION] 이미지 참조 생략: "
-                f"history_id={history_id!r}, index={index}, value={raw_ref!r}"
-            )
-            continue
-        individual = _preferred_individual_review_record(related, raw_ref)
-        if individual and str(individual.get("history_id") or "").strip():
-            source_ids.append(str(individual["history_id"]))
-        fields = _inspection_output_fields(individual, IMAGE_SCOPE)
-        images.append(
-            {
-                "slot": _slot_number(raw_ref.get("slot"), field=f"image ref {index} slot"),
-                "feedback": fields.get("feedback", ""),
-                "continuity_observation": fields.get("continuity_observation", ""),
-            }
-        )
-    overall = _inspection_output_fields(record, OVERALL_SCOPE).get(
-        "overall_feedback", ""
-    )
-    if not overall and not any(
-        image["feedback"] or image["continuity_observation"] for image in images
-    ):
-        print(
-            "[ILLUSTRATION_QUALITY:TRANSLATION] 번역할 검사 결과 없음: "
-            f"history_id={history_id!r}, images={images!r}"
-        )
-        raise ValueError("번역할 AI 검사 결과가 없습니다.")
-    return {
-        "source_inspection_history_id": history_id,
-        "source_history_ids": list(dict.fromkeys(source_ids)),
-        "inspection_session_id": str(record.get("inspection_session_id") or ""),
-        "inspection_flow_run_id": str(record.get("inspection_flow_run_id") or ""),
-        "overall_feedback": overall,
-        "images": images,
-    }
-
-
-def _cached_translation(
-    records: list[dict[str, Any]], source: dict[str, Any]
-) -> dict[str, Any] | None:
-    source_id = str(source.get("source_inspection_history_id") or "")
-    candidates = [
-        record
-        for record in records
-        if str(record.get("task_key") or "") == TRANSLATION_TASK_KEY
-        and str(record.get("source_inspection_history_id") or "") == source_id
-        and str(record.get("status") or "").lower() == "ok"
-    ]
-    for record in reversed(candidates):
-        try:
-            translated = _parse_translation_response(record.get("output"), source)
-            translated["translation_history_id"] = str(record.get("history_id") or "")
-            return translated
-        except Exception as exc:
-            print(
-                "[ILLUSTRATION_QUALITY:TRANSLATION] 캐시 결과 형식 오류로 생략: "
-                f"source_history_id={source_id!r}, "
-                f"translation_history_id={record.get('history_id')!r}, "
-                f"error={type(exc).__name__}: {exc}"
-            )
-            traceback.print_exc()
-    print(
-        "[ILLUSTRATION_QUALITY:TRANSLATION] 번역 캐시 없음: "
-        f"source_history_id={source_id!r}, candidates={len(candidates)}"
-    )
-    return None
-
-
 def _overall_review_detail(
     record: dict[str, Any], records: list[dict[str, Any]], backup_dir: str
 ) -> dict[str, Any]:
@@ -848,22 +635,10 @@ def _overall_review_detail(
                 ),
             }
         )
-    try:
-        source = _translation_source(record, records)
-        translation = _cached_translation(records, source)
-    except Exception as exc:
-        print(
-            "[ILLUSTRATION_QUALITY:TRANSLATION] 평가 화면 번역 조회 실패: "
-            f"history_id={record.get('history_id')!r}, "
-            f"error={type(exc).__name__}: {exc}"
-        )
-        traceback.print_exc()
-        translation = None
     return {
         "history_id": str(record.get("history_id") or ""),
         "inspection_scope": OVERALL_SCOPE,
         "images": images,
-        "automatic_translation": translation,
     }
 
 
@@ -881,24 +656,6 @@ def load_human_review(history_id: str, backup_dir: str) -> dict[str, Any]:
     if str(target.get("inspection_scope") or "") == OVERALL_SCOPE:
         return _overall_review_detail(target, records, backup_dir)
     return _review_detail(target, records, backup_dir)
-
-
-def load_translation_request(history_id: str) -> dict[str, Any]:
-    normalized_id = str(history_id or "").strip()
-    if not normalized_id:
-        print(
-            "[ILLUSTRATION_QUALITY:TRANSLATION] 번역 요청 실패: "
-            f"history_id={history_id!r}"
-        )
-        raise ValueError("검사 기록 ID가 필요합니다.")
-    records = _all_history_records()
-    target = _history_record_by_id(records, normalized_id)
-    _validate_review_target(target, normalized_id)
-    source = _translation_source(target, records)
-    return {
-        "source": source,
-        "cached_translation": _cached_translation(records, source),
-    }
 
 
 def _related_inspection_records(
@@ -958,14 +715,6 @@ def save_human_review(
         for record in related_inspections
         if str(record.get("history_id") or "").strip()
     }
-    translation_ids = {
-        str(record.get("history_id") or "")
-        for record in records
-        if str(record.get("task_key") or "") == TRANSLATION_TASK_KEY
-        and str(record.get("source_inspection_history_id") or "") in linked_ids
-        and str(record.get("history_id") or "").strip()
-    }
-    linked_ids.update(translation_ids)
     backup_names = {
         str(image.get("backup_name") or "").strip()
         for record in related_inspections
@@ -1242,62 +991,6 @@ def _history_record(
     }
 
 
-def _translation_history_record(
-    *,
-    source: dict[str, Any],
-    queue_item_id: str,
-    messages: list[dict[str, str]],
-    usage: dict[str, Any],
-    raw: Any,
-    elapsed: float,
-    status: str,
-    error: str,
-    history_id: str,
-    execution_id: str,
-    parent_execution_id: str,
-    slot: str,
-    phase: str,
-) -> dict[str, Any]:
-    prompt_tokens, completion_tokens = _token_counts(usage, messages, raw)
-    service, model = _slot_identity(slot)
-    try:
-        elapsed_value = max(0.0, float(elapsed or 0.0))
-    except Exception as exc:
-        print(
-            "[ILLUSTRATION_QUALITY:TRANSLATION] invalid elapsed value: "
-            f"value={elapsed!r}, error={type(exc).__name__}: {exc}"
-        )
-        traceback.print_exc()
-        elapsed_value = 0.0
-    return {
-        "task_key": TRANSLATION_TASK_KEY,
-        "call_name": TRANSLATION_CALL_NAME,
-        "history_id": str(history_id or uuid.uuid4().hex),
-        "execution_id": str(execution_id or ""),
-        "parent_execution_id": str(parent_execution_id or ""),
-        "llm_slot": str(slot or ""),
-        "phase": str(phase or ""),
-        "service": service,
-        "model": model,
-        "input": messages,
-        "output": _raw_text(raw),
-        "prompt_tokens": prompt_tokens,
-        "completion_tokens": completion_tokens,
-        "elapsed": round(elapsed_value, 3),
-        "tps": round(completion_tokens / elapsed_value, 1) if elapsed_value else 0.0,
-        "status": str(status or ""),
-        "error": str(error or ""),
-        "queue_item_id": queue_item_id,
-        "source_inspection_history_id": str(
-            source.get("source_inspection_history_id") or ""
-        ),
-        "source_history_ids": [str(value) for value in source.get("source_history_ids") or []],
-        "inspection_session_id": str(source.get("inspection_session_id") or ""),
-        "inspection_flow_run_id": str(source.get("inspection_flow_run_id") or ""),
-        "inspection_slots": [image.get("slot") for image in source.get("images") or []],
-    }
-
-
 def _log_history(record: dict[str, Any]) -> None:
     try:
         lighbd_service._log_lighbd_history(record)
@@ -1552,246 +1245,14 @@ async def execute_inspection(
         raise
 
 
-async def execute_translation(
-    queue_item: Any,
-    *,
-    source: dict[str, Any],
-) -> dict[str, Any]:
-    """Translate a completed English inspection batch in a separate queued call."""
-
-    if not isinstance(source, dict):
-        print(
-            "[ILLUSTRATION_QUALITY:TRANSLATION] source 형식 오류: "
-            f"type={type(source).__name__}, value={source!r}"
-        )
-        raise ValueError("번역 원본은 객체여야 합니다.")
-    source_id = str(source.get("source_inspection_history_id") or "").strip()
-    if not source_id:
-        print(
-            "[ILLUSTRATION_QUALITY:TRANSLATION] source history ID 누락: "
-            f"source={source!r}"
-        )
-        raise ValueError("번역 원본 검사 기록 ID가 필요합니다.")
-    queue_id = _queue_item_id(queue_item)
-    messages = _translation_messages(source)
-    execution_id = (
-        f"{TRANSLATION_TASK_KEY}:{source_id}:{uuid.uuid4().hex[:12]}"
-    )
-    parent_execution_id = source_id
-    usage: dict[str, Any] = {}
-    execution_context = None
-    terminal_logged = False
-    started = time.time()
-    try:
-        active_slot = str(
-            llm_service.routing_primary_slot(TRANSLATION_TASK_KEY) or "llm1"
-        )
-    except Exception as exc:
-        print(
-            "[ILLUSTRATION_QUALITY:TRANSLATION] primary slot lookup failed: "
-            f"source_history_id={source_id!r}, error={type(exc).__name__}: {exc}"
-        )
-        traceback.print_exc()
-        active_slot = "llm1"
-    active_phase = "primary"
-
-    def record(
-        *,
-        status: str,
-        raw: Any,
-        error: str,
-        slot: str,
-        phase: str,
-        elapsed: float,
-        history_id: str,
-        record_execution_id: str,
-        record_parent_id: str,
-    ) -> None:
-        _log_history(
-            _translation_history_record(
-                source=source,
-                queue_item_id=queue_id,
-                messages=messages,
-                usage=usage,
-                raw=raw,
-                elapsed=elapsed,
-                status=status,
-                error=error,
-                history_id=history_id,
-                execution_id=record_execution_id,
-                parent_execution_id=record_parent_id,
-                slot=slot,
-                phase=phase,
-            )
-        )
-
-    try:
-        illustration_flow.llm_metadata(
-            input=messages,
-            status="processing",
-            inspection_scope="translation",
-            history_id=execution_id,
-            source_inspection_history_id=source_id,
-        )
-    except Exception as exc:
-        print(
-            "[ILLUSTRATION_QUALITY:TRANSLATION] flow metadata update failed: "
-            f"source_history_id={source_id!r}, error={type(exc).__name__}: {exc}"
-        )
-        traceback.print_exc()
-
-    try:
-        execution_context = llm_service.create_llm_execution_context(
-            TRANSLATION_TASK_KEY,
-            call_name=TRANSLATION_CALL_NAME,
-            json_mode=True,
-            execution_id=execution_id,
-            parent_execution_id=parent_execution_id,
-            metadata={
-                "source_inspection_history_id": source_id,
-                "source_history_ids": list(source.get("source_history_ids") or []),
-                "inspection_session_id": str(source.get("inspection_session_id") or ""),
-                "inspection_flow_run_id": str(source.get("inspection_flow_run_id") or ""),
-                "queue_item_id": queue_id,
-            },
-        )
-
-        async def on_attempt_failure(event: Any) -> None:
-            nonlocal active_slot, active_phase
-            try:
-                event = event if isinstance(event, dict) else {}
-                attempt_id = str(event.get("attempt_id") or uuid.uuid4().hex)
-                attempt_slot = str(
-                    event.get("slot") or event.get("llm_slot") or active_slot
-                )
-                attempt_phase = str(event.get("phase") or active_phase)
-                active_slot, active_phase = attempt_slot, attempt_phase
-                reason = str(
-                    event.get("reason")
-                    or event.get("error")
-                    or "LLM routing attempt failed"
-                )
-                print(
-                    "[ILLUSTRATION_QUALITY:TRANSLATION] routed attempt failed: "
-                    f"source_history_id={source_id!r}, phase={attempt_phase!r}, "
-                    f"slot={attempt_slot!r}, error={reason}"
-                )
-                record(
-                    status="error",
-                    raw=event.get("raw_response", event.get("result", "")),
-                    error=reason,
-                    slot=attempt_slot,
-                    phase=attempt_phase,
-                    elapsed=event.get("elapsed") or (time.time() - started),
-                    history_id=attempt_id,
-                    record_execution_id=attempt_id,
-                    record_parent_id=str(
-                        getattr(execution_context, "execution_id", execution_id)
-                        or execution_id
-                    ),
-                )
-            except Exception as exc:
-                print(
-                    "[ILLUSTRATION_QUALITY:TRANSLATION] retry audit failed: "
-                    f"source_history_id={source_id!r}, "
-                    f"error={type(exc).__name__}: {exc}"
-                )
-                traceback.print_exc()
-
-        def result_validator(raw: Any) -> tuple[bool, str]:
-            return _validate_translation_response(raw, source)
-
-        result = await llm_service.callLLMTaskResult(
-            TRANSLATION_TASK_KEY,
-            messages,
-            json_mode=True,
-            result_validator=result_validator,
-            metadata_sink=usage,
-            on_attempt_failure=on_attempt_failure,
-            execution_context=execution_context,
-        )
-        elapsed = time.time() - started
-        raw_result = _result_field(result, "raw_response")
-        if raw_result is None:
-            raw_result = _result_field(result, "text", "")
-        final_slot = str(_result_field(result, "final_slot", "") or active_slot)
-        final_phase = str(_result_field(result, "final_phase", "") or active_phase)
-        active_slot, active_phase = final_slot, final_phase
-
-        if not bool(_result_field(result, "accepted", False)):
-            exception = _result_field(result, "exception")
-            error = str(
-                _result_field(result, "reason", "")
-                or (f"{type(exception).__name__}: {exception}" if exception else "")
-                or _result_field(result, "text", "")
-                or "illustration quality translation LLM call failed"
-            )
-            print(
-                "[ILLUSTRATION_QUALITY:TRANSLATION] terminal failure: "
-                f"source_history_id={source_id!r}, error={error}"
-            )
-            record(
-                status="error",
-                raw=raw_result,
-                error=error,
-                slot=final_slot,
-                phase=final_phase,
-                elapsed=elapsed,
-                history_id=execution_id,
-                record_execution_id=execution_id,
-                record_parent_id=parent_execution_id,
-            )
-            terminal_logged = True
-            raise RuntimeError(error)
-
-        parsed = _parse_translation_response(raw_result, source)
-        record(
-            status="ok",
-            raw=raw_result,
-            error="",
-            slot=final_slot,
-            phase=final_phase,
-            elapsed=elapsed,
-            history_id=execution_id,
-            record_execution_id=execution_id,
-            record_parent_id=parent_execution_id,
-        )
-        parsed["translation_history_id"] = execution_id
-        return parsed
-    except BaseException as exc:
-        print(
-            "[ILLUSTRATION_QUALITY:TRANSLATION] translation failed: "
-            f"source_history_id={source_id!r}, queue={queue_id!r}, "
-            f"state={'terminal' if terminal_logged else 'unexpected'}, "
-            f"error={type(exc).__name__}: {exc}"
-        )
-        traceback.print_exc()
-        if not terminal_logged:
-            record(
-                status="error",
-                raw="",
-                error=f"{type(exc).__name__}: {exc}",
-                slot=active_slot,
-                phase=active_phase,
-                elapsed=time.time() - started,
-                history_id=execution_id,
-                record_execution_id=execution_id,
-                record_parent_id=parent_execution_id,
-            )
-        raise
-
-
 __all__ = [
     "TASK_KEY",
-    "TRANSLATION_TASK_KEY",
     "IMAGE_SCOPE",
     "OVERALL_SCOPE",
     "HUMAN_RATINGS",
     "execute_inspection",
-    "execute_translation",
     "human_reviewed_backup_names",
     "load_human_review",
-    "load_translation_request",
     "save_human_review",
     "save_human_reviews",
 ]

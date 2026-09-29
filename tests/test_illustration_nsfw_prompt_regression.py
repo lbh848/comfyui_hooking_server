@@ -187,13 +187,13 @@ def test_plan_and_detail_contracts_preserve_supported_explicit_meaning() -> None
     plan = _render_role_system("plan", True)
     detail = _render_role_system("detail", True)
 
-    assert "replacing it with a safer but inaccurate event" in plan
-    assert "every story-essential exposure or displaced-clothing state" in plan
+    assert "Preserve explicit source intensity and exposure, never conceal or euphemize it" in plan
+    assert "who acts on whom" in plan
     assert "without softening, intensifying, or extending it" in detail
     assert "exact supported act, actor/receiver direction, contact, intensity" in detail
     assert "never restore default clothing merely to soften the moment" in detail
-    assert "No hidden anatomy is forced into view" in detail
-    assert "no visible story-essential structure is silently dropped" in detail
+    assert "Do not change source intensity or conceal explicit contact" in detail
+    assert "only visible or coverage-defining clothing" in detail
 
 
 @pytest.mark.asyncio

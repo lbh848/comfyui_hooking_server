@@ -33,6 +33,7 @@ def test_model_facing_prompt_roles_are_registered_and_loadable() -> None:
         "call2_common": "system.txt",
         "call2_explicit": "explicit.txt",
         "call2_plan": "plan.txt",
+        "call2_audit": "audit.txt",
         "call2_detail": "detail.txt",
         "call2_keyvis": "keyvisual.txt",
         "call2_fallback": "fallback.txt",
@@ -58,14 +59,17 @@ def test_model_facing_prompts_do_not_expose_internal_stage_names() -> None:
 
 def test_call1_prompt_keeps_only_the_schema_consumed_by_the_pipeline() -> None:
     prompt = _read("enhance.txt")
-    schema = prompt.split("Required JSON shape", 1)[1].split("Wardrobe rules:", 1)[0]
+    example = next(line for line in prompt.splitlines() if line.startswith('{"state_at_start":'))
+    schema = json.loads(example.removesuffix("."))
 
-    for field in ('"wardrobe_at_start"', '"wardrobe_events"', '"hairstyle_events"'):
-        assert field in schema
-    assert re.search(r'"wardrobe_at_start":\s*\[\s*\{[^}]*"character"[^}]*"worn"[^}]*"removed"', schema)
-    assert re.search(r'"wardrobe_events":\s*\[\s*\{[^}]*"segment_id"[^}]*"character"[^}]*"worn"[^}]*"removed"[^}]*"evidence"', schema)
-    assert '"hairstyle_change"' in schema and '"operation": "replace|add|remove|reset_default"' in schema
-    assert all(field not in schema for field in ('"wardrobe_change"', '"state_after"', '"body_state"'))
+    assert set(schema) == {"state_at_start", "events"}
+    assert set(schema["state_at_start"][0]) == {"character", "status"}
+    assert set(schema["events"][0]) == {"segment_id", "character", "status"}
+    for retired in ('"wardrobe_at_start"', '"wardrobe_events"', '"hairstyle_events"',
+                    '"wardrobe_change"', '"state_after"', '"outfit_state"'):
+        assert retired not in prompt
+    assert "outfit AND hairstyle" in prompt
+    assert "previous saved" in prompt
 
 
 @pytest.mark.parametrize(

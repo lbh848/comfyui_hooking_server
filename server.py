@@ -698,7 +698,6 @@ DEFAULT_CONFIG = {
     # 작업별 LLM1/LLM2/LLM3 라우팅 및 메인/폴백 재시도 정책(외부 LLM 분기 탭).
     "llm_routing": {
         "illustration_quality_inspection": _llm_route_defaults(json_mode=True),
-        "illustration_quality_translation": _llm_route_defaults(json_mode=True),
         "extract_outfit":          _llm_route_defaults(fallback=True),
         "enhance_outfit":          _llm_route_defaults(fallback=True),
         "restore_workflow":        _llm_route_defaults(fallback=True),
@@ -1796,7 +1795,7 @@ def _system_monitor_loop(stop_event: threading.Event) -> None:
     print("[SYSMON] 시스템 모니터 스레드 종료")
 
 
-def _system_monitor_cleanup(_app: web.Application) -> None:
+async def _system_monitor_cleanup(_app: web.Application) -> None:
     """서버 종료 시 모니터 daemon 스레드에 종료 시그널을 보낸다."""
     _sysmon_stop_event.set()
 
@@ -5644,7 +5643,6 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
     prompts[prompt_id]["save_node_id"] = save_node_id
     regen_session_id = str(raw_body.get("illustration_regenerate_session_id") or "")
     regen_slot = raw_body.get("illustration_regenerate_slot")
-    raw_batch_id = str(raw_body.get("illustration_raw_batch_id") or "")
 
     try:
         runtime_snapshot = _take_prompt_runtime_snapshot(prompt_id)
@@ -5775,6 +5773,7 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
             # V1([ILXL]/[UPSCALE]) 입력은 illust 빌딩을 타지 않고 밑 else 에서 통과시킨다.
             builder = IllustPromptBuilder()
             raw_positive = positive
+            raw_detail_negative = negative
 
             # 1. 원본 섹션은 로그용으로 보존한다. 캐릭터 1인 전용 규칙은
             # 규칙 적용 전의 구조화된 NAME을 우선 사용해 정확한 인원수를 정한다.
@@ -5849,6 +5848,14 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                     f"bot={bot_name!r}, states={applied_visual_states}"
                 )
             characters_for_parse = (bot.get("characters", []) if bot else [])
+            if raw_body.get("illustration_scene_detail_authoritative") is True:
+                # Only the new ordinary route carries this transport marker.
+                # Keep card metadata/LoRA ownership, but do not inject the card's
+                # absolute appearance tags into DETAIL's selected positives.
+                characters_for_parse = [
+                    {**character, "absolute_tags": ""}
+                    for character in characters_for_parse
+                ]
             char_names = [c["name"] for c in characters_for_parse]
             character_aliases = _build_character_alias_map(
                 word_rules_snapshot,
@@ -6155,14 +6162,17 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                 settings_key = "illust_settings_group" if is_multi else "illust_settings_solo"
                 settings = bot.get(settings_key, bot.get("illust_settings", {}))
                 print(f"[ILLUST] 프로필 선택: {'group' if is_multi else 'solo'} ({len(detected)}명)")
-                anonymous_fragment_requested = bool(
+                legacy_fragment_requested = bool(
                     raw_body.get("illustration_anonymous_partner_fragment", False)
                 )
+                # Only an explicit legacy fragment flag can relax the configured
+                # negative preset. The new ordinary DETAIL route has no such flag;
+                # transport the preset without inferring partner visibility.
                 allow_anonymous_fragment = allows_anonymous_fragment_negative_relaxation(
                     bot,
-                    anonymous_fragment_requested,
+                    legacy_fragment_requested,
                 )
-                if anonymous_fragment_requested and not allow_anonymous_fragment:
+                if legacy_fragment_requested and not allow_anonymous_fragment:
                     print(
                         "[ILLUST:PROMPT] 익명 상호작용 조각 음성 완화 건너뜀 - "
                         "First-Pass Single V5 계약 아님: "
@@ -6252,6 +6262,17 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                     )
                     if multi_char_prompt_context:
                         positive = sync_multi_char_shared_tags(positive)
+
+                if raw_body.get("illustration_scene_detail_authoritative") is True:
+                    # The image builder replaces incoming negatives with its
+                    # configured presets. Restore only DETAIL's RAW negative;
+                    # never reintroduce profile/outfit positives or old flags.
+                    negative = _append_authoritative_scene_negative(
+                        negative,
+                        raw_detail_negative,
+                        provider=illustration_provider,
+                        prompt_format=prompt_format,
+                    )
 
                 # 4-1. 인스턴스 LoRA 사용 횟수 증가 (V1/챈섭은 LoRA 미사용 → 제외)
                 from modes.instance_lora_mode import increment_usage as _increment_instance_lora_usage
@@ -6484,11 +6505,6 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                     f"[ILLUST_CONTEXT] 재생성 이미지는 반환하지만 캐시 갱신 실패: "
                     f"session={regen_session_id}, slot={regen_slot}"
                 )
-            batch_run = illustration_flow.raw_batch(raw_batch_id) if raw_batch_id else None
-            if batch_run and batch_run["cancel_requested"]:
-                illustration_context_pipeline.set_session_regenerate_cancelled(
-                    regen_session_id, regen_slot
-                )
 
         # WS: executed + executing(null)
         executed_msg = {
@@ -6520,25 +6536,14 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
         tb = traceback.format_exc()
         print(f"[ERROR] process_prompt 실패: {e}\n{tb}")
         log_to_file("proxy.log", f"ERROR in process_prompt: {e}\n{tb}")
-        batch_run = illustration_flow.raw_batch(raw_batch_id) if raw_batch_id else None
-        if raw_batch_id:
-            prompts[prompt_id]["status"] = "cancelled" if batch_run and batch_run["cancel_requested"] else "failed"
-            prompts[prompt_id]["error"] = (
-                illustration_flow.RAW_BATCH_CANCEL_REASON
-                if batch_run and batch_run["cancel_requested"] else str(e)
-            )
-        else:
-            prompts[prompt_id]["status"] = "completed"
+        prompts[prompt_id]["status"] = "completed"
         prompts[prompt_id]["outputs"] = {"images": []}
         if regen_session_id and regen_slot is not None:
-            if batch_run and batch_run["cancel_requested"]:
-                illustration_context_pipeline.set_session_regenerate_cancelled(regen_session_id, regen_slot)
-            else:
-                illustration_context_pipeline.set_session_regenerate_error(
-                    regen_session_id,
-                    regen_slot,
-                    str(e),
-                )
+            illustration_context_pipeline.set_session_regenerate_error(
+                regen_session_id,
+                regen_slot,
+                str(e),
+            )
         raise
 
 
@@ -6580,6 +6585,35 @@ def _build_llm_final_result(descriptor: dict | None) -> dict | None:
             descriptor.get("anonymous_partner_fragment", False)
         ),
     }
+
+
+def _append_authoritative_scene_negative(
+    assembled_negative: str,
+    raw_negative: str,
+    *,
+    provider: str,
+    prompt_format: str,
+) -> str:
+    """Keep DETAIL negatives alongside configured presets in each image format."""
+    detail = str(raw_negative or "").strip()
+    if not detail:
+        print("[ILLUST_CONTEXT:RAW] DETAIL RAW negative 비어 있음; 설정 preset만 유지")
+        return assembled_negative
+
+    def append(part: str) -> str:
+        return ", ".join(value for value in (part.strip(), detail) if value)
+
+    if provider == "comfy" and prompt_format == "v3":
+        divider = "\n[SDXL]\n"
+        if divider not in assembled_negative:
+            print(
+                "[ILLUST_CONTEXT:RAW] V3 negative에 ANIMA/SDXL 경계 없음: "
+                f"negative={assembled_negative!r}, detail={detail!r}"
+            )
+            raise ValueError("V3 negative에 ANIMA/SDXL 경계가 없습니다")
+        anima, sdxl = assembled_negative.split(divider, 1)
+        return append(anima) + divider + append(sdxl)
+    return append(assembled_negative)
 
 
 def _descriptor_visual_states(descriptor: dict | None) -> dict:
@@ -7760,6 +7794,7 @@ async def process_illustration_context_queue_item(item) -> dict:
     inspection_queue_items: dict[int, Any] = {}
     inspection_enabled = bool(runtime_snapshot.get("illustration_quality_inspection_enabled", False))
     early_descriptor_slots = []
+    dispatched_scene_slots: set[int] = set()
     early_dispatch = False
     early_keyvis_pair = None
     raw_items = []
@@ -8062,6 +8097,10 @@ async def process_illustration_context_queue_item(item) -> dict:
                 descriptor.get("anonymous_partner_fragment", False)
             ),
         }
+        if descriptor.get("kind") == "scene" and "call1_scene_state" in descriptor:
+            # New ordinary DETAIL already chose image tags; preserve them through
+            # the renderer without restoring fixed appearance/wardrobe tags.
+            child_raw_body["illustration_scene_detail_authoritative"] = True
         multi_char_context = _multi_char_queue_context(descriptor, child_prompt_format)
         if multi_char_context:
             child_raw_body["illustration_multi_char"] = multi_char_context
@@ -8668,12 +8707,12 @@ async def process_illustration_context_queue_item(item) -> dict:
                         f"session={session_id}, kind={descriptor.get('kind')!r}"
                     )
                     raise RuntimeError("KEYVIS 조기 등록 descriptor가 아닙니다")
-                if early_keyvis_pair is not None:
+                if early_keyvis_pair is not None or not early_descriptor_slots or early_descriptor_slots[0] != -1 or child_pairs[0] is not None:
                     print(
-                        f"[ILLUST_CONTEXT:KEYVIS] 중복 조기 등록 요청 거부: "
-                        f"session={session_id}"
+                        f"[ILLUST_CONTEXT:KEYVIS] 중복/미등록 조기 등록 요청 거부: "
+                        f"session={session_id}, planned={early_descriptor_slots}, already={early_keyvis_pair is not None}"
                     )
-                    raise RuntimeError("KEYVIS가 이미 조기 등록되었습니다")
+                    raise RuntimeError("KEYVIS가 이미 조기 등록되었거나 PLAN에 없습니다")
                 preliminary_format = keyvis_built.get("prompt_format", "v3")
                 if (
                     _is_multi_char_descriptor(descriptor, preliminary_format)
@@ -8684,7 +8723,10 @@ async def process_illustration_context_queue_item(item) -> dict:
                         f"session={session_id}, characters={len(descriptor.get('characters') or [])}"
                     )
                     raise RuntimeError("KEYVIS 다중 캐릭터 레이아웃이 준비되지 않았습니다")
-                total_count = max(1, int(keyvis_built.get("total_count") or 1))
+                total_count = int(keyvis_built.get("total_count") or 0)
+                if total_count != len(child_pairs):
+                    print(f"[ILLUST_CONTEXT:KEYVIS] 계획된 이미지 수 불일치: session={session_id}, planned={len(child_pairs)}, actual={total_count}")
+                    raise RuntimeError("KEYVIS 등록 이미지 수가 PLAN과 다릅니다")
                 early_keyvis_pair = await _enqueue_child(
                     descriptor,
                     1,
@@ -8693,7 +8735,9 @@ async def process_illustration_context_queue_item(item) -> dict:
                     preliminary_format,
                     defer_postprocess=True,
                     queue_priority=0,
+                    llm_trace=_child_llm_trace([], descriptor),
                 )
+                child_pairs[0] = early_keyvis_pair
                 early_dispatch = True
                 print(
                     f"[ILLUST_CONTEXT:KEYVIS] KEYVIS 프롬프트 확정 · 이미지 즉시 등록: "
@@ -8702,17 +8746,23 @@ async def process_illustration_context_queue_item(item) -> dict:
                 )
 
             async def _on_call2_plan_ready(plan_built: dict):
-                nonlocal original_asset_plan_slots
+                nonlocal original_asset_plan_slots, child_pairs, early_descriptor_slots
                 illustration_flow.raise_if_cancel_requested()
+                scene_slots = plan_built.get("scene_slots") or []
+                expected_slots = ([-1] if plan_built.get("keyvis_planned") else []) + list(scene_slots)
+                total_count = plan_built.get("total_count")
+                if (child_pairs or early_descriptor_slots or not expected_slots
+                        or any(type(slot) is not int for slot in expected_slots)
+                        or len(set(expected_slots)) != len(expected_slots)
+                        or total_count != len(expected_slots)):
+                    print(f"[ILLUST_CONTEXT] PLAN 슬롯 예약 오류: session={session_id}, expected={expected_slots!r}, total={total_count!r}, existing={early_descriptor_slots!r}")
+                    raise RuntimeError("CALL2-PLAN 이미지 슬롯 예약에 실패했습니다")
+                early_descriptor_slots = expected_slots
+                child_pairs = [None] * len(expected_slots)
                 if not original_asset_enabled:
-                    print(
-                        f"[ILLUST_ORIGINAL_ASSET] PLAN slot 기록 건너뜀 - 토글 비활성화: "
-                        f"session={session_id}"
-                    )
+                    print(f"[ILLUST_CONTEXT] PLAN 이미지 슬롯 예약: session={session_id}, slots={expected_slots!r}")
                     return
-                original_asset_plan_slots = {
-                    int(slot) for slot in (plan_built.get("scene_slots") or [])
-                }
+                original_asset_plan_slots = set(scene_slots)
                 print(
                     f"[ILLUST_ORIGINAL_ASSET] CALL2-PLAN slot 확정 · DETAIL/GPU 등록까지 선택 보류: "
                     f"session={session_id}, "
@@ -8721,72 +8771,53 @@ async def process_illustration_context_queue_item(item) -> dict:
                 )
 
             async def _on_call2_ready(call2_built: dict):
-                nonlocal child_pairs, early_dispatch, early_descriptor_slots
+                nonlocal early_dispatch
                 illustration_flow.raise_if_cancel_requested()
-                preliminary_items = call2_built.get("items") or []
-                if not preliminary_items:
-                    print(f"[ILLUST_CONTEXT] CALL2 조기 등록 장면이 비어 있음: session={session_id}")
-                    raise RuntimeError("CALL2 조기 등록 장면이 비어 있습니다")
-                early_dispatch = True
-                early_descriptor_slots = [entry.get("slot") for entry in preliminary_items]
-                total_count = len(preliminary_items)
-                print(
-                    f"[ILLUST_CONTEXT] CALL2 완료 · CALL3와 이미지 생성 병렬 시작: "
-                    f"session={session_id}, images={total_count}, "
-                    f"provider={illustration_provider_snapshot}"
-                )
+                ready_items = call2_built.get("items") or []
+                total_count = call2_built.get("total_count")
+                if not ready_items or not early_descriptor_slots or total_count != len(child_pairs):
+                    print(f"[ILLUST_CONTEXT] DETAIL 배치 등록 형식 오류: session={session_id}, items={len(ready_items)}, total={total_count!r}, planned={early_descriptor_slots!r}")
+                    raise RuntimeError("DETAIL 배치의 등록 항목/PLAN 이미지 수가 다릅니다")
                 preliminary_format = call2_built.get("prompt_format", "v3")
-                for index, descriptor in enumerate(preliminary_items, start=1):
-                    if (
-                        str(descriptor.get("kind") or "") == "keyvis"
-                        and early_keyvis_pair is not None
-                    ):
-                        child_pairs.append(early_keyvis_pair)
-                        print(
-                            f"[ILLUST_CONTEXT:KEYVIS] 기존 조기 등록 이미지 재사용: "
-                            f"session={session_id}, index={index}/{total_count}"
-                        )
+                for descriptor in ready_items:
+                    slot = descriptor.get("slot") if isinstance(descriptor, dict) else None
+                    if (not isinstance(descriptor, dict) or descriptor.get("kind") != "scene"
+                            or type(slot) is not int or slot not in early_descriptor_slots
+                            or slot in dispatched_scene_slots):
+                        print(f"[ILLUST_CONTEXT] DETAIL 배치 slot 중복/미배정: session={session_id}, slot={slot!r}, assigned={sorted(dispatched_scene_slots)}, planned={early_descriptor_slots!r}")
+                        raise RuntimeError(f"DETAIL 배치의 이미지 slot이 PLAN과 다릅니다: {slot!r}")
+                    dispatched_scene_slots.add(slot)
+                    index = early_descriptor_slots.index(slot) + 1
+                    is_multi = _is_multi_char_descriptor(descriptor, preliminary_format)
+                    layout_error = str(descriptor.get("multi_char_layout_error") or "").strip()
+                    if is_multi and (layout_error or not isinstance(descriptor.get("multi_char_layout"), dict)):
+                        print(f"[ILLUST_CONTEXT:MULTI_CHAR] DETAIL 배치 이미지 등록 제외: session={session_id}, slot={slot}, error={layout_error or 'layout missing'}")
                         continue
-                    if _is_multi_char_descriptor(descriptor, preliminary_format):
-                        child_pairs.append(None)
-                        print(
-                            f"[ILLUST_CONTEXT:MULTI_CHAR] CALL2 다중 장면 후순위 보류: "
-                            f"session={session_id}, slot={descriptor.get('slot')}, "
-                            f"characters={len(descriptor.get('characters') or [])}"
-                        )
-                    else:
-                        child_pairs.append(await _enqueue_child(
-                            descriptor,
-                            index,
-                            total_count,
-                            call2_built.get("context", ""),
-                            preliminary_format,
-                            defer_postprocess=True,
-                            queue_priority=0,
-                        ))
+                    child_pairs[index - 1] = await _enqueue_child(
+                        descriptor,
+                        index,
+                        total_count,
+                        call2_built.get("context", ""),
+                        preliminary_format,
+                        defer_postprocess=True,
+                        queue_priority=1 if is_multi else 0,
+                        llm_trace=_child_llm_trace([], descriptor),
+                    )
+                early_dispatch = True
+                print(f"[ILLUST_CONTEXT] DETAIL 배치 완료 · 이미지 즉시 등록: session={session_id}, slots={[entry['slot'] for entry in ready_items]}, queued={sum(pair is not None for pair in child_pairs)}/{total_count}, provider={illustration_provider_snapshot}")
                 if original_asset_enabled:
                     if any(pair is not None for pair in child_pairs):
                         used_slots = (
                             set(original_asset_plan_slots)
                             if original_asset_plan_slots is not None
-                            else {
-                                int(entry["slot"])
-                                for entry in preliminary_items
-                                if isinstance(entry, dict)
-                                and entry.get("slot") is not None
-                                and str(entry.get("kind") or "") == "scene"
-                            }
+                            else set(dispatched_scene_slots)
                         )
                         _start_original_asset_selection(
                             used_slots,
-                            trigger="CALL2 DETAIL 완료 · GPU 큐 등록",
+                            trigger="CALL2 DETAIL batch 완료 · GPU 큐 등록",
                         )
                     else:
-                        print(
-                            f"[ILLUST_ORIGINAL_ASSET] DETAIL 완료했으나 등록 가능한 GPU 작업이 "
-                            f"아직 없음 · CALL3/다중 레이아웃 뒤로 선택 보류: "
-                            f"session={session_id}, items={len(preliminary_items)}"
-                        )
+                        print(f"[ILLUST_ORIGINAL_ASSET] DETAIL 배치의 등록 가능한 GPU 작업 없음: session={session_id}, slots={[entry['slot'] for entry in ready_items]}")
 
             if illustration_enabled:
                 built = await illustration_context_pipeline.build_from_context(
@@ -8795,9 +8826,7 @@ async def process_illustration_context_queue_item(item) -> dict:
                     extra_character_cards,
                     progress=progress,
                     stream_notify=stream_notify,
-                    on_call2_plan_ready=(
-                        _on_call2_plan_ready if original_asset_enabled else None
-                    ),
+                    on_call2_plan_ready=_on_call2_plan_ready,
                     on_call2_ready=_on_call2_ready,
                     on_keyvis_ready=_on_keyvis_ready,
                     extra_instruction=extra_instruction,
@@ -8838,15 +8867,15 @@ async def process_illustration_context_queue_item(item) -> dict:
                 *llm_trace,
                 *(built.get("llm_trace") or []),
             ]))
-            # 조기분산(early dispatch)으로 먼저 큐에 들어간 자식들에게 사후 주입.
-            # 이 자식들은 단일 캐릭터(멀티캐릭터는 후순위 보류)라 MULTI-CHAR-MASK가
-            # 없고, llm_trace(공통)에도 MULTI-CHAR-MASK가 빠져 있으므로 그대로 주입한다.
+            # 조기 등록 자식의 백업에 전체 공통 호출과 자기 슬롯의 mask 호출만 주입한다.
             for _pair in child_pairs:
                 if _pair is None:
                     continue
                 _cid = _pair[0]
                 if _cid in prompts:
-                    prompts[_cid]["_llm_trace"] = list(llm_trace)
+                    prompts[_cid]["_llm_trace"] = _child_llm_trace(
+                        llm_trace, child_descriptors.get(_cid) or {}
+                    )
             if history_plan is not None:
                 history_finalize_attempted = True
                 illustration_chat_history.finalize_history(history_plan, built)
@@ -8854,6 +8883,14 @@ async def process_illustration_context_queue_item(item) -> dict:
             if illustration_enabled and not raw_items:
                 print(f"[ILLUST_CONTEXT] 생성할 장면이 없음: session={session_id}")
                 raise RuntimeError("CALL 결과에 생성할 장면이 없습니다")
+            if illustration_enabled:
+                final_scene_slots = {
+                    entry.get("slot") for entry in raw_items
+                    if isinstance(entry, dict) and entry.get("kind") == "scene"
+                }
+                if dispatched_scene_slots != final_scene_slots:
+                    print(f"[ILLUST_CONTEXT] DETAIL 배치 조기 등록 누락/초과: session={session_id}, registered={sorted(dispatched_scene_slots)}, final={sorted(final_scene_slots)}")
+                    raise RuntimeError("DETAIL 배치 이미지 등록 결과와 최종 장면 slot이 다릅니다")
 
             if len(child_pairs) != len(raw_items):
                 print(
@@ -8880,34 +8917,25 @@ async def process_illustration_context_queue_item(item) -> dict:
                 )
                 raise RuntimeError("CALL2 조기 등록 결과와 CALL3 최종 슬롯 순서가 다릅니다")
 
-            # CALL3 뒤 레이아웃 계산이 끝난 다중 장면만 priority=1로 등록한다.
-            # 레이아웃 실패는 다른 슬롯을 취소하지 않고 해당 자리의 최종 실패로 남긴다.
+            # Completed batches and Key Visual already queued their ready images.
+            # Only a multi-character descriptor whose layout failed may remain
+            # unqueued; do not silently re-enqueue a scene after CALL3.
             illustration_flow.raise_if_cancel_requested()
             for index, pair in enumerate(child_pairs, start=1):
                 if pair is not None:
                     continue
                 descriptor = raw_items[index - 1]
+                if not _is_multi_char_descriptor(descriptor, built.get("prompt_format", "v3")):
+                    print(f"[ILLUST_CONTEXT] 조기 이미지 등록 누락: session={session_id}, slot={descriptor.get('slot')}, index={index}")
+                    raise RuntimeError(f"완료된 장면 이미지가 큐에 등록되지 않았습니다: slot={descriptor.get('slot')}")
                 layout_error = str(descriptor.get("multi_char_layout_error") or "").strip()
-                if layout_error or not isinstance(descriptor.get("multi_char_layout"), dict):
-                    if not layout_error:
-                        layout_error = "다중 캐릭터 마스크 레이아웃이 생성되지 않았습니다"
-                        descriptor["multi_char_layout_error"] = layout_error
-                    print(
-                        f"[ILLUST_CONTEXT:MULTI_CHAR] 후순위 큐 등록 제외: "
-                        f"session={session_id}, slot={descriptor.get('slot')}, "
-                        f"error={layout_error}"
-                    )
-                    continue
-                child_pairs[index - 1] = await _enqueue_child(
-                    descriptor,
-                    index,
-                    len(raw_items),
-                    built.get("context", ""),
-                    built.get("prompt_format", "v3"),
-                    defer_postprocess=False,
-                    queue_priority=1,
-                    llm_trace=_child_llm_trace(llm_trace, descriptor),
-                )
+                if not layout_error and isinstance(descriptor.get("multi_char_layout"), dict):
+                    print(f"[ILLUST_CONTEXT:MULTI_CHAR] 레이아웃 완료 이미지의 조기 등록 누락: session={session_id}, slot={descriptor.get('slot')}")
+                    raise RuntimeError(f"다중 캐릭터 이미지가 큐에 등록되지 않았습니다: slot={descriptor.get('slot')}")
+                if not layout_error:
+                    layout_error = "다중 캐릭터 마스크 레이아웃이 생성되지 않았습니다"
+                    descriptor["multi_char_layout_error"] = layout_error
+                print(f"[ILLUST_CONTEXT:MULTI_CHAR] 큐 등록 제외: session={session_id}, slot={descriptor.get('slot')}, error={layout_error}")
 
             if original_asset_enabled and original_asset_task is None:
                 fallback_used_slots = (
@@ -8947,6 +8975,9 @@ async def process_illustration_context_queue_item(item) -> dict:
             raise RuntimeError("일반 삽화와 원본 에셋 결과가 모두 비어 있습니다")
 
         if not early_dispatch:
+            if early_descriptor_slots:
+                print(f"[ILLUST_CONTEXT] PLAN 장면이 있으나 조기 이미지 등록 없음: session={session_id}, slots={early_descriptor_slots!r}")
+                raise RuntimeError("계획된 삽화 이미지가 큐에 등록되지 않았습니다")
             illustration_flow.raise_if_cancel_requested()
             await progress(70, "enqueue", f"이미지 {len(raw_items)}장 큐 등록", 0, len(raw_items))
             for index, descriptor in enumerate(raw_items, start=1):
@@ -9344,83 +9375,6 @@ async def handle_illustration_quality_inspection_review(request: web.Request) ->
         return web.json_response({"status": "error", "error": str(exc)}, status=500)
 
 
-async def handle_illustration_quality_inspection_translation(
-    request: web.Request,
-) -> web.Response:
-    history_id = str(request.match_info.get("history_id") or "").strip()
-    try:
-        translation_request = illustration_quality_inspection.load_translation_request(
-            history_id
-        )
-        cached = translation_request.get("cached_translation")
-        if isinstance(cached, dict):
-            print(
-                "[ILLUST_INSPECTION:TRANSLATION] 캐시 사용: "
-                f"history_id={history_id!r}, "
-                f"translation_history_id={cached.get('translation_history_id')!r}"
-            )
-            return web.json_response({**cached, "cached": True})
-        source = translation_request.get("source")
-        if not isinstance(source, dict):
-            print(
-                "[ILLUST_INSPECTION:TRANSLATION] 번역 원본 형식 오류: "
-                f"history_id={history_id!r}, source={source!r}"
-            )
-            raise RuntimeError("번역 원본을 준비하지 못했습니다.")
-
-        async def translate(queue_item):
-            return await illustration_quality_inspection.execute_translation(
-                queue_item,
-                source=source,
-            )
-
-        slots = [image.get("slot") for image in source.get("images") or []]
-        item = await queue_manager.add_item(
-            illustration_quality_inspection.TRANSLATION_TASK_KEY,
-            f"품질 검사 한글 번역 · {len(slots)}장",
-            {
-                "source_inspection_history_id": history_id,
-                "session_id": str(source.get("inspection_session_id") or ""),
-                "slots": slots,
-            },
-            priority=0,
-            runtime_handler=translate,
-        )
-        print(
-            "[ILLUST_INSPECTION:TRANSLATION] 번역 큐 등록 및 완료 대기: "
-            f"history_id={history_id!r}, queue={item.id!r}, slots={slots}"
-        )
-        result = await item.completion_future
-        if not isinstance(result, dict):
-            print(
-                "[ILLUST_INSPECTION:TRANSLATION] 번역 큐 결과 형식 오류: "
-                f"history_id={history_id!r}, queue={item.id!r}, result={result!r}"
-            )
-            raise RuntimeError("번역 결과 형식이 올바르지 않습니다.")
-        return web.json_response({**result, "cached": False})
-    except LookupError as exc:
-        print(
-            "[ILLUST_INSPECTION:TRANSLATION] 검사 기록 조회 실패: "
-            f"history_id={history_id!r}, error={exc}"
-        )
-        traceback.print_exc()
-        return web.json_response({"status": "error", "error": str(exc)}, status=404)
-    except ValueError as exc:
-        print(
-            "[ILLUST_INSPECTION:TRANSLATION] 번역 요청 거부: "
-            f"history_id={history_id!r}, error={exc}"
-        )
-        traceback.print_exc()
-        return web.json_response({"status": "error", "error": str(exc)}, status=400)
-    except Exception as exc:
-        print(
-            "[ILLUST_INSPECTION:TRANSLATION] 번역 처리 실패: "
-            f"history_id={history_id!r}, error={type(exc).__name__}: {exc}"
-        )
-        traceback.print_exc()
-        return web.json_response({"status": "error", "error": str(exc)}, status=500)
-
-
 async def handle_illustration_flow(request: web.Request) -> web.Response:
     node_id = request.query.get("node")
     if node_id:
@@ -9489,26 +9443,6 @@ async def handle_video_input_flow_event(request: web.Request) -> web.Response:
         return web.json_response({"success": False, "error": str(exc)}, status=500)
 
 
-def _settle_cancelled_raw_batch(run: dict, result: dict) -> None:
-    reason = illustration_flow.raw_batch_reason(run)
-    for item in queue_manager.items:
-        binding = getattr(item, "_illustration_flow", None)
-        if not binding or binding[0] is not run or item.status != "cancelled":
-            continue
-        prompt_id = str((item.params or {}).get("prompt_id") or "")
-        if prompt_id:
-            _finish_cancelled_raw_prompt(
-                prompt_id, run["raw_batch_session_id"],
-                (item.params or {}).get("raw_batch_slot"), reason=reason,
-            )
-    illustration_context_pipeline.set_session_regenerate_cancelled(
-        run["raw_batch_session_id"], run.get("raw_batch_current_slot", -1),
-        finishing=bool(result.get("active_finishing")),
-    )
-    if not result.get("active_finishing") and not result.get("active_cancelled"):
-        illustration_flow.finish_cancelled_raw_batch(run["raw_batch_id"])
-
-
 async def handle_illustration_flow_cancel(request: web.Request) -> web.Response:
     try:
         body = await request.json()
@@ -9520,9 +9454,6 @@ async def handle_illustration_flow_cancel(request: web.Request) -> web.Response:
         if not result.get("found"):
             print(f"[ILLUST_FLOW] 중단 API 대상 없음: run={run_id}")
             return web.json_response({"success": False, "error": "실행 중인 흐름을 찾을 수 없습니다"}, status=404)
-        batch_run = illustration_flow.raw_batch_for_run(run_id)
-        if batch_run is not None:
-            _settle_cancelled_raw_batch(batch_run, result)
         return web.json_response({
             "success": True,
             **result,
@@ -9532,48 +9463,6 @@ async def handle_illustration_flow_cancel(request: web.Request) -> web.Response:
         print(f"[ILLUST_FLOW] 중단 API 실패: error={type(exc).__name__}: {exc}")
         traceback.print_exc()
         return web.json_response({"success": False, "error": str(exc)}, status=500)
-
-
-async def handle_raw_batch_status(request: web.Request) -> web.Response:
-    """Short, no-cache control channel for the saved-RAW whole-generation module."""
-    batch_id = str(request.match_info.get("batch_id") or "")
-    if not re.fullmatch(r"[0-9a-f]{24}", batch_id):
-        print(f"[ILLUST_FLOW:RAW_BATCH] 상태 조회 토큰 오류: batch={batch_id!r}")
-        return web.json_response({"error": "잘못된 저장 RAW 전체 생성 토큰입니다"}, status=400)
-    run = illustration_flow.raw_batch(batch_id)
-    if run is None:
-        print(f"[ILLUST_FLOW:RAW_BATCH] 상태 조회 실행 없음: batch={batch_id}")
-        return web.json_response({"error": "저장 RAW 전체 생성 실행을 찾을 수 없습니다"}, status=404)
-    operation = next((name for name in ("p", "f", "a") if name in request.query), "")
-    if operation and (request.query.get(operation) != "1" or len(request.query) != 1):
-        print(f"[ILLUST_FLOW:RAW_BATCH] 상태 전이 요청 오류: batch={batch_id}, query={dict(request.query)}")
-        return web.json_response({"error": "잘못된 저장 RAW 전체 생성 상태 요청입니다"}, status=400)
-    if not operation and request.query:
-        print(f"[ILLUST_FLOW:RAW_BATCH] 알 수 없는 상태 요청: batch={batch_id}, query={dict(request.query)}")
-        return web.json_response({"error": "지원하지 않는 저장 RAW 전체 생성 상태 요청입니다"}, status=400)
-    if operation == "a" and run["raw_batch_state"] == "active":
-        reason = "모듈의 저장 RAW 전체 생성 처리 실패"
-        result = await queue_manager.cancel_illustration_flow(run["id"], reason=reason)
-        if not result.get("found"):
-            print(f"[ILLUST_FLOW:RAW_BATCH] 실패 실행 정리 실패: batch={batch_id}, run={run['id']}")
-            return web.json_response({"error": "저장 RAW 전체 생성 작업을 정리할 수 없습니다"}, status=409)
-        _settle_cancelled_raw_batch(run, result)
-    elif operation:
-        state = {"p": "finalizing", "f": "completed", "a": "failed"}[operation]
-        if not illustration_flow.finish_raw_batch(batch_id, state,
-                                                  "모듈의 저장 RAW 전체 생성 처리 실패" if state == "failed" else ""):
-            return web.json_response({
-                "error": illustration_flow.raw_batch_reason(run) if run["cancel_requested"] else (
-                    "저장 RAW 전체 생성 상태를 변경할 수 없습니다"
-                ),
-                "state": run["raw_batch_state"],
-            }, status=409, headers={"Cache-Control": "no-store"})
-    return web.json_response({
-        "state": run["raw_batch_state"], "run": run["id"],
-        "error": illustration_flow.raw_batch_reason(run) if run["cancel_requested"] else (
-            run.get("raw_batch_error") or ""
-        ),
-    }, headers={"Cache-Control": "no-store"})
 
 
 async def handle_illustration_flow_script(request: web.Request) -> web.Response:
@@ -9666,7 +9555,6 @@ async def handle_api_illustration_context_bridge_health(request: web.Request) ->
         "slot_animation_metadata": True,
         "asset_display_metadata": True,
         "asset_reroll": True,
-        "raw_batch_stop": True,
         "lookup_key_length": 24,
         "max_slot_manifest_count": illustration_context_pipeline.MAX_ILLUSTRATION_SLOT_COUNT,
         "progress_phases": ["call1", "call2", "call2_plan", "call2_keyvis", "call2_detail", "call2_authority_audit", "call2_fallback", "call3", "multi_char_mask", "asset_reroll", "enqueue", "generating", "retrying", "regenerating", "ready", "error"],
@@ -11382,33 +11270,6 @@ def _serve_illustration_session_result(
     return web.json_response({"prompt_id": prompt_id, "number": len(prompts), "node_errors": {}})
 
 
-def _finish_cancelled_raw_prompt(
-    prompt_id: str, session_id: str, slot: int | None, *, reason: str = ""
-) -> None:
-    entry = prompts.get(prompt_id)
-    if not isinstance(entry, dict):
-        print(
-            f"[ILLUST_FLOW:RAW_BATCH] 취소 prompt 정리 실패 - 없음: "
-            f"prompt={prompt_id}, session={session_id}, slot={slot}"
-        )
-        return
-    if entry.get("status") != "running":
-        print(
-            f"[ILLUST_FLOW:RAW_BATCH] 이미 종료된 prompt 유지: "
-            f"prompt={prompt_id}, session={session_id}, slot={slot}, status={entry.get('status')}"
-        )
-        return
-    reason = reason or illustration_flow.RAW_BATCH_CANCEL_REASON
-    entry.update(status="cancelled", error=reason, outputs={"images": []}, image_bytes=None)
-    illustration_context_pipeline.set_session_regenerate_cancelled(
-        session_id, slot if slot is not None else -1
-    )
-    print(
-        f"[ILLUST_FLOW:RAW_BATCH] 대기 prompt 중단 완료: "
-        f"prompt={prompt_id}, session={session_id}, slot={slot}, reason={reason}"
-    )
-
-
 async def _serve_priority_reservation_for_illustration_slot(
     body: dict,
     prompt_id: str,
@@ -11416,8 +11277,6 @@ async def _serve_priority_reservation_for_illustration_slot(
     session_id: str,
     slot: int,
     raw_positive: str,
-    *,
-    raw_batch_id: str = "",
 ) -> web.Response | None:
     """예약 이미지가 있으면 한 슬롯의 실제 생성보다 먼저 반환한다.
 
@@ -11425,13 +11284,6 @@ async def _serve_priority_reservation_for_illustration_slot(
     않는다. 이 함수는 저장 RAW로 한 장을 생성하려는 요청에서만 호출한다.
     """
     global reschedule_queue
-
-    if raw_batch_id and illustration_flow.raw_batch(raw_batch_id)["cancel_requested"]:
-        print(
-            f"[ILLUST_FLOW:RAW_BATCH] 예약 이미지 조회 전 중단: "
-            f"batch={raw_batch_id}, session={session_id}, slot={slot}"
-        )
-        return web.json_response({"error": illustration_flow.RAW_BATCH_CANCEL_REASON}, status=409)
 
     image_bytes = None
     reservation_kind = ""
@@ -11445,12 +11297,11 @@ async def _serve_priority_reservation_for_illustration_slot(
             reservation_kind = "single"
             reservation_detail = scheduled_name
             reschedule_queue = None
-            if not raw_batch_id:
-                await notify_frontend("reschedule_used", {"name": scheduled_name})
-                await notify_frontend(
-                    "reschedule_changed",
-                    {"scheduled": False, "name": None},
-                )
+            await notify_frontend("reschedule_used", {"name": scheduled_name})
+            await notify_frontend(
+                "reschedule_changed",
+                {"scheduled": False, "name": None},
+            )
         else:
             print(
                 f"[ILLUST_CONTEXT] 예약 우선 처리 실패 - 이미지 bytes 없음: "
@@ -11495,9 +11346,6 @@ async def _serve_priority_reservation_for_illustration_slot(
     asyncio.create_task(
         complete_prompt_from_reschedule(prompt_id, save_node or "9", filename)
     )
-    if raw_batch_id:
-        await notify_frontend("reschedule_used", {"name": reservation_detail})
-        await notify_frontend("reschedule_changed", {"scheduled": False, "name": None})
     return web.json_response(
         {"prompt_id": prompt_id, "number": len(prompts), "node_errors": {}}
     )
@@ -11513,7 +11361,6 @@ async def _enqueue_illustration_session_slot(
     attach_context: bool,
     operation_label: str,
     whole_session: bool = False,
-    raw_batch_id: str = "",
 ) -> web.Response:
     """저장된 RAW descriptor로 한 슬롯을 생성한다. CALL1/2/3은 실행하지 않는다."""
     descriptor = illustration_context_pipeline.session_item_by_slot(session_id, slot)
@@ -11526,13 +11373,6 @@ async def _enqueue_illustration_session_slot(
             {"error": "illustration full generation unavailable: session or slot not found"},
             status=409,
         )
-
-    if raw_batch_id and illustration_flow.raw_batch(raw_batch_id)["raw_batch_state"] != "active":
-        print(
-            f"[ILLUST_FLOW:RAW_BATCH] 큐 접수 전 중단: "
-            f"batch={raw_batch_id}, session={session_id}, slot={slot}"
-        )
-        return web.json_response({"error": illustration_flow.RAW_BATCH_CANCEL_REASON}, status=409)
 
     generated_prompt = copy.deepcopy(prompt_data)
     if not set_prompt_by_title(generated_prompt, "긍정프롬프트", descriptor.get("raw_positive", "")):
@@ -11548,8 +11388,6 @@ async def _enqueue_illustration_session_slot(
         "image_bytes": None, "timestamp": time.time(),
         "_llm_final_result": _build_llm_final_result(descriptor),
     }
-    if raw_batch_id:
-        prompts[prompt_id]["raw_batch_id"] = raw_batch_id
     generated_body = {
         "prompt": generated_prompt,
         "client_id": body.get("client_id", ""),
@@ -11561,11 +11399,11 @@ async def _enqueue_illustration_session_slot(
             descriptor.get("anonymous_partner_fragment", False)
         ),
     }
+    if descriptor.get("kind") == "scene" and "call1_scene_state" in descriptor:
+        generated_body["illustration_scene_detail_authoritative"] = True
     if attach_context:
         session = illustration_context_pipeline.get_session(session_id) or {}
         generated_body["illustration_context"] = session.get("context", "")
-    if raw_batch_id:
-        generated_body["illustration_raw_batch_id"] = raw_batch_id
 
     illustration_context_pipeline.set_session_regenerate_started(
         session_id,
@@ -11573,29 +11411,14 @@ async def _enqueue_illustration_session_slot(
         operation_label,
         whole_session=whole_session,
     )
-    try:
-        backup_name = str(descriptor.get("backup_name") or "").strip()
-        hybrid_regeneration = bool(backup_name and _backup_uses_hybrid_regeneration(backup_name))
-    except Exception as exc:
-        print(
-            f"[ILLUST_FLOW:RAW_BATCH] 백업 확인 실패: batch={raw_batch_id}, "
-            f"session={session_id}, slot={slot}, error={exc}"
-        )
-        traceback.print_exc()
-        if raw_batch_id:
-            prompts[prompt_id].update(
-                status="failed", error=str(exc), outputs={"images": []}, image_bytes=None,
-            )
-            illustration_context_pipeline.set_session_regenerate_error(session_id, slot, str(exc))
-        raise
-    if hybrid_regeneration:
+    backup_name = str(descriptor.get("backup_name") or "").strip()
+    if backup_name and _backup_uses_hybrid_regeneration(backup_name):
         asyncio.create_task(process_illustration_remote_regenerate(
             prompt_id,
             session_id,
             slot,
             backup_name,
             operation_label,
-            raw_batch_id=raw_batch_id,
         ))
         print(
             f"[ILLUST_CONTEXT:REMOTE_REGEN] 하이브리드 백업 접수: "
@@ -11605,47 +11428,12 @@ async def _enqueue_illustration_session_slot(
         return web.json_response(
             {"prompt_id": prompt_id, "number": len(prompts), "node_errors": {}}
         )
-    queue_params = {
-        "prompt_id": prompt_id, "prompt_data": generated_prompt, "raw_body": generated_body,
-    }
-    if raw_batch_id:
-        queue_params.update(
-            raw_batch_id=raw_batch_id, raw_batch_session_id=session_id,
-            raw_batch_slot=slot,
-        )
-        # Await queue admission for this batch: Stop must not cross an unbound
-        # fire-and-forget add_item() and let a cancelled slot start later.
-        try:
-            item = await queue_manager.add_item(
-                "illustration", f"삽화 {operation_label} · slot {slot}", queue_params, priority=0,
-            )
-        except Exception as exc:
-            print(
-                f"[ILLUST_FLOW:RAW_BATCH] 큐 접수 실패: batch={raw_batch_id}, "
-                f"session={session_id}, slot={slot}, error={exc}"
-            )
-            traceback.print_exc()
-            prompts[prompt_id].update(
-                status="failed", error=str(exc), outputs={"images": []}, image_bytes=None,
-            )
-            illustration_context_pipeline.set_session_regenerate_error(session_id, slot, str(exc))
-            raise
-        if item.status == "cancelled":
-            _finish_cancelled_raw_prompt(prompt_id, session_id, slot, reason=item.error)
-            return web.json_response({"error": item.error or illustration_flow.RAW_BATCH_CANCEL_REASON}, status=409)
-        # A worker may claim the item before its image Task starts. Stop cancels
-        # that item without entering process_prompt(), so settle /history here too.
-        def on_batch_item_done(_future):
-            if item.status == "cancelled":
-                _finish_cancelled_raw_prompt(prompt_id, session_id, slot, reason=item.error)
-        item.completion_future.add_done_callback(on_batch_item_done)
-    else:
-        asyncio.create_task(queue_manager.add_item(
-            "illustration",
-            f"삽화 {operation_label} · slot {slot}",
-            queue_params,
-            priority=0,
-        ))
+    asyncio.create_task(queue_manager.add_item(
+        "illustration",
+        f"삽화 {operation_label} · slot {slot}",
+        {"prompt_id": prompt_id, "prompt_data": generated_prompt, "raw_body": generated_body},
+        priority=0,
+    ))
     print(f"[ILLUST_CONTEXT] {operation_label} 접수: session={session_id}, slot={slot}")
     return web.json_response({"prompt_id": prompt_id, "number": len(prompts), "node_errors": {}})
 
@@ -11773,6 +11561,8 @@ async def handle_prompt(request: web.Request) -> web.Response:
                     descriptor.get("anonymous_partner_fragment", False)
                 ),
             }
+            if descriptor.get("kind") == "scene" and "call1_scene_state" in descriptor:
+                regenerate_body["illustration_scene_detail_authoritative"] = True
             backup_name = str(descriptor.get("backup_name") or "").strip()
             if backup_name and _backup_uses_hybrid_regeneration(backup_name):
                 asyncio.create_task(process_illustration_remote_regenerate(
@@ -11873,47 +11663,13 @@ async def handle_prompt(request: web.Request) -> web.Response:
                     slot=context_payload["slot"],
                 )
             if context_action == "generate":
-                # Only the saved-server-RAW whole-generation module sends a batch
-                # token. Legacy/single-slot generate requests retain their path.
+                # 현재 응답 전체 생성은 기존 RAW descriptor만 사용한다.
+                # CONTEXT 재생성으로 폴백하지 않으며, RAW 로그에도 CONTEXT를 붙이지 않는다.
                 slot = context_payload["slot"]
-                raw_batch_id = context_payload.get("raw_batch_id")
-                has_batch_index = "raw_batch_index" in context_payload
-                if (raw_batch_id is None) != (not has_batch_index):
-                    print(
-                        f"[ILLUST_FLOW:RAW_BATCH] 누락된 토큰/순번: "
-                        f"session={session_id}, slot={slot}, batch={raw_batch_id!r}, "
-                        f"index={context_payload.get('raw_batch_index')!r}"
-                    )
-                    return web.json_response({"error": "저장 RAW 전체 생성 토큰과 순번이 필요합니다"}, status=400)
-                if raw_batch_id is not None:
-                    batch_index = context_payload["raw_batch_index"]
-                    if (not isinstance(raw_batch_id, str)
-                        or not re.fullmatch(r"[0-9a-f]{24}", raw_batch_id)
-                        or isinstance(batch_index, bool)
-                        or not isinstance(batch_index, int) or batch_index < 0):
-                        print(
-                            f"[ILLUST_FLOW:RAW_BATCH] 잘못된 토큰/순번: "
-                            f"session={session_id}, slot={slot}, batch={raw_batch_id!r}, "
-                            f"index={batch_index!r}"
-                        )
-                        return web.json_response({"error": "잘못된 저장 RAW 전체 생성 토큰 또는 순번입니다"}, status=400)
-                    batch_run, admission_error = illustration_flow.admit_raw_batch(
-                        raw_batch_id, session_id, batch_index
-                    )
-                    if batch_run is None:
-                        return web.json_response({"error": admission_error}, status=409)
-                    batch_run["raw_batch_current_slot"] = slot
-                    illustration_flow.changed(batch_run)
                 descriptor = illustration_context_pipeline.session_item_by_slot(
                     session_id,
                     slot,
                 )
-                if raw_batch_id is not None and illustration_flow.raw_batch(raw_batch_id)["cancel_requested"]:
-                    print(
-                        f"[ILLUST_FLOW:RAW_BATCH] descriptor 조회 중 중단: "
-                        f"session={session_id}, slot={slot}, batch={raw_batch_id}"
-                    )
-                    return web.json_response({"error": illustration_flow.RAW_BATCH_CANCEL_REASON}, status=409)
                 if descriptor is not None:
                     reservation_response = await _serve_priority_reservation_for_illustration_slot(
                         body,
@@ -11922,7 +11678,6 @@ async def handle_prompt(request: web.Request) -> web.Response:
                         session_id,
                         slot,
                         descriptor.get("raw_positive", ""),
-                        raw_batch_id=raw_batch_id or "",
                     )
                     if reservation_response is not None:
                         return reservation_response
@@ -11935,7 +11690,6 @@ async def handle_prompt(request: web.Request) -> web.Response:
                     attach_context=False,
                     operation_label="전체 생성",
                     whole_session=True,
-                    raw_batch_id=raw_batch_id or "",
                 )
             if context_action == "asset_reroll":
                 session = illustration_context_pipeline.get_session(session_id)
@@ -12101,37 +11855,21 @@ async def handle_history(request: web.Request) -> web.Response:
         node_outputs = {}
         if save_node:
             node_outputs[str(save_node)] = {"images": img_list}
-        status_error = bool(entry.get("raw_batch_id")) and entry.get("status") in ("cancelled", "failed")
-        reason = str(entry.get("error") or (
-            illustration_flow.RAW_BATCH_CANCEL_REASON if entry.get("status") == "cancelled"
-            else "삽화 생성 작업에 실패했습니다"
-        )) if status_error else ""
         return {
             "prompt": [0, pid, entry["prompt"] if include_workflow else {}, {}, []],
             "outputs": node_outputs,
-            "status": {
-                "status_str": "error" if status_error else "success",
-                "completed": True,
-                "messages": [["execution_error", {"exception_message": reason}]] if status_error else [],
-            },
+            "status": {"status_str": "success", "completed": True, "messages": []},
         }
 
     if not prompt_id:
         res = {
             pid: build_entry(pid, e, include_workflow=False)
             for pid, e in prompts.items()
-            if e["status"] == "completed" or (
-                e.get("raw_batch_id") and e["status"] in ("cancelled", "failed")
-            )
+            if e["status"] == "completed"
         }
         return web.json_response(res)
 
-    if prompt_id in prompts and (
-        prompts[prompt_id]["status"] == "completed" or (
-            prompts[prompt_id].get("raw_batch_id")
-            and prompts[prompt_id]["status"] in ("cancelled", "failed")
-        )
-    ):
+    if prompt_id in prompts and prompts[prompt_id]["status"] == "completed":
         return web.json_response(
             {prompt_id: build_entry(prompt_id, prompts[prompt_id])}
         )
@@ -12922,8 +12660,6 @@ async def _run_regeneration_attempts(
     illustration_visual_states: dict | None = None,
     regeneration_request_id: str = "",
     first_item_future: asyncio.Future | None = None,
-    raw_batch_id: str = "",
-    raw_batch_session_id: str = "",
 ) -> tuple[dict, object]:
     """공급자 레인을 점유하지 않는 위치에서 재생성 시도를 순차 조정한다.
 
@@ -12961,16 +12697,6 @@ async def _run_regeneration_attempts(
 
     failures: list[tuple[str, str]] = []
     for attempt_index, provider in enumerate(providers, start=1):
-        if raw_batch_id:
-            batch_run = illustration_flow.raw_batch(raw_batch_id)
-            if batch_run is None or batch_run["raw_batch_state"] != "active":
-                print(
-                    f"[ILLUST_FLOW:RAW_BATCH] 새 공급자 시도 차단: "
-                    f"batch={raw_batch_id}, session={raw_batch_session_id}, "
-                    f"backup={backup_name}, provider={provider}, "
-                    f"state={batch_run['raw_batch_state'] if batch_run else 'missing'}"
-                )
-                raise asyncio.CancelledError(illustration_flow.RAW_BATCH_CANCEL_REASON)
         is_fallback = attempt_index > 1
         attempt_label = (
             f"{label} 폴백({provider}): {backup_name}"
@@ -12988,28 +12714,25 @@ async def _run_regeneration_attempts(
             f"mode={provider_mode}, fallback={is_fallback}"
         )
         try:
-            queue_params = {
-                "backup_name": backup_name,
-                "positive": positive,
-                "negative": negative,
-                "bot_name": bot_name or "",
-                "postprocess_settings": postprocess_settings,
-                "speak_text": speak_text or "",
-                "provider": provider,
-                "provider_mode": provider_mode,
-                "prompt_provider": prompt_provider,
-                "generation_params": attempt_params,
-                "illustration_multi_char": illustration_multi_char,
-                "illustration_visual_states": illustration_visual_states,
-                "regeneration_request_id": regeneration_request_id,
-            }
-            if raw_batch_id:
-                queue_params.update(
-                    raw_batch_id=raw_batch_id,
-                    raw_batch_session_id=raw_batch_session_id,
-                )
             queue_item = await queue_manager.add_item(
-                "regenerate", attempt_label, queue_params, priority=0,
+                "regenerate",
+                attempt_label,
+                {
+                    "backup_name": backup_name,
+                    "positive": positive,
+                    "negative": negative,
+                    "bot_name": bot_name or "",
+                    "postprocess_settings": postprocess_settings,
+                    "speak_text": speak_text or "",
+                    "provider": provider,
+                    "provider_mode": provider_mode,
+                    "prompt_provider": prompt_provider,
+                    "generation_params": attempt_params,
+                    "illustration_multi_char": illustration_multi_char,
+                    "illustration_visual_states": illustration_visual_states,
+                    "regeneration_request_id": regeneration_request_id,
+                },
+                priority=0,
             )
             if first_item_future is not None and not first_item_future.done():
                 first_item_future.set_result(queue_item)
@@ -16828,8 +16551,6 @@ async def handle_api_regenerate(
     *,
     _body: dict | None = None,
     _return_queue_result: bool = False,
-    _raw_batch_id: str = "",
-    _raw_batch_session_id: str = "",
 ) -> web.Response | dict:
     """백업의 프롬프트 + 현재 워크플로우로 이미지를 재생성해 반환한다.
 
@@ -16923,11 +16644,6 @@ async def handle_api_regenerate(
             "illustration_visual_states": src_visual_states,
             "label": "재생성",
         }
-        if _raw_batch_id:
-            attempt_kwargs.update(
-                raw_batch_id=_raw_batch_id,
-                raw_batch_session_id=_raw_batch_session_id,
-            )
         if not _return_queue_result:
             request_id, item = await _enqueue_regeneration_request(**attempt_kwargs)
             return web.json_response(
@@ -18308,25 +18024,13 @@ async def process_illustration_remote_regenerate(
     slot: int,
     backup_name: str,
     operation_label: str = "재생성",
-    *,
-    raw_batch_id: str = "",
 ) -> dict:
     """원격 슬롯의 하이브리드 백업을 공통 재생성 폴백 경로로 처리한다."""
     try:
-        if raw_batch_id:
-            run = illustration_flow.raw_batch(raw_batch_id)
-            if run is None or run["raw_batch_state"] != "active":
-                print(
-                    f"[ILLUST_FLOW:RAW_BATCH] 하이브리드 생성 전 중단: "
-                    f"batch={raw_batch_id}, session={session_id}, slot={slot}"
-                )
-                raise asyncio.CancelledError(illustration_flow.RAW_BATCH_CANCEL_REASON)
         regenerate_result = await handle_api_regenerate(
             None,
             _body={"name": backup_name},
             _return_queue_result=True,
-            _raw_batch_id=raw_batch_id,
-            _raw_batch_session_id=session_id,
         )
         if isinstance(regenerate_result, web.Response):
             _internal_json_response_payload(
@@ -18357,9 +18061,6 @@ async def process_illustration_remote_regenerate(
             raise RuntimeError(
                 f"원격 {operation_label} 이미지를 세션 슬롯에 반영하지 못했습니다"
             )
-        batch_run = illustration_flow.raw_batch(raw_batch_id) if raw_batch_id else None
-        if batch_run and batch_run["cancel_requested"]:
-            illustration_context_pipeline.set_session_regenerate_cancelled(session_id, slot)
 
         prompt_entry = prompts.get(prompt_id)
         if not isinstance(prompt_entry, dict):
@@ -18384,24 +18085,6 @@ async def process_illustration_remote_regenerate(
             "provider": regenerate_result.get("provider"),
             "fallback_used": bool(regenerate_result.get("fallback_used")),
         }
-    except asyncio.CancelledError:
-        if not raw_batch_id:
-            raise
-        run = illustration_flow.raw_batch(raw_batch_id)
-        reason = (illustration_flow.RAW_BATCH_CANCEL_REASON if run and run["cancel_requested"]
-                  else "원격 저장 RAW 이미지 생성 작업이 취소되었습니다")
-        print(
-            f"[ILLUST_FLOW:RAW_BATCH] 하이브리드 중단: "
-            f"batch={raw_batch_id}, session={session_id}, slot={slot}, reason={reason}"
-        )
-        if run and run["cancel_requested"]:
-            _finish_cancelled_raw_prompt(prompt_id, session_id, slot)
-        else:
-            prompt_entry = prompts.get(prompt_id)
-            if isinstance(prompt_entry, dict):
-                prompt_entry.update(status="failed", error=reason, outputs={"images": []}, image_bytes=None)
-            illustration_context_pipeline.set_session_regenerate_error(session_id, slot, reason)
-        return {"success": False, "prompt_id": prompt_id, "error": reason}
     except Exception as exc:
         print(
             f"[ILLUST_CONTEXT:REMOTE_REGEN] 실패: "
@@ -18409,26 +18092,14 @@ async def process_illustration_remote_regenerate(
             f"backup={backup_name}, error={exc}"
         )
         traceback.print_exc()
-        batch_run = illustration_flow.raw_batch(raw_batch_id) if raw_batch_id else None
-        if batch_run and batch_run["cancel_requested"]:
-            illustration_context_pipeline.set_session_regenerate_cancelled(session_id, slot)
-        else:
-            illustration_context_pipeline.set_session_regenerate_error(
-                session_id,
-                slot,
-                str(exc),
-            )
+        illustration_context_pipeline.set_session_regenerate_error(
+            session_id,
+            slot,
+            str(exc),
+        )
         prompt_entry = prompts.get(prompt_id)
         if isinstance(prompt_entry, dict):
-            prompt_entry["status"] = (
-                "cancelled" if batch_run and batch_run["cancel_requested"]
-                else "failed" if raw_batch_id else "completed"
-            )
-            if raw_batch_id:
-                prompt_entry["error"] = (
-                    illustration_flow.RAW_BATCH_CANCEL_REASON
-                    if batch_run and batch_run["cancel_requested"] else str(exc)
-                )
+            prompt_entry["status"] = "completed"
             prompt_entry["outputs"] = {"images": []}
             prompt_entry["image_bytes"] = None
         return {
@@ -22208,12 +21879,7 @@ app.router.add_post(
     "/api/illustration_quality_inspection/review/{history_id}",
     handle_illustration_quality_inspection_review,
 )
-app.router.add_post(
-    "/api/illustration_quality_inspection/translation/{history_id}",
-    handle_illustration_quality_inspection_translation,
-)
 app.router.add_post("/api/illustration_flow/cancel", handle_illustration_flow_cancel)
-app.router.add_get("/b/{batch_id}", handle_raw_batch_status)
 app.router.add_get("/illustration_flow.js", handle_illustration_flow_script)
 app.router.add_get("/api/config", handle_api_config)
 app.router.add_post("/api/config", handle_api_config)

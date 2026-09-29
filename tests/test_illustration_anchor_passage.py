@@ -92,17 +92,19 @@ def test_selected_anchor_passage_is_preserved_as_downstream_event_authority(
     assert public["slot"] == plan["slot"]
 
 
-def test_anchor_authority_contract_covers_planner_and_detail_handoffs():
+def test_anchor_authority_contract_covers_planner_audit_and_detail_handoffs():
     prompts = pipeline.load_prompt_files()
     plan_contract = prompts["call2_plan"]
+    audit_contract = prompts["call2_audit"]
     detail_contract = prompts["call2_detail"]
 
-    assert "verbatim passage alone establishes action, location, and story time" in plan_contract
-    assert "may not donate another event" in plan_contract
-    assert "Never invent an action, pose, contact, body region, or setting" in plan_contract
-    assert "Never place an illustration boundary inside one continuous dialogue" in plan_contract
-    assert "`anchor_passage` is the event authority" in detail_contract
-    assert "may not add another event" in detail_contract
+    assert "Only CURRENT Cxxx passages supply selectable moments" in plan_contract
+    assert "unique exact supplied anchor_segment" in plan_contract
+    assert "Never select an unsupported event, place, time" in plan_contract
+    assert "Never infer an unsupported place/time" in audit_contract
+    assert "exact number, order, anchor_segment and characters" in audit_contract
+    assert "single visible event" in detail_contract
+    assert "do not invent missing garments" in detail_contract
 
 
 def test_missing_anchor_passage_fails_with_diagnostic(capsys):

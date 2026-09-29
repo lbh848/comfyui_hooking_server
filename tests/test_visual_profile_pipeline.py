@@ -101,11 +101,14 @@ def test_character_and_profile_prompts_are_separated_before_compact_call1_contra
     assert "Registered character cards" not in call1_prompt
     assert "{visual_profile_catalog}" not in call1_prompt
     assert '"profile_events"' not in call1_prompt
-    assert "profile" not in call1_prompt.casefold()
-    assert "all three arrays must exist" in call1_prompt
-    assert '"wardrobe_at_start"' in call1_prompt
-    assert '"wardrobe_events"' in call1_prompt
-    assert '"hairstyle_events"' in call1_prompt
+    assert "selected resolved profile" in call1_prompt
+    assert "use that character's selected resolved profile and lb.extra baseline" in call1_prompt
+    assert "change the resolved profile" in call1_prompt
+    assert '"state_at_start"' in call1_prompt
+    assert '"events"' in call1_prompt
+    assert '"wardrobe_at_start"' not in call1_prompt
+    assert '"wardrobe_events"' not in call1_prompt
+    assert '"hairstyle_events"' not in call1_prompt
     assert '"reference_assignments"' not in call1_prompt
     assert '"unresolved_references"' not in call1_prompt
     assert '"current_characters"' not in call1_prompt

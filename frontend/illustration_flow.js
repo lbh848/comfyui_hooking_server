@@ -3,7 +3,6 @@
     let flow = null, flowBackdrop, modal, detailModal, developerModal, stopButton, developerButton;
     let selected = null, detailRequest = 0, developerPreviousFocus = null;
     let qualityInspectionEnabled = false, qualityInspectionRequest = 0;
-    const qualityTranslationRequests = new Map();
     let scale = 1, previousFocus = null;
     let activeTab = 'illustration';
     const flows = {illustration: null, video: null, video_input: null};
@@ -71,7 +70,6 @@
             .if-layer-backdrop{position:fixed;inset:0;z-index:460;background:#020617b3;backdrop-filter:blur(3px)}
             .if-layer-backdrop[hidden]{display:none}
             .if-modal{position:fixed;inset:0;z-index:470;margin:auto;box-sizing:border-box;overflow:hidden;color:var(--text,#e2e8f0);background:var(--bg2,#111827);border:1px solid #64748b66;border-radius:16px;padding:0;width:min(1240px,94vw);max-width:96vw;max-height:calc(100dvh - 32px);box-shadow:0 24px 90px #0009;font:14px/1.5 system-ui,sans-serif}
-            #illustration-flow-modal{width:min(1860px,calc(100vw - 32px));max-width:calc(100vw - 32px)}
             .if-modal[open]{display:flex;flex-direction:column}.if-header,.if-tabs,.if-auto-open-settings,.if-legend,.if-footer{flex-shrink:0}
             .if-detail{z-index:480}
             .if-developer{z-index:490;width:min(620px,94vw)}
@@ -82,7 +80,7 @@
             .if-tabs{display:flex;gap:8px;padding:12px 22px 0;border-bottom:1px solid #64748b44}.if-tab{border:0;border-bottom:3px solid transparent;border-radius:8px 8px 0 0;padding:10px 16px;color:var(--text2,#94a3b8)}.if-tab[aria-selected=true]{color:var(--text,#e2e8f0);background:#60a5fa18;border-bottom-color:#60a5fa}.if-modal [hidden]{display:none!important}
             .if-auto-open-settings{padding:10px 22px;border-bottom:1px solid #64748b33}.if-auto-open-toggle{display:flex;align-items:center;gap:9px;width:fit-content;font-size:13px;cursor:pointer}.if-auto-open-toggle input{appearance:none;flex-shrink:0;width:34px;height:20px;margin:0;border:1px solid #64748b;border-radius:12px;background:#475569;cursor:pointer;position:relative}.if-auto-open-toggle input::after{content:'';position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:#e2e8f0;transition:transform .15s}.if-auto-open-toggle input:checked{background:#2563eb;border-color:#60a5fa}.if-auto-open-toggle input:checked::after{transform:translateX(14px)}.if-auto-open-toggle input:focus-visible{outline:3px solid #60a5fa;outline-offset:3px}.if-auto-open-state{font-size:12px;color:var(--text2,#94a3b8)}.if-auto-open-help{font-size:12px;color:var(--text2,#94a3b8);margin:5px 0 0;overflow-wrap:anywhere}
             .if-legend{padding:10px 22px;gap:18px;font-size:12px;border-bottom:1px solid #64748b33}.if-legend-group{gap:12px}.if-legend-label{color:var(--text2,#94a3b8);font-weight:650}.if-legend-status .if-legend-item::before{content:'●';color:var(--state);margin-right:5px}.if-legend-executor .if-legend-item::before{content:'';display:inline-block;width:13px;height:13px;border-radius:4px;background:color-mix(in srgb,var(--bg2,#172033) 68%,var(--node-tint) 32%);border:1px solid var(--node-tint);margin-right:6px;vertical-align:-2px}
-            .if-viewport{height:min(97.5vh,990px);min-height:0;flex-shrink:1;overflow:auto;background-color:var(--bg,#0b1220);background-image:radial-gradient(#94a3b822 1px,transparent 1px);background-size:20px 20px;padding:0;position:relative}
+            .if-viewport{height:min(65vh,660px);min-height:0;flex-shrink:1;overflow:auto;background-color:var(--bg,#0b1220);background-image:radial-gradient(#94a3b822 1px,transparent 1px);background-size:20px 20px;padding:0;position:relative}
             .if-space{position:relative}.if-canvas{position:relative;transform-origin:0 0}.if-edges{position:absolute;inset:0;overflow:visible;pointer-events:none}
             .if-node{position:absolute;box-sizing:border-box;width:222px;height:98px;border:1px solid #64748b77;border-left:4px solid var(--state);border-radius:11px;background:color-mix(in srgb,var(--bg2,#172033) 68%,var(--node-tint,#94a3b8) 32%);padding:12px 22px 10px 13px;box-shadow:0 4px 15px #0002}
             .if-node[data-status=processing]{box-shadow:0 0 0 2px #60a5fa33,0 0 22px #60a5fa22}.if-node-title{font-weight:650;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.if-node-state{color:var(--state);font-size:12px;margin-top:6px}.if-node-model{font-size:11px;color:var(--text2,#94a3b8);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -91,7 +89,7 @@
             .if-tooltip{position:fixed;z-index:30;max-width:330px;padding:10px 13px;border-radius:9px;background:#0f172a;color:#e2e8f0;border:1px solid #64748b;box-shadow:0 8px 30px #0006;white-space:pre-wrap;pointer-events:none;font-size:12px}
             .if-empty{padding:80px 24px;text-align:center;color:var(--text2,#94a3b8)}.if-empty small{display:block;margin-top:8px}.if-footer{padding:10px 22px;font-size:12px;color:var(--text2,#94a3b8)}
             .if-detail{width:min(900px,94vw)}.if-detail-body{padding:18px 22px;max-height:70vh;overflow:auto}.if-detail-body h3{font-size:14px;margin:18px 0 8px}.if-detail-body pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#64748b14;padding:14px;border-radius:8px;font:12px/1.65 ui-monospace,monospace;margin:0;max-height:340px;overflow:auto}.if-detail-body summary{cursor:pointer;padding:8px 0}.if-meta{display:grid;grid-template-columns:110px 1fr;gap:7px 14px;overflow-wrap:anywhere}.if-meta dt{color:var(--text2,#94a3b8)}.if-meta dd{margin:0}
-            .if-review-panel{border:1px solid #f59e0b88;border-radius:12px;background:#f59e0b0f;padding:16px;margin-bottom:12px}.if-review-title{font-weight:800;font-size:15px;color:#fde68a}.if-review-guide{margin:5px 0 14px;color:var(--text2,#94a3b8);font-size:12px;line-height:1.65}.if-review-list{display:grid;gap:14px}.if-review-item{display:grid;grid-template-columns:minmax(220px,.9fr) minmax(300px,1.1fr);gap:14px;padding:12px;border:1px solid #64748b55;border-radius:12px;background:#02061755}.if-review-item-body{min-width:0}.if-review-figure{margin:0;border:1px solid #64748b55;border-radius:10px;overflow:hidden;background:#02061766;align-self:start}.if-review-image{display:block;width:100%;max-height:520px;object-fit:contain;background:#020617}.if-review-caption{padding:7px 9px;font-size:11px;color:var(--text2,#94a3b8);overflow-wrap:anywhere}.if-review-missing{padding:44px 12px;text-align:center;color:#fecaca;font-size:12px}.if-review-ai{margin:0 0 14px;padding:12px 14px;border:1px solid #38bdf866;border-radius:10px;background:#0c4a6e24}.if-review-ai-overall{margin-bottom:16px}.if-review-ai-title{color:#bae6fd;font-size:13px;font-weight:800}.if-review-ai-language{margin-top:11px;padding-top:9px;border-top:1px solid #38bdf833;color:#e0f2fe;font-size:11px;font-weight:850}.if-review-ai-title+.if-review-ai-language{border-top:0;padding-top:0}.if-review-ai-result{margin-top:9px}.if-review-ai-label{display:block;margin-bottom:3px;color:#7dd3fc;font-size:11px;font-weight:750}.if-review-ai-text{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;line-height:1.6}.if-review-ai-raw{margin:9px 0 0!important;max-height:180px!important}.if-review-translation-status{margin:-6px 0 14px}.if-review-ratings{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0 12px}.if-review-rating{min-width:86px;font-weight:750}.if-review-rating[aria-pressed=true][data-rating=good]{border-color:#4ade80;background:#22c55e33;color:#bbf7d0}.if-review-rating[aria-pressed=true][data-rating=normal]{border-color:#facc15;background:#eab30833;color:#fef08a}.if-review-rating[aria-pressed=true][data-rating=bad]{border-color:#fb7185;background:#e11d4833;color:#fecdd3}.if-review-reason{box-sizing:border-box;width:100%;min-height:78px;resize:vertical;border:1px solid #64748b66;border-radius:8px;background:var(--bg,#0b1220);color:var(--text,#e2e8f0);padding:10px 12px;font:13px/1.5 system-ui,sans-serif}.if-review-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:14px}.if-review-save{border-color:#f59e0b99;background:#f59e0b22;font-weight:750}.if-review-status{font-size:12px;color:var(--text2,#94a3b8)}
+            .if-review-panel{border:1px solid #f59e0b88;border-radius:12px;background:#f59e0b0f;padding:16px;margin-bottom:12px}.if-review-title{font-weight:800;font-size:15px;color:#fde68a}.if-review-guide{margin:5px 0 14px;color:var(--text2,#94a3b8);font-size:12px;line-height:1.65}.if-review-list{display:grid;gap:14px}.if-review-item{display:grid;grid-template-columns:minmax(220px,.9fr) minmax(300px,1.1fr);gap:14px;padding:12px;border:1px solid #64748b55;border-radius:12px;background:#02061755}.if-review-item-body{min-width:0}.if-review-figure{margin:0;border:1px solid #64748b55;border-radius:10px;overflow:hidden;background:#02061766;align-self:start}.if-review-image{display:block;width:100%;max-height:520px;object-fit:contain;background:#020617}.if-review-caption{padding:7px 9px;font-size:11px;color:var(--text2,#94a3b8);overflow-wrap:anywhere}.if-review-missing{padding:44px 12px;text-align:center;color:#fecaca;font-size:12px}.if-review-auto{margin:0 0 10px}.if-review-auto summary{color:#bae6fd;font-size:12px}.if-review-auto pre{margin-top:6px!important;max-height:150px!important}.if-review-ratings{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0 12px}.if-review-rating{min-width:86px;font-weight:750}.if-review-rating[aria-pressed=true][data-rating=good]{border-color:#4ade80;background:#22c55e33;color:#bbf7d0}.if-review-rating[aria-pressed=true][data-rating=normal]{border-color:#facc15;background:#eab30833;color:#fef08a}.if-review-rating[aria-pressed=true][data-rating=bad]{border-color:#fb7185;background:#e11d4833;color:#fecdd3}.if-review-reason{box-sizing:border-box;width:100%;min-height:78px;resize:vertical;border:1px solid #64748b66;border-radius:8px;background:var(--bg,#0b1220);color:var(--text,#e2e8f0);padding:10px 12px;font:13px/1.5 system-ui,sans-serif}.if-review-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:14px}.if-review-save{border-color:#f59e0b99;background:#f59e0b22;font-weight:750}.if-review-status{font-size:12px;color:var(--text2,#94a3b8)}
             .if-developer-body{padding:20px 22px;max-height:70vh;overflow:auto}.if-quality-card{border:1px solid #64748b55;border-radius:10px;padding:15px;background:#64748b12}.if-quality-toggle{display:flex;align-items:center;gap:10px;font-weight:700;cursor:pointer}.if-quality-toggle input{width:18px;height:18px;accent-color:#c084fc}.if-quality-copy{margin:9px 0 0;color:var(--text2,#94a3b8);font-size:12px;line-height:1.65}.if-quality-status{margin-top:12px;min-height:1.4em;color:var(--text2,#94a3b8);font-size:12px}.if-developer-footer{display:flex;justify-content:flex-end;padding:12px 22px;border-top:1px solid #64748b44}
             @media(max-width:650px){.if-header{align-items:flex-start;padding:14px}.if-actions{justify-content:flex-end}.if-header h2{font-size:16px}.if-meta{grid-template-columns:80px 1fr}.if-review-item{grid-template-columns:1fr}}
         `;
@@ -264,8 +262,7 @@
         developerButton.hidden = activeTab !== 'illustration';
         const terminal = ['completed', 'failed', 'cancelled', 'skipped'].includes(flow?.status);
         const cancelling = Boolean(flow?.cancel_requested) || flow?.status === 'cancelling';
-        const finalizing = flow?.raw_batch_state === 'finalizing';
-        stopButton.disabled = !flow || terminal || cancelling || finalizing;
+        stopButton.disabled = !flow || terminal || cancelling;
         stopButton.textContent = !terminal && cancelling ? '중단 중…' : '중단';
     }
     function qualityInspectionToast(message, type = 'info') {
@@ -593,82 +590,11 @@
         render();
         if (selected && detailModal?.open) openDetail(selected, true);
     }
-    function parsedInspectionOutput(value) {
-        if (value && typeof value === 'object' && !Array.isArray(value)) return value;
-        const raw = String(value ?? '').trim();
-        if (!raw) return {};
-        const unfenced = raw.replace(/^```[a-zA-Z0-9_-]*\s*/, '').replace(/\s*```$/, '').trim();
-        const start = unfenced.indexOf('{'), end = unfenced.lastIndexOf('}');
-        const candidates = [raw, unfenced];
-        let lastError = null;
-        if (start >= 0 && end > start) candidates.push(unfenced.slice(start, end + 1));
-        for (const candidate of [...new Set(candidates)]) {
-            try {
-                const parsed = JSON.parse(candidate);
-                if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
-            } catch (error) {
-                lastError = error;
-            }
-        }
-        console.error('[ILLUST_QUALITY] AI 검사 결과를 구조화할 수 없어 원문 표시:', {raw, error: lastError});
-        return {raw};
-    }
-    function automaticInspectionCard(output, {overall = false, status = '', translation = null} = {}) {
-        const result = parsedInspectionOutput(output);
-        const card = element('section', `if-review-ai${overall ? ' if-review-ai-overall' : ''}`);
-        card.append(element('div', 'if-review-ai-title', overall ? '전체 세트 AI 검사 결과' : 'AI 개별 검사 결과'));
-        const englishRows = overall
-            ? [['전체 일관성 피드백', result.overall_feedback]]
-            : [['문제 피드백', result.feedback], ['연속성 관찰', result.continuity_observation]];
-        const koreanRows = overall
-            ? [['전체 일관성 피드백', translation?.overall_feedback_ko]]
-            : [['문제 피드백', translation?.feedback_ko], ['연속성 관찰', translation?.continuity_observation_ko]];
-        let visible = false;
-        const appendRows = (language, rows) => {
-            const available = rows.filter(([, value]) => value !== null && value !== undefined && String(value).trim() !== '');
-            if (!available.length) return;
-            card.append(element('div', 'if-review-ai-language', language));
-            available.forEach(([label, value]) => {
-                const row = element('div', 'if-review-ai-result');
-                row.append(element('span', 'if-review-ai-label', label), element('p', 'if-review-ai-text', String(value)));
-                card.append(row); visible = true;
-            });
-        };
-        appendRows('한국어 번역', koreanRows);
-        appendRows('영어 원문', englishRows);
-        if (!visible && result.raw) {
-            card.append(element('pre', 'if-review-ai-raw', String(result.raw)));
-            visible = true;
-        }
-        if (!visible) {
-            const failed = String(status || '').toLowerCase() === 'error';
-            card.append(element('p', 'if-review-status', failed ? 'AI 검사가 실패하여 표시할 결과가 없습니다.' : '표시할 AI 검사 결과가 없습니다.'));
-        }
-        return card;
-    }
-    function requestQualityTranslation(historyId) {
-        const key = String(historyId || '');
-        if (qualityTranslationRequests.has(key)) return qualityTranslationRequests.get(key);
-        const url = `/api/illustration_quality_inspection/translation/${encodeURIComponent(key)}`;
-        const request = fetch(url, {method: 'POST'})
-            .then(async response => {
-                const payload = await response.json().catch(() => ({}));
-                if (!response.ok) throw Error(payload.error || `한글 번역 실패 (${response.status})`);
-                return payload;
-            })
-            .catch(error => {
-                qualityTranslationRequests.delete(key);
-                throw error;
-            });
-        qualityTranslationRequests.set(key, request);
-        return request;
-    }
     function appendQualityReviewPanel(n, body, request, runId) {
         const panel = element('section', 'if-review-panel');
-        const title = element('div', 'if-review-title', '전체 이미지 일괄 평가');
+        panel.append(element('div', 'if-review-title', '전체 이미지 일괄 평가'));
         const guide = element('p', 'if-review-guide', '전체 검사에 포함된 이미지를 한 화면에서 확인한 뒤 각 이미지에 좋음·보통·나쁨과 리뷰를 입력하세요. 모든 평가를 선택한 뒤 한 번에 저장하면 연결된 LLM 흐름도 자동 정리에서 보호됩니다.');
-        let overallResult = automaticInspectionCard(detailOutput(n), {overall: true, status: n.status});
-        panel.append(title, guide, overallResult);
+        panel.append(guide);
         body.append(panel);
         if (!n.history_id) {
             panel.append(element('div', 'if-review-status', n.status === 'processing' || n.status === 'waiting'
@@ -687,68 +613,10 @@
             })
             .then(payload => {
                 if (request !== detailRequest || runId !== flow?.id || !detailModal?.open || !panel.isConnected) return;
-                let activeTranslation = payload.automatic_translation && typeof payload.automatic_translation === 'object'
-                    ? payload.automatic_translation
-                    : null;
-                const translationBySlot = translation => new Map(
-                    (Array.isArray(translation?.images) ? translation.images : [])
-                        .map(image => [String(image.slot), image])
-                );
-                let translatedSlots = translationBySlot(activeTranslation);
-                overallResult = automaticInspectionCard(detailOutput(n), {
-                    overall: true,
-                    status: n.status,
-                    translation: activeTranslation,
-                });
-                panel.replaceChildren(title, guide, overallResult);
+                panel.replaceChildren(element('div', 'if-review-title', '전체 이미지 일괄 평가'), guide);
                 const images = Array.isArray(payload.images) ? payload.images : [];
-                const imageCards = new Map();
-                const translationStatus = element('div', 'if-review-status if-review-translation-status');
-                panel.append(translationStatus);
-                const applyTranslation = translation => {
-                    activeTranslation = translation;
-                    translatedSlots = translationBySlot(translation);
-                    const translatedOverall = automaticInspectionCard(detailOutput(n), {
-                        overall: true,
-                        status: n.status,
-                        translation,
-                    });
-                    overallResult.replaceWith(translatedOverall);
-                    overallResult = translatedOverall;
-                    imageCards.forEach((entry, slot) => {
-                        const translatedCard = automaticInspectionCard(entry.image.automatic_output, {
-                            status: entry.image.automatic_status,
-                            translation: translatedSlots.get(slot),
-                        });
-                        entry.card.replaceWith(translatedCard);
-                        entry.card = translatedCard;
-                    });
-                };
-                const loadTranslation = () => {
-                    if (activeTranslation) {
-                        translationStatus.textContent = '한국어 번역 표시 중 · 저장된 번역 결과 사용';
-                        return;
-                    }
-                    translationStatus.textContent = '영어 검사가 완료되어 별도 한글 번역 작업을 LLM 큐에서 처리하는 중…';
-                    requestQualityTranslation(n.history_id)
-                        .then(translation => {
-                            if (request !== detailRequest || runId !== flow?.id || !detailModal?.open || !panel.isConnected) return;
-                            applyTranslation(translation);
-                            translationStatus.textContent = translation.cached
-                                ? '한국어 번역 표시 중 · 저장된 번역 결과 사용'
-                                : '한국어 번역 완료 · 영어 원문과 함께 표시 중';
-                            translationStatus.style.color = '#bbf7d0';
-                        })
-                        .catch(error => {
-                            console.error('[ILLUST_QUALITY] 한글 번역 조회 실패:', {historyId: n.history_id, error});
-                            if (request !== detailRequest || runId !== flow?.id || !detailModal?.open || !panel.isConnected) return;
-                            translationStatus.textContent = `한글 번역 실패 · 영어 원문만 표시: ${error.message || error}`;
-                            translationStatus.style.color = '#fecdd3';
-                        });
-                };
                 if (!images.length) {
                     panel.append(element('div', 'if-review-missing', '이 전체 검사 기록에는 연결된 이미지가 없습니다.'));
-                    loadTranslation();
                     return;
                 }
                 const list = element('div', 'if-review-list');
@@ -783,12 +651,11 @@
                     figure.append(element('figcaption', 'if-review-caption', `slot ${slot} · ${image.backup_name || '백업명 없음'}`));
                     item.append(figure);
                     const itemBody = element('div', 'if-review-item-body');
-                    const aiCard = automaticInspectionCard(image.automatic_output, {
-                        status: image.automatic_status,
-                        translation: translatedSlots.get(String(slot)),
-                    });
-                    imageCards.set(String(slot), {card: aiCard, image});
-                    itemBody.append(aiCard);
+                    if (image.automatic_output) {
+                        const automatic = element('details', 'if-review-auto');
+                        automatic.append(element('summary', '', '자동 검사 결과'), element('pre', '', String(image.automatic_output)));
+                        itemBody.append(automatic);
+                    }
                     const historyId = String(image.review_history_id || '');
                     if (!historyId) {
                         itemBody.append(element('div', 'if-review-status', '이 이미지의 개별 검사 기록을 찾을 수 없어 사람 평가를 저장할 수 없습니다.'));
@@ -860,7 +727,6 @@
                 actions.append(saveButton, status);
                 panel.append(actions);
                 updateSaveState();
-                loadTranslation();
             })
             .catch(error => {
                 console.error('[ILLUST_QUALITY] 일괄 평가 정보 조회 실패:', {historyId: n.history_id, error});
