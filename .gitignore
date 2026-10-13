@@ -28,6 +28,9 @@ AGENTS.md
 # 에이전트 스킬 정의 (로컬 전용)
 .agents/
 
+# 테스트 코드 (로컬 전용, git 공유 대상 아님)
+tests/
+
 # Key files (보안상 git에 포함하지 않음)
 key/
 요구사항/chansub_key_before_*.json
