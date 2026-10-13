@@ -1948,8 +1948,8 @@ def test_server_defaults_expose_independent_character_maker_routes():
     draft = server.DEFAULT_CONFIG["llm_routing"]["character_maker_draft"]
     feedback = server.DEFAULT_CONFIG["llm_routing"]["character_maker_feedback"]
 
-    assert draft["json_mode"] is True
-    assert feedback["json_mode"] is True
+    assert "json_mode" not in draft
+    assert "json_mode" not in feedback
     assert draft is not feedback
     assert server.DEFAULT_CONFIG["character_maker_rag_enabled"] is False
     assert server.DEFAULT_CONFIG["character_maker_rag_autostart"] is False

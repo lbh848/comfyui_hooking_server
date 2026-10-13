@@ -294,6 +294,125 @@ async def test_llm1_to_llm10_reach_their_own_openai_compatible_slot(monkeypatch)
     ]
 
 
+@pytest.mark.parametrize("service", ["openai", "ollama", "ollama-cloud", "gemini"])
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize("vision", [False, True])
+@pytest.mark.asyncio
+async def test_all_slots_parse_json_without_provider_format_enforcement(
+    monkeypatch, service, streaming, vision,
+):
+    requests = []
+    cases = [
+        ("The parcel contains three notebooks.", {"item": "notebooks", "quantity": 3}),
+        ("A customer ordered two lamps.", {"item": "lamps", "quantity": 2}),
+        ("The basket holds five oranges.", {"item": "oranges", "quantity": 5}),
+    ]
+    sent_messages = []
+
+    async def completion(request):
+        body = await request.json()
+        requests.append(body)
+        if "response_format" in body or "responseMimeType" in body.get("generationConfig", {}):
+            return web.json_response({"error": "JSON forcing is unsupported"}, status=400)
+        if service == "gemini":
+            data = {"candidates": [{"content": {"parts": [{"text": answer}]}}]}
+        elif streaming:
+            data = {"choices": [{"delta": {"content": answer}}]}
+        else:
+            data = {"choices": [{"message": {"content": answer}}]}
+        if streaming:
+            response = web.StreamResponse(headers={"Content-Type": "text/event-stream"})
+            await response.prepare(request)
+            await response.write(f"data: {json.dumps(data)}\n\n".encode("utf-8"))
+            if service != "gemini":
+                await response.write(b"data: [DONE]\n\n")
+            await response.write_eof()
+            return response
+        return web.json_response(data)
+
+    provider = web.Application()
+    provider.router.add_post("/{path:.*}", completion)
+    if vision:
+        from PIL import Image
+
+        image = io.BytesIO()
+        Image.new("RGB", (2, 2), "white").save(image, format="PNG")
+        image_b64 = base64.b64encode(image.getvalue()).decode("ascii")
+
+    async with _running_app(provider) as base_url:
+        cfg = _isolated_config()
+        for number in LLM_SLOT_NUMBERS:
+            suffix = _slot_suffix(number)
+            cfg.update({
+                f"llm_service{suffix}": service,
+                f"llm_url{suffix}": base_url,
+                f"llm_stream{suffix}": streaming,
+                f"llm_gemini_base64{suffix}": False,
+                f"llm_pdf_prompt{suffix}": False,
+                f"llm_custom_body{suffix}": "",
+            })
+        monkeypatch.setattr(llm_service, "_current_config", cfg)
+        for number in LLM_SLOT_NUMBERS:
+            source, expected = cases[(number - 1) % len(cases)]
+            messages = [{"role": "user", "content": (
+                "Extract item and quantity as a JSON object. " + source
+            )}]
+            sent_messages.append(messages[0]["content"])
+            answer = json.dumps(expected)
+            # Real responses include both bare and fenced JSON.
+            if number % 2:
+                answer = f"```json\n{answer}\n```"
+            cfg["llm_routing"] = {"without_json_force": {
+                "primary": f"llm{number}", "fallback": False, "json_mode": True,
+            }}
+            kwargs = {
+                "json_mode": True,
+                "result_validator": lambda raw: (
+                    illustration_context_pipeline._json_object_from_text(raw) == expected,
+                    "JSON content mismatch",
+                ),
+            }
+            if vision:
+                result = await llm_service.callLLMVisionTask(
+                    "without_json_force", messages,
+                    image_b64=image_b64, image_mime="image/png", **kwargs,
+                )
+            else:
+                result = await llm_service.callLLMTask("without_json_force", messages, **kwargs)
+            assert illustration_context_pipeline._json_object_from_text(result) == expected
+
+    assert len(requests) == len(LLM_SLOT_NUMBERS)
+    for body, sent_content in zip(requests, sent_messages):
+        content = body["contents"][0]["parts"][0]["text"] if service == "gemini" else llm_service._msg_text(body["messages"][0]["content"])
+        assert content == sent_content
+
+
+@pytest.mark.asyncio
+async def test_legacy_json_force_route_does_not_change_plain_text_call(monkeypatch):
+    captured = {}
+
+    async def call(slot, messages, model=None, json_mode=False):
+        captured.update(slot=slot, messages=messages, json_mode=json_mode)
+        return "The lights are on."
+
+    monkeypatch.setattr(llm_service, "_current_config", _isolated_config(
+        llm_routing={"plain_text": {"primary": "llm4", "json_mode": True}},
+    ))
+    monkeypatch.setattr(llm_service, "_call_routed_text_slot", call)
+    messages = [{"role": "user", "content": "Reply with a sentence about the room."}]
+    assert await llm_service.callLLMTask("plain_text", messages) == "The lights are on."
+    assert captured == {"slot": "llm4", "messages": messages, "json_mode": False}
+
+
+@pytest.mark.parametrize("legacy_value", [True, False, "old-setting"])
+def test_routing_save_omits_obsolete_json_force_setting(legacy_value):
+    routing = server._normalize_llm_routing_for_save({
+        "illustration_call1": {"primary": "llm3", "json_mode": legacy_value},
+    })
+    assert routing["illustration_call1"]["primary"] == "llm3"
+    assert all("json_mode" not in entry for entry in routing.values())
+
+
 @pytest.mark.asyncio
 async def test_opencode_go_preset_sends_configured_session_header(monkeypatch):
     captured = {}
@@ -544,7 +663,7 @@ async def test_llm_test_sse_endpoint_dispatches_all_ten_targets(monkeypatch):
         **_kwargs,
     ):
         assert messages == [{"role": "user", "content": "endpoint smoke"}]
-        assert json_mode is True
+        assert json_mode is False
         slot_number = int(slot[3:])
         stream_id = f"tracked-{slot}"
         await stream_observer({
@@ -618,7 +737,7 @@ async def test_llm_test_sse_endpoint_dispatches_all_ten_targets(monkeypatch):
                 expected = (
                     f"stream:{slot}"
                     if use_stream
-                    else f"single:{slot}:json=True"
+                    else f"single:{slot}:json=False"
                 )
                 assert done["text"] == expected
 
@@ -638,7 +757,7 @@ async def test_llm_test_sse_endpoint_dispatches_all_ten_targets(monkeypatch):
             assert vision_response.status == 200
             vision_events = _parse_sse(await vision_response.text())
             assert vision_events[-1][0] == "done"
-            assert vision_events[-1][1]["text"] == f"single:{slot}:json=True"
+            assert vision_events[-1][1]["text"] == f"single:{slot}:json=False"
 
 
 @pytest.mark.asyncio
@@ -1305,3 +1424,152 @@ async def test_call_llm_task_force_slot_invalid_falls_back_to_normal_routing(mon
     assert result.final_slot == "llm1"
     assert result.final_phase == "primary"
     assert invoked_slots == ["llm1"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("slot", LLM_SLOT_NUMBERS)
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize("evidence,status", [
+    ({"reasoning_tokens": 17}, "observed"),
+    ({"reasoning_tokens": 0}, "zero"),
+    ({"reasoning_chars": 12, "reasoning_text": "provider data"}, "observed"),
+    ({"reasoning_chars": 0}, "unknown"),
+])
+async def test_thinking_check_uses_saved_slot_mode_and_records_evidence(
+    monkeypatch, slot, streaming, evidence, status,
+):
+    suffix = _slot_suffix(slot)
+    cfg = _isolated_config(**{f"llm_stream{suffix}": streaming})
+    before = cfg.copy()
+    history = []
+    monkeypatch.setattr(llm_service, "get_config", lambda: cfg.copy())
+    monkeypatch.setattr(lighbd_service, "_log_lighbd_history", history.append)
+    monkeypatch.setattr(server, "save_config", lambda *_args: pytest.fail("diagnostic saved configuration"))
+
+    async def single(messages, model=None, json_mode=False, **_kwargs):
+        assert messages == [{"role": "user", "content": "Calculate 17 * 23. Reply with only the number."}]
+        assert model is None and json_mode is False
+        llm_service._usage_sink_ctx.get().update(evidence)
+        return "Thinking is OFF"  # Model claims are never diagnostic evidence.
+
+    async def tracked(messages, *, slot: str, metadata_sink, **kwargs):
+        assert slot == f"llm{slot_number}"
+        assert kwargs["execution_context"].task_key == "llm_thinking_check"
+        assert kwargs["model"] is None and kwargs["json_mode"] is False
+        metadata_sink.update(evidence)
+        return "Thinking is OFF"
+
+    slot_number = slot
+    if streaming:
+        monkeypatch.setattr(llm_service, "callLLMTrackedStream", tracked)
+        monkeypatch.setattr(llm_service, f"callLLM{suffix}", lambda *_args, **_kwargs: pytest.fail("wrong saved mode"))
+    else:
+        monkeypatch.setattr(llm_service, f"callLLM{suffix}", single)
+        monkeypatch.setattr(llm_service, "callLLMTrackedStream", lambda *_args, **_kwargs: pytest.fail("forced streaming"))
+    app = web.Application()
+    app.router.add_post("/api/llm/test_stream", server.handle_api_llm_test_stream)
+    async with _running_app(app) as base_url, ClientSession() as client:
+        response = await client.post(f"{base_url}/api/llm/test_stream", json={
+            "thinking_check": True, "target": f"llm{slot}",
+            "stream": not streaming, "model": "must-not-override", "json_mode": True,
+            "messages": [{"role": "user", "content": "must not run"}], "image_b64": "AA==",
+        })
+        assert response.status == 200
+        events = _parse_sse(await response.text())
+    assert events[-1][0] == "done", events
+    assert events[-1][1]["thinking_status"] == status
+    for key, value in evidence.items():
+        assert events[-1][1][key] == value
+        assert history[-1][key] == value
+    assert history[-1]["thinking_status"] == status
+    assert history[-1]["task_key"] == "llm_thinking_check"
+    assert history[-1]["llm_slot"] == f"llm{slot}"
+    assert history[-1]["model"] == f"slot-{slot}"
+    assert history[-1]["routing_stage"] == "selected_slot"
+    assert history[-1]["execution_id"] and history[-1]["elapsed"] >= 0
+    assert cfg.copy() == before
+    queued = server.queue_manager.added[-1]
+    assert queued["item_type"] in queue_manager_module.LLM_TYPES
+    assert queued["params"]["task_key"] == "llm_thinking_check"
+    assert queued["params"]["stream"] is streaming
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("streaming", [False, True])
+async def test_thinking_check_failure_is_in_queue_and_lb_details(monkeypatch, streaming):
+    cfg = _isolated_config(llm_stream10=streaming)
+    monkeypatch.setattr(llm_service, "get_config", lambda: cfg.copy())
+    history = []
+    monkeypatch.setattr(lighbd_service, "_log_lighbd_history", history.append)
+
+    async def failed(*_args, **_kwargs):
+        return "[LLM 실패] provider unavailable"
+
+    monkeypatch.setattr(llm_service, "callLLM10", failed)
+    monkeypatch.setattr(llm_service, "callLLMTrackedStream", failed)
+    app = web.Application()
+    app.router.add_post("/api/llm/test_stream", server.handle_api_llm_test_stream)
+    async with _running_app(app) as base_url, ClientSession() as client:
+        response = await client.post(f"{base_url}/api/llm/test_stream", json={
+            "thinking_check": True, "target": "llm10",
+        })
+        events = _parse_sse(await response.text())
+    assert events[-1][0] == "error"
+    assert "provider unavailable" in events[-1][1]["error"]
+    assert history[-1]["task_key"] == "llm_thinking_check"
+    assert history[-1]["status"] == "error"
+    assert history[-1]["error"] and history[-1]["input"]
+    assert "thinking_status" not in history[-1]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("streaming", [False, True])
+async def test_thinking_check_preserves_all_ten_real_request_bodies(monkeypatch, streaming):
+    received, history = [], []
+    provider = web.Application()
+
+    async def completions(request):
+        body = await request.json()
+        received.append(body)
+        usage = {"prompt_tokens": 11, "completion_tokens": 9,
+                 "completion_tokens_details": {"reasoning_tokens": 7}}
+        if body.get("stream"):
+            return web.Response(text="data: " + json.dumps({
+                "choices": [{"delta": {"content": "391"}, "finish_reason": "stop"}]
+            }) + "\n\ndata: " + json.dumps({"choices": [], "usage": usage}) + "\n\ndata: [DONE]\n\n",
+                content_type="text/event-stream")
+        return web.json_response({"choices": [{"message": {"content": "391"}}], "usage": usage})
+
+    provider.router.add_post("/v1/chat/completions", completions)
+    app = web.Application()
+    app.router.add_post("/api/llm/test_stream", server.handle_api_llm_test_stream)
+    monkeypatch.setattr(lighbd_service, "_log_lighbd_history", history.append)
+    async with _running_app(provider) as provider_url, _running_app(app) as base_url, ClientSession() as client:
+        cfg = _isolated_config()
+        for number in LLM_SLOT_NUMBERS:
+            suffix = _slot_suffix(number)
+            cfg.update({f"llm_url{suffix}": provider_url,
+                        f"llm_stream{suffix}": streaming,
+                        f"llm_reasoning_preset{suffix}": "custom",
+                        f"llm_custom_body{suffix}": json.dumps({"probe_slot": number,
+                            "thinking": {"type": "enabled" if number % 2 else "disabled"},
+                            "reasoning_effort": "high" if number % 2 else "none"})})
+        monkeypatch.setattr(llm_service, "_current_config", cfg)
+        before = cfg.copy()
+        for number in LLM_SLOT_NUMBERS:
+            response = await client.post(f"{base_url}/api/llm/test_stream", json={
+                "thinking_check": True, "target": f"llm{number}",
+            })
+            events = _parse_sse(await response.text())
+            assert events[-1][0] == "done", events
+            assert events[-1][1]["thinking_status"] == "observed"
+            assert events[-1][1]["reasoning_tokens"] == 7
+        assert cfg.copy() == before
+    assert len(received) == 10
+    for number, body in enumerate(received, 1):
+        assert body["model"] == f"slot-{number}"
+        assert body["probe_slot"] == number
+        assert body["thinking"] == {"type": "enabled" if number % 2 else "disabled"}
+        assert body["reasoning_effort"] == ("high" if number % 2 else "none")
+        assert bool(body.get("stream")) is streaming
+    assert len(history) == 10

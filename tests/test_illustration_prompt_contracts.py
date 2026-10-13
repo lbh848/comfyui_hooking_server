@@ -32,8 +32,8 @@ def test_model_facing_prompt_roles_are_registered_and_loadable() -> None:
         "call2_prefill": "prefill.txt",
         "call2_common": "system.txt",
         "call2_explicit": "explicit.txt",
+        "call2_select": "scene_select.txt",
         "call2_plan": "plan.txt",
-        "call2_audit": "audit.txt",
         "call2_detail": "detail.txt",
         "call2_keyvis": "keyvisual.txt",
         "call2_fallback": "fallback.txt",
@@ -59,17 +59,21 @@ def test_model_facing_prompts_do_not_expose_internal_stage_names() -> None:
 
 def test_call1_prompt_keeps_only_the_schema_consumed_by_the_pipeline() -> None:
     prompt = _read("enhance.txt")
-    example = next(line for line in prompt.splitlines() if line.startswith('{"state_at_start":'))
+    example = next(line for line in prompt.splitlines() if line.startswith('{"SLOT0":'))
     schema = json.loads(example.removesuffix("."))
 
-    assert set(schema) == {"state_at_start", "events"}
-    assert set(schema["state_at_start"][0]) == {"character", "status"}
-    assert set(schema["events"][0]) == {"segment_id", "character", "status"}
+    assert set(schema) == {"SLOT0", "SLOT2", "SLOT4"}
+    assert set(schema["SLOT0"]["canonical name"]) == {"outfit", "hair"}
+    assert set(schema["SLOT2"]["canonical name"]) == {"outfit"}
+    assert set(schema["SLOT4"]["canonical name"]) == {"hair"}
+    assert all(isinstance(tags, str) for characters in schema.values()
+               for state in characters.values() for tags in state.values())
     for retired in ('"wardrobe_at_start"', '"wardrobe_events"', '"hairstyle_events"',
                     '"wardrobe_change"', '"state_after"', '"outfit_state"'):
         assert retired not in prompt
-    assert "outfit AND hairstyle" in prompt
-    assert "previous saved" in prompt
+    assert "outfit and hairstyle image tags" in prompt
+    assert "saved state memory" in prompt
+    assert "outfit and hair propagate independently" in prompt
 
 
 @pytest.mark.parametrize(

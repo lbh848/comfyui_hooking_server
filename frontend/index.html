@@ -3252,37 +3252,6 @@
             grid-template-columns: repeat(2, minmax(0, 1fr));
             gap: 8px;
         }
-        .llm-route-easy-json {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 10px;
-            margin-top: 9px;
-            padding: 9px;
-            border: 1px solid color-mix(in srgb, #9c7fe8 35%, var(--border));
-            border-radius: 7px;
-            background: rgba(91, 67, 145, 0.12);
-        }
-        .llm-route-easy-json-copy strong {
-            display: block;
-            color: var(--text);
-            font-size: 0.72rem;
-        }
-        .llm-route-easy-json-copy span {
-            display: block;
-            margin-top: 2px;
-            color: var(--text2);
-            font-size: 0.64rem;
-        }
-        .llm-route-easy-json select {
-            min-width: 118px;
-            padding: 5px 7px;
-            border: 1px solid color-mix(in srgb, #9c7fe8 45%, var(--border));
-            border-radius: 6px;
-            background: var(--surface);
-            color: var(--text);
-            font-size: 0.7rem;
-        }
         .llm-route-easy-actions {
             display: flex;
             align-items: center;
@@ -3405,17 +3374,6 @@
             color: var(--text2);
             font-size: 0.64rem;
         }
-        .llm-route-json-toggle {
-            display: flex;
-            flex: 0 0 auto;
-            align-items: center;
-            gap: 5px;
-            color: var(--text2);
-            font-size: 0.66rem;
-            white-space: nowrap;
-            cursor: pointer;
-        }
-        .llm-route-json-toggle input { accent-color: #9c7fe8; }
         .llm-route-path-grid {
             display: grid;
             grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -3709,10 +3667,11 @@
 
         /* 삽화 프롬프트 생성 모달 */
         .illust-prompt-modal-content {
-            width: min(1080px, 100%);
-            max-width: 1080px;
-            height: min(88vh, 920px);
-            max-height: 920px;
+            width: min(1440px, 100%);
+            max-width: 1440px;
+            height: min(94vh, 1200px);
+            height: min(94dvh, 1200px);
+            max-height: calc(100dvh - 40px);
             overflow: hidden;
         }
         .illust-prompt-modal-content .modal-header,
@@ -3762,6 +3721,33 @@
             background: color-mix(in srgb, var(--accent) 10%, transparent);
         }
 
+        .illust-prompt-modal-content .illust-prompt-node-tabs {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin: 0 0 12px;
+        }
+        .illust-prompt-modal-content .illust-prompt-node-tab {
+            padding: 7px 10px;
+            border: 1px solid var(--border);
+            border-radius: 5px;
+            background: var(--surface2);
+            color: var(--text);
+            font-size: 0.72rem;
+            white-space: nowrap;
+            cursor: pointer;
+        }
+        .illust-prompt-modal-content .illust-prompt-node-tab.is-active {
+            background: var(--accent);
+            color: #fff;
+        }
+        .illust-prompt-modal-content .illust-prompt-node-help {
+            margin: 0 0 10px;
+            color: var(--text2);
+            font-size: 0.75rem;
+            line-height: 1.6;
+        }
+
         /* 삽화 프롬프트 생성 설정: 모든 선택자는 전용 루트 아래로 제한한다. */
         .illust-settings {
             --illust-panel: color-mix(in srgb, var(--surface2) 30%, var(--surface));
@@ -3792,6 +3778,345 @@
             grid-template-columns: 180px minmax(0, 1fr);
             align-items: start;
             gap: 20px;
+        }
+        .illust-settings .illust-flow-preview {
+            margin-top: 24px;
+            padding: 18px;
+            border: 1px solid var(--illust-border-subtle);
+            border-radius: 9px;
+            background: var(--illust-panel-muted);
+        }
+        .illust-settings .illust-flow-preview-header {
+            display: flex;
+            align-items: baseline;
+            flex-wrap: wrap;
+            gap: 8px 14px;
+            margin-bottom: 14px;
+        }
+        .illust-settings .illust-flow-preview-header h3 {
+            margin: 0;
+            font-size: 14px;
+        }
+        .illust-settings .illust-flow-preview-header span,
+        .illust-settings .illust-flow-preview-note {
+            color: var(--text2);
+            font-size: 12px;
+            line-height: 1.6;
+        }
+        .illust-settings .illust-flow-preview-viewport {
+            overflow-x: auto;
+            padding-bottom: 8px;
+        }
+        .illust-preview-toolbar [data-illust-preview-scenario][type="number"] {
+            width: 82px;
+        }
+        .illust-preview-condition {
+            color: var(--text2);
+            font-size: 11px;
+        }
+        .illust-preview-activation {
+            display: inline-block;
+            margin-left: 6px;
+            padding: 0 3px;
+            border: 1px solid currentColor;
+            border-radius: 3px;
+            font-size: 9px;
+            color: var(--text2);
+        }
+        .illust-preview-activation[data-activation="off"] {
+            color: var(--text2);
+        }
+        .illust-settings .illust-flow-preview-grid {
+            position: relative;
+            box-sizing: border-box;
+            padding-right: 12px;
+            padding-left: 12px;
+            overflow: hidden;
+            display: grid;
+            grid-template-columns: repeat(7, minmax(160px, 1fr));
+            gap: 16px;
+            min-width: 1228px;
+        }
+        .illust-settings .illust-flow-preview-step {
+            min-width: 0;
+        }
+        .illust-settings .illust-flow-preview-step-title {
+            position: relative;
+            margin: 0 0 10px;
+            color: var(--text2);
+            font-size: 11px;
+            font-weight: 700;
+        }
+        .illust-settings .illust-flow-preview-step:not(:last-child) .illust-flow-preview-step-title::after {
+            position: absolute;
+            right: -13px;
+            color: var(--accent);
+            content: '→';
+        }
+        .illust-settings .illust-flow-preview-node {
+            position: relative;
+            z-index: 2;
+            margin-bottom: 8px;
+            padding: 10px;
+            border: 1px solid var(--illust-border-subtle);
+            border-left: 3px solid var(--accent);
+            border-radius: 6px;
+            background: var(--surface);
+        }
+        .illust-settings .illust-flow-preview-node.is-disabled {
+            border-left-color: var(--border);
+            opacity: 0.5;
+        }
+        .illust-settings .illust-flow-preview-node.is-current {
+            border-color: var(--accent);
+            background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+        }
+        .illust-settings .illust-flow-preview-node strong {
+            display: block;
+            font-family: monospace;
+            font-size: 11px;
+            line-height: 1.5;
+            overflow-wrap: anywhere;
+        }
+        .illust-settings .illust-flow-preview-node span {
+            display: block;
+            margin-top: 4px;
+            color: var(--text2);
+            font-size: 11px;
+            line-height: 1.5;
+        }
+        .illust-settings .illust-flow-preview-parallel {
+            margin-bottom: 8px;
+            padding: 8px;
+            border: 1px solid color-mix(in srgb, var(--accent) 50%, var(--border));
+            border-radius: 4px;
+            background: color-mix(in srgb, var(--accent) 5%, var(--surface));
+        }
+        .illust-settings .illust-flow-preview-parallel-title {
+            position: relative;
+            z-index: 2;
+            margin: 0 0 8px;
+            color: var(--accent);
+            font-size: 11px;
+            font-weight: 700;
+            line-height: 1.5;
+            overflow-wrap: anywhere;
+        }
+        .illust-settings .illust-preview-group-state {
+            position: relative;
+            z-index: 2;
+            margin: 0 0 8px;
+            color: var(--text2);
+            font-size: 10px;
+            line-height: 1.6;
+            overflow-wrap: anywhere;
+        }
+        .illust-settings .illust-flow-preview-parallel > :last-child {
+            margin-bottom: 0;
+        }
+        .illust-settings .illust-flow-preview-batch-index {
+            margin-left: 5px;
+            color: var(--text2);
+            font-size: 10px;
+            font-weight: 400;
+            white-space: nowrap;
+        }
+        .illust-settings .illust-flow-preview-note {
+            margin: 10px 0 0;
+        }
+        .illust-settings .illust-thinking-checks {
+            background: var(--illust-panel-muted);
+        }
+        .illust-settings .illust-thinking-checks p {
+            margin: 8px 0;
+            color: var(--text2);
+        }
+        .illust-settings .illust-thinking-checks button {
+            padding: 6px 10px;
+            border: 1px solid var(--illust-border-subtle);
+            border-radius: 5px;
+            background: var(--surface);
+            color: var(--text);
+            cursor: pointer;
+        }
+        .illust-settings .illust-thinking-checks button:disabled {
+            opacity: .6;
+            cursor: default;
+        }
+        .illust-settings .illust-thinking-node-badge {
+            position: absolute;
+            left: -11px;
+            top: 10px;
+            z-index: 3;
+            display: grid;
+            place-items: center;
+            width: 20px;
+            height: 20px;
+            padding: 0;
+            border: 2px solid var(--surface);
+            border-radius: 50%;
+            color: #fff;
+            font-size: 12px;
+            font-weight: 700;
+            line-height: 1;
+            cursor: help;
+            box-shadow: 0 1px 4px #0005;
+        }
+        .illust-settings .illust-thinking-node-badge[data-thinking-health="red"] { background: #dc2626; }
+        .illust-settings .illust-thinking-node-badge[data-thinking-health="yellow"] { background: #facc15; color: #422006; }
+        .illust-settings .illust-thinking-node-badge[data-thinking-health="green"] { background: #15803d; }
+        .illust-settings .illust-thinking-node-badge[data-thinking-health="gray"] { background: #64748b; }
+        .illust-settings .illust-thinking-node-badge:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+        .illust-thinking-node-tooltip {
+            position: fixed;
+            z-index: 120000;
+            box-sizing: border-box;
+            width: max-content;
+            max-width: min(360px, calc(100vw - 16px));
+            max-height: calc(100vh - 16px);
+            overflow-y: auto;
+            padding: 12px 14px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface);
+            color: var(--text);
+            font-size: 12px;
+            line-height: 1.5;
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+            box-shadow: 0 6px 24px #0005;
+        }
+        .illust-settings .illust-preview-toolbar {
+            position: sticky;
+            top: 0;
+            z-index: 4;
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 8px 12px;
+            margin-bottom: 16px;
+            padding: 8px 0;
+            background: var(--illust-panel-muted);
+        }
+        .illust-settings .illust-preview-toolbar button,
+        .illust-settings .illust-preview-toolbar select {
+            padding: 6px 10px;
+            border: 1px solid var(--illust-border-subtle);
+            border-radius: 5px;
+            background: var(--surface);
+            color: var(--text);
+            font-size: 12px;
+        }
+        .illust-settings .illust-preview-toolbar button {
+            cursor: pointer;
+        }
+        .illust-settings .illust-preview-toolbar label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: var(--text2);
+            font-size: 12px;
+        }
+        .illust-settings .illust-preview-timeline {
+            flex: 1;
+            min-width: 180px;
+            white-space: nowrap;
+        }
+        .illust-settings .illust-preview-timeline input {
+            width: 100%;
+            accent-color: var(--accent);
+        }
+        .illust-settings .illust-preview-status {
+            flex-basis: 100%;
+            color: var(--text2);
+            font-size: 12px;
+            overflow-wrap: anywhere;
+        }
+        .illust-settings .illust-preview-connections {
+            position: absolute;
+            inset: 0;
+            z-index: 1;
+            color: var(--accent);
+            overflow: hidden;
+            pointer-events: none;
+        }
+        .illust-settings .illust-preview-edge {
+            fill: none;
+            stroke: var(--accent);
+            stroke-width: 1.2;
+            opacity: 0.18;
+        }
+        .illust-settings .illust-preview-edge[data-transferred='true'] {
+            opacity: 0.4;
+        }
+        .illust-settings .illust-preview-edge[data-simulated='false'] {
+            stroke-dasharray: 4 4;
+            opacity: 0.5;
+        }
+        .illust-settings .illust-preview-packet {
+            fill: var(--accent);
+        }
+        .illust-settings .illust-preview-packet-label {
+            fill: var(--accent);
+            stroke: var(--surface);
+            stroke-width: 3px;
+            paint-order: stroke;
+            font-size: 10px;
+        }
+        .illust-settings .illust-flow-preview-node .illust-preview-state {
+            color: var(--text2);
+            font-size: 10px;
+        }
+        .illust-settings .illust-flow-preview-node.has-simulation:not([data-illust-preview-node='CALL3']) > span:first-of-type {
+            display: none;
+        }
+        .illust-settings .illust-flow-preview-node .illust-preview-data {
+            font-size: 10px;
+            line-height: 1.4;
+        }
+        .illust-settings .illust-preview-progress {
+            height: 2px;
+            margin-top: 7px;
+            background: var(--border);
+        }
+        .illust-settings .illust-preview-progress i {
+            display: block;
+            height: 100%;
+            background: var(--accent);
+        }
+        .illust-settings .illust-flow-preview-node.has-simulation[data-simulation-state='waiting'],
+        .illust-settings .illust-flow-preview-node.has-simulation[data-simulation-state='skipped'] {
+            border-color: var(--illust-border-subtle);
+            border-left-color: var(--border);
+            background: var(--surface);
+        }
+        .illust-settings [data-simulation-state='processing'] {
+            border-color: var(--accent);
+            background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+        }
+        .illust-settings [data-simulation-state='processing'] .illust-preview-state {
+            color: var(--accent);
+        }
+        .illust-settings [data-simulation-playing='true'] [data-simulation-state='processing'] {
+            animation: illust-preview-processing 1.2s ease-in-out infinite;
+        }
+        .illust-settings [data-simulation-state='completed'] {
+            border-left-color: #34d399;
+        }
+        .illust-settings [data-simulation-state='skipped'] {
+            opacity: 0.55;
+        }
+        @keyframes illust-preview-processing {
+            50% { box-shadow: 0 0 12px color-mix(in srgb, var(--accent) 28%, transparent); }
+        }
+        @media (prefers-reduced-motion: reduce) {
+            .illust-settings [data-simulation-playing='true'] [data-simulation-state='processing'] {
+                animation: none;
+            }
+            .illust-settings .illust-preview-packet,
+            .illust-settings .illust-preview-packet-label {
+                display: none !important;
+            }
         }
         .illust-settings .illust-settings-nav {
             display: flex;
@@ -3873,6 +4198,21 @@
         }
         .illust-settings .illust-settings-panel-body {
             min-width: 0;
+        }
+        .illust-settings .illust-call-stage-guide {
+            border-top: 1px solid var(--illust-border-subtle);
+        }
+        .illust-settings .illust-call-stage-guide > summary {
+            padding: 14px 18px;
+            color: var(--text2);
+            font-size: 12.5px;
+            font-weight: 600;
+            line-height: 1.45;
+            cursor: pointer;
+        }
+        .illust-settings .illust-call-stage-guide > summary:focus-visible {
+            outline: 2px solid var(--accent);
+            outline-offset: -3px;
         }
         .illust-settings .illust-call-stage-notes {
             display: grid;
@@ -5033,6 +5373,7 @@
         @media (max-width: 640px) {
             .illust-prompt-modal-content {
                 height: calc(100vh - 40px);
+                height: calc(100dvh - 40px);
                 max-height: none;
             }
             .illust-settings {
@@ -23531,16 +23872,9 @@
                         <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
                             <select id="setting-llm-service" onchange="onLlmServiceChange()"
                                     style="padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: 0.85rem;">
-                                <option value="copilot">Copilot</option>
                                 <option value="vertex">Vertex Gemini</option>
-                                <option value="vertex-openai">Vertex OpenAI</option>
-                                <option value="openai">OpenAI</option>
-                                <option value="openrouter">OpenRouter</option>
-                                <option value="gemini">Gemini (AI Studio)</option>
+                                <option value="openai" selected>OpenAI 호환 URL</option>
                                 <option value="claude">Claude</option>
-                                <option value="lmstudio">LM Studio (로컬)</option>
-                                <option value="ollama">Ollama (로컬)</option>
-                                <option value="ollama-cloud">Ollama Cloud</option>
                             </select>
                         </div>
                     </div>
@@ -23559,7 +23893,7 @@
                     <div class="setting-row" id="llm-api-key-row" style="display: none;">
                         <div class="setting-label">
                             <div class="title">LLM API 키</div>
-                            <div class="desc">OpenAI / OpenRouter / Gemini / Claude 용</div>
+                            <div class="desc">OpenAI 호환 URL / Claude용</div>
                         </div>
                         <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
                             <input type="text" id="setting-llm-api-key" placeholder="sk-..."
@@ -23595,7 +23929,7 @@
                     <div class="setting-row" id="llm-gemini-base64-row" style="display:none;">
                         <div class="setting-label">
                             <div class="title">LLM1 Gemini/Vertex Base64 송수신</div>
-                            <div class="desc">Gemini AI Studio·Vertex Gemini·Vertex OpenAI의 텍스트 요청과 응답을 UTF-8 Base64로 감쌉니다. 서버가 완전한 응답을 복호화해 파이프라인에 전달하며 이미지 데이터는 그대로 전송합니다.<br><a href="https://arca.live/b/characterai/176675290" target="_blank" rel="noopener noreferrer" style="color:#4dd0e1;">원본 프로젝트: https://arca.live/b/characterai/176675290</a></div>
+                            <div class="desc">Vertex Gemini의 텍스트 요청과 응답을 UTF-8 Base64로 감쌉니다. 서버가 완전한 응답을 복호화해 파이프라인에 전달하며 이미지 데이터는 그대로 전송합니다.<br><a href="https://arca.live/b/characterai/176675290" target="_blank" rel="noopener noreferrer" style="color:#4dd0e1;">원본 프로젝트: https://arca.live/b/characterai/176675290</a></div>
                         </div>
                         <div class="setting-control" style="display:flex; align-items:center; gap:8px;">
                             <label class="toggle-switch">
@@ -23637,7 +23971,7 @@
                     <div class="setting-row">
                         <div class="setting-label">
                             <div class="title">LLM1 동시 요청 수</div>
-                            <div class="desc">LLM1에서 동시에 실행할 실제 API 요청 상한입니다. 텍스트·비전·스트림·재시도에 공통 적용되며, 외부 API의 RPM/TPM 제한을 고려해 설정하세요.</div>
+                            <div class="desc">LLM1의 실제 API 동시 요청 상한입니다. 같은 OpenAI 호환 주소·API 키를 쓰는 연결은 가장 낮은 설정값을 합계 상한으로 공유합니다. 텍스트·비전·스트림·재시도에 모두 적용됩니다.</div>
                         </div>
                         <div class="setting-control">
                             <input type="number" id="setting-llm-max-concurrency" min="1" max="20" step="1"
@@ -23705,22 +24039,6 @@
                         <div id="llm-custom-body-status" style="margin-top:6px; font-size:.75rem; color:var(--text2);"></div>
                     </div>
 
-                    <div class="setting-row" id="vertex-key-row" style="display: none; flex-direction: column; align-items: stretch;">
-                        <div class="setting-label" style="margin-bottom: 8px;">
-                            <div class="title">Vertex 서비스 계정 JSON</div>
-                            <div class="desc">GCP 서비스 계정 키 JSON 붙여넣거나 파일에서 불러오기. key/vertex.json 으로 저장됨</div>
-                        </div>
-                        <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 8px;">
-                            <input type="file" id="setting-vertex-key-file" accept=".json,application/json"
-                                   style="font-size: .8rem; flex: 1;">
-                            <button onclick="loadVertexKeyFile()" style="padding: 6px 12px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); cursor: pointer;">파일 불러오기</button>
-                            <button onclick="saveVertexKey()" style="padding: 6px 12px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); cursor: pointer;">저장</button>
-                            <button onclick="deleteVertexKey()" style="padding: 6px 12px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); cursor: pointer;">삭제</button>
-                        </div>
-                        <textarea id="setting-vertex-key-json" placeholder='{ "type": "service_account", "project_id": "...", ... }'
-                                  style="width: 100%; min-height: 120px; padding: 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-family: monospace; font-size: .8rem;"></textarea>
-                        <div id="vertex-key-status" style="margin-top: 6px; font-size: .75rem; color: var(--text2);"></div>
-                    </div>
                     </details>
 
                     <details class="llm-group">
@@ -23734,16 +24052,9 @@
                             <select id="setting-llm-service2" onchange="onLlmServiceChange()"
                                     style="padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: .85rem;">
                                 <option value="">(LLM1과 동일)</option>
-                                <option value="copilot">Copilot</option>
                                 <option value="vertex">Vertex Gemini</option>
-                                <option value="vertex-openai">Vertex OpenAI</option>
-                                <option value="openai">OpenAI</option>
-                                <option value="openrouter">OpenRouter</option>
-                                <option value="gemini">Gemini (AI Studio)</option>
+                                <option value="openai">OpenAI 호환 URL</option>
                                 <option value="claude">Claude</option>
-                                <option value="lmstudio">LM Studio (로컬)</option>
-                                <option value="ollama">Ollama (로컬)</option>
-                                <option value="ollama-cloud">Ollama Cloud</option>
                             </select>
                         </div>
                     </div>
@@ -23840,7 +24151,7 @@
                     <div class="setting-row">
                         <div class="setting-label">
                             <div class="title">LLM2 동시 요청 수</div>
-                            <div class="desc">LLM2에서 동시에 실행할 실제 API 요청 상한입니다. LLM1과 독립적으로 적용됩니다.</div>
+                            <div class="desc">LLM2의 실제 API 동시 요청 상한입니다. 같은 OpenAI 호환 주소·API 키를 쓰는 연결은 가장 낮은 설정값을 합계 상한으로 공유합니다. 텍스트·비전·스트림·재시도에 모두 적용됩니다.</div>
                         </div>
                         <div class="setting-control">
                             <input type="number" id="setting-llm-max-concurrency2" min="1" max="20" step="1"
@@ -23912,7 +24223,7 @@
 
                     <details class="llm-group">
                         <summary>LLM3 연결 설정</summary>
-                    <div class="setting-row"><div class="setting-label"><div class="title">LLM3 서비스 선택</div><div class="desc">비워두면 LLM1 서비스 사용</div></div><div class="setting-control"><select id="setting-llm-service3" onchange="onLlmServiceChange()" style="padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);"><option value="">(LLM1과 동일)</option><option value="copilot">Copilot</option><option value="vertex">Vertex Gemini</option><option value="vertex-openai">Vertex OpenAI</option><option value="openai">OpenAI</option><option value="openrouter">OpenRouter</option><option value="gemini">Gemini (AI Studio)</option><option value="claude">Claude</option><option value="lmstudio">LM Studio (로컬)</option><option value="ollama">Ollama (로컬)</option><option value="ollama-cloud">Ollama Cloud</option></select></div></div>
+                    <div class="setting-row"><div class="setting-label"><div class="title">LLM3 서비스 선택</div><div class="desc">비워두면 LLM1 서비스 사용</div></div><div class="setting-control"><select id="setting-llm-service3" onchange="onLlmServiceChange()" style="padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);"><option value="">(LLM1과 동일)</option><option value="vertex">Vertex Gemini</option><option value="openai">OpenAI 호환 URL</option><option value="claude">Claude</option></select></div></div>
                     <div class="setting-row"><div class="setting-label"><div class="title">LLM3 모델명</div><div class="desc">LLM3로 사용할 모델명</div></div><div class="setting-control"><input id="setting-llm-model3" type="text" placeholder="예: gpt-4.1" oninput="renderReasoningControls(3)" style="width:220px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);"></div></div>
                     <div class="setting-row" id="llm-api-key3-row" style="display:none;"><div class="setting-label"><div class="title">LLM3 API 키 (옵션)</div><div class="desc">비워두면 LLM1 키 재사용</div></div><div class="setting-control"><input id="setting-llm-api-key3" type="text" placeholder="sk-..." style="width:300px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-family:monospace;"></div></div>
                     <div class="setting-row" id="llm-url3-row" style="display:none;"><div class="setting-label"><div class="title">LLM3 베이스 URL (옵션)</div><div class="desc">비워두면 LLM1 URL 또는 선택한 서비스의 기본 URL 사용</div></div><div class="setting-control"><input id="setting-llm-url3" type="text" placeholder="https://..." style="width:300px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);"></div></div>
@@ -23923,7 +24234,7 @@
                     <div class="setting-row">
                         <div class="setting-label">
                             <div class="title">LLM3 동시 요청 수</div>
-                            <div class="desc">LLM3에서 동시에 실행할 실제 API 요청 상한입니다. LLM1·LLM2와 독립적으로 적용됩니다.</div>
+                            <div class="desc">LLM3의 실제 API 동시 요청 상한입니다. 같은 OpenAI 호환 주소·API 키를 쓰는 연결은 가장 낮은 설정값을 합계 상한으로 공유합니다. 텍스트·비전·스트림·재시도에 모두 적용됩니다.</div>
                         </div>
                         <div class="setting-control">
                             <input type="number" id="setting-llm-max-concurrency3" min="1" max="20" step="1"
@@ -23984,16 +24295,9 @@
                                 <select id="setting-llm-service4" onchange="onLlmServiceChange()"
                                         style="padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: .85rem;">
                                     <option value="">(LLM1과 동일)</option>
-                                    <option value="copilot">Copilot</option>
                                     <option value="vertex">Vertex Gemini</option>
-                                    <option value="vertex-openai">Vertex OpenAI</option>
-                                    <option value="openai">OpenAI</option>
-                                    <option value="openrouter">OpenRouter</option>
-                                    <option value="gemini">Gemini (AI Studio)</option>
+                                    <option value="openai">OpenAI 호환 URL</option>
                                     <option value="claude">Claude</option>
-                                    <option value="lmstudio">LM Studio (로컬)</option>
-                                    <option value="ollama">Ollama (로컬)</option>
-                                    <option value="ollama-cloud">Ollama Cloud</option>
                                 </select>
                             </div>
                         </div>
@@ -24082,7 +24386,7 @@
                         <div class="setting-row">
                             <div class="setting-label">
                                 <div class="title">LLM4 동시 요청 수</div>
-                                <div class="desc">LLM4에서 동시에 실행할 실제 API 요청 상한입니다. 다른 슬롯과 독립적으로 적용됩니다.</div>
+                                <div class="desc">LLM4의 실제 API 동시 요청 상한입니다. 같은 OpenAI 호환 주소·API 키를 쓰는 연결은 가장 낮은 설정값을 합계 상한으로 공유합니다. 텍스트·비전·스트림·재시도에 모두 적용됩니다.</div>
                             </div>
                             <div class="setting-control">
                                 <input type="number" id="setting-llm-max-concurrency4" min="1" max="20" step="1"
@@ -24160,16 +24464,9 @@
                                 <select id="setting-llm-service5" onchange="onLlmServiceChange()"
                                         style="padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: .85rem;">
                                     <option value="">(LLM1과 동일)</option>
-                                    <option value="copilot">Copilot</option>
                                     <option value="vertex">Vertex Gemini</option>
-                                    <option value="vertex-openai">Vertex OpenAI</option>
-                                    <option value="openai">OpenAI</option>
-                                    <option value="openrouter">OpenRouter</option>
-                                    <option value="gemini">Gemini (AI Studio)</option>
+                                    <option value="openai">OpenAI 호환 URL</option>
                                     <option value="claude">Claude</option>
-                                    <option value="lmstudio">LM Studio (로컬)</option>
-                                    <option value="ollama">Ollama (로컬)</option>
-                                    <option value="ollama-cloud">Ollama Cloud</option>
                                 </select>
                             </div>
                         </div>
@@ -24258,7 +24555,7 @@
                         <div class="setting-row">
                             <div class="setting-label">
                                 <div class="title">LLM5 동시 요청 수</div>
-                                <div class="desc">LLM5에서 동시에 실행할 실제 API 요청 상한입니다. 다른 슬롯과 독립적으로 적용됩니다.</div>
+                                <div class="desc">LLM5의 실제 API 동시 요청 상한입니다. 같은 OpenAI 호환 주소·API 키를 쓰는 연결은 가장 낮은 설정값을 합계 상한으로 공유합니다. 텍스트·비전·스트림·재시도에 모두 적용됩니다.</div>
                             </div>
                             <div class="setting-control">
                                 <input type="number" id="setting-llm-max-concurrency5" min="1" max="20" step="1"
@@ -24336,16 +24633,9 @@
                                 <select id="setting-llm-service6" onchange="onLlmServiceChange()"
                                         style="padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: .85rem;">
                                     <option value="">(LLM1과 동일)</option>
-                                    <option value="copilot">Copilot</option>
                                     <option value="vertex">Vertex Gemini</option>
-                                    <option value="vertex-openai">Vertex OpenAI</option>
-                                    <option value="openai">OpenAI</option>
-                                    <option value="openrouter">OpenRouter</option>
-                                    <option value="gemini">Gemini (AI Studio)</option>
+                                    <option value="openai">OpenAI 호환 URL</option>
                                     <option value="claude">Claude</option>
-                                    <option value="lmstudio">LM Studio (로컬)</option>
-                                    <option value="ollama">Ollama (로컬)</option>
-                                    <option value="ollama-cloud">Ollama Cloud</option>
                                 </select>
                             </div>
                         </div>
@@ -24434,7 +24724,7 @@
                         <div class="setting-row">
                             <div class="setting-label">
                                 <div class="title">LLM6 동시 요청 수</div>
-                                <div class="desc">LLM6에서 동시에 실행할 실제 API 요청 상한입니다. 다른 슬롯과 독립적으로 적용됩니다.</div>
+                                <div class="desc">LLM6의 실제 API 동시 요청 상한입니다. 같은 OpenAI 호환 주소·API 키를 쓰는 연결은 가장 낮은 설정값을 합계 상한으로 공유합니다. 텍스트·비전·스트림·재시도에 모두 적용됩니다.</div>
                             </div>
                             <div class="setting-control">
                                 <input type="number" id="setting-llm-max-concurrency6" min="1" max="20" step="1"
@@ -24512,16 +24802,9 @@
                                 <select id="setting-llm-service7" onchange="onLlmServiceChange()"
                                         style="padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: .85rem;">
                                     <option value="">(LLM1과 동일)</option>
-                                    <option value="copilot">Copilot</option>
                                     <option value="vertex">Vertex Gemini</option>
-                                    <option value="vertex-openai">Vertex OpenAI</option>
-                                    <option value="openai">OpenAI</option>
-                                    <option value="openrouter">OpenRouter</option>
-                                    <option value="gemini">Gemini (AI Studio)</option>
+                                    <option value="openai">OpenAI 호환 URL</option>
                                     <option value="claude">Claude</option>
-                                    <option value="lmstudio">LM Studio (로컬)</option>
-                                    <option value="ollama">Ollama (로컬)</option>
-                                    <option value="ollama-cloud">Ollama Cloud</option>
                                 </select>
                             </div>
                         </div>
@@ -24610,7 +24893,7 @@
                         <div class="setting-row">
                             <div class="setting-label">
                                 <div class="title">LLM7 동시 요청 수</div>
-                                <div class="desc">LLM7에서 동시에 실행할 실제 API 요청 상한입니다. 다른 슬롯과 독립적으로 적용됩니다.</div>
+                                <div class="desc">LLM7의 실제 API 동시 요청 상한입니다. 같은 OpenAI 호환 주소·API 키를 쓰는 연결은 가장 낮은 설정값을 합계 상한으로 공유합니다. 텍스트·비전·스트림·재시도에 모두 적용됩니다.</div>
                             </div>
                             <div class="setting-control">
                                 <input type="number" id="setting-llm-max-concurrency7" min="1" max="20" step="1"
@@ -24688,16 +24971,9 @@
                                 <select id="setting-llm-service8" onchange="onLlmServiceChange()"
                                         style="padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: .85rem;">
                                     <option value="">(LLM1과 동일)</option>
-                                    <option value="copilot">Copilot</option>
                                     <option value="vertex">Vertex Gemini</option>
-                                    <option value="vertex-openai">Vertex OpenAI</option>
-                                    <option value="openai">OpenAI</option>
-                                    <option value="openrouter">OpenRouter</option>
-                                    <option value="gemini">Gemini (AI Studio)</option>
+                                    <option value="openai">OpenAI 호환 URL</option>
                                     <option value="claude">Claude</option>
-                                    <option value="lmstudio">LM Studio (로컬)</option>
-                                    <option value="ollama">Ollama (로컬)</option>
-                                    <option value="ollama-cloud">Ollama Cloud</option>
                                 </select>
                             </div>
                         </div>
@@ -24786,7 +25062,7 @@
                         <div class="setting-row">
                             <div class="setting-label">
                                 <div class="title">LLM8 동시 요청 수</div>
-                                <div class="desc">LLM8에서 동시에 실행할 실제 API 요청 상한입니다. 다른 슬롯과 독립적으로 적용됩니다.</div>
+                                <div class="desc">LLM8의 실제 API 동시 요청 상한입니다. 같은 OpenAI 호환 주소·API 키를 쓰는 연결은 가장 낮은 설정값을 합계 상한으로 공유합니다. 텍스트·비전·스트림·재시도에 모두 적용됩니다.</div>
                             </div>
                             <div class="setting-control">
                                 <input type="number" id="setting-llm-max-concurrency8" min="1" max="20" step="1"
@@ -24864,16 +25140,9 @@
                                 <select id="setting-llm-service9" onchange="onLlmServiceChange()"
                                         style="padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: .85rem;">
                                     <option value="">(LLM1과 동일)</option>
-                                    <option value="copilot">Copilot</option>
                                     <option value="vertex">Vertex Gemini</option>
-                                    <option value="vertex-openai">Vertex OpenAI</option>
-                                    <option value="openai">OpenAI</option>
-                                    <option value="openrouter">OpenRouter</option>
-                                    <option value="gemini">Gemini (AI Studio)</option>
+                                    <option value="openai">OpenAI 호환 URL</option>
                                     <option value="claude">Claude</option>
-                                    <option value="lmstudio">LM Studio (로컬)</option>
-                                    <option value="ollama">Ollama (로컬)</option>
-                                    <option value="ollama-cloud">Ollama Cloud</option>
                                 </select>
                             </div>
                         </div>
@@ -24962,7 +25231,7 @@
                         <div class="setting-row">
                             <div class="setting-label">
                                 <div class="title">LLM9 동시 요청 수</div>
-                                <div class="desc">LLM9에서 동시에 실행할 실제 API 요청 상한입니다. 다른 슬롯과 독립적으로 적용됩니다.</div>
+                                <div class="desc">LLM9의 실제 API 동시 요청 상한입니다. 같은 OpenAI 호환 주소·API 키를 쓰는 연결은 가장 낮은 설정값을 합계 상한으로 공유합니다. 텍스트·비전·스트림·재시도에 모두 적용됩니다.</div>
                             </div>
                             <div class="setting-control">
                                 <input type="number" id="setting-llm-max-concurrency9" min="1" max="20" step="1"
@@ -25040,16 +25309,9 @@
                                 <select id="setting-llm-service10" onchange="onLlmServiceChange()"
                                         style="padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: .85rem;">
                                     <option value="">(LLM1과 동일)</option>
-                                    <option value="copilot">Copilot</option>
                                     <option value="vertex">Vertex Gemini</option>
-                                    <option value="vertex-openai">Vertex OpenAI</option>
-                                    <option value="openai">OpenAI</option>
-                                    <option value="openrouter">OpenRouter</option>
-                                    <option value="gemini">Gemini (AI Studio)</option>
+                                    <option value="openai">OpenAI 호환 URL</option>
                                     <option value="claude">Claude</option>
-                                    <option value="lmstudio">LM Studio (로컬)</option>
-                                    <option value="ollama">Ollama (로컬)</option>
-                                    <option value="ollama-cloud">Ollama Cloud</option>
                                 </select>
                             </div>
                         </div>
@@ -25138,7 +25400,7 @@
                         <div class="setting-row">
                             <div class="setting-label">
                                 <div class="title">LLM10 동시 요청 수</div>
-                                <div class="desc">LLM10에서 동시에 실행할 실제 API 요청 상한입니다. 다른 슬롯과 독립적으로 적용됩니다.</div>
+                                <div class="desc">LLM10의 실제 API 동시 요청 상한입니다. 같은 OpenAI 호환 주소·API 키를 쓰는 연결은 가장 낮은 설정값을 합계 상한으로 공유합니다. 텍스트·비전·스트림·재시도에 모두 적용됩니다.</div>
                             </div>
                             <div class="setting-control">
                                 <input type="number" id="setting-llm-max-concurrency10" min="1" max="20" step="1"
@@ -25247,10 +25509,6 @@
                             <label id="llm-test-multi-label" style="display: none; align-items: center; gap: 4px; font-size: .85rem; color: var(--text); cursor: pointer;" title="다중 비전: CURRENT 외에 REF(참고 이미지)를 함께 전송. 캐릭터 메이커 revise 비전과 동일 경로. 비전 ON일 때만 활성.">
                                 <input type="checkbox" id="llm-test-multi" onchange="_onLlmTestMultiToggle()"> 다중 이미지
                             </label>
-                            <label style="display: flex; align-items: center; gap: 4px; font-size: .85rem; color: var(--text); cursor: pointer;"
-                                   title="OpenAI 호환/Gemini는 response_format으로 JSON 출력을 강제하고, Claude native/Vertex 등 비지원 프로바이더는 조용히 무시됩니다. 프로바이더별 JSON 지원 여부 확인용.">
-                                <input type="checkbox" id="llm-test-json"> JSON
-                            </label>
                             <label id="llm-test-image-label" style="display: none; align-items: center; gap: 4px; font-size: .8rem; color: var(--text2); cursor: pointer; padding: 4px 10px; border: 1px dashed var(--border); border-radius: 6px;" title="CURRENT: 비전에 보낼 메인 이미지 1장">
                                 📷 CURRENT <span id="llm-test-image-name">이미지 선택</span>
                                 <input type="file" id="llm-test-image" accept="image/*" style="display: none;" onchange="_onLlmTestImagePick(this)">
@@ -25270,7 +25528,6 @@
                                 경과: <span id="llm-test-elapsed">0.00</span>s |
                                 <span id="llm-test-tps">0.0</span> t/s |
                                 TTFT: <span id="llm-test-ttft">-</span>
-                                <span id="llm-test-json-badge" style="display: none; margin-left: 8px;"></span>
                             </div>
                         </div>
                         <pre id="llm-test-output"
@@ -25561,7 +25818,6 @@
                         <div id="llm-routing-easy-panel" class="llm-route-mode-panel" role="tabpanel" aria-labelledby="llm-route-mode-easy-btn">
                             <div class="llm-route-easy-intro">
                                 텍스트 요구 작업과 비전 요구 작업을 각각 한 번에 설정합니다. <b>일괄 적용</b> 후 모달 하단의 <b>저장</b>을 눌러야 실제 설정에 반영됩니다.
-                                JSON 포맷 강제는 JSON 응답을 지원하는 작업에만 일괄 활성화하거나 비활성화합니다.
                             </div>
                             <div id="llm-routing-easy" class="llm-route-easy-grid"></div>
                         </div>
@@ -26643,7 +26899,7 @@
                                 <span class="comfy-installer-step" aria-hidden="true">04</span>
                                 <div class="comfy-installer-section-heading">
                                     <h3 class="comfy-installer-title">설치 및 업데이트 실행</h3>
-                                    <p class="comfy-installer-section-copy">새 환경을 구성하거나 기존 내장 설치를 트랜잭션 방식으로 검증·승격합니다.</p>
+                                    <p class="comfy-installer-section-copy">ComfyUI를 설치하거나 기존 환경을 업데이트합니다.</p>
                                 </div>
                             </div>
                             <div class="comfy-installer-actions">
@@ -26663,12 +26919,10 @@
                                 <span class="comfy-installer-sage-note" id="comfy-installer-sage-note">SOYA_USER 전체를 노드 제목·워크플로우 파일명과 관계없이 처리합니다. 열려 있는 ComfyUI 워크플로우는 다시 열어야 반영됩니다.</span>
                             </div>
                             <p class="comfy-installer-note" style="margin-top:9px;">
-                                설치는 선택한 워크플로우에 필요한 모델만 받고 E2E 없이 완료됩니다. 업데이트도 워크플로우 실행 검사를 하지 않으며,
-                                후킹 서버가 바뀌면 재시작 후 한 번 더 눌러야 합니다. 무결성 검사는 현재 설정된 워크플로우와 읽기 전용 팩 원본을 비교하며, 복구는 결과 모달에서 사용자가 선택한 항목만 비파괴 방식으로 처리합니다. E2E 검사는 설치 완료 후 지원되는 배포 원본을 선택해 실제 실행합니다. 이미지 검사에서는 아래 두 진단 중 하나를 선택합니다. 이미지 깨짐 검사는 관리 Comfy를 같은 설정으로 새로 시작한 뒤 실제 프로그램 작업 큐에서 전체 에셋 워크플로를 실행합니다. 수십 분 걸릴 수 있으며, 동일 프롬프트·seed로 A 기존 경로, B sampler 직전 ModelPatcher Refresh, C DCW/CWM OFF, E 텍스트 인코더 CPU 고정을 각각 warmup 1장+15장 비교합니다. D LoRA 완료 ModelPatcher 고정 재사용은 실제 제출 워크플로에 production Stable ModelPatcher Reuse가 없을 때만 실행하며, 이미 있으면 중복 캐시를 피하기 위해 자동 생략합니다. E에서는 UNet과 VAE는 기존 GPU 경로를 유지합니다. 이상이 재현되면 같은 실패 경로에서 DynamicVRAM ON/OFF, async offload OFF, Smart Memory OFF, pinned memory OFF를 각각 단독 비교하고, 검사가 끝나거나 실패·중단되어도 원래 Comfy 실행 프로필을 복구합니다. 모든 케이스에서 ModelPatcher UUID·상주 패치 UUID와 conditioning·sampler latent·VAE 출력의 NaN/Inf를 기록합니다. 결과 이미지·실제 프롬프트·최종 제출 워크플로·모델/LoRA 해시·환경·원본 로그·구조화 계측·MD 보고서를 ZIP으로 만듭니다.
+                                선택한 워크플로우에 필요한 모델만 설치합니다. 실행 검사는 설치·업데이트 후 별도로 진행할 수 있습니다.
                             </p>
                             <p class="comfy-installer-note" id="comfy-installer-compatibility-note" style="margin-top:7px;">
-                                <strong>호환 설치:</strong> RTX 2070/2080 같은 Turing(sm75)부터 사용할 수 있도록 SageAttention과 전용 Triton을 제외합니다.
-                                지원되지 않는 NVIDIA·AMD·Intel·GPU 없음 환경은 CPU 프로필로 설치를 계속합니다. NVIDIA 호환 프로필을 사용했다면 워크플로우에서 SageAttention 노드를 제거하거나 해당 노드를 <code>disabled</code>로 설정해야 합니다.
+                                <strong>호환 설치:</strong> 구형 NVIDIA GPU 등을 위한 옵션입니다. 사용 시 워크플로우의 SageAttention 노드를 비활성화하세요.
                             </p>
                         </section>
 
@@ -26880,7 +27134,7 @@
             <div class="modal-header">
                 <div>
                     <h2 id="comfy-installer-e2e-title">배포 워크플로우 E2E 검사</h2>
-                    <div class="comfy-installer-note" style="margin-top:5px;">별도 보관된 읽기 전용 배포 원본 중 파일이 실제 존재하고 E2E 검사 방법이 등록된 항목만 표시합니다.</div>
+                    <div class="comfy-installer-note" style="margin-top:5px;">설치 완료 후 검사할 배포 워크플로우를 선택하세요. 선택한 항목을 실제로 실행합니다.</div>
                 </div>
                 <button class="modal-close" onclick="comfyInstallerCloseE2EModal()" aria-label="E2E 검사 건너뛰기">&times;</button>
             </div>
@@ -26915,14 +27169,15 @@
             <div class="comfy-installer-e2e-body" style="display:grid; gap:12px;">
                 <section class="comfy-installer-card" style="margin:0;">
                     <h3 class="comfy-installer-title">이미지 깨짐 검사</h3>
-                    <p class="comfy-installer-note">반복 생성 중 이미지가 손상되는 문제를 기존 A/B/C/E 및 조건부 D 진단으로 검사합니다. 관리 Comfy 재시작과 반복 생성이 포함됩니다.</p>
+                    <p class="comfy-installer-note">Comfy를 현재 설정으로 재시작하고 반복 생성해 이미지 깨짐의 원인을 비교합니다. 수십 분 걸릴 수 있으며, 완료·실패·중단 시 원래 실행 설정을 복구합니다.</p>
                     <button type="button" class="comfy-installer-btn" id="comfy-installer-image-corruption-choice-btn" onclick="comfyInstallerStartImageDiagnostic()">이미지 깨짐 검사 시작</button>
                 </section>
                 <section class="comfy-installer-card" style="margin:0;">
                     <h3 class="comfy-installer-title">Comfy와 프로그램에서 생성하는 이미지가 다름 검사</h3>
-                    <p class="comfy-installer-note">캐릭터 메이커의 현재 워크플로우를 읽기 전용으로 복사하고, 같은 seed에서 Comfy 저장 프롬프트와 캐릭터 메이커 프롬프트를 각각 직접 경로·프로그램 경로로 실행해 총 4장을 비교합니다. 원본 워크플로우와 설정은 수정하지 않으며 Comfy를 재시작하지 않습니다.</p>
+                    <p class="comfy-installer-note">캐릭터 메이커의 현재 워크플로우로 프롬프트와 실행 경로를 바꿔 총 4장의 결과를 비교합니다. 원본 워크플로우·설정을 수정하거나 Comfy를 재시작하지 않습니다.</p>
                     <button type="button" class="comfy-installer-btn primary" id="comfy-installer-image-comparison-choice-btn" onclick="comfyInstallerStartImageComparisonDiagnostic()">생성 차이 검사 시작</button>
                 </section>
+                <p class="comfy-installer-note">결과 이미지와 진단 보고서는 ZIP으로 내려받을 수 있습니다.</p>
             </div>
             <div class="modal-footer">
                 <button class="cancel" type="button" onclick="comfyInstallerCloseImageDiagnosticModal()">닫기</button>
@@ -27653,6 +27908,9 @@
     </div>
 
     <script src="/illustration_flow.js"></script>
+    <script src="/illustration_prompt_inspector.js"></script>
+    <script src="/illustration_preview.js"></script>
+    <script src="/llm_thinking_check.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
     <script>
@@ -31213,14 +31471,16 @@
                 const info = await fetchJSON('/api/conversion_info');
                 renderConversionStatus(info);
             } catch (e) {
-                document.getElementById('conv-status').textContent = '연결 실패';
-                document.getElementById('conv-status').classList.add('error');
+                console.error('[CONVERSION_STATUS] 변환 정보 조회 실패:', e);
+                renderConversionStatus({error: `서버 연결 실패: ${e.message}`});
             }
         }
 
         function renderConversionStatus(info) {
             const container = document.getElementById('conversion-status');
+            const statusBar = document.getElementById('status-bar');
             if (info.error) {
+                statusBar.style.display = '';
                 container.innerHTML = `
                     <div class="info-item">
                         <span class="label">상태:</span>
@@ -31230,37 +31490,15 @@
                         <span class="label">에러:</span>
                         <span class="value error">${escapeHtml(info.error)}</span>
                     </div>`;
+                scheduleIndependentScrollHeightSync();
                 return;
             }
 
-            const unused = info.unused_nodes || [];
-            const apiCount = info.api_node_count || 0;
-            const origCount = info.original_node_count || 0;
             const note = info.note || '';
             const nodeErrors = info.submit_node_errors || {};
             const nodeErrorCount = Object.keys(nodeErrors).length;
 
-            let statusHtml = `
-                <div class="info-item">
-                    <span class="label">API 노드:</span>
-                    <span class="value">${apiCount}개</span>
-                </div>`;
-
-            if (origCount > 0 && origCount !== apiCount) {
-                statusHtml += `
-                    <div class="info-item">
-                        <span class="label">원본 노드:</span>
-                        <span class="value">${origCount}개</span>
-                    </div>`;
-            }
-
-            if (unused.length > 0) {
-                statusHtml += `
-                    <div class="info-item">
-                        <span class="label">미사용 노드:</span>
-                        <span class="value warn">${unused.length}개</span>
-                    </div>`;
-            }
+            let statusHtml = '';
 
             if (nodeErrorCount > 0) {
                 statusHtml += `
@@ -31278,15 +31516,9 @@
                     </div>`;
             }
 
-            if (unused.length === 0 && nodeErrorCount === 0 && !info.error) {
-                statusHtml += `
-                    <div class="info-item">
-                        <span class="label">상태:</span>
-                        <span class="value" style="color:var(--success)">정상</span>
-                    </div>`;
-            }
-
             container.innerHTML = statusHtml;
+            statusBar.style.display = statusHtml ? '' : 'none';
+            scheduleIndependentScrollHeightSync();
         }
 
         // ─── 백업 목록 로드 (페이지네이션) ───
@@ -31347,7 +31579,8 @@
             const loadMoreBtn = document.getElementById('load-more-btn');
             
             if (paginationState.total > 0) {
-                statsBar.style.display = 'flex';
+                statsBar.style.display = document.getElementById('tab-backup-content').classList.contains('active')
+                    ? 'flex' : 'none';
                 totalCount.textContent = paginationState.total;
                 loadedCount.textContent = `${backupsData.length}개 로드됨`;
                 
@@ -39358,7 +39591,7 @@
         async function comfyInstallerShutdownAfterUpdate() {
             if (comfyInstallerShutdownRequested) return;
             comfyInstallerShutdownRequested = true;
-            const message = '업데이트가 완료되었습니다. 매니저를 재시작해주세요.';
+            const message = '서버 업데이트가 완료되었습니다. 매니저를 재시작한 뒤 업데이트를 한 번 더 눌러주세요.';
             const progressNote = document.getElementById('comfy-installer-progress-note');
             if (progressNote) progressNote.textContent = message;
             showToast(message, 'success');
@@ -39812,7 +40045,7 @@
                 });
                 comfyInstallerRenderStatus(started);
                 comfyInstallerCloseImageDiagnosticModal();
-                showToast('이미지 깨짐 검사를 시작했습니다 · A/B/C/E + 조건부 D 후 이상 재현 시 메모리/offload 단독 변수를 비교합니다', 'success');
+                showToast('이미지 깨짐 검사를 시작했습니다. 완료 후 진단 ZIP을 내려받을 수 있습니다', 'success');
                 clearTimeout(comfyInstallerPollTimer);
                 comfyInstallerPollTimer = setTimeout(() => comfyInstallerRefreshStatus(false), 500);
             } catch (error) {
@@ -40300,6 +40533,7 @@
             if (compatibilityMode && !window.confirm(
                 'NVIDIA 호환 설치를 시작할까요?\n\n' +
                 'RTX 2070/2080 같은 Turing(sm75)부터 지원하기 위해 SageAttention과 전용 Triton을 설치하지 않습니다.\n' +
+                '지원하지 않는 GPU이거나 GPU가 없으면 CPU로 설치합니다.\n' +
                 '설치 후 사용하는 워크플로우에서 SageAttention 노드를 제거하거나 disabled로 설정해야 합니다.'
             )) return;
             // 과금 방식이 변경되는 선택이므로 반드시 사용자 확인을 거칩니다.
@@ -42999,7 +43233,7 @@
                     currentConfig[`${base}${suffix}`] ?? fallback
                 );
                 const serviceEl = el(`setting-llm-service${suffix}`);
-                if (serviceEl) serviceEl.value = configValue('llm_service', slot === 1 ? 'copilot' : '');
+                if (serviceEl) setLlmServiceSelection(slot, configValue('llm_service', slot === 1 ? 'openai' : ''));
                 const modelEl = el(`setting-llm-model${suffix}`);
                 if (modelEl) modelEl.value = configValue('llm_model', slot === 1 ? 'gpt-4.1' : '');
                 const streamEnabled = !!configValue('llm_stream', false);
@@ -45766,7 +46000,6 @@
             document.getElementById('llm-test-elapsed').textContent = '0.00';
             document.getElementById('llm-test-tps').textContent = '0.0';
             document.getElementById('llm-test-ttft').textContent = '-';
-            _setLlmTestJsonBadge('off');
             const btn = document.getElementById('llm-test-send-btn');
             if (btn) btn.disabled = false;
         }
@@ -45780,39 +46013,6 @@
                 document.getElementById('llm-test-tps').textContent = (Math.round(tps * 10) / 10).toFixed(1);
             if (ttft !== undefined && ttft !== null)
                 document.getElementById('llm-test-ttft').textContent = (Math.round(ttft * 1000)) + 'ms';
-        }
-
-        function _setLlmTestJsonBadge(state, detail) {
-            const badge = document.getElementById('llm-test-json-badge');
-            if (!badge) return;
-            badge.style.display = 'inline';
-            if (state === 'ok') {
-                badge.textContent = 'JSON: ✓ 유효';
-                badge.style.color = 'var(--success)';
-            } else if (state === 'fail') {
-                badge.textContent = 'JSON: ✗ ' + (detail || '파싱 실패');
-                badge.style.color = 'var(--danger)';
-            } else if (state === 'error') {
-                badge.textContent = 'JSON: ✗ 오류';
-                badge.style.color = 'var(--danger)';
-            } else {
-                badge.style.display = 'none';
-                badge.textContent = '';
-            }
-        }
-
-        function _validateLlmTestJson(text) {
-            let t = (text || '').trim();
-            if (!t) { _setLlmTestJsonBadge('fail', '빈 응답'); return; }
-            // 일부 프로바이더는 JSON 모드에서도 ```json ... ``` 펜스를 씌우므로 내부만 추출해 검증.
-            const fence = t.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/);
-            if (fence) t = fence[1].trim();
-            try {
-                JSON.parse(t);
-                _setLlmTestJsonBadge('ok');
-            } catch (e) {
-                _setLlmTestJsonBadge('fail', String(e && e.message ? e.message : e).slice(0, 60));
-            }
         }
 
         async function sendLlmTest() {
@@ -45832,19 +46032,12 @@
             outEl.textContent = '';
             _setLlmTestStats(0, 0.0, 0.0, null);
             document.getElementById('llm-test-ttft').textContent = '-';
-            _setLlmTestJsonBadge('off');
             btn.disabled = true;
             btn.textContent = '전송 중…';
 
             const useStream = document.getElementById('llm-test-stream').checked;
             const useVision = document.getElementById('llm-test-vision').checked;
-            const useJson = document.getElementById('llm-test-json')?.checked || false;
-            // JSON 토글 ON: response_format 강제만으로는 모델이 무슨 JSON을 만들지 몰라 {} 가 되므로,
-            // 입력에 JSON 출력 지시문(고정 스키마)을 덧붙여 의미 있는 JSON을 생성하고 응답을 검증한다.
-            const userContent = useJson
-                ? `다음을 JSON 객체로 출력하시오. JSON 외의 텍스트/마크다운 금지.\n스키마: {"echo": <입력 문장을 그대로>, "length": <입력 글자 수>}\n입력: ${text}`
-                : text;
-            const messages = [{"role": "user", "content": userContent}];
+            const messages = [{"role": "user", "content": text}];
 
             // 비전 모드: 이미지 필수
             if (useVision && !_llmTestImage.b64) {
@@ -45858,7 +46051,6 @@
             const targetVal = (targetSel && _TEST_TARGETS.includes(targetSel.value)) ? targetSel.value : 'llm1';
             payload.target = targetVal;
             try { localStorage.setItem('llm-test-target', targetVal); } catch (_) {}
-            if (useJson) payload.json_mode = true;
             if (useVision) {
                 if (_llmTestRefImages.length > 0) {
                     // 다중 비전: CURRENT(필수) + REF 목록. 단일 image_b64 대신 images 배열 전송.
@@ -45951,15 +46143,12 @@
                                 tps = tokens / data.elapsed;
                             }
                             _setLlmTestStats(tokens, data.elapsed, tps, data.ttft);
-                            if (useJson) _validateLlmTestJson(data.text || outEl.textContent);
                         } else if (eventType === 'error') {
                             const errMsg = data.error || '알 수 없는 오류';
                             outEl.textContent += (outEl.textContent ? '\n' : '') + '[ERROR] ' + errMsg;
-                            if (useJson) _setLlmTestJsonBadge('error');
                             showToast('LLM 오류: ' + errMsg, 'error');
                         } else if (eventType === 'cancelled') {
                             if (data.partial_text) outEl.textContent = data.partial_text;
-                            if (useJson) _setLlmTestJsonBadge('off');
                             showToast('LLM 테스트를 중지했습니다.', 'info');
                         }
                     }
@@ -47278,13 +47467,11 @@
                 lines.push('3. **ORIGINAL-ASSET** — 켜진 경우, 확정 프로필을 기준으로 현재 장면에 맞는 등록 원본 에셋과 삽입 슬롯을 선택.');
                 lines.push('4. **CALL1-BACKTRANSLATE** — 최신 CHAR 응답(현재 맥락)을 영어로 역번역. 후속 단계가 상황을 정확히 이해하도록 정규화. (토글 시)');
                 lines.push('5. **CALL1** (enhance) — 앞 단계가 확정한 CURRENT 캐릭터를 기준으로 복장·헤어스타일 변화 사건만 분석해 CALL2에 전달. 지칭어는 문맥상 해석하되 본문을 치환하지 않습니다.');
-                lines.push('6. **CALL2-PLAN** — 전체 현재 Cxxx 카탈로그에서 요청 수만큼 픽셀만으로 사건이 읽히는 최종 scene_plan 세트를 선택·확정.');
-                lines.push('7. **CALL2-KEYVIS / CALL2-DETAIL** — 릴레이 소설 로그에 Danbooru 태그를 붙여 `<lb-xnai>` TOON 구조(camera/scene/supplement/characters) 생성. KEYVIS=키비주얼, DETAIL=일반 장면. PLAN 없이 단독일 때 **CALL2-FALLBACK**.');
-                lines.push('8. **CALL2-AUTHORITY-AUDIT** — 고정 외형 예외 감사. 복장은 CALL2의 outfit_state를 그대로 신뢰하며 감사하지 않습니다. 고정 외형은 유지하되 서사에 명시된 헤어스타일·신체 변화가 있을 때만 예외를 의미로 판정합니다.');
-                lines.push('9. **CALL2-FIX** — CALL2 출력이 malformed일 때 내용을 바꾸지 않고 구조만 교정(실패 시에만).');
-                 lines.push('10. **CALL3** (speak/manga) — 선택된 일반 장면의 대사/생각 작성. speak=vn 대사창, manga=말풍선. 이미지 생성과 병렬 실행.');
-                 lines.push('11. **MULTI-CHAR-MASK** (CALL5) — 2인 이상 장면의 캐릭터별 영역 공간 분해(마스크). CALL3 이후, 장면(slot)마다 별도 호출.');
-                 lines.push('12. **ILLUSTRATION-QUALITY-INSPECTION** (조건부) — 각 이미지 백업 직후 한 장씩 문제 중심 영어 피드백을 생성하고, 모든 이미지 완료 뒤 축소 연락처 시트로 전체 복장·스토리 일관성을 검토. 손 문제는 평가하지 않으며, 결과는 LB Details LLM 로그에 기록되어 이 흐름에 표시.');
+                lines.push('6. **CALL2-SELECT → CALL2-PLAN → CALL2-DETAIL** — SELECT는 CALL1과 동시에 장면·인물·순서를 선택합니다. 각 PLAN 배치가 완료되면 해당 장면의 구도·동작·접촉과 SLOT 상태를 바로 DETAIL에 전달합니다.');
+                lines.push('7. **CALL2-DETAIL / CALL2-KEYVIS** — DETAIL은 PLAN 장면별 개요·프로필·상태를 이미지 태그로 확장합니다. KEYVIS는 별도 대표 이미지 한 장을 선택·묘사하며 DETAIL과 함께 실행합니다.');
+                lines.push('8. **MULTI-CHAR-MASK** — 필요한 다중 캐릭터 이미지의 영역을 계산합니다. 각 DETAIL 배치나 KEYVIS가 끝나면 마스크를 준비한 뒤 해당 이미지를 즉시 생성 큐에 등록합니다.');
+                lines.push('9. **CALL3** (speak/manga/subtitle) — 일반 장면의 대사/생각 작성. 대표 이미지는 대사 대상에서 제외하며 이미지 생성과 병렬 실행합니다.');
+                lines.push('10. **ILLUSTRATION-QUALITY-INSPECTION** (조건부) — 각 이미지 백업 직후 한 장씩 문제 중심 영어 피드백을 생성하고, 모든 이미지 완료 뒤 축소 연락처 시트로 전체 복장·스토리 일관성을 검토. 손 문제는 평가하지 않으며, 결과는 LB Details LLM 로그에 기록되어 이 흐름에 표시.');
                  lines.push('');
                 lines.push('**결과 요약(본문 최하단, 시간순):** ');
                 lines.push('- **③ 캐릭터 원본(lb.extra)** — 이 그림 캐릭터들의 원형 외형/복장 태그(태그 누락 점검용). ');
@@ -47577,6 +47764,36 @@
             return slot === 1 ? '' : String(slot);
         }
 
+        function ensureLlmVertexKeyFields() {
+            for (const slot of LLM_SLOTS) {
+                const suffix = llmSlotSuffix(slot);
+                if (document.getElementById(`vertex-key${suffix}-row`)) continue;
+                const keyRow = document.getElementById(`llm-api-key${suffix}-row`);
+                if (!keyRow) {
+                    console.error(`[LLM${slot}] Vertex 키 입력칸 생성 실패: API 키 행을 찾지 못했습니다.`);
+                    continue;
+                }
+                const row = document.createElement('div');
+                row.className = 'setting-row';
+                row.id = `vertex-key${suffix}-row`;
+                row.style.cssText = 'display:none;flex-direction:column;align-items:stretch;';
+                row.innerHTML = `
+                    <div class="setting-label" style="margin-bottom:8px;">
+                        <div class="title">LLM${slot} Vertex 서비스 계정 JSON</div>
+                        <div class="desc">GCP 서비스 계정 키 JSON을 붙여넣거나 파일에서 불러오세요. 이 슬롯에만 저장되며 다른 슬롯의 키를 가져오지 않습니다.</div>
+                    </div>
+                    <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap;">
+                        <input type="file" id="setting-vertex-key-file${suffix}" accept=".json,application/json" style="font-size:.8rem;flex:1;min-width:150px;">
+                        <button type="button" class="btn-small" onclick="loadVertexKeyFile(${slot})">파일 불러오기</button>
+                        <button type="button" class="btn-small" onclick="saveVertexKey(${slot})">저장</button>
+                        <button type="button" class="btn-small" onclick="deleteVertexKey(${slot})">삭제</button>
+                    </div>
+                    <textarea id="setting-vertex-key-json${suffix}" placeholder='{ "type": "service_account", "project_id": "...", ... }' style="width:100%;min-height:120px;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-family:monospace;font-size:.8rem;"></textarea>
+                    <div id="vertex-key${suffix}-status" style="margin-top:6px;font-size:.75rem;color:var(--text2);"></div>`;
+                keyRow.insertAdjacentElement('afterend', row);
+            }
+        }
+
         function ensureLlmCustomHeaderFields() {
             for (const slot of LLM_SLOTS) {
                 const suffix = llmSlotSuffix(slot);
@@ -47617,6 +47834,25 @@
             return DEFAULT_GEMINI_THINKING_LEVEL;
         }
 
+        function setLlmServiceSelection(slot, serviceId) {
+            const select = document.getElementById("setting-llm-service" + llmSlotSuffix(slot));
+            if (!select) {
+                console.error("[LLM" + slot + "] 서비스 선택칸을 찾지 못했습니다:", serviceId);
+                return;
+            }
+            const value = String(serviceId ?? (slot === 1 ? 'openai' : ''));
+            if (value && !Array.from(select.options).some(option => option.value === value)) {
+                const legacy = document.createElement('option');
+                legacy.value = value;
+                legacy.textContent = value + " (기존 설정)";
+                legacy.hidden = true;
+                legacy.disabled = true;
+                select.appendChild(legacy);
+                console.warn("[LLM" + slot + "] 선택 목록에서 제외된 기존 서비스를 유지합니다:", value);
+            }
+            select.value = value;
+        }
+
         async function loadLlmServiceCatalog() {
             if (llmServiceCatalogPromise) return llmServiceCatalogPromise;
             llmServiceCatalogPromise = (async () => {
@@ -47640,32 +47876,13 @@
                             inherited.textContent = '(LLM1과 동일)';
                             select.appendChild(inherited);
                         }
-                        const groups = new Map();
                         for (const service of llmServiceCatalog) {
-                            // "Provider Manager" 그룹은 외부 프로젝트에서 복사해 온
-                            // OpenAI 호환 프리셋 묶음으로, UI 선택지에서는 숨긴다.
-                            // 백엔드 카탈로그/호출 경로는 유지되므로 이미 해당 서비스로
-                            // 저장된 기존 설정은 아래 레거시 옵션 분기가 "(기존 설정)"으로 표시해 동작한다.
-                            if (service.group === 'Provider Manager') continue;
-                            const groupName = service.group || '기타';
-                            if (!groups.has(groupName)) {
-                                const group = document.createElement('optgroup');
-                                group.label = groupName;
-                                groups.set(groupName, group);
-                                select.appendChild(group);
-                            }
                             const option = document.createElement('option');
                             option.value = service.id;
                             option.textContent = service.name;
-                            groups.get(groupName).appendChild(option);
+                            select.appendChild(option);
                         }
-                        if (previous && !llmServiceCatalog.some(service => service.id === previous)) {
-                            const legacy = document.createElement('option');
-                            legacy.value = previous;
-                            legacy.textContent = `${previous} (기존 설정)`;
-                            select.appendChild(legacy);
-                        }
-                        select.value = previous;
+                        setLlmServiceSelection(slot, previous);
                     }
                     return llmServiceCatalog;
                 } catch (error) {
@@ -47696,16 +47913,18 @@
             const suffix = llmSlotSuffix(slot);
             const selected = document.getElementById(`setting-llm-service${suffix}`)?.value || '';
             if (slot === 1 || selected) return selected;
-            return document.getElementById('setting-llm-service')?.value || 'copilot';
+            return document.getElementById('setting-llm-service')?.value || 'openai';
         }
 
         function onLlmServiceChange() {
             ensureLlmCustomHeaderFields();
+            ensureLlmVertexKeyFields();
             for (const slot of LLM_SLOTS) {
                 const suffix = llmSlotSuffix(slot);
                 const selected = document.getElementById(`setting-llm-service${suffix}`)?.value || '';
                 const meta = getLlmServiceMeta(getEffectiveLlmService(slot));
                 const keyRow = document.getElementById(`llm-api-key${suffix}-row`);
+                const vertexKeyRow = document.getElementById(`vertex-key${suffix}-row`);
                 const urlRow = document.getElementById(`llm-url${suffix}-row`);
                 const reasoningRow = document.getElementById(`llm-reasoning${suffix}-row`);
                 const customRow = document.getElementById(`llm-custom-body${suffix}-row`);
@@ -47717,6 +47936,11 @@
                 const genericKey = ['required', 'optional'].includes(meta.api_key);
                 const geminiNative = isGeminiNativeService(meta.id);
                 if (keyRow) keyRow.style.display = hasOwnService && genericKey ? 'flex' : 'none';
+                if (vertexKeyRow) {
+                    const usesVertex = ['vertex', 'vertex-openai'].includes(meta.id);
+                    vertexKeyRow.style.display = usesVertex ? 'flex' : 'none';
+                    if (usesVertex) loadVertexKeyStatus(slot);
+                }
                 if (urlRow) urlRow.style.display = hasOwnService && meta.url_override ? 'flex' : 'none';
                 if (reasoningRow) reasoningRow.style.display = 'flex';
                 if (reasoningPreset) reasoningPreset.style.display = geminiNative ? 'none' : '';
@@ -47737,13 +47961,6 @@
                     pdfPromptRow.style.display = supportsPdfPrompt ? 'flex' : 'none';
                 }
                 renderReasoningControls(slot);
-            }
-
-            const s1 = document.getElementById('setting-llm-service').value;
-            const vertexKeyRow = document.getElementById('vertex-key-row');
-            if (vertexKeyRow) {
-                vertexKeyRow.style.display = (s1 === 'vertex' || s1 === 'vertex-openai') ? 'flex' : 'none';
-                if (s1 === 'vertex' || s1 === 'vertex-openai') loadVertexKeyStatus();
             }
         }
 
@@ -48104,7 +48321,8 @@
         ];
 
         const LLM_ROUTING_TASKS = [
-            { key: 'illustration_quality_inspection', label: '삽화 품질 자동 검사', kind: '비전/JSON', modality: 'vision', group: 'developer_settings', json: true },
+            { key: 'llm_thinking_check', label: 'Think 확인 (선택한 연결)', kind: '텍스트 · 슬롯 직접 선택', modality: 'text', group: 'developer_settings', locked: true },
+            { key: 'illustration_quality_inspection', label: '삽화 품질 자동 검사', kind: '비전/JSON', modality: 'vision', group: 'developer_settings' },
             { key: 'extract_outfit',           label: '복장 추출',          kind: '텍스트', modality: 'text', group: 'outfit_workflow', locked: true },
             { key: 'enhance_outfit',           label: '복장 정제',          kind: '텍스트', modality: 'text', group: 'outfit_workflow', locked: true },
             { key: 'restore_workflow',         label: '수동 그리기/복원(LLM)', kind: '텍스트', modality: 'text', group: 'outfit_workflow' },
@@ -48112,32 +48330,33 @@
             { key: 'refine_lb_extra',          label: '외모/복장 태그 정제',kind: '비전', modality: 'vision', group: 'asset_management' },
             { key: 'refine_lora_prompt',       label: 'LoRA/에셋/스타일 정제', kind: '비전', modality: 'vision', group: 'asset_management' },
             { key: 'refine_lora_test_setup',   label: '테스트 이미지 일괄 세팅(봇/에셋)',kind: '텍스트', modality: 'text', group: 'asset_management' },
-            { key: 'lora_prompt_review',       label: 'LoRA 프롬프트 2차 검수', kind: '비전/JSON', modality: 'vision', group: 'asset_management', json: true },
-            { key: 'asset_name_mapping_auto_fix', label: '에셋 이름 자동 수정', kind: 'JSON', modality: 'text', group: 'asset_management', json: true },
-            { key: 'asset_name_mapping_full',  label: '에셋 이름 전체 매핑', kind: 'JSON', modality: 'text', group: 'asset_management', json: true },
-            { key: 'preset_import_classify',   label: '프리셋 가져오기 분류', kind: 'JSON', modality: 'text', group: 'asset_management', json: true },
-            { key: 'visual_profile_guide',     label: '프로필 선택 기준 자동 작성', kind: '텍스트/JSON', modality: 'text', group: 'bot_profiles', json: true },
-            { key: 'visual_profile_appearance_vision', label: '프로필 대표 이미지 외형 분석', kind: '비전/JSON', modality: 'vision', group: 'bot_profiles', json: true },
-            { key: 'edit_illustration_prompt', label: '삽화 편하게 수정', kind: '비전/JSON', modality: 'vision', group: 'image_editing', json: true },
-            { key: 'illustration_auto_feedback_review', label: '삽화 오토피드백 검수', kind: '비전/JSON', modality: 'vision', group: 'image_editing', json: true },
+            { key: 'lora_prompt_review',       label: 'LoRA 프롬프트 2차 검수', kind: '비전/JSON', modality: 'vision', group: 'asset_management' },
+            { key: 'asset_name_mapping_auto_fix', label: '에셋 이름 자동 수정', kind: 'JSON', modality: 'text', group: 'asset_management' },
+            { key: 'asset_name_mapping_full',  label: '에셋 이름 전체 매핑', kind: 'JSON', modality: 'text', group: 'asset_management' },
+            { key: 'preset_import_classify',   label: '프리셋 가져오기 분류', kind: 'JSON', modality: 'text', group: 'asset_management' },
+            { key: 'visual_profile_guide',     label: '프로필 선택 기준 자동 작성', kind: '텍스트/JSON', modality: 'text', group: 'bot_profiles' },
+            { key: 'visual_profile_appearance_vision', label: '프로필 대표 이미지 외형 분석', kind: '비전/JSON', modality: 'vision', group: 'bot_profiles' },
+            { key: 'edit_illustration_prompt', label: '삽화 편하게 수정', kind: '비전/JSON', modality: 'vision', group: 'image_editing' },
+            { key: 'illustration_auto_feedback_review', label: '삽화 오토피드백 검수', kind: '비전/JSON', modality: 'vision', group: 'image_editing' },
             { key: 'qwen_edit_translate',      label: 'EDIT 지시 영어 번역', kind: '텍스트', modality: 'text', group: 'image_editing' },
-            { key: 'character_maker_draft',    label: '캐릭터 메이커 초안', kind: '텍스트/JSON', modality: 'text', group: 'character_maker', json: true },
-            { key: 'character_maker_feedback', label: '캐릭터 메이커 이미지 피드백', kind: '비전/JSON', modality: 'vision', group: 'character_maker', json: true },
-            { key: 'danbooru_tag_search',      label: '단부르 태그 검색', kind: '텍스트/JSON · 2단계', modality: 'text', group: 'knowledge_search', json: true },
-            { key: 'illustration_character_resolve', label: '삽화 CURRENT 등장인물 판별', kind: 'JSON · 항상 실행', modality: 'text', group: 'illustration_pipeline', json: true },
-            { key: 'illustration_profile_context_translate', label: '삽화 프로필 영어 컨텍스트 번역', kind: 'JSON · 캐시 미스 시', modality: 'text', group: 'illustration_pipeline', json: true },
-            { key: 'illustration_profile_resolve', label: '삽화 CURRENT 프로필 결정', kind: 'JSON · 캐릭터별 병렬', modality: 'text', group: 'illustration_pipeline', json: true },
-            { key: 'illustration_original_asset', label: '삽화 원본 에셋 선택',          kind: 'JSON · 1단계', modality: 'text', group: 'illustration_pipeline', json: true },
-            { key: 'illustration_original_asset_recovery', label: '삽화 원본 에셋 복구', kind: 'JSON · 실패 후보 재선택', modality: 'text', group: 'illustration_pipeline', json: true },
+            { key: 'character_maker_draft',    label: '캐릭터 메이커 초안', kind: '텍스트/JSON', modality: 'text', group: 'character_maker' },
+            { key: 'character_maker_feedback', label: '캐릭터 메이커 이미지 피드백', kind: '비전/JSON', modality: 'vision', group: 'character_maker' },
+            { key: 'danbooru_tag_search',      label: '단부르 태그 검색', kind: '텍스트/JSON · 2단계', modality: 'text', group: 'knowledge_search' },
+            { key: 'illustration_character_resolve', label: '삽화 CURRENT 등장인물 판별', kind: 'JSON · 항상 실행', modality: 'text', group: 'illustration_pipeline' },
+            { key: 'illustration_profile_context_translate', label: '삽화 프로필 영어 컨텍스트 번역', kind: 'JSON · 캐시 미스 시', modality: 'text', group: 'illustration_pipeline' },
+            { key: 'illustration_profile_resolve', label: '삽화 CURRENT 프로필 결정', kind: 'JSON · 캐릭터별 병렬', modality: 'text', group: 'illustration_pipeline' },
+            { key: 'illustration_original_asset', label: '삽화 원본 에셋 선택',          kind: 'JSON · 1단계', modality: 'text', group: 'illustration_pipeline' },
+            { key: 'illustration_original_asset_recovery', label: '삽화 원본 에셋 복구', kind: 'JSON · 실패 후보 재선택', modality: 'text', group: 'illustration_pipeline' },
             { key: 'illustration_call1_backtranslate', label: '삽화 CALL1 역번역',               kind: '텍스트', modality: 'text', group: 'illustration_pipeline' },
-            { key: 'illustration_call1',       label: '삽화 CALL1 (복장·헤어)',         kind: 'JSON · 병렬 가능', modality: 'text', group: 'illustration_pipeline', json: true },
-            { key: 'illustration_call2_plan',  label: '삽화 CALL2-PLAN',                 kind: '텍스트', modality: 'text', group: 'illustration_pipeline' },
+            { key: 'illustration_call1',       label: '삽화 CALL1 (복장·헤어)',         kind: 'JSON · 단일 상태 추적', modality: 'text', group: 'illustration_pipeline' },
+            { key: 'illustration_call2_select', label: '삽화 CALL2-SELECT (장면 선택)',   kind: 'JSON · 장면 수·순서·인물', modality: 'text', group: 'illustration_pipeline' },
+            { key: 'illustration_call2_plan',  label: '삽화 CALL2-PLAN',         kind: '텍스트 · 배치별 시각 계획', modality: 'text', group: 'illustration_pipeline' },
             { key: 'illustration_call2_keyvis', label: '삽화 CALL2-KEYVIS',              kind: '텍스트', modality: 'text', group: 'illustration_pipeline' },
-            { key: 'illustration_call2',       label: '삽화 CALL2-DETAIL',               kind: '텍스트 · 기존 폴백 포함', modality: 'text', group: 'illustration_pipeline' },
-            { key: 'illustration_call2_authority_audit', label: '삽화 CALL2-AUTHORITY-AUDIT', kind: 'JSON · 고정 외형 예외 감사', modality: 'text', group: 'illustration_pipeline', json: true },
-            { key: 'illustration_call2_fix',   label: '삽화 CALL2-FIX (TOON 교정)',    kind: '텍스트', modality: 'text', group: 'illustration_pipeline' },
+            { key: 'illustration_call2',       label: '삽화 CALL2-DETAIL',               kind: '텍스트 · 장면 배치 묘사', modality: 'text', group: 'illustration_pipeline' },
+            { key: 'illustration_call2_authority_audit', label: '삽화 CALL2-AUTHORITY-AUDIT (이전 경로)', kind: 'JSON · 현재 삽화 흐름에서 미사용', modality: 'text', group: 'illustration_pipeline' },
+            { key: 'illustration_call2_fix',   label: '삽화 CALL2-FIX (이전 경로)',    kind: '텍스트 · 현재 삽화 흐름에서 미사용', modality: 'text', group: 'illustration_pipeline' },
             { key: 'illustration_call3',       label: '삽화 CALL3 (대사·애니 자막)',    kind: '텍스트', modality: 'text', group: 'illustration_pipeline' },
-            { key: 'illustration_multi_char_mask', label: '삽화 다중 캐릭터 마스크',    kind: 'JSON', modality: 'text', group: 'illustration_pipeline', json: true },
+            { key: 'illustration_multi_char_mask', label: '삽화 다중 캐릭터 마스크',    kind: 'JSON', modality: 'text', group: 'illustration_pipeline' },
             { key: 'video_instruction_translate', label: '영상 연출 영어 번역', kind: '텍스트', modality: 'text', group: 'video_pipeline' },
             { key: 'video_prompt_i2v',        label: 'H3 I2V 연출·정적 분석', kind: '비전', modality: 'vision', group: 'video_pipeline' },
             { key: 'video_prompt_i2v_compose',        label: 'H3 I2V 프롬프트 작성', kind: '텍스트', modality: 'text', group: 'video_pipeline' },
@@ -48234,7 +48453,7 @@
             if (routeSlots.includes(entry?.fallback_target)) return entry.fallback_target;
             if (!entry?.fallback) return 'none';
             const legacyFallback = {llm1: 'llm2', llm2: 'llm1', llm3: 'llm1'};
-            return legacyFallback[primary] || 'llm1';
+            return legacyFallback[primary] || 'none';
         }
 
         function readDetailedLlmRoute(task) {
@@ -48277,15 +48496,6 @@
             if (!primary || !fallback || !retryDelay || !maxRetries || !fallbackRetryDelay || !fallbackMaxRetries) {
                 return null;
             }
-            let jsonMode = null;
-            if (task.json) {
-                const jsonControl = field(
-                    `input[data-route-key="${task.key}"][data-route-field="json_mode"]`,
-                    'json_mode',
-                );
-                if (!jsonControl) return null;
-                jsonMode = !!jsonControl.checked;
-            }
             return {
                 primary: primary.value,
                 fallback_target: fallback.value,
@@ -48293,7 +48503,6 @@
                 max_retries: llmRouteNumber(maxRetries.value, 0, true),
                 fallback_retry_delay_sec: llmRouteNumber(fallbackRetryDelay.value, 0),
                 fallback_max_retries: llmRouteNumber(fallbackMaxRetries.value, 0, true),
-                json_mode: jsonMode,
             };
         }
 
@@ -48345,7 +48554,6 @@
                 fallback_target: '폴백 LLM',
                 fallback_retry_delay_sec: '폴백 대기',
                 fallback_max_retries: '폴백 추가 횟수',
-                json_mode: 'JSON 포맷 강제',
             };
             let html = '';
             for (const modality of LLM_ROUTING_MODALITIES) {
@@ -48367,17 +48575,11 @@
                 ]) {
                     values[fieldName] = llmRouteCommonValue(routes, fieldName);
                 }
-                const jsonRoutes = routes.filter((_route, index) => tasks[index].json);
-                values.json_mode = llmRouteCommonValue(jsonRoutes, 'json_mode');
                 const mixedFields = Object.entries(values)
                     .filter(([_fieldName, state]) => state.mixed)
                     .map(([fieldName]) => fieldLabels[fieldName]);
-                const jsonTaskCount = tasks.filter(task => task.json).length;
                 const primary = values.primary.mixed ? '' : values.primary.value;
                 const fallback = values.fallback_target.mixed ? '' : values.fallback_target.value;
-                const jsonMode = values.json_mode.mixed
-                    ? ''
-                    : (values.json_mode.value ? 'on' : 'off');
                 const mixedOption = '<option value="" disabled>개별 설정 혼합됨</option>';
 
                 html += `<article class="llm-route-easy-card ${modality.key}">`;
@@ -48412,13 +48614,6 @@
                 html += `<label class="llm-route-retry-field"><span>대기(초)</span><input id="llm-route-easy-${modality.key}-fallback-retry-delay" type="number" min="0" max="300" step="0.5" value="${values.fallback_retry_delay_sec.mixed ? '' : values.fallback_retry_delay_sec.value}" placeholder="혼합"></label>`;
                 html += `<label class="llm-route-retry-field"><span>추가 횟수</span><input id="llm-route-easy-${modality.key}-fallback-max-retries" type="number" min="0" max="10" step="1" value="${values.fallback_max_retries.mixed ? '' : values.fallback_max_retries.value}" placeholder="혼합"></label>`;
                 html += '</div></section></div>';
-                html += '<div class="llm-route-easy-json">';
-                html += `<div class="llm-route-easy-json-copy"><strong>JSON 포맷 강제</strong><span>지원하는 ${jsonTaskCount}개 작업에만 적용</span></div>`;
-                html += `<select id="llm-route-easy-${modality.key}-json-mode" aria-label="${modality.label} JSON 포맷 강제">`;
-                if (!jsonMode) html += mixedOption.replace('disabled', 'disabled selected');
-                html += `<option value="on"${jsonMode === 'on' ? ' selected' : ''}>모두 켜기</option>`;
-                html += `<option value="off"${jsonMode === 'off' ? ' selected' : ''}>모두 끄기</option>`;
-                html += '</select></div>';
                 html += '<div class="llm-route-easy-actions">';
                 html += `<span id="llm-route-easy-${modality.key}-status" class="llm-route-easy-status${mixedFields.length ? ' mixed' : ''}">`;
                 html += mixedFields.length
@@ -48468,12 +48663,8 @@
                 const routeSlots = LLM_SLOTS.map(slot => `llm${slot}`);
                 const primary = document.getElementById(`llm-route-easy-${modality}-primary`)?.value || '';
                 const fallback = document.getElementById(`llm-route-easy-${modality}-fallback`)?.value || '';
-                const jsonMode = document.getElementById(`llm-route-easy-${modality}-json-mode`)?.value || '';
                 if (!routeSlots.includes(primary)) throw new Error('메인 LLM을 선택하세요.');
                 if (fallback !== 'none' && !routeSlots.includes(fallback)) throw new Error('폴백 LLM을 선택하세요.');
-                if (jsonMode !== 'on' && jsonMode !== 'off') {
-                    throw new Error('JSON 포맷 강제를 모두 켜거나 모두 끌지 선택하세요.');
-                }
                 const values = {
                     primary,
                     fallback_target: fallback,
@@ -48498,12 +48689,10 @@
                         max_retries: byField('input', 'max_retries'),
                         fallback_retry_delay_sec: byField('input', 'fallback_retry_delay_sec'),
                         fallback_max_retries: byField('input', 'fallback_max_retries'),
-                        json_mode: task.json ? byField('input', 'json_mode') : null,
                     };
                     const missing = Object.entries(taskControls)
-                        .filter(([fieldName, control]) => fieldName !== 'task' && fieldName !== 'json_mode' && !control)
+                        .filter(([fieldName, control]) => fieldName !== 'task' && !control)
                         .map(([fieldName]) => fieldName);
-                    if (task.json && !taskControls.json_mode) missing.push('json_mode');
                     if (missing.length) {
                         throw new Error(`${task.label} 상세 컨트롤 누락: ${missing.join(', ')}`);
                     }
@@ -48517,16 +48706,13 @@
                     taskControls.max_retries.value = String(values.max_retries);
                     taskControls.fallback_retry_delay_sec.value = String(values.fallback_retry_delay_sec);
                     taskControls.fallback_max_retries.value = String(values.fallback_max_retries);
-                    if (taskControls.json_mode) taskControls.json_mode.checked = jsonMode === 'on';
                     llmRoutingEasyAppliedTaskKeys.add(taskControls.task.key);
                     updateLlmRouteFallbackState(taskControls.task.key);
                 }
                 const status = document.getElementById(`llm-route-easy-${modality}-status`);
-                const jsonTaskCount = tasks.filter(task => task.json).length;
-                const jsonLabel = jsonMode === 'on' ? '모두 켬' : '모두 끔';
                 if (status) {
                     status.classList.remove('mixed');
-                    status.textContent = `${tasks.length}개 작업에 적용됨 · JSON ${jsonTaskCount}개 ${jsonLabel} · 저장 필요`;
+                    status.textContent = `${tasks.length}개 작업에 적용됨 · 저장 필요`;
                 } else {
                     console.error('[LLM_ROUTE_EASY] 적용 상태 요소를 찾지 못했습니다:', modality);
                 }
@@ -48594,9 +48780,6 @@
                     const primary = VALID_ROUTE_SLOTS.includes(entry.primary) ? entry.primary : 'llm1';
                     // 폴백 대상 결정: fallback_target 우선, 없으면 레거시 fallback(bool) 해석, 그 외는 '없음'.
                     const fbTarget = llmRouteResolvedFallback(entry, primary);
-                    // 구조화 응답 작업은 JSON response_format 토글을 제공한다.
-                    const supportsJson = !!t.json;
-                    const jsonMode = supportsJson ? (entry.json_mode !== undefined ? !!entry.json_mode : true) : null;
                     const retryDelay = llmRouteNumber(entry.retry_delay_sec, 0);
                     const maxRetries = llmRouteNumber(entry.max_retries, 0, true);
                     const fallbackRetryDelay = llmRouteNumber(entry.fallback_retry_delay_sec, 0);
@@ -48608,9 +48791,6 @@
                     html += `<div class="llm-route-task-title">${t.label}</div>`;
                     html += `<span class="llm-route-kind">${t.kind}</span>`;
                     if (t.locked) html += '<span class="llm-route-lock-badge">잠금</span>';
-                    if (supportsJson) {
-                        html += `<label class="llm-route-json-toggle" title="JSON 포맷 강제(response_format=json_object). Cerebras/Gemma 등에서 반복 루프가 나면 꺼보세요."><input type="checkbox" data-route-key="${t.key}" data-route-field="json_mode"${jsonMode ? ' checked' : ''}><span>JSON 강제</span></label>`;
-                    }
                     html += '</div><div class="llm-route-path-grid">';
 
                     html += '<section class="llm-route-path-panel primary">';
@@ -48649,7 +48829,7 @@
                     html += `<div class="llm-route-notice">⚠ 외부 API 탭에서 LLM${s} 모델명을 설정해야 LLM${s}(메인/폴백) 선택지가 활성화됩니다.</div>`;
                 }
             }
-            html += '<div class="llm-route-tip">💡 메인 재시도를 모두 소진한 뒤 폴백으로 넘어갑니다. JSON 작업은 서비스 호환성 문제가 있을 때 포맷 강제를 끌 수 있습니다.</div>';
+            html += '<div class="llm-route-tip">💡 메인 재시도를 모두 소진한 뒤 폴백으로 넘어갑니다.</div>';
             container.innerHTML = html;
             initializeLlmRouteSelectTooltips(container);
         }
@@ -48661,7 +48841,9 @@
             for (const t of LLM_ROUTING_TASKS) {
                 // 잠긴 항목은 UI에서 편집 불가하므로 기존 설정값을 그대로 보존
                 if (t.locked && !llmRoutingEasyAppliedTaskKeys.has(t.key)) {
-                    routing[t.key] = prevRouting[t.key] || { primary: 'llm1', fallback: false };
+                    const entry = { ...(prevRouting[t.key] || { primary: 'llm1', fallback: false }) };
+                    delete entry.json_mode;
+                    routing[t.key] = entry;
                     continue;
                 }
                 const sel = document.querySelector(`select[data-route-key="${t.key}"][data-route-field="primary"]`);
@@ -48683,11 +48865,6 @@
                     entry.fallback = true;
                 } else {
                     entry.fallback = false;
-                }
-                // 구조화 응답 작업은 JSON response_format 설정도 저장
-                if (t.json) {
-                    const jm = document.querySelector(`input[data-route-key="${t.key}"][data-route-field="json_mode"]`);
-                    entry.json_mode = !!(jm && jm.checked);
                 }
                 routing[t.key] = entry;
             }
@@ -49027,12 +49204,13 @@
         }
 
         // ─── Vertex JSON key 핸들러 ───
-        async function loadVertexKeyStatus() {
+        async function loadVertexKeyStatus(slot) {
+            const statusEl = document.getElementById(`vertex-key${llmSlotSuffix(slot)}-status`);
+            if (!statusEl) return;
             try {
-                const resp = await fetch('/api/llm/vertex_key');
+                const resp = await fetch(`/api/llm/vertex_key?slot=llm${slot}`);
                 const data = await resp.json();
-                const statusEl = document.getElementById('vertex-key-status');
-                if (!statusEl) return;
+                if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
                 if (data.exists) {
                     statusEl.textContent = `✓ 저장됨: project=${data.project_id || '(알 수 없음)'} email=${data.client_email || ''}`;
                     statusEl.style.color = '#5cd5a0';
@@ -49041,50 +49219,69 @@
                     statusEl.style.color = '#ff6b6b';
                 }
             } catch (e) {
-                console.error('vertex key status:', e);
+                console.error(`[LLM${slot}] Vertex 키 조회 실패:`, e);
+                statusEl.textContent = `키 조회 실패: ${e.message}`;
+                statusEl.style.color = '#ff6b6b';
             }
         }
 
-        function loadVertexKeyFile() {
-            const input = document.getElementById('setting-vertex-key-file');
-            if (!input.files || !input.files[0]) return;
+        function loadVertexKeyFile(slot) {
+            const suffix = llmSlotSuffix(slot);
+            const input = document.getElementById(`setting-vertex-key-file${suffix}`);
+            if (!input.files || !input.files[0]) {
+                showToast(`LLM${slot}에 불러올 JSON 파일을 선택하세요.`, 'warning');
+                return;
+            }
             const reader = new FileReader();
             reader.onload = (e) => {
-                document.getElementById('setting-vertex-key-json').value = e.target.result;
+                document.getElementById(`setting-vertex-key-json${suffix}`).value = e.target.result;
             };
-            reader.readAsText(input.files[0]);
+            reader.onerror = () => {
+                console.error(`[LLM${slot}] Vertex 키 파일 읽기 실패:`, reader.error);
+                showToast(`LLM${slot} Vertex 키 파일 읽기 실패`, 'error');
+            };
+            reader.readAsText(input.files[0], 'UTF-8');
         }
 
-        async function saveVertexKey() {
-            const text = document.getElementById('setting-vertex-key-json').value.trim();
+        async function saveVertexKey(slot) {
+            const textarea = document.getElementById(`setting-vertex-key-json${llmSlotSuffix(slot)}`);
+            const text = textarea.value.trim();
             if (!text) {
                 alert('JSON 내용이 비었음');
                 return;
             }
             try {
-                const resp = await fetch('/api/llm/vertex_key', {
+                const resp = await fetch(`/api/llm/vertex_key?slot=llm${slot}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ json: text }),
                 });
                 const data = await resp.json();
                 if (resp.ok) {
-                    loadVertexKeyStatus();
+                    textarea.value = '';
+                    await loadVertexKeyStatus(slot);
+                    showToast(`LLM${slot} Vertex 키 저장 완료`, 'success');
                 } else {
+                    console.error(`[LLM${slot}] Vertex 키 저장 실패:`, data.error || resp.status);
                     alert('저장 실패: ' + (data.error || resp.status));
                 }
             } catch (e) {
+                console.error(`[LLM${slot}] Vertex 키 저장 실패:`, e);
                 alert('저장 실패: ' + e.message);
             }
         }
 
-        async function deleteVertexKey() {
-            if (!confirm('Vertex 키를 삭제하시겠습니까? (key/vertex.json)')) return;
+        async function deleteVertexKey(slot) {
+            if (!confirm(`LLM${slot}의 Vertex 키를 삭제하시겠습니까?`)) return;
             try {
-                await fetch('/api/llm/vertex_key', { method: 'DELETE' });
-                document.getElementById('setting-vertex-key-json').value = '';
-                loadVertexKeyStatus();
+                const resp = await fetch(`/api/llm/vertex_key?slot=llm${slot}`, { method: 'DELETE' });
+                const data = await resp.json();
+                if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+                document.getElementById(`setting-vertex-key-json${llmSlotSuffix(slot)}`).value = '';
+                await loadVertexKeyStatus(slot);
+                showToast(`LLM${slot} Vertex 키 삭제 완료`, 'success');
             } catch (e) {
+                console.error(`[LLM${slot}] Vertex 키 삭제 실패:`, e);
                 alert('삭제 실패: ' + e.message);
             }
         }
@@ -60933,6 +61130,7 @@
 
             document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
             document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+            updateStatsBar();
             const requestedButton = document.querySelector(`.tab-btn[onclick="switchTab('${name}')"]`);
             if (requestedButton) {
                 requestedButton.classList.add('active');
@@ -60941,8 +61139,7 @@
             }
             if (name === 'backup') {
                 document.getElementById('tab-backup-content').classList.add('active');
-                const sb = document.getElementById('stats-bar');
-                if (sb) sb.style.display = 'flex';
+                updateStatsBar();
             } else if (name === 'bot') {
                 document.getElementById('tab-bot-content').classList.add('active');
                 scheduleIndependentScrollHeightSync();
@@ -60974,14 +61171,10 @@
                 document.getElementById('tab-character-maker-content').classList.add('active');
                 if (!assetTags) await loadAssetData();
                 await initCharacterMaker();
-                const sb = document.getElementById('stats-bar');
-                if (sb) sb.style.display = 'none';
             } else if (name === 'preset-mgmt') {
                 document.getElementById('tab-preset-mgmt-content').classList.add('active');
                 if (!assetTags) loadAssetData();
                 pmLoadData();
-                const sb = document.getElementById('stats-bar');
-                if (sb) sb.style.display = 'none';
             } else if (name === 'lora') {
                 document.getElementById('tab-lora-content').classList.add('active');
                 const savedMode = sessionStorage.getItem('loraMode') || 'asset';
@@ -81270,7 +81463,11 @@
 
         function openIllustLogModal() {
             let modal = document.getElementById('illust-log-modal');
-            if (modal) { modal.classList.toggle('visible'); return; }
+            if (modal) {
+                modal.classList.toggle('visible');
+                if (modal.classList.contains('visible')) refreshIllustrationPromptInspector();
+                return;
+            }
             modal = document.createElement('div');
             modal.id = 'illust-log-modal';
             modal.className = 'modal';
@@ -81286,7 +81483,7 @@
                     <div class="illust-modal-tabs" role="tablist" aria-label="삽화 프롬프트 생성 메뉴">
                         <button id="illust-tab-logs" class="illust-modal-tab is-active" type="button" role="tab" aria-selected="true" aria-controls="illust-tab-content-logs" onclick="switchIllustModalTab('logs')">생성 로그</button>
                         <button id="illust-tab-history" class="illust-modal-tab" type="button" role="tab" aria-selected="false" aria-controls="illust-tab-content-history" onclick="switchIllustModalTab('history')">채팅 히스토리</button>
-                        <button id="illust-tab-llm" class="illust-modal-tab" type="button" role="tab" aria-selected="false" aria-controls="illust-tab-content-llm" onclick="switchIllustModalTab('llm')">LLM 프롬프트</button>
+                        <button id="illust-tab-llm" class="illust-modal-tab" type="button" role="tab" aria-selected="false" aria-controls="illust-tab-content-llm" onclick="switchIllustModalTab('llm')">프롬프트 구성</button>
                         <button id="illust-tab-toggles" class="illust-modal-tab" type="button" role="tab" aria-selected="false" aria-controls="illust-tab-content-toggles" onclick="switchIllustModalTab('toggles')">생성 설정</button>
                     </div>
                     <div class="modal-body" id="illust-log-body">
@@ -81298,13 +81495,10 @@
                                 <label class="illust-history-field">저장 히스토리 최대 글자수
                                     <input id="illust-history-storage-max" type="number" min="1000" max="500000" step="1000">
                                 </label>
-                                <label class="illust-history-field">CALL1 히스토리 글자수
+                                <label class="illust-history-field" title="CALL1·SELECT·PLAN·KEYVIS가 함께 참조하는 과거 대화 범위입니다.">상태 추적·장면 계획 히스토리 글자수
                                     <input id="illust-history-call1" type="number" min="0" max="500000" step="1000">
                                 </label>
-                                <label class="illust-history-field">CALL2 폴백 글자수
-                                    <input id="illust-history-call2" type="number" min="0" max="500000" step="1000">
-                                </label>
-                                <label class="illust-history-field">CALL3 폴백 글자수
+                                <label class="illust-history-field">CALL3 대사 히스토리 글자수
                                     <input id="illust-history-call3" type="number" min="0" max="500000" step="1000">
                                 </label>
                             </div>
@@ -81316,121 +81510,151 @@
                             <div id="illust-history-list" class="illust-history-list"></div>
                         </div>
                         <div id="illust-tab-content-llm" style="display:none; padding:12px 16px;">
-                            <div style="margin-bottom:12px; padding:8px; background:rgba(0,0,0,0.06); border-radius:6px; font-size:0.75rem; color:var(--text2); line-height:1.5;">
-                                CHAT을 받은 서버가 히스토리 연속성/리롤 판정 → CHARACTER-RESOLVE(항상) → PROFILE-RESOLVE(다중 프로필 추론 토글 시) → 원본 에셋 선택/CALL1 역번역·병렬 분석 → CALL2-PLAN 최종 장면 선별 → 독립 CALL2-KEYVIS/CALL2-DETAIL 생성·최종 병합 → (폴백/파싱 실패 시 기존 CALL2/CALL2-FIX) → CALL3 순서로 실행합니다. 삽화 프롬프트 본문은 config.json이 아니라 아래 개별 txt 파일에 저장됩니다.
-                                1. CHARACTER-RESOLVE는 <strong>character.txt</strong>와 전체 CURRENT만 사용해 현재 등장인물을 결정합니다. PAST와 프로필 카탈로그는 받지 않으며, 과거 추적 여부는 서버의 기존 상태에서 결합합니다.<br>
-                                2. PROFILE-RESOLVE는 다중 프로필 추론을 켠 경우에만 확정된 CURRENT 다중 프로필 캐릭터를 한 명씩 병렬 호출합니다. 각 호출은 <strong>profile.txt</strong>, 전체 CURRENT, 대상 캐릭터 한 명의 카탈로그만 사용해 START·변환 타임라인과 실제 본문에 근거한 reason을 결정합니다. PAST는 받지 않으며, 토글을 끄면 서버가 등록 기본 프로필을 사용합니다.<br>
-                                3. 원본 에셋 출력이 켜져 있으면 확정 프로필을 받은 선택기가 등록 에셋과 삽입 슬롯을 먼저 정합니다.<br>
-                                4. 역번역이 켜져 있으면 <strong>backtranslate.txt</strong>로 현재 응답만 영어로 병렬 번역하며, 과거 CHAT은 번역하지 않습니다.<br>
-                                5. CALL1은 <strong>enhance.txt</strong>, 저장 히스토리, 확정 등장인물·프로필을 바탕으로 복장 및 헤어스타일 변화 타임라인만 JSON으로 만듭니다. 지칭어는 자연어 문맥으로 해석해 각 사건에 확정 canonical name을 쓰며 본문은 치환하지 않습니다. 병렬 분석을 켜면 segment를 최대 동시 요청 수만큼 균등 분할해 동시에 분석하고 검증된 결과를 하나로 병합합니다.<br>
-                                6. CALL2-PLAN은 전체 현재 Cxxx 카탈로그에서 장면 앵커·등장 캐릭터·짧은 장면 개요의 최종 세트를 선택합니다. 그 뒤 서버가 복장 상태와 슬롯을 결합해 장면을 CALL2-DETAIL 작업들에 균등 분배합니다. 독립 CALL2-KEYVIS 결과는 DETAIL과 CALL3 입력에 넣지 않고 마지막 이미지 목록에만 병합합니다.<br>
-                                7. CALL2는 모델 호환성용 <strong>jailbreak.txt</strong>·<strong>job.txt</strong> 뒤에 역할에 맞는 <strong>plan.txt</strong>, <strong>detail.txt</strong>, <strong>keyvisual.txt</strong>, <strong>fallback.txt</strong>를 결합합니다. 렌더링 역할은 <strong>system.txt</strong>의 공통 불변 규칙을 사용하고, NSFW 토글이 켜진 렌더링 역할에는 <strong>explicit.txt</strong>를 추가하며, 단일 FALLBACK에는 <strong>prefill.txt</strong>를 assistant prefill로 사용합니다. 출력 구조는 <strong>format.txt</strong>를 사용합니다.<br>
-                                8. CALL2 파싱이 실패하면 <strong>repair.txt</strong>(CALL2-FIX)가 TOON 블록을 교정합니다. 대사 단계는 후처리 모드에 맞춰 <strong>speak.txt</strong>, <strong>manga.txt</strong>, <strong>subtitle.txt</strong> 중 하나를 사용합니다.<br>
-                                <strong>preset.txt</strong>는 V3의 <code>[SETUP]/[CHAR]/[SUPPLEMENT]</code> RAW 입력 템플릿과 공통 부정 프롬프트를 담습니다. V1을 선택하면 서버가 같은 장면을 <code>[ILXL]/[UPSCALE]</code> 입력 형태로 생성합니다.
+                            <div id="illust-assembled-inputs"></div>
+                            <details id="illust-instruction-editor" style="margin-top:24px; border-top:1px solid var(--border); padding-top:12px;" ontoggle="if(this.open && !this.dataset.loaded) {this.dataset.loaded='true'; loadLighbdPrompts();}">
+                            <summary style="cursor:pointer; font-weight:600;">지침 편집</summary>
+                            <div class="illust-prompt-node-help">
+                                고정 지침을 편집합니다. 변수와 코드 규칙을 포함한 조립 구성은 위에서 확인하세요.
                             </div>
-                            <div style="display:flex; gap:5px; margin:0 0 10px;">
-                                <button id="illust-call-tab-backtranslate" onclick="switchIllustCallTab('backtranslate')" style="padding:6px 14px; border:1px solid var(--border); border-radius:5px; background:var(--accent); color:#fff; cursor:pointer;">CALL1 역번역</button>
-                                <button id="illust-call-tab-character" onclick="switchIllustCallTab('character')" style="padding:6px 14px; border:1px solid var(--border); border-radius:5px; background:var(--surface2); color:var(--text); cursor:pointer;">캐릭터 관측</button>
-                                <button id="illust-call-tab-profile" onclick="switchIllustCallTab('profile')" style="padding:6px 14px; border:1px solid var(--border); border-radius:5px; background:var(--surface2); color:var(--text); cursor:pointer;">프로필 결정</button>
-                                <button id="illust-call-tab-call1" onclick="switchIllustCallTab('call1')" style="padding:6px 14px; border:1px solid var(--border); border-radius:5px; background:var(--surface2); color:var(--text); cursor:pointer;">CALL1 분석</button>
-                                <button id="illust-call-tab-call2" onclick="switchIllustCallTab('call2')" style="padding:6px 14px; border:1px solid var(--border); border-radius:5px; background:var(--surface2); color:var(--text); cursor:pointer;">CALL2</button>
-                                <button id="illust-call-tab-call3" onclick="switchIllustCallTab('call3')" style="padding:6px 14px; border:1px solid var(--border); border-radius:5px; background:var(--surface2); color:var(--text); cursor:pointer;">CALL3</button>
+                            <div class="illust-prompt-node-tabs" role="tablist" aria-label="LLM 프롬프트 실행 노드">
+                                <button id="illust-call-tab-character" class="illust-prompt-node-tab is-active" type="button" role="tab" data-illust-call-tab="character" aria-selected="true" aria-controls="illust-call-content-character" onclick="switchIllustCallTab('character')">CHARACTER-RESOLVE</button>
+                                <button id="illust-call-tab-profile" class="illust-prompt-node-tab" type="button" role="tab" data-illust-call-tab="profile" aria-selected="false" aria-controls="illust-call-content-profile" onclick="switchIllustCallTab('profile')">PROFILE-RESOLVE</button>
+                                <button id="illust-call-tab-backtranslate" class="illust-prompt-node-tab" type="button" role="tab" data-illust-call-tab="backtranslate" aria-selected="false" aria-controls="illust-call-content-backtranslate" onclick="switchIllustCallTab('backtranslate')">CALL1-BACKTRANSLATE</button>
+                                <button id="illust-call-tab-call1" class="illust-prompt-node-tab" type="button" role="tab" data-illust-call-tab="call1" aria-selected="false" aria-controls="illust-call-content-call1" onclick="switchIllustCallTab('call1')">CALL1</button>
+                                <button id="illust-call-tab-call2_select" class="illust-prompt-node-tab" type="button" role="tab" data-illust-call-tab="call2_select" aria-selected="false" aria-controls="illust-call-content-call2_select" onclick="switchIllustCallTab('call2_select')">CALL2-SELECT</button>
+                                <button id="illust-call-tab-call2_plan" class="illust-prompt-node-tab" type="button" role="tab" data-illust-call-tab="call2_plan" aria-selected="false" aria-controls="illust-call-content-call2_plan" onclick="switchIllustCallTab('call2_plan')">CALL2-PLAN</button>
+                                <button id="illust-call-tab-call2_detail" class="illust-prompt-node-tab" type="button" role="tab" data-illust-call-tab="call2_detail" aria-selected="false" aria-controls="illust-call-content-call2_detail" onclick="switchIllustCallTab('call2_detail')">CALL2-DETAIL</button>
+                                <button id="illust-call-tab-call2_keyvis" class="illust-prompt-node-tab" type="button" role="tab" data-illust-call-tab="call2_keyvis" aria-selected="false" aria-controls="illust-call-content-call2_keyvis" onclick="switchIllustCallTab('call2_keyvis')">CALL2-KEYVIS</button>
+                                <button id="illust-call-tab-call3" class="illust-prompt-node-tab" type="button" role="tab" data-illust-call-tab="call3" aria-selected="false" aria-controls="illust-call-content-call3" onclick="switchIllustCallTab('call3')">CALL3</button>
+                                <button id="illust-call-tab-multi_char_mask" class="illust-prompt-node-tab" type="button" role="tab" data-illust-call-tab="multi_char_mask" aria-selected="false" aria-controls="illust-call-content-multi_char_mask" onclick="switchIllustCallTab('multi_char_mask')">MULTI-CHAR-MASK</button>
+                                <button id="illust-call-tab-shared" class="illust-prompt-node-tab" type="button" role="tab" data-illust-call-tab="shared" aria-selected="false" aria-controls="illust-call-content-shared" onclick="switchIllustCallTab('shared')">공유 프롬프트</button>
+                                <button id="illust-call-tab-preset" class="illust-prompt-node-tab" type="button" role="tab" data-illust-call-tab="preset" aria-selected="false" aria-controls="illust-call-content-preset" onclick="switchIllustCallTab('preset')">출력 템플릿</button>
+                                <button id="illust-call-tab-legacy" class="illust-prompt-node-tab" type="button" role="tab" data-illust-call-tab="legacy" aria-selected="false" aria-controls="illust-call-content-legacy" onclick="switchIllustCallTab('legacy')">보관용</button>
                             </div>
-                            <div id="illust-call-content-backtranslate">
+                            <div id="illust-call-content-character" data-illust-call-panel="character" role="tabpanel" aria-labelledby="illust-call-tab-character">
+                                <p class="illust-prompt-node-help">현재 본문의 등장인물을 확정합니다.</p>
                                 <details open style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
-                                    <summary style="cursor:pointer; font-size:0.8rem; font-weight:600;">📝 backtranslate.txt (현재 응답 영문 역번역)</summary>
-                                    <div style="margin-top:6px; font-size:0.7rem; color:var(--text2); line-height:1.5;"><code>{character_names}</code>, <code>{chunk_index}</code>, <code>{chunk_total}</code> 자리표시자를 사용할 수 있습니다.</div>
-                                    <textarea id="lighbd-prompt-call1_backtranslate" data-lighbd-prompt="call1_backtranslate" style="width:100%; height:300px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;"></textarea>
+                                        <summary style="cursor:pointer; font-size:0.8rem; font-weight:600;">CURRENT 등장인물 전용</summary>
+                                        <textarea id="lighbd-prompt-character_resolve" data-lighbd-prompt="character_resolve" style="width:100%; height:300px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;"></textarea>
+                                    </details>
+                            </div>
+                            <div id="illust-call-content-profile" data-illust-call-panel="profile" role="tabpanel" aria-labelledby="illust-call-tab-profile" hidden>
+                                <p class="illust-prompt-node-help">확정 등장인물의 프로필과 적용 시점을 결정합니다.</p>
+                                <details open style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
+                                        <summary style="cursor:pointer; font-size:0.8rem; font-weight:600;">확정 CURRENT 다중 프로필 타임라인</summary>
+                                        <textarea id="lighbd-prompt-profile_resolve" data-lighbd-prompt="profile_resolve" style="width:100%; height:300px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;"></textarea>
+                                    </details>
+                            </div>
+                            <div id="illust-call-content-backtranslate" data-illust-call-panel="backtranslate" role="tabpanel" aria-labelledby="illust-call-tab-backtranslate" hidden>
+                                <p class="illust-prompt-node-help">현재 응답을 영어로 역번역합니다.</p>
+                                <details open style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
+                                        <summary style="cursor:pointer; font-size:0.8rem; font-weight:600;">현재 응답 영문 역번역</summary>
+                                        <div style="margin-top:6px; font-size:0.7rem; color:var(--text2); line-height:1.5;"><code>{character_names}</code>, <code>{chunk_index}</code>, <code>{chunk_total}</code> 자리표시자를 사용할 수 있습니다.</div>
+                                        <textarea id="lighbd-prompt-call1_backtranslate" data-lighbd-prompt="call1_backtranslate" style="width:100%; height:300px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;"></textarea>
+                                    </details>
+                            </div>
+                            <div id="illust-call-content-call1" data-illust-call-panel="call1" role="tabpanel" aria-labelledby="illust-call-tab-call1" hidden>
+                                <p class="illust-prompt-node-help">과거 문맥에서 시작 복장·머리 상태를 복원하고, 저장 이력으로 색상·형태 등의 구체성을 유지합니다. 현재 원문의 변화만 타임라인에 기록하며, 기본 프로필은 원문과 이력에 없는 부분을 보완합니다.</p>
+                                <details open style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
+                                        <summary style="cursor:pointer; font-size:0.8rem; font-weight:600;">복장·헤어스타일 상태 추적</summary>
+                                        <textarea id="lighbd-prompt-call1_enhance" data-lighbd-prompt="call1_enhance" style="width:100%; height:300px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;"></textarea>
+                                    </details>
+                            </div>
+                            <div id="illust-call-content-call2_select" data-illust-call-panel="call2_select" role="tabpanel" aria-labelledby="illust-call-tab-call2_select" hidden>
+                                <p class="illust-prompt-node-help">일반 장면의 수·순서·등장인물을 선택합니다. 공통 지침을 함께 사용합니다.</p>
+                                <details open style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
+                                    <summary style="cursor:pointer; font-size:0.8rem; font-weight:600; color:var(--text);">PLAN 앞단 장면 선택</summary>
+                                    <textarea id="lighbd-prompt-call2_select" data-lighbd-prompt="call2_select" style="width:100%; height:260px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;" placeholder="로딩 중..."></textarea>
                                 </details>
                             </div>
-                            <div id="illust-call-content-call1" style="display:none;">
+                            <div id="illust-call-content-call2_plan" data-illust-call-panel="call2_plan" role="tabpanel" aria-labelledby="illust-call-tab-call2_plan" hidden>
+                                <p class="illust-prompt-node-help">선택된 장면의 구도·동작·접촉을 계획합니다. 공통 지침을 함께 사용합니다.</p>
                                 <details open style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
-                                    <summary style="cursor:pointer; font-size:0.8rem; font-weight:600;">📝 enhance.txt (인물·지칭·복장 상태 분석)</summary>
-                                    <textarea id="lighbd-prompt-call1_enhance" data-lighbd-prompt="call1_enhance" style="width:100%; height:300px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;"></textarea>
+                                    <summary style="cursor:pointer; font-size:0.8rem; font-weight:600; color:var(--text);">선택 장면 병렬 시각 계획</summary>
+                                    <textarea id="lighbd-prompt-call2_plan" data-lighbd-prompt="call2_plan" style="width:100%; height:260px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;" placeholder="로딩 중..."></textarea>
                                 </details>
                             </div>
-                            <div id="illust-call-content-character" style="display:none;">
+                            <div id="illust-call-content-call2_detail" data-illust-call-panel="call2_detail" role="tabpanel" aria-labelledby="illust-call-tab-call2_detail" hidden>
+                                <p class="illust-prompt-node-help">SYSTEM 조립 순서: 공용 호환성 지침 → {lb-xnai.lb.extra 시스템 프롬프트} → 공용 물리·노출·접촉 지침 → DETAIL 전용 지침. KEYVIS 작업 지침과 공통 묘사 규칙은 포함하지 않습니다. 조립 화면에서 블록별 출처와 내용을 확인할 수 있습니다.</p>
                                 <details open style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
-                                    <summary style="cursor:pointer; font-size:0.8rem; font-weight:600;">📝 character.txt (CURRENT 등장인물 전용)</summary>
-                                    <textarea id="lighbd-prompt-character_resolve" data-lighbd-prompt="character_resolve" style="width:100%; height:300px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;"></textarea>
+                                    <summary style="cursor:pointer; font-size:0.8rem; font-weight:600; color:var(--text);">할당 장면 시각화</summary>
+                                    <textarea id="lighbd-prompt-call2_detail" data-lighbd-prompt="call2_detail" style="width:100%; height:260px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;" placeholder="로딩 중..."></textarea>
                                 </details>
                             </div>
-                            <div id="illust-call-content-profile" style="display:none;">
-                                <details open style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
-                                    <summary style="cursor:pointer; font-size:0.8rem; font-weight:600;">📝 profile.txt (확정 CURRENT 다중 프로필 타임라인)</summary>
-                                    <textarea id="lighbd-prompt-profile_resolve" data-lighbd-prompt="profile_resolve" style="width:100%; height:300px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;"></textarea>
-                                </details>
-                            </div>
-                            <div id="illust-call-content-call2" style="display:none;">
-                            <details open style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
-                                <summary style="cursor:pointer; font-size:0.8rem; font-weight:600; color:var(--text);">📝 jailbreak.txt (외부 LLM 호환성 envelope)</summary>
-                                <textarea id="lighbd-prompt-call2_jailbreak" data-lighbd-prompt="call2_jailbreak" style="width:100%; height:180px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;" placeholder="로딩 중..."></textarea>
-                            </details>
-                            <details style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
-                                <summary style="cursor:pointer; font-size:0.8rem; font-weight:600; color:var(--text);">📝 job.txt (역할 공통 작업 정체성)</summary>
-                                <textarea id="lighbd-prompt-call2_job" data-lighbd-prompt="call2_job" style="width:100%; height:110px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;" placeholder="로딩 중..."></textarea>
-                            </details>
-                            <details style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
-                                <summary style="cursor:pointer; font-size:0.8rem; font-weight:600; color:var(--text);">📝 system.txt (DETAIL/KEYVIS/FALLBACK 공통 불변 규칙)</summary>
-                                <textarea id="lighbd-prompt-call2_common" data-lighbd-prompt="call2_common" style="width:100%; height:280px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;" placeholder="로딩 중..."></textarea>
-                            </details>
-                            <details open style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
-                                <summary style="cursor:pointer; font-size:0.8rem; font-weight:600; color:var(--text);">📝 explicit.txt (NSFW 활성 시 물리·노출·접촉 계약)</summary>
-                                <textarea id="lighbd-prompt-call2_explicit" data-lighbd-prompt="call2_explicit" style="width:100%; height:280px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;" placeholder="로딩 중..."></textarea>
-                            </details>
-                            <details open style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
-                                <summary style="cursor:pointer; font-size:0.8rem; font-weight:600; color:var(--text);">📝 plan.txt (최종 장면 세트 선택)</summary>
-                                <textarea id="lighbd-prompt-call2_plan" data-lighbd-prompt="call2_plan" style="width:100%; height:260px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;" placeholder="로딩 중..."></textarea>
-                            </details>
-                            <details open style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
-                                <summary style="cursor:pointer; font-size:0.8rem; font-weight:600; color:var(--text);">📝 detail.txt (할당 장면 시각화)</summary>
-                                <textarea id="lighbd-prompt-call2_detail" data-lighbd-prompt="call2_detail" style="width:100%; height:260px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;" placeholder="로딩 중..."></textarea>
-                            </details>
-                            <details style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
-                                <summary style="cursor:pointer; font-size:0.8rem; font-weight:600; color:var(--text);">📝 keyvisual.txt (독립 대표 이미지)</summary>
-                                <textarea id="lighbd-prompt-call2_keyvis" data-lighbd-prompt="call2_keyvis" style="width:100%; height:240px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;" placeholder="로딩 중..."></textarea>
-                            </details>
-                            <details style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
-                                <summary style="cursor:pointer; font-size:0.8rem; font-weight:600; color:var(--text);">📝 fallback.txt (단일 호출 복구)</summary>
-                                <textarea id="lighbd-prompt-call2_fallback" data-lighbd-prompt="call2_fallback" style="width:100%; height:220px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;" placeholder="로딩 중..."></textarea>
-                            </details>
-                            <details style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
-                                <summary style="cursor:pointer; font-size:0.8rem; font-weight:600; color:var(--text);">📝 prefill.txt (단일 FALLBACK assistant prefill)</summary>
-                                <textarea id="lighbd-prompt-call2_prefill" data-lighbd-prompt="call2_prefill" style="width:100%; height:110px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;" placeholder="로딩 중..."></textarea>
-                            </details>
-                            <details open style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
-                                <summary style="cursor:pointer; font-size:0.8rem; font-weight:600; color:var(--text);">📝 format.txt (마지막 user - lb-xnai YAML 템플릿)</summary>
-                                <textarea id="lighbd-prompt-format" data-lighbd-prompt="format" style="width:100%; height:200px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;" placeholder="로딩 중..."></textarea>
-                            </details>
-                            <details open style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
-                                <summary style="cursor:pointer; font-size:0.8rem; font-weight:600; color:var(--text);">📝 preset.txt (V3 RAW 입력 템플릿)</summary>
-                                <textarea id="lighbd-prompt-preset" data-lighbd-prompt="preset" style="width:100%; height:220px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;" placeholder="로딩 중..."></textarea>
-                            </details>
-                            <details style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
-                                <summary style="cursor:pointer; font-size:0.8rem; font-weight:600; color:var(--text);">📝 repair.txt (CALL2-FIX TOON 교정)</summary>
-                                <textarea id="lighbd-prompt-call2_fix" data-lighbd-prompt="call2_fix" style="width:100%; height:260px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;" placeholder="로딩 중..."></textarea>
-                            </details>
-                            </div>
-                            <div id="illust-call-content-call3" style="display:none;">
-                                <details open style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
-                                    <summary style="cursor:pointer; font-size:0.8rem; font-weight:600;">📝 speak.txt (장면별 대사)</summary>
-                                    <textarea id="lighbd-prompt-call3_speak" data-lighbd-prompt="call3_speak" style="width:100%; height:260px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;"></textarea>
-                                </details>
-                                <details open style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
-                                    <summary style="cursor:pointer; font-size:0.8rem; font-weight:600;">📝 manga.txt (만화 대사와 말풍선 형태)</summary>
-                                    <textarea id="lighbd-prompt-call3_manga" data-lighbd-prompt="call3_manga" style="width:100%; height:320px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;"></textarea>
-                                </details>
-                                <details open style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
-                                    <summary style="cursor:pointer; font-size:0.8rem; font-weight:600;">📝 subtitle.txt (방송 애니 자막 대사)</summary>
-                                    <textarea id="lighbd-prompt-call3_subtitle" data-lighbd-prompt="call3_subtitle" style="width:100%; height:320px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;"></textarea>
+                            <div id="illust-call-content-call2_keyvis" data-illust-call-panel="call2_keyvis" role="tabpanel" aria-labelledby="illust-call-tab-call2_keyvis" hidden>
+                                <p class="illust-prompt-node-help">SYSTEM 조립 순서: 공용 호환성 지침 → KEYVIS 작업 지침 → KEYVIS 공통 묘사 규칙 → 공용 물리·노출·접촉 지침 → KEYVIS 전용 지침. {lb-xnai.lb.extra 시스템 프롬프트}는 USER에 포함합니다.</p>
+                                <details style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
+                                    <summary style="cursor:pointer; font-size:0.8rem; font-weight:600; color:var(--text);">독립 대표 이미지</summary>
+                                    <textarea id="lighbd-prompt-call2_keyvis" data-lighbd-prompt="call2_keyvis" style="width:100%; height:240px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;" placeholder="로딩 중..."></textarea>
                                 </details>
                                 <details style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
-                                    <summary style="cursor:pointer; font-size:0.8rem; font-weight:600; color:var(--warning);">📝 manga_nsfw.txt (NSFW 보강 — #nsfw_soft/#nsfw_hard)</summary>
-                                    <div style="margin-top:6px; font-size:0.7rem; color:var(--text2); line-height:1.5;">manga 모드이고 생성 설정의 <strong>NSFW 태깅</strong> 토글이 ON일 때만 manga 프롬프트 끝에 주입됩니다. 일반 장면엔 노출되지 않습니다.</div>
-                                    <textarea id="lighbd-prompt-call3_manga_nsfw" data-lighbd-prompt="call3_manga_nsfw" style="width:100%; height:220px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;" placeholder="로딩 중..."></textarea>
+                                    <summary style="cursor:pointer; font-size:0.8rem; font-weight:600; color:var(--text);">KEYVIS 작업 지침</summary>
+                                    <textarea id="lighbd-prompt-call2_job" data-lighbd-prompt="call2_job" style="width:100%; height:110px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;" placeholder="로딩 중..."></textarea>
+                                </details>
+                                <details style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
+                                    <summary style="cursor:pointer; font-size:0.8rem; font-weight:600; color:var(--text);">KEYVIS 공통 묘사 규칙</summary>
+                                    <textarea id="lighbd-prompt-call2_common" data-lighbd-prompt="call2_common" style="width:100%; height:280px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;" placeholder="로딩 중..."></textarea>
+                                </details>
+                            </div>
+                            <div id="illust-call-content-call3" data-illust-call-panel="call3" role="tabpanel" aria-labelledby="illust-call-tab-call3" hidden>
+                                <p class="illust-prompt-node-help">후처리 모드에 맞는 Speak·Manga·Subtitle 대사를 작성합니다.</p>
+                                <details open style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
+                                        <summary style="cursor:pointer; font-size:0.8rem; font-weight:600;">장면별 대사</summary>
+                                        <textarea id="lighbd-prompt-call3_speak" data-lighbd-prompt="call3_speak" style="width:100%; height:260px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;"></textarea>
+                                    </details>
+                                <details open style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
+                                        <summary style="cursor:pointer; font-size:0.8rem; font-weight:600;">만화 대사와 말풍선 형태</summary>
+                                        <textarea id="lighbd-prompt-call3_manga" data-lighbd-prompt="call3_manga" style="width:100%; height:320px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;"></textarea>
+                                    </details>
+                                <details open style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
+                                        <summary style="cursor:pointer; font-size:0.8rem; font-weight:600;">방송 애니 자막 대사</summary>
+                                        <textarea id="lighbd-prompt-call3_subtitle" data-lighbd-prompt="call3_subtitle" style="width:100%; height:320px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;"></textarea>
+                                    </details>
+                                <details style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
+                                        <summary style="cursor:pointer; font-size:0.8rem; font-weight:600; color:var(--warning);">NSFW 보강 — #nsfw_soft/#nsfw_hard</summary>
+                                        <div style="margin-top:6px; font-size:0.7rem; color:var(--text2); line-height:1.5;">manga 모드이고 생성 설정의 <strong>NSFW 태깅</strong> 토글이 ON일 때만 manga 프롬프트 끝에 주입됩니다. 일반 장면엔 노출되지 않습니다.</div>
+                                        <textarea id="lighbd-prompt-call3_manga_nsfw" data-lighbd-prompt="call3_manga_nsfw" style="width:100%; height:220px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;" placeholder="로딩 중..."></textarea>
+                                    </details>
+                            </div>
+                            <div id="illust-call-content-multi_char_mask" data-illust-call-panel="multi_char_mask" role="tabpanel" aria-labelledby="illust-call-tab-multi_char_mask" hidden>
+                                <p class="illust-prompt-node-help">여러 인물의 이미지 태그를 캐릭터별 영역과 공통 배경·구도로 나눕니다.</p>
+                                <details open style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
+                                    <summary style="cursor:pointer; font-size:0.8rem; font-weight:600;">캐릭터별 영역과 공통 배경·구도 분리</summary>
+                                    <textarea id="lighbd-prompt-multi_char_mask" data-lighbd-prompt="multi_char_mask" style="width:100%; height:320px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;" placeholder="로딩 중..."></textarea>
+                                </details>
+                            </div>
+                            <div id="illust-call-content-shared" data-illust-call-panel="shared" role="tabpanel" aria-labelledby="illust-call-tab-shared" hidden>
+                                <p class="illust-prompt-node-help">호환성 지침은 SELECT·PLAN·DETAIL·KEYVIS에서 사용합니다. 물리·노출·접촉 지침은 DETAIL·KEYVIS에 포함하며, 파일 전체를 NSFW 토글로 제외하지 않습니다. 설정에 따른 조건은 각 지침 내부 매크로를 따릅니다.</p>
+                                <details open style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
+                                    <summary style="cursor:pointer; font-size:0.8rem; font-weight:600; color:var(--text);">외부 LLM 호환성 envelope</summary>
+                                    <textarea id="lighbd-prompt-call2_jailbreak" data-lighbd-prompt="call2_jailbreak" style="width:100%; height:180px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;" placeholder="로딩 중..."></textarea>
+                                </details>
+                                <details open style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
+                                    <summary style="cursor:pointer; font-size:0.8rem; font-weight:600; color:var(--text);">물리·노출·접촉 지침 — DETAIL·KEYVIS 공용</summary>
+                                    <textarea id="lighbd-prompt-call2_explicit" data-lighbd-prompt="call2_explicit" style="width:100%; height:280px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;" placeholder="로딩 중..."></textarea>
+                                </details>
+                            </div>
+                            <div id="illust-call-content-preset" data-illust-call-panel="preset" role="tabpanel" aria-labelledby="illust-call-tab-preset" hidden>
+                                <p class="illust-prompt-node-help">노드 결과를 [SPEAK]·[NAME]·[SETUP]·[CHAR]·[SUPPLEMENT]로 조립할 때 사용하는 템플릿입니다.</p>
+                                <details open style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
+                                    <summary style="cursor:pointer; font-size:0.8rem; font-weight:600; color:var(--text);">V3 RAW 입력 템플릿</summary>
+                                    <textarea id="lighbd-prompt-preset" data-lighbd-prompt="preset" style="width:100%; height:220px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;" placeholder="로딩 중..."></textarea>
+                                </details>
+                            </div>
+                            <div id="illust-call-content-legacy" data-illust-call-panel="legacy" role="tabpanel" aria-labelledby="illust-call-tab-legacy" hidden>
+                                <p class="illust-prompt-node-help">현재 생성 경로에서 사용하지 않는 보관용 프롬프트입니다.</p>
+                                <details style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
+                                    <summary style="cursor:pointer; font-size:0.8rem; font-weight:600; color:var(--text);">보관용 · 현재 생성 경로에서 미사용</summary>
+                                    <textarea id="lighbd-prompt-call2_prefill" data-lighbd-prompt="call2_prefill" style="width:100%; height:110px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;" placeholder="로딩 중..."></textarea>
                                 </details>
                             </div>
                             <div id="lighbd-prompt-status" style="margin-top:8px; font-size:0.72rem; color:var(--text2);"></div>
+                            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:12px;">
+                                <span id="lighbd-prompt-dirty" style="font-size:0.75rem; color:var(--text2); flex:1;"></span>
+                                <button class="illust-settings-action is-secondary" type="button" onclick="loadLighbdPrompts()">지침 다시 불러오기</button>
+                                <button class="illust-settings-action is-primary" type="button" onclick="saveLighbdPrompts()">지침 저장</button>
+                            </div>
+                            </details>
                         </div>
                         <div id="illust-tab-content-toggles" class="illust-settings" role="tabpanel" aria-labelledby="illust-tab-toggles" hidden></div>
                     </div>
@@ -81443,9 +81667,8 @@
                         <button onclick="document.getElementById('illust-log-modal').classList.remove('visible')" style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:6px 16px; border-radius:4px; cursor:pointer;">닫기</button>
                     </div>
                     <div class="modal-footer" id="illust-log-footer-llm" style="display:none; align-items:center; gap:8px;">
-                        <span id="lighbd-prompt-dirty" style="font-size:0.75rem; color:var(--text2); flex:1;"></span>
-                        <button onclick="loadLighbdPrompts()" style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:6px 16px; border-radius:4px; cursor:pointer;">다시 불러오기</button>
-                        <button onclick="saveLighbdPrompts()" style="background:var(--accent); color:#fff; border:none; padding:6px 16px; border-radius:4px; cursor:pointer;">💾 저장</button>
+                        <span style="flex:1; font-size:0.75rem; color:var(--text2);">현재 지침과 코드의 조립 구조를 표시합니다.</span>
+                        <button onclick="refreshIllustrationPromptInspector()" style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:6px 16px; border-radius:4px; cursor:pointer;">구성 새로고침</button>
                         <button onclick="document.getElementById('illust-log-modal').classList.remove('visible')" style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:6px 16px; border-radius:4px; cursor:pointer;">닫기</button>
                     </div>
                     <div class="modal-footer illust-settings-footer" id="illust-log-footer-history" style="display:none;">
@@ -81464,9 +81687,8 @@
             `;
             document.body.appendChild(modal);
             modal.classList.add('visible');
-            refreshIllustLogs();
-            loadLighbdPrompts();
-            loadIllustrationContextToggles();
+            mountIllustrationPromptInspector();
+            switchIllustModalTab('llm');
         }
         function onReasoningPreset3Change() {
             renderReasoningControls(3);
@@ -81503,22 +81725,26 @@
             historyFooter.style.display = tab === 'history' ? 'flex' : 'none';
             llmFooter.style.display = tab === 'llm' ? 'flex' : 'none';
             togglesFooter.hidden = tab !== 'toggles';
+            if (tab === 'logs') refreshIllustLogs();
             if (tab === 'history') loadIllustrationChatHistories();
-            if (tab === 'llm') loadLighbdPrompts();
+            if (tab === 'llm') refreshIllustrationPromptInspector();
             if (tab === 'toggles') loadIllustrationContextToggles();
         }
 
         function switchIllustCallTab(tab) {
-            for (const name of ['backtranslate', 'character', 'call1', 'profile', 'call2', 'call3']) {
-                const active = name === tab;
-                const button = document.getElementById('illust-call-tab-' + name);
-                const content = document.getElementById('illust-call-content-' + name);
-                if (button) {
-                    button.style.background = active ? 'var(--accent)' : 'var(--surface2)';
-                    button.style.color = active ? '#fff' : 'var(--text)';
-                }
-                if (content) content.style.display = active ? '' : 'none';
+            const root = document.getElementById('illust-tab-content-llm');
+            if (!root) {
+                console.error('[ILLUST_CONTEXT] LLM 프롬프트 탭을 찾을 수 없습니다:', tab);
+                return;
             }
+            root.querySelectorAll('[data-illust-call-tab]').forEach(button => {
+                const active = button.dataset.illustCallTab === tab;
+                button.classList.toggle('is-active', active);
+                button.setAttribute('aria-selected', String(active));
+            });
+            root.querySelectorAll('[data-illust-call-panel]').forEach(panel => {
+                panel.hidden = panel.dataset.illustCallPanel !== tab;
+            });
         }
 
         async function loadLighbdPrompts() {
@@ -81529,9 +81755,10 @@
                 character_resolve: 'character_resolve',
                 profile_resolve: 'profile_resolve',
                 call2_jailbreak: 'call2_jailbreak', call2_job: 'call2_job', call2_prefill: 'call2_prefill',
-                call2_common: 'call2_common', call2_explicit: 'call2_explicit', call2_plan: 'call2_plan', call2_detail: 'call2_detail',
-                call2_keyvis: 'call2_keyvis', call2_fallback: 'call2_fallback', call2_format: 'format', call2_preset: 'preset',
-                call3_speak: 'call3_speak', call3_manga: 'call3_manga', call3_manga_nsfw: 'call3_manga_nsfw', call2_fix: 'call2_fix',
+                call2_common: 'call2_common', call2_explicit: 'call2_explicit', call2_select: 'call2_select', call2_plan: 'call2_plan', call2_detail: 'call2_detail',
+                call2_keyvis: 'call2_keyvis', call2_preset: 'preset',
+                call3_speak: 'call3_speak', call3_manga: 'call3_manga', call3_manga_nsfw: 'call3_manga_nsfw',
+                call3_subtitle: 'call3_subtitle', multi_char_mask: 'multi_char_mask',
             };
             statusEl.textContent = '불러오는 중...';
             try {
@@ -81542,9 +81769,9 @@
                     const el = document.getElementById('lighbd-prompt-' + id);
                     if (el) el.value = data[k] || '';
                 }
-                const sizes = Object.keys(fields).map(k => `${k} ${data[k]?.length || 0}자`).join(' · ');
-                statusEl.textContent = `로드 완료 (${sizes})`;
+                statusEl.textContent = '지침을 불러왔습니다. 편집한 지침은 저장 후 새 호출부터 적용됩니다.';
             } catch (e) {
+                console.error('[ILLUST_CONTEXT] LLM 프롬프트 로드 실패:', e);
                 statusEl.innerHTML = `<span style="color:#ff6b6b;">로드 실패: ${escapeHtml(e.message || String(e))}</span>`;
             }
         }
@@ -81557,9 +81784,10 @@
                 character_resolve: 'character_resolve',
                 profile_resolve: 'profile_resolve',
                 call2_jailbreak: 'call2_jailbreak', call2_job: 'call2_job', call2_prefill: 'call2_prefill',
-                call2_common: 'call2_common', call2_explicit: 'call2_explicit', call2_plan: 'call2_plan', call2_detail: 'call2_detail',
-                call2_keyvis: 'call2_keyvis', call2_fallback: 'call2_fallback', call2_format: 'format', call2_preset: 'preset',
-                call3_speak: 'call3_speak', call3_manga: 'call3_manga', call3_manga_nsfw: 'call3_manga_nsfw', call2_fix: 'call2_fix',
+                call2_common: 'call2_common', call2_explicit: 'call2_explicit', call2_select: 'call2_select', call2_plan: 'call2_plan', call2_detail: 'call2_detail',
+                call2_keyvis: 'call2_keyvis', call2_preset: 'preset',
+                call3_speak: 'call3_speak', call3_manga: 'call3_manga', call3_manga_nsfw: 'call3_manga_nsfw',
+                call3_subtitle: 'call3_subtitle', multi_char_mask: 'multi_char_mask',
             };
             const body = {};
             for (const [k, id] of Object.entries(fields)) {
@@ -81578,9 +81806,11 @@
                     throw new Error(errBody.error || ('HTTP ' + res.status));
                 }
                 const data = await res.json();
-                statusEl.innerHTML = `<span style="color:#5cd5a0;">저장 완료 (파일: ${(data.saved || []).join(', ')})</span>`;
-                showToast('캐릭터/프로필/CALL1 역번역/1/2/3 프롬프트 저장 완료', 'success');
+                statusEl.textContent = `지침 ${Array.isArray(data.saved) ? data.saved.length : 0}개 저장 완료 · 새 호출부터 적용됩니다.`;
+                await refreshIllustrationPromptInspector();
+                showToast('삽화 노드별 LLM 프롬프트 저장 완료', 'success');
             } catch (e) {
+                console.error('[ILLUST_CONTEXT] LLM 프롬프트 저장 실패:', e);
                 statusEl.innerHTML = `<span style="color:#ff6b6b;">저장 실패: ${escapeHtml(e.message || String(e))}</span>`;
                 showToast('lighbd 프롬프트 저장 실패: ' + (e.message || String(e)), 'error');
             }
@@ -81588,6 +81818,7 @@
 
         let _illustrationHistorySearchTimer = null;
         let _illustrationHistorySettingsLoaded = false;
+        let _illustrationHistorySettings = {};
 
         function _formatIllustrationHistoryTime(value) {
             const numeric = Number(value || 0);
@@ -81848,10 +82079,10 @@
         }
 
         function _applyIllustrationHistorySettings(settings) {
+            _illustrationHistorySettings = {...settings};
             const map = {
                 'illust-history-storage-max': 'storage_max_chars',
                 'illust-history-call1': 'call1_history_chars',
-                'illust-history-call2': 'call2_fallback_history_chars',
                 'illust-history-call3': 'call3_fallback_history_chars',
             };
             for (const [id, key] of Object.entries(map)) {
@@ -81921,13 +82152,12 @@
         async function saveIllustrationHistorySettings() {
             const storage = Number(document.getElementById('illust-history-storage-max')?.value || 0);
             const call1 = Number(document.getElementById('illust-history-call1')?.value || 0);
-            const call2 = Number(document.getElementById('illust-history-call2')?.value || 0);
             const call3 = Number(document.getElementById('illust-history-call3')?.value || 0);
-            if (!Number.isFinite(storage) || storage < 1000 || [call1, call2, call3].some(value => !Number.isFinite(value) || value < 0)) {
+            if (!Number.isFinite(storage) || storage < 1000 || [call1, call3].some(value => !Number.isFinite(value) || value < 0)) {
                 showToast('히스토리 글자수 설정을 확인해주세요.', 'error');
                 return;
             }
-            if ([call1, call2, call3].some(value => value > storage)) {
+            if ([call1, call3].some(value => value > storage)) {
                 showToast('CALL별 히스토리 글자수는 저장 최대 글자수를 넘을 수 없습니다.', 'error');
                 return;
             }
@@ -81938,9 +82168,9 @@
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({settings: {
+                        ..._illustrationHistorySettings,
                         storage_max_chars: storage,
                         call1_history_chars: call1,
-                        call2_fallback_history_chars: call2,
                         call3_fallback_history_chars: call3,
                     }}),
                 });
@@ -81960,31 +82190,27 @@
         const ILLUSTRATION_CONTEXT_TOGGLE_GROUPS = [
             {
                 key: 'pipeline', title: '파이프라인',
-                description: '삽화 프롬프트 파이프라인에서 실행할 단계를 설정합니다. 각 Call의 세부 옵션은 해당 Call 탭에서 관리합니다.',
+                description: '출력 방식과 부가 기능을 설정합니다. 현재 상태와 프로필을 확정하는 핵심 단계는 필수 처리이며, 단계별 설명은 아래 생성 흐름 안내에서 확인할 수 있습니다.',
                 fields: [
-                    {key: 'illustration_output_mode', label: '출력 모드', type: 'select', help: '일반 삽화(CALL1/2/3 + Comfy), 원본 에셋(업로드 원본 선택), 또는 둘 다를 반환합니다. 원본 에셋 장수는 아래 원본 에셋 출력 섹션에서 설정하며, 선택 지침은 현재 봇의 에셋 출력 지침 세팅을 사용합니다.', options: [{value: 'illustration', label: '일반 삽화'}, {value: 'original_asset', label: '원본 에셋'}, {value: 'both', label: '일반 삽화 + 원본 에셋'}], onchange: 'onIllustrationOutputModeChange(this)'},
-                    {key: 'profile_resolve_enabled', label: '다중 프로필 추론', type: 'toggle', help: 'CURRENT 등장인물 판별 LLM은 항상 별도로 실행됩니다. 켜면 확정된 CURRENT 다중 프로필 캐릭터를 캐릭터별 병렬 PROFILE-RESOLVE로 보내 시작·변환 타임라인과 판단 reason을 추론하고, 끄면 프로필 LLM 호출 없이 등록 기본 프로필을 적용합니다.'},
+                    {key: 'illustration_output_mode', label: '출력 모드', type: 'select', help: '일반 삽화(CALL1/2/3 + Comfy), 원본 에셋(업로드 원본 선택), 또는 둘 다를 반환합니다. 원본 에셋 장수는 원본 에셋 출력 탭에서 설정합니다.', options: [{value: 'illustration', label: '일반 삽화'}, {value: 'original_asset', label: '원본 에셋'}, {value: 'both', label: '일반 삽화 + 원본 에셋'}], onchange: 'onIllustrationOutputModeChange(this)'},
+                    {key: 'nsfw', label: 'NSFW 태깅', type: 'toggle', help: 'DETAIL과 KEYVIS에 성인 장면용 태깅 지침을 적용합니다. Manga 대사 모드의 버블 타입에도 함께 반영됩니다.'},
                     {key: 'call1_backtranslate_enabled', label: 'CALL1 역번역', type: 'toggle', help: 'CALL1 컨텍스트 보강 전에 현재 응답을 영어로 역번역합니다.'},
-                    {key: 'call1_enabled', label: 'CALL1 복장·헤어 분석', type: 'toggle', help: '앞 단계가 확정한 CURRENT 캐릭터를 기준으로 현재 context의 복장·헤어스타일 변화 사건을 구조화합니다.'},
-                    {key: 'call3_enabled', label: 'CALL3 대사 생성', type: 'toggle', help: 'CALL3 대사(speak/manga) 생성을 켭니다. CALL2 파싱 실패 시 CALL2-FIX 교정은 항상 동작합니다.'},
                     {key: 'multi_char_mask_enabled', label: 'MULTI-CHAR-MASK', type: 'toggle', help: '2명 이상 장면에서 캐릭터별 Regional RGB 마스크를 계산합니다. 끄면 마스크 LLM 호출과 Regional 마스크 전달 없이 일반 다중 캐릭터 프롬프트로 생성합니다.'},
                 ],
-            },
-            {
-                key: 'output_count',
-                title: '출력 장면 수',
-                description: '삽화 총 장면 수의 유일한 소스입니다. Output Count Rule 프롬프트는 이 값으로 자동 생성되어 CALL2-PLAN에 총량으로 전달되고, 병렬 Call2-detail worker 각각에는 (값÷병렬 수)로 나뉘어 전달되어 3배 과잉 생성을 막습니다.',
-                fields: [
-                    {key: 'output_count_min', label: '최소 장면 수', type: 'number', min: 1, max: 30, help: '삽화 총 장면 수의 하한입니다. PLAN이 이 범위 내에서 총량을 정합니다.'},
-                    {key: 'output_count_max', label: '최대 장면 수', type: 'number', min: 1, max: 30, help: '삽화 총 장면 수의 상한입니다. 이 값을 초과하면 잘라냅니다.'},
+                callInfo: [
+                    {label: '생성 순서', text: '등장인물·프로필 결정 → 선택적 역번역 → CALL1 상태 추적과 SELECT 장면 선택 병렬 → PLAN 시각 계획 → 각 PLAN 완료 즉시 DETAIL 묘사를 시작합니다. KEYVIS는 일반 PLAN과 독립적으로 실행합니다. 각 이미지의 묘사와 필요한 마스크가 준비되면 생성 큐에 등록하며, CALL3 대사 완료를 기다리지 않습니다.'},
+                    {label: '자동 프로필 결정', text: '등장인물 판별 뒤 다중 프로필 캐릭터가 있으면 캐릭터별로 프로필 타임라인을 결정합니다. 해당 캐릭터가 없으면 프로필 LLM 호출은 자동 생략합니다.'},
+                    {label: 'CALL1 상태 추적', text: '일반 삽화 생성 시 복장·헤어의 시작 상태와 현재 변화 사건을 단일 호출로 추적합니다. 이전 OFF 저장값으로 생략되지 않습니다. 상태 추적·장면 계획 히스토리 범위는 채팅 히스토리 탭에서 설정합니다.'},
+                    {label: 'DETAIL 이미지 묘사', text: 'PLAN 장면 설명과 해당 장면의 프로필·상태를 이미지 태그로 확장합니다. 병렬 처리 여부와 최대 동시 요청 수는 DETAIL 탭에서 PLAN과 독립적으로 설정합니다. 느린 배치 재요청은 PLAN과 DETAIL이 각각 관리합니다.'},
+                    {label: 'MULTI-CHAR-MASK', text: '마스크 기능이 켜져 있고 Comfy 공급자·V3 형식의 장면에 캐릭터가 2~3명일 때 영역을 계산합니다. 해당 DETAIL 배치 또는 KEYVIS 완료 직후 생성 큐 등록 전에 실행합니다.'},
+                    {label: '프롬프트·LLM 연결', text: '프롬프트 본문은 기존 Call 프롬프트·LLM 프롬프트 탭에서, 모델 연결과 재시도는 외부 LLM 분기에서 설정합니다. CALL1은 enhance.txt, DETAIL은 detail.txt, 마스크는 multi_char_mask.txt를 사용합니다.'},
                 ],
             },
             {
-                key: 'original_asset',
-                title: '원본 에셋 출력',
-                description: '현재 선택된 봇의 ‘에셋 출력 지침 세팅’ 저장값과 대화 문맥을 단일 LLM이 읽고, 실제 업로드된 원본 파일을 골라 변환 없이 그대로 출력합니다. 기존 전역 에셋 선택 지침은 사용하지 않습니다. 전체 파일 목록은 LLM에 전송하지 않습니다. 출력 모드가 원본 에셋 또는 둘 다일 때만 활성화됩니다.',
+                key: 'original_asset', title: '원본 에셋 출력',
+                description: '현재 봇의 에셋 출력 지침과 대화 문맥을 읽고, 업로드 원본을 선택해 변환 없이 출력합니다. 파이프라인의 출력 모드가 원본 에셋 또는 둘 다일 때 활성화됩니다.',
                 fields: [
-                    {key: 'original_asset_count', label: '출력 장수', type: 'number', min: 1, max: 30, help: '원본 에셋 선택 LLM이 이번 응답에서 고를 정확한 장수입니다.', dependsOn: ['original_asset_enabled']},
+                    {key: 'original_asset_count', label: '원본 에셋 출력 장수', type: 'number', min: 1, max: 30, help: '원본 에셋 또는 둘 다를 출력할 때 선택할 정확한 장수입니다. 선택 지침은 현재 봇의 에셋 출력 지침 세팅을 사용합니다.', dependsOn: ['original_asset_enabled']},
                 ],
             },
             {
@@ -82022,103 +82248,96 @@
                 ],
             },
             {
-                key: 'call1', title: 'CALL1 분석',
-                description: '역번역 다음에 인물, 지칭 대상과 복장 변화 타임라인을 구조화하는 일반 CALL1 단계입니다.',
+                key: 'call2_select', title: 'SELECT 장면 선택',
+                description: 'CALL1과 동시에 현재 본문의 장면 수·순서·인물을 선택합니다. 아래 수량은 일반 장면 기준이며, 대표 이미지를 켜면 한 장이 별도로 추가됩니다.',
                 fields: [
-                    {key: 'call1_parallel_enabled', label: 'Segment 병렬 분석', type: 'toggle', help: '현재 응답의 구조 segment를 여러 CALL1 작업으로 나눠 분석한 뒤 검증된 JSON을 합칩니다.', dependsOn: ['call1_enabled']},
-                    {key: 'call1_parallel_max_concurrency', label: '최대 동시 요청 수', type: 'number', min: 1, max: 16, help: 'segment를 이 작업 수만큼 서사 순서대로 균등 분할해 동시에 분석합니다. 원본과 느린 요청 복제를 모두 합쳐 이 동시성 한도를 넘지 않습니다.', dependsOn: ['call1_enabled', 'call1_parallel_enabled']},
-                    {
-                        key: 'call1_parallel_slow_retry_enabled', label: '느리다고? 다시해!', type: 'toggle',
-                        help: '일부 CALL1 분석 청크만 뒤처질 때 같은 청크를 한 번 더 요청해 먼저 검증된 결과를 사용합니다.',
-                        tooltip: '설정한 N개 이하의 CALL1 청크만 남았을 때 진행률/TPS 조건을 평가합니다. 복제 요청도 CALL1 최대 동시 요청 수를 공유하므로 설정한 동시성을 넘지 않습니다. 먼저 검증된 결과만 사용하고 패배 요청은 취소합니다. 비스트리밍 LLM은 진행률과 TPS를 0으로 간주하며 중복 호출만큼 비용이 늘 수 있습니다.',
-                        dependsOn: ['call1_enabled', 'call1_parallel_enabled'], requiresMin: {key: 'call1_parallel_max_concurrency', value: 2}, lockToggle: true,
-                    },
-                    {key: 'call1_parallel_slow_retry_remaining', label: '재요청할 남은 개수 (N)', type: 'number', min: 1, max: 16, help: '실행 중인 CALL1 청크가 이 개수 이하로 남았을 때 느린 요청을 검사합니다.', dependsOn: ['call1_enabled', 'call1_parallel_enabled', 'call1_parallel_slow_retry_enabled'], requiresMin: {key: 'call1_parallel_max_concurrency', value: 2}},
-                    {key: 'call1_parallel_slow_retry_progress_enabled', label: '진행률 조건 사용', type: 'toggle', help: '남은 CALL1 청크의 추정 진행률을 복제 판정에 사용합니다.', dependsOn: ['call1_enabled', 'call1_parallel_enabled', 'call1_parallel_slow_retry_enabled'], requiresMin: {key: 'call1_parallel_max_concurrency', value: 2}},
-                    {key: 'call1_parallel_slow_retry_progress_threshold', label: '진행률 기준 (X%)', type: 'number', min: 1, max: 99, help: '추정 진행률이 이 값보다 낮으면 조건을 만족합니다.', dependsOn: ['call1_enabled', 'call1_parallel_enabled', 'call1_parallel_slow_retry_enabled', 'call1_parallel_slow_retry_progress_enabled'], requiresMin: {key: 'call1_parallel_max_concurrency', value: 2}},
-                    {key: 'call1_parallel_slow_retry_tps_enabled', label: 'TPS 조건 사용', type: 'toggle', help: '남은 CALL1 청크의 추정 TPS를 복제 판정에 사용합니다.', dependsOn: ['call1_enabled', 'call1_parallel_enabled', 'call1_parallel_slow_retry_enabled'], requiresMin: {key: 'call1_parallel_max_concurrency', value: 2}},
-                    {key: 'call1_parallel_slow_retry_tps_threshold', label: 'TPS 기준', type: 'number', min: 0.1, max: 1000, step: 0.1, help: '추정 TPS가 이 값보다 낮으면 조건을 만족합니다.', dependsOn: ['call1_enabled', 'call1_parallel_enabled', 'call1_parallel_slow_retry_enabled', 'call1_parallel_slow_retry_tps_enabled'], requiresMin: {key: 'call1_parallel_max_concurrency', value: 2}},
-                    {key: 'call1_parallel_slow_retry_condition_operator', label: '조건 결합 방식', type: 'select', help: 'AND는 켜진 조건을 모두, OR는 하나 이상 만족할 때 복제합니다.', options: [{value: 'and', label: 'AND — 모두 만족'}, {value: 'or', label: 'OR — 하나 이상 만족'}], dependsOn: ['call1_enabled', 'call1_parallel_enabled', 'call1_parallel_slow_retry_enabled'], requiresMin: {key: 'call1_parallel_max_concurrency', value: 2}},
+                    {key: 'output_count_min', label: '최소 일반 장면 수', type: 'number', min: 1, max: 30, help: 'SELECT가 선택할 일반 장면 수의 하한입니다. 선택 가능한 본문 슬롯 수가 더 적으면 그 수로 제한됩니다.'},
+                    {key: 'output_count_max', label: '최대 일반 장면 수', type: 'number', min: 1, max: 30, help: 'SELECT가 선택할 일반 장면 수의 상한입니다. PLAN과 DETAIL은 배정된 장면 수를 유지합니다.'},
+                    {key: 'scene_mode', label: '장면 수 결정', type: 'select', help: '두 모드 모두 최소·최대 범위를 적용합니다. 자동 선택은 그 범위 안에서 문맥에 맞는 수량을 고르도록 SELECT에 지시합니다.', options: [{value: 'manual', label: '지정 범위 적용'}, {value: 'auto', label: '범위 안에서 자동 선택'}]},
+                    {key: 'character_limit', label: '이미지당 최대 캐릭터', type: 'select', help: '한 이미지에 배치할 최대 캐릭터 수입니다. 봇의 활성 이미지 정책도 함께 적용됩니다.', options: [1, 2, 3]},
+                    {key: 'focus', label: '집중 캐릭터', type: 'text', help: 'SELECT가 장면을 선택하고 PLAN이 시각 계획을 만들 때 우선할 캐릭터입니다. 비워 두면 대화 문맥에서 결정합니다.'},
+                    {key: 'direction', label: '우선 연출 지시', type: 'textarea', help: 'SELECT의 장면 선택과 PLAN의 구도·동작·접촉 계획에 전달할 연출 지시입니다.', stacked: true},
                 ],
                 callInfo: [
-                    {label: '실행 여부', text: '파이프라인의 CALL1 복장·헤어 분석 토글에서 설정합니다.'},
-                    {label: '프롬프트', text: 'Call 프롬프트 탭의 enhance.txt (CALL1 분석)에서 편집합니다.'},
-                    {label: 'LLM과 재시도', text: '외부 LLM 분기의 삽화 CALL1 (복장·헤어)에서 설정합니다.'},
-                    {label: '히스토리 범위', text: '채팅 히스토리 탭의 CALL1 히스토리 글자수에서 설정합니다.'},
+                    {label: '프롬프트', text: 'LLM 프롬프트 탭의 scene_select.txt를 사용합니다.'},
+                    {label: 'LLM과 재시도', text: '외부 LLM 분기의 삽화 CALL2-SELECT에서 설정합니다.'},
                 ],
             },
             {
-                key: 'call2', title: 'CALL2 장면 생성',
-                description: 'CALL2가 선택하고 묘사할 장면 수, 캐릭터, 연출 및 컨텍스트 범위를 설정합니다.',
+                key: 'call2_plan', title: 'PLAN 시각 계획',
+                description: 'SELECT가 선택한 장면과 CALL1 상태를 합쳐 구도·동작·접촉을 계획합니다. 아래 설정은 PLAN 배치에만 적용하며 DETAIL의 병렬 설정은 별도로 관리합니다. 완료된 PLAN 배치 → DETAIL 즉시 연결 순서는 유지합니다.',
                 fields: [
-                    {key: 'call2_parallel_enabled', label: 'PLAN + KEYVIS + DETAIL 병렬 생성', type: 'toggle', help: 'PLAN과 독립 Key Visual LLM을 동시에 시작하고, PLAN이 끝나면 선택 장면을 DETAIL 배치로 나눠 병렬 생성합니다.'},
-                    {key: 'call2_parallel_max_concurrency', label: 'DETAIL 최대 동시 요청 수', type: 'number', min: 1, max: 16, help: 'PLAN이 선택한 장면 전체를 이 DETAIL 요청 수에 균등 분배합니다. DETAIL 원본·복제 요청이 이 한도를 공유하며, 독립 Key Visual 요청은 이 수와 별도로 PLAN과 동시에 실행될 수 있습니다.', dependsOn: ['call2_parallel_enabled']},
+                    {key: 'call2_parallel_enabled', label: 'PLAN 배치 병렬 처리', type: 'toggle', help: '켜면 선택 장면을 여러 PLAN 배치로 나눕니다. 끄면 PLAN만 한 배치로 처리하며 DETAIL 설정에는 영향을 주지 않습니다.'},
+                    {key: 'call2_parallel_max_concurrency', label: 'PLAN 최대 동시 요청 수', type: 'number', min: 1, max: 16, help: '선택 장면을 이 요청 수에 균등 분배하여 PLAN 배치들을 병렬 실행합니다. 실제 API 동시 실행에는 해당 LLM 연결의 동시 요청 상한도 적용됩니다.', dependsOn: ['call2_parallel_enabled']},
                     {
                         key: 'call2_parallel_slow_retry_enabled', label: '느리다고? 다시해!', type: 'toggle',
-                        help: '일부 CALL2-DETAIL 배치만 뒤처질 때 같은 배치를 한 번 더 요청해 먼저 검증된 결과를 사용합니다.',
-                        tooltip: '설정한 N개 이하의 DETAIL 배치만 남았을 때 진행률/TPS 조건을 평가합니다. 복제 요청도 CALL2 최대 동시 요청 수를 공유합니다. 먼저 배정된 plan_id와 slot을 모두 만족한 결과만 사용하며 패배 요청은 취소합니다. 비스트리밍 LLM은 진행률과 TPS를 0으로 간주하며 중복 호출만큼 비용이 늘 수 있습니다.',
+                        help: '일부 PLAN 배치만 뒤처질 때 같은 배치를 한 번 더 요청해 먼저 검증된 결과를 사용합니다.',
+                        tooltip: '설정한 N개 이하의 PLAN 배치만 남았을 때 진행률/TPS 조건을 평가합니다. 복제 요청도 CALL2 최대 동시 요청 수를 공유합니다. 배정된 장면의 anchor·인물·순서가 일치하는 결과를 사용하며 패배 요청은 취소합니다. 비스트리밍 LLM은 진행률과 TPS를 0으로 간주하며 중복 호출만큼 비용이 늘 수 있습니다.',
                         dependsOn: ['call2_parallel_enabled'], requiresMin: {key: 'call2_parallel_max_concurrency', value: 2}, lockToggle: true,
                     },
-                    {key: 'call2_parallel_slow_retry_remaining', label: '재요청할 남은 개수 (N)', type: 'number', min: 1, max: 16, help: '실행 중인 DETAIL 배치가 이 개수 이하로 남았을 때 느린 요청을 검사합니다.', dependsOn: ['call2_parallel_enabled', 'call2_parallel_slow_retry_enabled'], requiresMin: {key: 'call2_parallel_max_concurrency', value: 2}},
-                    {key: 'call2_parallel_slow_retry_progress_enabled', label: '진행률 조건 사용', type: 'toggle', help: '남은 DETAIL 배치의 추정 진행률을 복제 판정에 사용합니다.', dependsOn: ['call2_parallel_enabled', 'call2_parallel_slow_retry_enabled'], requiresMin: {key: 'call2_parallel_max_concurrency', value: 2}},
+                    {key: 'call2_parallel_slow_retry_remaining', label: '재요청할 남은 개수 (N)', type: 'number', min: 1, max: 16, help: '실행 중인 PLAN 배치가 이 개수 이하로 남았을 때 느린 요청을 검사합니다.', dependsOn: ['call2_parallel_enabled', 'call2_parallel_slow_retry_enabled'], requiresMin: {key: 'call2_parallel_max_concurrency', value: 2}},
+                    {key: 'call2_parallel_slow_retry_progress_enabled', label: '진행률 조건 사용', type: 'toggle', help: '남은 PLAN 배치의 추정 진행률을 복제 판정에 사용합니다.', dependsOn: ['call2_parallel_enabled', 'call2_parallel_slow_retry_enabled'], requiresMin: {key: 'call2_parallel_max_concurrency', value: 2}},
                     {key: 'call2_parallel_slow_retry_progress_threshold', label: '진행률 기준 (X%)', type: 'number', min: 1, max: 99, help: '추정 진행률이 이 값보다 낮으면 조건을 만족합니다.', dependsOn: ['call2_parallel_enabled', 'call2_parallel_slow_retry_enabled', 'call2_parallel_slow_retry_progress_enabled'], requiresMin: {key: 'call2_parallel_max_concurrency', value: 2}},
-                    {key: 'call2_parallel_slow_retry_tps_enabled', label: 'TPS 조건 사용', type: 'toggle', help: '남은 DETAIL 배치의 추정 TPS를 복제 판정에 사용합니다.', dependsOn: ['call2_parallel_enabled', 'call2_parallel_slow_retry_enabled'], requiresMin: {key: 'call2_parallel_max_concurrency', value: 2}},
+                    {key: 'call2_parallel_slow_retry_tps_enabled', label: 'TPS 조건 사용', type: 'toggle', help: '남은 PLAN 배치의 추정 TPS를 복제 판정에 사용합니다.', dependsOn: ['call2_parallel_enabled', 'call2_parallel_slow_retry_enabled'], requiresMin: {key: 'call2_parallel_max_concurrency', value: 2}},
                     {key: 'call2_parallel_slow_retry_tps_threshold', label: 'TPS 기준', type: 'number', min: 0.1, max: 1000, step: 0.1, help: '추정 TPS가 이 값보다 낮으면 조건을 만족합니다.', dependsOn: ['call2_parallel_enabled', 'call2_parallel_slow_retry_enabled', 'call2_parallel_slow_retry_tps_enabled'], requiresMin: {key: 'call2_parallel_max_concurrency', value: 2}},
                     {key: 'call2_parallel_slow_retry_condition_operator', label: '조건 결합 방식', type: 'select', help: 'AND는 켜진 조건을 모두, OR는 하나 이상 만족할 때 복제합니다.', options: [{value: 'and', label: 'AND — 모두 만족'}, {value: 'or', label: 'OR — 하나 이상 만족'}], dependsOn: ['call2_parallel_enabled', 'call2_parallel_slow_retry_enabled'], requiresMin: {key: 'call2_parallel_max_concurrency', value: 2}},
-                    {key: 'nsfw', label: 'NSFW 태깅', type: 'toggle', help: 'CALL2에 성인 장면용 태깅 지침을 허용합니다. Manga 대사 모드의 버블 타입에도 함께 반영됩니다.'},
-                    {key: 'supplement', label: 'SUPPLEMENT 생성', type: 'toggle', help: 'CALL2가 효과와 보조 묘사 섹션을 생성하도록 합니다.'},
-                    {key: 'key_visual', label: 'Key Visual 생성', type: 'toggle', help: 'CALL2-PLAN과 동시에 독립 CALL2-KEYVIS LLM을 호출해 슬롯 장면과 분리된 대표 이미지 한 장을 생성합니다. 외부 LLM 분기에서 PLAN·DETAIL·KEYVIS를 각각 선택할 수 있습니다.'},
-                    {key: 'minimal_background_description', label: '배경 묘사 최소화', type: 'toggle', help: '켜면 배경을 가장 작은 이야기 근거 또는 simple background로 제한합니다. 끄면 중복 방지 규칙은 유지하면서 이야기에서 확인되는 장소·시간·날씨·조명·소품을 충분히 묘사합니다.'},
-                    {key: 'character_limit', label: '이미지당 최대 캐릭터', type: 'select', help: '한 이미지에 함께 배치할 캐릭터 수입니다.', options: [1, 2, 3]},
-                    {
-                        key: 'scene_mode', label: 'Scene 수 결정', type: 'select',
-                        help: '두 모드 모두 출력 장면 수의 최소/최대 범위를 강제합니다. lb-xnai에 맡김은 그 범위 안에서 문맥에 맞는 수량을 선택합니다.',
-                        options: [
-                            {value: 'manual', label: '범위 지정'},
-                            {value: 'auto', label: '범위 안에서 lb-xnai에 맡김'},
-                        ],
-                    },
-                    {key: 'context_history', label: 'lb.extra 외형 이력 사용', type: 'toggle', help: 'CALL2가 저장된 캐릭터 외형과 복장 정보를 참조하도록 합니다.'},
-                    {key: 'focus', label: '집중 캐릭터', type: 'text', help: 'CALL2가 우선할 캐릭터입니다. 비워 두면 대화 문맥에서 결정합니다.'},
-                    {key: 'direction', label: '우선 연출 지시', type: 'textarea', help: 'CALL2에 이번 생성에서 특별히 강조할 연출을 전달합니다.', stacked: true},
+                ],
+                callInfo: [
+                    {label: '프롬프트', text: 'LLM 프롬프트 탭의 plan.txt를 사용합니다.'},
+                    {label: 'LLM과 재시도', text: '외부 LLM 분기의 삽화 CALL2-PLAN에서 설정합니다. 완료된 PLAN 배치부터 DETAIL로 전달합니다.'},
                 ],
             },
             {
-                key: 'call2_fix', title: 'CALL2-FIX',
-                description: 'CALL2 결과를 TOON으로 파싱하지 못했을 때만 자동 실행되는 복구 호출입니다.',
-                fields: [],
+                key: 'call2_detail', title: 'DETAIL 이미지 묘사',
+                description: '장면 검토가 끝난 뒤 일반 장면을 이미지 태그로 확장합니다. 병렬 설정은 PLAN과 독립적이며, 각 DETAIL 배치가 완료되면 필요한 마스크를 준비한 뒤 해당 이미지를 생성 큐에 등록합니다.',
+                fields: [
+                    {key: 'call2_detail_parallel_enabled', label: 'DETAIL 배치 병렬 처리', type: 'toggle', help: '켜면 일반 장면을 여러 DETAIL 배치로 나눕니다. 끄면 DETAIL만 한 배치로 처리하며 PLAN 설정에는 영향을 주지 않습니다.'},
+                    {key: 'call2_detail_parallel_max_concurrency', label: 'DETAIL 최대 동시 요청 수', type: 'number', min: 1, max: 16, help: '완료된 PLAN 범위 안에서 DETAIL 묶음을 나누고, 모든 묶음에 이 동시 요청 상한을 적용합니다. PLAN 배치 수가 상한보다 많으면 각 배치를 한 건씩 순차 처리합니다. 실제 API 동시 실행에는 해당 LLM 연결의 동시 요청 상한도 적용됩니다.', dependsOn: ['call2_detail_parallel_enabled']},
+                    {
+                        key: 'call2_detail_parallel_slow_retry_enabled', label: '느리다고? 다시해!', type: 'toggle',
+                        help: '일부 DETAIL 배치만 뒤처질 때 같은 배치를 한 번 더 요청해 먼저 검증된 결과를 사용합니다.',
+                        tooltip: '설정한 N개 이하의 DETAIL 배치만 남았을 때 진행률/TPS 조건을 평가합니다. 복제 요청도 DETAIL 최대 동시 요청 수를 공유합니다. 배정된 slot·인물이 일치하는 결과를 사용하며 패배 요청은 취소합니다. 마스크 준비와 이미지 등록은 승리 결과로 한 번만 실행합니다. 비스트리밍 LLM은 진행률과 TPS를 0으로 간주하며 중복 호출만큼 비용이 늘 수 있습니다.',
+                        dependsOn: ['call2_detail_parallel_enabled'], requiresMin: {key: 'call2_detail_parallel_max_concurrency', value: 2}, lockToggle: true,
+                    },
+                    {key: 'call2_detail_parallel_slow_retry_remaining', label: '재요청할 남은 개수 (N)', type: 'number', min: 1, max: 16, help: '실행 중인 DETAIL 배치가 이 개수 이하로 남았을 때 느린 요청을 검사합니다.', dependsOn: ['call2_detail_parallel_enabled', 'call2_detail_parallel_slow_retry_enabled'], requiresMin: {key: 'call2_detail_parallel_max_concurrency', value: 2}},
+                    {key: 'call2_detail_parallel_slow_retry_progress_enabled', label: '진행률 조건 사용', type: 'toggle', help: '남은 DETAIL 배치의 추정 진행률을 복제 판정에 사용합니다.', dependsOn: ['call2_detail_parallel_enabled', 'call2_detail_parallel_slow_retry_enabled'], requiresMin: {key: 'call2_detail_parallel_max_concurrency', value: 2}},
+                    {key: 'call2_detail_parallel_slow_retry_progress_threshold', label: '진행률 기준 (X%)', type: 'number', min: 1, max: 99, help: '추정 진행률이 이 값보다 낮으면 조건을 만족합니다.', dependsOn: ['call2_detail_parallel_enabled', 'call2_detail_parallel_slow_retry_enabled', 'call2_detail_parallel_slow_retry_progress_enabled'], requiresMin: {key: 'call2_detail_parallel_max_concurrency', value: 2}},
+                    {key: 'call2_detail_parallel_slow_retry_tps_enabled', label: 'TPS 조건 사용', type: 'toggle', help: '남은 DETAIL 배치의 추정 TPS를 복제 판정에 사용합니다.', dependsOn: ['call2_detail_parallel_enabled', 'call2_detail_parallel_slow_retry_enabled'], requiresMin: {key: 'call2_detail_parallel_max_concurrency', value: 2}},
+                    {key: 'call2_detail_parallel_slow_retry_tps_threshold', label: 'TPS 기준', type: 'number', min: 0.1, max: 1000, step: 0.1, help: '추정 TPS가 이 값보다 낮으면 조건을 만족합니다.', dependsOn: ['call2_detail_parallel_enabled', 'call2_detail_parallel_slow_retry_enabled', 'call2_detail_parallel_slow_retry_tps_enabled'], requiresMin: {key: 'call2_detail_parallel_max_concurrency', value: 2}},
+                    {key: 'call2_detail_parallel_slow_retry_condition_operator', label: '조건 결합 방식', type: 'select', help: 'AND는 켜진 조건을 모두, OR는 하나 이상 만족할 때 복제합니다.', options: [{value: 'and', label: 'AND — 모두 만족'}, {value: 'or', label: 'OR — 하나 이상 만족'}], dependsOn: ['call2_detail_parallel_enabled', 'call2_detail_parallel_slow_retry_enabled'], requiresMin: {key: 'call2_detail_parallel_max_concurrency', value: 2}},
+                ],
                 callInfo: [
-                    {label: '실행 조건', text: 'CALL2 TOON 파싱 실패 시 자동으로 교정 단계에 진입합니다. 별도 ON/OFF는 두지 않습니다.'},
-                    {label: '프롬프트', text: 'Call 프롬프트 탭의 repair.txt (CALL2-FIX TOON 교정)에서 편집합니다.'},
-                    {label: 'LLM과 재시도', text: '외부 LLM 분기의 삽화 CALL2-FIX (TOON 교정)에서 설정합니다.'},
-                    {label: '실패 결과', text: 'CALL2-FIX 이후에도 파싱하지 못하면 해당 삽화 프롬프트 파이프라인을 중단합니다.'},
+                    {label: '대표 이미지', text: 'KEYVIS는 DETAIL 병렬 설정과 무관하게 독립 호출하며 DETAIL과 함께 실행됩니다.'},
+                    {label: '프롬프트', text: 'LLM 프롬프트 탭의 detail.txt를 사용합니다. NSFW 태깅은 파이프라인 탭에서 설정합니다.'},
+                    {label: 'LLM과 재시도', text: '외부 LLM 분기의 삽화 CALL2-DETAIL에서 설정합니다. 느린 배치 재요청 조건은 DETAIL 전용으로 관리합니다.'},
+                ],
+            },
+            {
+                key: 'keyvis', title: 'KEYVIS 대표 이미지',
+                description: '장면 검토 뒤 DETAIL과 함께 독립 대표 이미지를 생성합니다. 일반 장면 수에 한 장을 추가하며 CALL3 대사 대상에는 포함하지 않습니다.',
+                fields: [
+                    {key: 'key_visual', label: '대표 이미지 생성', type: 'toggle', help: '현재 이야기에서 대표 장면 한 장을 독립적으로 선택·묘사합니다.'},
+                    {key: 'minimal_background_description', label: '대표 이미지 배경 묘사 최소화', type: 'toggle', help: 'KEYVIS의 배경을 가장 작은 이야기 근거로 제한합니다. 일반 장면의 배경은 PLAN·DETAIL의 장면 설명에 따릅니다.', dependsOn: ['key_visual']},
+                ],
+                callInfo: [
+                    {label: '프롬프트', text: 'LLM 프롬프트 탭의 keyvisual.txt와 system.txt를 사용합니다.'},
+                    {label: 'LLM과 재시도', text: '외부 LLM 분기의 삽화 CALL2-KEYVIS에서 별도로 설정합니다.'},
                 ],
             },
             {
                 key: 'call3', title: 'CALL3 대사',
                 description: 'CALL2가 선택한 장면에 대해 CALL3가 생성할 대사 형식과 언어를 설정합니다.',
                 fields: [
-                    {key: 'speak_enabled', label: '장면별 SPEAK 생성', type: 'toggle', help: 'CALL3가 각 장면에 표시할 대사를 생성합니다.', dependsOn: ['call3_enabled']},
+                    {key: 'speak_enabled', label: '장면 대사 생성', type: 'toggle', help: 'CALL3가 일반 장면의 대사를 생성합니다. Speak·말풍선·자막에 공통 적용되며 대표 이미지는 대사 대상에서 제외합니다.'},
                     {
                         key: 'call3_prompt_mode', label: 'CALL3 대사 프롬프트', type: 'select',
                         help: '후처리 설정(대사=Speak / 말풍선=Manga / 자막=Subtitle)에 따라 자동 지정됩니다. 나머지 항목은 회색으로 선택 불가.',
                         options: [{value: 'speak', label: 'Speak'}, {value: 'manga', label: 'Manga'}, {value: 'subtitle', label: 'Subtitle'}],
-                        dependsOn: ['call3_enabled', 'speak_enabled'],
+                        dependsOn: ['speak_enabled'],
                     },
-                    {key: 'speak_emotion_enabled', label: 'SPEAK 감정 태그', type: 'toggle', help: 'CALL3가 생성한 Speak 대사에 감정 태그를 덧붙입니다.', dependsOn: ['call3_enabled', 'speak_enabled']},
-                    {key: 'speak_language', label: 'SPEAK 언어', type: 'select', help: 'CALL3가 생성할 장면 대사의 언어를 선택합니다.', options: ['한국어', '영어', '일어', '중어'], dependsOn: ['call3_enabled', 'speak_enabled']},
-                    {key: 'speak_emotions', label: '허용 감정', type: 'text', help: '감정 이름을 세미콜론(;)으로 구분해 입력합니다.', placeholder: '기쁨; 분노; 당황; 슬픔', dependsOn: ['call3_enabled', 'speak_enabled', 'speak_emotion_enabled']},
-                ],
-            },
-            {
-                key: 'multi_char_mask', title: 'MULTI-CHAR-MASK',
-                description: 'CALL2가 확정한 캐릭터 프롬프트는 유지하고, 다중 캐릭터 장면의 배경·구도와 캐릭터 영역만 계산하는 후속 호출입니다.',
-                fields: [],
-                callInfo: [
-                    {label: '실행 조건', text: 'Comfy 공급자와 V3 형식에서 한 장면에 캐릭터가 2~3명일 때 자동 실행됩니다.'},
-                    {label: '처리 위치', text: 'CALL3 처리 다음에 다중 캐릭터 장면별로 병렬 실행됩니다.'},
-                    {label: '프롬프트', text: 'prompts/lighbd/multi_char_mask.txt를 사용하며 긍정 프롬프트 추가 메모도 함께 전달됩니다. 현재 Call 프롬프트 탭에는 별도 편집란이 없습니다.'},
-                    {label: 'LLM과 재시도', text: '외부 LLM 분기의 삽화 다중 캐릭터 마스크에서 설정합니다.'},
+                    {key: 'speak_language', label: '대사 언어', type: 'select', help: 'CALL3가 생성할 장면 대사의 언어를 선택합니다.', options: ['한국어', '영어', '일어', '중어'], dependsOn: ['speak_enabled']},
+                    {key: 'speak_emotion_enabled', label: 'SPEAK 감정 태그', type: 'toggle', help: 'Speak 모드에서 대사에 감정 태그를 덧붙입니다.', dependsOn: ['speak_enabled']},
+                    {key: 'speak_emotions', label: '허용 감정', type: 'text', help: 'Speak 감정 태그를 켰을 때 사용할 감정 이름을 세미콜론(;)으로 구분해 입력합니다.', placeholder: '기쁨; 분노; 당황; 슬픔', dependsOn: ['speak_enabled', 'speak_emotion_enabled']},
                 ],
             },
             {
@@ -82129,22 +82348,13 @@
                         key: 'prompt_format', label: '프롬프트 입력 형식', type: 'select', stacked: true,
                         help: '선택한 삽화 워크플로우 버전에 맞는 RAW 프롬프트 구조가 자동으로 적용됩니다.',
                         options: [
-                            {value: 'v1', label: 'V1 — 삽화 모드 비활성화 형식 ([ILXL] / [UPSCALE])'},
-                            {value: 'v3', label: 'V3 — 삽화 모드 활성화 형식 ([SETUP] / [CHAR] / [SUPPLEMENT])'},
+                            {value: 'v1', label: 'V1 — 선택 워크플로우의 V1 처리'},
+                            {value: 'v3', label: 'V3 — 선택 워크플로우의 V3 처리'},
                             {value: 'chansub', label: '챈섭 — Comfy POSITIVE/NEGATIVE (챈섭 공급자 전용)'},
                         ],
                     },
                     {key: 'positive_note', label: '긍정 프롬프트 추가', type: 'textarea', help: '모든 장면의 최종 긍정 프롬프트에 덧붙일 내용을 입력합니다.', stacked: true},
                     {key: 'negative_note', label: '부정 프롬프트 추가', type: 'textarea', help: '모든 장면의 최종 부정 프롬프트에 덧붙일 내용을 입력합니다.', stacked: true},
-                    {key: 'compat_comfy', label: 'Comfy 호환', type: 'toggle', help: 'CALL2 지시와 최종 조립에 Comfy용 캐릭터 분리 옵션을 적용합니다.'},
-                    {
-                        key: 'compat_character_prompt', label: '캐릭터 프롬프트', type: 'select', help: '캐릭터별 프롬프트를 분리할지 선택합니다.', dependsOn: ['compat_comfy'],
-                        options: [{value: 'separate', label: '분리'}, {value: 'normal', label: '일반'}],
-                    },
-                    {
-                        key: 'compat_character_divider', label: '캐릭터 구분', type: 'select', help: '최종 캐릭터 프롬프트 사이의 구분 방식을 선택합니다.', dependsOn: ['compat_comfy'],
-                        options: [{value: 'newline', label: '빈 줄'}, {value: 'pipe', label: '파이프 ( | )'}],
-                    },
                 ],
             },
         ];
@@ -82230,36 +82440,14 @@
         }
 
         function _renderIllustrationSettingsGroupFields(group) {
-            if (Array.isArray(group.callInfo) && group.callInfo.length && (!group.fields || !group.fields.length)) {
-                return `
-                    <div class="illust-call-stage-notes">
-                        ${group.callInfo.map(item => `
-                            <div class="illust-call-stage-note">
-                                <div class="illust-call-stage-note-label">${escapeHtml(item.label)}</div>
-                                <div class="illust-call-stage-note-text">${escapeHtml(item.text)}</div>
-                            </div>`).join('')}
-                    </div>`;
-            }
-            if (group.key === 'pipeline') {
-                return group.fields.map(field => _renderIllustrationContextField(field)).join('');
-            }
-            if (group.key === 'call1') {
-                return `
-                    ${group.fields.slice(0, 2).map(field => _renderIllustrationContextField(field)).join('')}
-                    <div class="illust-settings-dependent" aria-label="CALL1 느린 분석 재요청 세부 옵션">
-                        ${group.fields.slice(2).map(field => _renderIllustrationContextField(field)).join('')}
-                    </div>
-                    <h4 class="illust-settings-subheading">호출 정보</h4>
-                    <div class="illust-call-stage-notes">
-                        ${(group.callInfo || []).map(item => `
-                            <div class="illust-call-stage-note">
-                                <div class="illust-call-stage-note-label">${escapeHtml(item.label)}</div>
-                                <div class="illust-call-stage-note-text">${escapeHtml(item.text)}</div>
-                            </div>`).join('')}
-                    </div>`;
-            }
+            const notes = (group.callInfo || []).map(item => `
+                <div class="illust-call-stage-note">
+                    <div class="illust-call-stage-note-label">${escapeHtml(item.label)}</div>
+                    <div class="illust-call-stage-note-text">${escapeHtml(item.text)}</div>
+                </div>`).join('');
+            let content = group.fields.map(field => _renderIllustrationContextField(field)).join('');
             if (group.key === 'backtranslation') {
-                return `
+                content = `
                     ${_renderIllustrationContextField(group.fields[0])}
                     ${_renderIllustrationContextField(group.fields[1])}
                     <div class="illust-settings-dependent" aria-label="느린 역번역 재요청 세부 옵션">
@@ -82271,41 +82459,79 @@
                     ${_renderIllustrationContextField(group.fields[8])}`;
             }
             if (group.key === 'call3') {
-                return `
+                content = `
                     ${_renderIllustrationContextField(group.fields[0])}
-                    <div class="illust-settings-dependent" aria-label="장면별 SPEAK 생성 세부 옵션">
+                    <div class="illust-settings-dependent" aria-label="장면별 대사 생성 세부 옵션">
                         ${group.fields.slice(1).map(field => _renderIllustrationContextField(field)).join('')}
                     </div>`;
             }
-            if (group.key === 'call2') {
-                return `
+            if (group.key === 'call2_plan' || group.key === 'call2_detail') {
+                const stageLabel = group.key === 'call2_plan' ? 'PLAN' : 'DETAIL';
+                content = `
                     ${group.fields.slice(0, 2).map(field => _renderIllustrationContextField(field)).join('')}
-                    <div class="illust-settings-dependent" aria-label="CALL2 느린 상세 배치 재요청 세부 옵션">
-                        ${group.fields.slice(2, 9).map(field => _renderIllustrationContextField(field)).join('')}
-                    </div>
-                    <h4 class="illust-settings-subheading">장면 출력</h4>
-                    ${group.fields.slice(9, 12).map(field => _renderIllustrationContextField(field)).join('')}
-                    <h4 class="illust-settings-subheading">장면 제한</h4>
-                    ${_renderIllustrationContextField(group.fields[12])}
-                    ${_renderIllustrationContextField(group.fields[13])}
-                    ${_renderIllustrationContextField(group.fields[14])}
-                    <h4 class="illust-settings-subheading">컨텍스트와 연출</h4>
-                    ${group.fields.slice(15).map(field => _renderIllustrationContextField(field)).join('')}`;
+                    <div class="illust-settings-dependent" aria-label="${stageLabel} 느린 배치 재요청 세부 옵션">
+                        ${group.fields.slice(2).map(field => _renderIllustrationContextField(field)).join('')}
+                    </div>`;
             }
             if (group.key === 'output') {
-                return `
+                content = `
                     ${_renderIllustrationContextField(group.fields[0])}
                     <h4 class="illust-settings-subheading">프롬프트 추가 메모</h4>
                     <div class="illust-settings-paired" aria-label="프롬프트 추가 메모">
                         ${group.fields.slice(1, 3).map(field => _renderIllustrationContextField(field)).join('')}
-                    </div>
-                    <h4 class="illust-settings-subheading">Comfy 출력 호환</h4>
-                    ${_renderIllustrationContextField(group.fields[3])}
-                    <div class="illust-settings-dependent" aria-label="Comfy 호환 세부 옵션">
-                        ${group.fields.slice(4).map(field => _renderIllustrationContextField(field)).join('')}
                     </div>`;
             }
-            return group.fields.map(field => _renderIllustrationContextField(field)).join('');
+            const notesPanel = notes ? `<div class="illust-call-stage-notes">${notes}</div>` : '';
+            if (notes && group.key === 'pipeline') {
+                return content + `<details class="illust-call-stage-guide">
+                    <summary>생성 흐름 및 필수 단계 안내</summary>${notesPanel}
+                </details>`;
+            }
+            return content + notesPanel;
+        }
+
+        let _illustrationPreviewRequestId = 0;
+        async function renderIllustrationNodePreview() {
+            const preview = document.getElementById('illust-node-preview');
+            const body = document.getElementById('illust-tab-content-toggles');
+            if (!preview || !body) {
+                console.error('[ILLUST_CONTEXT] 노드 배치 미리보기 요소를 찾지 못함.');
+                return;
+            }
+            const requestId = ++_illustrationPreviewRequestId;
+            pauseIllustrationPreview();
+            const toggles = {..._illustrationContextToggles};
+            body.querySelectorAll('[data-illust-toggle]').forEach(control => {
+                toggles[control.dataset.illustToggle] = control.type === 'checkbox' ? control.checked : control.value;
+            });
+            const scenario = {};
+            body.querySelectorAll('[data-illust-preview-scenario]').forEach(control => {
+                if (control.type === 'checkbox') scenario[control.dataset.illustPreviewScenario] = control.checked;
+                else if (control.value) scenario[control.dataset.illustPreviewScenario] = control.value;
+                control.onchange = () => renderIllustrationNodePreview();
+            });
+            const status = body.querySelector('[data-illust-preview-status]');
+            if (status) status.textContent = '서버의 실제 설정으로 실행 계획 계산 중…';
+            try {
+                await new Promise(resolve => setTimeout(resolve, 120));
+                if (requestId !== _illustrationPreviewRequestId || !preview.isConnected) return;
+                const response = await fetch('/api/illustration_context/execution-preview', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({toggles, scenario}),
+                });
+                const plan = await response.json();
+                if (!response.ok) throw new Error(plan.error || `HTTP ${response.status}`);
+                if (requestId !== _illustrationPreviewRequestId || !preview.isConnected) return;
+                const characterCount = body.querySelector('[data-illust-preview-scenario="character_count"]');
+                if (characterCount) characterCount.disabled = plan.scenario?.protocol === 'prompt_batch_v1';
+                renderIllustrationPreviewPlan(preview, plan, _illustrationSettingsActiveGroup);
+                refreshIllustrationThinkingChecks(preview, currentConfig);
+            } catch (error) {
+                console.error('[ILLUST_PREVIEW] 실행 계획 조회 실패', {error, scenario});
+                if (requestId !== _illustrationPreviewRequestId || !preview.isConnected) return;
+                preview.textContent = `실행 계획을 읽지 못했습니다: ${error.message}`;
+                if (status) status.textContent = '실행 계획 조회 실패';
+            }
         }
 
         function renderIllustrationContextToggles() {
@@ -82347,7 +82573,27 @@
                                 </section>`;
                         }).join('')}
                     </div>
-                </div>`;
+                </div>
+                <section class="illust-flow-preview" aria-labelledby="illust-node-preview-title">
+                    <header class="illust-flow-preview-header">
+                        <h3 id="illust-node-preview-title">노드 배치 미리보기</h3>
+                        <span data-illust-preview-summary>서버의 실제 설정으로 계산합니다.</span>
+                    </header>
+                    <div class="illust-preview-toolbar" role="group" aria-label="설정 기반 흐름 시뮬레이션">
+                        <button type="button" data-illust-preview-play>흐름 재생</button>
+                        <button type="button" data-illust-preview-reset>처음부터</button>
+                        <label>CHARACTER-RESOLVE 인원 <input type="number" min="0" step="1" value="2" data-illust-preview-scenario="character_count" aria-label="모의 CHARACTER-RESOLVE 등장인물 수" title="등록된 캐릭터 순서대로 지정한 인원만큼 CURRENT에 등장한다고 가정합니다."> 명</label>
+                        <label><input type="checkbox" data-illust-preview-scenario="conditional"> 다중 캐릭터 마스크 가정</label>
+                        <label>입력 <select data-illust-preview-scenario="protocol" aria-label="모의 입력 종류"><option value="context">대화 문맥</option><option value="prompt_batch_v1">완성 프롬프트</option></select></label>
+                        <label>배속 <select data-illust-preview-speed aria-label="시뮬레이션 배속"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option></select></label>
+                        <label class="illust-preview-timeline">흐름 위치 <input type="range" min="0" max="1" step="0.01" value="0" data-illust-preview-progress aria-label="시뮬레이션 흐름 위치"></label>
+                        <span class="illust-preview-status" data-illust-preview-status role="status" aria-live="polite">설정 기반 예시 · 재생하면 데이터 흐름을 보여줍니다</span>
+                    </div>
+                    <div class="illust-flow-preview-viewport" tabindex="0" role="region" aria-label="삽화 노드 배치, 작은 화면에서는 가로 스크롤">
+                        <div id="illust-node-preview" class="illust-flow-preview-grid"></div>
+                    </div>
+                    <p class="illust-flow-preview-note">CHARACTER-RESOLVE 등장인물은 기본 2명이며 등록 순서대로 선택합니다. 일반 장면 수와 필요한 슬롯은 현재 출력 설정으로 계산합니다.</p>
+                </section>`;
             if (!body.dataset.illustDirtyListenerBound) {
                 const markDirtyFromControl = event => {
                     if (event.target?.matches?.('[data-illust-toggle]')) {
@@ -82381,6 +82627,7 @@
                 panel.classList.toggle('is-active', active);
                 panel.setAttribute('aria-hidden', String(!active));
             });
+            renderIllustrationNodePreview();
         }
 
         function setIllustrationContextStatus(message, state = '') {
@@ -82470,6 +82717,7 @@
             });
             _applyPromptFormatChansubLock();
             _applyCall3PromptModeLock();
+            renderIllustrationNodePreview();
         }
 
         // prompt_format은 워크플로우 프로필에서 자동 결정한다.
@@ -82506,6 +82754,9 @@
             if (!select) return;  // 대사 카테고리가 아직 렌더되지 않았을 수 있음
             Array.from(select.options).forEach(opt => { opt.disabled = (opt.value !== target); });
             if (select.value !== target) select.value = target;
+            document.querySelectorAll('[data-illust-toggle="speak_emotion_enabled"], [data-illust-toggle="speak_emotions"]').forEach(control => {
+                control.closest('.illust-setting-row')?.classList.toggle('is-hidden', target !== 'speak');
+            });
         }
 
         // 현재 봇의 후처리 활성 모드를 서버에서 읽어 캐시하고 잠금을 다시 적용한다.
@@ -82523,12 +82774,16 @@
                 console.error('[POSTPROCESS] 활성 모드 조회 실패:', e);
             }
             _applyCall3PromptModeLock();
+            if (document.getElementById('illust-node-preview')) renderIllustrationNodePreview();
         }
 
         async function loadIllustrationContextToggles() {
             setIllustrationContextStatus('불러오는 중...');
             try {
-                const res = await fetch('/api/illustration_context/toggles');
+                const [res] = await Promise.all([
+                    fetch('/api/illustration_context/toggles'),
+                    loadCurrentConfig(true),
+                ]);
                 if (!res.ok) throw new Error('HTTP ' + res.status);
                 const data = await res.json();
                 _illustrationContextToggles = data.toggles || {};
@@ -82544,7 +82799,12 @@
         }
 
         async function saveIllustrationContextToggles() {
-            const body = {};
+            const body = {..._illustrationContextToggles};
+            // Retired settings must not survive as hidden save-time options.
+            delete body.call1_enabled;
+            delete body.profile_resolve_enabled;
+            delete body.call3_enabled;
+            delete body.compat_character_divider;
             for (const field of ILLUSTRATION_CONTEXT_TOGGLE_FIELDS) {
                 const el = document.querySelector(`[data-illust-toggle="${field.key}"]`);
                 if (!el) {

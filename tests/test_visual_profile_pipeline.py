@@ -146,8 +146,8 @@ def test_character_and_profile_resolve_are_registered_in_routing_and_prompt_edit
     server_source = (root / "server.py").read_text(encoding="utf-8")
     frontend_source = (root / "frontend" / "index.html").read_text(encoding="utf-8")
 
-    assert '"illustration_character_resolve": _llm_route_defaults(json_mode=True)' in server_source
-    assert '"illustration_profile_resolve": _llm_route_defaults(json_mode=True)' in server_source
+    assert '"illustration_character_resolve": _llm_route_defaults()' in server_source
+    assert '"illustration_profile_resolve": _llm_route_defaults()' in server_source
     assert "key: 'illustration_character_resolve'" in frontend_source
     assert "key: 'illustration_profile_resolve'" in frontend_source
     assert 'data-lighbd-prompt="character_resolve"' in frontend_source

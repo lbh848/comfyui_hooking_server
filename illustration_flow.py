@@ -8,6 +8,8 @@ import time
 import traceback
 import uuid
 
+from modes.illustration_prompt_assembly import input_variables
+
 _run = contextvars.ContextVar("illustration_flow_run", default=None)
 _frontier = contextvars.ContextVar("illustration_flow_frontier", default=())
 _node = contextvars.ContextVar("illustration_flow_node", default=None)
@@ -51,15 +53,81 @@ def snapshot(run=None, *, kind="illustration"):
         return None
     return {key: copy.deepcopy(value) for key, value in run.items() if key not in {"nodes", "publish_pending", "_active_llm_tasks", "_frontier"}} | {
         "nodes": [{k: copy.deepcopy(v) for k, v in node.items()
-                   if k not in {"input", "output", "attempts"}} for node in run["nodes"].values()]
+                   if k not in {"input", "input_variables", "output", "attempts", "_preview_image", "_preview_mask", "call1_state_table"}} for node in run["nodes"].values()]
     }
 
 
 def detail(run_id, node_id):
     for run in (_latest, _latest_video, _latest_video_input):
         if run is not None and run["id"] == run_id:
-            return copy.deepcopy(run["nodes"].get(node_id))
+            node = run["nodes"].get(node_id)
+            return {key: copy.deepcopy(value) for key, value in node.items()
+                    if key not in {"_preview_image", "_preview_mask"}} if node is not None else None
     print(f"[ILLUST_FLOW] 상세 정보 없음: run={run_id}, node={node_id}")
+    return None
+
+
+def preview_image(run_id, node_id):
+    run = _latest
+    if run is not None and run["id"] == run_id:
+        image = run["nodes"].get(node_id, {}).get("_preview_image")
+        if image:
+            return image
+    print(f"[ILLUST_FLOW] 생성 이미지 없음: run={run_id}, node={node_id}")
+    return None
+
+
+def record_image_mask(image_bytes):
+    """Keep the exact mask used by this image, independent of the shared input file."""
+    run = _run.get()
+    if run is None:
+        print("[ILLUST_FLOW:MASK] 작업흐름 기록 없음; 마스크 미리보기 생략")
+        return
+    for node_id in _frontier.get():
+        node = run["nodes"].get(node_id)
+        if node is not None and node.get("kind") == "image":
+            if image_bytes:
+                node["_preview_mask"] = bytes(image_bytes)
+                url = f"/api/illustration_flow?run={run['id']}&node={node_id}&mask=1&v={time.time_ns()}"
+            else:
+                node.pop("_preview_mask", None)
+                url = ""
+            update(run, node_id, mask_url=url)
+            return
+    print(f"[ILLUST_FLOW:MASK] 실행 중인 삽화 노드 없음: run={run['id']}, frontier={_frontier.get()}")
+
+
+async def record_comfy_dynamic_mask(outputs, fetch_image, *, port):
+    """Replace the initial preview with the final mask actually used by Comfy."""
+    for node_id, output in outputs.items():
+        references = output.get("soya_dynamic_mask", [])
+        if not references:
+            continue
+        try:
+            reference = references[-1]
+            image_bytes = await fetch_image(
+                reference["filename"], reference.get("subfolder", ""),
+                reference.get("type", "temp"), port=port,
+            )
+            if not image_bytes:
+                print(f"[ILLUST_FLOW:MASK] Dynamic preview empty: node={node_id}, ref={reference}")
+                return
+            record_image_mask(image_bytes)
+            print(f"[ILLUST_FLOW:MASK] Dynamic final mask recorded: node={node_id}")
+        except Exception as exc:
+            print(f"[ILLUST_FLOW:MASK] Dynamic preview failed: node={node_id}, refs={references}, error={exc}")
+            traceback.print_exc()
+        return
+    print("[ILLUST_FLOW:MASK] No dynamic output; retaining initial mask or intentional bypass")
+
+
+def preview_mask(run_id, node_id):
+    run = _latest
+    if run is not None and run["id"] == run_id:
+        mask = run["nodes"].get(node_id, {}).get("_preview_mask")
+        if mask:
+            return mask
+    print(f"[ILLUST_FLOW] 생성 마스크 없음: run={run_id}, node={node_id}")
     return None
 
 
@@ -293,22 +361,50 @@ def stage(label, *, executor="process", layout_group=None):
                 )
                 traceback.print_exc()
                 resolved_executor = "process"
-            node_id = add_node(
-                run,
-                label,
-                dependencies=_frontier.get(),
-                kind="stage",
-                executor=resolved_executor,
-                layout_group=layout_group,
-                input=serializable(inputs),
-                status="processing",
-                started_at=time.time(),
+            dependencies = _frontier.get()
+            preceding = run["nodes"].get(dependencies[0]) if len(dependencies) == 1 else None
+            queued_image = (
+                run.get("kind") == "illustration"
+                and layout_group == "illustration_generation"
+                and preceding is not None
+                and preceding.get("kind") == "image"
+                and preceding.get("status") == "processing"
             )
+            if queued_image:
+                # The queue and generator execute the same slot, with one identity.
+                node_id = preceding["id"]
+                update(run, node_id, input=serializable(preceding["input"] | inputs),
+                       executor=resolved_executor, status="processing", ended_at=None,
+                       summary="이미지 생성 중", error="")
+            else:
+                node_id = add_node(
+                    run,
+                    label,
+                    dependencies=dependencies,
+                    kind="stage",
+                    executor=resolved_executor,
+                    layout_group=layout_group,
+                    **({"prompt_id": inputs["prompt_id"]} if inputs.get("prompt_id") else {}),
+                    input=serializable(inputs),
+                    status="processing",
+                    started_at=time.time(),
+                )
             try:
                 result = await fn(*args, **kwargs)
                 failed = isinstance(result, tuple) and len(result) == 2 and not result[0]
-                update(run, node_id, status="failed" if failed else "completed",
-                       output=serializable(result), error=str(result[1]) if failed else "")
+                output = serializable(result)
+                preview = {}
+                if (run.get("kind") == "illustration"
+                        and layout_group == "illustration_generation"
+                        and isinstance(result, tuple) and result
+                        and isinstance(result[0], bytes) and result[0]):
+                    run["nodes"][node_id]["_preview_image"] = result[0]
+                    preview["image_url"] = f"/api/illustration_flow?run={run['id']}&node={node_id}&image=1&v={time.time_ns()}"
+                if queued_image:
+                    output = {"generation": output}
+                update(run, node_id,
+                       status="failed" if failed else "processing" if queued_image else "completed",
+                       output=output, error=str(result[1]) if failed else "", **preview)
                 if failed:
                     print(f"[ILLUST_FLOW] 단계 결과 실패: label={label}, output={serializable(result)}")
                 return result
@@ -320,8 +416,13 @@ def stage(label, *, executor="process", layout_group=None):
                     f"error={reason}, input={serializable(inputs)}"
                 )
                 traceback.print_exc()
+                output = (
+                    {"generation": {"error": reason}}
+                    if queued_image
+                    else _failure_output(run["nodes"][node_id], reason)
+                )
                 update(run, node_id, status=status, error=reason,
-                       output=_failure_output(run["nodes"][node_id], reason))
+                       output=output)
                 raise
             finally:
                 _frontier.set((node_id,))
@@ -416,6 +517,8 @@ def queue_added(item):
         task_key=item.type,
         executor=executor,
         layout_group=None if is_root or is_review else "illustration_images",
+        **({"prompt_id": item.params["prompt_id"]} if not is_root and item.params.get("prompt_id") else {}),
+        **({"inspection_scope": item.params.get("scope", "")} if is_review else {}),
         input={
             k: item.params[k]
             for k in ("payload", "prompt_data", "provider", "scope", "session_id", "slots")
@@ -461,7 +564,10 @@ def finish_video(run):
 
 def queue_progress(item):
     binding = getattr(item, "_illustration_flow", None)
-    if binding and binding[0].get("kind") in {"video", "video_input"}:
+    if binding and (
+        binding[0].get("kind") in {"video", "video_input"}
+        or binding[0]["nodes"][binding[1]].get("kind") == "image"
+    ):
         run, node_id, _ = binding
         update(run, node_id, progress=item.progress, summary=f"진행률 {item.progress:g}%",
                progress_detail=serializable(item.progress_detail))
@@ -526,16 +632,24 @@ def queue_execution(fn):
             changed(run)
         try:
             result = await fn(self, item)
+            node = run["nodes"][node_id]
+            output = serializable(result)
             failed = isinstance(result, dict) and result.get("success") is False
             cancelled = bool(root and run.get("cancel_requested"))
+            if node.get("kind") == "image" and isinstance(node.get("output"), dict) and "generation" in node["output"]:
+                output = node["output"] | {"queue": output}
+                failed = failed or node["status"] == "failed"
+                cancelled = cancelled or node["status"] == "cancelled"
             status = "cancelled" if cancelled else ("failed" if failed else "completed")
             if failed:
-                print(f"[ILLUST_FLOW] 큐 결과 실패: node={node_id}, result={result}")
-            update(run, node_id, status=status, output=serializable(result),
+                print(f"[ILLUST_FLOW] 큐 결과 실패: node={node_id}, result={result}, error={node.get('error')}")
+            update(run, node_id, status=status, output=output,
                    error=(
                        "사용자가 삽화 처리 흐름을 중단했습니다"
-                       if cancelled
-                       else str(result.get("error") or "작업 실패") if failed else ""
+                       if cancelled and root
+                       else str(node.get("error") or "작업 취소") if cancelled
+                       else str((result.get("error") if isinstance(result, dict) else None)
+                                or node.get("error") or "작업 실패") if failed else ""
                    ))
             if run.get("kind") == "video":
                 finish_video(run)
@@ -593,11 +707,13 @@ def llm_call(fn):
         if run is None:
             return await fn(call_name, messages, *args, **kwargs)
         node_id = _reserved.get()
+        variables = input_variables(messages)
+        presentation = {"input_variables": variables} if variables is not None else {}
         if node_id is not None:
             _reserved.set(None)
-            update(run, node_id, label=call_name, input=messages, executor="llm")
+            update(run, node_id, label=call_name, input=messages, executor="llm", **presentation)
         else:
-            node_id = add_node(run, call_name, dependencies=_frontier.get(), kind="llm", executor="llm", input=messages)
+            node_id = add_node(run, call_name, dependencies=_frontier.get(), kind="llm", executor="llm", input=messages, **presentation)
         token = _node.set(node_id)
         registration = register_active_llm_task()
         try:
@@ -628,6 +744,20 @@ def llm_metadata(**fields):
         update(_run.get(), _node.get(), **fields)
 
 
+def record_call1_state_table(table):
+    """Attach server expansion to the CALL1 that just completed in this branch."""
+    run = _run.get()
+    if run is None:
+        print("[ILLUST_FLOW:CALL1] 작업흐름 기록 없음; 상태표는 생성 결과에 보존")
+        return
+    for node_id in _frontier.get():
+        node = run["nodes"].get(node_id)
+        if node and node["label"] == "CALL1":
+            update(run, node_id, call1_state_table=copy.deepcopy(table))
+            return
+    print(f"[ILLUST_FLOW:CALL1] 상태표를 연결할 CALL1 노드 없음: frontier={_frontier.get()!r}")
+
+
 def llm_attempt(event, model, service):
     run, node_id = _run.get(), _node.get()
     if run is None or node_id is None:
@@ -636,9 +766,13 @@ def llm_attempt(event, model, service):
     event.update(model=model, service=service)
     node = run["nodes"][node_id]
     node["attempts"].append(event)
+    timing_keys = ("thinking_started_at", "thinking_ended_at", "response_started_at", "response_ended_at")
+    timing = dict.fromkeys(timing_keys) if event.get("type") == "attempt_start" else {
+        key: event[key] for key in timing_keys if key in event
+    }
     llm_metadata(model=model, service=service, phase=event.get("phase"),
                  llm_slot=event.get("slot"), attempt=event.get("attempt"),
-                 status="waiting" if event.get("type") == "attempt_start" else node["status"])
+                 status="waiting" if event.get("type") in {"attempt_start", "attempt_failure"} else node["status"], **timing)
 
 
 def create_task(coro, *, flow_label=None, **kwargs):

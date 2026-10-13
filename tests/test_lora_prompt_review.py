@@ -384,7 +384,7 @@ def test_backend_registers_default_route_detail_and_queue_order():
     assert route["primary"] == "llm1"
     assert route["max_retries"] == 0
     assert route["fallback"] is False
-    assert route["json_mode"] is True
+    assert "json_mode" not in route
     assert llm_service._current_config["lora_prompt_review_enabled"] is False
     assert not hasattr(llm_service, "callLLMVisionTaskOnce")
     assert "lora_prompt_review" in LLM_TYPES

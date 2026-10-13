@@ -1395,8 +1395,8 @@ def test_visual_profile_guide_is_registered_in_routing_queue_and_frontend():
     frontend = (root / "frontend" / "index.html").read_text(encoding="utf-8")
     queue_manager = importlib.import_module("queue_manager")
 
-    assert '"visual_profile_guide": _llm_route_defaults(json_mode=True)' in server_source
-    assert '"visual_profile_appearance_vision": _llm_route_defaults(json_mode=True)' in server_source
+    assert '"visual_profile_guide": _llm_route_defaults()' in server_source
+    assert '"visual_profile_appearance_vision": _llm_route_defaults()' in server_source
     assert "{ key: 'visual_profile_guide'" in frontend
     assert "{ key: 'visual_profile_appearance_vision'" in frontend
     assert "visual_profile_guide" in queue_manager.LLM_TYPES

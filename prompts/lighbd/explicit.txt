@@ -1,4 +1,4 @@
-{{#when::toggle::lb-xnai.nsfw}}EXPLICIT SCENE EXECUTION
+EXPLICIT SCENE EXECUTION
 
 PURPOSE
 
@@ -22,4 +22,4 @@ FINAL CHECK
 
 - The supported act, direction, contact, coverage, and intensity remain recognizable without additions.
 - Camera, pose, ownership, clothing, contact, occlusion, crop, and supplement describe one possible instant.
-- No hidden anatomy is forced into view, and no visible story-essential structure is silently dropped.{{/when}}
+- No hidden anatomy is forced into view, and no visible story-essential structure is silently dropped.

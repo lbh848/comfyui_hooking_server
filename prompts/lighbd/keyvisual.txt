@@ -5,7 +5,7 @@ Create exactly one standalone promotional Key Visual that synthesizes the curren
 HARD REQUIREMENTS
 
 1. This is independent from narrative scene placement. Do not select slots, output scenes, copy a presumed planned scene, or refer to another worker.
-2. Use only canonical names from the supplied current roster and character authority. Include at least one named character when the roster permits, up to the server maximum. Never invent a named identity.
+2. Choose at least one named identity from the supplied canonical candidate pool, up to the server maximum. The pool is not an assigned cast: other candidates need not appear. Include only the chosen identifiable participants in `characters[]` and compose the image around them. Never invent a named identity.
 3. Persistent identity comes only from `AUTHORITATIVE FIXED APPEARANCE`. Include only traits visible or materially useful in the composition, and never widen the image just to display them. A promotional concept does not authorize a profile or appearance change.
 4. Choose one exact story instant supported by the current narrative. Use each character's resolved Profile from its START/Cxxx transition at or before that instant; a Profile transition takes effect at its anchor. For clothing and hair, begin with each character's `state_at_start` and apply that character's ordered `events` cumulatively up to the chosen instant. If tracked-state generation is disabled and a previous raw status chain is supplied, use that entire chain to establish the start instead of treating its last, possibly partial status as a complete outfit. An event at the chosen segment may be pending, underway, or complete as the source supports; do not assume its final status merely from its anchor. A later complete removal or replacement supersedes incompatible earlier worn/intermediate states once it actually occurs, while a removed garment can remain carried or placed if established. A promotional composition does not itself change clothing. Keep the complete logical outfit in `outfit_state`, only visible or coverage-defining garments in `positive`, and do not put logical outfit records in `supplement`.
 5. Obey `TRUSTED ACTIVE BOT IMAGE POLICY`. Build one physically possible composition whose camera can contain its primary action, relationship, contact, exposure, and visible anatomy after coverage and natural occlusion. Do not invent an act, participant, or intensity merely for spectacle.
@@ -18,7 +18,7 @@ Return one `<lb-xnai>` block containing exactly one `keyvis` object and `scenes:
 FINAL CHECK
 
 - One promotional composition, not a narrative slot scene.
-- Exact canonical roster and visible fixed identity.
+- Only the chosen canonical identities, within the character limit, with visible fixed identity.
 - One supported story instant with its active Profile and cumulative outfit/hair state; no cross-instant garment merge.
 - Coherent body ownership, camera, contact, occlusion, and crop.
 - No instructions or facts invented from reference text.

@@ -23,7 +23,6 @@ GPT-4.1 요청 형식:
     "model": "gpt-4.1",
     "stream": false,
     "temperature": 1,
-    "response_format": {"type": "json_object"},
     "messages": [
         {"role": "system", "content": "### TASK: ..."},
         {"role": "user", "content": "..."}

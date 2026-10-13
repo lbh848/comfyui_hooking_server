@@ -15,7 +15,7 @@ def test_auto_feedback_llm_routing_is_registered_in_backend_and_frontend() -> No
     route = server.DEFAULT_CONFIG["llm_routing"][
         server.ILLUSTRATION_AUTO_FEEDBACK_REVIEW_TASK_KEY
     ]
-    assert route["json_mode"] is True
+    assert "json_mode" not in route
 
     frontend = (ROOT / "frontend" / "index.html").read_text(encoding="utf-8")
     assert "illustration_auto_feedback_review" in frontend

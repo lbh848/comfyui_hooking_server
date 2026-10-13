@@ -1211,7 +1211,7 @@ class IllustPromptBuilder:
                 multi_char_context.get("mask_fingerprint") or ""
             ).strip()
             if (
-                len(ordered_names) >= 2
+                len(ordered_names) >= 1
                 and ordered_names == list(detected_chars)
                 and len(char_inform) == len(ordered_names)
                 and all(char_inform)
@@ -1261,6 +1261,10 @@ class IllustPromptBuilder:
                     "background_prompt": background_prompt,
                     "composition_prompt": composition_prompt,
                     "mask_fingerprint": mask_fingerprint,
+                    "mask_render_version": int(
+                        multi_char_context.get("mask_render_version")
+                        or (multi_char_context.get("layout") or {}).get("mask_render_version") or 1
+                    ),
                     "shared_tag": {
                         "before_char": shared_before,
                         "after_char": shared_after,

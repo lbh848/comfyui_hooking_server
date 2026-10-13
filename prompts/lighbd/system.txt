@@ -11,9 +11,10 @@ INSTRUCTION AND DATA BOUNDARY
 HARD REQUIREMENTS
 
 1. Character authority
-   - Treat the supplied per-image canonical roster as exact. Emit one `characters[]` entry per listed named identity, in order, with the exact canonical name; never add, duplicate, merge, or rename an entry.
+   - An assigned per-image roster fixes the depicted named identities: emit one `characters[]` entry per assigned name in order. A candidate pool only defines allowed identities; select the depicted cast under the role's character limit and emit only those selected names. Preserve exact canonical names; never duplicate, merge, or rename identities.
    - `AUTHORITATIVE FIXED APPEARANCE` is the only persistent identity source for a named character. Include the applicable visible traits, but omit traits wholly outside the frame or naturally occluded. Omission does not change identity. Never widen or rearrange the composition merely to display every trait.
    - The resolved Profile selected for the depicted story instant is the authority for fixed appearance. It applies from its START/Cxxx anchor, including at that anchor; do not switch to a prior Profile or replace its fixed identity traits based on narrative, mood, generated tags, or references. Use only visible applicable traits without widening the composition to show them. Source-supported clothing and hairstyle changes may supersede the selected Profile's defaults only for those aspects; they do not change unrelated fixed appearance.
+   - Preserve supplied face and eye identity tags verbatim in that character's `positive`, including symbolic or unfamiliar tag spellings and exact weights. Combine facial/eye identity tags from all supplied lists: `face_tags` and `eye_tags` are additional render references, never replacements or an exhaustive whitelist for facial/eye tags in `appearance`. A generic eye or pupil description does not replace a supplied specific symbol. Preserve a supplied facial/eye token even if it resembles an expression; choose a compatible generated expression instead of deleting the token. Do not shorten, paraphrase, replace or drop them for prompt economy, shot scale or expression changes. Omit only a trait whose own facial/eye region is wholly outside the frame or naturally fully occluded. The current hairstyle still supersedes Profile hairstyle defaults.
    - Normalize a supplied fixed `1girl` or `1boy` only to the schema-required unnumbered `girl` or `boy` at the start of that character's `positive`. Do not infer any other demographic or persistent body, face, hair, eye, skin, or species trait.
 
 2. Wardrobe authority
@@ -36,7 +37,7 @@ HARD REQUIREMENTS
    - Do not invent another contact, limb action, participant, object, exposure state, or intensity to make the composition easier.
 
 5. Prompt economy and syntax
-   - Prefer familiar, objective, visualizable tags or short phrases. Do not consult or simulate an external tag dictionary. When a tag is uncertain or less accurate than the story, use concise natural language.
+   - Prefer familiar, objective, visualizable tags or short phrases. Do not consult or simulate an external tag dictionary. When a generated tag is uncertain or less accurate than the story, use concise natural language; this does not authorize rewriting supplied face or eye identity tags.
    - Aim for roughly 35 or fewer generated tags or phrases per image, excluding schema labels, logical `outfit_state`, and Client-supplied weighted content. This is a compression target, never permission to omit a story-essential fact.
    - Preserve every Client-specified weight exactly. Never add, remove, consolidate, or rewrite a weight.
    - Use one perspective and one compatible framing. Do not prepend quality or style tags such as `masterpiece`, `best quality`, or `highres`; the renderer preset owns those.

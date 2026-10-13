@@ -30,12 +30,17 @@ def isolated_llm_config(monkeypatch):
     return config
 
 
-def test_service_catalog_contains_provider_manager_presets_and_preserves_ollama_cloud():
+def test_service_catalog_exposes_only_the_three_supported_choices():
     catalog = {item["id"]: item for item in llm_service.get_service_catalog()}
 
-    assert set(llm_service.PROVIDER_MANAGER_SERVICES).issubset(catalog)
-    assert catalog["ollama-cloud"]["format"] == "openai"
-    assert catalog["ollama-cloud"]["api_key"] == "required"
+    assert list(catalog) == ["vertex", "openai", "claude"]
+    assert [item["name"] for item in catalog.values()] == [
+        "Vertex Gemini", "OpenAI 호환 URL", "Claude"
+    ]
+    assert catalog["openai"]["format"] == "openai"
+    assert catalog["openai"]["url_override"] is True
+    assert catalog["claude"]["format"] == "anthropic"
+    assert catalog["vertex"]["api_key"] == "vertex"
     assert llm_service.PROVIDER_MANAGER_SERVICES["z-ai"]["endpoint"] == (
         "https://api.z.ai/api/paas/v4/chat/completions"
     )
@@ -353,11 +358,11 @@ async def test_ollama_cloud_keeps_working_endpoint_and_bearer_key(monkeypatch, i
     }
 
 
-def test_vertex_services_keep_separate_untouched_formats():
+def test_vertex_catalog_and_legacy_openai_transport_remain_separate():
     catalog = {item["id"]: item for item in llm_service.get_service_catalog()}
 
     assert catalog["vertex"]["format"] == "vertex"
-    assert catalog["vertex-openai"]["format"] == "vertex-openai"
+    assert "vertex-openai" not in catalog
     assert "vertex" not in llm_service.PROVIDER_MANAGER_SERVICES
     assert "vertex-openai" not in llm_service.PROVIDER_MANAGER_SERVICES
 

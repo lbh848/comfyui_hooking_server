@@ -17,6 +17,7 @@ import base64
 import codecs
 import datetime
 import functools
+import hashlib
 import inspect
 import json
 import math
@@ -32,6 +33,7 @@ from dataclasses import dataclass, field
 import aiohttp
 import httpx
 from typing import Any, Optional
+from urllib.parse import urlsplit, urlunsplit
 
 from modes.llm_pdf_prompt import (
     PDF_MEDIA_RESOLUTION,
@@ -88,31 +90,12 @@ PROVIDER_MANAGER_SERVICES = {
 
 
 def get_service_catalog() -> list:
-    """설정 UI가 사용하는 LLM 서비스 메타데이터를 반환한다."""
-    builtins = [
-        {"id": "copilot", "name": "Copilot", "group": "기본", "api_key": "none", "url_override": False, "format": "openai"},
+    """설정 UI에 제공하는 세 가지 서비스. 기존 서비스 호출 경로는 호환용으로 유지한다."""
+    return [
         {"id": "vertex", "name": "Vertex Gemini", "group": "기본", "api_key": "vertex", "url_override": False, "format": "vertex"},
-        {"id": "vertex-openai", "name": "Vertex OpenAI", "group": "기본", "api_key": "vertex", "url_override": True, "format": "vertex-openai"},
-        {"id": "openai", "name": "OpenAI / 호환 URL", "group": "기본", "api_key": "required", "url_override": True, "format": "openai"},
-        {"id": "openrouter", "name": "OpenRouter", "group": "기본", "api_key": "required", "url_override": True, "format": "openai"},
-        {"id": "gemini", "name": "Gemini (AI Studio)", "group": "기본", "api_key": "required", "url_override": True, "format": "google"},
-        {"id": "claude", "name": "Claude (Anthropic)", "group": "기본", "api_key": "required", "url_override": True, "format": "anthropic"},
-        {"id": "lmstudio", "name": "LM Studio (로컬)", "group": "기본", "api_key": "optional", "url_override": True, "format": "openai"},
-        {"id": "ollama", "name": "Ollama (로컬)", "group": "기본", "api_key": "optional", "url_override": True, "format": "openai"},
-        {"id": "ollama-cloud", "name": "Ollama Cloud", "group": "기본", "api_key": "required", "url_override": True, "format": "openai"},
+        {"id": "openai", "name": "OpenAI 호환 URL", "group": "기본", "api_key": "required", "url_override": True, "format": "openai"},
+        {"id": "claude", "name": "Claude", "group": "기본", "api_key": "required", "url_override": True, "format": "anthropic"},
     ]
-    presets = [
-        {
-            "id": service_id,
-            "name": metadata["name"],
-            "group": "Provider Manager",
-            "api_key": "required" if metadata["api_key_required"] else "optional",
-            "url_override": True,
-            "format": "openai",
-        }
-        for service_id, metadata in PROVIDER_MANAGER_SERVICES.items()
-    ]
-    return builtins + presets
 
 
 # ─── 키 로딩 ───────────────────────────────────────────────
@@ -137,18 +120,20 @@ def _load_copilot_key() -> Optional[str]:
     return None
 
 
+def vertex_key_path(slot: str) -> str:
+    """슬롯별 저장 경로. LLM1의 기존 vertex.json 이름만 호환 유지한다."""
+    if slot not in LLM_SLOT_IDS:
+        raise ValueError(f"Unknown Vertex LLM slot: {slot!r}")
+    return os.path.join(KEY_DIR, f"vertex{_slot_suffix(slot)}.json")
+
+
 def _get_vertex_key_path() -> Optional[str]:
-    """key/ 폴더에서 Vertex 서비스 계정 키 파일 경로 반환.
-    우선순위: vertex.json (UI 업로드) > copilot 제외한 첫 번째 *.json (레거시)
-    """
-    if not os.path.isdir(KEY_DIR):
-        return None
-    preferred = os.path.join(KEY_DIR, "vertex.json")
-    if os.path.exists(preferred):
-        return preferred
-    for f in os.listdir(KEY_DIR):
-        if f.endswith(".json") and "copilot" not in f.lower():
-            return os.path.join(KEY_DIR, f)
+    """현재 요청 슬롯의 키만 사용한다. 다른 슬롯이나 임의 JSON은 상속하지 않는다."""
+    slot = _llm_slot_ctx.get()
+    path = vertex_key_path(slot)
+    if os.path.isfile(path):
+        return path
+    _llm_log(f"Vertex 키 파일 없음: slot={slot}, path={path}")
     return None
 
 
@@ -311,26 +296,30 @@ def _log_history(service: str, model: str, messages: list, output: str,
 
 # ─── Vertex AI 초기화 ──────────────────────────────────────
 
-_vertex_initialized = False
-_vertex_client = None
+_vertex_clients: dict[str, tuple[tuple, Any]] = {}
+
+
+def invalidate_vertex_client(slot: str) -> None:
+    """키 변경 후 새 요청만 새 클라이언트를 사용하고 진행 중 요청은 보존한다."""
+    _vertex_clients.pop(slot, None)
 
 
 def _init_vertex():
-    """Vertex AI 초기화 — google-genai SDK (vertexai=True) 로 Client 생성 (최초 1회).
-
-    레거시 vertexai.generative_models SDK 대신 google-genai 를 사용해
-    최신/프리뷰 Gemini 모델의 응답 파싱 호환성을 확보한다.
-    """
-    global _vertex_initialized, _vertex_client
-    if _vertex_initialized:
-        return
-
+    """현재 슬롯의 google-genai 클라이언트를 반환하고 키 변경 시 재생성한다."""
+    slot = _llm_slot_ctx.get()
     key_path = _get_vertex_key_path()
     if not key_path:
-        _llm_log("Vertex AI 키 파일 없음")
-        return
+        invalidate_vertex_client(slot)
+        _llm_log(f"Vertex AI 초기화 불가: slot={slot}, 키 파일 없음")
+        return None
 
     try:
+        stat = os.stat(key_path)
+        signature = (key_path, stat.st_mtime_ns, stat.st_size)
+        cached = _vertex_clients.get(slot)
+        if cached is not None and cached[0] == signature:
+            return cached[1]
+
         from google.oauth2 import service_account
         from google import genai
 
@@ -342,17 +331,20 @@ def _init_vertex():
             key_path,
             scopes=["https://www.googleapis.com/auth/cloud-platform"],
         )
-        _vertex_client = genai.Client(
+        client = genai.Client(
             vertexai=True,
             project=project_id,
             location="global",
             credentials=credentials,
         )
-        _vertex_initialized = True
-        _llm_log(f"Vertex AI(google-genai) 초기화 완료: {project_id}")
+        _vertex_clients[slot] = (signature, client)
+        _llm_log(f"Vertex AI(google-genai) 초기화 완료: slot={slot}, project={project_id}")
+        return client
     except Exception as e:
-        _llm_log(f"Vertex AI 초기화 실패: {e}")
+        invalidate_vertex_client(slot)
+        _llm_log(f"Vertex AI 초기화 실패: slot={slot}, path={key_path}, error={e}")
         traceback.print_exc()
+        return None
 
 
 # ─── 서비스별 호출 ──────────────────────────────────────────
@@ -394,6 +386,8 @@ async def _call_copilot(messages: list, model: str) -> str:
 
             if response.status_code == 200:
                 result = response.json()
+                message = result.get("choices", [{}])[0].get("message", {})
+                _capture_thinking_metadata(result.get("usage"), message.get("reasoning") or message.get("reasoning_content") or "")
                 content = result.get("choices", [{}])[0] \
                               .get("message", {}).get("content", "")
                 _llm_log(f"Copilot 성공: {len(content)}자")
@@ -414,8 +408,8 @@ async def _call_copilot(messages: list, model: str) -> str:
 
 async def _call_vertex(messages: list, model: str) -> str:
     """Vertex AI (google-genai SDK, vertexai=True) 호출 (단일 시도)"""
-    _init_vertex()
-    if not _vertex_initialized or _vertex_client is None:
+    client = _init_vertex()
+    if client is None:
         return "[LLM 실패] Vertex AI 초기화 실패"
 
     parts, system_instruction = _build_genai_contents(messages)
@@ -428,12 +422,13 @@ async def _call_vertex(messages: list, model: str) -> str:
         loop = asyncio.get_event_loop()
         response = await loop.run_in_executor(
             None,
-            lambda: _vertex_client.models.generate_content(model=actual_model, contents=parts, config=config),
+            lambda: client.models.generate_content(model=actual_model, contents=parts, config=config),
         )
         finish_reason, finish_message = _extract_vertex_finish_details(response)
         prompt_tokens, completion_tokens = _extract_vertex_usage(
             getattr(response, "usage_metadata", None)
         )
+        _capture_thinking_metadata(getattr(response, "usage_metadata", None))
         _store_actual_usage_in_sink(
             prompt_tokens,
             completion_tokens,
@@ -518,9 +513,9 @@ class _ContextConfig(dict):
 
 
 _current_config = _ContextConfig({
-    "llm_service": "copilot",
+    "llm_service": "openai",
     "llm_model": "gpt-4.1",
-    "llm_api_key": "",        # OpenAI / OpenRouter / Gemini / Claude API 키
+    "llm_api_key": "",        # OpenAI 호환 URL / Claude API 키
     "llm_url": "",            # 베이스 URL 오버라이드 (모든 OpenAI 호환 서비스). {model} 치환 지원
     "llm_reasoning_preset": "auto",   # auto|gpt|gemini|claude|deepseek|kimi|glm|custom|none
     "llm_reasoning_effort": "",       # ""|low|medium|high|none (OpenAI reasoning_effort)
@@ -594,8 +589,9 @@ def update_config(config: dict):
     global _current_config
     migrate_config(config)
     concurrency_changed = any(
-        f"llm_max_concurrency{'' if n == 1 else n}" in config
+        f"{key}{'' if n == 1 else n}" in config
         for n in range(1, LLM_SLOT_COUNT + 1)
+        for key in ("llm_max_concurrency", "llm_service", "llm_url", "llm_api_key")
     )
     for key, value in config.items():
         if key in _current_config:
@@ -858,8 +854,8 @@ async def _count_gemini_original_tokens(
     started = time.time()
     try:
         if service == "vertex":
-            _init_vertex()
-            if not _vertex_initialized or _vertex_client is None:
+            client = _init_vertex()
+            if client is None:
                 raise RuntimeError("Vertex AI 초기화 실패")
             from google.genai import types
 
@@ -870,7 +866,7 @@ async def _count_gemini_original_tokens(
                 else None
             )
             actual_model = model.split("/")[0]
-            response = await _vertex_client.aio.models.count_tokens(
+            response = await client.aio.models.count_tokens(
                 model=actual_model,
                 contents=contents,
                 config=count_config,
@@ -1218,10 +1214,10 @@ class _GeminiBase64StreamDecoder:
         return _decode_gemini_base64_response(raw)
 
 
-def _llm_max_concurrency(slot: str | None = None) -> int:
+def _llm_max_concurrency(slot: str | None = None, *, config: dict | None = None) -> int:
     normalized = _normalize_llm_slot(slot or _llm_slot_ctx.get())
     key = f"llm_max_concurrency{_slot_suffix(normalized)}"
-    raw = _base_config_get(key, 1)
+    raw = _base_config_get(key, 1) if config is None else config.get(key, 1)
     try:
         if isinstance(raw, bool):
             raise TypeError("bool은 허용되지 않음")
@@ -1245,40 +1241,98 @@ def _llm_max_concurrency(slot: str | None = None) -> int:
     return value
 
 
-class _LlmRequestGate:
-    """실행 중 설정 변경도 안전하게 반영하는 슬롯별 동시성 게이트."""
+def _llm_provider_identity(slot: str, *, config: dict | None = None) -> str:
+    """동일 연결을 서비스 별칭이나 모델명과 무관하게 식별한다. 키는 공개하지 않는다."""
+    source = _current_config if config is None else config
+    suffix = _slot_suffix(slot)
 
-    def __init__(self, slot: str):
+    def connection_value(key, default=""):
+        return dict.get(source, f"{key}{suffix}") or dict.get(source, key) or default
+
+    service = connection_value("llm_service", "openai")
+    defaults = {
+        "openai": "https://api.openai.com",
+        "openrouter": "https://openrouter.ai/api",
+        "lmstudio": "http://localhost:1234",
+        "ollama": "http://localhost:11434",
+        "ollama-cloud": "https://ollama.com",
+    }
+    if service in PROVIDER_MANAGER_SERVICES:
+        default_url = PROVIDER_MANAGER_SERVICES[service]["endpoint"]
+    elif service in defaults:
+        default_url = defaults[service]
+    else:
+        # Native SDKs do not use llm_url as an OpenAI endpoint (Vertex uses a
+        # region, for example). Preserve their existing independent slot caps.
+        return f"slot:{_normalize_llm_slot(slot)}"
+    credential = connection_value("llm_api_key")
+    if not credential and service not in {"ollama", "lmstudio"}:
+        return f"slot:{_normalize_llm_slot(slot)}"
+    endpoint = _normalize_openai_compat_url(connection_value("llm_url", default_url))
+    parts = urlsplit(endpoint)
+    endpoint = urlunsplit((parts.scheme.lower(), parts.netloc.lower(), parts.path.rstrip("/"), parts.query, ""))
+    return "provider:" + hashlib.sha256(
+        json.dumps([endpoint, credential], ensure_ascii=False).encode("utf-8")
+    ).hexdigest()
+
+
+def _llm_provider_slots(slot: str, *, config: dict | None = None) -> list[str]:
+    source = _current_config if config is None else config
+    identity = _llm_provider_identity(slot, config=source)
+    return [candidate for candidate in LLM_SLOT_IDS
+            if (candidate == slot or dict.get(source, f"llm_service{_slot_suffix(candidate)}"))
+            and _llm_provider_identity(candidate, config=source) == identity]
+
+
+def _llm_provider_max_concurrency(slot: str, *, config: dict | None = None) -> int:
+    return min(_llm_max_concurrency(member, config=config)
+               for member in _llm_provider_slots(slot, config=config))
+
+
+class _LlmRequestGate:
+    """슬롯 한도와 동일 프로바이더·인증의 합계 한도를 원자적으로 확보한다."""
+
+    def __init__(self, slot: str, *, condition=None, provider_active=None):
         self.slot = _normalize_llm_slot(slot)
         self.active = 0
-        self.condition = asyncio.Condition()
+        self.condition = condition if condition is not None else asyncio.Condition()
+        self.provider_active = provider_active if provider_active is not None else {}
 
-    async def acquire(self) -> None:
+    def has_capacity_now(self) -> bool:
+        identity = _llm_provider_identity(self.slot)
+        return (self.active < _llm_max_concurrency(self.slot)
+                and self.provider_active.get(identity, 0) < _llm_provider_max_concurrency(self.slot))
+
+    def _reserve(self) -> str:
+        identity = _llm_provider_identity(self.slot)
+        self.active += 1
+        self.provider_active[identity] = self.provider_active.get(identity, 0) + 1
+        return identity
+
+    async def acquire(self) -> str:
         async with self.condition:
-            await self.condition.wait_for(
-                lambda: self.active < _llm_max_concurrency(self.slot)
-            )
-            self.active += 1
+            await self.condition.wait_for(self.has_capacity_now)
+            return self._reserve()
 
-    async def try_acquire(self) -> bool:
+    async def try_acquire(self) -> str | None:
         """대기하지 않고 슬롯 하나를 예약한다.
 
         수동 병렬 재시도는 "나중에 재시도"가 아니라 지금 원본과 경쟁해야 하므로,
         여유가 없으면 대기열에 넣지 않고 즉시 실패시킨다.
         """
         async with self.condition:
-            if self.active >= _llm_max_concurrency(self.slot):
-                return False
-            self.active += 1
-            return True
+            if not self.has_capacity_now():
+                return None
+            return self._reserve()
 
-    def has_capacity_now(self) -> bool:
-        """현재 이벤트 루프 시점의 즉시 실행 가능 여부를 반환한다."""
-        return self.active < _llm_max_concurrency(self.slot)
-
-    async def release(self) -> None:
+    async def release(self, identity: str) -> None:
         async with self.condition:
             self.active = max(0, self.active - 1)
+            remaining = self.provider_active.get(identity, 0) - 1
+            if remaining > 0:
+                self.provider_active[identity] = remaining
+            else:
+                self.provider_active.pop(identity, None)
             self.condition.notify_all()
 
     async def wake(self) -> None:
@@ -1295,7 +1349,12 @@ def _request_gate(slot: str) -> _LlmRequestGate:
     normalized = _normalize_llm_slot(slot)
     gate = gates.get(normalized)
     if gate is None:
-        gate = _LlmRequestGate(normalized)
+        existing = next(iter(gates.values()), None)
+        gate = _LlmRequestGate(
+            normalized,
+            condition=existing.condition if existing else None,
+            provider_active=existing.provider_active if existing else None,
+        )
         gates[normalized] = gate
     return gate
 
@@ -1351,12 +1410,12 @@ async def _fire_queue_gate_acquired() -> None:
 async def _limit_llm_request(slot: str | None = None):
     normalized = _normalize_llm_slot(slot or _llm_slot_ctx.get())
     gate = _request_gate(normalized)
-    await gate.acquire()
-    await _fire_queue_gate_acquired()
+    identity = await gate.acquire()
     try:
+        await _fire_queue_gate_acquired()
         yield
     finally:
-        await gate.release()
+        await gate.release(identity)
 
 
 # ─── URL / reasoning 헬퍼 ───────────────────────────────────
@@ -1598,13 +1657,6 @@ def _build_openai_body(
             body = _deep_merge_body(body, default_body, protected_keys=protected, source="provider default body")
         body = _merge_custom_body(body, custom_body, protected, "OpenAI custom body")
 
-    # JSON 모드(response_format) 적용 — 컨텍스트에 설정된 경우만.
-    # OpenAI 호환 계열은 json_object 를, 일부는 json_schema 도 지원하지만
-    # 호환성을 위해 json_object 만 사용한다.
-    _rf = _response_format_ctx.get()
-    if _rf:
-        body["response_format"] = _rf
-
     return body
 
 
@@ -1721,8 +1773,6 @@ def _build_gemini_request_body(messages: list, model: str) -> dict:
     }
     body["generationConfig"] = generation_config
 
-    if _response_format_ctx.get():
-        body.setdefault("generationConfig", {})["responseMimeType"] = "application/json"
     return body
 
 
@@ -1876,11 +1926,6 @@ VISION_SUPPORTED_SERVICES = {
 VISION_UNSUPPORTED_SERVICES = {
 }
 
-# JSON 모드(response_format) 전달용 컨텍스트 변수.
-# callLLM/callLLMVision 에서 json_mode=True 시 set 하고, _build_openai_body/_call_gemini
-# 가 get 하여 요청 body 에 반영한다. async 세이프하고 동시/중첩 호출에도 격리된다.
-_response_format_ctx: ContextVar = ContextVar("llm_response_format", default=None)
-
 # 실제 작업 호출의 스트림 이벤트에 task_key/호출 슬롯 정보를 싣기 위한 컨텍스트.
 # ContextVar 이므로 여러 LLM 큐 작업이 동시에 실행되어도 메타데이터가 섞이지 않는다.
 _stream_metadata_ctx: ContextVar = ContextVar("llm_stream_metadata", default=None)
@@ -1894,6 +1939,10 @@ _stream_observer_ctx: ContextVar = ContextVar("llm_stream_observer", default=Non
 # 끌어올리기 위한 싱크. usage는 _stream_call_to_text 의 로컬 record 에만 담기고
 # _stream_metadata_ctx 에는 채워지지 않으므로, 별도 싱크를 통해 done 분기에서 채워 돌려준다.
 _usage_sink_ctx: ContextVar = ContextVar("llm_usage_sink", default=None)
+LLM_STREAM_TIMING_FIELDS = (
+    "thinking_started_at", "thinking_ended_at",
+    "response_started_at", "response_ended_at",
+)
 
 
 def _normalize_actual_usage_count(value, *, provider: str, field: str) -> int | None:
@@ -1949,6 +1998,30 @@ def _extract_openai_usage(usage) -> tuple[int | None, int | None]:
         field="completion_tokens/output_tokens",
     )
     return prompt_tokens, completion_tokens
+
+
+def _extract_reasoning_tokens(usage) -> int | None:
+    """Keep an explicit zero separate from absent provider reasoning usage."""
+    details = _usage_field(usage, "completion_tokens_details", "output_tokens_details")
+    raw = _usage_field(details, "reasoning_tokens")
+    if raw is None:
+        raw = _usage_field(usage, "reasoning_tokens", "thoughts_token_count", "thoughtsTokenCount")
+    return _normalize_actual_usage_count(raw, provider="thinking-check", field="reasoning_tokens")
+
+
+def _capture_thinking_metadata(usage=None, reasoning: str = "") -> dict:
+    """Observe provider evidence without changing any request setting."""
+    fields = {}
+    tokens = _extract_reasoning_tokens(usage)
+    if tokens is not None:
+        fields["reasoning_tokens"] = tokens
+    if reasoning:
+        fields["reasoning_text"] = reasoning
+        fields["reasoning_chars"] = len(reasoning)
+    sink = _usage_sink_ctx.get()
+    if sink is not None:
+        sink.update(fields)
+    return fields
 
 
 def _extract_vertex_usage(usage_metadata) -> tuple[int | None, int | None]:
@@ -2449,7 +2522,7 @@ async def _call_vertex_openai(messages: list, model: str) -> str:
     """Vertex AI OpenAI 호환 엔드포인트. GCP 서비스 계정으로 OAuth 토큰 발급 필요."""
     key_path = _get_vertex_key_path()
     if not key_path:
-        return "[LLM 실패] vertex-openai: Vertex 키 파일 (key/*.json) 없음"
+        return f"[LLM 실패] vertex-openai: {_llm_slot_ctx.get()} Vertex 키 파일 없음"
 
     project = _vertex_project_id()
     location = _current_config.get("llm_url") or "us-central1"
@@ -2463,6 +2536,8 @@ async def _call_vertex_openai(messages: list, model: str) -> str:
     try:
         token = await _get_vertex_access_token(key_path)
     except Exception as e:
+        _llm_log(f"vertex-openai 토큰 발급 실패: slot={_llm_slot_ctx.get()}, path={key_path}, error={e}")
+        traceback.print_exc()
         return f"[LLM 실패] vertex-openai 토큰 발급 실패: {e}"
 
     return await _call_openai_compat(
@@ -2485,6 +2560,7 @@ def _vertex_project_id() -> str:
         return data.get("project_id", "")
     except Exception as e:
         _llm_log(f"Vertex project_id 추출 실패: {e}")
+        traceback.print_exc()
         return ""
 
 
@@ -2626,6 +2702,8 @@ async def _call_openai_compat(messages: list, model: str, endpoint: str,
                     completion_tokens,
                     provider="openai-compatible",
                 )
+                message = result.get("choices", [{}])[0].get("message", {})
+                _capture_thinking_metadata(result.get("usage"), message.get("reasoning") or message.get("reasoning_content") or "")
                 content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
                 _llm_log(f"openai-compat 성공: {len(content)}자")
                 return content
@@ -2711,6 +2789,7 @@ async def _call_gemini(messages: list, model: str) -> str:
                 candidates = data.get("candidates") or []
                 candidate = candidates[0] if candidates else {}
                 parts = candidate.get("content", {}).get("parts", [])
+                _capture_thinking_metadata(data.get("usageMetadata"), "".join(p.get("text", "") for p in parts if p.get("thought")))
                 content = "".join(p.get("text", "") for p in parts)
                 if not content:
                     finish_reason = candidate.get("finishReason") or "없음"
@@ -2774,6 +2853,7 @@ async def _call_claude(messages: list, model: str) -> str:
             if response.status_code == 200:
                 data = response.json()
                 content_blocks = data.get("content", [])
+                _capture_thinking_metadata(data.get("usage"), "".join(b.get("thinking", "") for b in content_blocks if b.get("type") == "thinking"))
                 content = "".join(b.get("text", "") for b in content_blocks if b.get("type") == "text")
                 _llm_log(f"claude 성공: {len(content)}자")
                 return content
@@ -2845,35 +2925,30 @@ async def _dispatch(messages: list, service: str, model: str) -> str:
         if use_base64
         else pdf_messages
     )
-    format_token = _response_format_ctx.set(None) if use_base64 else None
     if use_base64:
         _llm_log(
             "[LLM_GEMINI_BASE64] 요청·응답 Base64 적용: "
             f"slot={_normalize_llm_slot(_llm_slot_ctx.get())}, "
             f"messages={len(messages or [])}"
         )
-    try:
-        async with _limit_llm_request():
-            count_task = (
-                asyncio.create_task(
-                    _count_gemini_original_tokens(messages, service, model)
-                )
-                if pdf_metadata
-                else None
+    async with _limit_llm_request():
+        count_task = (
+            asyncio.create_task(
+                _count_gemini_original_tokens(messages, service, model)
             )
-            try:
-                result = await _dispatch_unlimited(request_messages, service, model)
-            finally:
-                if count_task is not None:
-                    pdf_tokens_before = await count_task
-                    _store_pdf_prompt_metrics(
-                        pdf_metadata,
-                        pdf_tokens_before,
-                    )
-        return _decode_gemini_base64_response(result) if use_base64 else result
-    finally:
-        if format_token is not None:
-            _response_format_ctx.reset(format_token)
+            if pdf_metadata
+            else None
+        )
+        try:
+            result = await _dispatch_unlimited(request_messages, service, model)
+        finally:
+            if count_task is not None:
+                pdf_tokens_before = await count_task
+                _store_pdf_prompt_metrics(
+                    pdf_metadata,
+                    pdf_tokens_before,
+                )
+    return _decode_gemini_base64_response(result) if use_base64 else result
 
 
 async def callLLM(messages: list, model: str = None, json_mode: bool = False) -> str:
@@ -2890,9 +2965,8 @@ async def callLLM(messages: list, model: str = None, json_mode: bool = False) ->
     Args:
         messages: [{"role": "system"/"user", "content": "..."}]
         model: 모델명 (None이면 설정에서 가져옴)
-        json_mode: True 면 OpenAI 호환/Gemini 요청에 response_format=json_object 를
-                   설정해 JSON 출력을 강제한다. 비지원 프로바이더는 프롬프트 기반 JSON
-                   지시에 의존한다(응답은 호출자가 파싱).
+        json_mode: 기존 호출자와의 호환성을 위한 JSON 응답 의도 표시.
+                   API 출력 형식을 강제하지 않으며, 프롬프트와 호출자의 파싱을 사용한다.
 
     Returns:
         LLM 응답 텍스트. 실패 시 "[LLM 실패] ..." 형식의 에러 문자열 반환
@@ -2900,15 +2974,12 @@ async def callLLM(messages: list, model: str = None, json_mode: bool = False) ->
     service = _current_config["llm_service"]
     use_model = model or _current_config["llm_model"]
     slot_token = _llm_slot_ctx.set("llm1")
-    token = _response_format_ctx.set({"type": "json_object"}) if json_mode else None
     try:
         if bool(_current_config.get("llm_stream", False)):
             return await _stream_call_to_text(messages, service, use_model, "llm1")
         return await _dispatch(messages, service, use_model)
     finally:
         _llm_slot_ctx.reset(slot_token)
-        if token is not None:
-            _response_format_ctx.reset(token)
 
 
 async def callLLMVision(messages: list, image_b64: str = None, image_mime: str = "image/webp",
@@ -2925,9 +2996,8 @@ async def callLLMVision(messages: list, image_b64: str = None, image_mime: str =
                    images 가 주어지면 무시된다.
         image_mime: 단일 이미지의 MIME 타입 (기본 image/webp)
         model: 모델명 (None이면 설정에서 가져옴)
-        json_mode: True 면 OpenAI 호환/Gemini 요청에 response_format=json_object 를
-                   설정해 JSON 출력을 강제한다. 비지원 프로바이더는 프롬프트 기반 JSON
-                   지시에 의존한다(응답은 호출자가 파싱).
+        json_mode: 기존 호출자와의 호환성을 위한 JSON 응답 의도 표시.
+                   API 출력 형식을 강제하지 않으며, 프롬프트와 호출자의 파싱을 사용한다.
         images: 다중 이미지. ``(b64, mime)`` 또는 ``(b64, mime, label)`` 항목을
                 주면 격자 합성 없이 각각 별도의 이미지 파트로 함께 전송한다.
                 label은 해당 이미지 바로 앞의 텍스트 파트로 배치된다.
@@ -2955,7 +3025,6 @@ async def callLLMVision(messages: list, image_b64: str = None, image_mime: str =
         return f"[LLM 실패] {e}"
 
     _llm_log(f"callLLMVision: service={service} model={use_model} mime={log_mime} img_b64_len={log_len} json_mode={json_mode}")
-    token = _response_format_ctx.set({"type": "json_object"}) if json_mode else None
     slot_token = _llm_slot_ctx.set("llm1")
     try:
         if bool(_current_config.get("llm_stream", False)):
@@ -2963,8 +3032,6 @@ async def callLLMVision(messages: list, image_b64: str = None, image_mime: str =
         return await _dispatch(new_messages, service, use_model)
     finally:
         _llm_slot_ctx.reset(slot_token)
-        if token is not None:
-            _response_format_ctx.reset(token)
 
 
 async def callLLMVisionStream(messages: list, image_b64: str = None, image_mime: str = "image/webp", model: str = None, log_history: bool = True, json_mode: bool = False, images: list = None):
@@ -3011,9 +3078,8 @@ async def callLLM2(messages: list, model: str = None, json_mode: bool = False) -
     Args:
         messages: [{"role": "system"/"user", "content": "..."}]
         model: 모델명 (None이면 설정의 llm_model2 사용)
-        json_mode: True 면 OpenAI 호환/Gemini 요청에 response_format=json_object 를
-                   설정해 JSON 출력을 강제한다. 비지원 프로바이더는 프롬프트 기반 JSON
-                   지시에 의존한다(응답은 호출자가 파싱).
+        json_mode: 기존 호출자와의 호환성을 위한 JSON 응답 의도 표시.
+                   API 출력 형식을 강제하지 않으며, 프롬프트와 호출자의 파싱을 사용한다.
 
     Returns:
         LLM 응답 텍스트. 실패 시 "[LLM 실패] ..." 형식의 에러 문자열 반환
@@ -3027,14 +3093,11 @@ async def callLLM2(messages: list, model: str = None, json_mode: bool = False) -
         _slot_config_overrides("llm2")
     )
     slot_token = _llm_slot_ctx.set("llm2")
-    token = _response_format_ctx.set({"type": "json_object"}) if json_mode else None
     try:
         if bool(_current_config.get("llm_stream2", False)):
             return await _stream_call_to_text(messages, service, use_model, "llm2")
         return await _dispatch(messages, service, use_model)
     finally:
-        if token is not None:
-            _response_format_ctx.reset(token)
         _llm_slot_ctx.reset(slot_token)
         _request_config_override_ctx.reset(config_token)
 
@@ -3055,7 +3118,6 @@ async def callLLM3(messages: list, model: str = None, json_mode: bool = False) -
         _slot_config_overrides("llm3")
     )
     slot_token = _llm_slot_ctx.set("llm3")
-    token = _response_format_ctx.set({"type": "json_object"}) if json_mode else None
     try:
         print(f"[LLM3] 호출 시작: service={service}, model={use_model}, messages={len(messages)}")
         if bool(_current_config.get("llm_stream3", False)):
@@ -3070,8 +3132,6 @@ async def callLLM3(messages: list, model: str = None, json_mode: bool = False) -
         traceback.print_exc()
         return f"[LLM 실패] LLM3 오류: {e}"
     finally:
-        if token is not None:
-            _response_format_ctx.reset(token)
         _llm_slot_ctx.reset(slot_token)
         _request_config_override_ctx.reset(config_token)
 
@@ -3080,7 +3140,7 @@ async def callLLM3Stream(messages: list, model: str = None, log_history: bool = 
                          json_mode: bool = False):
     """LLM3 실제 스트리밍 호출. delta/done/error 이벤트를 yield한다.
 
-    json_mode=True 면 _response_format_ctx 를 세팅해 response_format 전파(callLLMStream 참고).
+    json_mode는 기존 호출자와의 호환성을 위해 받으며 API 출력 형식을 강제하지 않는다.
     """
     service = _current_config.get("llm_service3") or _current_config["llm_service"]
     use_model = model or _current_config.get("llm_model3")
@@ -3101,7 +3161,6 @@ async def callLLM3Stream(messages: list, model: str = None, log_history: bool = 
         _slot_config_overrides("llm3")
     )
     slot_token = _llm_slot_ctx.set("llm3")
-    token = _response_format_ctx.set({"type": "json_object"}) if json_mode else None
     try:
         async for ev in _dispatch_stream(messages, service, use_model):
             if ev["type"] == "done":
@@ -3133,8 +3192,6 @@ async def callLLM3Stream(messages: list, model: str = None, log_history: bool = 
         traceback.print_exc()
         yield {"type": "error", "error": f"[LLM 실패] LLM3 스트리밍 오류: {e}"}
     finally:
-        if token is not None:
-            _response_format_ctx.reset(token)
         _llm_slot_ctx.reset(slot_token)
         _request_config_override_ctx.reset(config_token)
 
@@ -3155,7 +3212,7 @@ def _is_llm_failed(result) -> bool:
     return not bool(result)
 
 
-def _routing_for(task_key: str):
+def _routing_for(task_key: str, *, config: dict | None = None):
     """task_key 의 (primary, fallback_target) 반환. 미설정 시 (llm1, None).
     primary/fallback_target 은 LLM_SLOT_IDS(llm1..llm{N}) 중 하나.
     fallback_target 은 None 이면 폴백 없음.
@@ -3163,7 +3220,8 @@ def _routing_for(task_key: str):
     하위호환: fallback_target 이 지정되어 있지 않고 기존 fallback(bool)이 True 이면
     과거 하드코딩 매핑(llm1→llm2, llm2→llm1, llm3→llm1)을 적용한다.
     (슬롯 4 이상은 신규라 레거시 매핑이 없다 → fallback_target 명시 필요.)"""
-    entry = (_current_config.get("llm_routing") or {}).get(task_key, {}) or {}
+    source = _current_config if config is None else config
+    entry = (source.get("llm_routing") or {}).get(task_key, {}) or {}
     primary = entry.get("primary", "llm1")
     if primary not in LLM_SLOT_IDS:
         primary = "llm1"
@@ -3448,7 +3506,6 @@ async def _call_routed_text_slot(
 
     config_token = _request_config_override_ctx.set(_slot_config_overrides(slot))
     slot_token = _llm_slot_ctx.set(slot)
-    format_token = _response_format_ctx.set({"type": "json_object"}) if json_mode else None
     try:
         if bool(_base_config_get(f"llm_stream{suffix}", False)):
             return await _stream_call_to_text(messages, service, use_model, slot)
@@ -3458,8 +3515,6 @@ async def _call_routed_text_slot(
         traceback.print_exc()
         return f"[LLM 실패] LLM{suffix} 오류: {e}"
     finally:
-        if format_token is not None:
-            _response_format_ctx.reset(format_token)
         _llm_slot_ctx.reset(slot_token)
         _request_config_override_ctx.reset(config_token)
 
@@ -3555,11 +3610,8 @@ async def callLLMTaskResult(
     재시도한다. result_validator가 있으면 형식/내용 검증 실패도 같은 정책을 적용한다.
     """
     primary, fb_target = _routing_for(task_key)
-    # 라우팅 엔트리에 json_mode 가 명시되어 있으면 그 값 우선(edit_illustration_prompt 토글).
-    # 없으면 caller 가 넘긴 json_mode 사용(기존 동작 보존).
-    entry = (_current_config.get("llm_routing") or {}).get(task_key, {}) or {}
-    rj = entry.get("json_mode", None)
-    eff_json = (bool(rj) if rj is not None else json_mode)
+    # JSON 응답 의도는 호출자가 정한다. 저장된 레거시 강제 옵션은 사용하지 않는다.
+    eff_json = json_mode
     context = execution_context or create_llm_execution_context(
         task_key,
         json_mode=eff_json,
@@ -3786,7 +3838,6 @@ async def callLLMVision2(messages: list, image_b64: str = None, image_mime: str 
         _slot_config_overrides("llm2")
     )
     slot_token = _llm_slot_ctx.set("llm2")
-    token = _response_format_ctx.set({"type": "json_object"}) if json_mode else None
     try:
         try:
             new_messages, log_mime, log_len = _prepare_vision_messages(
@@ -3805,8 +3856,6 @@ async def callLLMVision2(messages: list, image_b64: str = None, image_mime: str 
             return await _stream_call_to_text(new_messages, service, use_model, "llm2")
         return await _dispatch(new_messages, service, use_model)
     finally:
-        if token is not None:
-            _response_format_ctx.reset(token)
         _llm_slot_ctx.reset(slot_token)
         _request_config_override_ctx.reset(config_token)
 
@@ -3834,7 +3883,6 @@ async def callLLMVision3(messages: list, image_b64: str = None, image_mime: str 
         _slot_config_overrides("llm3")
     )
     slot_token = _llm_slot_ctx.set("llm3")
-    token = _response_format_ctx.set({"type": "json_object"}) if json_mode else None
     try:
         try:
             new_messages, log_mime, log_len = _prepare_vision_messages(
@@ -3853,8 +3901,6 @@ async def callLLMVision3(messages: list, image_b64: str = None, image_mime: str 
             return await _stream_call_to_text(new_messages, service, use_model, "llm3")
         return await _dispatch(new_messages, service, use_model)
     finally:
-        if token is not None:
-            _response_format_ctx.reset(token)
         _llm_slot_ctx.reset(slot_token)
         _request_config_override_ctx.reset(config_token)
 
@@ -3913,11 +3959,8 @@ async def callLLMVisionTaskResult(
             traceback.print_exc()
             raise
     primary, fb_target = _routing_for(task_key)
-    # 라우팅 엔트리에 json_mode 가 명시되어 있으면 그 값 우선(edit_illustration_prompt 토글).
-    # 없으면 caller 가 넘긴 json_mode 사용(기존 동작 보존).
-    entry = (_current_config.get("llm_routing") or {}).get(task_key, {}) or {}
-    rj = entry.get("json_mode", None)
-    eff_json = (bool(rj) if rj is not None else json_mode)
+    # JSON 응답 의도는 호출자가 정한다. 저장된 레거시 강제 옵션은 사용하지 않는다.
+    eff_json = json_mode
     context = execution_context or create_llm_execution_context(
         task_key,
         json_mode=eff_json,
@@ -4250,6 +4293,8 @@ def request_stream_control(stream_id: str, action: str) -> tuple[bool, str]:
         if not coordinator.capacity_available_now(stream_id):
             gate = _request_gate(str(record.get("llm_slot") or "llm1"))
             limit = _llm_max_concurrency(str(record.get("llm_slot") or "llm1"))
+            provider_limit = _llm_provider_max_concurrency(gate.slot)
+            provider_active = gate.provider_active.get(_llm_provider_identity(gate.slot), 0)
             print(
                 f"[LLM_STREAM] 병렬 재시도 여유 슬롯 없음: "
                 f"stream_id={stream_id}, slot={record.get('llm_slot')}, "
@@ -4258,7 +4303,8 @@ def request_stream_control(stream_id: str, action: str) -> tuple[bool, str]:
             return (
                 False,
                 f"{str(record.get('llm_slot') or 'llm1').upper()} 동시 요청 "
-                f"여유 슬롯이 없습니다. (사용 중 {gate.active}/{limit})",
+                f"여유 슬롯이 없습니다. (슬롯 {gate.active}/{limit}, "
+                f"프로바이더 {provider_active}/{provider_limit})",
             )
     if normalized == "retry" and coordinator.parallel_started and not coordinator.resolved:
         print(
@@ -4312,6 +4358,7 @@ def _register_active_stream(
         "ttft": None,
         "started_at": now,
         "last_event_at": now,
+        **dict.fromkeys(LLM_STREAM_TIMING_FIELDS),
         "race_id": coordinator.race_id if race_role else "",
         "race_role": race_role,
         "race_status": "racing" if race_role else "",
@@ -4413,15 +4460,19 @@ def _stream_record_event_fields(record: dict) -> dict:
             record.get("parallel_retry_supported", False)
         ),
         "parallel_retry_available": parallel_retry_available,
+        **{key: record.get(key) for key in LLM_STREAM_TIMING_FIELDS},
     }
 
 
 def _apply_stream_outcome_usage(outcome: dict) -> None:
     """최종 채택된 시도의 usage만 상위 sink에 반영한다."""
+    snapshot = outcome.get("snapshot") or {}
+    timing = {key: snapshot.get(key) for key in LLM_STREAM_TIMING_FIELDS}
+    illustration_flow.llm_metadata(**timing)
     sink = _usage_sink_ctx.get()
     if sink is None:
         return
-    snapshot = outcome.get("snapshot") or {}
+    sink.update(timing)
     if outcome.get("kind") == "failure":
         sink["error"] = str(outcome.get("error") or "")
     else:
@@ -4437,6 +4488,9 @@ def _apply_stream_outcome_usage(outcome: dict) -> None:
         "max_output_tokens",
         "pdf_tokens_before",
         "pdf_pages_after",
+        "reasoning_tokens",
+        "reasoning_chars",
+        "reasoning_text",
     ):
         if snapshot.get(key) is not None:
             sink[key] = snapshot[key]
@@ -4498,7 +4552,7 @@ class _ManualParallelStreamRace:
         *,
         stream_id: str | None = None,
         race_role: str = "",
-        preacquired_gate: _LlmRequestGate | None = None,
+        preacquired_request: tuple[_LlmRequestGate, str] | None = None,
     ) -> str:
         stream_id = stream_id or uuid.uuid4().hex
         task = asyncio.create_task(
@@ -4506,7 +4560,7 @@ class _ManualParallelStreamRace:
                 self,
                 stream_id,
                 race_role=race_role,
-                preacquired_gate=preacquired_gate,
+                preacquired_request=preacquired_request,
             )
         )
         self.tasks[stream_id] = task
@@ -4571,11 +4625,14 @@ class _ManualParallelStreamRace:
             return False, message
 
         gate = _request_gate(self.llm_slot)
-        if not await gate.try_acquire():
+        identity = await gate.try_acquire()
+        if identity is None:
             limit = _llm_max_concurrency(self.llm_slot)
+            provider_limit = _llm_provider_max_concurrency(self.llm_slot)
+            provider_active = gate.provider_active.get(_llm_provider_identity(self.llm_slot), 0)
             message = (
                 f"{self.llm_slot.upper()} 동시 요청 여유 슬롯이 없습니다. "
-                f"(사용 중 {gate.active}/{limit})"
+                f"(슬롯 {gate.active}/{limit}, 프로바이더 {provider_active}/{provider_limit})"
             )
             print(
                 f"[LLM_STREAM] 병렬 재시도 즉시 슬롯 확보 실패: "
@@ -4583,9 +4640,8 @@ class _ManualParallelStreamRace:
             )
             return False, message
         # try_acquire 로 즉시 슬롯을 확보한 경우도 실제 게이트 점유이므로 큐에 알린다.
-        # 이 게이트는 preacquired_gate 로 _consume_stream_attempt 에 전달되어 그 안의
+        # 이 예약은 preacquired_request 로 _consume_stream_attempt 에 전달되어 그 안의
         # acquire 경로를 건너뛰므로 여기서 명시적으로 발화해야 한다.
-        await _fire_queue_gate_acquired()
 
         first_parallel = not self.parallel_started
         if first_parallel:
@@ -4601,13 +4657,14 @@ class _ManualParallelStreamRace:
         })
         self.snapshots[source_stream_id] = _public_stream_state(source_record)
         try:
+            await _fire_queue_gate_acquired()
             self.start_attempt(
                 stream_id=parallel_stream_id,
                 race_role="parallel",
-                preacquired_gate=gate,
+                preacquired_request=(gate, identity),
             )
         except Exception as e:
-            await gate.release()
+            await gate.release(identity)
             if first_parallel:
                 self.parallel_started = False
                 self.race_id = ""
@@ -4716,19 +4773,22 @@ async def _consume_stream_attempt(
     stream_id: str,
     *,
     race_role: str = "",
-    preacquired_gate: _LlmRequestGate | None = None,
+    preacquired_request: tuple[_LlmRequestGate, str] | None = None,
 ) -> dict:
     """provider 스트림 하나를 소비한다. 병렬 시작 제어는 연결을 끊지 않는다."""
     service = coordinator.service
     model = coordinator.model
     llm_slot = coordinator.llm_slot
     metadata = coordinator.metadata
-    gate = preacquired_gate or _request_gate(llm_slot)
-    if preacquired_gate is None:
-        await gate.acquire()
-        await _fire_queue_gate_acquired()
+    if preacquired_request is None:
+        gate = _request_gate(llm_slot)
+        identity = await gate.acquire()
+    else:
+        gate, identity = preacquired_request
     gate_token = _preacquired_stream_slot_ctx.set(llm_slot)
     try:
+        if preacquired_request is None:
+            await _fire_queue_gate_acquired()
         # 실제 슬롯 용량을 확보한 뒤에만 활성 스트림으로 공개한다. 게이트에서
         # 기다리는 큐 작업은 아직 provider 연결이 아니므로 active 목록에 포함하지 않는다.
         record = _register_active_stream(
@@ -4741,6 +4801,8 @@ async def _consume_stream_attempt(
             race_role=race_role,
         )
         coordinator.snapshots[stream_id] = _public_stream_state(record)
+        if coordinator.active_attempt_ids()[:1] == [stream_id]:
+            illustration_flow.llm_metadata(**dict.fromkeys(LLM_STREAM_TIMING_FIELDS))
         await _emit_request_stream_observer({
             **metadata,
             "type": "stream_open",
@@ -4759,7 +4821,7 @@ async def _consume_stream_attempt(
         ).__aiter__()
     except BaseException:
         _preacquired_stream_slot_ctx.reset(gate_token)
-        await gate.release()
+        await gate.release(identity)
         raise
     partial_parts: list[str] = []
     reasoning_parts: list[str] = []
@@ -4847,20 +4909,32 @@ async def _consume_stream_attempt(
                 if event_type == "start":
                     record["status"] = "시작"
                 elif event_type == "delta":
+                    received_at = time.time()
                     delta_text = str(event.get("text", "") or "")
                     reasoning_text = str(event.get("reasoning", "") or "")
                     if delta_text:
                         partial_parts.append(delta_text)
+                        if record["response_started_at"] is None:
+                            record["response_started_at"] = received_at
+                        record["response_ended_at"] = received_at
                     if reasoning_text:
                         reasoning_parts.append(reasoning_text)
+                        if record["thinking_started_at"] is None:
+                            record["thinking_started_at"] = received_at
+                        record["thinking_ended_at"] = received_at
                     record["text"] = "".join(partial_parts)
                     if reasoning_parts:
                         record["reasoning_text"] = "".join(reasoning_parts)
+                        record["reasoning_chars"] = len(record["reasoning_text"])
                     # content 아직 없고 thinking만 흐르는 구간. reasoning 델타도
                     # last_event_at을 갱신해 idle 타임아웃이 정상 요청을 죽이지 않게 한다.
                     record["status"] = (
                         "스트리밍" if partial_parts else "생각 중"
                     )
+                    if coordinator.active_attempt_ids()[:1] == [stream_id]:
+                        illustration_flow.llm_metadata(**{
+                            key: record[key] for key in LLM_STREAM_TIMING_FIELDS
+                        })
                 elif event_type == "done":
                     done_seen = True
                     final_text = str(event.get("text", "") or "")
@@ -4888,6 +4962,8 @@ async def _consume_stream_attempt(
                     ("max_output_tokens", "max_output_tokens"),
                     ("pdf_tokens_before", "pdf_tokens_before"),
                     ("pdf_pages_after", "pdf_pages_after"),
+                    ("reasoning_tokens", "reasoning_tokens"),
+                    ("reasoning_chars", "reasoning_chars"),
                 ):
                     if event.get(source_key) is not None:
                         record[target_key] = event[source_key]
@@ -5083,7 +5159,7 @@ async def _consume_stream_attempt(
         await _close_stream_iterator(iterator)
         _active_streams.pop(stream_id, None)
         _preacquired_stream_slot_ctx.reset(gate_token)
-        await gate.release()
+        await gate.release(identity)
 
     snapshot = dict(coordinator.snapshots.get(stream_id) or {})
     if done_seen and final_text:
@@ -5324,11 +5400,6 @@ async def callLLMTrackedStream(
             _slot_config_overrides(normalized_slot)
         )
     slot_token = _llm_slot_ctx.set(normalized_slot)
-    format_token = (
-        _response_format_ctx.set({"type": "json_object"})
-        if json_mode
-        else None
-    )
     metadata_token = _stream_metadata_ctx.set(metadata)
     observer_token = _stream_observer_ctx.set(stream_observer)
     sink_token = (
@@ -5398,8 +5469,6 @@ async def callLLMTrackedStream(
             _usage_sink_ctx.reset(sink_token)
         _stream_observer_ctx.reset(observer_token)
         _stream_metadata_ctx.reset(metadata_token)
-        if format_token is not None:
-            _response_format_ctx.reset(format_token)
         _llm_slot_ctx.reset(slot_token)
         if config_token is not None:
             _request_config_override_ctx.reset(config_token)
@@ -5500,6 +5569,7 @@ async def _stream_openai_compat(messages: list, model: str, url: str,
     reasoning_parts: list[str] = []
     completion_tokens = None
     prompt_tokens = None
+    reasoning_tokens = None
 
     _llm_log(f"{service} stream 요청: url={norm_url} model={model} family={reasoning_family}")
     yield {"type": "start", "service": service, "model": model}
@@ -5547,6 +5617,9 @@ async def _stream_openai_compat(messages: list, model: str, url: str,
                         continue
 
                     pt, ct = _extract_openai_usage(chunk.get("usage"))
+                    rt = _extract_reasoning_tokens(chunk.get("usage"))
+                    if rt is not None:
+                        reasoning_tokens = rt
                     if ct is not None:
                         completion_tokens = ct
                     if pt is not None:
@@ -5615,6 +5688,7 @@ async def _stream_openai_compat(messages: list, model: str, url: str,
             "tps": tps,
             "ttft": ttft,
             "reasoning_chars": len(reasoning_full),
+            **({"reasoning_tokens": reasoning_tokens} if reasoning_tokens is not None else {}),
         }
     except httpx.TimeoutException:
         _llm_log(f"{service} stream 타임아웃")
@@ -5645,6 +5719,8 @@ async def _stream_copilot(messages: list, model: str):
     accumulated = []
     completion_tokens = None
     prompt_tokens = None
+    reasoning_tokens = None
+    reasoning_parts = []
 
     reasoning_family = _detect_reasoning_family(
         model,
@@ -5675,7 +5751,17 @@ async def _stream_copilot(messages: list, model: str):
                     _llm_log(f"copilot stream 실패: {response.status_code} - {err_text}")
                     yield {"type": "error", "error": f"copilot HTTP {response.status_code}: {err_text}"}
                     return
-                async for raw_line in response.aiter_lines():
+                line_iterator = response.aiter_lines().__aiter__()
+                finish_reason_seen = False
+                while True:
+                    try:
+                        raw_line = await asyncio.wait_for(anext(line_iterator),
+                            timeout=_OPENAI_POST_FINISH_USAGE_GRACE_SECONDS) if finish_reason_seen else await anext(line_iterator)
+                    except StopAsyncIteration:
+                        break
+                    except asyncio.TimeoutError:
+                        _llm_log("copilot stream post-finish usage wait expired")
+                        break
                     line = (raw_line or "").strip()
                     if not line.startswith("data:"):
                         continue
@@ -5686,18 +5772,23 @@ async def _stream_copilot(messages: list, model: str):
                         chunk = json.loads(data_str)
                     except json.JSONDecodeError:
                         continue
-                    if isinstance(chunk.get("usage"), dict):
-                        ct = chunk["usage"].get("completion_tokens")
-                        if ct:
-                            completion_tokens = ct
-                        pt = chunk["usage"].get("prompt_tokens")
-                        if pt:
-                            prompt_tokens = pt
+                    pt, ct = _extract_openai_usage(chunk.get("usage"))
+                    if ct is not None:
+                        completion_tokens = ct
+                    if pt is not None:
+                        prompt_tokens = pt
+                    rt = _extract_reasoning_tokens(chunk.get("usage"))
+                    if rt is not None:
+                        reasoning_tokens = rt
                     choices = chunk.get("choices") or []
                     if choices:
                         choice = choices[0]
                         delta = choice.get("delta", {}) or {}
                         text = delta.get("content") or ""
+                        reasoning = delta.get("reasoning") or delta.get("reasoning_content") or ""
+                        if reasoning:
+                            reasoning_parts.append(reasoning)
+                            yield {"type": "delta", "reasoning": reasoning, "elapsed": time.time() - t0}
                         if text:
                             if ttft is None:
                                 ttft = time.time() - t0
@@ -5705,11 +5796,13 @@ async def _stream_copilot(messages: list, model: str):
                             yield {"type": "delta", "text": text, "elapsed": time.time() - t0, "ttft": ttft}
                         finish_reason = choice.get("finish_reason")
                         if finish_reason is not None:
+                            finish_reason_seen = True
                             _llm_log(
-                                f"copilot stream finish_reason 종료: "
+                                f"copilot stream finish_reason 수신: "
                                 f"reason={finish_reason}, chars={len(''.join(accumulated))}"
                             )
-                            break
+                    if finish_reason_seen and prompt_tokens is not None and completion_tokens is not None:
+                        break
 
         full = "".join(accumulated)
         elapsed = time.time() - t0
@@ -5727,6 +5820,8 @@ async def _stream_copilot(messages: list, model: str):
             "elapsed": elapsed,
             "tps": tps,
             "ttft": ttft,
+            "reasoning_chars": len("".join(reasoning_parts)),
+            **({"reasoning_tokens": reasoning_tokens} if reasoning_tokens is not None else {}),
         }
     except httpx.TimeoutException:
         _llm_log("copilot stream 타임아웃")
@@ -5756,6 +5851,8 @@ async def _stream_gemini(messages: list, model: str):
     accumulated = []
     completion_tokens = None
     prompt_tokens = None
+    reasoning_tokens = None
+    reasoning_parts = []
 
     _llm_log(f"gemini stream 요청: model={model}")
     yield {"type": "start", "service": "gemini", "model": model}
@@ -5783,6 +5880,9 @@ async def _stream_gemini(messages: list, model: str):
                         continue
                     # usage (마지막 chunk 에 있음)
                     md = chunk.get("usageMetadata") or {}
+                    rt = _extract_reasoning_tokens(md)
+                    if rt is not None:
+                        reasoning_tokens = rt
                     if md.get("candidatesTokenCount"):
                         completion_tokens = md["candidatesTokenCount"]
                     if md.get("promptTokenCount"):
@@ -5791,7 +5891,11 @@ async def _stream_gemini(messages: list, model: str):
                     if candidates:
                         candidate = candidates[0]
                         parts = candidate.get("content", {}).get("parts", []) or []
-                        text = "".join(p.get("text", "") for p in parts if isinstance(p, dict))
+                        reasoning = "".join(p.get("text", "") for p in parts if isinstance(p, dict) and p.get("thought"))
+                        text = "".join(p.get("text", "") for p in parts if isinstance(p, dict) and not p.get("thought"))
+                        if reasoning:
+                            reasoning_parts.append(reasoning)
+                            yield {"type": "delta", "reasoning": reasoning, "elapsed": time.time() - t0}
                         if text:
                             if ttft is None:
                                 ttft = time.time() - t0
@@ -5821,6 +5925,8 @@ async def _stream_gemini(messages: list, model: str):
             "elapsed": elapsed,
             "tps": tps,
             "ttft": ttft,
+            "reasoning_chars": len("".join(reasoning_parts)),
+            **({"reasoning_tokens": reasoning_tokens} if reasoning_tokens is not None else {}),
         }
     except httpx.TimeoutException:
         _llm_log("gemini stream 타임아웃")
@@ -5859,6 +5965,7 @@ async def _stream_claude(messages: list, model: str):
     accumulated = []
     completion_tokens = None
     prompt_tokens = None
+    reasoning_parts = []
 
     _llm_log(f"claude stream 요청: model={model}")
     yield {"type": "start", "service": "claude", "model": model}
@@ -5892,6 +5999,10 @@ async def _stream_claude(messages: list, model: str):
 
                     if cur_event == "content_block_delta":
                         delta = chunk.get("delta", {}) or {}
+                        reasoning = delta.get("thinking") or ""
+                        if reasoning:
+                            reasoning_parts.append(reasoning)
+                            yield {"type": "delta", "reasoning": reasoning, "elapsed": time.time() - t0}
                         text = delta.get("text") or ""
                         if text:
                             if ttft is None:
@@ -5931,6 +6042,7 @@ async def _stream_claude(messages: list, model: str):
             "elapsed": elapsed,
             "tps": tps,
             "ttft": ttft,
+            "reasoning_chars": len("".join(reasoning_parts)),
         }
     except httpx.TimeoutException:
         _llm_log("claude stream 타임아웃")
@@ -5944,8 +6056,8 @@ async def _stream_claude(messages: list, model: str):
 
 async def _stream_vertex_sdk(messages: list, model: str):
     """Vertex AI (google-genai SDK, generate_content_stream). 동기 iterator 를 executor 로 감쌈."""
-    _init_vertex()
-    if not _vertex_initialized or _vertex_client is None:
+    client = _init_vertex()
+    if client is None:
         yield {"type": "error", "error": "Vertex AI 초기화 실패"}
         return
 
@@ -5958,6 +6070,7 @@ async def _stream_vertex_sdk(messages: list, model: str):
     accumulated = []
     completion_tokens = None
     prompt_tokens = None
+    reasoning_tokens = None
     finish_reason = ""
     finish_message = ""
     max_output_tokens = _configured_max_output_tokens()
@@ -5974,10 +6087,13 @@ async def _stream_vertex_sdk(messages: list, model: str):
 
     def _consume_into_queue(q):
         try:
-            stream = _vertex_client.models.generate_content_stream(
+            stream = client.models.generate_content_stream(
                 model=actual_model, contents=parts, config=config
             )
             for event in stream:
+                rt = _extract_reasoning_tokens(getattr(event, "usage_metadata", None))
+                if rt is not None:
+                    loop.call_soon_threadsafe(q.put_nowait, ("reasoning_usage", rt))
                 usage = _extract_vertex_usage(
                     getattr(event, "usage_metadata", None)
                 )
@@ -6020,6 +6136,9 @@ async def _stream_vertex_sdk(messages: list, model: str):
                 if actual_completion_tokens is not None:
                     completion_tokens = actual_completion_tokens
                 continue
+            if kind == "reasoning_usage":
+                reasoning_tokens = payload
+                continue
             if kind == "finish":
                 finish_reason, finish_message = payload
                 continue
@@ -6053,6 +6172,7 @@ async def _stream_vertex_sdk(messages: list, model: str):
             "finish_reason": finish_reason,
             "finish_message": finish_message,
             "max_output_tokens": max_output_tokens,
+            **({"reasoning_tokens": reasoning_tokens} if reasoning_tokens is not None else {}),
         }
     except asyncio.TimeoutError:
         idle_timeout = _stream_idle_timeout_seconds()
@@ -6075,7 +6195,7 @@ async def _stream_vertex_openai(messages: list, model: str):
     """Vertex AI OpenAI 호환 엔드포인트 스트리밍."""
     key_path = _get_vertex_key_path()
     if not key_path:
-        yield {"type": "error", "error": "vertex-openai: Vertex 키 파일 (key/*.json) 없음"}
+        yield {"type": "error", "error": f"vertex-openai: {_llm_slot_ctx.get()} Vertex 키 파일 없음"}
         return
     project = _vertex_project_id()
     location = _current_config.get("llm_url") or "us-central1"
@@ -6086,6 +6206,8 @@ async def _stream_vertex_openai(messages: list, model: str):
     try:
         token = await _get_vertex_access_token(key_path)
     except Exception as e:
+        _llm_log(f"vertex-openai stream 토큰 발급 실패: slot={_llm_slot_ctx.get()}, path={key_path}, error={e}")
+        traceback.print_exc()
         yield {"type": "error", "error": f"vertex-openai 토큰 발급 실패: {e}"}
         return
     async for ev in _stream_openai_compat(
@@ -6245,18 +6367,10 @@ async def _dispatch_stream(messages: list, service: str, model: str):
         ).__aiter__()
         try:
             while True:
-                # Base64 응답은 JSON MIME/response_format과 양립하지 않으므로 provider
-                # anext 호출 범위에서만 해제한다. ContextVar token을 yield 너머로
-                # 들고 가지 않아 다른 async context에서 aclose해도 안전하다.
-                format_token = _response_format_ctx.set(None) if use_base64 else None
                 try:
-                    try:
-                        event = await anext(upstream)
-                    except StopAsyncIteration:
-                        break
-                finally:
-                    if format_token is not None:
-                        _response_format_ctx.reset(format_token)
+                    event = await anext(upstream)
+                except StopAsyncIteration:
+                    break
 
                 transformed = dict(event)
                 event_type = transformed.get("type")
@@ -6300,10 +6414,8 @@ async def callLLMStream(messages: list, model: str = None, log_history: bool = T
     log_history=True (기본) 면 done/error 시 logs/llm_history.jsonl 에 기록.
     LLM 테스트 패널처럼 일회성 테스트 용도면 False 로 끔.
 
-    json_mode=True 면 OpenAI 호환/Gemini 요청에 response_format/json responseMimeType 를
-    설정해 JSON 출력을 강제한다. Claude native/Vertex 등 비지원 프로바이더는 조용히
-    무시된다(callLLM 과 동일). 스트리밍 경로의 body 빌드가 _response_format_ctx 를
-    읽으므로, 진입 함수에서 컨텍스트를 세팅하기만 하면 _dispatch_stream 시그니처 변경 없이 전파.
+    json_mode는 기존 호출자와의 호환성을 위해 받으며 API 출력 형식을 강제하지 않는다.
+    필요한 응답 형식은 프롬프트로 요청하고 호출자가 파싱한다.
     """
     service = _current_config["llm_service"]
     use_model = model or _current_config["llm_model"]
@@ -6317,7 +6429,6 @@ async def callLLMStream(messages: list, model: str = None, log_history: bool = T
     error_msg = ""
 
     slot_token = _llm_slot_ctx.set("llm1")
-    token = _response_format_ctx.set({"type": "json_object"}) if json_mode else None
     try:
         async for ev in _dispatch_stream(messages, service, use_model):
             if ev["type"] == "done":
@@ -6339,8 +6450,6 @@ async def callLLMStream(messages: list, model: str = None, log_history: bool = T
                 error=error_msg, prompt_tokens=final_prompt_tokens,
             )
     finally:
-        if token is not None:
-            _response_format_ctx.reset(token)
         _llm_slot_ctx.reset(slot_token)
 
 
@@ -6351,7 +6460,7 @@ async def callLLM2Stream(messages: list, model: str = None, log_history: bool = 
     LLM2 요청별 설정 오버레이와 callLLMStream의 스트리밍 디스패치를 합성한다.
     llm_service2 가 비어 있으면 LLM1 서비스/엔드포인트를 재사용(callLLM2 와 동일).
 
-    json_mode=True 면 _response_format_ctx 를 세팅해 response_format 전파(callLLMStream 참고).
+    json_mode는 기존 호출자와의 호환성을 위해 받으며 API 출력 형식을 강제하지 않는다.
     """
     service = _current_config.get("llm_service2") or _current_config["llm_service"]
     use_model = model or _current_config.get("llm_model2")
@@ -6371,7 +6480,6 @@ async def callLLM2Stream(messages: list, model: str = None, log_history: bool = 
         _slot_config_overrides("llm2")
     )
     slot_token = _llm_slot_ctx.set("llm2")
-    token = _response_format_ctx.set({"type": "json_object"}) if json_mode else None
     try:
         async for ev in _dispatch_stream(messages, service, use_model):
             if ev["type"] == "done":
@@ -6393,8 +6501,6 @@ async def callLLM2Stream(messages: list, model: str = None, log_history: bool = 
                 error=error_msg, prompt_tokens=final_prompt_tokens,
             )
     finally:
-        if token is not None:
-            _response_format_ctx.reset(token)
         _llm_slot_ctx.reset(slot_token)
         _request_config_override_ctx.reset(config_token)
 
@@ -6520,14 +6626,11 @@ async def _call_llm_slot_text(slot, messages, model=None, json_mode=False):
         return error
     config_token = _request_config_override_ctx.set(_slot_config_overrides(slot))
     slot_token = _llm_slot_ctx.set(slot)
-    token = _response_format_ctx.set({"type": "json_object"}) if json_mode else None
     try:
         if bool(_base_config_get(f"llm_stream{suffix}", False)):
             return await _stream_call_to_text(messages, service, use_model, slot)
         return await _dispatch(messages, service, use_model)
     finally:
-        if token is not None:
-            _response_format_ctx.reset(token)
         _llm_slot_ctx.reset(slot_token)
         _request_config_override_ctx.reset(config_token)
 
@@ -6558,7 +6661,6 @@ async def _call_llm_slot_text_stream(slot, messages, model=None, log_history=Tru
 
     config_token = _request_config_override_ctx.set(_slot_config_overrides(slot))
     slot_token = _llm_slot_ctx.set(slot)
-    token = _response_format_ctx.set({"type": "json_object"}) if json_mode else None
     try:
         async for ev in _dispatch_stream(messages, service, use_model):
             if ev["type"] == "done":
@@ -6580,8 +6682,6 @@ async def _call_llm_slot_text_stream(slot, messages, model=None, log_history=Tru
                 error=error_msg, prompt_tokens=final_prompt_tokens,
             )
     finally:
-        if token is not None:
-            _response_format_ctx.reset(token)
         _llm_slot_ctx.reset(slot_token)
         _request_config_override_ctx.reset(config_token)
 
@@ -6616,7 +6716,6 @@ async def _call_llm_slot_vision(slot, messages, image_b64=None, image_mime="imag
     # llm_vision_compress{N} 값을 읽도록, 정규화 이전에 슬롯 오버라이드를 건다.
     config_token = _request_config_override_ctx.set(_slot_config_overrides(slot))
     slot_token = _llm_slot_ctx.set(slot)
-    token = _response_format_ctx.set({"type": "json_object"}) if json_mode else None
     try:
         try:
             new_messages, log_mime, log_len = _prepare_vision_messages(
@@ -6635,8 +6734,6 @@ async def _call_llm_slot_vision(slot, messages, image_b64=None, image_mime="imag
             return await _stream_call_to_text(new_messages, service, use_model, slot)
         return await _dispatch(new_messages, service, use_model)
     finally:
-        if token is not None:
-            _response_format_ctx.reset(token)
         _llm_slot_ctx.reset(slot_token)
         _request_config_override_ctx.reset(config_token)
 

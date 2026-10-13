@@ -442,7 +442,7 @@ def test_server_registers_one_dedicated_danbooru_llm_route() -> None:
     route = server.DEFAULT_CONFIG["llm_routing"]["danbooru_tag_search"]
 
     assert route["primary"] == "llm1"
-    assert route["json_mode"] is True
+    assert "json_mode" not in route
     assert route["max_retries"] == 1
     assert "danbooru_tag_search_plan" not in server.DEFAULT_CONFIG["llm_routing"]
     assert "danbooru_tag_search_answer" not in server.DEFAULT_CONFIG["llm_routing"]

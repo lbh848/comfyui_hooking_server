@@ -2,6 +2,7 @@
 (() => {
     let flow = null, flowBackdrop, modal, detailModal, developerModal, stopButton, developerButton;
     let selected = null, detailRequest = 0, developerPreviousFocus = null;
+    let detailRefreshRequest = 0, detailRefreshPending = false, renderedDetail = null;
     let qualityInspectionEnabled = false, qualityInspectionRequest = 0;
     let scale = 1, previousFocus = null;
     let activeTab = 'illustration';
@@ -42,7 +43,12 @@
         return el;
     };
     const stringify = value => typeof value === 'string' ? value : JSON.stringify(value ?? '', null, 2);
+    const updateText = (el, text) => {if (el.textContent !== text) el.textContent = text;};
     const hasDetailValue = value => value !== null && value !== undefined && (typeof value !== 'string' || value.trim() !== '');
+    const maskResults = new Map();
+    const previewImages = new Map();
+    const maskOverlayNodes = new Set();
+    let maskResultsRun = '';
     function detailOutput(n) {
         if (hasDetailValue(n.output)) return n.output;
         const attempts = Array.isArray(n.attempts) ? n.attempts : [];
@@ -59,6 +65,32 @@
         return Object.keys(fallback).length ? fallback : '';
     }
     const elapsed = n => n.started_at ? `${Math.max(0, (n.ended_at || Date.now() / 1000) - n.started_at).toFixed(1)}초` : n.ended_at ? '처리 종료' : '실행 대기';
+    const phaseSeconds = (n, phase) => {
+        const start = n[`${phase}_started_at`], end = n[`${phase}_ended_at`];
+        return Number.isFinite(start) && Number.isFinite(end) ? Math.max(0, end - start) : 0;
+    };
+    function llmTiming(n) {
+        if (nodeExecutor(n) !== 'llm') return '';
+        const response = Number.isFinite(n.response_started_at)
+            ? `${phaseSeconds(n, 'response').toFixed(1)}s`
+            : ['completed', 'failed', 'cancelled'].includes(n.status) ? '일괄' : '대기';
+        return `THINK ${phaseSeconds(n, 'thinking').toFixed(1)}s · 응답 ${response}`;
+    }
+    const tokenTime = value => Number.isFinite(value)
+        ? new Date(value * 1000).toLocaleTimeString('ko-KR', {
+            hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit', fractionalSecondDigits: 3,
+        }) : '수신 없음';
+    function timingDetails(n) {
+        if (nodeExecutor(n) !== 'llm') return {};
+        return {
+            'THINK 시간': `${phaseSeconds(n, 'thinking').toFixed(1)}s`,
+            '응답 작성 시간': Number.isFinite(n.response_started_at) ? `${phaseSeconds(n, 'response').toFixed(1)}s` : '토큰별 수신 기록 없음',
+            '추론 첫 수신': tokenTime(n.thinking_started_at),
+            '추론 마지막 수신': tokenTime(n.thinking_ended_at),
+            '본문 첫 수신': tokenTime(n.response_started_at),
+            '본문 마지막 수신': tokenTime(n.response_ended_at),
+        };
+    }
     function button(text, action) {
         const b = element('button', 'if-button', text); b.type = 'button'; b.onclick = action; return b;
     }
@@ -72,6 +104,8 @@
             .if-modal{position:fixed;inset:0;z-index:470;margin:auto;box-sizing:border-box;overflow:hidden;color:var(--text,#e2e8f0);background:var(--bg2,#111827);border:1px solid #64748b66;border-radius:16px;padding:0;width:min(1240px,94vw);max-width:96vw;max-height:calc(100dvh - 32px);box-shadow:0 24px 90px #0009;font:14px/1.5 system-ui,sans-serif}
             .if-modal[open]{display:flex;flex-direction:column}.if-header,.if-tabs,.if-auto-open-settings,.if-legend,.if-footer{flex-shrink:0}
             .if-detail{z-index:480}
+            .if-call1-open{border:0;background:transparent;color:inherit;text-align:left;cursor:pointer;padding:0;width:100%;font:inherit}.if-call1-open:focus-visible{outline:2px solid #60a5fa;outline-offset:3px}
+            .if-state-table-wrap{overflow:auto;max-height:55vh;border:1px solid #64748b55;border-radius:10px;margin:12px 0}.if-state-table{border-collapse:separate;border-spacing:0;width:max-content;min-width:100%;font-size:12px}.if-state-table th,.if-state-table td{border-right:1px solid #64748b44;border-bottom:1px solid #64748b44;padding:10px;vertical-align:top}.if-state-table thead th{position:sticky;top:0;background:var(--bg2,#111827);z-index:2}.if-state-table tbody th{position:sticky;left:0;background:var(--bg2,#111827);z-index:1;min-width:90px}.if-state-table td{min-width:190px;max-width:260px;overflow-wrap:anywhere}.if-state-tags+.if-state-tags{margin-top:8px}.if-state-direct{color:#93c5fd}.if-state-inherited{color:var(--text2,#94a3b8)}.if-state-tag-label{font-weight:700;font-size:11px;margin-bottom:3px}
             .if-developer{z-index:490;width:min(620px,94vw)}
             .if-header{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:18px 22px;border-bottom:1px solid #64748b44}
             .if-header h2{font-size:19px;margin:0}.if-title-row{display:flex;align-items:center;gap:9px;flex-wrap:wrap}.if-subtitle{font-size:12px;color:var(--text2,#94a3b8);margin-top:4px;overflow-wrap:anywhere}
@@ -82,9 +116,13 @@
             .if-legend{padding:10px 22px;gap:18px;font-size:12px;border-bottom:1px solid #64748b33}.if-legend-group{gap:12px}.if-legend-label{color:var(--text2,#94a3b8);font-weight:650}.if-legend-status .if-legend-item::before{content:'●';color:var(--state);margin-right:5px}.if-legend-executor .if-legend-item::before{content:'';display:inline-block;width:13px;height:13px;border-radius:4px;background:color-mix(in srgb,var(--bg2,#172033) 68%,var(--node-tint) 32%);border:1px solid var(--node-tint);margin-right:6px;vertical-align:-2px}
             .if-viewport{height:min(65vh,660px);min-height:0;flex-shrink:1;overflow:auto;background-color:var(--bg,#0b1220);background-image:radial-gradient(#94a3b822 1px,transparent 1px);background-size:20px 20px;padding:0;position:relative}
             .if-space{position:relative}.if-canvas{position:relative;transform-origin:0 0}.if-edges{position:absolute;inset:0;overflow:visible;pointer-events:none}
+            .if-direction{position:absolute;left:36px;top:12px;color:var(--text2,#94a3b8);font-size:12px}.if-step-column{position:absolute;top:44px;box-sizing:border-box;width:246px;border:1px solid #64748b33;border-radius:10px;background:#64748b06;pointer-events:none}.if-step-title{padding:8px 12px;border-bottom:1px solid #64748b33;color:var(--text2,#94a3b8);font-size:12px;font-weight:750}
             .if-node{position:absolute;box-sizing:border-box;width:222px;height:98px;border:1px solid #64748b77;border-left:4px solid var(--state);border-radius:11px;background:color-mix(in srgb,var(--bg2,#172033) 68%,var(--node-tint,#94a3b8) 32%);padding:12px 22px 10px 13px;box-shadow:0 4px 15px #0002}
             .if-node[data-status=processing]{box-shadow:0 0 0 2px #60a5fa33,0 0 22px #60a5fa22}.if-node-title{font-weight:650;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.if-node-state{color:var(--state);font-size:12px;margin-top:6px}.if-node-model{font-size:11px;color:var(--text2,#94a3b8);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
             .if-port{position:absolute;right:-9px;top:39px;width:18px;height:18px;border-radius:50%;border:3px solid color-mix(in srgb,var(--bg2,#172033) 68%,var(--node-tint,#94a3b8) 32%);background:var(--state);cursor:pointer;padding:0;box-shadow:0 0 0 1px var(--state)}
+            .if-node-timing{font-size:10px;line-height:1.3;color:var(--text2,#cbd5e1);white-space:nowrap;margin-top:2px}
+            .if-node-preview{position:absolute;top:98px;left:13px;right:13px;bottom:12px;overflow:auto;border-top:1px solid #64748b55;padding-top:8px;font-size:11px;overflow-wrap:anywhere}.if-preview-title{font-weight:700;margin-bottom:5px}.if-preview-empty{padding:38px 5px;text-align:center;color:var(--text2,#94a3b8)}.if-mask-preview{display:block;width:100%;height:130px;background:#020617;border-radius:6px}.if-mask-region{margin-top:3px;line-height:1.4}.if-mask-text{white-space:pre-wrap;font:10px/1.5 system-ui;margin:7px 0 0;max-height:65px;overflow:auto;color:var(--text2,#cbd5e1)}.if-preview-image-button{display:block;width:100%;padding:0;border:0;background:#020617;border-radius:6px;cursor:pointer}.if-preview-image{display:block;width:100%;height:190px;object-fit:contain;border-radius:6px}.if-detail-image{display:block;width:100%;max-height:540px;object-fit:contain;background:#020617;border-radius:8px;margin:12px 0}
+            .if-mask-overlay-toggle{display:flex;align-items:center;gap:6px;margin-bottom:7px;cursor:pointer}.if-mask-overlay-toggle input{margin:0;accent-color:#60a5fa}.if-mask-overlay-toggle input:focus-visible{outline:2px solid #60a5fa;outline-offset:2px}.if-mask-overlay-toggle:has(input:disabled){color:var(--text2,#94a3b8);cursor:default}.if-preview-image-button{position:relative;isolation:isolate}.if-image-mask-overlay{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;border-radius:6px}
             .if-node[data-review-node=true] .if-port{width:22px;height:22px;right:-11px;top:37px;border-color:#fef3c7;background:#f59e0b;box-shadow:0 0 0 2px #f59e0b,0 0 16px #f59e0b99}.if-node[data-review-node=true] .if-node-model{color:#fde68a;font-weight:700}
             .if-tooltip{position:fixed;z-index:30;max-width:330px;padding:10px 13px;border-radius:9px;background:#0f172a;color:#e2e8f0;border:1px solid #64748b;box-shadow:0 8px 30px #0006;white-space:pre-wrap;pointer-events:none;font-size:12px}
             .if-empty{padding:80px 24px;text-align:center;color:var(--text2,#94a3b8)}.if-empty small{display:block;margin-top:8px}.if-footer{padding:10px 22px;font-size:12px;color:var(--text2,#94a3b8)}
@@ -190,14 +228,23 @@
                 const nodes = new Map((flow?.nodes || []).map(n => [n.id, n]));
                 modal.querySelectorAll('.if-node').forEach(card => {
                     const n = nodes.get(card.dataset.nodeId);
-                    if (n) card.querySelector('.if-node-state').textContent = nodeState(n);
+                    if (n) {
+                        updateText(card.querySelector('.if-node-state'), nodeState(n));
+                        const timing = card.querySelector('.if-node-timing');
+                        if (timing) updateText(timing, llmTiming(n));
+                    }
                 });
             }, 1000);
         });
         detailModal = element('dialog', 'if-modal if-detail'); detailModal.setAttribute('aria-label', '처리 단계 상세');
         const dh = element('header', 'if-header'); dh.append(element('h2', '', '처리 단계 상세'), button('닫기', () => detailModal.close()));
         detailModal.append(dh, element('div', 'if-detail-body'));
-        detailModal.addEventListener('close', () => { selected = null; detailRequest++; rehomeToast(); });
+        detailModal.addEventListener('close', () => {
+            // close is queued: a node may already have reopened this dialog.
+            if (detailModal.open) return;
+            selected = null; detailRequest++; detailRefreshRequest = 0;
+            detailRefreshPending = false; renderedDetail = null; rehomeToast();
+        });
 
         developerModal = element('dialog', 'if-modal if-developer');
         developerModal.id = 'illustration-quality-settings-modal';
@@ -405,22 +452,386 @@
     }
     function hideTooltip() {modal?.querySelector('.if-tooltip')?.remove();}
     function tooltip(n, port) {
-        hideTooltip();
+        let tip = modal.querySelector('.if-tooltip');
+        if (tip?.dataset.nodeId !== n.id) {hideTooltip(); tip = null;}
         const executor = nodeExecutor(n);
         const isOverallQualityReview = n.task_key === 'illustration_quality_inspection' && n.inspection_scope === 'overall';
         const action = isOverallQualityReview
             ? '클릭하면 전체 이미지를 한 화면에서 보고 일괄 평가할 수 있습니다.'
             : n.error || n.summary || '클릭하여 상세 보기';
-        const tip = element('div', 'if-tooltip', `${n.label}\n${executorLabels[executor] || executor} · ${labels[n.status] || n.status} · ${elapsed(n)}\n${n.model || (executor === 'llm' ? '모델 배정 대기' : executor === 'comfy' ? 'ComfyUI' : executor === 'human' ? '사람이 선택한 입력 상태' : '서버 처리')}\n${n.phase === 'fallback' ? '폴백 사용 · ' : ''}${action}`);
-        tip.setAttribute('role', 'tooltip'); modal.append(tip);
+        const timing = Object.entries(timingDetails(n)).map(([key, value]) => `${key}: ${value}`).join('\n');
+        if (!tip) {
+            tip = element('div', 'if-tooltip'); tip.dataset.nodeId = n.id;
+            tip.setAttribute('role', 'tooltip'); modal.append(tip);
+        }
+        updateText(tip, `${n.label}\n${executorLabels[executor] || executor} · ${labels[n.status] || n.status} · ${elapsed(n)}\n${n.model || (executor === 'llm' ? '모델 배정 대기' : executor === 'comfy' ? 'ComfyUI' : executor === 'human' ? '사람이 선택한 입력 상태' : '서버 처리')}\n${timing ? timing + '\n수신 시점 기준 · 최종 시도\n' : ''}${n.phase === 'fallback' ? '폴백 사용 · ' : ''}${action}`);
         const r = port.getBoundingClientRect();
         tip.style.left = `${Math.max(8, Math.min(innerWidth - tip.offsetWidth - 12, r.left - 80))}px`;
         tip.style.top = `${Math.max(8, Math.min(innerHeight - tip.offsetHeight - 12, r.bottom + 10))}px`;
     }
+    function layoutNodes(nodes, kind) {
+        // Display stages are fixed even when branches finish or dispatch images early.
+        // Names also classify reserved LLM nodes before routing metadata arrives.
+        const stageRules = [
+            ['CHARACTER-RESOLVE', 'character_resolve', 1, 0],
+            ['PROFILE-CONTEXT-CACHE', 'profile_context_translation', 1, 1],
+            ['PROFILE-CONTEXT-TRANSLATE', 'profile_context_translation', 1, 1],
+            ['PROFILE-RESOLVE', 'profile_resolve', 1, 2],
+            ['CALL1-BACKTRANSLATE', 'call1_backtranslate', 2, 0],
+            ['CALL1', 'call1', 2, 1],
+            ['CALL2-SELECT', 'call2_select', 2, 2],
+            ['CALL2-PLAN', 'call2_plan', 3, 0],
+            ['CALL2-DETAIL', 'call2_detail', 4, 0],
+            ['CALL2-KEYVIS', 'call2_keyvis', 4, 1],
+            ['CALL2-AUTHORITY-AUDIT', 'call2_authority_audit', 4, 2],
+            ['CALL2-FIX', 'call2_fix', 4, 2],
+            ['CALL2-FALLBACK', 'call2', 4, 0],
+            ['CALL2', 'call2', 4, 0],
+            ['CALL3', 'call3', 4, 3],
+            ['MULTI-CHAR-MASK', 'illustration_multi_char_mask', 5, 0],
+            ['MULTI-CHAR_MASK', 'illustration_multi_char_mask', 5, 0],
+            ['ORIGINAL-ASSET-RECOVERY', 'original_asset_recovery', 5, 2],
+            ['ORIGINAL-RECOVERY', 'original_asset_recovery', 5, 2],
+            ['ORIGINAL-ASSET', 'original_asset', 5, 1],
+            ['SLOT', 'illustration_images', 6, 0],
+            ['이미지 생성', 'illustration_generation', 6, 1],
+        ];
+        const stageOf = n => {
+            if (kind !== 'illustration' || n.kind === 'request' || n.kind === 'result') return null;
+            for (const value of [n.call_name, n.label]) {
+                const name = String(value || '');
+                const rule = stageRules.find(([label]) => name === label || name.startsWith(`${label} `) || name.startsWith(`${label}-`));
+                if (rule) return rule;
+            }
+            const group = String(n.layout_group || '');
+            const rule = stageRules.find(([, groupName]) => groupName === group || `illustration_${groupName}` === n.task_key || groupName === n.task_key);
+            return rule || (n.kind === 'image' ? stageRules.find(([, groupName]) => groupName === 'illustration_images') : null);
+        };
+        const stageById = new Map(nodes.map(n => [n.id, stageOf(n)]));
+        const layoutGroup = n => stageById.get(n.id)
+            ? `__illustration_step_${stageById.get(n.id)[2]}__`
+            : kind === 'illustration' && n.kind !== 'request'
+                ? String(n.layout_group || (n.task_key && `${n.task_key}:${n.inspection_scope || ''}`)
+                    || `__followup_${n.kind || ''}_${n.call_name || n.label || n.id}__`)
+                : String(n.layout_group || n.id);
+        const nodeById = new Map(nodes.map(n => [n.id, n]));
+        const membersByGroup = new Map(), dependenciesByGroup = new Map();
+        nodes.forEach(n => {
+            const group = layoutGroup(n);
+            const members = membersByGroup.get(group) || [];
+            members.push(n);
+            membersByGroup.set(group, members);
+            const dependencies = dependenciesByGroup.get(group) || new Set();
+            (n.dependencies || []).forEach(parentId => {
+                const parent = nodeById.get(parentId);
+                if (!parent) return;
+                const parentGroup = layoutGroup(parent);
+                if (parentGroup !== group) dependencies.add(parentGroup);
+            });
+            dependenciesByGroup.set(group, dependencies);
+        });
+        const depthByGroup = new Map(), resolvingGroups = new Set();
+        const groupDepth = group => {
+            if (depthByGroup.has(group)) return depthByGroup.get(group);
+            const members = membersByGroup.get(group) || [];
+            const stage = members.map(n => stageById.get(n.id)).find(Boolean);
+            if (stage) {depthByGroup.set(group, stage[2]); return stage[2];}
+            if (members.some(n => n.kind === 'request')) {depthByGroup.set(group, 0); return 0;}
+            if (resolvingGroups.has(group)) {
+                console.error('[ILLUST_FLOW] layout_group dependency cycle', group);
+                return kind === 'illustration' ? 7 : 1;
+            }
+            resolvingGroups.add(group);
+            const dependencies = [...(dependenciesByGroup.get(group) || [])];
+            const minimumDepth = kind === 'illustration' ? 7 : dependencies.length ? 1 : 0;
+            const depth = Math.max(minimumDepth, ...dependencies.map(parentGroup => groupDepth(parentGroup) + 1));
+            resolvingGroups.delete(group);
+            depthByGroup.set(group, depth);
+            return depth;
+        };
+        const insertionOrder = new Map(nodes.map((n, index) => [n.id, index]));
+        const orderedNodes = [...nodes].sort((a, b) => {
+            const stageA = stageById.get(a.id), stageB = stageById.get(b.id);
+            const stageOrder = (stageA?.[3] || 0) - (stageB?.[3] || 0);
+            const orderA = Number.isFinite(Number(a.layout_order)) ? Number(a.layout_order) : 0;
+            const orderB = Number.isFinite(Number(b.layout_order)) ? Number(b.layout_order) : 0;
+            const nameOrder = kind === 'illustration' || (stageA && stageB)
+                ? String(a.call_name || a.label || '').localeCompare(String(b.call_name || b.label || ''), undefined, {numeric: true})
+                : 0;
+            const tieOrder = kind === 'illustration' || (stageA && stageB)
+                ? String(a.id).localeCompare(String(b.id), undefined, {numeric: true})
+                : insertionOrder.get(a.id) - insertionOrder.get(b.id);
+            return stageOrder || orderA - orderB || nameOrder || tieOrder;
+        });
+        const positions = new Map(), layers = new Map(), rootColumnX = 36;
+        const top = kind === 'illustration' ? 104 : 32;
+        const depthById = new Map(nodes.map(n => [n.id, groupDepth(layoutGroup(n))]));
+        const laneById = new Map();
+        if (kind === 'illustration') {
+            const plans = orderedNodes.filter(n => stageById.get(n.id)?.[1] === 'call2_plan');
+            const detailsByPlan = new Map(plans.map(n => [n.id, []]));
+            const planAncestors = (id, visiting = new Set()) => {
+                if (!nodeById.has(id) || visiting.has(id)) return new Set();
+                if (detailsByPlan.has(id)) return new Set([id]);
+                const nextVisiting = new Set(visiting); nextVisiting.add(id);
+                return new Set((nodeById.get(id).dependencies || [])
+                    .flatMap(parent => [...planAncestors(parent, nextVisiting)]));
+            };
+            orderedNodes.filter(n => stageById.get(n.id)?.[1] === 'call2_detail').forEach(n => {
+                const parents = planAncestors(n.id);
+                // Aggregate DETAIL calls have no single PLAN row to align with.
+                if (parents.size === 1) detailsByPlan.get([...parents][0]).push(n);
+            });
+            if ([...detailsByPlan.values()].some(details => details.length)) {
+                let nextLane = 0;
+                plans.forEach(plan => {
+                    const details = detailsByPlan.get(plan.id);
+                    laneById.set(plan.id, nextLane);
+                    details.forEach((detail, index) => laneById.set(detail.id, nextLane + index));
+                    // Keep later PLAN rows reserved while their DETAIL calls arrive.
+                    nextLane += Math.max(1, details.length);
+                });
+                layers.set(3, nextLane); layers.set(4, nextLane);
+            }
+            const branchNodes = orderedNodes.filter(n => depthById.get(n.id) >= 5 && n.kind !== 'result');
+            const branchIds = new Set(branchNodes.map(n => n.id));
+            const keyById = new Map(), keyByPrompt = new Map(), children = new Map();
+            branchNodes.forEach(n => {
+                // Parse declared slot identifiers in task captions, never prompt/context prose.
+                const slot = illustrationSlot(n);
+                if (slot !== null) {
+                    const key = `slot:${slot}`;
+                    keyById.set(n.id, key);
+                    if (n.prompt_id) keyByPrompt.set(n.prompt_id, key);
+                }
+                (n.dependencies || []).forEach(id => {
+                    if (!branchIds.has(id)) return;
+                    const members = children.get(id) || [];
+                    members.push(n.id); children.set(id, members);
+                });
+            });
+            branchNodes.forEach(n => {
+                if (!keyById.has(n.id) && n.prompt_id) keyById.set(n.id, keyByPrompt.get(n.prompt_id) || `prompt:${n.prompt_id}`);
+                if (!keyById.has(n.id) && n.kind === 'image') keyById.set(n.id, `image:${n.id}`);
+            });
+            const relatedKeys = (id, downstream, visiting = new Set()) => {
+                if (!branchIds.has(id) || visiting.has(id)) return new Set();
+                if (keyById.has(id)) return new Set([keyById.get(id)]);
+                const nextVisiting = new Set(visiting); nextVisiting.add(id);
+                const related = downstream ? children.get(id) || [] : nodeById.get(id).dependencies || [];
+                return new Set(related.flatMap(next => [...relatedKeys(next, downstream, nextVisiting)]));
+            };
+            const inferredKeys = new Map();
+            branchNodes.forEach(n => {
+                if (keyById.has(n.id)) return;
+                const ancestors = relatedKeys(n.id, false);
+                const keys = ancestors.size ? ancestors : relatedKeys(n.id, true);
+                // Shared/aggregate work must not be attached to an arbitrary image.
+                if (keys.size === 1) inferredKeys.set(n.id, [...keys][0]);
+            });
+            inferredKeys.forEach((key, id) => keyById.set(id, key));
+            const keys = [...new Set(keyById.values())].sort((a, b) => a.localeCompare(b, undefined, {numeric: true}));
+            const counts = new Map();
+            branchNodes.forEach(n => {
+                const key = keyById.get(n.id);
+                if (!key) return;
+                const byDepth = counts.get(key) || new Map(), depth = depthById.get(n.id);
+                byDepth.set(depth, (byDepth.get(depth) || 0) + 1); counts.set(key, byDepth);
+            });
+            let nextLane = 0;
+            const offsets = new Map();
+            keys.forEach(key => {
+                offsets.set(key, nextLane);
+                // Reserve room for retries or multiple same-stage tasks without overlap.
+                nextLane += Math.max(...counts.get(key).values());
+            });
+            const used = new Map();
+            branchNodes.forEach(n => {
+                const key = keyById.get(n.id);
+                if (!key) return;
+                const cell = `${depthById.get(n.id)}:${key}`, index = used.get(cell) || 0;
+                used.set(cell, index + 1); laneById.set(n.id, offsets.get(key) + index);
+            });
+            if (nextLane) new Set([...depthById.values()].filter(depth => depth >= 5)).forEach(depth => layers.set(depth, nextLane));
+        }
+        // PLAN/DETAIL share parent rows; later stages share rows by illustration.
+        orderedNodes.forEach(n => {
+            const depth = depthById.get(n.id);
+            const lane = laneById.has(n.id) ? laneById.get(n.id) : layers.get(depth) || 0;
+            if (!laneById.has(n.id)) layers.set(depth, lane + 1);
+            positions.set(n.id, {depth, x: rootColumnX + depth * 290, y: lane});
+        });
+        const rowHeights = new Map();
+        nodes.forEach(n => {
+            const p = positions.get(n.id), group = kind === 'illustration' && p.depth >= 5 ? 'branches' : p.depth;
+            const key = `${group}:${p.y}`;
+            const cardHeight = kind === 'illustration' && nodePreviewKind(n) ? 360 : 98;
+            rowHeights.set(key, Math.max(rowHeights.get(key) || 0, cardHeight));
+        });
+        positions.forEach(p => {
+            const group = kind === 'illustration' && p.depth >= 5 ? 'branches' : p.depth;
+            let y = top;
+            for (let row = 0; row < p.y; row += 1) y += (rowHeights.get(`${group}:${row}`) || 98) + 38;
+            p.y = y;
+        });
+        const width = Math.max(kind === 'illustration' ? rootColumnX + 7 * 290 + 270 : 650, ...[...positions.values()].map(p => p.x + 270));
+        const height = Math.max(350, ...nodes.map(n => positions.get(n.id).y + (kind === 'illustration' && nodePreviewKind(n) ? 360 : 98) + 42));
+        return {positions, width, height};
+    }
+    function nodePreviewKind(n) {
+        const caption = String(n.call_name || n.label || '');
+        if (n.task_key === 'illustration_multi_char_mask' || n.layout_group === 'illustration_multi_char_mask'
+                || caption === 'MULTI-CHAR-MASK' || caption.startsWith('MULTI-CHAR-MASK ')
+                || caption === 'MULTI-CHAR_MASK' || caption.startsWith('MULTI-CHAR_MASK ')) return 'mask';
+        return n.kind === 'image' || n.layout_group === 'illustration_generation' ? 'image' : '';
+    }
+    function nodeImageUrl(n, runStatus) {
+        if (n.image_url) return n.image_url;
+        return n.kind === 'image' && n.status === 'completed' && runStatus === 'completed' && n.prompt_id
+            ? `/view?filename=${encodeURIComponent(`ComfyUI_${String(n.prompt_id).slice(0, 8)}.png`)}` : '';
+    }
+    function illustrationSlot(n) {
+        const caption = String(n.call_name || n.label || '');
+        const slot = n.illustration_slot ?? (n.inspection_images?.length === 1 ? n.inspection_images[0].slot : undefined)
+            ?? caption.match(/\bslot(?:\s*=\s*|\s+)(-?\d+)\b/)?.[1];
+        return slot !== undefined && slot !== null && slot !== '' && Number.isInteger(Number(slot)) ? Number(slot) : null;
+    }
+    function imageMaskNode(n, flow) {
+        const masks = (flow.nodes || []).filter(node => nodePreviewKind(node) === 'mask');
+        const slot = illustrationSlot(n);
+        const matching = slot === null ? [] : masks.filter(mask => illustrationSlot(mask) === slot);
+        const dependencies = masks.filter(mask => n.dependencies?.includes(mask.id));
+        const candidates = matching.length ? matching
+            : dependencies.length === 1 && (slot === null || illustrationSlot(dependencies[0]) === null) ? dependencies : [];
+        return candidates.findLast(mask => mask.status === 'completed') || candidates.at(-1);
+    }
+    function imageMaskOverlay(layout, img, maskUrl) {
+        const ns = 'http://www.w3.org/2000/svg', svg = document.createElementNS(ns, 'svg');
+        const width = img.naturalWidth || layout?.mask_width || 100, height = img.naturalHeight || layout?.mask_height || 100;
+        svg.classList.add('if-image-mask-overlay'); svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+        svg.setAttribute('aria-hidden', 'true');
+        if (maskUrl) {
+            const mask = document.createElementNS(ns, 'image');
+            mask.setAttribute('href', maskUrl); mask.setAttribute('width', width); mask.setAttribute('height', height);
+            mask.setAttribute('preserveAspectRatio', 'none');
+            mask.onerror = () => console.error('[ILLUST_FLOW] 생성 마스크 표시 실패:', {url: maskUrl});
+            svg.style.mixBlendMode = 'screen'; svg.style.opacity = '.35';
+            svg.append(mask);
+            return svg;
+        }
+        const colors = ['#ef4444', '#22c55e', '#3b82f6'];
+        [...layout.regions].sort((a, b) => a.x + a.width / 2 - b.x - b.width / 2).forEach((region, index) => {
+            const rect = document.createElementNS(ns, 'rect'), color = colors[index % colors.length];
+            for (const field of ['x', 'y', 'width', 'height']) rect.setAttribute(field, Number(region[field]) * (field === 'x' || field === 'width' ? width : height));
+            rect.setAttribute('fill', color); rect.setAttribute('fill-opacity', '.28');
+            rect.setAttribute('stroke', color); rect.setAttribute('stroke-width', '1.5'); rect.setAttribute('vector-effect', 'non-scaling-stroke');
+            svg.append(rect);
+        });
+        return svg;
+    }
+    function maskResultKey(flow, n) {return `${flow.id}:${n.id}:${n.ended_at || n.response_ended_at || ''}`;}
+    async function loadMaskResults(flow, nodes) {
+        if (maskResultsRun !== flow.id) {maskResults.clear(); maskResultsRun = flow.id;}
+        await Promise.all(nodes.filter(n => nodePreviewKind(n) === 'mask' && n.status === 'completed').map(async n => {
+            const key = maskResultKey(flow, n);
+            if (maskResults.has(key)) return;
+            maskResults.set(key, {pending: true});
+            try {
+                const response = await fetch(`/api/illustration_flow?run=${encodeURIComponent(flow.id)}&node=${encodeURIComponent(n.id)}`);
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                const {node} = await response.json();
+                const raw = detailOutput(node || {});
+                const text = typeof raw === 'string' ? raw : JSON.stringify(raw);
+                const layout = typeof raw === 'object' ? raw : JSON.parse(text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1));
+                if (!Array.isArray(layout?.regions)) throw new Error('영역 결과가 없습니다');
+                if (maskResultsRun !== flow.id) return;
+                maskResults.set(key, {layout});
+            } catch (error) {
+                console.error('[ILLUST_FLOW] 노드 영역 결과 표시 실패:', {run: flow.id, node: n.id}, error);
+                if (maskResultsRun === flow.id) maskResults.set(key, {error: '영역 결과를 표시하지 못했습니다. 출력 상세를 확인하세요.'});
+            }
+        }));
+        if (activeTab === 'illustration' && flows.illustration?.id === flow.id) render();
+    }
+    function nodePreview(n, flow) {
+        const kind = nodePreviewKind(n), preview = element('div', 'if-node-preview');
+        preview.append(element('div', 'if-preview-title', kind === 'mask' ? '생성 영역' : '생성 이미지'));
+        if (kind === 'mask') {
+            const result = maskResults.get(maskResultKey(flow, n));
+            if (result?.layout) {
+                const ns = 'http://www.w3.org/2000/svg', svg = document.createElementNS(ns, 'svg');
+                const imageNode = (flow.nodes || []).find(child => child.kind === 'image' && child.dependencies?.includes(n.id));
+                const image = imageNode && previewImages.get(imageNode.id);
+                const canvasWidth = image?.naturalWidth || result.layout.mask_width || 100;
+                const canvasHeight = image?.naturalHeight || result.layout.mask_height || 100;
+                svg.classList.add('if-mask-preview'); svg.setAttribute('viewBox', `0 0 ${canvasWidth} ${canvasHeight}`);
+                svg.setAttribute('role', 'img'); svg.setAttribute('aria-label', `${n.label} 영역 배치`);
+                const colors = ['#ef4444', '#22c55e', '#3b82f6'];
+                const regions = [...result.layout.regions].sort((a, b) => a.x + a.width / 2 - b.x - b.width / 2);
+                regions.forEach((r, index) => {
+                    const rect = document.createElementNS(ns, 'rect');
+                    for (const field of ['x', 'y', 'width', 'height']) rect.setAttribute(field, Number(r[field]) * (field === 'x' || field === 'width' ? canvasWidth : canvasHeight));
+                    rect.setAttribute('fill', colors[index % colors.length]); rect.setAttribute('fill-opacity', '.65');
+                    rect.setAttribute('stroke', colors[index % colors.length]); rect.setAttribute('stroke-width', '.7');
+                    const title = document.createElementNS(ns, 'title'); title.textContent = r.name; rect.append(title); svg.append(rect);
+                });
+                preview.append(svg);
+                regions.forEach((r, index) => {
+                    const percent = v => `${(Number(v) * 100).toFixed(0)}%`;
+                    const line = element('div', 'if-mask-region', `${'RGB'[index]} · ${r.name} · 면적 ${(r.width * r.height * 100).toFixed(1)}%\nx ${percent(r.x)}, y ${percent(r.y)} · 폭 ${percent(r.width)}, 높이 ${percent(r.height)}`);
+                    line.style.color = ['#fecaca', '#bbf7d0', '#bfdbfe'][index % colors.length]; line.style.whiteSpace = 'pre-line'; preview.append(line);
+                });
+                preview.append(element('pre', 'if-mask-text', `구도: ${result.layout.composition_prompt || ''}\n배경: ${result.layout.background_prompt || ''}`));
+            } else preview.append(element('div', 'if-preview-empty', result?.error || (n.status === 'completed' ? '영역 결과 불러오는 중…' : n.error || '영역 생성 대기')));
+        } else {
+            const url = nodeImageUrl(n, flow.status);
+            if (url) {
+                const imageButton = button('', () => openDetail(n.id)); imageButton.className = 'if-preview-image-button';
+                imageButton.setAttribute('aria-label', `${n.label} 생성 이미지 크게 보기`);
+                const img = previewImages.get(n.id) || element('img', 'if-preview-image');
+                if (img.getAttribute('src') !== url) {img.src = url; delete img.dataset.failed;}
+                img.alt = `${n.label} 생성 결과`; img.loading = 'lazy'; previewImages.set(n.id, img);
+                img.onload = () => {if (activeTab === 'illustration' && flows.illustration?.id === flow.id) render();};
+                img.onerror = () => {console.error('[ILLUST_FLOW] 생성 이미지 표시 실패:', {node: n.id, url}); img.dataset.failed = 'true'; imageButton.replaceChildren(element('div', 'if-preview-empty', '이미지를 불러오지 못했습니다.'));};
+                const maskNode = imageMaskNode(n, flow);
+                const result = maskNode && maskResults.get(maskResultKey(flow, maskNode));
+                const recordedMask = Object.hasOwn(n, 'mask_url');
+                if ((n.mask_url || (!recordedMask && maskNode)) && img.dataset.failed !== 'true') {
+                    const toggle = element('label', 'if-mask-overlay-toggle'), input = element('input');
+                    const overlay = n.mask_url ? imageMaskOverlay(null, img, n.mask_url)
+                        : result?.layout ? imageMaskOverlay(result.layout, img) : null;
+                    input.type = 'checkbox'; input.checked = maskOverlayNodes.has(n.id); input.disabled = !overlay;
+                    input.dataset.maskOverlayNode = n.id; input.setAttribute('aria-label', `${n.label} 마스크 겹쳐 보기`);
+                    toggle.title = result?.error || (overlay ? '생성 이미지 위에 인물 영역 마스크를 겹쳐 표시합니다.' : '마스크 결과를 기다리는 중입니다.');
+                    if (overlay) {
+                        overlay.toggleAttribute('hidden', !input.checked);
+                        input.onchange = () => {
+                            if (input.checked) maskOverlayNodes.add(n.id); else maskOverlayNodes.delete(n.id);
+                            overlay.toggleAttribute('hidden', !input.checked);
+                        };
+                    }
+                    toggle.append(input, document.createTextNode('마스크 겹쳐 보기')); preview.append(toggle);
+                    imageButton.append(img);
+                    if (overlay) imageButton.append(overlay);
+                } else imageButton.append(img.dataset.failed ? element('div', 'if-preview-empty', '이미지를 불러오지 못했습니다.') : img);
+                preview.append(imageButton);
+            } else preview.append(element('div', 'if-preview-empty', n.error || '이미지 생성 대기'));
+        }
+        return preview;
+    }
+    function previewSignature(n, flow) {
+        const kind = nodePreviewKind(n), mask = kind === 'image' ? imageMaskNode(n, flow) : n;
+        const result = mask && maskResults.get(maskResultKey(flow, mask));
+        const imageNode = kind === 'mask'
+            ? (flow.nodes || []).find(child => child.kind === 'image' && child.dependencies?.includes(n.id)) : n;
+        const img = imageNode && previewImages.get(imageNode.id);
+        return JSON.stringify([kind, n.label, n.status, n.error, nodeImageUrl(n, flow.status),
+            n.mask_url, Object.hasOwn(n, 'mask_url'), mask?.id, result,
+            img?.naturalWidth, img?.naturalHeight, img?.dataset.failed]);
+    }
     function render() {
         updateStopButton();
         if (!modal?.open) return;
-        hideTooltip();
         const viewport = modal.querySelector('.if-viewport');
         modal.querySelectorAll('.if-tab').forEach(tab => {
             const active = tab.dataset.tab === activeTab;
@@ -432,134 +843,135 @@
         viewport.setAttribute('aria-labelledby', `if-tab-${activeTab}`);
         const scroll = [viewport.scrollLeft, viewport.scrollTop];
         const focusedNode = document.activeElement?.dataset?.nodeId;
-        viewport.replaceChildren();
+        const focusedMaskOverlay = document.activeElement?.dataset?.maskOverlayNode;
         if (!flow) {
+            hideTooltip();
             modal.querySelector('.if-subtitle').textContent = `${tabLabels[activeTab]} · 최신 요청의 실행 상태`;
             const name = activeTab === 'video_input' ? '영상 입력 개선' : activeTab === 'video' ? '영상' : '삽화';
             const empty = element('div', 'if-empty', `아직 ${name} 요청이 없습니다. 요청이 들어오면 여기에 처리 흐름이 표시됩니다.`);
             if (activeTab === 'video') empty.append(element('small', '', '연출 작성·참조 분석 → 프롬프트 작성·후보 선택 → 영상 생성 → 후처리 → 결과 반환'));
             if (activeTab === 'video_input') empty.append(element('small', '', '입력 상태와 AI 다듬기 결과, 적용·되돌리기 선택을 한 세션 안에 이어서 보존합니다.'));
             empty.append(element('small', '', `현재 확대 비율 ${Math.round(scale * 100)}% — 지금 조절한 비율은 다음 그래프에도 적용됩니다.`));
-            viewport.append(empty);
+            viewport.replaceChildren(empty);
             return;
         }
         modal.querySelector('.if-subtitle').textContent = `${flow.label} · ${labels[flow.status] || flow.status} · ${new Date(flow.created_at * 1000).toLocaleString()}`;
-        const nodes = flow.nodes || [], positions = new Map(), layers = new Map();
-        const rootColumnX = 36;
-        const nodeById = new Map(nodes.map(n => [n.id, n]));
-        const isCompactColumnLabel = value => {
-            const label = String(value || '');
-            return label === 'CHARACTER-RESOLVE' || label.startsWith('CHARACTER-RESOLVE-') ||
-                label === 'PROFILE-CONTEXT-CACHE' || label.startsWith('PROFILE-CONTEXT-TRANSLATE') ||
-                label === 'PROFILE-RESOLVE' || label.startsWith('PROFILE-RESOLVE-') ||
-                label.startsWith('CALL1-BACKTRANSLATE') ||
-                label === 'CALL1' || /^CALL1 \d+\/\d+(?:\s|$)/.test(label);
-        };
-        const isPlanColumnLabel = value => {
-            const label = String(value || '');
-            return label === 'CALL2-PLAN' || label.startsWith('CALL2-PLAN-');
-        };
-        const isCompactColumnNode = n => isCompactColumnLabel(n.label) || isCompactColumnLabel(n.call_name);
-        const isPlanColumnNode = n => isPlanColumnLabel(n.label) || isPlanColumnLabel(n.call_name);
-        const layoutGroup = n => isCompactColumnNode(n)
-            ? '__early_compact__'
-            : isPlanColumnNode(n)
-                ? '__call2_plan__'
-                : String(n.layout_group || n.id);
-        const membersByGroup = new Map();
-        nodes.forEach(n => {
-            const group = layoutGroup(n);
-            const members = membersByGroup.get(group) || [];
-            members.push(n);
-            membersByGroup.set(group, members);
-        });
-        const dependenciesByGroup = new Map();
-        nodes.forEach(n => {
-            const group = layoutGroup(n);
-            const dependencies = dependenciesByGroup.get(group) || new Set();
-            (n.dependencies || []).forEach(parentId => {
-                const parent = nodeById.get(parentId);
-                if (!parent) return;
-                const parentGroup = layoutGroup(parent);
-                if (parentGroup !== group) dependencies.add(parentGroup);
-            });
-            dependenciesByGroup.set(group, dependencies);
-        });
-        const depthByGroup = new Map();
-        const resolvingGroups = new Set();
-        const groupDepth = group => {
-            if (depthByGroup.has(group)) return depthByGroup.get(group);
-            if (group === '__early_compact__') {depthByGroup.set(group, 1); return 1;}
-            const members = membersByGroup.get(group) || [];
-            if (members.some(n => n.kind === 'request')) {depthByGroup.set(group, 0); return 0;}
-            if (resolvingGroups.has(group)) {
-                console.error('[ILLUST_FLOW] layout_group dependency cycle', group);
-                return 2;
-            }
-            resolvingGroups.add(group);
-            const dependencies = [...(dependenciesByGroup.get(group) || [])];
-            const minimumDepth = activeTab === 'illustration' ? 2 : dependencies.length ? 1 : 0;
-            const depth = Math.max(minimumDepth, ...dependencies.map(parentGroup => groupDepth(parentGroup) + 1));
-            resolvingGroups.delete(group);
-            depthByGroup.set(group, depth);
-            return depth;
-        };
-        [...membersByGroup.keys()].forEach(groupDepth);
-
-        // A logical stage owns one column. Retries/partial repairs in the same
-        // layout_group stack vertically instead of consuming another column.
-        // Illustration queue items share one column, while their actual generation
-        // stage uses the next logical column. Early images still align with later queue items.
-        const insertionOrder = new Map(nodes.map((n, index) => [n.id, index]));
-        const orderedNodes = [...nodes].sort((a, b) => {
-            const orderA = Number.isFinite(Number(a.layout_order)) ? Number(a.layout_order) : 0;
-            const orderB = Number.isFinite(Number(b.layout_order)) ? Number(b.layout_order) : 0;
-            return orderA - orderB || insertionOrder.get(a.id) - insertionOrder.get(b.id);
-        });
-        orderedNodes.forEach(n => {
-            const depth = groupDepth(layoutGroup(n));
-            const lane = layers.get(depth) || 0;
-            layers.set(depth, lane + 1);
-            positions.set(n.id, {depth, x: rootColumnX + depth * 290, y: 32 + lane * 136});
-        });
-
-        // Keep every logical column top-aligned. Nodes retain their insertion order
-        // and stack downward from the same top offset; dependency edges never move
-        // a parent or child vertically after the initial column placement.
-        const width = Math.max(650, ...[...positions.values()].map(p => p.x + 270));
-        const height = Math.max(350, ...[...positions.values()].map(p => p.y + 140));
-        const space = element('div', 'if-space'), canvas = element('div', 'if-canvas');
+        const nodes = flow.nodes || [];
+        if (activeTab === 'illustration' && maskResultsRun !== flow.id) {
+            maskResults.clear(); previewImages.clear(); maskOverlayNodes.clear(); maskResultsRun = flow.id;
+        }
+        const {positions, width, height} = layoutNodes(nodes, activeTab);
+        let space = viewport.querySelector('.if-space'), canvas = space?.querySelector('.if-canvas');
+        const sameGraph = canvas && space.dataset.runId === flow.id && space.dataset.tab === activeTab;
+        // Streaming updates must keep the pointer-down target connected. Reuse
+        // the graph and keyed children even when new branches change its layout.
+        if (!sameGraph) {
+            hideTooltip();
+            space = element('div', 'if-space'); canvas = element('div', 'if-canvas');
+            space.dataset.runId = flow.id; space.dataset.tab = activeTab;
+            space.append(canvas); viewport.replaceChildren(space);
+        }
         space.style.width = `${width * scale}px`; space.style.height = `${height * scale}px`;
         canvas.style.width = `${width}px`; canvas.style.height = `${height}px`; canvas.style.transform = `scale(${scale})`;
-        const ns = 'http://www.w3.org/2000/svg', svg = document.createElementNS(ns, 'svg');
-        svg.classList.add('if-edges'); svg.setAttribute('width', width); svg.setAttribute('height', height); svg.setAttribute('aria-hidden', 'true');
+        const ns = 'http://www.w3.org/2000/svg';
+        let svg = canvas.querySelector('.if-edges');
+        if (!svg) {
+            svg = document.createElementNS(ns, 'svg'); svg.classList.add('if-edges');
+            svg.setAttribute('aria-hidden', 'true'); canvas.append(svg);
+        }
+        svg.setAttribute('width', width); svg.setAttribute('height', height);
+        if (activeTab === 'illustration') {
+            if (!canvas.querySelector('.if-direction')) canvas.insertBefore(element('div', 'if-direction', '실행 순서 →'), svg);
+            const columns = new Set([0, 1, 2, 3, 4, 5, 6, ...[...positions.values()].map(p => p.depth)]);
+            const existingColumns = new Map([...canvas.querySelectorAll('.if-step-column')].map(column => [Number(column.dataset.step), column]));
+            [...columns].sort((a, b) => a - b).forEach(depth => {
+                let column = existingColumns.get(depth);
+                if (!column) {
+                    column = element('section', 'if-step-column'); column.dataset.step = String(depth);
+                    column.append(element('div', 'if-step-title', depth === 0 ? '요청' : depth <= 6 ? `STEP ${depth}` : '후속 처리'));
+                    canvas.insertBefore(column, svg);
+                }
+                column.style.left = `${24 + depth * 290}px`; column.style.height = `${height - 56}px`;
+            });
+            existingColumns.forEach((column, depth) => {if (!columns.has(depth)) column.remove();});
+        }
+        const paths = new Map([...svg.children].map(path => [path.dataset.edgeKey, path]));
+        const edgeKeys = new Set();
         nodes.forEach(n => (n.dependencies || []).forEach(id => {
             const a = positions.get(id), b = positions.get(n.id); if (!a || !b) return;
-            const path = document.createElementNS(ns, 'path');
-            path.setAttribute('d', `M ${a.x + 222} ${a.y + 48} C ${a.x + 257} ${a.y + 48}, ${b.x - 35} ${b.y + 48}, ${b.x} ${b.y + 48}`);
+            const key = JSON.stringify([id, n.id]); edgeKeys.add(key);
+            let path = paths.get(key);
+            if (!path) {path = document.createElementNS(ns, 'path'); path.dataset.edgeKey = key; svg.append(path);}
+            path.setAttribute('d', a.depth === b.depth
+                ? `M ${a.x + 222} ${a.y + 48} C ${a.x + 257} ${a.y + 48}, ${b.x + 257} ${b.y + 48}, ${b.x + 222} ${b.y + 48}`
+                : `M ${a.x + 222} ${a.y + 48} C ${a.x + 257} ${a.y + 48}, ${b.x - 35} ${b.y + 48}, ${b.x} ${b.y + 48}`);
             path.setAttribute('fill', 'none'); path.setAttribute('stroke', colors[n.status] || '#64748b'); path.setAttribute('stroke-width', '1.8'); path.setAttribute('opacity', '.65');
             if (n.status === 'waiting') path.setAttribute('stroke-dasharray', '5 5');
-            svg.append(path);
+            else path.removeAttribute('stroke-dasharray');
         }));
-        canvas.append(svg);
+        paths.forEach((path, key) => {if (!edgeKeys.has(key)) path.remove();});
+        const cards = new Map([...canvas.querySelectorAll('.if-node')].map(card => [card.dataset.nodeId, card]));
+        const nodeIds = new Set(nodes.map(n => n.id));
         nodes.forEach(n => {
-            const p = positions.get(n.id), card = element('article', 'if-node'), executor = nodeExecutor(n);
+            const p = positions.get(n.id), executor = nodeExecutor(n);
+            let card = cards.get(n.id);
+            if (!card) {
+                card = element('article', 'if-node'); card.dataset.nodeId = n.id;
+                card.append(element('div', 'if-node-title'), element('div', 'if-node-state'), element('div', 'if-node-model'));
+                const port = button('', () => openDetail(n.id)); port.className = 'if-port'; port.dataset.nodeId = n.id;
+                card.append(port); canvas.append(card);
+            }
             const isQualityReview = n.task_key === 'illustration_quality_inspection' && n.inspection_scope === 'overall';
             card.dataset.status = n.status; card.dataset.nodeId = n.id; card.dataset.executor = executor; card.dataset.reviewNode = String(isQualityReview); card.style.setProperty('--state', colors[n.status] || colors.waiting); card.style.setProperty('--node-tint', executorColors[executor] || executorColors.process);
+            card.dataset.step = String(p.depth);
             card.style.left = `${p.x}px`; card.style.top = `${p.y}px`;
-            const title = element('div', 'if-node-title', n.label); title.title = n.label;
+            const previewKind = activeTab === 'illustration' && nodePreviewKind(n);
+            let preview = card.querySelector('.if-node-preview');
+            if (previewKind) {
+                card.style.height = '360px'; card.dataset.previewKind = previewKind;
+                const signature = previewSignature(n, flow);
+                if (!preview || preview.dataset.signature !== signature) {
+                    const previewScroll = [preview?.scrollLeft || 0, preview?.scrollTop || 0];
+                    const nextPreview = nodePreview(n, flow); nextPreview.dataset.signature = previewSignature(n, flow);
+                    if (preview) preview.replaceWith(nextPreview); else card.append(nextPreview);
+                    [nextPreview.scrollLeft, nextPreview.scrollTop] = previewScroll;
+                }
+            } else if (preview) {
+                preview.remove(); card.style.height = ''; delete card.dataset.previewKind;
+            }
+            let title = card.querySelector('.if-node-title');
+            if (title.tagName !== (n.label === 'CALL1' ? 'BUTTON' : 'DIV')) {
+                const nextTitle = n.label === 'CALL1' ? button(n.label, () => openDetail(n.id)) : element('div');
+                title.replaceWith(nextTitle); title = nextTitle;
+            }
+            updateText(title, n.label);
+            title.className = `if-node-title${n.label === 'CALL1' ? ' if-call1-open' : ''}`; title.title = n.label;
             const modelText = isQualityReview
                 ? '출력 ● 클릭 → 이미지 일괄 평가'
                 : n.model || (executor === 'llm' ? 'LLM' : executor === 'comfy' ? 'ComfyUI' : executor === 'human' ? '사람이 선택한 입력 상태' : '서버 처리');
-            card.append(title, element('div', 'if-node-state', nodeState(n)), element('div', 'if-node-model', modelText));
-            const port = button('', () => openDetail(n.id)); port.className = 'if-port'; port.dataset.nodeId = n.id;
+            updateText(card.querySelector('.if-node-state'), nodeState(n));
+            updateText(card.querySelector('.if-node-model'), modelText);
+            let timing = card.querySelector('.if-node-timing');
+            if (executor === 'llm') {
+                if (!timing) {timing = element('div', 'if-node-timing'); card.append(timing);}
+                updateText(timing, llmTiming(n));
+            } else timing?.remove();
+            const port = card.querySelector('.if-port');
             port.setAttribute('aria-label', isQualityReview ? `${n.label} 전체 이미지 보기 및 일괄 평가` : `${n.label} 출력 상세`);
             if (isQualityReview) port.title = '전체 생성 이미지를 한 화면에서 보고 평가합니다.';
+            else port.removeAttribute('title');
             port.onmouseenter = port.onfocus = () => tooltip(n, port); port.onmouseleave = port.onblur = hideTooltip;
-            card.append(port); canvas.append(card);
         });
-        space.append(canvas); viewport.append(space); viewport.scrollLeft = scroll[0]; viewport.scrollTop = scroll[1];
-        if (focusedNode) [...canvas.querySelectorAll('.if-port')].find(p => p.dataset.nodeId === focusedNode)?.focus({preventScroll: true});
+        cards.forEach((card, id) => {if (!nodeIds.has(id)) {card.remove(); previewImages.delete(id); maskOverlayNodes.delete(id);}});
+        viewport.scrollLeft = scroll[0]; viewport.scrollTop = scroll[1];
+        if (sameGraph && focusedNode && document.activeElement?.dataset?.nodeId !== focusedNode) [...canvas.querySelectorAll('.if-port')].find(p => p.dataset.nodeId === focusedNode)?.focus({preventScroll: true});
+        if (sameGraph && focusedMaskOverlay && document.activeElement?.dataset?.maskOverlayNode !== focusedMaskOverlay) [...canvas.querySelectorAll('.if-mask-overlay-toggle input')].find(input => input.dataset.maskOverlayNode === focusedMaskOverlay)?.focus({preventScroll: true});
+        const tooltipNodeId = modal.querySelector('.if-tooltip')?.dataset.nodeId;
+        if (tooltipNodeId) {
+            const n = nodes.find(n => n.id === tooltipNodeId), port = [...canvas.querySelectorAll('.if-port')].find(p => p.dataset.nodeId === tooltipNodeId);
+            if (n && port) tooltip(n, port); else hideTooltip();
+        }
+        if (activeTab === 'illustration' && nodes.some(n => nodePreviewKind(n) === 'mask' && n.status === 'completed' && !maskResults.has(maskResultKey(flow, n)))) void loadMaskResults(flow, nodes);
     }
     async function refresh(kind) {
         if (!kind) {await Promise.all(Object.keys(flows).map(key => refresh(key))); return;}
@@ -737,43 +1149,126 @@
                 loading.style.color = n.status === 'processing' || n.status === 'waiting' ? '' : '#fecdd3';
             });
     }
+    function appendCall1StateTable(n, body) {
+        const data = n.call1_state_table;
+        if (!data) return;
+        body.append(element('h3', '', '복장·헤어 시간표'), element('p', 'if-subtitle', '왼쪽에서 오른쪽으로 상태를 이어받습니다. 파란색은 CALL1이 직접 출력한 값이고, 회색은 앞 SLOT에서 이어받은 값입니다. 복장과 헤어는 각각 새 값이 나오는 지점부터 바뀝니다.'));
+        const wrap = element('div', 'if-state-table-wrap'), table = element('table', 'if-state-table');
+        wrap.dataset.detailScrollKey = 'call1-state-table';
+        table.setAttribute('aria-label', 'CALL1 슬롯별 복장·헤어 상태');
+        const head = element('thead'), header = element('tr'), corner = element('th', '', '인물'); corner.scope = 'col'; header.append(corner);
+        data.slots.forEach(slot => {const th = element('th', '', `SLOT${slot}`); th.scope = 'col'; header.append(th);});
+        head.append(header); table.append(head);
+        const rows = element('tbody');
+        data.characters.forEach(name => {
+            const row = element('tr'), label = element('th', '', name); label.scope = 'row'; row.append(label);
+            data.slots.forEach(slot => {
+                const key = `SLOT${slot}`, cell = element('td');
+                const state = data.states[key][name], changes = data.changes[key]?.[name] || {};
+                [['outfit', '복장'], ['hair', '헤어']].forEach(([field, caption]) => {
+                    const direct = Object.hasOwn(changes, field), section = element('div', `if-state-tags ${direct ? 'if-state-direct' : 'if-state-inherited'}`);
+                    section.dataset.field = field; section.dataset.source = direct ? 'direct' : 'inherited';
+                    section.append(element('div', 'if-state-tag-label', `${caption} · ${direct ? '직접' : '이어받음'}`), element('div', '', state[field] || '(태그 없음)')); cell.append(section);
+                });
+                row.append(cell);
+            });
+            rows.append(row);
+        });
+        table.append(rows); wrap.append(table); body.append(wrap);
+    }
+
+    function detailText(text, key) {
+        const pre = element('pre', '', text);
+        pre.dataset.detailScrollKey = key;
+        return pre;
+    }
+
+    function captureDetailView(body) {
+        return {
+            scroll: [body.scrollLeft, body.scrollTop],
+            inner: new Map([...body.querySelectorAll('[data-detail-scroll-key]')].map(node =>
+                [node.dataset.detailScrollKey, [node.scrollLeft, node.scrollTop]])),
+            opened: [...body.querySelectorAll('details')].map(node => node.open),
+            focus: body.contains(document.activeElement) ? document.activeElement.dataset.detailScrollKey : null,
+        };
+    }
+
+    function restoreDetailView(body, view) {
+        body.querySelectorAll('[data-detail-scroll-key]').forEach(node => {
+            const scroll = view.inner.get(node.dataset.detailScrollKey);
+            if (scroll) [node.scrollLeft, node.scrollTop] = scroll;
+            if (view.focus && node.dataset.detailScrollKey === view.focus) node.focus({preventScroll: true});
+        });
+        [body.scrollLeft, body.scrollTop] = view.scroll;
+    }
+
     async function openDetail(nodeId, updating = false) {
         const runId = flow?.id; if (!runId) return;
+        // Coalesce background refreshes without invalidating the response the
+        // user is waiting for. Explicit node changes still take effect at once.
+        if (updating && detailRefreshRequest) {detailRefreshPending = true; return;}
         selected = nodeId; const request = ++detailRequest;
+        detailRefreshRequest = request; detailRefreshPending = false;
         hideTooltip();
         if (!detailModal.open) detailModal.show();
         rehomeToast();
         const body = detailModal.querySelector('.if-detail-body');
-        if (!updating) body.replaceChildren(element('p', '', '상세 정보를 불러오는 중…'));
+        if (!updating) {renderedDetail = null; body.replaceChildren(element('p', '', '상세 정보를 불러오는 중…'));}
         try {
             const response = await fetch(`/api/illustration_flow?run=${encodeURIComponent(runId)}&node=${encodeURIComponent(nodeId)}`, {cache: 'no-store'});
             if (!response.ok) throw Error(response.status === 404 ? '새 요청이 접수되어 이전 상세 정보가 종료되었습니다.' : `상세 조회 실패 (${response.status})`);
             const {node: n} = await response.json();
             if (request !== detailRequest || runId !== flow?.id || !detailModal.open) return;
-            const scroll = body.scrollTop;
-            const opened = [...body.querySelectorAll('details')].map(d => d.open);
+            const imageUrl = nodeImageUrl(n, flow.status);
+            const signature = JSON.stringify([n, activeTab, imageUrl]);
+            if (renderedDetail?.runId === runId && renderedDetail.nodeId === nodeId && renderedDetail.signature === signature) {
+                const timer = body.querySelector('[data-detail-elapsed]');
+                if (timer) timer.textContent = elapsed(n);
+                return;
+            }
+            // Capture at response time so scrolling during a slow request wins.
+            const view = captureDetailView(body);
             body.replaceChildren(); detailModal.querySelector('h2').textContent = n.label;
+            appendCall1StateTable(n, body);
             const meta = element('dl', 'if-meta');
             const executor = nodeExecutor(n);
-            Object.entries({'상태': labels[n.status] || n.status, '처리 주체': executorLabels[executor] || executor, '모델': n.model || '해당 없음 / 배정 대기', '서비스': n.service || '—', 'LLM 슬롯': n.llm_slot || '—', '라우팅': n.phase || '—', '처리 시간': elapsed(n), '실행 ID': n.execution_id || n.id, '오류': n.error || '없음'}).forEach(([key,value]) => meta.append(element('dt', '', key), element('dd', '', value)));
+            Object.entries({'상태': labels[n.status] || n.status, '처리 주체': executorLabels[executor] || executor, '모델': n.model || '해당 없음 / 배정 대기', '서비스': n.service || '—', 'LLM 슬롯': n.llm_slot || '—', '라우팅': n.phase || '—', '전체 처리 시간': elapsed(n), ...timingDetails(n), '실행 ID': n.execution_id || n.id, '오류': n.error || '없음'}).forEach(([key,value]) => {
+                const item = element('dd', '', value);
+                if (key === '전체 처리 시간') item.dataset.detailElapsed = '';
+                meta.append(element('dt', '', key), item);
+            });
             body.append(meta);
+            if (executor === 'llm') body.append(element('p', 'if-subtitle', 'THINK·응답 작성 시간은 최종 시도의 첫 토큰부터 마지막 토큰까지 수신 구간입니다. 추론 수신이 없으면 THINK 0.0s로 표시합니다.'));
             const attempts = n.attempts || [];
             body.append(element('h3', '', `호출·폴백 이력 (${attempts.filter(a => a.type === 'attempt_start').length}회 시도)`));
             if (!attempts.length) body.append(element('p', 'if-subtitle', '아직 호출 이력이 없거나 LLM을 사용하지 않는 단계입니다.'));
             attempts.forEach((a, index) => {
-                const d = element('details'); d.open = opened[index] || false;
-                d.append(element('summary', '', `${a.phase === 'fallback' ? '폴백' : '주 경로'} · ${a.model || '모델 미확정'} · ${a.slot || a.llm_slot || ''} · ${a.type}`), element('pre', '', stringify(a))); body.append(d);
+                const d = element('details'); d.open = view.opened[index] || false;
+                d.append(element('summary', '', `${a.phase === 'fallback' ? '폴백' : '주 경로'} · ${a.model || '모델 미확정'} · ${a.slot || a.llm_slot || ''} · ${a.type}`), detailText(stringify(a), `attempt-${index}`)); body.append(d);
             });
             const output = detailOutput(n);
-            body.append(element('h3', '', '입력'), element('pre', '', stringify(n.input) || '아직 입력이 없습니다.'));
+            body.append(element('h3', '', '입력'), detailText(stringify(n.input) || '아직 입력이 없습니다.', 'input'));
             body.append(element('h3', '', '출력'));
+            if (activeTab === 'illustration' && nodePreviewKind(n) === 'image' && imageUrl) {
+                const img = element('img', 'if-detail-image'); img.src = imageUrl; img.alt = `${n.label} 생성 결과`; body.append(img);
+            }
             if (n.task_key === 'illustration_quality_inspection' && n.inspection_scope === 'overall') appendQualityReviewPanel(n, body, request, runId);
             const outputEmptyText = ['failed', 'cancelled'].includes(n.status)
                 ? '실패했지만 기록된 오류나 응답이 없습니다.'
                 : '아직 출력이 없습니다.';
-            body.append(element('pre', '', stringify(output) || outputEmptyText));
-            body.scrollTop = scroll;
-        } catch (error) {console.error('[ILLUST_FLOW] 상세 조회 실패:', error); if (request === detailRequest) body.replaceChildren(element('p', '', error.message));}
+            body.append(detailText(stringify(output) || outputEmptyText, 'output'));
+            restoreDetailView(body, view);
+            renderedDetail = {runId, nodeId, signature};
+        } catch (error) {
+            console.error('[ILLUST_FLOW] 상세 조회 실패:', error);
+            if (request === detailRequest && detailModal.open && (!updating || !renderedDetail)) body.replaceChildren(element('p', '', error.message));
+        } finally {
+            if (detailRefreshRequest === request) {
+                detailRefreshRequest = 0;
+                const pending = detailRefreshPending; detailRefreshPending = false;
+                if (pending && selected && detailModal.open) void openDetail(selected, true);
+            }
+        }
     }
     window.receiveIllustrationFlow = receive;
     window.receiveVideoFlow = (next, autoOpen) => receive(next, autoOpen, 'video');

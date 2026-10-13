@@ -48,8 +48,8 @@ def test_llm_mapping_routes_are_independent_json_tasks():
     auto = server.DEFAULT_CONFIG["llm_routing"]["asset_name_mapping_auto_fix"]
     full = server.DEFAULT_CONFIG["llm_routing"]["asset_name_mapping_full"]
 
-    assert auto["json_mode"] is True
-    assert full["json_mode"] is True
+    assert "json_mode" not in auto
+    assert "json_mode" not in full
     assert auto is not full
 
 

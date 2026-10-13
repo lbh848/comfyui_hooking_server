@@ -397,7 +397,7 @@ def test_profile_context_translation_is_registered_for_routing_and_workflow():
     ).read_text(encoding="utf-8")
 
     assert route["primary"] == "llm1"
-    assert route["json_mode"] is True
+    assert "json_mode" not in route
     assert (
         pipeline._CALL_TASK_KEYS[pipeline.PROFILE_CONTEXT_TRANSLATE_CALL_NAME]
         == pipeline.PROFILE_CONTEXT_TRANSLATE_TASK_KEY
@@ -407,8 +407,8 @@ def test_profile_context_translation_is_registered_for_routing_and_workflow():
     ][0] == "profile_context_translation"
     assert "key: 'illustration_profile_context_translate'" in frontend
     assert "JSON · 캐시 미스 시" in frontend
-    assert "label === 'PROFILE-CONTEXT-CACHE'" in flow_frontend
-    assert "label.startsWith('PROFILE-CONTEXT-TRANSLATE')" in flow_frontend
+    assert "['PROFILE-CONTEXT-CACHE', 'profile_context_translation'," in flow_frontend
+    assert "['PROFILE-CONTEXT-TRANSLATE', 'profile_context_translation'," in flow_frontend
     assert "PROFILE-CONTEXT-CACHE" in Path(
         pipeline.__file__
     ).read_text(encoding="utf-8")

@@ -98,19 +98,15 @@ def test_gemini_base64_encoder_preserves_roles_and_image_parts():
     assert encoded[2]["content"][1] is not image_part
 
 
-def test_gemini_base64_input_keeps_json_response_format(monkeypatch):
+def test_gemini_base64_input_does_not_force_json_response_format(monkeypatch):
     monkeypatch.setattr(llm_service, "_current_config", _config())
-    token = llm_service._response_format_ctx.set({"type": "json_object"})
-    try:
-        body = llm_service._build_gemini_request_body(
-            [{"role": "user", "content": "응답"}],
-            "gemini-test",
-        )
-    finally:
-        llm_service._response_format_ctx.reset(token)
+    body = llm_service._build_gemini_request_body(
+        [{"role": "user", "content": "응답"}],
+        "gemini-test",
+    )
 
     generation_config = body["generationConfig"]
-    assert generation_config["responseMimeType"] == "application/json"
+    assert "responseMimeType" not in generation_config
     assert "responseSchema" not in generation_config
 
 
@@ -131,27 +127,19 @@ async def test_sync_base64_transport_wraps_and_decodes_response(
         seen["messages"] = messages
         seen["service"] = service
         seen["model"] = model
-        seen["response_format"] = llm_service._response_format_ctx.get()
         return base64.b64encode(plain_response.encode("utf-8")).decode("ascii")
 
     monkeypatch.setattr(
         llm_service, "_dispatch_unlimited", fake_dispatch_unlimited
     )
-    outer_token = llm_service._response_format_ctx.set({"type": "json_object"})
-    try:
-        result = await llm_service._dispatch(
-            [{"role": "user", "content": "JSON으로 답해"}],
-            service,
-            f"{service}-test",
-        )
-        assert llm_service._response_format_ctx.get() == {"type": "json_object"}
-    finally:
-        llm_service._response_format_ctx.reset(outer_token)
+    result = await llm_service.callLLM(
+        [{"role": "user", "content": "JSON으로 답해"}],
+        json_mode=True,
+    )
 
     assert result == plain_response
     assert seen["service"] == service
     assert seen["model"] == f"{service}-test"
-    assert seen["response_format"] is None
     assert "Base64-Encoded Instruction Protocol" in seen["messages"][0]["content"]
     assert (
         base64.b64decode(seen["messages"][1]["content"]).decode("utf-8")
@@ -391,7 +379,6 @@ async def test_base64_stream_can_be_closed_from_a_different_async_context(monkey
     monkeypatch.setattr(llm_service, "_current_config", _config())
 
     async def fake_stream_unlimited(messages, service, model):
-        assert llm_service._response_format_ctx.get() is None
         yield {"type": "start", "service": service, "model": model}
         yield {"type": "done", "text": base64.b64encode(b"ok").decode("ascii")}
 
@@ -400,7 +387,6 @@ async def test_base64_stream_can_be_closed_from_a_different_async_context(monkey
         "_dispatch_stream_unlimited",
         fake_stream_unlimited,
     )
-    outer_token = llm_service._response_format_ctx.set({"type": "json_object"})
     stream = llm_service._dispatch_stream(
         [{"role": "user", "content": "요청"}],
         "vertex",
@@ -409,11 +395,9 @@ async def test_base64_stream_can_be_closed_from_a_different_async_context(monkey
     try:
         first_event = await asyncio.create_task(anext(stream))
         assert first_event["type"] == "start"
-        assert llm_service._response_format_ctx.get() == {"type": "json_object"}
         await stream.aclose()
-        assert llm_service._response_format_ctx.get() == {"type": "json_object"}
     finally:
-        llm_service._response_format_ctx.reset(outer_token)
+        await stream.aclose()
 
 
 def test_frontend_registers_base64_control_for_every_llm_slot():

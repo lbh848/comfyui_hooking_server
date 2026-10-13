@@ -352,7 +352,7 @@ def _multi_char_context(descriptor: dict[str, Any]) -> dict[str, Any] | None:
         if isinstance(character, dict) and str(character.get("name") or "").strip()
     ]
     layout = descriptor.get("multi_char_layout")
-    if len(characters) < 2 or not isinstance(layout, dict):
+    if not characters or not isinstance(layout, dict):
         return None
     return {
         "enable": True,

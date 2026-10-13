@@ -673,13 +673,11 @@ def test_original_asset_settings_and_routing_are_registered() -> None:
         "원본 에셋 실패 항목 복구",
     )
     assert "illustration_original_asset" in server.DEFAULT_CONFIG["llm_routing"]
-    assert server.DEFAULT_CONFIG["llm_routing"]["illustration_original_asset"][
-        "json_mode"
-    ] is True
+    assert "json_mode" not in server.DEFAULT_CONFIG["llm_routing"]["illustration_original_asset"]
     assert "illustration_original_asset_recovery" in server.DEFAULT_CONFIG["llm_routing"]
-    assert server.DEFAULT_CONFIG["llm_routing"][
+    assert "json_mode" not in server.DEFAULT_CONFIG["llm_routing"][
         "illustration_original_asset_recovery"
-    ]["json_mode"] is True
+    ]
 
 
 def test_runtime_snapshot_uses_bot_instruction_and_ignores_legacy_global_value(
@@ -785,12 +783,13 @@ def test_frontend_places_original_asset_tab_after_output_count() -> None:
     groups_end = frontend.index("const ILLUSTRATION_CONTEXT_TOGGLE_FIELDS", groups_start)
     groups = frontend[groups_start:groups_end]
 
-    assert groups.index("key: 'output_count'") < groups.index("key: 'original_asset'")
+    assert groups.index("key: 'pipeline'") < groups.index("key: 'original_asset'") < groups.index("key: 'backtranslation'")
+    assert "key: 'output_count_min'" in groups and "key: 'output_count_max'" in groups
     assert "key: 'illustration_output_mode'" in groups
     assert "key: 'original_asset_count'" in groups
     assert "key: 'original_asset_instruction'" not in groups
     assert "에셋 출력 지침 세팅" in groups
-    assert "기존 전역 에셋 선택 지침은 사용하지 않습니다" in groups
+    assert "현재 봇의 에셋 출력 지침" in groups
     assert "key: 'illustration_original_asset'" in frontend
     assert "key: 'illustration_original_asset_recovery'" in frontend
 
@@ -1040,6 +1039,7 @@ async def test_mixed_output_starts_original_asset_after_detail_gpu_dispatch(
             "session_id": session_id,
             "mode": "plan",
             "scene_slots": [1],
+            "total_count": 1,
             "target_slotted": build_payload["target_slotted"],
         })
         stage_order.append("call2_after_plan")
@@ -1053,14 +1053,12 @@ async def test_mixed_output_starts_original_asset_after_detail_gpu_dispatch(
         await kwargs["on_call2_ready"]({
             "context": "context",
             "prompt_format": "v3",
+            "total_count": 1,
             "items": [generated_descriptor],
         })
-        if multi_character:
-            # 다중 장면은 CALL3/레이아웃 뒤 실제 GPU 큐 등록까지 한 번 더 보류한다.
-            await asyncio.sleep(0)
-            assert not asset_started.is_set()
-        else:
-            await asyncio.wait_for(asset_started.wait(), timeout=1.0)
+        # This callback receives accepted descriptors with required masks ready.
+        # Both single and multi-character scenes start assets after registration.
+        await asyncio.wait_for(asset_started.wait(), timeout=1.0)
         return {
             "context": "context",
             "prompt_format": "v3",
@@ -1154,37 +1152,34 @@ async def test_mixed_output_starts_original_asset_after_detail_gpu_dispatch(
 
 def test_original_asset_plan_reserves_slots_but_gpu_dispatch_starts_selection() -> None:
     server_source = Path(server.__file__).read_text(encoding="utf-8")
-    pipeline_source = Path(pipeline.__file__).read_text(encoding="utf-8")
+    pipeline_source = (Path(pipeline.__file__).parent / "illustration_scene_pipeline.py").read_text(encoding="utf-8")
 
     assert "before_call2" not in server_source
     assert "before_call2" not in pipeline_source
-    assert "on_call2_plan_ready=None" in pipeline_source
+    assert "on_call2_plan_ready=None" in Path(pipeline.__file__).read_text(encoding="utf-8")
     assert "CALL2-PLAN 직후 선택 시작" not in server_source
     assert "CALL2-PLAN slot 확정 · DETAIL/GPU 등록까지 선택 보류" in server_source
 
-    plan_join = pipeline_source.index("call2_plan_output = await illustration_flow.join(plan_task)")
-    plan_parse = pipeline_source.index("parsed_plan, plan_reason = parse_call2_plan(", plan_join)
-    anchor_bind = pipeline_source.index(
-        'parsed_plan["scene_plan"] = bind_scene_plan_anchor_passages(',
-        plan_parse,
-    )
-    plan_callback = pipeline_source.index("await on_call2_plan_ready({", anchor_bind)
-    detail_stage = pipeline_source.index('parallel_stage = "CALL2-DETAIL"', plan_callback)
+    plan_join = pipeline_source.index("plan_results = await p._run_parallel_pipeline_jobs(")
+    plan_audit = pipeline_source.index('audit_output = await p._call_pipeline_llm("CALL2-AUDIT"', plan_join)
+    prepared = pipeline_source.index("prepared = []", plan_audit)
+    plan_callback = pipeline_source.index("await on_call2_plan_ready({", prepared)
+    detail_stage = pipeline_source.index("detail_request_limit =", plan_callback)
     assert (
         plan_join
-        < plan_parse
-        < anchor_bind
+        < plan_audit
+        < prepared
         < plan_callback
         < detail_stage
     )
 
     server_plan_callback = server_source.index("async def _on_call2_plan_ready")
     slot_reservation = server_source.index(
-        "original_asset_plan_slots = {",
+        "original_asset_plan_slots = set(scene_slots)",
         server_plan_callback,
     )
     call2_ready = server_source.index("async def _on_call2_ready", slot_reservation)
-    gpu_enqueue = server_source.index("child_pairs.append(await _enqueue_child(", call2_ready)
+    gpu_enqueue = server_source.index("await _enqueue_child(", call2_ready)
     asset_start = server_source.index(
         "_start_original_asset_selection(",
         gpu_enqueue,
@@ -1198,9 +1193,9 @@ def test_asset_only_path_is_free_and_mixed_path_waits_for_plan_slots() -> None:
     free_select = source.index("_run_original_asset_selection(set())", asset_only)
     plan_wait = source.index("일반 삽화 PLAN slot 확정 대기", free_select)
     plan_callback = source.index("async def _on_call2_plan_ready", plan_wait)
-    plan_reservation = source.index("original_asset_plan_slots = {", plan_callback)
+    plan_reservation = source.index("original_asset_plan_slots = set(scene_slots)", plan_callback)
     call2_ready = source.index("async def _on_call2_ready", plan_reservation)
-    gpu_enqueue = source.index("child_pairs.append(await _enqueue_child(", call2_ready)
+    gpu_enqueue = source.index("await _enqueue_child(", call2_ready)
     mixed_select = source.index("_start_original_asset_selection(", gpu_enqueue)
     assert (
         asset_only

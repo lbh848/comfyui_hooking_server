@@ -1037,31 +1037,76 @@ async def test_overall_human_review_loads_and_saves_all_image_evaluations(
     }
 
 
-def test_backup_cleanup_keeps_reviewed_images_outside_the_ordinary_limit(
-    tmp_path, monkeypatch
+@pytest.mark.parametrize("reviewed_position", [0, 1, 2])
+@pytest.mark.parametrize("image_extension", [".webp", ".avif"])
+def test_backup_cleanup_counts_reviewed_images_within_the_configured_limit(
+    tmp_path, monkeypatch, capsys, reviewed_position, image_extension
 ):
     backup_dir = tmp_path / "workflow_backup"
     backup_dir.mkdir()
-    for index, name in enumerate(("reviewed-old", "ordinary-middle", "ordinary-new"), start=1):
-        image = backup_dir / f"{name}.webp"
+    names = ("20260919_092800_6a9d64b9", "river-scene", "lantern-scene")
+    sidecars = (".json", ".txt", "_info.json", "_enhanced.txt", "_chat.txt", "_wildcard.json")
+    for subdir in ("_raw", "_posters"):
+        (backup_dir / subdir).mkdir()
+    for index, name in enumerate(names, start=1):
+        image = backup_dir / f"{name}{image_extension}"
         image.write_bytes(name.encode("utf-8"))
-        (backup_dir / f"{name}_info.json").write_text("{}", encoding="utf-8")
+        for suffix in sidecars:
+            (backup_dir / f"{name}{suffix}").write_text("{}", encoding="utf-8")
+        for raw_extension in (".webp", ".avif"):
+            (backup_dir / "_raw" / f"{name}{raw_extension}").write_bytes(b"raw")
+        (backup_dir / "_posters" / f"{name}.webp").write_bytes(b"poster")
         os.utime(image, (index, index))
     monkeypatch.setattr(server, "get_backup_base_dir", lambda: str(backup_dir))
     monkeypatch.setattr(server, "app_config", {"backup_max_count": 1})
     monkeypatch.setattr(
         server.illustration_quality_inspection,
         "human_reviewed_backup_names",
-        lambda: {"reviewed-old"},
+        lambda: {names[reviewed_position]},
     )
 
     server.cleanup_backups()
 
-    assert (backup_dir / "reviewed-old.webp").is_file()
-    assert (backup_dir / "reviewed-old_info.json").is_file()
-    assert (backup_dir / "ordinary-new.webp").is_file()
-    assert not (backup_dir / "ordinary-middle.webp").exists()
-    assert not (backup_dir / "ordinary-middle_info.json").exists()
+    assert sorted(path.name for path in backup_dir.glob(f"*{image_extension}")) == [
+        f"{names[-1]}{image_extension}"
+    ]
+    for name in names:
+        expected = name == names[-1]
+        for suffix in sidecars:
+            assert (backup_dir / f"{name}{suffix}").exists() == expected
+        for raw_extension in (".webp", ".avif"):
+            assert (backup_dir / "_raw" / f"{name}{raw_extension}").exists() == expected
+        assert (backup_dir / "_posters" / f"{name}.webp").exists() == expected
+    assert "사람 평가 사례 백업 보존" not in capsys.readouterr().out
+
+
+def test_backup_cleanup_does_not_depend_on_human_review_history(tmp_path, monkeypatch):
+    backup_dir = tmp_path / "workflow_backup"
+    backup_dir.mkdir()
+    for index, (name, extension) in enumerate(
+        (("old-scene", ".webp"), ("middle-scene", ".avif"), ("new-scene", ".webp")),
+        start=1,
+    ):
+        image = backup_dir / f"{name}{extension}"
+        image.write_bytes(b"image")
+        os.utime(image, (index, index))
+    monkeypatch.setattr(server, "get_backup_base_dir", lambda: str(backup_dir))
+    monkeypatch.setattr(server, "app_config", {"backup_max_count": 2})
+
+    def unavailable_review_history():
+        raise OSError("Review history is unavailable")
+
+    monkeypatch.setattr(
+        server.illustration_quality_inspection,
+        "human_reviewed_backup_names",
+        unavailable_review_history,
+    )
+
+    server.cleanup_backups()
+
+    assert sorted(path.name for path in backup_dir.iterdir()) == [
+        "middle-scene.avif", "new-scene.webp"
+    ]
 
 
 @pytest.mark.asyncio

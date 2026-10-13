@@ -40,6 +40,8 @@ from modes.visual_profiles import (
     tag_values as visual_tag_values,
     visual_profile_names,
 )
+from modes.illustration_prompt_assembly import PromptText, input_variables, is_symbolic, prompt_join, prompt_sub, symbolic_call2_template, variable
+from modes import illustration_prompt_builders as prompt_builders
 
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -58,7 +60,6 @@ PROMPT_BATCH_PREFIX = "__LB_ILLUST_PROMPT_BATCH_V1__"
 EASY_EDIT_PREFIX = "__LB_ILLUST_EASY_EDIT_V1__"
 MAX_ILLUSTRATION_SLOT_COUNT = 65
 MAX_EASY_EDIT_DIRECTION_LENGTH = 4000
-CALL5_MAX_PAIRWISE_OVERLAP_RATIO = 0.60
 PROFILE_CONTEXT_TRANSLATE_TASK_KEY = "illustration_profile_context_translate"
 PROFILE_CONTEXT_TRANSLATE_CALL_NAME = "PROFILE-CONTEXT-TRANSLATE"
 _CHARACTER_IDENTITY_LORA_FIELDS = (
@@ -104,8 +105,8 @@ PROMPT_FILES = {
     "call2_prefill": "prefill.txt",
     "call2_common": "system.txt",
     "call2_explicit": "explicit.txt",
+    "call2_select": "scene_select.txt",
     "call2_plan": "plan.txt",
-    "call2_audit": "audit.txt",
     "call2_detail": "detail.txt",
     "call2_keyvis": "keyvisual.txt",
     "call2_fallback": "fallback.txt",
@@ -159,7 +160,6 @@ DEFAULT_TOGGLES = {
     "illustration_output_mode": DEFAULT_ILLUSTRATION_OUTPUT_MODE,
     "original_asset_count": 1,
     "original_asset_instruction": "",
-    "profile_resolve_enabled": True,
     "call1_backtranslate_enabled": False,
     "call1_backtranslate_max_concurrency": 4,
     "call1_backtranslate_slow_retry_enabled": False,
@@ -170,7 +170,6 @@ DEFAULT_TOGGLES = {
     "call1_backtranslate_slow_retry_tps_threshold": 5.0,
     "call1_backtranslate_slow_retry_condition_operator": "and",
     "call1_backtranslate_failure_strategy": "fallback",
-    "call1_enabled": True,
     "call1_parallel_enabled": True,
     "call1_parallel_max_concurrency": 3,
     "call1_parallel_slow_retry_enabled": False,
@@ -191,8 +190,16 @@ DEFAULT_TOGGLES = {
     "call2_parallel_slow_retry_tps_enabled": False,
     "call2_parallel_slow_retry_tps_threshold": 5.0,
     "call2_parallel_slow_retry_condition_operator": "and",
+    "call2_detail_parallel_enabled": True,
+    "call2_detail_parallel_max_concurrency": 3,
+    "call2_detail_parallel_slow_retry_enabled": False,
+    "call2_detail_parallel_slow_retry_remaining": 1,
+    "call2_detail_parallel_slow_retry_progress_enabled": True,
+    "call2_detail_parallel_slow_retry_progress_threshold": 50,
+    "call2_detail_parallel_slow_retry_tps_enabled": False,
+    "call2_detail_parallel_slow_retry_tps_threshold": 5.0,
+    "call2_detail_parallel_slow_retry_condition_operator": "and",
     "call3_context_turns": 5,
-    "call3_enabled": True,
     "multi_char_mask_enabled": True,
     "speak_enabled": True,
     "call3_prompt_mode": "speak",
@@ -218,7 +225,6 @@ DEFAULT_TOGGLES = {
     "positive_note": "",
     "negative_note": "",
     "compat_comfy": True,
-    "compat_character_divider": "newline",
     "compat_character_prompt": "separate",
 }
 
@@ -383,6 +389,26 @@ def merged_toggles(value: dict | None) -> dict:
         for key in out:
             if key in value:
                 out[key] = value[key]
+        # State tracking and applicable profile resolution are required stages,
+        # not user options. Retired OFF values must not bypass either stage.
+        for key in ("call1_enabled", "profile_resolve_enabled"):
+            if key in value:
+                print(f"[ILLUST_CONTEXT] 폐기된 필수 단계 토글 무시: {key}={value[key]!r}")
+        if "compat_character_divider" in value:
+            print(
+                f"[ILLUST_CONTEXT] 폐기된 캐릭터 구분 설정 무시: "
+                f"compat_character_divider={value['compat_character_divider']!r}, "
+                "RAW 캐릭터 블록은 파이프로 구분"
+            )
+        # Fold the old two-switch dialogue gate into the existing single key.
+        # Do not emit call3_enabled, so normalization is idempotent and the
+        # remaining switch can be turned back on without a hidden veto.
+        if "call3_enabled" in value:
+            out["speak_enabled"] = bool(out["speak_enabled"]) and bool(value["call3_enabled"])
+            print(
+                f"[ILLUST_CONTEXT:CALL3] 기존 대사 토글 통합: "
+                f"call3_enabled={value['call3_enabled']!r}, speak_enabled={out['speak_enabled']}"
+            )
         # 구버전의 자유 입력 preset 값은 V1/V3 선택값으로 한 번만 해석한다.
         # tutorial/default/빈 값은 모두 기존 preset.txt(V3)를 뜻했다.
         if "prompt_format" not in value and "preset" in value:
@@ -433,6 +459,7 @@ def merged_toggles(value: dict | None) -> dict:
     for prefix, label in (
         ("call1_parallel", "CALL1 병렬"),
         ("call2_parallel", "CALL2 병렬"),
+        ("call2_detail_parallel", "DETAIL 병렬"),
     ):
         operator_key = f"{prefix}_slow_retry_condition_operator"
         condition_operator = str(out.get(operator_key) or "").strip().lower()
@@ -549,6 +576,39 @@ def merged_toggles(value: dict | None) -> dict:
             "output_count_max": DEFAULT_TOGGLES["output_count_max"],
             "original_asset_count": DEFAULT_TOGGLES["original_asset_count"],
         })
+    # A legacy config had one pair of PLAN/DETAIL controls. Seed missing DETAIL
+    # values once into the normalized result; explicit values are independent.
+    if isinstance(value, dict):
+        for detail_key, legacy_key in (
+            ("call2_detail_parallel_enabled", "call2_parallel_enabled"),
+            ("call2_detail_parallel_max_concurrency", "call2_parallel_max_concurrency"),
+        ):
+            if detail_key not in value and legacy_key in value:
+                out[detail_key] = out[legacy_key]
+                print(f"[ILLUST_CONTEXT:DETAIL] 기존 공용 병렬 설정 초기값 적용: {detail_key}={out[detail_key]!r}")
+    try:
+        out["call2_detail_parallel_max_concurrency"] = max(
+            1, min(16, int(out["call2_detail_parallel_max_concurrency"])),
+        )
+    except (TypeError, ValueError, OverflowError) as e:
+        print(
+            f"[ILLUST_CONTEXT:DETAIL] 최대 동시 요청 수 보정 실패: "
+            f"value={out['call2_detail_parallel_max_concurrency']!r}, error={e}"
+        )
+        traceback.print_exc()
+        out["call2_detail_parallel_max_concurrency"] = DEFAULT_TOGGLES["call2_detail_parallel_max_concurrency"]
+    for suffix, cast, minimum, maximum in (
+        ("remaining", int, 1, 16),
+        ("progress_threshold", int, 1, 99),
+        ("tps_threshold", float, 0.1, 1000.0),
+    ):
+        key = f"call2_detail_parallel_slow_retry_{suffix}"
+        try:
+            out[key] = max(minimum, min(maximum, cast(out[key])))
+        except (TypeError, ValueError, OverflowError) as e:
+            print(f"[ILLUST_CONTEXT:DETAIL] 느린 요청 조건 보정 실패: key={key}, value={out[key]!r}, error={e}")
+            traceback.print_exc()
+            out[key] = DEFAULT_TOGGLES[key]
     # 출력 모드 단일 드롭박스 -> illustration_enabled/original_asset_enabled 전개.
     # 입력에 모드가 없으면(구버전 저장값) 두 불린 조합에서 모드를 추론한다.
     raw_output_mode = (
@@ -582,8 +642,8 @@ def merged_toggles(value: dict | None) -> dict:
     # 예전 UI에서 저장한 고정 배치 크기는 더 이상 사용하지 않는다. CALL2-PLAN이
     # 선택한 전체 장면 수를 최대 동시 요청 수에 맞춰 자동 분배한다.
     out.pop("call2_parallel_batch_size", None)
-    # CALL1 병렬도 segment를 최대 동시 요청 수만큼 균등 분할하므로 청크당 segment 수
-    # 설정은 더 이상 사용하지 않는다. 과거 저장값이 남아 있으면 무시.
+    # CALL1은 하나의 누적 상태 타임라인을 위한 단일 호출이다.
+    # 예전 segment 청크 크기 설정은 사용하지 않는다.
     out.pop("call1_parallel_chunk_size", None)
     return out
 
@@ -1456,7 +1516,8 @@ def _normalize_messages(messages: list[dict]) -> list[dict]:
     for msg in messages:
         role = msg.get("role", "user")
         role = "assistant" if role in ("char", "assistant") else role
-        content = str(msg.get("content") or "").strip()
+        value = msg.get("content") or ""
+        content = value.strip() if isinstance(value, PromptText) else str(value).strip()
         if not content:
             continue
         if out and out[-1]["role"] == role:
@@ -5986,7 +6047,7 @@ def _bool(value) -> bool:
 
 def _render_conditionals(text: str, values: dict) -> str:
     # custom closer를 Risu의 일반 closer와 같게 취급한다.
-    text = re.sub(r"\{\{/(?:compat-comfy|nsfw|supplement|context|history-length|history-null)\}\}", "{{/when}}", text)
+    text = prompt_sub(r"\{\{/(?:compat-comfy|nsfw|supplement|context|history-length|history-null)\}\}", "{{/when}}", text)
 
     def cond(expr: str) -> bool:
         bits = [b.strip() for b in expr.strip(": ").split("::") if b.strip()]
@@ -6017,9 +6078,12 @@ def _render_conditionals(text: str, values: dict) -> str:
         match = block.search(text)
         if not match:
             break
-        body = match.group(2)
-        yes, sep, no = body.partition("{{:else}}")
-        text = text[:match.start()] + (yes if cond(match.group(1)) else (no if sep else "")) + text[match.end():]
+        body = text[match.start(2):match.end(2)]
+        divider = body.find("{{:else}}")
+        yes = body if divider < 0 else body[:divider]
+        no = "" if divider < 0 else body[divider + len("{{:else}}"):]
+        selected = yes if cond(match.group(1)) else no
+        text = text[:match.start()] + variable(selected, "조건 설정에 따라 포함된 지침") + text[match.end():]
     return text
 
 
@@ -6038,7 +6102,9 @@ def render_call2_prompt(
     생략한다. PLAN과 병렬 DETAIL은 각 태스크 메시지에 자신의 정확한
     카운트 계약을 별도로 받으므로 role system에 공통 제한을 중복하지 않는다.
     """
-    text = str(text or "")
+    if is_symbolic():
+        return symbolic_call2_template(str(text or ""))
+    text = PromptText(str(text or ""))
     # 복잡한 history/client-comment 블록은 서버 값으로 명시적으로 재구성한다.
     prefix = text
     suffix = ""
@@ -6054,15 +6120,15 @@ def render_call2_prompt(
         _, suffix = tail.split("# Example", 1)
         suffix = "# Example" + suffix
         if toggles.get("context_history") and history.strip():
-            prefix += "## Character Tag History\n\n" + history.strip() + "\n\n"
+            prefix += "## Character Tag History\n\n" + variable(history.strip(), "캐릭터 태그 히스토리") + "\n\n"
         comments = []
         if str(toggles.get("focus") or "").strip():
             comments.append(
-                f'I want to focus on the character(s): "{str(toggles["focus"]).strip()}". Do not make scenes for others.'
+                'I want to focus on the character(s): "' + variable(str(toggles["focus"]).strip(), "사용자 집중 대상") + '". Do not make scenes for others.'
             )
         if str(toggles.get("direction") or "").strip():
-            comments.append(str(toggles["direction"]).strip())
-        prefix += "## Client Comments\n\n<instruction>\n" + ("\n\n".join(comments) if comments else "(None specified)") + "\n</instruction>\n\n"
+            comments.append(variable(str(toggles["direction"]).strip(), "사용자 연출 지시"))
+        prefix += "## Client Comments\n\n<instruction>\n" + (prompt_join("\n\n", comments) if comments else "(None specified)") + "\n</instruction>\n\n"
         text = prefix + suffix
 
     risu_values = {
@@ -6079,40 +6145,40 @@ def render_call2_prompt(
         "lb-xnai-history": history or "null",
     }
     for key, value in risu_values.items():
-        text = text.replace("{{getglobalvar::toggle_" + key + "}}", value)
-        text = text.replace("{{getvar::" + key + "}}", value)
+        text = text.replace("{{getglobalvar::toggle_" + key + "}}", variable(value, "생성 설정: " + key))
+        text = text.replace("{{getvar::" + key + "}}", variable(value, "생성 설정: " + key))
 
     def dict_element(match):
         try:
             table = json.loads(match.group(1))
-            return str(table.get(str(match.group(2)).strip(), ""))
+            return variable(str(table.get(str(match.group(2)).strip(), "")), "설정 매크로 선택값")
         except Exception as e:
             print(f"[ILLUST_CONTEXT] dictelement 렌더 실패: {e}; expr={match.group(0)!r}")
             traceback.print_exc()
             return ""
 
-    text = re.sub(r"\{\{dictelement::(\{[^{}]*\})::([^{}]*)\}\}", dict_element, text)
+    text = prompt_sub(r"\{\{dictelement::(\{[^{}]*\})::([^{}]*)\}\}", dict_element, text)
     text = _render_conditionals(text, risu_values)
     # Risu에만 존재하는 잔여 매크로는 LLM으로 보내지 않고 로그에 남긴다.
     leftovers = re.findall(r"\{\{[^\n]{0,240}?\}\}", text)
     if leftovers:
         print(f"[ILLUST_CONTEXT] 렌더 후 잔여 Risu 매크로 {len(leftovers)}개 제거: {leftovers}")
-        text = re.sub(r"\{\{[^\n]*?\}\}", "", text)
+        text = prompt_sub(r"\{\{[^\n]*?\}\}", "", text)
     # output_count_min/max는 scene_mode와 무관한 유일한 장면 수 권위다.
     if include_server_limits:
         limits = []
         if include_scene_count_limit:
             limits.append(
-                f"Generate between {int(toggles['output_count_min'])} and "
-                f"{int(toggles['output_count_max'])} scenes."
+                "Generate between " + variable(int(toggles['output_count_min']), "최소 장면 수") + " and "
+                + variable(int(toggles['output_count_max']), "최대 장면 수") + " scenes."
             )
         limits.append(
-            f"Maximum fully visible characters per image: {int(toggles['character_limit'])}."
+            "Maximum fully visible characters per image: " + variable(int(toggles['character_limit']), "인물 수 제한") + "."
         )
         limits.append(
-            f"Key visual: {'required' if toggles.get('key_visual') else 'disabled; omit keyvis'}."
+            "Key visual: " + variable('required' if toggles.get('key_visual') else 'disabled; omit keyvis', "대표 이미지 설정") + "."
         )
-        text += "\n\n# Server limits\n- " + "\n- ".join(limits)
+        text += "\n\n# Server limits\n- " + prompt_join("\n- ", limits)
     return text.strip()
 
 
@@ -8263,7 +8329,7 @@ def _balanced_call2_scene_plan_batches(
     scene_plan: list[dict],
     max_concurrency: int,
 ) -> list[list[dict]]:
-    """PLAN 결과를 가능한 DETAIL 작업 수에 서사 순서대로 균등 분배한다."""
+    """선택/계획 장면을 PLAN 또는 DETAIL 작업 수에 서사 순서대로 균등 분배한다."""
     if not scene_plan:
         return []
     worker_count = min(max(1, int(max_concurrency)), len(scene_plan))
@@ -8300,33 +8366,8 @@ async def _run_call2_keyvis(
             "CHARACTER DICTIONARY와 현재 문맥에 명시된 canonical 이름만 사용하도록 요청"
         )
     roster_text = json.dumps(allowed, ensure_ascii=False)
-    messages.append({
-        "role": "user",
-        "content": (
-            "# KEY VISUAL TASK\n"
-            "Choose at least one and at most "
-            f"{max(1, min(3, int(toggles.get('character_limit', 3))))} named characters when supported "
-            "by the current context.\n\n"
-            "# CURRENT CANONICAL CHARACTER ROSTER\n"
-            + (roster_text if allowed else "(unavailable; use only names in CHARACTER DICTIONARY)")
-            + "\n\n# OUTPUT SCHEMA\n"
-            "<lb-xnai>\n"
-            "keyvis:\n"
-            "  camera: ...\n"
-            "  characters:\n"
-            "    - positive: ...\n"
-            "      name: canonical name\n"
-            "      position: ...\n"
-            "      outfit_state:\n"
-            "        body_state: clothed|partial|nude|topless|bottomless|underwear_only|unknown\n"
-            "        worn: [...]\n"
-            "        removed: [...]\n"
-            "  scene: ...\n"
-            "  supplement: ...\n"
-            "scenes: []\n"
-            "</lb-xnai>\n\nReturn only this block."
-        ),
-    })
+    messages.append(prompt_builders.keyvis_task_message(
+        max(1, min(3, int(toggles.get("character_limit", 3)))), roster_text, allowed))
     try:
         print(
             "[ILLUST_CONTEXT:CALL2_KEYVIS] 독립 입력 준비: "
@@ -9622,7 +9663,7 @@ def build_call3_dialogue_system_prompt(
         emotion_instruction = "\nAdd one #emotion tag to every emitted line."
         emotions = str(toggles.get("speak_emotions") or "").strip()
         if emotions:
-            emotion_instruction += " Allowed labels: " + emotions
+            emotion_instruction += " Allowed labels: " + variable(emotions, "허용 감정 태그")
     elif prompt_mode == "manga" and toggles.get("speak_emotion_enabled"):
         print("[ILLUST_CONTEXT:CALL3] Manga 모드에서는 감정 태그 설정을 사용하지 않음")
     elif prompt_mode == "subtitle" and toggles.get("speak_emotion_enabled"):
@@ -9634,7 +9675,10 @@ def build_call3_dialogue_system_prompt(
     if prompt_mode == "manga" and toggles.get("nsfw"):
         nsfw_block = str(prompts.get("call3_manga_nsfw") or "").strip()
         if nsfw_block:
-            nsfw_instruction = "\n" + nsfw_block
+            nsfw_instruction = (
+                "\n[조건: " + variable("", "만화 NSFW 설정") + " 활성화]\n" + nsfw_block
+                if is_symbolic() else "\n" + variable(nsfw_block, "NSFW 설정에 따라 추가된 만화 지침")
+            )
         else:
             print("[ILLUST_CONTEXT:CALL3] nsfw 토글 ON이나 manga_nsfw 프롬프트가 비어 있어 SOFT/HARD 타입 미주입")
 
@@ -9642,9 +9686,9 @@ def build_call3_dialogue_system_prompt(
     # speak/manga 프롬프트의 {character_names} 자리표시자를 치환한다.
     names = str(extra_names or "").strip()
     if "{character_names}" in selected_prompt:
-        system_prompt = selected_prompt.replace("{character_names}", names)
+        system_prompt = PromptText(selected_prompt).replace("{character_names}", variable(names, "캐릭터 이름 목록"))
     elif names:
-        system_prompt = selected_prompt + "\n\nCharacter names: " + names
+        system_prompt = selected_prompt + "\n\nCharacter names: " + variable(names, "캐릭터 이름 목록")
     else:
         system_prompt = selected_prompt
     output_language = str(toggles.get("speak_language") or "한국어").strip() or "한국어"
@@ -9653,17 +9697,17 @@ def build_call3_dialogue_system_prompt(
         roster_boundary_instruction = (
             "\nAn exact roster identifier may appear as machine-readable metadata only on the "
             "left side of the colon. Do not repeat it inside quoted dialogue or parenthesized "
-            f"thought. Inside the text body, use a natural {output_language} form of address "
+            "thought. Inside the text body, use a natural " + variable(output_language, "출력 언어") + " form of address "
             "supported by the original narrative and bounded conversation, or omit direct "
             "address when uncertain."
         )
     language_instruction = (
         "# OUTPUT LANGUAGE — HARD REQUIREMENT\n"
-        f"Write every dialogue, thought, inner monologue, and newly created reaction in {output_language}.\n"
+        + "Write every dialogue, thought, inner monologue, and newly created reaction in " + variable(output_language, "출력 언어") + ".\n"
         "Character names, [Scene slot=N] headers, and required output tags may remain in their "
         "prescribed form. Do not switch the spoken text to another language even when the source "
         "narrative or examples use another language. Before answering, silently verify that every "
-        f"spoken or thought line follows the required output language: {output_language}."
+        "spoken or thought line follows the required output language: " + variable(output_language, "출력 언어") + "."
         + roster_boundary_instruction
     )
     system_prompt = language_instruction + "\n\n" + system_prompt
@@ -9681,9 +9725,9 @@ def build_call3_scene_request(
     """Build the scene request without exposing internal stage names in subtitle mode."""
     scene_heading = "Selected illustrated scenes"
     return (
-        f"[Original narrative]\n{original_narrative}"
-        f"\n\n[{scene_heading}]\n{selected_scene_payload}"
-        f"\n\nLanguage: {output_language}"
+        "[Original narrative]\n" + variable(original_narrative, "현재 원문")
+        + f"\n\n[{scene_heading}]\n" + variable(selected_scene_payload, "선택된 삽화 장면")
+        + "\n\nLanguage: " + variable(output_language, "출력 언어")
     )
 
 
@@ -9693,7 +9737,7 @@ def _build_character_history(extra_reference: str) -> str:
 
 
 # 삽화 CALL 이름 → 외부 LLM 분기 task_key. 기존 illustration_call2는 DETAIL과
-# 단일/폴백 경로에 유지하고 PLAN/SCENE-CURATE/KEYVIS/AUTHORITY-AUDIT는 독립 분리한다.
+# 단일/폴백 경로에 유지하고 SELECT/PLAN/KEYVIS/AUTHORITY-AUDIT는 독립 분리한다.
 _CALL_TASK_KEYS = {
     "ORIGINAL-ASSET": "illustration_original_asset",
     "ORIGINAL-ASSET-RECOVERY": "illustration_original_asset_recovery",
@@ -9705,10 +9749,10 @@ _CALL_TASK_KEYS = {
     "PROFILE-RESOLVE-REPAIR": "illustration_profile_resolve",
     PROFILE_CONTEXT_TRANSLATE_CALL_NAME: PROFILE_CONTEXT_TRANSLATE_TASK_KEY,
     "CALL2": "illustration_call2",
+    "CALL2-SELECT": "illustration_call2_select",
     "CALL2-PLAN": "illustration_call2_plan",
     # The new structural scene audit shares PLAN's configured route/slot/retry
     # policy; it is not a second model setting or a duplicate queue job.
-    "CALL2-AUDIT": "illustration_call2_plan",
     "CALL2-KEYVIS": "illustration_call2_keyvis",
     "CALL2-AUTHORITY-AUDIT": "illustration_call2_authority_audit",
     "CALL2-FALLBACK": "illustration_call2",
@@ -9746,8 +9790,8 @@ _CALL_QUEUE_SUBTASK_GROUPS = {
         "프로필 영어 컨텍스트 번역",
     ),
     "CALL2": ("call2", "CALL2 장면/태그 빌드"),
+    "CALL2-SELECT": ("call2_select", "CALL2 장면 선택"),
     "CALL2-PLAN": ("call2_plan", "CALL2 장면 PLAN"),
-    "CALL2-AUDIT": ("call2_audit", "CALL2 장면 원문 감사"),
     "CALL2-DETAIL": ("call2_detail", "CALL2 장면 DETAIL"),
     "CALL2-KEYVIS": ("call2_keyvis", "CALL2 Key Visual"),
     "CALL2-AUTHORITY-AUDIT": (
@@ -9840,6 +9884,7 @@ async def _call_pipeline_llm(
         "model": model,
         "service": service,
         "input": messages,
+        "input_variables": input_variables(messages),
         "output": "",
         "completion_tokens": 0,
         "elapsed": 0.0,
@@ -9875,6 +9920,9 @@ async def _call_pipeline_llm(
         "max_output_tokens",
         "pdf_tokens_before",
         "pdf_pages_after",
+        "reasoning_tokens",
+        "reasoning_chars",
+        *llm_service.LLM_STREAM_TIMING_FIELDS,
     )
 
     def _provider_details() -> dict:
@@ -10061,6 +10109,7 @@ async def _call_pipeline_llm(
                     "max_output_tokens",
                     history_record["max_output_tokens"],
                 ),
+                **{key: provider_metadata.get(key) for key in llm_service.LLM_STREAM_TIMING_FIELDS},
             })
             terminal_notified = True
         history_record.update({
@@ -10083,6 +10132,7 @@ async def _call_pipeline_llm(
                 history_record["max_output_tokens"],
             ),
         })
+        history_record.update(_provider_details())
         lighbd_service._log_lighbd_history(history_record)
         history_logged = True
         return str(result)
@@ -10274,14 +10324,14 @@ async def _build_call3_dialogue_with_recovery(
     retry_messages = deepcopy(speak_messages)
     retry_messages.extend([{
         "role": "assistant",
-        "content": normalized_initial_output,
+        "content": variable(normalized_initial_output, "교정할 이전 LLM 응답"),
     }, {
         "role": "user",
         "content": (
             "Repair only the failed Scene slots listed below. Every other Scene block has "
             "already passed validation and is preserved by the server; do not repeat, rewrite, "
             "summarize, or mention it. "
-            f"Repair slots, in order: {repair_slots}. "
+            + "Repair slots, in order: " + variable(repair_slots, "교정할 슬롯 목록") + ". "
             "Emit exactly one [Scene slot=N] block for every repair slot and no block for "
             "any other slot. "
             "A scene that should intentionally remain silent, or has no suitable "
@@ -10289,11 +10339,11 @@ async def _build_call3_dialogue_with_recovery(
             "an empty body. Do not invent narration, action description, dialogue, or "
             "thought merely to fill such a block. Every other block must contain at "
             "least one dialogue, thought, or inner monologue entry. "
-            f"Write every dialogue and thought in {speak_language}; this language rule is mandatory. "
+            "Write every dialogue and thought in " + variable(speak_language, "출력 언어") + "; this language rule is mandatory. "
             + roster_correction_instruction
             + "Character names in speaker prefixes, Scene headers, and required tags are "
             "the only language exceptions. "
-            f"Validation failure to fix: {model_failure_reason}. "
+            "Validation failure to fix: " + variable(model_failure_reason, "교정할 오류 내용") + ". "
             "Never write the literal placeholders `empty`, `none`, `null`, or `nil`; an "
             "intentionally silent block contains its Scene header and no body text. "
             "Output only the repaired Scene blocks."
@@ -10361,6 +10411,25 @@ class ParallelPipelineJobsError(RuntimeError):
         self.failures = dict(failures)
 
 
+def _detail_batches_for_plan_batches(plan_batches: list[list[dict]], request_limit: int) -> list[list[list[dict]]]:
+    """Keep each DETAIL batch inside one PLAN result so it can start immediately.
+
+    Preserve the requested DETAIL request count when possible. Each PLAN needs
+    at least one DETAIL request; all groups share the configured concurrency cap.
+    """
+    if not plan_batches:
+        print("[ILLUST_CONTEXT:CALL2-DETAIL] 분배할 PLAN 배치 없음")
+        return []
+    counts = [1] * len(plan_batches)
+    target = max(len(plan_batches), min(int(request_limit), sum(map(len, plan_batches))))
+    while sum(counts) < target:
+        eligible = [index for index, batch in enumerate(plan_batches) if counts[index] < len(batch)]
+        index = max(eligible, key=lambda index: len(plan_batches[index]) / counts[index])
+        counts[index] += 1
+    return [_balanced_call2_scene_plan_batches(batch, count)
+            for batch, count in zip(plan_batches, counts)]
+
+
 @illustration_flow.collect_branches
 async def _run_parallel_pipeline_jobs(
     jobs: list[dict],
@@ -10377,8 +10446,11 @@ async def _run_parallel_pipeline_jobs(
     slow_retry_condition_operator: str,
     stream_notify,
     invoke,
+    on_resolved=None,
+    fail_fast: bool = False,
+    request_semaphore=None,
 ) -> list[dict]:
-    """Run ordered LLM jobs with a shared cap and translation-style tail hedging."""
+    """Run capped LLM races and optionally finalize each accepted winner once."""
     if not jobs:
         print(f"[ILLUST_CONTEXT:{group_id}] 실행할 병렬 작업이 비어 있음")
         return []
@@ -10401,7 +10473,7 @@ async def _run_parallel_pipeline_jobs(
             f"jobs={len(jobs)}, max_concurrency={concurrency}"
         )
 
-    semaphore = asyncio.Semaphore(concurrency)
+    semaphore = request_semaphore if request_semaphore is not None else asyncio.Semaphore(concurrency)
     states: dict[int, dict] = {}
     for index, job in enumerate(jobs, start=1):
         states[index] = {
@@ -10496,6 +10568,7 @@ async def _run_parallel_pipeline_jobs(
                 "output_length": len(raw),
                 "attempt_kind": attempt_kind,
                 "completed_at": time.monotonic(),
+                "resolved_context": contextvars.copy_context() if on_resolved else None,
             }
         except asyncio.CancelledError:
             print(
@@ -10515,11 +10588,13 @@ async def _run_parallel_pipeline_jobs(
                 "raw": "",
                 "output_length": 0,
                 "reason": str(e),
+                "error": e,
                 "attempt_kind": attempt_kind,
                 "completed_at": time.monotonic(),
             }
 
     pending: set[asyncio.Task] = set()
+    finalizing: set[asyncio.Task] = set()
     task_metadata: dict[asyncio.Task, tuple[int, str]] = {}
     resolved: dict[int, dict] = {}
     failed: dict[int, str] = {}
@@ -10534,12 +10609,18 @@ async def _run_parallel_pipeline_jobs(
         start_attempt(job_index, "primary")
 
     try:
-        while pending:
-            done, waiting = await asyncio.wait(
-                pending,
+        while pending or finalizing:
+            done, _waiting = await asyncio.wait(
+                pending | finalizing,
                 return_when=asyncio.FIRST_COMPLETED,
             )
-            pending = set(waiting)
+            # Winner callbacks may prepare masks and enqueue images independently
+            # while the coordinator keeps observing the remaining LLM requests.
+            for task in done & finalizing:
+                task.result()
+            finalizing.difference_update(done)
+            done.intersection_update(pending)
+            pending.difference_update(done)
             completed = []
             for task in done:
                 index, attempt_kind = task_metadata.pop(task)
@@ -10557,12 +10638,13 @@ async def _run_parallel_pipeline_jobs(
                     outcome = {
                         "ok": False,
                         "reason": f"unexpected_error: {e}",
+                        "error": e,
                         "attempt_kind": attempt_kind,
                         "completed_at": time.monotonic(),
                     }
                 completed.append((float(outcome["completed_at"]), index, outcome))
 
-            for _completed_at, index, outcome in sorted(completed):
+            for _completed_at, index, outcome in sorted(completed, key=lambda item: (item[0], item[1])):
                 state = states[index]
                 state["attempt_outcomes"][outcome["attempt_kind"]] = outcome
                 if index in resolved:
@@ -10596,6 +10678,13 @@ async def _run_parallel_pipeline_jobs(
                     for sibling in list(state["tasks"]):
                         if not sibling.done():
                             sibling.cancel()
+                    if on_resolved:
+                        # Keep the winning LLM's flow frontier so masks and images
+                        # depend on that response, including when a duplicate wins.
+                        callback = on_resolved(index, outcome["value"])
+                        finalizing.add(outcome["resolved_context"].run(
+                            illustration_flow.create_task, callback,
+                        ))
                     continue
                 state["failure_reasons"].append(str(outcome.get("reason") or "unknown_failure"))
 
@@ -10603,6 +10692,16 @@ async def _run_parallel_pipeline_jobs(
                 if index in resolved or index in failed or state["tasks"]:
                     continue
                 failed[index] = state["failure_reasons"][-1] if state["failure_reasons"] else "unknown_failure"
+                if fail_fast:
+                    print(
+                        f"[ILLUST_CONTEXT:{group_id}] 병렬 작업 최종 실패로 나머지 취소: "
+                        f"job={index}/{len(jobs)}, input={state['job']!r}, reason={failed[index]}"
+                    )
+                    last_outcome = next(reversed(state["attempt_outcomes"].values()), {})
+                    error = last_outcome.get("error")
+                    if isinstance(error, Exception):
+                        raise error
+                    raise RuntimeError(failed[index])
 
             unresolved = [
                 index
@@ -10674,17 +10773,17 @@ async def _run_parallel_pipeline_jobs(
                             f"tps={estimated_tps:.1f}, conditions={condition_text}"
                         )
     except asyncio.CancelledError:
-        print(f"[ILLUST_CONTEXT:{group_id}] 병렬 조정 상위 작업 취소: pending={len(pending)}")
-        for task in pending:
+        print(f"[ILLUST_CONTEXT:{group_id}] 병렬 조정 상위 작업 취소: pending={len(pending)}, finalizing={len(finalizing)}")
+        for task in pending | finalizing:
             task.cancel()
-        await illustration_flow.gather(*pending, return_exceptions=True)
+        await illustration_flow.gather(*(pending | finalizing), return_exceptions=True)
         raise
     except Exception as e:
         print(f"[ILLUST_CONTEXT:{group_id}] 병렬 조정 예외: {e}")
         traceback.print_exc()
-        for task in pending:
+        for task in pending | finalizing:
             task.cancel()
-        await illustration_flow.gather(*pending, return_exceptions=True)
+        await illustration_flow.gather(*(pending | finalizing), return_exceptions=True)
         raise
 
     history_updates = {}
@@ -11050,44 +11149,9 @@ async def _run_resolution_stage(
         if profile_inference_enabled
         else {}
     )
-    if profile_inference_enabled:
-        user_content = (
-            "# TARGET CURRENT MULTI-PROFILE CHARACTER\n"
-            + json.dumps(selected_names[0], ensure_ascii=False)
-            + "\n\n# PREVIOUSLY TRACKED PROFILE STATE\n"
-            + json.dumps(tracked_state, ensure_ascii=False, indent=2)
-            + "\n\n# REGISTERED PROFILE CATALOG FOR RESOLVED CURRENT CHARACTERS\n"
-            + (catalog or "(none)")
-            + "\n\n# FULL CURRENT CONTEXT SEGMENTS\n"
-            + segmented_current
-        )
-    else:
-        user_content = (
-            "# COMPLETE REGISTERED CHARACTER ROSTER\n"
-            + json.dumps(selected_names, ensure_ascii=False)
-            + ("\n\n" + card_identity_context if card_identity_context else "")
-            + "\n\n# FULL CURRENT CONTEXT SEGMENTS\n"
-            + segmented_current
-            + "\n\n# FINAL CANONICAL NAME OUTPUT AUTHORITY\n"
-            "The preceding CURRENT narrative is the only participation and identity "
-            "evidence. Its name spellings, aliases, titles, and localized forms are never "
-            "valid output values. Select the CURRENT participants semantically, then copy every "
-            "characters[].name character-for-character from this exact registered-name "
-            "list and nowhere else:\n"
-            + json.dumps(selected_names, ensure_ascii=False)
-            + "\nBefore returning, compare every characters[].name against that list. "
-            "If a value is not an exact member, replace it with the exact registered name "
-            "when identity is established; otherwise omit the item and add an uncertainty. "
-            "Return only this JSON shape:\n"
-            '{"characters":[{"name":"exact registered name from the list above"'
-            '}],"uncertainties":[]}'
-        )
-    if persona_context:
-        user_content = persona_context + "\n\n" + user_content
-    messages = _normalize_messages([
-        {"role": "system", "content": str(profile_system or "").strip()},
-        {"role": "user", "content": user_content},
-    ])
+    messages = _normalize_messages(prompt_builders.resolution_messages(
+        profile_inference_enabled, selected_names, tracked_state, catalog,
+        segmented_current, card_identity_context, persona_context, profile_system))
 
     def validate_shape(result):
         raw = _json_object_from_text(result)
@@ -11286,18 +11350,18 @@ async def _run_resolution_stage(
                 "role": "user",
                 "content": (
                     "# REJECTED CHARACTER ITEMS ONLY\n"
-                    + json.dumps(repairable_name_issues, ensure_ascii=False, indent=2)
+                    + variable(json.dumps(repairable_name_issues, ensure_ascii=False, indent=2), "교정할 캐릭터 항목")
                     + "\n\n"
-                    + repair_context
+                    + variable(repair_context, "이름 교정용 문맥")
                     + "\n\n# FINAL CANONICAL NAME REPAIR AUTHORITY\n"
                     "The invalid_name values below came from the rejected response. They "
                     "identify what must be corrected and must not be copied into repairs.\n"
                     "# REPAIR TARGETS\n"
-                    + json.dumps(repair_targets, ensure_ascii=False, indent=2)
+                    + variable(json.dumps(repair_targets, ensure_ascii=False, indent=2), "교정 대상 이름")
                     + "\n\n# ALREADY ACCEPTED CHARACTER NAMES (UNAVAILABLE)\n"
-                    + json.dumps(accepted_names, ensure_ascii=False)
+                    + variable(json.dumps(accepted_names, ensure_ascii=False), "이미 확정된 이름")
                     + "\n\n# REMAINING AVAILABLE REGISTERED NAMES (ONLY VALID name VALUES)\n"
-                    + json.dumps(available_names, ensure_ascii=False)
+                    + variable(json.dumps(available_names, ensure_ascii=False), "남은 등록 이름")
                     + "\nCopy every repairs[].name character-for-character from the "
                     "REMAINING AVAILABLE REGISTERED NAMES list immediately above. Never "
                     "translate, transliterate, localize, or reuse an invalid_name. Omit a "
@@ -11489,14 +11553,14 @@ async def _run_resolution_stage(
                     "role": "user",
                     "content": (
                         "# REJECTED CHARACTER PROFILE ITEMS\n"
-                        + json.dumps(repair_requests, ensure_ascii=False, indent=2)
+                        + variable(json.dumps(repair_requests, ensure_ascii=False, indent=2), "교정할 프로필 항목")
                         + "\n\n# PREVIOUSLY TRACKED PROFILE STATE\n"
-                        + json.dumps(tracked_state, ensure_ascii=False, indent=2)
-                        + ("\n\n" + persona_context if persona_context else "")
+                        + variable(json.dumps(tracked_state, ensure_ascii=False, indent=2), "이전 프로필 추적 상태")
+                        + ("\n\n" + variable(persona_context, "등록 사용자 페르소나") if persona_context else "")
                         + "\n\n# REGISTERED PROFILE CATALOG FOR REJECTED CHARACTERS\n"
-                        + build_natural_profile_catalog(repair_profiles)
+                        + variable(build_natural_profile_catalog(repair_profiles), "교정 대상 등록 프로필")
                         + "\n\n# FULL CURRENT CONTEXT SEGMENTS\n"
-                        + segmented_current
+                        + variable(segmented_current, "현재 원문과 구간")
                     ),
                 },
             ])
@@ -11919,14 +11983,13 @@ def _parse_profile_context_translations(
     return parsed
 
 
-async def prepare_profile_context_translations(
+def plan_profile_context_translations(
     visual_profiles: dict[str, dict],
     *,
     cache_namespace: str,
-    stream_notify=None,
-    history_ids_sink: list[str] | None = None,
-) -> tuple[dict[str, dict], dict]:
-    """Attach cached/lazily translated English prose to selected profile copies."""
+    cache: dict,
+) -> tuple[dict, dict, list, dict]:
+    """Read-only cache preparation shared by generation and flow preview."""
     translated_profiles = deepcopy(visual_profiles or {})
     namespace = str(cache_namespace or "").strip()
     summary = {
@@ -11944,15 +12007,14 @@ async def prepare_profile_context_translations(
             "[ILLUST_CONTEXT:PROFILE_CONTEXT_TRANSLATE] 번역할 프로필이 없어 생략: "
             f"namespace={namespace!r}, profiles={translated_profiles!r}"
         )
-        return translated_profiles, summary
+        return translated_profiles, summary, [], {}
     if not namespace:
         print(
             "[ILLUST_CONTEXT:PROFILE_CONTEXT_TRANSLATE] 캐시 namespace가 없어 번역 생략: "
             f"characters={list(translated_profiles)}, state={summary!r}"
         )
-        return translated_profiles, summary
+        return translated_profiles, summary, [], {}
 
-    cache = visual_profile_translation_cache.load_cache()
     misses: list[dict] = []
     targets_by_ref: dict[str, tuple[dict, str, str, str, str]] = {}
     for character_name, character in translated_profiles.items():
@@ -12012,6 +12074,24 @@ async def prepare_profile_context_translations(
                 )
                 summary["cache_misses"] += 1
 
+    return translated_profiles, summary, misses, targets_by_ref
+
+
+async def prepare_profile_context_translations(
+    visual_profiles: dict[str, dict],
+    *,
+    cache_namespace: str,
+    stream_notify=None,
+    history_ids_sink: list[str] | None = None,
+) -> tuple[dict[str, dict], dict]:
+    """Attach cached/lazily translated English prose to selected profile copies."""
+    namespace = str(cache_namespace or "").strip()
+    cache = visual_profile_translation_cache.load_cache() if visual_profiles and namespace else {}
+    translated_profiles, summary, misses, targets_by_ref = plan_profile_context_translations(
+        visual_profiles, cache_namespace=namespace, cache=cache,
+    )
+    if not translated_profiles or not namespace:
+        return translated_profiles, summary
     if not misses:
         print(
             "[ILLUST_CONTEXT:PROFILE_CONTEXT_TRANSLATE] 모든 원문이 캐시에 있어 "
@@ -12074,7 +12154,7 @@ async def prepare_profile_context_translations(
                 "role": "user",
                 "content": (
                     "Translate only these missing cached fields. Each entry remains independent.\n\n"
-                    + json.dumps(misses, ensure_ascii=False, indent=2)
+                    + variable(json.dumps(misses, ensure_ascii=False, indent=2), "번역할 프로필 자료")
                 ),
             },
         ])
@@ -12169,9 +12249,15 @@ async def resolve_profiles_before_generation(
     stream_notify=None,
     progress=None,
     history_ids_sink: list[str] | None = None,
+    stage_runner=None,
 ) -> tuple[str, dict]:
-    """Always resolve CURRENT characters, then optionally resolve their profiles."""
-    merged = merged_toggles(toggles)
+    """Resolve CURRENT characters and every applicable multi-profile timeline."""
+    # The preview supplies side-effect-free stage implementations. The actual
+    # ordering and CURRENT-character branch selection remain in this function.
+    async def run_stage(operation, *args, **kwargs):
+        if stage_runner is not None:
+            return await stage_runner(operation, *args, **kwargs)
+        return await operation(*args, **kwargs)
     candidate_names = [
         str(name or "").strip()
         for name, value in (visual_profiles or {}).items()
@@ -12200,7 +12286,7 @@ async def resolve_profiles_before_generation(
     if progress:
         await progress(1, "character_resolve", "CURRENT 등장인물 판별")
     prompts = load_prompt_files()
-    character_output, character_result = await _run_character_resolution(
+    character_output, character_result = await run_stage(_run_character_resolution,
         character_system=prompts.get("character_resolve", ""),
         segmented_current=segmented_current,
         current_context=current_context,
@@ -12226,18 +12312,6 @@ async def resolve_profiles_before_generation(
         current_names,
         multiple_only=False,
     )
-    if not bool(merged.get("profile_resolve_enabled", True)):
-        print(
-            "[ILLUST_CONTEXT:PROFILE_RESOLVE] 토글 비활성화, "
-            f"CURRENT 기본 프로필 적용: characters={current_names}"
-        )
-        return character_output, _apply_profile_resolution_fallbacks(
-            character_result,
-            current_profiles,
-            previous_state,
-            default_only=True,
-        )
-
     multi_profile_names = [
         name
         for name in current_names
@@ -12258,17 +12332,17 @@ async def resolve_profiles_before_generation(
         multiple_only=True,
     )
     translated_profiles, _translation_summary = (
-        await prepare_profile_context_translations(
+        await run_stage(prepare_profile_context_translations,
             profile_resolution_inputs,
             cache_namespace=profile_translation_namespace,
             stream_notify=stream_notify,
             history_ids_sink=history_ids_sink,
         )
     )
-    await _record_profile_context_cache_summary(_translation_summary)
+    await run_stage(_record_profile_context_cache_summary, _translation_summary)
     if progress:
         await progress(3, "profile_resolve", "CURRENT 다중 프로필 결정")
-    profile_output, profile_result = await _run_profile_resolution(
+    profile_output, profile_result = await run_stage(_run_profile_resolution,
         profile_system=prompts.get("profile_resolve", ""),
         segmented_current=segmented_current,
         current_context=current_context,
@@ -12346,12 +12420,13 @@ def _parse_multi_char_layout_response(
                 "[ILLUST_CONTEXT:MULTI_CHAR] 모델의 캐릭터 재작성 결과 무시: "
                 f"characters={ignored_rewrites}"
             )
+    if isinstance(value, dict):
+        value["mask_render_version"] = multi_char_mask.MASK_RENDER_VERSION
     return multi_char_mask.validate_multi_char_layout(
         value,
         expected_names,
         require_prompt_separation=True,
         require_character_prompt=True,
-        max_pairwise_overlap_ratio=CALL5_MAX_PAIRWISE_OVERLAP_RATIO,
     )
 
 
@@ -12361,8 +12436,9 @@ async def calculate_multi_char_layouts(
     prompt_template: str,
     stream_notify=None,
     positive_note: str = "",
+    canvas_sizes: dict | None = None,
 ) -> None:
-    """2~3인 descriptor의 영역과 배경/캐릭터 프롬프트를 병렬 계산한다."""
+    """1~3인 descriptor의 영역과 배경/캐릭터 프롬프트를 병렬 계산한다."""
     targets = []
     for descriptor in descriptors:
         characters = [
@@ -12379,9 +12455,12 @@ async def calculate_multi_char_layouts(
                 f"[ILLUST_CONTEXT:MULTI_CHAR] 캐릭터 수 초과로 해당 슬롯 제외: "
                 f"slot={descriptor.get('slot')}, characters={len(characters)}"
             )
-        elif len(characters) >= 2:
+        elif characters:
             targets.append((descriptor, characters))
+        else:
+            print(f"[ILLUST_CONTEXT:MULTI_CHAR] 명명된 인물이 없어 영역 계산 생략: slot={descriptor.get('slot')}")
     if not targets:
+        print("[ILLUST_CONTEXT:MULTI_CHAR] 영역 계산 대상 없음")
         return
 
     system_prompt = str(prompt_template or "").strip()
@@ -12409,17 +12488,20 @@ async def calculate_multi_char_layouts(
             } for character in characters],
         }
         clean_positive_note = str(positive_note or "").strip()
+        canvas = (canvas_sizes or {}).get("group" if len(characters) >= 2 else "solo")
+        if canvas:
+            scene_payload["canvas"] = (
+                f"The generation canvas is {canvas[0]} pixels wide and {canvas[1]} pixels tall. "
+                "Project the body on this canvas; normalize horizontal coordinates by its width "
+                "and vertical coordinates by its height."
+            )
+        else:
+            print(f"[ILLUST_CONTEXT:MULTI_CHAR] 캔버스 크기 미제공: slot={slot}; 장면의 정규화 배치만 계산")
         if clean_positive_note:
             scene_payload["positive_note"] = clean_positive_note
         descriptor["multi_char_layout_request"] = deepcopy(scene_payload)
         descriptor.pop("multi_char_layout_raw_response", None)
-        messages = [{
-            "role": "system",
-            "content": system_prompt,
-        }, {
-            "role": "user",
-            "content": json.dumps(scene_payload, ensure_ascii=False),
-        }]
+        messages = prompt_builders.mask_messages(system_prompt, scene_payload)
 
         def validate_result(result: str):
             try:
@@ -12443,7 +12525,7 @@ async def calculate_multi_char_layouts(
                 payload = dict(event)
                 payload["queue_subtask"] = {
                     "group_id": "multi_char_mask",
-                    "group_label": "다중 캐릭터 마스크",
+                    "group_label": "캐릭터 영역 마스크",
                     "index": index,
                     "total": len(targets),
                 }
@@ -12636,32 +12718,9 @@ async def backtranslate_current_context(
         chunk: str,
         attempt_kind: str,
     ) -> dict:
-        system_prompt = template
-        replacements = {
-            "{character_names}": names or "(none)",
-            "{chunk_index}": str(index),
-            "{chunk_total}": str(len(chunks)),
-        }
-        for marker, value in replacements.items():
-            system_prompt = system_prompt.replace(marker, value)
-        if names and "{character_names}" not in template:
-            system_prompt += "\n\n# Protected character names\n" + names
-
         protected_chunk, protected_markers = _protect_slot_markers(chunk)
-
-        messages = _normalize_messages([
-            {"role": "system", "content": system_prompt},
-            {
-                "role": "user",
-                "content": (
-                    f"[Current Response Chunk {index}/{len(chunks)}]\n"
-                    "Return only the English translation of the chunk body below.\n\n"
-                    "Tokens shaped like __SLOT_0__ are server-protected "
-                    "slot markers. Copy every token exactly once and in the same order.\n\n"
-                    + protected_chunk
-                ),
-            },
-        ])
+        messages = _normalize_messages(prompt_builders.backtranslation_messages(
+            template, names, index, len(chunks), protected_chunk))
         last_reason = "unknown_failure"
         validation_attempts = 0
 
@@ -13144,8 +13203,7 @@ def build_raw_prompt(descriptor: dict, narrative: str, prompts: dict, toggles: d
     template = prompts.get("call2_preset") or "[Positive]\n[SETUP]\n{setup}\n[CHAR]\n{char}\n[SUPPLEMENT]\n{supplement}\n\n[Negative]\n"
     positive_part, marker, negative_part = template.partition("[Negative]")
     chars = descriptor.get("characters") or []
-    divider = "\n\n" if toggles.get("compat_character_divider") == "newline" else " | "
-    char_positive = divider.join(str(ch.get("positive") or "") for ch in chars if str(ch.get("positive") or "").strip())
+    char_positive = " | ".join(str(ch.get("positive") or "") for ch in chars if str(ch.get("positive") or "").strip())
     char_negative = ", ".join(str(ch.get("negative") or "") for ch in chars if str(ch.get("negative") or "").strip())
     names = ", ".join(str(ch.get("name") or "") for ch in chars if str(ch.get("name") or "").strip())
     setup = ", ".join(x for x in (descriptor.get("camera", ""), descriptor.get("scene", "")) if x)
@@ -13169,16 +13227,21 @@ def build_raw_prompt(descriptor: dict, narrative: str, prompts: dict, toggles: d
         "{char}": char_positive,
         "{supplement}": supplement,
     }
-    positive = positive_part
+    positive = PromptText(positive_part)
     for key, value in replacements.items():
-        positive = positive.replace(key, str(value))
+        label = {
+            "{chat}": "현재 원문", "{slot}": "장면 슬롯 번호", "{speak}": "CALL3 대사 결과",
+            "{name}": "캐릭터 이름 목록", "{setup}": "카메라·장면 태그", "{prompt}": "카메라·장면 태그",
+            "{char}": "캐릭터별 긍정 태그", "{supplement}": "보충 묘사 태그",
+        }[key]
+        positive = positive.replace(key, variable(value, label))
     if positive_note:
-        positive = positive.rstrip() + "\n" + positive_note
-    negative = negative_part.strip() if marker else ""
+        positive = positive.rstrip() + "\n" + variable(positive_note, "추가 긍정 프롬프트")
+    negative = PromptText(negative_part.strip() if marker else "")
     if char_negative:
-        negative = ", ".join(x for x in (negative, char_negative) if x)
+        negative = prompt_join(", ", (x for x in (negative, variable(char_negative, "캐릭터별 부정 태그")) if x))
     if str(toggles.get("negative_note") or "").strip():
-        negative = ", ".join(x for x in (negative, str(toggles["negative_note"]).strip()) if x)
+        negative = prompt_join(", ", (x for x in (negative, variable(str(toggles["negative_note"]).strip(), "추가 부정 프롬프트")) if x))
     return positive.strip(), negative.strip()
 
 
@@ -13204,7 +13267,7 @@ async def build_from_context(
     pre_resolved_profile_result: dict | None = None,
     first_pass_single_v5: bool = False,
 ) -> dict:
-    # Ordinary scenes use the PLAN -> AUDIT -> DETAIL implementation exclusively.
+    # Ordinary scenes use the streaming PLAN -> DETAIL implementation exclusively.
     # Public legacy parsers remain above for archived records and the independent
     # Key Visual decoder; the superseded ordinary orchestration is removed.
     from modes import illustration_scene_pipeline

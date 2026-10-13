@@ -3,6 +3,7 @@ import asyncio
 import json
 import re
 import sys
+from copy import deepcopy
 from pathlib import Path
 
 import pytest
@@ -2567,7 +2568,7 @@ async def test_independent_call2_keyvis_returns_one_object_and_rejects_scenes(mo
     assert raw_output == keyvis_output
     combined = "\n".join(str(message.get("content") or "") for message in seen_messages)
     assert "# KEY VISUAL TASK" in combined
-    assert "# CURRENT CANONICAL CHARACTER ROSTER" in combined
+    assert "# ALLOWED CANONICAL CHARACTER CANDIDATES (CHOOSE A SUBSET)" in combined
     assert "Choose at least one and at most 3 named characters" in combined
     assert "# ASSIGNED SCENE PLAN DATA" not in combined
     assert "keyvis:" in combined
@@ -6036,10 +6037,15 @@ async def test_call3_does_not_run_when_detail_fails_after_independent_key_visual
 
     async def fake_call(call_name, messages, *args, **kwargs):
         call_names.append(call_name)
+        if call_name == "CALL1":
+            return json.dumps({"state_at_start": [{"character": "Maria", "status": "school uniform"}],
+                               "events": []})
+        if call_name == "CALL2-SELECT":
+            return _plan_response(characters=("Maria",), brief="Maria poses for the poster")
         if call_name == "CALL2-PLAN":
             return _plan_response(characters=("Maria",), brief="Maria poses for the poster")
         if call_name == "CALL2-AUDIT":
-            return _audit_pass_for_plan(messages)
+            return '{"audited_scene_plan":[]}'
         if call_name == "CALL2-KEYVIS":
             return """<lb-xnai>
 keyvis:
@@ -6051,7 +6057,14 @@ keyvis:
 scenes: []
 </lb-xnai>"""
         if call_name == "CALL2-DETAIL":
-            return _detail_for_scene(messages).replace("position", "unapproved_position")
+            batch = json.JSONDecoder().raw_decode(messages[-1]["content"].split(
+                "# ONLY THIS BATCH'S PREPARED SCENES\n", 1)[1])[0]["scenes"]
+            return "<lb-xnai>" + json.dumps({"scenes": [{
+                "slot": scene["slot"], "camera": "portrait", "scene": scene["brief"], "supplement": "",
+                "characters": [{"name": ch["name"], "positive": "blonde hair",
+                                "negative": "", "unapproved_position": "center"}
+                               for ch in scene["characters"]],
+            } for scene in batch]}) + "</lb-xnai>"
         raise AssertionError(f"retired fallback or dialogue call: {call_name}")
 
     monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_call)
@@ -6427,7 +6440,7 @@ async def test_multi_char_layout_reorders_call2_characters_left_to_right(monkeyp
     request_characters = json.loads(calls[0][1][1]["content"])["characters"]
     assert request_characters[0]["validated_positive"] == "green hair"
     assert request_characters[0]["validated_negative"] == "red hair"
-    assert request_characters[0]["outfit_state"] == {"worn": ["green jacket"]}
+    assert "outfit_state" not in request_characters[0]
     assert [character["name"] for character in descriptor["characters"]] == ["Left", "Right"]
     assert descriptor["multi_char_layout"]["character_order"] == ["Left", "Right"]
     assert descriptor["multi_char_history_ids"] == ["mask-slot4-id"]
@@ -6451,6 +6464,79 @@ async def test_multi_char_layout_reorders_call2_characters_left_to_right(monkeyp
         region["outfit_state"]
         for region in descriptor["multi_char_layout"]["regions"]
     ] == [{"worn": ["red coat"]}, {"worn": ["green jacket"]}]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("name,scene", [
+    ("Shoko", "One figure curled in a bed corner, gripping a blanket."),
+    ("Shoko", "One figure raises a hand while looking off-frame."),
+    ("Mira", "One traveler sits on a bench, holding her coat closed."),
+    ("Ren", "One figure receives a key from a connected anonymous hand entering at the right edge."),
+])
+async def test_single_scene_uses_registered_mask_call_and_preserves_authoritative_subject(monkeypatch, name, scene):
+    descriptor = {"kind": "scene", "slot": 9, "camera": "medium shot", "scene": scene,
+        "supplement": "The figure faces right.", "characters": [{"name": name,
+            "positive": "girl, long hair, seated", "negative": "", "position": "center"}]}
+    original = deepcopy(descriptor["characters"])
+    calls, events = [], []
+
+    async def fake_call(call_name, messages, stream_notify=None, result_validator=None,
+                        json_mode=False, history_ids_sink=None):
+        calls.append(call_name)
+        payload = json.loads(messages[-1]["content"])
+        assert payload["characters"][0]["validated_positive"] == original[0]["positive"]
+        assert payload["scene"] == scene
+        history_ids_sink.append("single-mask-id")
+        await stream_notify({"type": "text", "text": "layout"})
+        response = json.dumps({"background_prompt": "room, soft light",
+            "composition_prompt": "one figure facing right",
+            "regions": [{"name": name, "x": .25, "y": .1, "width": .5, "height": .9}]})
+        assert json_mode is True
+        assert result_validator(response) == (True, "")
+        return response
+
+    async def notify(event):
+        events.append(event)
+
+    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_call)
+    await pipeline.calculate_multi_char_layouts([descriptor], pipeline.load_prompt_files()["multi_char_mask"],
+                                              stream_notify=notify)
+    assert calls == ["MULTI-CHAR-MASK slot=9"]
+    assert descriptor["characters"] == original
+    assert descriptor["multi_char_layout"]["character_order"] == [name]
+    assert descriptor["multi_char_layout"]["regions"][0]["channel"] == "R"
+    assert descriptor["multi_char_history_ids"] == ["single-mask-id"]
+    assert events[0]["queue_subtask"]["group_id"] == "multi_char_mask"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("names,scene,canvas_sizes,expected", [
+    (["Mira"], "One person curled in a seat.", {"solo": (1600, 900), "group": (2048, 1024)}, (1600, 900)),
+    (["Ren"], "One portrait fills the vertical crop.", {"solo": (900, 1600), "group": (2048, 1024)}, (900, 1600)),
+    (["Aster"], "One person receives a key from an anonymous edge hand.", {"solo": (1200, 800), "group": (2048, 1024)}, (1200, 800)),
+    (["Ina", "Bo"], "Two people share a table.", {"solo": (1200, 800), "group": (2048, 1024)}, (2048, 1024)),
+])
+async def test_mask_receives_actual_canvas_for_named_subject_profile(monkeypatch, names, scene, canvas_sizes, expected):
+    descriptor = {"slot": 3, "camera": "eye level", "scene": scene, "characters": [
+        {"name": name, "positive": "seated", "negative": ""} for name in names]}
+
+    async def call(_name, messages, stream_notify=None, result_validator=None, history_ids_sink=None, **kwargs):
+        payload = json.loads(messages[-1]["content"])
+        assert payload["canvas"].startswith(f"The generation canvas is {expected[0]} pixels wide and {expected[1]} pixels tall.")
+        assert payload["scene"] == scene
+        assert [character["name"] for character in payload["characters"]] == names
+        response = json.dumps({"background_prompt": "room", "composition_prompt": "figures seated",
+            "regions": [{"name": name, "x": index * .4, "y": .1, "width": .3, "height": .8}
+                        for index, name in enumerate(names)]})
+        assert result_validator(response) == (True, "")
+        history_ids_sink.append("canvas-mask-id")
+        return response
+
+    monkeypatch.setattr(pipeline, "_call_pipeline_llm", call)
+    await pipeline.calculate_multi_char_layouts([descriptor], pipeline.load_prompt_files()["multi_char_mask"],
+                                               canvas_sizes=canvas_sizes)
+    assert descriptor["multi_char_layout_request"]["canvas"].startswith(f"The generation canvas is {expected[0]}")
+    assert descriptor["multi_char_history_ids"] == ["canvas-mask-id"]
 
 
 def test_multi_char_mask_generation_setting_controls_layout_path():
@@ -6642,7 +6728,7 @@ async def test_pipeline_failure_history_preserves_provider_termination_details(m
     async def fake_call(_task_key, _actual_messages, **kwargs):
         assert (
             pipeline.llm_service._gemini_base64_response_mode_ctx.get()
-            == pipeline.llm_service.GEMINI_BASE64_RESPONSE_ILLUSTRATION_SCENES
+            == pipeline.llm_service.GEMINI_BASE64_RESPONSE_WHOLE
         )
         observer = kwargs["execution_observer"]
         await observer({
@@ -6782,37 +6868,41 @@ async def test_character_resolve_uses_dedicated_route_queue_group_and_lb_history
 
 
 @pytest.mark.asyncio
-async def test_profile_resolution_toggle_off_still_resolves_characters_and_uses_default(
-    monkeypatch,
+@pytest.mark.parametrize(("name", "transformed"), [("Hana", True), ("Sora", True), ("Noel", False)])
+async def test_legacy_profile_resolution_off_still_resolves_current_profile(
+    monkeypatch, name, transformed,
 ):
     calls = []
 
     async def fake_pipeline_call(call_name, messages, _stream_notify, **kwargs):
         calls.append((call_name, messages, kwargs))
         prompt = "\n".join(message["content"] for message in messages)
-        assert "# COMPLETE REGISTERED CHARACTER ROSTER" in prompt
-        assert "# REGISTERED CHARACTER CARD IDENTITY REFERENCES" in prompt
-        assert "Hana_Ordinary" in prompt
         assert "# PAST HISTORY" not in prompt
-        assert "# REGISTERED PROFILE CATALOG" not in prompt
-        return json.dumps({
-            "characters": [{
-                "name": "Hana",
-            }],
-            "uncertainties": [],
-        })
+        if call_name == "CHARACTER-RESOLVE":
+            assert "# COMPLETE REGISTERED CHARACTER ROSTER" in prompt
+            assert "# REGISTERED CHARACTER CARD IDENTITY REFERENCES" in prompt
+            assert f"{name}_Ordinary" in prompt
+            assert "# REGISTERED PROFILE CATALOG" not in prompt
+            return json.dumps({"characters": [{"name": name}], "uncertainties": []})
+        assert call_name == "PROFILE-RESOLVE"
+        assert "# TARGET CURRENT MULTI-PROFILE CHARACTER" in prompt
+        assert json.dumps(name, ensure_ascii=False) in prompt
+        return json.dumps({"characters": [{"name": name, "profile_timeline": [{
+            "at": "START", "profile_ref": "[2]" if transformed else "[1]",
+            "reason": "The current narrative establishes this form.",
+        }]}], "uncertainties": []})
 
     monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
 
     visual_profiles = {
-        "Hana": cards_to_character_profiles("Hana", [{
+        name: cards_to_character_profiles(name, [{
             "id": "ordinary",
-            "aliases": ["Hana_Ordinary"],
+            "aliases": [f"{name}_Ordinary"],
             "appearance": ["black hair"],
             "default_outfit": ["blue dress"],
         }, {
             "id": "transformed",
-            "aliases": ["Hana_Transformed"],
+            "aliases": [f"{name}_Transformed"],
             "appearance": ["white hair"],
             "default_outfit": ["white armor"],
         }]),
@@ -6820,15 +6910,15 @@ async def test_profile_resolution_toggle_off_still_resolves_characters_and_uses_
     output, result = await pipeline.resolve_profiles_before_generation(
         payload={
             "chats": [
-                {"role": "char", "data": "Hana enters the room."},
+                {"role": "char", "data": f"{name} enters the room in {'transformed' if transformed else 'ordinary'} form."},
             ],
         },
         toggles={"profile_resolve_enabled": False},
         history_plan={
             "call1_history": [{"role": "char", "data": "past-only marker"}],
             "state_before": {
-                "hana": {
-                    "canonical_name": "Hana",
+                name.lower(): {
+                    "canonical_name": name,
                     "active_visual_profile_id": "transformed",
                 },
             },
@@ -6836,18 +6926,20 @@ async def test_profile_resolution_toggle_off_still_resolves_characters_and_uses_
         visual_profiles=visual_profiles,
     )
 
-    assert len(calls) == 1
+    assert len(calls) == 2
     assert calls[0][0] == "CHARACTER-RESOLVE"
+    assert calls[1][0] == "PROFILE-RESOLVE"
     assert calls[0][2]["json_mode"] is True
-    assert json.loads(output)["characters"][0]["name"] == "Hana"
-    assert result["current_characters"] == [{"name": "Hana", "confidence": 1.0}]
-    assert result["history_characters"] == ["Hana"]
-    assert result["profile_events"][0]["profile"] == "Hana_Ordinary"
-    assert result["initial_visual_bases"][0]["target_visual_profile_id"] == "ordinary"
+    assert json.loads(output)["characters"][0]["name"] == name
+    assert json.loads(output)["characters"][0]["profile_timeline"][0]["reason"] == "The current narrative establishes this form."
+    assert result["current_characters"] == [{"name": name, "confidence": 1.0}]
+    assert result["history_characters"] == [name]
+    profile_id = "transformed" if transformed else "ordinary"
+    assert result["initial_visual_bases"][0]["target_visual_profile_id"] == profile_id
     seeded = pipeline.apply_initial_visual_bases(
         {
-            "hana": {
-                "canonical_name": "Hana",
+            name.lower(): {
+                "canonical_name": name,
                 "active_visual_profile_id": "transformed",
                 "current_wardrobe": {
                     "body_state": "clothed",
@@ -6860,12 +6952,8 @@ async def test_profile_resolution_toggle_off_still_resolves_characters_and_uses_
         "message-off",
         visual_profiles,
     )
-    assert seeded["hana"]["active_visual_profile_id"] == "ordinary"
-    assert seeded["hana"]["current_wardrobe"]["worn"] == ["blue dress"]
-    assert pipeline.merged_toggles({})["profile_resolve_enabled"] is True
-    assert pipeline.merged_toggles({
-        "profile_resolve_enabled": False,
-    })["profile_resolve_enabled"] is False
+    assert seeded[name.lower()]["active_visual_profile_id"] == profile_id
+    assert seeded[name.lower()]["current_wardrobe"]["worn"] == (["white armor"] if transformed else ["blue dress"])
 
     monkeypatch.undo()
     for check in (
@@ -7505,7 +7593,7 @@ async def _check_profile_resolution_receives_only_resolved_current_multi_profile
     async def fake_pipeline_call(call_name, messages, _stream_notify, **kwargs):
         calls.append((call_name, messages, kwargs))
         prompt = "\n".join(message["content"] for message in messages)
-        assert "# RESOLVED CURRENT MULTI-PROFILE CHARACTERS" in prompt
+        assert "# TARGET CURRENT MULTI-PROFILE CHARACTER" in prompt
         assert "# COMPLETE REGISTERED CHARACTER ROSTER" not in prompt
         assert "Adachi_Civilian" not in prompt
         assert "Adachi_Changed" not in prompt

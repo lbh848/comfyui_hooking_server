@@ -46,7 +46,14 @@ def test_easy_bulk_apply_updates_only_explicitly_supported_controls() -> None:
         "function updateLlmRouteFallbackState(taskKey)", 1
     )[0]
 
-    assert "jsonMode !== 'on' && jsonMode !== 'off'" in source
-    assert "json_mode: task.json ? byField('input', 'json_mode') : null" in source
-    assert "if (taskControls.json_mode)" in source
+    assert "json_mode" not in source
     assert "llmRoutingEasyAppliedTaskKeys.add(taskControls.task.key)" in source
+
+
+def test_json_force_controls_are_removed_from_routing_and_api_test() -> None:
+    assert "JSON 강제" not in FRONTEND
+    assert "JSON 포맷 강제" not in FRONTEND
+    assert 'id="llm-test-json"' not in FRONTEND
+    assert 'data-route-field="json_mode"' not in FRONTEND
+    assert "payload.json_mode" not in FRONTEND
+    assert "delete entry.json_mode" in FRONTEND

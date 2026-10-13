@@ -1,4 +1,5 @@
 import asyncio
+import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -839,6 +840,7 @@ async def test_manual_parallel_retry_keeps_original_and_uses_faster_success(monk
         attempt = calls
         yield {"type": "start", "service": service, "model": model}
         if attempt == 1:
+            yield {"type": "delta", "reasoning": "original thought", "elapsed": 0.02}
             yield {
                 "type": "delta",
                 "text": "느린 원본",
@@ -906,6 +908,10 @@ async def test_manual_parallel_retry_keeps_original_and_uses_faster_success(monk
     assert llm_service.get_active_streams() == []
     assert sink["completion_tokens"] == 5
     assert sink["tps"] == 25.0
+    assert sink["thinking_started_at"] is None
+    assert sink["thinking_ended_at"] is None
+    assert sink["response_started_at"] is not None
+    assert sink["response_ended_at"] >= sink["response_started_at"]
 
     starts = [event for event in frontend_events if event["type"] == "start"]
     assert len({event["stream_id"] for event in starts}) == 2
@@ -924,6 +930,8 @@ async def test_manual_parallel_retry_keeps_original_and_uses_faster_success(monk
     assert len(history_events) == 1
     history = history_events[0]
     assert history["winner_stream_id"] != original["stream_id"]
+    original_attempt = next(attempt for attempt in history["attempts"] if attempt["stream_id"] == original["stream_id"])
+    assert original_attempt["thinking_started_at"] is not None
     assert {attempt["race_role"] for attempt in history["attempts"]} == {
         "original",
         "parallel",
@@ -1400,12 +1408,10 @@ async def test_vertex_nonstream_stores_actual_usage(monkeypatch):
         def generate_content(self, **kwargs):
             return response
 
-    monkeypatch.setattr(llm_service, "_init_vertex", lambda: None)
-    monkeypatch.setattr(llm_service, "_vertex_initialized", True)
     monkeypatch.setattr(
         llm_service,
-        "_vertex_client",
-        SimpleNamespace(models=FakeModels()),
+        "_init_vertex",
+        lambda: SimpleNamespace(models=FakeModels()),
     )
     monkeypatch.setattr(llm_service, "_build_genai_contents", lambda messages: (["hello"], None))
     monkeypatch.setattr(llm_service, "_build_vertex_generate_config", lambda system: {})
@@ -1469,12 +1475,10 @@ async def test_vertex_stream_uses_sdk_actual_usage(monkeypatch):
         def generate_content_stream(self, **kwargs):
             return iter(stream_events)
 
-    monkeypatch.setattr(llm_service, "_init_vertex", lambda: None)
-    monkeypatch.setattr(llm_service, "_vertex_initialized", True)
     monkeypatch.setattr(
         llm_service,
-        "_vertex_client",
-        SimpleNamespace(models=FakeModels()),
+        "_init_vertex",
+        lambda: SimpleNamespace(models=FakeModels()),
     )
     monkeypatch.setattr(llm_service, "_build_genai_contents", lambda messages: (["hello"], None))
     monkeypatch.setattr(llm_service, "_build_vertex_generate_config", lambda system: {})
@@ -1497,3 +1501,69 @@ async def test_vertex_stream_uses_sdk_actual_usage(monkeypatch):
     assert events[-1]["finish_reason"] == "MAX_TOKENS"
     assert events[-1]["finish_message"] == "Maximum output tokens reached"
     assert events[-1]["max_output_tokens"] == 10000
+
+
+@pytest.mark.parametrize("usage,expected", [
+    ({"completion_tokens_details": {"reasoning_tokens": 31}}, 31),
+    ({"output_tokens_details": {"reasoning_tokens": 0}}, 0),
+    ({"reasoning_tokens": 4}, 4),
+    ({"thoughtsTokenCount": 12}, 12),
+    (SimpleNamespace(thoughts_token_count=0), 0),
+    ({"completion_tokens": 900, "total_tokens": 1000}, None),
+    ({"completion_tokens_details": {}}, None),
+    ({"thoughtsTokenCount": None}, None),
+    ({"reasoning_tokens": -1}, None),
+    ({"reasoning_tokens": True}, None),
+    ({"reasoning_tokens": "unknown"}, None),
+    (None, None),
+])
+def test_reasoning_usage_never_confuses_missing_with_zero(usage, expected):
+    assert llm_service._extract_reasoning_tokens(usage) == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["gemini", "claude", "copilot"])
+async def test_provider_thinking_deltas_are_separate_from_answer(monkeypatch, provider):
+    if provider == "gemini":
+        frames = ["data: " + json.dumps({
+            "candidates": [{"content": {"parts": [
+                {"text": "provider thought", "thought": True}, {"text": "391"}
+            ]}, "finishReason": "STOP"}],
+            "usageMetadata": {"promptTokenCount": 8, "candidatesTokenCount": 1, "thoughtsTokenCount": 9},
+        })]
+    elif provider == "claude":
+        frames = ["event: content_block_delta", 'data: {"delta":{"type":"thinking_delta","thinking":"provider thought"}}',
+                  "event: content_block_delta", 'data: {"delta":{"type":"text_delta","text":"391"}}',
+                  "event: message_stop", 'data: {"type":"message_stop"}']
+    else:
+        frames = ['data: {"choices":[{"delta":{"reasoning_content":"provider thought"}}]}',
+                  'data: {"choices":[{"delta":{"content":"391"},"finish_reason":"stop"}]}',
+                  'data: {"choices":[],"usage":{"prompt_tokens":8,"completion_tokens":10,"completion_tokens_details":{"reasoning_tokens":9}}}',
+                  'data: [DONE]']
+
+    class Response:
+        status_code = 200
+        async def __aenter__(self): return self
+        async def __aexit__(self, *_args): return False
+        async def aiter_lines(self):
+            for frame in frames: yield frame
+
+    class Client:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *_args): return False
+        def stream(self, *_args, **_kwargs): return Response()
+
+    config = _test_config()
+    config.update({"llm_api_key": "test-only", "llm_url": "https://example.invalid", "llm_reasoning_preset": "none"})
+    monkeypatch.setattr(llm_service, "_current_config", config)
+    monkeypatch.setattr(llm_service, "COPILOT_KEY", "test-only")
+    monkeypatch.setattr(llm_service.httpx, "AsyncClient", lambda **_kwargs: Client())
+    monkeypatch.setattr(llm_service, "_llm_log", lambda *_args: None)
+    events = [event async for event in getattr(llm_service, f"_stream_{provider}")(
+        [{"role": "user", "content": "Calculate 17 * 23. Reply with only the number."}], "test-model")]
+    assert events[-1]["type"] == "done", events
+    assert events[-1]["text"] == "391"
+    assert events[-1]["reasoning_chars"] == len("provider thought")
+    assert any(event.get("reasoning") == "provider thought" for event in events)
+    if provider != "claude": assert events[-1]["reasoning_tokens"] == 9
+    else: assert "reasoning_tokens" not in events[-1]

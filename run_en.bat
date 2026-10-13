@@ -9,6 +9,10 @@ chcp 65001 >nul 2>&1
 set "PYTHONUTF8=1"
 set "PYTHONIOENCODING=utf-8"
 
+:: Reject duplicate launches before setup or Python startup callbacks can run.
+powershell -NoProfile -Command "$client = [Net.Sockets.TcpClient]::new(); try { if ($client.ConnectAsync('127.0.0.1', 8189).Wait(300)) { exit 0 }; exit 1 } catch { exit 1 } finally { $client.Dispose() }"
+if not errorlevel 1 goto :already_running
+
 set "UV_VERSION=0.11.8"
 set "UV_TOOL_DIR=%CD%\.tools\uv-%UV_VERSION%"
 set "UV_EXE=%UV_TOOL_DIR%\uv.exe"
@@ -98,11 +102,22 @@ echo   Frontend: http://127.0.0.1:8189/
 echo ============================================
 echo.
 "%UV_EXE%" run --no-sync python server.py
+if "%ERRORLEVEL%"=="2" goto :already_running
 
 :end
 pause
 endlocal
 goto :eof
+
+:already_running
+echo.
+echo [INFO] Server is already running on port 8189.
+echo [INFO] Frontend: http://127.0.0.1:8189/
+echo [INFO] This CMD will remain open. Type exit to close this window.
+echo [INFO] The existing server will keep running.
+cmd /d /k
+endlocal
+exit /b 0
 
 :ensure_git
 where git.exe >nul 2>&1

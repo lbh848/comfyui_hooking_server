@@ -3371,21 +3371,25 @@ class QueueManager:
         # 큐 적재 시점이 아니라 이 GPU 항목이 실제 실행되는 순간에만 공유 폴더를
         # 비우고 마스크를 쓴다. GPU 큐가 직렬이라 다음 항목이 덮어쓸 수 없다.
         multi_char_context = raw_body.get("illustration_multi_char") or {}
+        mask_bytes = None
         if isinstance(multi_char_context, dict) and multi_char_context.get("enable"):
             try:
-                from modes.multi_char_mask import prepare_region_mask
+                from modes import multi_char_mask
 
-                config = self.get_config() if self.get_config else {}
-                comfy_input_dir = str((config or {}).get("comfy_input_dir") or "")
-                prepared_path = prepare_region_mask(
-                    comfy_input_dir,
-                    multi_char_context,
-                    mask_location=str(multi_char_context.get("mask_location") or "region_mask"),
-                )
-                print(
-                    f"[QUEUE:MULTI_CHAR] 실행 직전 마스크 배치 완료: "
-                    f"item={item.id}, path={prepared_path}"
-                )
+                if not multi_char_mask.should_skip_solo_region_mask(multi_char_context.get("layout")):
+                    config = self.get_config() if self.get_config else {}
+                    comfy_input_dir = str((config or {}).get("comfy_input_dir") or "")
+                    prepared_path = multi_char_mask.prepare_region_mask(
+                        comfy_input_dir,
+                        multi_char_context,
+                        mask_location=str(multi_char_context.get("mask_location") or "region_mask"),
+                    )
+                    with open(prepared_path, "rb") as mask_file:
+                        mask_bytes = mask_file.read()
+                    print(
+                        f"[QUEUE:MULTI_CHAR] 실행 직전 마스크 배치 완료: "
+                        f"item={item.id}, path={prepared_path}"
+                    )
             except Exception as e:
                 print(
                     f"[QUEUE:MULTI_CHAR] 실행 직전 마스크 배치 실패: "
@@ -3393,6 +3397,8 @@ class QueueManager:
                 )
                 traceback.print_exc()
                 raise
+
+        illustration_flow.record_image_mask(mask_bytes)
 
         async def _on_illust_progress(value, max_value):
             await self._notify_progress(item, {
@@ -3736,6 +3742,11 @@ class QueueManager:
             elif prompt_multi_enabled:
                 raise ValueError(
                     "프롬프트는 다중 캐릭터인데 재생성 마스크 스냅샷이 없습니다"
+                )
+
+            if multi_char_context:
+                positive, multi_char_context = multi_char_mask.apply_solo_region_mask_policy(
+                    positive, multi_char_context,
                 )
 
             if multi_char_context:

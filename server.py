@@ -23,6 +23,18 @@ from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
 
+HOST = "0.0.0.0"
+PORT = 8189
+
+# Check before importing application modules or initializing shared data.
+# run_en.bat handles exit code 2 by retaining the CMD prompt.
+if __name__ == "__main__":
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as port_probe:
+        port_probe.settimeout(0.2)
+        if port_probe.connect_ex(("127.0.0.1", PORT)) == 0:
+            print(f"[SERVER] Port {PORT} is already in use; no duplicate server started.", flush=True)
+            raise SystemExit(2)
+
 from runtime_temp import clear_runtime_temp
 
 # ─── 모듈 이중 로드 방지 ─────────────────────────────────
@@ -235,8 +247,6 @@ from comfy_allocation import (
 )
 
 # ─── 설정 ───────────────────────────────────────────────
-HOST = "0.0.0.0"
-PORT = 8189
 REAL_COMFY_HOST = os.environ.get("REAL_COMFY_HOST", "127.0.0.1")
 # REAL_COMFY_PORT는 load_config() 이후 app_config에서 초기화됨
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -615,7 +625,7 @@ DEFAULT_CONFIG = {
     "clamp_value": 1.2,  # 가중치 클램프 최대값
     "outfit_mode_enabled": False,  # 복장 추출 모드 활성화 여부
     "outfit_workflow_source_path": "",  # 복장 추출 워크플로우 원본 소스 전체 경로
-    "llm_service": "copilot",   # LLM 서비스: copilot / vertex / vertex-openai / openai / openrouter / gemini / claude / lmstudio / ollama / ollama-cloud
+    "llm_service": "openai",    # 선택 서비스: vertex / openai / claude (기존 서비스 호출은 호환 유지)
     "llm_model": "gpt-4.1",    # LLM 모델명
     # 주의: 슬롯별 API 키는 config.json 에 저장 안 함.
     # key/llm_keys.json 으로 분리 (handle_api_llm_keys 참조).
@@ -628,7 +638,6 @@ DEFAULT_CONFIG = {
     "illustration_context_toggles": {
         "illustration_output_mode": "illustration",
         "original_asset_count": 1,
-        "profile_resolve_enabled": True,
         "call1_backtranslate_enabled": False,
         "call1_backtranslate_max_concurrency": 4,
         "call1_backtranslate_slow_retry_enabled": False,
@@ -639,7 +648,6 @@ DEFAULT_CONFIG = {
         "call1_backtranslate_slow_retry_tps_threshold": 5.0,
         "call1_backtranslate_slow_retry_condition_operator": "and",
         "call1_backtranslate_failure_strategy": "fallback",
-        "call1_enabled": True,
         "call1_parallel_enabled": True,
         "call1_parallel_max_concurrency": 3,
         "call1_parallel_slow_retry_enabled": False,
@@ -660,8 +668,16 @@ DEFAULT_CONFIG = {
         "call2_parallel_slow_retry_tps_enabled": False,
         "call2_parallel_slow_retry_tps_threshold": 5.0,
         "call2_parallel_slow_retry_condition_operator": "and",
+        "call2_detail_parallel_enabled": True,
+        "call2_detail_parallel_max_concurrency": 3,
+        "call2_detail_parallel_slow_retry_enabled": False,
+        "call2_detail_parallel_slow_retry_remaining": 1,
+        "call2_detail_parallel_slow_retry_progress_enabled": True,
+        "call2_detail_parallel_slow_retry_progress_threshold": 50,
+        "call2_detail_parallel_slow_retry_tps_enabled": False,
+        "call2_detail_parallel_slow_retry_tps_threshold": 5.0,
+        "call2_detail_parallel_slow_retry_condition_operator": "and",
         "call3_context_turns": 5,
-        "call3_enabled": True,
         "multi_char_mask_enabled": True,
         "speak_enabled": True,
         "call3_prompt_mode": "speak",
@@ -683,7 +699,6 @@ DEFAULT_CONFIG = {
         "positive_note": "",
         "negative_note": "",
         "compat_comfy": True,
-        "compat_character_divider": "newline",
         "compat_character_prompt": "separate",
     },
     "llm_temperature": 1.0,
@@ -697,7 +712,8 @@ DEFAULT_CONFIG = {
     "illustration_quality_inspection_enabled": False,
     # 작업별 LLM1/LLM2/LLM3 라우팅 및 메인/폴백 재시도 정책(외부 LLM 분기 탭).
     "llm_routing": {
-        "illustration_quality_inspection": _llm_route_defaults(json_mode=True),
+        "llm_thinking_check": _llm_route_defaults(max_retries=0, fallback_max_retries=0),
+        "illustration_quality_inspection": _llm_route_defaults(),
         "extract_outfit":          _llm_route_defaults(fallback=True),
         "enhance_outfit":          _llm_route_defaults(fallback=True),
         "restore_workflow":        _llm_route_defaults(fallback=True),
@@ -705,29 +721,29 @@ DEFAULT_CONFIG = {
         "refine_lb_extra":         _llm_route_defaults(max_retries=2, fallback_max_retries=2),
         "refine_lora_prompt":      _llm_route_defaults(max_retries=2, fallback_max_retries=2),
         "refine_lora_test_setup":  _llm_route_defaults(max_retries=2, fallback_max_retries=2),
-        "lora_prompt_review":      _llm_route_defaults(json_mode=True),
+        "lora_prompt_review":      _llm_route_defaults(),
         "asset_name_mapping_auto_fix": _llm_route_defaults(
-            max_retries=1, fallback_max_retries=1, json_mode=True
+            max_retries=1, fallback_max_retries=1,
         ),
         "asset_name_mapping_full": _llm_route_defaults(
-            max_retries=1, fallback_max_retries=1, json_mode=True
+            max_retries=1, fallback_max_retries=1,
         ),
         "preset_import_classify": _llm_route_defaults(
-            max_retries=1, fallback_max_retries=1, json_mode=True
+            max_retries=1, fallback_max_retries=1,
         ),
-        "visual_profile_guide": _llm_route_defaults(json_mode=True),
-        "visual_profile_appearance_vision": _llm_route_defaults(json_mode=True),
+        "visual_profile_guide": _llm_route_defaults(),
+        "visual_profile_appearance_vision": _llm_route_defaults(),
         "character_maker_draft": _llm_route_defaults(
-            max_retries=1, fallback_max_retries=1, json_mode=True
+            max_retries=1, fallback_max_retries=1,
         ),
         "character_maker_feedback": _llm_route_defaults(
-            max_retries=1, fallback_max_retries=1, json_mode=True
+            max_retries=1, fallback_max_retries=1,
         ),
         "danbooru_tag_search": _llm_route_defaults(
-            max_retries=1, fallback_max_retries=1, json_mode=True
+            max_retries=1, fallback_max_retries=1,
         ),
-        "edit_illustration_prompt":_llm_route_defaults(json_mode=True),  # 끄면 response_format 미전송(Cerebras/Gemma 루프 회피)
-        "illustration_auto_feedback_review": _llm_route_defaults(json_mode=True),
+        "edit_illustration_prompt":_llm_route_defaults(),
+        "illustration_auto_feedback_review": _llm_route_defaults(),
         "qwen_edit_translate":     _llm_route_defaults(max_retries=1),
         "video_instruction_translate": _llm_route_defaults(max_retries=1),
         "video_prompt_i2v":        _llm_route_defaults(max_retries=1),
@@ -741,19 +757,20 @@ DEFAULT_CONFIG = {
         # 삽화 컨텍스트 파이프라인 역번역/CALL1/2/2-FIX/3. 메인 LLM/폴백은 외부 LLM 분기 탭에서 드롭박스로 선택.
         # 폴백 없음(fallback_target 미지정)이 기본.
         "illustration_call1_backtranslate": _llm_route_defaults(max_retries=1, retry_delay_sec=0.0, fallback_max_retries=1, fallback_retry_delay_sec=0.0),
-        "illustration_call1":      _llm_route_defaults(json_mode=True),  # 복장·헤어 변화 JSON 분석
-        "illustration_character_resolve": _llm_route_defaults(json_mode=True),  # 생성 최전단 CURRENT 등장인물 판별(항상 실행)
-        "illustration_profile_context_translate": _llm_route_defaults(json_mode=True),  # CURRENT 카드 자연어의 지연 영어 번역
-        "illustration_profile_resolve": _llm_route_defaults(json_mode=True),  # 확정 CURRENT 다중 프로필 결정(토글 시)
-        "illustration_call2_plan": _llm_route_defaults(),  # CALL2 전역 장면 PLAN
+        "illustration_call1":      _llm_route_defaults(),  # 복장·헤어 변화 JSON 분석
+        "illustration_character_resolve": _llm_route_defaults(),  # 생성 최전단 CURRENT 등장인물 판별(항상 실행)
+        "illustration_profile_context_translate": _llm_route_defaults(),  # CURRENT 카드 자연어의 지연 영어 번역
+        "illustration_profile_resolve": _llm_route_defaults(),  # 확정 CURRENT 다중 프로필 결정(토글 시)
+        "illustration_call2_select": _llm_route_defaults(),  # CALL2 전역 장면 선택
+        "illustration_call2_plan": _llm_route_defaults(),  # CALL2 선택 장면 병렬 PLAN
         "illustration_call2":      _llm_route_defaults(),  # CALL2 DETAIL 및 기존 단일/폴백 경로
         "illustration_call2_keyvis": _llm_route_defaults(),  # CALL2 독립 Key Visual
-        "illustration_call2_authority_audit": _llm_route_defaults(json_mode=True),  # CALL2 고정 외형 예외 감사
+        "illustration_call2_authority_audit": _llm_route_defaults(),  # CALL2 고정 외형 예외 감사
         "illustration_call2_fix":  _llm_route_defaults(),  # CALL2 파싱 실패 시 TOON 교정(repair.txt)
         "illustration_call3":      _llm_route_defaults(),  # 대사 생성(speak/manga/subtitle)
-        "illustration_original_asset": _llm_route_defaults(json_mode=True),  # 업로드 원본 에셋 단일 선택
-        "illustration_original_asset_recovery": _llm_route_defaults(json_mode=True),  # 실패한 원본 에셋을 실제 유사 후보 중 재선택
-        "illustration_multi_char_mask": _llm_route_defaults(json_mode=True),  # CALL3 뒤 캐릭터별 정규화 영역 계산
+        "illustration_original_asset": _llm_route_defaults(),  # 업로드 원본 에셋 단일 선택
+        "illustration_original_asset_recovery": _llm_route_defaults(),  # 실패한 원본 에셋을 실제 유사 후보 중 재선택
+        "illustration_multi_char_mask": _llm_route_defaults(),  # CALL3 뒤 캐릭터별 정규화 영역 계산
     },
     "llm_max_concurrency": 1,         # LLM1 실제 API 동시 요청 상한
     "llm_max_concurrency2": 1,        # LLM2 실제 API 동시 요청 상한
@@ -904,7 +921,11 @@ def _merge_llm_routing_config(raw_config: dict) -> dict:
     merged_routing = {}
     legacy_call2_entry = raw_routing.get("illustration_call2")
     for task_key, default_entry in DEFAULT_CONFIG["llm_routing"].items():
-        if (
+        if task_key == "illustration_call2_select" and task_key not in raw_routing:
+            # Selection was formerly part of PLAN; retain that configured route
+            # until the user saves an independent selection route.
+            raw_entry = raw_routing.get("illustration_call2_plan", legacy_call2_entry) or {}
+        elif (
             task_key in _CALL2_COMPAT_SPLIT_ROUTE_KEYS
             and task_key not in raw_routing
             and isinstance(legacy_call2_entry, dict)
@@ -990,6 +1011,9 @@ def _normalize_llm_routing_for_save(raw_routing) -> dict:
         base.update(raw_entry)
         candidate[task_key] = base
 
+    if "illustration_call2_select" not in raw_routing:
+        candidate["illustration_call2_select"] = copy.deepcopy(candidate["illustration_call2_plan"])
+
     normalized = {}
     for task_key, entry in candidate.items():
         primary = entry.get("primary", "llm1")
@@ -1017,10 +1041,6 @@ def _normalize_llm_routing_for_save(raw_routing) -> dict:
             clean_entry[field] = _parse_llm_retry_delay(
                 entry.get(field, 0.0), f"llm_routing.{task_key}.{field}"
             )
-        if "json_mode" in entry:
-            if not isinstance(entry["json_mode"], bool):
-                raise ValueError(f"llm_routing.{task_key}.json_mode는 true/false여야 합니다.")
-            clean_entry["json_mode"] = entry["json_mode"]
         normalized[task_key] = clean_entry
     return normalized
 
@@ -1618,9 +1638,8 @@ _regeneration_background_tasks: set[asyncio.Task] = set()
 async def notify_frontend(event_type: str, data: dict = None):
     """프론트엔드 대시보드에 이벤트를 전송한다."""
     message = {"type": event_type, "data": data or {}}
-    now = time.time()
     client_count = len(frontend_ws_connections)
-    # 고빈도/스트림 이벤트는 매 전송마다 로그를 찍지 않는다
+    # 정상 송신은 로그를 찍지 않는다. 아래 예외는 대시보드 미접속 경고에만 적용한다.
     # - system_stats: 매초 호출되는 헤더 시스템 통계
     # - lighbd_llm_stream delta: 토큰 단위 스트림 조각
     quiet_notify = (
@@ -1631,38 +1650,31 @@ async def notify_frontend(event_type: str, data: dict = None):
             and data.get("type") == "delta"
         )
     )
-    if not quiet_notify:
-        print(f"[WS-NOTIFY] event={event_type} clients={client_count}")
     if client_count == 0:
         if not quiet_notify:
             print(f"[WS-NOTIFY] ⚠️ 클라이언트 0명 — event={event_type}, 현재 frontend_ws_connections 비어있음")
         return
     for client_id, entry in list(frontend_ws_connections.items()):
+        peer = ""
         try:
             ws = entry["ws"]
-            pong_age = now - entry.get("last_pong", 0)
-            # ws 상태 진단
+            # 오류·닫힌 연결 진단에 사용할 접속 정보
             req_info = getattr(ws, "_req", None)
-            peer = ""
             try:
                 if req_info is not None:
                     peer = str(getattr(req_info, "remote", "")) or ""
             except Exception as e:
-                print(f"[WS-NOTIFY] peer 정보 조회 실패 client={client_id[:8]} err={type(e).__name__}: {e}")
+                print(f"[WS-NOTIFY] peer 정보 조회 실패 event={event_type} client={client_id[:8]} err={type(e).__name__}: {e}")
                 traceback.print_exc()
                 peer = ""
             ws_closed = ws.closed
-            if not quiet_notify:
-                print(f"[WS-NOTIFY] [SEND] client={client_id[:8]} peer={peer} pong_age={pong_age:.1f}s ws.closed={ws_closed}")
             if ws_closed:
-                print(f"[WS-NOTIFY] [CLOSED] 이미 닫힌 ws 제거 ({client_id[:8]})")
+                print(f"[WS-NOTIFY] [CLOSED] 이미 닫힌 ws 제거 event={event_type} client={client_id[:8]} peer={peer}")
                 frontend_ws_connections.pop(client_id, None)
                 continue
             await ws.send_json(message)
-            if not quiet_notify:
-                print(f"[WS-NOTIFY] [OK] 송신 성공 ({client_id[:8]})")
         except Exception as e:
-            print(f"[WS-NOTIFY] [FAIL] 송신 실패 client={client_id[:8]} err={type(e).__name__}: {e}")
+            print(f"[WS-NOTIFY] [FAIL] 송신 실패 event={event_type} client={client_id[:8]} peer={peer} err={type(e).__name__}: {e}")
             frontend_ws_connections.pop(client_id, None)
             traceback.print_exc()
 
@@ -2368,7 +2380,9 @@ def _load_word_rules_snapshot(bot_name: str) -> list[dict]:
     return copy.deepcopy(rules)
 
 
-def _capture_illustration_runtime_snapshot(config: dict | None = None) -> dict:
+def _capture_illustration_runtime_snapshot(
+    config: dict | None = None, *, asset_instruction: str | None = None,
+) -> dict:
     """삽화 요청 시작 시 설정·선택 봇·단어 규칙을 하나의 값으로 고정한다."""
     config_snapshot = copy.deepcopy(app_config if config is None else config)
     workflow_profiles.normalize_workflow_config(config_snapshot)
@@ -2406,8 +2420,9 @@ def _capture_illustration_runtime_snapshot(config: dict | None = None) -> dict:
     toggles = illustration_context_pipeline.merged_toggles(
         raw_toggles
     )
-    toggles["original_asset_instruction"] = bot_mode.get_asset_output_instruction(
-        bot_name
+    toggles["original_asset_instruction"] = (
+        bot_mode.get_asset_output_instruction(bot_name)
+        if asset_instruction is None else asset_instruction
     )
     snapshot = {
         "bot_name": bot_name,
@@ -2427,7 +2442,8 @@ def _capture_illustration_runtime_snapshot(config: dict | None = None) -> dict:
         f"workflow={illustration_workflow_type}, "
         f"backtranslate_parallel={toggles.get('call1_backtranslate_max_concurrency')!r}, "
         f"call1_parallel={toggles.get('call1_parallel_max_concurrency')!r}, "
-        f"call2_parallel={toggles.get('call2_parallel_max_concurrency')!r}, "
+        f"call2_plan_parallel={toggles.get('call2_parallel_max_concurrency')!r}, "
+        f"call2_detail_parallel={toggles.get('call2_detail_parallel_max_concurrency')!r}, "
         f"word_rules={len(rules)}"
     )
     return snapshot
@@ -2838,7 +2854,7 @@ async def save_backup(
     provider_mode: 생성 요청의 공급자 모드(comfy/chansub/hybrid).
     prompt_provider: 저장 프롬프트 문법을 만든 공급자(comfy 또는 chansub).
     *_snapshot: 이미지 생성과 백업이 겹칠 때 해당 이미지 생성 시점의 전역 메타데이터를 고정한다.
-    illustration_multi_char: 2~3인 재생성용 정규화 레이아웃 스냅샷.
+    illustration_multi_char: 1~3인 재생성용 정규화 레이아웃 스냅샷.
     illustration_visual_states: 캐릭터별로 실제 적용된 시각 프로필 스냅샷.
     execution_target: 이미지를 실제로 생성한 Comfy 실행처("modal"/"local" 등). 빈 값이면
         CURRENT_COMFY_EXECUTION_TARGET 컨텍스트 변수에서 읽는다. provider와 함께
@@ -3192,36 +3208,14 @@ async def save_backup(
 
 
 def cleanup_backups():
-    """Delete old unreviewed backups while retaining every human review case."""
+    """Keep the newest backups within the configured limit, regardless of reviews."""
     max_count = app_config.get("backup_max_count", DEFAULT_MAX_BACKUP_IMAGES)
     backup_dir = get_backup_base_dir()
-    try:
-        reviewed_names = illustration_quality_inspection.human_reviewed_backup_names()
-    except Exception as exc:
-        print(
-            "[BACKUP:CLEANUP] 사람 평가 보존 목록 조회 실패로 자동 정리 중단: "
-            f"backup_dir={backup_dir!r}, error={type(exc).__name__}: {exc}"
-        )
-        traceback.print_exc()
-        return
     files = []
     for pattern in ("*.webp", "*.avif"):
         files.extend(glob.glob(os.path.join(backup_dir, pattern)))
     files = sorted(set(files), key=os.path.getmtime, reverse=True)
-    old_files = []
-    unreviewed_kept = 0
-    for candidate in files:
-        candidate_name = os.path.splitext(os.path.basename(candidate))[0]
-        if candidate_name in reviewed_names:
-            print(
-                "[BACKUP:CLEANUP] 사람 평가 사례 백업 보존: "
-                f"name={candidate_name!r}"
-            )
-            continue
-        if unreviewed_kept < max_count:
-            unreviewed_kept += 1
-            continue
-        old_files.append(candidate)
+    old_files = files[max_count:]
     for old_file in old_files:
         base, _image_extension = os.path.splitext(old_file)
         for ext in [".webp", ".avif", ".json", ".txt", "_info.json", "_enhanced.txt", "_chat.txt", "_wildcard.json"]:
@@ -3972,6 +3966,10 @@ async def generate_image_with_prompt(
     history = await fetch_real_history(real_prompt_id, port=illust_port)
     real_entry = history.get(real_prompt_id, {})
     real_outputs = real_entry.get("outputs", {})
+
+    await illustration_flow.record_comfy_dynamic_mask(
+        real_outputs, fetch_real_image, port=illust_port,
+    )
 
     real_images = []
     for nid, nout in real_outputs.items():
@@ -6108,6 +6106,7 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                                 )
                         multi_char_prompt_context = {
                             "enable": True,
+                            "mask_render_version": int(layout.get("mask_render_version") or 1),
                             "char_name_list": list(detected),
                             "char_inform": char_inform,
                             "background_prompt": separated_background_prompt,
@@ -6327,6 +6326,14 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                     bot_name,
                     word_rules_snapshot,
                 )
+
+        if multi_char_requested:
+            positive, queued_multi_char = multi_char_mask.apply_solo_region_mask_policy(
+                positive, queued_multi_char,
+            )
+            multi_char_requested = queued_multi_char is not None
+            if not multi_char_requested:
+                raw_body.pop("illustration_multi_char", None)
 
         print(f"[INFO] 긍정: {positive}")
         print(f"[INFO] 부정: {negative}")
@@ -7747,6 +7754,19 @@ async def _enqueue_illustration_quality_inspection(
         return None
 
 
+def _illustration_mask_canvas_sizes(bot_name: str) -> dict:
+    bot = next((entry for entry in _load_bot_data_readonly()["bots"]
+                if entry.get("name") == bot_name), None)
+    if bot is None:
+        print(f"[ILLUST_CONTEXT:MULTI_CHAR] 캔버스 프로필 없음: bot={bot_name!r}")
+        return {}
+    sizes = {}
+    for profile in ("solo", "group"):
+        settings = bot.get(f"illust_settings_{profile}", bot.get("illust_settings", {}))
+        sizes[profile] = (settings.get("img_w", 756), settings.get("img_h", 756))
+    return sizes
+
+
 async def process_illustration_context_queue_item(item) -> dict:
     """CALL2 뒤 이미지 큐와 CALL3를 병렬 실행하고 후처리 합류까지 기다린다."""
     params = item.params or {}
@@ -7841,7 +7861,7 @@ async def process_illustration_context_queue_item(item) -> dict:
             for character in (descriptor.get("characters") or [])
             if isinstance(character, dict) and str(character.get("name") or "").strip()
         ]
-        return len(characters) >= 2
+        return bool(characters)
 
     def _multi_char_queue_context(descriptor: dict, prompt_format: str) -> dict | None:
         if not _is_multi_char_descriptor(descriptor, prompt_format):
@@ -8526,6 +8546,8 @@ async def process_illustration_context_queue_item(item) -> dict:
             )
             illustration_flow.raise_if_cancel_requested()
         pipeline_payload = payload
+        if multi_char_mask_active:
+            pipeline_payload = {**payload, "canvas_sizes": _illustration_mask_canvas_sizes(active_bot)}
 
         async def _run_original_asset_selection(used_slots: set[int] | None = None):
             illustration_flow.raise_if_cancel_requested()
@@ -9378,6 +9400,21 @@ async def handle_illustration_quality_inspection_review(request: web.Request) ->
 async def handle_illustration_flow(request: web.Request) -> web.Response:
     node_id = request.query.get("node")
     if node_id:
+        if request.query.get("mask") == "1":
+            mask_bytes = illustration_flow.preview_mask(request.query.get("run", ""), node_id)
+            if not mask_bytes:
+                return web.Response(status=404, text="생성 마스크가 없습니다")
+            return web.Response(body=mask_bytes, content_type="image/png",
+                                headers={"Cache-Control": "no-store"})
+        if request.query.get("image") == "1":
+            image_bytes = illustration_flow.preview_image(request.query.get("run", ""), node_id)
+            if not image_bytes:
+                return web.Response(status=404, text="생성 이미지가 없습니다")
+            content_type = _detect_illustration_bridge_image_content_type(image_bytes)
+            if content_type is None and image_bytes.startswith(b"\xff\xd8\xff"):
+                content_type = "image/jpeg"
+            return web.Response(body=image_bytes, content_type=content_type or "application/octet-stream",
+                                headers={"Cache-Control": "no-store"})
         node = illustration_flow.detail(request.query.get("run", ""), node_id)
         return web.json_response({"node": node}, status=200 if node else 404,
                                  headers={"Cache-Control": "no-store"})
@@ -9470,6 +9507,21 @@ async def handle_illustration_flow_script(request: web.Request) -> web.Response:
                             headers={"Cache-Control": "no-cache"})
 
 
+async def handle_illustration_prompt_inspector_script(request: web.Request) -> web.Response:
+    return web.FileResponse(os.path.join(FRONTEND_DIR, "illustration_prompt_inspector.js"),
+                            headers={"Cache-Control": "no-cache"})
+
+
+async def handle_illustration_preview_script(request: web.Request) -> web.Response:
+    return web.FileResponse(os.path.join(FRONTEND_DIR, "illustration_preview.js"),
+                            headers={"Cache-Control": "no-cache"})
+
+
+async def handle_llm_thinking_check_script(request: web.Request) -> web.Response:
+    return web.FileResponse(os.path.join(FRONTEND_DIR, "llm_thinking_check.js"),
+                            headers={"Cache-Control": "no-cache"})
+
+
 async def handle_get_illust_logs(request: web.Request) -> web.Response:
     """GET /api/bot_mode/illust_logs - 삽화 프롬프트 생성 로그 반환"""
     logs = get_illust_logs()
@@ -9557,7 +9609,7 @@ async def handle_api_illustration_context_bridge_health(request: web.Request) ->
         "asset_reroll": True,
         "lookup_key_length": 24,
         "max_slot_manifest_count": illustration_context_pipeline.MAX_ILLUSTRATION_SLOT_COUNT,
-        "progress_phases": ["call1", "call2", "call2_plan", "call2_keyvis", "call2_detail", "call2_authority_audit", "call2_fallback", "call3", "multi_char_mask", "asset_reroll", "enqueue", "generating", "retrying", "regenerating", "ready", "error"],
+        "progress_phases": ["call1", "call2", "call2_select", "call2_plan", "call2_keyvis", "call2_detail", "call2_authority_audit", "call2_fallback", "call3", "multi_char_mask", "asset_reroll", "enqueue", "generating", "retrying", "regenerating", "ready", "error"],
     })
 
 
@@ -9900,6 +9952,75 @@ async def handle_api_illustration_context_bridge_image(request: web.Request) -> 
     )
 
 
+async def handle_api_illustration_prompt_structure(request: web.Request) -> web.Response:
+    """Read the current assembly with named variables, without running an LLM."""
+    try:
+        from modes.illustration_prompt_structure import build_prompt_structure
+        return web.json_response(build_prompt_structure(), headers={"Cache-Control": "no-store"})
+    except Exception as e:
+        print(f"[ILLUST_CONTEXT] prompt structure 조회 실패: input={dict(request.query)!r}, error={e}")
+        traceback.print_exc()
+        return web.json_response({"error": str(e)}, status=500)
+
+
+async def handle_api_illustration_execution_preview(request: web.Request) -> web.Response:
+    """Simulate current settings without saving config or running generation."""
+    try:
+        from modes.illustration_execution_preview import build_execution_plan
+        from modes.visual_profiles import effective_bot_profiles
+        from modes import visual_profile_translation_cache
+        from modes.bot_mode import _load_lb_extra, get_bot_asset_output_instruction
+
+        body = await request.json()
+        if not isinstance(body, dict) or not isinstance(body.get("toggles", {}), dict):
+            print(f"[ILLUST_PREVIEW] 입력 형식 오류: body={body!r}")
+            return web.json_response({"error": "toggles must be object"}, status=400)
+        config = copy.deepcopy(app_config)
+        # Credentials are held separately from persisted app_config. Use them
+        # only inside this read-only plan to identify shared provider budgets.
+        runtime_llm_config = llm_service.get_config()
+        for number in range(1, llm_service.LLM_SLOT_COUNT + 1):
+            key = f"llm_api_key{'' if number == 1 else number}"
+            config[key] = runtime_llm_config.get(key, "")
+        overrides = {key: value for key, value in body.get("toggles", {}).items()
+                     if key in illustration_context_pipeline.DEFAULT_TOGGLES
+                     and key != "original_asset_instruction"}
+        config["illustration_context_toggles"] = {
+            **(config.get("illustration_context_toggles") or {}), **overrides,
+        }
+        bot_name = str(config.get("bot_selected") or "")
+        data = _load_bot_data_readonly() if bot_name else {"bots": []}
+        bot = next((item for item in data["bots"] if item.get("name") == bot_name), {})
+        instruction = get_bot_asset_output_instruction(bot_name, data=data) if bot_name else ""
+        snapshot = _capture_illustration_runtime_snapshot(config, asset_instruction=instruction)
+        extra = _load_lb_extra(bot_name) if bot_name else []
+        if isinstance(extra, dict):
+            extra = extra.get("edited") or []
+        profiles = effective_bot_profiles(bot, extra or [])
+        character_names = [str(item.get("name") or "").strip() for item in bot.get("characters", [])
+                           if isinstance(item, dict) and str(item.get("name") or "").strip()]
+        toggles = snapshot["illustration_context_toggles"]
+        index = illustration_original_assets.build_original_asset_index(
+            os.path.join(BASE_DIR, "bot"), bot_name, character_names,
+        ) if toggles["original_asset_enabled"] and instruction.strip() else {}
+        # Policy methods are read-only. A shallow copy keeps live readiness callbacks
+        # while using this request's config, without changing the running manager.
+        policy = copy.copy(queue_manager)
+        policy.get_config = lambda: config
+        plan = await build_execution_plan(
+            config=config, snapshot=snapshot, visual_profiles=profiles,
+            translation_cache=visual_profile_translation_cache.load_cache(),
+            asset_count=len(index), postprocess_mode=bot.get("postprocess_mode", "vn"),
+            queue_policy=policy, scenario=body.get("scenario"), bot=bot,
+        )
+        plan["summary"] += f" · 봇 프리셋 {bot.get('system_prompt_preset') or '(직접 지정)'}"
+        return web.json_response(plan, headers={"Cache-Control": "no-store"})
+    except Exception as e:
+        print(f"[ILLUST_PREVIEW] 실행 계획 조회 실패: error={type(e).__name__}: {e}")
+        traceback.print_exc()
+        return web.json_response({"error": str(e)}, status=500)
+
+
 async def handle_api_illustration_context_prompts(request: web.Request) -> web.Response:
     """CALL1 역번역/1/2/3 프롬프트 파일 조회/저장. 본문은 config에 넣지 않는다."""
     try:
@@ -10100,6 +10221,20 @@ async def handle_api_lighbd_history(request: web.Request) -> web.Response:
         except (TypeError, ValueError):
             limit_n = LIGHBD_HISTORY_MAX
         records = _load_lighbd_history(limit=limit_n)
+        if request.query.get("scope") == "illustration":
+            records = [record for record in records
+                       if str(record.get("prompt_id") or "").startswith("illustration_context:")]
+        history_id = request.query.get("history_id")
+        if history_id:
+            records = [record for record in records if record.get("history_id") == history_id]
+            if not records:
+                print(f"[LIGHBD] 저장된 호출 없음: history_id={history_id!r}, scope={request.query.get('scope')!r}")
+        if request.query.get("summary") == "1":
+            # The inspector loads one full request only after the user selects it.
+            fields = ("history_id", "execution_id", "parent_execution_id", "ts", "call_name",
+                      "task_key", "model", "service", "status", "error", "phase", "llm_slot",
+                      "attempt", "total_attempts", "attempt_id")
+            records = [{key: record[key] for key in fields if key in record} for record in records]
         return web.json_response({"history": records, "count": len(records)})
     except Exception as e:
         tb = traceback.format_exc()
@@ -10522,6 +10657,12 @@ async def handle_api_llm_test_stream(request: web.Request) -> web.StreamResponse
     except Exception as e:
         return web.json_response({"error": f"invalid JSON body: {e}"}, status=400)
 
+    thinking_check = body.get("thinking_check") is True
+    if thinking_check:
+        # A fixed, small input observes the saved connection without toggling thinking.
+        body = {"target": body.get("target"), "messages": [
+            {"role": "user", "content": "Calculate 17 * 23. Reply with only the number."}
+        ]}
     messages = body.get("messages") or []
     if not messages or not isinstance(messages, list):
         return web.json_response({"error": "messages 가 비었거나 list 가 아님"}, status=400)
@@ -10545,7 +10686,7 @@ async def handle_api_llm_test_stream(request: web.Request) -> web.StreamResponse
             images = norm_imgs
         else:
             print(f"[LLM_TEST_STREAM] images 무시: 항목 파싱 실패 (len={len(raw_images)}), 단일 image_b64 로 폴백")
-    use_json = bool(body.get("json_mode", False))
+    use_json = False  # 레거시 요청도 API 출력 형식을 강제하지 않는다.
     target = (body.get("target") or "llm1").strip().lower()
     if target not in llm_service.LLM_SLOT_IDS:
         print(
@@ -10577,6 +10718,8 @@ async def handle_api_llm_test_stream(request: web.Request) -> web.StreamResponse
     }
     cfg = llm_service.get_config()
     _suffix = "" if target == "llm1" else target[3:]
+    if thinking_check:
+        use_stream = bool(cfg.get(f"llm_stream{_suffix}", False))
     cur_service = cfg.get(f"llm_service{_suffix}") or cfg.get("llm_service", "")
     cur_model_key = f"llm_model{_suffix}"
     fn_single, fn_vision_single = _slot_fns.get(
@@ -10585,18 +10728,21 @@ async def handle_api_llm_test_stream(request: web.Request) -> web.StreamResponse
     )
 
     use_model_resolved = use_model or cfg.get(cur_model_key, "")
+    task_key = "llm_thinking_check" if thinking_check else "llm_test"
+    call_name = "THINK CHECK" if thinking_check else "LLM TEST"
     execution_context = llm_service.create_llm_execution_context(
-        "llm_test",
-        call_name="LLM TEST",
+        task_key,
+        call_name=call_name,
         json_mode=use_json,
     )
     execution_id = execution_context.execution_id
-    prompt_id = f"llm_test:{execution_id[:12]}"
+    prompt_id = f"{task_key}:{execution_id[:12]}"
     history_record = {
         "ts": datetime.datetime.now().isoformat(timespec="seconds"),
         "prompt_id": prompt_id,
-        "call_name": "LLM TEST",
-        "task_key": "llm_test",
+        "call_name": call_name,
+        "task_key": task_key,
+        "routing_stage": "selected_slot",
         "history_id": execution_id,
         "execution_id": execution_id,
         "parent_execution_id": execution_context.parent_execution_id,
@@ -10627,6 +10773,7 @@ async def handle_api_llm_test_stream(request: web.Request) -> web.StreamResponse
     history_logged = False
     terminal_error = ""
     stream_parts: list[str] = []
+    reasoning_parts: list[str] = []
 
     async def write_event(event_type: str, data: dict) -> None:
         payload = json.dumps(data, ensure_ascii=False)
@@ -10644,11 +10791,27 @@ async def handle_api_llm_test_stream(request: web.Request) -> web.StreamResponse
         nonlocal terminal_error
         event_data = dict(data or {})
         if event_type == "delta":
+            if event_data.get("reasoning"):
+                reasoning_parts.append(str(event_data["reasoning"]))
+                history_record["reasoning_text"] = "".join(reasoning_parts)
             delta_text = str(event_data.get("text") or "")
             if delta_text:
                 stream_parts.append(delta_text)
                 history_record["output"] = "".join(stream_parts)
         elif event_type == "done":
+            if thinking_check:
+                tokens = event_data.get("reasoning_tokens")
+                chars = event_data.get("reasoning_chars") or 0
+                event_data["thinking_status"] = (
+                    "observed" if (tokens is not None and tokens > 0) or chars > 0
+                    else "zero" if tokens == 0 else "unknown"
+                )
+                if event_data["thinking_status"] == "unknown":
+                    print(f"[THINK_CHECK] No provider reasoning evidence: slot={target}, model={use_model_resolved}")
+                history_record["thinking_status"] = event_data["thinking_status"]
+            for key in ("reasoning_tokens", "reasoning_chars", "reasoning_text"):
+                if event_data.get(key) is not None:
+                    history_record[key] = event_data[key]
             done_text = str(
                 event_data.get("text")
                 or history_record.get("output")
@@ -10691,13 +10854,14 @@ async def handle_api_llm_test_stream(request: web.Request) -> web.StreamResponse
                 "status": "error",
                 "error": terminal_error,
             })
+            print(f"[LLM_TEST_STREAM] {task_key} failed: slot={target}, model={use_model_resolved}, input={messages!r}, error={terminal_error}")
 
         ws_event = dict(event_data)
         ws_event.update({
             "type": event_type,
             "prompt_id": prompt_id,
-            "call_name": "LLM TEST",
-            "task_key": "llm_test",
+            "call_name": call_name,
+            "task_key": task_key,
             "llm_slot": target,
             "execution_id": execution_id,
             "parent_execution_id": execution_context.parent_execution_id,
@@ -10820,6 +10984,9 @@ async def handle_api_llm_test_stream(request: web.Request) -> web.StreamResponse
                             "ttft": tracked_usage.get("ttft"),
                             "pdf_tokens_before": tracked_usage.get("pdf_tokens_before"),
                             "pdf_pages_after": tracked_usage.get("pdf_pages_after"),
+                            **{key: tracked_usage[key] for key in (
+                                "reasoning_tokens", "reasoning_chars", "reasoning_text"
+                            ) if key in tracked_usage},
                         },
                         notify_live=False,
                     )
@@ -10872,18 +11039,23 @@ async def handle_api_llm_test_stream(request: web.Request) -> web.StreamResponse
                         "model": use_model_resolved,
                     },
                 )
-                text = await fn_single(
-                    messages,
-                    model=use_model,
-                    json_mode=use_json,
-                )
+                single_usage: dict = {}
+                usage_token = llm_service._usage_sink_ctx.set(single_usage)
+                try:
+                    text = await fn_single(
+                        messages,
+                        model=use_model,
+                        json_mode=use_json,
+                    )
+                finally:
+                    llm_service._usage_sink_ctx.reset(usage_token)
                 elapsed = time.time() - started
                 if isinstance(text, str) and text.startswith("[LLM 실패]"):
                     await publish_event("error", {"error": text})
                 else:
-                    tokens = max(1, len(text) // 3)
+                    tokens = single_usage.get("completion_tokens", max(1, len(text) // 3))
                     tps = (tokens / elapsed) if elapsed > 0 else 0.0
-                    prompt_tokens = history_record["prompt_tokens"]
+                    prompt_tokens = single_usage.get("prompt_tokens", history_record["prompt_tokens"])
                     llm_service._log_history(
                         service=cur_service,
                         model=use_model_resolved,
@@ -10901,6 +11073,9 @@ async def handle_api_llm_test_stream(request: web.Request) -> web.StreamResponse
                         "elapsed": elapsed,
                         "tps": tps,
                         "ttft": None,
+                        **{key: single_usage[key] for key in (
+                            "reasoning_tokens", "reasoning_chars", "reasoning_text"
+                        ) if key in single_usage},
                     })
 
             if history_record.get("status") == "processing":
@@ -10969,7 +11144,7 @@ async def handle_api_llm_test_stream(request: web.Request) -> web.StreamResponse
     try:
         item = await queue_manager.add_item(
             "llm_test",
-            f"LLM 테스트 · {target.upper()} · {use_model_resolved or '(모델 없음)'}",
+            f"{'Think 확인' if thinking_check else 'LLM 테스트'} · {target.upper()} · {use_model_resolved or '(모델 없음)'}",
             {
                 "target": target,
                 "model": use_model_resolved,
@@ -10978,6 +11153,7 @@ async def handle_api_llm_test_stream(request: web.Request) -> web.StreamResponse
                 "vision": bool(image_b64 or images),
                 "prompt_id": prompt_id,
                 "execution_id": execution_id,
+                "task_key": task_key,
             },
             priority=10,
             runtime_handler=run_queued_test,
@@ -11054,36 +11230,51 @@ def _load_llm_keys_into_config():
 
 
 async def handle_api_lighbd_vertex_key(request: web.Request) -> web.Response:
-    """Vertex 서비스 계정 JSON 업로드/조회/삭제.
+    """?slot=llm1~llm10의 Vertex 키 업로드/조회/삭제. 생략은 기존 LLM1 API 호환."""
+    slot = request.query.get("slot", "llm1")
+    try:
+        vertex_path = llm_service.vertex_key_path(slot)
+    except ValueError as e:
+        print(f"[VERTEX_KEY] 잘못된 슬롯: slot={slot!r}, method={request.method}, error={e}")
+        return web.json_response({"error": str(e)}, status=400)
 
-    POST /api/llm/vertex_key   {"json": "<service account JSON>"} → 저장 (key/vertex.json)
-    GET  /api/llm/vertex_key   → {"exists": bool, "project_id": str, "client_email": str}
-    DELETE /api/llm/vertex_key → 삭제
-    """
-    import os as _os
-    KEY_DIR_LOCAL = _os.path.join(BASE_DIR, "key")
-    vertex_path = _os.path.join(KEY_DIR_LOCAL, "vertex.json")
+    def backup_existing_key(operation: str) -> None:
+        if not os.path.isfile(vertex_path):
+            print(f"[VERTEX_KEY] 백업 생략: slot={slot}, 기존 키 파일 없음, path={vertex_path}")
+            return
+        backup_dir = os.path.join(os.path.dirname(vertex_path), "backups")
+        os.makedirs(backup_dir, exist_ok=True)
+        stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        backup_path = os.path.join(backup_dir, f"{slot}_vertex_before_{operation}_{stamp}.bak")
+        shutil.copy2(vertex_path, backup_path)
+        print(f"[VERTEX_KEY] 키 백업 완료: slot={slot}, path={backup_path}")
 
     try:
         if request.method == "POST":
             body = await request.json()
             json_str = body.get("json", "")
-            if not json_str or not json_str.strip():
+            if not isinstance(json_str, str) or not json_str.strip():
+                print(f"[VERTEX_KEY] 저장 실패: slot={slot}, 비어 있거나 문자열이 아닌 JSON")
                 return web.json_response({"error": "empty json"}, status=400)
             # JSON 형식 검증
             try:
                 data = json.loads(json_str)
             except json.JSONDecodeError as e:
+                print(f"[VERTEX_KEY] JSON 파싱 실패: slot={slot}, error={e}")
+                traceback.print_exc()
                 return web.json_response({"error": f"invalid JSON: {e}"}, status=400)
-            if "project_id" not in data:
+            if not isinstance(data, dict) or "project_id" not in data:
+                print(f"[VERTEX_KEY] 저장 실패: slot={slot}, service account project_id 없음")
                 return web.json_response(
                     {"error": "service account JSON must contain project_id"},
                     status=400,
                 )
-            _os.makedirs(KEY_DIR_LOCAL, exist_ok=True)
+            os.makedirs(os.path.dirname(vertex_path), exist_ok=True)
+            backup_existing_key("save")
             with open(vertex_path, "w", encoding="utf-8") as f:
                 f.write(json_str)
-            print(f"[LIGHBD] Vertex key saved: project={data['project_id']} path={vertex_path}")
+            llm_service.invalidate_vertex_client(slot)
+            print(f"[VERTEX_KEY] 키 저장 완료: slot={slot}, project={data['project_id']}, path={vertex_path}")
             return web.json_response({
                 "status": "ok",
                 "project_id": data.get("project_id", ""),
@@ -11091,13 +11282,17 @@ async def handle_api_lighbd_vertex_key(request: web.Request) -> web.Response:
             })
 
         if request.method == "DELETE":
-            if _os.path.exists(vertex_path):
-                _os.remove(vertex_path)
-                print(f"[LIGHBD] Vertex key deleted: {vertex_path}")
+            if os.path.exists(vertex_path):
+                backup_existing_key("delete")
+                os.remove(vertex_path)
+                print(f"[VERTEX_KEY] 키 삭제 완료: slot={slot}, path={vertex_path}")
+            else:
+                print(f"[VERTEX_KEY] 삭제 생략: slot={slot}, 키 파일 없음, path={vertex_path}")
+            llm_service.invalidate_vertex_client(slot)
             return web.json_response({"status": "ok"})
 
         # GET
-        if not _os.path.exists(vertex_path):
+        if not os.path.exists(vertex_path):
             return web.json_response({"exists": False, "project_id": "", "client_email": ""})
         try:
             with open(vertex_path, "r", encoding="utf-8") as f:
@@ -11108,11 +11303,13 @@ async def handle_api_lighbd_vertex_key(request: web.Request) -> web.Response:
                 "client_email": data.get("client_email", ""),
             })
         except Exception as e:
-            return web.json_response({"exists": True, "error": str(e)})
+            print(f"[VERTEX_KEY] 키 조회 실패: slot={slot}, path={vertex_path}, error={e}")
+            traceback.print_exc()
+            return web.json_response({"exists": True, "error": str(e)}, status=500)
 
     except Exception as e:
-        tb = traceback.format_exc()
-        print(f"[LIGHBD] vertex_key error: {e}\n{tb}")
+        print(f"[VERTEX_KEY] 처리 실패: slot={slot}, method={request.method}, path={vertex_path}, error={e}")
+        traceback.print_exc()
         return web.json_response({"error": str(e)}, status=500)
 
 
@@ -20456,7 +20653,7 @@ async def handle_api_config(request: web.Request) -> web.Response:
             for _slot_n in range(1, llm_service.LLM_SLOT_COUNT + 1):
                 _sfx = "" if _slot_n == 1 else str(_slot_n)
                 _llm_runtime_cfg.update({
-                    f"llm_service{_sfx}": app_config.get(f"llm_service{_sfx}", "copilot" if _slot_n == 1 else ""),
+                    f"llm_service{_sfx}": app_config.get(f"llm_service{_sfx}", "openai" if _slot_n == 1 else ""),
                     f"llm_model{_sfx}": app_config.get(f"llm_model{_sfx}", "gpt-4.1" if _slot_n == 1 else ""),
                     f"llm_url{_sfx}": app_config.get(f"llm_url{_sfx}", ""),
                     f"llm_reasoning_preset{_sfx}": app_config.get(f"llm_reasoning_preset{_sfx}", "auto"),
@@ -21365,7 +21562,7 @@ async def handle_api_outfit_run_llm(request: web.Request) -> web.Response:
 
         # LLM 설정 동기화
         llm_sync_config = {
-            "llm_service": app_config.get("llm_service", "copilot"),
+            "llm_service": app_config.get("llm_service", "openai"),
             "llm_model": app_config.get("llm_model", "gpt-4.1"),
         }
         for slot_n in range(2, llm_service.LLM_SLOT_COUNT + 1):
@@ -21767,6 +21964,8 @@ app.router.add_post("/api/illustration_context/bridge/client-log", handle_api_il
 app.router.add_get("/api/illustration_context/bridge/session/{sid}", handle_api_illustration_context_bridge_session)
 app.router.add_get("/api/illustration_context/bridge/session/{sid}/image/{slot}", handle_api_illustration_context_bridge_image)
 app.router.add_get("/api/illustration_context/prompts", handle_api_illustration_context_prompts)
+app.router.add_get("/api/illustration_context/prompt-structure", handle_api_illustration_prompt_structure)
+app.router.add_post("/api/illustration_context/execution-preview", handle_api_illustration_execution_preview)
 app.router.add_post("/api/illustration_context/prompts", handle_api_illustration_context_prompts)
 app.router.add_get("/api/illustration_context/toggles", handle_api_illustration_context_toggles)
 app.router.add_post("/api/illustration_context/toggles", handle_api_illustration_context_toggles)
@@ -21881,6 +22080,9 @@ app.router.add_post(
 )
 app.router.add_post("/api/illustration_flow/cancel", handle_illustration_flow_cancel)
 app.router.add_get("/illustration_flow.js", handle_illustration_flow_script)
+app.router.add_get("/illustration_prompt_inspector.js", handle_illustration_prompt_inspector_script)
+app.router.add_get("/illustration_preview.js", handle_illustration_preview_script)
+app.router.add_get("/llm_thinking_check.js", handle_llm_thinking_check_script)
 app.router.add_get("/api/config", handle_api_config)
 app.router.add_post("/api/config", handle_api_config)
 modal_service = register_modal_routes(
@@ -33682,7 +33884,7 @@ async def on_startup(app):
     autocomplete_service.load_all_csv()
     # LLM 서비스 설정 초기화. 슬롯 1 + 공통 키는 리터럴로, 슬롯 2..N 은 단일 소스에서 자동 생성.
     _llm_cfg = {
-        "llm_service": app_config.get("llm_service", "copilot"),
+        "llm_service": app_config.get("llm_service", "openai"),
         "llm_model": app_config.get("llm_model", "gpt-4.1"),
         "llm_url": app_config.get("llm_url", ""),
         "llm_reasoning_preset": app_config.get("llm_reasoning_preset", "auto"),

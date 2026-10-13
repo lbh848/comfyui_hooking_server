@@ -376,12 +376,10 @@ async def test_vertex_original_count_uses_native_count_tokens(monkeypatch):
             seen.update(kwargs)
             return SimpleNamespace(total_tokens=12345)
 
-    monkeypatch.setattr(llm_service, "_init_vertex", lambda: None)
-    monkeypatch.setattr(llm_service, "_vertex_initialized", True)
     monkeypatch.setattr(
         llm_service,
-        "_vertex_client",
-        SimpleNamespace(aio=SimpleNamespace(models=FakeModels())),
+        "_init_vertex",
+        lambda: SimpleNamespace(aio=SimpleNamespace(models=FakeModels())),
     )
 
     total = await llm_service._count_gemini_original_tokens(

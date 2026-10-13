@@ -11,6 +11,7 @@ import json
 from copy import deepcopy
 from typing import Iterable
 
+import numpy as np
 from PIL import Image, ImageDraw
 
 
@@ -18,6 +19,8 @@ MASK_CHANNELS = ("R", "G", "B")
 DEFAULT_MASK_LOCATION = "region_mask"
 DEFAULT_MASK_SIZE = 1024
 MULTI_CHAR_SNAPSHOT_VERSION = 1
+MASK_RENDER_VERSION = 5
+SOLO_MASK_SKIP_AREA_RATIO = 0.30
 
 
 def _normalized_name(value: object) -> str:
@@ -53,14 +56,13 @@ def validate_multi_char_layout(
     *,
     require_prompt_separation: bool = False,
     require_character_prompt: bool | None = None,
-    max_pairwise_overlap_ratio: float | None = None,
 ) -> dict:
     """LLM 레이아웃과 선택적 2-pass 프롬프트를 검증해 왼쪽→오른쪽으로 정규화한다."""
     if require_character_prompt is None:
         require_character_prompt = require_prompt_separation
     names = [str(name or "").strip() for name in expected_names]
-    if not 2 <= len(names) <= len(MASK_CHANNELS):
-        raise ValueError(f"다중 캐릭터 수는 2~{len(MASK_CHANNELS)}명이어야 합니다: {len(names)}")
+    if not 1 <= len(names) <= len(MASK_CHANNELS):
+        raise ValueError(f"영역 캐릭터 수는 1~{len(MASK_CHANNELS)}명이어야 합니다: {len(names)}")
     if any(not name for name in names):
         raise ValueError(f"캐릭터 이름이 비어 있습니다: {names!r}")
 
@@ -161,40 +163,6 @@ def validate_multi_char_layout(
         missing_names = [normalized_to_original[key] for key in missing]
         raise ValueError(f"레이아웃에서 누락된 캐릭터가 있습니다: {missing_names!r}")
 
-    if max_pairwise_overlap_ratio is not None:
-        try:
-            overlap_limit = float(max_pairwise_overlap_ratio)
-        except (TypeError, ValueError) as exc:
-            raise ValueError(
-                f"영역 overlap 상한이 숫자가 아닙니다: {max_pairwise_overlap_ratio!r}"
-            ) from exc
-        if not math.isfinite(overlap_limit) or not 0.0 <= overlap_limit <= 1.0:
-            raise ValueError(f"영역 overlap 상한 범위가 잘못되었습니다: {overlap_limit}")
-        for left_index, left in enumerate(validated):
-            for right in validated[left_index + 1:]:
-                overlap_width = max(
-                    0.0,
-                    min(left["x"] + left["width"], right["x"] + right["width"])
-                    - max(left["x"], right["x"]),
-                )
-                overlap_height = max(
-                    0.0,
-                    min(left["y"] + left["height"], right["y"] + right["height"])
-                    - max(left["y"], right["y"]),
-                )
-                overlap_area = overlap_width * overlap_height
-                smaller_area = min(
-                    left["width"] * left["height"],
-                    right["width"] * right["height"],
-                )
-                ratio = overlap_area / smaller_area if smaller_area > 0.0 else 0.0
-                if ratio > overlap_limit + 1e-9:
-                    raise ValueError(
-                        "캐릭터 핵심 영역 overlap이 과도합니다: "
-                        f"left={left['name']!r}, right={right['name']!r}, "
-                        f"ratio={ratio:.3f}, limit={overlap_limit:.3f}"
-                    )
-
     validated.sort(key=lambda region: (
         region["x"] + region["width"] / 2.0,
         region["_source_index"],
@@ -207,6 +175,7 @@ def validate_multi_char_layout(
     normalized_layout = {
         "mask_width": DEFAULT_MASK_SIZE,
         "mask_height": DEFAULT_MASK_SIZE,
+        "mask_render_version": int(layout.get("mask_render_version") or MASK_RENDER_VERSION),
         "character_order": [region["name"] for region in regions],
         "regions": regions,
     }
@@ -233,6 +202,11 @@ def layout_fingerprint(layout: dict) -> str:
             "height": float(region.get("height")),
         } for region in layout["regions"]],
     }
+    render_version = int(layout.get("mask_render_version") or MASK_RENDER_VERSION)
+    if render_version >= 2:
+        # Legacy snapshots keep their original geometry-only fingerprint.
+        # New masks also identify the pixel ownership algorithm they use.
+        canonical["mask_render_version"] = render_version
     encoded = json.dumps(
         canonical,
         ensure_ascii=False,
@@ -283,6 +257,57 @@ def extract_multi_char_prompt_payload(positive: object) -> dict | None:
     return payload
 
 
+def should_skip_solo_region_mask(layout: object) -> bool:
+    """Keep small solo regions masked; skip only a single region above 30%."""
+    regions = layout.get("regions") if isinstance(layout, dict) else None
+    if not isinstance(regions, list) or len(regions) != 1:
+        return False
+    region = regions[0]
+    name = str(region.get("name") or "")
+    area_ratio = (
+        _finite_number(region.get("width"), "width", name)
+        * _finite_number(region.get("height"), "height", name)
+    )
+    # Products such as 0.75 * 0.4 must still count as exactly 30%.
+    skip = area_ratio > SOLO_MASK_SKIP_AREA_RATIO and not math.isclose(
+        area_ratio, SOLO_MASK_SKIP_AREA_RATIO, rel_tol=0.0, abs_tol=1e-12,
+    )
+    if skip:
+        print(
+            f"[MULTI_CHAR:MASK] solo 마스크 생략: name={name!r}, "
+            f"area={area_ratio:.2%}, threshold={SOLO_MASK_SKIP_AREA_RATIO:.2%}"
+        )
+    return skip
+
+
+def apply_solo_region_mask_policy(positive: str, context: dict) -> tuple[str, dict | None]:
+    """Disable the existing control and backup snapshot together for a large solo region."""
+    if not should_skip_solo_region_mask(context.get("layout")):
+        return positive, context
+    try:
+        payload = extract_multi_char_prompt_payload(positive)
+        if payload is None:
+            raise ValueError("solo 마스크를 생략할 [MULTI_CHAR] 제어 블록이 없습니다")
+        payload["enable"] = False
+        lines = positive.splitlines(keepends=True)
+        start = next(index + 1 for index, line in enumerate(lines)
+                     if line.strip() == "[MULTI_CHAR]")
+        end = next((index for index in range(start, len(lines))
+                    if lines[index].strip().startswith("[")
+                    and lines[index].strip().endswith("]")), len(lines))
+        last = lines[end - 1]
+        ending = "\r\n" if last.endswith("\r\n") else "\n" if last.endswith("\n") else ""
+        lines[start:end] = [json.dumps(payload, ensure_ascii=False) + ending]
+        return "".join(lines), None
+    except Exception as exc:
+        print(
+            f"[MULTI_CHAR:MASK] solo 마스크 비활성화 실패: "
+            f"context={context!r}, positive={positive!r}, error={exc}"
+        )
+        traceback.print_exc()
+        raise
+
+
 def normalize_multi_char_snapshot(context: object) -> dict | None:
     """큐 컨텍스트를 백업 가능한 최소·정규 형식으로 바꾼다."""
     if context is None:
@@ -304,8 +329,11 @@ def normalize_multi_char_snapshot(context: object) -> dict | None:
             for character in (context.get("characters") or [])
             if isinstance(character, dict)
         ]
+    source_layout = context.get("layout")
+    if isinstance(source_layout, dict):
+        source_layout = {"mask_render_version": 1, **source_layout}
     normalized_layout = validate_multi_char_layout(
-        context.get("layout"),
+        source_layout,
         expected_names,
         require_prompt_separation=False,
     )
@@ -323,6 +351,7 @@ def normalize_multi_char_snapshot(context: object) -> dict | None:
     mask_layout = {
         "mask_width": int(normalized_layout.get("mask_width") or DEFAULT_MASK_SIZE),
         "mask_height": int(normalized_layout.get("mask_height") or DEFAULT_MASK_SIZE),
+        "mask_render_version": normalized_layout["mask_render_version"],
         "character_order": normalized_order,
         "regions": [
             {
@@ -454,7 +483,7 @@ def recover_multi_char_snapshot_from_sessions(
         str(name or "").strip()
         for name in (prompt_payload.get("char_name_list") or [])
     ]
-    if not 2 <= len(expected_names) <= len(MASK_CHANNELS) or any(
+    if not 1 <= len(expected_names) <= len(MASK_CHANNELS) or any(
         not name for name in expected_names
     ):
         raise ValueError(f"레거시 복구 캐릭터 순서가 올바르지 않습니다: {expected_names!r}")
@@ -577,17 +606,72 @@ def _clear_directory(directory: str) -> None:
             os.remove(path)
 
 
+def _overlap_midpoint_owners(coverage, boxes, pixel_boxes, original_union, rows, columns, width, height):
+    """Center each shared region's partition without favoring a smaller body box."""
+    channel_bits = 1 << np.arange(len(boxes))
+    membership = (coverage[:, rows, columns] * channel_bits[:, None]).sum(axis=0)
+    extension_bit = 1 << len(boxes)
+    membership |= (~original_union[rows, columns]).astype(int) * extension_bit
+    centers = np.asarray([(x + w / 2, y + h / 2) for x, y, w, h in boxes])
+    owners = np.empty(len(rows), dtype=np.intp)
+    for shared_region in np.unique(membership):
+        selected = membership == shared_region
+        members = np.flatnonzero(shared_region & channel_bits)
+        bounds = [pixel_boxes[index] for index in members]
+        left, right = max(box[0] for box in bounds), min(box[2] + 1 for box in bounds)
+        if shared_region & extension_bit:
+            # Added background is separate from original body pixels, so upward
+            # extensions cannot shift the partition inside either body.
+            top, bottom = 0, min(box[1] for box in bounds)
+        else:
+            top, bottom = max(box[1] for box in bounds), min(box[3] + 1 for box in bounds)
+        midpoint = np.asarray([(left + right) / (2 * width), (top + bottom) / (2 * height)])
+        member_centers = centers[members]
+        anchors = member_centers - member_centers.mean(axis=0) + midpoint
+        points = np.column_stack(((columns[selected] + .5) / width, (rows[selected] + .5) / height))
+        # Translating unweighted centers to the overlap midpoint puts a two-box
+        # boundary through that midpoint, including diagonal arrangements.
+        distances = ((points[None, :, :] - anchors[:, None, :]) ** 2).sum(axis=2)
+        chosen = distances.argmin(axis=0)
+        remaining = set(range(len(members)))
+        while remaining:
+            first = min(remaining)
+            identical = sorted(index for index in remaining if np.allclose(
+                member_centers[index], member_centers[first], rtol=0, atol=1e-12,
+            ))
+            remaining.difference_update(identical)
+            if len(identical) < 2:
+                continue
+            tied = np.isin(chosen, identical)
+            if not tied.any():
+                print(f"[MULTI_CHAR:MASK] 중심 동률 영역에 배정된 픽셀 없음: channels={members[identical].tolist()}")
+                continue
+            tied_x, tied_y = columns[selected][tied], rows[selected][tied]
+            if (tied_x.max() - tied_x.min() + 1) / width >= (tied_y.max() - tied_y.min() + 1) / height:
+                axis = tied_x
+            else:
+                axis = tied_y
+            relative = (axis - axis.min() + .5) / (axis.max() - axis.min() + 1)
+            stripes = np.clip((relative * len(identical)).astype(int), 0, len(identical) - 1)
+            chosen[tied] = np.asarray(identical)[stripes]
+            print(f"[MULTI_CHAR:MASK] 동일 중심 영역의 균등 분할: channels={members[identical].tolist()}")
+        owners[selected] = members[chosen]
+    return owners
+
+
 def render_region_mask(layout: dict, width: int | None = None, height: int | None = None) -> Image.Image:
-    """각 캐릭터 영역을 R/G/B 독립 채널에 그려 겹침도 보존한다."""
+    """Extend upward into background while preserving original body ownership."""
     regions = layout.get("regions") if isinstance(layout, dict) else None
-    if not isinstance(regions, list) or not 2 <= len(regions) <= len(MASK_CHANNELS):
-        raise ValueError("검증된 2~3개 regions가 필요합니다")
+    if not isinstance(regions, list) or not 1 <= len(regions) <= len(MASK_CHANNELS):
+        raise ValueError("검증된 1~3개 regions가 필요합니다")
     width = int(width or layout.get("mask_width") or DEFAULT_MASK_SIZE)
     height = int(height or layout.get("mask_height") or DEFAULT_MASK_SIZE)
     if width < 1 or height < 1:
         raise ValueError(f"마스크 크기가 올바르지 않습니다: {width}x{height}")
 
     channels = [Image.new("L", (width, height), 0) for _ in MASK_CHANNELS]
+    boxes = []
+    pixel_boxes = []
     for index, region in enumerate(regions):
         name = str(region.get("name") or f"character-{index + 1}")
         x = _finite_number(region.get("x"), "x", name)
@@ -599,6 +683,62 @@ def render_region_mask(layout: dict, width: int | None = None, height: int | Non
         right = max(left, min(width - 1, int(math.ceil((x + box_width) * width)) - 1))
         bottom = max(top, min(height - 1, int(math.ceil((y + box_height) * height)) - 1))
         ImageDraw.Draw(channels[index]).rectangle((left, top, right, bottom), fill=255)
+        boxes.append((x, y, box_width, box_height))
+        pixel_boxes.append((left, top, right, bottom))
+
+    render_version = int(layout.get("mask_render_version") or MASK_RENDER_VERSION)
+    if render_version < 2:
+        print("[MULTI_CHAR:MASK] 저장된 이전 버전의 마스크 영역과 겹침을 복원합니다")
+        return Image.merge("RGB", tuple(channels))
+
+    coverage = np.stack([np.asarray(channel) != 0 for channel in channels[:len(regions)]])
+    original_union = coverage.any(axis=0)
+    # V5 starts from body geometry; the sampler extends it around observed faces.
+    # Archived V3/V4 layouts retain their unconditional upward extension.
+    if 3 <= render_version < 5:
+        for index, (left, top, right, _bottom) in enumerate(pixel_boxes):
+            added = ~original_union[:top, left:right + 1]
+            coverage[index, :top, left:right + 1] |= added
+            channels[index] = Image.fromarray(coverage[index].astype(np.uint8) * 255)
+        print(f"[MULTI_CHAR:MASK] 상단 확장: size={width}x{height}, "
+              f"added_pixels={int(coverage.any(axis=0).sum() - original_union.sum())}; "
+              "원래 인물 영역과 하단·좌우 경계 유지")
+    rows, columns = np.nonzero(coverage.sum(axis=0) > 1)
+    if not len(rows):
+        print(f"[MULTI_CHAR:MASK] 겹치는 픽셀 없음: size={width}x{height}")
+        return Image.merge("RGB", tuple(channels))
+
+    if render_version >= 4:
+        owners = _overlap_midpoint_owners(
+            coverage, boxes, pixel_boxes, original_union, rows, columns, width, height,
+        )
+    else:
+        # Stored V2/V3 snapshots retain their original mask and fingerprint.
+        px, py = (columns + 0.5) / width, (rows + 0.5) / height
+        scores = np.full((len(regions), len(rows)), np.inf)
+        for index, (x, y, box_width, box_height) in enumerate(boxes):
+            distance = ((px - x - box_width / 2) / (box_width / 2)) ** 2
+            distance += ((py - y - box_height / 2) / (box_height / 2)) ** 2
+            scores[index] = np.where(coverage[index, rows, columns],
+                                     distance + 2 * math.log(box_width * box_height), np.inf)
+
+        for box in dict.fromkeys(boxes):
+            identical = [index for index, candidate in enumerate(boxes) if candidate == box]
+            if len(identical) < 2:
+                continue
+            x, y, box_width, box_height = box
+            relative = (px - x) / box_width if box_width >= box_height else (py - y) / box_height
+            chosen = np.asarray(identical)[np.clip((relative * len(identical)).astype(int), 0, len(identical) - 1)]
+            for index in identical:
+                scores[index, chosen != index] = np.inf
+            print(f"[MULTI_CHAR:MASK] 동일 좌표 영역의 기하적 동률 분할: channels={identical}, bounds={box}")
+
+        owners = scores.argmin(axis=0)
+    for index in range(len(regions)):
+        coverage[index, rows, columns] = owners == index
+        channels[index] = Image.fromarray(coverage[index].astype(np.uint8) * 255)
+    print(f"[MULTI_CHAR:MASK] 겹친 픽셀 분할 완료: pixels={len(rows)}, "
+          f"areas={[(region['name'], int(coverage[index].sum())) for index, region in enumerate(regions)]}")
     return Image.merge("RGB", tuple(channels))
 
 
@@ -617,6 +757,8 @@ def prepare_region_mask(
             for char in (multi_char_context.get("characters") or [])
             if isinstance(char, dict)
         ]
+        if isinstance(layout, dict):
+            layout = {"mask_render_version": 1, **layout}
         normalized = validate_multi_char_layout(layout, expected_names)
         location = str(multi_char_context.get("mask_location") or mask_location)
         target_dir = resolve_mask_directory(comfy_input_dir, location)
