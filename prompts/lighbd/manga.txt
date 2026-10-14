@@ -1,6 +1,6 @@
 Write concise character dialogue and choose balloon styles for supplied illustrated manga scenes.
 
-The selected-scenes list is authoritative. For every supplied selected scene, emit its exact Scene header. When dialogue, a thought, or an inner monologue naturally belongs to that exact illustrated moment, write it and reuse source wording when suitable. A scene may be intentionally silent. If no suitable character is visible or narratively present, or adding an entry would turn external action/narration into an invented thought, leave that Scene block body empty.
+The selected-scenes list is authoritative. For every supplied selected scene, emit a scene object with its exact slot value. When dialogue, a thought, or an inner monologue naturally belongs to that exact illustrated moment, write it and reuse source wording when suitable. A scene may be intentionally silent. If no suitable character is visible or narratively present, or adding an entry would turn external action/narration into an invented thought, use an empty entries array.
 
 Do not add new events, relationships, exposition, or plot information.
 Use the requested language.
@@ -9,29 +9,28 @@ Character roster (internal identifiers for machine-readable speaker attribution 
 {character_names}
 
 Writing rules:
-- Keep speaker attribution separate from forms of address inside dialogue. In the `NAME:` prefix, use the exact matching identifier from the character roster so downstream processing can identify the speaker. The prefix is metadata and is not part of the balloon text.
-- Inside quoted dialogue or parenthesized thoughts, never copy an internal roster identifier merely because it appears in the roster, selected-scene metadata, or character fields.
+- Keep speaker attribution separate from forms of address inside dialogue. In the speaker field, use the exact matching identifier from the character roster so downstream processing can identify the speaker. That field is metadata and is not part of the balloon text.
+- Inside the text field, never copy an internal roster identifier merely because it appears in the roster, selected-scene metadata, or character fields.
 - Infer any in-story name, nickname, title, kinship term, pronoun, or other form of address from the original narrative and bounded conversation. Use the form that the characters would naturally use in context.
 - Do not force a name, nickname, or direct address into an entry. If the source does not naturally call for one, write the entry without addressing anyone by name. If the proper form of address is uncertain, omit it instead of exposing an internal identifier or inventing one.
-- The exact roster identifier belongs only on the left side of the colon. When the requested output language is not English, never leave that Latin-script roster identifier inside balloon text. Use a natural in-story form of address supported by the source, or omit direct address when uncertain.
+- The exact roster identifier belongs only in the speaker field. When the requested output language is not English, never leave that Latin-script roster identifier inside balloon text. Use a natural in-story form of address supported by the source, or omit direct address when uncertain.
 - Keep each entry short and natural for a manga balloon.
 - Prefer a reaction, short phrase, or one short sentence.
 - Remove padding and repetition while preserving meaning and emotion.
 - Do not write paragraphs, long monologues, or multi-sentence speeches.
 - Prefer one entry per scene.
 - Use at most two entries only when an immediate reply is essential.
-- Every supplied selected scene header is mandatory. Its body may be empty only when the exact illustrated moment should remain silent or has no suitable visible or narratively present character.
+- Every supplied selected scene object is mandatory. Its entries array may be empty only when the exact illustrated moment should remain silent or has no suitable visible or narratively present character.
 - For each selected scene, search its upper_window first and choose the closest suitable dialogue, thought, or inner monologue above the insertion slot.
 - Use lower_window only when upper_window has no suitable entry, choosing the closest suitable entry below the slot.
 - Never cross the supplied window boundaries. Do not take a situation or line from beyond another illustration.
-- If neither bounded window contains a suitable source line, add one short context-faithful reaction only when it is natural and supported. Otherwise keep the Scene header and leave its body empty.
+- If neither bounded window contains a suitable source line, add one short context-faithful reaction only when it is natural and supported. Otherwise keep the scene object with entries: [].
 
 Output format:
 
-[Scene slot=N]
-NAME: "spoken line" #normal
-NAME: (thought line) #thought_cloud
-NAME: (inner monologue) #monologue_box
+{"scenes":[{"slot":"C001","entries":[{"speaker":"NAME","type":"speech","text":"spoken line","tag":"normal"}]},{"slot":"C002","entries":[{"speaker":"NAME","type":"thought","text":"thought line","tag":"thought_cloud"}]},{"slot":"C003","entries":[]}]}
+
+Use the exact supplied slot value, whether it is a Cxxx anchor or an integer. Both thoughts and inner monologues use type: thought; the tag distinguishes their balloon style. Write only the body in text, without surrounding speech quotes or thought parentheses. Put the balloon label in tag without #. Return all JSON string values as plain text; do not Base64-encode the response.
 
 Choose exactly one balloon type:
 
@@ -72,41 +71,25 @@ Type distinctions:
   Politeness or friendliness alone is #normal.
 - When several types fit, choose the strongest visible or audible delivery.
 
-Examples:
+Examples of decoded entries:
 
-[Scene slot=1]
-Emma: "오늘은 날씨가 좋네요." #normal
-
-[Scene slot=2]
-Victor: "지금 당장 물러서라." #angular
-
-[Scene slot=3]
-Daniel: (어느 쪽도 예사 인물이 아니군.) #monologue_box
-
-[Scene slot=4]
-Sophia: (설마 나를 기다리고 있었던 건가…?) #thought_cloud
-
-[Scene slot=5]
-Mia: "오지 마… 제발…" #trembling
-
-[Scene slot=6]
-Jack: "당장 멈춰!" #burst
-
-[Scene slot=7]
-Grace: "쉿… 아무한테도 말하지 마." #whisper
-
-[Scene slot=8]
-Charlotte: "저만 믿고 따라오시면 돼요." #charming
+{"speaker":"Emma","type":"speech","text":"오늘은 날씨가 좋네요.","tag":"normal"}
+{"speaker":"Victor","type":"speech","text":"지금 당장 물러서라.","tag":"angular"}
+{"speaker":"Daniel","type":"thought","text":"어느 쪽도 예사 인물이 아니군.","tag":"monologue_box"}
+{"speaker":"Sophia","type":"thought","text":"설마 나를 기다리고 있었던 건가…?","tag":"thought_cloud"}
+{"speaker":"Mia","type":"speech","text":"오지 마… 제발…","tag":"trembling"}
+{"speaker":"Jack","type":"speech","text":"당장 멈춰!","tag":"burst"}
+{"speaker":"Grace","type":"speech","text":"쉿… 아무한테도 말하지 마.","tag":"whisper"}
+{"speaker":"Charlotte","type":"speech","text":"저만 믿고 따라오시면 돼요.","tag":"charming"}
 
 Final rules:
-- Emit exactly one Scene block for every supplied selected scene, in the supplied order.
-- Use each supplied exact numeric slot once. Never output a slot that was not supplied.
-- Key visuals are intentionally excluded. Never output slot -1.
-- Never omit or skip a supplied selected scene. Always emit its Scene header. If no direct dialogue exists, use a context-faithful thought, inner monologue, reaction, or spoken line only when it naturally belongs to a suitable character; otherwise leave the block body empty.
+- Emit exactly one scene object for every supplied selected scene, in the supplied order.
+- Use each supplied exact Cxxx anchor once. Never output a slot that was not supplied.
+- Key visuals are intentionally excluded. Never output a Key Visual anchor.
+- Never omit or skip a supplied selected scene. Always emit its scene object. If no direct dialogue exists, use a context-faithful thought, inner monologue, reaction, or spoken line only when it naturally belongs to a suitable character; otherwise use entries: [].
 - A line must belong to a character visible or narratively present in that scene.
-- Use quotation marks only for spoken dialogue.
-- Use parentheses for thoughts and inner monologues.
-- Append exactly one of these labels to every entry:
+- Use type: speech for spoken dialogue and type: thought for thoughts and inner monologues.
+- Set tag to exactly one of these labels, without the # prefix:
 
   #normal
   #angular
@@ -118,4 +101,4 @@ Final rules:
   #charming
 
 - Do not output explanations, alternatives, confidence scores, other labels, or unrequested Scene blocks.
-- Output only the required Scene blocks.
+- Output only the required JSON object, without Markdown fences or explanations.

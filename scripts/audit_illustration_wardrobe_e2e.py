@@ -194,13 +194,13 @@ def _baseline_capture(backup_arg: str) -> dict[str, Any]:
             continue
         if str(record.get("history_id") or "") in trace_ids:
             records.append(record)
-    call1 = next((r for r in records if r.get("call_name") == "CALL1"), None)
+    call1 = next((r for r in records if r.get("call_name") in {"OUTFIT", "CALL1"}), None)
     detail = next(
         (r for r in records if str(r.get("call_name") or "").startswith("CALL2-DETAIL")),
         None,
     )
     if not call1 or not detail:
-        raise RuntimeError("baseline trace is missing captured CALL1 or CALL2-DETAIL")
+        raise RuntimeError("baseline trace is missing captured OUTFIT or CALL2-DETAIL")
 
     raw_positive = str((info.get("llm_final_result") or {}).get("raw_positive") or "")
     chat_start = raw_positive.find("[CHAT]\n")
@@ -215,11 +215,18 @@ def _baseline_capture(backup_arg: str) -> dict[str, Any]:
         if isinstance(message, dict) and "# PAST HISTORY" in str(message.get("content") or "")
     )
     past_start = call1_user.index("# PAST HISTORY") + len("# PAST HISTORY")
-    past_end = call1_user.index("# CURRENT CONTEXT SEGMENTS", past_start)
+    past_end = next((
+        call1_user.index(marker, past_start)
+        for marker in ("# CURRENT CONTEXT SEGMENTS", "# CURRENT SEGMENTS (SOURCE CHRONOLOGY)")
+        if marker in call1_user[past_start:]
+    ), -1)
+    if past_end < 0:
+        print("[WARDROBE_E2E] captured OUTFIT has no current-source section", flush=True)
+        raise RuntimeError("baseline OUTFIT current-source section is missing")
     past_text = call1_user[past_start:past_end].strip()
     past_chats = _tagged_chats(past_text)
     if not past_chats:
-        raise RuntimeError("baseline CALL1 has no recoverable tagged PAST HISTORY")
+        raise RuntimeError("baseline OUTFIT has no recoverable tagged PAST HISTORY")
 
     detail_user = next(
         (
@@ -230,7 +237,13 @@ def _baseline_capture(backup_arg: str) -> dict[str, Any]:
         ),
         "",
     )
-    if detail_user:
+    slot_section = "# CURRENT WITH SERVER SLOT BOUNDARIES\n"
+    if slot_section in call1_user:
+        target_slotted = call1_user.split(slot_section, 1)[1].split(
+            "\n\n# SEGMENT TO SLOT ALIGNMENT", 1
+        )[0].strip()
+        print("[WARDROBE_E2E] recovered exact slot context from OUTFIT", flush=True)
+    elif detail_user:
         slot_start = detail_user.index("[Last log entry]") + len("[Last log entry]")
         # Older traces appended the assigned plan to this message. Role-specific
         # prompts keep it in a later message, so the log entry naturally runs to EOF.
@@ -281,10 +294,18 @@ def _baseline_capture(backup_arg: str) -> dict[str, Any]:
     call1_system = str((call1.get("input") or [{}])[0].get("content") or "")
     state_marker = "Previously tracked character state:"
     state_at = call1_system.find(state_marker)
-    if state_at < 0:
-        raise RuntimeError("baseline CALL1 has no tracked state marker")
-    json_at = call1_system.find("{", state_at + len(state_marker))
-    state_before, _end = json.JSONDecoder().raw_decode(call1_system[json_at:])
+    if state_at >= 0:
+        json_at = call1_system.find("{", state_at + len(state_marker))
+        state_before, _end = json.JSONDecoder().raw_decode(call1_system[json_at:])
+    else:
+        memory_marker = "# PREVIOUS SAVED OUTFIT STATE"
+        if memory_marker not in call1_user:
+            memory_marker = "# PREVIOUS SAVED CALL1 STATE"
+        if memory_marker not in call1_user:
+            print("[WARDROBE_E2E] captured OUTFIT has no previous-state section", flush=True)
+            raise RuntimeError("baseline OUTFIT has no tracked state marker")
+        memory = call1_user.split(memory_marker, 1)[1].split("\n", 1)[1].lstrip()
+        state_before, _end = json.JSONDecoder().raw_decode(memory)
     if not isinstance(state_before, dict):
         raise RuntimeError("baseline tracked state is not an object")
 
@@ -517,7 +538,7 @@ async def _run_once(
     extra_instruction = server.build_active_lb_instruction(bot_name)
     extra_costume = server.build_lb_extra_costume(bot_name)
     extra_names = server.build_lb_extra_names(bot_name)
-    backtranslate_names = server.build_bot_character_names(bot_name)
+    character_names = server.build_bot_character_names(bot_name)
     visual_profile_catalog = server.build_visual_profile_catalog(bot_name)
     visual_profiles = server.build_effective_visual_profiles(bot_name)
     payload = {
@@ -598,7 +619,7 @@ async def _run_once(
         extra_instruction=extra_instruction,
         extra_costume=extra_costume,
         extra_names=extra_names,
-        backtranslate_names=backtranslate_names,
+        character_names=character_names,
         history_plan=history_plan,
         enable_multi_char_layout=illustration_context_pipeline.should_enable_multi_char_layout(
             toggles, runtime["provider"]
@@ -647,7 +668,7 @@ async def _run_once(
             "instruction": extra_instruction,
             "character_cards_and_costume": extra_costume,
             "character_names": extra_names,
-            "backtranslate_names": backtranslate_names,
+            "character_names": character_names,
             "visual_profile_catalog": visual_profile_catalog,
         },
         "items": items,
@@ -769,7 +790,7 @@ async def _main_async(args: argparse.Namespace) -> int:
         "tracked_character_names": sorted((source_record.get("characters") or {}).keys()),
         "visual_profile_names": profile_names,
         "history_state_source": (
-            "captured CALL1 Previously tracked character state"
+            "captured OUTFIT Previously tracked character state"
             if baseline is not None
             else "active_turn.state_before"
         ),

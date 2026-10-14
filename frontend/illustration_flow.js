@@ -66,15 +66,28 @@
     }
     const elapsed = n => n.started_at ? `${Math.max(0, (n.ended_at || Date.now() / 1000) - n.started_at).toFixed(1)}초` : n.ended_at ? '처리 종료' : '실행 대기';
     const phaseSeconds = (n, phase) => {
-        const start = n[`${phase}_started_at`], end = n[`${phase}_ended_at`];
-        return Number.isFinite(start) && Number.isFinite(end) ? Math.max(0, end - start) : 0;
+        const start = n[`${phase}_started_at`];
+        if (!Number.isFinite(start)) return null;
+        const active = n.active === true || n.status === 'processing' || n.status === 'cancelling';
+        const end = phase === 'thinking' && Number.isFinite(n.response_started_at)
+            ? n.response_started_at
+            : active ? Date.now() / 1000
+            : phase === 'thinking' ? n.last_event_at ?? n.ended_at ?? n.thinking_ended_at
+            : n.response_ended_at;
+        return Number.isFinite(end) ? Math.max(0, end - start) : null;
     };
     function llmTiming(n) {
         if (nodeExecutor(n) !== 'llm') return '';
+        const thinkingSeconds = phaseSeconds(n, 'thinking');
+        const thinking = thinkingSeconds === null
+            ? (n.active === true || n.status === 'processing' || n.status === 'waiting') && !Number.isFinite(n.response_started_at) ? '대기' : '미수신'
+            : thinkingSeconds < 0.1 ? '<0.1s' : `${thinkingSeconds.toFixed(1)}s`;
+        const responseSeconds = phaseSeconds(n, 'response');
         const response = Number.isFinite(n.response_started_at)
-            ? `${phaseSeconds(n, 'response').toFixed(1)}s`
-            : ['completed', 'failed', 'cancelled'].includes(n.status) ? '일괄' : '대기';
-        return `THINK ${phaseSeconds(n, 'thinking').toFixed(1)}s · 응답 ${response}`;
+            ? responseSeconds === null ? '측정 불가' : responseSeconds < 0.1 ? '<0.1s' : `${responseSeconds.toFixed(1)}s`
+            : n.status === 'completed' ? '일괄'
+            : ['failed', 'cancelled'].includes(n.status) || Number.isFinite(n.ended_at) ? '미측정' : '대기';
+        return `THINK ${thinking} · 응답 ${response}`;
     }
     const tokenTime = value => Number.isFinite(value)
         ? new Date(value * 1000).toLocaleTimeString('ko-KR', {
@@ -83,8 +96,8 @@
     function timingDetails(n) {
         if (nodeExecutor(n) !== 'llm') return {};
         return {
-            'THINK 시간': `${phaseSeconds(n, 'thinking').toFixed(1)}s`,
-            '응답 작성 시간': Number.isFinite(n.response_started_at) ? `${phaseSeconds(n, 'response').toFixed(1)}s` : '토큰별 수신 기록 없음',
+            'THINK 시간': phaseSeconds(n, 'thinking') === null ? '측정 불가 (추론 수신 없음)' : `${phaseSeconds(n, 'thinking').toFixed(1)}s`,
+            '응답 작성 시간': phaseSeconds(n, 'response') === null ? '토큰별 수신 기록 없음' : `${phaseSeconds(n, 'response').toFixed(1)}s`,
             '추론 첫 수신': tokenTime(n.thinking_started_at),
             '추론 마지막 수신': tokenTime(n.thinking_ended_at),
             '본문 첫 수신': tokenTime(n.response_started_at),
@@ -119,6 +132,7 @@
             .if-direction{position:absolute;left:36px;top:12px;color:var(--text2,#94a3b8);font-size:12px}.if-step-column{position:absolute;top:44px;box-sizing:border-box;width:246px;border:1px solid #64748b33;border-radius:10px;background:#64748b06;pointer-events:none}.if-step-title{padding:8px 12px;border-bottom:1px solid #64748b33;color:var(--text2,#94a3b8);font-size:12px;font-weight:750}
             .if-node{position:absolute;box-sizing:border-box;width:222px;height:98px;border:1px solid #64748b77;border-left:4px solid var(--state);border-radius:11px;background:color-mix(in srgb,var(--bg2,#172033) 68%,var(--node-tint,#94a3b8) 32%);padding:12px 22px 10px 13px;box-shadow:0 4px 15px #0002}
             .if-node[data-status=processing]{box-shadow:0 0 0 2px #60a5fa33,0 0 22px #60a5fa22}.if-node-title{font-weight:650;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.if-node-state{color:var(--state);font-size:12px;margin-top:6px}.if-node-model{font-size:11px;color:var(--text2,#94a3b8);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+            .if-node-heading{display:flex;align-items:center;gap:6px;min-width:0}.if-node-heading .if-node-title{flex:1;min-width:0}.if-node-attempts{flex-shrink:0;white-space:nowrap;font-size:11px;font-weight:700;line-height:1.5;padding:1px 5px;border:1px solid #c4b5fd99;border-radius:6px;background:#a78bfa26;color:var(--text,#e2e8f0)}
             .if-port{position:absolute;right:-9px;top:39px;width:18px;height:18px;border-radius:50%;border:3px solid color-mix(in srgb,var(--bg2,#172033) 68%,var(--node-tint,#94a3b8) 32%);background:var(--state);cursor:pointer;padding:0;box-shadow:0 0 0 1px var(--state)}
             .if-node-timing{font-size:10px;line-height:1.3;color:var(--text2,#cbd5e1);white-space:nowrap;margin-top:2px}
             .if-node-preview{position:absolute;top:98px;left:13px;right:13px;bottom:12px;overflow:auto;border-top:1px solid #64748b55;padding-top:8px;font-size:11px;overflow-wrap:anywhere}.if-preview-title{font-weight:700;margin-bottom:5px}.if-preview-empty{padding:38px 5px;text-align:center;color:var(--text2,#94a3b8)}.if-mask-preview{display:block;width:100%;height:130px;background:#020617;border-radius:6px}.if-mask-region{margin-top:3px;line-height:1.4}.if-mask-text{white-space:pre-wrap;font:10px/1.5 system-ui;margin:7px 0 0;max-height:65px;overflow:auto;color:var(--text2,#cbd5e1)}.if-preview-image-button{display:block;width:100%;padding:0;border:0;background:#020617;border-radius:6px;cursor:pointer}.if-preview-image{display:block;width:100%;height:190px;object-fit:contain;border-radius:6px}.if-detail-image{display:block;width:100%;max-height:540px;object-fit:contain;background:#020617;border-radius:8px;margin:12px 0}
@@ -234,6 +248,11 @@
                         if (timing) updateText(timing, llmTiming(n));
                     }
                 });
+                const detailNode = nodes.get(selected);
+                if (detailModal?.open && detailNode) {
+                    const values = timingDetails(detailNode);
+                    detailModal.querySelectorAll('[data-detail-timing]').forEach(item => updateText(item, values[item.dataset.detailTiming]));
+                }
             }, 1000);
         });
         detailModal = element('dialog', 'if-modal if-detail'); detailModal.setAttribute('aria-label', '처리 단계 상세');
@@ -464,7 +483,8 @@
             tip = element('div', 'if-tooltip'); tip.dataset.nodeId = n.id;
             tip.setAttribute('role', 'tooltip'); modal.append(tip);
         }
-        updateText(tip, `${n.label}\n${executorLabels[executor] || executor} · ${labels[n.status] || n.status} · ${elapsed(n)}\n${n.model || (executor === 'llm' ? '모델 배정 대기' : executor === 'comfy' ? 'ComfyUI' : executor === 'human' ? '사람이 선택한 입력 상태' : '서버 처리')}\n${timing ? timing + '\n수신 시점 기준 · 최종 시도\n' : ''}${n.phase === 'fallback' ? '폴백 사용 · ' : ''}${action}`);
+        const model = executor === 'llm' ? (window.llmRouteSlotModelName?.(n.llm_slot, true, n.model || '') || n.model) : n.model;
+        updateText(tip, `${n.label}\n${executorLabels[executor] || executor} · ${nodeState(n)}${executor === 'llm' && Number.isInteger(n.attempt_count) ? ` · 시도 ${n.attempt_count}회` : ''}\n${model || (executor === 'llm' ? '모델 배정 대기' : executor === 'comfy' ? 'ComfyUI' : executor === 'human' ? '사람이 선택한 입력 상태' : '서버 처리')}\n${timing ? timing + '\n수신 시점 기준 · 최종 시도\n' : ''}${n.phase === 'fallback' ? '폴백 사용 · ' : ''}${action}`);
         const r = port.getBoundingClientRect();
         tip.style.left = `${Math.max(8, Math.min(innerWidth - tip.offsetWidth - 12, r.left - 80))}px`;
         tip.style.top = `${Math.max(8, Math.min(innerHeight - tip.offsetHeight - 12, r.bottom + 10))}px`;
@@ -477,14 +497,13 @@
             ['PROFILE-CONTEXT-CACHE', 'profile_context_translation', 1, 1],
             ['PROFILE-CONTEXT-TRANSLATE', 'profile_context_translation', 1, 1],
             ['PROFILE-RESOLVE', 'profile_resolve', 1, 2],
-            ['CALL1-BACKTRANSLATE', 'call1_backtranslate', 2, 0],
+            ['OUTFIT', 'call1', 2, 1],
             ['CALL1', 'call1', 2, 1],
-            ['CALL2-SELECT', 'call2_select', 2, 2],
+            ['TIME & PLACE', 'time_place', 2, 2],
+            ['CALL2-SELECT', 'call2_select', 2, 3],
             ['CALL2-PLAN', 'call2_plan', 3, 0],
             ['CALL2-DETAIL', 'call2_detail', 4, 0],
             ['CALL2-KEYVIS', 'call2_keyvis', 4, 1],
-            ['CALL2-AUTHORITY-AUDIT', 'call2_authority_audit', 4, 2],
-            ['CALL2-FIX', 'call2_fix', 4, 2],
             ['CALL2-FALLBACK', 'call2', 4, 0],
             ['CALL2', 'call2', 4, 0],
             ['CALL3', 'call3', 4, 3],
@@ -917,7 +936,9 @@
             let card = cards.get(n.id);
             if (!card) {
                 card = element('article', 'if-node'); card.dataset.nodeId = n.id;
-                card.append(element('div', 'if-node-title'), element('div', 'if-node-state'), element('div', 'if-node-model'));
+                const heading = element('div', 'if-node-heading');
+                heading.append(element('div', 'if-node-title'), element('span', 'if-node-attempts'));
+                card.append(heading, element('div', 'if-node-state'), element('div', 'if-node-model'));
                 const port = button('', () => openDetail(n.id)); port.className = 'if-port'; port.dataset.nodeId = n.id;
                 card.append(port); canvas.append(card);
             }
@@ -940,15 +961,20 @@
                 preview.remove(); card.style.height = ''; delete card.dataset.previewKind;
             }
             let title = card.querySelector('.if-node-title');
-            if (title.tagName !== (n.label === 'CALL1' ? 'BUTTON' : 'DIV')) {
-                const nextTitle = n.label === 'CALL1' ? button(n.label, () => openDetail(n.id)) : element('div');
+            const hasStateTable = ['OUTFIT', 'CALL1', 'TIME & PLACE'].includes(n.label);
+            if (title.tagName !== (hasStateTable ? 'BUTTON' : 'DIV')) {
+                const nextTitle = hasStateTable ? button(n.label, () => openDetail(n.id)) : element('div');
                 title.replaceWith(nextTitle); title = nextTitle;
             }
             updateText(title, n.label);
-            title.className = `if-node-title${n.label === 'CALL1' ? ' if-call1-open' : ''}`; title.title = n.label;
+            title.className = `if-node-title${hasStateTable ? ' if-call1-open' : ''}`; title.title = n.label;
+            const attempts = card.querySelector('.if-node-attempts');
+            attempts.hidden = executor !== 'llm' || !Number.isInteger(n.attempt_count);
+            updateText(attempts, attempts.hidden ? '' : `시도 ${n.attempt_count}회`);
+            attempts.title = '최초 호출·재시도·폴백을 포함한 총 시도 횟수';
             const modelText = isQualityReview
                 ? '출력 ● 클릭 → 이미지 일괄 평가'
-                : n.model || (executor === 'llm' ? 'LLM' : executor === 'comfy' ? 'ComfyUI' : executor === 'human' ? '사람이 선택한 입력 상태' : '서버 처리');
+                : (executor === 'llm' ? (window.llmRouteSlotModelName?.(n.llm_slot, true, n.model || '') || n.model) : n.model) || (executor === 'llm' ? 'LLM' : executor === 'comfy' ? 'ComfyUI' : executor === 'human' ? '사람이 선택한 입력 상태' : '서버 처리');
             updateText(card.querySelector('.if-node-state'), nodeState(n));
             updateText(card.querySelector('.if-node-model'), modelText);
             let timing = card.querySelector('.if-node-timing');
@@ -1149,13 +1175,16 @@
                 loading.style.color = n.status === 'processing' || n.status === 'waiting' ? '' : '#fecdd3';
             });
     }
-    function appendCall1StateTable(n, body) {
-        const data = n.call1_state_table;
+    function appendTrackedStateTable(n, body) {
+        const timePlace = !!n.time_place_state_table;
+        const data = timePlace ? n.time_place_state_table : n.call1_state_table;
         if (!data) return;
-        body.append(element('h3', '', '복장·헤어 시간표'), element('p', 'if-subtitle', '왼쪽에서 오른쪽으로 상태를 이어받습니다. 파란색은 CALL1이 직접 출력한 값이고, 회색은 앞 SLOT에서 이어받은 값입니다. 복장과 헤어는 각각 새 값이 나오는 지점부터 바뀝니다.'));
+        const title = timePlace ? 'TIME & PLACE 시간표' : '복장·헤어 시간표';
+        const fields = timePlace ? [['time', 'TIME'], ['place', 'PLACE']] : [['outfit', '복장'], ['hair', '헤어']];
+        body.append(element('h3', '', title), element('p', 'if-subtitle', `왼쪽에서 오른쪽으로 상태를 이어받습니다. 파란색은 ${timePlace ? 'TIME & PLACE' : 'OUTFIT'}가 직접 출력한 값이고, 회색은 앞 SLOT에서 이어받은 값입니다. 각 항목은 새 값이 나오는 지점부터 독립적으로 바뀝니다.`));
         const wrap = element('div', 'if-state-table-wrap'), table = element('table', 'if-state-table');
-        wrap.dataset.detailScrollKey = 'call1-state-table';
-        table.setAttribute('aria-label', 'CALL1 슬롯별 복장·헤어 상태');
+        wrap.dataset.detailScrollKey = timePlace ? 'time-place-state-table' : 'call1-state-table';
+        table.setAttribute('aria-label', timePlace ? 'TIME & PLACE 슬롯별 시간·장소 상태' : 'OUTFIT 슬롯별 복장·헤어 상태');
         const head = element('thead'), header = element('tr'), corner = element('th', '', '인물'); corner.scope = 'col'; header.append(corner);
         data.slots.forEach(slot => {const th = element('th', '', `SLOT${slot}`); th.scope = 'col'; header.append(th);});
         head.append(header); table.append(head);
@@ -1165,10 +1194,10 @@
             data.slots.forEach(slot => {
                 const key = `SLOT${slot}`, cell = element('td');
                 const state = data.states[key][name], changes = data.changes[key]?.[name] || {};
-                [['outfit', '복장'], ['hair', '헤어']].forEach(([field, caption]) => {
+                fields.forEach(([field, caption]) => {
                     const direct = Object.hasOwn(changes, field), section = element('div', `if-state-tags ${direct ? 'if-state-direct' : 'if-state-inherited'}`);
                     section.dataset.field = field; section.dataset.source = direct ? 'direct' : 'inherited';
-                    section.append(element('div', 'if-state-tag-label', `${caption} · ${direct ? '직접' : '이어받음'}`), element('div', '', state[field] || '(태그 없음)')); cell.append(section);
+                    section.append(element('div', 'if-state-tag-label', `${caption} · ${direct ? '직접' : '이어받음'}`), element('div', '', state[field] || (timePlace ? '(정보 없음)' : '(태그 없음)'))); cell.append(section);
                 });
                 row.append(cell);
             });
@@ -1224,27 +1253,30 @@
             if (renderedDetail?.runId === runId && renderedDetail.nodeId === nodeId && renderedDetail.signature === signature) {
                 const timer = body.querySelector('[data-detail-elapsed]');
                 if (timer) timer.textContent = elapsed(n);
+                const values = timingDetails(n);
+                body.querySelectorAll('[data-detail-timing]').forEach(item => updateText(item, values[item.dataset.detailTiming]));
                 return;
             }
             // Capture at response time so scrolling during a slow request wins.
             const view = captureDetailView(body);
             body.replaceChildren(); detailModal.querySelector('h2').textContent = n.label;
-            appendCall1StateTable(n, body);
+            appendTrackedStateTable(n, body);
             const meta = element('dl', 'if-meta');
             const executor = nodeExecutor(n);
-            Object.entries({'상태': labels[n.status] || n.status, '처리 주체': executorLabels[executor] || executor, '모델': n.model || '해당 없음 / 배정 대기', '서비스': n.service || '—', 'LLM 슬롯': n.llm_slot || '—', '라우팅': n.phase || '—', '전체 처리 시간': elapsed(n), ...timingDetails(n), '실행 ID': n.execution_id || n.id, '오류': n.error || '없음'}).forEach(([key,value]) => {
+            Object.entries({'상태': labels[n.status] || n.status, '처리 주체': executorLabels[executor] || executor, '모델': (executor === 'llm' ? (window.llmRouteSlotModelName?.(n.llm_slot, true, n.model || '') || n.model) : n.model) || '해당 없음 / 배정 대기', '서비스': n.service || '—', 'LLM 슬롯': n.llm_slot || '—', '라우팅': n.phase || '—', '전체 처리 시간': elapsed(n), ...timingDetails(n), '실행 ID': n.execution_id || n.id, '오류': n.error || '없음'}).forEach(([key,value]) => {
                 const item = element('dd', '', value);
                 if (key === '전체 처리 시간') item.dataset.detailElapsed = '';
+                if (key === 'THINK 시간' || key === '응답 작성 시간') item.dataset.detailTiming = key;
                 meta.append(element('dt', '', key), item);
             });
             body.append(meta);
-            if (executor === 'llm') body.append(element('p', 'if-subtitle', 'THINK·응답 작성 시간은 최종 시도의 첫 토큰부터 마지막 토큰까지 수신 구간입니다. 추론 수신이 없으면 THINK 0.0s로 표시합니다.'));
+            if (executor === 'llm') body.append(element('p', 'if-subtitle', 'THINK 시간은 첫 추론 수신부터 본문 첫 수신까지, 응답 시간은 본문 첫 수신부터 마지막 수신까지입니다. 진행 중에는 현재 시각까지 갱신합니다. 내부 추론 시간을 추정하지 않으며 추론 수신 기록이 없으면 미수신으로 표시합니다.'));
             const attempts = n.attempts || [];
             body.append(element('h3', '', `호출·폴백 이력 (${attempts.filter(a => a.type === 'attempt_start').length}회 시도)`));
             if (!attempts.length) body.append(element('p', 'if-subtitle', '아직 호출 이력이 없거나 LLM을 사용하지 않는 단계입니다.'));
             attempts.forEach((a, index) => {
                 const d = element('details'); d.open = view.opened[index] || false;
-                d.append(element('summary', '', `${a.phase === 'fallback' ? '폴백' : '주 경로'} · ${a.model || '모델 미확정'} · ${a.slot || a.llm_slot || ''} · ${a.type}`), detailText(stringify(a), `attempt-${index}`)); body.append(d);
+                d.append(element('summary', '', `${a.phase === 'fallback' ? '폴백' : '주 경로'} · ${(window.llmRouteSlotModelName?.(a.slot || a.llm_slot, true, a.model || '') || a.model) || '모델 미확정'} · ${a.slot || a.llm_slot || ''} · ${a.type}`), detailText(stringify(a), `attempt-${index}`)); body.append(d);
             });
             const output = detailOutput(n);
             body.append(element('h3', '', '입력'), detailText(stringify(n.input) || '아직 입력이 없습니다.', 'input'));
@@ -1271,6 +1303,8 @@
         }
     }
     window.receiveIllustrationFlow = receive;
+    window.formatLlmStreamTiming = llmTiming;
+    window.llmStreamTimingDetails = timingDetails;
     window.receiveVideoFlow = (next, autoOpen) => receive(next, autoOpen, 'video');
     window.receiveVideoInputFlow = (next, autoOpen) => receive(next, autoOpen, 'video_input');
     window.rehomeIllustrationToast = rehomeToast;

@@ -1,7 +1,7 @@
 """Shared, side-effect-free message assembly for generation and the composition view."""
 import json
 
-from modes.illustration_prompt_assembly import PromptText, prompt_join, variable
+from modes.illustration_prompt_assembly import prompt_join, variable
 
 
 def blank_state_table(names, slots):
@@ -9,7 +9,7 @@ def blank_state_table(names, slots):
     def cell(value):
         return str(value).replace("|", "\\|").replace("\n", " ").replace("\r", " ")
     return "\n".join([
-        "| Character | " + " | ".join(f"SLOT{slot}" for slot in slots) + " |",
+        "| Character | " + " | ".join(str(anchor) for anchor in slots) + " |",
         "| --- | " + " | ".join("---" for _ in slots) + " |",
         *("| " + cell(name) + " | " + " | ".join("" for _ in slots) + " |" for name in names),
     ])
@@ -17,10 +17,11 @@ def blank_state_table(names, slots):
 
 def call1_messages(prompts, names, prior_status, baselines, past_text, segmented,
                    *, slots=None, slotted="", segment_slots=None):
+    anchors = list(segment_slots or {f"C{i + 1:03d}": slot for i, slot in enumerate(slots or [0])})
     return [
         {"role": "system", "content": prompts["call1_enhance"]},
         {"role": "user", "content": "# CURRENT CANONICAL CHARACTERS\n" + variable(json.dumps(names, ensure_ascii=False), "확정 등장인물")
-         + "\n\n# PREVIOUS SAVED CALL1 STATE (RAW CHRONOLOGICAL DETAIL MEMORY; APPLY NARRATIVE CHANGES)\n"
+         + "\n\n# PREVIOUS SAVED OUTFIT STATE (RAW CHRONOLOGICAL DETAIL MEMORY; APPLY NARRATIVE CHANGES)\n"
          + variable(json.dumps(prior_status, ensure_ascii=False), "이전 저장 상태")
          + "\n\n# SELECTED PROFILE / LB.EXTRA BASELINE (FALLBACK ONLY IF NARRATIVE AND MEMORY ARE SILENT)\n"
          + variable(json.dumps(baselines, ensure_ascii=False), "프로필·복장 기준")
@@ -28,12 +29,25 @@ def call1_messages(prompts, names, prior_status, baselines, past_text, segmented
          + variable(past_text or "(none)", "과거 대화")
          + "\n\n# CURRENT SEGMENTS (SOURCE CHRONOLOGY)\n"
          + variable(segmented, "현재 원문과 구간")
-         + "\n\n# CURRENT WITH SERVER SLOT BOUNDARIES\n"
-         + variable(slotted or segmented, "슬롯이 삽입된 현재 원문")
-         + "\n\n# SEGMENT TO SLOT ALIGNMENT\n"
-         + variable(json.dumps(segment_slots or {}, ensure_ascii=False), "구간·슬롯 대응")
          + "\n\n# EMPTY CHARACTER BY TIME TABLE (LEFT TO RIGHT; INPUT ONLY)\n"
-         + variable(blank_state_table(names, slots or [0]), "빈 복장·헤어 시간표")},
+         + variable(blank_state_table(names, anchors), "빈 복장·헤어 시간표")},
+    ]
+
+def time_place_messages(prompts, names, prior_state, past_text, segmented,
+                        *, slots=None, slotted="", segment_slots=None):
+    anchors = list(segment_slots or {f"C{i + 1:03d}": slot for i, slot in enumerate(slots or [0])})
+    return [
+        {"role": "system", "content": prompts["time_place"]},
+        {"role": "user", "content": "# CURRENT CANONICAL CHARACTERS\n"
+         + variable(json.dumps(names, ensure_ascii=False), "확정 등장인물")
+         + "\n\n# PREVIOUS SAVED TIME AND PLACE (BEFORE CURRENT; APPLY NARRATIVE TRANSITIONS)\n"
+         + variable(json.dumps(prior_state, ensure_ascii=False), "이전 시간·장소 상태")
+         + "\n\n# PAST HISTORY (TIME AND PLACE CONTINUITY)\n"
+         + variable(past_text or "(none)", "과거 대화")
+         + "\n\n# CURRENT SEGMENTS (SOURCE CHRONOLOGY)\n"
+         + variable(segmented, "현재 원문과 구간")
+         + "\n\n# EMPTY CHARACTER BY TIME TABLE (LEFT TO RIGHT; INPUT ONLY)\n"
+         + variable(blank_state_table(names, anchors), "빈 시간·장소 시간표")},
     ]
 
 def selection_messages(prompts, role_context, names, single_names, scene_count, toggles, prior_status, plan_profiles, past_text, segment_catalog):
@@ -55,7 +69,8 @@ def selection_messages(prompts, role_context, names, single_names, scene_count, 
     ]
 
 def plan_messages(prompts, role_context, batch, batch_names, single_names, tracking, plan_profiles, past_text, segmented, toggles,
-                  *, segment_slots=None):
+                  *, segment_slots=None, time_place=None, prior_status=None, prior_time_place=None):
+    anchors = {f"SLOT{slot}": anchor for anchor, slot in (segment_slots or {}).items()}
     return [
         {"role": "system", "content": role_context + "\n\n" + prompts["call2_plan"]},
         {"role": "user", "content":
@@ -64,12 +79,20 @@ def plan_messages(prompts, role_context, batch, batch_names, single_names, track
          + ("\n\n# SINGLE SUBJECTS\n" + variable(json.dumps(
              [name for name in single_names if name in batch_names], ensure_ascii=False), "단독 주인공 목록")
             if single_names is not None else "")
-         + "\n\n# CURRENT TRACKED OUTFIT AND HAIRSTYLE (READ-ONLY)\n"
-         + variable(json.dumps({slot: {name: state for name, state in values.items() if name in batch_names}
+         + ("\n\n# CURRENT TRACKED OUTFIT AND HAIRSTYLE (READ-ONLY)\n"
+         + variable(json.dumps({anchors.get(slot, slot): {name: state for name, state in values.items() if name in batch_names}
                        for slot, values in tracking.items()}, ensure_ascii=False), "추적된 복장·머리 상태")
-         + "\n\n# ASSIGNED ANCHOR TO SLOT ALIGNMENT\n"
-         + variable(json.dumps({item["anchor_segment"]: (segment_slots or {}).get(item["anchor_segment"])
-                               for item in batch}, ensure_ascii=False), "할당 장면의 구간·슬롯 대응")
+            if tracking is not None else "")
+         + ("\n\n# PREVIOUS SAVED OUTFIT (BEFORE CURRENT; APPLY SOURCE CHANGES)\n"
+            + variable(json.dumps(prior_status, ensure_ascii=False), "이전 저장 복장")
+            if prior_status else "")
+         + ("\n\n# CURRENT TRACKED TIME AND PLACE (READ-ONLY; SAME SLOT ALIGNMENT)\n"
+            + variable(json.dumps({anchors.get(slot, slot): {name: state for name, state in values.items() if name in batch_names}
+                          for slot, values in time_place.items()}, ensure_ascii=False), "추적된 시간·장소 상태")
+            if time_place is not None else "")
+         + ("\n\n# PREVIOUS SAVED TIME AND PLACE (BEFORE CURRENT; APPLY SOURCE CHANGES)\n"
+            + variable(json.dumps(prior_time_place, ensure_ascii=False), "이전 저장 시간·장소")
+            if prior_time_place else "")
          + "\n\n# SELECTED PROFILE TIMELINE FOR ASSIGNED NAMES (READ-ONLY)\n"
          + variable(json.dumps([item for item in plan_profiles if item["character"] in batch_names], ensure_ascii=False), "해당 인물 프로필 타임라인")
          + "\n\n# BOUNDED EARLIER CONTEXT (FACTS ONLY, NO NEW SCENE CANDIDATES)\n"
@@ -83,15 +106,33 @@ def plan_messages(prompts, role_context, batch, batch_names, single_names, track
          + "Return only {\"scene_plan\":[{\"anchor_segment\":\"C001\",\"characters\":[\"canonical name\"],\"scene_brief\":\"complete visual brief\"}]}."},
     ]
 
-def detail_messages(detail_system, batch, slots):
+def detail_messages(detail_system, batch, slots, *, past_text="", segmented="", toggles=None,
+                    prior_status=None, prior_time_place=None):
+    prepared = [{"slot": scene["anchor_segment"] if "anchor_segment" in scene else scene["slot"],
+                 **{key: value for key, value in scene.items() if key not in {"slot", "anchor_segment"}}}
+                for scene in batch]
     return [
         {"role": "system", "content": detail_system},
         {"role": "user", "content": "# ONLY THIS BATCH'S PREPARED SCENES\n"
-         + variable(json.dumps({"scenes": batch}, ensure_ascii=False), "이 호출의 장면·프로필·상태")
-         + "\n\nReturn one <lb-xnai> block with a scenes array for exactly these slots: "
-         + variable(json.dumps(slots), "출력할 슬롯 목록") + ". Each scene has slot, camera, characters "
+         + variable(json.dumps({"scenes": prepared}, ensure_ascii=False), "이 호출의 장면·프로필·상태")
+         + ("\n\n# PREVIOUS SAVED OUTFIT (BEFORE CURRENT; APPLY SOURCE CHANGES)\n"
+            + variable(json.dumps(prior_status, ensure_ascii=False), "이전 저장 복장") if prior_status else "")
+         + ("\n\n# PREVIOUS SAVED TIME AND PLACE (BEFORE CURRENT; APPLY SOURCE CHANGES)\n"
+            + variable(json.dumps(prior_time_place, ensure_ascii=False), "이전 저장 시간·장소") if prior_time_place else "")
+         + ("\n\n# BOUNDED EARLIER CONTEXT (FACTS ONLY)\n"
+            + variable(past_text, "과거 대화") if past_text else "")
+         + ("\n\n# FULL CURRENT SOURCE SEGMENTS (REFERENCE ONLY; ASSIGNED ANCHORS FIXED)\n"
+            + variable(segmented, "현재 원문과 구간") if segmented else "")
+         + ("\n\nClient focus: " + variable(toggles["focus"], "사용자 집중 대상")
+            if toggles and str(toggles.get("focus") or "").strip() else "")
+         + ("\nClient direction: " + variable(toggles["direction"], "사용자 연출 지시")
+            if toggles and str(toggles.get("direction") or "").strip() else "")
+         + "\n\nReturn one <lb-xnai> block with a scenes array for exactly these C anchors: "
+         + variable(json.dumps([scene["slot"] for scene in prepared]), "출력할 원문 앵커 목록") + ". Each scene has slot, camera, characters "
          + "(name, positive, negative, position), scene, supplement. "
-         + "Use only its own prepared brief, profile and state; no extra fields.</lb-xnai>"},
+         + "Use each scene's own supplied brief/profile/state. When a brief or tracked aspect is absent, "
+         + "decide it from source chronology at that scene's assigned anchor, preserving its identities and count. "
+         + "No extra fields.</lb-xnai>"},
     ]
 
 def lb_extra_system_prompt_block(system_prompt):
@@ -142,32 +183,6 @@ def resolution_messages(profile_inference_enabled, selected_names, tracked_state
         {"role": "user", "content": user_content},
     ]
 
-def backtranslation_messages(template, names, index, chunk_total, protected_chunk):
-    system_prompt = PromptText(template)
-    replacements = {
-        "{character_names}": names or "(none)",
-        "{chunk_index}": str(index),
-        "{chunk_total}": str(chunk_total),
-    }
-    for marker, value in replacements.items():
-        system_prompt = system_prompt.replace(marker, variable(value, "역번역 변수: " + marker))
-    if names and "{character_names}" not in template:
-        system_prompt += "\n\n# Protected character names\n" + variable(names, "보호할 캐릭터 이름")
-
-    return [
-        {"role": "system", "content": system_prompt},
-        {
-            "role": "user",
-            "content": (
-                "[Current Response Chunk " + variable(index, "역번역 묶음 번호") + "/" + variable(chunk_total, "역번역 묶음 수") + "]\n"
-                "Return only the English translation of the chunk body below.\n\n"
-                "Tokens shaped like __SLOT_0__ are server-protected "
-                "slot markers. Copy every token exactly once and in the same order.\n\n"
-                + variable(protected_chunk, "역번역할 원문 묶음")
-            ),
-        },
-    ]
-
 def keyvis_task_message(max_chars, roster_text, allowed):
     return {
         "role": "user",
@@ -206,7 +221,9 @@ def mask_messages(system_prompt, scene_payload):
         "content": variable(json.dumps(scene_payload, ensure_ascii=False), "마스크 장면·캐릭터 데이터"),
     }]
 
-def keyvis_context_messages(keyvis_system, lb_extra_system_prompt, keyvis_reference, keyvis_profiles, tracking, past_text, slotted):
+def keyvis_context_messages(keyvis_system, lb_extra_system_prompt, keyvis_reference, keyvis_profiles, tracking, past_text, slotted,
+                            *, time_place=None, segment_slots=None, prior_status=None, prior_time_place=None):
+    anchors = {f"SLOT{slot}": anchor for anchor, slot in (segment_slots or {}).items()}
     keyvis_messages = [{"role": "system", "content": keyvis_system}]
     if lb_extra_system_prompt:
         keyvis_messages.append({"role": "user", "content": lb_extra_system_prompt_block(lb_extra_system_prompt)})
@@ -214,9 +231,20 @@ def keyvis_context_messages(keyvis_system, lb_extra_system_prompt, keyvis_refere
         keyvis_messages.append({"role": "user", "content": "# CHARACTER DICTIONARY\n" + variable(keyvis_reference, "캐릭터 사전")})
     keyvis_messages.append({"role": "user", "content": "# AUTHORITATIVE FIXED APPEARANCE BY STORY INSTANT\n"
         + variable(json.dumps(keyvis_profiles, ensure_ascii=False), "시점별 확정 프로필")
-        + "\n\n# CHRONOLOGICAL OUTFIT AND HAIRSTYLE REFERENCES BY STORY INSTANT\n"
-        + variable(json.dumps(tracking, ensure_ascii=False), "복장·머리 상태 타임라인")
-        + "\n\nA resolved Profile applies from its START/Cxxx anchor, including scenes anchored there. The server-filled SLOT timeline gives each person's complete outfit and hair tags at that insertion boundary. Choose one supported story instant compatible with its SLOT state; do not re-decide the outfit/hair or merge incompatible instants. Select visible tags for the chosen composition, preserving the established items, colors and arrangement."})
+        + ("\n\n# CHRONOLOGICAL OUTFIT AND HAIRSTYLE REFERENCES BY STORY INSTANT\n"
+        + variable(json.dumps({anchors.get(key, key): value for key, value in tracking.items()}, ensure_ascii=False), "복장·머리 상태 타임라인")
+           if tracking is not None else "")
+        + "\n\nA resolved Profile applies from its START/Cxxx anchor, including scenes anchored there. When a server-filled C outfit/hair timeline is supplied, it owns the current state: choose one supported instant compatible with its own C anchor state, preserving established items, colors and arrangement. When the timeline is absent, determine current outfit and hair from source chronology and earlier context; Profile defaults apply only when narrative and memory are silent. Do not merge incompatible instants."})
+    if prior_status:
+        keyvis_messages.append({"role": "user", "content": "# PREVIOUS SAVED OUTFIT (BEFORE CURRENT; APPLY SOURCE CHANGES)\n"
+            + variable(json.dumps(prior_status, ensure_ascii=False), "이전 저장 복장")})
+    if prior_time_place:
+        keyvis_messages.append({"role": "user", "content": "# PREVIOUS SAVED TIME AND PLACE (BEFORE CURRENT; APPLY SOURCE CHANGES)\n"
+            + variable(json.dumps(prior_time_place, ensure_ascii=False), "이전 저장 시간·장소")})
+    if time_place is not None:
+        keyvis_messages.append({"role": "user", "content": "# CHRONOLOGICAL TIME AND PLACE BY STORY INSTANT\n"
+            + variable(json.dumps({anchors.get(key, key): value for key, value in time_place.items()}, ensure_ascii=False), "시간·장소 상태 타임라인")
+            + "\n\nUse the selected instant's own C anchor time/place together with that anchor's outfit/hair. An unknown aspect provides no setting fact; use the source context without inventing one. Never merge different places or times into a shared scene."})
     if past_text:
         keyvis_messages.append({"role": "user", "content": "# PAST CONTEXT\n" + variable(past_text, "과거 대화")})
     keyvis_messages.append({"role": "user", "content": "[Last log entry]\n" + variable(slotted, "슬롯이 삽입된 현재 원문")})

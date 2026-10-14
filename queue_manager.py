@@ -4,6 +4,8 @@
 """
 
 import asyncio
+import aiohttp
+from contextvars import ContextVar
 import illustration_flow
 import copy
 import datetime
@@ -36,6 +38,7 @@ from modes.lora_export_utils import format_lora_export_filename
 
 # 원격 첫 컨테이너는 sd-scripts 런타임 부트스트랩까지 이 안에 끝내야 한다.
 LORA_TRAINING_TIMEOUT_SECONDS = 7_200
+CURRENT_COMFY_QUEUE_ITEM = ContextVar("comfy_queue_item", default=None)
 
 
 def _cleanup_remote_training_staging(export_dir: str, *, staging_root: str = "", job_id: str = "") -> None:
@@ -251,7 +254,7 @@ def normalize_queue_priority_orders(config: dict) -> tuple[dict[str, int], dict[
 # 실제 API 동시성은 llm_service의 슬롯별 게이트가 최종 제한한다.
 LLM_TYPES = frozenset({
     "llm_test",                    # 설정 화면 LLM1~10 연결 테스트
-    "illustration_llm_build",       # CHAT -> CALL1/2/3 -> 다중 삽화 큐 생성
+    "illustration_llm_build",       # CHAT -> OUTFIT/CALL2/CALL3 -> 다중 삽화 큐 생성
     "illustration_easy_edit",       # 저장 슬롯 -> 기존 편하게 수정 LLM -> 수정 재생성
     "illustration_auto_feedback_llm", # 편하게 수정 오토피드백의 프롬프트 수정/비전 검수
     "illustration_quality_inspection", # 생성 직후 개별 검사 및 완성 세트 전체 품질 검사
@@ -368,6 +371,7 @@ class QueueManager:
         self.current_external_items: dict[int, QueueItem] = {}
         self._processing = False
         self._lock = asyncio.Lock()
+        self._gpu_wakeup = asyncio.Event()
         # 일시정지: True면 새 작업을 꺼내지 않는다 (현재 실행중은 그대로 완료).
         # 큐 적재(add_item)는 계속되며, 재개 시 대기 항목이 순차 처리된다.
         self._paused = False
@@ -484,6 +488,20 @@ class QueueManager:
             traceback.print_exc()
 
     def _cleanup_item_resources(self, item: QueueItem) -> None:
+        mask_directory = getattr(item, "_comfy_mask_directory", None)
+        if item.type == "illustration" and mask_directory is not None:
+            try:
+                from modes import multi_char_mask
+                if os.path.isdir(mask_directory):
+                    multi_char_mask._clear_directory(mask_directory)
+                    os.rmdir(mask_directory)
+                    print(f"[QUEUE:MULTI_CHAR] 작업별 마스크 정리 완료: item={item.id}, path={mask_directory}")
+                else:
+                    print(f"[QUEUE:MULTI_CHAR] 마스크 정리 생략, 폴더 없음: item={item.id}, path={mask_directory}")
+            except Exception as exc:
+                print(f"[QUEUE:MULTI_CHAR] 마스크 정리 실패: item={item.id}, path={mask_directory}, error={exc}")
+                traceback.print_exc()
+            return
         if item.type == VIDEO_POSTPROCESS_TYPE:
             if self.video_mode is None:
                 print(
@@ -674,6 +692,7 @@ class QueueManager:
             asyncio.ensure_future(self._deferred_prune(item))
             return item
         self.items.append(item)
+        self._gpu_wakeup.set()
         self._resort_pending()
         print(f"[QUEUE] 항목 추가: type={item_type}, label={label}, id={item.id}, priority={priority}, 대기={len([i for i in self.items if i.status == 'pending'])}")
         if not skip_notify:
@@ -752,6 +771,9 @@ class QueueManager:
         """동일 batch_id의 pending 항목 전부 취소. processing은 현행 정책상 취소 불가."""
         cancelled = 0
         for item in self.items:
+            if item.batch_id == batch_id and item.status == "waiting" and getattr(item, "_comfy_submission", None) is not None:
+                cancelled += int(await self.cancel_item(item.id))
+                continue
             if item.batch_id == batch_id and item.status == "pending":
                 item.status = "cancelled"
                 item.completed_at = time.time()
@@ -769,9 +791,48 @@ class QueueManager:
             self._video_postprocess_wakeup.set()
         return cancelled
 
-    async def cancel_item(self, item_id: str) -> bool:
+    async def cancel_item(self, item_id: str, *, requeue: bool = False) -> bool:
         for item in self.items:
             if item.id == item_id:
+                submission = getattr(item, "_comfy_submission", None)
+                if submission is not None and item.status == "waiting":
+                    # Serialize withdrawal with POST /prompt. Delete only this
+                    # manager-owned pending prompt; a prompt that started wins.
+                    async with item._comfy_submission_lock:
+                        prompt_id = getattr(item, "_comfy_prompt_id", None)
+                        if prompt_id:
+                            host = self.get_real_comfy_host() if self.get_real_comfy_host else "127.0.0.1"
+                            url = f"http://{host}:{item._comfy_port}"
+                            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
+                                async with session.post(f"{url}/queue", json={"delete": [prompt_id]}) as response:
+                                    response.raise_for_status()
+                                async with session.get(f"{url}/queue") as response:
+                                    response.raise_for_status()
+                                    state = await response.json()
+                                async with session.get(f"{url}/history/{prompt_id}") as response:
+                                    response.raise_for_status()
+                                    history = await response.json()
+                            if any(entry[1] == prompt_id for entry in state.get("queue_running", [])) or prompt_id in history:
+                                print(f"[QUEUE:COMFY] 중단 전에 실행 시작, 완료까지 유지: item={item.id}, prompt={prompt_id}")
+                                return False
+                            if any(entry[1] == prompt_id for entry in state.get("queue_pending", [])):
+                                print(f"[QUEUE:COMFY] 대기 요청 회수 실패: item={item.id}, prompt={prompt_id}, state={state}")
+                                return False
+                        item._comfy_requeue = requeue
+                        item._illustration_cancel_requested = True
+                        item._illustration_cancel_reason = "큐 일시정지로 선행 제출 회수" if requeue else "큐 항목이 취소되었습니다"
+                        task = getattr(item, "_illustration_execution_task", None) or getattr(item, "_gpu_pipeline_task", None)
+                        if item.started_at is None:
+                            item.status = "pending" if requeue else "cancelled"
+                            if not requeue:
+                                item.completed_at = time.time()
+                                item.error = item._illustration_cancel_reason
+                                self._settle_future(item)
+                        if task is not None:
+                            task.cancel(item._illustration_cancel_reason)
+                        print(f"[QUEUE:COMFY] 선행 작업 회수: item={item.id}, prompt={prompt_id}, requeue={requeue}")
+                    self._gpu_wakeup.set()
+                    return True
                 if item.status in ("pending",):
                     item.status = "cancelled"
                     item.completed_at = time.time()
@@ -807,6 +868,10 @@ class QueueManager:
             binding = getattr(item, "_illustration_flow", None)
             if not binding or binding[0].get("id") != normalized:
                 continue
+            if getattr(item, "_comfy_submission", None) is not None and item.status == "waiting":
+                if await self.cancel_item(item.id):
+                    pending_cancelled += 1
+                    continue
             execution_task = getattr(item, "_illustration_execution_task", None)
             if execution_task is not None and not execution_task.done():
                 if item.type in image_types:
@@ -866,6 +931,10 @@ class QueueManager:
         cancelled = 0
         for item in self.items:
             params = item.params if isinstance(item.params, dict) else {}
+            if (str(params.get("one_click_run_id") or "").strip() == normalized
+                    and item.status == "waiting" and getattr(item, "_comfy_submission", None) is not None):
+                cancelled += int(await self.cancel_item(item.id))
+                continue
             if (
                 str(params.get("one_click_run_id") or "").strip() == normalized
                 and item.status == "pending"
@@ -900,6 +969,11 @@ class QueueManager:
             return self._paused
         self._paused = paused
         print(f"[QUEUE] {'일시정지' if paused else '재개'}")
+        if paused:
+            for item in list(self.items):
+                if getattr(item, "_comfy_submission", None) is not None and item.status == "waiting":
+                    await self.cancel_item(item.id, requeue=True)
+        self._gpu_wakeup.set()
         await self._notify_queue_updated()
         if not paused:
             # 재개: idle 상태였던 처리 루프들을 다시 기동.
@@ -914,6 +988,9 @@ class QueueManager:
     async def cancel_all_pending(self):
         cancelled = 0
         for item in self.items:
+            if item.status == "waiting" and getattr(item, "_comfy_submission", None) is not None:
+                cancelled += int(await self.cancel_item(item.id))
+                continue
             if item.status == "pending":
                 item.status = "cancelled"
                 item.completed_at = time.time()
@@ -1190,7 +1267,8 @@ class QueueManager:
                 item.status in ("processing", "waiting") for item in self.items
             ),
             "paused": self._paused,
-            "pending_count": len([i for i in self.items if i.status == "pending"]),
+            "pending_count": len([i for i in self.items if i.status == "pending"
+                                  or (i.status == "waiting" and getattr(i, "_comfy_submission", None) is not None)]),
             # LLM lane: 'processing' = 게이트를 잡아 실제 API 호출 중인 항목 수(=실제 동시 호출 수),
             # 'waiting' = 워커가 꺼냈지만 슬롯 게이트 대기 중인 항목 수.
             "llm_running_count": len([
@@ -1636,21 +1714,38 @@ class QueueManager:
         return True
 
     async def _process_loop(self):
-        """GPU계열 아이템을 1개씩 순차 처리하는 메인 루프.
-        LLM계열(item.type in LLM_TYPES)은 여기서 처리하지 않고 _llm_worker_loop 워커풀에 위임한다."""
+        """Local illustrations keep one execution and at most one prepared request.
+        Other GPU work still runs alone; Comfy itself executes images serially.
+        """
         async with self._lock:
             if self._processing:
                 return
             self._processing = True
+        active = {}
         try:
             while True:
+                self._gpu_wakeup.clear()
+                finished_illustration = False
+                for task in list(active):
+                    if task.done():
+                        if not task.cancelled():
+                            await task
+                        finished_illustration = finished_illustration or (
+                            active[task].status == "completed"
+                            and getattr(active[task], "_comfy_submission", None) is not None
+                        )
+                        del active[task]
+                # Preserve the existing illustration grace period only after
+                # the entire local window drains, never between queued images.
+                if finished_illustration and not active and not self._paused:
+                    await self._wait_after_illustration()
                 # 일시정지 중이면 새 작업을 꺼내지 않는다.
                 # (현재 _run_item_pipeline 안에서 실행 중인 작업은 이 루프 밖이므로 그대로 완료됨)
-                if self._paused:
+                if self._paused and not active:
                     print("[QUEUE] 일시정지 중 - GPU 메인 루프 대기")
                     break
                 pending_items = [i for i in self.items if i.status == "pending"]
-                if not pending_items:
+                if not pending_items and not active:
                     break
                 pending_items.sort(key=self._sort_key)
                 # 로컬 전용·원격 병렬 중 로컬 허용·하이브리드 항목을 선택한다.
@@ -1670,8 +1765,37 @@ class QueueManager:
                     )
                     and self._dependencies_ready(i)
                 ]
-                if not gpu_pending:
-                    break  # 남은 pending은 타 레인 또는 선행 작업 종료 대기
+                can_prefetch = (
+                    len(active) == 1
+                    and all(
+                        getattr(item, "_comfy_submission", None) is not None
+                        and item._comfy_submission.done()
+                        and item._comfy_submission.result()
+                        for item in active.values()
+                    )
+                )
+                next_item = gpu_pending[0] if gpu_pending else None
+                local_illustration = (
+                    next_item is not None
+                    and next_item.type == "illustration"
+                    and self._local_comfy_lane_allowed(next_item)
+                    and self._item_execution_area(next_item)[0] in ("gpu", "hybrid", "comfy_parallel")
+                    and str((next_item.params or {}).get("provider") or "comfy").lower() in ("comfy", "hybrid")
+                )
+                if (self._paused or next_item is None or len(active) >= 2
+                        or (active and not (can_prefetch and local_illustration))):
+                    if not active:
+                        break
+                    wake = asyncio.create_task(self._gpu_wakeup.wait())
+                    signals = [item._comfy_submission for item in active.values()
+                               if getattr(item, "_comfy_submission", None) is not None
+                               and not item._comfy_submission.done()]
+                    try:
+                        await asyncio.wait([*active, *signals, wake], return_when=asyncio.FIRST_COMPLETED)
+                    finally:
+                        wake.cancel()
+                        await asyncio.gather(wake, return_exceptions=True)
+                    continue
                 next_item = gpu_pending[0]
                 if self._item_execution_area(next_item)[0] == "hybrid":
                     if not self._bind_hybrid_item_provider(next_item, "comfy"):
@@ -1689,9 +1813,22 @@ class QueueManager:
                         if configured_target == VIDEO_ENGINE_COMFY_TARGET
                         else "local",
                     )
-                self.current_item = next_item
-                await self._run_item_pipeline(next_item, is_gpu=True)
+                if local_illustration:
+                    next_item._comfy_submission = asyncio.get_running_loop().create_future()
+                    next_item._comfy_submission_lock = asyncio.Lock()
+                    next_item._comfy_requeue = False
+                    next_item._illustration_cancel_requested = False
+                    next_item._comfy_prompt_id = None
+                if not active:
+                    self.current_item = next_item
+                # Reserve before yielding so add_item cannot claim it twice.
+                next_item.status = "waiting" if local_illustration else "processing"
+                task = asyncio.create_task(self._run_item_pipeline(next_item, is_gpu=True))
+                next_item._gpu_pipeline_task = task
+                active[task] = next_item
         finally:
+            if active:
+                await asyncio.gather(*active, return_exceptions=True)
             self._processing = False
 
     async def _run_item_pipeline(self, item: QueueItem, is_gpu: bool):
@@ -1701,13 +1838,14 @@ class QueueManager:
         # LLM 항목은 슬롯 게이트를 실제로 획득하기 전까지 'waiting'으로 둔다.
         # 게이트 획득 순간(_execute_item 안의 LLM 호출)에 아래 콜백이 'processing'으로
         # 전환하므로 'processing' 수 = 실제 동시 LLM API 호출 수가 된다.
-        item.status = "waiting" if is_llm else "processing"
+        item.status = "waiting" if is_llm or getattr(item, "_comfy_submission", None) is not None else "processing"
         item.started_at = time.time()
         item.progress = 0.0
         print(f"[QUEUE] 처리 시작: type={item.type}, label={item.label}, id={item.id}")
         await self._notify_queue_updated()
         execution_target = getattr(item, "comfy_execution_target", None)
         context_token = CURRENT_COMFY_EXECUTION_TARGET.set(execution_target)
+        item_token = CURRENT_COMFY_QUEUE_ITEM.set(item if getattr(item, "_comfy_submission", None) is not None else None)
         gate_cb_token = None
         if is_llm:
             # 게이트 획득 알림을 받아 waiting→processing 으로 전환(idempotent).
@@ -1738,6 +1876,7 @@ class QueueManager:
                 is_gpu
                 and self._comfy_task_key_for_item(item)
                 and callable(self.prepare_local_gpu_target)
+                and (self.current_item is item or self.current_item is None)
             ):
                 await self.prepare_local_gpu_target(
                     str(execution_target or "local"),
@@ -1788,6 +1927,10 @@ class QueueManager:
                     item.status = "completed"
                     item.progress = 100.0
                     print(f"[QUEUE] 처리 완료: id={item.id}")
+        except asyncio.CancelledError:
+            item.status = "cancelled"
+            item.error = str(getattr(item, "_illustration_cancel_reason", "") or "큐 실행이 취소되었습니다")
+            print(f"[QUEUE] 실행 취소: item={item.id}, reason={item.error}")
         except Exception as e:
             item.status = "failed"
             item.error = str(e)
@@ -1795,20 +1938,32 @@ class QueueManager:
             traceback.print_exc()
         finally:
             CURRENT_COMFY_EXECUTION_TARGET.reset(context_token)
+            CURRENT_COMFY_QUEUE_ITEM.reset(item_token)
             if gate_cb_token is not None:
                 llm_service.reset_queue_gate_acquired_callback(gate_cb_token)
-        item.completed_at = time.time()
-        # 대기 중인 HTTP 핸들러 등에게 완료/실패 알림
-        self._settle_future(item)
-        if is_gpu:
+        if getattr(item, "_comfy_requeue", False):
+            item.status = "pending"
+            item.started_at = None
+            item.completed_at = None
+            item.error = None
+            item.progress = 0.0
+            item.progress_detail = {}
+            self._gpu_wakeup.set()
+            print(f"[QUEUE:COMFY] 회수한 요청을 매니저 대기로 복귀: item={item.id}")
+        else:
+            item.completed_at = time.time()
+            # 대기 중인 HTTP 핸들러 등에게 완료/실패 알림
+            self._settle_future(item)
+        if is_gpu and self.current_item is item:
             self.current_item = None
         was_illustration = item.type == "illustration"
         # 완료 알림 후 잠시 유지 — 완료 항목을 UI에 2초간 띄운 뒤 삭제(프룬)하되,
         # 백그라운드로 지연시켜 다음 큐가 즉시 시작되도록 한다(파이프라인은 블록하지 않음).
         await self._notify_queue_updated()
-        asyncio.ensure_future(self._deferred_prune(item))
+        if item.status != "pending":
+            asyncio.ensure_future(self._deferred_prune(item))
         # 삽화 완료 후: 새 삽화 들어오면 즉시, 아니면 10초 대기 후 다음 작업
-        if is_gpu and was_illustration:
+        if is_gpu and was_illustration and getattr(item, "_comfy_submission", None) is None:
             await self._wait_after_illustration()
         # 어떤 아이템이 완료되면 우선순위 블록이 풀렸을 수 있으니 메인 루프 재점검
         asyncio.ensure_future(self._process_loop())
@@ -2727,13 +2882,13 @@ class QueueManager:
         config = self.get_config() if self.get_config else {}
         total = 0
         # 슬롯별 (표시명, 모델 키, 동시요청 키)는 llm_service.LLM_SLOT_COUNT 에서 파생.
-        # LLM1 은 모델명 유무와 무관하게 항상 합산에 포함(기본 슬롯).
+        # 모든 슬롯은 모델명이 설정되어 있을 때만 합산한다.
         for n in range(1, llm_service.LLM_SLOT_COUNT + 1):
             suffix = "" if n == 1 else str(n)
             slot = f"LLM{n}"
             model_key = f"llm_model{suffix}"
             concurrency_key = f"llm_max_concurrency{suffix}"
-            if n != 1 and not str(config.get(model_key, "") or "").strip():
+            if not str(config.get(model_key, "") or "").strip():
                 continue
             raw = config.get(concurrency_key, 1)
             try:
@@ -3368,8 +3523,8 @@ class QueueManager:
         prompt_data = params.get("prompt_data", {})
         raw_body = params.get("raw_body", {})
 
-        # 큐 적재 시점이 아니라 이 GPU 항목이 실제 실행되는 순간에만 공유 폴더를
-        # 비우고 마스크를 쓴다. GPU 큐가 직렬이라 다음 항목이 덮어쓸 수 없다.
+        # Lookahead uses a private folder and the existing mask_location input.
+        # Legacy serial callers retain their configured mask directory.
         multi_char_context = raw_body.get("illustration_multi_char") or {}
         mask_bytes = None
         if isinstance(multi_char_context, dict) and multi_char_context.get("enable"):
@@ -3379,6 +3534,11 @@ class QueueManager:
                 if not multi_char_mask.should_skip_solo_region_mask(multi_char_context.get("layout")):
                     config = self.get_config() if self.get_config else {}
                     comfy_input_dir = str((config or {}).get("comfy_input_dir") or "")
+                    if getattr(item, "_comfy_submission", None) is not None:
+                        item._comfy_mask_location = f"soya_manager_masks/{uuid.uuid4().hex}"
+                        multi_char_context = copy.deepcopy(multi_char_context)
+                        multi_char_context["mask_location"] = item._comfy_mask_location
+                        item._comfy_mask_directory = multi_char_mask.resolve_mask_directory(comfy_input_dir, item._comfy_mask_location)
                     prepared_path = multi_char_mask.prepare_region_mask(
                         comfy_input_dir,
                         multi_char_context,
@@ -3396,6 +3556,7 @@ class QueueManager:
                     f"item={item.id}, error={e}"
                 )
                 traceback.print_exc()
+                self._cleanup_item_resources(item)
                 raise
 
         illustration_flow.record_image_mask(mask_bytes)
@@ -3409,15 +3570,25 @@ class QueueManager:
                 "total": max_value,
             })
 
-        if self.process_prompt_full:
-            await self.process_prompt_full(prompt_id, prompt_data, raw_body, queue_progress_callback=_on_illust_progress)
-        else:
-            raise RuntimeError("process_prompt_full 콜백이 설정되지 않았습니다")
+        try:
+            if self.process_prompt_full:
+                await self.process_prompt_full(prompt_id, prompt_data, raw_body, queue_progress_callback=_on_illust_progress)
+            else:
+                raise RuntimeError("process_prompt_full 콜백이 설정되지 않았습니다")
+        finally:
+            if getattr(item, "_comfy_mask_directory", None) is not None:
+                self._cleanup_item_resources(item)
 
         return {"success": True, "prompt_id": prompt_id}
 
     async def _handle_illustration_llm_build(self, item: QueueItem) -> dict:
-        """CHAT 기반 CALL1/2/3 빌드. GPU 워커와 분리된 LLM 큐에서 실행한다."""
+        """CHAT 기반 OUTFIT/CALL2/CALL3 빌드. GPU 워커와 분리된 LLM 큐에서 실행한다."""
+        if callable(getattr(item, "_runtime_handler", None)):
+            result = await self._handle_runtime_llm_task(item)
+            if result.get("status") == "error":
+                print(f"[QUEUE:ILLUST_CONTEXT] 빌드 실패: item={item.id}, result={result!r}")
+                raise RuntimeError(result.get("error") or "삽화 LLM 빌드 실패")
+            return result
         if not self.process_illustration_context:
             print("[QUEUE:ILLUST_CONTEXT] process_illustration_context 콜백이 설정되지 않음")
             raise RuntimeError("process_illustration_context 콜백이 설정되지 않았습니다")
@@ -3449,7 +3620,7 @@ class QueueManager:
                         traceback.print_exc()
                         return None
 
-                # Modal control-plane 요청과 CALL1/2/3을 겹쳐 콜드 스타트 시간을 숨긴다.
+                # Modal control-plane 요청과 OUTFIT/CALL2/CALL3을 겹쳐 콜드 스타트 시간을 숨긴다.
                 warm_lease_task = asyncio.create_task(acquire_warm_lease())
         try:
             return await self.process_illustration_context(item)
@@ -3593,6 +3764,9 @@ class QueueManager:
             comfy_task_key="illustration",
         )
         elapsed_time = time.time() - start_time
+        if provider == "comfy" and callable(self.get_current_illustration_workflow_snapshot):
+            snapshot = self.get_current_illustration_workflow_snapshot() or {}
+            elapsed_time = snapshot.get("generation_time", elapsed_time)
         if not img_bytes:
             print(
                 f"[QUEUE:CHARACTER_MAKER_ILLUST] 생성 결과 없음: "
@@ -3803,6 +3977,9 @@ class QueueManager:
 
         if not img_bytes:
             raise RuntimeError(f"재생성 실패: {error}")
+        if provider == "comfy" and callable(self.get_current_illustration_workflow_snapshot):
+            snapshot = self.get_current_illustration_workflow_snapshot() or {}
+            elapsed_time = snapshot.get("generation_time", elapsed_time)
 
         # 재생성 이미지 백업 저장 — 원본 백업의 bot_name 상속 (같은 봇 딱지)
         # 후처리 설정 스냅샷 + SPEAK 원문도 상속 → 재생성 결과에 동일 후처리 적용

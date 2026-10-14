@@ -613,58 +613,24 @@ def _load_lighbd_history(limit: int | None = LIGHBD_HISTORY_MAX) -> list:
 
 
 async def _stream_with_frontend_notify(prompt_id: str, messages: list):
-    """callLLMStream 을 돌면서 각 이벤트를 프론트엔드에 WS 전달.
-
-    프론트엔드 우하단 위젯 (lighbd_llm_stream 이벤트) 이 상태/통계/출력을
-    실시간 표시. lighbd 호출만 lighbd_history.jsonl 에 기록 (callLLMStream의
-    llm_history.jsonl 기록은 중복 회피를 위해 끔).
-    """
-    from modes.llm_service import callLLMStream
+    """기존 삽화 라우팅과 실행 기록 경로로 ENQUEUE 결과를 생성한다."""
+    from modes import illustration_context_pipeline
+    import server as _server
 
     try:
-        import server as _server
-        notify = _server.notify_frontend
-    except Exception as e:
-        print(f"[LIGHBD] WARN: cannot access notify_frontend: {e}")
-        notify = None
-
-    final_record = {
-        "ts": datetime.datetime.now().isoformat(timespec="seconds"),
-        "prompt_id": prompt_id,
-        "input": messages,
-        "output": "",
-        "completion_tokens": 0,
-        "prompt_tokens": 0,
-        "elapsed": 0.0,
-        "tps": 0.0,
-    }
-
-    async for ev in callLLMStream(messages, log_history=False):
-        # context: lighbd 세션 식별용 prompt_id 추가해서 프론트가 어떤 호출인지 구분
-        out_ev = dict(ev)
-        out_ev["prompt_id"] = prompt_id
-        if notify is not None:
-            try:
-                await notify("lighbd_llm_stream", out_ev)
-            except Exception as e:
-                print(f"[LIGHBD] WARN: notify_frontend failed: {e}")
-        # 히스토리용 정보 수집
-        if ev["type"] == "done":
-            final_record["output"] = ev.get("text", "")
-            final_record["completion_tokens"] = ev.get("completion_tokens", 0)
-            final_record["prompt_tokens"] = ev.get("prompt_tokens", 0)
-            final_record["elapsed"] = round(ev.get("elapsed", 0.0), 3)
-            final_record["tps"] = round(ev.get("tps", 0.0), 1)
-            if ev.get("ttft") is not None:
-                final_record["ttft"] = round(ev.get("ttft"), 3)
-            final_record["status"] = "ok"
-        elif ev["type"] == "error":
-            final_record["error"] = ev.get("error", "")
-            final_record["status"] = "error"
-        yield ev
-
-    # done/error 이후 히스토리 기록
-    _log_lighbd_history(final_record)
+        result = await illustration_context_pipeline._call_pipeline_llm(
+            "CALL2-FALLBACK",
+            messages,
+            history_id=prompt_id,
+            stream_notify=lambda event: _server.notify_frontend(
+                "lighbd_llm_stream", {**event, "prompt_id": prompt_id}
+            ),
+        )
+        yield {"type": "done", "text": result}
+    except Exception as error:
+        print(f"[LIGHBD] ENQUEUE LLM 실패: prompt_id={prompt_id}, input={messages!r}, error={error}")
+        traceback.print_exc()
+        yield {"type": "error", "error": str(error)}
 
 
 # ─── Preset 프롬프트 빌드 ────────────────────────────────

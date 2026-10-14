@@ -191,7 +191,6 @@ def _reference(name: str) -> str:
 
 def _toggles(case: AuditCase) -> dict[str, Any]:
     return {
-        "call1_backtranslate_enabled": False,
         "call1_enabled": False,
         "call2_parallel_enabled": True,
         "call2_parallel_max_concurrency": 1,
@@ -232,7 +231,7 @@ async def _run_case(case: AuditCase, repeat: int) -> dict[str, Any]:
                 "dark blue long-sleeved dress"
             ),
             extra_names=case.subject_name,
-            backtranslate_names=case.subject_name,
+            character_names=case.subject_name,
             pre_resolved_profile_result=_profile_result(case.subject_name),
             enable_multi_char_layout=False,
         )
@@ -254,17 +253,6 @@ async def _run_case(case: AuditCase, repeat: int) -> dict[str, Any]:
             "call2_output": result.get("call2_output", ""),
             "call2_plan_output": result.get("call2_plan_output", ""),
             "call2_detail_outputs": result.get("call2_detail_outputs", []),
-            "call2_authority_audit": result.get("call2_authority_audit", {}),
-            "call2_authority_audit_output": result.get(
-                "call2_authority_audit_output",
-                "",
-            ),
-            "call2_authority_audit_status": result.get(
-                "call2_authority_audit_status",
-                "",
-            ),
-            "call2_fallback_stage": result.get("call2_fallback_stage", ""),
-            "call2_fallback_reason": result.get("call2_fallback_reason", ""),
             "llm_trace": result.get("llm_trace", []),
             "timing_seconds": round(elapsed, 3),
             "error": "",

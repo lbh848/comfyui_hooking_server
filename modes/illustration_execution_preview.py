@@ -12,7 +12,7 @@ from queue_manager import QueueItem
 
 
 STEPS = ["등장인물·프로필", "문맥·장면 선택", "시각 계획",
-         "장면 묘사·대사", "분기 준비", "생성·출력"]
+         "장면 묘사·대표 이미지·대사", "분기 준비", "이미지 생성", "후속 처리"]
 
 
 async def build_execution_plan(*, config, snapshot, visual_profiles, translation_cache,
@@ -53,6 +53,9 @@ async def build_execution_plan(*, config, snapshot, visual_profiles, translation
 
     def card(name, step, description, *, enabled=True, condition="", group="", index=1, count=1, task_key=None):
         task = task_key or pipeline._CALL_TASK_KEYS.get("CALL2" if name == "CALL2-DETAIL" else name)
+        if task is None:
+            task = next((key for call, key in pipeline._CALL_TASK_KEYS.items()
+                         if name.startswith(call + " ")), None)
         route = None
         provider_resource = None
         if task:
@@ -130,11 +133,14 @@ async def build_execution_plan(*, config, snapshot, visual_profiles, translation
     translate = card("PROFILE-CONTEXT-TRANSLATE", 1,
                      f"등록 문맥 미스 최대 {misses}개 · CURRENT 등장인물의 문맥만 한 요청으로 번역" if misses else "캐시 미스가 없어 호출 생략",
                      enabled=bool(multiple and misses) and not prompt_batch, condition=profile_condition)
-    profile_card = card("PROFILE-RESOLVE", 1,
-                        "완성 프롬프트 입력에서는 프로필 판정 생략" if prompt_batch else
-                        f"모의 CURRENT의 다중 프로필 캐릭터 {len(multiple)}명 · 등장인물마다 판정" if multiple
-                        else "모의 CURRENT에 다중 프로필 캐릭터가 없어 사용하지 않음",
-                        enabled=bool(multiple) and not prompt_batch, condition=profile_condition)
+    profile_cards = [card("PROFILE-RESOLVE", 1, f"{name} 프로필 판정", group="profile_resolve",
+                          index=index, count=len(multiple), condition=profile_condition)
+                     for index, name in enumerate(multiple, 1)] if multiple and not prompt_batch else []
+    if not profile_cards:
+        card("PROFILE-RESOLVE", 1,
+             "완성 프롬프트 입력에서는 프로필 판정 생략" if prompt_batch else
+             "모의 CURRENT에 다중 프로필 캐릭터가 없어 사용하지 않음",
+             enabled=False, condition=profile_condition)
 
     async def preview_profile_stage(operation, *args, **kwargs):
         nonlocal context
@@ -148,14 +154,16 @@ async def build_execution_plan(*, config, snapshot, visual_profiles, translation
             prepared, summary, missing, _targets = pipeline.plan_profile_context_translations(
                 args[0], cache_namespace=kwargs["cache_namespace"], cache=translation_cache,
             )
-            cached = job(cache_card, context, output="캐시 조회 결과")
-            context = [job(translate, [cached], output="프로필 영어 문맥")] if missing else [cached]
+            if missing:
+                context = [job(translate, context, output="프로필 영어 문맥")]
             return prepared, summary
         if operation is pipeline._record_profile_context_cache_summary:
+            context = [job(cache_card, context, output="캐시 적중·번역 결과 기록")]
             return args[0]
         if operation is pipeline._run_profile_resolution:
-            context = [job(profile_card, context, input=f"{name} 프로필 후보", output=f"{name} 확정 프로필")
-                       for name in kwargs["candidate_names"]]
+            context = [job(profile_cards[index], context,
+                           input=f"{name} 프로필 후보", output=f"{name} 확정 프로필")
+                       for index, name in enumerate(kwargs["candidate_names"])]
             result = pipeline._materialize_profile_character_records(
                 [{"name": name, "in_history": False, "profile_timeline": []} for name in kwargs["candidate_names"]],
                 kwargs["visual_profiles"],
@@ -175,31 +183,25 @@ async def build_execution_plan(*, config, snapshot, visual_profiles, translation
         if profiles:
             notes.append(f"모의 CURRENT 등장인물 {len(current_profiles)}명: {', '.join(current_profiles) or '(없음)'}. 인원 수로 지정하면 등록 순서대로 선택합니다. ON인 프로필 준비·판정을 끝낸 뒤 다음 단계로 진행합니다.")
 
-    scenes = [{"slot": i} for i in range(1, scene_count + 1)]
-    back_enabled = illustration and toggles["call1_backtranslate_enabled"] and not prompt_batch
-    source = "".join(f"문맥 [Slot {i}]\n" for i in range(1, slot_count + 1))
-    back_chunks = pipeline.split_backtranslation_chunks(source, toggles["call1_backtranslate_max_concurrency"]) if back_enabled else []
-    front_parents = [job(card("CALL1-BACKTRANSLATE", 2, "CURRENT 슬롯 묶음 역번역", group="backtranslation",
-                              index=i, count=len(back_chunks)), context, output="역번역 문맥")
-                     for i, _chunk in enumerate(back_chunks, 1)] or context
-    if not back_chunks:
-        card("CALL1-BACKTRANSLATE", 2, "역번역 OFF" if not prompt_batch else "완성 프롬프트 입력", enabled=False)
+    scenes = [{"slot": i} for i in range(scene_count)]
     front = []
-    for name, desc in [("CALL1", "하나의 복장·헤어 상태 타임라인"), ("CALL2-SELECT", f"일반 장면 {scene_count}개 선택")]:
-        node = card(name, 2, desc, enabled=illustration and not prompt_batch, group="call1_select")
+    for name, desc, enabled in [("OUTFIT", "하나의 복장·헤어 상태 타임라인", toggles["outfit_enabled"]),
+                                ("TIME & PLACE", "독립적인 캐릭터별 시간·장소 타임라인", toggles["time_place_enabled"]),
+                                ("CALL2-SELECT", f"일반 장면 {scene_count}개 선택", True)]:
+        node = card(name, 2, desc, enabled=illustration and not prompt_batch and enabled, group="call1_select")
         if node["enabled"]:
-            front.append(job(node, front_parents, output="상태 타임라인" if name == "CALL1" else "선택 장면"))
+            front.append(job(node, context, output="선택 장면" if name == "CALL2-SELECT" else "상태 타임라인"))
     plan_batches = pipeline._balanced_call2_scene_plan_batches(
         scenes, toggles["call2_parallel_max_concurrency"] if toggles["call2_parallel_enabled"] else 1)
     plans = []
-    if illustration and not prompt_batch:
+    if illustration and not prompt_batch and toggles["call2_plan_enabled"]:
         for i, batch in enumerate(plan_batches, 1):
             plans.append(job(card("CALL2-PLAN", 3, f"장면 {len(batch)}개 시각 계획", group="call2_plan",
                                   index=i, count=len(plan_batches)), front, output="시각 계획"))
     else:
-        card("CALL2-PLAN", 3, "일반 삽화 OFF" if not illustration else "완성 프롬프트 입력", enabled=False)
-    detail_groups = pipeline._detail_batches_for_plan_batches(
-        plan_batches, toggles["call2_detail_parallel_max_concurrency"] if toggles["call2_detail_parallel_enabled"] else 1)
+        card("CALL2-PLAN", 3, "일반 삽화 OFF" if not illustration else
+             "완성 프롬프트 입력" if prompt_batch else "PLAN OFF · SELECT에서 DETAIL로 직접 전달", enabled=False)
+    detail_groups = pipeline._detail_batches_for_plan_batches(plan_batches)
     detail_sources = []
     if illustration and not prompt_batch:
         detail_count = sum(map(len, detail_groups))
@@ -207,22 +209,24 @@ async def build_execution_plan(*, config, snapshot, visual_profiles, translation
         for plan_index, group in enumerate(detail_groups):
             for batch in group:
                 i += 1
-                detail_sources.append((job(card("CALL2-DETAIL", 4, f"PLAN {plan_index + 1} 완료 즉시 · 장면 {len(batch)}개 이미지 태그 묘사",
+                description = (f"PLAN {plan_index + 1} 완료 즉시" if toggles["call2_plan_enabled"] else "SELECT 완료 후 원문에서 직접 판단")
+                detail_sources.append((job(card("CALL2-DETAIL", 4, f"{description} · 장면 {len(batch)}개 이미지 태그 묘사",
                                                 group="call2_detail", index=i, count=detail_count),
-                                           [plans[plan_index]], output=f"장면 {len(batch)}개 묘사"), batch, False))
+                                           [plans[plan_index]] if plans else front, output=f"장면 {len(batch)}개 묘사"), batch, False))
     else:
         card("CALL2-DETAIL", 4, "일반 삽화 OFF" if not illustration else "완성 프롬프트 입력", enabled=False)
         if illustration:
             detail_sources = [(None, scenes, False)]
-    keyvis_card = card("CALL2-KEYVIS", 4, "일반 장면 외 대표 이미지 1장",
+    keyvis_card = card("CALL2-KEYVIS", 4, "PLAN과 독립적으로 병렬 · 일반 장면 외 대표 이미지 1장",
                        enabled=illustration and toggles["key_visual"] and not prompt_batch, group="keyvis")
     if keyvis_card["enabled"]:
         detail_sources.append((job(keyvis_card, front, output="대표 이미지 묘사"), [{"slot": -1}], True))
 
     mask_enabled = illustration and pipeline.should_enable_multi_char_layout(toggles, provider)
-    mask = card("MULTI-CHAR-MASK", 5, "단독·다인 장면마다 이름 있는 캐릭터 1~3명의 영역 계산",
-                enabled=mask_enabled, condition="실제 장면의 이름 있는 캐릭터 수가 1~3명일 때", group="pipeline")
-    slot_card = card("SLOT", 6, "준비된 장면마다 이미지 큐 등록", enabled=illustration)
+    mask = None
+    if not (mask_enabled and conditional):
+        mask = card("MULTI-CHAR-MASK", 5, "이름 있는 캐릭터 1~3명의 영역 계산",
+                    enabled=mask_enabled, condition="해당 장면에 마스크가 필요할 때", group="pipeline")
     image_lanes = []
     item = QueueItem(id="preview", type="illustration", label="preview", params={"provider": provider})
     if provider in ("chansub", "hybrid"):
@@ -240,32 +244,38 @@ async def build_execution_plan(*, config, snapshot, visual_profiles, translation
                 capacities[lane] = capacity
                 image_lanes.append([lane])
     lane_label = " / ".join(f"{lane[0]} 최대 {capacities[lane[0]]}개" for lane in image_lanes)
-    image_card = card("이미지 렌더링", 6, lane_label or "활성 생성 레인이 없어 큐 대기", enabled=illustration)
-    registrations, normal_registrations, images = [], [], []
+    scene_ready, normal_ready, images = [], [], []
+    image_slots = {}
+    image_count = sum(len(batch) for _descriptor, batch, _keyvis in detail_sources)
     keyvis_images = set()
     for descriptor_id, batch, is_keyvis in detail_sources:
         descriptor_card = next((node for node in nodes if any(
             entry["id"] == descriptor_id and entry["card"] == node["id"] for entry in jobs)), None)
-        connect(descriptor_card, mask)
-        connect(mask, slot_card)
-        masks = [job(mask, [descriptor_id], output=f"장면 {scene['slot']} 영역") for scene in batch] if mask_enabled and conditional else []
-        for scene_index, scene in enumerate(batch):
-            # Runtime dispatches each scene as soon as its own mask is ready.
-            slot_id = job(slot_card, [masks[scene_index]] if masks else [descriptor_id, *([] if descriptor_id else context)],
-                          output=f"장면 {scene['slot']} 생성 요청",
-                          data_parents=[descriptor_id, masks[scene_index] if masks else None,
-                                        *([] if descriptor_id else context)])
-            registrations.append(slot_id)
+        for scene in batch:
+            current_mask = (card(f"MULTI-CHAR-MASK slot={scene['slot']}", 5,
+                                f"장면 {scene['slot']} 캐릭터 영역 계산", group="pipeline")
+                            if mask_enabled and conditional else mask)
+            connect(descriptor_card, current_mask)
+            mask_job = (job(current_mask, [descriptor_id], output=f"장면 {scene['slot']} 영역")
+                        if mask_enabled and conditional else None)
+            ready = [mask_job] if mask_job else [descriptor_id, *([] if descriptor_id else context)]
+            scene_ready.extend(filter(None, ready))
             if not is_keyvis:
-                normal_registrations.append(slot_id)
-            if image_card["enabled"]:
-                images.append(job(image_card, [slot_id], resources=image_lanes, output=f"장면 {scene['slot']} 이미지",
-                                  priority=1 if masks and not is_keyvis else 0))
-                if is_keyvis:
-                    keyvis_images.add(images[-1])
+                normal_ready.extend(filter(None, ready))
+            queue_index = 1 if is_keyvis else scene["slot"] + 1 + int(keyvis_card["enabled"])
+            image_card = card(f"삽화 {queue_index}/{image_count} · slot {scene['slot']}", 6,
+                              (lane_label or "활성 생성 레인이 없어 큐 대기") + " · 같은 큐 노드가 대기 후 생성",
+                              group="illustration_images")
+            connect(current_mask, image_card)
+            image = job(image_card, ready, resources=image_lanes, output=f"장면 {scene['slot']} 이미지",
+                        priority=1 if mask_job and not is_keyvis else 0)
+            images.append(image)
+            image_slots[image] = scene["slot"]
+            if is_keyvis:
+                keyvis_images.add(image)
     dialogue_card = card("CALL3", 4, f"{mode} 대사 · 모든 DETAIL/KEYVIS 콜백 완료 후, 이미지 완료는 기다리지 않음",
                          enabled=illustration and toggles["speak_enabled"] and not prompt_batch, group="call3")
-    dialogue = job(dialogue_card, registrations, output="장면별 대사",
+    dialogue = job(dialogue_card, scene_ready, output="장면별 대사",
                    data_parents=[descriptor_id for descriptor_id, _batch, keyvis in detail_sources if not keyvis]) if dialogue_card["enabled"] else None
 
     effective_assets = min(toggles["original_asset_count"], max(0, slot_count - (scene_count if illustration else 0)))
@@ -280,14 +290,23 @@ async def build_execution_plan(*, config, snapshot, visual_profiles, translation
     asset_job = None
     if asset_enabled:
         asset_job = job(asset_card, context if not illustration or prompt_batch else (),
-                        any_parents=normal_registrations if illustration and not prompt_batch else (),
-                        output=f"원본 {effective_assets}장 선택", data_parents=[*context, *front])
+                        any_parents=normal_ready if illustration and not prompt_batch else (),
+                        output=f"원본 {effective_assets}장 선택")
+        # Any ready ordinary scene can trigger this task. The simulation picks
+        # its first actual parent without inventing an image-registration node.
+        for parent_id in normal_ready if illustration and not prompt_batch else ():
+            parent_job = next(entry for entry in jobs if entry["id"] == parent_id)
+            connect(next(node for node in nodes if node["id"] == parent_job["card"]), asset_card)
+        if prompt_batch and illustration:
+            for image in images:
+                image_job = next(entry for entry in jobs if entry["id"] == image)
+                image_job["parents"].append(asset_job)
+                connect(asset_card, next(node for node in nodes if node["id"] == image_job["card"]))
     recovery_card = card("ORIGINAL-ASSET-RECOVERY", 5, "선택 실패 항목이 있을 때만 재선택",
          enabled=asset_enabled, condition="에셋 선택 실패 시에만 실행 (정상 모의 실행에서 생략)", group="original_asset")
-    source_card = card("원본 파일 읽기", 6, "선택한 업로드 원본 읽기 · 이미지 생성 큐를 사용하지 않음", enabled=asset_enabled)
-    source_job = job(source_card, [asset_job], output="업로드 원본 이미지") if asset_job else None
+    # The original-asset operation reads its selected files internally; the
+    # recorded flow has no separate file-read node or queue job.
     connect(asset_card, recovery_card)
-    connect(recovery_card, source_card)
     # Only this read-only preview inspects settings; it never loads/migrates bot
     # data through the runtime setters or resolves/downloads render fonts.
     from modes import postprocess as postprocess_settings
@@ -306,33 +325,39 @@ async def build_execution_plan(*, config, snapshot, visual_profiles, translation
                           "후처리 마스터 설정 OFF" if not postprocess_settings.is_postprocess_active(config) else
                           f"활성 봇의 {mode} 후처리 OFF" if not selected_settings.get("enabled", False) else
                           f"렌더링 이미지와 CALL3 대사를 합성 · 봇의 {mode} 후처리")
-    composition = card("대사 이미지 합성", 6, composition_reason, enabled=composition_enabled,
-                       condition="일반 장면에 CALL3 대사가 있을 때 · 대표 이미지는 제외")
-    save_card = card("이미지 저장", 6, "준비된 이미지와 생성 기록 저장 · 대사 합성 OFF면 렌더링 원본 저장",
-                     enabled=illustration)
     saved_images = []
-    for image in images:
-        composed = job(composition, [image, *registrations, dialogue], output="대사 합성 이미지",
-                       data_parents=[image, dialogue]) if composition_enabled and image not in keyvis_images else image
-        saved_images.append(job(save_card, [composed, *registrations, dialogue], output="완성된 일반 이미지",
-                                data_parents=[composed]))
-    output_parts = (["일반 이미지"] if images else []) + ([f"{mode} 대사 기록"] if dialogue else []) + (["원본 에셋"] if source_job else [])
-    final = card("출력 합류", 6, "·".join(output_parts) + " 합류 후 출력" if output_parts else "출력 결과가 없어 실행 실패",
-                 enabled=bool(images or source_job))
+    for index, image in enumerate(images, 1):
+        if prompt_batch:
+            # Complete prompt batches save inside their image queue operation.
+            saved_images.append(image)
+            continue
+        compose = composition_enabled and image not in keyvis_images
+        postprocess = card("이미지 후처리", 7,
+            f"slot {image_slots[image]} · " + ("대표 이미지 원본·기록 저장" if image in keyvis_images else
+            f"{mode} 대사 합성·이미지·기록 저장" if compose else f"원본 이미지·기록 저장 · {composition_reason}"),
+            index=index, count=len(images), group="illustration_postprocess")
+        saved_images.append(job(postprocess, [image, *([dialogue] if dialogue else scene_ready)],
+                                output="대사 합성 이미지·생성 기록" if compose else "원본 이미지·생성 기록"))
+    output_parts = (["일반 이미지"] if images else []) + ([f"{mode} 대사 기록"] if dialogue else []) + (["원본 에셋"] if asset_job else [])
+    final = card("결과 반환", 7, "·".join(output_parts) + " 반환" if output_parts else "출력 결과가 없어 실행 실패",
+                 enabled=bool(images or asset_job))
     if final["enabled"]:
-        published = job(final, [*saved_images, source_job], output="삽화 출력")
+        published = job(final, [*saved_images, asset_job], output="삽화 출력")
+        connect(recovery_card, final)
         if images and snapshot.get("illustration_quality_inspection_enabled"):
             from modes import illustration_quality_inspection as inspection
-            review_card = card("IMAGE-QUALITY-INSPECTION", 6, "저장한 일반 이미지마다 자동 평가 · 출력은 평가 완료를 기다리지 않음",
-                               task_key=inspection.TASK_KEY)
-            reviews = [job(review_card, [saved_image], output="개별 이미지 평가") for saved_image in saved_images]
-            overall_card = card("SET-QUALITY-INSPECTION", 6, "출력과 개별 평가 완료 후 전체 생성 이미지 평가 · 원본 에셋 제외",
-                                task_key=inspection.TASK_KEY)
-            job(overall_card, [published, *reviews], output="전체 이미지 평가")
+            reviews = [job(card(f"생성 이미지 자동 검사 · slot {image_slots[image]}", 7,
+                "이미지 후처리 뒤 자동 검사 · 결과 반환은 검사 완료를 기다리지 않음",
+                group="illustration_inspection", task_key=inspection.TASK_KEY),
+                [saved_image], output="개별 이미지 평가") for image, saved_image in zip(images, saved_images)]
+            overall_card = card(f"생성 이미지 전체 품질 검사 · {len(images)}장", 7,
+                                "게시 가능한 이미지와 개별 검사 결과를 모아 전체 검사 · 원본 에셋 제외",
+                                task_key=inspection.TASK_KEY, group="illustration_inspection_overall")
+            job(overall_card, [*saved_images, asset_job, *reviews], output="전체 이미지 평가")
     else:
         notes.append("현재 입력과 설정으로 출력 가능한 이미지가 없어 실제 요청도 실패합니다.")
-    notes.append("LLM 호출과 이미지 렌더링은 길게, 캐시 조회·큐 등록·파일 읽기·합성·저장·데이터 전달은 빠르게 재생합니다. 재생 시간은 작업 종류별 상대 길이이며 실제 소요 시간 예측이 아닙니다. 다른 요청이 없는 큐를 계산하며 오류 복구·라우팅 재시도는 성공 흐름에 포함하지 않습니다.")
-    notes.append("사용 ON/OFF는 설정상 사용 여부이며 처리 중 표시는 모의 실행 상태입니다. 점선은 이번 모의 실행에 포함하지 않은 조건부 경로입니다. 렌더링은 CALL3와 병렬로 진행하고, 대사 이미지 합성은 CALL3·후처리 마스터·활성 봇의 후처리 설정이 켜진 경우에만 사용합니다.")
+    notes.append("FLOW는 자동으로 반복 재생합니다. 실행되는 노드는 0.2초 동안 반짝이고, 생략되는 노드는 강조 없이 넘어갑니다. 연결선을 따라 데이터 전달 순서를 보여줍니다. 다른 요청이 없는 큐를 계산하며 오류 복구·라우팅 재시도는 성공 흐름에 포함하지 않습니다.")
+    notes.append("사용 ON/OFF는 설정상 사용 여부이며 처리 중 표시는 모의 실행 상태입니다. 점선은 이번 모의 실행에 포함하지 않은 조건부 경로입니다. 이미지 큐의 대기·생성은 같은 노드입니다. 대사 합성·이미지 저장은 이미지 후처리 안에서 처리하며, 합성 OFF에서도 원본과 기록을 저장합니다. 완성 프롬프트 입력의 저장은 이미지 큐 작업에 포함됩니다.")
     if assets and illustration:
         notes.append(f"일반 장면 {scene_count}개 전체를 예약합니다. KEYVIS 등록은 Original Asset 시작 조건이 아닙니다.")
     if mask_enabled:

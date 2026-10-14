@@ -19,7 +19,11 @@
             const [task] = getIllustrationPreviewTasks([name]);
             if (!task) continue;
             const route = config.llm_routing?.[task] || {};
-            const primary = validSlot(route.primary) ? route.primary : 'llm1';
+            const primary = route.primary;
+            if (!validSlot(primary)) {
+                console.error('[THINK_CHECK] 메인 슬롯 미설정:', {task, route});
+                continue;
+            }
             add(primary, name, '메인');
             add(llmRouteResolvedFallback(route, primary), name, '폴백');
         }
@@ -28,11 +32,12 @@
     }
 
     function signature(slot, config) {
-        // Include legacy unsuffixed inputs because the existing request builder can use them.
         const suffix = slot === 'llm1' ? '' : slot.slice(3);
-        return JSON.stringify(Object.entries(config).filter(([key]) =>
-            key.startsWith('llm_') && key !== 'llm_routing' &&
-            (!/\d+$/.test(key) || (suffix && key.endsWith(suffix)))));
+        const fields = ['service', 'model', 'api_key', 'url', 'reasoning_preset',
+            'reasoning_effort', 'reasoning_budget_tokens', 'temperature', 'custom_body',
+            'custom_headers', 'stream', 'max_tokens', 'max_concurrency',
+            'stream_idle_timeout_seconds', 'vision_compress', 'gemini_base64', 'pdf_prompt'];
+        return JSON.stringify(fields.map(field => [field, config[`llm_${field}${suffix}`]]));
     }
 
     function element(tag, text, parent) {
@@ -52,12 +57,17 @@
         const [task] = getIllustrationPreviewTasks([name]);
         if (!task) return null;
         const route = config.llm_routing?.[task] || {};
-        const primary = validSlot(route.primary) ? route.primary : 'llm1';
+        const primary = route.primary;
+        if (!validSlot(primary)) {
+            console.error('[THINK_CHECK] 메인 슬롯 미설정:', {task, route});
+            return null;
+        }
         const fallback = llmRouteResolvedFallback(route, primary);
         const main = resultForSlot(primary), backup = validSlot(fallback) ? resultForSlot(fallback) : null;
         const connection = (slot, role, result) => {
             const suffix = slot === 'llm1' ? '' : slot.slice(3);
-            return `${role}: ${slot.toUpperCase()} · ${config[`llm_model${suffix}`] || '(모델 미설정)'}\n${result?.label || '미검사'}`;
+            const model = llmRouteSlotModelName(slot, true, config[`llm_model${suffix}`] || '', config);
+            return `${role}: ${slot.toUpperCase()} · ${model || '(모델 미설정)'}\n${result?.label || '미검사'}`;
         };
         const details = [connection(primary, '메인', main), validSlot(fallback)
             ? connection(fallback, '폴백', backup) : '폴백: 설정 없음'];
@@ -167,7 +177,7 @@
             const info = element('div', undefined, row);
             info.style.cssText = 'flex:1;min-width:200px';
             const suffix = slot === 'llm1' ? '' : slot.slice(3);
-            const model = savedConfig[`llm_model${suffix}`] || '(모델 미설정)';
+            const model = llmRouteSlotModelName(slot, true, savedConfig[`llm_model${suffix}`] || '', savedConfig) || '(모델 미설정)';
             element('strong', `${slot.toUpperCase()} · ${model}`, info);
             const roles = element('div', tasks.join(', '), info);
             roles.style.cssText = 'color:var(--text2);font-size:.78rem';

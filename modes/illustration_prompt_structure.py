@@ -16,6 +16,7 @@ def build_prompt_structure(prompts=None):
     names = ["_input_"]
     batch = [{"anchor_segment": "C001", "characters": names}]
     tracking = {"SLOT0": {"_input_": {"outfit": "_input_", "hair": "_input_"}}}
+    time_place = {"SLOT0": {"_input_": {"time": "_input_", "place": "_input_"}}}
     stages = []
 
     def part(label, content, source, *, condition="", path=""):
@@ -55,11 +56,6 @@ def build_prompt_structure(prompts=None):
               builders.resolution_messages(True, names, {}, "_input_", "_input_", "", "_input_", prompts["profile_resolve"]),
               condition="여러 프로필이 등록된 캐릭터만 · 캐릭터별 병렬",
               notes="단일 프로필은 바로 사용합니다. 사용자 페르소나는 자료가 있을 때 포함합니다.")
-        stage("backtranslate", "BACKTRANSLATE · 원문 역번역", "그림 생성에 사용할 원문을 영어로 변환합니다.",
-              ["역번역된 현재 원문"], ["역번역 지침", "보호할 이름·묶음 정보"],
-              builders.backtranslation_messages(prompts["call1_backtranslate"], "_input_", 1, 1, "_input_"),
-              condition="역번역 설정 ON · 원문 묶음별 병렬",
-              notes="OFF이면 현재 원문을 그대로 사용합니다. 슬롯 표식과 캐릭터 이름을 보존합니다.")
         protected = pipeline.render_call2_prompt(prompts.get("call2_jailbreak", ""), toggles, include_server_limits=False)
         role_context = builders.role_context(protected, "_input_")
         compatibility_part = prompt_part(
@@ -70,19 +66,27 @@ def build_prompt_structure(prompts=None):
             "활성 봇 > 선택된 시스템 프롬프트 (lb-xnai.lb.extra)",
             condition="선택된 시스템 프롬프트가 있으면 포함 · 장면 수 규칙은 서버에서 제거")
         shared_parts = [compatibility_part, lb_extra_part]
-        stage("call1", "CALL1 · 복장·머리 상태 추적", "빈 인물×SLOT 시간표를 입력하고 초기·변경 시점의 복장·헤어 태그만 출력합니다. 서버가 빈칸을 오른쪽으로 채웁니다.",
+        stage("call1", "OUTFIT · 복장·머리 상태 추적", "빈 인물×SLOT 시간표를 입력하고 초기·변경 시점의 복장·헤어 태그만 출력합니다. 서버가 빈칸을 오른쪽으로 채웁니다.",
               ["SLOT별 초기·변경 태그", "서버가 채운 복장·헤어 시간표"],
-              [prompt_part("call1_enhance", "상태 복원·세부정보 유지·변화 추적 지침", "CALL1 > 복장·헤어스타일 상태 추적")],
+              [prompt_part("call1_enhance", "상태 복원·세부정보 유지·변화 추적 지침", "OUTFIT > 복장·헤어스타일 상태 추적")],
               builders.call1_messages(prompts, names, {}, {}, "_input_", "_input_", slots=[0, 1], slotted="_input_", segment_slots={"C001": 0}),
-              notes="장면 선택과 병렬입니다. 저장 이력이 없어도 과거 원문으로 상태를 복원하고, 저장 이력은 생략된 색상·형태 등을 보완합니다. 이후 원문의 변화가 우선하며 각 SLOT까지 적용합니다. 복장·헤어는 각각 새 태그가 나올 때까지 이어받고, 새 값은 해당 항목 전체를 교체합니다. CALL1 노드 상세에서 채워진 표를 봅니다.")
+              condition="OUTFIT 설정 ON",
+              notes="OFF이면 후속 LLM이 원문·이전 문맥에서 상태를 판단합니다. 장면 선택과 병렬입니다. 저장 이력이 없어도 과거 원문으로 상태를 복원하고, 저장 이력은 생략된 색상·형태 등을 보완합니다. 이후 원문의 변화가 우선하며 각 SLOT까지 적용합니다. 복장·헤어는 각각 새 태그가 나올 때까지 이어받고, 새 값은 해당 항목 전체를 교체합니다. OUTFIT 노드 상세에서 채워진 표를 봅니다.")
+        stage("time_place", "TIME & PLACE · 시간·장소 추적", "캐릭터별 시간대와 장소를 복장·헤어와 독립적으로 추적합니다.",
+              ["SLOT별 초기·변경 time/place", "서버가 채운 시간·장소 시간표"],
+              [prompt_part("time_place", "시간·장소 추적 지침", "TIME & PLACE > 시간·장소 상태 추적")],
+              builders.time_place_messages(prompts, names, {}, "_input_", "_input_", slots=[0, 1], slotted="_input_", segment_slots={"C001": 0}),
+              condition="TIME & PLACE 설정 ON",
+              notes="OFF이면 후속 LLM이 원문·이전 문맥에서 시간·장소를 판단합니다. OUTFIT·SELECT와 병렬입니다. time은 넓은 시간대, place는 간단한 장소 단어입니다. 둘은 각각 변경된 SLOT에서만 출력하고 서버가 이전 값을 이어받습니다. 근거가 없으면 unknown이며 복장·헤어를 출력하지 않습니다. TIME & PLACE 노드 상세에서 채워진 표를 봅니다.")
         stage("select", "CALL2-SELECT · 장면 선택", "현재 원문의 후보에서 요청한 수의 앵커와 등장인물만 고릅니다.",
               ["선택된 원문 앵커·등장인물"], shared_parts + [prompt_part("call2_select", "SELECT 전용 프롬프트", "CALL2-SELECT > 장면 선택 지침")],
               builders.selection_messages(prompts, role_context, names, names, "_input_", toggles, {}, [], "_input_", "_input_"),
-              notes="CALL1과 병렬입니다. 단독 주인공 목록은 싱글 프리셋에서, 집중 대상·연출 지시는 입력됐을 때 포함합니다.")
+              notes="OUTFIT·TIME & PLACE와 병렬입니다. 단독 주인공 목록은 싱글 프리셋에서, 집중 대상·연출 지시는 입력됐을 때 포함합니다.")
         stage("plan", "CALL2-PLAN · 선택 장면 구체화", "선택된 앵커에서 그릴 순간을 판단하고, 프로필과 상태를 반영해 장면을 묘사합니다.",
               ["구체화된 장면 계획"], shared_parts + [prompt_part("call2_plan", "PLAN 전용 프롬프트", "CALL2-PLAN > 장면 구체화 지침")],
-              builders.plan_messages(prompts, role_context, batch, set(names), names, tracking, [], "_input_", "_input_", toggles),
-              notes="CALL1과 SELECT 결과를 합친 뒤 시작합니다. 설정에 따라 장면 묶음을 병렬 처리합니다. 단독 주인공·집중 대상·연출 지시는 조건부입니다.")
+              builders.plan_messages(prompts, role_context, batch, set(names), names, tracking, [], "_input_", "_input_", toggles, time_place=time_place),
+              condition="PLAN 설정 ON",
+              notes="OFF이면 SELECT 결과와 원문을 DETAIL에 직접 전달합니다. 활성 추적 단계·SELECT 결과를 합친 뒤 시작합니다. 설정에 따라 장면 묶음을 병렬 처리합니다. 단독 주인공·집중 대상·연출 지시는 조건부입니다.")
         explicit = pipeline.render_call2_prompt(prompts.get("call2_explicit", ""), toggles, include_server_limits=False)
         explicit_part = prompt_part(
             "call2_explicit", "공용 프롬프트 · 물리·노출·접촉 지침", "공용 프롬프트 > 물리·노출·접촉 지침",
@@ -92,11 +96,11 @@ def build_prompt_structure(prompts=None):
               ["카메라·장면 태그", "캐릭터별 긍정 태그", "캐릭터별 부정 태그", "보충 묘사 태그"],
               shared_parts + [explicit_part, prompt_part("call2_detail", "DETAIL 전용 프롬프트", "CALL2-DETAIL > 이미지 태그 작성 지침")],
               builders.detail_messages(detail_system, batch, []),
-              notes="위 블록을 순서대로 줄바꿈 두 개로 연결해 SYSTEM 메시지 하나를 만듭니다. KEYVIS 작업 지침(call2_job)과 공통 묘사 규칙(call2_common)은 DETAIL에 포함하지 않습니다. 각 PLAN 완료 결과에 해당 장면의 프로필·SLOT 상태를 결속해 바로 DETAIL에 전달합니다. DETAIL 묶음은 PLAN 경계를 넘지 않으며 공통 동시 요청 상한을 적용합니다.")
+              notes="위 블록을 순서대로 줄바꿈 두 개로 연결해 SYSTEM 메시지 하나를 만듭니다. KEYVIS 작업 지침(call2_job)과 공통 묘사 규칙(call2_common)은 DETAIL에 포함하지 않습니다. PLAN 한 묶음이 완료되면 같은 장면 전체를 DETAIL 한 요청에 전달합니다. PLAN OFF에서도 공통 병렬 설정으로 SELECT 장면을 분배합니다. 생략한 상태·계획은 필드를 채우지 않고 원문·이전 문맥으로 DETAIL이 판단합니다.")
         keyvis_system = pipeline.render_call2_prompt("\n\n".join(prompts.get(key, "") for key in
             ("call2_jailbreak", "call2_job", "call2_common", "call2_explicit", "call2_keyvis")),
             toggles, include_scene_count_limit=False, include_server_limits=False)
-        keyvis_messages = builders.keyvis_context_messages(keyvis_system, "_input_", "_input_", [], tracking, "_input_", "_input_")
+        keyvis_messages = builders.keyvis_context_messages(keyvis_system, "_input_", "_input_", [], tracking, "_input_", "_input_", time_place=time_place)
         keyvis_messages.append(builders.keyvis_task_message(3, "_input_", names))
         stage("keyvis", "CALL2-KEYVIS · 대표 이미지", "전체 문맥에서 대표 이미지의 순간과 구도를 독립적으로 선택합니다.",
               ["대표 이미지 태그"], [compatibility_part,
@@ -107,7 +111,7 @@ def build_prompt_structure(prompts=None):
                   explicit_part,
                   prompt_part("call2_keyvis", "KEYVIS 전용 프롬프트", "CALL2-KEYVIS > 대표 이미지 지침",
                               rendered=pipeline.render_call2_prompt(prompts["call2_keyvis"], toggles, include_server_limits=False))],
-              keyvis_messages, condition="대표 이미지 설정 ON · DETAIL과 병렬",
+              keyvis_messages, condition="대표 이미지 설정 ON · 일반 PLAN·DETAIL과 독립적으로 병렬",
               notes="SYSTEM의 공용·전용 지침을 순서대로 연결합니다. lb-xnai.lb.extra 시스템 프롬프트는 이 호출에서는 USER에 들어가며, 캐릭터 사전·시점별 프로필·상태·과거 문맥·현재 원문·작업 요청과 순서대로 연결합니다.",
               user_parts=[lb_extra_part])
         variants = []
@@ -141,11 +145,10 @@ def build_prompt_structure(prompts=None):
         "stages": stages,
         "flow": [
             {"label": "원문·등록 캐릭터 → 등장인물·프로필", "keys": ["character", "profile"]},
-            {"label": "그림 생성용 원문 준비", "keys": ["backtranslate"]},
-            {"label": "병렬 처리 → 두 결과를 PLAN에서 합침", "keys": ["call1", "select"]},
-            {"label": "완료된 PLAN 배치 → 해당 장면 DETAIL 즉시 시작", "keys": ["plan", "detail"]},
-            {"label": "병렬 처리 · 대표 이미지는 별도 입력", "keys": ["detail", "keyvis"]},
-            {"label": "조건에 따라 대사와 인물 영역 추가", "keys": ["call3", "mask"]},
-            {"label": "출력 템플릿 조립 → LoRA·품질 후처리 → 이미지 생성", "keys": ["assemble"]},
+            {"label": "SELECT와 켜진 상태 추적 단계 병렬", "keys": ["call1", "time_place", "select"]},
+            {"label": "PLAN 시각 계획 · OFF면 다음 단계로 직접 전달", "keys": ["plan"]},
+            {"label": "DETAIL·대표 이미지 묘사 · 준비 완료 후 CALL3", "keys": ["detail", "keyvis", "call3"]},
+            {"label": "준비된 장면별 인물 영역 배치", "keys": ["mask"]},
+            {"label": "출력 템플릿 조립 → LoRA·품질 태그 반영 → 이미지 생성", "keys": ["assemble"]},
         ],
     }

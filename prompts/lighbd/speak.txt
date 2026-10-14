@@ -1,34 +1,34 @@
 Write concise character dialogue or thoughts for the supplied illustrated scenes.
 
-The selected-scenes list is authoritative. For every supplied selected scene, emit its exact Scene header. When dialogue or a thought naturally belongs to that exact illustrated moment, write it and reuse source wording when suitable. A scene may be intentionally silent. If no suitable character is visible or narratively present, or adding an entry would turn external action/narration into an invented thought, leave that Scene block body empty. Do not add new events, relationships, exposition, or plot information. Use the requested language.
+The selected-scenes list is authoritative. For every supplied selected scene, emit a scene object with its exact slot value. When dialogue or a thought naturally belongs to that exact illustrated moment, write it and reuse source wording when suitable. A scene may be intentionally silent. If no suitable character is visible or narratively present, or adding an entry would turn external action/narration into an invented thought, use an empty entries array. Do not add new events, relationships, exposition, or plot information. Use the requested language.
 
 Character roster (internal identifiers for machine-readable speaker attribution only):
 {character_names}
 
 Output format:
-[Scene slot=N]
-NAME: "spoken line"
-NAME: (thought line)
+{"scenes":[{"slot":"C001","entries":[{"speaker":"NAME","type":"speech","text":"spoken line"}]},{"slot":"C002","entries":[{"speaker":"NAME","type":"thought","text":"thought line"}]},{"slot":"C003","entries":[]}]}
+
+Use the exact supplied slot value, whether it is a Cxxx anchor or an integer. Write the body only in text, without surrounding speech quotes or thought parentheses. The optional tag field holds one emotion label without # when requested. Return all JSON string values as plain text; do not Base64-encode the response.
 
 Rules:
-- Keep speaker attribution separate from forms of address inside dialogue. In the `NAME:` prefix, use the exact matching identifier from the character roster so downstream processing can identify the speaker. The prefix is metadata and is not part of the spoken or thought text.
-- Inside quoted dialogue or parenthesized thoughts, never copy an internal roster identifier merely because it appears in the roster, selected-scene metadata, or character fields.
+- Keep speaker attribution separate from forms of address inside dialogue. In the speaker field, use the exact matching identifier from the character roster so downstream processing can identify the speaker. That field is metadata and is not part of the spoken or thought text.
+- Inside the text field, never copy an internal roster identifier merely because it appears in the roster, selected-scene metadata, or character fields.
 - Infer any in-story name, nickname, title, kinship term, pronoun, or other form of address from the original narrative and bounded conversation. Use the form that the characters would naturally use in context.
 - Do not force a name, nickname, or direct address into an entry. If the source does not naturally call for one, write the line without addressing anyone by name. If the proper form of address is uncertain, omit it instead of exposing an internal identifier or inventing one.
-- The exact roster identifier belongs only on the left side of the colon. When the requested output language is not English, never leave that Latin-script roster identifier inside quoted dialogue or parenthesized thought. Use a natural in-story form of address supported by the source, or omit direct address when uncertain.
-- Emit exactly one Scene block for every supplied selected scene, in the supplied order.
-- Use each supplied exact numeric slot once. Never output a slot that was not supplied.
-- Key visuals are intentionally excluded. Never output slot -1.
-- Never omit or skip a supplied Scene header. Its body may be empty only when the exact illustrated moment should remain silent or has no suitable visible or narratively present character.
+- The exact roster identifier belongs only in the speaker field. When the requested output language is not English, never leave that Latin-script roster identifier inside the text field. Use a natural in-story form of address supported by the source, or omit direct address when uncertain.
+- Emit exactly one scene object for every supplied selected scene, in the supplied order.
+- Use each supplied exact Cxxx anchor once. Never output a slot that was not supplied.
+- Key visuals are intentionally excluded. Never output a Key Visual anchor.
+- Never omit or skip a supplied scene object. Its entries array may be empty only when the exact illustrated moment should remain silent or has no suitable visible or narratively present character.
 - A line must belong to a character visible or narratively present in that scene.
 - Emit at most two dialogue/thought entries per scene. This is a hard limit.
 - Prefer one entry: the illustrated speaker's single most relevant utterance or thought.
 - For each selected scene, search its upper_window first and choose the closest suitable dialogue or thought above the insertion slot.
 - Use lower_window only when upper_window has no suitable entry, and then choose the closest suitable entry below the slot.
 - Never cross the supplied window boundaries. Text beyond a neighboring illustration belongs to another illustration and is forbidden.
-- If neither bounded window contains a suitable source line, add one short context-faithful thought or reaction only when it is natural and supported. Otherwise keep the Scene header and leave its body empty.
+- If neither bounded window contains a suitable source line, add one short context-faithful thought or reaction only when it is natural and supported. Otherwise keep the scene object with entries: [].
 - Use two entries only for one immediate exchange: one utterance followed by one direct reply.
 - Never continue to a third turn, never output an A-B-A exchange, and never split one utterance across multiple entries.
 - If the source contains a longer conversation, select only the one line or single two-entry exchange that best matches the exact illustrated moment.
 - Do not output explanations, alternatives, confidence scores, or unrequested Scene blocks.
-- Output only the required Scene blocks.
+- Output only the required JSON object, without Markdown fences or explanations.

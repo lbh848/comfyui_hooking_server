@@ -7,6 +7,7 @@ illustration_context_pipeline. This module does not infer image tags in Python.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 from copy import deepcopy
 import hashlib
 import json
@@ -28,8 +29,8 @@ def _fail(stage: str, reason: str, value=None) -> None:
     raise ValueError(f"{stage}: {reason}")
 
 
-def _json_response(text: str, stage: str) -> dict:
-    value = pipeline._json_object_from_text(text)
+def _json_response(text: str, stage: str, *, array_key: str | None = None) -> dict:
+    value = pipeline._json_object_from_text(text, array_key=array_key)
     if not isinstance(value, dict):
         _fail(stage, "JSON object 응답 없음", str(text or "")[:400])
     return value
@@ -120,7 +121,7 @@ def profile_for_detail(name: str, base: dict, extra_reference: str,
 
 
 def previous_statuses(names: list[str], history_plan: dict | None) -> dict[str, list[str]]:
-    """Carry the saved raw CALL1 status chain, never just its last (possibly partial) event."""
+    """Carry the saved raw OUTFIT status chain, never just its last (possibly partial) event."""
     states = (history_plan or {}).get("state_before") or {}
     result = {}
     for name in names:
@@ -132,42 +133,62 @@ def previous_statuses(names: list[str], history_plan: dict | None) -> dict[str, 
             if not isinstance(chain, list) or not chain or any(
                 not isinstance(status, str) or not status.strip() for status in chain
             ):
-                _fail("CALL1", "저장된 CALL1 원문 상태 기록 손상", {"character": name, "history": chain})
+                _fail("OUTFIT", "저장된 OUTFIT 원문 상태 기록 손상", {"character": name, "history": chain})
             result[name] = list(chain)
             continue
         status = tracked.get("call1_status") if isinstance(tracked, dict) else None
         if isinstance(status, str) and status.strip():
-            print(f"[ILLUST_CONTEXT:CALL1] 구형 단일 CALL1 상태만 사용(이전 변경 내역 없음): character={name!r}")
+            print(f"[ILLUST_CONTEXT:OUTFIT] 구형 단일 OUTFIT 상태만 사용(이전 변경 내역 없음): character={name!r}")
             result[name] = [status]
         else:
-            print(f"[ILLUST_CONTEXT:CALL1] 저장된 CALL1 종단 상태 없음, resolved profile/lb.extra 기본값 사용: character={name!r}, history={bool(history_plan)}")
+            print(f"[ILLUST_CONTEXT:OUTFIT] 저장된 OUTFIT 종단 상태 없음, resolved profile/lb.extra 기본값 사용: character={name!r}, history={bool(history_plan)}")
     return result
 
 
-def parse_state(text: str, names: list[str], slots: list[int]) -> dict:
-    """Read sparse per-slot tag checkpoints; Python never interprets tag meaning."""
-    raw = _json_response(text, "CALL1")
+def previous_time_places(names: list[str], history_plan: dict | None) -> dict:
+    """Time/place memory is independent of OUTFIT's outfit/hair history."""
+    states = (history_plan or {}).get("state_before") or {}
+    result = {}
+    for name in names:
+        tracked = next((value for key, value in states.items()
+                        if isinstance(value, dict) and
+                        str(value.get("canonical_name") or key).strip().casefold() == name.casefold()), None)
+        previous = tracked.get("time_place") if isinstance(tracked, dict) else None
+        if isinstance(previous, dict) and previous:
+            result[name] = deepcopy(previous)
+        else:
+            print(f"[ILLUST_CONTEXT:TIME & PLACE] 저장된 시간·장소 없음; 원문 문맥으로 판단: character={name!r}, state={previous!r}")
+    return result
+
+
+def parse_state(text: str, names: list[str], slots: list[int], *,
+                fields=("outfit", "hair"), stage="OUTFIT", segment_slots=None) -> dict:
+    """Read sparse string checkpoints; Python never interprets their meaning."""
+    raw = _json_response(text, stage)
+    aspects = "/".join(fields)
     if not slots:
-        _fail("CALL1", "상태표의 SLOT 목록 없음", slots)
+        _fail(stage, "상태표의 SLOT 목록 없음", slots)
+    slot_labels = {anchor: f"SLOT{slot}" for anchor, slot in (segment_slots or {}).items()}
+    raw = {slot_labels.get(label, label): characters for label, characters in raw.items()}
     known_slots = {f"SLOT{slot}" for slot in slots}
     for slot, characters in raw.items():
         if slot not in known_slots or not isinstance(characters, dict):
-            _fail("CALL1", "상태를 배치할 SLOT/인물 객체 없음", {slot: characters})
+            _fail(stage, "상태를 배치할 SLOT/인물 객체 없음", {slot: characters})
         for name, state in characters.items():
             if name not in names or not isinstance(state, dict):
-                _fail("CALL1", "확정 인물의 태그 상태 객체 필요", {slot: {name: state}})
+                _fail(stage, "확정 인물의 상태 객체 필요", {slot: {name: state}})
             for field, tags in state.items():
-                if field not in {"outfit", "hair"} or not isinstance(tags, str):
-                    _fail("CALL1", "복장/헤어 태그 문자열 필요", {slot: {name: state}})
+                if field not in fields or not isinstance(tags, str):
+                    _fail(stage, f"{aspects} 문자열 필요", {slot: {name: state}})
     first = raw.get(f"SLOT{slots[0]}", {})
     for name in names:
-        if not {"outfit", "hair"} <= first.get(name, {}).keys():
-            _fail("CALL1", "첫 SLOT의 복장/헤어 초기값 누락", {"character": name, "first_slot": slots[0], "input": raw})
+        if not set(fields) <= first.get(name, {}).keys():
+            _fail(stage, f"첫 SLOT의 {aspects} 초기값 누락", {"character": name, "first_slot": slots[0], "input": raw})
     return raw
 
 
 def fill_state_table(changes: dict, names: list[str], slots: list[int]) -> dict:
-    """Forward-fill each person's outfit/hair until that field's next checkpoint.
+    """Forward-fill each person's fields until that field's next checkpoint.
 
     An explicitly supplied empty string replaces the prior value too. It is
     never confused with an omitted field, and no tag merging is performed.
@@ -188,40 +209,70 @@ def parse_plan(text: str, *, segments: dict, slot_map: dict[str, int],
                single_names: list[str] | None = None,
                assigned_scenes: list[dict] | None = None,
                stage: str = "CALL2-PLAN") -> list[dict]:
-    raw = _json_response(text, stage)
-    if set(raw) != {"scene_plan"} or not isinstance(raw["scene_plan"], list):
+    raw = _json_response(text, stage, array_key="scene_plan")
+    if "scene_plan" not in raw and "anchor_segment" in raw:
+        print(f"[ILLUST_CONTEXT:{stage}] 단일 장면 루트 복구: anchor={raw['anchor_segment']!r}")
+        raw = {"scene_plan": [raw]}
+    if not isinstance(raw.get("scene_plan"), list):
         _fail(stage, "scene_plan만 출력해야 함", list(raw))
-    scenes = raw["scene_plan"]
+    if set(raw) != {"scene_plan"}:
+        print(f"[ILLUST_CONTEXT:{stage}] 소비하지 않는 루트 필드 제외: fields={set(raw) - {'scene_plan'}}")
+    scenes = deepcopy(raw["scene_plan"])
     minimum = (len(assigned_scenes) if assigned_scenes is not None
                else min(int(toggles["output_count_min"]), len(candidates)))
     maximum = (len(assigned_scenes) if assigned_scenes is not None
                else min(int(toggles["output_count_max"]), len(candidates)))
     if not minimum <= len(scenes) <= maximum:
         _fail(stage, f"장면 수 위반: required={minimum}..{maximum}", len(scenes))
+    if assigned_scenes is not None:
+        anchors = [item.get("anchor_segment") for item in scenes if isinstance(item, dict)]
+        expected_anchors = [item["anchor_segment"] for item in assigned_scenes]
+        if (len(anchors) == len(scenes) and all(isinstance(anchor, str) for anchor in anchors)
+                and len(set(anchors)) == len(anchors) and set(anchors) == set(expected_anchors)):
+            by_anchor = {item["anchor_segment"]: item for item in scenes}
+            if anchors != expected_anchors:
+                print(f"[ILLUST_CONTEXT:{stage}] 장면 순서 복구: actual={anchors}, assigned={expected_anchors}")
+            scenes = [by_anchor[anchor] for anchor in expected_anchors]
     known = set(names)
     permitted_single = set(single_names or [])
     last_rank = -1
     used_slots = set()
     for index, scene in enumerate(scenes, 1):
+        required_fields = {"anchor_segment", "characters"}
         if stage == "CALL2-SELECT":
-            required_fields = {"anchor_segment", "characters"}
             # An older selection response remains usable, but its brief must
             # not constrain PLAN's source-grounded choice of the instant.
-            if (not isinstance(scene, dict) or not required_fields <= set(scene)
-                    or not set(scene) <= required_fields | {"scene_brief"}):
+            if not isinstance(scene, dict) or not required_fields <= set(scene):
                 _fail(stage, "선택 출력에는 anchor_segment/characters가 필요", scene)
-        elif not isinstance(scene, dict) or set(scene) != {"anchor_segment", "characters", "scene_brief"}:
-            _fail(stage, "plan 출력 필드는 anchor_segment/characters/scene_brief만 허용", scene)
+        else:
+            required_fields.add("scene_brief")
+            if not isinstance(scene, dict) or not required_fields <= set(scene):
+                _fail(stage, "plan 출력에는 anchor_segment/characters/scene_brief가 필요", scene)
+        extras = set(scene) - required_fields - ({"scene_brief"} if stage == "CALL2-SELECT" else set())
+        if extras:
+            print(f"[ILLUST_CONTEXT:{stage}] 소비하지 않는 장면 필드 제외: fields={extras}")
+            scene = {key: value for key, value in scene.items() if key not in extras}
+            scenes[index - 1] = scene
         if assigned_scenes is not None:
             assigned = assigned_scenes[index - 1]
+            participants = scene["characters"]
+            if (isinstance(participants, list) and all(isinstance(name, str) for name in participants)
+                    and len(participants) == len(assigned["characters"])
+                    and len(set(participants)) == len(participants)
+                    and set(participants) == set(assigned["characters"])
+                    and participants != assigned["characters"]):
+                print(f"[ILLUST_CONTEXT:{stage}] 확정 인물 순서 복구: anchor={scene['anchor_segment']}, actual={participants}")
+                scene["characters"] = list(assigned["characters"])
             if (scene["anchor_segment"] != assigned["anchor_segment"]
                     or scene["characters"] != assigned["characters"]):
                 _fail(stage, "배정된 장면의 anchor/characters/순서 변경 불가",
                       {"assigned": assigned, "actual": scene})
         anchor = scene["anchor_segment"]
         rank = list(segments).index(anchor) if isinstance(anchor, str) and anchor in segments else -1
-        if rank <= last_rank or anchor not in slot_map or slot_map[anchor] not in candidates:
-            _fail(stage, "없는/중복/역순 anchor 또는 slot 매핑 불가", scene)
+        if rank < 0 or anchor not in slot_map or slot_map[anchor] not in candidates:
+            _fail(stage, "없는 anchor 또는 slot 매핑 불가", scene)
+        if stage != "CALL2-SELECT" and rank <= last_rank:
+            _fail(stage, "중복/역순 anchor", scene)
         slot = slot_map[anchor]
         if slot in used_slots:
             _fail(stage, "다른 anchor와 같은 slot을 선택함", {"slot": slot, "anchor": anchor})
@@ -243,18 +294,27 @@ def parse_plan(text: str, *, segments: dict, slot_map: dict[str, int],
             if "scene_brief" in scene:
                 print(f"[ILLUST_CONTEXT:{stage}] 기존 선택 brief는 PLAN에 전달하지 않음; "
                       f"순간 판단은 PLAN에서 수행: scene={scene!r}")
-        return [{"anchor_segment": scene["anchor_segment"],
-                 "characters": deepcopy(scene["characters"])} for scene in scenes]
+        selected = [{"anchor_segment": scene["anchor_segment"],
+                     "characters": deepcopy(scene["characters"])} for scene in scenes]
+        # SELECT chooses the moments and cast; source insertion order is a
+        # mechanical server concern, not a reason to discard valid choices.
+        ordered = sorted(selected, key=lambda scene: list(segments).index(scene["anchor_segment"]))
+        if ordered != selected:
+            print(f"[ILLUST_CONTEXT:{stage}] 유효한 선택을 원문 삽입 순서로 정렬: "
+                  f"before={[scene['anchor_segment'] for scene in selected]!r}, "
+                  f"after={[scene['anchor_segment'] for scene in ordered]!r}")
+        return ordered
     return deepcopy(scenes)
 
 
 def slice_scene(plan: dict, *, slot_map: dict[str, int], profile_result: dict,
-                visual_profiles: dict | None, segments: dict, tracking: dict,
-                extra_reference: str) -> tuple[dict, dict]:
-    """Pass only the selected slot's filled tag state and selected profiles."""
+                visual_profiles: dict | None, segments: dict, tracking: dict | None,
+                extra_reference: str, time_place: dict | None = None) -> tuple[dict, dict]:
+    """Pass selected profiles and only the enabled trackers' own slot state."""
     anchor = plan["anchor_segment"]
-    scene = {"anchor_segment": anchor, "slot": int(slot_map[anchor]),
-             "brief": plan["scene_brief"], "characters": []}
+    scene = {"anchor_segment": anchor, "slot": int(slot_map[anchor]), "characters": []}
+    if "scene_brief" in plan:
+        scene["brief"] = plan["scene_brief"]
     bases = {}
     for name in plan["characters"]:
         base = active_profile(name, anchor, profile_result, visual_profiles,
@@ -262,15 +322,26 @@ def slice_scene(plan: dict, *, slot_map: dict[str, int], profile_result: dict,
         if base:
             bases[name] = base
         character = {"name": name, "profile": profile_for_detail(name, base, extra_reference,
-                                                               visual_profiles),
-                     "state": deepcopy(tracking[f"SLOT{scene['slot']}"][name])}
+                                                               visual_profiles)}
+        if tracking is not None:
+            character["state"] = deepcopy(tracking[f"SLOT{scene['slot']}"][name])
+        if time_place is not None:
+            character["time_place"] = deepcopy(time_place[f"SLOT{scene['slot']}"][name])
         scene["characters"].append(character)
     return scene, bases
 
 
 def _parse_detail_scene(item: dict, scene: dict) -> dict:
-    if not isinstance(item, dict) or set(item) != {"slot", "camera", "characters", "scene", "supplement"}:
-        _fail("CALL2-DETAIL", "장면 스키마 위반/outfit_state 등 추가 필드 불가", item)
+    required = {"slot", "camera", "characters", "scene"}
+    if not isinstance(item, dict) or not required <= set(item):
+        _fail("CALL2-DETAIL", "필수 장면 데이터 누락", item)
+    item = deepcopy(item)
+    extras = set(item) - required - {"supplement"}
+    if extras:
+        print(f"[ILLUST_CONTEXT:CALL2-DETAIL] 소비하지 않는 장면 필드 제외: slot={item['slot']}, fields={extras}")
+    if item.get("supplement") is None:
+        print(f"[ILLUST_CONTEXT:CALL2-DETAIL] 빈 supplement 복구: slot={item['slot']}")
+        item["supplement"] = ""
     if type(item["slot"]) is not int or item["slot"] != scene["slot"]:
         _fail("CALL2-DETAIL", "PLAN과 다른 slot", {"expected": scene["slot"], "actual": item["slot"]})
     if not all(isinstance(item[key], str) for key in ("camera", "scene", "supplement")) or not item["camera"].strip() or not item["scene"].strip():
@@ -279,11 +350,26 @@ def _parse_detail_scene(item: dict, scene: dict) -> dict:
     expected = [ch["name"] for ch in scene["characters"]]
     if not isinstance(characters, list) or len(characters) != len(expected):
         _fail("CALL2-DETAIL", "캐릭터 수 불일치", {"expected": expected, "actual": characters})
+    actual = [character.get("name") for character in characters if isinstance(character, dict)]
+    if (len(actual) == len(characters) and all(isinstance(name, str) for name in actual)
+            and len(set(actual)) == len(actual) and set(actual) == set(expected) and actual != expected):
+        print(f"[ILLUST_CONTEXT:CALL2-DETAIL] 확정 인물 순서 복구: slot={item['slot']}, actual={actual}, expected={expected}")
+        by_name = {character["name"]: character for character in characters}
+        characters = [by_name[name] for name in expected]
     for index, (character, name) in enumerate(zip(characters, expected)):
-        if not isinstance(character, dict) or set(character) != {"name", "positive", "negative", "position"}:
-            _fail("CALL2-DETAIL", f"캐릭터 스키마 위반 index={index}", character)
+        if not isinstance(character, dict) or not {"name", "positive"} <= set(character):
+            _fail("CALL2-DETAIL", f"필수 캐릭터 데이터 누락 index={index}", character)
+        extras = set(character) - {"name", "positive", "negative", "position"}
+        if extras:
+            print(f"[ILLUST_CONTEXT:CALL2-DETAIL] 소비하지 않는 캐릭터 필드 제외: name={name!r}, fields={extras}")
+        for field in ("negative", "position"):
+            if character.get(field) is None:
+                print(f"[ILLUST_CONTEXT:CALL2-DETAIL] 빈 캐릭터 필드 복구: name={name!r}, field={field}")
+                character[field] = ""
         if character["name"] != name or not all(isinstance(character[key], str) for key in ("positive", "negative", "position")):
             _fail("CALL2-DETAIL", f"canonical name/태그 형식 위반 index={index}", character)
+    characters = [{key: character[key] for key in ("name", "positive", "negative", "position")}
+                  for character in characters]
     return {"kind": "scene", "slot": item["slot"], "camera": item["camera"],
             "scene": item["scene"], "supplement": item["supplement"],
             "characters": deepcopy(characters), "speak": ""}
@@ -292,56 +378,46 @@ def _parse_detail_scene(item: dict, scene: dict) -> dict:
 def parse_detail_batch(text: str, scenes: list[dict]) -> list[dict]:
     blocks = list(re.finditer(r"<lb[-_]xnai[^>]*>([\s\S]*?)</lb[-_]xnai>", text or "", re.I))
     if len(blocks) != 1:
-        _fail("CALL2-DETAIL", "배치당 <lb-xnai> 블록은 정확히 하나여야 함",
-              {"count": len(blocks), "slots": [scene["slot"] for scene in scenes],
-               "response": str(text or "")[:400]})
-    inner = blocks[0].group(1).strip()
-    fence = re.fullmatch(r"```(?:json|yaml|yml)?\s*\n([\s\S]*?)\n?```", inner, re.I)
-    if fence:
-        inner = fence.group(1).strip()
-    # A routed provider can emit <scenes>[JSON array]</scenes> inside the
-    # required lb-xnai block. That is a container, not YAML: decode the array
-    # losslessly before applying the same strict scene/slot validators below.
-    wrapped = re.fullmatch(r"<scenes>\s*([\s\S]*?)\s*</scenes>", inner, re.I)
-    if wrapped:
-        inner = wrapped.group(1).strip()
-        fence = re.fullmatch(r"```(?:json)?\s*\n([\s\S]*?)\n?```", inner, re.I)
-        if fence:
-            inner = fence.group(1).strip()
-        try:
-            raw = {"scenes": json.loads(inner)}
-        except json.JSONDecodeError as exc:
-            print(f"[ILLUST_CONTEXT:CALL2-DETAIL] <scenes> JSON 디코딩 오류: slots={[scene['slot'] for scene in scenes]!r}, error={exc}, source={inner[:500]!r}")
-            traceback.print_exc()
-            raise ValueError(f"CALL2-DETAIL: <scenes> JSON 디코딩 오류: {exc}") from exc
-    else:
-        try:
-            if inner.startswith(("{", "[")):
-                try:
-                    raw = json.loads(inner)
-                except json.JSONDecodeError:
-                    raw = yaml.safe_load(pipeline._normalize_toon(inner))
-            else:
-                raw = yaml.safe_load(pipeline._normalize_toon(inner))
-        except (json.JSONDecodeError, yaml.YAMLError) as exc:
-            print(f"[ILLUST_CONTEXT:CALL2-DETAIL] 응답 디코딩 오류: slots={[scene['slot'] for scene in scenes]!r}, error={exc}, source={inner[:500]!r}")
-            traceback.print_exc()
-            raise ValueError(f"CALL2-DETAIL: 응답 디코딩 오류: {exc}") from exc
-    if not isinstance(raw, dict) or set(raw) != {"scenes"} or not isinstance(raw["scenes"], list):
-        _fail("CALL2-DETAIL", "scenes 배열만 허용하며 Key Visual/추가 필드 불가", raw)
+        print(f"[ILLUST_CONTEXT:CALL2-DETAIL] 배치 포장 복구: blocks={len(blocks)}, slots={[scene['slot'] for scene in scenes]}")
+    documents = [block.group(1) for block in blocks] if blocks else [str(text or "")]
+    items = []
+    for document in documents:
+        raw = pipeline._json_object_from_text(document, array_key="scenes")
+        if isinstance(raw, dict) and "scenes" not in raw and "slot" in raw:
+            print(f"[ILLUST_CONTEXT:CALL2-DETAIL] 단일 장면 루트 복구: slot={raw['slot']!r}")
+            raw = {"scenes": [raw]}
+        if not isinstance(raw, dict) or not isinstance(raw.get("scenes"), list):
+            _fail("CALL2-DETAIL", "복구 가능한 scenes 배열 없음", document[:500])
+        if set(raw) != {"scenes"}:
+            print(f"[ILLUST_CONTEXT:CALL2-DETAIL] 소비하지 않는 루트 필드 제외: fields={set(raw) - {'scenes'}}")
+        items.extend(raw["scenes"])
     expected_by_slot = {scene["slot"]: scene for scene in scenes}
     if len(expected_by_slot) != len(scenes):
         _fail("CALL2-DETAIL", "배정된 장면의 slot 중복", [scene["slot"] for scene in scenes])
-    if len(raw["scenes"]) != len(scenes):
-        _fail("CALL2-DETAIL", "배정된 장면 수 불일치", {"expected": list(expected_by_slot), "actual": raw["scenes"]})
     by_slot = {}
-    for item in raw["scenes"]:
+    anchor_slots = {scene.get("anchor_segment"): scene["slot"] for scene in scenes if scene.get("anchor_segment")}
+    for item in items:
         if not isinstance(item, dict) or "slot" not in item:
             _fail("CALL2-DETAIL", "장면 slot 누락/형식 오류", item)
         slot = item["slot"]
-        if type(slot) is not int or slot not in expected_by_slot or slot in by_slot:
+        if isinstance(slot, str) and slot in anchor_slots:
+            slot = anchor_slots[slot]
+            item = {**item, "slot": slot}
+        elif isinstance(slot, str) and re.fullmatch(r"[+-]?\d+", slot.strip()):
+            print(f"[ILLUST_CONTEXT:CALL2-DETAIL] 숫자 slot 문자열 복구: value={slot!r}")
+            slot = int(slot)
+            item = {**item, "slot": slot}
+        if type(slot) is not int or slot not in expected_by_slot:
             _fail("CALL2-DETAIL", "미배정/중복 slot", {"expected": list(expected_by_slot), "actual": slot})
-        by_slot[slot] = _parse_detail_scene(item, expected_by_slot[slot])
+        descriptor = _parse_detail_scene(item, expected_by_slot[slot])
+        if slot in by_slot:
+            if descriptor != by_slot[slot]:
+                _fail("CALL2-DETAIL", "서로 다른 내용의 중복 slot", slot)
+            print(f"[ILLUST_CONTEXT:CALL2-DETAIL] 동일 장면 중복 제거: slot={slot}")
+            continue
+        by_slot[slot] = descriptor
+    if set(by_slot) != set(expected_by_slot):
+        _fail("CALL2-DETAIL", "배정된 장면 수 불일치", {"expected": list(expected_by_slot), "actual": list(by_slot)})
     return [by_slot[scene["slot"]] for scene in scenes]
 
 
@@ -369,7 +445,7 @@ async def build_from_context(
     payload: dict, toggles: dict | None, extra_reference: str, progress=None,
     stream_notify=None, on_call2_plan_ready=None, on_call2_ready=None,
     on_keyvis_ready=None, extra_instruction: str = "", extra_costume: str = "",
-    extra_names: str = "", backtranslate_names: str = "",
+    extra_names: str = "", character_names: str = "",
     enable_multi_char_layout: bool = False, history_plan: dict | None = None,
     visual_profiles: dict | None = None, profile_translation_namespace: str = "",
     pre_resolved_profile_output: str = "", pre_resolved_profile_result: dict | None = None,
@@ -388,30 +464,8 @@ async def build_from_context(
             _fail("CONTEXT", "최신 CHAR 본문 없음", {"session": payload.get("session_id"), "chats": len(chats)})
         original_slotted = str(payload.get("target_slotted") or "").strip() or p.insert_slots(narrative)
         slotted = original_slotted
-        backtranslation_chunks = []
-        if toggles.get("call1_backtranslate_enabled"):
-            if progress:
-                await progress(3, "call1_backtranslate", "CALL1 역번역 준비")
-            slotted, backtranslation_chunks = await p.backtranslate_current_context(
-                slotted, prompts.get("call1_backtranslate", ""), backtranslate_names,
-                int(toggles["call1_backtranslate_max_concurrency"]),
-                failure_strategy=str(toggles["call1_backtranslate_failure_strategy"]),
-                stream_notify=stream_notify,
-                slow_retry_enabled=bool(toggles["call1_backtranslate_slow_retry_enabled"]),
-                slow_retry_remaining=int(toggles["call1_backtranslate_slow_retry_remaining"]),
-                slow_retry_progress_enabled=bool(toggles["call1_backtranslate_slow_retry_progress_enabled"]),
-                slow_retry_progress_threshold=int(toggles["call1_backtranslate_slow_retry_progress_threshold"]),
-                slow_retry_tps_enabled=bool(toggles["call1_backtranslate_slow_retry_tps_enabled"]),
-                slow_retry_tps_threshold=float(toggles["call1_backtranslate_slow_retry_tps_threshold"]),
-                slow_retry_condition_operator=str(toggles["call1_backtranslate_slow_retry_condition_operator"]),
-            )
-            enhanced = p.remove_slot_markers(slotted)
-            if not enhanced:
-                _fail("BACKTRANSLATE", "변환된 CURRENT 본문 없음", backtranslation_chunks)
-        else:
-            print("[ILLUST_CONTEXT:BACKTRANSLATE] 토글 비활성화; CURRENT 원문 유지")
-            enhanced = str(narrative).strip()
-        segmented, segments = p._segment_current_context(enhanced)
+        enhanced = p.remove_slot_markers(slotted)
+        segmented, segments = p._segment_current_context(enhanced, slotted_context=slotted)
         history = history_plan if isinstance(history_plan, dict) else None
         if visual_profiles and pre_resolved_profile_result is None:
             profile_output, profile_result = await p.resolve_profiles_before_generation(
@@ -422,8 +476,9 @@ async def build_from_context(
         else:
             profile_output = str(pre_resolved_profile_output or "")
             profile_result = deepcopy(pre_resolved_profile_result or p._empty_profile_result())
-        names = _roster(profile_result, backtranslate_names or extra_names, visual_profiles)
+        names = _roster(profile_result, character_names or extra_names, visual_profiles)
         prior_status = previous_statuses(names, history)
+        prior_time_place = previous_time_places(names, history)
         segment_order = {sid: index for index, sid in enumerate(segments)}
         baselines = {name: profile_for_detail(
             name, active_profile(name, "START", profile_result, visual_profiles, segment_order),
@@ -436,24 +491,47 @@ async def build_from_context(
         past_text = p._history_messages_text(history_slice)
         async def track_state():
             if progress:
-                await progress(8, "call1", "CALL1 옷·머리 상태 추적")
+                await progress(8, "call1", "OUTFIT 옷·머리 상태 추적")
             if toggles.get("call1_parallel_enabled"):
-                print("[ILLUST_CONTEXT:CALL1] 하나의 누적 상태 타임라인을 위해 CALL1 shard 병렬 분할 사용하지 않음")
+                print("[ILLUST_CONTEXT:OUTFIT] 하나의 누적 상태 타임라인을 위해 OUTFIT shard 병렬 분할 사용하지 않음")
             state_messages = prompt_builders.call1_messages(
                 prompts, names, prior_status, baselines, past_text, segmented,
                 slots=state_slots, slotted=slotted, segment_slots=segment_slots)
             def validate_state(response):
                 try:
-                    parse_state(response, names, state_slots)
+                    parse_state(response, names, state_slots, segment_slots=segment_slots)
                     return True, ""
                 except ValueError as exc:
                     return False, str(exc)
-            call1_output = await p._call_pipeline_llm("CALL1", p._normalize_messages(state_messages),
+            call1_output = await p._call_pipeline_llm("OUTFIT", p._normalize_messages(state_messages),
                                                      stream_notify, result_validator=validate_state, json_mode=True)
-            changes = parse_state(call1_output, names, state_slots)
+            changes = parse_state(call1_output, names, state_slots, segment_slots=segment_slots)
             table = fill_state_table(changes, names, state_slots)
             illustration_flow.record_call1_state_table(table)
             return call1_output, table
+
+        async def track_time_place():
+            if progress:
+                await progress(8, "time_place", "TIME & PLACE 시간·장소 추적")
+            messages = prompt_builders.time_place_messages(
+                prompts, names, prior_time_place, past_text, segmented,
+                slots=state_slots, slotted=slotted, segment_slots=segment_slots)
+            def parse(response):
+                return parse_state(response, names, state_slots,
+                                   fields=("time", "place"), stage="TIME & PLACE", segment_slots=segment_slots)
+            def validate(response):
+                try:
+                    parse(response)
+                    return True, ""
+                except ValueError as exc:
+                    return False, str(exc)
+            output = await p._call_pipeline_llm(
+                "TIME & PLACE", p._normalize_messages(messages), stream_notify,
+                result_validator=validate, json_mode=True)
+            table = fill_state_table(parse(output), names, state_slots)
+            illustration_flow.record_state_table(
+                table, label="TIME & PLACE", field="time_place_state_table")
+            return output, table
 
         segment_slots, segment_catalog, slot_reason = p.build_segment_slot_map(slotted, segments)
         if not segment_slots or slot_reason:
@@ -473,7 +551,7 @@ async def build_from_context(
                                           include_server_limits=False)
         role_context = prompt_builders.role_context(protected, lb_extra_system_prompt)
         # Selection uses source chronology, saved pre-CURRENT statuses and
-        # already resolved cards; current CALL1 tracking joins only before PLAN.
+        # already resolved cards; current OUTFIT tracking joins only before PLAN.
         plan_profiles = []
         for name in names:
             profile_segments = {
@@ -513,19 +591,30 @@ async def build_from_context(
                 single_names=single_names, stage="CALL2-SELECT")
             return output, selected
 
+        front_stages = (
+            (track_state, "OUTFIT", toggles["outfit_enabled"]),
+            (track_time_place, "TIME & PLACE", toggles["time_place_enabled"]),
+            (select_scenes, "CALL2-SELECT", True),
+        )
         if progress:
-            await progress(8, "call2_select", "CALL1 상태 추적 · SELECT 장면 선택 병렬")
-        print(f"[ILLUST_CONTEXT:CALL1_SELECT] PLAN 앞단 병렬 시작: "
+            await progress(8, "call2_select", " · ".join(
+                label for _, label, enabled in front_stages if enabled) + " 처리")
+        print(f"[ILLUST_CONTEXT:OUTFIT_SELECT] PLAN 앞단 병렬 시작: "
               f"session={payload.get('session_id')!r}")
-        front_workers = [
-            illustration_flow.create_task(track_state(), flow_label="CALL1"),
-            illustration_flow.create_task(select_scenes(), flow_label="CALL2-SELECT"),
-        ]
+        front_workers = []
+        for operation, label, enabled in front_stages:
+            if not enabled:
+                print(f"[ILLUST_CONTEXT:{label}] OFF; LLM 호출·작업 흐름 노드 생성 생략; "
+                      "원문과 이전 문맥으로 후속 LLM이 판단")
+                continue
+            front_workers.append(illustration_flow.create_task(operation(), flow_label=label))
         try:
-            (call1_output, state_table), (selection_output, selected_plan) = (
-                await illustration_flow.gather(*front_workers))
+            front_results = iter(await illustration_flow.gather(*front_workers))
+            call1_output, state_table = next(front_results) if toggles["outfit_enabled"] else ("", None)
+            time_place_output, time_place_table = next(front_results) if toggles["time_place_enabled"] else ("", None)
+            selection_output, selected_plan = next(front_results)
         except BaseException as exc:
-            print(f"[ILLUST_CONTEXT:CALL1_SELECT] 병렬 단계 종료: "
+            print(f"[ILLUST_CONTEXT:OUTFIT_SELECT] 병렬 단계 종료: "
                   f"session={payload.get('session_id')!r}, error={exc!r}, "
                   f"states={[worker.done() for worker in front_workers]!r}")
             traceback.print_exc()
@@ -534,7 +623,8 @@ async def build_from_context(
                     worker.cancel()
             await illustration_flow.gather(*front_workers, return_exceptions=True)
             raise
-        tracking = state_table["states"]
+        tracking = state_table["states"] if state_table is not None else None
+        time_place_tracking = time_place_table["states"] if time_place_table is not None else None
         call1_result = {"state_table": deepcopy(state_table),
                         "current_characters": deepcopy(profile_result.get("current_characters") or []),
                         "history_characters": deepcopy(profile_result.get("history_characters") or [])}
@@ -543,11 +633,15 @@ async def build_from_context(
                               if toggles.get("call2_parallel_enabled") else 1)
         plan_batches = p._balanced_call2_scene_plan_batches(selected_plan, plan_request_limit)
         plan_batch_sizes = [len(batch) for batch in plan_batches]
-        print(f"[ILLUST_CONTEXT:CALL2-PLAN] 선택 장면 {len(selected_plan)}개, "
-              f"요청 {len(plan_batches)}건, 분배={plan_batch_sizes}")
+        print(f"[ILLUST_CONTEXT:CALL2-PLAN] enabled={toggles['call2_plan_enabled']}, "
+              f"선택 장면 {len(selected_plan)}개, 요청 {len(plan_batches) if toggles['call2_plan_enabled'] else 0}건, "
+              f"분배={plan_batch_sizes}")
         if progress:
-            await progress(30, "call2_plan",
-                           f"CALL2 PLAN 장면 {len(selected_plan)}개 · 요청 {len(plan_batches)}건 {plan_batch_sizes}")
+            if toggles["call2_plan_enabled"]:
+                await progress(30, "call2_plan",
+                               f"CALL2 PLAN 장면 {len(selected_plan)}개 · 요청 {len(plan_batches)}건 {plan_batch_sizes}")
+            else:
+                await progress(30, "call2_detail", f"PLAN OFF · SELECT 장면 {len(selected_plan)}개를 DETAIL로 직접 전달")
 
         async def expand_plan(job, index, total, attempt_kind, stream_observer,
                               history_id, job_stream_notify):
@@ -555,7 +649,10 @@ async def build_from_context(
             batch_names = {name for scene in batch for name in scene["characters"]}
             messages = prompt_builders.plan_messages(
                 prompts, role_context, batch, batch_names, single_names, tracking,
-                plan_profiles, past_text, segmented, toggles, segment_slots=segment_slots)
+                plan_profiles, past_text, segmented, toggles, segment_slots=segment_slots,
+                time_place=time_place_tracking,
+                prior_status=prior_status if tracking is None else None,
+                prior_time_place=prior_time_place if time_place_tracking is None else None)
             def parse_batch(response):
                 return parse_plan(
                     response, segments=segments, slot_map=segment_slots,
@@ -588,10 +685,7 @@ async def build_from_context(
 
         # Use the same downstream context for early Key Visual registration,
         # preliminary ordinary registration and the final result.
-        downstream_chats = deepcopy(chats)
-        if toggles.get("call1_backtranslate_enabled"):
-            downstream_chats[target_index]["data"] = enhanced
-        downstream_context = p.context_text(downstream_chats)
+        downstream_context = p.context_text(chats)
 
         keyvis_descriptor = None
         keyvis_output = ""
@@ -624,7 +718,10 @@ async def build_from_context(
             if not keyvis_reference and extra_reference:
                 print(f"[ILLUST_CONTEXT:CALL2_KEYVIS] 확정 이름에 해당하는 lb.extra 블록 없음: names={names!r}")
             keyvis_messages = prompt_builders.keyvis_context_messages(
-                keyvis_system, lb_extra_system_prompt, keyvis_reference, keyvis_profiles, tracking, past_text, slotted)
+                keyvis_system, lb_extra_system_prompt, keyvis_reference, keyvis_profiles, tracking, past_text, segmented,
+                time_place=time_place_tracking, segment_slots=segment_slots,
+                prior_status=prior_status if tracking is None else None,
+                prior_time_place=prior_time_place if time_place_tracking is None else None)
             async def expand_keyvis():
                 descriptor, output = await p._run_call2_keyvis(
                     call2_context_messages=keyvis_messages, allowed_character_names=names,
@@ -639,10 +736,12 @@ async def build_from_context(
                     await p.calculate_multi_char_layouts([descriptor], prompts.get("multi_char_mask", ""),
                                                          stream_notify=stream_notify,
                                                          positive_note=str(toggles.get("positive_note") or ""),
-                                                         canvas_sizes=payload.get("canvas_sizes"))
+                                                         canvas_sizes=payload.get("canvas_sizes"),
+                                                         single_char_mask_enabled=bool(toggles.get("single_char_mask_enabled", True)))
                 named_characters = [character for character in descriptor.get("characters") or []
                                     if isinstance(character, dict) and str(character.get("name") or "").strip()]
-                layout_required = enable_multi_char_layout and bool(named_characters)
+                layout_required = enable_multi_char_layout and bool(named_characters) and (
+                    len(named_characters) != 1 or bool(toggles.get("single_char_mask_enabled", True)))
                 layout_error = str(descriptor.get("multi_char_layout_error") or "").strip()
                 if layout_required and (layout_error or not isinstance(descriptor.get("multi_char_layout"), dict)):
                     # The ordinary scenes must continue even when this Key Visual
@@ -664,11 +763,10 @@ async def build_from_context(
                 return descriptor, output
             keyvis_worker = expand_keyvis
 
-        detail_request_limit = (int(toggles["call2_detail_parallel_max_concurrency"])
-                                if toggles.get("call2_detail_parallel_enabled") else 1)
-        detail_groups = p._detail_batches_for_plan_batches(plan_batches, detail_request_limit)
-        detail_semaphore = asyncio.Semaphore(detail_request_limit)
-        detail_results_by_plan = {}
+        detail_request_limit = plan_request_limit
+        detail_groups = p._detail_batches_for_plan_batches(plan_batches)
+        detail_jobs = [{"ready": asyncio.get_running_loop().create_future(), "weight": len(batch)}
+                       for batch in plan_batches]
         # Preserve the existing explicit-scene policy on DETAIL, not just on
         # Key Visual. The new DETAIL output contract below supersedes its old
         # outfit_state field while retaining its camera/contact safeguards.
@@ -681,7 +779,13 @@ async def build_from_context(
                                stream_observer, history_id, job_stream_notify):
             batch = job["scenes"]
             slots = [scene["slot"] for scene in batch]
-            messages = prompt_builders.detail_messages(detail_system, batch, slots)
+            needs_source = not all(toggles[key] for key in
+                                   ("outfit_enabled", "time_place_enabled", "call2_plan_enabled"))
+            messages = prompt_builders.detail_messages(detail_system, batch, slots,
+                past_text=past_text if needs_source else "",
+                segmented=segmented if needs_source else "", toggles=toggles,
+                prior_status=prior_status if tracking is None else None,
+                prior_time_place=prior_time_place if time_place_tracking is None else None)
             validated = {}
             def validate_detail(response):
                 try:
@@ -702,18 +806,23 @@ async def build_from_context(
                        else parse_detail_batch(output, batch))
             return {"raw": output, "descriptors": results}
 
-        async def finalize_batch(batch_index, value, *, batches):
+        async def finalize_batch(batch_index, value):
             # Only the coordinator's accepted winner reaches these side effects.
-            batch = batches[batch_index - 1]
+            batch = detail_jobs[batch_index - 1]["ready"].result()[0]["scenes"]
             results = value["descriptors"]
             for scene, result in zip(batch, results):
                 result["anchor_segment"] = scene["anchor_segment"]
-                result["scene_brief"] = scene["brief"]
+                if "brief" in scene:
+                    result["scene_brief"] = scene["brief"]
                 result["visual_base_snapshot"] = deepcopy(bases_by_slot[scene["slot"]])
                 # Preserve the selected slot's full tags as continuity metadata.
-                result["call1_scene_state"] = deepcopy({ch["name"]: {
-                    "state": ch["state"]}
-                    for ch in scene["characters"]})
+                if tracking is not None:
+                    result["call1_scene_state"] = deepcopy({ch["name"]: {
+                        "state": ch["state"]}
+                        for ch in scene["characters"]})
+                if time_place_tracking is not None:
+                    result["time_place_scene_state"] = deepcopy({
+                        ch["name"]: ch["time_place"] for ch in scene["characters"]})
 
             async def register_one(descriptor):
                 # Each scene depends on its own mask, including within one
@@ -722,7 +831,8 @@ async def build_from_context(
                     await p.calculate_multi_char_layouts([descriptor], prompts.get("multi_char_mask", ""),
                                                          stream_notify=stream_notify,
                                                          positive_note=str(toggles.get("positive_note") or ""),
-                                                         canvas_sizes=payload.get("canvas_sizes"))
+                                                         canvas_sizes=payload.get("canvas_sizes"),
+                                                         single_char_mask_enabled=bool(toggles.get("single_char_mask_enabled", True)))
                 if on_call2_ready:
                     pos, neg = p.build_raw_prompt(descriptor, enhanced, prompts, toggles)
                     item = deepcopy(descriptor)
@@ -751,34 +861,27 @@ async def build_from_context(
             # The coordinator invokes this once in the accepted PLAN winner's
             # flow context, while the other PLAN calls keep running.
             planned = {scene["anchor_segment"]: scene for scene in value["scenes"]}
-            batches = []
-            for assigned_batch in detail_groups[plan_index - 1]:
-                batch = []
-                for selected in assigned_batch:
-                    scene, bases = slice_scene(planned[selected["anchor_segment"]],
-                        slot_map=segment_slots, profile_result=profile_result,
-                        visual_profiles=visual_profiles, segments=segments, tracking=tracking,
-                        extra_reference=extra_costume or extra_reference)
-                    bases_by_slot[scene["slot"]] = bases
-                    batch.append(scene)
-                batches.append(batch)
+            batch = []
+            for selected in plan_batches[plan_index - 1]:
+                scene, bases = slice_scene(planned[selected["anchor_segment"]],
+                    slot_map=segment_slots, profile_result=profile_result,
+                    visual_profiles=visual_profiles, segments=segments, tracking=tracking,
+                    extra_reference=extra_costume or extra_reference, time_place=time_place_tracking)
+                bases_by_slot[scene["slot"]] = bases
+                batch.append(scene)
             if progress:
-                await progress(40, "call2_detail", f"PLAN {plan_index} 완료 · DETAIL {len(batches)}개 요청 시작")
-            detail_results_by_plan[plan_index] = await p._run_parallel_pipeline_jobs(
-                [{"scenes": batch, "weight": len(batch)} for batch in batches],
-                group_id=f"call2_detail_plan_{plan_index}", group_label=f"CALL2 DETAIL · PLAN {plan_index}",
-                max_concurrency=detail_request_limit,
-                slow_retry_enabled=bool(toggles["call2_detail_parallel_slow_retry_enabled"]),
-                slow_retry_remaining=int(toggles["call2_detail_parallel_slow_retry_remaining"]),
-                slow_retry_progress_enabled=bool(toggles["call2_detail_parallel_slow_retry_progress_enabled"]),
-                slow_retry_progress_threshold=int(toggles["call2_detail_parallel_slow_retry_progress_threshold"]),
-                slow_retry_tps_enabled=bool(toggles["call2_detail_parallel_slow_retry_tps_enabled"]),
-                slow_retry_tps_threshold=float(toggles["call2_detail_parallel_slow_retry_tps_threshold"]),
-                slow_retry_condition_operator=str(toggles["call2_detail_parallel_slow_retry_condition_operator"]),
-                stream_notify=stream_notify, invoke=expand_batch,
-                on_resolved=lambda index, result: finalize_batch(index, result, batches=batches),
-                fail_fast=True, request_semaphore=detail_semaphore)
+                source_label = f"PLAN {plan_index} 완료" if toggles["call2_plan_enabled"] else "SELECT 직접 전달"
+                await progress(40, "call2_detail", f"{source_label} · DETAIL 1개 요청 시작 · 장면 {len(batch)}개")
+            detail_jobs[plan_index - 1]["ready"].set_result((
+                {"scenes": batch, "weight": len(batch)}, contextvars.copy_context()))
+
         async def expand_plans():
+            if not toggles["call2_plan_enabled"]:
+                print("[ILLUST_CONTEXT:CALL2-PLAN] OFF; SELECT 앵커·인물을 DETAIL로 직접 전달")
+                values = [{"raw": "", "scenes": batch} for batch in plan_batches]
+                for index, value in enumerate(values, 1):
+                    await prepare_details(index, value)
+                return values
             return await p._run_parallel_pipeline_jobs(
                 [{"scenes": batch, "weight": len(batch)} for batch in plan_batches],
                 group_id="call2_plan", group_label="CALL2 장면 PLAN",
@@ -792,10 +895,21 @@ async def build_from_context(
                 slow_retry_condition_operator=str(toggles["call2_parallel_slow_retry_condition_operator"]),
                 stream_notify=stream_notify, invoke=expand_plan, on_resolved=prepare_details, fail_fast=True)
 
-        print(f"[ILLUST_CONTEXT:CALL2-DETAIL] PLAN 완료 즉시 전달: "
+        print(f"[ILLUST_CONTEXT:CALL2-DETAIL] 활성 계획 또는 SELECT 직접 전달: "
               f"groups={[[len(batch) for batch in group] for group in detail_groups]}, "
               f"max_concurrency={detail_request_limit}")
-        workers = [illustration_flow.create_task(expand_plans())]
+        workers = [illustration_flow.create_task(expand_plans()), illustration_flow.create_task(
+            p._run_parallel_pipeline_jobs(
+                detail_jobs, group_id="call2_detail", group_label="CALL2 DETAIL",
+                max_concurrency=detail_request_limit,
+                slow_retry_enabled=bool(toggles["call2_detail_parallel_slow_retry_enabled"]),
+                slow_retry_remaining=int(toggles["call2_detail_parallel_slow_retry_remaining"]),
+                slow_retry_progress_enabled=bool(toggles["call2_detail_parallel_slow_retry_progress_enabled"]),
+                slow_retry_progress_threshold=int(toggles["call2_detail_parallel_slow_retry_progress_threshold"]),
+                slow_retry_tps_enabled=bool(toggles["call2_detail_parallel_slow_retry_tps_enabled"]),
+                slow_retry_tps_threshold=float(toggles["call2_detail_parallel_slow_retry_tps_threshold"]),
+                slow_retry_condition_operator=str(toggles["call2_detail_parallel_slow_retry_condition_operator"]),
+                stream_notify=stream_notify, invoke=expand_batch, on_resolved=finalize_batch, fail_fast=True))]
         if keyvis_worker:
             workers.append(illustration_flow.create_task(keyvis_worker()))
         try:
@@ -807,7 +921,8 @@ async def build_from_context(
                 failure = worker.exception()
                 if failure is None:
                     continue
-                label = ("PLAN -> DETAIL" if index == 0 else "KEYVIS")
+                label = (("PLAN -> DETAIL" if toggles["call2_plan_enabled"] else "SELECT -> DETAIL")
+                         if index == 0 else "DETAIL" if index == 1 else "KEYVIS")
                 print(f"[ILLUST_CONTEXT:CALL2] 병렬 작업 실패: slots={label!r}, error={failure}")
                 traceback.print_exception(type(failure), failure, failure.__traceback__)
             for worker in workers:
@@ -819,11 +934,10 @@ async def build_from_context(
             raise
         plan_results = responses[0]
         plan = [scene for result in plan_results for scene in result["scenes"]]
-        plan_outputs = [result["raw"] for result in plan_results]
+        plan_outputs = [result["raw"] for result in plan_results] if toggles["call2_plan_enabled"] else [""]
         plan_output = (plan_outputs[0] if len(plan_outputs) == 1
                        else json.dumps({"scene_plan": plan}, ensure_ascii=False))
-        expanded = [result for index in range(1, len(plan_batches) + 1)
-                    for result in detail_results_by_plan[index]]
+        expanded = responses[1]
         if keyvis_worker:
             keyvis_descriptor, keyvis_output = responses[-1]
         ordinary = [result for value in expanded for result in value["descriptors"]]
@@ -834,21 +948,28 @@ async def build_from_context(
         states_after = deepcopy((history or {}).get("state_before") or {})
         for name in names:
             # Preserve complete tag checkpoints, including unchanged aspects,
-            # in the existing text memory consumed by the next CALL1.
-            chain = []
-            for slot in state_slots:
-                status = json.dumps(tracking[f"SLOT{slot}"][name], ensure_ascii=False)
-                if not chain or chain[-1] != status:
-                    chain.append(status)
+            # in the existing text memory consumed by the next OUTFIT.
             key = next((key for key, value in states_after.items()
                         if isinstance(value, dict) and
                         str(value.get("canonical_name") or key).casefold() == name.casefold()), name.casefold())
             stored = states_after.setdefault(key, {})
             stored["canonical_name"] = name
-            stored["call1_status_history"] = chain
-            # Retain the legacy scalar for old record readers, never as the
-            # next request's authority when a raw history exists.
-            stored["call1_status"] = chain[-1]
+            if tracking is not None:
+                chain = []
+                for slot in state_slots:
+                    status = json.dumps(tracking[f"SLOT{slot}"][name], ensure_ascii=False)
+                    if not chain or chain[-1] != status:
+                        chain.append(status)
+                stored["call1_status_history"] = chain
+                stored["call1_status"] = chain[-1]
+            else:
+                # A pre-CURRENT checkpoint is not an updated current state.
+                stored.pop("call1_status_history", None)
+                stored.pop("call1_status", None)
+            if time_place_tracking is not None:
+                stored["time_place"] = deepcopy(time_place_tracking[f"SLOT{state_slots[-1]}"][name])
+            else:
+                stored.pop("time_place", None)
             if history:
                 stored["last_seen_message_id"] = str(history.get("current_message_id") or "")
             if visual_profiles:
@@ -861,7 +982,8 @@ async def build_from_context(
         call3_state = {}
         if toggles.get("speak_enabled") and ordinary:
             call3_mode, call3_system = p.build_call3_dialogue_system_prompt(prompts, toggles, extra_names)
-            selected_slots, selected_scene_payload = p.build_call3_scene_selection(ordinary, slotted if history else "")
+            selected_slots, selected_scene_payload = p.build_call3_scene_selection(
+                ordinary, slotted if history else "", segment_slots=segment_slots)
             speak_language = str(toggles.get("speak_language") or "한국어").strip() or "한국어"
             speak_messages = [{"role": "system", "content": call3_system}]
             if history:
@@ -873,9 +995,10 @@ async def build_from_context(
                     speak_messages.append({"role": "assistant" if chat["role"] == "char" else "user",
                                            "content": variable(str(chat.get("data") or "").strip(), "과거 대화")})
             speak_messages.append({"role": "user", "content": p.build_call3_scene_request(
-                str(narrative or "").strip(), selected_scene_payload, speak_language, call3_mode)})
+                segmented, selected_scene_payload, speak_language, call3_mode)})
             call3_state = await p._build_call3_dialogue_with_recovery(
-                speak_messages, selected_slots, extra_names, speak_language, stream_notify, "CALL3", "CALL3-CORRECTION")
+                speak_messages, selected_slots, extra_names, speak_language, stream_notify, "CALL3", "CALL3-CORRECTION",
+                segment_slots=segment_slots)
             call3_output = postprocess.postprocess_call3_emotion_placement(str(call3_state.get("output") or ""))
             speak_map = p.parse_speak_output(call3_output, max_entries_per_scene=(
                 2 if call3_mode in {"speak", "subtitle"} else None))
@@ -891,24 +1014,19 @@ async def build_from_context(
             raw_items.append(item)
         return {
             "session_id": payload["session_id"], "context": downstream_context,
-            "narrative": narrative, "backtranslated_narrative": enhanced if toggles.get("call1_backtranslate_enabled") else "",
-            "backtranslated_slotted": slotted if toggles.get("call1_backtranslate_enabled") else "",
-            "backtranslation_chunks": backtranslation_chunks, "enhanced_narrative": enhanced,
+            "narrative": narrative, "enhanced_narrative": enhanced,
             "call1_output": call1_output, "call1_result": call1_result,
+            "time_place_output": time_place_output,
+            "time_place_result": {"state_table": deepcopy(time_place_table)},
             "profile_output": profile_output, "profile_result": profile_result,
             "reference_provenance": p.build_reference_provenance(history),
             "last_visual_reference_classification": {}, "reference_variables": {},
             "profile_events": list(profile_result.get("profile_events") or []),
             "initial_visual_bases": list(profile_result.get("initial_visual_bases") or []),
             "visual_base_events": list(profile_result.get("visual_base_events") or []),
-            "balanced_fallback_used": False,
             "call2_output": call2_output, "call2_select_output": selection_output,
             "call2_plan_output": plan_output, "call2_plan_outputs": plan_outputs,
             "call2_keyvis_output": keyvis_output, "call2_detail_outputs": detail_outputs,
-            "call2_detail_failed_slots": [], "call2_authority_audit": [],
-            "call2_authority_audit_output": "", "call2_authority_audit_status": "not_applicable",
-            "call2_authority_audit_metrics": {}, "call2_fallback_stage": "", "call2_fallback_reason": "",
-            "call2_fix_output": "", "call2_fix_failed_slots": [],
             "call3_output": call3_output, "call3_initial_output": str(call3_state.get("initial_output") or ""),
             "call3_correction_used": bool(call3_state.get("correction_used")),
             "call3_partial_recovery_used": bool(call3_state.get("partial_recovery_used")),

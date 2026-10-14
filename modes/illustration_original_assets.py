@@ -189,24 +189,13 @@ def build_original_asset_index(
 
 
 def _json_object(raw: str) -> dict | None:
-    text = str(raw or "").strip()
-    if text.startswith("```"):
-        text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE)
-        text = re.sub(r"\s*```$", "", text)
-    try:
-        value = json.loads(text)
-    except Exception as e:
+    from modes import illustration_context_pipeline as pipeline
+
+    value = pipeline._json_object_from_text(raw, array_key="selections")
+    if value is None:
         print(
-            f"[ILLUST_ORIGINAL_ASSET] LLM JSON 파싱 실패: "
-            f"error={e}, raw={text[:500]!r}"
+            f"[ILLUST_ORIGINAL_ASSET] LLM 구조화 응답 복구 불가: raw={str(raw)[:500]!r}"
         )
-        return None
-    if not isinstance(value, dict):
-        print(
-            f"[ILLUST_ORIGINAL_ASSET] LLM JSON 최상위가 객체가 아님: "
-            f"type={type(value).__name__}, raw={text[:500]!r}"
-        )
-        return None
     return value
 
 
@@ -306,17 +295,17 @@ Command-selection rules:
 - Treat one continuous, unchanged pose/expression/action as one visual beat. Do not spend multiple selections on near-duplicate states from the same beat. Select the same subject again only after the response establishes a meaningful visual change.
 
 Slot-placement rules:
-- Each [Slot N] is the insertion gap after the paragraph above it and before the paragraph below it.
+- Each [Cxxx] anchor identifies the insertion boundary after its source passage.
 - Choose the first suitable slot after the text has established the eligible subject, current outfit/form, and depicted state, while that state still applies. Never place an image before its subject or visual evidence is introduced, and never carry it past a scene or state change.
 - Keep selections in narrative order and distribute them across distinct, meaningful visual beats.
 
 Return JSON only with this exact machine-consumed shape:
-{"selections":[{"src":"<exact command filename including extension>","slot":0}]}
+{"selections":[{"src":"<exact command filename including extension>","slot":"C001"}]}
 
 Requirements:
 - Return no more than the requested maximum number of selections.
 - If the current response contains fewer valid distinct visual beats than the requested maximum, return fewer selections. Never invent, weaken, or duplicate a choice merely to reach the maximum.
-- Use only the allowed insertion slot integers supplied below.
+- Use only the allowed Cxxx anchor IDs supplied below.
 - Do not repeat a slot.
 - Preserve command spelling, spaces, underscores, and capitalization from the user's instructions.
 - The server will reject invented commands and commands without an uploaded original file.
@@ -354,11 +343,15 @@ async def select_original_assets(
     profile_authority: str = "",
 ) -> list[dict]:
     """Return per-item resolutions; invalid items carry an ``error`` value."""
+    from modes import illustration_context_pipeline as pipeline
+    catalog, segments = pipeline._segment_current_context(
+        pipeline.remove_slot_markers(target_slotted), slotted_context=target_slotted)
+    segment_slots = {anchor: segment["slot"] for anchor, segment in segments.items()}
     messages = build_selection_messages(
         instruction=instruction,
         conversation_context=conversation_context,
-        target_slotted=target_slotted,
-        allowed_slots=allowed_slots,
+        target_slotted=catalog,
+        allowed_slots=[anchor for anchor, slot in segment_slots.items() if slot in allowed_slots],
         requested_count=requested_count,
         profile_authority=profile_authority,
     )
@@ -401,7 +394,8 @@ async def select_original_assets(
         else:
             src = str(selection.get("src") or "").strip()
             try:
-                slot = int(selection.get("slot"))
+                raw_slot = selection.get("slot")
+                slot = int(segment_slots.get(raw_slot, raw_slot))
             except Exception:
                 reason = f"selection {index} slot이 정수가 아님"
         if not reason and slot not in allowed:
@@ -551,7 +545,7 @@ def build_recovery_messages(
             f"- {command}" for command in (item.get("candidates") or [])
         )
         recovery_blocks.append("\n".join([
-            f"Slot: {item['slot']}",
+            f"Anchor: {item['slot']}",
             f"Rejected src: {item.get('rejected_src') or '(empty)'}",
             f"Rejection reason: {item.get('error') or '(unknown)'}",
             "Allowed existing candidates:",
@@ -561,11 +555,11 @@ def build_recovery_messages(
 For each rejected slot, read the original asset instructions and conversation context, then choose the contextually correct src from that slot's Allowed existing candidates. Resolve semantic form/state and current wardrobe separately. The local current-response passage determines wardrobe first, followed by earlier passages in the same active scene, carried-forward recent context when still unchanged, and only then the profile-default outfit. When multiple wardrobe variants are compatible with the same semantic form/state, choosing the variant matching the narrative wardrobe does not change the preselected profile. Reason from the complete context and command meanings, never keyword or string similarity. Candidate lists contain real uploaded command IDs and are exhaustive for this recovery step.
 
 Return JSON only with this exact machine-consumed shape:
-{"selections":[{"src":"<one exact allowed candidate>","slot":0}]}
+{"selections":[{"src":"<one exact allowed candidate>","slot":"C001"}]}
 
 Requirements:
 - Return exactly one selection for every rejected slot.
-- Preserve each supplied slot integer exactly and do not repeat slots.
+- Preserve each supplied Cxxx anchor ID exactly and do not repeat anchors.
 - Copy src exactly from the Allowed existing candidates for that same slot.
 - Never invent, shorten, combine, or rewrite a candidate.
 - Do not output explanations or markdown."""
@@ -602,6 +596,11 @@ async def recover_original_asset_selections(
     profile_authority: str = "",
 ) -> list[dict]:
     """Recover invalid selections by asking the LLM to choose real candidates."""
+    from modes import illustration_context_pipeline as pipeline
+    catalog, segments = pipeline._segment_current_context(
+        pipeline.remove_slot_markers(target_slotted), slotted_context=target_slotted)
+    segment_slots = {anchor: segment["slot"] for anchor, segment in segments.items()}
+    anchor_by_slot = {slot: anchor for anchor, slot in segment_slots.items()}
     allowed = set(allowed_slots)
     occupied_slots = {
         int(selection["slot"])
@@ -663,8 +662,8 @@ async def recover_original_asset_selections(
     messages = build_recovery_messages(
         instruction=instruction,
         conversation_context=conversation_context,
-        target_slotted=target_slotted,
-        recovery_items=recovery_items,
+        target_slotted=catalog,
+        recovery_items=[{**item, "slot": anchor_by_slot[item["slot"]]} for item in recovery_items],
         profile_authority=profile_authority,
     )
 
@@ -701,7 +700,8 @@ async def recover_original_asset_selections(
         else:
             src = str(selection.get("src") or "").strip()
             try:
-                slot = int(selection.get("slot"))
+                raw_slot = selection.get("slot")
+                slot = int(segment_slots.get(raw_slot, raw_slot))
             except Exception:
                 reason = f"recovery selection {index} slot이 정수가 아님"
         expected = expected_by_slot.get(slot) if not reason else None

@@ -93,6 +93,7 @@ from modes import pose_mode
 from modes import chain_preset_mode
 from modes import mode_logger
 from queue_manager import (
+    CURRENT_COMFY_QUEUE_ITEM,
     DEFAULT_GPU_QUEUE_TYPE_ORDER,
     DEFAULT_LLM_QUEUE_TYPE_ORDER,
     VIDEO_POSTPROCESS_TYPE,
@@ -626,7 +627,8 @@ DEFAULT_CONFIG = {
     "outfit_mode_enabled": False,  # 복장 추출 모드 활성화 여부
     "outfit_workflow_source_path": "",  # 복장 추출 워크플로우 원본 소스 전체 경로
     "llm_service": "openai",    # 선택 서비스: vertex / openai / claude (기존 서비스 호출은 호환 유지)
-    "llm_model": "gpt-4.1",    # LLM 모델명
+    "llm_model": "",    # 슬롯별 모델명. 미설정 연결은 실행하지 않는다.
+    "llm_alias": "",    # 선택 표시 이름. 비어 있으면 실제 모델명을 표시한다.
     # 주의: 슬롯별 API 키는 config.json 에 저장 안 함.
     # key/llm_keys.json 으로 분리 (handle_api_llm_keys 참조).
     "llm_url": "",              # LLM1 베이스 URL 오버라이드 (OpenAI 호환 서비스, {model} 치환 지원)
@@ -638,16 +640,9 @@ DEFAULT_CONFIG = {
     "illustration_context_toggles": {
         "illustration_output_mode": "illustration",
         "original_asset_count": 1,
-        "call1_backtranslate_enabled": False,
-        "call1_backtranslate_max_concurrency": 4,
-        "call1_backtranslate_slow_retry_enabled": False,
-        "call1_backtranslate_slow_retry_remaining": 1,
-        "call1_backtranslate_slow_retry_progress_enabled": True,
-        "call1_backtranslate_slow_retry_progress_threshold": 50,
-        "call1_backtranslate_slow_retry_tps_enabled": False,
-        "call1_backtranslate_slow_retry_tps_threshold": 5.0,
-        "call1_backtranslate_slow_retry_condition_operator": "and",
-        "call1_backtranslate_failure_strategy": "fallback",
+        "outfit_enabled": True,
+        "time_place_enabled": True,
+        "call2_plan_enabled": True,
         "call1_parallel_enabled": True,
         "call1_parallel_max_concurrency": 3,
         "call1_parallel_slow_retry_enabled": False,
@@ -668,8 +663,6 @@ DEFAULT_CONFIG = {
         "call2_parallel_slow_retry_tps_enabled": False,
         "call2_parallel_slow_retry_tps_threshold": 5.0,
         "call2_parallel_slow_retry_condition_operator": "and",
-        "call2_detail_parallel_enabled": True,
-        "call2_detail_parallel_max_concurrency": 3,
         "call2_detail_parallel_slow_retry_enabled": False,
         "call2_detail_parallel_slow_retry_remaining": 1,
         "call2_detail_parallel_slow_retry_progress_enabled": True,
@@ -679,6 +672,7 @@ DEFAULT_CONFIG = {
         "call2_detail_parallel_slow_retry_condition_operator": "and",
         "call3_context_turns": 5,
         "multi_char_mask_enabled": True,
+        "single_char_mask_enabled": True,
         "speak_enabled": True,
         "call3_prompt_mode": "speak",
         "speak_language": "한국어",
@@ -714,9 +708,9 @@ DEFAULT_CONFIG = {
     "llm_routing": {
         "llm_thinking_check": _llm_route_defaults(max_retries=0, fallback_max_retries=0),
         "illustration_quality_inspection": _llm_route_defaults(),
-        "extract_outfit":          _llm_route_defaults(fallback=True),
-        "enhance_outfit":          _llm_route_defaults(fallback=True),
-        "restore_workflow":        _llm_route_defaults(fallback=True),
+        "extract_outfit":          _llm_route_defaults(),
+        "enhance_outfit":          _llm_route_defaults(),
+        "restore_workflow":        _llm_route_defaults(),
         "classify_face_tags":      _llm_route_defaults(max_retries=2, fallback_max_retries=2),
         "refine_lb_extra":         _llm_route_defaults(max_retries=2, fallback_max_retries=2),
         "refine_lora_prompt":      _llm_route_defaults(max_retries=2, fallback_max_retries=2),
@@ -754,10 +748,10 @@ DEFAULT_CONFIG = {
         "video_prompt_i2v_compose":        _llm_route_defaults(max_retries=1),
         "video_prompt_first_last_compose": _llm_route_defaults(max_retries=1),
         "video_prompt_ref2v_compose":      _llm_route_defaults(max_retries=1),
-        # 삽화 컨텍스트 파이프라인 역번역/CALL1/2/2-FIX/3. 메인 LLM/폴백은 외부 LLM 분기 탭에서 드롭박스로 선택.
+        # 삽화 컨텍스트 파이프라인 OUTFIT/CALL2/CALL3. 메인 LLM/폴백은 외부 LLM 분기 탭에서 드롭박스로 선택.
         # 폴백 없음(fallback_target 미지정)이 기본.
-        "illustration_call1_backtranslate": _llm_route_defaults(max_retries=1, retry_delay_sec=0.0, fallback_max_retries=1, fallback_retry_delay_sec=0.0),
         "illustration_call1":      _llm_route_defaults(),  # 복장·헤어 변화 JSON 분석
+        "illustration_time_place": _llm_route_defaults(),  # 캐릭터별 시간·장소 독립 추적
         "illustration_character_resolve": _llm_route_defaults(),  # 생성 최전단 CURRENT 등장인물 판별(항상 실행)
         "illustration_profile_context_translate": _llm_route_defaults(),  # CURRENT 카드 자연어의 지연 영어 번역
         "illustration_profile_resolve": _llm_route_defaults(),  # 확정 CURRENT 다중 프로필 결정(토글 시)
@@ -765,8 +759,6 @@ DEFAULT_CONFIG = {
         "illustration_call2_plan": _llm_route_defaults(),  # CALL2 선택 장면 병렬 PLAN
         "illustration_call2":      _llm_route_defaults(),  # CALL2 DETAIL 및 기존 단일/폴백 경로
         "illustration_call2_keyvis": _llm_route_defaults(),  # CALL2 독립 Key Visual
-        "illustration_call2_authority_audit": _llm_route_defaults(),  # CALL2 고정 외형 예외 감사
-        "illustration_call2_fix":  _llm_route_defaults(),  # CALL2 파싱 실패 시 TOON 교정(repair.txt)
         "illustration_call3":      _llm_route_defaults(),  # 대사 생성(speak/manga/subtitle)
         "illustration_original_asset": _llm_route_defaults(),  # 업로드 원본 에셋 단일 선택
         "illustration_original_asset_recovery": _llm_route_defaults(),  # 실패한 원본 에셋을 실제 유사 후보 중 재선택
@@ -831,13 +823,16 @@ DEFAULT_CONFIG = {
 for _slot_n in range(2, llm_service.LLM_SLOT_COUNT + 1):
     _suffix = str(_slot_n)
     DEFAULT_CONFIG.update({
-        f"llm_service{_suffix}": "",
+        f"llm_service{_suffix}": "openai",
         f"llm_model{_suffix}": "",
+        f"llm_alias{_suffix}": "",
         f"llm_url{_suffix}": "",
         f"llm_custom_body{_suffix}": "",
         f"llm_custom_headers{_suffix}": "",
         f"llm_reasoning_preset{_suffix}": "auto",
         f"llm_reasoning_effort{_suffix}": "",
+        f"llm_reasoning_budget_tokens{_suffix}": 0,
+        f"llm_temperature{_suffix}": 1.0,
         f"llm_stream{_suffix}": False,
         f"llm_max_tokens{_suffix}": 0,
         f"llm_stream_idle_timeout_seconds{_suffix}": 90.0,
@@ -872,7 +867,6 @@ _LLM_RETRY_DELAY_FIELDS = ("retry_delay_sec", "fallback_retry_delay_sec")
 _CALL2_COMPAT_SPLIT_ROUTE_KEYS = (
     "illustration_call2_plan",
     "illustration_call2_keyvis",
-    "illustration_call2_authority_audit",
 )
 _LEGACY_LLM_RETRY_TASKS = {
     "classify_face_tags": "auto_face_tag_max_retries",
@@ -976,6 +970,9 @@ def _merge_llm_routing_config(raw_config: dict) -> dict:
         merged_routing[task_key] = entry
 
     for task_key, raw_entry in raw_routing.items():
+        if task_key in {"illustration_call2_authority_audit", "illustration_call2_fix"}:
+            print(f"[CONFIG] 제거된 삽화 LLM 작업 설정 제외: task={task_key!r}")
+            continue
         if task_key in merged_routing:
             continue
         if not isinstance(raw_entry, dict):
@@ -1003,11 +1000,14 @@ def _normalize_llm_routing_for_save(raw_routing) -> dict:
             inherited.update(legacy_call2_entry)
             candidate[task_key] = inherited
     for task_key, raw_entry in raw_routing.items():
+        if task_key in {"illustration_call2_authority_audit", "illustration_call2_fix"}:
+            print(f"[CONFIG] 제거된 삽화 LLM 작업 저장 제외: task={task_key!r}")
+            continue
         if not isinstance(task_key, str) or not task_key.strip():
             raise ValueError(f"LLM 작업 키가 유효하지 않습니다: {task_key!r}")
         if not isinstance(raw_entry, dict):
             raise ValueError(f"llm_routing.{task_key}는 JSON 객체여야 합니다.")
-        base = candidate.get(task_key, _llm_route_defaults())
+        base = candidate.get(task_key, {})
         base.update(raw_entry)
         candidate[task_key] = base
 
@@ -1016,7 +1016,7 @@ def _normalize_llm_routing_for_save(raw_routing) -> dict:
 
     normalized = {}
     for task_key, entry in candidate.items():
-        primary = entry.get("primary", "llm1")
+        primary = entry.get("primary")
         if primary not in llm_service.LLM_SLOT_IDS:
             raise ValueError(f"llm_routing.{task_key}.primary 값이 유효하지 않습니다: {primary!r}")
 
@@ -2440,10 +2440,9 @@ def _capture_illustration_runtime_snapshot(
     print(
         f"[ILLUST] 런타임 스냅샷 생성: bot={bot_name!r}, provider={provider}, "
         f"workflow={illustration_workflow_type}, "
-        f"backtranslate_parallel={toggles.get('call1_backtranslate_max_concurrency')!r}, "
+        f"optional_stages={(toggles.get('outfit_enabled'), toggles.get('time_place_enabled'), toggles.get('call2_plan_enabled'))!r}, "
         f"call1_parallel={toggles.get('call1_parallel_max_concurrency')!r}, "
-        f"call2_plan_parallel={toggles.get('call2_parallel_max_concurrency')!r}, "
-        f"call2_detail_parallel={toggles.get('call2_detail_parallel_max_concurrency')!r}, "
+        f"call2_plan_detail_parallel={toggles.get('call2_parallel_max_concurrency')!r}, "
         f"word_rules={len(rules)}"
     )
     return snapshot
@@ -2963,7 +2962,7 @@ async def save_backup(
             if postprocess_mode == "bubble":
                 from modes.bubble_render import compose_bubble
                 _bs = {k: v for k, v in postprocess_settings.items() if k != "_mode"}
-                image_bytes = compose_bubble(image_bytes, speak_text, _bs, bot_name)
+                image_bytes = await asyncio.to_thread(compose_bubble, image_bytes, speak_text, _bs, bot_name)
                 print(f"[BACKUP] 말풍선 합성 적용: speak_len={len(speak_text)}")
             elif postprocess_mode == "subtitle":
                 from modes.subtitle_render import compose_subtitle
@@ -2973,13 +2972,13 @@ async def save_backup(
                     for key, value in postprocess_settings.items()
                     if key != "_mode"
                 }
-                image_bytes = compose_subtitle(
-                    image_bytes, speak_text, subtitle_settings, bot_name
+                image_bytes = await asyncio.to_thread(
+                    compose_subtitle, image_bytes, speak_text, subtitle_settings, bot_name
                 )
                 print(f"[BACKUP] 애니 자막 합성 적용: speak_len={len(speak_text)}")
             else:
                 from modes.postprocess import compose_postprocess
-                image_bytes = compose_postprocess(image_bytes, speak_text, postprocess_settings, bot_name)
+                image_bytes = await asyncio.to_thread(compose_postprocess, image_bytes, speak_text, postprocess_settings, bot_name)
                 print(f"[BACKUP] 후처리 합성 적용: placement={postprocess_settings.get('placement')}, speak_len={len(speak_text)}")
             composition_applied = True
         except Exception as e:
@@ -3026,9 +3025,9 @@ async def save_backup(
         save_kwargs["exif"] = exif_bytes
 
     if img.mode == "RGBA":
-        img.save(webp_path, **save_kwargs)
+        await asyncio.to_thread(img.save, webp_path, **save_kwargs)
     else:
-        img.convert("RGB").save(webp_path, **save_kwargs)
+        await asyncio.to_thread(img.convert("RGB").save, webp_path, **save_kwargs)
 
     orig_size = len(image_bytes)
     webp_size = os.path.getsize(webp_path)
@@ -3056,11 +3055,11 @@ async def save_backup(
                     for _i in range(getattr(raw_img, "n_frames", 1)):
                         raw_img.seek(_i)
                         frames.append(raw_img.convert("RGBA") if raw_img.mode == "RGBA" else raw_img.convert("RGB"))
-                    frames[0].save(raw_path, save_all=True, append_images=frames[1:], **raw_save_kwargs)
+                    await asyncio.to_thread(frames[0].save, raw_path, save_all=True, append_images=frames[1:], **raw_save_kwargs)
                 elif raw_img.mode == "RGBA":
-                    raw_img.save(raw_path, **raw_save_kwargs)
+                    await asyncio.to_thread(raw_img.save, raw_path, **raw_save_kwargs)
                 else:
-                    raw_img.convert("RGB").save(raw_path, **raw_save_kwargs)
+                    await asyncio.to_thread(raw_img.convert("RGB").save, raw_path, **raw_save_kwargs)
             print(f"[BACKUP] 원본 이미지 저장: _raw/{base_name}.webp ({os.path.getsize(raw_path):,}B)")
             raw_saved_extension = ".webp"
         except Exception as e:
@@ -3572,6 +3571,7 @@ async def wait_for_real_comfy(ws, real_prompt_id: str, progress_callback=None, t
     prev_max = 0
     prev_node = ""
     dynamic_total = total_steps  # 새 샘플러 발견 시 동적 보정
+    queue_item = CURRENT_COMFY_QUEUE_ITEM.get()
     try:
         async for msg in ws:
             if msg.type == aiohttp.WSMsgType.TEXT:
@@ -3580,6 +3580,14 @@ async def wait_for_real_comfy(ws, real_prompt_id: str, progress_callback=None, t
                 msg_data = data.get("data", {})
                 msg_prompt = msg_data.get("prompt_id", "")
                 msg_node = msg_data.get("node", "")
+
+                if msg_prompt and msg_prompt != real_prompt_id:
+                    continue
+                if msg_type == "execution_start" and msg_prompt == real_prompt_id and queue_item is not None:
+                    queue_item.started_at = msg_data.get("timestamp", time.time() * 1000) / 1000
+                    queue_item.status = "processing"
+                    queue_manager.current_item = queue_item
+                    await queue_manager._notify_queue_updated()
 
                 if msg_type == "progress":
                     v = msg_data.get("value", 0)
@@ -3601,7 +3609,8 @@ async def wait_for_real_comfy(ws, real_prompt_id: str, progress_callback=None, t
                         overall_v = min(cumulative_steps + v, dynamic_total)
                         pct = min(100, round(overall_v / dynamic_total * 100))
                         print(f"[PROXY] WS progress: {v}/{mx} node={msg_node} (전체 {pct}%)", end="\r")
-                        await progress_callback(overall_v, dynamic_total)
+                        if progress_callback:
+                            await progress_callback(overall_v, dynamic_total)
                     else:
                         print(f"[PROXY] WS progress: {v}/{mx} node={msg_node}", end="\r")
                         if progress_callback and mx and mx > 0:
@@ -3623,7 +3632,8 @@ async def wait_for_real_comfy(ws, real_prompt_id: str, progress_callback=None, t
                         overall_v = min(cumulative_steps + v, dynamic_total)
                         pct = min(100, round(overall_v / dynamic_total * 100))
                         print(f"[PROXY] WS progress_state: {v}/{mx} node={msg_node} (전체 {pct}%)", end="\r")
-                        await progress_callback(overall_v, dynamic_total)
+                        if progress_callback:
+                            await progress_callback(overall_v, dynamic_total)
                     else:
                         if v and mx and mx > 0:
                             print(f"[PROXY] WS progress_state: {v}/{mx} node={msg_node}", end="\r")
@@ -3670,6 +3680,7 @@ async def wait_for_real_comfy(ws, real_prompt_id: str, progress_callback=None, t
                 break
     except Exception as e:
         print(f"[PROXY] WS 예외: {e}")
+        traceback.print_exc()
         if error_holder is not None and "error" not in error_holder:
             error_holder["error"] = "ws_exception"
             error_holder["detail"] = str(e)
@@ -3927,14 +3938,35 @@ async def generate_image_with_prompt(
         if progress_callback:
             await progress_callback(value, max_value)
 
+    queue_item = CURRENT_COMFY_QUEUE_ITEM.get()
+    if queue_item is not None:
+        mask_location = getattr(queue_item, "_comfy_mask_location", None)
+        if mask_location:
+            for node in risu_prompt.values():
+                inputs = node.get("inputs", {}) if isinstance(node, dict) else {}
+                if "mask_location" in inputs:
+                    inputs["mask_location"] = mask_location
+            # Preserve the original graph in backup metadata; this path belongs
+            # only to the submitted request and is removed after result receipt.
+            workflow_snapshot["submitted_workflow"] = copy.deepcopy(risu_prompt)
+    client_id = f"gen_{uuid.uuid4().hex[:8]}"
     ws_url = (
         f"ws://{REAL_COMFY_HOST}:{illust_port}/ws"
-        f"?clientId=gen_{uuid.uuid4().hex[:8]}"
+        f"?clientId={client_id}"
     )
     try:
         async with aiohttp.ClientSession() as ws_session:
             async with ws_session.ws_connect(ws_url) as real_ws:
-                real_prompt_id, submit_result = await submit_to_real_comfy(risu_prompt, port=illust_port)
+                if queue_item is None:
+                    real_prompt_id, submit_result = await submit_to_real_comfy(risu_prompt, port=illust_port, client_id=client_id)
+                else:
+                    async with queue_item._comfy_submission_lock:
+                        real_prompt_id, submit_result = await submit_to_real_comfy(risu_prompt, port=illust_port, client_id=client_id)
+                        queue_item._comfy_prompt_id = real_prompt_id
+                        queue_item._comfy_port = illust_port
+                        queue_item._comfy_submission.set_result(True)
+                        print(f"[QUEUE:COMFY] 선행 제출 완료: item={queue_item.id}, prompt={real_prompt_id}, port={illust_port}")
+                        queue_manager._gpu_wakeup.set()
                 node_errors = submit_result.get("node_errors", {})
 
                 total_steps = count_ksampler_total_steps(api_workflow_snapshot)
@@ -3966,6 +3998,23 @@ async def generate_image_with_prompt(
     history = await fetch_real_history(real_prompt_id, port=illust_port)
     real_entry = history.get(real_prompt_id, {})
     real_outputs = real_entry.get("outputs", {})
+    execution_times = {
+        event[0]: event[1]["timestamp"] / 1000
+        for event in real_entry.get("status", {}).get("messages", [])
+        if event[0] in ("execution_start", "execution_success") and "timestamp" in event[1]
+    }
+    if "execution_start" in execution_times and "execution_success" in execution_times:
+        started_at = execution_times["execution_start"]
+        ended_at = execution_times["execution_success"]
+        workflow_snapshot["generation_time"] = max(0.0, ended_at - started_at)
+        if queue_item is not None:
+            queue_item.started_at = started_at
+            binding = getattr(queue_item, "_illustration_flow", None)
+            if binding:
+                run, node_id, _root = binding
+                illustration_flow.update(run, node_id, started_at=started_at, ended_at=ended_at)
+    else:
+        print(f"[GEN:TIMING] Comfy 실행 시각 누락, 기존 요청 경과 시간 사용: prompt={real_prompt_id}, status={real_entry.get('status')}")
 
     await illustration_flow.record_comfy_dynamic_mask(
         real_outputs, fetch_real_image, port=illust_port,
@@ -4813,7 +4862,9 @@ async def handle_api_workflow_test_status(request: web.Request) -> web.Response:
 # ─── 통합 큐 매니저 초기화 (init_queue_manager에서 호출) ───
 def init_queue_manager():
     queue_manager.notify_frontend = notify_frontend
-    queue_manager.get_config = lambda: load_config()
+    # Configuration APIs already refresh app_config. Queue inspection must not
+    # re-read and normalize the entire settings file for every candidate item.
+    queue_manager.get_config = lambda: app_config
     queue_manager.asset_mode = asset_mode
     queue_manager.asset_tool = asset_tool
     queue_manager.qwen_edit_mode = qwen_edit_mode
@@ -6378,6 +6429,7 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                 "conversion_info": copy.deepcopy(current_conversion_info),
             }
         )
+        elapsed_time = generation_workflow_snapshot.get("generation_time", elapsed_time)
         # node_errors 기록
         if illustration_provider == "comfy" and isinstance(node_errors, dict) and node_errors:
             generation_workflow_snapshot.setdefault("conversion_info", {})[
@@ -6868,7 +6920,7 @@ def build_lb_extra_costume(
     trace_id: str = "",
     request_cache: dict | None = None,
 ) -> str:
-    """lb.extra의 캐릭터 카드만 조립(CALL1 및 CALL2 캐릭터 사전용)."""
+    """lb.extra의 캐릭터 카드만 조립(OUTFIT 및 CALL2 캐릭터 사전용)."""
     collected = _collect_lb_extra_for_request(
         bot_name,
         trace_id,
@@ -6911,11 +6963,11 @@ def build_bot_character_names(
         request_cache,
     )
     if not collected:
-        print(f"[ILLUST_CONTEXT:BACKTRANSLATE] 봇 캐릭터 목록 수집 실패: bot={bot_name!r}")
+        print(f"[ILLUST_CONTEXT:CHARACTERS] 봇 캐릭터 목록 수집 실패: bot={bot_name!r}")
         return ""
     names = collected.get("bot_character_names") or []
     if not names:
-        print(f"[ILLUST_CONTEXT:BACKTRANSLATE] 봇 캐릭터 목록이 비어 있음: bot={bot_name!r}")
+        print(f"[ILLUST_CONTEXT:CHARACTERS] 봇 캐릭터 목록이 비어 있음: bot={bot_name!r}")
         return ""
     return ", ".join(str(name) for name in names)
 
@@ -7834,7 +7886,7 @@ async def process_illustration_context_queue_item(item) -> dict:
     llm_trace = []
 
     def _quality_inspection_context() -> str:
-        # CALL1 can enhance/backtranslate built.context. Judge generated pixels
+        # Use the original built.context. Judge generated pixels
         # against the original chat so upstream hallucinations stay visible.
         return str(
             illustration_context_pipeline.context_text(payload.get("chats") or [])
@@ -7861,7 +7913,9 @@ async def process_illustration_context_queue_item(item) -> dict:
             for character in (descriptor.get("characters") or [])
             if isinstance(character, dict) and str(character.get("name") or "").strip()
         ]
-        return bool(characters)
+        return bool(characters) and (
+            len(characters) != 1 or bool(illust_toggles.get("single_char_mask_enabled", True))
+        )
 
     def _multi_char_queue_context(descriptor: dict, prompt_format: str) -> dict | None:
         if not _is_multi_char_descriptor(descriptor, prompt_format):
@@ -8392,7 +8446,7 @@ async def process_illustration_context_queue_item(item) -> dict:
         extra_costume = ""
         extra_character_cards = ""
         extra_names = ""
-        backtranslate_names = ""
+        character_names = ""
         visual_profile_catalog = ""
         effective_visual_profiles = {}
         first_pass_single_v5 = False
@@ -8465,7 +8519,7 @@ async def process_illustration_context_queue_item(item) -> dict:
                 )
 
             # CURRENT 등장인물을 항상 판별하고, 토글 시에만 별도 프로필 단계를 실행한다.
-            # 확정 결과는 ORIGINAL-ASSET, CALL1, CALL2가 함께 사용한다.
+            # 확정 결과는 ORIGINAL-ASSET, OUTFIT, CALL2가 함께 사용한다.
             extra_instruction = _timed_pre_character_step(
                 "build_active_lb_instruction",
                 build_active_lb_instruction,
@@ -8488,7 +8542,7 @@ async def process_illustration_context_queue_item(item) -> dict:
                 pre_character_trace_id,
                 lb_extra_request_cache,
             )
-            backtranslate_names = _timed_pre_character_step(
+            character_names = _timed_pre_character_step(
                 "build_bot_character_names",
                 build_bot_character_names,
                 active_bot,
@@ -8854,7 +8908,7 @@ async def process_illustration_context_queue_item(item) -> dict:
                     extra_instruction=extra_instruction,
                     extra_costume=extra_costume,
                     extra_names=extra_names,
-                    backtranslate_names=backtranslate_names,
+                    character_names=character_names,
                     history_plan=history_plan,
                     enable_multi_char_layout=multi_char_mask_active,
                     visual_profile_catalog=visual_profile_catalog,
@@ -8867,7 +8921,7 @@ async def process_illustration_context_queue_item(item) -> dict:
                 illustration_flow.raise_if_cancel_requested()
             else:
                 print(
-                    f"[ILLUST_CONTEXT] 일반 삽화 출력 토글로 CALL1/2/3·Comfy 생성 생략: "
+                    f"[ILLUST_CONTEXT] 일반 삽화 출력 토글로 OUTFIT/CALL2/CALL3·Comfy 생성 생략: "
                     f"session={session_id}, original_asset_enabled={original_asset_enabled}"
                 )
                 await progress(20, "original_asset", "일반 삽화 생략 · 원본 에셋 준비")
@@ -9609,7 +9663,7 @@ async def handle_api_illustration_context_bridge_health(request: web.Request) ->
         "asset_reroll": True,
         "lookup_key_length": 24,
         "max_slot_manifest_count": illustration_context_pipeline.MAX_ILLUSTRATION_SLOT_COUNT,
-        "progress_phases": ["call1", "call2", "call2_select", "call2_plan", "call2_keyvis", "call2_detail", "call2_authority_audit", "call2_fallback", "call3", "multi_char_mask", "asset_reroll", "enqueue", "generating", "retrying", "regenerating", "ready", "error"],
+        "progress_phases": ["call1", "call2", "call2_select", "call2_plan", "call2_keyvis", "call2_detail", "call2_fallback", "call3", "multi_char_mask", "asset_reroll", "enqueue", "generating", "retrying", "regenerating", "ready", "error"],
     })
 
 
@@ -10022,7 +10076,7 @@ async def handle_api_illustration_execution_preview(request: web.Request) -> web
 
 
 async def handle_api_illustration_context_prompts(request: web.Request) -> web.Response:
-    """CALL1 역번역/1/2/3 프롬프트 파일 조회/저장. 본문은 config에 넣지 않는다."""
+    """OUTFIT 역번역/1/2/3 프롬프트 파일 조회/저장. 본문은 config에 넣지 않는다."""
     try:
         if request.method == "GET":
             return web.json_response(illustration_context_pipeline.load_prompt_files())
@@ -10190,7 +10244,16 @@ async def handle_api_lighbd_enqueue(request: web.Request) -> web.Response:
 
         from modes.lighbd_service import handle_enqueue
         print(f"[LIGHBD] /api/lighbd/enqueue received prompt_id={session_id[:8]} context_len={len(context)}")
-        result = await handle_enqueue(context, session_id)
+        item = await queue_manager.add_item(
+            "illustration_llm_build",
+            f"삽화 ENQUEUE · {session_id[:8]}",
+            {"task_key": "illustration_call2", "session_id": session_id},
+            runtime_handler=lambda _item: handle_enqueue(context, session_id),
+        )
+        if item.completion_future is None:
+            print(f"[LIGHBD] 큐 완료 Future 없음: item={item.id}, session={session_id}")
+            raise RuntimeError("삽화 ENQUEUE 큐 완료 Future가 없습니다")
+        result = await item.completion_future
         return web.json_response({
             "status": result["status"],
             "prompt_id": session_id,
@@ -10720,12 +10783,9 @@ async def handle_api_llm_test_stream(request: web.Request) -> web.StreamResponse
     _suffix = "" if target == "llm1" else target[3:]
     if thinking_check:
         use_stream = bool(cfg.get(f"llm_stream{_suffix}", False))
-    cur_service = cfg.get(f"llm_service{_suffix}") or cfg.get("llm_service", "")
+    cur_service = cfg.get(f"llm_service{_suffix}") or "openai"
     cur_model_key = f"llm_model{_suffix}"
-    fn_single, fn_vision_single = _slot_fns.get(
-        target,
-        _slot_fns["llm1"],
-    )
+    fn_single, fn_vision_single = _slot_fns[target]
 
     use_model_resolved = use_model or cfg.get(cur_model_key, "")
     task_key = "llm_thinking_check" if thinking_check else "llm_test"
@@ -11559,7 +11619,7 @@ async def _enqueue_illustration_session_slot(
     operation_label: str,
     whole_session: bool = False,
 ) -> web.Response:
-    """저장된 RAW descriptor로 한 슬롯을 생성한다. CALL1/2/3은 실행하지 않는다."""
+    """저장된 RAW descriptor로 한 슬롯을 생성한다. OUTFIT/CALL2/CALL3은 실행하지 않는다."""
     descriptor = illustration_context_pipeline.session_item_by_slot(session_id, slot)
     if descriptor is None:
         print(
@@ -18640,8 +18700,8 @@ def _auto_feedback_slot_identity(slot: str) -> tuple[str, str]:
     normalized = str(slot or "llm1").strip().lower()
     suffix = "" if normalized == "llm1" else normalized.removeprefix("llm")
     return (
-        str(config.get(f"llm_service{suffix}") or config.get("llm_service") or ""),
-        str(config.get(f"llm_model{suffix}") or config.get("llm_model") or ""),
+        str(config.get(f"llm_service{suffix}") or "openai"),
+        str(config.get(f"llm_model{suffix}") or ""),
     )
 
 
@@ -20653,17 +20713,19 @@ async def handle_api_config(request: web.Request) -> web.Response:
             for _slot_n in range(1, llm_service.LLM_SLOT_COUNT + 1):
                 _sfx = "" if _slot_n == 1 else str(_slot_n)
                 _llm_runtime_cfg.update({
-                    f"llm_service{_sfx}": app_config.get(f"llm_service{_sfx}", "openai" if _slot_n == 1 else ""),
-                    f"llm_model{_sfx}": app_config.get(f"llm_model{_sfx}", "gpt-4.1" if _slot_n == 1 else ""),
+                    f"llm_service{_sfx}": app_config.get(f"llm_service{_sfx}", "openai"),
+                    f"llm_model{_sfx}": app_config.get(f"llm_model{_sfx}", ""),
                     f"llm_url{_sfx}": app_config.get(f"llm_url{_sfx}", ""),
                     f"llm_reasoning_preset{_sfx}": app_config.get(f"llm_reasoning_preset{_sfx}", "auto"),
                     f"llm_reasoning_effort{_sfx}": app_config.get(f"llm_reasoning_effort{_sfx}", ""),
+                    f"llm_reasoning_budget_tokens{_sfx}": app_config.get(f"llm_reasoning_budget_tokens{_sfx}", 0),
+                    f"llm_temperature{_sfx}": app_config.get(f"llm_temperature{_sfx}", 1.0),
                     f"llm_custom_body{_sfx}": app_config.get(f"llm_custom_body{_sfx}", ""),
                     f"llm_custom_headers{_sfx}": app_config.get(f"llm_custom_headers{_sfx}", ""),
                     f"llm_stream{_sfx}": app_config.get(f"llm_stream{_sfx}", False),
                     f"llm_max_tokens{_sfx}": app_config.get(
                         f"llm_max_tokens{_sfx}",
-                        llm_service.DEFAULT_LLM_MAX_OUTPUT_TOKENS if _slot_n == 1 else 0,
+                        llm_service.DEFAULT_LLM_MAX_OUTPUT_TOKENS,
                     ),
                     f"llm_max_concurrency{_sfx}": app_config.get(f"llm_max_concurrency{_sfx}", 1),
                     f"llm_stream_idle_timeout_seconds{_sfx}": app_config.get(f"llm_stream_idle_timeout_seconds{_sfx}", 90.0),
@@ -21561,13 +21623,11 @@ async def handle_api_outfit_run_llm(request: web.Request) -> web.Response:
             pass
 
         # LLM 설정 동기화
-        llm_sync_config = {
-            "llm_service": app_config.get("llm_service", "openai"),
-            "llm_model": app_config.get("llm_model", "gpt-4.1"),
-        }
-        for slot_n in range(2, llm_service.LLM_SLOT_COUNT + 1):
-            llm_sync_config[f"llm_service{slot_n}"] = app_config.get(f"llm_service{slot_n}", "")
-            llm_sync_config[f"llm_model{slot_n}"] = app_config.get(f"llm_model{slot_n}", "")
+        llm_sync_config = {}
+        for slot in llm_service.LLM_SLOT_IDS:
+            suffix = llm_service._slot_suffix(slot)
+            llm_sync_config[f"llm_service{suffix}"] = app_config.get(f"llm_service{suffix}", "openai")
+            llm_sync_config[f"llm_model{suffix}"] = app_config.get(f"llm_model{suffix}", "")
         llm_service.update_config(llm_sync_config)
 
         try:
@@ -29277,14 +29337,15 @@ async def handle_api_character_maker_capabilities(
 
         def _route_capability(task_key: str) -> dict[str, Any]:
             route = routing.get(task_key, {}) or {}
-            slot = route.get("primary", "llm1")
-            # slot(llm1..llmN) -> llm_service{N} 키. LLM_SLOT_IDS 외 값은 llm_service 로 폴백.
-            _slot_suffix = "" if slot == "llm1" else (slot[3:] if slot in llm_service.LLM_SLOT_IDS else "")
+            slot = route.get("primary")
+            if slot not in llm_service.LLM_SLOT_IDS:
+                print(f"[CHARACTER_MAKER] 기능 상태의 메인 슬롯 미설정: task={task_key!r}, route={route!r}")
+                return {"slot": slot, "service": "", "vision_ready": False}
+            _slot_suffix = llm_service._slot_suffix(slot)
             service_key = f"llm_service{_slot_suffix}"
             service_name = str(
                 llm_config.get(service_key)
-                or llm_config.get("llm_service")
-                or ""
+                or "openai"
             )
             return {
                 "slot": slot,
@@ -33882,48 +33943,12 @@ async def on_startup(app):
         traceback.print_exc()
     # 자동완성 CSV 로드
     autocomplete_service.load_all_csv()
-    # LLM 서비스 설정 초기화. 슬롯 1 + 공통 키는 리터럴로, 슬롯 2..N 은 단일 소스에서 자동 생성.
+    # 저장된 모든 슬롯 설정을 같은 규칙으로 초기화한다.
     _llm_cfg = {
-        "llm_service": app_config.get("llm_service", "openai"),
-        "llm_model": app_config.get("llm_model", "gpt-4.1"),
-        "llm_url": app_config.get("llm_url", ""),
-        "llm_reasoning_preset": app_config.get("llm_reasoning_preset", "auto"),
-        "llm_reasoning_effort": app_config.get("llm_reasoning_effort", ""),
-        "llm_custom_body": app_config.get("llm_custom_body", ""),
-        "llm_custom_headers": app_config.get("llm_custom_headers", ""),
-        "llm_reasoning_budget_tokens": app_config.get("llm_reasoning_budget_tokens", 0),
-        "llm_temperature": app_config.get("llm_temperature", 1.0),
-        "llm_max_tokens": app_config.get(
-            "llm_max_tokens",
-            llm_service.DEFAULT_LLM_MAX_OUTPUT_TOKENS,
-        ),
-        "llm_stream": app_config.get("llm_stream", False),
-        "llm_max_concurrency": app_config.get("llm_max_concurrency", 1),
-        "llm_stream_idle_timeout_seconds": app_config.get("llm_stream_idle_timeout_seconds", 90.0),
-        "llm_vision_compress": app_config.get("llm_vision_compress", False),
-        "llm_gemini_base64": app_config.get("llm_gemini_base64", False),
-        "llm_pdf_prompt": app_config.get("llm_pdf_prompt", False),
+        key: app_config.get(key, default)
+        for key, default in llm_service.get_config().items()
+        if key in DEFAULT_CONFIG
     }
-    for _n in range(2, llm_service.LLM_SLOT_COUNT + 1):
-        _s = str(_n)
-        _llm_cfg.update({
-            f"llm_service{_s}": app_config.get(f"llm_service{_s}", ""),
-            f"llm_model{_s}": app_config.get(f"llm_model{_s}", ""),
-            f"llm_url{_s}": app_config.get(f"llm_url{_s}", ""),
-            f"llm_reasoning_preset{_s}": app_config.get(f"llm_reasoning_preset{_s}", "auto"),
-            f"llm_reasoning_effort{_s}": app_config.get(f"llm_reasoning_effort{_s}", ""),
-            f"llm_custom_body{_s}": app_config.get(f"llm_custom_body{_s}", ""),
-            f"llm_custom_headers{_s}": app_config.get(f"llm_custom_headers{_s}", ""),
-            f"llm_stream{_s}": app_config.get(f"llm_stream{_s}", False),
-            f"llm_max_tokens{_s}": app_config.get(f"llm_max_tokens{_s}", 0),
-            f"llm_max_concurrency{_s}": app_config.get(f"llm_max_concurrency{_s}", 1),
-            f"llm_stream_idle_timeout_seconds{_s}": app_config.get(f"llm_stream_idle_timeout_seconds{_s}", 90.0),
-            f"llm_vision_compress{_s}": app_config.get(f"llm_vision_compress{_s}", False),
-            f"llm_gemini_base64{_s}": app_config.get(f"llm_gemini_base64{_s}", False),
-            f"llm_pdf_prompt{_s}": app_config.get(f"llm_pdf_prompt{_s}", False),
-        })
-    _llm_cfg["lora_prompt_review_enabled"] = app_config.get("lora_prompt_review_enabled", False)
-    _llm_cfg["llm_routing"] = app_config.get("llm_routing", {})
     llm_service.update_config(_llm_cfg)
     # API 키는 config.json 이 아닌 key/llm_keys.json 에서 로드
     _load_llm_keys_into_config()

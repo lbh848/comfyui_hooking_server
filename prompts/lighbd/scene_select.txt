@@ -8,7 +8,7 @@ Use only the supplied CURRENT canonical roster and respect any SINGLE subject re
 
 SELECTION
 
-Read all candidates before deciding. Preserve the requested count and choose unique exact supplied anchors in narrative order. Favor passages supporting materially different visible events or changes. An invisible thought or abstract effect is not a filler scene. One event may supply several anchors when its passages support different visible actions, poses, reactions or contact changes. Leave the concrete instant, pose and composition to PLAN.
+Read all candidates before deciding. Preserve the requested count and choose unique exact supplied anchors. Return order is unrestricted; the server arranges selected anchors by their source insertion positions. Favor passages supporting materially different visible events or changes. An invisible thought or abstract effect is not a filler scene. One event may supply several anchors when its passages support different visible actions, poses, reactions or contact changes. Leave the concrete instant, pose and composition to PLAN.
 
 In SINGLE mode the named subject is the sole main identity/LoRA owner. Choose anchors supporting an event that remains physically understandable with only the smallest naturally connected off-frame anonymous partner fragment permitted by the active policy. Never add the anonymous partner to characters. PLAN determines the instant and fragment geometry without enlarging or identifying the partner. Preserve source intensity and exposure; do not choose a concealed or euphemized substitute. Do not output scene descriptions, reasoning or alternative candidates.
 
@@ -18,4 +18,4 @@ Return JSON only: {"scene_plan":[{"anchor_segment":"C001","characters":["canonic
 
 FINAL CHECK
 
-Requested count, unique increasing anchors, canonical-subset identities and passages supporting distinct visible events. Output anchors and names only.
+Requested count, unique supplied anchors, canonical-subset identities and passages supporting distinct visible events. Output anchors and names only.

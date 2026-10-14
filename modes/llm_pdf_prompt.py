@@ -52,12 +52,14 @@ def _newline_marker(count: int) -> str:
     return "\u2029" + ("\u2028" * (count - 2))
 
 
-def _paginate_text(text: str) -> list[list[dict]]:
+def _paginate_text(
+    text: str, *, character_width_ratio: float = _CHARACTER_WIDTH_RATIO
+) -> list[list[dict]]:
     usable_width = _PAGE_WIDTH - (2 * _PAGE_MARGIN)
     usable_height = _PAGE_HEIGHT - (2 * _PAGE_MARGIN)
     characters_per_line = max(
         1,
-        math.floor(usable_width / (PDF_FONT_SIZE * _CHARACTER_WIDTH_RATIO)),
+        math.floor(usable_width / (PDF_FONT_SIZE * character_width_ratio)),
     )
     lines_per_page = max(1, math.floor(usable_height / PDF_FONT_SIZE))
 
@@ -209,9 +211,11 @@ def _assemble_pdf(objects: list[bytes]) -> bytes:
     return b"".join(chunks)
 
 
-def build_text_pdf(text: str) -> tuple[bytes, int]:
+def build_text_pdf(
+    text: str, *, character_width_ratio: float = _CHARACTER_WIDTH_RATIO
+) -> tuple[bytes, int]:
     """UTF-8 자연어를 네이티브 텍스트가 포함된 1pt A4 PDF로 만든다."""
-    pages = _paginate_text(str(text))
+    pages = _paginate_text(str(text), character_width_ratio=character_width_ratio)
     character_ids: dict[str, int] = {}
     for page in pages:
         for line in page:
@@ -330,6 +334,7 @@ def prepare_pdf_prompt_messages(
     messages: list,
     *,
     encode_transcript: bool,
+    character_width_ratio: float = _CHARACTER_WIDTH_RATIO,
 ) -> tuple[list, dict]:
     """대화를 PDF 한 파트와 원본 이미지 파트들로 변환한다."""
     transcript, media_parts = build_conversation_transcript(messages)
@@ -338,7 +343,11 @@ def prepare_pdf_prompt_messages(
         if encode_transcript
         else transcript
     )
-    pdf_bytes, page_count = build_text_pdf(pdf_text)
+    pdf_bytes, page_count = (
+        build_text_pdf(pdf_text)
+        if character_width_ratio == _CHARACTER_WIDTH_RATIO
+        else build_text_pdf(pdf_text, character_width_ratio=character_width_ratio)
+    )
     pdf_data_url = (
         f"data:{PDF_MIME_TYPE};base64,"
         + base64.b64encode(pdf_bytes).decode("ascii")
@@ -371,5 +380,6 @@ def prepare_pdf_prompt_messages(
         "encoded_chars": len(pdf_text),
         "image_count": len(media_parts),
         "base64_transcript": encode_transcript,
+        "character_width_ratio": character_width_ratio,
     }
 

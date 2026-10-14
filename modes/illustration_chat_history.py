@@ -614,7 +614,7 @@ def prepare_history(
     bot_name: str = "",
     trace_id: str = "",
 ) -> dict:
-    """Build an uncommitted history view for CALL1/2/3."""
+    """Build an uncommitted history view for OUTFIT/CALL2/CALL3."""
     total_started_at = time.perf_counter()
     perf: dict = {}
     if target_index < 0 or target_index >= len(chats):
@@ -797,18 +797,11 @@ def _safe_pipeline_snapshot(result: dict | None, error: str = "") -> dict:
         "status": "error" if error else "success",
         "error": str(error or "")[:2_000],
         "call1_result": deepcopy(value.get("call1_result") or {}),
+        "time_place_result": deepcopy(value.get("time_place_result") or {}),
         "profile_result": deepcopy(value.get("profile_result") or {}),
         **({"wardrobe_events": deepcopy(value["wardrobe_events"])}
            if "wardrobe_events" in value else {}),
         "call2_out": str(value.get("call2_output") or ""),
-        "call2_authority_audit": deepcopy(value.get("call2_authority_audit") or []),
-        "call2_authority_audit_output": str(
-            value.get("call2_authority_audit_output") or ""
-        )[:50_000],
-        "call2_authority_audit_status": str(
-            value.get("call2_authority_audit_status") or ""
-        ),
-        "call2_fix_out": str(value.get("call2_fix_output") or ""),
         "call3_initial_out": str(value.get("call3_initial_output") or ""),
         "call3_out": str(value.get("call3_output") or ""),
         "call3_correction_used": bool(value.get("call3_correction_used")),

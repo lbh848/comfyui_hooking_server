@@ -1050,12 +1050,10 @@ def _visual_guide_slot_identity(llm_service_module, slot: str) -> tuple[str, str
     suffix = "" if normalized == "llm1" else normalized.removeprefix("llm")
     service = str(
         config.get(f"llm_service{suffix}")
-        or config.get("llm_service")
-        or ""
+        or "openai"
     )
     model = str(
         config.get(f"llm_model{suffix}")
-        or config.get("llm_model")
         or ""
     )
     return service, model
@@ -1119,7 +1117,7 @@ def _log_visual_guide_llm_history(
     try:
         from modes.lighbd_service import _log_lighbd_history
 
-        slot = str(llm_slot or "llm1")
+        slot = str(llm_slot or llm_service_module.routing_primary_slot(task_key))
         service, model = _visual_guide_slot_identity(llm_service_module, slot)
         token_usage = dict(usage or {})
         target_profile_ids = list(profile_ids or [])
@@ -1345,7 +1343,7 @@ async def _generate_visual_profile_appearance_context(
         attempt_raw = info.get("raw_response", info.get("result"))
         if attempt_raw is not None:
             last_raw_result = str(attempt_raw)
-        attempt_slot = str(info.get("slot") or "llm1")
+        attempt_slot = str(info.get("slot") or llm_service_module.routing_primary_slot(VISUAL_APPEARANCE_TASK_KEY))
         attempt_phase = str(info.get("phase") or "primary")
         attempt_number = int(info.get("attempt") or 0)
         total_attempts = int(info.get("total_attempts") or 0)
@@ -4656,7 +4654,7 @@ class BotMode:
                         attempt_raw = info.get("result")
                         if attempt_raw is not None:
                             last_raw_result = str(attempt_raw)
-                        attempt_slot = str(info.get("slot") or "llm1")
+                        attempt_slot = str(info.get("slot") or llm_service.routing_primary_slot(VISUAL_GUIDE_TASK_KEY))
                         attempt_phase = str(info.get("phase") or "primary")
                         attempt_number = int(info.get("attempt") or 0)
                         total_attempts = int(info.get("total_attempts") or 0)
@@ -8138,7 +8136,7 @@ async def run_auto_classify_face_tags(
     import time as _time
     import datetime
     from modes.tag_classifier import classify_prompt
-    from modes.llm_service import callLLMVisionTask, supports_vision, get_config, routing_primary_service
+    from modes.llm_service import callLLMVisionTask, supports_vision, get_config, routing_primary_service, routing_primary_model, routing_primary_slot
     from modes.lighbd_service import _log_lighbd_history
 
     async def _notify_llm_widget(event_type: str, data: dict = None):
@@ -8240,7 +8238,7 @@ async def run_auto_classify_face_tags(
         prompt_id = f"auto_face_tag:{char_name}:{target['visual_card_id']}"
         print(f"[BOT_MODE] auto_classify_face_tags 호출: bot={bot_name} char={char_name} card={target['visual_card_id']} service={service} appearance={len(groups.get('외모/신체', []))} attire={len(groups.get('복장', []))} etc={len(groups.get('미분류', []))} use_custom={use_custom}")
 
-        use_model = cfg.get("llm_model", "")
+        use_model = routing_primary_model("classify_face_tags")
         await _notify_llm_widget("start", {"model": use_model, "prompt_id": prompt_id})
 
         raw = None
@@ -8435,7 +8433,7 @@ async def run_lb_extra_refine(
     import base64
     import time as _time
     import datetime
-    from modes.llm_service import callLLMVisionTask, supports_vision, get_config, routing_primary_service
+    from modes.llm_service import callLLMVisionTask, supports_vision, get_config, routing_primary_service, routing_primary_model, routing_primary_slot
     from modes.lighbd_service import _log_lighbd_history
 
     selected_card_id = str(visual_card_id or "").strip()
@@ -8450,8 +8448,8 @@ async def run_lb_extra_refine(
         suffix = "" if slot in ("", "llm1") else slot[3:]
         service_key = f"llm_service{suffix}" if suffix else "llm_service"
         model_key = f"llm_model{suffix}" if suffix else "llm_model"
-        actual_service = str(cfg.get(service_key) or cfg.get("llm_service") or service or "")
-        actual_model = str(cfg.get(model_key) or cfg.get("llm_model") or "")
+        actual_service = str(cfg.get(service_key) or "openai")
+        actual_model = str(cfg.get(model_key) or "")
         return actual_service, actual_model
 
     def _write_lb_extra_history(
@@ -8467,7 +8465,7 @@ async def run_lb_extra_refine(
         total_attempts: int = 0,
         tps: float = 0.0,
     ) -> None:
-        resolved_slot = str(slot or execution_complete.get("llm_slot") or "")
+        resolved_slot = str(slot or execution_complete.get("llm_slot") or routing_primary_slot("refine_lb_extra"))
         actual_service, actual_model = _history_slot_config(resolved_slot)
         history_input = messages or [{
             "role": "user",
@@ -8626,7 +8624,7 @@ async def run_lb_extra_refine(
               f"appearance={len(appearance_tags or [])} outfit={len(outfit_tags or [])} "
               f"etc={len(etc_tags or [])} use_custom={use_custom}")
 
-        use_model = cfg.get("llm_model", "")
+        use_model = routing_primary_model("refine_lb_extra")
         await _notify_llm_widget("start", {"model": use_model, "prompt_id": prompt_id})
 
         raw = None

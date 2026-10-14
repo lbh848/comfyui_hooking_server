@@ -53,7 +53,9 @@ def snapshot(run=None, *, kind="illustration"):
         return None
     return {key: copy.deepcopy(value) for key, value in run.items() if key not in {"nodes", "publish_pending", "_active_llm_tasks", "_frontier"}} | {
         "nodes": [{k: copy.deepcopy(v) for k, v in node.items()
-                   if k not in {"input", "input_variables", "output", "attempts", "_preview_image", "_preview_mask", "call1_state_table"}} for node in run["nodes"].values()]
+                   if k not in {"input", "input_variables", "output", "attempts", "_preview_image", "_preview_mask", "call1_state_table", "time_place_state_table"}} | {
+                       "attempt_count": sum(event.get("type") == "attempt_start" for event in node.get("attempts", [])),
+                   } for node in run["nodes"].values()]
     }
 
 
@@ -231,9 +233,9 @@ def add_node(run, label, *, dependencies=(), node_id=None, **fields):
 def update(run, node_id, **fields):
     node = run["nodes"][node_id]
     if fields.get("status") == "processing" and node["started_at"] is None:
-        fields["started_at"] = time.time()
+        fields.setdefault("started_at", time.time())
     if fields.get("status") in TERMINAL:
-        fields["ended_at"] = time.time()
+        fields.setdefault("ended_at", node.get("ended_at") or time.time())
     node.update(fields)
     changed(run)
 
@@ -368,14 +370,14 @@ def stage(label, *, executor="process", layout_group=None):
                 and layout_group == "illustration_generation"
                 and preceding is not None
                 and preceding.get("kind") == "image"
-                and preceding.get("status") == "processing"
+                and preceding.get("status") in ("waiting", "processing")
             )
             if queued_image:
                 # The queue and generator execute the same slot, with one identity.
                 node_id = preceding["id"]
                 update(run, node_id, input=serializable(preceding["input"] | inputs),
-                       executor=resolved_executor, status="processing", ended_at=None,
-                       summary="이미지 생성 중", error="")
+                       executor=resolved_executor, status=preceding["status"], ended_at=None,
+                       summary="생성 대기" if preceding["status"] == "waiting" else "이미지 생성 중", error="")
             else:
                 node_id = add_node(
                     run,
@@ -581,6 +583,11 @@ def queue_sync(items):
         run, node_id, root = binding
         status = {"pending": "waiting"}.get(item.status, item.status)
         node = run["nodes"][node_id]
+        if (node.get("kind") == "image" and getattr(item, "_comfy_submission", None) is not None
+                and status in ("waiting", "processing") and node["status"] != status):
+            update(run, node_id, status=status,
+                   started_at=item.started_at if status == "processing" else None,
+                   summary="Comfy 대기 · 선행 제출" if status == "waiting" else "이미지 생성 중")
         if node["status"] not in TERMINAL and status in TERMINAL:
             error = str(getattr(item, "error", "") or "")
             fields = {"status": status, "error": error}
@@ -626,7 +633,10 @@ def queue_execution(fn):
         executor = "llm" if is_review else ("process" if root else ("comfy" if provider == "comfy" else "process"))
         if run.get("kind") == "video":
             executor = "comfy" if item.type in VIDEO_RENDER_TYPES else "process"
-        update(run, node_id, status="processing", summary="큐에서 실행 시작", executor=executor)
+        waiting_comfy = getattr(item, "_comfy_submission", None) is not None and item.status == "waiting"
+        update(run, node_id, status="waiting" if waiting_comfy else "processing",
+               **({"started_at": None} if waiting_comfy else {}), ended_at=None,
+               summary="생성 대기" if waiting_comfy else "큐에서 실행 시작", executor=executor)
         if root:
             run["status"] = "processing"
             changed(run)
@@ -671,6 +681,10 @@ def queue_execution(fn):
                 changed(run)
             return result
         except BaseException as exc:
+            if getattr(item, "_comfy_requeue", False):
+                print(f"[ILLUST_FLOW] 일시정지로 선행 작업을 대기에 복귀: run={run['id']}, node={node_id}")
+                update(run, node_id, status="waiting", ended_at=None, error="", summary="큐 일시정지 · 제출 회수")
+                raise
             status = "cancelled" if isinstance(exc, asyncio.CancelledError) else "failed"
             reason = _failure_reason(exc, "작업 취소" if status == "cancelled" else "작업 실패")
             print(
@@ -745,17 +759,22 @@ def llm_metadata(**fields):
 
 
 def record_call1_state_table(table):
-    """Attach server expansion to the CALL1 that just completed in this branch."""
+    """Attach server expansion to the OUTFIT that just completed in this branch."""
+    record_state_table(table, label="OUTFIT", field="call1_state_table")
+
+
+def record_state_table(table, *, label, field):
+    """Attach an independent filled timeline to its completed LLM node."""
     run = _run.get()
     if run is None:
-        print("[ILLUST_FLOW:CALL1] 작업흐름 기록 없음; 상태표는 생성 결과에 보존")
+        print(f"[ILLUST_FLOW:{label}] 작업흐름 기록 없음; 상태표는 생성 결과에 보존")
         return
     for node_id in _frontier.get():
         node = run["nodes"].get(node_id)
-        if node and node["label"] == "CALL1":
-            update(run, node_id, call1_state_table=copy.deepcopy(table))
+        if node and (node["label"] == label or (label == "OUTFIT" and node["label"] == "CALL1")):
+            update(run, node_id, **{field: copy.deepcopy(table)})
             return
-    print(f"[ILLUST_FLOW:CALL1] 상태표를 연결할 CALL1 노드 없음: frontier={_frontier.get()!r}")
+    print(f"[ILLUST_FLOW:{label}] 상태표를 연결할 노드 없음: frontier={_frontier.get()!r}")
 
 
 def llm_attempt(event, model, service):
