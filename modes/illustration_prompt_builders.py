@@ -130,8 +130,10 @@ def detail_messages(detail_system, batch, slots, *, past_text="", segmented="", 
          + "\n\nReturn one <lb-xnai> block with a scenes array for exactly these C anchors: "
          + variable(json.dumps([scene["slot"] for scene in prepared]), "출력할 원문 앵커 목록") + ". Each scene has slot, camera, characters "
          + "(name, positive, negative, position), scene, supplement. "
-         + "Use each scene's own supplied brief/profile/state. When a brief or tracked aspect is absent, "
-         + "decide it from source chronology at that scene's assigned anchor, preserving its identities and count. "
+         + "Use each scene's supplied profile/state and source chronology at its assigned anchor. "
+         + "Treat the PLAN brief and prepared character list as reference information. "
+         + "Determine the visible characters and their names from the source and supplied context; "
+         + "the output does not have to match PLAN's character names, count or order. "
          + "No extra fields.</lb-xnai>"},
     ]
 
