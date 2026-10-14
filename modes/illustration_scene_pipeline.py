@@ -347,18 +347,30 @@ def _parse_detail_scene(item: dict, scene: dict) -> dict:
     if not all(isinstance(item[key], str) for key in ("camera", "scene", "supplement")) or not item["camera"].strip() or not item["scene"].strip():
         _fail("CALL2-DETAIL", "camera/scene/supplement 형식 오류", item)
     characters = item["characters"]
-    expected = [ch["name"] for ch in scene["characters"]]
-    if not isinstance(characters, list) or len(characters) != len(expected):
-        _fail("CALL2-DETAIL", "캐릭터 수 불일치", {"expected": expected, "actual": characters})
-    actual = [character.get("name") for character in characters if isinstance(character, dict)]
-    if (len(actual) == len(characters) and all(isinstance(name, str) for name in actual)
-            and len(set(actual)) == len(actual) and set(actual) == set(expected) and actual != expected):
-        print(f"[ILLUST_CONTEXT:CALL2-DETAIL] 확정 인물 순서 복구: slot={item['slot']}, actual={actual}, expected={expected}")
-        by_name = {character["name"]: character for character in characters}
-        characters = [by_name[name] for name in expected]
-    for index, (character, name) in enumerate(zip(characters, expected)):
+    if isinstance(characters, str):
+        restored = pipeline._json_object_from_text(characters, array_key="characters")
+        if restored is not None:
+            characters = restored.get("characters", restored)
+            print(f"[ILLUST_CONTEXT:CALL2-DETAIL] 문자열 인물 데이터 복구: slot={item['slot']}")
+    if isinstance(characters, dict) and "characters" in characters:
+        characters = characters["characters"]
+        print(f"[ILLUST_CONTEXT:CALL2-DETAIL] 인물 배열 포장 복구: slot={item['slot']}")
+    if isinstance(characters, dict):
+        if "name" in characters or "positive" in characters:
+            characters = [characters]
+        else:
+            characters = [
+                {"name": name, **character} if isinstance(character, dict)
+                else {"name": name, "positive": character}
+                for name, character in characters.items()
+            ]
+        print(f"[ILLUST_CONTEXT:CALL2-DETAIL] 객체 인물 데이터 배열 복구: slot={item['slot']}, count={len(characters)}")
+    if not isinstance(characters, list):
+        _fail("CALL2-DETAIL", "인물 데이터를 객체/배열로 복구할 수 없음", characters)
+    for index, character in enumerate(characters):
         if not isinstance(character, dict) or not {"name", "positive"} <= set(character):
             _fail("CALL2-DETAIL", f"필수 캐릭터 데이터 누락 index={index}", character)
+        name = character["name"]
         extras = set(character) - {"name", "positive", "negative", "position"}
         if extras:
             print(f"[ILLUST_CONTEXT:CALL2-DETAIL] 소비하지 않는 캐릭터 필드 제외: name={name!r}, fields={extras}")
@@ -366,8 +378,9 @@ def _parse_detail_scene(item: dict, scene: dict) -> dict:
             if character.get(field) is None:
                 print(f"[ILLUST_CONTEXT:CALL2-DETAIL] 빈 캐릭터 필드 복구: name={name!r}, field={field}")
                 character[field] = ""
-        if character["name"] != name or not all(isinstance(character[key], str) for key in ("positive", "negative", "position")):
-            _fail("CALL2-DETAIL", f"canonical name/태그 형식 위반 index={index}", character)
+        if (not isinstance(character["name"], str) or not character["name"].strip()
+                or not all(isinstance(character[key], str) for key in ("positive", "negative", "position"))):
+            _fail("CALL2-DETAIL", f"인물 이름/태그 문자열 데이터 없음 index={index}", character)
     characters = [{key: character[key] for key in ("name", "positive", "negative", "position")}
                   for character in characters]
     return {"kind": "scene", "slot": item["slot"], "camera": item["camera"],
@@ -375,7 +388,7 @@ def _parse_detail_scene(item: dict, scene: dict) -> dict:
             "characters": deepcopy(characters), "speak": ""}
 
 
-def parse_detail_batch(text: str, scenes: list[dict]) -> list[dict]:
+def parse_detail_batch(text: str, scenes: list[dict], *, allow_partial: bool = False) -> list[dict]:
     blocks = list(re.finditer(r"<lb[-_]xnai[^>]*>([\s\S]*?)</lb[-_]xnai>", text or "", re.I))
     if len(blocks) != 1:
         print(f"[ILLUST_CONTEXT:CALL2-DETAIL] 배치 포장 복구: blocks={len(blocks)}, slots={[scene['slot'] for scene in scenes]}")
@@ -387,6 +400,9 @@ def parse_detail_batch(text: str, scenes: list[dict]) -> list[dict]:
             print(f"[ILLUST_CONTEXT:CALL2-DETAIL] 단일 장면 루트 복구: slot={raw['slot']!r}")
             raw = {"scenes": [raw]}
         if not isinstance(raw, dict) or not isinstance(raw.get("scenes"), list):
+            if allow_partial:
+                print(f"[ILLUST_CONTEXT:CALL2-DETAIL] 파싱 불가 장면 문서 제외, 다른 장면 보존: input={document[:500]!r}")
+                continue
             _fail("CALL2-DETAIL", "복구 가능한 scenes 배열 없음", document[:500])
         if set(raw) != {"scenes"}:
             print(f"[ILLUST_CONTEXT:CALL2-DETAIL] 소비하지 않는 루트 필드 제외: fields={set(raw) - {'scenes'}}")
@@ -396,29 +412,44 @@ def parse_detail_batch(text: str, scenes: list[dict]) -> list[dict]:
         _fail("CALL2-DETAIL", "배정된 장면의 slot 중복", [scene["slot"] for scene in scenes])
     by_slot = {}
     anchor_slots = {scene.get("anchor_segment"): scene["slot"] for scene in scenes if scene.get("anchor_segment")}
+    failed_slots = set()
     for item in items:
-        if not isinstance(item, dict) or "slot" not in item:
-            _fail("CALL2-DETAIL", "장면 slot 누락/형식 오류", item)
-        slot = item["slot"]
-        if isinstance(slot, str) and slot in anchor_slots:
-            slot = anchor_slots[slot]
-            item = {**item, "slot": slot}
-        elif isinstance(slot, str) and re.fullmatch(r"[+-]?\d+", slot.strip()):
-            print(f"[ILLUST_CONTEXT:CALL2-DETAIL] 숫자 slot 문자열 복구: value={slot!r}")
-            slot = int(slot)
-            item = {**item, "slot": slot}
-        if type(slot) is not int or slot not in expected_by_slot:
-            _fail("CALL2-DETAIL", "미배정/중복 slot", {"expected": list(expected_by_slot), "actual": slot})
-        descriptor = _parse_detail_scene(item, expected_by_slot[slot])
-        if slot in by_slot:
-            if descriptor != by_slot[slot]:
+        slot = None
+        try:
+            if not isinstance(item, dict) or "slot" not in item:
+                _fail("CALL2-DETAIL", "장면 slot 누락/형식 오류", item)
+            slot = item["slot"]
+            if isinstance(slot, str) and slot in anchor_slots:
+                slot = anchor_slots[slot]
+                item = {**item, "slot": slot}
+            elif isinstance(slot, str) and re.fullmatch(r"[+-]?\d+", slot.strip()):
+                print(f"[ILLUST_CONTEXT:CALL2-DETAIL] 숫자 slot 문자열 복구: value={slot!r}")
+                slot = int(slot)
+                item = {**item, "slot": slot}
+            if type(slot) is not int or slot not in expected_by_slot:
+                _fail("CALL2-DETAIL", "미배정/중복 slot", {"expected": list(expected_by_slot), "actual": slot})
+            descriptor = _parse_detail_scene(item, expected_by_slot[slot])
+            if slot in by_slot and descriptor != by_slot[slot]:
                 _fail("CALL2-DETAIL", "서로 다른 내용의 중복 slot", slot)
+        except ValueError as exc:
+            if not allow_partial:
+                raise
+            print(f"[ILLUST_CONTEXT:CALL2-DETAIL] 사용할 수 없는 장면만 재요청: slot={slot!r}, error={exc}, input={item!r}")
+            traceback.print_exc()
+            if type(slot) is int and slot in expected_by_slot:
+                failed_slots.add(slot)
+                by_slot.pop(slot, None)
+            continue
+        if slot in failed_slots:
+            print(f"[ILLUST_CONTEXT:CALL2-DETAIL] 실패한 중복 slot 재사용 생략: slot={slot}")
+            continue
+        if slot in by_slot:
             print(f"[ILLUST_CONTEXT:CALL2-DETAIL] 동일 장면 중복 제거: slot={slot}")
             continue
         by_slot[slot] = descriptor
-    if set(by_slot) != set(expected_by_slot):
+    if not allow_partial and set(by_slot) != set(expected_by_slot):
         _fail("CALL2-DETAIL", "배정된 장면 수 불일치", {"expected": list(expected_by_slot), "actual": list(by_slot)})
-    return [by_slot[scene["slot"]] for scene in scenes]
+    return [by_slot[scene["slot"]] for scene in scenes if scene["slot"] in by_slot]
 
 
 def parse_detail(text: str, scene: dict) -> dict:
@@ -781,25 +812,41 @@ async def build_from_context(
             slots = [scene["slot"] for scene in batch]
             needs_source = not all(toggles[key] for key in
                                    ("outfit_enabled", "time_place_enabled", "call2_plan_enabled"))
-            messages = prompt_builders.detail_messages(detail_system, batch, slots,
+            messages = p._normalize_messages(prompt_builders.detail_messages(detail_system, batch, slots,
                 past_text=past_text if needs_source else "",
                 segmented=segmented if needs_source else "", toggles=toggles,
                 prior_status=prior_status if tracking is None else None,
-                prior_time_place=prior_time_place if time_place_tracking is None else None)
+                prior_time_place=prior_time_place if time_place_tracking is None else None))
             validated = {}
+            completed = {}
             def validate_detail(response):
                 try:
-                    results = parse_detail_batch(response, batch)
+                    pending = [scene for scene in batch if scene["slot"] not in completed]
+                    results = parse_detail_batch(response, pending, allow_partial=True)
                 except ValueError as exc:
+                    print(f"[ILLUST_CONTEXT:CALL2-DETAIL] 응답 파싱 실패, 보존 장면 유지: completed={list(completed)}, error={exc}")
+                    traceback.print_exc()
                     return False, str(exc)
+                completed.update((result["slot"], result) for result in results)
+                pending = [scene for scene in batch if scene["slot"] not in completed]
+                if pending:
+                    print(f"[ILLUST_CONTEXT:CALL2-DETAIL] 정상 장면 보존 후 누락분만 재요청: "
+                          f"completed={list(completed)}, pending={[scene['slot'] for scene in pending]}")
+                    messages[:] = p._normalize_messages(prompt_builders.detail_messages(detail_system, pending,
+                        [scene["slot"] for scene in pending],
+                        past_text=past_text if needs_source else "",
+                        segmented=segmented if needs_source else "", toggles=toggles,
+                        prior_status=prior_status if tracking is None else None,
+                        prior_time_place=prior_time_place if time_place_tracking is None else None))
+                    return False, f"CALL2-DETAIL: 미완료 장면만 재요청 slots={[scene['slot'] for scene in pending]}"
                 validated["output"] = response
-                validated["results"] = results
+                validated["results"] = [completed[scene["slot"]] for scene in batch]
                 return True, ""
             call_name = "CALL2-DETAIL"
             if attempt_kind == "duplicate":
                 call_name += f" {batch_index}/{total} [느리다고? 다시해!]"
             output = await p._call_pipeline_llm(
-                call_name, p._normalize_messages(messages), job_stream_notify,
+                call_name, messages, job_stream_notify,
                 result_validator=validate_detail, stream_observer=stream_observer,
                 history_id=history_id)
             results = (validated["results"] if validated.get("output") == output

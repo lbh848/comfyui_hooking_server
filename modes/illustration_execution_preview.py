@@ -128,11 +128,11 @@ async def build_execution_plan(*, config, snapshot, visual_profiles, translation
     )
     hits, misses = cache_summary["cache_hits"], cache_summary["cache_misses"]
     profile_condition = "CURRENT에 해당 다중 프로필 캐릭터가 등장할 때"
-    cache_card = card("PROFILE-CONTEXT-CACHE", 1, f"등록 문맥 캐시: 적중 {hits} · 미스 {misses}",
-                      enabled=bool(multiple) and not prompt_batch, condition=profile_condition)
     translate = card("PROFILE-CONTEXT-TRANSLATE", 1,
                      f"등록 문맥 미스 최대 {misses}개 · CURRENT 등장인물의 문맥만 한 요청으로 번역" if misses else "캐시 미스가 없어 호출 생략",
                      enabled=bool(multiple and misses) and not prompt_batch, condition=profile_condition)
+    cache_card = card("PROFILE-CONTEXT-CACHE", 1, f"등록 문맥 캐시: 적중 {hits} · 미스 {misses}",
+                      enabled=bool(multiple) and not prompt_batch, condition=profile_condition)
     profile_cards = [card("PROFILE-RESOLVE", 1, f"{name} 프로필 판정", group="profile_resolve",
                           index=index, count=len(multiple), condition=profile_condition)
                      for index, name in enumerate(multiple, 1)] if multiple and not prompt_batch else []

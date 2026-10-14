@@ -7009,7 +7009,7 @@ async def _call_pipeline_llm(
         "task_key": task_key,
         "model": model,
         "service": service,
-        "input": messages,
+        "input": deepcopy(messages),
         "input_variables": input_variables(messages),
         "output": "",
         "completion_tokens": 0,
@@ -7055,6 +7055,7 @@ async def _call_pipeline_llm(
         "first_byte_elapsed",
         "last_raw_elapsed",
         "raw_bytes",
+        "transport_raw_response",
         *llm_service.LLM_STREAM_TIMING_FIELDS,
     )
 
@@ -7095,6 +7096,8 @@ async def _call_pipeline_llm(
         etype = str(event.get("type") or "")
         if etype == "attempt_start":
             provider_metadata.clear()
+            history_record["input"] = deepcopy(messages)
+            history_record["input_variables"] = input_variables(messages)
         recorded_event = dict(event)
         if etype in {"attempt_success", "attempt_failure", "execution_complete"}:
             recorded_event.update(_provider_details())
@@ -7191,11 +7194,12 @@ async def _call_pipeline_llm(
         })
         base64_response_mode_token = None
         if call_name.startswith("CALL2-DETAIL"):
-            # A DETAIL request returns one document containing its entire scenes
-            # batch; legacy per-scene envelopes decode into incompatible documents.
+            # The validator retains healthy scenes and narrows this list before
+            # the next routed attempt. Other callers keep immutable requests.
+            call_kwargs["retry_messages"] = messages
             base64_response_mode_token = (
                 llm_service._gemini_base64_response_mode_ctx.set(
-                    llm_service.GEMINI_BASE64_RESPONSE_WHOLE
+                    llm_service.GEMINI_BASE64_RESPONSE_ILLUSTRATION_SCENES
                 )
             )
         try:

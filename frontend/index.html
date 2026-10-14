@@ -81842,8 +81842,8 @@
                     </div>
                     <div class="illust-prompt-toolbar" id="illust-log-footer-toggles" hidden>
                         <span id="illust-toggle-status" class="illust-settings-status" aria-live="polite">로드 대기 중</span>
-                        <button class="illust-settings-action is-secondary" type="button" onclick="loadIllustrationContextToggles()">다시 불러오기</button>
-                        <button id="illust-toggle-save" class="illust-settings-action is-primary" type="button" onclick="saveIllustrationContextToggles()">저장</button>
+                        <button id="illust-toggle-reload" class="illust-settings-action is-secondary" type="button" onclick="loadIllustrationContextToggles()">다시 불러오기</button>
+                        <button id="illust-toggle-save" class="illust-settings-action is-primary" type="button" onclick="saveIllustrationContextToggles()">지금 저장</button>
                     </div>
                     <div class="illust-prompt-toolbar" id="illust-log-footer-flow" hidden>
                         <span>현재 생성 설정의 노드 흐름과 연결된 LLM의 Think 사용을 확인합니다.</span>
@@ -82678,6 +82678,8 @@
         let _illustrationContextToggles = {};
         let _illustrationSettingsActiveGroup = 'pipeline';
         let _illustrationSettingsDirty = false;
+        let _illustrationSettingsSaveTimer = null;
+        let _illustrationSettingsSaving = false;
 
         function _renderIllustrationContextOptions(options, value) {
             return (options || []).map(option => {
@@ -82861,6 +82863,7 @@
             }
             body.innerHTML = `
                 <div class="illust-settings-info">
+                    값을 변경하면 자동으로 저장됩니다.
                     기능을 끄면 관련 세부 옵션만 비활성화됩니다. 설정은 언제든 다시 켤 수 있습니다.
                 </div>
                 <div class="illust-settings-layout">
@@ -82952,7 +82955,12 @@
 
         function markIllustrationContextSettingsDirty() {
             _illustrationSettingsDirty = true;
-            setIllustrationContextStatus('저장되지 않은 변경 사항', 'dirty');
+            setIllustrationContextStatus('자동 저장 대기 중...', 'dirty');
+            clearTimeout(_illustrationSettingsSaveTimer);
+            _illustrationSettingsSaveTimer = setTimeout(() => {
+                _illustrationSettingsSaveTimer = null;
+                void saveIllustrationContextToggles(true);
+            }, 400);
         }
 
         function setIllustrationContextSaving(saving) {
@@ -82964,7 +82972,9 @@
             }
             button.disabled = saving;
             button.classList.toggle('is-saving', saving);
-            button.textContent = saving ? '저장 중...' : '저장';
+            button.textContent = saving ? '저장 중...' : '지금 저장';
+            const reload = document.getElementById('illust-toggle-reload');
+            if (reload) reload.disabled = saving;
             body.setAttribute('aria-busy', String(saving));
         }
 
@@ -83087,6 +83097,8 @@
         }
 
         async function loadIllustrationContextToggles() {
+            clearTimeout(_illustrationSettingsSaveTimer);
+            _illustrationSettingsSaveTimer = null;
             setIllustrationContextStatus('불러오는 중...');
             try {
                 const [res] = await Promise.all([
@@ -83098,7 +83110,7 @@
                 _illustrationContextToggles = data.toggles || {};
                 renderIllustrationContextToggles();
                 _illustrationSettingsDirty = false;
-                setIllustrationContextStatus('로드 완료');
+                setIllustrationContextStatus('자동 저장 켜짐');
                 // 현재 봇의 후처리 모드를 반영해 CALL3 대사 프롬프트 잠금을 맞춘다.
                 refreshPostprocessActiveMode();
             } catch (e) {
@@ -83111,7 +83123,16 @@
             }
         }
 
-        async function saveIllustrationContextToggles() {
+        async function saveIllustrationContextToggles(autoSave = false) {
+            clearTimeout(_illustrationSettingsSaveTimer);
+            _illustrationSettingsSaveTimer = null;
+            if (_illustrationSettingsSaving) {
+                _illustrationSettingsDirty = true;
+                console.debug('[ILLUST_CONTEXT] 저장 중 변경은 현재 요청 완료 후 저장합니다.');
+                return;
+            }
+            _illustrationSettingsSaving = true;
+            _illustrationSettingsDirty = false;
             const body = {..._illustrationContextToggles};
             // Retired settings must not survive as hidden save-time options.
             delete body.call1_enabled;
@@ -83135,6 +83156,7 @@
             }
             setIllustrationContextStatus('저장 중...');
             setIllustrationContextSaving(true);
+            let saved = false;
             try {
                 const res = await fetch('/api/illustration_context/toggles', {
                     method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -83142,19 +83164,33 @@
                 });
                 const data = await res.json();
                 if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
-                _illustrationContextToggles = data.toggles || body;
-                renderIllustrationContextToggles();
-                _illustrationSettingsDirty = false;
-                setIllustrationContextStatus('저장 완료');
-                showToast('삽화 생성 설정 저장 완료', 'success');
-                applyIllustSettingsV1Lock();
+                if (!_illustrationSettingsDirty) {
+                    _illustrationContextToggles = data.toggles || body;
+                    // Update normalized values in place so editing keeps its focus and caret.
+                    for (const field of ILLUSTRATION_CONTEXT_TOGGLE_FIELDS) {
+                        const el = document.querySelector(`[data-illust-toggle="${field.key}"]`);
+                        if (!el) continue;
+                        const value = _illustrationContextToggles[field.key];
+                        if (field.type === 'toggle') el.checked = Boolean(value);
+                        else if (el.value !== String(value ?? '')) el.value = String(value ?? '');
+                    }
+                    updateIllustrationContextOptionLocks();
+                    applyIllustSettingsV1Lock();
+                    setIllustrationContextStatus(autoSave ? '자동 저장 완료' : '저장 완료');
+                    if (!autoSave) showToast('삽화 생성 설정 저장 완료', 'success');
+                }
+                saved = true;
             } catch (e) {
                 console.error('[ILLUST_CONTEXT] 생성 설정 저장 실패:', e);
                 _illustrationSettingsDirty = true;
                 setIllustrationContextStatus('저장 실패: ' + (e.message || e), 'error');
                 showToast('삽화 생성 설정 저장 실패: ' + (e.message || e), 'error');
             } finally {
+                _illustrationSettingsSaving = false;
                 setIllustrationContextSaving(false);
+            }
+            if (saved && _illustrationSettingsDirty && _illustrationSettingsSaveTimer === null) {
+                await saveIllustrationContextToggles(true);
             }
         }
 

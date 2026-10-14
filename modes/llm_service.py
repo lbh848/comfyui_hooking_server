@@ -644,7 +644,7 @@ This section replaces the response transport rules above for this illustration s
 
 1. Compose every requested scene as its own complete `<lb-xnai>` document using `scenes[1]` and exactly one scene item in the decoded task's requested schema.
 2. Apply the common transport rule independently to each one-scene document: if it contains JSON or TOON/YAML, preserve its structure and enclosing tags and encode only nonempty string values with the `base64:` prefix. Otherwise UTF-8 Base64-encode the complete document.
-3. Emit the encoded documents in requested plan order using exactly this ASCII envelope, replacing SLOT with that scene's exact integer slot:
+3. Emit the encoded documents in requested plan order using exactly this ASCII envelope, replacing SLOT with that scene's exact supplied slot or C anchor:
 <lb-scene slot="SLOT">
 TRANSPORTED_DOCUMENT
 </lb-scene>
@@ -890,12 +890,12 @@ def _strip_base64_fence(text: str) -> str:
 
 
 _GEMINI_SCENE_OPEN_RE = re.compile(
-    r"<lb-scene\s+slot\s*=\s*[\"']?(\d+)[\"']?\s*>",
+    r"<lb-scene\s+slot\s*=\s*[\"']?([A-Za-z0-9_-]+)[\"']?\s*>",
     re.IGNORECASE,
 )
 _GEMINI_SCENE_CLOSE_RE = re.compile(r"</lb-scene\s*>", re.IGNORECASE)
 _GEMINI_SCENE_FRAME_RE = re.compile(
-    r"<lb-scene\s+slot\s*=\s*[\"']?(\d+)[\"']?\s*>"
+    r"<lb-scene\s+slot\s*=\s*[\"']?([A-Za-z0-9_-]+)[\"']?\s*>"
     r"([\s\S]*?)</lb-scene\s*>",
     re.IGNORECASE,
 )
@@ -1082,6 +1082,29 @@ def _decode_structured_base64_values(raw_text: str, *, partial: bool = False) ->
     try:
         value, end = decoder.raw_decode(raw, start)
     except json.JSONDecodeError:
+        if (not partial and _gemini_base64_response_mode_ctx.get()
+                == GEMINI_BASE64_RESPONSE_ILLUSTRATION_SCENES):
+            # A legacy combined JSON response may end during its last scene.
+            # Keep only complete scene objects; never guess missing payload bits.
+            opening = re.match(r'(?:\{\s*"scenes"\s*:\s*\[|\[)', raw[start:])
+            if opening is not None:
+                position = start + opening.end()
+                scenes = []
+                while position < len(raw):
+                    position += len(raw[position:]) - len(raw[position:].lstrip())
+                    try:
+                        scene, position = decoder.raw_decode(raw, position)
+                    except json.JSONDecodeError as exc:
+                        print(f"[LLM_GEMINI_BASE64] 불완전한 장면 이후 생략: completed={len(scenes)}, error={exc}, tail={raw[position:position + 500]!r}")
+                        traceback.print_exc()
+                        break
+                    scenes.append(scene)
+                    position += len(raw[position:]) - len(raw[position:].lstrip())
+                    if raw[position:position + 1] != ",":
+                        break
+                    position += 1
+                if scenes:
+                    return _decode_structured_base64_values(json.dumps({"scenes": scenes}, ensure_ascii=False))
         if raw[start:start + 1] in ("{", "[", '"'):
             return None  # Incomplete JSON must stay buffered, not enter TOON.
         opening = re.search(r"[\[{]", raw)
@@ -1179,7 +1202,22 @@ def _decode_structured_base64_values(raw_text: str, *, partial: bool = False) ->
             return decoded
         return item
 
-    restored = restore(value, "$")
+    if (_gemini_base64_response_mode_ctx.get() == GEMINI_BASE64_RESPONSE_ILLUSTRATION_SCENES
+            and (isinstance(value, list)
+                 or isinstance(value, dict) and isinstance(value.get("scenes"), list))):
+        # Some providers retain the combined JSON shape despite the envelope
+        # instruction. A corrupt scene must not discard its healthy siblings.
+        scenes = []
+        for index, scene in enumerate(value if isinstance(value, list) else value["scenes"]):
+            try:
+                scenes.append(restore(scene, f"$['scenes'][{index}]"))
+            except Exception as exc:
+                changed = True
+                print(f"[LLM_GEMINI_BASE64] 삽화 장면 복호화 실패, 해당 장면만 제외: index={index}, error={exc}, input={scene!r}")
+                traceback.print_exc()
+        restored = scenes if isinstance(value, list) else {**value, "scenes": scenes}
+    else:
+        restored = restore(value, "$")
     if not changed:
         return raw
     _llm_log(
@@ -1214,6 +1252,9 @@ def _decode_gemini_scene_document(payload: str) -> str:
 def _decode_gemini_scene_base64_response(raw_text: str) -> str:
     """완성된 삽화 장면 envelope만 각각 복호화하고 나머지는 누락으로 남긴다."""
     raw = str(raw_text or "")
+    sink = _usage_sink_ctx.get()
+    if sink is not None:
+        sink["transport_raw_response"] = raw
     frames = list(_GEMINI_SCENE_FRAME_RE.finditer(raw))
     open_count = len(_GEMINI_SCENE_OPEN_RE.findall(raw))
     close_count = len(_GEMINI_SCENE_CLOSE_RE.findall(raw))
@@ -1223,9 +1264,9 @@ def _decode_gemini_scene_base64_response(raw_text: str) -> str:
         return _decode_gemini_whole_base64_response(raw)
 
     decoded_documents: list[str] = []
-    failed_slots: list[int] = []
+    failed_slots: list[str] = []
     for frame in frames:
-        scene_slot = int(frame.group(1))
+        scene_slot = frame.group(1)
         compact = "".join(frame.group(2).split())
         try:
             decoded = _decode_gemini_scene_document(frame.group(2))
@@ -1310,7 +1351,7 @@ class _GeminiBase64StreamDecoder:
                 self._scene_frame_buffer = self._scene_frame_buffer[opening.start():]
                 break
 
-            scene_slot = int(opening.group(1))
+            scene_slot = opening.group(1)
             payload = self._scene_frame_buffer[opening.end():closing.start()]
             self._scene_frame_buffer = self._scene_frame_buffer[closing.end():]
             compact = "".join(payload.split())
@@ -3564,6 +3605,7 @@ async def callLLMTaskResult(
     parent_execution_id: str = "",
     execution_observer=None,
     force_slot: str | None = None,
+    retry_messages: list | None = None,
 ) -> LLMExecutionResult:
     """
     작업별 라우팅 텍스트 LLM 호출의 공통 내부 결과를 반환한다.
@@ -3572,6 +3614,9 @@ async def callLLMTaskResult(
     max_retries=0(1회)으로만 호출한다. CALL2-DETAIL 의 ①전부예측(primary)/
     ②실패분만(fallback) 교대 루프가 단계별로 지정 슬롯 1회씩만 부르도록 쓴다.
     기본 None 이면 기존 primary×N→fallback×M 동작을 그대로 유지한다.
+
+    retry_messages는 검증기가 정상 장면을 보존한 뒤 남은 요청으로 좁히는
+    호출자 소유 목록이다. 지정하지 않으면 최초 입력을 모든 시도에 보존한다.
 
     config["llm_routing"][task_key] 의 primary(llm1..llm10) 에 따라 메인 LLM 호출 후,
     작업별 설정에 따라 메인 LLM을 재시도한 뒤, 실패하면 폴백 LLM도 별도 정책으로
@@ -3589,6 +3634,8 @@ async def callLLMTaskResult(
     attempt_events: list[dict] = []
     # PocketRisu requestChatDataMain clones the source before shaping a request.
     # Keep that source immutable across primary retries and fallback slots.
+    # DETAIL may explicitly supply a request list narrowed by its validator;
+    # each provider still receives its own independent copy of that list.
     source_messages = copy.deepcopy(messages)
 
     async def _invoke(slot: str) -> str:
@@ -3620,7 +3667,7 @@ async def callLLMTaskResult(
             })
             return await _call_routed_text_slot(
                 slot,
-                copy.deepcopy(source_messages),
+                copy.deepcopy(retry_messages if retry_messages is not None else source_messages),
                 model=model,
                 json_mode=eff_json,
             )
@@ -3766,6 +3813,7 @@ async def callLLMTask(
     parent_execution_id: str = "",
     execution_observer=None,
     force_slot: str | None = None,
+    retry_messages: list | None = None,
 ) -> str:
     """기존 문자열 계약을 유지하는 작업별 텍스트 LLM 공개 함수."""
     execution_result = await callLLMTaskResult(
@@ -3782,6 +3830,7 @@ async def callLLMTask(
         parent_execution_id=parent_execution_id,
         execution_observer=execution_observer,
         force_slot=force_slot,
+        retry_messages=retry_messages,
     )
     return execution_result.to_legacy()
 
