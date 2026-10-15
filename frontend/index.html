@@ -5897,13 +5897,11 @@
             min-width: 0; padding: 0 18px 14px; box-sizing: border-box; container-type: inline-size;
         }
         .illust-postprocess-settings > fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
-        .illust-postprocess-toolbar, .illust-postprocess-actions {
+        .illust-postprocess-toolbar {
             display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
             padding: 12px 0; font-size: 0.76rem; color: var(--text2);
         }
         .illust-postprocess-toolbar { border-top: 1px solid var(--border); margin-top: 18px; }
-        .illust-postprocess-actions { justify-content: flex-end; border-top: 1px solid var(--border); }
-        .illust-postprocess-actions span { margin-right: auto; }
         /* 레이아웃/카드/탭/딱지/행/라벨 등은 모달 본문 <style>(.postprocess-ui 스코프)에서 재정의.
            아래는 감정 뽑기/베이스 피커 등 다른 모달에서도 공통 쓰이는 클래스만 남긴다. */
         .pp-hint { font-size: 0.72rem; color: var(--text2, #888); margin-top: 6px; }
@@ -21678,10 +21676,8 @@
     <div id="postprocess-modal" class="illust-postprocess-settings" hidden>
         <fieldset id="pp-settings-fields" aria-label="봇별 이미지 합성 설정">
             <div class="illust-postprocess-toolbar">
-                <strong>봇별 이미지 합성</strong>
+                <strong>현재 봇의 이미지 합성</strong>
                 <div style="display:flex; gap:6px; align-items:center; margin-left:auto; flex-wrap:wrap;">
-                    <label for="pp-bot-select">설정할 봇</label>
-                    <select id="pp-bot-select" onchange="ppOnBotChange()" class="illust-setting-input" style="min-width:130px; max-width:200px;"></select>
                     <button type="button" class="btn" style="padding:4px 10px; font-size:0.74rem;" onclick="ppSaveToCache()" title="현재 설정을 브라우저 캐시에 저장 (봇 간 복붙용)">캐시에 저장</button>
                     <button type="button" class="btn" style="padding:4px 10px; font-size:0.74rem;" onclick="ppLoadFromCache()" title="브라우저 캐시에서 설정 불러오기">캐시에서 불러오기</button>
                 </div>
@@ -22502,7 +22498,7 @@
 }
 
               </style>
-                <p class="pp-hint" style="margin:0 0 12px;">합성 방식을 선택하고 미리보기로 조정한 뒤 ‘봇별 합성 설정 저장’을 누르세요. 선택한 방식에 맞는 대사 프롬프트가 자동 적용됩니다.</p>
+                <p class="pp-hint" style="margin:0 0 12px;">현재 선택된 봇의 합성 방식을 미리보기로 조정한 뒤 상단 ‘지금 저장’을 누르세요. 선택한 방식에 맞는 대사 프롬프트가 자동 적용됩니다.</p>
                 <div class="pp-layout">
                     <!-- 왼쪽: 탭 + 옵션 -->
                     <div class="pp-left">
@@ -23091,10 +23087,6 @@
                     </div>
                 </div>
              </div>
-            </div>
-            <div class="illust-postprocess-actions">
-                <span>봇별 합성 옵션은 이 버튼으로 저장합니다.</span>
-                <button type="button" class="btn btn-primary" onclick="savePostprocessSettings()">봇별 합성 설정 저장</button>
             </div>
         </fieldset>
     </div>
@@ -48757,10 +48749,10 @@
             { key: 'illustration_call1',       label: '삽화 OUTFIT (복장·헤어)',         kind: 'JSON · 단일 상태 추적', modality: 'text', group: 'illustration_pipeline' },
             { key: 'illustration_time_place', label: '삽화 TIME & PLACE (시간·장소)', kind: 'JSON · 독립 상태 추적', modality: 'text', group: 'illustration_pipeline' },
             { key: 'illustration_call2_select', label: '삽화 SLOT-SELECTER (장면 선택)',   kind: 'JSON · 장면 수·순서·인물', modality: 'text', group: 'illustration_pipeline' },
-            { key: 'illustration_call2_plan',  label: '삽화 CALL2-PLAN',         kind: '텍스트 · 배치별 시각 계획', modality: 'text', group: 'illustration_pipeline' },
+            { key: 'illustration_call2_plan',  label: '삽화 PLAN',               kind: '텍스트 · 배치별 시각 계획', modality: 'text', group: 'illustration_pipeline' },
             { key: 'illustration_call2_keyvis', label: '삽화 KEYVIS',              kind: '텍스트', modality: 'text', group: 'illustration_pipeline' },
             { key: 'illustration_call2',       label: '삽화 DETAIL',               kind: '텍스트 · 장면 배치 묘사', modality: 'text', group: 'illustration_pipeline' },
-            { key: 'illustration_call3',       label: '삽화 POST PROCESS (대사·애니 자막)',    kind: '텍스트', modality: 'text', group: 'illustration_pipeline' },
+            { key: 'illustration_call3',       label: '삽화 POST PROCESS',         kind: '텍스트', modality: 'text', group: 'illustration_pipeline' },
             { key: 'illustration_multi_char_mask', label: '삽화 다중 캐릭터 마스크',    kind: 'JSON', modality: 'text', group: 'illustration_pipeline' },
             { key: 'video_instruction_translate', label: '영상 연출 영어 번역', kind: '텍스트', modality: 'text', group: 'video_pipeline' },
             { key: 'video_prompt_i2v',        label: 'H3 I2V 연출·정적 분석', kind: '비전', modality: 'vision', group: 'video_pipeline' },
@@ -67292,22 +67284,11 @@
             };
         }
 
-        let ppCurrentBot = '';   // 후처리 모달에서 현재 편집 중인 봇
+        let ppCurrentBot = '';   // 현재 선택된 봇에서 불러온 합성 설정의 소유자
 
         // 현재 봇의 후처리 활성 모드. POST PROCESS 대사 프롬프트 잠금의 진실 소스.
         // bubble=manga / subtitle=subtitle / vn=speak. 서버도 생성 시 같은 규칙으로 덮어쓴다.
         let _postprocessActiveMode = 'vn';
-
-        function ppFillBotSelect() {
-            const sel = document.getElementById('pp-bot-select');
-            if (!sel) return;
-            const bots = (typeof botData !== 'undefined' && botData && Array.isArray(botData.bots)) ? botData.bots : [];
-            sel.innerHTML = bots.length
-                ? bots.map(b => `<option value="${escapeAttr(b.name)}">${escapeHtml(b.name)}</option>`).join('')
-                : '<option value="">(봇 없음)</option>';
-            ppCurrentBot = (typeof botCurrentBot !== 'undefined' && botCurrentBot) || (bots[0] && bots[0].name) || '';
-            if (ppCurrentBot) sel.value = ppCurrentBot;
-        }
 
         function _ppNormalizeVn(vn) {
             const source = (vn && typeof vn === 'object') ? vn : {};
@@ -67424,40 +67405,43 @@
                 if (!resp.ok) throw new Error('HTTP ' + resp.status);
                 const j = await resp.json();
                 const vn = _ppNormalizeVn(j);
-                ppWorking = { vn, bubble: null, subtitle: null, mode: 'vn' };
-                ppApplyVnToUI();
+                const working = { vn, bubble: null, subtitle: null, mode: 'vn' };
                 // 말풍선 모드 설정 + 활성 모드 로드
                 try {
                     const rb = await fetch('/api/bot_mode/postprocess_bubble?bot=' + encodeURIComponent(botName));
                     if (rb.ok) {
                         const jb = await rb.json();
-                        ppWorking.bubble = _ppNormalizeBubble(jb.bubble);
-                        ppWorking.mode = ['vn', 'bubble', 'subtitle'].includes(jb.mode) ? jb.mode : 'vn';
-                        ppApplyBubbleToUI();
+                        working.bubble = _ppNormalizeBubble(jb.bubble);
+                        working.mode = ['vn', 'bubble', 'subtitle'].includes(jb.mode) ? jb.mode : 'vn';
                     } else {
-                        ppWorking.bubble = _ppNormalizeBubble(null);
-                        ppApplyBubbleToUI();
+                        working.bubble = _ppNormalizeBubble(null);
                     }
                 } catch (be) {
                     console.error('[POSTPROCESS] bubble 설정 로드 실패:', be);
-                    ppWorking.bubble = _ppNormalizeBubble(null);
-                    ppApplyBubbleToUI();
+                    working.bubble = _ppNormalizeBubble(null);
                 }
                 // 방송 애니 자막 설정과 최종 활성 모드를 로드
                 try {
                     const rs = await fetch('/api/bot_mode/postprocess_subtitle?bot=' + encodeURIComponent(botName));
                     if (rs.ok) {
                         const js = await rs.json();
-                        ppWorking.subtitle = _ppNormalizeSubtitle(js.subtitle);
-                        ppWorking.mode = ['vn', 'bubble', 'subtitle'].includes(js.mode) ? js.mode : ppWorking.mode;
+                        working.subtitle = _ppNormalizeSubtitle(js.subtitle);
+                        working.mode = ['vn', 'bubble', 'subtitle'].includes(js.mode) ? js.mode : working.mode;
                     } else {
                         console.error('[POSTPROCESS] subtitle 설정 응답 실패:', rs.status);
-                        ppWorking.subtitle = _ppNormalizeSubtitle(null);
+                        working.subtitle = _ppNormalizeSubtitle(null);
                     }
                 } catch (se) {
                     console.error('[POSTPROCESS] subtitle 설정 로드 실패:', se);
-                    ppWorking.subtitle = _ppNormalizeSubtitle(null);
+                    working.subtitle = _ppNormalizeSubtitle(null);
                 }
+                if (botName !== ppCurrentBot) {
+                    console.info('[POSTPROCESS] 봇 변경 전 응답을 편집기에 적용하지 않습니다:', {botName, currentBot: ppCurrentBot});
+                    return;
+                }
+                ppWorking = working;
+                ppApplyVnToUI();
+                ppApplyBubbleToUI();
                 ppApplySubtitleToUI();
                 switchPostprocessTab(ppWorking.mode || 'vn');  // 저장된 활성 모드 탭으로
                 _postprocessActiveMode = ['vn', 'bubble', 'subtitle'].includes(ppWorking.mode)
@@ -67466,46 +67450,45 @@
                 renderPpModeBadges();  // 적용중 모드 딱지
                 ppRefreshFaceDevices().then(() => ppRenderFaceCrop());  // vn 얼굴 크롭 미리보기
             } catch (e) {
-                ppWorking = null;
                 console.error('[POSTPROCESS] 봇 설정 로드 실패:', e);
-                showToast('봇 설정 로드 실패: ' + (e.message || e), 'error');
+                if (botName === ppCurrentBot) {
+                    ppWorking = null;
+                    showToast('봇 설정 로드 실패: ' + (e.message || e), 'error');
+                }
             } finally {
-                if (fields) fields.disabled = false;
+                if (fields && botName === ppCurrentBot) fields.disabled = !ppWorking;
             }
         }
 
         async function ppOnBotChange() {
-            const newBot = document.getElementById('pp-bot-select').value;
-            if (!newBot || newBot === ppCurrentBot) return;
+            const newBot = botCurrentBot || '';
+            if (newBot === ppCurrentBot) return;
             ppCurrentBot = newBot;
-            await ppLoadBotSettings(newBot);
+            await openPostprocessModal();
         }
 
         async function openPostprocessModal() {
             const fields = document.getElementById('pp-settings-fields');
             if (fields) fields.disabled = true;
-            ppWorking = JSON.parse(JSON.stringify(defaultPpConfig()));
+            ppWorking = null;
             ppBubbleBaseDataUrl = null;
             ppVnBaseDataUrl = null;
             ppSubtitleBaseDataUrl = null;
             try {
-                await ensureBotDataLoaded();
-                ppFillBotSelect();
-                if (ppCurrentBot) {
-                    await ppLoadBotSettings(ppCurrentBot);
-                } else {
-                    ppApplyVnToUI();
-                    ppApplyBubbleToUI();
-                    ppApplySubtitleToUI();
-                    switchPostprocessTab('vn');
-                    ppRefreshFaceDevices().then(() => ppRenderFaceCrop());
+                await ensureBotStateInitialized();
+                ppCurrentBot = botCurrentBot || '';
+                if (!ppCurrentBot) {
+                    console.info('[POSTPROCESS] 선택된 봇이 없어 합성 편집기를 비활성화합니다.');
+                    setIllustrationContextStatus('합성 설정은 봇을 선택한 뒤 편집할 수 있습니다.');
+                    return;
                 }
+                await ppLoadBotSettings(ppCurrentBot);
             } catch (error) {
                 ppWorking = null;
                 console.error('[POSTPROCESS] 봇 목록과 합성 편집기 초기화 실패:', error);
                 throw error;
             } finally {
-                if (fields) fields.disabled = false;
+                if (fields) fields.disabled = !ppWorking;
             }
         }
 
@@ -68672,64 +68655,67 @@
         }
 
         async function savePostprocessSettings() {
-            if (!ppWorking) {
+            if (!ppWorking || document.getElementById('pp-settings-fields')?.disabled) {
                 console.error('[POSTPROCESS] 저장할 봇별 합성 설정이 로드되지 않았습니다.');
-                showToast('합성 설정을 먼저 불러오세요.', 'error');
-                return;
+                throw new Error('현재 봇의 합성 설정을 먼저 불러오세요.');
             }
-            if (!ppCurrentBot) { showToast('봇을 먼저 선택하세요', 'error'); return; }
+            const bot = ppCurrentBot;
+            if (!bot || bot !== botCurrentBot) {
+                console.error('[POSTPROCESS] 현재 봇과 합성 편집기의 봇이 다릅니다:', {bot, currentBot: botCurrentBot});
+                throw new Error('현재 선택된 봇의 합성 설정을 다시 불러오세요.');
+            }
             collectPpVnSettings();
             collectPpBubbleSettings();
             collectPpSubtitleSettings();
             // 활성 탭 = 저장할 활성 모드. 사용자가 마지막에 본 탭이 적용 모드.
-            ppWorking.mode = ['vn', 'bubble', 'subtitle'].includes(ppActiveTab)
-                ? ppActiveTab : 'vn';
-            renderPpModeBadges();  // 저장 직후 딱지 이동(적용 모드 = 현재 탭)
             // 감정 추출 결과(emotion_rows/emotion_total)는 임시 — 저장/재오픈 시 사라지도록 제외.
             const payload = JSON.parse(JSON.stringify(ppWorking));
+            payload.mode = ['vn', 'bubble', 'subtitle'].includes(ppActiveTab)
+                ? ppActiveTab : 'vn';
             if (payload && payload.vn) { delete payload.vn.emotion_rows; delete payload.vn.emotion_total; }
             try {
                 const resp = await fetch('/api/bot_mode/postprocess_vn', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({bot: ppCurrentBot, vn: payload.vn})
+                    body: JSON.stringify({bot, vn: payload.vn})
                 });
                 if (!resp.ok) {
                     const txt = await resp.text().catch(() => '');
-                    showToast('후처리 설정 저장 실패: ' + (txt || resp.status), 'error');
-                    return;
+                    throw new Error('POST PROCESS 대사창 설정 저장 실패: ' + (txt || resp.status));
                 }
                 // 말풍선 모드 설정 + 활성 모드 저장 (동일 봇)
                 const rb = await fetch('/api/bot_mode/postprocess_bubble', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({bot: ppCurrentBot, bubble: payload.bubble, mode: ppWorking.mode})
+                    body: JSON.stringify({bot, bubble: payload.bubble, mode: payload.mode})
                 });
                 if (!rb.ok) {
                     const txt = await rb.text().catch(() => '');
-                    showToast('말풍선 설정 저장 실패: ' + (txt || rb.status), 'error');
-                    return;
+                    throw new Error('POST PROCESS 말풍선 설정 저장 실패: ' + (txt || rb.status));
                 }
                 const rs = await fetch('/api/bot_mode/postprocess_subtitle', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({
-                        bot: ppCurrentBot,
+                        bot,
                         subtitle: payload.subtitle,
-                        mode: ppWorking.mode,
+                        mode: payload.mode,
                     }),
                 });
                 if (!rs.ok) {
                     const txt = await rs.text().catch(() => '');
-                    showToast('자막 설정 저장 실패: ' + (txt || rs.status), 'error');
-                    return;
+                    throw new Error('POST PROCESS 자막 설정 저장 실패: ' + (txt || rs.status));
                 }
-                showToast('후처리 설정 저장 완료 (' + ppCurrentBot + ' · ' + ppWorking.mode + ')');
-                _postprocessActiveMode = ppWorking.mode;
-                _applyCall3PromptModeLock();  // 저장된 모드로 POST PROCESS 대사 프롬프트 잠금 이동
+                if (bot === ppCurrentBot && bot === botCurrentBot && ppWorking) {
+                    ppWorking.mode = payload.mode;
+                    _postprocessActiveMode = payload.mode;
+                    _applyCall3PromptModeLock();
+                    renderPpModeBadges();
+                }
+                return true;
             } catch (e) {
-                console.error('[POSTPROCESS] 저장 실패:', e);
-                showToast('후처리 설정 저장 실패: ' + (e.message || e), 'error');
+                console.error('[POSTPROCESS] 저장 실패:', {bot, mode: payload.mode, error: e});
+                throw e;
             }
         }
 
@@ -69473,6 +69459,12 @@
             const charDetailSidebar = document.getElementById('bot-char-detail-sidebar');
             if (charDetailSidebar) charDetailSidebar.style.display = 'none';
             updateActiveBotFloat();
+            if (document.getElementById('illust-postprocess-host')) {
+                ppOnBotChange().catch(error => {
+                    console.error('[POSTPROCESS] 현재 봇의 합성 설정 동기화 실패:', error);
+                    setIllustrationContextStatus('합성 설정 로드 실패: ' + (error.message || error), 'error');
+                });
+            }
             const extraPanel = document.getElementById('illust-tab-content-extra');
             if (extraPanel && !extraPanel.hidden) exportLbExtraTxt();
             const btnList = document.getElementById('bot-btn-group-list');
@@ -82833,7 +82825,7 @@
                 callInfo: [
                     {label: '대표 이미지', text: '파이프라인의 KEYVIS 묶음에서 DETAIL 통합 예측 또는 별도 LLM 예측을 선택합니다.'},
                     {label: '프롬프트', text: 'LLM 프롬프트 탭의 plan.txt와 detail.txt를 사용합니다. NSFW 태깅은 파이프라인 탭에서 설정합니다.'},
-                    {label: 'LLM과 재시도', text: '외부 LLM 분기의 삽화 CALL2-PLAN과 DETAIL 연결은 각각 설정합니다. 느린 배치 재요청 조건도 단계별로 관리합니다.'},
+                    {label: 'LLM과 재시도', text: '외부 LLM 분기의 삽화 PLAN과 DETAIL 연결은 각각 설정합니다. 느린 배치 재요청 조건도 단계별로 관리합니다.'},
                 ],
             },
             {
@@ -83399,7 +83391,16 @@
             setIllustrationContextStatus('저장 중...');
             setIllustrationContextSaving(true);
             let saved = false;
+            let savedPostprocess = false;
             try {
+                if (!autoSave) {
+                    if (ppCurrentBot) {
+                        savedPostprocess = await savePostprocessSettings();
+                        body.call3_prompt_mode = _illustrationContextToggles.call3_prompt_mode;
+                    } else {
+                        console.info('[POSTPROCESS] 불러온 봇별 합성 설정이 없어 공통 생성 설정만 저장합니다.');
+                    }
+                }
                 const res = await fetch('/api/illustration_context/toggles', {
                     method: 'POST', headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({toggles: body}),
@@ -83419,14 +83420,17 @@
                     updateIllustrationContextOptionLocks();
                     applyIllustSettingsV1Lock();
                     setIllustrationContextStatus(autoSave ? '자동 저장 완료' : '저장 완료');
-                    if (!autoSave) showToast('삽화 생성 설정 저장 완료', 'success');
+                    if (!autoSave) showToast(savedPostprocess ? '생성 설정과 현재 봇의 합성 설정 저장 완료' : '삽화 생성 설정 저장 완료', 'success');
                 }
                 saved = true;
             } catch (e) {
                 console.error('[ILLUST_CONTEXT] 생성 설정 저장 실패:', e);
                 _illustrationSettingsDirty = true;
-                setIllustrationContextStatus('저장 실패: ' + (e.message || e), 'error');
-                showToast('삽화 생성 설정 저장 실패: ' + (e.message || e), 'error');
+                const message = savedPostprocess
+                    ? '봇별 합성 설정은 저장됐지만 생성 설정 저장 실패: '
+                    : '설정 저장 실패: ';
+                setIllustrationContextStatus(message + (e.message || e), 'error');
+                showToast(message + (e.message || e), 'error');
             } finally {
                 _illustrationSettingsSaving = false;
                 setIllustrationContextSaving(false);
