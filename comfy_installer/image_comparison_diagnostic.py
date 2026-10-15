@@ -498,7 +498,7 @@ def run_image_comparison_diagnostic(
     if not _DIAGNOSTIC_ID_RE.fullmatch(archive_id):
         raise RuntimeError(f"이미지 비교 진단 ID 생성 실패: {archive_id!r}")
     archive_root = (
-        project_root / ".work" / "comfy-installer" / "image-comparison-diagnostics"
+        project_root / "backups" / "comfy-installer" / "image-comparison-diagnostics"
     ).resolve()
     work_dir = (archive_root / archive_id).resolve()
     archive = (archive_root / f"{archive_id}.zip").resolve()

@@ -36,7 +36,7 @@ CHARACTER_MAKER_SINGLE_SESSION_ID = "default"
 TAGS_FILE = os.path.join(ASSET_DATA_DIR, "tags.json")
 HIDDEN_TAGS_FILE = os.path.join(ASSET_DATA_DIR, "hidden_tags.json")
 NAME_MAPPING_FILE = os.path.join(ASSET_DATA_DIR, "name_mapping.json")
-NAME_MAPPING_BACKUP_DIR = os.path.join(BASE_DIR, "요구사항")
+NAME_MAPPING_BACKUP_DIR = os.path.join(BASE_DIR, "backups")
 EXPORT_VIDEO_SESSION_DIR = os.path.join(ASSET_DATA_DIR, "export_video_sessions")
 EXPORT_VIDEO_SESSION_TTL_SECONDS = 24 * 60 * 60
 

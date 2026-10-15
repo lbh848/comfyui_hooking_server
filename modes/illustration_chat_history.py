@@ -31,7 +31,7 @@ TRASH_DIR = os.path.join(HISTORY_ROOT, "trash")
 SETTINGS_PATH = os.path.join(HISTORY_ROOT, "settings.json")
 REQUIREMENTS_BACKUP_DIR = os.path.join(
     BASE_DIR,
-    "요구사항",
+    "backups",
     "illustration_chat_history_backups",
 )
 

@@ -1021,7 +1021,7 @@ class PatchImportApi:
     ):
         self.project_root = Path(project_root).resolve()
         self.upload_root = (
-            self.project_root / ".work" / "patch-import" / "uploads"
+            self.project_root / "backups" / "patch-import" / "uploads"
         )
         self.importer = PatchImporter(self.project_root)
         self.reload_asset_tags = reload_asset_tags

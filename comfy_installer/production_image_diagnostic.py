@@ -1949,7 +1949,7 @@ def run_production_image_diagnostic(
     progress: ProgressCallback | None = None,
 ) -> dict[str, Any]:
     diagnostic_id = datetime.datetime.now().strftime("%Y%m%d_%H%M%S") + "-" + uuid.uuid4().hex[:8]
-    root = project_root / ".work" / "comfy-installer" / "image-diagnostics"
+    root = project_root / "backups" / "comfy-installer" / "image-diagnostics"
     report_dir = root / diagnostic_id
     archive_path = root / f"{diagnostic_id}.zip"
     report_dir.mkdir(parents=True, exist_ok=False)

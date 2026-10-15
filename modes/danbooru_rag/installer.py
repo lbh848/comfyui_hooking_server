@@ -281,7 +281,7 @@ class DanbooruRagIndexInstaller:
     def _backup_existing(self) -> Path | None:
         if not self.data_root.exists():
             return None
-        backup_parent = self.project_root / "요구사항"
+        backup_parent = self.project_root / "backups"
         backup_parent.mkdir(parents=True, exist_ok=True)
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         backup_path = backup_parent / f"danbooru_rag_before_install_{stamp}"
@@ -400,7 +400,7 @@ class DanbooruRagIndexInstaller:
                 progress_callback,
                 "기존 자료 백업",
                 88,
-                "기존 설치가 있으면 요구사항 폴더에 백업합니다.",
+                "기존 설치가 있으면 backups 폴더에 백업합니다.",
             )
             backup_path = self._backup_existing()
             self.data_root.parent.mkdir(parents=True, exist_ok=True)

@@ -12,7 +12,7 @@ import traceback
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 MODEL_DIR = Path(os.environ.get("COMFYUI_MODEL_DIR", PROJECT_ROOT / "models"))
-BACKUP_DIR = PROJECT_ROOT / "요구사항" / "model_backups"
+BACKUP_DIR = PROJECT_ROOT / "backups" / "model_backups"
 STAGING_DIR = MODEL_DIR / ".download"
 
 HF_REPO_ID = "byung-hyun/eye_segmentation_model"

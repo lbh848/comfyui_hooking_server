@@ -100,7 +100,10 @@ def create_comfy_venv(
                 )
             repair_relocated_managed_venv(
                 comfy_root=comfy_root,
-                requirements_dir=(requirements_dir or comfy_root.parent / "요구사항"),
+                requirements_dir=(
+                    requirements_dir
+                    or comfy_root / ".installer-state" / "backups" / "runtime"
+                ),
             )
             lines = run_command(
                 [

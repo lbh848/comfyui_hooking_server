@@ -249,9 +249,9 @@ class ComfyInstallerService:
         self.requirements_dir = (
             Path(requirements_dir).resolve()
             if requirements_dir is not None
-            else self.project_root / "요구사항"
+            else self.project_root / "backups"
         )
-        self.work_root = self.project_root / ".work" / "comfy-installer"
+        self.work_root = self.project_root / "backups" / "comfy-installer"
         self.upload_root = self.work_root / "uploads"
         self.workflow_library_root = (
             self.project_root / "comfy_workflow_library"
@@ -1859,7 +1859,7 @@ class ComfyInstallerService:
             raise InstallerServiceError("이미지 진단 ZIP ID 형식이 잘못되었습니다.")
         root = (
             self.project_root
-            / ".work"
+            / "backups"
             / "comfy-installer"
             / "image-diagnostics"
         ).resolve()
@@ -1882,7 +1882,7 @@ class ComfyInstallerService:
             raise InstallerServiceError("이미지 비교 진단 ZIP ID 형식이 잘못되었습니다.")
         root = (
             self.project_root
-            / ".work"
+            / "backups"
             / "comfy-installer"
             / "image-comparison-diagnostics"
         ).resolve()

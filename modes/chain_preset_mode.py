@@ -18,7 +18,7 @@ class ChainPresetMode:
         project_root = os.path.dirname(os.path.dirname(__file__))
         self.preset_dir = preset_dir or os.path.join(project_root, "chain_presets")
         self.hidden_dir = os.path.join(self.preset_dir, "hidden")
-        self.backup_dir = backup_dir or os.path.join(project_root, "요구사항")
+        self.backup_dir = backup_dir or os.path.join(project_root, "backups")
 
     def _ensure_dirs(self):
         os.makedirs(self.preset_dir, exist_ok=True)
@@ -39,7 +39,7 @@ class ChainPresetMode:
         return os.path.join(directory, f"{name.strip()}.json")
 
     def _backup_existing_file(self, filepath):
-        """기존 체인 JSON을 덮어쓰기 전에 요구사항/ 폴더에 백업한다."""
+        """기존 체인 JSON을 덮어쓰기 전에 backups/ 폴더에 백업한다."""
         if not os.path.isfile(filepath):
             return None
         os.makedirs(self.backup_dir, exist_ok=True)

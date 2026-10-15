@@ -25,7 +25,7 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STYLE_LORA_DIR = os.path.join(BASE_DIR, "style_lora_data")
 STYLE_LORA_MANAGE_FILE = os.path.join(BASE_DIR, "asset_data", "style_lora_manage.json")
 ASSET_DATA_DIR = os.path.join(BASE_DIR, "asset_data")
-BACKUP_DIR = os.path.join(BASE_DIR, "요구사항")
+BACKUP_DIR = os.path.join(BASE_DIR, "backups")
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 
@@ -64,7 +64,7 @@ def _gen_id(name: str) -> str:
 # ─── JSON 로드/세이브 + 마이그레이션 ───────────────────────────
 
 def _backup_file(path: str):
-    """데이터 파일 덮어쓰기 전 요구사항/ 폴더에 백업."""
+    """데이터 파일 덮어쓰기 전 backups/ 폴더에 백업."""
     try:
         if not os.path.isfile(path):
             return
@@ -596,7 +596,7 @@ def delete_images_bulk(project_id: str, filenames_to_remove) -> dict:
     """이미지 일괄 삭제(이미지 필터링용).
     - 메타데이터 images 리스트에서 일괄 제거 (단일 _save_data 1회)
     - 실제 이미지 파일 + 캡션(_prompt.json) 파일 삭제
-    - 삭제 전 asset_data/style_lora_manage.json 을 요구사항/ 에 백업 (데이터 안전 규칙)
+    - 삭제 전 asset_data/style_lora_manage.json 을 backups/ 에 백업 (데이터 안전 규칙)
     반환: {success, deleted:int, failed:[...]}
     """
     data = _load_data()
