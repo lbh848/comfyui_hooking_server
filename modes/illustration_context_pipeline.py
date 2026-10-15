@@ -5912,7 +5912,7 @@ def _parse_call2_keyvis_output(
     mask_inline: bool = False,
     allow_scenes: bool = False,
 ) -> tuple[dict | None, str]:
-    """Read one KEYVIS, optionally alongside a DETAIL batch's scenes."""
+    """Read one KEYVIS; candidate names guide generation without rejecting output."""
     local_toggles = deepcopy(toggles)
     local_toggles.update({
         "key_visual": True,
@@ -6010,8 +6010,9 @@ def _parse_call2_keyvis_output(
     if allowed:
         unexpected = [name for name in actual_names if name.casefold() not in allowed]
         if unexpected:
-            return fail(
-                f"허용 canonical 캐릭터 밖 이름: unexpected={unexpected}, "
+            print(
+                f"[ILLUST_CONTEXT:{source}] canonical 목록 밖 이름도 반환값 유지: "
+                f"unexpected={unexpected}, "
                 f"allowed={list(allowed.values())}"
             )
     return descriptor, ""

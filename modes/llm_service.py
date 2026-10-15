@@ -1231,7 +1231,8 @@ def _decode_structured_base64_values(raw_text: str, *, partial: bool = False) ->
             and (isinstance(value, list)
                  or isinstance(value, dict) and isinstance(value.get("scenes"), list))):
         # Some providers retain the combined JSON shape despite the envelope
-        # instruction. A corrupt scene must not discard its healthy siblings.
+        # instruction. Decode sibling fields (including an integrated Key
+        # Visual) too, while keeping each usable image if another is corrupt.
         scenes = []
         for index, scene in enumerate(value if isinstance(value, list) else value["scenes"]):
             try:
@@ -1241,6 +1242,17 @@ def _decode_structured_base64_values(raw_text: str, *, partial: bool = False) ->
                 print(f"[LLM_GEMINI_BASE64] 삽화 장면 복호화 실패, 해당 장면만 제외: index={index}, error={exc}, input={scene!r}")
                 traceback.print_exc()
         restored = scenes if isinstance(value, list) else {**value, "scenes": scenes}
+        if isinstance(value, dict):
+            for key, child in value.items():
+                if key == "scenes":
+                    continue
+                try:
+                    restored[key] = restore(child, f"$[{key!r}]")
+                except Exception as exc:
+                    changed = True
+                    restored.pop(key)
+                    print(f"[LLM_GEMINI_BASE64] 삽화 응답 필드 복호화 실패, 해당 필드만 제외: field={key!r}, error={exc}, input={child!r}")
+                    traceback.print_exc()
     else:
         restored = restore(value, "$")
     if not changed:
