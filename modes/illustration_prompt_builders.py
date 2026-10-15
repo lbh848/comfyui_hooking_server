@@ -125,6 +125,10 @@ def detail_messages(detail_system, batch, slots, *, past_text="", segmented="", 
             generation_system=detail_system, canvas_sizes=canvas_sizes,
             positive_note=str((toggles or {}).get("positive_note") or ""))[0]["content"]
     if keyvis_messages:
+        if mask_inline:
+            # Replace the generated scenes-only example with the combined root,
+            # rather than showing two competing output contracts.
+            detail_system = prompt_sub(r"(?s)\n\nOUTPUT\n[^\n]*\n[^\n]*\Z", "", detail_system)
         detail_system += (
             "\n\nCOMBINED DETAIL AND KEY VISUAL OUTPUT\n"
             "This call performs both tasks. The ordinary-scene instructions apply only to scenes; "
@@ -139,7 +143,8 @@ def detail_messages(detail_system, batch, slots, *, past_text="", segmented="", 
                "Use one <lb-xnai> block. The keyvis object uses camera, characters "
                "(name, positive, negative, position, outfit_state), scene, supplement. "
                "Each ordinary scene uses its existing fields and exact C anchor slot. ")
-            + "Write scenes first, then keyvis. If no scene anchors remain, return scenes: [] and keyvis only."
+            + "The root fields are scenes and keyvis: {\"scenes\":[...],\"keyvis\":{...}}. "
+            "Write scenes first, then keyvis. If no scene anchors remain, return scenes: [] and keyvis only."
         )
     messages = [
         {"role": "system", "content": detail_system},

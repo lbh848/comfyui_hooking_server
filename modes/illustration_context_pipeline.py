@@ -5920,9 +5920,19 @@ def _parse_call2_keyvis_output(
         # can reject the KEYVIS response whenever any scene was emitted.
         "scene_mode": "auto",
     })
+    raw = None
+    if mask_inline or allow_scenes:
+        documents = (re.findall(r"<lb[-_]xnai[^>]*>([\s\S]*?)</lb[-_]xnai>", text or "", re.I)
+                     if allow_scenes else []) or [text]
+        for document in documents:
+            candidate = _json_object_from_text(document)
+            if isinstance(candidate, dict) and isinstance(candidate.get("keyvis"), dict):
+                raw = candidate
+                if len(documents) > 1:
+                    print(f"[ILLUST_CONTEXT:{source}] 분리된 응답 문서에서 KEYVIS 복구: documents={len(documents)}")
+                break
     if mask_inline:
         from modes import illustration_scene_pipeline
-        raw = _json_object_from_text(text)
         if not isinstance(raw, dict) or not isinstance(raw.get("keyvis"), dict):
             reason = "자체 마스크 KEYVIS 응답에 keyvis object가 없습니다"
             print(f"[ILLUST_CONTEXT:{source}] {reason}: input={text!r}")
@@ -5945,7 +5955,6 @@ def _parse_call2_keyvis_output(
             return None, str(exc)
     elif allow_scenes:
         # Preserve a usable Key Visual even when an ordinary scene is malformed.
-        raw = _json_object_from_text(text)
         descriptors = ([_descriptor(raw["keyvis"], "keyvis", -1)]
                        if isinstance(raw, dict) and isinstance(raw.get("keyvis"), dict) else [])
     else:

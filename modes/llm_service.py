@@ -647,14 +647,15 @@ This request transports a role-labelled conversation transcript as reversible UT
 _GEMINI_ILLUSTRATION_SCENE_BASE64_OVERRIDE = """### Illustration Scene-Isolated Response Override
 This section replaces the response transport rules above for this illustration scene-detail call only.
 
-1. Compose every requested scene as its own complete `<lb-xnai>` document using `scenes[1]` and exactly one scene item in the decoded task's requested schema.
+1. Compose every requested ordinary scene as its own complete `<lb-xnai>` document using `scenes[1]` and exactly one scene item in the decoded task's requested schema.
 2. Apply the common transport rule independently to each one-scene document: if it contains JSON or TOON/YAML, preserve its structure and enclosing tags and encode only nonempty string values with the `base64:` prefix. Otherwise UTF-8 Base64-encode the complete document.
 3. Emit the encoded documents in requested plan order using exactly this ASCII envelope, replacing SLOT with that scene's exact supplied slot or C anchor:
 <lb-scene slot="SLOT">
 TRANSPORTED_DOCUMENT
 </lb-scene>
-4. Finish and close one envelope before starting the next. Never combine two scenes in one Base64 payload.
-5. Output only the envelopes. Do not add Markdown fences, analysis, prose, or a combined outer `<lb-xnai>` document.
+4. If and only if the decoded task also requests a Key Visual (`keyvis`), emit it after the ordinary scenes in one additional `<lb-scene slot="-1">` envelope. Its document contains exactly one `keyvis` object in the requested image schema, not a scenes item. Key Visual is additional to the assigned ordinary-scene count and anchors. If no ordinary scenes remain, emit only this requested Key Visual envelope. Do not emit Key Visual when the task does not request it.
+5. Finish and close one envelope before starting the next. Never combine two images in one Base64 payload. Apply the same string-value transport rules to the Key Visual document.
+6. Output only the envelopes. This replaces the decoded task's outer response packaging only; preserve its image fields, source facts and task-specific instructions. Do not add Markdown fences, analysis, prose, or a combined outer `<lb-xnai>` document.
 """
 
 
@@ -1296,6 +1297,13 @@ def _decode_gemini_scene_base64_response(raw_text: str) -> str:
     open_count = len(_GEMINI_SCENE_OPEN_RE.findall(raw))
     close_count = len(_GEMINI_SCENE_CLOSE_RE.findall(raw))
     if not frames and open_count == 0:
+        documents = list(re.finditer(
+            r"<lb[-_]xnai[^>]*>[\s\S]*?</lb[-_]xnai>", raw, re.I))
+        if len(documents) > 1:
+            # Older responses use the inner wrappers without transport frames.
+            # Restore every image, including a trailing integrated Key Visual.
+            return "\n\n".join(_decode_gemini_whole_base64_response(document.group())
+                               for document in documents)
         # 모델이 장면별 override를 무시하고 기존 전체 Base64 또는 평문으로
         # 응답했을 때 기존 복호화/원문 보존 경로를 그대로 사용한다.
         return _decode_gemini_whole_base64_response(raw)
