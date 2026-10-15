@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import contextvars
 from copy import deepcopy
+from functools import partial
 import hashlib
 import json
 import re
@@ -331,7 +332,52 @@ def slice_scene(plan: dict, *, slot_map: dict[str, int], profile_result: dict,
     return scene, bases
 
 
-def _parse_detail_scene(item: dict, scene: dict) -> dict:
+def _parse_detail_scene(item: dict, scene: dict, *, mask_inline: bool = False,
+                        single_char_mask_enabled: bool = True) -> dict:
+    if mask_inline:
+        required = {"slot", "background_prompt", "composition_prompt", "regions"}
+        if not isinstance(item, dict) or not required <= set(item):
+            _fail("CALL2-DETAIL", "인라인 마스크 장면 필수 데이터 누락", item)
+        if type(item["slot"]) is not int or item["slot"] != scene["slot"]:
+            _fail("CALL2-DETAIL", "PLAN과 다른 slot", {"expected": scene["slot"], "actual": item["slot"]})
+        if (not all(isinstance(item[key], str) and item[key].strip()
+                    for key in ("background_prompt", "composition_prompt"))
+                or not isinstance(item["regions"], list)):
+            _fail("CALL2-DETAIL", "background_prompt/composition_prompt/regions 형식 오류", item)
+        raw_response = json.dumps(item, ensure_ascii=False)
+        if len(item["regions"]) == 1 and not single_char_mask_enabled:
+            region = item["regions"][0]
+            if not isinstance(region, dict):
+                _fail("CALL2-DETAIL", "인라인 캐릭터 데이터 형식 오류", region)
+            # Coordinates are unused when the existing solo-mask switch is off.
+            # Keep its usable prompt instead of retrying an irrelevant rectangle.
+            regions = [{field: pipeline.multi_char_mask._prompt_text(
+                region.get(field), f"regions[0].{field}", required=field != "negative")
+                for field in ("name", "character_prompt", "negative")}]
+            layout = None
+            print(f"[ILLUST_CONTEXT:CALL2-DETAIL] 1인도 마스크 OFF, 인라인 프롬프트만 사용: slot={item['slot']}")
+        elif item["regions"]:
+            layout = pipeline._parse_multi_char_layout_response(raw_response, [
+                region.get("name") if isinstance(region, dict) else ""
+                for region in item["regions"]
+            ])
+            regions = layout["regions"]
+        else:
+            print(f"[ILLUST_CONTEXT:CALL2-DETAIL] 명명된 인물이 없는 인라인 장면, 마스크 생략: slot={item['slot']}")
+            layout, regions = None, []
+        descriptor = {
+            "kind": "scene", "slot": item["slot"],
+            "camera": item["background_prompt"], "scene": item["composition_prompt"],
+            "supplement": "", "speak": "", "characters": [
+                {"name": region["name"], "positive": region["character_prompt"],
+                 "negative": region.get("negative", ""), "position": ""}
+                for region in regions
+            ],
+        }
+        if layout is not None:
+            descriptor["multi_char_layout"] = layout
+            descriptor["multi_char_layout_raw_response"] = raw_response
+        return descriptor
     required = {"slot", "camera", "characters", "scene"}
     if not isinstance(item, dict) or not required <= set(item):
         _fail("CALL2-DETAIL", "필수 장면 데이터 누락", item)
@@ -388,11 +434,63 @@ def _parse_detail_scene(item: dict, scene: dict) -> dict:
             "characters": deepcopy(characters), "speak": ""}
 
 
-def parse_detail_batch(text: str, scenes: list[dict], *, allow_partial: bool = False) -> list[dict]:
+def parse_detail_batch(text: str, scenes: list[dict], *, allow_partial: bool = False,
+                       streaming: bool = False, mask_inline: bool = False,
+                       single_char_mask_enabled: bool = True) -> list[dict]:
     blocks = list(re.finditer(r"<lb[-_]xnai[^>]*>([\s\S]*?)</lb[-_]xnai>", text or "", re.I))
-    if len(blocks) != 1:
+    if not streaming and len(blocks) != 1:
         print(f"[ILLUST_CONTEXT:CALL2-DETAIL] 배치 포장 복구: blocks={len(blocks)}, slots={[scene['slot'] for scene in scenes]}")
     documents = [block.group(1) for block in blocks] if blocks else [str(text or "")]
+    if streaming:
+        # Closed wrappers are complete documents. For the active document, only
+        # consume closed JSON values or YAML/TOON entries sealed by a sibling.
+        # Never repair an unfinished value by appending invented delimiters.
+        openings = list(re.finditer(r"<lb[-_]xnai[^>]*>", text or "", re.I))
+        tail = (text[openings[-1].end():] if openings and
+                (not blocks or openings[-1].start() > blocks[-1].start())
+                else str(text or "") if not openings else "")
+        documents = [block.group(1) for block in blocks]
+        tail = re.sub(r"^\s*(?:```[^\r\n]*\r?\n|\[TOON\]\s*)", "", tail).lstrip()
+        decoded = []
+        array = re.match(r'(?:\{\s*"scenes"\s*:\s*)?\[\s*', tail)
+        if array:
+            offset = array.end()
+            decoder = json.JSONDecoder()
+            while offset < len(tail):
+                try:
+                    item, offset = decoder.raw_decode(tail, offset)
+                except json.JSONDecodeError:
+                    break  # A split value is ordinary streaming progress.
+                decoded.append(item)
+                separator = re.match(r"\s*,\s*", tail[offset:])
+                if not separator:
+                    break
+                offset += separator.end()
+        elif tail.startswith("{"):
+            try:
+                item, _end = json.JSONDecoder().raw_decode(tail)
+                if isinstance(item, dict) and "slot" in item:
+                    decoded.append(item)
+            except json.JSONDecodeError:
+                pass  # A single-scene document has not closed yet.
+        else:
+            header = re.match(r"scenes(?:\[\d+\])?(?:\{[^{}\r\n]+\})?:[^\S\r\n]*\r?\n", tail)
+            if header:
+                body = tail[header.end():]
+                if "{" in header.group():
+                    # A TOON table row is complete at its newline. Scalar
+                    # decoding and field binding stay in the existing parser.
+                    end = body.rfind("\n") + 1
+                    if end:
+                        documents.append(tail[:header.end() + end])
+                else:
+                    entries = list(re.finditer(r"(?m)^([ ]*)-\s+(?=\S)", body))
+                    if entries:
+                        siblings = [entry for entry in entries if entry.group(1) == entries[0].group(1)]
+                        if len(siblings) > 1:
+                            documents.append(tail[:header.end() + siblings[-1].start()])
+        if decoded:
+            documents.append(json.dumps({"scenes": decoded}, ensure_ascii=False))
     items = []
     for document in documents:
         raw = pipeline._json_object_from_text(document, array_key="scenes")
@@ -428,7 +526,8 @@ def parse_detail_batch(text: str, scenes: list[dict], *, allow_partial: bool = F
                 item = {**item, "slot": slot}
             if type(slot) is not int or slot not in expected_by_slot:
                 _fail("CALL2-DETAIL", "미배정/중복 slot", {"expected": list(expected_by_slot), "actual": slot})
-            descriptor = _parse_detail_scene(item, expected_by_slot[slot])
+            descriptor = _parse_detail_scene(item, expected_by_slot[slot],
+                mask_inline=mask_inline, single_char_mask_enabled=single_char_mask_enabled)
             if slot in by_slot and descriptor != by_slot[slot]:
                 _fail("CALL2-DETAIL", "서로 다른 내용의 중복 slot", slot)
         except ValueError as exc:
@@ -485,6 +584,8 @@ async def build_from_context(
     """Build ordinary descriptors without semantic state/post-DETAIL rewriting."""
     p = pipeline
     toggles = p.merged_toggles(toggles)
+    mask_inline = bool(enable_multi_char_layout and toggles.get("multi_char_mask_inline_enabled"))
+    keyvis_in_detail = bool(toggles.get("key_visual") and toggles.get("keyvis_in_detail_enabled"))
     prompts = p.load_prompt_files()
     trace: list[str] = []
     token = p._llm_trace_ctx.set(trace)
@@ -672,7 +773,7 @@ async def build_from_context(
                 await progress(30, "call2_plan",
                                f"CALL2 PLAN 장면 {len(selected_plan)}개 · 요청 {len(plan_batches)}건 {plan_batch_sizes}")
             else:
-                await progress(30, "call2_detail", f"PLAN OFF · SELECT 장면 {len(selected_plan)}개를 DETAIL로 직접 전달")
+                await progress(30, "call2_detail", f"PLAN OFF · SLOT-SELECTER 장면 {len(selected_plan)}개를 DETAIL로 직접 전달")
 
         async def expand_plan(job, index, total, attempt_kind, stream_observer,
                               history_id, job_stream_notify):
@@ -721,6 +822,7 @@ async def build_from_context(
         keyvis_descriptor = None
         keyvis_output = ""
         keyvis_worker = None
+        keyvis_messages = None
         if toggles.get("key_visual"):
             # Key Visual independently chooses a story instant; supply every
             # selected-card transition rather than an ordinary DETAIL slice.
@@ -752,11 +854,20 @@ async def build_from_context(
                 keyvis_system, lb_extra_system_prompt, keyvis_reference, keyvis_profiles, tracking, past_text, segmented,
                 time_place=time_place_tracking, segment_slots=segment_slots,
                 prior_status=prior_status if tracking is None else None,
-                prior_time_place=prior_time_place if time_place_tracking is None else None)
-            async def expand_keyvis():
-                descriptor, output = await p._run_call2_keyvis(
-                    call2_context_messages=keyvis_messages, allowed_character_names=names,
-                    toggles=toggles, stream_notify=stream_notify)
+                prior_time_place=prior_time_place if time_place_tracking is None else None,
+                mask_inline=mask_inline and not keyvis_in_detail, mask_prompt=prompts.get("multi_char_mask", ""),
+                canvas_sizes=payload.get("canvas_sizes"), positive_note=str(toggles.get("positive_note") or ""))
+            if keyvis_in_detail:
+                keyvis_messages.append(prompt_builders.keyvis_task_message(
+                    toggles["character_limit"], json.dumps(names, ensure_ascii=False), names,
+                    mask_inline=mask_inline))
+                print("[ILLUST_CONTEXT:CALL2_KEYVIS] DETAIL 첫 배치에서 함께 예측; 별도 KEYVIS LLM 호출 생략")
+            async def expand_keyvis(descriptor=None, output=""):
+                if descriptor is None:
+                    descriptor, output = await p._run_call2_keyvis(
+                        call2_context_messages=keyvis_messages, allowed_character_names=names,
+                        toggles=toggles, stream_notify=stream_notify,
+                        **({"mask_inline": True} if mask_inline else {}))
                 descriptor["visual_base_snapshot"] = {
                     name: active_profile(name, list(segments)[-1], profile_result,
                                          visual_profiles, segment_order)
@@ -768,7 +879,8 @@ async def build_from_context(
                                                          stream_notify=stream_notify,
                                                          positive_note=str(toggles.get("positive_note") or ""),
                                                          canvas_sizes=payload.get("canvas_sizes"),
-                                                         single_char_mask_enabled=bool(toggles.get("single_char_mask_enabled", True)))
+                                                         single_char_mask_enabled=bool(toggles.get("single_char_mask_enabled", True)),
+                                                         **({"mask_inline": True} if mask_inline else {}))
                 named_characters = [character for character in descriptor.get("characters") or []
                                     if isinstance(character, dict) and str(character.get("name") or "").strip()]
                 layout_required = enable_multi_char_layout and bool(named_characters) and (
@@ -792,12 +904,18 @@ async def build_from_context(
                         traceback.print_exc()
                         raise
                 return descriptor, output
-            keyvis_worker = expand_keyvis
+            if not keyvis_in_detail:
+                keyvis_worker = expand_keyvis
 
-        detail_request_limit = plan_request_limit
-        detail_groups = p._detail_batches_for_plan_batches(plan_batches)
-        detail_jobs = [{"ready": asyncio.get_running_loop().create_future(), "weight": len(batch)}
-                       for batch in plan_batches]
+        detail_request_limit = (int(toggles["call2_detail_parallel_max_concurrency"])
+                                if toggles.get("call2_detail_parallel_enabled") else 1)
+        detail_batches = p._detail_batches_for_plan_batches(plan_batches, detail_request_limit)
+        prepared_scenes = {}
+        plan_contexts = {}
+        detail_failure = asyncio.get_running_loop().create_future()
+        detail_jobs = [{"ready": asyncio.get_running_loop().create_future(), "weight": len(batch),
+                        "completed": {}, "scene_workers": {}}
+                       for batch in detail_batches]
         # Preserve the existing explicit-scene policy on DETAIL, not just on
         # Key Visual. The new DETAIL output contract below supersedes its old
         # outfit_state field while retaining its camera/contact safeguards.
@@ -808,56 +926,128 @@ async def build_from_context(
                                   (role_context, explicit_policy, prompts["call2_detail"]) if part))
         async def expand_batch(job, batch_index, total, attempt_kind,
                                stream_observer, history_id, job_stream_notify):
+            nonlocal keyvis_descriptor, keyvis_output
             batch = job["scenes"]
-            slots = [scene["slot"] for scene in batch]
+            state = detail_jobs[batch_index - 1]
+            completed = state["completed"]
+            pending = [scene for scene in batch if scene["slot"] not in completed]
+            owns_keyvis = keyvis_in_detail and batch_index == 1
+            if not pending and (not owns_keyvis or -1 in completed):
+                print(f"[ILLUST_CONTEXT:CALL2-DETAIL] 모든 장면 스트림 확정, 중복 요청 생략: slots={list(completed)}")
+                return {"raw": "", "descriptors": [completed[scene["slot"]] for scene in batch]
+                        + ([completed[-1]] if owns_keyvis else [])}
             needs_source = not all(toggles[key] for key in
                                    ("outfit_enabled", "time_place_enabled", "call2_plan_enabled"))
-            messages = p._normalize_messages(prompt_builders.detail_messages(detail_system, batch, slots,
+            messages = p._normalize_messages(prompt_builders.detail_messages(detail_system, pending,
+                [scene["slot"] for scene in pending],
                 past_text=past_text if needs_source else "",
                 segmented=segmented if needs_source else "", toggles=toggles,
                 prior_status=prior_status if tracking is None else None,
-                prior_time_place=prior_time_place if time_place_tracking is None else None))
+                prior_time_place=prior_time_place if time_place_tracking is None else None,
+                mask_inline=mask_inline, mask_prompt=prompts.get("multi_char_mask", ""),
+                canvas_sizes=payload.get("canvas_sizes"),
+                keyvis_messages=keyvis_messages if owns_keyvis and -1 not in completed else None))
             validated = {}
-            completed = {}
             def validate_detail(response):
+                nonlocal keyvis_descriptor, keyvis_output
+                keyvis_reason = ""
+                if owns_keyvis and -1 not in completed:
+                    descriptor, keyvis_reason = p._parse_call2_keyvis_output(
+                        response, toggles, names, "CALL2-DETAIL-KEYVIS",
+                        mask_inline=mask_inline, allow_scenes=True)
+                    if descriptor:
+                        completed[-1] = descriptor
+                        keyvis_descriptor, keyvis_output = descriptor, response
                 try:
-                    pending = [scene for scene in batch if scene["slot"] not in completed]
-                    results = parse_detail_batch(response, pending, allow_partial=True)
+                    results = parse_detail_batch(response, batch, allow_partial=True,
+                        mask_inline=mask_inline,
+                        single_char_mask_enabled=bool(toggles.get("single_char_mask_enabled", True)))
                 except ValueError as exc:
                     print(f"[ILLUST_CONTEXT:CALL2-DETAIL] 응답 파싱 실패, 보존 장면 유지: completed={list(completed)}, error={exc}")
                     traceback.print_exc()
                     return False, str(exc)
-                completed.update((result["slot"], result) for result in results)
+                for result in results:
+                    completed.setdefault(result["slot"], result)
                 pending = [scene for scene in batch if scene["slot"] not in completed]
-                if pending:
+                missing_keyvis = owns_keyvis and -1 not in completed
+                if pending or missing_keyvis:
                     print(f"[ILLUST_CONTEXT:CALL2-DETAIL] 정상 장면 보존 후 누락분만 재요청: "
-                          f"completed={list(completed)}, pending={[scene['slot'] for scene in pending]}")
+                          f"completed={list(completed)}, pending={[scene['slot'] for scene in pending]}, "
+                          f"keyvis_pending={missing_keyvis}, keyvis_error={keyvis_reason}")
                     messages[:] = p._normalize_messages(prompt_builders.detail_messages(detail_system, pending,
                         [scene["slot"] for scene in pending],
                         past_text=past_text if needs_source else "",
                         segmented=segmented if needs_source else "", toggles=toggles,
                         prior_status=prior_status if tracking is None else None,
-                        prior_time_place=prior_time_place if time_place_tracking is None else None))
-                    return False, f"CALL2-DETAIL: 미완료 장면만 재요청 slots={[scene['slot'] for scene in pending]}"
+                        prior_time_place=prior_time_place if time_place_tracking is None else None,
+                        mask_inline=mask_inline, mask_prompt=prompts.get("multi_char_mask", ""),
+                        canvas_sizes=payload.get("canvas_sizes"),
+                        keyvis_messages=keyvis_messages if missing_keyvis else None))
+                    return False, (f"CALL2-DETAIL: 미완료 장면/대표 이미지만 재요청 slots={[scene['slot'] for scene in pending]}, "
+                                   f"keyvis_pending={missing_keyvis}, reason={keyvis_reason}")
                 validated["output"] = response
-                validated["results"] = [completed[scene["slot"]] for scene in batch]
+                validated["results"] = [completed[scene["slot"]] for scene in batch] + (
+                    [completed[-1]] if owns_keyvis else [])
                 return True, ""
             call_name = "CALL2-DETAIL"
             if attempt_kind == "duplicate":
                 call_name += f" {batch_index}/{total} [느리다고? 다시해!]"
             output = await p._call_pipeline_llm(
                 call_name, messages, job_stream_notify,
-                result_validator=validate_detail, stream_observer=stream_observer,
+                result_validator=validate_detail, stream_observer=partial(
+                    finalize_batch, batch_index, messages=messages, stream_state={},
+                    stream_observer=stream_observer),
                 history_id=history_id)
-            results = (validated["results"] if validated.get("output") == output
-                       else parse_detail_batch(output, batch))
+            if validated.get("output") != output:
+                accepted, reason = validate_detail(output)
+                if not accepted:
+                    _fail("CALL2-DETAIL", reason, output)
+            results = validated["results"]
             return {"raw": output, "descriptors": results}
 
-        async def finalize_batch(batch_index, value):
-            # Only the coordinator's accepted winner reaches these side effects.
+        async def finalize_batch(batch_index, value, *, messages=None, stream_state=None,
+                                 stream_observer=None):
+            state = detail_jobs[batch_index - 1]
             batch = detail_jobs[batch_index - 1]["ready"].result()[0]["scenes"]
-            results = value["descriptors"]
-            for scene, result in zip(batch, results):
+            streaming = messages is not None
+            if streaming:
+                if stream_observer:
+                    stream_observer(value)
+                event_type = str(value.get("type") or "")
+                if event_type in {"request_mode", "stream_open"}:
+                    stream_state["text"] = ""
+                if event_type not in {"delta", "done", "error"}:
+                    return
+                text = value.get("partial_text")
+                if text is None:
+                    text = (str(value.get("text") or "") if event_type == "done" else
+                            stream_state.get("text", "") + str(value.get("text") or ""))
+                previous_text = stream_state.get("text", "")
+                stream_state["text"] = str(text or "")
+                if stream_state["text"] == previous_text:
+                    return
+                pending = [scene for scene in batch if scene["slot"] not in state["completed"]]
+                if not pending:
+                    return
+                results = parse_detail_batch(stream_state["text"], batch, allow_partial=True, streaming=True,
+                    mask_inline=mask_inline,
+                    single_char_mask_enabled=bool(toggles.get("single_char_mask_enabled", True)))
+            else:
+                results = value["descriptors"]
+            registered_before = len(state["scene_workers"])
+            by_slot = {scene["slot"]: scene for scene in batch}
+            for result in results:
+                slot = result["slot"]
+                # Claim a slot before any await. All routed and parallel attempts
+                # share these descriptors and tasks; the first usable scene wins.
+                if slot in state["scene_workers"]:
+                    continue
+                result = state["completed"].setdefault(slot, result)
+                if result.get("kind") == "keyvis":
+                    state["scene_workers"][slot] = illustration_flow.create_task(
+                        expand_keyvis(result, keyvis_output))
+                    continue
+                scene = by_slot[slot]
                 result["anchor_segment"] = scene["anchor_segment"]
                 if "brief" in scene:
                     result["scene_brief"] = scene["brief"]
@@ -871,7 +1061,36 @@ async def build_from_context(
                     result["time_place_scene_state"] = deepcopy({
                         ch["name"]: ch["time_place"] for ch in scene["characters"]})
 
-            async def register_one(descriptor):
+                registration_context = contextvars.copy_context()
+                if streaming and illustration_flow._node.get() is not None:
+                    registration_context.run(illustration_flow._frontier.set, (illustration_flow._node.get(),))
+                state["scene_workers"][slot] = registration_context.run(
+                    illustration_flow.create_task, register_one(result))
+                if streaming:
+                    print(f"[ILLUST_CONTEXT:CALL2-DETAIL] 스트림 장면 확정 · 마스크/이미지 준비 시작: "
+                          f"slot={slot}, completed={list(state['completed'])}")
+
+            if streaming:
+                if len(state["scene_workers"]) == registered_before:
+                    return
+                pending = [scene for scene in batch if scene["slot"] not in state["completed"]]
+                messages[:] = p._normalize_messages(prompt_builders.detail_messages(detail_system, pending,
+                    [scene["slot"] for scene in pending],
+                    past_text=past_text if not all(toggles[key] for key in
+                        ("outfit_enabled", "time_place_enabled", "call2_plan_enabled")) else "",
+                    segmented=segmented if not all(toggles[key] for key in
+                        ("outfit_enabled", "time_place_enabled", "call2_plan_enabled")) else "",
+                    toggles=toggles, prior_status=prior_status if tracking is None else None,
+                    prior_time_place=prior_time_place if time_place_tracking is None else None,
+                    mask_inline=mask_inline, mask_prompt=prompts.get("multi_char_mask", ""),
+                    canvas_sizes=payload.get("canvas_sizes"),
+                    keyvis_messages=keyvis_messages if keyvis_in_detail and batch_index == 1
+                        and -1 not in state["completed"] else None))
+                return
+            await illustration_flow.gather(*state["scene_workers"].values())
+
+        async def register_one(descriptor):
+            try:
                 # Each scene depends on its own mask, including within one
                 # DETAIL batch. A slow sibling must not hold ready images.
                 if enable_multi_char_layout:
@@ -879,7 +1098,8 @@ async def build_from_context(
                                                          stream_notify=stream_notify,
                                                          positive_note=str(toggles.get("positive_note") or ""),
                                                          canvas_sizes=payload.get("canvas_sizes"),
-                                                         single_char_mask_enabled=bool(toggles.get("single_char_mask_enabled", True)))
+                                                         single_char_mask_enabled=bool(toggles.get("single_char_mask_enabled", True)),
+                                                         **({"mask_inline": True} if mask_inline else {}))
                 if on_call2_ready:
                     pos, neg = p.build_raw_prompt(descriptor, enhanced, prompts, toggles)
                     item = deepcopy(descriptor)
@@ -891,36 +1111,49 @@ async def build_from_context(
                                           "total_count": len(selected_plan) + int(bool(toggles.get("key_visual"))),
                                           "items": [item]})
 
-            scene_workers = [illustration_flow.create_task(register_one(descriptor)) for descriptor in results]
-            try:
-                await illustration_flow.gather(*scene_workers)
             except BaseException as exc:
                 print(f"[ILLUST_CONTEXT:CALL2-DETAIL] 장면 준비/등록 실패: "
-                      f"slots={[descriptor['slot'] for descriptor in results]}, error={exc}")
+                      f"slot={descriptor['slot']}, error={exc}")
                 traceback.print_exc()
-                for worker in scene_workers:
-                    if not worker.done():
-                        worker.cancel()
-                await illustration_flow.gather(*scene_workers, return_exceptions=True)
+                if not isinstance(exc, asyncio.CancelledError) and not detail_failure.done():
+                    detail_failure.set_result(exc)
                 raise
 
         async def prepare_details(plan_index, value):
-            # The coordinator invokes this once in the accepted PLAN winner's
-            # flow context, while the other PLAN calls keep running.
+            # Accepted PLAN winners publish only their own scenes. A DETAIL
+            # batch becomes ready as soon as all of its source PLANs complete.
             planned = {scene["anchor_segment"]: scene for scene in value["scenes"]}
-            batch = []
             for selected in plan_batches[plan_index - 1]:
                 scene, bases = slice_scene(planned[selected["anchor_segment"]],
                     slot_map=segment_slots, profile_result=profile_result,
                     visual_profiles=visual_profiles, segments=segments, tracking=tracking,
                     extra_reference=extra_costume or extra_reference, time_place=time_place_tracking)
                 bases_by_slot[scene["slot"]] = bases
-                batch.append(scene)
-            if progress:
-                source_label = f"PLAN {plan_index} 완료" if toggles["call2_plan_enabled"] else "SELECT 직접 전달"
-                await progress(40, "call2_detail", f"{source_label} · DETAIL 1개 요청 시작 · 장면 {len(batch)}개")
-            detail_jobs[plan_index - 1]["ready"].set_result((
-                {"scenes": batch, "weight": len(batch)}, contextvars.copy_context()))
+                prepared_scenes[selected["anchor_segment"]] = scene
+            plan_contexts[plan_index] = contextvars.copy_context()
+            for detail_index, selected_batch in enumerate(detail_batches, 1):
+                ready = detail_jobs[detail_index - 1]["ready"]
+                if ready.done():
+                    continue
+                anchors = {selected["anchor_segment"] for selected in selected_batch}
+                if not anchors.issubset(prepared_scenes):
+                    continue
+                sources = [index for index, source in enumerate(plan_batches, 1)
+                           if any(selected["anchor_segment"] in anchors for selected in source)]
+                ready_context = contextvars.copy_context()
+                ready_context.run(illustration_flow._frontier.set, tuple(dict.fromkeys(
+                    node for index in sources
+                    for node in plan_contexts[index].get(illustration_flow._frontier, ()))))
+                batch = [prepared_scenes[selected["anchor_segment"]] for selected in selected_batch]
+                # Claim readiness before yielding: several PLAN callbacks may
+                # finish together, but each DETAIL batch must start only once.
+                ready.set_result(({"scenes": batch, "weight": len(batch)}, ready_context))
+                source_label = (f"PLAN {sources} 완료" if toggles["call2_plan_enabled"]
+                                else "SELECT 직접 전달")
+                print(f"[ILLUST_CONTEXT:CALL2-DETAIL] {source_label} · DETAIL {detail_index}/{len(detail_batches)} 준비: "
+                      f"slots={[scene['slot'] for scene in batch]}")
+                if progress:
+                    await progress(40, "call2_detail", f"{source_label} · DETAIL {detail_index}/{len(detail_batches)} 요청 준비 · 장면 {len(batch)}개")
 
         async def expand_plans():
             if not toggles["call2_plan_enabled"]:
@@ -943,11 +1176,11 @@ async def build_from_context(
                 stream_notify=stream_notify, invoke=expand_plan, on_resolved=prepare_details, fail_fast=True)
 
         print(f"[ILLUST_CONTEXT:CALL2-DETAIL] 활성 계획 또는 SELECT 직접 전달: "
-              f"groups={[[len(batch) for batch in group] for group in detail_groups]}, "
+              f"분배={[len(batch) for batch in detail_batches]}, "
               f"max_concurrency={detail_request_limit}")
         workers = [illustration_flow.create_task(expand_plans()), illustration_flow.create_task(
             p._run_parallel_pipeline_jobs(
-                detail_jobs, group_id="call2_detail", group_label="CALL2 DETAIL",
+                detail_jobs, group_id="call2_detail", group_label="DETAIL 장면 묘사",
                 max_concurrency=detail_request_limit,
                 slow_retry_enabled=bool(toggles["call2_detail_parallel_slow_retry_enabled"]),
                 slow_retry_remaining=int(toggles["call2_detail_parallel_slow_retry_remaining"]),
@@ -959,8 +1192,12 @@ async def build_from_context(
                 stream_notify=stream_notify, invoke=expand_batch, on_resolved=finalize_batch, fail_fast=True))]
         if keyvis_worker:
             workers.append(illustration_flow.create_task(keyvis_worker()))
+        group_worker = illustration_flow.create_task(illustration_flow.gather(*workers))
         try:
-            responses = await illustration_flow.gather(*workers)
+            await asyncio.wait((group_worker, detail_failure), return_when=asyncio.FIRST_COMPLETED)
+            if detail_failure.done():
+                raise detail_failure.result()
+            responses = await illustration_flow.join(group_worker)
         except BaseException as exc:
             for index, worker in enumerate(workers):
                 if not worker.done() or worker.cancelled():
@@ -968,17 +1205,21 @@ async def build_from_context(
                 failure = worker.exception()
                 if failure is None:
                     continue
-                label = (("PLAN -> DETAIL" if toggles["call2_plan_enabled"] else "SELECT -> DETAIL")
+                label = (("PLAN -> DETAIL" if toggles["call2_plan_enabled"] else "SLOT-SELECTER -> DETAIL")
                          if index == 0 else "DETAIL" if index == 1 else "KEYVIS")
                 print(f"[ILLUST_CONTEXT:CALL2] 병렬 작업 실패: slots={label!r}, error={failure}")
                 traceback.print_exception(type(failure), failure, failure.__traceback__)
-            for worker in workers:
+            scene_workers = [worker for job in detail_jobs for worker in job["scene_workers"].values()]
+            for worker in [group_worker, *workers, *scene_workers]:
                 if not worker.done():
                     worker.cancel()
-            await asyncio.gather(*workers, return_exceptions=True)
+            await asyncio.gather(group_worker, *workers, *scene_workers, return_exceptions=True)
             if isinstance(exc, asyncio.CancelledError):
                 print(f"[ILLUST_CONTEXT:CALL2] 병렬 작업 취소: session={payload.get('session_id')!r}")
             raise
+        finally:
+            if not detail_failure.done():
+                detail_failure.cancel()
         plan_results = responses[0]
         plan = [scene for result in plan_results for scene in result["scenes"]]
         plan_outputs = [result["raw"] for result in plan_results] if toggles["call2_plan_enabled"] else [""]
@@ -987,7 +1228,8 @@ async def build_from_context(
         expanded = responses[1]
         if keyvis_worker:
             keyvis_descriptor, keyvis_output = responses[-1]
-        ordinary = [result for value in expanded for result in value["descriptors"]]
+        ordinary = [result for value in expanded for result in value["descriptors"]
+                    if result.get("kind") != "keyvis"]
         detail_outputs = [value["raw"] for value in expanded]
         descriptors = ([keyvis_descriptor] if keyvis_descriptor else []) + ordinary
         p.attach_descriptor_anchors(descriptors, original_slotted)

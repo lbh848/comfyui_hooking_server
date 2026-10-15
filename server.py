@@ -663,6 +663,8 @@ DEFAULT_CONFIG = {
         "call2_parallel_slow_retry_tps_enabled": False,
         "call2_parallel_slow_retry_tps_threshold": 5.0,
         "call2_parallel_slow_retry_condition_operator": "and",
+        "call2_detail_parallel_enabled": True,
+        "call2_detail_parallel_max_concurrency": 3,
         "call2_detail_parallel_slow_retry_enabled": False,
         "call2_detail_parallel_slow_retry_remaining": 1,
         "call2_detail_parallel_slow_retry_progress_enabled": True,
@@ -672,6 +674,7 @@ DEFAULT_CONFIG = {
         "call2_detail_parallel_slow_retry_condition_operator": "and",
         "call3_context_turns": 5,
         "multi_char_mask_enabled": True,
+        "multi_char_mask_inline_enabled": False,
         "single_char_mask_enabled": True,
         "speak_enabled": True,
         "call3_prompt_mode": "speak",
@@ -681,6 +684,7 @@ DEFAULT_CONFIG = {
         "nsfw": False,
         "supplement": True,
         "key_visual": True,
+        "keyvis_in_detail_enabled": False,
         "minimal_background_description": True,
         "character_limit": 3,
         "scene_mode": "manual",
@@ -702,6 +706,7 @@ DEFAULT_CONFIG = {
     "llm_vision_compress": False,        # LLM1 비전 이미지 webp 압축 전송 (False=PNG 호환)
     "llm_gemini_base64": False,          # LLM1 Gemini/Vertex Base64 요청 래핑
     "llm_pdf_prompt": False,              # LLM1 Gemini/Vertex 대화 transcript PDF 전송
+    "llm_pdf_prompt_format": "pdf",       # 토큰 절약: pdf=네이티브 텍스트, image=그림 PDF
     "lora_prompt_review_enabled": False, # LoRA 프롬프트 완성 후 선택적 2차 비전 검수
     "illustration_quality_inspection_enabled": False,
     # 작업별 LLM1/LLM2/LLM3 라우팅 및 메인/폴백 재시도 정책(외부 LLM 분기 탭).
@@ -840,6 +845,7 @@ for _slot_n in range(2, llm_service.LLM_SLOT_COUNT + 1):
         f"llm_vision_compress{_suffix}": False,
         f"llm_gemini_base64{_suffix}": False,
         f"llm_pdf_prompt{_suffix}": False,
+        f"llm_pdf_prompt_format{_suffix}": "pdf",
     })
 
 # 워크플로우 백업 최대 보관 수 (기본값, config에서 덮어씀)
@@ -2442,7 +2448,8 @@ def _capture_illustration_runtime_snapshot(
         f"workflow={illustration_workflow_type}, "
         f"optional_stages={(toggles.get('outfit_enabled'), toggles.get('time_place_enabled'), toggles.get('call2_plan_enabled'))!r}, "
         f"call1_parallel={toggles.get('call1_parallel_max_concurrency')!r}, "
-        f"call2_plan_detail_parallel={toggles.get('call2_parallel_max_concurrency')!r}, "
+        f"call2_plan_parallel={toggles.get('call2_parallel_max_concurrency')!r}, "
+        f"call2_detail_parallel={toggles.get('call2_detail_parallel_max_concurrency')!r}, "
         f"word_rules={len(rules)}"
     )
     return snapshot
@@ -9027,9 +9034,9 @@ async def process_illustration_context_queue_item(item) -> dict:
                 )
                 registered_count = sum(pair is not None for pair in child_pairs)
                 trigger = (
-                    "CALL3/다중 레이아웃 완료 · GPU 큐 등록"
+                    "POST PROCESS/다중 레이아웃 완료 · GPU 큐 등록"
                     if registered_count
-                    else "DETAIL/CALL3 완료 · 등록 가능한 GPU 작업 없음"
+                    else "DETAIL/POST PROCESS 완료 · 등록 가능한 GPU 작업 없음"
                 )
                 _start_original_asset_selection(
                     fallback_used_slots,
@@ -9070,7 +9077,7 @@ async def process_illustration_context_queue_item(item) -> dict:
             await progress(
                 70,
                 "generating",
-                f"CALL3 완료 · 이미지 생성/후처리 합류 0/{len(raw_items)}",
+                f"POST PROCESS 완료 · 이미지 생성/후처리 합류 0/{len(raw_items)}",
                 0,
                 len(raw_items),
             )
@@ -10897,6 +10904,8 @@ async def handle_api_llm_test_stream(request: web.Request) -> web.StreamResponse
             for key in ("pdf_tokens_before", "pdf_pages_after"):
                 if event_data.get(key) is not None:
                     history_record[key] = int(event_data[key])
+            if event_data.get("pdf_prompt_format") is not None:
+                history_record["pdf_prompt_format"] = event_data["pdf_prompt_format"]
         elif event_type in ("error", "cancelled"):
             terminal_error = str(
                 event_data.get("error")
@@ -11044,6 +11053,7 @@ async def handle_api_llm_test_stream(request: web.Request) -> web.StreamResponse
                             "ttft": tracked_usage.get("ttft"),
                             "pdf_tokens_before": tracked_usage.get("pdf_tokens_before"),
                             "pdf_pages_after": tracked_usage.get("pdf_pages_after"),
+                            "pdf_prompt_format": tracked_usage.get("pdf_prompt_format"),
                             **{key: tracked_usage[key] for key in (
                                 "reasoning_tokens", "reasoning_chars", "reasoning_text"
                             ) if key in tracked_usage},
@@ -20732,6 +20742,7 @@ async def handle_api_config(request: web.Request) -> web.Response:
                     f"llm_vision_compress{_sfx}": app_config.get(f"llm_vision_compress{_sfx}", False),
                     f"llm_gemini_base64{_sfx}": app_config.get(f"llm_gemini_base64{_sfx}", False),
                     f"llm_pdf_prompt{_sfx}": app_config.get(f"llm_pdf_prompt{_sfx}", False),
+                    f"llm_pdf_prompt_format{_sfx}": app_config.get(f"llm_pdf_prompt_format{_sfx}", "pdf"),
                 })
             llm_service.update_config(_llm_runtime_cfg)
 

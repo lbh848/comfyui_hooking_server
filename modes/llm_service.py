@@ -464,6 +464,7 @@ _current_config = _ContextConfig({
     "llm_vision_compress": False,        # LLM1 비전 이미지 webp 압축 전송 (False=PNG 호환)
     "llm_gemini_base64": False,          # LLM1 Gemini/Vertex 요청 Base64 래핑
     "llm_pdf_prompt": False,              # LLM1 Gemini/Vertex 대화 transcript PDF 전송
+    "llm_pdf_prompt_format": "pdf",       # 토큰 절약: pdf=네이티브 텍스트, image=그림 PDF
     "lora_prompt_review_enabled": False, # LoRA 완성 프롬프트 2차 비전 검수
     # 작업별 LLM1/LLM2/LLM3 라우팅과 메인/폴백 재시도 정책(외부 LLM 분기).
     # 실제 기본값은 server.py 의 DEFAULT_CONFIG 에서 update_config 로 내려온다.
@@ -492,6 +493,7 @@ for _slot_n in range(2, LLM_SLOT_COUNT + 1):
         f"llm_vision_compress{_suffix}": False,
         f"llm_gemini_base64{_suffix}": False,
         f"llm_pdf_prompt{_suffix}": False,
+        f"llm_pdf_prompt_format{_suffix}": "pdf",
     })
 
 
@@ -612,6 +614,9 @@ def _slot_config_overrides(slot: str) -> dict:
     overrides["llm_pdf_prompt"] = bool(
         _base_config_get(f"llm_pdf_prompt{suffix}", False)
     )
+    overrides["llm_pdf_prompt_format"] = _base_config_get(
+        f"llm_pdf_prompt_format{suffix}", "pdf"
+    )
     return overrides
 
 
@@ -673,7 +678,7 @@ def _gemini_base64_enabled(service: str) -> bool:
 
 
 def _gemini_pdf_enabled(service: str) -> bool:
-    """현재 슬롯에서 native Gemini/Vertex transcript PDF를 사용할지 반환한다."""
+    """현재 슬롯에서 Gemini/Vertex의 PDF·이미지 토큰 절약을 사용할지 반환한다."""
     return service in _GEMINI_PDF_SERVICES and bool(
         _current_config.get("llm_pdf_prompt", False)
     )
@@ -687,6 +692,13 @@ def _gemini_base64_protocol(service: str) -> str:
         if use_pdf
         else _GEMINI_BASE64_PROTOCOL
     )
+    if use_pdf and _current_config.get("llm_pdf_prompt_format", "pdf") == "image":
+        protocol = protocol.replace(
+            "inside the attached PDF.", "as pictured text inside the attached PDF, with no embedded text layer."
+        ).replace(
+            "Extract the PDF's embedded native text exactly, decode that complete text as one UTF-8 Base64 block,",
+            "Read the PDF's pictured text in page order, ignore visual line wrapping, decode the complete text as one UTF-8 Base64 block,",
+        )
     if (_stream_metadata_ctx.get() or {}).get("task_key") == "illustration_call3":
         # Keep input decoding rules, replacing the response encoding rules.
         response_rule = f"{4 if use_pdf else 3}. Compose the requested response."
@@ -703,7 +715,7 @@ def _gemini_base64_protocol(service: str) -> str:
 
 
 def _prepare_gemini_pdf_messages(messages: list, service: str) -> tuple[list, dict]:
-    """PDF 토글 조합에 맞춰 transcript와 별도 이미지 파트를 만든다."""
+    """슬롯별 토큰 절약 형식에 맞춰 transcript와 별도 이미지 파트를 만든다."""
     if not _gemini_pdf_enabled(service):
         return messages, {}
     use_base64 = _gemini_base64_enabled(service)
@@ -719,13 +731,15 @@ def _prepare_gemini_pdf_messages(messages: list, service: str) -> tuple[list, di
     transformed, metadata = prepare_pdf_prompt_messages(
         messages,
         encode_transcript=use_base64,
+        prompt_format=_current_config.get("llm_pdf_prompt_format", "pdf"),
         **layout_options,
     )
     _llm_log(
         "[LLM_PDF_PROMPT] 요청 변환 완료: "
         f"slot={_normalize_llm_slot(_llm_slot_ctx.get())}, "
         f"service={service}, pages={metadata['page_count']}, "
-        f"font_pt=1, resolution={PDF_MEDIA_RESOLUTION}, "
+        f"format={metadata['prompt_format']}, font_pt={9 if metadata['prompt_format'] == 'image' else 1}, "
+        f"resolution={PDF_MEDIA_RESOLUTION}, "
         f"character_width_ratio={metadata['character_width_ratio']}, "
         f"transcript_chars={metadata['transcript_chars']}, "
         f"encoded_chars={metadata['encoded_chars']}, "
@@ -822,7 +836,10 @@ def _store_pdf_prompt_metrics(
     """PDF 계측값을 현재 provider usage sink에 기록하고 이벤트용 dict를 반환한다."""
     if not pdf_metadata:
         return {}
-    metrics = {"pdf_pages_after": int(pdf_metadata.get("page_count") or 0)}
+    metrics = {
+        "pdf_pages_after": int(pdf_metadata.get("page_count") or 0),
+        "pdf_prompt_format": pdf_metadata.get("prompt_format", "pdf"),
+    }
     if pdf_tokens_before is not None:
         metrics["pdf_tokens_before"] = int(pdf_tokens_before)
     sink = _usage_sink_ctx.get()
@@ -983,6 +1000,14 @@ def _decode_structured_base64_values(raw_text: str, *, partial: bool = False) ->
             closing_wrappers.append("</" + re.match(r"<([A-Za-z][\w:-]*)", opening_text).group(1) + ">")
         start += opening_wrapper.end()
         start += len(raw[start:]) - len(raw[start:].lstrip())
+    if re.search(r'(?m)^[ \t]*[A-Za-z_][\w-]*\[\d+\]\{[^{}\r\n]+\}:[ \t]*$', raw[start:]):
+        # A TOON table row can begin with base64:, but it is several cells,
+        # not one source passage. Reuse the application's table normalizer
+        # before restoring its ordinary structured scalar values.
+        from modes.illustration_context_pipeline import _normalize_toon
+        normalized = _normalize_toon(raw)
+        if normalized != raw:
+            return _decode_structured_base64_values(normalized, partial=partial)
     if partial and raw[start:start + 1] in ("{", "[", '"') and not re.match(
         r"\[(?:Scene\s|C\d|Shot\s|TOON\])", raw[start:], re.I,
     ):
@@ -1281,7 +1306,12 @@ def _decode_gemini_scene_base64_response(raw_text: str) -> str:
             )
             traceback.print_exc()
             continue
-        decoded_documents.append(decoded.strip())
+        decoded = decoded.strip()
+        # Preserve the completed transport frame's boundary even when the
+        # model omits its inner document wrapper. Never join bare JSON roots.
+        if not re.search(r"<lb[-_]xnai[^>]*>", decoded, re.I):
+            decoded = f"<lb-xnai>\n{decoded}\n</lb-xnai>"
+        decoded_documents.append(decoded)
 
     incomplete_count = max(0, open_count - len(frames))
     if failed_slots or incomplete_count or close_count != open_count:
@@ -1366,7 +1396,11 @@ class _GeminiBase64StreamDecoder:
                 )
                 traceback.print_exc()
                 continue
-            decoded_documents.append(decoded.strip())
+            decoded = decoded.strip()
+            # Keep the same document boundary in streaming and final output.
+            if not re.search(r"<lb[-_]xnai[^>]*>", decoded, re.I):
+                decoded = f"<lb-xnai>\n{decoded}\n</lb-xnai>"
+            decoded_documents.append(decoded)
         return "\n\n".join(decoded_documents)
 
     def feed(self, text: str) -> str:
@@ -4440,6 +4474,7 @@ def _apply_stream_outcome_usage(outcome: dict) -> None:
         "max_output_tokens",
         "pdf_tokens_before",
         "pdf_pages_after",
+        "pdf_prompt_format",
         "reasoning_tokens",
         "reasoning_chars",
         "reasoning_text",
@@ -4936,6 +4971,7 @@ async def _consume_stream_attempt(
                     ("max_output_tokens", "max_output_tokens"),
                     ("pdf_tokens_before", "pdf_tokens_before"),
                     ("pdf_pages_after", "pdf_pages_after"),
+                    ("pdf_prompt_format", "pdf_prompt_format"),
                     ("reasoning_tokens", "reasoning_tokens"),
                     ("reasoning_chars", "reasoning_chars"),
                     ("http_status", "http_status"),

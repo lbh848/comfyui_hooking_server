@@ -116,7 +116,7 @@
     function renderIllustrationPreviewPlan(root, plan, activeGroup) {
         const escape = value => String(value ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;')
             .replaceAll('>', '&gt;').replaceAll('"', '&quot;');
-        const labels = {call1_select: 'OUTFIT + TIME & PLACE + SELECT',
+        const labels = {call1_select: 'OUTFIT + TIME & PLACE + SLOT-SELECTER',
             call2_plan: 'PLAN 배치', call2_detail: 'DETAIL 배치', keyvis: 'KEYVIS',
             original_asset: 'Original Asset', profile_resolve: 'PROFILE-RESOLVE',
             illustration_images: '삽화', illustration_postprocess: '이미지 후처리',
@@ -125,7 +125,7 @@
             data-illust-preview-node="${escape(node.name)}" data-preview-id="${escape(node.id)}"
             data-enabled="${node.enabled}" data-condition="${escape(node.condition)}"
             data-batch-index="${node.index}" data-batch-count="${node.count}">
-            <strong>${escape(node.name)}${node.count > 1 ? `<small class="illust-flow-preview-batch-index">${node.index}/${node.count}</small>` : ''}<small class="illust-preview-activation" data-activation="${node.enabled ? 'on' : 'off'}">사용 ${node.enabled ? 'ON' : 'OFF'}</small></strong>
+            <strong>${escape(node.name.replaceAll('CALL2-SELECT', 'SLOT-SELECTER').replaceAll('CALL2-DETAIL', 'DETAIL').replaceAll('CALL2-KEYVIS', 'KEYVIS').replaceAll('CALL3', 'POST PROCESS'))}${node.count > 1 ? `<small class="illust-flow-preview-batch-index">${node.index}/${node.count}</small>` : ''}<small class="illust-preview-activation" data-activation="${node.enabled ? 'on' : 'off'}">사용 ${node.enabled ? 'ON' : 'OFF'}</small></strong>
             <span>${node.enabled ? '' : '생략 · '}${escape(node.description)}</span>
             ${node.condition && node.enabled ? `<span class="illust-preview-condition">조건: ${escape(node.condition)}</span>` : ''}
             ${node.llm ? `<span class="illust-preview-llm">${node.llm.slot.toUpperCase()} · 슬롯 공유 상한 ${node.llm.limit}개</span>` : ''}
@@ -236,7 +236,7 @@
             card.state.textContent = (state === 'skipped' && card.condition ? '조건부 경로 · 이번 모의 실행에서 제외' : stateLabels[state])
                 + (jobs.length > 1 ? ` · ${finished}/${jobs.length}개` : '');
             const sample = active[0] || jobs[0];
-            card.data.textContent = sample ? `${sample.input} → ${sample.output}` : card.description;
+            card.data.textContent = (sample ? `${sample.input} → ${sample.output}` : card.description).replaceAll('CALL2-SELECT', 'SLOT-SELECTER').replaceAll('CALL2-DETAIL', 'DETAIL').replaceAll('CALL2-KEYVIS', 'KEYVIS').replaceAll('CALL3', 'POST PROCESS');
         });
         current.groupStatuses.forEach(group => {
             const slots = new Map();
@@ -265,7 +265,7 @@
                 edge.packet.style.opacity = String(Math.min(1, progress * 6, (1 - progress) * 6));
             }
         });
-        const activeNames = [...new Set(model.jobs.filter(job => time >= job.start && time < job.end).map(job => job.name))];
+        const activeNames = [...new Set(model.jobs.filter(job => time >= job.start && time < job.end).map(job => job.name.replaceAll('CALL2-SELECT', 'SLOT-SELECTER').replaceAll('CALL2-DETAIL', 'DETAIL').replaceAll('CALL2-KEYVIS', 'KEYVIS').replaceAll('CALL3', 'POST PROCESS')))];
         const text = model.blocked.length ? '실행 계획에 진행할 수 없는 작업이 있습니다' : activeNames.length
             ? `FLOW 자동 재생 · ${activeNames.join(' + ')}`
             : 'FLOW 자동 재생 · 다음 단계로 데이터 전달 중';

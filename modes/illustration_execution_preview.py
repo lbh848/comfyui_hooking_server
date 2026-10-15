@@ -23,6 +23,9 @@ async def build_execution_plan(*, config, snapshot, visual_profiles, translation
     assets = toggles["original_asset_enabled"]
     provider = snapshot["provider"]
     prompt_batch = scenario.get("protocol") == "prompt_batch_v1"
+    mask_enabled = illustration and pipeline.should_enable_multi_char_layout(toggles, provider)
+    mask_inline = mask_enabled and toggles.get("multi_char_mask_inline_enabled", False) and not prompt_batch
+    keyvis_in_detail = toggles["key_visual"] and toggles.get("keyvis_in_detail_enabled", False) and not prompt_batch
     # Input slots are a workload assumption, not fabricated narrative/LLM output.
     slot_count = max(1, int(scenario.get("slot_count") or (
         toggles["output_count_max"] + (toggles["original_asset_count"] if assets else 0))))
@@ -35,6 +38,9 @@ async def build_execution_plan(*, config, snapshot, visual_profiles, translation
     postprocess_mode = postprocess_mode if postprocess_mode in ("vn", "bubble", "subtitle") else "vn"
     mode = {"bubble": "Manga", "subtitle": "Subtitle"}.get(postprocess_mode, "Speak")
     nodes, jobs, notes = [], [], []
+    if "multi_char_mask_inline_enabled" not in toggles:
+        print("[ILLUST_PREVIEW] 실행 중인 파이프라인에 통합 마스크 설정이 없어 기존 별도 호출 방식으로 표시합니다.")
+        notes.append("현재 서버에는 통합 마스크 설정이 아직 반영되지 않아 기존 별도 호출 방식으로 표시합니다. 새 생성 방식을 적용하려면 서버를 재시작하세요.")
     connections = {}
     capacities = {}
     provider_slots = getattr(llm_service, "_llm_provider_slots", None)
@@ -52,7 +58,7 @@ async def build_execution_plan(*, config, snapshot, visual_profiles, translation
         notes.append("현재 서버의 LLM 모듈은 공유 프로바이더 한도 조회를 지원하지 않아 슬롯별 한도로 표시합니다. 공유 한도를 반영하려면 서버를 재시작하세요.")
 
     def card(name, step, description, *, enabled=True, condition="", group="", index=1, count=1, task_key=None):
-        task = task_key or pipeline._CALL_TASK_KEYS.get("CALL2" if name == "CALL2-DETAIL" else name)
+        task = task_key if task_key is not None else pipeline._CALL_TASK_KEYS.get("CALL2" if name == "CALL2-DETAIL" else name)
         if task is None:
             task = next((key for call, key in pipeline._CALL_TASK_KEYS.items()
                          if name.startswith(call + " ")), None)
@@ -201,32 +207,44 @@ async def build_execution_plan(*, config, snapshot, visual_profiles, translation
     else:
         card("CALL2-PLAN", 3, "일반 삽화 OFF" if not illustration else
              "완성 프롬프트 입력" if prompt_batch else "PLAN OFF · SELECT에서 DETAIL로 직접 전달", enabled=False)
-    detail_groups = pipeline._detail_batches_for_plan_batches(plan_batches)
+    detail_batches = pipeline._detail_batches_for_plan_batches(
+        plan_batches, toggles["call2_detail_parallel_max_concurrency"]
+        if toggles["call2_detail_parallel_enabled"] else 1)
     detail_sources = []
     if illustration and not prompt_batch:
-        detail_count = sum(map(len, detail_groups))
-        i = 0
-        for plan_index, group in enumerate(detail_groups):
-            for batch in group:
-                i += 1
-                description = (f"PLAN {plan_index + 1} 완료 즉시" if toggles["call2_plan_enabled"] else "SELECT 완료 후 원문에서 직접 판단")
-                detail_sources.append((job(card("CALL2-DETAIL", 4, f"{description} · 장면 {len(batch)}개 이미지 태그 묘사",
-                                                group="call2_detail", index=i, count=detail_count),
-                                           [plans[plan_index]] if plans else front, output=f"장면 {len(batch)}개 묘사"), batch, False))
+        for i, batch in enumerate(detail_batches, 1):
+            slots = {scene["slot"] for scene in batch}
+            sources = [index for index, source in enumerate(plan_batches)
+                       if any(scene["slot"] in slots for scene in source)]
+            description = (f"PLAN {', '.join(str(index + 1) for index in sources)} 완료 즉시"
+                           if toggles["call2_plan_enabled"] else "SLOT-SELECTER 완료 후 원문에서 직접 판단")
+            if mask_inline:
+                description += " · MULTI-CHAR-MASK 함께 예측"
+            if keyvis_in_detail and i == 1:
+                description += " · KEYVIS 대표 이미지 1장 함께 예측"
+            detail_sources.append((job(card("CALL2-DETAIL", 4, f"{description} · 장면 {len(batch)}개 이미지 태그 묘사",
+                                            group="call2_detail", index=i, count=len(detail_batches)),
+                                       [plans[index] for index in sources] if plans else front,
+                                       output=f"장면 {len(batch)}개 묘사" + ("·마스크" if mask_inline else "")), batch, False))
     else:
         card("CALL2-DETAIL", 4, "일반 삽화 OFF" if not illustration else "완성 프롬프트 입력", enabled=False)
         if illustration:
             detail_sources = [(None, scenes, False)]
-    keyvis_card = card("CALL2-KEYVIS", 4, "PLAN과 독립적으로 병렬 · 일반 장면 외 대표 이미지 1장",
-                       enabled=illustration and toggles["key_visual"] and not prompt_batch, group="keyvis")
+    keyvis_card = card("CALL2-KEYVIS", 4, ("첫 DETAIL 배치에서 함께 예측 · 별도 LLM 호출 없음" if keyvis_in_detail
+                       else "PLAN과 독립적으로 병렬 · 일반 장면 외 대표 이미지 1장")
+                       + (" · MULTI-CHAR-MASK 함께 예측" if mask_inline else ""),
+                       enabled=illustration and toggles["key_visual"] and not prompt_batch and not keyvis_in_detail, group="keyvis")
     if keyvis_card["enabled"]:
-        detail_sources.append((job(keyvis_card, front, output="대표 이미지 묘사"), [{"slot": -1}], True))
+        detail_sources.append((job(keyvis_card, front, output="대표 이미지 묘사" + ("·마스크" if mask_inline else "")), [{"slot": -1}], True))
+    elif illustration and keyvis_in_detail and detail_sources:
+        detail_sources.append((detail_sources[0][0], [{"slot": -1}], True))
 
-    mask_enabled = illustration and pipeline.should_enable_multi_char_layout(toggles, provider)
     mask = None
     if not (mask_enabled and conditional):
-        mask = card("MULTI-CHAR-MASK", 5, "이름 있는 캐릭터 1~3명의 영역 계산",
-                    enabled=mask_enabled, condition="해당 장면에 마스크가 필요할 때", group="pipeline")
+        mask = card("MULTI-CHAR-MASK", 5,
+                    "자체 생성 · DETAIL·KEYVIS 결과의 마스크 사용 · 추가 LLM 호출 없음" if mask_inline else "이름 있는 캐릭터 1~3명의 영역 계산",
+                    enabled=mask_enabled, condition="해당 장면에 마스크가 필요할 때", group="pipeline",
+                    task_key="" if mask_inline else None)
     image_lanes = []
     item = QueueItem(id="preview", type="illustration", label="preview", params={"provider": provider})
     if provider in ("chansub", "hybrid"):
@@ -253,7 +271,9 @@ async def build_execution_plan(*, config, snapshot, visual_profiles, translation
             entry["id"] == descriptor_id and entry["card"] == node["id"] for entry in jobs)), None)
         for scene in batch:
             current_mask = (card(f"MULTI-CHAR-MASK slot={scene['slot']}", 5,
-                                f"장면 {scene['slot']} 캐릭터 영역 계산", group="pipeline")
+                                (f"자체 생성 · {'KEYVIS' if is_keyvis else 'DETAIL'}의 장면 {scene['slot']} 마스크 사용 · 추가 LLM 호출 없음"
+                                 if mask_inline else f"장면 {scene['slot']} 캐릭터 영역 계산"), group="pipeline",
+                                task_key="" if mask_inline else None)
                             if mask_enabled and conditional else mask)
             connect(descriptor_card, current_mask)
             mask_job = (job(current_mask, [descriptor_id], output=f"장면 {scene['slot']} 영역")
@@ -321,10 +341,10 @@ async def build_execution_plan(*, config, snapshot, visual_profiles, translation
     composition_enabled = bool(dialogue and postprocess_settings.is_postprocess_active(config)
                                and selected_settings.get("enabled", False))
     composition_reason = ("일반 삽화 OFF" if not illustration else
-                          "CALL3 대사 생성 OFF" if not dialogue else
+                          "POST PROCESS 대사 생성 OFF" if not dialogue else
                           "후처리 마스터 설정 OFF" if not postprocess_settings.is_postprocess_active(config) else
                           f"활성 봇의 {mode} 후처리 OFF" if not selected_settings.get("enabled", False) else
-                          f"렌더링 이미지와 CALL3 대사를 합성 · 봇의 {mode} 후처리")
+                          f"렌더링 이미지와 POST PROCESS 대사를 합성 · 봇의 {mode} 후처리")
     saved_images = []
     for index, image in enumerate(images, 1):
         if prompt_batch:

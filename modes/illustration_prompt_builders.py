@@ -1,7 +1,8 @@
 """Shared, side-effect-free message assembly for generation and the composition view."""
 import json
+import re
 
-from modes.illustration_prompt_assembly import prompt_join, variable
+from modes.illustration_prompt_assembly import PromptText, prompt_join, prompt_sub, variable
 
 
 def blank_state_table(names, slots):
@@ -107,11 +108,40 @@ def plan_messages(prompts, role_context, batch, batch_names, single_names, track
     ]
 
 def detail_messages(detail_system, batch, slots, *, past_text="", segmented="", toggles=None,
-                    prior_status=None, prior_time_place=None):
+                    prior_status=None, prior_time_place=None, mask_inline=False,
+                    mask_prompt="", canvas_sizes=None, keyvis_messages=None):
     prepared = [{"slot": scene["anchor_segment"] if "anchor_segment" in scene else scene["slot"],
                  **{key: value for key, value in scene.items() if key not in {"slot", "anchor_segment"}}}
                 for scene in batch]
-    return [
+    if keyvis_messages:
+        # Scope the existing policies to their own image types. Context and the
+        # final combined output contract are shared by this single LLM call.
+        detail_system = prompt_join("\n\n", (
+            "ORDINARY SCENE INSTRUCTIONS (apply only to scenes)", detail_system,
+            "KEY VISUAL INSTRUCTIONS (apply only to keyvis)", keyvis_messages[0]["content"],
+        ))
+    if mask_inline:
+        detail_system = mask_messages(mask_prompt, {}, mask_inline=True,
+            generation_system=detail_system, canvas_sizes=canvas_sizes,
+            positive_note=str((toggles or {}).get("positive_note") or ""))[0]["content"]
+    if keyvis_messages:
+        detail_system += (
+            "\n\nCOMBINED DETAIL AND KEY VISUAL OUTPUT\n"
+            "This call performs both tasks. The ordinary-scene instructions apply only to scenes; "
+            "the Key Visual instructions apply only to keyvis. Their standalone output restrictions "
+            "are replaced by this combined contract: output exactly one keyvis object AND the assigned "
+            "scenes array in the same response. Key Visual is an additional promotional composition, "
+            "independent of the assigned scene anchors and cast; choose its own supported story instant "
+            "and canonical participants using the full Key Visual context. Never copy its state into an ordinary scene. "
+            + ("Use one JSON object. Both keyvis and each scene use background_prompt, composition_prompt, "
+               "regions (name, character_prompt, negative, x, y, width, height). Only scenes have slot. "
+               if mask_inline else
+               "Use one <lb-xnai> block. The keyvis object uses camera, characters "
+               "(name, positive, negative, position, outfit_state), scene, supplement. "
+               "Each ordinary scene uses its existing fields and exact C anchor slot. ")
+            + "Write scenes first, then keyvis. If no scene anchors remain, return scenes: [] and keyvis only."
+        )
+    messages = [
         {"role": "system", "content": detail_system},
         {"role": "user", "content": "# ONLY THIS BATCH'S PREPARED SCENES\n"
          + variable(json.dumps({"scenes": prepared}, ensure_ascii=False), "이 호출의 장면·프로필·상태")
@@ -127,15 +157,24 @@ def detail_messages(detail_system, batch, slots, *, past_text="", segmented="", 
             if toggles and str(toggles.get("focus") or "").strip() else "")
          + ("\nClient direction: " + variable(toggles["direction"], "사용자 연출 지시")
             if toggles and str(toggles.get("direction") or "").strip() else "")
-         + "\n\nReturn one <lb-xnai> block with a scenes array for exactly these C anchors: "
-         + variable(json.dumps([scene["slot"] for scene in prepared]), "출력할 원문 앵커 목록") + ". Each scene has slot, camera, characters "
-         + "(name, positive, negative, position), scene, supplement. "
+         + ("\n\nReturn one JSON object with a scenes array for exactly these C anchors: "
+            if mask_inline else "\n\nReturn one <lb-xnai> block with a scenes array for exactly these C anchors: ")
+         + variable(json.dumps([scene["slot"] for scene in prepared]), "출력할 원문 앵커 목록")
+         + (". Each scene has slot, background_prompt, composition_prompt, regions "
+            "(name, character_prompt, negative, x, y, width, height). " if mask_inline else
+            ". Each scene has slot, camera, characters (name, positive, negative, position), scene, supplement. ")
          + "Use each scene's supplied profile/state and source chronology at its assigned anchor. "
          + "Treat the PLAN brief and prepared character list as reference information. "
          + "Determine the visible characters and their names from the source and supplied context; "
          + "the output does not have to match PLAN's character names, count or order. "
-         + "No extra fields.</lb-xnai>"},
+         + ("The combined response must also contain exactly one keyvis object. " if keyvis_messages else "")
+         + ("Use the exact supplied C anchor as slot. The prepared scene characters are input references; "
+            "write the final visible identities only in regions. No extra fields or prose."
+            if mask_inline else "No extra fields.</lb-xnai>")},
     ]
+    if keyvis_messages:
+        messages[1:1] = keyvis_messages[1:]
+    return messages
 
 def lb_extra_system_prompt_block(system_prompt):
     return "# TRUSTED ACTIVE BOT IMAGE POLICY\n" + variable(system_prompt, "lb-xnai.lb.extra 시스템 프롬프트")
@@ -185,17 +224,26 @@ def resolution_messages(profile_inference_enabled, selected_names, tracked_state
         {"role": "user", "content": user_content},
     ]
 
-def keyvis_task_message(max_chars, roster_text, allowed):
+def keyvis_task_message(max_chars, roster_text, allowed, *, mask_inline=False):
     return {
         "role": "user",
         "content": (
             "# KEY VISUAL TASK\n"
             "Choose at least one and at most "
             + variable(max_chars, "대표 이미지 인물 수 제한") + " named characters when supported "
-            "by the current context. Emit characters[] only for the identities selected for this image.\n\n"
-            "# ALLOWED CANONICAL CHARACTER CANDIDATES (CHOOSE A SUBSET)\n"
+            + ("by the current context. Emit regions[] only for the identities selected for this image.\n\n"
+               if mask_inline else "by the current context. Emit characters[] only for the identities selected for this image.\n\n")
+            + "# ALLOWED CANONICAL CHARACTER CANDIDATES (CHOOSE A SUBSET)\n"
             + variable(roster_text if allowed else "(unavailable; use only names in CHARACTER DICTIONARY)", "확정 등장인물")
-            + "\n\n# OUTPUT SCHEMA\n"
+            + ("\n\n# OUTPUT SCHEMA\n"
+            '{"keyvis":{"background_prompt":"shared camera and setting",'
+            '"composition_prompt":"neutral placement and physical relations",'
+            '"regions":[{"name":"exact selected canonical name",'
+            '"character_prompt":"final character image tags","negative":"",'
+            '"x":number,"y":number,"width":number,"height":number}]}}\n'
+            "Use finite JSON numbers derived from this image for the coordinate fields. "
+            "Return only this JSON object."
+            if mask_inline else "\n\n# OUTPUT SCHEMA\n"
             "<lb-xnai>\n"
             "keyvis:\n"
             "  camera: ...\n"
@@ -210,11 +258,103 @@ def keyvis_task_message(max_chars, roster_text, allowed):
             "  scene: ...\n"
             "  supplement: ...\n"
             "scenes: []\n"
-            "</lb-xnai>\n\nReturn only this block."
+            "</lb-xnai>\n\nReturn only this block.")
         ),
     }
 
-def mask_messages(system_prompt, scene_payload):
+def mask_messages(system_prompt, scene_payload, *, mask_inline=False, generation_system="",
+                  keyvis=False, canvas_sizes=None, positive_note=""):
+    if mask_inline:
+        # The generation stage owns both text and geometry. Remove obsolete
+        # output sections before composing its single active field contract.
+        generation = generation_system if isinstance(generation_system, PromptText) else PromptText(str(generation_system or ""))
+        nsfw_output = "Add `nsfw` exactly once in `scene`." in generation
+        generation = prompt_sub(r"(?ms)^(?:#{1,6}[ \t]*)?(?i:OUTPUT(?: SCHEMA| FORMAT)?|RESPONSE (?:SCHEMA|FORMAT))[ \t]*\r?\n.*?(?=^(?:#{1,6}[ \t]+\S|[A-Z][A-Z &/\u2014_-]*[ \t]*$)|\Z)", "", generation)
+        generation = prompt_sub(r"(?is)<lb[-_]xnai[^>]*>[\s\S]*?</lb[-_]xnai>", "", generation)
+        generation = prompt_sub(r"(?ms)^3\. Field ownership\s*\n.*?(?=^4\. Physical coherence)", "", generation)
+        generation = generation.replace(
+            "Put scene-wide location, shared objects and an anonymous permitted partner fragment in `scene`, and the named person's own traits and main pose/action in their `positive`.",
+            "Put the shared setting and static objects in `background_prompt`, an anonymous permitted partner fragment and its physical relations in `composition_prompt`, and each named person's own traits and main pose/action in their `character_prompt`.")
+        generation = generation.replace(
+            "For Key Visual, `outfit_state` records its complete logical outfit, including off-frame items; `positive` contains only visible or coverage-defining garments.",
+            "Maintain the complete logical outfit as continuity context; `character_prompt` contains only visible or coverage-defining garments.")
+        generation = generation.replace(
+            "Keep the complete logical outfit in `outfit_state`, only visible or coverage-defining garments in `positive`, and do not put logical outfit records in `supplement`.",
+            "Maintain the complete logical outfit as continuity context and include only visible or coverage-defining garments in `character_prompt`; do not output a logical outfit record.")
+        generation = prompt_sub(
+            r"(?m)^In `camera`, `scene`, `position` and `supplement`,[^\n]*",
+            "In `composition_prompt`, refer to people through their actual visible placement or pose using neutral terms such as person or figure. Do not put narrative names or distinguishing identity traits in either shared prompt. Identify an anonymous fragment by its visible region and frame entry without assigning an identity. Keep required image identity/LoRA trigger tokens in that person's `character_prompt`.",
+            generation)
+        # Map field references, never narrative words or source/profile data.
+        for old, new in (("characters[].positive", "regions[].character_prompt"),
+                         ("characters[]", "regions[]"), ("characters[n]", "regions[n]"),
+                         ("`characters`", "`regions`"),
+                         ("`positive`", "`character_prompt`"),
+                         ("`camera`", "`background_prompt`"),
+                         ("`scene`", "`composition_prompt`"),
+                         ("`supplement`", "`composition_prompt`"),
+                         ("`position`", "`composition_prompt`")):
+            generation = generation.replace(old, new)
+        for old, new in (("positive", "character_prompt"), ("scene", "composition_prompt"),
+                         ("supplement", "composition_prompt"), ("camera", "background_prompt"),
+                         ("position", "composition_prompt")):
+            generation = prompt_sub(r"(?<![\w`])" + old + r"(?=/supplement\b|[ \t]+field\b)", new, generation)
+            generation = prompt_sub(r"(?<=scene/)" + old + r"\b", new, generation)
+            generation = prompt_sub(r"\b(in|into|its|their) " + old + r"\b", r"\1 " + new, generation)
+        generation = generation.replace("scene/composition_prompt", "composition_prompt")
+        generation = generation.replace("composition_prompt/supplement", "composition_prompt")
+        generation = generation.replace("supplied `regions` roster", "supplied character roster")
+        generation = generation.replace("supplied `regions` list", "supplied character list")
+        generation = generation.replace("logical `outfit_state`, ", "")
+        generation = generation.replace("in `outfit_state`", "as continuity context")
+        generation = generation.replace("`outfit_state`", "source wardrobe continuity")
+        generation = generation.replace("camera, tags and prose", "shared prompts and character tags")
+        generation = generation.replace("camera, scene, supplement", "shared prompt content")
+        generation = generation.replace("`background_prompt`, `composition_prompt` or `composition_prompt`", "`background_prompt` or `composition_prompt`")
+        generation = generation.replace("and exact geometry in `composition_prompt`", "with its exact geometry")
+        generation = generation.replace("and its exact geometry in `composition_prompt`", "with its exact geometry")
+        generation = generation.replace("use `composition_prompt` only for directional contact, overlap, occlusion, or off-frame continuation that tags cannot express clearly.",
+            "describe directional contact, overlap, occlusion and off-frame continuation in that same `composition_prompt`.")
+        generation = generation.replace("a gaze target or no supplement", "a gaze target and simple placement")
+        generation = generation.replace("a natural supplement", "natural composition prose")
+        generation = generation.replace("crop, and supplement", "crop, and composition prose")
+        generation = generation.replace("occlusion, and supplement", "occlusion, and composition prose")
+
+        mask = str(system_prompt or "").strip()
+        mask = re.sub(r"\ADecompose one supplied illustration[^\n]*", "", mask)
+        mask = re.sub(r"(?m)^The scene and every character prompt are already defined[^\n]*", "", mask)
+        mask = re.sub(r"(?m)^Read the full camera[^\n]*", "Read the complete assigned context, resolved profiles, tracked state and visual brief. Decide the visible bodies and their physical relations together with the final image text; never infer geometry from an isolated word.", mask)
+        mask = re.sub(r"(?m)^Return exactly one JSON object[^\n]*", "", mask)
+        mask = re.sub(r"(?m)^- Emit exactly one region for every input character[^\n]*", "- Emit exactly one region for every named identity selected for the image under the generation task, and no other identities. Copy each canonical name exactly.", mask)
+        mask = re.sub(r"(?m)^- Do not output `character_prompt`[^\n]*", "- Each region's `character_prompt` contains that named person's final visible identity, current wardrobe or coverage, pose, action, expression and gaze. Use `negative` only for negative content explicitly supplied by trusted policy or the Client; otherwise return an empty string. Do not output logical outfit records.", mask)
+        mask = mask.replace("Use the validated character data only to infer spatial geometry.",
+                            "Keep named character identity and wardrobe only in that region's `character_prompt`.")
+        mask = mask.replace("validated positive tags", "final character image tags")
+        mask = mask.replace(
+            "Use neutral terms such as `person` or `figure`; do not infer or restate age, sex, gender, species, identity traits, or wardrobe.",
+            "Use neutral terms such as `person` or `figure` in prose; do not infer or restate age, sex, gender, species, identity traits, or wardrobe in that prose. Preserve only the count and focus control tags explicitly required by trusted policy, without adding, removing, or changing those controls.")
+        if nsfw_output:
+            generation += "\n\nPreserve the requested nsfw classification once in `background_prompt`."
+            mask = mask.replace("empty-space information.", "empty-space information, plus the explicitly required scene classification.")
+        shape = ('{"keyvis":{"background_prompt":"...","composition_prompt":"...",'
+                 '"regions":[{"name":"canonical name","character_prompt":"final image tags",'
+                 '"negative":"","x":number,"y":number,"width":number,"height":number}]}}'
+                 if keyvis else '{"scenes":[{"slot":"Cxxx","background_prompt":"...",'
+                 '"composition_prompt":"...","regions":[{"name":"canonical name",'
+                 '"character_prompt":"final image tags","negative":"",'
+                 '"x":number,"y":number,"width":number,"height":number}]}]}')
+        system_prompt = prompt_join("\n\n", (part for part in (
+            generation.strip(),
+            "INTEGRATED IMAGE TEXT AND REGIONS\nWrite the final image prompt and predict its body regions in this same response. The following shared fields and region fields are the complete output contract.",
+            mask.strip(),
+            "FIELD OWNERSHIP\n`background_prompt` owns shared camera, framing, environment including static shared objects, time and lighting. `composition_prompt` owns the neutral figure count, placement, visible extent, body support, action, contact, occlusion and any permitted anonymous fragment. `regions[].character_prompt` owns only its named character's visible identity, current wardrobe or coverage and main pose/action. Describe each fact once in its owning field. An anonymous fragment has no region or identity of its own."
+            + ("" if keyvis else " For a source-supported image with no named visible subject, return an empty regions array and describe its composition without inventing a person."),
+            ("CANVAS\n" + variable(json.dumps(canvas_sizes, ensure_ascii=False), "인물 수별 실제 캔버스 크기")
+             + "\nUse solo for one named identity and group for two or three. Each pair is [width, height] in pixels; normalize horizontal bounds by width and vertical bounds by height." if canvas_sizes else ""),
+            ("CLIENT POSITIVE NOTE\n" + variable(positive_note, "추가 긍정 프롬프트")
+             + "\nUse this supplied context when planning the geometry; the renderer appends this note separately." if positive_note else ""),
+            "OUTPUT\nUse English for image-prompt content and preserve exact canonical names. Return only one JSON object in this shape (number means a finite JSON number derived from the chosen composition):\n" + shape,
+        ) if part))
     return [{
         "role": "system",
         "content": system_prompt,
@@ -224,10 +364,17 @@ def mask_messages(system_prompt, scene_payload):
     }]
 
 def keyvis_context_messages(keyvis_system, lb_extra_system_prompt, keyvis_reference, keyvis_profiles, tracking, past_text, slotted,
-                            *, time_place=None, segment_slots=None, prior_status=None, prior_time_place=None):
+                            *, time_place=None, segment_slots=None, prior_status=None, prior_time_place=None,
+                            mask_inline=False, mask_prompt="", canvas_sizes=None, positive_note=""):
     anchors = {f"SLOT{slot}": anchor for anchor, slot in (segment_slots or {}).items()}
+    if mask_inline:
+        generation_system = prompt_join("\n\n", (part for part in (keyvis_system,
+            lb_extra_system_prompt_block(lb_extra_system_prompt) if lb_extra_system_prompt else "") if part))
+        keyvis_system = mask_messages(mask_prompt, {}, mask_inline=True,
+            generation_system=generation_system, keyvis=True, canvas_sizes=canvas_sizes,
+            positive_note=positive_note)[0]["content"]
     keyvis_messages = [{"role": "system", "content": keyvis_system}]
-    if lb_extra_system_prompt:
+    if lb_extra_system_prompt and not mask_inline:
         keyvis_messages.append({"role": "user", "content": lb_extra_system_prompt_block(lb_extra_system_prompt)})
     if keyvis_reference:
         keyvis_messages.append({"role": "user", "content": "# CHARACTER DICTIONARY\n" + variable(keyvis_reference, "캐릭터 사전")})

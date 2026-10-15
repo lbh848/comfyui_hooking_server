@@ -79,9 +79,11 @@
         });
         container.append(grid);
     }
-    function selectStage(key) {
-        const stage = stages.find(item => item.key === key);
-        if (!stage) { console.error('[ILLUST_STRUCTURE] 단계 없음:', key); return; }
+    function selectStage(key, variantKey = '') {
+        const definition = stages.find(item => item.key === key);
+        if (!definition) { console.error('[ILLUST_STRUCTURE] 단계 없음:', key); return; }
+        const variant = definition.variants?.find(item => item.key === variantKey);
+        const stage = {...definition, ...variant, key: definition.key};
         selectedKey = key;
         root.querySelectorAll('.illust-structure-node').forEach(node => {
             node.classList.toggle('active', node.dataset.key === key);
@@ -106,9 +108,10 @@
         const messages = el('div');
         if (stage.variants) {
             const label = el('label', 'illust-structure-variant', '지침 모드');
-            const select = el('select'); select.setAttribute('aria-label', '대사 프롬프트 모드');
+            const select = el('select'); select.setAttribute('aria-label', stage.key === 'call3' ? '대사 프롬프트 모드' : '마스크 예측 방식');
             stage.variants.forEach(variant => {const option = el('option', '', variant.label); option.value = variant.key; select.append(option);});
-            select.onchange = () => renderMessages(messages, stage.variants.find(variant => variant.key === select.value));
+            select.value = variantKey || stage.variants[0].key;
+            select.onchange = () => selectStage(key, select.value);
             label.append(select); detail.append(label);
         }
         detail.append(messages); renderMessages(messages, stage);

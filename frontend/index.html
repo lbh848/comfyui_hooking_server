@@ -3770,6 +3770,10 @@
         .illust-prompt-workspace .illust-history {
             padding-bottom: 104px;
         }
+        .illust-prompt-workspace #illust-tab-content-extra {
+            min-width: 0;
+            padding-bottom: 104px;
+        }
         .illust-prompt-toolbar {
             display: flex;
             align-items: center;
@@ -4319,6 +4323,10 @@
         }
         .illust-settings .illust-settings-panel.is-active {
             display: block;
+        }
+        .illust-settings #illust-settings-panel-call3 {
+            /* 모서리는 잘라내되 실시간 미리보기의 스크롤 기준은 본문으로 유지한다. */
+            overflow: clip;
         }
         .illust-settings .illust-settings-panel-header {
             display: block;
@@ -5379,6 +5387,24 @@
             background: var(--illust-input);
             transition: opacity 0.18s, background 0.18s;
         }
+        .illust-settings .illust-settings-fieldset {
+            min-width: 0;
+            margin: 12px 18px 18px;
+            padding: 0;
+            border: 1px solid var(--illust-border-subtle);
+            border-left: 2px solid color-mix(in srgb, var(--accent) 45%, var(--border));
+            border-radius: 8px;
+        }
+        .illust-settings .illust-settings-fieldset > legend {
+            margin-left: 12px;
+            padding: 0 6px;
+            color: var(--text);
+            font-size: 12px;
+            font-weight: 700;
+        }
+        .illust-settings .illust-settings-fieldset > .illust-settings-dependent {
+            margin: 0 12px 12px;
+        }
         .illust-settings .illust-settings-dependent .illust-setting-row {
             min-height: 64px;
             padding-right: 14px;
@@ -5866,8 +5892,18 @@
         .settings-tab-arrow:hover { color: var(--accent); }
         .settings-tab-arrow:disabled { opacity: 0.3; cursor: default; }
 
-        /* ─── 후처리 설정 모달 전용 스타일 ───────────────────── */
-        .pp-modal-content { max-width: 1120px; width: calc(100vw - 60px); }
+        /* ─── POST PROCESS 봇별 합성 설정 ───────────────────── */
+        .illust-postprocess-settings {
+            min-width: 0; padding: 0 18px 14px; box-sizing: border-box; container-type: inline-size;
+        }
+        .illust-postprocess-settings > fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
+        .illust-postprocess-toolbar, .illust-postprocess-actions {
+            display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+            padding: 12px 0; font-size: 0.76rem; color: var(--text2);
+        }
+        .illust-postprocess-toolbar { border-top: 1px solid var(--border); margin-top: 18px; }
+        .illust-postprocess-actions { justify-content: flex-end; border-top: 1px solid var(--border); }
+        .illust-postprocess-actions span { margin-right: auto; }
         /* 레이아웃/카드/탭/딱지/행/라벨 등은 모달 본문 <style>(.postprocess-ui 스코프)에서 재정의.
            아래는 감정 뽑기/베이스 피커 등 다른 모달에서도 공통 쓰이는 클래스만 남긴다. */
         .pp-hint { font-size: 0.72rem; color: var(--text2, #888); margin-top: 6px; }
@@ -9520,7 +9556,6 @@
             box-shadow: 0 0 8px rgba(77, 226, 174, 0.72);
         }
         #tab-btn-bot {
-            min-width: 302px;
             display: flex;
             align-items: center;
             justify-content: center;
@@ -16544,12 +16579,11 @@
         <div class="tab-group tab-group--illustration" role="group" aria-label="삽화 기능">
             <span class="tab-group-label" aria-hidden="true">삽화</span>
             <button type="button" id="tab-btn-backup" class="tab-btn active" onclick="switchTab('backup')">삽화 백업</button>
-            <button type="button" id="tab-btn-illustration-prompt" class="tab-btn" onclick="switchTab('illustration-prompt')">삽화 프롬프트 생성</button>
+            <button type="button" id="tab-btn-illustration-prompt" class="tab-btn" onclick="switchTab('illustration-prompt')">삽화 프롬프트 설정</button>
             <button type="button" id="tab-btn-bot" class="tab-btn" onclick="switchTab('bot')">
-                <span class="tab-title">삽화 모드</span>
+                <span class="tab-title">삽화용 봇 설정</span>
                 <span class="tab-status-badges">
                     <span id="bot-mode-chip" class="status-chip off">포맷 <span class="status-chip-value">V3</span></span>
-                    <span id="postprocess-chip" class="status-chip off">후처리 <span class="status-chip-value">OFF</span></span>
                     <span id="debug-mode-chip" class="status-chip off">디버그 <span class="status-chip-value">OFF</span></span>
                 </span>
             </button>
@@ -17252,23 +17286,15 @@
         <!-- 삽화 설정 탭 -->
         <div id="tab-bot-content" class="tab-content">
             <div class="asset-breadcrumb" id="bot-breadcrumb">
-                <span>삽화 모드</span>
+                <span>삽화용 봇 설정</span>
             </div>
             <div style="display:flex; align-items:center; gap:10px; padding:8px 16px; border-bottom:1px solid var(--border);">
                 <label class="toggle-switch">
                     <input type="checkbox" id="bot-mode-toggle" checked disabled>
                     <span class="toggle-slider"></span>
                 </label>
-                <span style="font-size:0.85rem;">삽화 모드 (항상 ON 고정)</span>
+                <span style="font-size:0.85rem;">삽화용 봇 설정 (항상 ON 고정)</span>
                 <span id="bot-mode-status" class="toggle-status on">V3</span>
-                <span style="width:12px;"></span>
-                <label class="toggle-switch">
-                    <input type="checkbox" id="postprocess-toggle" onchange="onPostprocessToggle()">
-                    <span class="toggle-slider"></span>
-                </label>
-                <span style="font-size:0.85rem;">후처리 ([SPEAK])</span>
-                <span id="postprocess-status" class="toggle-status off">OFF</span>
-                <button type="button" id="postprocess-settings-btn" class="btn" style="padding:2px 10px; font-size:0.78rem;" onclick="openPostprocessModal()">⚙️ 후처리 설정</button>
                 <span style="width:12px;"></span>
                 <label class="toggle-switch">
                     <input type="checkbox" id="debug-mode-toggle" onchange="onDebugModeToggle()">
@@ -21648,20 +21674,19 @@
         </div>
     </div>
 
-    <!-- 후처리 설정 모달 (CLAUDE.md: ✕/저장/닫기 버튼으로만 닫힘, 바깥 클릭 닫기 금지) -->
-    <div class="modal" id="postprocess-modal">
-        <div class="modal-content pp-modal-content">
-            <div class="modal-header">
-                <h3>후처리 설정</h3>
+    <!-- 생성 설정의 POST PROCESS 패널에 연결하는 기존 봇별 합성 편집기 -->
+    <div id="postprocess-modal" class="illust-postprocess-settings" hidden>
+        <fieldset id="pp-settings-fields" aria-label="봇별 이미지 합성 설정">
+            <div class="illust-postprocess-toolbar">
+                <strong>봇별 이미지 합성</strong>
                 <div style="display:flex; gap:6px; align-items:center; margin-left:auto; flex-wrap:wrap;">
-                    <span style="font-size:0.74rem; color:var(--text2, #999);">봇</span>
-                    <select id="pp-bot-select" onchange="ppOnBotChange()" class="select" style="min-width:130px; max-width:200px;"></select>
+                    <label for="pp-bot-select">설정할 봇</label>
+                    <select id="pp-bot-select" onchange="ppOnBotChange()" class="illust-setting-input" style="min-width:130px; max-width:200px;"></select>
                     <button type="button" class="btn" style="padding:4px 10px; font-size:0.74rem;" onclick="ppSaveToCache()" title="현재 설정을 브라우저 캐시에 저장 (봇 간 복붙용)">캐시에 저장</button>
                     <button type="button" class="btn" style="padding:4px 10px; font-size:0.74rem;" onclick="ppLoadFromCache()" title="브라우저 캐시에서 설정 불러오기">캐시에서 불러오기</button>
                 </div>
-                <button class="modal-close" onclick="closePostprocessModal()">&times;</button>
             </div>
-            <div class="modal-body">
+            <div>
              <div class="postprocess-ui">
               <style>
 /* Post-process modal visual refresh
@@ -22441,15 +22466,43 @@
   }
 }
 
+/* 생성 설정 패널의 실제 너비에 맞춰 옵션과 미리보기를 배치한다. */
+.illust-postprocess-settings .pp-layout {
+  grid-template-columns: minmax(0, 1.15fr) minmax(240px, 0.85fr);
+  min-width: 0;
+  height: auto;
+  overflow: visible;
+}
+.illust-postprocess-settings .pp-left {
+  overflow: visible;
+  padding-right: 0;
+}
+.illust-postprocess-settings .pp-tab-bar {
+  position: static;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.illust-postprocess-settings .pp-tab-btn {
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.illust-postprocess-settings .pp-right {
+  position: sticky;
+  top: 12px;
+  align-self: start;
+  height: min(640px, calc(var(--independent-scroll-height, 100dvh) - 128px));
+}
+.illust-postprocess-settings .pp-preview-box {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+}
+@container (max-width: 860px) {
+  .illust-postprocess-settings .pp-layout { grid-template-columns: minmax(0, 1fr); }
+  .illust-postprocess-settings .pp-right { position: static; }
+  .illust-postprocess-settings .pp-row { grid-template-columns: minmax(0, 1fr); }
+}
+
               </style>
-                <div class="pp-shell-header">
-                    <div>
-                        <div class="pp-kicker">POST PROCESS</div>
-                        <h2 class="pp-shell-title">대사 합성 설정</h2>
-                        <div class="pp-shell-desc">대사창과 말풍선 렌더링을 조정하고 결과를 즉시 확인합니다.</div>
-                    </div>
-                    <div class="pp-live-status">실시간 반영</div>
-                </div>
+                <p class="pp-hint" style="margin:0 0 12px;">합성 방식을 선택하고 미리보기로 조정한 뒤 ‘봇별 합성 설정 저장’을 누르세요. 선택한 방식에 맞는 대사 프롬프트가 자동 적용됩니다.</p>
                 <div class="pp-layout">
                     <!-- 왼쪽: 탭 + 옵션 -->
                     <div class="pp-left">
@@ -22474,7 +22527,7 @@
                             <div class="pp-card pp-card-primary">
                                 <div class="pp-switch-line">
                                     <div>
-                                        <div style="font-size:0.88rem; font-weight:600;">대사 모드</div>
+                                        <div style="font-size:0.88rem; font-weight:600;">이 봇에서 대사창 합성</div>
                                         <div class="pp-hint" style="margin-top:2px;">[SPEAK] 대사/생각을 이미지 하단 박스에 합성</div>
                                     </div>
                                     <label class="toggle-switch">
@@ -22777,7 +22830,7 @@
                             <div class="pp-card pp-card-primary">
                                 <div class="pp-switch-line">
                                     <div>
-                                        <div style="font-size:0.88rem; font-weight:600;">방송 애니 자막 모드</div>
+                                        <div style="font-size:0.88rem; font-weight:600;">이 봇에서 자막 합성</div>
                                         <div class="pp-hint">화자 메타데이터는 숨기고 대사만 하단 안전영역에 배치합니다. 굵은 검정 외곽선과 부드러운 그림자를 겹쳐 밝고 복잡한 장면에서도 읽히게 합니다.</div>
                                     </div>
                                     <label class="switch"><input type="checkbox" id="pp-subtitle-enabled" onchange="renderPostprocessPreview()"><span class="slider"></span></label>
@@ -22884,7 +22937,7 @@
                             <div class="pp-card pp-card-primary">
                                 <div class="pp-switch-line">
                                     <div>
-                                        <div style="font-size:0.88rem; font-weight:600;">말풍선 모드</div>
+                                        <div style="font-size:0.88rem; font-weight:600;">이 봇에서 말풍선 합성</div>
                                         <div class="pp-hint">감지된 얼굴 중 발화자(NAME)를 ViT-B/16 임베딩 매칭으로 식별 → ONNX 위치 후보 중 얼굴을 가리지 않는 가까운 곳에 렌더. 발화=일반, 생각=꼬리 없는 사각형.</div>
                                     </div>
                                     <label class="switch"><input type="checkbox" id="pp-bubble-enabled" onchange="renderPostprocessPreview()"><span class="slider"></span></label>
@@ -23039,11 +23092,11 @@
                 </div>
              </div>
             </div>
-            <div class="modal-footer">
-                <button type="button" class="btn" onclick="closePostprocessModal()">닫기</button>
-                <button type="button" class="btn btn-primary" onclick="savePostprocessSettings()">저장</button>
+            <div class="illust-postprocess-actions">
+                <span>봇별 합성 옵션은 이 버튼으로 저장합니다.</span>
+                <button type="button" class="btn btn-primary" onclick="savePostprocessSettings()">봇별 합성 설정 저장</button>
             </div>
-        </div>
+        </fieldset>
     </div>
 
     <!-- 베이스 이미지 피커 (삽화 백업에서 선택) — 대사/말풍선 모드 공용 -->
@@ -24100,10 +24153,11 @@
 
                     <div class="setting-row" id="llm-pdf-prompt-row" style="display:none;">
                         <div class="setting-label">
-                            <div class="title">LLM1 대화 PDF 토큰 절약</div>
-                            <div class="desc">Gemini·Vertex 대화 전체를 1pt·낮은 해상도의 네이티브 텍스트 PDF로 보내고 이미지는 별도 첨부합니다. Base64도 켜면 PDF 본문까지 가역 인코딩하며, 매우 긴 인코딩 문서는 제공자 안전 필터에 차단될 수 있습니다.<br><a href="https://arca.live/b/characterai/181021175" target="_blank" rel="noopener noreferrer" style="color:#4dd0e1;">원본 프로젝트: https://arca.live/b/characterai/181021175</a></div>
+                            <div class="title">토큰 절약</div>
+                            <div class="desc">Gemini·Vertex 대화를 선택한 형식으로 보내 입력 토큰을 줄입니다. PDF는 기존 1pt 텍스트, 이미지는 텍스트 레이어 없이 9pt 글자를 그림으로 담은 PDF입니다. 원래 첨부 이미지는 별도로 보냅니다. Base64도 켜면 문서 본문을 인코딩합니다.<br><a href="https://arca.live/b/characterai/181021175" target="_blank" rel="noopener noreferrer" style="color:#4dd0e1;">원본 프로젝트: https://arca.live/b/characterai/181021175</a></div>
                         </div>
                         <div class="setting-control" style="display:flex; align-items:center; gap:8px;">
+                            <select id="setting-llm-pdf-prompt-format" aria-label="LLM1 토큰 절약 형식" style="width:auto;min-width:90px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);color-scheme:dark;" disabled><option value="pdf">PDF</option><option value="image">이미지</option></select>
                             <label class="toggle-switch">
                                 <input type="checkbox" id="setting-llm-pdf-prompt" onchange="updateLlmPdfPromptStatus(1, this.checked)">
                                 <span class="toggle-slider"></span>
@@ -24293,10 +24347,11 @@
 
                     <div class="setting-row" id="llm-pdf-prompt2-row" style="display:none;">
                         <div class="setting-label">
-                            <div class="title">LLM2 대화 PDF 토큰 절약</div>
-                            <div class="desc">LLM2가 Gemini·Vertex일 때 대화를 1pt·낮은 해상도 PDF로 보내고 이미지는 별도 첨부합니다. Base64 동시 사용 시 긴 인코딩 문서는 제공자 안전 필터에 차단될 수 있습니다.<br><a href="https://arca.live/b/characterai/181021175" target="_blank" rel="noopener noreferrer" style="color:#4dd0e1;">원본 프로젝트: https://arca.live/b/characterai/181021175</a></div>
+                            <div class="title">토큰 절약</div>
+                            <div class="desc">Gemini·Vertex 대화를 선택한 형식으로 보내 입력 토큰을 줄입니다. PDF는 기존 1pt 텍스트, 이미지는 텍스트 레이어 없이 9pt 글자를 그림으로 담은 PDF입니다. 원래 첨부 이미지는 별도로 보냅니다. Base64도 켜면 문서 본문을 인코딩합니다.<br><a href="https://arca.live/b/characterai/181021175" target="_blank" rel="noopener noreferrer" style="color:#4dd0e1;">원본 프로젝트: https://arca.live/b/characterai/181021175</a></div>
                         </div>
                         <div class="setting-control" style="display:flex; align-items:center; gap:8px;">
+                            <select id="setting-llm-pdf-prompt-format2" aria-label="LLM2 토큰 절약 형식" style="width:auto;min-width:90px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);color-scheme:dark;" disabled><option value="pdf">PDF</option><option value="image">이미지</option></select>
                             <label class="toggle-switch">
                                 <input type="checkbox" id="setting-llm-pdf-prompt2" onchange="updateLlmPdfPromptStatus(2, this.checked)">
                                 <span class="toggle-slider"></span>
@@ -24412,7 +24467,8 @@
                     <div class="setting-row" id="llm-url3-row" style="display:none;"><div class="setting-label"><div class="title">LLM3 베이스 URL (옵션)</div><div class="desc">비워두면 선택한 서비스의 기본 URL 사용</div></div><div class="setting-control"><input id="setting-llm-url3" type="text" placeholder="https://..." style="width:300px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);"></div></div>
                     <div class="setting-row"><div class="setting-label"><div class="title">LLM3 스트리밍</div><div class="desc">LLM3 요청을 실제 chunk 스트림으로 받고 LLM로그창에 실시간 표시합니다.</div></div><div class="setting-control" style="display:flex;align-items:center;gap:8px;"><label class="toggle-switch"><input type="checkbox" id="setting-llm-stream3" onchange="updateLlmStreamStatus(3, this.checked)"><span class="toggle-slider"></span></label><span id="setting-llm-stream3-status" class="toggle-status off">OFF</span></div></div>
                     <div class="setting-row" id="llm-gemini-base643-row" style="display:none;"><div class="setting-label"><div class="title">LLM3 Gemini/Vertex Base64 송수신</div><div class="desc">LLM3가 Gemini 또는 Vertex 계열일 때 텍스트 요청과 응답을 Base64로 전달하고 서버에서 응답을 복호화하는 독립 토글입니다. JSON 응답은 구조를 유지하고 문자열 값만 Base64로 전달합니다.<br><a href="https://arca.live/b/characterai/176675290" target="_blank" rel="noopener noreferrer" style="color:#4dd0e1;">원본 프로젝트: https://arca.live/b/characterai/176675290</a></div></div><div class="setting-control" style="display:flex;align-items:center;gap:8px;"><label class="toggle-switch"><input type="checkbox" id="setting-llm-gemini-base643" onchange="updateLlmGeminiBase64Status(3, this.checked)"><span class="toggle-slider"></span></label><span id="setting-llm-gemini-base643-status" class="toggle-status off">OFF</span></div></div>
-                    <div class="setting-row" id="llm-pdf-prompt3-row" style="display:none;"><div class="setting-label"><div class="title">LLM3 대화 PDF 토큰 절약</div><div class="desc">Gemini·Vertex 대화를 1pt·낮은 해상도 PDF로 보내고 이미지는 별도 첨부합니다. Base64 동시 사용 시 긴 인코딩 문서는 제공자 안전 필터에 차단될 수 있습니다.<br><a href="https://arca.live/b/characterai/181021175" target="_blank" rel="noopener noreferrer" style="color:#4dd0e1;">원본 프로젝트: https://arca.live/b/characterai/181021175</a></div></div><div class="setting-control" style="display:flex;align-items:center;gap:8px;"><label class="toggle-switch"><input type="checkbox" id="setting-llm-pdf-prompt3" onchange="updateLlmPdfPromptStatus(3, this.checked)"><span class="toggle-slider"></span></label><span id="setting-llm-pdf-prompt3-status" class="toggle-status off">OFF</span></div></div>
+                    <div class="setting-row" id="llm-pdf-prompt3-row" style="display:none;"><div class="setting-label"><div class="title">토큰 절약</div><div class="desc">Gemini·Vertex 대화를 선택한 형식으로 보내 입력 토큰을 줄입니다. PDF는 기존 1pt 텍스트, 이미지는 텍스트 레이어 없이 9pt 글자를 그림으로 담은 PDF입니다. 원래 첨부 이미지는 별도로 보냅니다. Base64도 켜면 문서 본문을 인코딩합니다.<br><a href="https://arca.live/b/characterai/181021175" target="_blank" rel="noopener noreferrer" style="color:#4dd0e1;">원본 프로젝트: https://arca.live/b/characterai/181021175</a></div></div><div class="setting-control" style="display:flex;align-items:center;gap:8px;"><select id="setting-llm-pdf-prompt-format3" aria-label="LLM3 토큰 절약 형식" style="width:auto;min-width:90px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);color-scheme:dark;" disabled><option value="pdf">PDF</option><option value="image">이미지</option></select>
+                            <label class="toggle-switch"><input type="checkbox" id="setting-llm-pdf-prompt3" onchange="updateLlmPdfPromptStatus(3, this.checked)"><span class="toggle-slider"></span></label><span id="setting-llm-pdf-prompt3-status" class="toggle-status off">OFF</span></div></div>
                     <div class="setting-row"><div class="setting-label"><div class="title">이미지를 webp으로 압축해서 전송</div><div class="desc">토글이 꺼져있다면, 가장 호환성이 좋은 png로 보냅니다.(비전 사용시)</div></div><div class="setting-control" style="display:flex;align-items:center;gap:8px;"><label class="toggle-switch"><input type="checkbox" id="setting-llm-vision-compress3" onchange="updateLlmVisionCompressStatus(3, this.checked)"><span class="toggle-slider"></span></label><span id="setting-llm-vision-compress3-status" class="toggle-status off">OFF</span></div></div>
                     <div class="setting-row">
                         <div class="setting-label">
@@ -24500,11 +24556,12 @@
                         </div>
                         <div class="setting-row" id="llm-pdf-prompt4-row" style="display:none;">
                             <div class="setting-label">
-                                <div class="title">LLM4 대화 PDF 토큰 절약</div>
-                                <div class="desc">Gemini·Vertex 대화를 1pt·낮은 해상도 PDF로 보내고 이미지는 별도 첨부합니다. Base64 동시 사용 시 긴 인코딩 문서는 제공자 안전 필터에 차단될 수 있습니다.<br><a href="https://arca.live/b/characterai/181021175" target="_blank" rel="noopener noreferrer" style="color:#4dd0e1;">원본 프로젝트: https://arca.live/b/characterai/181021175</a></div>
+                                <div class="title">토큰 절약</div>
+                                <div class="desc">Gemini·Vertex 대화를 선택한 형식으로 보내 입력 토큰을 줄입니다. PDF는 기존 1pt 텍스트, 이미지는 텍스트 레이어 없이 9pt 글자를 그림으로 담은 PDF입니다. 원래 첨부 이미지는 별도로 보냅니다. Base64도 켜면 문서 본문을 인코딩합니다.<br><a href="https://arca.live/b/characterai/181021175" target="_blank" rel="noopener noreferrer" style="color:#4dd0e1;">원본 프로젝트: https://arca.live/b/characterai/181021175</a></div>
                             </div>
                             <div class="setting-control" style="display:flex; align-items:center; gap:8px;">
-                                <label class="toggle-switch">
+                                <select id="setting-llm-pdf-prompt-format4" aria-label="LLM4 토큰 절약 형식" style="width:auto;min-width:90px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);color-scheme:dark;" disabled><option value="pdf">PDF</option><option value="image">이미지</option></select>
+                            <label class="toggle-switch">
                                     <input type="checkbox" id="setting-llm-pdf-prompt4" onchange="updateLlmPdfPromptStatus(4, this.checked)">
                                     <span class="toggle-slider"></span>
                                 </label>
@@ -24737,11 +24794,12 @@
                         </div>
                         <div class="setting-row" id="llm-pdf-prompt5-row" style="display:none;">
                             <div class="setting-label">
-                                <div class="title">LLM5 대화 PDF 토큰 절약</div>
-                                <div class="desc">Gemini·Vertex 대화를 1pt·낮은 해상도 PDF로 보내고 이미지는 별도 첨부합니다. Base64 동시 사용 시 긴 인코딩 문서는 제공자 안전 필터에 차단될 수 있습니다.<br><a href="https://arca.live/b/characterai/181021175" target="_blank" rel="noopener noreferrer" style="color:#4dd0e1;">원본 프로젝트: https://arca.live/b/characterai/181021175</a></div>
+                                <div class="title">토큰 절약</div>
+                                <div class="desc">Gemini·Vertex 대화를 선택한 형식으로 보내 입력 토큰을 줄입니다. PDF는 기존 1pt 텍스트, 이미지는 텍스트 레이어 없이 9pt 글자를 그림으로 담은 PDF입니다. 원래 첨부 이미지는 별도로 보냅니다. Base64도 켜면 문서 본문을 인코딩합니다.<br><a href="https://arca.live/b/characterai/181021175" target="_blank" rel="noopener noreferrer" style="color:#4dd0e1;">원본 프로젝트: https://arca.live/b/characterai/181021175</a></div>
                             </div>
                             <div class="setting-control" style="display:flex; align-items:center; gap:8px;">
-                                <label class="toggle-switch">
+                                <select id="setting-llm-pdf-prompt-format5" aria-label="LLM5 토큰 절약 형식" style="width:auto;min-width:90px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);color-scheme:dark;" disabled><option value="pdf">PDF</option><option value="image">이미지</option></select>
+                            <label class="toggle-switch">
                                     <input type="checkbox" id="setting-llm-pdf-prompt5" onchange="updateLlmPdfPromptStatus(5, this.checked)">
                                     <span class="toggle-slider"></span>
                                 </label>
@@ -24919,11 +24977,12 @@
                         </div>
                         <div class="setting-row" id="llm-pdf-prompt6-row" style="display:none;">
                             <div class="setting-label">
-                                <div class="title">LLM6 대화 PDF 토큰 절약</div>
-                                <div class="desc">Gemini·Vertex 대화를 1pt·낮은 해상도 PDF로 보내고 이미지는 별도 첨부합니다. Base64 동시 사용 시 긴 인코딩 문서는 제공자 안전 필터에 차단될 수 있습니다.<br><a href="https://arca.live/b/characterai/181021175" target="_blank" rel="noopener noreferrer" style="color:#4dd0e1;">원본 프로젝트: https://arca.live/b/characterai/181021175</a></div>
+                                <div class="title">토큰 절약</div>
+                                <div class="desc">Gemini·Vertex 대화를 선택한 형식으로 보내 입력 토큰을 줄입니다. PDF는 기존 1pt 텍스트, 이미지는 텍스트 레이어 없이 9pt 글자를 그림으로 담은 PDF입니다. 원래 첨부 이미지는 별도로 보냅니다. Base64도 켜면 문서 본문을 인코딩합니다.<br><a href="https://arca.live/b/characterai/181021175" target="_blank" rel="noopener noreferrer" style="color:#4dd0e1;">원본 프로젝트: https://arca.live/b/characterai/181021175</a></div>
                             </div>
                             <div class="setting-control" style="display:flex; align-items:center; gap:8px;">
-                                <label class="toggle-switch">
+                                <select id="setting-llm-pdf-prompt-format6" aria-label="LLM6 토큰 절약 형식" style="width:auto;min-width:90px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);color-scheme:dark;" disabled><option value="pdf">PDF</option><option value="image">이미지</option></select>
+                            <label class="toggle-switch">
                                     <input type="checkbox" id="setting-llm-pdf-prompt6" onchange="updateLlmPdfPromptStatus(6, this.checked)">
                                     <span class="toggle-slider"></span>
                                 </label>
@@ -25101,11 +25160,12 @@
                         </div>
                         <div class="setting-row" id="llm-pdf-prompt7-row" style="display:none;">
                             <div class="setting-label">
-                                <div class="title">LLM7 대화 PDF 토큰 절약</div>
-                                <div class="desc">Gemini·Vertex 대화를 1pt·낮은 해상도 PDF로 보내고 이미지는 별도 첨부합니다. Base64 동시 사용 시 긴 인코딩 문서는 제공자 안전 필터에 차단될 수 있습니다.<br><a href="https://arca.live/b/characterai/181021175" target="_blank" rel="noopener noreferrer" style="color:#4dd0e1;">원본 프로젝트: https://arca.live/b/characterai/181021175</a></div>
+                                <div class="title">토큰 절약</div>
+                                <div class="desc">Gemini·Vertex 대화를 선택한 형식으로 보내 입력 토큰을 줄입니다. PDF는 기존 1pt 텍스트, 이미지는 텍스트 레이어 없이 9pt 글자를 그림으로 담은 PDF입니다. 원래 첨부 이미지는 별도로 보냅니다. Base64도 켜면 문서 본문을 인코딩합니다.<br><a href="https://arca.live/b/characterai/181021175" target="_blank" rel="noopener noreferrer" style="color:#4dd0e1;">원본 프로젝트: https://arca.live/b/characterai/181021175</a></div>
                             </div>
                             <div class="setting-control" style="display:flex; align-items:center; gap:8px;">
-                                <label class="toggle-switch">
+                                <select id="setting-llm-pdf-prompt-format7" aria-label="LLM7 토큰 절약 형식" style="width:auto;min-width:90px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);color-scheme:dark;" disabled><option value="pdf">PDF</option><option value="image">이미지</option></select>
+                            <label class="toggle-switch">
                                     <input type="checkbox" id="setting-llm-pdf-prompt7" onchange="updateLlmPdfPromptStatus(7, this.checked)">
                                     <span class="toggle-slider"></span>
                                 </label>
@@ -25283,11 +25343,12 @@
                         </div>
                         <div class="setting-row" id="llm-pdf-prompt8-row" style="display:none;">
                             <div class="setting-label">
-                                <div class="title">LLM8 대화 PDF 토큰 절약</div>
-                                <div class="desc">Gemini·Vertex 대화를 1pt·낮은 해상도 PDF로 보내고 이미지는 별도 첨부합니다. Base64 동시 사용 시 긴 인코딩 문서는 제공자 안전 필터에 차단될 수 있습니다.<br><a href="https://arca.live/b/characterai/181021175" target="_blank" rel="noopener noreferrer" style="color:#4dd0e1;">원본 프로젝트: https://arca.live/b/characterai/181021175</a></div>
+                                <div class="title">토큰 절약</div>
+                                <div class="desc">Gemini·Vertex 대화를 선택한 형식으로 보내 입력 토큰을 줄입니다. PDF는 기존 1pt 텍스트, 이미지는 텍스트 레이어 없이 9pt 글자를 그림으로 담은 PDF입니다. 원래 첨부 이미지는 별도로 보냅니다. Base64도 켜면 문서 본문을 인코딩합니다.<br><a href="https://arca.live/b/characterai/181021175" target="_blank" rel="noopener noreferrer" style="color:#4dd0e1;">원본 프로젝트: https://arca.live/b/characterai/181021175</a></div>
                             </div>
                             <div class="setting-control" style="display:flex; align-items:center; gap:8px;">
-                                <label class="toggle-switch">
+                                <select id="setting-llm-pdf-prompt-format8" aria-label="LLM8 토큰 절약 형식" style="width:auto;min-width:90px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);color-scheme:dark;" disabled><option value="pdf">PDF</option><option value="image">이미지</option></select>
+                            <label class="toggle-switch">
                                     <input type="checkbox" id="setting-llm-pdf-prompt8" onchange="updateLlmPdfPromptStatus(8, this.checked)">
                                     <span class="toggle-slider"></span>
                                 </label>
@@ -25465,11 +25526,12 @@
                         </div>
                         <div class="setting-row" id="llm-pdf-prompt9-row" style="display:none;">
                             <div class="setting-label">
-                                <div class="title">LLM9 대화 PDF 토큰 절약</div>
-                                <div class="desc">Gemini·Vertex 대화를 1pt·낮은 해상도 PDF로 보내고 이미지는 별도 첨부합니다. Base64 동시 사용 시 긴 인코딩 문서는 제공자 안전 필터에 차단될 수 있습니다.<br><a href="https://arca.live/b/characterai/181021175" target="_blank" rel="noopener noreferrer" style="color:#4dd0e1;">원본 프로젝트: https://arca.live/b/characterai/181021175</a></div>
+                                <div class="title">토큰 절약</div>
+                                <div class="desc">Gemini·Vertex 대화를 선택한 형식으로 보내 입력 토큰을 줄입니다. PDF는 기존 1pt 텍스트, 이미지는 텍스트 레이어 없이 9pt 글자를 그림으로 담은 PDF입니다. 원래 첨부 이미지는 별도로 보냅니다. Base64도 켜면 문서 본문을 인코딩합니다.<br><a href="https://arca.live/b/characterai/181021175" target="_blank" rel="noopener noreferrer" style="color:#4dd0e1;">원본 프로젝트: https://arca.live/b/characterai/181021175</a></div>
                             </div>
                             <div class="setting-control" style="display:flex; align-items:center; gap:8px;">
-                                <label class="toggle-switch">
+                                <select id="setting-llm-pdf-prompt-format9" aria-label="LLM9 토큰 절약 형식" style="width:auto;min-width:90px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);color-scheme:dark;" disabled><option value="pdf">PDF</option><option value="image">이미지</option></select>
+                            <label class="toggle-switch">
                                     <input type="checkbox" id="setting-llm-pdf-prompt9" onchange="updateLlmPdfPromptStatus(9, this.checked)">
                                     <span class="toggle-slider"></span>
                                 </label>
@@ -25647,11 +25709,12 @@
                         </div>
                         <div class="setting-row" id="llm-pdf-prompt10-row" style="display:none;">
                             <div class="setting-label">
-                                <div class="title">LLM10 대화 PDF 토큰 절약</div>
-                                <div class="desc">Gemini·Vertex 대화를 1pt·낮은 해상도 PDF로 보내고 이미지는 별도 첨부합니다. Base64 동시 사용 시 긴 인코딩 문서는 제공자 안전 필터에 차단될 수 있습니다.<br><a href="https://arca.live/b/characterai/181021175" target="_blank" rel="noopener noreferrer" style="color:#4dd0e1;">원본 프로젝트: https://arca.live/b/characterai/181021175</a></div>
+                                <div class="title">토큰 절약</div>
+                                <div class="desc">Gemini·Vertex 대화를 선택한 형식으로 보내 입력 토큰을 줄입니다. PDF는 기존 1pt 텍스트, 이미지는 텍스트 레이어 없이 9pt 글자를 그림으로 담은 PDF입니다. 원래 첨부 이미지는 별도로 보냅니다. Base64도 켜면 문서 본문을 인코딩합니다.<br><a href="https://arca.live/b/characterai/181021175" target="_blank" rel="noopener noreferrer" style="color:#4dd0e1;">원본 프로젝트: https://arca.live/b/characterai/181021175</a></div>
                             </div>
                             <div class="setting-control" style="display:flex; align-items:center; gap:8px;">
-                                <label class="toggle-switch">
+                                <select id="setting-llm-pdf-prompt-format10" aria-label="LLM10 토큰 절약 형식" style="width:auto;min-width:90px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);color-scheme:dark;" disabled><option value="pdf">PDF</option><option value="image">이미지</option></select>
+                            <label class="toggle-switch">
                                     <input type="checkbox" id="setting-llm-pdf-prompt10" onchange="updateLlmPdfPromptStatus(10, this.checked)">
                                     <span class="toggle-slider"></span>
                                 </label>
@@ -28181,9 +28244,9 @@
         </div>
     </div>
 
-    <script src="/illustration_flow.js?v=20261014-attempt-badge"></script>
+    <script src="/illustration_flow.js?v=20261015-stage-names"></script>
     <script src="/illustration_prompt_inspector.js"></script>
-    <script src="/illustration_preview.js"></script>
+    <script src="/illustration_preview.js?v=20261015-stage-names"></script>
     <script src="/llm_thinking_check.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
@@ -43527,6 +43590,8 @@
                 const pdfPrompt = !!configValue('llm_pdf_prompt', false);
                 const pdfPromptEl = el(`setting-llm-pdf-prompt${suffix}`);
                 if (pdfPromptEl) pdfPromptEl.checked = pdfPrompt;
+                const pdfFormatEl = el(`setting-llm-pdf-prompt-format${suffix}`);
+                if (pdfFormatEl) pdfFormatEl.value = configValue('llm_pdf_prompt_format', 'pdf') === 'image' ? 'image' : 'pdf';
                 updateLlmPdfPromptStatus(slot, pdfPrompt);
                 const urlEl = el(`setting-llm-url${suffix}`);
                 if (urlEl) urlEl.value = configValue('llm_url', '');
@@ -43959,7 +44024,7 @@
                 color: '#e4a149',
                 label: '삽화 생성',
                 fixed: true,
-                description: '일반 흐름은 CALL2 뒤 이미지 생성을 시작하고 CALL3(조건부)를 일부 생성과 병렬 실행합니다. 프롬프트 배치는 CALL 빌드를 건너뜁니다.',
+                description: '일반 흐름은 CALL2 뒤 이미지 생성을 시작하고 POST PROCESS(조건부)를 일부 생성과 병렬 실행합니다. 프롬프트 배치는 CALL 빌드를 건너뜁니다.',
                 steps: [
                     {
                         type: 'illustration_llm_build',
@@ -43972,7 +44037,7 @@
                         type: 'illustration_llm_build',
                         lane: 'llm',
                         laneLabel: 'LLM',
-                        label: 'CALL3 대사 빌드',
+                        label: 'POST PROCESS 대사 빌드',
                         qualifier: '조건부',
                     },
                     {
@@ -43981,7 +44046,7 @@
                         laneLabel: '동적 공급자',
                         label: '이미지 생성 1~N',
                         relation: 'parallel',
-                        relationLabel: 'CALL3와 이미지 생성은 일부 병렬',
+                        relationLabel: 'POST PROCESS와 이미지 생성은 일부 병렬',
                     },
                 ],
             },
@@ -44785,7 +44850,8 @@
                 labels[`llm_max_concurrency${suffix}`] = `LLM${slot} 동시 요청 수`;
                 labels[`llm_vision_compress${suffix}`] = `LLM${slot} 비전 압축`;
                 labels[`llm_gemini_base64${suffix}`] = `LLM${slot} Gemini/Vertex Base64 입력`;
-                labels[`llm_pdf_prompt${suffix}`] = `LLM${slot} Gemini/Vertex 대화 PDF`;
+                labels[`llm_pdf_prompt${suffix}`] = `LLM${slot} 토큰 절약`;
+                labels[`llm_pdf_prompt_format${suffix}`] = `LLM${slot} 토큰 절약 형식`;
                 labels[`llm_custom_headers${suffix}`] = `LLM${slot} Custom Headers`;
             }
             let html = '<table style="width:100%; border-collapse:collapse; font-size:0.82rem;">';
@@ -45228,6 +45294,7 @@
                 config[`llm_vision_compress${suffix}`] = !!(el(`setting-llm-vision-compress${suffix}`) || {}).checked;
                 config[`llm_gemini_base64${suffix}`] = !!(el(`setting-llm-gemini-base64${suffix}`) || {}).checked;
                 config[`llm_pdf_prompt${suffix}`] = !!(el(`setting-llm-pdf-prompt${suffix}`) || {}).checked;
+                config[`llm_pdf_prompt_format${suffix}`] = (el(`setting-llm-pdf-prompt-format${suffix}`) || {}).value || 'pdf';
                 config[`llm_url${suffix}`] = (el(`setting-llm-url${suffix}`) || {}).value || '';
                 config[`llm_reasoning_preset${suffix}`] = (el(`setting-llm-reasoning-preset${suffix}`) || {}).value || 'auto';
                 config[`llm_reasoning_effort${suffix}`] = (el(`setting-llm-reasoning-effort${suffix}`) || {}).value || '';
@@ -46722,7 +46789,7 @@
                     const state = _lighbdLlmStreams.get(id) || _createLighbdStreamState(id);
                     state.active = true;
                     state.slot = item.llm_slot || state.slot;
-                    state.callName = item.call_name || item.task_key || state.callName;
+                    state.callName = (item.call_name || item.task_key || state.callName).replaceAll('CALL2-SELECT', 'SLOT-SELECTER').replaceAll('CALL2-DETAIL', 'DETAIL').replaceAll('CALL2-KEYVIS', 'KEYVIS').replaceAll('CALL3', 'POST PROCESS');
                     state.model = item.model || state.model;
                     state.status = item.status || ((state.callName ? state.callName + ' · ' : '') + '스트리밍');
                     state.output = String(item.text || '');
@@ -46798,7 +46865,7 @@
             const isNewStream = !_lighbdLlmStreams.has(streamId);
             const state = _lighbdLlmStreams.get(streamId) || _createLighbdStreamState(streamId);
             state.slot = data.llm_slot || state.slot;
-            state.callName = data.call_name || data.task_key || state.callName;
+            state.callName = (data.call_name || data.task_key || state.callName).replaceAll('CALL2-SELECT', 'SLOT-SELECTER').replaceAll('CALL2-DETAIL', 'DETAIL').replaceAll('CALL2-KEYVIS', 'KEYVIS').replaceAll('CALL3', 'POST PROCESS');
             state.model = data.model || state.model;
             for (const key of ['started_at', 'last_event_at', 'thinking_started_at', 'thinking_ended_at', 'response_started_at', 'response_ended_at']) {
                 if (data[key] !== undefined) state[key] = data[key] == null ? null : Number(data[key]);
@@ -47220,7 +47287,8 @@
             const before = record?.pdf_tokens_before == null
                 ? '측정 실패'
                 : Number(record.pdf_tokens_before).toLocaleString('ko-KR');
-            return `입력 ${promptTokens} (PDF 변환전: ${before} · 변환후: ${pages}장)`;
+            const format = record?.pdf_prompt_format === 'image' ? '이미지' : 'PDF';
+            return `입력 ${promptTokens} (${format} 변환전: ${before} · 변환후: ${pages}장)`;
         }
 
         function renderLighbdHistoryList(records) {
@@ -47239,7 +47307,7 @@
                 const outputText = r.output || '';
                 const stats = `${_formatLighbdInputTokens(r)} · 출력 ${r.completion_tokens ?? 0} · ${r.elapsed ?? 0}s · ${r.tps ?? 0} t/s` + (r.ttft ? ` · TTFT ${r.ttft}s` : '');
                 const callBadge = r.call_name
-                    ? `<span style="font-size:0.7rem; padding:1px 6px; border-radius:3px; background:rgba(0,188,212,0.16); color:#4dd0e1; font-weight:600;">${escapeHtml(r.call_name)}</span>`
+                    ? `<span style="font-size:0.7rem; padding:1px 6px; border-radius:3px; background:rgba(0,188,212,0.16); color:#4dd0e1; font-weight:600;">${escapeHtml(r.call_name.replaceAll('CALL2-SELECT', 'SLOT-SELECTER').replaceAll('CALL2-DETAIL', 'DETAIL').replaceAll('CALL2-KEYVIS', 'KEYVIS').replaceAll('CALL3', 'POST PROCESS'))}</span>`
                     : '';
                 return `
                     <div class="lighbd-history-card">
@@ -47339,7 +47407,7 @@
                 <div class="lighbd-detail-shell" role="dialog" aria-modal="true" aria-labelledby="lighbd-detail-title">
                     <div class="lighbd-modal-head">
                         <div class="lighbd-modal-title" id="lighbd-detail-title">
-                            ${escapeHtml(record.call_name || record.task_key || 'LLM 요청 상세')}
+                            ${escapeHtml((record.call_name || record.task_key || 'LLM 요청 상세').replaceAll('CALL2-SELECT', 'SLOT-SELECTER').replaceAll('CALL2-DETAIL', 'DETAIL').replaceAll('CALL2-KEYVIS', 'KEYVIS').replaceAll('CALL3', 'POST PROCESS'))}
                             <div class="lighbd-modal-subtitle">${escapeHtml(record.ts || '')} · ${escapeHtml(llmRouteSlotModelName(record.llm_slot, true, record.model || '') || '모델 정보 없음')}</div>
                         </div>
                         <span style="font-size:.7rem;padding:3px 8px;border-radius:6px;background:${statusMeta.background};color:${statusMeta.color};font-weight:700;">${statusMeta.label}</span>
@@ -47606,7 +47674,7 @@
             }
             // LLM 흐름 단계 섹션
             const isVideo = data.is_video_animation === true;
-            const flowTitle = isVideo ? '영상화 LLM 흐름 단계' : 'LLM 흐름 단계 (MULTI-CHAR-MASK~CALL3 · 생성 이미지 자동 검사 포함)';
+            const flowTitle = isVideo ? '영상화 LLM 흐름 단계' : 'LLM 흐름 단계 (MULTI-CHAR-MASK~POST PROCESS · 생성 이미지 자동 검사 포함)';
             html += `<div style="margin:4px 0 10px; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
                 <h3 style="margin:0; font-size:0.92rem; font-weight:700; color:var(--text);">${escapeHtml(flowTitle)}</h3>
                 <button onclick="exportLlmFlowMarkdown()" style="padding:5px 12px; font-size:0.78rem; border:1px solid var(--border); border-radius:6px; background:var(--surface1); color:var(--text); cursor:pointer;">📄 MD 내보내기</button>
@@ -47714,7 +47782,7 @@
             const rawOutput = record.output || '';
             const rawOutputText = _formatLighbdHistoryContent(rawOutput);
             const qualityOutput = _renderIllustrationQualityInspectionOutput(record);
-            const callName = record.call_name || record.task_key || 'LLM 호출';
+            const callName = (record.call_name || record.task_key || 'LLM 호출').replaceAll('CALL2-SELECT', 'SLOT-SELECTER').replaceAll('CALL2-DETAIL', 'DETAIL').replaceAll('CALL2-KEYVIS', 'KEYVIS').replaceAll('CALL3', 'POST PROCESS');
             const stats = `${_formatLighbdInputTokens(record)} · 출력 ${record.completion_tokens ?? 0} · 한도 ${record.max_output_tokens ?? '-'} · 종료 ${record.finish_reason || '-'} · ${record.elapsed ?? 0}s · ${record.tps ?? 0} t/s`;
             const providerSection = (record.finish_reason || record.finish_message || record.max_output_tokens != null)
                 ? `<section class="lighbd-detail-section" style="border:none; border-top:1px solid var(--border); border-radius:0;">
@@ -47761,7 +47829,7 @@
             lines.push('');
             lines.push(_llmFlowIsVideo
                 ? `> 영상 ${_llmFlowSourceLabel} \`${name}\` 을 만든 영상화 LLM 호출의 입력/출력 전체. 내용은 자르거나 축약하지 않았습니다.`
-                : `> 삽화 백업 \`${name}\` 을 만든 MULTI-CHAR-MASK~CALL3 및 생성 이미지 자동 검사 단계의 LLM 호출 입력/출력 전체. 내용은 자르거나 축약하지 않았습니다.`);
+                : `> 삽화 백업 \`${name}\` 을 만든 MULTI-CHAR-MASK~POST PROCESS 및 생성 이미지 자동 검사 단계의 LLM 호출 입력/출력 전체. 내용은 자르거나 축약하지 않았습니다.`);
             lines.push('');
             lines.push(`- 단계 수: ${records.length}`);
             lines.push(`- 내보낸 시각: ${new Date().toISOString()}`);
@@ -47771,7 +47839,7 @@
             // ── 파이프라인 호출 순서 + 각 역할 (MD만으로 분석 가능하도록 상단 고정) ──
             lines.push(_llmFlowIsVideo
                 ? '## 영상화 파이프라인 호출 순서 및 역할'
-                : '## 파이프라인 호출 순서 및 역할 (MULTI-CHAR-MASK~CALL3 · 생성 이미지 자동 검사 포함)');
+                : '## 파이프라인 호출 순서 및 역할 (MULTI-CHAR-MASK~POST PROCESS · 생성 이미지 자동 검사 포함)');
             lines.push('');
             if (_llmFlowIsVideo) {
                 lines.push('> 실제 최종 영상에 연결된 지시 초안·입력 다듬기·정적 분석·H3 프롬프트 작성 호출을 실행 순서대로 기록.');
@@ -47784,7 +47852,7 @@
                 lines.push('**결과 요약(본문 최하단, 시간순):** 다듬기 전 사용자 원문 → 최종 영상 지시 → 최종 H3 프롬프트.');
             } else {
                 lines.push('> 삽화 1장을 만들기 위해 거친 LLM 호출 단계의 실행 순서와 각 역할. ');
-                lines.push('> 레코드는 시각(ts)순이며, 병렬 실행(CALL2-DETAIL/KEYVIS, CALL3↔이미지생성)으로 일부 순서가 겹칠 수 있음. ');
+                lines.push('> 레코드는 시각(ts)순이며, 병렬 실행(DETAIL/KEYVIS, POST PROCESS↔이미지생성)으로 일부 순서가 겹칠 수 있음. ');
                 lines.push('> 역번역/다중캐릭터 등은 토글·조건부라 생략될 수 있음. ');
                 lines.push('> 최종 사용값은 본문 최하단 **결과 요약(시간순)** 에 정리.');
                 lines.push('');
@@ -47792,10 +47860,10 @@
                 lines.push('2. **PROFILE-RESOLVE** — 다중 프로필 추론을 켠 경우에만, 앞 단계가 확정한 CURRENT 다중 프로필 캐릭터를 캐릭터별로 병렬 판정합니다. 각 호출은 한 캐릭터의 START·이후 변환 프로필과 구체적인 판단 reason을 반환합니다. PAST는 받지 않습니다. 끄면 서버가 등록 기본 프로필을 적용합니다.');
                 lines.push('3. **ORIGINAL-ASSET** — 켜진 경우, 확정 프로필을 기준으로 현재 장면에 맞는 등록 원본 에셋과 삽입 슬롯을 선택.');
                 lines.push('5. **OUTFIT** (enhance) — 앞 단계가 확정한 CURRENT 캐릭터를 기준으로 복장·헤어스타일 변화 사건만 분석해 CALL2에 전달. 지칭어는 문맥상 해석하되 본문을 치환하지 않습니다.');
-                lines.push('6. **TIME & PLACE / CALL2-SELECT → 선택적 CALL2-PLAN → CALL2-DETAIL** — TIME & PLACE는 캐릭터별 시간·장소를 독립적으로 추적하고, SELECT는 OUTFIT·TIME & PLACE와 동시에 장면·인물·순서를 선택합니다. 각 PLAN 배치가 완료되면 해당 장면의 구도·동작·접촉과 SLOT 상태를 바로 DETAIL에 전달합니다.');
-                lines.push('7. **CALL2-DETAIL / CALL2-KEYVIS** — DETAIL은 PLAN 장면별 개요·프로필·상태를 이미지 태그로 확장합니다. KEYVIS는 별도 대표 이미지 한 장을 선택·묘사하며 DETAIL과 함께 실행합니다.');
+                lines.push('6. **TIME & PLACE / SLOT-SELECTER → 선택적 CALL2-PLAN → DETAIL** — TIME & PLACE는 캐릭터별 시간·장소를 독립적으로 추적하고, SLOT-SELECTER는 OUTFIT·TIME & PLACE와 동시에 장면·인물·순서를 선택합니다. 각 PLAN 배치가 완료되면 해당 장면의 구도·동작·접촉과 SLOT 상태를 바로 DETAIL에 전달합니다.');
+                lines.push('7. **DETAIL / KEYVIS** — DETAIL은 PLAN 장면별 개요·프로필·상태를 이미지 태그로 확장합니다. KEYVIS는 대표 이미지 한 장을 선택·묘사하며 설정에 따라 DETAIL에 통합하거나 별도로 호출합니다.');
                 lines.push('8. **MULTI-CHAR-MASK** — 필요한 다중 캐릭터 이미지의 영역을 계산합니다. 각 DETAIL 배치나 KEYVIS가 끝나면 마스크를 준비한 뒤 해당 이미지를 즉시 생성 큐에 등록합니다.');
-                lines.push('9. **CALL3** (speak/manga/subtitle) — 일반 장면의 대사/생각 작성. 대표 이미지는 대사 대상에서 제외하며 이미지 생성과 병렬 실행합니다.');
+                lines.push('9. **POST PROCESS** (speak/manga/subtitle) — 일반 장면의 대사/생각 작성. 대표 이미지는 대사 대상에서 제외하며 이미지 생성과 병렬 실행합니다.');
                 lines.push('10. **ILLUSTRATION-QUALITY-INSPECTION** (조건부) — 각 이미지 백업 직후 한 장씩 문제 중심 영어 피드백을 생성하고, 모든 이미지 완료 뒤 축소 연락처 시트로 전체 복장·스토리 일관성을 검토. 손 문제는 평가하지 않으며, 결과는 LB Details LLM 로그에 기록되어 이 흐름에 표시.');
                  lines.push('');
                 lines.push('**결과 요약(본문 최하단, 시간순):** ');
@@ -47808,7 +47876,7 @@
             lines.push('');
             for (let i = 0; i < records.length; i++) {
                 const r = records[i];
-                const callName = r.call_name || r.task_key || 'LLM 호출';
+                const callName = (r.call_name || r.task_key || 'LLM 호출').replaceAll('CALL2-SELECT', 'SLOT-SELECTER').replaceAll('CALL2-DETAIL', 'DETAIL').replaceAll('CALL2-KEYVIS', 'KEYVIS').replaceAll('CALL3', 'POST PROCESS');
                 const status = r.status || (r.error ? 'error' : 'ok');
                 lines.push(`## ${i + 1}. ${callName}`);
                 lines.push('');
@@ -47818,7 +47886,7 @@
                 if (r.phase || r.llm_slot) lines.push(`- 라우팅: ${r.phase || '-'} / ${r.llm_slot || '-'}`);
                 const pdfTokenSuffix = r.pdf_pages_after == null
                     ? ''
-                    : ` (PDF 변환전: ${r.pdf_tokens_before == null ? '측정 실패' : Number(r.pdf_tokens_before).toLocaleString('ko-KR')} · 변환후: ${r.pdf_pages_after}장)`;
+                    : ` (${r.pdf_prompt_format === 'image' ? '이미지' : 'PDF'} 변환전: ${r.pdf_tokens_before == null ? '측정 실패' : Number(r.pdf_tokens_before).toLocaleString('ko-KR')} · 변환후: ${r.pdf_pages_after}장)`;
                 lines.push(`- 입력 토큰: ${r.prompt_tokens ?? 0}${pdfTokenSuffix} · 출력 토큰: ${r.completion_tokens ?? 0}`);
                 lines.push(`- 요청 출력 한도: ${r.max_output_tokens ?? '-'}`);
                 if (r.finish_reason) lines.push(`- 종료 사유: ${r.finish_reason}`);
@@ -48068,6 +48136,8 @@
 
         function updateLlmPdfPromptStatus(slot, checked) {
             const suffix = slot === 1 ? '' : String(slot);
+            const format = document.getElementById(`setting-llm-pdf-prompt-format${suffix}`);
+            if (format) format.disabled = !checked;
             const status = document.getElementById(`setting-llm-pdf-prompt${suffix}-status`);
             if (!status) return;
             status.textContent = checked ? 'ON' : 'OFF';
@@ -48686,11 +48756,11 @@
             { key: 'illustration_original_asset_recovery', label: '삽화 원본 에셋 복구', kind: 'JSON · 실패 후보 재선택', modality: 'text', group: 'illustration_pipeline' },
             { key: 'illustration_call1',       label: '삽화 OUTFIT (복장·헤어)',         kind: 'JSON · 단일 상태 추적', modality: 'text', group: 'illustration_pipeline' },
             { key: 'illustration_time_place', label: '삽화 TIME & PLACE (시간·장소)', kind: 'JSON · 독립 상태 추적', modality: 'text', group: 'illustration_pipeline' },
-            { key: 'illustration_call2_select', label: '삽화 CALL2-SELECT (장면 선택)',   kind: 'JSON · 장면 수·순서·인물', modality: 'text', group: 'illustration_pipeline' },
+            { key: 'illustration_call2_select', label: '삽화 SLOT-SELECTER (장면 선택)',   kind: 'JSON · 장면 수·순서·인물', modality: 'text', group: 'illustration_pipeline' },
             { key: 'illustration_call2_plan',  label: '삽화 CALL2-PLAN',         kind: '텍스트 · 배치별 시각 계획', modality: 'text', group: 'illustration_pipeline' },
-            { key: 'illustration_call2_keyvis', label: '삽화 CALL2-KEYVIS',              kind: '텍스트', modality: 'text', group: 'illustration_pipeline' },
-            { key: 'illustration_call2',       label: '삽화 CALL2-DETAIL',               kind: '텍스트 · 장면 배치 묘사', modality: 'text', group: 'illustration_pipeline' },
-            { key: 'illustration_call3',       label: '삽화 CALL3 (대사·애니 자막)',    kind: '텍스트', modality: 'text', group: 'illustration_pipeline' },
+            { key: 'illustration_call2_keyvis', label: '삽화 KEYVIS',              kind: '텍스트', modality: 'text', group: 'illustration_pipeline' },
+            { key: 'illustration_call2',       label: '삽화 DETAIL',               kind: '텍스트 · 장면 배치 묘사', modality: 'text', group: 'illustration_pipeline' },
+            { key: 'illustration_call3',       label: '삽화 POST PROCESS (대사·애니 자막)',    kind: '텍스트', modality: 'text', group: 'illustration_pipeline' },
             { key: 'illustration_multi_char_mask', label: '삽화 다중 캐릭터 마스크',    kind: 'JSON', modality: 'text', group: 'illustration_pipeline' },
             { key: 'video_instruction_translate', label: '영상 연출 영어 번역', kind: '텍스트', modality: 'text', group: 'video_pipeline' },
             { key: 'video_prompt_i2v',        label: 'H3 I2V 연출·정적 분석', kind: '비전', modality: 'vision', group: 'video_pipeline' },
@@ -59757,7 +59827,7 @@
             const legend = document.getElementById('cm-workflow-legend');
             if (legend) {
                 legend.innerHTML = illustrationMode
-                    ? '<strong>삽화 모드:</strong> 현재 설정의 삽화 프로필을 사용하며, V1·챈섭에서 지원하지 않는 로컬 고급 옵션은 잠깁니다.'
+                    ? '<strong>삽화용 봇 설정:</strong> 현재 설정의 삽화 프로필을 사용하며, V1·챈섭에서 지원하지 않는 로컬 고급 옵션은 잠깁니다.'
                     : '<strong>에셋 모드:</strong> 현재 설정의 에셋 프로필을 사용하며, 모델 계열에 맞지 않는 옵션은 잠깁니다.';
             }
             wall.querySelectorAll('[data-cm-local-advanced]').forEach(container => {
@@ -67092,18 +67162,14 @@
             const el = document.getElementById('postprocess-status');
             if (el) {
                 el.textContent = on ? 'ON' : 'OFF';
-                el.className = 'toggle-status ' + (on ? 'on' : 'off');
-            }
-            const chip = document.getElementById('postprocess-chip');
-            if (chip) {
-                chip.className = 'status-chip ' + (on ? 'on' : 'off');
-                const value = chip.querySelector('.status-chip-value');
-                if (value) value.textContent = on ? 'ON' : 'OFF';
+                el.className = 'illust-setting-state' + (on ? ' on' : '');
             }
         }
 
         async function onPostprocessToggle() {
-            const checked = document.getElementById('postprocess-toggle').checked;
+            const input = document.getElementById('postprocess-toggle');
+            const checked = input.checked;
+            input.disabled = true;
             updatePostprocessStatus(checked);
             try {
                 const resp = await fetch('/api/config', {
@@ -67113,20 +67179,22 @@
                 });
                 if (!resp.ok) {
                     const txt = await resp.text().catch(() => '');
-                    document.getElementById('postprocess-toggle').checked = !checked;
-                    updatePostprocessStatus(!checked);
-                    showToast('후처리 설정 저장 실패: ' + (txt || resp.status));
+                    throw new Error(txt || ('HTTP ' + resp.status));
                 }
+                currentConfig.postprocess_enabled = checked;
+                renderIllustrationNodePreview();
             } catch (e) {
                 console.error('[POSTPROCESS] 토글 저장 실패:', e);
-                document.getElementById('postprocess-toggle').checked = !checked;
+                input.checked = !checked;
                 updatePostprocessStatus(!checked);
                 showToast('후처리 설정 저장 실패: ' + (e.message || e));
+            } finally {
+                input.disabled = false;
             }
         }
 
         // ─── 후처리 설정 모달 ─────────────────────────────────
-        let ppWorking = null;        // 모달 작업용 postprocess 객체 복사본
+        let ppWorking = null;        // POST PROCESS 편집용 postprocess 객체 복사본
         let ppPreviewTimer = null;
         let ppEmotionLastItems = null;  // 감정 뽑기: 최근 조회한 {character, filename} 원본(규칙 변경 시 재적용용)
 
@@ -67226,7 +67294,7 @@
 
         let ppCurrentBot = '';   // 후처리 모달에서 현재 편집 중인 봇
 
-        // 현재 봇의 후처리 활성 모드. CALL3 대사 프롬프트 잠금의 진실 소스.
+        // 현재 봇의 후처리 활성 모드. POST PROCESS 대사 프롬프트 잠금의 진실 소스.
         // bubble=manga / subtitle=subtitle / vn=speak. 서버도 생성 시 같은 규칙으로 덮어쓴다.
         let _postprocessActiveMode = 'vn';
 
@@ -67349,6 +67417,8 @@
         }
 
         async function ppLoadBotSettings(botName) {
+            const fields = document.getElementById('pp-settings-fields');
+            if (fields) fields.disabled = true;
             try {
                 const resp = await fetch('/api/bot_mode/postprocess_vn?bot=' + encodeURIComponent(botName));
                 if (!resp.ok) throw new Error('HTTP ' + resp.status);
@@ -67392,12 +67462,15 @@
                 switchPostprocessTab(ppWorking.mode || 'vn');  // 저장된 활성 모드 탭으로
                 _postprocessActiveMode = ['vn', 'bubble', 'subtitle'].includes(ppWorking.mode)
                     ? ppWorking.mode : 'vn';
-                _applyCall3PromptModeLock();  // 생성 설정 CALL3 잠금 동기화
+                _applyCall3PromptModeLock();  // 생성 설정 POST PROCESS 잠금 동기화
                 renderPpModeBadges();  // 적용중 모드 딱지
                 ppRefreshFaceDevices().then(() => ppRenderFaceCrop());  // vn 얼굴 크롭 미리보기
             } catch (e) {
+                ppWorking = null;
                 console.error('[POSTPROCESS] 봇 설정 로드 실패:', e);
                 showToast('봇 설정 로드 실패: ' + (e.message || e), 'error');
+            } finally {
+                if (fields) fields.disabled = false;
             }
         }
 
@@ -67408,28 +67481,32 @@
             await ppLoadBotSettings(newBot);
         }
 
-        function openPostprocessModal() {
+        async function openPostprocessModal() {
+            const fields = document.getElementById('pp-settings-fields');
+            if (fields) fields.disabled = true;
             ppWorking = JSON.parse(JSON.stringify(defaultPpConfig()));
             ppBubbleBaseDataUrl = null;
             ppVnBaseDataUrl = null;
             ppSubtitleBaseDataUrl = null;
-            ppFillBotSelect();
-            document.getElementById('postprocess-modal').classList.add('visible');
-            if (ppCurrentBot) {
-                ppLoadBotSettings(ppCurrentBot);
-            } else {
-                ppApplyVnToUI();
-                ppApplyBubbleToUI();
-                ppApplySubtitleToUI();
-                switchPostprocessTab('vn');
-                ppRefreshFaceDevices().then(() => ppRenderFaceCrop());
+            try {
+                await ensureBotDataLoaded();
+                ppFillBotSelect();
+                if (ppCurrentBot) {
+                    await ppLoadBotSettings(ppCurrentBot);
+                } else {
+                    ppApplyVnToUI();
+                    ppApplyBubbleToUI();
+                    ppApplySubtitleToUI();
+                    switchPostprocessTab('vn');
+                    ppRefreshFaceDevices().then(() => ppRenderFaceCrop());
+                }
+            } catch (error) {
+                ppWorking = null;
+                console.error('[POSTPROCESS] 봇 목록과 합성 편집기 초기화 실패:', error);
+                throw error;
+            } finally {
+                if (fields) fields.disabled = false;
             }
-        }
-
-        function closePostprocessModal() {
-            document.getElementById('postprocess-modal').classList.remove('visible');
-            ppWorking = null;
-            ppEmotionResetSession();
         }
 
         let ppActiveTab = 'vn';  // 후처리 모달 현재 활성 탭: vn | bubble | subtitle
@@ -68595,7 +68672,11 @@
         }
 
         async function savePostprocessSettings() {
-            if (!ppWorking) { closePostprocessModal(); return; }
+            if (!ppWorking) {
+                console.error('[POSTPROCESS] 저장할 봇별 합성 설정이 로드되지 않았습니다.');
+                showToast('합성 설정을 먼저 불러오세요.', 'error');
+                return;
+            }
             if (!ppCurrentBot) { showToast('봇을 먼저 선택하세요', 'error'); return; }
             collectPpVnSettings();
             collectPpBubbleSettings();
@@ -68645,7 +68726,7 @@
                 }
                 showToast('후처리 설정 저장 완료 (' + ppCurrentBot + ' · ' + ppWorking.mode + ')');
                 _postprocessActiveMode = ppWorking.mode;
-                _applyCall3PromptModeLock();  // 저장된 모드로 CALL3 대사 프롬프트 잠금 이동
+                _applyCall3PromptModeLock();  // 저장된 모드로 POST PROCESS 대사 프롬프트 잠금 이동
             } catch (e) {
                 console.error('[POSTPROCESS] 저장 실패:', e);
                 showToast('후처리 설정 저장 실패: ' + (e.message || e), 'error');
@@ -69062,15 +69143,58 @@
             updateBotModeStatus(true);
         }
 
-        async function saveBotSelected() {
+        async function saveBotSelected(reloadPage = false) {
+            const selectedBot = botCurrentBot || '';
+            const workspace = document.querySelector('.tab-content.active');
+            const float = document.getElementById('active-bot-float');
             try {
-                await fetch('/api/config', {
+                if (reloadPage) {
+                    const position = {
+                        tab: workspace?.id?.replace(/^tab-/, '').replace(/-content$/, '') || 'backup',
+                        illustrationTab: document.querySelector('.illust-prompt-tab[aria-selected="true"]')?.id?.replace('illust-tab-', '') || 'logs',
+                        settingsCategory: _illustrationSettingsActiveGroup,
+                        callTab: document.querySelector('[data-illust-call-tab][aria-selected="true"]')?.dataset.illustCallTab,
+                        promptStage: document.querySelector('.illust-structure-node.active')?.dataset.key,
+                        extraTab: _lbExtraTab,
+                        scrolls: [workspace, ...Array.from(workspace?.querySelectorAll('[id]') || [])]
+                            .filter(element => element?.id && (element.scrollTop || element.scrollLeft))
+                            .map(element => ({id: element.id, top: element.scrollTop, left: element.scrollLeft})),
+                        windowScroll: [window.scrollX, window.scrollY],
+                    };
+                    sessionStorage.setItem('botSwitchReturnPosition', JSON.stringify(position));
+                    if (workspace) workspace.inert = true;
+                    if (float) float.inert = true;
+                }
+                const response = await fetch('/api/config', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({_origin: 'saveBotSelected', bot_selected: botCurrentBot || ''})
+                    body: JSON.stringify({_origin: 'saveBotSelected', bot_selected: selectedBot})
                 });
+                const result = await response.json();
+                if (!response.ok || result.success === false || result.error) {
+                    throw new Error(result.error || `HTTP ${response.status}`);
+                }
+                if (reloadPage) {
+                    if (botCurrentBot === selectedBot) window.location.reload();
+                    else {
+                        console.info('[BOT] 저장 중 봇 선택이 다시 바뀌어 이전 선택의 새로고침을 건너뜁니다:', selectedBot, botCurrentBot);
+                        sessionStorage.removeItem('botSwitchReturnPosition');
+                    }
+                }
+                return true;
             } catch (e) {
                 console.error('[BOT] 선택 봇 저장 실패:', e);
+                if (reloadPage) {
+                    try { sessionStorage.removeItem('botSwitchReturnPosition'); }
+                    catch (error) { console.error('[BOT] 새로고침 복원 위치 제거 실패:', error); }
+                    showToast('봇 변경 실패: ' + e.message, 'error');
+                }
+                return false;
+            } finally {
+                if (reloadPage) {
+                    if (workspace) workspace.inert = false;
+                    if (float) float.inert = false;
+                }
             }
         }
 
@@ -69255,7 +69379,7 @@
                     + (isSelected ? '<span style="font-size:0.75rem; color:var(--accent); font-weight:600;">선택됨</span>' : '<span style="font-size:0.7rem; color:var(--text2);">선택</span>');
                 row.onclick = (e) => {
                     e.stopPropagation();
-                    selectBot(bot.name);
+                    selectBot(bot.name, true);
                     closeBotFloatPopover();
                 };
                 list.appendChild(row);
@@ -69313,6 +69437,31 @@
         async function restoreBotCurrentBotLightweight() {
             try {
                 await ensureBotStateInitialized();
+                const savedPosition = sessionStorage.getItem('botSwitchReturnPosition');
+                if (savedPosition) {
+                    sessionStorage.removeItem('botSwitchReturnPosition');
+                    const position = JSON.parse(savedPosition);
+                    if (position.settingsCategory) _illustrationSettingsActiveGroup = position.settingsCategory;
+                    await switchTab(position.tab || 'backup');
+                    if (position.tab === 'illustration-prompt') {
+                        await switchIllustModalTab(position.illustrationTab || 'logs');
+                        if (position.illustrationTab === 'extra') await _switchLbExtraTab(position.extraTab || 'classification');
+                        if (position.callTab) switchIllustCallTab(position.callTab);
+                        if (position.promptStage) {
+                            document.querySelector(`.illust-structure-node[data-key="${CSS.escape(position.promptStage)}"]`)?.click();
+                        }
+                    }
+                    scheduleIndependentScrollHeightSync();
+                    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+                    for (const scroll of position.scrolls || []) {
+                        const element = document.getElementById(scroll.id);
+                        if (element) {
+                            element.scrollTop = scroll.top;
+                            element.scrollLeft = scroll.left;
+                        }
+                    }
+                    window.scrollTo(...(position.windowScroll || [0, 0]));
+                }
             } catch (e) {
                 console.error('[BOT] 라이트웨이트 복원 실패:', e);
             }
@@ -69324,6 +69473,8 @@
             const charDetailSidebar = document.getElementById('bot-char-detail-sidebar');
             if (charDetailSidebar) charDetailSidebar.style.display = 'none';
             updateActiveBotFloat();
+            const extraPanel = document.getElementById('illust-tab-content-extra');
+            if (extraPanel && !extraPanel.hidden) exportLbExtraTxt();
             const btnList = document.getElementById('bot-btn-group-list');
             const btnSelected = document.getElementById('bot-btn-group-selected');
             if (!botCurrentBot) {
@@ -69381,7 +69532,7 @@
             applyExternalBotSelection(newBot);
         }
 
-        function selectBot(botName) {
+        function selectBot(botName, reloadPage = false) {
             const nextBot = String(botName || '');
             if (nextBot && (!botData || !Array.isArray(botData.bots)
                     || !botData.bots.some(bot => bot.name === nextBot))) {
@@ -69390,6 +69541,11 @@
                 return false;
             }
 
+            const previousBot = botCurrentBot;
+            if (reloadPage && nextBot === previousBot) {
+                console.info('[BOT] 같은 봇을 선택하여 현재 화면을 유지합니다:', nextBot);
+                return true;
+            }
             if (nextBot !== botCurrentBot) _botCharacterSearchQuery = '';
             botCurrentBot = nextBot;
             const botSelect = document.getElementById('bot-select');
@@ -69402,7 +69558,17 @@
             }
 
             // 사용자가 선택을 변경한 경우에만 config에 저장한다.
-            saveBotSelected();
+            const saveRequest = saveBotSelected(reloadPage);
+            if (reloadPage) {
+                saveRequest.then(saved => {
+                    if (!saved && botCurrentBot === nextBot) {
+                        botCurrentBot = previousBot;
+                        if (botSelect) botSelect.value = previousBot;
+                        updateActiveBotFloat();
+                    }
+                });
+                return true;
+            }
             applyBotSelectionUi();
             loadIllustArtistPresets();
             return true;
@@ -71418,15 +71584,34 @@
         let _focusEditPhotoIdx = 0;
 
         async function exportLbExtraTxt() {
+            const panel = document.getElementById('illust-tab-content-extra');
+            if (!panel) {
+                console.error('[EXPORT_EXTRA] lb-xnai.lb.extra 설정 탭을 찾지 못했습니다.');
+                return;
+            }
             const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
-            if (!bot) { showToast('봇을 선택해주세요', 'error'); return; }
+            if (!bot) {
+                console.error('[EXPORT_EXTRA] 선택된 봇이 없습니다:', botCurrentBot);
+                panel.textContent = '봇을 선택해주세요.';
+                delete panel.dataset.botName;
+                delete panel.dataset.loadingBot;
+                return;
+            }
+            const botName = bot.name;
+            if (panel.dataset.botName === botName || panel.dataset.loadingBot === botName) {
+                console.info('[EXPORT_EXTRA] 현재 봇의 편집 내용 또는 진행 중인 로드를 유지합니다:', botName);
+                return;
+            }
             const chars = (bot.characters || []).filter(c => (c.rep_images || []).length > 0);
-            if (chars.length === 0) { showToast('대표 이미지가 있는 캐릭터가 없습니다', 'error'); return; }
-
-            const btn = document.getElementById('btn-export-lb-extra');
-            const origText = btn.textContent;
-            btn.disabled = true;
-            btn.textContent = '불러오는 중…';
+            delete panel.dataset.botName;
+            panel.dataset.loadingBot = botName;
+            panel.textContent = '불러오는 중…';
+            if (chars.length === 0) {
+                console.error('[EXPORT_EXTRA] 대표 이미지가 있는 캐릭터가 없습니다:', botName);
+                panel.textContent = '대표 이미지가 있는 캐릭터가 없습니다.';
+                delete panel.dataset.loadingBot;
+                return;
+            }
 
             try {
                 // 화면 트리는 bot.json의 캐릭터 카드(프로필/복장)를 기준으로 그린다.
@@ -71437,17 +71622,17 @@
                 const origResults = [];
                 let promptMissingCount = 0;   // 대표 이미지 프롬프트 파일 누락 캐릭터 수
                 for (let i = 0; i < chars.length; i++) {
-                    btn.textContent = `분류 중… (${i + 1}/${chars.length})`;
+                    if (panel.dataset.loadingBot === botName) panel.textContent = `분류 중… (${i + 1}/${chars.length})`;
                     const char = chars[i];
 
-                    const imgResp = await fetch(`/api/bot_mode/images?bot=${encodeURIComponent(botCurrentBot)}&character=${encodeURIComponent(char.name)}`);
+                    const imgResp = await fetch(`/api/bot_mode/images?bot=${encodeURIComponent(botName)}&character=${encodeURIComponent(char.name)}`);
                     const imgData = await imgResp.json();
                     const firstRep = char.rep_images[0];
                     const img = (imgData.images || []).find(im => im.filename === firstRep);
                     const prompt = (img && img.prompt) || '';
                     if (!prompt) {
                         // 대표 이미지의 프롬프트 파일(*_prompt.json)이 없으면 자동 분류 불가.
-                        // 캐릭터 자체는 누락시키지 않고 빈 분류 + promptMissing 플래그로 포함시킨다(모달에서 경고 표시).
+                        // 캐릭터 자체는 누락시키지 않고 빈 분류 + promptMissing 플래그로 포함시킨다(설정 탭에서 경고 표시).
                         console.warn(`[EXPORT_EXTRA] ${char.name}: 대표 이미지(${firstRep}) 프롬프트 누락 — 자동 분류 건너뜀`);
                         promptMissingCount++;
                         origResults.push({ name: char.name, appearance: [], uncategorized: [], outfit: [], promptMissing: true });
@@ -71474,23 +71659,27 @@
                         outfit: groups['복장'] || []
                     });
                 }
-                if (origResults.length === 0) { showToast('가져올 데이터가 없습니다', 'error'); return; }
-                if (promptMissingCount > 0) {
-                    showToast(`프롬프트 누락 캐릭터 ${promptMissingCount}명 — 자동 분류 안 됨, 모달에서 ⚠ 표시 확인`, 'error');
-                }
-
-                _lbExtraOriginal = origResults;
+                if (origResults.length === 0) throw new Error('가져올 데이터가 없습니다');
 
                 // 2) 편집본: 저장된 데이터가 있으면 사용, 없으면 원본 복사
                 let savedEdited = null;
                 try {
-                    const savedResp = await fetch(`/api/bot_mode/lb_extra?bot_name=${encodeURIComponent(botCurrentBot)}`);
+                    const savedResp = await fetch(`/api/bot_mode/lb_extra?bot_name=${encodeURIComponent(botName)}`);
                     const savedResult = await savedResp.json();
                     if (savedResult.data && savedResult.data.length > 0) {
                         savedEdited = savedResult.data;
                     }
                 } catch (e) { console.log('[EXPORT_EXTRA] 저장 데이터 로드 스킵:', e); }
 
+                if (botCurrentBot === botName && panel.dataset.loadingBot === botName) await _loadSystemPrompt();
+                if (botCurrentBot !== botName || panel.dataset.loadingBot !== botName) {
+                    console.info('[EXPORT_EXTRA] 봇 선택이 변경되어 이전 설정 로드를 건너뜁니다:', botName, botCurrentBot);
+                    return;
+                }
+                if (promptMissingCount > 0) {
+                    showToast(`프롬프트 누락 캐릭터 ${promptMissingCount}명 — 자동 분류 안 됨, 설정 탭에서 ⚠ 표시 확인`, 'error');
+                }
+                _lbExtraOriginal = origResults;
                 if (savedEdited) {
                     _lbExtraEdited = origResults.map(orig => {
                         const saved = savedEdited.find(s => s.name === orig.name);
@@ -71509,27 +71698,29 @@
                     _lbExtraEdited = JSON.parse(JSON.stringify(origResults));
                 }
                 _openLbExtraModal();
+                panel.dataset.botName = botName;
             } catch (e) {
                 console.error('[EXPORT_EXTRA] 실패:', e);
-                showToast('데이터 로드 실패: ' + e.message, 'error');
+                if (panel.dataset.loadingBot === botName) {
+                    panel.textContent = '데이터 로드 실패: ' + e.message + ' 탭을 다시 선택해 재시도하세요.';
+                    showToast('데이터 로드 실패: ' + e.message, 'error');
+                }
             } finally {
-                btn.disabled = false;
-                btn.textContent = origText;
+                if (panel.dataset.loadingBot === botName) delete panel.dataset.loadingBot;
             }
         }
 
         function _openLbExtraModal() {
-            const existing = document.getElementById('lb-extra-overlay');
-            if (existing) existing.remove();
-            _lbExtraSearchQuery = '';   // 모달 재오픈 시 검색어 초기화
+            const panel = document.getElementById('illust-tab-content-extra');
+            if (!panel) {
+                console.error('[EXPORT_EXTRA] lb-xnai.lb.extra 편집 화면을 표시할 탭이 없습니다.');
+                return;
+            }
+            _lbExtraSearchQuery = '';
 
-            const overlay = document.createElement('div');
-            overlay.id = 'lb-extra-overlay';
-            overlay.style.cssText = 'position:fixed; inset:0; z-index:270; background:rgba(0,0,0,0.5); display:flex; align-items:center; justify-content:center;';
-
-            overlay.innerHTML = `
-                <div style="background:var(--surface); border:1px solid var(--border); border-radius:12px; width:95vw; max-width:1400px; height:88vh; display:flex; flex-direction:column; overflow:hidden;">
-                    <div style="display:flex; align-items:center; padding:12px 16px; border-bottom:1px solid var(--border); gap:12px; flex-shrink:0;">
+            panel.innerHTML = `
+                <div style="background:var(--surface); display:flex; flex-direction:column; min-width:0; overflow:hidden;">
+                    <div style="display:flex; align-items:center; flex-wrap:wrap; padding:12px 16px; border-bottom:1px solid var(--border); gap:12px; flex-shrink:0;">
                         <span style="font-weight:700; font-size:1.05rem;">lb-xnai.lb.extra 구조</span>
                         <div style="display:flex; gap:4px; margin-left:8px;">
                             <button id="lb-extra-tab-classification" onclick="_switchLbExtraTab('classification')" style="padding:3px 10px; border-radius:4px; border:1px solid var(--border); background:var(--accent); color:#fff; cursor:pointer; font-size:0.8rem; font-weight:600;">캐릭터 트리</button>
@@ -71549,7 +71740,6 @@
                         <button id="btn-lb-extra-batch-refine" onclick="_lbExtraBatchRefine()" title="모든 프로필 카드의 Appearance/default_outfit을 일괄 정제합니다. 카드 1 결과는 이식용 데이터에도 반영됩니다." style="background:#7C3AED; color:#fff; border:none; padding:6px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">프로필 카드 일괄 정제</button>
                         <button onclick="_saveLbExtra()" style="background:#1565C0; color:#fff; border:none; padding:6px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">저장</button>
                         <button onclick="_downloadLbExtra()" style="background:#00695C; color:#fff; border:none; padding:6px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">다운로드</button>
-                        <button onclick="document.getElementById('lb-extra-overlay').remove()" style="background:none; border:none; color:var(--text2); font-size:1.2rem; cursor:pointer;">✕</button>
                     </div>
                     <div id="lb-extra-column-header" style="display:flex; align-items:center; gap:8px; flex-shrink:0; padding:6px 16px; border-bottom:1px solid var(--border);">
                         <div style="font-weight:600; font-size:0.82rem; color:var(--text2);">수평 계층도 · 캐릭터 → 프로필 → Appearance / 복장</div>
@@ -71557,12 +71747,14 @@
                         <button onclick="_setLbExtraTreeExpanded(true)" style="padding:3px 9px; border:1px solid var(--border); border-radius:4px; background:var(--surface2); color:var(--text2); cursor:pointer; font-size:0.72rem;">모두 펼치기</button>
                         <button onclick="_setLbExtraTreeExpanded(false)" style="padding:3px 9px; border:1px solid var(--border); border-radius:4px; background:var(--surface2); color:var(--text2); cursor:pointer; font-size:0.72rem;">모두 접기</button>
                     </div>
-                    <div id="lb-extra-content" style="flex:1; overflow-y:auto; padding:16px;"></div>
+                    <div id="lb-extra-content" style="min-width:0; overflow:auto; padding:16px;"></div>
                 </div>`;
 
-            document.body.appendChild(overlay);
-
-            overlay.querySelector('#lb-extra-desc-cb').addEventListener('change', function() {
+            panel.querySelector('#lb-extra-desc-cb').checked = _lbExtraShowDesc;
+            const descTrack = panel.querySelector('#lb-extra-desc-track');
+            descTrack.style.background = _lbExtraShowDesc ? 'var(--accent)' : 'var(--border)';
+            descTrack.querySelector('span').style.left = _lbExtraShowDesc ? '16px' : '2px';
+            panel.querySelector('#lb-extra-desc-cb').addEventListener('change', function() {
                 _lbExtraShowDesc = this.checked;
                 const track = document.getElementById('lb-extra-desc-track');
                 const knob = track.querySelector('span');
@@ -71573,7 +71765,7 @@
 
             // 캐릭터 검색: 입력 즉시 부분 매칭 필터링 (검색 버튼 없음).
             // 본문(#lb-extra-content)만 갱신되므로 입력창 포커스 유지.
-            overlay.querySelector('#lb-extra-search').addEventListener('input', function() {
+            panel.querySelector('#lb-extra-search').addEventListener('input', function() {
                 _lbExtraSearchQuery = this.value || '';
                 _renderLbExtraContent();
             });
@@ -71581,7 +71773,7 @@
             _switchLbExtraTab('classification');
         }
 
-        function _switchLbExtraTab(tab) {
+        async function _switchLbExtraTab(tab) {
             // 시스템 프롬프트 탭에서 나갈 때 textarea 내용 저장
             if (_lbExtraTab === 'systemPrompt') {
                 const editor = document.getElementById('sp-editor');
@@ -71606,10 +71798,8 @@
                 if (descLabel) descLabel.style.display = 'none';
                 if (searchWrap) searchWrap.style.display = 'none';
                 // 시스템 프롬프트 탭 진입 시 데이터 로드 (builtin+local 모두 GET system_prompt 에서 반환)
-                (async () => {
-                    await _loadSystemPrompt();
-                    _renderLbExtraContent();
-                })();
+                await _loadSystemPrompt();
+                _renderLbExtraContent();
                 return;
             }
             _renderLbExtraContent();
@@ -71628,10 +71818,15 @@
         }
 
         async function _loadSystemPrompt() {
+            const botName = botCurrentBot;
             if (!botCurrentBot) { _systemPromptText = ''; _systemPromptPresetSelected = ''; _systemPromptScope = 'local'; _systemPromptBuiltin = {}; _systemPromptLocal = {}; return; }
             try {
-                const resp = await fetch(`/api/bot_mode/system_prompt?bot_name=${encodeURIComponent(botCurrentBot)}`);
+                const resp = await fetch(`/api/bot_mode/system_prompt?bot_name=${encodeURIComponent(botName)}`);
                 const result = await resp.json();
+                if (botCurrentBot !== botName) {
+                    console.info('[LB_EXTRA] 봇 선택이 변경되어 이전 시스템 프롬프트 로드를 건너뜁니다:', botName, botCurrentBot);
+                    return;
+                }
                 _systemPromptText = result.text || '';
                 _systemPromptPresetSelected = result.preset || '';
                 _systemPromptScope = result.scope || 'local';
@@ -71639,6 +71834,7 @@
                 _systemPromptLocal = result.local_presets || {};
             } catch (e) {
                 console.error('[LB_EXTRA] 시스템 프롬프트 로드 실패:', e);
+                if (botCurrentBot !== botName) return;
                 _systemPromptText = '';
                 _systemPromptPresetSelected = '';
                 _systemPromptScope = 'local';
@@ -72860,7 +73056,7 @@
             _focusEditCharIdx = -1;
             _focusEditPhotoIdx = 0;
             _restoreVisualCardFocusSession();
-            if (document.getElementById('lb-extra-overlay')) {
+            if (document.getElementById('lb-extra-content')) {
                 _renderLbExtraContent();
             }
         }
@@ -78471,7 +78667,7 @@
                 console.error('[BOT_SEARCH] breadcrumb 요소가 없습니다.');
                 return;
             }
-            let html = '<span class="bc-active" style="cursor:pointer;" onclick="botNavBack()">삽화 모드</span>';
+            let html = '<span class="bc-active" style="cursor:pointer;" onclick="botNavBack()">삽화용 봇 설정</span>';
             if (botCurrentBot) {
                 html += `<span class="bc-sep">›</span>`;
                 html += `<span class="bc-active" style="cursor:pointer;" onclick="navToBotChars()">${escHtml(botCurrentBot)}</span>`;
@@ -78486,7 +78682,7 @@
                 }
             }
             if (_botCurrentView === 'chars' && botCurrentBot && !botCurrentChar) {
-                html += `<input id="bot-character-search" class="breadcrumb-character-search" type="search" autocomplete="off" placeholder="캐릭터 검색" aria-label="삽화 모드 캐릭터 검색" value="${escAttr(_botCharacterSearchQuery)}" oninput="filterBotCharacters(this.value)">`;
+                html += `<input id="bot-character-search" class="breadcrumb-character-search" type="search" autocomplete="off" placeholder="캐릭터 검색" aria-label="삽화용 봇 설정 캐릭터 검색" value="${escAttr(_botCharacterSearchQuery)}" oninput="filterBotCharacters(this.value)">`;
             }
             bc.innerHTML = html;
         }
@@ -81821,20 +82017,21 @@
                 return;
             }
             if (modal.childElementCount) {
+                switchIllustModalTab('toggles');
                 refreshIllustrationPromptInspector();
                 return;
             }
             modal.innerHTML = `
                 <div class="illust-prompt-workspace">
                     <div class="illust-prompt-header">
-                        <nav class="illust-prompt-tabs" role="tablist" aria-label="삽화 프롬프트 생성 메뉴">
-                            <button id="illust-tab-logs" class="illust-prompt-tab is-active" type="button" role="tab" aria-selected="true" aria-controls="illust-tab-content-logs" onclick="switchIllustModalTab('logs')">생성 로그</button>
+                        <nav class="illust-prompt-tabs" role="tablist" aria-label="삽화 프롬프트 설정 메뉴">
+                            <button id="illust-tab-logs" class="illust-prompt-tab" type="button" role="tab" aria-selected="false" aria-controls="illust-tab-content-logs" onclick="switchIllustModalTab('logs')">생성 로그</button>
                             <button id="illust-tab-history" class="illust-prompt-tab" type="button" role="tab" aria-selected="false" aria-controls="illust-tab-content-history" onclick="switchIllustModalTab('history')">채팅 히스토리</button>
                             <button id="illust-tab-llm" class="illust-prompt-tab" type="button" role="tab" aria-selected="false" aria-controls="illust-tab-content-llm" onclick="switchIllustModalTab('llm')">프롬프트 구성</button>
-                            <button id="illust-tab-toggles" class="illust-prompt-tab" type="button" role="tab" aria-selected="false" aria-controls="illust-tab-content-toggles" onclick="switchIllustModalTab('toggles')">생성 설정</button>
+                            <button id="illust-tab-toggles" class="illust-prompt-tab is-active" type="button" role="tab" aria-selected="true" aria-controls="illust-tab-content-toggles" onclick="switchIllustModalTab('toggles')">생성 설정</button>
+                            <button id="illust-tab-extra" class="illust-prompt-tab" type="button" role="tab" aria-selected="false" aria-controls="illust-tab-content-extra" onclick="switchIllustModalTab('extra')">lb-xnai.lb.extra</button>
                             <button id="illust-tab-flow" class="illust-prompt-tab" type="button" role="tab" aria-selected="false" aria-controls="illust-tab-content-flow" onclick="switchIllustModalTab('flow')">노드·Think 확인</button>
                         </nav>
-                        <button id="btn-export-lb-extra" class="illust-settings-action is-secondary" type="button" onclick="exportLbExtraTxt()">lb-xnai.lb.extra 설정</button>
                     </div>
                     <div class="illust-prompt-toolbar" id="illust-log-footer-llm">
                         <span>현재 지침과 코드의 조립 구조를 표시합니다.</span>
@@ -81870,10 +82067,10 @@
                                 <label class="illust-history-field">저장 히스토리 최대 글자수
                                     <input id="illust-history-storage-max" type="number" min="1000" max="500000" step="1000">
                                 </label>
-                                <label class="illust-history-field" title="OUTFIT·TIME &amp; PLACE·SELECT·PLAN·KEYVIS가 함께 참조하는 과거 대화 범위입니다.">상태 추적·장면 계획 히스토리 글자수
+                                <label class="illust-history-field" title="OUTFIT·TIME &amp; PLACE·SLOT-SELECTER·PLAN·KEYVIS가 함께 참조하는 과거 대화 범위입니다.">상태 추적·장면 계획 히스토리 글자수
                                     <input id="illust-history-call1" type="number" min="0" max="500000" step="1000">
                                 </label>
-                                <label class="illust-history-field">CALL3 대사 히스토리 글자수
+                                <label class="illust-history-field">POST PROCESS 대사 히스토리 글자수
                                     <input id="illust-history-call3" type="number" min="0" max="500000" step="1000">
                                 </label>
                             </div>
@@ -81896,11 +82093,11 @@
                                 <button id="illust-call-tab-profile" class="illust-prompt-node-tab" type="button" role="tab" data-illust-call-tab="profile" aria-selected="false" aria-controls="illust-call-content-profile" onclick="switchIllustCallTab('profile')">PROFILE-RESOLVE</button>
                                 <button id="illust-call-tab-call1" class="illust-prompt-node-tab" type="button" role="tab" data-illust-call-tab="call1" aria-selected="false" aria-controls="illust-call-content-call1" onclick="switchIllustCallTab('call1')">OUTFIT</button>
                                 <button id="illust-call-tab-time_place" class="illust-prompt-node-tab" type="button" role="tab" data-illust-call-tab="time_place" aria-selected="false" aria-controls="illust-call-content-time_place" onclick="switchIllustCallTab('time_place')">TIME &amp; PLACE</button>
-                                <button id="illust-call-tab-call2_select" class="illust-prompt-node-tab" type="button" role="tab" data-illust-call-tab="call2_select" aria-selected="false" aria-controls="illust-call-content-call2_select" onclick="switchIllustCallTab('call2_select')">CALL2-SELECT</button>
+                                <button id="illust-call-tab-call2_select" class="illust-prompt-node-tab" type="button" role="tab" data-illust-call-tab="call2_select" aria-selected="false" aria-controls="illust-call-content-call2_select" onclick="switchIllustCallTab('call2_select')">SLOT-SELECTER</button>
                                 <button id="illust-call-tab-call2_plan" class="illust-prompt-node-tab" type="button" role="tab" data-illust-call-tab="call2_plan" aria-selected="false" aria-controls="illust-call-content-call2_plan" onclick="switchIllustCallTab('call2_plan')">CALL2-PLAN</button>
-                                <button id="illust-call-tab-call2_detail" class="illust-prompt-node-tab" type="button" role="tab" data-illust-call-tab="call2_detail" aria-selected="false" aria-controls="illust-call-content-call2_detail" onclick="switchIllustCallTab('call2_detail')">CALL2-DETAIL</button>
-                                <button id="illust-call-tab-call2_keyvis" class="illust-prompt-node-tab" type="button" role="tab" data-illust-call-tab="call2_keyvis" aria-selected="false" aria-controls="illust-call-content-call2_keyvis" onclick="switchIllustCallTab('call2_keyvis')">CALL2-KEYVIS</button>
-                                <button id="illust-call-tab-call3" class="illust-prompt-node-tab" type="button" role="tab" data-illust-call-tab="call3" aria-selected="false" aria-controls="illust-call-content-call3" onclick="switchIllustCallTab('call3')">CALL3</button>
+                                <button id="illust-call-tab-call2_detail" class="illust-prompt-node-tab" type="button" role="tab" data-illust-call-tab="call2_detail" aria-selected="false" aria-controls="illust-call-content-call2_detail" onclick="switchIllustCallTab('call2_detail')">DETAIL</button>
+                                <button id="illust-call-tab-call2_keyvis" class="illust-prompt-node-tab" type="button" role="tab" data-illust-call-tab="call2_keyvis" aria-selected="false" aria-controls="illust-call-content-call2_keyvis" onclick="switchIllustCallTab('call2_keyvis')">KEYVIS</button>
+                                <button id="illust-call-tab-call3" class="illust-prompt-node-tab" type="button" role="tab" data-illust-call-tab="call3" aria-selected="false" aria-controls="illust-call-content-call3" onclick="switchIllustCallTab('call3')">POST PROCESS</button>
                                 <button id="illust-call-tab-multi_char_mask" class="illust-prompt-node-tab" type="button" role="tab" data-illust-call-tab="multi_char_mask" aria-selected="false" aria-controls="illust-call-content-multi_char_mask" onclick="switchIllustCallTab('multi_char_mask')">MULTI-CHAR-MASK</button>
                                 <button id="illust-call-tab-shared" class="illust-prompt-node-tab" type="button" role="tab" data-illust-call-tab="shared" aria-selected="false" aria-controls="illust-call-content-shared" onclick="switchIllustCallTab('shared')">공유 프롬프트</button>
                                 <button id="illust-call-tab-preset" class="illust-prompt-node-tab" type="button" role="tab" data-illust-call-tab="preset" aria-selected="false" aria-controls="illust-call-content-preset" onclick="switchIllustCallTab('preset')">출력 템플릿</button>
@@ -81928,7 +82125,7 @@
                                     </details>
                             </div>
                             <div id="illust-call-content-time_place" data-illust-call-panel="time_place" role="tabpanel" aria-labelledby="illust-call-tab-time_place" hidden>
-                                <p class="illust-prompt-node-help">OUTFIT·SELECT와 병렬로 캐릭터별 시간대와 장소를 추적합니다. time과 place는 각각 변경된 SLOT에서만 출력하고 이전 값을 이어받습니다.</p>
+                                <p class="illust-prompt-node-help">OUTFIT·SLOT-SELECTER와 병렬로 캐릭터별 시간대와 장소를 추적합니다. time과 place는 각각 변경된 SLOT에서만 출력하고 이전 값을 이어받습니다.</p>
                                 <details open style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
                                     <summary style="cursor:pointer; font-size:0.8rem; font-weight:600;">TIME &amp; PLACE 독립 상태 추적</summary>
                                     <textarea id="lighbd-prompt-time_place" data-lighbd-prompt="time_place" style="width:100%; height:300px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;"></textarea>
@@ -81949,7 +82146,7 @@
                                 </details>
                             </div>
                             <div id="illust-call-content-call2_detail" data-illust-call-panel="call2_detail" role="tabpanel" aria-labelledby="illust-call-tab-call2_detail" hidden>
-                                <p class="illust-prompt-node-help">SYSTEM 조립 순서: 공용 호환성 지침 → {lb-xnai.lb.extra 시스템 프롬프트} → 공용 물리·노출·접촉 지침 → DETAIL 전용 지침. KEYVIS 작업 지침과 공통 묘사 규칙은 포함하지 않습니다. 조립 화면에서 블록별 출처와 내용을 확인할 수 있습니다.</p>
+                                <p class="illust-prompt-node-help">SYSTEM 조립 순서: 공용 호환성 지침 → {lb-xnai.lb.extra 시스템 프롬프트} → 공용 물리·노출·접촉 지침 → DETAIL 전용 지침. KEYVIS 통합 예측을 켜면 첫 배치에 대표 이미지 지침·문맥과 통합 출력 형식을 함께 전달합니다. 조립 화면에서 블록별 출처와 내용을 확인할 수 있습니다.</p>
                                 <details open style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
                                     <summary style="cursor:pointer; font-size:0.8rem; font-weight:600; color:var(--text);">할당 장면 시각화</summary>
                                     <textarea id="lighbd-prompt-call2_detail" data-lighbd-prompt="call2_detail" style="width:100%; height:260px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;" placeholder="로딩 중..."></textarea>
@@ -81971,7 +82168,7 @@
                                 </details>
                             </div>
                             <div id="illust-call-content-call3" data-illust-call-panel="call3" role="tabpanel" aria-labelledby="illust-call-tab-call3" hidden>
-                                <p class="illust-prompt-node-help">후처리 모드에 맞는 Speak·Manga·Subtitle 대사를 작성합니다.</p>
+                                <p class="illust-prompt-node-help">POST PROCESS 모드에 맞는 Speak·Manga·Subtitle 대사를 작성합니다.</p>
                                 <details open style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
                                         <summary style="cursor:pointer; font-size:0.8rem; font-weight:600;">장면별 대사</summary>
                                         <textarea id="lighbd-prompt-call3_speak" data-lighbd-prompt="call3_speak" style="width:100%; height:260px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;"></textarea>
@@ -81991,14 +82188,14 @@
                                     </details>
                             </div>
                             <div id="illust-call-content-multi_char_mask" data-illust-call-panel="multi_char_mask" role="tabpanel" aria-labelledby="illust-call-tab-multi_char_mask" hidden>
-                                <p class="illust-prompt-node-help">여러 인물의 이미지 태그를 캐릭터별 영역과 공통 배경·구도로 나눕니다.</p>
+                                <p class="illust-prompt-node-help">이미지 태그를 캐릭터별 영역과 공통 배경·구도로 나눕니다. 생성 설정의 ‘마스크 예측 방식’에서 ‘현재 모델에서 예측’을 선택하면 이 지침을 DETAIL·KEYVIS 본문에 합치고 마스크 출력 형식으로 한 번에 작성합니다. ‘별도 LLM으로 예측’을 선택하면 전용 LLM을 호출합니다.</p>
                                 <details open style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
                                     <summary style="cursor:pointer; font-size:0.8rem; font-weight:600;">캐릭터별 영역과 공통 배경·구도 분리</summary>
                                     <textarea id="lighbd-prompt-multi_char_mask" data-lighbd-prompt="multi_char_mask" style="width:100%; height:320px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;" placeholder="로딩 중..."></textarea>
                                 </details>
                             </div>
                             <div id="illust-call-content-shared" data-illust-call-panel="shared" role="tabpanel" aria-labelledby="illust-call-tab-shared" hidden>
-                                <p class="illust-prompt-node-help">호환성 지침은 SELECT·PLAN·DETAIL·KEYVIS에서 사용합니다. 물리·노출·접촉 지침은 DETAIL·KEYVIS에 포함하며, 파일 전체를 NSFW 토글로 제외하지 않습니다. 설정에 따른 조건은 각 지침 내부 매크로를 따릅니다.</p>
+                                <p class="illust-prompt-node-help">호환성 지침은 SLOT-SELECTER·PLAN·DETAIL·KEYVIS에서 사용합니다. 물리·노출·접촉 지침은 DETAIL·KEYVIS에 포함하며, 파일 전체를 NSFW 토글로 제외하지 않습니다. 설정에 따른 조건은 각 지침 내부 매크로를 따릅니다.</p>
                                 <details open style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
                                     <summary style="cursor:pointer; font-size:0.8rem; font-weight:600; color:var(--text);">외부 LLM 호환성 envelope</summary>
                                     <textarea id="lighbd-prompt-call2_jailbreak" data-lighbd-prompt="call2_jailbreak" style="width:100%; height:180px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;" placeholder="로딩 중..."></textarea>
@@ -82031,39 +82228,42 @@
                             </details>
                         </div>
                         <div id="illust-tab-content-toggles" class="illust-settings" role="tabpanel" aria-labelledby="illust-tab-toggles" hidden></div>
+                        <div id="illust-tab-content-extra" role="tabpanel" aria-labelledby="illust-tab-extra" hidden></div>
                         <div id="illust-tab-content-flow" class="illust-settings" role="tabpanel" aria-labelledby="illust-tab-flow" hidden>노드 구성을 불러오는 중…</div>
                     </div>
                 </div>
             `;
             mountIllustrationPromptInspector();
-            switchIllustModalTab('logs');
+            switchIllustModalTab('toggles');
         }
         function onReasoningPreset3Change() {
             renderReasoningControls(3);
         }
 
-        function switchIllustModalTab(tab) {
+        async function switchIllustModalTab(tab) {
             const logs = document.getElementById('illust-tab-logs');
             const history = document.getElementById('illust-tab-history');
             const llm = document.getElementById('illust-tab-llm');
             const toggles = document.getElementById('illust-tab-toggles');
+            const extra = document.getElementById('illust-tab-extra');
             const flow = document.getElementById('illust-tab-flow');
             const logsBody = document.getElementById('illust-tab-content-logs');
             const historyBody = document.getElementById('illust-tab-content-history');
             const llmBody = document.getElementById('illust-tab-content-llm');
             const togglesBody = document.getElementById('illust-tab-content-toggles');
+            const extraBody = document.getElementById('illust-tab-content-extra');
             const flowBody = document.getElementById('illust-tab-content-flow');
             const logsFooter = document.getElementById('illust-log-footer-logs');
             const historyFooter = document.getElementById('illust-log-footer-history');
             const llmFooter = document.getElementById('illust-log-footer-llm');
             const togglesFooter = document.getElementById('illust-log-footer-toggles');
             const flowFooter = document.getElementById('illust-log-footer-flow');
-            const requiredElements = [logs, history, llm, toggles, flow, logsBody, historyBody, llmBody, togglesBody, flowBody, logsFooter, historyFooter, llmFooter, togglesFooter, flowFooter];
+            const requiredElements = [logs, history, llm, toggles, extra, flow, logsBody, historyBody, llmBody, togglesBody, extraBody, flowBody, logsFooter, historyFooter, llmFooter, togglesFooter, flowFooter];
             if (requiredElements.some(element => !element)) {
                 console.error('[ILLUST_CONTEXT] 삽화 프롬프트 생성 탭 전환에 필요한 요소가 없습니다:', tab);
                 return;
             }
-            for (const [name, button] of [['logs', logs], ['history', history], ['llm', llm], ['toggles', toggles], ['flow', flow]]) {
+            for (const [name, button] of [['logs', logs], ['history', history], ['llm', llm], ['toggles', toggles], ['extra', extra], ['flow', flow]]) {
                 const active = name === tab;
                 button.classList.toggle('is-active', active);
                 button.setAttribute('aria-selected', String(active));
@@ -82072,6 +82272,7 @@
             historyBody.style.display = tab === 'history' ? '' : 'none';
             llmBody.style.display = tab === 'llm' ? '' : 'none';
             togglesBody.hidden = tab !== 'toggles';
+            extraBody.hidden = tab !== 'extra';
             flowBody.hidden = tab !== 'flow';
             logsFooter.style.display = tab === 'logs' ? 'flex' : 'none';
             historyFooter.style.display = tab === 'history' ? 'flex' : 'none';
@@ -82079,12 +82280,13 @@
             togglesFooter.hidden = tab !== 'toggles';
             flowFooter.hidden = tab !== 'flow';
             if (tab !== 'flow') pauseIllustrationPreview();
-            if (tab === 'logs') refreshIllustLogs();
-            if (tab === 'history') loadIllustrationChatHistories();
-            if (tab === 'llm') refreshIllustrationPromptInspector();
+            if (tab === 'logs') await refreshIllustLogs();
+            if (tab === 'history') await loadIllustrationChatHistories();
+            if (tab === 'llm') await refreshIllustrationPromptInspector();
+            if (tab === 'extra') await exportLbExtraTxt();
             if (tab === 'toggles' || tab === 'flow') {
-                if (!togglesBody.childElementCount) loadIllustrationContextToggles();
-                else if (tab === 'flow') renderIllustrationNodePreview();
+                if (!togglesBody.childElementCount) await loadIllustrationContextToggles();
+                else if (tab === 'flow') await renderIllustrationNodePreview();
             }
         }
 
@@ -82244,11 +82446,11 @@
                                 <pre id="illust-history-detail-call2"></pre>
                             </details>
                             <details class="illust-history-detail-section">
-                                <summary>CALL3 최초 출력</summary>
+                                <summary>POST PROCESS 최초 출력</summary>
                                 <pre id="illust-history-detail-call3-initial"></pre>
                             </details>
                             <details class="illust-history-detail-section" open>
-                                <summary>CALL3 최종 출력</summary>
+                                <summary>POST PROCESS 최종 출력</summary>
                                 <pre id="illust-history-detail-call3-final"></pre>
                             </details>
                             <details class="illust-history-detail-section">
@@ -82365,9 +82567,9 @@
                 'illust-history-detail-call3-note',
                 pipelineResult.call3_out
                     ? (pipelineResult.call3_correction_used
-                        ? 'CALL3: 최초 생성 1회 + 슬롯 완전성 교정 1회'
-                        : 'CALL3: 최초 생성 1회 · 교정 호출 없음')
-                    : 'CALL3 출력 없음',
+                        ? 'POST PROCESS: 최초 생성 1회 + 슬롯 완전성 교정 1회'
+                        : 'POST PROCESS: 최초 생성 1회 · 교정 호출 없음')
+                    : 'POST PROCESS 출력 없음',
             );
             _setIllustrationHistoryDetailText('illust-history-detail-subtitle', record?.title || '');
             status.style.display = 'none';
@@ -82549,21 +82751,26 @@
                 key: 'pipeline', title: '파이프라인',
                 description: '출력 방식과 단계별 사용 여부를 설정합니다. OUTFIT·TIME & PLACE·PLAN은 독립적으로 끌 수 있으며, 생략한 판단은 원문을 받은 후속 LLM이 수행합니다.',
                 fields: [
-                    {key: 'illustration_output_mode', label: '출력 모드', type: 'select', help: '일반 삽화(OUTFIT/CALL2/CALL3 + Comfy), 원본 에셋(업로드 원본 선택), 또는 둘 다를 반환합니다. 원본 에셋 장수는 원본 에셋 출력 탭에서 설정합니다.', options: [{value: 'illustration', label: '일반 삽화'}, {value: 'original_asset', label: '원본 에셋'}, {value: 'both', label: '일반 삽화 + 원본 에셋'}], onchange: 'onIllustrationOutputModeChange(this)'},
+                    {key: 'illustration_output_mode', label: '출력 모드', type: 'select', help: '일반 삽화(OUTFIT/CALL2/POST PROCESS + Comfy), 원본 에셋(업로드 원본 선택), 또는 둘 다를 반환합니다. 원본 에셋 장수는 원본 에셋 출력 탭에서 설정합니다.', options: [{value: 'illustration', label: '일반 삽화'}, {value: 'original_asset', label: '원본 에셋'}, {value: 'both', label: '일반 삽화 + 원본 에셋'}], onchange: 'onIllustrationOutputModeChange(this)'},
                     {key: 'nsfw', label: 'NSFW 태깅', type: 'toggle', help: 'DETAIL과 KEYVIS에 성인 장면용 태깅 지침을 적용합니다. Manga 대사 모드의 버블 타입에도 함께 반영됩니다.'},
                     {key: 'outfit_enabled', label: 'OUTFIT 복장·헤어 추적', type: 'toggle', help: '켜면 복장·헤어를 미리 추적합니다. 끄면 원문·이전 문맥·프로필을 보고 후속 LLM이 현재 상태를 판단합니다.'},
                     {key: 'time_place_enabled', label: 'TIME & PLACE 시간·장소 추적', type: 'toggle', help: '켜면 시간·장소를 미리 추적합니다. 끄면 후속 LLM이 원문과 이전 문맥에서 판단합니다.'},
-                    {key: 'call2_plan_enabled', label: 'PLAN 시각 계획', type: 'toggle', help: '켜면 장면의 순간·구도·동작을 미리 계획합니다. 끄면 SELECT 결과와 원문을 DETAIL에 직접 전달해 판단하게 합니다.'},
-                    {key: 'multi_char_mask_enabled', label: 'MULTI-CHAR-MASK', type: 'toggle', help: '2명 이상 장면에서 캐릭터별 Regional RGB 마스크를 계산합니다. 끄면 마스크 LLM 호출과 Regional 마스크 전달 없이 일반 다중 캐릭터 프롬프트로 생성합니다.'},
+                    {key: 'call2_plan_enabled', label: 'PLAN 시각 계획', type: 'toggle', help: '켜면 장면의 순간·구도·동작을 미리 계획합니다. 끄면 SLOT-SELECTER 결과와 원문을 DETAIL에 직접 전달해 판단하게 합니다.'},
+                    {key: 'key_visual', label: '대표 이미지 생성', type: 'toggle', help: '켜면 일반 장면 외에 대표 이미지 한 장을 추가합니다. 끄면 DETAIL 통합·별도 LLM 방식 모두 대표 이미지를 생성하지 않습니다.'},
+                    {key: 'keyvis_in_detail_enabled', label: 'DETAIL에서 KEYVIS 함께 예측', type: 'toggle', dependsOn: ['key_visual'], help: '켜면 첫 DETAIL 배치에서 일반 장면과 대표 이미지 한 장을 함께 작성하고 DETAIL의 LLM·재시도 설정을 사용합니다. 끄면 KEYVIS에 지정한 LLM으로 별도 예측합니다. 마스크 예측 방식은 두 모드 모두 적용됩니다.'},
+                    {key: 'minimal_background_description', label: '대표 이미지 배경 묘사 최소화', type: 'toggle', help: 'KEYVIS의 배경을 가장 작은 이야기 근거로 제한합니다. 일반 장면의 배경은 PLAN·DETAIL의 장면 설명에 따릅니다.', dependsOn: ['key_visual']},
+                    {key: 'multi_char_mask_enabled', label: '마스크 사용', type: 'toggle', help: '2명 이상 장면에서 캐릭터별 Regional RGB 마스크를 계산합니다. 끄면 마스크 LLM 호출과 Regional 마스크 전달 없이 일반 다중 캐릭터 프롬프트로 생성합니다.'},
+                    {key: 'multi_char_mask_inline_enabled', label: '마스크 예측 방식', type: 'select', options: [{value: false, label: '별도 LLM으로 예측'}, {value: true, label: '현재 모델에서 예측'}], onchange: 'onIllustrationContextToggleChange(this)', help: '현재 모델에서 예측하면 DETAIL·KEYVIS에 마스크 지침을 합치고 기존 출력 형식을 마스크 형식으로 교체해 한 번에 작성합니다. 별도 LLM으로 예측하면 MULTI-CHAR-MASK 전용 LLM을 호출합니다. 이미 완성된 프롬프트를 입력하는 경로에서는 별도 LLM을 사용합니다.', dependsOn: ['multi_char_mask_enabled']},
                     {key: 'single_char_mask_enabled', label: '1인도 마스크', type: 'toggle', help: 'MULTI-CHAR-MASK가 켜져 있을 때 1인 장면에도 마스크를 계산합니다. 끄면 일반 삽화와 대표 이미지의 1인 장면은 마스크 없이 생성합니다.', dependsOn: ['multi_char_mask_enabled']},
                 ],
                 callInfo: [
-                    {label: '생성 순서', text: '등장인물·프로필 결정 → 켜진 상태 추적 단계와 SELECT 장면 선택 병렬 → PLAN 또는 DETAIL. PLAN을 끄면 SELECT에서 DETAIL로 직접 연결하고, 상태 추적을 끄면 원문·이전 문맥을 전달합니다. KEYVIS는 일반 PLAN과 독립적으로 실행합니다. 각 이미지의 묘사와 필요한 마스크가 준비되면 생성 큐에 등록하며, CALL3 대사 완료를 기다리지 않습니다.'},
+                    {label: '생성 순서', text: '등장인물·프로필 결정 → 켜진 상태 추적 단계와 SLOT-SELECTER 장면 선택 병렬 → PLAN 또는 DETAIL. PLAN을 끄면 SLOT-SELECTER에서 DETAIL로 직접 연결하고, 상태 추적을 끄면 원문·이전 문맥을 전달합니다. KEYVIS는 선택한 방식에 따라 첫 DETAIL 배치에서 함께 예측하거나 별도 호출합니다. 각 이미지의 묘사와 필요한 마스크가 준비되면 생성 큐에 등록하며, POST PROCESS 대사 완료를 기다리지 않습니다.'},
                     {label: '자동 프로필 결정', text: '등장인물 판별 뒤 다중 프로필 캐릭터가 있으면 캐릭터별로 프로필 타임라인을 결정합니다. 해당 캐릭터가 없으면 프로필 LLM 호출은 자동 생략합니다.'},
                     {label: 'OUTFIT 상태 추적', text: 'ON이면 복장·헤어의 시작 상태와 현재 변화 사건을 추적합니다. OFF이면 호출을 생략하고 후속 LLM이 문맥에서 판단합니다. 상태 추적·장면 계획 히스토리 범위는 채팅 히스토리 탭에서 설정합니다.'},
                     {label: 'TIME & PLACE 상태 추적', text: 'ON이면 별도 호출에서 캐릭터별 time(넓은 시간대)과 place(간단한 장소)를 추적합니다. OFF이면 후속 LLM이 원문에서 판단합니다. 각 항목은 변경된 SLOT에서만 출력하며 복장·헤어와 독립적으로 이어받습니다. 노드 상세에서 시간·장소 시간표를 확인할 수 있습니다.'},
                     {label: 'DETAIL 이미지 묘사', text: '해당 장면의 프로필과 켜진 단계의 분석 결과를 이미지 태그로 확장합니다. 생략한 계획·상태는 원문과 이전 문맥에서 직접 판단합니다. 병렬 처리 여부와 최대 동시 요청 수는 DETAIL 탭에서 PLAN과 독립적으로 설정합니다. 느린 배치 재요청은 PLAN과 DETAIL이 각각 관리합니다.'},
-                    {label: 'MULTI-CHAR-MASK', text: '마스크 기능이 켜져 있고 Comfy 공급자·V3 형식의 장면에 캐릭터가 2~3명일 때 영역을 계산합니다. 1인도 마스크를 켜면 1인 장면에도 적용합니다. 해당 DETAIL 배치 또는 KEYVIS 완료 직후 생성 큐 등록 전에 실행합니다.'},
+                    {label: 'KEYVIS 대표 이미지', text: '일반 장면 외 대표 이미지 한 장을 추가하며 POST PROCESS 대사 대상에는 포함하지 않습니다. DETAIL 통합 예측은 DETAIL의 LLM·재시도 설정을, 별도 예측은 KEYVIS 설정을 사용합니다. 대표 이미지 지침은 LLM 프롬프트 탭의 keyvisual.txt와 system.txt에서 설정합니다.'},
+                    {label: 'MULTI-CHAR-MASK', text: '마스크 기능이 켜져 있고 Comfy 공급자·V3 형식의 장면에 캐릭터가 2~3명일 때 영역을 계산합니다. 1인도 마스크를 켜면 1인 장면에도 적용합니다. 마스크 예측 방식에서 현재 모델을 선택하면 DETAIL·KEYVIS가 마스크를 함께 작성하고, 별도 LLM을 선택하면 해당 묘사 완료 후 전용 LLM으로 계산합니다. 완성 프롬프트 입력은 별도 호출을 유지합니다.'},
                     {label: '프롬프트·LLM 연결', text: '프롬프트 본문은 기존 Call 프롬프트·LLM 프롬프트 탭에서, 모델 연결과 재시도는 외부 LLM 분기에서 설정합니다. OUTFIT은 enhance.txt, DETAIL은 detail.txt, 마스크는 multi_char_mask.txt를 사용합니다.'},
                 ],
             },
@@ -82575,27 +82782,27 @@
                 ],
             },
             {
-                key: 'call2_select', title: 'SELECT 장면 선택',
+                key: 'call2_select', title: 'SLOT-SELECTER 장면 선택',
                 description: 'OUTFIT과 동시에 현재 본문의 장면 수·순서·인물을 선택합니다. 아래 수량은 일반 장면 기준이며, 대표 이미지를 켜면 한 장이 별도로 추가됩니다.',
                 fields: [
-                    {key: 'output_count_min', label: '최소 일반 장면 수', type: 'number', min: 1, max: 30, help: 'SELECT가 선택할 일반 장면 수의 하한입니다. 선택 가능한 본문 슬롯 수가 더 적으면 그 수로 제한됩니다.'},
-                    {key: 'output_count_max', label: '최대 일반 장면 수', type: 'number', min: 1, max: 30, help: 'SELECT가 선택할 일반 장면 수의 상한입니다. PLAN과 DETAIL은 배정된 장면 수를 유지합니다.'},
-                    {key: 'scene_mode', label: '장면 수 결정', type: 'select', help: '두 모드 모두 최소·최대 범위를 적용합니다. 자동 선택은 그 범위 안에서 문맥에 맞는 수량을 고르도록 SELECT에 지시합니다.', options: [{value: 'manual', label: '지정 범위 적용'}, {value: 'auto', label: '범위 안에서 자동 선택'}]},
+                    {key: 'output_count_min', label: '최소 일반 장면 수', type: 'number', min: 1, max: 30, help: 'SLOT-SELECTER가 선택할 일반 장면 수의 하한입니다. 선택 가능한 본문 슬롯 수가 더 적으면 그 수로 제한됩니다.'},
+                    {key: 'output_count_max', label: '최대 일반 장면 수', type: 'number', min: 1, max: 30, help: 'SLOT-SELECTER가 선택할 일반 장면 수의 상한입니다. PLAN과 DETAIL은 배정된 장면 수를 유지합니다.'},
+                    {key: 'scene_mode', label: '장면 수 결정', type: 'select', help: '두 모드 모두 최소·최대 범위를 적용합니다. 자동 선택은 그 범위 안에서 문맥에 맞는 수량을 고르도록 SLOT-SELECTER에 지시합니다.', options: [{value: 'manual', label: '지정 범위 적용'}, {value: 'auto', label: '범위 안에서 자동 선택'}]},
                     {key: 'character_limit', label: '이미지당 최대 캐릭터', type: 'select', help: '한 이미지에 배치할 최대 캐릭터 수입니다. 봇의 활성 이미지 정책도 함께 적용됩니다.', options: [1, 2, 3]},
-                    {key: 'focus', label: '집중 캐릭터', type: 'text', help: 'SELECT가 장면을 선택하고 PLAN 또는 DETAIL이 시각 계획을 만들 때 우선할 캐릭터입니다. 비워 두면 대화 문맥에서 결정합니다.'},
-                    {key: 'direction', label: '우선 연출 지시', type: 'textarea', help: 'SELECT와 PLAN 또는 DETAIL의 구도·동작·접촉 판단에 전달할 연출 지시입니다.', stacked: true},
+                    {key: 'focus', label: '집중 캐릭터', type: 'text', help: 'SLOT-SELECTER가 장면을 선택하고 PLAN 또는 DETAIL이 시각 계획을 만들 때 우선할 캐릭터입니다. 비워 두면 대화 문맥에서 결정합니다.'},
+                    {key: 'direction', label: '우선 연출 지시', type: 'textarea', help: 'SLOT-SELECTER와 PLAN 또는 DETAIL의 구도·동작·접촉 판단에 전달할 연출 지시입니다.', stacked: true},
                 ],
                 callInfo: [
                     {label: '프롬프트', text: 'LLM 프롬프트 탭의 scene_select.txt를 사용합니다.'},
-                    {label: 'LLM과 재시도', text: '외부 LLM 분기의 삽화 CALL2-SELECT에서 설정합니다.'},
+                    {label: 'LLM과 재시도', text: '외부 LLM 분기의 삽화 SLOT-SELECTER에서 설정합니다.'},
                 ],
             },
             {
                 key: 'call2_plan_detail', title: 'PLAN·DETAIL',
-                description: 'PLAN과 DETAIL은 같은 병렬 설정을 사용합니다. PLAN 한 묶음이 완료되면 같은 장면 전체를 DETAIL 한 요청에 바로 전달합니다. PLAN을 꺼도 이 설정으로 SELECT 장면을 DETAIL에 분배합니다.',
+                description: 'PLAN과 DETAIL의 요청 개수를 각각 설정합니다. 개수가 같으면 1:1로 연결하고, 다르면 DETAIL에 배정된 장면을 만드는 PLAN이 모두 완료되는 즉시 실행합니다. PLAN을 끄면 SLOT-SELECTER 장면을 DETAIL 설정으로 분배합니다.',
                 fields: [
-                    {key: 'call2_parallel_enabled', label: 'PLAN·DETAIL 배치 병렬 처리', type: 'toggle', help: '켜면 선택 장면을 같은 수의 PLAN·DETAIL 묶음으로 나눕니다. 끄면 각 단계를 한 묶음으로 처리합니다. PLAN OFF에서도 DETAIL에 적용됩니다.'},
-                    {key: 'call2_parallel_max_concurrency', label: 'PLAN·DETAIL 최대 동시 요청 수', type: 'number', min: 1, max: 16, help: '선택 장면을 이 개수에 균등 분배하고 각 PLAN 묶음을 DETAIL 한 요청에 연결합니다. 장면이 적으면 장면 수만큼 실행합니다. 각 단계와 해당 LLM 연결의 동시 요청 상한을 적용합니다.', dependsOn: ['call2_parallel_enabled']},
+                    {key: 'call2_parallel_enabled', label: 'PLAN 배치 병렬 처리', type: 'toggle', help: '켜면 선택 장면을 여러 PLAN 묶음으로 나눕니다. 끄면 PLAN 한 요청에서 처리합니다.', dependsOn: ['call2_plan_enabled']},
+                    {key: 'call2_parallel_max_concurrency', label: 'PLAN 최대 동시 요청 수', type: 'number', min: 1, max: 16, help: '선택 장면을 이 개수에 균등 분배합니다. 장면이 적으면 장면 수만큼 실행하며 해당 LLM 연결의 동시 요청 상한도 적용합니다.', dependsOn: ['call2_plan_enabled', 'call2_parallel_enabled']},
                     {
                         key: 'call2_parallel_slow_retry_enabled', label: '느리다고? 다시해!', type: 'toggle',
                         help: '일부 PLAN 배치만 뒤처질 때 같은 배치를 한 번 더 요청해 먼저 검증된 결과를 사용합니다.',
@@ -82608,56 +82815,40 @@
                     {key: 'call2_parallel_slow_retry_tps_enabled', label: 'TPS 조건 사용', type: 'toggle', help: '남은 PLAN 배치의 추정 TPS를 복제 판정에 사용합니다.', dependsOn: ['call2_plan_enabled', 'call2_parallel_enabled', 'call2_parallel_slow_retry_enabled'], requiresMin: {key: 'call2_parallel_max_concurrency', value: 2}},
                     {key: 'call2_parallel_slow_retry_tps_threshold', label: 'TPS 기준', type: 'number', min: 0.1, max: 1000, step: 0.1, help: '추정 TPS가 이 값보다 낮으면 조건을 만족합니다.', dependsOn: ['call2_plan_enabled', 'call2_parallel_enabled', 'call2_parallel_slow_retry_enabled', 'call2_parallel_slow_retry_tps_enabled'], requiresMin: {key: 'call2_parallel_max_concurrency', value: 2}},
                     {key: 'call2_parallel_slow_retry_condition_operator', label: '조건 결합 방식', type: 'select', help: 'AND는 켜진 조건을 모두, OR는 하나 이상 만족할 때 복제합니다.', options: [{value: 'and', label: 'AND — 모두 만족'}, {value: 'or', label: 'OR — 하나 이상 만족'}], dependsOn: ['call2_plan_enabled', 'call2_parallel_enabled', 'call2_parallel_slow_retry_enabled'], requiresMin: {key: 'call2_parallel_max_concurrency', value: 2}},
+                    {key: 'call2_detail_parallel_enabled', label: 'DETAIL 배치 병렬 처리', type: 'toggle', help: '켜면 장면을 여러 DETAIL 묶음으로 나눕니다. 끄면 모든 PLAN이 끝난 후 DETAIL 한 요청에서 처리합니다. PLAN OFF에서도 적용됩니다.'},
+                    {key: 'call2_detail_parallel_max_concurrency', label: 'DETAIL 최대 동시 요청 수', type: 'number', min: 1, max: 16, help: '장면을 이 개수에 균등 분배합니다. 각 DETAIL은 자기 장면에 필요한 PLAN만 기다리며, 개수가 같으면 PLAN과 1:1로 연결합니다. 해당 LLM 연결의 동시 요청 상한도 적용합니다.', dependsOn: ['call2_detail_parallel_enabled']},
                     {
                         key: 'call2_detail_parallel_slow_retry_enabled', label: '느리다고? 다시해!', type: 'toggle',
                         help: '일부 DETAIL 배치만 뒤처질 때 같은 배치를 한 번 더 요청해 먼저 검증된 결과를 사용합니다.',
                         tooltip: '설정한 N개 이하의 DETAIL 배치만 남았을 때 진행률/TPS 조건을 평가합니다. 복제 요청도 DETAIL 최대 동시 요청 수를 공유합니다. 배정된 slot·인물이 일치하는 결과를 사용하며 패배 요청은 취소합니다. 마스크 준비와 이미지 등록은 승리 결과로 한 번만 실행합니다. 비스트리밍 LLM은 진행률과 TPS를 0으로 간주하며 중복 호출만큼 비용이 늘 수 있습니다.',
-                        dependsOn: ['call2_parallel_enabled'], requiresMin: {key: 'call2_parallel_max_concurrency', value: 2}, lockToggle: true,
+                        dependsOn: ['call2_detail_parallel_enabled'], requiresMin: {key: 'call2_detail_parallel_max_concurrency', value: 2}, lockToggle: true,
                     },
-                    {key: 'call2_detail_parallel_slow_retry_remaining', label: '재요청할 남은 개수 (N)', type: 'number', min: 1, max: 16, help: '실행 중인 DETAIL 배치가 이 개수 이하로 남았을 때 느린 요청을 검사합니다.', dependsOn: ['call2_parallel_enabled', 'call2_detail_parallel_slow_retry_enabled'], requiresMin: {key: 'call2_parallel_max_concurrency', value: 2}},
-                    {key: 'call2_detail_parallel_slow_retry_progress_enabled', label: '진행률 조건 사용', type: 'toggle', help: '남은 DETAIL 배치의 추정 진행률을 복제 판정에 사용합니다.', dependsOn: ['call2_parallel_enabled', 'call2_detail_parallel_slow_retry_enabled'], requiresMin: {key: 'call2_parallel_max_concurrency', value: 2}},
-                    {key: 'call2_detail_parallel_slow_retry_progress_threshold', label: '진행률 기준 (X%)', type: 'number', min: 1, max: 99, help: '추정 진행률이 이 값보다 낮으면 조건을 만족합니다.', dependsOn: ['call2_parallel_enabled', 'call2_detail_parallel_slow_retry_enabled', 'call2_detail_parallel_slow_retry_progress_enabled'], requiresMin: {key: 'call2_parallel_max_concurrency', value: 2}},
-                    {key: 'call2_detail_parallel_slow_retry_tps_enabled', label: 'TPS 조건 사용', type: 'toggle', help: '남은 DETAIL 배치의 추정 TPS를 복제 판정에 사용합니다.', dependsOn: ['call2_parallel_enabled', 'call2_detail_parallel_slow_retry_enabled'], requiresMin: {key: 'call2_parallel_max_concurrency', value: 2}},
-                    {key: 'call2_detail_parallel_slow_retry_tps_threshold', label: 'TPS 기준', type: 'number', min: 0.1, max: 1000, step: 0.1, help: '추정 TPS가 이 값보다 낮으면 조건을 만족합니다.', dependsOn: ['call2_parallel_enabled', 'call2_detail_parallel_slow_retry_enabled', 'call2_detail_parallel_slow_retry_tps_enabled'], requiresMin: {key: 'call2_parallel_max_concurrency', value: 2}},
-                    {key: 'call2_detail_parallel_slow_retry_condition_operator', label: '조건 결합 방식', type: 'select', help: 'AND는 켜진 조건을 모두, OR는 하나 이상 만족할 때 복제합니다.', options: [{value: 'and', label: 'AND — 모두 만족'}, {value: 'or', label: 'OR — 하나 이상 만족'}], dependsOn: ['call2_parallel_enabled', 'call2_detail_parallel_slow_retry_enabled'], requiresMin: {key: 'call2_parallel_max_concurrency', value: 2}},
+                    {key: 'call2_detail_parallel_slow_retry_remaining', label: '재요청할 남은 개수 (N)', type: 'number', min: 1, max: 16, help: '실행 중인 DETAIL 배치가 이 개수 이하로 남았을 때 느린 요청을 검사합니다.', dependsOn: ['call2_detail_parallel_enabled', 'call2_detail_parallel_slow_retry_enabled'], requiresMin: {key: 'call2_detail_parallel_max_concurrency', value: 2}},
+                    {key: 'call2_detail_parallel_slow_retry_progress_enabled', label: '진행률 조건 사용', type: 'toggle', help: '남은 DETAIL 배치의 추정 진행률을 복제 판정에 사용합니다.', dependsOn: ['call2_detail_parallel_enabled', 'call2_detail_parallel_slow_retry_enabled'], requiresMin: {key: 'call2_detail_parallel_max_concurrency', value: 2}},
+                    {key: 'call2_detail_parallel_slow_retry_progress_threshold', label: '진행률 기준 (X%)', type: 'number', min: 1, max: 99, help: '추정 진행률이 이 값보다 낮으면 조건을 만족합니다.', dependsOn: ['call2_detail_parallel_enabled', 'call2_detail_parallel_slow_retry_enabled', 'call2_detail_parallel_slow_retry_progress_enabled'], requiresMin: {key: 'call2_detail_parallel_max_concurrency', value: 2}},
+                    {key: 'call2_detail_parallel_slow_retry_tps_enabled', label: 'TPS 조건 사용', type: 'toggle', help: '남은 DETAIL 배치의 추정 TPS를 복제 판정에 사용합니다.', dependsOn: ['call2_detail_parallel_enabled', 'call2_detail_parallel_slow_retry_enabled'], requiresMin: {key: 'call2_detail_parallel_max_concurrency', value: 2}},
+                    {key: 'call2_detail_parallel_slow_retry_tps_threshold', label: 'TPS 기준', type: 'number', min: 0.1, max: 1000, step: 0.1, help: '추정 TPS가 이 값보다 낮으면 조건을 만족합니다.', dependsOn: ['call2_detail_parallel_enabled', 'call2_detail_parallel_slow_retry_tps_enabled', 'call2_detail_parallel_slow_retry_enabled'], requiresMin: {key: 'call2_detail_parallel_max_concurrency', value: 2}},
+                    {key: 'call2_detail_parallel_slow_retry_condition_operator', label: '조건 결합 방식', type: 'select', help: 'AND는 켜진 조건을 모두, OR는 하나 이상 만족할 때 복제합니다.', options: [{value: 'and', label: 'AND — 모두 만족'}, {value: 'or', label: 'OR — 하나 이상 만족'}], dependsOn: ['call2_detail_parallel_enabled', 'call2_detail_parallel_slow_retry_enabled'], requiresMin: {key: 'call2_detail_parallel_max_concurrency', value: 2}},
                 ],
                 callInfo: [
-                    {label: '대표 이미지', text: 'KEYVIS는 독립 호출하며 DETAIL과 함께 실행됩니다.'},
+                    {label: '대표 이미지', text: '파이프라인의 KEYVIS 묶음에서 DETAIL 통합 예측 또는 별도 LLM 예측을 선택합니다.'},
                     {label: '프롬프트', text: 'LLM 프롬프트 탭의 plan.txt와 detail.txt를 사용합니다. NSFW 태깅은 파이프라인 탭에서 설정합니다.'},
-                    {label: 'LLM과 재시도', text: '외부 LLM 분기의 삽화 CALL2-PLAN과 CALL2-DETAIL 연결은 각각 설정합니다. 느린 배치 재요청 조건도 단계별로 관리합니다.'},
+                    {label: 'LLM과 재시도', text: '외부 LLM 분기의 삽화 CALL2-PLAN과 DETAIL 연결은 각각 설정합니다. 느린 배치 재요청 조건도 단계별로 관리합니다.'},
                 ],
             },
             {
-                key: 'keyvis', title: 'KEYVIS 대표 이미지',
-                description: '활성 상태 추적과 SELECT 완료 후 DETAIL과 함께 독립 대표 이미지를 생성합니다. 일반 장면 수에 한 장을 추가하며 CALL3 대사 대상에는 포함하지 않습니다.',
+                key: 'call3', title: 'POST PROCESS',
+                description: '장면 대사 생성과 봇별 대사창·말풍선·자막 합성을 설정합니다. 이미지 합성 실행 여부는 파이프라인의 POST PROCESS 토글에서 설정합니다.',
                 fields: [
-                    {key: 'key_visual', label: '대표 이미지 생성', type: 'toggle', help: '현재 이야기에서 대표 장면 한 장을 독립적으로 선택·묘사합니다.'},
-                    {key: 'minimal_background_description', label: '대표 이미지 배경 묘사 최소화', type: 'toggle', help: 'KEYVIS의 배경을 가장 작은 이야기 근거로 제한합니다. 일반 장면의 배경은 PLAN·DETAIL의 장면 설명에 따릅니다.', dependsOn: ['key_visual']},
-                ],
-                callInfo: [
-                    {label: '프롬프트', text: 'LLM 프롬프트 탭의 keyvisual.txt와 system.txt를 사용합니다.'},
-                    {label: 'LLM과 재시도', text: '외부 LLM 분기의 삽화 CALL2-KEYVIS에서 별도로 설정합니다.'},
-                ],
-            },
-            {
-                key: 'call3', title: 'CALL3 대사',
-                description: 'CALL2가 선택한 장면에 대해 CALL3가 생성할 대사 형식과 언어를 설정합니다.',
-                fields: [
-                    {key: 'speak_enabled', label: '장면 대사 생성', type: 'toggle', help: 'CALL3가 일반 장면의 대사를 생성합니다. Speak·말풍선·자막에 공통 적용되며 대표 이미지는 대사 대상에서 제외합니다.'},
-                    {
-                        key: 'call3_prompt_mode', label: 'CALL3 대사 프롬프트', type: 'select',
-                        help: '후처리 설정(대사=Speak / 말풍선=Manga / 자막=Subtitle)에 따라 자동 지정됩니다. 나머지 항목은 회색으로 선택 불가.',
-                        options: [{value: 'speak', label: 'Speak'}, {value: 'manga', label: 'Manga'}, {value: 'subtitle', label: 'Subtitle'}],
-                        dependsOn: ['speak_enabled'],
-                    },
-                    {key: 'speak_language', label: '대사 언어', type: 'select', help: 'CALL3가 생성할 장면 대사의 언어를 선택합니다.', options: ['한국어', '영어', '일어', '중어'], dependsOn: ['speak_enabled']},
+                    {key: 'speak_enabled', label: '장면 대사 생성', type: 'toggle', help: 'POST PROCESS가 일반 장면의 대사를 생성합니다. Speak·말풍선·자막에 공통 적용되며 대표 이미지는 대사 대상에서 제외합니다.'},
+                    {key: 'speak_language', label: '대사 언어', type: 'select', help: 'POST PROCESS가 생성할 장면 대사의 언어를 선택합니다.', options: ['한국어', '영어', '일어', '중어'], dependsOn: ['speak_enabled']},
                     {key: 'speak_emotion_enabled', label: 'SPEAK 감정 태그', type: 'toggle', help: 'Speak 모드에서 대사에 감정 태그를 덧붙입니다.', dependsOn: ['speak_enabled']},
                     {key: 'speak_emotions', label: '허용 감정', type: 'text', help: 'Speak 감정 태그를 켰을 때 사용할 감정 이름을 세미콜론(;)으로 구분해 입력합니다.', placeholder: '기쁨; 분노; 당황; 슬픔', dependsOn: ['speak_enabled', 'speak_emotion_enabled']},
                 ],
             },
             {
                 key: 'output', title: '최종 프롬프트',
-                description: 'CALL2/CALL3 결과를 이미지 생성용 RAW 프롬프트로 조립하는 방식을 설정합니다.',
+                description: 'CALL2/POST PROCESS 결과를 이미지 생성용 RAW 프롬프트로 조립하는 방식을 설정합니다.',
                 fields: [
                     {
                         key: 'prompt_format', label: '프롬프트 입력 형식', type: 'select', stacked: true,
@@ -82763,19 +82954,54 @@
                     <div class="illust-call-stage-note-text">${escapeHtml(item.text)}</div>
                 </div>`).join('');
             let content = group.fields.map(field => _renderIllustrationContextField(field)).join('');
+            if (group.key === 'pipeline') {
+                const fieldsets = [
+                    ['KEYVIS', ['key_visual', 'keyvis_in_detail_enabled', 'minimal_background_description']],
+                    ['MULTI-CHAR-MASK', ['multi_char_mask_enabled', 'multi_char_mask_inline_enabled', 'single_char_mask_enabled']],
+                ];
+                content = group.fields.filter(field => !fieldsets.some(([, keys]) => keys.includes(field.key)))
+                    .map(field => _renderIllustrationContextField(field)).join('') + fieldsets.map(([title, keys]) => `
+                    <fieldset class="illust-settings-fieldset">
+                        <legend>${title}</legend>
+                        ${_renderIllustrationContextField(group.fields.find(field => field.key === keys[0]))}
+                        <div class="illust-settings-dependent" aria-label="${title} 세부 설정">
+                            ${group.fields.filter(field => keys.slice(1).includes(field.key))
+                                .map(field => _renderIllustrationContextField(field)).join('')}
+                        </div>
+                    </fieldset>`).join('');
+                const postprocessEnabled = Boolean(currentConfig.postprocess_enabled);
+                content += `
+                    <div class="illust-setting-row">
+                        <label class="illust-setting-copy" for="postprocess-toggle">
+                            <span class="illust-setting-label">POST PROCESS</span>
+                            <span class="illust-setting-help">이미지에 대사창·말풍선·자막을 합성합니다. 대사 생성과 봇별 합성 방식·미리보기는 POST PROCESS에서 설정합니다.</span>
+                        </label>
+                        <div class="illust-setting-control illust-setting-toggle-control">
+                            <label class="toggle-switch sm" aria-label="POST PROCESS">
+                                <input type="checkbox" id="postprocess-toggle" ${postprocessEnabled ? 'checked' : ''} onchange="onPostprocessToggle()">
+                                <span class="toggle-slider"></span>
+                            </label>
+                            <span id="postprocess-status" class="illust-setting-state${postprocessEnabled ? ' on' : ''}">${postprocessEnabled ? 'ON' : 'OFF'}</span>
+                        </div>
+                    </div>`;
+            }
             if (group.key === 'call3') {
                 content = `
                     ${_renderIllustrationContextField(group.fields[0])}
                     <div class="illust-settings-dependent" aria-label="장면별 대사 생성 세부 옵션">
                         ${group.fields.slice(1).map(field => _renderIllustrationContextField(field)).join('')}
-                    </div>`;
+                    </div>
+                    <div id="illust-postprocess-host"></div>`;
             }
             if (group.key === 'call2_plan_detail') {
                 content = `
-                    ${group.fields.slice(0, 2).map(field => _renderIllustrationContextField(field)).join('')}
                     ${['PLAN', 'DETAIL'].map(stageLabel => {
-                        const prefix = stageLabel === 'PLAN' ? 'call2_parallel_slow_retry_' : 'call2_detail_parallel_slow_retry_';
-                        return `<h4 class="illust-settings-subheading">${stageLabel} 느린 배치 재요청</h4>
+                        const batchPrefix = stageLabel === 'PLAN' ? 'call2_parallel' : 'call2_detail_parallel';
+                        const prefix = batchPrefix + '_slow_retry_';
+                        return `${group.fields.filter(field =>
+                            field.key === batchPrefix + '_enabled' || field.key === batchPrefix + '_max_concurrency')
+                            .map(field => _renderIllustrationContextField(field)).join('')}
+                            <h4 class="illust-settings-subheading">${stageLabel} 느린 배치 재요청</h4>
                             <div class="illust-settings-dependent" aria-label="${stageLabel} 느린 배치 재요청 세부 옵션">
                                 ${group.fields.filter(field => field.key.startsWith(prefix)).map(field => _renderIllustrationContextField(field)).join('')}
                             </div>`;
@@ -82815,7 +83041,9 @@
             }
             const toggles = {..._illustrationContextToggles};
             body.querySelectorAll('[data-illust-toggle]').forEach(control => {
-                toggles[control.dataset.illustToggle] = control.type === 'checkbox' ? control.checked : control.value;
+                const field = ILLUSTRATION_CONTEXT_TOGGLE_FIELDS.find(field => field.key === control.dataset.illustToggle);
+                const option = field?.options?.find(option => typeof option === 'object' && String(option.value) === control.value);
+                toggles[control.dataset.illustToggle] = control.type === 'checkbox' ? control.checked : (option?.value ?? control.value);
             });
             const scenario = {};
             flowBody.querySelectorAll('[data-illust-preview-scenario]').forEach(control => {
@@ -82861,9 +83089,12 @@
                 console.error('[ILLUST_CONTEXT] 활성 생성 설정 카테고리를 찾지 못해 첫 카테고리로 복구합니다:', _illustrationSettingsActiveGroup);
                 _illustrationSettingsActiveGroup = ILLUSTRATION_CONTEXT_TOGGLE_GROUPS[0].key;
             }
+            // 편집 중인 봇별 설정과 미리보기 DOM은 다시 렌더링해도 보존한다.
+            const postprocess = document.getElementById('postprocess-modal');
+            if (postprocess) postprocess.remove();
             body.innerHTML = `
                 <div class="illust-settings-info">
-                    값을 변경하면 자동으로 저장됩니다.
+                    대사 생성과 파이프라인 옵션은 값을 변경하면 자동으로 저장됩니다.
                     기능을 끄면 관련 세부 옵션만 비활성화됩니다. 설정은 언제든 다시 켤 수 있습니다.
                 </div>
                 <div class="illust-settings-layout">
@@ -82889,6 +83120,11 @@
                         }).join('')}
                     </div>
                 </div>`;
+            const postprocessHost = document.getElementById('illust-postprocess-host');
+            if (postprocess && postprocessHost) {
+                postprocessHost.append(postprocess);
+                postprocess.hidden = false;
+            }
             flowBody.innerHTML = `
                 <section class="illust-flow-preview" aria-labelledby="illust-node-preview-title">
                     <header class="illust-flow-preview-header">
@@ -82919,6 +83155,12 @@
                 body.dataset.illustDirtyListenerBound = 'true';
             }
             updateIllustrationContextOptionLocks();
+            if (_illustrationSettingsActiveGroup === 'call3' && !ppWorking) {
+                openPostprocessModal().catch(error => {
+                    console.error('[POSTPROCESS] 합성 편집기 로드 실패:', error);
+                    showToast('합성 설정을 불러오지 못했습니다: ' + (error.message || error), 'error');
+                });
+            }
         }
 
         function switchIllustrationSettingsCategory(groupKey) {
@@ -82940,6 +83182,12 @@
                 panel.setAttribute('aria-hidden', String(!active));
             });
             renderIllustrationNodePreview();
+            if (groupKey === 'call3' && !ppWorking) {
+                openPostprocessModal().catch(error => {
+                    console.error('[POSTPROCESS] 합성 편집기 로드 실패:', error);
+                    showToast('합성 설정을 불러오지 못했습니다: ' + (error.message || error), 'error');
+                });
+            }
         }
 
         function setIllustrationContextStatus(message, state = '') {
@@ -82981,14 +83229,15 @@
         function onIllustrationContextToggleChange(input) {
             const key = input?.dataset?.illustToggle;
             if (!key) {
-                console.error('[ILLUST_CONTEXT] 변경된 슬라이드의 설정 키가 없습니다.', input);
+                console.error('[ILLUST_CONTEXT] 변경된 컨트롤의 설정 키가 없습니다.', input);
                 return;
             }
-            _illustrationContextToggles[key] = input.checked;
+            const value = input.type === 'checkbox' ? input.checked : input.value === 'true';
+            _illustrationContextToggles[key] = value;
             const state = document.getElementById('illust-toggle-state-' + key);
             if (state) {
-                state.textContent = input.checked ? 'ON' : 'OFF';
-                state.classList.toggle('on', input.checked);
+                state.textContent = value ? 'ON' : 'OFF';
+                state.classList.toggle('on', value);
             }
             updateIllustrationContextOptionLocks();
         }
@@ -83059,20 +83308,14 @@
             if (typeof updateBotModeStatus === 'function') updateBotModeStatus(true);
         }
 
-        // call3_prompt_mode 셀렉트를 후처리 활성 모드에 맞춰 잠근다.
-        // 후처리 bubble → manga, subtitle → subtitle, vn → speak.
-        // 매칭하지 않는 옵션은 disabled(회색) 처리하고 값을 강제한다.
-        // 서버도 생성 시 같은 규칙으로 덮어쓰므로 여기서 값이 틀려도 결과는 안전.
+        // 봇의 합성 방식으로 대사 프롬프트를 정한다. 별도의 형식 선택은 표시하지 않는다.
+        // bubble → manga, subtitle → subtitle, vn → speak.
         function _applyCall3PromptModeLock() {
             const target = {
                 bubble: 'manga',
                 subtitle: 'subtitle',
             }[_postprocessActiveMode] || 'speak';
-            const select = document.querySelector('[data-illust-toggle="call3_prompt_mode"]');
             _illustrationContextToggles.call3_prompt_mode = target;
-            if (!select) return;  // 대사 카테고리가 아직 렌더되지 않았을 수 있음
-            Array.from(select.options).forEach(opt => { opt.disabled = (opt.value !== target); });
-            if (select.value !== target) select.value = target;
             document.querySelectorAll('[data-illust-toggle="speak_emotion_enabled"], [data-illust-toggle="speak_emotions"]').forEach(control => {
                 control.closest('.illust-setting-row')?.classList.toggle('is-hidden', target !== 'speak');
             });
@@ -83111,7 +83354,7 @@
                 renderIllustrationContextToggles();
                 _illustrationSettingsDirty = false;
                 setIllustrationContextStatus('자동 저장 켜짐');
-                // 현재 봇의 후처리 모드를 반영해 CALL3 대사 프롬프트 잠금을 맞춘다.
+                // 현재 봇의 후처리 모드를 반영해 POST PROCESS 대사 프롬프트 잠금을 맞춘다.
                 refreshPostprocessActiveMode();
             } catch (e) {
                 console.error('[ILLUST_CONTEXT] 토글 로드 실패:', e);
@@ -83142,17 +83385,16 @@
             delete body.profile_resolve_enabled;
             delete body.call3_enabled;
             delete body.compat_character_divider;
-            delete body.call2_detail_parallel_enabled;
-            delete body.call2_detail_parallel_max_concurrency;
             for (const field of ILLUSTRATION_CONTEXT_TOGGLE_FIELDS) {
                 const el = document.querySelector(`[data-illust-toggle="${field.key}"]`);
                 if (!el) {
                     console.error('[ILLUST_CONTEXT] 저장할 설정 컨트롤을 찾지 못함:', field.key);
                     continue;
                 }
+                const option = field.options?.find(option => typeof option === 'object' && String(option.value) === el.value);
                 body[field.key] = field.type === 'toggle'
                     ? el.checked
-                    : (field.type === 'number' ? Number(el.value) : el.value);
+                    : (field.type === 'number' ? Number(el.value) : (option?.value ?? el.value));
             }
             setIllustrationContextStatus('저장 중...');
             setIllustrationContextSaving(true);
@@ -83281,7 +83523,7 @@
                 _illustLogAllLogs = res?.logs || [];
                 _illustLogPage = 0;
                 if (_illustLogAllLogs.length === 0) {
-                    body.innerHTML = '<div style="text-align:center; padding:20px; color:var(--text2);">로그가 없습니다. 삽화 모드에서 프롬프트를 전송하면 로그가 기록됩니다.</div>';
+                    body.innerHTML = '<div style="text-align:center; padding:20px; color:var(--text2);">로그가 없습니다. 삽화용 봇 설정에서 프롬프트를 전송하면 로그가 기록됩니다.</div>';
                     document.getElementById('illust-log-page-info').textContent = '';
                     document.getElementById('illust-log-prev').disabled = true;
                     document.getElementById('illust-log-next').disabled = true;
@@ -83386,7 +83628,7 @@
                         <details style="margin-top:9px; color:var(--text2); font-size:0.72rem; line-height:1.55;">
                             <summary style="cursor:pointer; user-select:none; color:var(--text); font-weight:600;">규칙 유형과 작동 방식</summary>
                             <div style="margin-top:7px; padding:9px 11px; background:var(--surface2); border-radius:7px;">
-                                삽화 모드 프롬프트의 태그를 규칙에 따라 다룹니다. <strong>치환</strong>은 지정한 단어를 다른 단어로 바꿉니다(대소문자 무관 부분 매칭). <strong>제거</strong>는 trigger 단어가 감지되면 패턴(* = 임의 문자열)에 매칭되는 태그를 제거합니다. <strong>가중치 조정</strong>은 쉼표 단위로 정확히 일치하는 태그의 가중치를 변경하거나 제거합니다. <strong>삽입</strong>은 지정한 단어가 최종 프롬프트에 없으면 품질 태그 바로 뒤에 삽입합니다. <strong>캐릭터 찾기</strong>는 이미지 태그 이름을 선택한 캐릭터 카드로 인식하되 원래 프롬프트 태그는 바꾸지 않습니다. <strong>캐릭터 눈/얼굴 제거·치환</strong>은 trigger가 감지되면 감지 캐릭터의 eye_tags/face_tags를 빌드 시점에 변경하며 bot.json은 수정하지 않습니다. <strong>캐릭터 1인 감지 시만</strong>은 정확히 한 명이 감지된 장면에서만 해당 규칙을 실행합니다. 0명 또는 2명 이상이면 건너뜁니다.
+                                삽화용 봇 설정 프롬프트의 태그를 규칙에 따라 다룹니다. <strong>치환</strong>은 지정한 단어를 다른 단어로 바꿉니다(대소문자 무관 부분 매칭). <strong>제거</strong>는 trigger 단어가 감지되면 패턴(* = 임의 문자열)에 매칭되는 태그를 제거합니다. <strong>가중치 조정</strong>은 쉼표 단위로 정확히 일치하는 태그의 가중치를 변경하거나 제거합니다. <strong>삽입</strong>은 지정한 단어가 최종 프롬프트에 없으면 품질 태그 바로 뒤에 삽입합니다. <strong>캐릭터 찾기</strong>는 이미지 태그 이름을 선택한 캐릭터 카드로 인식하되 원래 프롬프트 태그는 바꾸지 않습니다. <strong>캐릭터 눈/얼굴 제거·치환</strong>은 trigger가 감지되면 감지 캐릭터의 eye_tags/face_tags를 빌드 시점에 변경하며 bot.json은 수정하지 않습니다. <strong>캐릭터 1인 감지 시만</strong>은 정확히 한 명이 감지된 장면에서만 해당 규칙을 실행합니다. 0명 또는 2명 이상이면 건너뜁니다.
                             </div>
                         </details>
                         <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:12px; padding-bottom:10px;">

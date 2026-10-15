@@ -182,6 +182,8 @@ DEFAULT_TOGGLES = {
     "call2_parallel_slow_retry_tps_enabled": False,
     "call2_parallel_slow_retry_tps_threshold": 5.0,
     "call2_parallel_slow_retry_condition_operator": "and",
+    "call2_detail_parallel_enabled": True,
+    "call2_detail_parallel_max_concurrency": 3,
     "call2_detail_parallel_slow_retry_enabled": False,
     "call2_detail_parallel_slow_retry_remaining": 1,
     "call2_detail_parallel_slow_retry_progress_enabled": True,
@@ -191,6 +193,7 @@ DEFAULT_TOGGLES = {
     "call2_detail_parallel_slow_retry_condition_operator": "and",
     "call3_context_turns": 5,
     "multi_char_mask_enabled": True,
+    "multi_char_mask_inline_enabled": False,
     "single_char_mask_enabled": True,
     "speak_enabled": True,
     "call3_prompt_mode": "speak",
@@ -200,6 +203,7 @@ DEFAULT_TOGGLES = {
     "nsfw": False,
     "supplement": True,
     "key_visual": True,
+    "keyvis_in_detail_enabled": False,
     "minimal_background_description": True,
     "character_limit": 3,
     # scene_mode: 두 모드 모두 output_count_min/max를 강제한다. "auto"는 그 범위
@@ -380,17 +384,14 @@ def merged_toggles(value: dict | None) -> dict:
         for key in out:
             if key in value:
                 out[key] = value[key]
-        # One batch count governs PLAN and DETAIL. Accept the former DETAIL
-        # controls only when their shared counterpart was never saved.
+        # Existing shared settings keep their effective DETAIL batch count until
+        # an independent DETAIL value is saved. Never overwrite an explicit value.
         for suffix in ("enabled", "max_concurrency"):
             shared_key = f"call2_parallel_{suffix}"
-            retired_key = f"call2_detail_parallel_{suffix}"
-            if retired_key in value:
-                if shared_key not in value:
-                    out[shared_key] = value[retired_key]
-                    print(f"[ILLUST_CONTEXT:CALL2] 기존 DETAIL 설정 통합: {shared_key}={out[shared_key]!r}")
-                else:
-                    print(f"[ILLUST_CONTEXT:CALL2] 별도 DETAIL 설정 제외: {retired_key}={value[retired_key]!r}; {shared_key}={out[shared_key]!r} 사용")
+            detail_key = f"call2_detail_parallel_{suffix}"
+            if detail_key not in value and shared_key in value:
+                out[detail_key] = value[shared_key]
+                print(f"[ILLUST_CONTEXT:CALL2] 기존 공통 설정을 DETAIL 초기값으로 유지: {detail_key}={out[detail_key]!r}")
         # Older retired switches do not override the independent stage options.
         for key in ("call1_enabled", "profile_resolve_enabled"):
             if key in value:
@@ -427,7 +428,8 @@ def merged_toggles(value: dict | None) -> dict:
                     f"{legacy_preset!r}, V3로 전환"
                 )
                 out["prompt_format"] = "v3"
-    for key in ("outfit_enabled", "time_place_enabled", "call2_plan_enabled", "call2_parallel_enabled"):
+    for key in ("outfit_enabled", "time_place_enabled", "call2_plan_enabled", "call2_parallel_enabled",
+                "call2_detail_parallel_enabled", "multi_char_mask_inline_enabled", "keyvis_in_detail_enabled"):
         out[key] = _bool(out[key])
     prompt_format = str(out.get("prompt_format") or "").strip().lower()
     if prompt_format not in ("v1", "v3", "chansub"):
@@ -534,6 +536,13 @@ def merged_toggles(value: dict | None) -> dict:
             "output_count_max": DEFAULT_TOGGLES["output_count_max"],
             "original_asset_count": DEFAULT_TOGGLES["original_asset_count"],
         })
+    try:
+        out["call2_detail_parallel_max_concurrency"] = max(
+            1, min(16, int(out["call2_detail_parallel_max_concurrency"])))
+    except (TypeError, ValueError, OverflowError) as e:
+        print(f"[ILLUST_CONTEXT:DETAIL] 병렬 개수 보정 실패: value={out['call2_detail_parallel_max_concurrency']!r}, error={e}")
+        traceback.print_exc()
+        out["call2_detail_parallel_max_concurrency"] = DEFAULT_TOGGLES["call2_detail_parallel_max_concurrency"]
     for suffix, cast, minimum, maximum in (
         ("remaining", int, 1, 16),
         ("progress_threshold", int, 1, 99),
@@ -5741,7 +5750,7 @@ def _extract_lb_block(text: str) -> str:
 
 
 def _normalize_toon(text: str) -> str:
-    text = re.sub(r"\b(scenes|characters)\[\d+\]:", r"\1:", text)
+    text = re.sub(r"\b(scenes|characters|regions)\[\d+\]:", r"\1:", text)
     text = text.replace("\t", "  ")
 
     # CALL2/CALL3 commonly emit TOON string fields as unquoted YAML scalars.
@@ -5754,12 +5763,15 @@ def _normalize_toon(text: str) -> str:
         "camera", "positive", "negative", "name", "position",
         "scene", "supplement", "speak", "scene_brief",
         "outfit", "hair", "time", "place",
+        "background_prompt", "composition_prompt", "character_prompt",
     }
     scalar_line = re.compile(
         r"^(\s*(?:-\s+)?)([A-Za-z_][\w-]*):(\s*)(.*)$"
     )
     normalized_lines = []
     block_indent = None
+    table_columns = None
+    table_indent = 0
     for line in text.splitlines():
         if block_indent is not None:
             indent = len(line) - len(line.lstrip())
@@ -5767,6 +5779,31 @@ def _normalize_toon(text: str) -> str:
                 normalized_lines.append(line)
                 continue
             block_indent = None
+        table_header = re.fullmatch(r'([ ]*)([A-Za-z_][\w-]*)\[\d+\]\{([^{}]+)\}:[ ]*', line)
+        if table_header:
+            table_indent = len(table_header.group(1))
+            table_columns = [column.strip() for column in table_header.group(3).split(',')]
+            normalized_lines.append(f"{table_header.group(1)}{table_header.group(2)}:")
+            continue
+        if table_columns is not None and line.strip():
+            indent = len(line) - len(line.lstrip())
+            if indent > table_indent:
+                # TOON rows are comma-separated scalar cells. Preserve quoted
+                # commas and JSON escapes, and bind each cell to its own key.
+                cells = re.findall(r'(?:^|,)[ \t]*("(?:[^"\\]|\\.)*"|[^,\r\n]*)', line.lstrip())
+                if len(cells) == len(table_columns):
+                    for index, (column, cell) in enumerate(zip(table_columns, cells)):
+                        cell = cell.strip()
+                        value = (json.loads(cell) if cell.startswith('"')
+                                 or cell in {"true", "false", "null"}
+                                 or re.fullmatch(r'-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?', cell)
+                                 else cell)
+                        prefix = " " * indent + ("- " if index == 0 else "  ")
+                        normalized_lines.append(f"{prefix}{column}: {json.dumps(value, ensure_ascii=False)}")
+                    continue
+                print(f"[ILLUST_CONTEXT:PARSE] TOON 행 필드 매핑 불가, 원문 보존: columns={table_columns!r}, input={line!r}")
+            else:
+                table_columns = None
         match = scalar_line.match(line)
         if not match or match.group(2) not in text_fields:
             normalized_lines.append(line)
@@ -5871,8 +5908,11 @@ def _parse_call2_keyvis_output(
     toggles: dict,
     allowed_character_names: list[str],
     source: str,
+    *,
+    mask_inline: bool = False,
+    allow_scenes: bool = False,
 ) -> tuple[dict | None, str]:
-    """Validate the independent KEYVIS worker's one-object contract."""
+    """Read one KEYVIS, optionally alongside a DETAIL batch's scenes."""
     local_toggles = deepcopy(toggles)
     local_toggles.update({
         "key_visual": True,
@@ -5880,7 +5920,36 @@ def _parse_call2_keyvis_output(
         # can reject the KEYVIS response whenever any scene was emitted.
         "scene_mode": "auto",
     })
-    descriptors = parse_toon_plan(text, local_toggles, source)
+    if mask_inline:
+        from modes import illustration_scene_pipeline
+        raw = _json_object_from_text(text)
+        if not isinstance(raw, dict) or not isinstance(raw.get("keyvis"), dict):
+            reason = "자체 마스크 KEYVIS 응답에 keyvis object가 없습니다"
+            print(f"[ILLUST_CONTEXT:{source}] {reason}: input={text!r}")
+            return None, reason
+        if raw.get("scenes") and not allow_scenes:
+            reason = "KEYVIS 전용 응답에 scenes가 포함됨"
+            print(f"[ILLUST_CONTEXT:{source}] {reason}: input={raw!r}")
+            return None, reason
+        try:
+            descriptor = illustration_scene_pipeline._parse_detail_scene(
+                {**raw["keyvis"], "slot": -1}, {"slot": -1},
+                mask_inline=True,
+                single_char_mask_enabled=bool(toggles.get("single_char_mask_enabled", True)),
+            )
+            descriptor["kind"] = "keyvis"
+            descriptors = [descriptor]
+        except (ValueError, TypeError) as exc:
+            print(f"[ILLUST_CONTEXT:{source}] 자체 마스크 KEYVIS 파싱 실패: input={raw!r}, error={exc}")
+            traceback.print_exc()
+            return None, str(exc)
+    elif allow_scenes:
+        # Preserve a usable Key Visual even when an ordinary scene is malformed.
+        raw = _json_object_from_text(text)
+        descriptors = ([_descriptor(raw["keyvis"], "keyvis", -1)]
+                       if isinstance(raw, dict) and isinstance(raw.get("keyvis"), dict) else [])
+    else:
+        descriptors = parse_toon_plan(text, local_toggles, source)
     keyvis = [
         item for item in descriptors
         if str(item.get("kind") or "") == "keyvis"
@@ -5896,7 +5965,7 @@ def _parse_call2_keyvis_output(
 
     if len(keyvis) != 1:
         return fail(f"keyvis 수 불일치: expected=1, actual={len(keyvis)}")
-    if scenes:
+    if scenes and not allow_scenes:
         return fail(
             "KEYVIS 전용 응답에 scene이 포함됨: "
             f"slots={[item.get('slot') for item in scenes]}"
@@ -5908,11 +5977,11 @@ def _parse_call2_keyvis_output(
         if isinstance(item, dict)
     ]
     if not str(descriptor.get("camera") or "").strip():
-        return fail("camera가 비어 있음")
+        return fail("background_prompt가 비어 있음" if mask_inline else "camera가 비어 있음")
     if not str(descriptor.get("scene") or "").strip():
-        return fail("scene이 비어 있음")
+        return fail("composition_prompt가 비어 있음" if mask_inline else "scene이 비어 있음")
     if not characters:
-        return fail("characters가 비어 있음")
+        return fail("regions가 비어 있음" if mask_inline else "characters가 비어 있음")
     character_limit = max(1, min(3, int(toggles.get("character_limit", 3))))
     if len(characters) > character_limit:
         return fail(
@@ -5925,9 +5994,10 @@ def _parse_call2_keyvis_output(
         name = str(character.get("name") or "").strip()
         positive = str(character.get("positive") or "").strip()
         if not name:
-            return fail(f"characters[{index}].name이 비어 있음")
+            return fail(f"{'regions' if mask_inline else 'characters'}[{index}].name이 비어 있음")
         if not positive:
-            return fail(f"characters[{index}].positive가 비어 있음")
+            return fail(f"regions[{index}].character_prompt가 비어 있음" if mask_inline
+                        else f"characters[{index}].positive가 비어 있음")
         if name.casefold() in {value.casefold() for value in actual_names}:
             return fail(f"캐릭터 이름이 중복됨: name={name!r}")
         actual_names.append(name)
@@ -6011,6 +6081,7 @@ async def _run_call2_keyvis(
     allowed_character_names: list[str],
     toggles: dict,
     stream_notify,
+    mask_inline: bool = False,
 ) -> tuple[dict, str]:
     """Generate a promotional composition using supplied shared wardrobe continuity."""
     messages = deepcopy(call2_context_messages)
@@ -6026,7 +6097,8 @@ async def _run_call2_keyvis(
         )
     roster_text = json.dumps(allowed, ensure_ascii=False)
     messages.append(prompt_builders.keyvis_task_message(
-        max(1, min(3, int(toggles.get("character_limit", 3)))), roster_text, allowed))
+        max(1, min(3, int(toggles.get("character_limit", 3)))), roster_text, allowed,
+        mask_inline=mask_inline))
     try:
         print(
             "[ILLUST_CONTEXT:CALL2_KEYVIS] 독립 입력 준비: "
@@ -6044,6 +6116,7 @@ async def _run_call2_keyvis(
             toggles,
             allowed,
             "CALL2-KEYVIS-RETRY-CHECK",
+            mask_inline=mask_inline,
         )
         return bool(descriptor), reason or "CALL2-KEYVIS 검증 실패"
 
@@ -6058,6 +6131,7 @@ async def _run_call2_keyvis(
         toggles,
         allowed,
         "CALL2-KEYVIS",
+        mask_inline=mask_inline,
     )
     if descriptor is None:
         print(
@@ -6929,13 +7003,13 @@ _CALL_QUEUE_SUBTASK_GROUPS = {
         "프로필 영어 컨텍스트 번역",
     ),
     "CALL2": ("call2", "CALL2 장면/태그 빌드"),
-    "CALL2-SELECT": ("call2_select", "CALL2 장면 선택"),
+    "CALL2-SELECT": ("call2_select", "SLOT-SELECTER 장면 선택"),
     "CALL2-PLAN": ("call2_plan", "CALL2 장면 PLAN"),
-    "CALL2-DETAIL": ("call2_detail", "CALL2 장면 DETAIL"),
-    "CALL2-KEYVIS": ("call2_keyvis", "CALL2 Key Visual"),
+    "CALL2-DETAIL": ("call2_detail", "DETAIL 장면 묘사"),
+    "CALL2-KEYVIS": ("call2_keyvis", "KEYVIS 대표 이미지"),
     "CALL2-FALLBACK": ("call2", "CALL2 폴백"),
-    "CALL3": ("call3", "CALL3 대사 빌드"),
-    "CALL3-CORRECTION": ("call3_correction", "CALL3 슬롯/언어 교정"),
+    "CALL3": ("call3", "POST PROCESS 대사 빌드"),
+    "CALL3-CORRECTION": ("call3_correction", "POST PROCESS 슬롯/언어 교정"),
 }
 
 
@@ -7567,12 +7641,17 @@ class ParallelPipelineJobsError(RuntimeError):
         self.failures = dict(failures)
 
 
-def _detail_batches_for_plan_batches(plan_batches: list[list[dict]]) -> list[list[list[dict]]]:
-    """Pass each complete PLAN batch to exactly one DETAIL request."""
+def _detail_batches_for_plan_batches(
+    plan_batches: list[list[dict]], max_concurrency: int | None = None,
+) -> list[list[dict]]:
+    """Balance DETAIL scenes independently, preserving 1:1 when counts match."""
     if not plan_batches:
         print("[ILLUST_CONTEXT:CALL2-DETAIL] 분배할 PLAN 배치 없음")
         return []
-    return [[batch] for batch in plan_batches]
+    if max_concurrency is None or max_concurrency == len(plan_batches):
+        return [list(batch) for batch in plan_batches]
+    return _balanced_call2_scene_plan_batches(
+        [scene for batch in plan_batches for scene in batch], max_concurrency)
 
 
 @illustration_flow.collect_branches
@@ -9600,6 +9679,7 @@ async def calculate_multi_char_layouts(
     positive_note: str = "",
     canvas_sizes: dict | None = None,
     single_char_mask_enabled: bool = True,
+    mask_inline: bool = False,
 ) -> None:
     """1~3인 descriptor의 영역과 배경/캐릭터 프롬프트를 병렬 계산한다."""
     targets = []
@@ -9626,6 +9706,57 @@ async def calculate_multi_char_layouts(
             print(f"[ILLUST_CONTEXT:MULTI_CHAR] 명명된 인물이 없어 영역 계산 생략: slot={descriptor.get('slot')}")
     if not targets:
         print("[ILLUST_CONTEXT:MULTI_CHAR] 영역 계산 대상 없음")
+        return
+
+    if mask_inline:
+        # Keep the generated mask at its normal graph position without
+        # inventing another LLM call or a separate history record.
+        run = illustration_flow._run.get()
+        dependencies = illustration_flow._frontier.get()
+        nodes = []
+        for descriptor, characters in targets:
+            slot = descriptor.get("slot")
+            source_call = "CALL2-KEYVIS" if descriptor.get("kind") == "keyvis" else "CALL2-DETAIL"
+            node_id = None
+            if run is not None:
+                source_node = next((run["nodes"][key] for key in dependencies
+                                    if key in run["nodes"]), {})
+                if str(source_node.get("label") or "").startswith("CALL2-DETAIL"):
+                    source_call = "CALL2-DETAIL"
+                node_id = illustration_flow.add_node(
+                    run, f"MULTI-CHAR-MASK slot={slot}", dependencies=dependencies,
+                    kind="stage", executor="process", status="processing", started_at=time.time(),
+                    task_key="illustration_multi_char_mask", layout_group="illustration_multi_char_mask",
+                    illustration_slot=slot, mask_generation_mode="inline", source_call_name=source_call,
+                    source_node_id=source_node.get("id"), model=source_node.get("model"),
+                    service=source_node.get("service"),
+                    summary=f"현재 모델에서 자체 생성 · {source_call} · 별도 LLM 호출 없음",
+                    input=deepcopy(descriptor.get("multi_char_layout_request") or {
+                        "source_call": source_call, "slot": slot,
+                    }),
+                )
+                nodes.append(node_id)
+            try:
+                layout = multi_char_mask.validate_multi_char_layout(
+                    descriptor.get("multi_char_layout"),
+                    [character["name"] for character in characters],
+                    require_prompt_separation=True,
+                )
+                descriptor["multi_char_layout"] = layout
+                descriptor.pop("multi_char_layout_error", None)
+                if node_id is not None:
+                    illustration_flow.update(run, node_id, status="completed", output=deepcopy(layout))
+                print(f"[ILLUST_CONTEXT:MULTI_CHAR] 현재 모델 자체 생성 마스크 사용: slot={slot}, source={source_call}")
+            except Exception as exc:
+                descriptor.pop("multi_char_layout", None)
+                descriptor["multi_char_layout_error"] = str(exc)
+                print(f"[ILLUST_CONTEXT:MULTI_CHAR] 자체 생성 마스크 실패: slot={slot}, input={descriptor!r}, error={exc}")
+                traceback.print_exc()
+                if node_id is not None:
+                    illustration_flow.update(run, node_id, status="failed", error=str(exc),
+                                             output={"error": str(exc), "raw_response": descriptor.get("multi_char_layout_raw_response", "")})
+        if nodes:
+            illustration_flow._frontier.set(tuple(nodes))
         return
 
     system_prompt = str(prompt_template or "").strip()
@@ -9781,7 +9912,7 @@ def build_raw_prompt(descriptor: dict, narrative: str, prompts: dict, toggles: d
     positive = PromptText(positive_part)
     for key, value in replacements.items():
         label = {
-            "{chat}": "현재 원문", "{slot}": "장면 슬롯 번호", "{speak}": "CALL3 대사 결과",
+            "{chat}": "현재 원문", "{slot}": "장면 슬롯 번호", "{speak}": "POST PROCESS 대사 결과",
             "{name}": "캐릭터 이름 목록", "{setup}": "카메라·장면 태그", "{prompt}": "카메라·장면 태그",
             "{char}": "캐릭터별 긍정 태그", "{supplement}": "보충 묘사 태그",
         }[key]

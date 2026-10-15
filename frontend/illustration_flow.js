@@ -144,6 +144,17 @@
             .if-review-panel{border:1px solid #f59e0b88;border-radius:12px;background:#f59e0b0f;padding:16px;margin-bottom:12px}.if-review-title{font-weight:800;font-size:15px;color:#fde68a}.if-review-guide{margin:5px 0 14px;color:var(--text2,#94a3b8);font-size:12px;line-height:1.65}.if-review-list{display:grid;gap:14px}.if-review-item{display:grid;grid-template-columns:minmax(220px,.9fr) minmax(300px,1.1fr);gap:14px;padding:12px;border:1px solid #64748b55;border-radius:12px;background:#02061755}.if-review-item-body{min-width:0}.if-review-figure{margin:0;border:1px solid #64748b55;border-radius:10px;overflow:hidden;background:#02061766;align-self:start}.if-review-image{display:block;width:100%;max-height:520px;object-fit:contain;background:#020617}.if-review-caption{padding:7px 9px;font-size:11px;color:var(--text2,#94a3b8);overflow-wrap:anywhere}.if-review-missing{padding:44px 12px;text-align:center;color:#fecaca;font-size:12px}.if-review-auto{margin:0 0 10px}.if-review-auto summary{color:#bae6fd;font-size:12px}.if-review-auto pre{margin-top:6px!important;max-height:150px!important}.if-review-ratings{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0 12px}.if-review-rating{min-width:86px;font-weight:750}.if-review-rating[aria-pressed=true][data-rating=good]{border-color:#4ade80;background:#22c55e33;color:#bbf7d0}.if-review-rating[aria-pressed=true][data-rating=normal]{border-color:#facc15;background:#eab30833;color:#fef08a}.if-review-rating[aria-pressed=true][data-rating=bad]{border-color:#fb7185;background:#e11d4833;color:#fecdd3}.if-review-reason{box-sizing:border-box;width:100%;min-height:78px;resize:vertical;border:1px solid #64748b66;border-radius:8px;background:var(--bg,#0b1220);color:var(--text,#e2e8f0);padding:10px 12px;font:13px/1.5 system-ui,sans-serif}.if-review-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:14px}.if-review-save{border-color:#f59e0b99;background:#f59e0b22;font-weight:750}.if-review-status{font-size:12px;color:var(--text2,#94a3b8)}
             .if-developer-body{padding:20px 22px;max-height:70vh;overflow:auto}.if-quality-card{border:1px solid #64748b55;border-radius:10px;padding:15px;background:#64748b12}.if-quality-toggle{display:flex;align-items:center;gap:10px;font-weight:700;cursor:pointer}.if-quality-toggle input{width:18px;height:18px;accent-color:#c084fc}.if-quality-copy{margin:9px 0 0;color:var(--text2,#94a3b8);font-size:12px;line-height:1.65}.if-quality-status{margin-top:12px;min-height:1.4em;color:var(--text2,#94a3b8);font-size:12px}.if-developer-footer{display:flex;justify-content:flex-end;padding:12px 22px;border-top:1px solid #64748b44}
             @media(max-width:650px){.if-header{align-items:flex-start;padding:14px}.if-actions{justify-content:flex-end}.if-header h2{font-size:16px}.if-meta{grid-template-columns:80px 1fr}.if-review-item{grid-template-columns:1fr}}
+            .if-attempt{margin:10px 0;border:1px solid #64748b66;border-radius:10px;background:#64748b0c;overflow:hidden}
+            .if-detail-body .if-attempt>summary{display:flex;align-items:center;gap:10px;padding:12px 14px;list-style:none;font-weight:650}
+            .if-attempt>summary::-webkit-details-marker{display:none}
+            .if-attempt>summary::before{content:'▶';flex-shrink:0;font-size:10px;color:var(--text2,#94a3b8)}
+            .if-attempt>summary::after{content:'펼치기';margin-left:auto;flex-shrink:0;font-size:11px;font-weight:400;color:var(--text2,#94a3b8)}
+            .if-attempt>summary:hover{background:#64748b14}.if-attempt>summary:focus-visible{outline:2px solid #60a5fa;outline-offset:-3px}
+            .if-attempt[open]{border-color:#60a5fa99;background:#60a5fa08}
+            .if-attempt[open]>summary{background:#60a5fa1a;border-bottom:1px solid #60a5fa44}
+            .if-attempt[open]>summary::before{content:'▼';color:#60a5fa}.if-attempt[open]>summary::after{content:'접기';color:#60a5fa}
+            .if-attempt-title{min-width:0;overflow-wrap:anywhere}.if-attempt-content{padding:0 14px 14px}
+            .if-detail-body .if-attempt-content h3{margin:14px 0 8px}
         `;
         document.head.append(style);
         flowBackdrop = element('div', 'if-layer-backdrop'); flowBackdrop.hidden = true;
@@ -483,7 +494,9 @@
             tip = element('div', 'if-tooltip'); tip.dataset.nodeId = n.id;
             tip.setAttribute('role', 'tooltip'); modal.append(tip);
         }
-        const model = executor === 'llm' ? (window.llmRouteSlotModelName?.(n.llm_slot, true, n.model || '') || n.model) : n.model;
+        const model = n.mask_generation_mode === 'inline'
+            ? `자체 생성 · ${n.source_call_name || '현재 모델'}${n.model ? ' · ' + n.model : ''} · 별도 LLM 호출 없음`
+            : executor === 'llm' ? (window.llmRouteSlotModelName?.(n.llm_slot, true, n.model || '') || n.model) : n.model;
         updateText(tip, `${n.label}\n${executorLabels[executor] || executor} · ${nodeState(n)}${executor === 'llm' && Number.isInteger(n.attempt_count) ? ` · 시도 ${n.attempt_count}회` : ''}\n${model || (executor === 'llm' ? '모델 배정 대기' : executor === 'comfy' ? 'ComfyUI' : executor === 'human' ? '사람이 선택한 입력 상태' : '서버 처리')}\n${timing ? timing + '\n수신 시점 기준 · 최종 시도\n' : ''}${n.phase === 'fallback' ? '폴백 사용 · ' : ''}${action}`);
         const r = port.getBoundingClientRect();
         tip.style.left = `${Math.max(8, Math.min(innerWidth - tip.offsetWidth - 12, r.left - 80))}px`;
@@ -493,6 +506,10 @@
         // Display stages are fixed even when branches finish or dispatch images early.
         // Names also classify reserved LLM nodes before routing metadata arrives.
         const stageRules = [
+            ['SLOT-SELECTER', 'call2_select', 2, 3],
+            ['DETAIL', 'call2_detail', 4, 0],
+            ['KEYVIS', 'call2_keyvis', 4, 1],
+            ['POST PROCESS', 'call3', 4, 3],
             ['CHARACTER-RESOLVE', 'character_resolve', 1, 0],
             ['PROFILE-CONTEXT-CACHE', 'profile_context_translation', 1, 1],
             ['PROFILE-CONTEXT-TRANSLATE', 'profile_context_translation', 1, 1],
@@ -974,6 +991,7 @@
             attempts.title = '최초 호출·재시도·폴백을 포함한 총 시도 횟수';
             const modelText = isQualityReview
                 ? '출력 ● 클릭 → 이미지 일괄 평가'
+                : n.mask_generation_mode === 'inline' ? `자체 생성 · ${n.source_call_name || '현재 모델'}`
                 : (executor === 'llm' ? (window.llmRouteSlotModelName?.(n.llm_slot, true, n.model || '') || n.model) : n.model) || (executor === 'llm' ? 'LLM' : executor === 'comfy' ? 'ComfyUI' : executor === 'human' ? '사람이 선택한 입력 상태' : '서버 처리');
             updateText(card.querySelector('.if-node-state'), nodeState(n));
             updateText(card.querySelector('.if-node-model'), modelText);
@@ -1017,6 +1035,11 @@
         const current = flows[kind];
         if (current && (next.created_at < current.created_at || (next.id === current.id && next.revision <= current.revision))) return;
         const isNew = current?.id !== next.id;
+        for (const node of next.nodes || []) {
+            for (const field of ['label', 'source_call_name']) {
+                if (typeof node[field] === 'string') node[field] = node[field].replaceAll('CALL2-SELECT', 'SLOT-SELECTER').replaceAll('CALL2-DETAIL', 'DETAIL').replaceAll('CALL2-KEYVIS', 'KEYVIS').replaceAll('CALL3', 'POST PROCESS');
+            }
+        }
         flows[kind] = next;
         if (autoOpen && autoOpenEnabled[kind] && isNew && !modal?.open) {
             init(); previousFocus = document.activeElement; switchTab(kind);
@@ -1247,6 +1270,9 @@
             const response = await fetch(`/api/illustration_flow?run=${encodeURIComponent(runId)}&node=${encodeURIComponent(nodeId)}`, {cache: 'no-store'});
             if (!response.ok) throw Error(response.status === 404 ? '새 요청이 접수되어 이전 상세 정보가 종료되었습니다.' : `상세 조회 실패 (${response.status})`);
             const {node: n} = await response.json();
+            for (const field of ['label', 'source_call_name']) {
+                if (typeof n[field] === 'string') n[field] = n[field].replaceAll('CALL2-SELECT', 'SLOT-SELECTER').replaceAll('CALL2-DETAIL', 'DETAIL').replaceAll('CALL2-KEYVIS', 'KEYVIS').replaceAll('CALL3', 'POST PROCESS');
+            }
             if (request !== detailRequest || runId !== flow?.id || !detailModal.open) return;
             const imageUrl = nodeImageUrl(n, flow.status);
             const signature = JSON.stringify([n, activeTab, imageUrl]);
@@ -1263,7 +1289,10 @@
             appendTrackedStateTable(n, body);
             const meta = element('dl', 'if-meta');
             const executor = nodeExecutor(n);
-            Object.entries({'상태': labels[n.status] || n.status, '처리 주체': executorLabels[executor] || executor, '모델': (executor === 'llm' ? (window.llmRouteSlotModelName?.(n.llm_slot, true, n.model || '') || n.model) : n.model) || '해당 없음 / 배정 대기', '서비스': n.service || '—', 'LLM 슬롯': n.llm_slot || '—', '라우팅': n.phase || '—', '전체 처리 시간': elapsed(n), ...timingDetails(n), '실행 ID': n.execution_id || n.id, '오류': n.error || '없음'}).forEach(([key,value]) => {
+            Object.entries({'상태': labels[n.status] || n.status, '처리 주체': executorLabels[executor] || executor,
+                ...(n.mask_generation_mode === 'inline' ? {'마스크 생성': '현재 모델에서 자체 생성 · 별도 LLM 호출 없음',
+                    '원본 호출': n.source_call_name || '현재 모델', '원본 노드': n.source_node_id || '—'} : {}),
+                '모델': (executor === 'llm' ? (window.llmRouteSlotModelName?.(n.llm_slot, true, n.model || '') || n.model) : n.model) || '해당 없음 / 배정 대기', '서비스': n.service || '—', 'LLM 슬롯': n.llm_slot || '—', '라우팅': n.phase || '—', '전체 처리 시간': elapsed(n), ...timingDetails(n), '실행 ID': n.execution_id || n.id, '오류': n.error || '없음'}).forEach(([key,value]) => {
                 const item = element('dd', '', value);
                 if (key === '전체 처리 시간') item.dataset.detailElapsed = '';
                 if (key === 'THINK 시간' || key === '응답 작성 시간') item.dataset.detailTiming = key;
@@ -1271,12 +1300,28 @@
             });
             body.append(meta);
             if (executor === 'llm') body.append(element('p', 'if-subtitle', 'THINK 시간은 첫 추론 수신부터 본문 첫 수신까지, 응답 시간은 본문 첫 수신부터 마지막 수신까지입니다. 진행 중에는 현재 시각까지 갱신합니다. 내부 추론 시간을 추정하지 않으며 추론 수신 기록이 없으면 미수신으로 표시합니다.'));
-            const attempts = n.attempts || [];
-            body.append(element('h3', '', `호출·폴백 이력 (${attempts.filter(a => a.type === 'attempt_start').length}회 시도)`));
+            const attempts = [];
+            for (const event of n.attempts || []) {
+                if (!['attempt_start', 'attempt_success', 'attempt_failure'].includes(event.type)) continue;
+                const previous = attempts.at(-1);
+                if (event.type === 'attempt_start' || !previous || previous.type !== 'attempt_start') attempts.push({...event});
+                else Object.assign(previous, event);
+            }
+            body.append(element('h3', '', `호출·폴백 이력 (${attempts.length}회 시도)`));
             if (!attempts.length) body.append(element('p', 'if-subtitle', '아직 호출 이력이 없거나 LLM을 사용하지 않는 단계입니다.'));
             attempts.forEach((a, index) => {
-                const d = element('details'); d.open = view.opened[index] || false;
-                d.append(element('summary', '', `${a.phase === 'fallback' ? '폴백' : '주 경로'} · ${(window.llmRouteSlotModelName?.(a.slot || a.llm_slot, true, a.model || '') || a.model) || '모델 미확정'} · ${a.slot || a.llm_slot || ''} · ${a.type}`), detailText(stringify(a), `attempt-${index}`)); body.append(d);
+                const d = element('details', 'if-attempt'); d.open = view.opened[index] || false;
+                const state = a.type === 'attempt_failure' ? '실패' : a.type === 'attempt_success' ? '성공' : '진행 중';
+                const summary = element('summary'), content = element('div', 'if-attempt-content');
+                summary.append(element('span', 'if-attempt-title', `${index + 1}회 · ${a.phase === 'fallback' ? '폴백' : '주 경로'} · ${(window.llmRouteSlotModelName?.(a.slot || a.llm_slot, true, a.model || '') || a.model) || '모델 미확정'} · ${a.slot || a.llm_slot || ''} · ${state}`));
+                content.append(element('h3', '', '입력'), detailText(stringify(n.input) || '아직 입력이 없습니다.', `attempt-${index}`));
+                if (a.type === 'attempt_failure') {
+                    const failure = [...new Set([a.reason, a.error].filter(Boolean))];
+                    if (a.raw_response !== undefined && a.raw_response !== null && a.raw_response !== '') failure.push(`실패 응답\n${stringify(a.raw_response)}`);
+                    content.append(element('h3', '', '실패 이력'), detailText(failure.join('\n\n') || '실패 사유가 기록되지 않았습니다.', `attempt-${index}-failure`));
+                }
+                d.append(summary, content);
+                body.append(d);
             });
             const output = detailOutput(n);
             body.append(element('h3', '', '입력'), detailText(stringify(n.input) || '아직 입력이 없습니다.', 'input'));
