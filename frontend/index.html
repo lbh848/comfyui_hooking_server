@@ -74223,7 +74223,7 @@
             modal.onclick = (e) => e.stopPropagation();
 
             modal.innerHTML = `
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+                <div style="display:flex; flex-shrink:0; justify-content:space-between; align-items:center; margin-bottom:16px;">
                     <div>
                         <h3 style="margin:0; font-size:1.1rem;">캐릭터 얼굴 / 눈 / 절대 / 부정 태그 설정 — ${escHtml(charName)}</h3>
                         <div style="font-size:0.7rem; color:var(--text2); margin-top:2px;">첫 번째 대표 이미지 프롬프트 분석</div>
@@ -74246,12 +74246,12 @@
                             style="background:var(--surface2); color:var(--text); border:1px solid var(--border); width:32px; height:32px; border-radius:6px; cursor:pointer; font-size:1.2rem; display:flex; align-items:center; justify-content:center;">✕</button>
                     </div>
                 </div>
-                <div style="display:flex; gap:16px; flex:1; overflow:hidden;">
-                    <div id="auto-group-face-col" style="width:400px; flex-shrink:0; display:flex; flex-direction:column; gap:8px; overflow-y:auto;">
+                <div style="display:flex; gap:16px; flex:1; min-height:0; overflow:hidden;">
+                    <div id="auto-group-face-col" style="width:400px; flex-shrink:0; display:flex; flex-direction:column; gap:8px; overflow-y:auto; scrollbar-gutter:stable;">
                         <div style="font-size:0.7rem; color:var(--accent); font-weight:600;">캐릭터 얼굴</div>
                         <div id="auto-group-face-img-wrap" style="position:relative; width:400px; min-height:400px; background:var(--surface2); border:1px solid var(--border); border-radius:8px; display:flex; align-items:center; justify-content:center; color:var(--text2); font-size:0.75rem;">로딩 중...</div>
                     </div>
-                    <div style="flex:1; display:flex; flex-direction:column; min-width:0; overflow-y:auto;">
+                    <div id="auto-group-editor-scroll" style="flex:1; display:flex; flex-direction:column; min-width:0; overflow-y:auto; scrollbar-gutter:stable;">
                         <div id="auto-group-content" style="flex:1 0 auto; display:flex; flex-direction:column; gap:12px;">
                             <div style="text-align:center; padding:40px; color:var(--text2);">분석 중...</div>
                         </div>
@@ -74287,11 +74287,11 @@
                                     oninput="_autoGroupImageNameTag = this.value" placeholder="예: alisa mikhailovna kujou"
                                     style="width:100%; box-sizing:border-box; margin-top:8px; padding:7px 9px; border:1px solid var(--border); border-radius:6px; background:var(--surface2); color:var(--text); font-size:0.82rem; opacity:${_autoGroupUseImageNameTag ? '1' : '0.5'};">
                             </div>
-                            <div style="display:flex; justify-content:flex-end; margin-top:10px;">
-                                <button onclick="_saveCharFaceTags()" style="background:var(--accent); color:#fff; border:none; padding:8px 20px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">저장</button>
-                            </div>
                         </div>
                     </div>
+                </div>
+                <div style="display:flex; flex-shrink:0; justify-content:flex-end; margin-top:12px; padding-top:12px; border-top:1px solid var(--border);">
+                    <button id="auto-group-save-btn" type="button" onclick="_saveCharFaceTags()" style="background:var(--accent); color:#fff; border:none; padding:8px 20px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">저장</button>
                 </div>
             `;
 
