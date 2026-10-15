@@ -10,4 +10,6 @@ The embedded vector retrieval implementation is adapted from:
 
 The downloadable index was generated with
 `intfloat/multilingual-e5-large`, which is published under the MIT license.
-The original CSV is not bundled with this project.
+The source CSV used to build this RAG index is not bundled with this project.
+The separately bundled Korean autocomplete CSV has its own
+[source and license notices](../../auto_complete/README.md).

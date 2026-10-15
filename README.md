@@ -17,3 +17,10 @@ ComfyUI와 모델은 앱 안의 설치 탭에서 별도로 설치합니다.
 ## License
 
 This project is licensed under [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/).
+
+Third-party components and data retain their respective licenses. The bundled
+Korean autocomplete CSV is published by
+[mengod-hf/danbooru-tags-kr](https://huggingface.co/datasets/mengod-hf/danbooru-tags-kr).
+Its upstream license notice specifies CC BY-SA 4.0 for Korean localization
+contributions and includes MIT notices and other third-party attributions.
+See [the bundled CSV's source and license notices](auto_complete/README.md).

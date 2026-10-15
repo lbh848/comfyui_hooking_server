@@ -25,6 +25,7 @@ autocomplete_service - CSV 기반 태그 자동완성 서비스
 import csv
 import os
 import re
+import traceback
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 AUTOCOMPLETE_DIR = os.path.join(BASE_DIR, "auto_complete")
@@ -34,9 +35,11 @@ _tags: list[dict] = []
 _loaded = False
 
 
-def _csv_priority(filename: str) -> int:
-    """KR 파일이 가장 높은 우선순위(0), 나머지는 파일 크기 역순"""
-    if filename.lower().startswith("kr"):
+def _csv_priority(filename: str, description: str = '') -> int:
+    """설명 형식 CSV와 기존 KR 파일을 별칭 CSV보다 우선한다."""
+    if (filename.lower().startswith("kr")
+            or '>' in _parse_description(description)['category']
+            or '키워드:' in description):
         return 0
     return 1
 
@@ -87,10 +90,11 @@ def load_all_csv():
     _tags = []
 
     if not os.path.isdir(AUTOCOMPLETE_DIR):
+        print(f"[AUTOCOMPLETE] CSV 폴더 없음: {AUTOCOMPLETE_DIR}")
         _loaded = True
         return
 
-    # for_anima 제외, CSV만, KR 우선 + 크기 큰 순 정렬
+    # for_anima 제외, 설명 형식 우선 + 크기 큰 순 정렬
     files = []
     for f in os.listdir(AUTOCOMPLETE_DIR):
         if not f.lower().endswith(".csv"):
@@ -98,16 +102,27 @@ def load_all_csv():
         if "for_anima" in f.lower():
             continue
         fpath = os.path.join(AUTOCOMPLETE_DIR, f)
-        files.append((f, fpath, os.path.getsize(fpath)))
+        priority = _csv_priority(f)
+        if priority != 0:
+            try:
+                with open(fpath, newline='', encoding='utf-8-sig') as csvfile:
+                    for row in csv.reader(csvfile):
+                        if len(row) >= 4 and _csv_priority(f, row[3].strip()) == 0:
+                            priority = 0
+                            break
+            except Exception as e:
+                print(f"[AUTOCOMPLETE] CSV 형식 확인 실패: {fpath}: {e}")
+                traceback.print_exc()
+        files.append((f, fpath, os.path.getsize(fpath), priority))
 
-    files.sort(key=lambda x: (_csv_priority(x[0]), -x[2]))
+    files.sort(key=lambda x: (x[3], -x[2]))
 
     seen_names = set()
     source_idx = 0
-    for fname, fpath, fsize in files:
+    for fname, fpath, fsize, priority in files:
         count_before = len(_tags)
         try:
-            with open(fpath, newline='', encoding='utf-8') as csvfile:
+            with open(fpath, newline='', encoding='utf-8-sig') as csvfile:
                 reader = csv.reader(csvfile)
                 for row in reader:
                     if len(row) < 3:
@@ -119,8 +134,8 @@ def load_all_csv():
 
                     desc_raw = row[3].strip() if len(row) >= 4 else ''
 
-                    # KR 파일: description 구조 파싱
-                    if _csv_priority(fname) == 0:
+                    # 파일명에 관계없이 설명 구조를 인식한다. 기존 KR 파일도 유지.
+                    if _csv_priority(fname, desc_raw) == 0:
                         parsed = _parse_description(desc_raw)
                         _tags.append({
                             'name': name,
@@ -132,7 +147,7 @@ def load_all_csv():
                             'source': source_idx,
                         })
                     else:
-                        # 비KR 파일: row[3]은 영문 별명
+                        # 설명 구조가 없는 row[3]은 기존처럼 영문 별명으로 처리.
                         aliases = [a.strip().lower().replace('_', ' ')
                                    for a in desc_raw.split(',') if a.strip()]
                         _tags.append({
@@ -149,6 +164,7 @@ def load_all_csv():
             print(f"[AUTOCOMPLETE] 로드: {fname} ({loaded:,}개 태그)")
         except Exception as e:
             print(f"[AUTOCOMPLETE] 로드 실패: {fname}: {e}")
+            traceback.print_exc()
         source_idx += 1
 
     _loaded = True

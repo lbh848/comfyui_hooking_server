@@ -1,2 +1,7 @@
 # Windows 배치 파일은 항상 CRLF로 체크아웃 (cmd.exe 파싱 깨짐 방지)
 *.bat text eol=crlf
+
+# Preserve the bundled CSV and original license notices byte for byte.
+auto_complete/danbooru-tags-anima-kr-2026-10-05-v2.csv -text
+auto_complete/LICENSE.danbooru-tags-kr.txt -text
+auto_complete/CC-BY-SA-4.0.txt -text

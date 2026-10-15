@@ -1,13 +1,14 @@
 """
-tag_classifier - KR CSV 카테고리 기반 태그 자동 분류
+tag_classifier - 설명 CSV 카테고리 기반 태그 자동 분류
 
-auto_complete/ 폴더의 KR CSV에서 [카테고리 > 서브카테고리]를 파싱하여
+auto_complete/ 폴더의 CSV에서 [카테고리 > 서브카테고리]를 파싱하여
 태그를 3그룹(외모/신체, 복장, 미분류)으로 분류한다.
 """
 
 import csv
 import os
 import re
+import traceback
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 AUTOCOMPLETE_DIR = os.path.join(BASE_DIR, "auto_complete")
@@ -33,7 +34,7 @@ GROUP_RULES = {
 
 
 def _extract_description(desc_field: str) -> str:
-    """KR CSV 설명 필드에서 카테고리 태그와 키워드를 제거한 순수 설명 추출."""
+    """CSV 설명 필드에서 카테고리 태그와 키워드를 제거한 순수 설명 추출."""
     # [카테고리 > 서브] 제거
     text = re.sub(r'\[([^\]]+)\]', '', desc_field).strip()
     # . 키워드: ... 제거
@@ -46,23 +47,26 @@ def _load():
     _tag_info = {}
 
     if not os.path.isdir(AUTOCOMPLETE_DIR):
+        print(f"[TAG_CLASSIFIER] CSV 폴더 없음: {AUTOCOMPLETE_DIR}")
         _loaded = True
         return
 
-    for f in os.listdir(AUTOCOMPLETE_DIR):
-        if not f.lower().endswith(".csv"):
-            continue
-        if not f.lower().startswith("kr"):
-            continue
+    files = [f for f in os.listdir(AUTOCOMPLETE_DIR)
+             if f.lower().endswith(".csv")]
+    # 자동완성과 같이 큰 설명 CSV의 중복 태그를 먼저 채택한다.
+    files.sort(key=lambda f: -os.path.getsize(os.path.join(AUTOCOMPLETE_DIR, f)))
+    for f in files:
 
         fpath = os.path.join(AUTOCOMPLETE_DIR, f)
         try:
-            with open(fpath, newline='', encoding='utf-8') as csvfile:
+            with open(fpath, newline='', encoding='utf-8-sig') as csvfile:
                 reader = csv.reader(csvfile)
                 for row in reader:
                     if len(row) < 4:
                         continue
                     name = row[0].strip().lower().replace('_', ' ').replace('﻿', '')
+                    if not name or name in _tag_info:
+                        continue
                     desc_field = row[3].strip()
                     m = re.match(r'\[([^>]+)\s*>\s*([^\]]+)\]', desc_field)
                     if m:
@@ -70,9 +74,10 @@ def _load():
                         subcat = m.group(2).strip()
                         description = _extract_description(desc_field)
                         _tag_info[name] = (cat, subcat, description)
-            print(f"[TAG_CLASSIFIER] KR CSV 로드 완료: {len(_tag_info):,}개 태그")
+            print(f"[TAG_CLASSIFIER] CSV 로드 완료: {f} ({len(_tag_info):,}개 태그)")
         except Exception as e:
             print(f"[TAG_CLASSIFIER] 로드 실패: {f}: {e}")
+            traceback.print_exc()
 
     _loaded = True
 

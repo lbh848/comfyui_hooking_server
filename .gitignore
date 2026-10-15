@@ -22,7 +22,12 @@ character_maker_data/
 bot/
 instance_lora/
 current_mode_workflow/
-auto_complete/
+# 배포용 한국어 CSV와 라이선스 고지만 포함; 사용자 CSV와 RAG 캐시는 제외
+/auto_complete/*
+!/auto_complete/danbooru-tags-anima-kr-2026-10-05-v2.csv
+!/auto_complete/README.md
+!/auto_complete/LICENSE.danbooru-tags-kr.txt
+!/auto_complete/CC-BY-SA-4.0.txt
 CLAUDE.md
 AGENTS.md
 # 에이전트 스킬 정의 (로컬 전용)
