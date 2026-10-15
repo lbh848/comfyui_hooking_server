@@ -1344,31 +1344,15 @@ class IllustPromptBuilder:
                               *, allow_anonymous_fragment: bool = False) -> str:
         """최종 부정 프롬프트 빌드.
 
-        ANIMA 부정: anima_negative_preset + 감지된 캐릭터 부정
-        SDXL 부정: sdxl_negative_preset + 감지된 캐릭터 부정
-        캐릭터 부정은 ANIMA/SDXL 양쪽에 모두 포함된다.
+        ANIMA/SDXL의 이미지 부정 프리셋만 조립한다.
+        카드의 character_negative는 DETAIL의 묘사 제외 조건이며 여기에 추가하지 않는다.
+        detected_chars와 bot 인자는 기존 호출부 호환을 위해 유지한다.
         """
         if settings is None:
             settings = {}
-        if detected_chars is None:
-            detected_chars = []
-        if bot is None:
-            bot = {}
-
         negative_presets = tags.get("negative_presets", {})
 
-        # ─── 감지된 캐릭터의 부정 프롬프트 수집 ───
-        char_neg_parts = []
-        characters = bot.get("characters", [])
-        for char_name in detected_chars:
-            char_data = next((c for c in characters if c["name"] == char_name), None)
-            if not char_data:
-                continue
-            char_neg = char_data.get("character_negative", "")
-            if char_neg and char_neg.strip():
-                char_neg_parts.append(char_neg.strip())
-
-        # ANIMA 부정: ANIMA 부정 프리셋 + 캐릭터 부정
+        # ANIMA 부정: ANIMA 부정 프리셋
         anima_neg_preset_name = settings.get("anima_negative_preset", "")
         anima_n_tags = negative_presets.get(anima_neg_preset_name, tags.get("anima_negative", []))
 
@@ -1376,9 +1360,7 @@ class IllustPromptBuilder:
             anima_n_tags,
             allow_anonymous_fragment,
         )
-        anima_neg_parts.extend(char_neg_parts)
-
-        # SDXL 부정: SDXL 부정 프리셋 + 캐릭터 부정
+        # SDXL 부정: SDXL 부정 프리셋
         sdxl_neg_preset_name = settings.get("sdxl_negative_preset", "")
         sdxl_n_tags = negative_presets.get(sdxl_neg_preset_name, tags.get("negative", []))
 
@@ -1386,8 +1368,6 @@ class IllustPromptBuilder:
             sdxl_n_tags,
             allow_anonymous_fragment,
         )
-        sdxl_neg_parts.extend(char_neg_parts)
-
         negative = ", ".join(anima_neg_parts)
         negative += "\n[SDXL]"
         negative += "\n" + ", ".join(sdxl_neg_parts)

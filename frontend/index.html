@@ -70960,7 +70960,7 @@
                             style="background:rgba(244,114,182,0.12); color:var(--text); border:1px solid rgba(244,114,182,0.3); padding:8px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600; white-space:nowrap;">전체 이미지 보기</button>
                         <button class="btn-auto-group" data-char-name="${escAttr(char.name)}"
                             onclick="event.stopPropagation(); autoGroupPrompt('${escAttr(char.name)}')"
-                            style="background:rgba(34,197,94,0.12); color:var(--text); border:1px solid rgba(34,197,94,0.3); padding:8px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600; white-space:nowrap;">캐릭터 얼굴 / 눈 / 절대태그 설정</button>
+                            style="background:rgba(34,197,94,0.12); color:var(--text); border:1px solid rgba(34,197,94,0.3); padding:8px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600; white-space:nowrap;">얼굴·눈·절대·부정</button>
                         <button onclick="event.stopPropagation(); openVisualCardLbExtraEditor('${escAttr(char.name)}')"
                             style="background:rgba(168,85,247,0.12); color:var(--text); border:1px solid rgba(168,85,247,0.35); padding:8px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600; white-space:nowrap;">lb-xnai.lb.extra 설정</button>
                         <select onchange="saveCharGenderTag('${escAttr(char.name)}', this.value)"
@@ -74191,7 +74191,7 @@
 
         async function _showAutoGroupModal(charName, prompt) {
             const old = document.getElementById('auto-group-overlay');
-            if (old) old.remove();
+            if (old) _closeAutoGroupModal();
 
             _autoGroupLastGroups = null;
             _autoGroupViewMode = 'chips';
@@ -74225,7 +74225,7 @@
             modal.innerHTML = `
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
                     <div>
-                        <h3 style="margin:0; font-size:1.1rem;">캐릭터 얼굴 / 눈 / 절대태그 설정 — ${escHtml(charName)}</h3>
+                        <h3 style="margin:0; font-size:1.1rem;">캐릭터 얼굴 / 눈 / 절대 / 부정 태그 설정 — ${escHtml(charName)}</h3>
                         <div style="font-size:0.7rem; color:var(--text2); margin-top:2px;">첫 번째 대표 이미지 프롬프트 분석</div>
                     </div>
                     <div style="display:flex; gap:8px; align-items:center;">
@@ -74251,8 +74251,8 @@
                         <div style="font-size:0.7rem; color:var(--accent); font-weight:600;">캐릭터 얼굴</div>
                         <div id="auto-group-face-img-wrap" style="position:relative; width:400px; min-height:400px; background:var(--surface2); border:1px solid var(--border); border-radius:8px; display:flex; align-items:center; justify-content:center; color:var(--text2); font-size:0.75rem;">로딩 중...</div>
                     </div>
-                    <div style="flex:1; display:flex; flex-direction:column; min-width:0;">
-                        <div id="auto-group-content" style="flex:1; overflow-y:auto; display:flex; flex-direction:column; gap:12px;">
+                    <div style="flex:1; display:flex; flex-direction:column; min-width:0; overflow-y:auto;">
+                        <div id="auto-group-content" style="flex:1 0 auto; display:flex; flex-direction:column; gap:12px;">
                             <div style="text-align:center; padding:40px; color:var(--text2);">분석 중...</div>
                         </div>
                         <div style="border-top:2px solid var(--border); margin-top:12px; padding-top:12px;">
@@ -74262,8 +74262,15 @@
                             <div style="font-weight:600; font-size:0.9rem; margin-top:12px; margin-bottom:8px;">눈 태그 편집</div>
                             <div id="auto-group-eye-edit" style="min-height:40px; border:1px dashed var(--border); border-radius:6px; padding:8px; display:flex; flex-wrap:wrap; gap:4px; align-items:center;">
                             </div>
-                            <div style="font-weight:600; font-size:0.9rem; margin-top:12px; margin-bottom:4px;">절대 태그 편집 <span style="font-size:0.7rem; color:var(--text2); font-weight:400;">(항상 강제로 들어가는 태그)</span></div>
+                            <div style="font-weight:600; font-size:0.9rem; margin-top:12px; margin-bottom:4px;">절대 태그 편집 <span style="font-size:0.7rem; color:var(--text2); font-weight:400;">(카드 외형에 포함 · 일반 삽화에서는 DETAIL이 반영 여부 결정)</span></div>
                             <div id="auto-group-absolute-edit" style="min-height:40px; border:1px dashed var(--border); border-radius:6px; padding:8px; display:flex; flex-wrap:wrap; gap:4px; align-items:center;">
+                            </div>
+                            <label for="auto-group-character-negative" style="display:block; font-weight:600; font-size:0.9rem; margin-top:12px; margin-bottom:4px;">캐릭터 부정 태그</label>
+                            <div id="auto-group-character-negative-help" style="font-size:0.7rem; color:var(--text2); margin-bottom:6px;">DETAIL이 현재 카드의 긍정 태그·묘사에서 제외할 특징입니다. 부정 프롬프트에 넣는 값 X</div>
+                            <div class="cm-text-wrap">
+                                <textarea id="auto-group-character-negative" rows="3" aria-describedby="auto-group-character-negative-help" placeholder="제외할 특징을 쉼표로 입력" autocomplete="off"
+                                    style="width:100%; box-sizing:border-box; resize:vertical; padding:8px; border:1px solid var(--border); border-radius:6px; background:var(--surface2); color:var(--text); font-size:0.85rem;">${escHtml((char && char.character_negative) || '')}</textarea>
+                                <div class="tag-autocomplete-dropdown" id="ac-auto-group-character-negative"></div>
                             </div>
                             <div style="margin-top:12px; padding:10px 12px; border:1px solid var(--border); border-radius:8px; background:rgba(14,165,233,0.06);">
                                 <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
@@ -74291,6 +74298,7 @@
             overlay.appendChild(modal);
             document.body.appendChild(overlay);
 
+            TagAutocomplete.attach('auto-group-character-negative', 'ac-auto-group-character-negative', 'textarea');
             _loadAutoGroupFaceImage(charName);
             await _fetchAndRenderGroups(prompt);
             _renderFaceTagEditors();
@@ -74544,6 +74552,7 @@
             let eyeTags = '';
             let absoluteTags = '';
             const imageNameInput = document.getElementById('auto-group-image-name-tag');
+            const negativeInput = document.getElementById('auto-group-character-negative');
             _autoGroupImageNameTag = imageNameInput ? imageNameInput.value.trim() : _autoGroupImageNameTag.trim();
 
             if (_autoGroupViewMode === 'chips') {
@@ -74565,6 +74574,7 @@
                     use_image_name_tag: _autoGroupUseImageNameTag,
                     image_name_tag: _autoGroupImageNameTag
                 });
+                if (negativeInput) profile.render_overrides.character_negative = negativeInput.value.trim();
                 profile.appearance = _vpTags(
                     [_autoGroupGenderTag, faceTags, eyeTags, absoluteTags].filter(Boolean).join(', '),
                     profile.appearance || []
@@ -74578,6 +74588,7 @@
         }
 
         function _closeAutoGroupModal() {
+            TagAutocomplete.dismiss('auto-group-character-negative', 'ac-auto-group-character-negative');
             const overlay = document.getElementById('auto-group-overlay');
             if (overlay) overlay.remove();
         }

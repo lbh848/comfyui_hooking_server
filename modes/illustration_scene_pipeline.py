@@ -112,6 +112,7 @@ def profile_for_detail(name: str, base: dict, extra_reference: str,
             "face_tags": deepcopy(overrides.get("face_tags") or []),
             "eye_tags": deepcopy(overrides.get("eye_tags") or []),
             "eye_prompt": str(overrides.get("eye_prompt") or ""),
+            "character_negative": str(overrides.get("character_negative") or ""),
         }
     # Legacy low-level integrations with no registered cards still receive
     # only this character's original lb.extra block. There is no inferred card.
