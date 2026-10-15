@@ -237,7 +237,7 @@ def _llm_log(message: str):
 
 HISTORY_MAX_ENTRIES = 20
 HISTORY_PATH = os.path.join(LOG_DIR, "llm_history.jsonl")
-HISTORY_BACKUP_DIR = os.path.join(BASE_DIR, "요구사항")
+HISTORY_BACKUP_DIR = os.path.join(BASE_DIR, "backups")
 HISTORY_BACKUP_PATH = os.path.join(HISTORY_BACKUP_DIR, "llm_history.jsonl.bak")
 
 
@@ -270,7 +270,7 @@ def _log_history(service: str, model: str, messages: list, output: str,
 
     line = json.dumps(record, ensure_ascii=False) + "\n"
 
-    # 기존 파일 백업 (CLAUDE.md 규칙: write 전 백업 필수)
+    # 기존 런타임 이력을 덮어쓰기 전에 backups/에 보존한다.
     existing_lines = []
     if os.path.exists(HISTORY_PATH):
         try:
@@ -3582,14 +3582,14 @@ async def _call_routed_text_slot(
     return await call(messages, model=model, json_mode=json_mode)
 
 
-def _track_video_llm(fn):
+def _track_flow_llm(fn):
     """Observe existing routed calls without changing their queue or result contract."""
     signature = inspect.signature(fn)
 
     @functools.wraps(fn)
     async def wrapped(*args, **kwargs):
         run = illustration_flow._run.get()
-        if run is None or run.get("kind") != "video":
+        if run is None or run.get("kind") not in {"video", "illustration"} or illustration_flow._node.get() is not None:
             return await fn(*args, **kwargs)
         bound = signature.bind(*args, **kwargs)
         inputs = bound.arguments
@@ -3618,11 +3618,13 @@ def _track_video_llm(fn):
                 await _emit_execution_observer(original_observer, event)
 
         inputs["execution_observer"] = observe
+        registration = illustration_flow.register_active_llm_task()
         try:
+            illustration_flow.raise_if_cancel_requested(run)
             result = await fn(*bound.args, **bound.kwargs)
             status = "completed" if result.accepted else "failed"
             if not result.accepted:
-                print(f"[VIDEO_FLOW] LLM 실패: task={task_key}, reason={result.reason}, input={inputs['messages']!r}")
+                print(f"[LLM_FLOW] LLM 실패: task={task_key}, reason={result.reason}, input={inputs['messages']!r}")
             usage = inputs.get("metadata_sink") or {}
             illustration_flow.update(
                 run, node_id, status=status, output=illustration_flow.serializable(result.raw_response),
@@ -3634,17 +3636,18 @@ def _track_video_llm(fn):
         except BaseException as exc:
             status = "cancelled" if isinstance(exc, asyncio.CancelledError) else "failed"
             reason = str(exc) or type(exc).__name__
-            print(f"[VIDEO_FLOW] LLM 종료: task={task_key}, status={status}, error={reason}, input={inputs['messages']!r}")
+            print(f"[LLM_FLOW] LLM 종료: task={task_key}, status={status}, error={reason}, input={inputs['messages']!r}")
             traceback.print_exc()
             illustration_flow.update(run, node_id, status=status, error=reason, output={"error": reason})
             raise
         finally:
+            illustration_flow.unregister_active_llm_task(registration)
             illustration_flow._node.reset(token)
             illustration_flow._frontier.set((node_id,))
     return wrapped
 
 
-@_track_video_llm
+@_track_flow_llm
 async def callLLMTaskResult(
     task_key: str,
     messages: list,
@@ -3903,6 +3906,7 @@ async def callLLMVision3(messages: list, image_b64: str = None, image_mime: str 
                                        model=model, json_mode=json_mode, images=images)
 
 
+@_track_flow_llm
 async def callLLMVisionTaskResult(
     task_key: str,
     messages: list,

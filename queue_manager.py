@@ -85,6 +85,7 @@ RESERVED_ILLUSTRATION_TYPE_ORDER = {
     "illustration_easy_edit": 2,
     "illustration_auto_feedback_llm": 2,
     "illustration_quality_inspection": 2,
+    "illustration_image_analysis": 2,
     "restore_manual": 3,
 }
 
@@ -258,6 +259,7 @@ LLM_TYPES = frozenset({
     "illustration_easy_edit",       # 저장 슬롯 -> 기존 편하게 수정 LLM -> 수정 재생성
     "illustration_auto_feedback_llm", # 편하게 수정 오토피드백의 프롬프트 수정/비전 검수
     "illustration_quality_inspection", # 생성 직후 개별 검사 및 완성 세트 전체 품질 검사
+    "illustration_image_analysis",  # 백업 이미지와 생성 기록의 원인 분석
     "instance_lora_prompt_refine",  # 태그 정제 / test_setup (instance·style·bot·asset 전부 LLM 호출)
     "lora_prompt_review",           # 1차 정제 + 설정된 route의 선택적 2차 비전 검수
     "bot_llm_face_tag_analysis",    # 비전 LLM 기반 얼굴/눈 태그 자동 분류
@@ -3001,6 +3003,7 @@ class QueueManager:
             "illustration_easy_edit": self._handle_illustration_easy_edit,
             "illustration_auto_feedback_llm": self._handle_runtime_llm_task,
             "illustration_quality_inspection": self._handle_runtime_llm_task,
+            "illustration_image_analysis": self._handle_runtime_llm_task,
             "preset_import_classify": self._handle_runtime_llm_task,
             "character_maker_illustration": self._handle_character_maker_illustration,
             "image_comparison_direct": self._handle_image_comparison_direct,
@@ -3894,6 +3897,7 @@ class QueueManager:
         generation_params = params.get("generation_params") or {}
         multi_char_context = params.get("illustration_multi_char")
         visual_states = params.get("illustration_visual_states")
+        mask_bytes = None
 
         if not self.generate_image_with_prompt:
             raise RuntimeError("generate_image_with_prompt 콜백이 설정되지 않았습니다")
@@ -3937,6 +3941,8 @@ class QueueManager:
                         multi_char_context.get("mask_location") or "region_mask"
                     ),
                 )
+                with open(prepared_path, "rb") as mask_file:
+                    mask_bytes = mask_file.read()
                 print(
                     f"[QUEUE:REGENERATE:MULTI_CHAR] 실행 직전 마스크 복원 완료: "
                     f"item={item.id}, backup={backup_name}, path={prepared_path}, "
@@ -3949,6 +3955,8 @@ class QueueManager:
             )
             traceback.print_exc()
             raise
+
+        illustration_flow.record_image_mask(mask_bytes)
 
         async def _on_regen_progress(value, max_value):
             await self._notify_progress(item, {

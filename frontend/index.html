@@ -1428,6 +1428,28 @@
             white-space: nowrap;
         }
 
+        #modal-mask-preview {
+            margin-bottom: 12px;
+            padding: 12px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface1);
+            font-size: 0.8rem;
+        }
+
+        #modal-mask-preview svg {
+            display: block;
+            max-width: 100%;
+            height: auto;
+            margin: 10px auto;
+            background: #14181e;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+        }
+
+        #modal-mask-preview svg rect { fill-opacity: .65; }
+        #modal-mask-preview .prompt-mask-legend { display: flex; flex-wrap: wrap; gap: 8px 16px; }
+
         .form-group {
             margin-bottom: 16px;
         }
@@ -10347,7 +10369,7 @@
         body.qwen-edit-open #lighbd-llm-widget,
         body.qwen-edit-open .lighbd-live-overlay,
         body.qwen-edit-open .lighbd-history-overlay,
-        body.qwen-edit-open .lighbd-detail-overlay {
+        body.qwen-edit-open .lighbd-detail-overlay:not(.llm-image-analysis-overlay) {
             z-index: 490 !important;
         }
         body.qwen-edit-open .asset-queue-container { z-index: 390 !important; }
@@ -16100,6 +16122,7 @@
         }
         .lighbd-history-overlay { z-index: 490; }
         .lighbd-detail-overlay { z-index: 490; }
+        .lighbd-detail-overlay.llm-image-analysis-overlay { z-index: 160; --bg: #0b1523; --text: #edf4ff; --text2: #b7c9de; --border: #415d78; }
         .lighbd-history-shell,
         .lighbd-detail-shell {
             display: flex;
@@ -16163,11 +16186,43 @@
         .lighbd-detail-section { border: 1px solid var(--border); background: rgba(0,0,0,.12); }
         .lighbd-detail-section-title { padding: 8px 11px; color: var(--text2); background: rgba(255,255,255,.025); border-bottom: 1px solid var(--border); font-size: .72rem; font-weight: 700; }
         .lighbd-detail-content { margin: 0; padding: 11px 12px; max-height: 480px; overflow: auto; color: var(--text); font-family: monospace; font-size: .75rem; line-height: 1.52; white-space: pre-wrap; word-break: break-word; }
+        .llm-image-analysis-preview { display: grid; grid-template-columns: minmax(0, .8fr) minmax(0, .8fr) minmax(0, 1.4fr); gap: 14px; height: clamp(240px, 42vh, 460px); margin-bottom: 16px; }
+        .llm-image-analysis-preview > section { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; border-radius: 8px; }
+        .llm-image-analysis-image { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 10px; background: rgba(0,0,0,.16); color: var(--text2); font-size: .8rem; }
+        .llm-image-analysis-image img { display: block; width: 100%; height: 100%; object-fit: contain; }
+        .llm-image-analysis-prompts { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+        .llm-image-analysis-prompts .lighbd-detail-content { max-height: none; overflow: visible; overflow-wrap: anywhere; }
+        .llm-image-analysis-overlay .lighbd-detail-shell { min-width: 0; max-width: 100%; background: #0c1725; }
+        .llm-image-analysis-overlay .lighbd-modal-head { background: #22394e; }
+        .llm-image-analysis-overlay .lighbd-detail-section { background: #1c2e43; border-radius: 9px; overflow: hidden; }
+        .llm-image-analysis-overlay .lighbd-detail-section-title { background: #2c455f; color: #edf4ff; }
+        .llm-image-analysis-overlay .lighbd-detail-content { background: #101e2e; }
+        .llm-image-analysis-overlay .llm-image-analysis-image { background: #0b1420; }
+        .llm-image-analysis-overlay .llm-image-analysis-prompts { background: #101e2e; }
+        .llm-image-analysis-overlay .lighbd-modal-title { overflow-wrap: anywhere; }
+        .llm-image-analysis-overlay .lighbd-modal-close { flex-shrink: 0; }
+        .llm-image-analysis-overlay .lighbd-detail-body { min-width: 0; font-size: .8rem; line-height: 1.55; overflow-wrap: anywhere; }
+        .llm-image-analysis-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; margin: 10px 0 16px; }
+        .llm-image-analysis-actions label { margin-right: auto; white-space: nowrap; }
+        .llm-image-analysis-actions button { padding: 6px 10px; font-size: inherit; }
+        #llm-image-analysis-form { padding: 14px; border: 1px solid var(--border); border-radius: 9px; background: #1c2e43; margin-bottom: 16px; }
+        #llm-image-analysis-result { min-width: 0; }
+        #llm-image-analysis-result > .lighbd-detail-section { padding-bottom: 12px; }
+        #llm-image-analysis-result .lighbd-detail-content { overflow-wrap: anywhere; }
+        #llm-image-analysis-status { margin: 12px; padding: 10px 12px; border-left: 3px solid #64d9c0; border-radius: 5px; background: #12363e; white-space: pre-wrap; }
+        #llm-image-analysis-result p, #llm-image-analysis-result details { margin: 10px 12px; }
+        #llm-image-analysis-result details { padding: 10px 12px; border: 1px solid var(--border); border-radius: 7px; background: #101e2e; }
+        #llm-image-analysis-result summary { cursor: pointer; }
+        .llm-image-analysis-rule-card { margin: 10px 12px; padding: 12px; border: 1px solid #55738f; border-radius: 7px; background: #253c53; }
+        .llm-image-analysis-rule-input { display: block; width: 100%; min-width: 0; resize: vertical; padding: 6px 8px; border: 1px solid #6686a3; border-radius: 5px; background: #0b1726; color: var(--text); font: inherit; }
+        .llm-image-analysis-rule-input:focus { outline: 2px solid #64d9c0; outline-offset: 1px; }
         @media (max-width: 680px) {
             .lighbd-history-overlay, .lighbd-detail-overlay { padding: 10px; }
             .lighbd-history-shell { width: 100%; height: 90vh; }
             .lighbd-detail-shell { width: 100%; max-height: 92vh; }
             .lighbd-detail-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .llm-image-analysis-preview { grid-template-columns: minmax(0, 1fr); height: auto; }
+            .llm-image-analysis-preview > section { height: clamp(220px, 40vh, 340px); }
         }
         /* lighbd LLM 라이브 모달 */
         .lighbd-live-overlay { z-index: 490; }
@@ -20360,6 +20415,7 @@
                     </div>
                     <pre id="modal-llm-plan-text" style="white-space:pre-wrap; margin:0; font-size:0.78rem; color:var(--text); font-family:inherit; max-height:160px; overflow-y:auto;"></pre>
                 </div>
+                <div id="modal-mask-preview" hidden></div>
                 <div class="form-group" style="position:relative;">
                     <label>긍정 프롬프트 (Positive)</label>
                     <textarea id="modal-positive" placeholder="긍정 프롬프트를 입력하세요..." oninput="onIllustrationPromptManualEdit()"></textarea>
@@ -20572,7 +20628,7 @@
                         <div id="llm-edit-character-section" style="display:none; margin-bottom:12px;">
                             <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:7px;">
                                 <label style="font-size:0.82rem; font-weight:700;">캐릭터</label>
-                                <span style="font-size:0.69rem; color:var(--text-secondary);">활성 봇에서 선택 · 인원/위치 유지</span>
+                                <span style="font-size:0.69rem; color:var(--text-secondary);">활성 봇에서 선택 · 인원 유지</span>
                             </div>
                             <div id="llm-edit-character-slots" style="display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:8px;"></div>
                             <div id="llm-edit-character-error" style="display:none; margin-top:6px; font-size:0.73rem; color:var(--error);"></div>
@@ -20581,6 +20637,11 @@
                             <label>수정 방향</label>
                             <textarea id="llm-edit-direction-input" rows="5" placeholder="예: 밤 분위기로 바꾸고 두 캐릭터가 서로 마주 보며 웃게 해줘" style="width:100%; resize:vertical;"></textarea>
                         </div>
+                        <label style="display:flex; align-items:center; gap:8px; margin-top:12px; font-size:0.8rem; cursor:pointer;">
+                            <input id="llm-edit-allow-mask-edit" type="checkbox" checked onchange="localStorage.setItem('llmEditAllowMaskEdit', String(this.checked))">
+                            마스크 영역 편집 허용
+                        </label>
+                        <div style="margin-top:4px; font-size:0.7rem; line-height:1.45; color:var(--text-secondary);">켜면 기존 영역 좌표를 LLM에 전달하고 수정 방향과 현재 그림에 맞게 위치·크기를 조정합니다. 끄면 좌표를 전달하지 않고 기존 영역을 유지합니다. 마스크가 있는 V3 삽화에 적용됩니다.</div>
                         <div id="llm-edit-auto-feedback-panel" style="margin-top:12px; padding:10px 12px; border:1px solid var(--border); border-radius:8px; background:var(--surface2);">
                             <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
                                 <div>
@@ -28236,7 +28297,7 @@
         </div>
     </div>
 
-    <script src="/illustration_flow.js?v=20261015-stage-names"></script>
+    <script src="/illustration_flow.js?v=20261016-manager-edit"></script>
     <script src="/illustration_prompt_inspector.js"></script>
     <script src="/illustration_preview.js?v=20261015-stage-names"></script>
     <script src="/llm_thinking_check.js"></script>
@@ -31544,6 +31605,11 @@
                             handleLighbdLlmStream(msg.data);
                             break;
                         case 'illustration_auto_feedback_updated':
+                            if (msg.data?.question) {
+                                const analysisOverlay = document.getElementById('llm-flow-overlay');
+                                if (analysisOverlay?._analysisJob?.job_id === msg.data.job_id) renderLlmFlowBody({job: msg.data});
+                                break;
+                            }
                             handleIllustrationAutoFeedbackUpdate(msg.data);
                             break;
                         case 'enhance_started':
@@ -32076,7 +32142,7 @@
                     : '';
 
                 // Store prompt data in Map (avoids data-attribute truncation issues)
-                promptDataMap.set(b.name, { positive, negative, enhanced_positive: b.enhanced_positive || '', wildcard_info: b.wildcard_info || {}, conversion_info: b.conversion_info || {}, video_instruction: b.video_instruction || '', video_instruction_original: b.video_instruction_original || '', video_instruction_source: b.video_instruction_source || '', video_auto_instruction: b.video_auto_instruction, video_visual_context: b.video_visual_context || '', video_visual_context_source: b.video_visual_context_source || '' });
+                promptDataMap.set(b.name, { positive, negative, image_url: b.image_url || '', enhanced_positive: b.enhanced_positive || '', wildcard_info: b.wildcard_info || {}, conversion_info: b.conversion_info || {}, video_instruction: b.video_instruction || '', video_instruction_original: b.video_instruction_original || '', video_instruction_source: b.video_instruction_source || '', video_auto_instruction: b.video_auto_instruction, video_visual_context: b.video_visual_context || '', video_visual_context_source: b.video_visual_context_source || '' });
 
                 const cardClass = 'backup-card';
 
@@ -32110,8 +32176,9 @@
                                     ${b.has_prompt ? '' : 'disabled title="프롬프트 없음"'}>
                                 ${isScheduled ? '✅ 예약됨' : '📅 예약'}
                             </button>
-                            <button onclick="toggleUnusedNodes('${escapeAttr(b.name)}')">
-                                🔍 노드
+                            <button onclick="event.stopPropagation(); openLlmFlowModal('${escapeAttr(b.name)}', {analysis: true})"
+                                    title="궁금한 점을 입력한 뒤 이미지와 생성 기록에서 원인을 분석합니다">
+                                🔍 이미지 분석
                             </button>
                             <button onclick="toggleChat('${escapeAttr(b.name)}')">
                                 💬 채팅
@@ -36495,6 +36562,8 @@
         let currentModalBackupName = null;
         let llmEditInFlight = false;
         let currentModalIdentityEdit = null;
+        let currentModalMultiChar = null;
+        let currentModalFlowRunId = '';
         let llmEditModalState = null;
         let illustrationAutoFeedbackState = {
             jobId: '',
@@ -37099,6 +37168,8 @@
                         positive,
                         negative,
                         camera_control: illustrationCameraDraft,
+                        illustration_multi_char: currentModalMultiChar,
+                        illustration_flow_run_id: currentModalFlowRunId,
                     }),
                 });
                 if (data.error) throw new Error(data.error);
@@ -37113,6 +37184,7 @@
                     document.getElementById('modal-negative').value = data.negative;
                 }
                 currentModalCameraAppliedControl = normalizeIllustrationCameraControlForUi(data.camera_control);
+                currentModalFlowRunId = data.illustration_flow_run_id || '';
                 currentModalCameraPrompt = String(data.camera_prompt || '').trim();
                 currentModalCameraDirty = false;
                 illustrationCameraDraftDirty = false;
@@ -37157,9 +37229,14 @@
 
             currentModalBackupName = name;
             currentModalIdentityEdit = null;
+            currentModalMultiChar = null;
+            currentModalFlowRunId = '';
             llmEditModalState = null;
             document.getElementById('modal-backup-name').textContent = name;
             document.getElementById('modal-preview-img').src = imageUrl;
+            const storedMask = promptData.conversion_info?.illustration_multi_char;
+            renderIllustrationMaskPreview(storedMask?.enable ? storedMask.layout : null,
+                document.getElementById('modal-preview-img'), '', document.getElementById('modal-mask-preview'));
             document.getElementById('modal-positive').value = positive;
             document.getElementById('modal-negative').value = negative;
             document.getElementById('modal-submit-btn').disabled = false;
@@ -37193,6 +37270,8 @@
             currentModalBackupName = null;
             llmEditInFlight = false;
             currentModalIdentityEdit = null;
+            currentModalMultiChar = null;
+            currentModalFlowRunId = '';
             llmEditModalState = null;
             currentModalCameraSupported = false;
             currentModalCameraAppliedControl = null;
@@ -37366,6 +37445,17 @@
                 visualProfileIds: {},
             };
             llmEditModalState = openingState;
+            const maskToggle = document.getElementById('llm-edit-allow-mask-edit');
+            let hasMask = false;
+            try {
+                const maskBlock = positive.match(/^[ \t]*\[MULTI_CHAR\][ \t]*\r?\n([\s\S]*?)(?=^[ \t]*\[[A-Z0-9_]+\][ \t]*\r?$|(?![\s\S]))/m);
+                hasMask = fmt === 'v3' && provider === 'comfy'
+                    && !!maskBlock && JSON.parse(maskBlock[1]).enable === true;
+            } catch (error) {
+                console.error('[EASY_EDIT] 마스크 제어 블록 확인 실패:', error);
+            }
+            maskToggle.disabled = !hasMask;
+            maskToggle.checked = hasMask && localStorage.getItem('llmEditAllowMaskEdit') !== 'false';
             // 감지된 형식 배지 표시
             const badge = document.getElementById('llm-edit-format-badge');
             if (badge) {
@@ -37407,7 +37497,7 @@
             if (fmt === 'v3') {
                 charSection.style.display = 'block';
                 charSlots.innerHTML = '<div style="grid-column:1/-1;color:var(--text-secondary);font-size:0.76rem;">백업의 캐릭터 교체 가능 여부를 확인하는 중...</div>';
-                scopeNote.textContent = '백업 원본과 고정 마스크 스냅샷을 서버에서 검증하고 있습니다.';
+                scopeNote.textContent = '백업 원본과 마스크 스냅샷을 서버에서 검증하고 있습니다.';
                 try {
                     const capability = await fetchJSON(
                         '/api/llm_edit_prompt/capability?name=' + encodeURIComponent(openingBackupName)
@@ -37461,7 +37551,7 @@
                     botBadge.textContent = `활성 봇: ${openingState.botName}`;
                     botBadge.style.display = 'block';
                     scopeNote.textContent = currentNames.length === 2
-                        ? '검증된 2인 고정 마스크를 유지하며 슬롯별 캐릭터·프로필·FACE·LoRA를 수정합니다.'
+                        ? '슬롯별 캐릭터·프로필·FACE·LoRA를 수정합니다. 영역 좌표 수정은 마스크 편집 토글로 선택합니다.'
                         : '장면을 자연어로 수정하고, 선택한 프로필 카드의 고정 외형·LoRA·Face LoRA·FACE-ID·얼굴 태그를 함께 적용합니다.';
                     renderLlmEditCharacterSlots(
                         currentNames,
@@ -37805,6 +37895,8 @@
                 negative: document.getElementById('modal-negative').value || '',
                 direction,
                 max_rounds: maxRounds,
+                allow_mask_edit: document.getElementById('llm-edit-allow-mask-edit')?.checked === true,
+                illustration_multi_char: currentModalMultiChar,
             };
             if (selectedCharacters) requestBody.characters = selectedCharacters;
             if (selectedVisualProfileIds) requestBody.visual_profile_ids = selectedVisualProfileIds;
@@ -37917,6 +38009,9 @@
                     positive: positive,
                     negative: negative,
                     direction: direction,
+                    allow_mask_edit: document.getElementById('llm-edit-allow-mask-edit')?.checked === true,
+                    illustration_multi_char: currentModalMultiChar,
+                    illustration_flow_run_id: currentModalFlowRunId,
                 };
                 if (selectedCharacters) requestBody.characters = selectedCharacters;
                 if (selectedVisualProfileIds) {
@@ -37957,9 +38052,16 @@
                     return;
                 }
                 currentModalIdentityEdit = data.identity_edit || currentModalIdentityEdit;
-                showToast(data.identity_edit
+                currentModalMultiChar = data.illustration_multi_char || currentModalMultiChar;
+                currentModalFlowRunId = data.illustration_flow_run_id || '';
+                const maskSnapshot = currentModalMultiChar || promptDataMap.get(currentModalBackupName)?.conversion_info?.illustration_multi_char;
+                renderIllustrationMaskPreview(maskSnapshot?.enable ? maskSnapshot.layout : null,
+                    document.getElementById('modal-preview-img'), '', document.getElementById('modal-mask-preview'));
+                showToast(data.mask_edit_error
+                    ? '프롬프트를 수정했습니다. 일부 마스크 좌표는 적용하지 못했습니다. 수정 계획을 확인해주세요.'
+                    : data.identity_edit
                     ? '장면과 캐릭터·프로필·FACE·LoRA 수정 적용 완료'
-                    : '편하게 수정 적용 완료', 'success');
+                    : '편하게 수정 적용 완료', data.mask_edit_error ? 'warning' : 'success');
                 closeLlmEditModal();
             } catch (e) {
                 console.error('[EASY_EDIT] 수정 요청 실패:', e);
@@ -38176,6 +38278,8 @@
                     positive: positive,
                     negative: negative,
                     identity_edit: currentModalIdentityEdit,
+                    illustration_multi_char: currentModalMultiChar,
+                    illustration_flow_run_id: currentModalFlowRunId,
                 };
                 if (currentModalCameraAppliedControl) {
                     requestBody.camera_control = currentModalCameraAppliedControl;
@@ -47441,9 +47545,11 @@
         let _llmFlowVideoInstruction = '';
         let _llmFlowVideoOriginalInstruction = '';
         let _llmFlowSourceLabel = '백업';
+        const _llmFlowAnalysisJobs = new Map();
 
         function closeLlmFlowModal() {
             const overlay = document.getElementById('llm-flow-overlay');
+            if (overlay?._analysisPollTimer) clearInterval(overlay._analysisPollTimer);
             if (overlay) overlay.remove();
         }
 
@@ -47452,6 +47558,9 @@
             closeLlmFlowModal();
             const apiUrl = options.apiUrl || `/api/backups/${encodeURIComponent(name)}/llm_trace`;
             const sourceLabel = options.sourceLabel || '백업';
+            const analysis = options.analysis === true;
+            const question = analysis ? String(options.question || '').trim() : '';
+            const promptData = analysis ? (promptDataMap.get(name) || {}) : {};
             _llmFlowName = name;
             _llmFlowRecords = [];
             _llmFlowIsVideo = false;
@@ -47460,34 +47569,139 @@
             _llmFlowSourceLabel = sourceLabel;
             const overlay = document.createElement('div');
             overlay.id = 'llm-flow-overlay';
-            overlay.className = 'lighbd-detail-overlay';
+            overlay.className = analysis ? 'lighbd-detail-overlay llm-image-analysis-overlay' : 'lighbd-detail-overlay';
             overlay.tabIndex = -1;
             overlay.innerHTML = `
                 <div class="lighbd-detail-shell" role="dialog" aria-modal="true" aria-labelledby="llm-flow-title" style="width:min(1180px, 96vw); max-height:min(92vh, 920px);">
                     <div class="lighbd-modal-head">
                         <div class="lighbd-modal-title" id="llm-flow-title">
-                            LLM 흐름 추적 · <span style="font-family:monospace; font-size:.78rem;">${escapeHtml(name)}</span>
-                            <div class="lighbd-modal-subtitle">이 ${escapeHtml(sourceLabel)}을 만든 LLM 단계의 입력/출력 전체. 내용은 자르거나 축약하지 않습니다.</div>
+                            ${analysis ? '이미지 분석' : 'LLM 흐름 추적'} · <span style="font-family:monospace; font-size:.78rem;">${escapeHtml(name)}</span>
+                            <div class="lighbd-modal-subtitle">${analysis ? '의심 표현 찾기 → 단어 규칙 시험 → 실제 이미지 재생성 → 비전 검수. 개선이 확인된 규칙을 보고합니다.' : `이 ${escapeHtml(sourceLabel)}을 만든 LLM 단계의 입력/출력 전체. 내용은 자르거나 축약하지 않습니다.`}</div>
                         </div>
                         <button class="lighbd-modal-close" onclick="closeLlmFlowModal()" aria-label="닫기">✕</button>
                     </div>
                     <div id="llm-flow-body" class="lighbd-detail-body" style="display:block; overflow-y:auto;">
-                        <div style="color:var(--text2); font-size:0.85rem;">불러오는 중...</div>
+                        ${analysis ? `
+                            <div class="llm-image-analysis-preview">
+                                <section class="lighbd-detail-section" aria-label="분석할 백업 이미지">
+                                    <div class="lighbd-detail-section-title">이미지</div>
+                                    <div class="llm-image-analysis-image">
+                                        ${promptData.image_url ? `<img src="${escapeAttr(promptData.image_url)}" alt="분석할 백업 이미지" onerror="console.error('[IMAGE_ANALYSIS] 백업 이미지 로드 실패:', this.src); this.alt='백업 이미지를 불러오지 못했습니다';">` : '표시할 백업 이미지가 없습니다.'}
+                                    </div>
+                                </section>
+                                <section class="lighbd-detail-section" aria-label="수정 후 생성 이미지">
+                                    <div class="lighbd-detail-section-title" id="llm-image-analysis-image-title">수정 후 생성 이미지</div>
+                                    <div class="llm-image-analysis-image" id="llm-image-analysis-generated">아직 재생성한 이미지가 없습니다.</div>
+                                </section>
+                                <section class="lighbd-detail-section" aria-label="저장된 생성 프롬프트">
+                                    <div class="lighbd-detail-section-title">프롬프트 변경 · <del>삭제</del> · <span style="color:#72e39b;">추가</span></div>
+                                    <div class="llm-image-analysis-prompts" tabindex="0" role="region" aria-label="긍정·부정 프롬프트 전체">
+                                        <div class="lighbd-detail-section-title">긍정 프롬프트 (Positive)</div>
+                                        <pre class="lighbd-detail-content" id="llm-image-analysis-positive">${escapeHtml(promptData.positive || '저장된 긍정 프롬프트가 없습니다.')}</pre>
+                                        <div class="lighbd-detail-section-title">부정 프롬프트 (Negative · 읽기 전용)</div>
+                                        <pre class="lighbd-detail-content" id="llm-image-analysis-negative">${escapeHtml(promptData.negative || '저장된 부정 프롬프트가 없습니다.')}</pre>
+                                    </div>
+                                </section>
+                            </div>
+                            <form id="llm-image-analysis-form">
+                                <label for="llm-image-analysis-question" style="display:block; margin-bottom:8px; font-weight:600;">어떤 점이 이상하거나 궁금한가요?</label>
+                                <textarea id="llm-image-analysis-question" rows="4" required ${question ? 'readonly' : ''}
+                                    placeholder="기대한 모습과 실제 이미지에서 다른 점을 적어 주세요. 단어 규칙을 바꿔 실제로 재생성하며 확인합니다."
+                                    style="box-sizing:border-box; width:100%; resize:vertical; padding:10px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:6px;">${escapeHtml(question)}</textarea>
+                                <div class="llm-image-analysis-actions">
+                                    <label>최대 시험 <input id="llm-image-analysis-max-rounds" type="number" min="1" max="10" value="${Number(options.maxRounds) || 3}" style="width:48px;">회</label>
+                                    <button type="button" id="llm-image-analysis-cancel" hidden>중지</button>
+                                    <button type="button" onclick="closeLlmFlowModal()">닫기</button>
+                                    <button type="submit" id="llm-image-analysis-submit" ${question ? 'disabled' : ''}>${question ? '분석 중…' : '분석 시작'}</button>
+                                </div>
+                            </form>
+                            <div id="llm-image-analysis-result" aria-live="polite">${question ? '<div role="status" style="color:var(--text2); font-size:0.85rem;">이미지 분석 대기·진행 중… LB · LLM에서 작업 상태를 확인할 수 있습니다.</div>' : ''}</div>
+                        ` : '<div role="status" style="color:var(--text2); font-size:0.85rem;">불러오는 중...</div>'}
                     </div>
                 </div>`;
             overlay.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeLlmFlowModal(); });
             document.body.appendChild(overlay);
             overlay.focus();
 
+            if (analysis) {
+                const input = document.getElementById('llm-image-analysis-question');
+                const submit = document.getElementById('llm-image-analysis-submit');
+                document.getElementById('llm-image-analysis-cancel').addEventListener('click', async () => {
+                    const jobId = overlay._analysisJob?.job_id;
+                    if (!jobId) return;
+                    try {
+                        const response = await fetch(`/api/illustration_auto_feedback/${encodeURIComponent(jobId)}/cancel`, {method: 'POST'});
+                        const data = await response.json();
+                        if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+                        if (document.getElementById('llm-flow-overlay') === overlay) renderLlmFlowBody(data);
+                    } catch (error) {
+                        console.error('[IMAGE_ANALYSIS] 중지 실패:', error);
+                        showToast(`중지 실패: ${error.message}`, 'error');
+                    }
+                });
+                document.getElementById('llm-image-analysis-form').addEventListener('submit', (event) => {
+                    event.preventDefault();
+                    if (submit.disabled) return;
+                    const nextQuestion = input.value.trim();
+                    if (!nextQuestion) {
+                        console.warn('[IMAGE_ANALYSIS] 질문이 비어 있어 분석을 시작하지 않습니다.');
+                        showToast('원인을 알고 싶은 내용을 입력해 주세요.', 'error');
+                        input.focus();
+                        return;
+                    }
+                    submit.disabled = true;
+                    const maxRounds = Number(document.getElementById('llm-image-analysis-max-rounds').value);
+                    if (!Number.isInteger(maxRounds) || maxRounds < 1 || maxRounds > 10) {
+                        submit.disabled = false;
+                        showToast('최대 시험 횟수는 1~10회로 입력해 주세요.', 'error');
+                        return;
+                    }
+                    return openLlmFlowModal(name, {...options, question: nextQuestion, maxRounds});
+                });
+                const existingJob = _llmFlowAnalysisJobs.get(name);
+                if (!question && !existingJob) {
+                    input.focus();
+                    return;
+                }
+            }
+
             try {
-                const resp = await fetch(apiUrl);
+                const existingJob = analysis ? _llmFlowAnalysisJobs.get(name) : null;
+                const resp = existingJob && !question ? {ok: true, json: async () => ({job: existingJob})} : await fetch(analysis ? '/api/illustration_auto_feedback' : apiUrl, analysis ? {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({name, question, direction: question, max_rounds: Number(options.maxRounds) || 3}),
+                } : {method: 'GET'});
+                const data = await resp.json();
+                if (analysis && resp.ok && data.job) _llmFlowAnalysisJobs.set(name, data.job);
+                // A closed/replaced modal must not display an older request's result.
+                if (document.getElementById('llm-flow-overlay') !== overlay) return;
                 if (!resp.ok) {
                     console.error('[LLM_FLOW] API 실패:', resp.status);
-                    throw new Error('HTTP ' + resp.status);
+                    throw new Error(data.error || 'HTTP ' + resp.status);
                 }
-                const data = await resp.json();
                 if (data.status === 'error') {
                     throw new Error(data.error || '조회 실패');
+                }
+                if (analysis && data.job) {
+                    overlay._analysisJob = data.job;
+                    renderLlmFlowBody(data);
+                    if (!['completed', 'failed', 'cancelled'].includes(data.job.status)) {
+                        overlay._analysisPollTimer = setInterval(async () => {
+                            if (document.getElementById('llm-flow-overlay') !== overlay || overlay._analysisPolling) return;
+                            overlay._analysisPolling = true;
+                            try {
+                                const response = await fetch(`/api/illustration_auto_feedback/${encodeURIComponent(data.job.job_id)}`);
+                                const update = await response.json();
+                                if (!response.ok) throw new Error(update.error || `HTTP ${response.status}`);
+                                if (document.getElementById('llm-flow-overlay') === overlay) renderLlmFlowBody(update);
+                            } catch (error) {
+                                console.error('[IMAGE_ANALYSIS] 상태 조회 실패:', error);
+                                const state = document.getElementById('llm-image-analysis-status');
+                                if (document.getElementById('llm-flow-overlay') === overlay && state) state.textContent = `상태 조회 실패 · 재시도 중: ${error.message}`;
+                            } finally { overlay._analysisPolling = false; }
+                        }, 1500);
+                    }
+                    return;
                 }
                 _llmFlowRecords = Array.isArray(data.records) ? data.records : [];
                 _llmFlowFinalResult = data.final_result || null;
@@ -47500,8 +47714,16 @@
                 renderLlmFlowBody(data);
             } catch (e) {
                 console.error('[LLM_FLOW] 로드 실패:', e);
-                const body = document.getElementById('llm-flow-body');
-                if (body) body.innerHTML = `<div style="color:#ff6b6b; font-size:0.85rem;">LLM 흐름 로드 실패: ${escapeHtml(e.message || String(e))}</div>`;
+                if (document.getElementById('llm-flow-overlay') !== overlay) return;
+                const body = document.getElementById(analysis ? 'llm-image-analysis-result' : 'llm-flow-body');
+                if (body) body.innerHTML = `<div role="alert" style="color:#ff6b6b; font-size:0.85rem;">${analysis ? '이미지 분석' : 'LLM 흐름'} 실패: ${escapeHtml(e.message || String(e))}</div>`;
+            } finally {
+                if (analysis && document.getElementById('llm-flow-overlay') === overlay && (!overlay._analysisJob || ['completed', 'failed', 'cancelled'].includes(overlay._analysisJob.status))) {
+                    const submit = document.getElementById('llm-image-analysis-submit');
+                    submit.disabled = false;
+                    submit.textContent = '분석 시작';
+                    document.getElementById('llm-image-analysis-question').readOnly = false;
+                }
             }
         }
 
@@ -47657,6 +47879,117 @@
         function renderLlmFlowBody(data) {
             const body = document.getElementById('llm-flow-body');
             if (!body) return;
+            if (data.job?.question) {
+                const job = data.job;
+                const overlay = document.getElementById('llm-flow-overlay');
+                if (!overlay || job.source_backup_name !== _llmFlowName) return;
+                if (overlay._analysisJob && overlay._analysisJob.job_id !== job.job_id) return;
+                const terminal = ['completed', 'failed', 'cancelled'].includes(job.status);
+                if (['completed', 'failed', 'cancelled'].includes(overlay._analysisJob?.status) && !terminal) return;
+                overlay._analysisJob = job;
+                _llmFlowAnalysisJobs.set(job.source_backup_name, job);
+                const rounds = Array.isArray(job.rounds) ? job.rounds : [];
+                const selected = terminal ? rounds.find(round => round.backup_name === job.best_backup_name) || rounds.at(-1) : rounds.at(-1);
+                const positive = terminal && selected ? selected.positive : job.positive;
+                const negative = terminal && selected ? selected.negative : job.negative;
+                for (const [polarity, original, revised] of [['positive', job.original_positive, positive], ['negative', job.original_negative, negative]]) {
+                    const prompt = document.getElementById(`llm-image-analysis-${polarity}`);
+                    if (prompt && typeof revised === 'string') prompt.innerHTML = computeVideoDirectionDiff(original, revised).map(operation => {
+                        const text = escapeHtml(operation.text);
+                        return operation.type === 'remove' ? `<del class="video-direction-diff-remove">${text}</del>`
+                            : operation.type === 'add' ? `<ins class="video-direction-diff-add">${text}</ins>` : text;
+                    }).join('');
+                }
+                const image = document.getElementById('llm-image-analysis-generated');
+                const imageTitle = document.getElementById('llm-image-analysis-image-title');
+                if (selected?.backup_name && image && image.dataset.backupName !== selected.backup_name) {
+                    image.dataset.backupName = selected.backup_name;
+                    image.innerHTML = `<img src="/api/backup_image/${encodeURIComponent(selected.backup_name)}.webp" alt="${selected.round}회 수정 후 생성 이미지" onerror="console.error('[IMAGE_ANALYSIS] 수정 이미지 로드 실패:', this.src); this.alt='수정 이미지를 불러오지 못했습니다';">`;
+                }
+                if (imageTitle) imageTitle.textContent = terminal && job.achieved ? '개선 확인된 최종 이미지' : selected ? `${selected.round}회 생성 결과 · ${terminal ? '미해결' : '검수 중'}` : '수정 후 생성 이미지';
+                const rules = (terminal ? selected?.rules : job.rules) || [];
+                const appliedRules = rules.filter(rule => rule.applied_to?.includes('positive'));
+                const editableRules = terminal && job.achieved && appliedRules.length > 0;
+                const draftKey = `${job.job_id}:${selected?.backup_name || ''}`;
+                if (editableRules && overlay._analysisRuleDraft?.key !== draftKey) {
+                    overlay._analysisRuleDraft = {key: draftKey, rules: JSON.parse(JSON.stringify(appliedRules)), dirty: false, saved: []};
+                }
+                const draft = editableRules ? overlay._analysisRuleDraft : null;
+                const ruleSettings = (draft?.rules || appliedRules).map((rule, index) => {
+                    const type = rule.type || 'replace';
+                    const fields = type === 'remove'
+                        ? [['감지할 단어', rule.trigger || '', 'trigger'], ['제거 패턴', rule.pattern, 'pattern'], ['trigger도 제거', !!rule.remove_trigger, 'remove_trigger'], ['예외 단어', Array.isArray(rule.exclude) ? rule.exclude.join(', ') : rule.exclude || '', 'exclude']]
+                        : type === 'weight'
+                        ? [['감지할 태그', rule.source, 'source'], ['가중치', rule.weight ?? '1.1', 'weight'], ['가중치 제거', !!rule.remove_weight, 'remove_weight']]
+                        : [['찾을 단어', rule.source, 'source'], ['바꿀 단어 (빈칸이면 삭제)', rule.target || '', 'target']];
+                    fields.push(['실제 적용 위치', rule.applied_to.map(polarity => polarity === 'positive' ? '긍정 프롬프트' : '부정 프롬프트').join(' · ')], ['활성화', rule.enabled !== false, 'enabled'], ['캐릭터 1인 감지 시만', !!rule.single_character_only, 'single_character_only']);
+                    return `<div class="llm-image-analysis-rule-card"><strong>${index + 1}. ${escapeHtml(({replace: '치환', remove: '제거', weight: '가중치 조정'})[type] || type)}</strong><dl style="margin:8px 0 0;">${fields.map(([label, value, key]) => `<dt style="color:var(--text2); font-size:.75rem;">${escapeHtml(label)}</dt><dd style="margin:2px 0 8px; white-space:pre-wrap; overflow-wrap:anywhere;">${editableRules && key ? (typeof value === 'boolean' ? `<input type="checkbox" aria-label="${escapeAttr(label)}" data-analysis-rule-index="${index}" data-analysis-rule-field="${key}" ${value ? 'checked' : ''}>` : `<textarea rows="2" class="llm-image-analysis-rule-input" aria-label="${escapeAttr(label)}" data-analysis-rule-index="${index}" data-analysis-rule-field="${key}">${escapeHtml(value ?? '')}</textarea>`) : escapeHtml(typeof value === 'boolean' ? value ? '켜짐' : '꺼짐' : value ?? '')}</dd>`).join('')}</dl>${editableRules ? `<div class="llm-image-analysis-actions"><button type="button" data-analysis-save-rule="${index}" aria-label="${index + 1}번 규칙만 추가" ${!job.bot_name || draft.saved.includes(index) ? 'disabled' : ''}>${draft.saved.includes(index) ? '추가 완료' : '이 규칙만 추가'}</button></div>` : ''}</div>`;
+                }).join('');
+                const result = document.getElementById('llm-image-analysis-result');
+                if (result) result.innerHTML = `
+                    <section class="lighbd-detail-section">
+                        <div class="lighbd-detail-section-title">${!terminal ? '수정·재생성 진행 중' : job.achieved ? '재생성 검수 완료 · 이미지 분석 결과' : job.status === 'cancelled' ? '분석 중지 · 개선 미확인' : '미해결 · 개선이 확인되지 않았습니다'}</div>
+                        <div id="llm-image-analysis-status" role="status">${escapeHtml(job.message || '')} · ${job.round || 0}/${job.max_rounds}회</div>
+                        ${!terminal ? `<details open><summary>현재 시험하는 가설·규칙</summary><pre class="lighbd-detail-content">${escapeHtml(job.current_direction || '')}</pre></details>` : ''}
+                        ${terminal && job.achieved && selected ? `<p>${escapeHtml(selected.review?.summary || '')}</p><details><summary>1. 의심 표현 · 생성 전 분석 가설</summary><p>생성 전 제안입니다. 실제 적용된 변경은 아래 규칙과 위 프롬프트에서 확인할 수 있습니다.</p><pre class="lighbd-detail-content">${escapeHtml(selected.analysis || selected.edit_direction || '')}</pre></details>` : ''}
+                        ${ruleSettings && (!terminal || job.achieved) ? `<div id="llm-image-analysis-rule-heading" class="lighbd-detail-section-title">2. 단어 기반 규칙 설정안 · ${draft?.dirty ? '사용자 수정 · 검수 전' : `실제 적용 ${terminal ? '· 이미지 검수 완료' : '· 시험 중'}`}</div><p id="llm-image-analysis-rule-description">${draft?.dirty ? '표시된 이미지는 수정 전 규칙으로 생성했습니다. 아래 수정값은 아직 재생성 검수하지 않았습니다.' : `삽화용 봇 설정의 단어 기반 규칙 중 실제로 프롬프트를 바꾼 항목입니다. ${terminal ? '해당 규칙 조합으로 생성한 이미지의 개선을 확인했습니다. 개별 규칙의 효과를 따로 검증한 것은 아닙니다.' : '이미지 개선 여부는 아직 검수 중입니다.'}`}</p>${ruleSettings}` : ''}
+                        ${editableRules ? `<p id="llm-image-analysis-rule-edit-status" role="status">${draft.dirty ? '사용자 수정값 · 재생성 검수 전' : '필요한 규칙을 수정하고 각 카드의 ‘이 규칙만 추가’를 누르세요.'}</p><p>추가할 봇 · ${escapeHtml(job.bot_name || '연결된 봇 정보 없음')} · 긍정 프롬프트에만 적용</p>` : ''}
+                        ${terminal && !job.achieved ? `<p>${escapeHtml(job.error || selected?.review?.remaining_gaps || '요청한 개선을 확인하지 못했습니다. 시험한 이미지는 보존됩니다.')}</p>` : ''}
+                        ${rounds.length ? `<details><summary>회차별 생성·검수 (${rounds.length})</summary>${rounds.map(round => `<p><a href="/api/backup_image/${encodeURIComponent(round.backup_name)}.webp" target="_blank" rel="noopener">${round.round}회 이미지</a> · ${round.review ? escapeHtml(round.review.summary || '') : '검수 대기'}</p>`).join('')}</details>` : ''}
+                    </section>`;
+                if (editableRules && result) {
+                    result.querySelectorAll('[data-analysis-rule-field]').forEach(field => {
+                        field.addEventListener('input', () => {
+                            const index = Number(field.dataset.analysisRuleIndex);
+                            const rule = draft.rules[index];
+                            const key = field.dataset.analysisRuleField;
+                            rule[key] = field.type === 'checkbox' ? field.checked : key === 'exclude' ? _wrExcludeFromText(field.value) : field.value;
+                            draft.dirty = true;
+                            draft.saved = draft.saved.filter(savedIndex => savedIndex !== index);
+                            const state = document.getElementById('llm-image-analysis-rule-edit-status');
+                            if (state) state.textContent = '사용자 수정값 · 재생성 검수 전';
+                            document.getElementById('llm-image-analysis-rule-heading').textContent = '2. 단어 기반 규칙 설정안 · 사용자 수정 · 검수 전';
+                            document.getElementById('llm-image-analysis-rule-description').textContent = '표시된 이미지는 수정 전 규칙으로 생성했습니다. 아래 수정값은 아직 재생성 검수하지 않았습니다.';
+                            const save = result.querySelector(`[data-analysis-save-rule="${index}"]`);
+                            save.disabled = !job.bot_name;
+                            save.textContent = '이 규칙만 추가';
+                        });
+                    });
+                    result.querySelectorAll('[data-analysis-save-rule]').forEach(save => save.addEventListener('click', async () => {
+                        if (save.disabled) return;
+                        save.disabled = true;
+                        const index = Number(save.dataset.analysisSaveRule);
+                        const fields = result.querySelectorAll(`[data-analysis-rule-index="${index}"]`);
+                        fields.forEach(field => { field.disabled = true; });
+                        const {id, applied_to, ...settings} = draft.rules[index];
+                        const saved = await saveWordReplacements({botName: job.bot_name, append: true,
+                            rules: [settings]});
+                        fields.forEach(field => { field.disabled = false; });
+                        if (saved) draft.saved.push(index);
+                        save.disabled = !!saved;
+                        save.textContent = saved ? '추가 완료' : '다시 추가';
+                    }));
+                }
+                const submit = document.getElementById('llm-image-analysis-submit');
+                if (submit) { submit.disabled = !terminal; submit.textContent = terminal ? '다시 분석·재생성' : '수정·재생성 중…'; }
+                const input = document.getElementById('llm-image-analysis-question');
+                if (input) { input.readOnly = !terminal; if (!input.value) input.value = job.question; }
+                const maxRounds = document.getElementById('llm-image-analysis-max-rounds');
+                if (maxRounds) maxRounds.disabled = !terminal;
+                const cancel = document.getElementById('llm-image-analysis-cancel');
+                if (cancel) { cancel.hidden = terminal; cancel.disabled = !!job.cancel_requested; }
+                if (terminal && overlay._analysisPollTimer) { clearInterval(overlay._analysisPollTimer); overlay._analysisPollTimer = null; }
+                return;
+            }
+            if (typeof data.analysis === 'string') {
+                const result = document.getElementById('llm-image-analysis-result') || body;
+                result.innerHTML = `
+                    <section class="lighbd-detail-section">
+                        <div class="lighbd-detail-section-title">이미지 분석 결과</div>
+                        <pre class="lighbd-detail-content" style="white-space:pre-wrap; overflow-wrap:anywhere;">${escapeHtml(data.analysis)}</pre>
+                    </section>`;
+                return;
+            }
             const records = Array.isArray(data.records) ? data.records : [];
             const missing = Array.isArray(data.missing) ? data.missing : [];
             const note = data.note || '';
@@ -48736,6 +49069,7 @@
             { key: 'visual_profile_guide',     label: '프로필 선택 기준 자동 작성', kind: '텍스트/JSON', modality: 'text', group: 'bot_profiles' },
             { key: 'visual_profile_appearance_vision', label: '프로필 대표 이미지 외형 분석', kind: '비전/JSON', modality: 'vision', group: 'bot_profiles' },
             { key: 'edit_illustration_prompt', label: '삽화 편하게 수정', kind: '비전/JSON', modality: 'vision', group: 'image_editing' },
+            { key: 'illustration_image_analysis', label: '이미지 분석', kind: '비전', modality: 'vision', group: 'image_editing' },
             { key: 'illustration_auto_feedback_review', label: '삽화 오토피드백 검수', kind: '비전/JSON', modality: 'vision', group: 'image_editing' },
             { key: 'qwen_edit_translate',      label: 'EDIT 지시 영어 번역', kind: '텍스트', modality: 'text', group: 'image_editing' },
             { key: 'character_maker_draft',    label: '캐릭터 메이커 초안', kind: '텍스트/JSON', modality: 'text', group: 'character_maker' },
@@ -61044,7 +61378,7 @@
                     ? `새로 등록 '${displayPart(naturalLanguageName)}' · ${revisionNaturalLanguage.length}자`
                     : '프리셋 등록 안 함 · 카드 기록에는 보존'}<br>
                 <b>생성 프리셋 편집본</b> · ${editablePresetSummary}<br>
-                새 프리셋이나 캐릭터 정보를 저장할 때는 먼저 <code>요구사항/</code>에 태그 데이터를 백업합니다.
+                새 프리셋이나 캐릭터 정보를 저장할 때는 먼저 <code>backups/</code>에 태그 데이터를 백업합니다.
             `;
         }
 
@@ -83643,7 +83977,7 @@
                         <details style="margin-top:9px; color:var(--text2); font-size:0.72rem; line-height:1.55;">
                             <summary style="cursor:pointer; user-select:none; color:var(--text); font-weight:600;">규칙 유형과 작동 방식</summary>
                             <div style="margin-top:7px; padding:9px 11px; background:var(--surface2); border-radius:7px;">
-                                삽화용 봇 설정 프롬프트의 태그를 규칙에 따라 다룹니다. <strong>치환</strong>은 지정한 단어를 다른 단어로 바꿉니다(대소문자 무관 부분 매칭). <strong>제거</strong>는 trigger 단어가 감지되면 패턴(* = 임의 문자열)에 매칭되는 태그를 제거합니다. <strong>가중치 조정</strong>은 쉼표 단위로 정확히 일치하는 태그의 가중치를 변경하거나 제거합니다. <strong>삽입</strong>은 지정한 단어가 최종 프롬프트에 없으면 품질 태그 바로 뒤에 삽입합니다. <strong>캐릭터 찾기</strong>는 이미지 태그 이름을 선택한 캐릭터 카드로 인식하되 원래 프롬프트 태그는 바꾸지 않습니다. <strong>캐릭터 눈/얼굴 제거·치환</strong>은 trigger가 감지되면 감지 캐릭터의 eye_tags/face_tags를 빌드 시점에 변경하며 bot.json은 수정하지 않습니다. <strong>캐릭터 1인 감지 시만</strong>은 정확히 한 명이 감지된 장면에서만 해당 규칙을 실행합니다. 0명 또는 2명 이상이면 건너뜁니다.
+                                삽화용 봇 설정의 <strong>긍정 프롬프트에만</strong> 적용하며 부정 프롬프트는 변경하지 않습니다. <strong>치환</strong>은 지정한 단어를 다른 단어로 바꿉니다(대소문자 무관 부분 매칭). <strong>제거</strong>는 trigger 단어가 감지되면 패턴(* = 임의 문자열)에 매칭되는 태그를 제거합니다. <strong>가중치 조정</strong>은 쉼표 단위로 정확히 일치하는 태그의 가중치를 변경하거나 제거합니다. <strong>삽입</strong>은 지정한 단어가 최종 프롬프트에 없으면 품질 태그 바로 뒤에 삽입합니다. <strong>캐릭터 찾기</strong>는 이미지 태그 이름을 선택한 캐릭터 카드로 인식하되 원래 프롬프트 태그는 바꾸지 않습니다. <strong>캐릭터 눈/얼굴 제거·치환</strong>은 trigger가 감지되면 감지 캐릭터의 eye_tags/face_tags를 빌드 시점에 변경하며 bot.json은 수정하지 않습니다. <strong>캐릭터 1인 감지 시만</strong>은 정확히 한 명이 감지된 장면에서만 해당 규칙을 실행합니다. 0명 또는 2명 이상이면 건너뜁니다.
                             </div>
                         </details>
                         <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:12px; padding-bottom:10px;">
@@ -84007,24 +84341,28 @@
             });
         }
 
-        async function saveWordReplacements() {
-            syncWordReplacementFromDom();
+        async function saveWordReplacements(options = {}) {
+            const suppliedRules = Array.isArray(options.rules);
+            if (!suppliedRules) syncWordReplacementFromDom();
+            const targetBot = suppliedRules ? options.botName : botCurrentBot;
             try {
                 const resp = await fetch('/api/bot_mode/word_replacements', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ bot: botCurrentBot, rules: _wrRules })
+                    body: JSON.stringify({ bot: targetBot, rules: suppliedRules ? options.rules : _wrRules, ...(options.append ? {append: true} : {}) })
                 });
                 const data = await resp.json();
                 if (!resp.ok || data.error) {
                     throw new Error(data.error || `HTTP ${resp.status}`);
                 }
-                showToast('단어 기반 규칙 저장 완료', 'success');
-                updateWordReplacementsCount();
-                document.getElementById('word-replacements-modal').remove();
+                showToast(options.append ? `${targetBot} · 단어 규칙 ${data.added_count}개 추가${data.added_count ? ' 완료' : ' (같은 규칙이 이미 있습니다)'}` : '단어 기반 규칙 저장 완료', 'success');
+                if (typeof botCurrentBot !== 'undefined' && targetBot === botCurrentBot) updateWordReplacementsCount();
+                if (!suppliedRules) document.getElementById('word-replacements-modal')?.remove();
+                return data;
             } catch (e) {
                 console.error('[WORD_RULE] 저장 실패:', e);
                 showToast('저장 실패: ' + e.message, 'error');
+                return null;
             }
         }
 
@@ -97435,6 +97773,7 @@
             qwen_edit: 'EDIT 툴',
             illustration_llm_build: '삽화 LLM',
             illustration_easy_edit: '삽화 편집',
+            illustration_image_analysis: '이미지 분석',
             illustration_auto_feedback_llm: '삽화 오토피드백 LLM',
             llm_test: 'LLM 테스트',
             visual_profile_guide: '프로필 선택 기준',

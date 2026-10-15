@@ -3965,10 +3965,25 @@ class BotMode:
             bot_name = body.get("bot", "").strip()
             rules = body.get("rules", [])
             if not bot_name:
+                print(f"[BOT_MODE] 단어 기반 규칙 저장 실패: 봇 이름 없음, body={body!r}")
                 return _json_error("봇 이름이 필요합니다.")
-            _save_word_replacements(bot_name, {"rules": rules})
+            added_count = 0
+            settings = {"rules": rules}
+            if body.get("append") is True:
+                settings = _load_word_replacements(bot_name)
+                existing_rules = list(settings.get("rules", []))
+                for rule in rules:
+                    candidate = {key: value for key, value in rule.items() if key not in {"id", "applied_to"}}
+                    if any(candidate == {key: value for key, value in existing.items() if key not in {"id", "applied_to"}} for existing in existing_rules):
+                        print(f"[BOT_MODE] 같은 단어 규칙 추가 스킵: bot={bot_name}, rule={candidate!r}")
+                        continue
+                    existing_rules.append({**candidate, "id": uuid.uuid4().hex[:12]})
+                    added_count += 1
+                settings["rules"] = existing_rules
+            if body.get("append") is not True or added_count:
+                _save_word_replacements(bot_name, settings)
             print(f"[BOT_MODE] 단어 기반 규칙 저장: bot={bot_name}, {len(rules)}개 규칙")
-            return _json_ok({"saved": True})
+            return _json_ok({"saved": True, "added_count": added_count})
         except Exception as e:
             print(f"[BOT_MODE] word_replacements 저장 실패: {e}")
             traceback.print_exc()
@@ -6246,6 +6261,7 @@ def _load_word_replacements(bot_name: str) -> dict:
         except Exception as e:
             print(f"[BOT_MODE] word_replacements 로드 실패: {e}")
             traceback.print_exc()
+            raise
     return {"rules": []}
 
 
@@ -6253,19 +6269,7 @@ def _save_word_replacements(bot_name: str, data: dict):
     path = _word_replacements_path(bot_name)
     bot_dir = os.path.dirname(path)
     os.makedirs(bot_dir, exist_ok=True)
-    if os.path.isfile(path):
-        backup_dir = os.path.join(BASE_DIR, "요구사항")
-        try:
-            os.makedirs(backup_dir, exist_ok=True)
-            stamp = time.strftime("%Y%m%d_%H%M%S")
-            backup_name = f"{bot_name}_{WORD_REPLACEMENTS_FILE}.bak_{stamp}_{uuid.uuid4().hex[:8]}"
-            backup_path = os.path.join(backup_dir, backup_name)
-            shutil.copy2(path, backup_path)
-            print(f"[BOT_MODE] 단어 기반 규칙 기존 파일 백업: {backup_path}")
-        except Exception as exc:
-            print(f"[BOT_MODE] 단어 기반 규칙 백업 실패(path={path!r}): {exc}")
-            traceback.print_exc()
-            raise RuntimeError("기존 단어 기반 규칙 백업에 실패하여 저장을 중단했습니다.") from exc
+    _backup_data_file_before_overwrite(path, "단어 기반 규칙")
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
 

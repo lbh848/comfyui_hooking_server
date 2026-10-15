@@ -281,7 +281,7 @@ def apply_replacement_rules(text: str, rules: list[dict]) -> tuple[str, int]:
 
 
 def apply_prompt_rules(positive: str, negative: str, rules: list[dict]) -> tuple[str, str, int]:
-    """기존 프롬프트 문자열에 치환과 제거 규칙을 모두 적용한다."""
+    """긍정 프롬프트에만 단어 규칙을 적용하고 부정 프롬프트는 그대로 반환한다."""
     applied_rule_indexes = set()
     for index, rule in enumerate(rules):
         if not rule.get("enabled", True):
@@ -293,15 +293,13 @@ def apply_prompt_rules(positive: str, negative: str, rules: list[dict]) -> tuple
             continue
         if rule_type == "remove":
             positive, did_positive = apply_remove_rule(positive, rule)
-            negative, did_negative = apply_remove_rule(negative, rule)
-            if did_positive or did_negative:
+            if did_positive:
                 applied_rule_indexes.add(index)
             continue
 
         if rule_type == "weight":
             positive, did_positive = apply_weight_rule(positive, rule)
-            negative, did_negative = apply_weight_rule(negative, rule)
-            if did_positive or did_negative:
+            if did_positive:
                 applied_rule_indexes.add(index)
             continue
 
@@ -319,10 +317,7 @@ def apply_prompt_rules(positive: str, negative: str, rules: list[dict]) -> tuple
         positive, positive_count = re.subn(
             pattern, replacement, positive, flags=re.IGNORECASE
         )
-        negative, negative_count = re.subn(
-            pattern, replacement, negative, flags=re.IGNORECASE
-        )
-        if positive_count or negative_count:
+        if positive_count:
             applied_rule_indexes.add(index)
 
     return positive, negative, len(applied_rule_indexes)

@@ -503,6 +503,8 @@
         tip.style.top = `${Math.max(8, Math.min(innerHeight - tip.offsetHeight - 12, r.bottom + 10))}px`;
     }
     function layoutNodes(nodes, kind) {
+        const isIllustration = kind === 'illustration';
+        if (kind === 'illustration' && nodes.some(n => ['illustration_easy_edit', 'regenerate'].includes(n.task_key))) kind = 'illustration_edit';
         // Display stages are fixed even when branches finish or dispatch images early.
         // Names also classify reserved LLM nodes before routing metadata arrives.
         const stageRules = [
@@ -544,7 +546,7 @@
             return rule || (n.kind === 'image' ? stageRules.find(([, groupName]) => groupName === 'illustration_images') : null);
         };
         const stageById = new Map(nodes.map(n => [n.id, stageOf(n)]));
-        const layoutGroup = n => stageById.get(n.id)
+        const layoutGroup = n => kind === 'illustration_edit' ? n.id : stageById.get(n.id)
             ? `__illustration_step_${stageById.get(n.id)[2]}__`
             : kind === 'illustration' && n.kind !== 'request'
                 ? String(n.layout_group || (n.task_key && `${n.task_key}:${n.inspection_scope || ''}`)
@@ -572,7 +574,7 @@
             const members = membersByGroup.get(group) || [];
             const stage = members.map(n => stageById.get(n.id)).find(Boolean);
             if (stage) {depthByGroup.set(group, stage[2]); return stage[2];}
-            if (members.some(n => n.kind === 'request')) {depthByGroup.set(group, 0); return 0;}
+            if (members.some(n => n.kind === 'request') && !dependenciesByGroup.get(group)?.size) {depthByGroup.set(group, 0); return 0;}
             if (resolvingGroups.has(group)) {
                 console.error('[ILLUST_FLOW] layout_group dependency cycle', group);
                 return kind === 'illustration' ? 7 : 1;
@@ -600,7 +602,7 @@
             return stageOrder || orderA - orderB || nameOrder || tieOrder;
         });
         const positions = new Map(), layers = new Map(), rootColumnX = 36;
-        const top = kind === 'illustration' ? 104 : 32;
+        const top = isIllustration ? 104 : 32;
         const depthById = new Map(nodes.map(n => [n.id, groupDepth(layoutGroup(n))]));
         const laneById = new Map();
         if (kind === 'illustration') {
@@ -701,7 +703,7 @@
         nodes.forEach(n => {
             const p = positions.get(n.id), group = kind === 'illustration' && p.depth >= 5 ? 'branches' : p.depth;
             const key = `${group}:${p.y}`;
-            const cardHeight = kind === 'illustration' && nodePreviewKind(n) ? 360 : 98;
+            const cardHeight = isIllustration && nodePreviewKind(n) ? 360 : 98;
             rowHeights.set(key, Math.max(rowHeights.get(key) || 0, cardHeight));
         });
         positions.forEach(p => {
@@ -710,8 +712,8 @@
             for (let row = 0; row < p.y; row += 1) y += (rowHeights.get(`${group}:${row}`) || 98) + 38;
             p.y = y;
         });
-        const width = Math.max(kind === 'illustration' ? rootColumnX + 7 * 290 + 270 : 650, ...[...positions.values()].map(p => p.x + 270));
-        const height = Math.max(350, ...nodes.map(n => positions.get(n.id).y + (kind === 'illustration' && nodePreviewKind(n) ? 360 : 98) + 42));
+        const width = Math.max(isIllustration ? rootColumnX + 7 * 290 + 270 : 650, ...[...positions.values()].map(p => p.x + 270));
+        const height = Math.max(350, ...nodes.map(n => positions.get(n.id).y + (isIllustration && nodePreviewKind(n) ? 360 : 98) + 42));
         return {positions, width, height};
     }
     function nodePreviewKind(n) {
@@ -719,7 +721,7 @@
         if (n.task_key === 'illustration_multi_char_mask' || n.layout_group === 'illustration_multi_char_mask'
                 || caption === 'MULTI-CHAR-MASK' || caption.startsWith('MULTI-CHAR-MASK ')
                 || caption === 'MULTI-CHAR_MASK' || caption.startsWith('MULTI-CHAR_MASK ')) return 'mask';
-        return n.kind === 'image' || n.layout_group === 'illustration_generation' ? 'image' : '';
+        return n.kind === 'image' || n.layout_group === 'illustration_generation' || n.image_nodes?.length ? 'image' : '';
     }
     function nodeImageUrl(n, runStatus) {
         if (n.image_url) return n.image_url;
@@ -741,7 +743,12 @@
             : dependencies.length === 1 && (slot === null || illustrationSlot(dependencies[0]) === null) ? dependencies : [];
         return candidates.findLast(mask => mask.status === 'completed') || candidates.at(-1);
     }
-    function imageMaskOverlay(layout, img, maskUrl) {
+    function imageMaskOverlay(layout, img, maskUrl, container = null) {
+        if (container) {
+            container.replaceChildren();
+            container.hidden = !layout?.regions?.length;
+            if (container.hidden) return;
+        }
         const ns = 'http://www.w3.org/2000/svg', svg = document.createElementNS(ns, 'svg');
         const width = img.naturalWidth || layout?.mask_width || 100, height = img.naturalHeight || layout?.mask_height || 100;
         svg.classList.add('if-image-mask-overlay'); svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
@@ -761,8 +768,21 @@
             for (const field of ['x', 'y', 'width', 'height']) rect.setAttribute(field, Number(region[field]) * (field === 'x' || field === 'width' ? width : height));
             rect.setAttribute('fill', color); rect.setAttribute('fill-opacity', '.28');
             rect.setAttribute('stroke', color); rect.setAttribute('stroke-width', '1.5'); rect.setAttribute('vector-effect', 'non-scaling-stroke');
+            const title = document.createElementNS(ns, 'title'); title.textContent = region.name || ''; rect.append(title);
             svg.append(rect);
         });
+        if (container) {
+            svg.classList.remove('if-image-mask-overlay');
+            svg.style.width = `${Math.min(320, 280 * width / height)}px`;
+            svg.removeAttribute('aria-hidden');
+            svg.setAttribute('role', 'img'); svg.setAttribute('aria-label', '재생성에 적용할 마스크 영역');
+            const legend = element('div', 'prompt-mask-legend');
+            [...svg.children].forEach((rect, index) => {
+                const line = element('div', '', `${'RGB'[index % colors.length]} · ${rect.textContent}`);
+                line.style.color = rect.getAttribute('stroke'); legend.append(line);
+            });
+            container.append(element('strong', '', '재생성에 적용할 마스크 영역'), svg, legend);
+        }
         return svg;
     }
     function maskResultKey(flow, n) {return `${flow.id}:${n.id}:${n.ended_at || n.response_ended_at || ''}`;}
@@ -789,8 +809,18 @@
         }));
         if (activeTab === 'illustration' && flows.illustration?.id === flow.id) render();
     }
-    function nodePreview(n, flow) {
+    function nodePreview(n, flow, previewKey = n.id) {
         const kind = nodePreviewKind(n), preview = element('div', 'if-node-preview');
+        if (n.kind === 'result' && n.image_nodes?.length) {
+            for (const id of n.image_nodes) {
+                const imageNode = flow.nodes.find(node => node.id === id);
+                if (!imageNode) continue;
+                const imagePreview = nodePreview(imageNode, flow, `${n.id}:${id}`);
+                imagePreview.className = 'if-result-image';
+                preview.append(imagePreview);
+            }
+            return preview;
+        }
         preview.append(element('div', 'if-preview-title', kind === 'mask' ? '생성 영역' : '생성 이미지'));
         if (kind === 'mask') {
             const result = maskResults.get(maskResultKey(flow, n));
@@ -824,9 +854,9 @@
             if (url) {
                 const imageButton = button('', () => openDetail(n.id)); imageButton.className = 'if-preview-image-button';
                 imageButton.setAttribute('aria-label', `${n.label} 생성 이미지 크게 보기`);
-                const img = previewImages.get(n.id) || element('img', 'if-preview-image');
+                const img = previewImages.get(previewKey) || element('img', 'if-preview-image');
                 if (img.getAttribute('src') !== url) {img.src = url; delete img.dataset.failed;}
-                img.alt = `${n.label} 생성 결과`; img.loading = 'lazy'; previewImages.set(n.id, img);
+                img.alt = `${n.label} 생성 결과`; img.loading = 'lazy'; previewImages.set(previewKey, img);
                 img.onload = () => {if (activeTab === 'illustration' && flows.illustration?.id === flow.id) render();};
                 img.onerror = () => {console.error('[ILLUST_FLOW] 생성 이미지 표시 실패:', {node: n.id, url}); img.dataset.failed = 'true'; imageButton.replaceChildren(element('div', 'if-preview-empty', '이미지를 불러오지 못했습니다.'));};
                 const maskNode = imageMaskNode(n, flow);
@@ -836,13 +866,13 @@
                     const toggle = element('label', 'if-mask-overlay-toggle'), input = element('input');
                     const overlay = n.mask_url ? imageMaskOverlay(null, img, n.mask_url)
                         : result?.layout ? imageMaskOverlay(result.layout, img) : null;
-                    input.type = 'checkbox'; input.checked = maskOverlayNodes.has(n.id); input.disabled = !overlay;
-                    input.dataset.maskOverlayNode = n.id; input.setAttribute('aria-label', `${n.label} 마스크 겹쳐 보기`);
+                    input.type = 'checkbox'; input.checked = maskOverlayNodes.has(previewKey); input.disabled = !overlay;
+                    input.dataset.maskOverlayNode = previewKey; input.setAttribute('aria-label', `${n.label} 마스크 겹쳐 보기`);
                     toggle.title = result?.error || (overlay ? '생성 이미지 위에 인물 영역 마스크를 겹쳐 표시합니다.' : '마스크 결과를 기다리는 중입니다.');
                     if (overlay) {
                         overlay.toggleAttribute('hidden', !input.checked);
                         input.onchange = () => {
-                            if (input.checked) maskOverlayNodes.add(n.id); else maskOverlayNodes.delete(n.id);
+                            if (input.checked) maskOverlayNodes.add(previewKey); else maskOverlayNodes.delete(previewKey);
                             overlay.toggleAttribute('hidden', !input.checked);
                         };
                     }
@@ -856,13 +886,17 @@
         return preview;
     }
     function previewSignature(n, flow) {
+        if (n.kind === 'result' && n.image_nodes?.length) return JSON.stringify(n.image_nodes.map(id => {
+            const source = flow.nodes.find(node => node.id === id), img = previewImages.get(`${n.id}:${id}`);
+            return [source && previewSignature(source, flow), img?.naturalWidth, img?.naturalHeight, img?.dataset.failed];
+        }));
         const kind = nodePreviewKind(n), mask = kind === 'image' ? imageMaskNode(n, flow) : n;
         const result = mask && maskResults.get(maskResultKey(flow, mask));
         const imageNode = kind === 'mask'
             ? (flow.nodes || []).find(child => child.kind === 'image' && child.dependencies?.includes(n.id)) : n;
         const img = imageNode && previewImages.get(imageNode.id);
         return JSON.stringify([kind, n.label, n.status, n.error, nodeImageUrl(n, flow.status),
-            n.mask_url, Object.hasOwn(n, 'mask_url'), mask?.id, result,
+            n.mask_url, Object.hasOwn(n, 'mask_url'), mask?.id, result, n.image_nodes,
             img?.naturalWidth, img?.naturalHeight, img?.dataset.failed]);
     }
     function render() {
@@ -1041,7 +1075,7 @@
             }
         }
         flows[kind] = next;
-        if (autoOpen && autoOpenEnabled[kind] && isNew && !modal?.open) {
+        if (autoOpen && next.auto_open !== false && autoOpenEnabled[kind] && isNew && !modal?.open) {
             init(); previousFocus = document.activeElement; switchTab(kind);
             flowBackdrop.hidden = false; modal.show(); modal.dispatchEvent(new Event('if-open'));
         }
@@ -1329,6 +1363,18 @@
             if (activeTab === 'illustration' && nodePreviewKind(n) === 'image' && imageUrl) {
                 const img = element('img', 'if-detail-image'); img.src = imageUrl; img.alt = `${n.label} 생성 결과`; body.append(img);
             }
+            if (activeTab === 'illustration') {
+                for (const id of n.image_nodes || []) {
+                    const imageNode = flow.nodes.find(node => node.id === id);
+                    const url = imageNode && nodeImageUrl(imageNode, flow.status);
+                    if (!url) continue;
+                    const img = element('img', 'if-detail-image'); img.src = url; img.alt = `${imageNode.label} 생성 결과`; body.append(img);
+                    if (imageNode.mask_url) {
+                        body.append(element('h3', '', '생성에 사용한 마스크'));
+                        const mask = element('img', 'if-detail-image'); mask.src = imageNode.mask_url; mask.alt = `${imageNode.label} 마스크`; body.append(mask);
+                    }
+                }
+            }
             if (n.task_key === 'illustration_quality_inspection' && n.inspection_scope === 'overall') appendQualityReviewPanel(n, body, request, runId);
             const outputEmptyText = ['failed', 'cancelled'].includes(n.status)
                 ? '실패했지만 기록된 오류나 응답이 없습니다.'
@@ -1348,6 +1394,7 @@
         }
     }
     window.receiveIllustrationFlow = receive;
+    window.renderIllustrationMaskPreview = imageMaskOverlay;
     window.formatLlmStreamTiming = llmTiming;
     window.llmStreamTimingDetails = timingDetails;
     window.receiveVideoFlow = (next, autoOpen) => receive(next, autoOpen, 'video');

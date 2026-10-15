@@ -8,8 +8,8 @@ LLM이 편집하고, 트리거/아티스트/품질/제어 블럭은 백엔드가
 - 일반 장면 편집은 제어 블럭([LORA_DATA]/[SEED]/[CACHE_PATH] 등)을 수정하지 않는다.
 - 사용자가 V3 Comfy 캐릭터를 명시적으로 선택한 경우에만 CHAR_LIST/CACHE/FACE/LoRA
   제어 블럭을 활성 봇 데이터로 재구성한다. 시드·해상도·디테일러 등은 그대로 보존한다.
-- 활성 [MULTI_CHAR]의 장면 조건과 선택 캐릭터 순서는 고정 마스크 기하를 유지한 채
-  동기화하며, 이름이 포함된 마스크 지문은 새 슬롯 이름에 맞춰 다시 계산한다.
+- 활성 [MULTI_CHAR]의 장면 조건은 마스크와 동기화한다. 마스크 편집이 명시적으로
+  허용된 요청만 영역 좌표를 전달·수정하며, 지문은 최종 이름과 좌표로 계산한다.
 - 트리거/아티스트/품질 토큰은 LLM에 전달하지 않고 백엔드에서 접두부로 보존한다.
 - 3개 주제 블럭은 동일 장면을 공유(supplement는 SDXL 제외) — LLM이 한 번 서술한
   scene_setup/char/supplement 를 백엔드가 3블럭에 일관 주입한다.
@@ -59,7 +59,8 @@ DEFAULT_SYSTEM_PROMPT = (
     "held objects; conflicting subject-count or composition cues; duplicated subject descriptions; "
     "and stale details. Remove, rewrite, or merge the causal conflicts into one physically coherent "
     "scene. Do not merely stack stronger symptom-countering tags while preserving the conflict. "
-    "Modify ONLY the scene description (setup/char/supplement). "
+    "Edit the scene description (setup/char/supplement). Revise regional mask coordinates "
+    "only when regional layout editing is explicitly enabled in this request. "
     "Return ONLY a valid JSON object - no other text, no markdown code fences, no explanations."
 )
 
@@ -303,7 +304,7 @@ def _save_llm_edit_custom(customs: dict, use_custom: bool) -> None:
     customs 는 SLOTS의 5개 슬롯 문자열을 담는다. 누락 슬롯은 '' 취급.
     """
     os.makedirs(ASSET_DATA_DIR, exist_ok=True)
-    requirements_dir = os.path.join(BASE_DIR, "요구사항")
+    requirements_dir = os.path.join(BASE_DIR, "backups")
     os.makedirs(requirements_dir, exist_ok=True)
 
     def _backup_required(path: str, slot: str) -> None:
@@ -315,7 +316,7 @@ def _save_llm_edit_custom(customs: dict, use_custom: bool) -> None:
             f"llm_prompt_edit_{slot}_before_save_{stamp}{os.path.splitext(path)[1]}",
         )
         shutil.copy2(path, backup_path)
-        print(f"[LLM_EDIT] {slot} 기존 파일 요구사항 백업 완료: {backup_path}")
+        print(f"[LLM_EDIT] {slot} 기존 파일 backups 백업 완료: {backup_path}")
 
     for slot, text in customs.items():
         path = SLOTS.get(slot, {}).get("custom_file")
@@ -844,13 +845,13 @@ def _substitute_placeholders(template: str, values: dict) -> str:
     return out
 
 
-def _multi_char_edit_contract(payload: object) -> str:
-    """고정 RGB 레이아웃을 유지하는 다인 편집 계약을 LLM 지시에 추가한다."""
+def _multi_char_edit_contract(payload: object, mask_layout: dict | None = None) -> str:
+    """영역별 장면 조건과, 허용된 요청에만 실제 마스크 좌표를 전달한다."""
     if not isinstance(payload, dict) or payload.get("enable") is not True:
         return ""
     names = [str(name or "").strip() for name in (payload.get("char_name_list") or [])]
     informs = [str(value or "").strip() for value in (payload.get("char_inform") or [])]
-    if not 2 <= len(names) <= 3 or len(informs) != len(names):
+    if not 1 <= len(names) <= 3 or len(informs) != len(names):
         raise ValueError(
             "MULTI_CHAR 편집 계약의 캐릭터 정보가 올바르지 않습니다: "
             f"names={names}, informs={len(informs)}"
@@ -859,10 +860,9 @@ def _multi_char_edit_contract(payload: object) -> str:
         f"{index + 1}. {name}: {info}"
         for index, (name, info) in enumerate(zip(names, informs))
     )
-    return (
+    contract = (
         "\n\n## Multi-character regional edit contract (mandatory)\n"
-        "The RGB mask geometry is fixed for this edit. Do not change character count, "
-        "order, or left/right allocation.\n"
+        "Keep the named character count and return character descriptions in the given order.\n"
         f"Exact regional order: {json.dumps(names, ensure_ascii=False)}\n"
         "Current per-character regional prompts:\n"
         f"{current_regions}\n"
@@ -873,6 +873,29 @@ def _multi_char_edit_contract(payload: object) -> str:
         "` | `. Put only shared background/location/lighting in `scene_setup`, and put the "
         "shared spatial composition/auxiliary description in `scene_supplement`."
     )
+    if mask_layout is not None:
+        contract += (
+            "\n\n## Regional layout editing: enabled\n"
+            "Current mask layout (reference data):\n"
+            + json.dumps(mask_layout["regions"], ensure_ascii=False)
+            + "\nMove and resize these regions to fit the user's intended edit and the final "
+            "scene you write. Use the current image, when available, to understand framing, "
+            "visible body extent, and the problem being corrected; do not lock the edited "
+            "layout to an unwanted pose in that image. Keep each region attached to its named "
+            "character and cover that character's intended visible extent in the edited composition. "
+            "Preserve unrelated regions when their placement already fits.\n"
+            "Coordinates are normalized to the canvas: x/y are the top-left corner, width/height "
+            "are positive sizes; x/y >= 0 and x + width <= 1, y + height <= 1. "
+            "Keep the same named characters; do not create new people or expand an anonymous "
+            "interaction fragment into another character.\n"
+            "Alongside plan and scene_* in the same JSON object, return a `regions` array with "
+            "one object per named character: {\"name\": \"exact character name\", \"x\": 0.1, "
+            "\"y\": 0.1, \"width\": 0.3, \"height\": 0.8}. Return complete coordinates, "
+            "including unchanged regions. Keep scene_char in the given character order even "
+            "if their spatial positions change; the server will align region channels and prompts. "
+            "Write the actual layout changes in the Korean plan and keep them consistent with scene_*."
+        )
+    return contract
 
 
 def build_llm_messages(
@@ -882,6 +905,7 @@ def build_llm_messages(
     multi_char_payload: dict = None,
     identity_contract: str = "",
     additional_contract: str = "",
+    mask_layout: dict | None = None,
 ) -> list:
     """LLM(비전) 호출용 messages 빌드 (V3 빌드본).
 
@@ -891,13 +915,18 @@ def build_llm_messages(
     사용하고, 동적 데이터(direction/scene_*)는 플레이스홀더로 치환한다.
     """
     system = get_effective_system_prompt()
+    if mask_layout is not None:
+        system += (
+            " For this request, editing scope also includes the named regional mask coordinates. "
+            "Return revised regions alongside the edited scene fields as specified below."
+        )
     template = get_effective_user_template_v3()
     user = _substitute_placeholders(template, {
         "direction": direction,
         "scene_current": scene_current,
         "scene_sdxl": scene_sdxl,
     })
-    user += _multi_char_edit_contract(multi_char_payload)
+    user += _multi_char_edit_contract(multi_char_payload, mask_layout)
     if identity_contract:
         user += str(identity_contract)
     if additional_contract:

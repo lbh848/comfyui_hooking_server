@@ -19,7 +19,7 @@ _latest = None
 _latest_video = None
 _latest_video_input = None
 _notify = None
-ROOT_TYPES = {"illustration", "illustration_llm_build", "illustration_easy_edit", "character_maker_illustration"}
+ROOT_TYPES = {"illustration", "illustration_llm_build", "illustration_easy_edit", "character_maker_illustration", "regenerate"}
 BACKGROUND_LLM_TYPES = {"illustration_quality_inspection"}
 VIDEO_INPUT_TYPES = {
     "video_instruction_draft", "video_instruction_refine", "video_instruction_direct",
@@ -501,29 +501,51 @@ def queue_added(item):
     if item.type not in ROOT_TYPES | BACKGROUND_LLM_TYPES:
         return
     is_root = run is None
-    if is_root:
+    continuation = str((item.params or {}).get("illustration_flow_run_id") or "")
+    if is_root and continuation:
+        if _latest is not None and _latest["id"] == continuation and not _latest.get("cancel_requested"):
+            run = _latest
+            run["status"] = "waiting"
+        else:
+            print(f"[ILLUST_FLOW] 이전 수정 흐름 연결 불가; 새 흐름 시작: run={continuation}, item={item.id}")
+    if run is None:
         run = {"id": uuid.uuid4().hex, "kind": "illustration", "label": item.label, "status": "waiting",
                "cancel_requested": False, "created_at": time.time(),
                "updated_at": time.time(), "revision": 0, "nodes": {},
                "_active_llm_tasks": set()}
         _latest = run
+    # Manager edits are reviewed in the prompt editor; keep their graph available
+    # without interrupting that review with an automatically opened dialog.
+    if "edit_body" in (item.params or {}) or (item.params or {}).get("illustration_flow_auto_open") is False:
+        run["auto_open"] = False
     provider = str((item.params or {}).get("provider") or "comfy").strip().lower()
     is_review = item.type in BACKGROUND_LLM_TYPES
-    executor = "llm" if is_review else ("process" if is_root else ("comfy" if provider == "comfy" else "process"))
+    dependencies = _frontier.get() if not is_root else tuple(
+        [next(reversed(run["nodes"]))] if run["nodes"] else []
+    )
+    mask_context = (item.params or {}).get("illustration_multi_char")
+    if item.type == "regenerate" and isinstance(mask_context, dict) and mask_context.get("enable"):
+        mask_id = add_node(
+            run, "재생성 마스크", dependencies=dependencies, kind="stage", executor="process",
+            layout_group="illustration_multi_char_mask", status="completed", ended_at=time.time(),
+            output=serializable(mask_context.get("layout")),
+        )
+        dependencies = (mask_id,)
+    executor = "llm" if is_review else ("process" if is_root and item.type != "regenerate" else ("comfy" if provider == "comfy" else "process"))
     node_id = add_node(
         run,
         item.label,
-        dependencies=() if is_root else _frontier.get(),
+        dependencies=dependencies,
         node_id=item.id,
-        kind="llm" if is_review else ("request" if is_root else "image"),
+        kind="llm" if is_review else ("image" if item.type == "regenerate" else "request" if is_root else "image"),
         task_key=item.type,
         executor=executor,
-        layout_group=None if is_root or is_review else "illustration_images",
+        layout_group="illustration_images" if item.type == "regenerate" else None if is_root or is_review else "illustration_images",
         **({"prompt_id": item.params["prompt_id"]} if not is_root and item.params.get("prompt_id") else {}),
         **({"inspection_scope": item.params.get("scope", "")} if is_review else {}),
         input={
             k: item.params[k]
-            for k in ("payload", "prompt_data", "provider", "scope", "session_id", "slots")
+            for k in ("payload", "edit_body", "prompt_data", "provider", "scope", "session_id", "slots", "backup_name", "positive", "negative")
             if k in item.params
         },
     )
@@ -630,7 +652,7 @@ def queue_execution(fn):
         is_review = item.type in BACKGROUND_LLM_TYPES
         tokens = (_run.set(run), _frontier.set((node_id,)), _node.set(node_id if is_review else None), _reserved.set(None), _branches.set(None))
         provider = str((item.params or {}).get("provider") or "comfy").strip().lower()
-        executor = "llm" if is_review else ("process" if root else ("comfy" if provider == "comfy" else "process"))
+        executor = "llm" if is_review else ("process" if root and item.type != "regenerate" else ("comfy" if provider == "comfy" else "process"))
         if run.get("kind") == "video":
             executor = "comfy" if item.type in VIDEO_RENDER_TYPES else "process"
         waiting_comfy = getattr(item, "_comfy_submission", None) is not None and item.status == "waiting"
@@ -643,6 +665,10 @@ def queue_execution(fn):
         try:
             result = await fn(self, item)
             node = run["nodes"][node_id]
+            image_bytes = getattr(item, "generated_image_bytes", None)
+            if isinstance(image_bytes, bytes) and image_bytes:
+                node["_preview_image"] = image_bytes
+                update(run, node_id, image_url=f"/api/illustration_flow?run={run['id']}&node={node_id}&image=1&v={time.time_ns()}")
             output = serializable(result)
             failed = isinstance(result, dict) and result.get("success") is False
             cancelled = bool(root and run.get("cancel_requested"))
@@ -675,8 +701,11 @@ def queue_execution(fn):
                 }
                 depended = {d for n in delivery_nodes.values() for d in n["dependencies"]}
                 leaves = [n for n in delivery_nodes if n not in depended]
+                image_nodes = [key for key, value in delivery_nodes.items()
+                               if value.get("image_url") and value["created_at"] >= node["created_at"]]
                 add_node(run, "결과 반환", dependencies=leaves, status=status,
-                         ended_at=time.time(), kind="result", executor="process", output=serializable(result))
+                         ended_at=time.time(), kind="result", executor="process", output=serializable(result),
+                         image_nodes=image_nodes)
                 run["status"] = status
                 changed(run)
             return result
