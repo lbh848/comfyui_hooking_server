@@ -1104,6 +1104,8 @@ def make_e2e_prompt(
             inputs["batch_size"] = 1
         if class_type == "md_soya_InstantReferenceLoRA":
             inputs["preview_enable"] = False
+        if class_type == "SoyaFirstSampler_mdsoya":
+            inputs["mask_location"] = "comfy-installer-e2e/region-mask"
 
         if class_type in {"SoyaRefImageLoader_mdsoya", "LoadImage"}:
             if "image" in inputs and not _is_link(inputs["image"]):
@@ -1282,6 +1284,7 @@ def _fixture_destinations(comfy_root: Path) -> dict[str, Path]:
         "face": face_root / "representation.png",
         "edit_source": edit_root / "source.png",
         "edit_mask": edit_root / "mask.png",
+        "region_mask": fixture_root / "region-mask" / "mask.png",
     }
 
 
@@ -1680,6 +1683,25 @@ def prepare_e2e_fixtures(comfy_root: Path) -> dict[str, str]:
             mask,
             destinations["edit_mask"],
             image_format="PNG",
+        )
+        # 실행 검증용 RGB 영역. 원본 MULTI_CHAR와 캐릭터 순서는 유지하고,
+        # 노드가 지원하는 1~3개 채널 모두에 서로 분리된 입력을 제공한다.
+        # 장면 레이아웃을 재현하는 마스크가 아닌 E2E 전용 픽스처다.
+        region_mask = Image.new("RGB", (512, 512), (0, 0, 0))
+        region_draw = ImageDraw.Draw(region_mask)
+        for index, color in enumerate(((255, 0, 0), (0, 255, 0), (0, 0, 255))):
+            region_draw.rectangle(
+                (index * 512 // 3, 0, (index + 1) * 512 // 3 - 1, 511),
+                fill=color,
+            )
+        _save_image_atomic(
+            region_mask,
+            destinations["region_mask"],
+            image_format="PNG",
+        )
+        print(
+            "[COMFY_INSTALL][E2E] RGB 영역 마스크 픽스처 준비 완료: "
+            f"path={destinations['region_mask']}, size=512x512, channels=RGB"
         )
         result = {key: str(path) for key, path in destinations.items()}
         result["face_source"] = str(face_source)
