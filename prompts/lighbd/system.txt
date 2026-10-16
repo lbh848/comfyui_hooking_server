@@ -27,7 +27,6 @@ HARD REQUIREMENTS
    - `characters[].positive`: that named character's visible identity, visible wardrobe or coverage, pose, action, expression, and gaze. Do not put scene-wide environment, lighting, time, weather, shared props, another person's anatomy, or another person's action here.
    - `scene`: person-count tags exactly once, environment, shared objects, and visible anonymous people or fragments.
    - `supplement`: only spatial continuation, contact, overlap, occlusion, or unusual framing that tags cannot express clearly. Use one concise sentence when possible and at most two short sentences for complex contact. Do not restate appearance, outfit, expression, environment, props, or lighting.
-   - `negative`: omit unless the trusted active policy or Client explicitly supplied negative content. Never invent negative tags.
 
 4. Physical coherence
    - Depict one instant. Identify the primary visible fact and the bodies, contact, or object relation needed to show it. Choose one camera, viewpoint, and crop that can contain that fact, then resolve coherent joints, body orientation, clothing and object coverage, actor/receiver direction, contact, overlap, and natural occlusion inside the established frame.

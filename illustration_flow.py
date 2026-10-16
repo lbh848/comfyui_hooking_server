@@ -814,7 +814,7 @@ def llm_attempt(event, model, service):
     event.update(model=model, service=service)
     node = run["nodes"][node_id]
     node["attempts"].append(event)
-    timing_keys = ("thinking_started_at", "thinking_ended_at", "response_started_at", "response_ended_at")
+    timing_keys = ("thinking_started_at", "thinking_ended_at", "response_started_at", "response_ended_at", "tps")
     timing = dict.fromkeys(timing_keys) if event.get("type") == "attempt_start" else {
         key: event[key] for key in timing_keys if key in event
     }

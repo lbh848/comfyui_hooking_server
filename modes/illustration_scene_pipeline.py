@@ -97,21 +97,19 @@ def active_profile(
 
 def profile_for_detail(name: str, base: dict, extra_reference: str,
                        visual_profiles: dict | None = None) -> dict:
-    """Return only the selected character/card's profile data, never whole lb.extra."""
+    """Return selected rendering settings; image descriptions belong only to identification."""
     if base:
-        character_profiles = pipeline._authority_values_for_name(visual_profiles or {}, name)
-        card = profile_by_id(character_profiles, base["visual_profile_id"]) if isinstance(character_profiles, dict) else None
         overrides = base.get("render_overrides") or {}
         return {
             "id": str(base.get("visual_profile_id") or ""),
             "name": str(base.get("visual_profile_name") or ""),
-            "visual_context": str((card or {}).get("visual_context") or ""),
             "appearance": deepcopy(base.get("appearance") or []),
             "default_outfit": deepcopy(base.get("outfit") or []),
             "gender_tag": str(overrides.get("gender_tag") or ""),
             "face_tags": deepcopy(overrides.get("face_tags") or []),
             "eye_tags": deepcopy(overrides.get("eye_tags") or []),
             "eye_prompt": str(overrides.get("eye_prompt") or ""),
+            "absolute_tags": deepcopy(overrides.get("absolute_tags") or ""),
             "character_negative": str(overrides.get("character_negative") or ""),
         }
     # Legacy low-level integrations with no registered cards still receive
@@ -123,7 +121,7 @@ def profile_for_detail(name: str, base: dict, extra_reference: str,
 
 
 def previous_statuses(names: list[str], history_plan: dict | None) -> dict[str, list[str]]:
-    """Carry the saved raw OUTFIT status chain, never just its last (possibly partial) event."""
+    """Resolve tag checkpoints by field; keep legacy prose events losslessly."""
     states = (history_plan or {}).get("state_before") or {}
     result = {}
     for name in names:
@@ -136,6 +134,26 @@ def previous_statuses(names: list[str], history_plan: dict | None) -> dict[str, 
                 not isinstance(status, str) or not status.strip() for status in chain
             ):
                 _fail("OUTFIT", "저장된 OUTFIT 원문 상태 기록 손상", {"character": name, "history": chain})
+            # Each emitted tag field is a complete replacement, not a tag delta.
+            # Keep the audit history on disk, but do not ask another LLM to
+            # reconcile superseded values with a user's edited starting state.
+            current = {}
+            for status in chain:
+                try:
+                    checkpoint = json.loads(status)
+                except json.JSONDecodeError:
+                    print(f"[ILLUST_CONTEXT:OUTFIT] 구형 원문 상태는 누적 해석용으로 보존: character={name!r}, input={status!r}")
+                    traceback.print_exc()
+                    break
+                if (not isinstance(checkpoint, dict) or not checkpoint
+                        or any(field not in ("outfit", "hair") or not isinstance(value, str)
+                               for field, value in checkpoint.items())):
+                    print(f"[ILLUST_CONTEXT:OUTFIT] 필드 체크포인트 외 원문 상태 보존: character={name!r}, input={status!r}")
+                    break
+                current.update(checkpoint)
+            else:
+                result[name] = [json.dumps(current, ensure_ascii=False)]
+                continue
             result[name] = list(chain)
             continue
         status = tracked.get("call1_status") if isinstance(tracked, dict) else None
@@ -346,6 +364,15 @@ def _parse_detail_scene(item: dict, scene: dict, *, mask_inline: bool = False,
                 or not isinstance(item["regions"], list)):
             _fail("CALL2-DETAIL", "background_prompt/composition_prompt/regions 형식 오류", item)
         raw_response = json.dumps(item, ensure_ascii=False)
+        item = deepcopy(item)
+        # LLM negative control is disabled. Keep old responses usable without
+        # forwarding their negative fields into character or regional prompts.
+        for region in item["regions"]:
+            if isinstance(region, dict):
+                ignored_negative = region.pop("negative", None)
+                if ignored_negative:
+                    print(f"[ILLUST_CONTEXT:CALL2-DETAIL] LLM negative ignored (disabled): "
+                          f"slot={item['slot']}, name={region.get('name')!r}, value={ignored_negative!r}")
         if len(item["regions"]) == 1 and not single_char_mask_enabled:
             region = item["regions"][0]
             if not isinstance(region, dict):
@@ -353,12 +380,12 @@ def _parse_detail_scene(item: dict, scene: dict, *, mask_inline: bool = False,
             # Coordinates are unused when the existing solo-mask switch is off.
             # Keep its usable prompt instead of retrying an irrelevant rectangle.
             regions = [{field: pipeline.multi_char_mask._prompt_text(
-                region.get(field), f"regions[0].{field}", required=field != "negative")
-                for field in ("name", "character_prompt", "negative")}]
+                region.get(field), f"regions[0].{field}", required=True)
+                for field in ("name", "character_prompt")}]
             layout = None
             print(f"[ILLUST_CONTEXT:CALL2-DETAIL] 1인도 마스크 OFF, 인라인 프롬프트만 사용: slot={item['slot']}")
         elif item["regions"]:
-            layout = pipeline._parse_multi_char_layout_response(raw_response, [
+            layout = pipeline._parse_multi_char_layout_response(json.dumps(item, ensure_ascii=False), [
                 region.get("name") if isinstance(region, dict) else ""
                 for region in item["regions"]
             ])
@@ -418,6 +445,11 @@ def _parse_detail_scene(item: dict, scene: dict, *, mask_inline: bool = False,
         if not isinstance(character, dict) or not {"name", "positive"} <= set(character):
             _fail("CALL2-DETAIL", f"필수 캐릭터 데이터 누락 index={index}", character)
         name = character["name"]
+        if character.get("negative"):
+            print(f"[ILLUST_CONTEXT:CALL2-DETAIL] LLM negative ignored (disabled): "
+                  f"slot={item['slot']}, name={name!r}, value={character['negative']!r}")
+        # Retain the empty internal field for existing descriptor consumers.
+        character["negative"] = ""
         extras = set(character) - {"name", "positive", "negative", "position"}
         if extras:
             print(f"[ILLUST_CONTEXT:CALL2-DETAIL] 소비하지 않는 캐릭터 필드 제외: name={name!r}, fields={extras}")
@@ -645,13 +677,14 @@ async def build_from_context(
 
         async def track_time_place():
             if progress:
-                await progress(8, "time_place", "TIME & PLACE 시간·장소 추적")
+                await progress(8, "time_place", "TIME & PLACE 시간·장소·조명 추적")
             messages = prompt_builders.time_place_messages(
                 prompts, names, prior_time_place, past_text, segmented,
                 slots=state_slots, slotted=slotted, segment_slots=segment_slots)
             def parse(response):
                 return parse_state(response, names, state_slots,
-                                   fields=("time", "place"), stage="TIME & PLACE", segment_slots=segment_slots)
+                                   fields=("time", "place", "lighting"),
+                                   stage="TIME & PLACE", segment_slots=segment_slots)
             def validate(response):
                 try:
                     parse(response)
@@ -847,17 +880,14 @@ async def build_from_context(
                 prompts.get("call2_common", ""), prompts.get("call2_explicit", ""),
                 prompts.get("call2_keyvis", ""),
             ]), toggles, include_scene_count_limit=False, include_server_limits=False)
-            keyvis_reference = (p._filter_character_reference(extra_reference, names)
-                                if history else extra_reference)
-            if not keyvis_reference and extra_reference:
-                print(f"[ILLUST_CONTEXT:CALL2_KEYVIS] 확정 이름에 해당하는 lb.extra 블록 없음: names={names!r}")
             keyvis_messages = prompt_builders.keyvis_context_messages(
-                keyvis_system, lb_extra_system_prompt, keyvis_reference, keyvis_profiles, tracking, past_text, segmented,
+                keyvis_system, lb_extra_system_prompt, keyvis_profiles, tracking, past_text, segmented,
                 time_place=time_place_tracking, segment_slots=segment_slots,
                 prior_status=prior_status if tracking is None else None,
                 prior_time_place=prior_time_place if time_place_tracking is None else None,
                 mask_inline=mask_inline and not keyvis_in_detail, mask_prompt=prompts.get("multi_char_mask", ""),
-                canvas_sizes=payload.get("canvas_sizes"), positive_note=str(toggles.get("positive_note") or ""))
+                canvas_sizes=payload.get("canvas_sizes"), positive_note=str(toggles.get("positive_note") or ""),
+                toggles=toggles)
             if keyvis_in_detail:
                 keyvis_messages.append(prompt_builders.keyvis_task_message(
                     toggles["character_limit"], json.dumps(names, ensure_ascii=False), names,

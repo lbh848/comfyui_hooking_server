@@ -1023,11 +1023,48 @@ def list_histories(query: str = "", limit: int = 100) -> list[dict]:
     return summaries[:safe_limit]
 
 
-def get_history(history_id: str) -> dict | None:
+def get_history(
+    history_id: str,
+    *,
+    characters: dict | None = None,
+    state_before: dict | None = None,
+) -> dict | None:
+    """Read a history, optionally saving edited continuation and reroll states."""
     with _IO_LOCK:
-        record = _load_json(_record_path(history_id))
+        path = _record_path(history_id)
+        record = _load_json(path)
         if record is None:
             print(f"[ILLUST_HISTORY] 상세 조회 대상 없음: history={history_id}")
+            return None
+        if characters is not None or state_before is not None:
+            if not isinstance(characters, dict) or not isinstance(state_before, dict):
+                print(
+                    f"[ILLUST_HISTORY] 상태 편집 형식 오류: history={history_id}, "
+                    f"characters={characters!r}, state_before={state_before!r}"
+                )
+                raise ValueError("캐릭터 상태와 현재 턴 시작 상태는 JSON 객체여야 합니다.")
+            active_turn = record.setdefault("active_turn", {})
+            if (record.get("characters") == characters
+                    and active_turn.get("state_before") == state_before
+                    and active_turn.get("state_after") == characters):
+                print(f"[ILLUST_HISTORY] 상태 편집 변경 없음, 저장 생략: history={history_id}")
+                return record
+            _backup_existing(path, f"{history_id}.json")
+            record["characters"] = deepcopy(characters)
+            active_turn["state_before"] = deepcopy(state_before)
+            active_turn["state_after"] = deepcopy(characters)
+            record["revision"] = int(record.get("revision") or 0) + 1
+            record["updated_at"] = time.time()
+            try:
+                _atomic_write_json(path, record)
+            except Exception as e:
+                print(f"[ILLUST_HISTORY] 상태 편집 저장 실패: history={history_id}, error={e}")
+                traceback.print_exc()
+                raise
+            print(
+                f"[ILLUST_HISTORY] 캐릭터 추적 상태 편집 저장: history={history_id}, "
+                f"characters={list(characters)}, revision={record['revision']}"
+            )
         return record
 
 

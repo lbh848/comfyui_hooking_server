@@ -1009,29 +1009,67 @@ class IllustPromptBuilder:
         # ─── ANIMA 트리거 (맨 앞 보장) ───
         anima_trigger_clean = [t.strip() for t in anima_triggers if t.strip()]
         sdxl_trigger_clean = [t.strip() for t in sdxl_triggers if t.strip()]
+        global_render_char = char
+        if (isinstance(multi_char_context, dict) and multi_char_context.get("enable")
+                and len(detected_chars) >= 2):
+            # DETAIL's unweighted regional solo stays in char_inform and face
+            # prompts; whole-image ANIMA/SDXL conditioning must keep the cast.
+            global_segments = []
+            for segment in char.split("|"):
+                region_tags = self._split_top_level_tags(segment)
+                global_tags = [tag for tag in region_tags if tag.strip().casefold() != "solo"]
+                if len(global_tags) != len(region_tags):
+                    print(f"[MULTI_CHAR:PROMPT] 영역 solo는 전체 이미지 본문에서 제외: "
+                          f"characters={detected_chars!r}, segment={segment!r}")
+                global_segments.append(", ".join(global_tags))
+            global_render_char = " | ".join(global_segments)
         # NAME 기반 CHAR 식별 태그는 캐릭터/얼굴 매핑용 원본 ``char``에는
         # 유지하되, 모델별 렌더링 본문에서는 이미 맨 앞에 놓인 활성 트리거와
         # 정확히 같은 독립 태그만 제거한다.
         anima_render_char = self.remove_active_trigger_tags(
-            char,
+            global_render_char,
             anima_trigger_clean,
             context="ANIMA CHAR",
         )
         sdxl_render_char = self.remove_active_trigger_tags(
-            char,
+            global_render_char,
             sdxl_trigger_clean,
             context="SDXL CHAR",
         )
 
-        # ─── 성별 태그 (캐릭터 gender_tag 수집, " and "로 결합) ───
-        gender_tags = []
+        # Count the selected cast, never the anonymous fragment or narrative.
+        # Card person types are authoritative; prompt-only people use their own
+        # already-bound image tags. This is tag syntax, not scene inference.
+        count_tag_pattern = re.compile(r"\d+(?:girls?|boys?|others?)")
+        person_types = {}
+        char_segments = char.split("|")
+        person_sources = dict(zip(detected_chars, char_segments)) if len(char_segments) == len(detected_chars) else {}
+        if isinstance(multi_char_context, dict) and multi_char_context.get("enable"):
+            person_sources.update(zip(multi_char_context.get("char_name_list") or [],
+                                      multi_char_context.get("char_inform") or []))
         for char_name in detected_chars:
-            char_data = next((c for c in characters if c["name"] == char_name), None)
-            if char_data:
-                gt = char_data.get("gender_tag", "1girl")
-                if gt and gt not in gender_tags:
-                    gender_tags.append(gt)
-        gender_str = " and ".join(gender_tags) if gender_tags else ""
+            char_data = next((c for c in characters if c["name"] == char_name), {})
+            person_type = re.fullmatch(r"(?:1)?(girl|boy|other)",
+                                      self._top_level_tag_core(char_data.get("gender_tag", "")))
+            if person_type:
+                person_types[char_name] = person_type.group(1)
+                continue
+            supplied_types = {
+                match.group(1)
+                for tag in self._split_top_level_tags(person_sources.get(char_name, ""))
+                if (match := re.fullmatch(r"(?:1)?(girl|boy|other)", self._top_level_tag_core(tag)))
+            }
+            if len(supplied_types) == 1:
+                person_types[char_name] = supplied_types.pop()
+            else:
+                print(f"[ILLUST_COUNT] 인물 유형을 확정할 태그 없음, 기존 전체 인원수 유지: "
+                      f"name={char_name!r}, gender_tag={char_data.get('gender_tag')!r}, "
+                      f"positive={person_sources.get(char_name)!r}")
+        person_totals = {}
+        for kind in person_types.values():
+            person_totals[kind] = person_totals.get(kind, 0) + 1
+        whole_count_tags = [f"{count}{kind}{'s' if count > 1 else ''}"
+                            for kind, count in person_totals.items()]
 
         # ─── ANIMA 아티스트 파트 ───
         anima_artist_parts = [t.strip() for t in anima_artist_tags if t.strip()]
@@ -1047,9 +1085,6 @@ class IllustPromptBuilder:
         # 3. supplement
         if supplement.strip():
             anima_content_core.append(supplement.strip())
-
-        # ANIMA_CONTENT: 트리거 + 아티스트 + setup + char + supplement
-        anima_content_parts = anima_trigger_clean + anima_artist_parts + anima_content_core
 
         # ─── SDXL 섹션 조립 ───
         sdxl_quality_parts = [t.strip() for t in quality_tags if t.strip()]
@@ -1081,6 +1116,36 @@ class IllustPromptBuilder:
                 f"bot={bot_name}, {applied_insert_rules}개 규칙"
             )
 
+        # Prepare a complete whole-image prompt before any later mask skip.
+        # Replace count tags from all assembled parts (including local counts)
+        # with one aggregate. Its person types also replace redundant standalone
+        # girl/boy/other tags; preserve phrases that merely contain those words.
+        if whole_count_tags and len(person_types) == len(detected_chars):
+            removed_counts = []
+            for parts in (anima_trigger_clean, sdxl_trigger_clean, anima_artist_parts,
+                          sdxl_artist_parts, anima_quality_parts, sdxl_quality_parts,
+                          anima_content_core, sdxl_content_core):
+                for index, value in enumerate(parts):
+                    cleaned_segments = []
+                    for segment in value.split("|"):
+                        kept_tags = []
+                        for tag in self._split_top_level_tags(segment):
+                            tag_core = self._top_level_tag_core(tag)
+                            if count_tag_pattern.fullmatch(tag_core) or tag_core in person_totals:
+                                removed_counts.append(tag)
+                            else:
+                                kept_tags.append(tag)
+                        cleaned_segments.append(", ".join(kept_tags))
+                    parts[index] = " | ".join(cleaned_segments)
+                parts[:] = [part for part in parts if part.strip()]
+            anima_content_core.insert(0, ", ".join(whole_count_tags))
+            sdxl_content_core.insert(0, ", ".join(whole_count_tags))
+            print(f"[ILLUST_COUNT] 전체용 인원수 조립: characters={detected_chars!r}, "
+                  f"counts={whole_count_tags!r}, replaced={removed_counts!r}")
+
+        # ANIMA_CONTENT: 트리거 + 아티스트 + setup + char + supplement
+        anima_content_parts = anima_trigger_clean + anima_artist_parts + anima_content_core
+
         # ANIMA_ALL: 트리거 → 아티스트 → 품질 → 콘텐츠
         anima_all_parts = (
             anima_trigger_clean
@@ -1095,7 +1160,6 @@ class IllustPromptBuilder:
         # ─── 긍정 프롬프트 조합 ───
         positive = "[ANIMA_QUALITY]\n" + ", ".join(anima_quality_parts)
         # ANIMA_ARTIST: 아티스트 프리셋 태그만 별도 블럭으로 출력
-        anima_artist_parts = [t.strip() for t in anima_artist_tags if t.strip()]
         positive += "\n[ANIMA_ARTIST]\n" + ", ".join(anima_artist_parts)
         positive += "\n[ANIMA_CONTENT]\n" + ", ".join(anima_content_parts)
         positive += "\n[ANIMA_ALL]\n" + ", ".join(anima_all_parts)
@@ -1219,6 +1283,17 @@ class IllustPromptBuilder:
                 and composition_prompt
                 and mask_fingerprint
             ):
+                # Shared text reaches every region. It must never carry the
+                # whole-image count, including archived LLM count mistakes.
+                shared_prompts = [background_prompt, composition_prompt]
+                for index, value in enumerate(shared_prompts):
+                    tags_in_part = self._split_top_level_tags(value)
+                    removed = [tag for tag in tags_in_part
+                               if count_tag_pattern.fullmatch(self._top_level_tag_core(tag))]
+                    if removed:
+                        shared_prompts[index] = ", ".join(tag for tag in tags_in_part if tag not in removed)
+                        print(f"[ILLUST_COUNT] 영역 공통 인원수 제외: field={index}, removed={removed!r}")
+                background_prompt, composition_prompt = shared_prompts
                 shared_before = list(anima_artist_parts) + list(anima_quality_parts)
                 # CALL2의 setup/char/supplement가 서로 섞여 있어도 마스크 LLM이
                 # 의미 기준으로 분리한 배경만 setup 위치에 넣는다. 원문을 다시
@@ -1233,6 +1308,7 @@ class IllustPromptBuilder:
                             + anima_shared_triggers
                         )
                         if str(trigger).strip()
+                        and not count_tag_pattern.fullmatch(self._top_level_tag_core(trigger))
                     ))
                     for name in ordered_names
                 ]
@@ -1244,6 +1320,15 @@ class IllustPromptBuilder:
                     ).strip()
                     for index, (name, info) in enumerate(zip(ordered_names, char_inform))
                 ]
+                for index, name in enumerate(ordered_names):
+                    if name not in person_types:
+                        continue  # Missing type was logged above; preserve usable text.
+                    local_tags = [tag for tag in self._split_top_level_tags(render_char_inform[index])
+                                  if not count_tag_pattern.fullmatch(self._top_level_tag_core(tag))
+                                  and self._top_level_tag_core(tag) not in {"girl", "boy", "other"}]
+                    render_char_inform[index] = ", ".join([f"1{person_types[name]}", *local_tags])
+                print(f"[ILLUST_COUNT] 영역용 인원수 조립: "
+                      f"counts={[(name, person_types.get(name)) for name in ordered_names]!r}")
                 if any(not info for info in render_char_inform):
                     print(
                         f"[MULTI_CHAR:PROMPT] 트리거 중복 제거 후 캐릭터 태그가 비었습니다: "

@@ -259,7 +259,7 @@ LLM_TYPES = frozenset({
     "illustration_easy_edit",       # 저장 슬롯 -> 기존 편하게 수정 LLM -> 수정 재생성
     "illustration_auto_feedback_llm", # 편하게 수정 오토피드백의 프롬프트 수정/비전 검수
     "illustration_quality_inspection", # 생성 직후 개별 검사 및 완성 세트 전체 품질 검사
-    "illustration_image_analysis",  # 백업 이미지와 생성 기록의 원인 분석
+    "illustration_image_analysis",  # 백업 이미지와 생성 기록의 원인 분석·자유 질문
     "instance_lora_prompt_refine",  # 태그 정제 / test_setup (instance·style·bot·asset 전부 LLM 호출)
     "lora_prompt_review",           # 1차 정제 + 설정된 route의 선택적 2차 비전 검수
     "bot_llm_face_tag_analysis",    # 비전 LLM 기반 얼굴/눈 태그 자동 분류
@@ -3534,8 +3534,18 @@ class QueueManager:
             try:
                 from modes import multi_char_mask
 
-                if not multi_char_mask.should_skip_solo_region_mask(multi_char_context.get("layout")):
-                    config = self.get_config() if self.get_config else {}
+                config = self.get_config() if self.get_config else {}
+                configured_toggles = (config or {}).get("illustration_context_toggles") or {}
+                # Preserve request-time settings through mask preparation and
+                # prompt building even if the UI changes while the job waits.
+                multi_char_context = copy.deepcopy(multi_char_context)
+                for key in ("single_char_mask_skip_enabled", "single_char_mask_skip_area_percent"):
+                    if key in configured_toggles:
+                        multi_char_context.setdefault(key, configured_toggles[key])
+                raw_body["illustration_multi_char"] = multi_char_context
+                if not multi_char_mask.should_skip_solo_region_mask(
+                    multi_char_context.get("layout"), multi_char_context,
+                ):
                     comfy_input_dir = str((config or {}).get("comfy_input_dir") or "")
                     if getattr(item, "_comfy_submission", None) is not None:
                         item._comfy_mask_location = f"soya_manager_masks/{uuid.uuid4().hex}"
@@ -3923,8 +3933,9 @@ class QueueManager:
                 )
 
             if multi_char_context:
+                config = self.get_config() if self.get_config else {}
                 positive, multi_char_context = multi_char_mask.apply_solo_region_mask_policy(
-                    positive, multi_char_context,
+                    positive, multi_char_context, (config or {}).get("illustration_context_toggles"),
                 )
 
             if multi_char_context:
@@ -3932,7 +3943,6 @@ class QueueManager:
                     raise ValueError(
                         f"다중 캐릭터 마스크 재생성은 comfy 공급자만 지원합니다: {provider!r}"
                     )
-                config = self.get_config() if self.get_config else {}
                 comfy_input_dir = str((config or {}).get("comfy_input_dir") or "")
                 prepared_path = multi_char_mask.prepare_region_mask(
                     comfy_input_dir,

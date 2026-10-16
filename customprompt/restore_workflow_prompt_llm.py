@@ -30,23 +30,6 @@ BOT_DATA_PATH = os.path.join(BASE_DIR, "asset_data", "bot.json")
 LOG_PREFIX = "[RESTORE_LLM]"
 
 
-_NEGATIVE = (
-    "lowres, worst quality, bad quality, low quality, normal quality, worst detail, "
-    "displeasing, fewer details, unfinished, incomplete, sketch, watermark, username, "
-    "patreon username, logo, patreon logo, sign, artist collaboration, 3d, realistic, "
-    "blender, pixel art, character doll, JPEG artifacts, aliasing, dithering, scan artifacts, "
-    "blurry, chromatic aberration, screentone, film grain, heavy film grain, digital dissolve, "
-    "censor, censored, mosaic censoring, bar censor, cropped, split theme, split screen, "
-    "head out of frame, distorted composition, bad perspective, one-hour drawing challenge, "
-    "4koma, 2koma, bad anatomy, anatomically incorrect, bad proportions, mutation, deformed, "
-    "disfigured, duplicate, amputee, bad hands, bad hand structure, bad arm, bad leg, bad limbs, "
-    "bad feet, missing finger, extra digits, fewer digits, unclear fingertips, extra arms, "
-    "extra legs, twist, bad face, mob face, bad eyes, unnatural hair, big head, big nose, "
-    "nostrils, philtrum, beard, bald, long neck, futanari, breast ptosis, squiggly, "
-    "bad gun anatomy, bullpup"
-)
-
-
 def _read_json(path: str) -> dict | None:
     try:
         with open(path, "r", encoding="utf-8") as file:
@@ -208,6 +191,10 @@ def _character_context(
         "gender_tag": gender,
         "appearance_tags": appearance,
         "outfit_tags": outfit,
+        **{
+            key: str(visual_base["render_overrides"].get(key) or "").strip()
+            for key in ("face_tags", "eye_tags", "absolute_tags", "character_negative")
+        },
         "visual_profile_id": visual_base["visual_profile_id"],
         "visual_profile_label": visual_base["visual_profile_label"],
     }
@@ -222,14 +209,32 @@ def _build_system_prompt(character_count: int, generate_speak: bool) -> str:
     )
     return (
         "You create a structured anime illustration scene for an image-generation pipeline.\n"
-        "Read all selected-character data and the optional situation directive as a whole. "
-        "Use ordinary contextual reasoning; never decide the scene from isolated keyword rules.\n\n"
+        "Compose a scene around the supplied characters. Their identity and outfit are a "
+        "copy-and-delete task, not a character-design task.\n\n"
+        "CHARACTER REFERENCES\n"
+        "For each character, copy the supplied gender, appearance, outfit, face, eye and "
+        "absolute tags into that character's tags. Preserve spellings, symbols and weights; "
+        "deduplicate repeated tags. These sources complement each other.\n"
+        "The character's exclusions authorize deletion only: remove supplied traits that "
+        "conflict with them, interpreting their meaning in context. An exclusion is not "
+        "evidence for any replacement or opposite trait. If the sources leave an attribute "
+        "unspecified, the output must also leave it unspecified. Do not complete a character "
+        "from its name, familiar design, typical appearance or compatibility with an exclusion.\n"
+        "For example, supplied 'glasses' with excluded 'red frames' stays 'glasses'; "
+        "it does not become 'blue-framed glasses'. Supplied 'blue-framed glasses' with the "
+        "same exclusion keeps 'blue-framed glasses', because that color is explicitly supplied. "
+        "Exclusions apply only to their owner and never become output tags or negated captions.\n\n"
+        "SCENE CREATION\n"
+        "Invent only the setting, camera, lighting, expression, gaze, pose, action and held props "
+        "needed for the situation. Read the whole situation in context. Keep all character "
+        "traits in their owning character's tags; setup and supplement are shared scene details. "
+        "Do not introduce extra identity or outfit traits through scene details.\n\n"
         "Return exactly one JSON object and no markdown or prose:\n"
         "{\n"
         '  "setup": "shared camera, framing, environment, time, weather, and lighting tags",\n'
         '  "characters": [\n'
-        '    {"name": "exact selected name", "tags": "this character only: gender, appearance, '
-        'outfit, expression, pose, action, held props", "position": "visual position hint"}\n'
+        '    {"name": "exact selected name", "tags": "copied character tags after deletions, '
+        'expression, gaze, pose, action, held props", "position": "visual position hint"}\n'
         "  ],\n"
         '  "supplement": "shared effects and identity-neutral composition extras",\n'
         '  "dialogue": [\n'
@@ -240,18 +245,15 @@ def _build_system_prompt(character_count: int, generate_speak: bool) -> str:
         f"1. Show exactly {character_count} selected character(s) and no other people.\n"
         "2. Return exactly one characters entry per selected character, in the same input order, "
         "and copy every name exactly.\n"
-        "3. Each character tags field must contain every supplied appearance and outfit tag "
-        "verbatim, plus fitting expression, pose, action, and held-prop tags.\n"
-        "4. Keep each character's identity-specific details only in that character's tags. "
-        "Do not mix clothing, hair, eyes, accessories, or props between characters.\n"
-        "5. setup and supplement must contain only shared or identity-neutral information.\n"
-        "6. Image prompt fields must be Danbooru-style English tags separated by commas. "
+        "3. Image prompt fields must be Danbooru-style English tags separated by commas. "
         "Do not write Korean prose in image prompt fields.\n"
-        "7. For two characters, give each a clear spatial position and visually coherent "
+        "4. For two characters, give each a clear spatial position and visually coherent "
         "interaction without merging their bodies.\n"
-        f"8. {dialogue_rule}\n"
-        "9. Dialogue type must be exactly speech or thought. Do not include quotation marks "
-        "inside dialogue text."
+        f"5. {dialogue_rule}\n"
+        "6. Dialogue type must be exactly speech or thought. Do not include quotation marks "
+        "inside dialogue text.\n\n"
+        "Before returning, check that every identity and outfit trait came from that "
+        "character's positive references, not from filling a gap left by an exclusion."
     )
 
 
@@ -260,20 +262,28 @@ def _build_user_prompt(
     situation: str,
     postprocess_mode: str,
 ) -> str:
-    payload = {
-        "selected_characters": character_contexts,
-        "situation_directive": str(situation or "").strip() or None,
-        "postprocess_mode": str(postprocess_mode or "vn").strip().lower(),
-    }
-    if payload["situation_directive"] is None:
-        payload["situation_instruction"] = (
-            "Freely invent a natural random scene suitable for the selected character(s)."
-        )
-    else:
-        payload["situation_instruction"] = (
-            "Follow the situation directive and freely fill in unspecified visual details."
-        )
-    return json.dumps(payload, ensure_ascii=False, indent=2)
+    parts = ["SELECTED CHARACTER REFERENCES (in output order)"]
+    for context in character_contexts:
+        parts.extend([
+            f"\nCharacter: {context['name']}",
+            "Positive references to copy:",
+            f"Gender: {context['gender_tag']}",
+            f"Appearance: {', '.join(context['appearance_tags'])}",
+            f"Outfit: {', '.join(context['outfit_tags'])}",
+            f"Face: {context.get('face_tags') or '(unspecified)'}",
+            f"Eyes: {context.get('eye_tags') or '(unspecified)'}",
+            f"Absolute: {context.get('absolute_tags') or '(unspecified)'}",
+            "Exclusions — delete conflicting source traits; do not supply replacements:",
+            str(context.get("character_negative") or "(none)"),
+        ])
+    parts.extend([
+        "\nSITUATION TO STAGE",
+        str(situation or "").strip() or "Choose a natural setting and action for these characters.",
+        f"Dialogue presentation mode: {str(postprocess_mode or 'vn').strip().lower()}",
+        "Return the scene JSON. Copy the character references, apply deletions only, "
+        "and add scene/action tags without completing unspecified character traits.",
+    ])
+    return "\n".join(parts)
 
 
 def _extract_json_object(text: str) -> dict:
@@ -327,7 +337,9 @@ def _ensure_required_tags(
     appearance: list[str],
     outfit: list[str],
 ) -> str:
-    parts = [part.strip() for part in generated.split(",") if part.strip()]
+    from modes.illust_prompt_builder import IllustPromptBuilder
+
+    parts = IllustPromptBuilder._split_top_level_tags(generated)
     existing = {part.casefold() for part in parts}
     required = [gender, *appearance, *outfit]
     for tag in reversed(required):
@@ -375,12 +387,25 @@ def _parse_scene_payload(
             f"characters[{index}].tags",
             required=True,
         )
-        tags = _ensure_required_tags(
-            tags,
-            context["gender_tag"],
-            context["appearance_tags"],
-            context["outfit_tags"],
-        )
+        if str(context.get("character_negative") or "").strip():
+            # The LLM owns semantic exclusion decisions. Re-adding source tags
+            # here could undo a valid omission, including equivalent wording.
+            print(f"{LOG_PREFIX} 캐릭터 제외 조건 적용: 원본 태그 자동 보충 생략, character={name!r}")
+            tags = _ensure_required_tags(tags, context["gender_tag"], [], [])
+        else:
+            from modes.illust_prompt_builder import IllustPromptBuilder
+
+            identity_tags = [
+                tag
+                for key in ("face_tags", "eye_tags", "absolute_tags")
+                for tag in IllustPromptBuilder._split_top_level_tags(context.get(key) or "")
+            ]
+            tags = _ensure_required_tags(
+                tags,
+                context["gender_tag"],
+                [*context["appearance_tags"], *identity_tags],
+                context["outfit_tags"],
+            )
         position = str(raw_character.get("position") or "").strip()
         if len(expected_names) == 2 and not position:
             raise ValueError(f"2인 캐릭터 위치 정보가 비어 있습니다: {name!r}")
@@ -666,7 +691,9 @@ async def run(
     )
     return {
         "positive": positive,
-        "negative": _NEGATIVE,
+        # The real image builder supplies the configured negative presets.
+        # character_negative remains a per-character description constraint.
+        "negative": "",
         "setup": scene["setup"],
         "supplement": scene["supplement"],
         "characters": scene["characters"],

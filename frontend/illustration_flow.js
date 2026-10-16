@@ -319,7 +319,8 @@
     }
     function nodeState(n) {
         const progress = n.status === 'processing' && Number.isFinite(n.progress) ? ` · ${Math.round(n.progress)}%` : '';
-        return `${labels[n.status] || n.status}${progress} · ${elapsed(n)}`;
+        const speed = nodeExecutor(n) === 'llm' && Number.isFinite(n.tps) ? ` · ${n.tps.toFixed(1)} t/s` : '';
+        return `${labels[n.status] || n.status}${progress} · ${elapsed(n)}${speed}`;
     }
     function switchTab(kind) {
         init();
@@ -1237,11 +1238,11 @@
         const data = timePlace ? n.time_place_state_table : n.call1_state_table;
         if (!data) return;
         const title = timePlace ? 'TIME & PLACE 시간표' : '복장·헤어 시간표';
-        const fields = timePlace ? [['time', 'TIME'], ['place', 'PLACE']] : [['outfit', '복장'], ['hair', '헤어']];
+        const fields = timePlace ? [['time', 'TIME'], ['place', 'PLACE'], ['lighting', 'LIGHTING']] : [['outfit', '복장'], ['hair', '헤어']];
         body.append(element('h3', '', title), element('p', 'if-subtitle', `왼쪽에서 오른쪽으로 상태를 이어받습니다. 파란색은 ${timePlace ? 'TIME & PLACE' : 'OUTFIT'}가 직접 출력한 값이고, 회색은 앞 SLOT에서 이어받은 값입니다. 각 항목은 새 값이 나오는 지점부터 독립적으로 바뀝니다.`));
         const wrap = element('div', 'if-state-table-wrap'), table = element('table', 'if-state-table');
         wrap.dataset.detailScrollKey = timePlace ? 'time-place-state-table' : 'call1-state-table';
-        table.setAttribute('aria-label', timePlace ? 'TIME & PLACE 슬롯별 시간·장소 상태' : 'OUTFIT 슬롯별 복장·헤어 상태');
+        table.setAttribute('aria-label', timePlace ? 'TIME & PLACE 슬롯별 시간·장소·조명 상태' : 'OUTFIT 슬롯별 복장·헤어 상태');
         const head = element('thead'), header = element('tr'), corner = element('th', '', '인물'); corner.scope = 'col'; header.append(corner);
         data.slots.forEach(slot => {const th = element('th', '', `SLOT${slot}`); th.scope = 'col'; header.append(th);});
         head.append(header); table.append(head);

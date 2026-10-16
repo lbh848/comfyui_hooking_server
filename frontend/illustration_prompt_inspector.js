@@ -6,7 +6,7 @@
         user: ['유저 프롬프트 (USER)', '서버가 변수와 코드 규칙을 조립해서 전달하는 처리 대상'],
         assistant: ['이전 대화 (ASSISTANT)', '일반 대화 경로에서 전달하는 이전 캐릭터 발화'],
         positive: ['긍정 이미지 프롬프트', '출력 템플릿에 이미지 태그·대사·추가 지침을 삽입한 결과'],
-        negative: ['부정 이미지 프롬프트', '고정 부정 태그와 캐릭터별·추가 부정 태그의 조합'],
+        negative: ['부정 이미지 프롬프트', '고정 부정 태그와 사용자 추가 부정 태그의 조합'],
     };
     const el = (tag, className, text) => {
         const node = document.createElement(tag);

@@ -10,10 +10,17 @@ HARD REQUIREMENTS
 4. Choose one exact story instant supported by the current narrative. Use each character's resolved Profile from its START/Cxxx transition at or before that instant; a Profile transition takes effect at its anchor. For clothing and hair, begin with each character's `state_at_start` and apply that character's ordered `events` cumulatively up to the chosen instant. If tracked-state generation is disabled and a previous raw status chain is supplied, use that entire chain to establish the start instead of treating its last, possibly partial status as a complete outfit. An event at the chosen segment may be pending, underway, or complete as the source supports; do not assume its final status merely from its anchor. A later complete removal or replacement supersedes incompatible earlier worn/intermediate states once it actually occurs, while a removed garment can remain carried or placed if established. A promotional composition does not itself change clothing. Keep the complete logical outfit in `outfit_state`, only visible or coverage-defining garments in `positive`, and do not put logical outfit records in `supplement`.
 5. Obey `TRUSTED ACTIVE BOT IMAGE POLICY`. Build one physically possible composition whose camera can contain its primary action, relationship, contact, exposure, and visible anatomy after coverage and natural occlusion. Do not invent an act, participant, or intensity merely for spectacle.
 6. Keep each named character's body and action in that character's `positive`; keep anonymous anatomy or action in `scene` and its exact geometry in `supplement`.
+7. Describe the intended visible state directly in positive image text. Negative prompts are managed separately by the application from configured presets and direct user input. Do not output a `negative` field or generate negative tags, even when a reference policy includes negative-output instructions. Do not move exclusion lists or negated instructions into positive tags or composition prose. Apply each selected Profile's `character_negative` only by omitting those traits from its owner's description, without inventing their opposites.
 
-OUTPUT
+REGIONAL SUBJECT FOCUS
 
-Return one `<lb-xnai>` block containing exactly one `keyvis` object and `scenes: []`. Use English prompt content. Do not output slots, plan IDs, analysis, JSON, or extra prose.
+When the active output contract uses integrated regions with two or more named characters, include `solo` once, without added weight, in each region's `character_prompt` if that region depicts only its named owner. This is a local one-subject instruction, not a claim that the whole image contains one person. Keep the complete scene-wide figure count, placement and interaction in `composition_prompt`; do not copy regional `solo` into either shared prompt or add regional person-count tags. Two people standing apart or facing each other across a table can each have local `solo` while the shared composition still describes both.
+
+Judge each region from the complete physical event. If another person's visible body or contact-bearing fragment must be depicted within that region, omit local `solo` there. A hand reaching across the other person's body is different from two independently occupied regions. Preserve the required contact and natural body bounds; do not remove a participant, shrink a mask or change the event to qualify for `solo`. With only one named region, or without integrated regional output, retain the existing scene-wide solo rules instead of introducing regional `solo`: a single region may be rendered without a mask. Anonymous fragments still receive no identity, extra region or additional person count.
+
+OUTPUT FORMAT
+
+Use TOON inside `<lb-xnai>` with exactly one `keyvis` object and `scenes: []`. Use English prompt content. Do not output slots, plan IDs, analysis or extra prose.
 
 FINAL CHECK
 

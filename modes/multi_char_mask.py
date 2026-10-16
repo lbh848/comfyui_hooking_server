@@ -257,32 +257,42 @@ def extract_multi_char_prompt_payload(positive: object) -> dict | None:
     return payload
 
 
-def should_skip_solo_region_mask(layout: object) -> bool:
-    """Keep small solo regions masked; skip only a single region above 30%."""
+def should_skip_solo_region_mask(layout: object, settings: dict | None = None) -> bool:
+    """Skip a single region above the enabled user-selected area threshold."""
     regions = layout.get("regions") if isinstance(layout, dict) else None
     if not isinstance(regions, list) or len(regions) != 1:
         return False
+    settings = settings or {}
+    if not settings.get("single_char_mask_skip_enabled", True):
+        print("[MULTI_CHAR:MASK] 면적 기준 OFF: 1인 영역의 마스크 유지")
+        return False
     region = regions[0]
     name = str(region.get("name") or "")
+    threshold = _finite_number(
+        settings.get("single_char_mask_skip_area_percent", SOLO_MASK_SKIP_AREA_RATIO * 100),
+        "single_char_mask_skip_area_percent", name,
+    ) / 100
     area_ratio = (
         _finite_number(region.get("width"), "width", name)
         * _finite_number(region.get("height"), "height", name)
     )
-    # Products such as 0.75 * 0.4 must still count as exactly 30%.
-    skip = area_ratio > SOLO_MASK_SKIP_AREA_RATIO and not math.isclose(
-        area_ratio, SOLO_MASK_SKIP_AREA_RATIO, rel_tol=0.0, abs_tol=1e-12,
+    # Preserve the strict boundary despite multiplication rounding.
+    skip = area_ratio > threshold and not math.isclose(
+        area_ratio, threshold, rel_tol=0.0, abs_tol=1e-12,
     )
     if skip:
         print(
             f"[MULTI_CHAR:MASK] solo 마스크 생략: name={name!r}, "
-            f"area={area_ratio:.2%}, threshold={SOLO_MASK_SKIP_AREA_RATIO:.2%}"
+            f"area={area_ratio:.2%}, threshold={threshold:.2%}"
         )
     return skip
 
 
-def apply_solo_region_mask_policy(positive: str, context: dict) -> tuple[str, dict | None]:
+def apply_solo_region_mask_policy(
+    positive: str, context: dict, settings: dict | None = None,
+) -> tuple[str, dict | None]:
     """Disable the existing control and backup snapshot together for a large solo region."""
-    if not should_skip_solo_region_mask(context.get("layout")):
+    if not should_skip_solo_region_mask(context.get("layout"), settings):
         return positive, context
     try:
         payload = extract_multi_char_prompt_payload(positive)

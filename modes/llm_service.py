@@ -647,14 +647,14 @@ This request transports a role-labelled conversation transcript as reversible UT
 _GEMINI_ILLUSTRATION_SCENE_BASE64_OVERRIDE = """### Illustration Scene-Isolated Response Override
 This section replaces the response transport rules above for this illustration scene-detail call only.
 
-1. Compose every requested ordinary scene as its own complete `<lb-xnai>` document using `scenes[1]` and exactly one scene item in the decoded task's requested schema.
-2. Apply the common transport rule independently to each one-scene document: if it contains JSON or TOON/YAML, preserve its structure and enclosing tags and encode only nonempty string values with the `base64:` prefix. Otherwise UTF-8 Base64-encode the complete document.
+1. Use the output format selected by the decoded task: JSON remains JSON and TOON remains TOON. This transport changes only document framing, not the selected syntax or image fields. Split the requested scenes array into complete one-scene documents, retaining the scenes container and that scene's exact slot field inside each document. Keep `<lb-xnai>` only when the selected task format uses it.
+2. Apply the common transport rule independently to each document: preserve keys, structure, enclosing tags and non-string values; encode only nonempty string values with the `base64:` prefix. The inner slot remains part of the scene data and follows this same string-value encoding rule.
 3. Emit the encoded documents in requested plan order using exactly this ASCII envelope, replacing SLOT with that scene's exact supplied slot or C anchor:
 <lb-scene slot="SLOT">
 TRANSPORTED_DOCUMENT
 </lb-scene>
 4. If and only if the decoded task also requests a Key Visual (`keyvis`), emit it after the ordinary scenes in one additional `<lb-scene slot="-1">` envelope. Its document contains exactly one `keyvis` object in the requested image schema, not a scenes item. Key Visual is additional to the assigned ordinary-scene count and anchors. If no ordinary scenes remain, emit only this requested Key Visual envelope. Do not emit Key Visual when the task does not request it.
-5. Finish and close one envelope before starting the next. Never combine two images in one Base64 payload. Apply the same string-value transport rules to the Key Visual document.
+5. Finish and close one envelope before starting the next. Apply the same selected output syntax and string-value transport rules to the Key Visual document.
 6. Output only the envelopes. This replaces the decoded task's outer response packaging only; preserve its image fields, source facts and task-specific instructions. Do not add Markdown fences, analysis, prose, or a combined outer `<lb-xnai>` document.
 """
 
@@ -1265,26 +1265,41 @@ def _decode_structured_base64_values(raw_text: str, *, partial: bool = False) ->
     return raw[:start] + json.dumps(restored, ensure_ascii=False) + raw[end:]
 
 
-def _decode_gemini_scene_document(payload: str) -> str:
+def _decode_gemini_scene_document(payload: str, *, scene_slot: str | None = None) -> str:
     """Restore an explicit transported value or a complete scene document."""
     source = _strip_base64_fence(payload)
+    decoded = None
     if not source.startswith("base64:"):
-        structured = _decode_structured_base64_values(source)
-        if structured is not None:
-            return structured
+        decoded = _decode_structured_base64_values(source)
     else:
         source = source[7:]
-    compact = "".join(source.split())
-    # Padding and transport whitespace contain no payload bits. Normalize
-    # only those; invalid characters, missing data and invalid UTF-8 still
-    # reach the existing failure logger and routing retry policy.
-    if re.fullmatch(r"[A-Za-z0-9+/]*=*", compact):
-        body = compact.rstrip("=")
-        normalized = body + "=" * (-len(body) % 4)
-        if normalized != compact:
-            print(f"[LLM_GEMINI_BASE64] 패딩 복구: chars={len(compact)}, padding={len(compact) - len(body)}->{len(normalized) - len(body)}")
-        compact = normalized
-    return base64.b64decode(compact, validate=True).decode("utf-8")
+    if decoded is None:
+        compact = "".join(source.split())
+        # Padding and transport whitespace contain no payload bits. Normalize
+        # only those; invalid characters, missing data and invalid UTF-8 still
+        # reach the existing failure logger and routing retry policy.
+        if re.fullmatch(r"[A-Za-z0-9+/]*=*", compact):
+            body = compact.rstrip("=")
+            normalized = body + "=" * (-len(body) % 4)
+            if normalized != compact:
+                print(f"[LLM_GEMINI_BASE64] 패딩 복구: chars={len(compact)}, padding={len(compact) - len(body)}->{len(normalized) - len(body)}")
+            compact = normalized
+        decoded = base64.b64decode(compact, validate=True).decode("utf-8")
+    if scene_slot is not None and scene_slot != "-1":
+        from modes.illustration_context_pipeline import _json_object_from_text
+        document = _json_object_from_text(decoded, array_key="scenes")
+        if isinstance(document, dict) and "keyvis" not in document:
+            items = document.get("scenes", [document])
+            # The completed envelope already identifies this single image.
+            # Recover only an omitted slot; retain explicit inner identities
+            # and never assign one envelope's slot across multiple scenes.
+            if (isinstance(items, list) and len(items) == 1 and isinstance(items[0], dict)
+                    and ("scene" in items[0] or "background_prompt" in items[0])
+                    and items[0].get("slot") in (None, "")):
+                items[0]["slot"] = scene_slot
+                print(f"[LLM_GEMINI_BASE64] 장면 envelope slot 복구: scene_slot={scene_slot}, fields={list(items[0])}")
+                decoded = json.dumps(document, ensure_ascii=False)
+    return decoded
 
 
 def _decode_gemini_scene_base64_response(raw_text: str) -> str:
@@ -1314,7 +1329,7 @@ def _decode_gemini_scene_base64_response(raw_text: str) -> str:
         scene_slot = frame.group(1)
         compact = "".join(frame.group(2).split())
         try:
-            decoded = _decode_gemini_scene_document(frame.group(2))
+            decoded = _decode_gemini_scene_document(frame.group(2), scene_slot=scene_slot)
         except Exception as e:
             failed_slots.append(scene_slot)
             print(
@@ -1406,7 +1421,7 @@ class _GeminiBase64StreamDecoder:
             self._scene_frame_buffer = self._scene_frame_buffer[closing.end():]
             compact = "".join(payload.split())
             try:
-                decoded = _decode_gemini_scene_document(payload)
+                decoded = _decode_gemini_scene_document(payload, scene_slot=scene_slot)
             except Exception as e:
                 print(
                     "[LLM_GEMINI_BASE64] 스트림 삽화 장면 블록 복호화 실패: "
@@ -3603,8 +3618,14 @@ def _track_flow_llm(fn):
         )
         token = illustration_flow._node.set(node_id)
         original_observer = inputs.get("execution_observer")
+        usage = inputs.get("metadata_sink")
+        if usage is None:
+            usage = {}
+            inputs["metadata_sink"] = usage
 
         async def observe(event):
+            if event.get("type") == "attempt_start":
+                usage.clear()
             slot = event.get("slot") or event.get("llm_slot")
             suffix = _slot_suffix(slot) if slot else ""
             model = inputs.get("model") or _base_config_get(f"llm_model{suffix}") or ""
@@ -3625,12 +3646,16 @@ def _track_flow_llm(fn):
             status = "completed" if result.accepted else "failed"
             if not result.accepted:
                 print(f"[LLM_FLOW] LLM 실패: task={task_key}, reason={result.reason}, input={inputs['messages']!r}")
-            usage = inputs.get("metadata_sink") or {}
+            elapsed = max(0.0, time.time() - result.context.started_at)
+            tokens = usage.get("completion_tokens")
+            if tokens is None:
+                tokens = _approx_tokens(str(result.raw_response or ""))
             illustration_flow.update(
                 run, node_id, status=status, output=illustration_flow.serializable(result.raw_response),
                 error=result.reason, summary=str(result.text or "")[:220],
                 execution_id=result.context.execution_id,
                 prompt_tokens=usage.get("prompt_tokens"), completion_tokens=usage.get("completion_tokens"),
+                tps=usage.get("tps") if usage.get("tps") is not None else (tokens / elapsed if elapsed > 0 else None),
             )
             return result
         except BaseException as exc:
@@ -4478,7 +4503,7 @@ def _apply_stream_outcome_usage(outcome: dict) -> None:
     """최종 채택된 시도의 usage만 상위 sink에 반영한다."""
     snapshot = outcome.get("snapshot") or {}
     timing = {key: snapshot.get(key) for key in LLM_STREAM_TIMING_FIELDS}
-    illustration_flow.llm_metadata(**timing, last_event_at=snapshot.get("last_event_at"))
+    illustration_flow.llm_metadata(**timing, last_event_at=snapshot.get("last_event_at"), tps=snapshot.get("tps"))
     sink = _usage_sink_ctx.get()
     if sink is None:
         return
@@ -4825,7 +4850,7 @@ async def _consume_stream_attempt(
         )
         coordinator.snapshots[stream_id] = _public_stream_state(record)
         if coordinator.active_attempt_ids()[:1] == [stream_id]:
-            illustration_flow.llm_metadata(**dict.fromkeys(LLM_STREAM_TIMING_FIELDS))
+            illustration_flow.llm_metadata(**dict.fromkeys(LLM_STREAM_TIMING_FIELDS), tps=None)
         await _emit_request_stream_observer({
             **metadata,
             "type": "stream_open",
@@ -5012,9 +5037,11 @@ async def _consume_stream_attempt(
                         record[target_key] = event[source_key]
                 record["last_event_at"] = time.time()
                 if event_type == "delta" and coordinator.active_attempt_ids()[:1] == [stream_id]:
+                    elapsed = max(0.0, record["last_event_at"] - record["started_at"])
                     illustration_flow.llm_metadata(**{
                         key: record[key] for key in LLM_STREAM_TIMING_FIELDS
-                    }, last_event_at=record["last_event_at"])
+                    }, last_event_at=record["last_event_at"],
+                        tps=_approx_tokens(record["text"]) / elapsed if elapsed > 0 and record["text"] else None)
                 payload = {
                     **metadata,
                     **event,

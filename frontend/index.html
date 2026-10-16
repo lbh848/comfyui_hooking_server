@@ -5774,6 +5774,85 @@
             color: var(--text2);
             font-size: 0.72rem;
         }
+        .illust-history-state-editor {
+            display: grid;
+            gap: 18px;
+            padding: 12px;
+        }
+        .illust-history-state-group h3 {
+            margin: 0 0 4px;
+            color: var(--text);
+            font-size: 0.82rem;
+        }
+        .illust-history-state-group > p {
+            margin: 0 0 10px;
+            color: var(--text2);
+            font-size: 0.72rem;
+            line-height: 1.6;
+        }
+        .illust-history-state-character {
+            min-width: 0;
+            margin: 8px 0 0;
+            padding: 12px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface);
+        }
+        .illust-history-state-character legend {
+            padding: 0 6px;
+            color: var(--accent);
+            font-size: 0.78rem;
+            font-weight: 650;
+            overflow-wrap: anywhere;
+        }
+        .illust-history-state-fields {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr));
+            gap: 12px;
+        }
+        .illust-history-state-editor label {
+            display: grid;
+            gap: 6px;
+            color: var(--text2);
+            font-size: 0.75rem;
+        }
+        .illust-history-state-editor textarea {
+            box-sizing: border-box;
+            width: 100%;
+            min-height: 92px;
+            resize: vertical;
+            padding: 10px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            background: var(--surface);
+            color: var(--text);
+            font: 0.75rem/1.55 ui-monospace, SFMono-Regular, Consolas, monospace;
+        }
+        .illust-history-state-editor textarea:focus {
+            outline: 2px solid var(--accent);
+            outline-offset: 1px;
+        }
+        .illust-history-state-past {
+            margin-top: 10px;
+            color: var(--text2);
+            font-size: 0.72rem;
+        }
+        .illust-history-state-past > summary { cursor: pointer; }
+        .illust-history-state-past dl {
+            display: grid;
+            grid-template-columns: auto minmax(0, 1fr);
+            gap: 6px 12px;
+            margin: 10px 0 0;
+            padding: 10px;
+            border-top: 1px solid var(--border);
+            line-height: 1.6;
+        }
+        .illust-history-state-past dd {
+            margin: 0;
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+        }
+        #illust-history-state-save { justify-self: end; }
         @media (max-width: 800px) {
             .illust-history-settings {
                 grid-template-columns: repeat(2, minmax(120px, 1fr));
@@ -16187,6 +16266,7 @@
         .lighbd-detail-section-title { padding: 8px 11px; color: var(--text2); background: rgba(255,255,255,.025); border-bottom: 1px solid var(--border); font-size: .72rem; font-weight: 700; }
         .lighbd-detail-content { margin: 0; padding: 11px 12px; max-height: 480px; overflow: auto; color: var(--text); font-family: monospace; font-size: .75rem; line-height: 1.52; white-space: pre-wrap; word-break: break-word; }
         .llm-image-analysis-preview { display: grid; grid-template-columns: minmax(0, .8fr) minmax(0, .8fr) minmax(0, 1.4fr); gap: 14px; height: clamp(240px, 42vh, 460px); margin-bottom: 16px; }
+        .llm-image-question-preview { grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); }
         .llm-image-analysis-preview > section { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; border-radius: 8px; }
         .llm-image-analysis-image { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 10px; background: rgba(0,0,0,.16); color: var(--text2); font-size: .8rem; }
         .llm-image-analysis-image img { display: block; width: 100%; height: 100%; object-fit: contain; }
@@ -47559,6 +47639,7 @@
             const apiUrl = options.apiUrl || `/api/backups/${encodeURIComponent(name)}/llm_trace`;
             const sourceLabel = options.sourceLabel || '백업';
             const analysis = options.analysis === true;
+            const questionMode = analysis && options.analysisMode === 'question';
             const question = analysis ? String(options.question || '').trim() : '';
             const promptData = analysis ? (promptDataMap.get(name) || {}) : {};
             _llmFlowName = name;
@@ -47576,25 +47657,25 @@
                     <div class="lighbd-modal-head">
                         <div class="lighbd-modal-title" id="llm-flow-title">
                             ${analysis ? '이미지 분석' : 'LLM 흐름 추적'} · <span style="font-family:monospace; font-size:.78rem;">${escapeHtml(name)}</span>
-                            <div class="lighbd-modal-subtitle">${analysis ? '의심 표현 찾기 → 단어 규칙 시험 → 실제 이미지 재생성 → 비전 검수. 개선이 확인된 규칙을 보고합니다.' : `이 ${escapeHtml(sourceLabel)}을 만든 LLM 단계의 입력/출력 전체. 내용은 자르거나 축약하지 않습니다.`}</div>
+                            <div class="lighbd-modal-subtitle">${analysis ? (questionMode ? '이미지, 저장된 생성 프롬프트, 등장 캐릭터의 삽화 봇 설정을 참고해 답합니다.' : '이미지, 저장된 생성 프롬프트, 등장 캐릭터의 삽화 봇 설정으로 의심 표현을 찾고, 단어 규칙을 시험해 개선 여부를 확인합니다.') : `이 ${escapeHtml(sourceLabel)}을 만든 LLM 단계의 입력/출력 전체. 내용은 자르거나 축약하지 않습니다.`}</div>
                         </div>
                         <button class="lighbd-modal-close" onclick="closeLlmFlowModal()" aria-label="닫기">✕</button>
                     </div>
                     <div id="llm-flow-body" class="lighbd-detail-body" style="display:block; overflow-y:auto;">
                         ${analysis ? `
-                            <div class="llm-image-analysis-preview">
+                            <div class="llm-image-analysis-preview${questionMode ? ' llm-image-question-preview' : ''}">
                                 <section class="lighbd-detail-section" aria-label="분석할 백업 이미지">
                                     <div class="lighbd-detail-section-title">이미지</div>
                                     <div class="llm-image-analysis-image">
                                         ${promptData.image_url ? `<img src="${escapeAttr(promptData.image_url)}" alt="분석할 백업 이미지" onerror="console.error('[IMAGE_ANALYSIS] 백업 이미지 로드 실패:', this.src); this.alt='백업 이미지를 불러오지 못했습니다';">` : '표시할 백업 이미지가 없습니다.'}
                                     </div>
                                 </section>
-                                <section class="lighbd-detail-section" aria-label="수정 후 생성 이미지">
+                                ${!questionMode ? `<section class="lighbd-detail-section" aria-label="수정 후 생성 이미지">
                                     <div class="lighbd-detail-section-title" id="llm-image-analysis-image-title">수정 후 생성 이미지</div>
                                     <div class="llm-image-analysis-image" id="llm-image-analysis-generated">아직 재생성한 이미지가 없습니다.</div>
-                                </section>
+                                </section>` : ''}
                                 <section class="lighbd-detail-section" aria-label="저장된 생성 프롬프트">
-                                    <div class="lighbd-detail-section-title">프롬프트 변경 · <del>삭제</del> · <span style="color:#72e39b;">추가</span></div>
+                                    <div class="lighbd-detail-section-title">${questionMode ? '저장된 생성 프롬프트' : '프롬프트 변경 · <del>삭제</del> · <span style="color:#72e39b;">추가</span>'}</div>
                                     <div class="llm-image-analysis-prompts" tabindex="0" role="region" aria-label="긍정·부정 프롬프트 전체">
                                         <div class="lighbd-detail-section-title">긍정 프롬프트 (Positive)</div>
                                         <pre class="lighbd-detail-content" id="llm-image-analysis-positive">${escapeHtml(promptData.positive || '저장된 긍정 프롬프트가 없습니다.')}</pre>
@@ -47604,15 +47685,21 @@
                                 </section>
                             </div>
                             <form id="llm-image-analysis-form">
-                                <label for="llm-image-analysis-question" style="display:block; margin-bottom:8px; font-weight:600;">어떤 점이 이상하거나 궁금한가요?</label>
+                                <div style="display:flex; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:8px;">
+                                    <label for="llm-image-analysis-question" style="font-weight:600;">${questionMode ? '이미지에 대해 무엇이 궁금한가요?' : '어떤 점이 이상하거나 궁금한가요?'}</label>
+                                    <select id="llm-image-analysis-mode" ${question ? 'disabled' : ''} aria-label="분석 모드" title="분석 모드" style="padding:4px 10px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:999px; font-size:0.78rem; cursor:pointer;">
+                                        <option value="contradictions" ${!questionMode ? 'selected' : ''}>모순점 찾기</option>
+                                        <option value="question" ${questionMode ? 'selected' : ''}>질문</option>
+                                    </select>
+                                </div>
                                 <textarea id="llm-image-analysis-question" rows="4" required ${question ? 'readonly' : ''}
-                                    placeholder="기대한 모습과 실제 이미지에서 다른 점을 적어 주세요. 단어 규칙을 바꿔 실제로 재생성하며 확인합니다."
-                                    style="box-sizing:border-box; width:100%; resize:vertical; padding:10px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:6px;">${escapeHtml(question)}</textarea>
+                                    placeholder="${questionMode ? '장면, 표정, 구도, 프롬프트 등 궁금한 내용을 자유롭게 질문해 주세요.' : '기대한 모습과 실제 이미지에서 다른 점을 적어 주세요. 단어 규칙을 바꿔 실제로 재생성하며 확인합니다.'}"
+                                    style="box-sizing:border-box; width:100%; resize:vertical; padding:10px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:6px;">${escapeHtml(question || options.draftQuestion || '')}</textarea>
                                 <div class="llm-image-analysis-actions">
-                                    <label>최대 시험 <input id="llm-image-analysis-max-rounds" type="number" min="1" max="10" value="${Number(options.maxRounds) || 3}" style="width:48px;">회</label>
+                                    ${!questionMode ? `<label>최대 시험 <input id="llm-image-analysis-max-rounds" type="number" min="1" max="10" value="${Number(options.maxRounds) || 3}" style="width:48px;">회</label>` : ''}
                                     <button type="button" id="llm-image-analysis-cancel" hidden>중지</button>
                                     <button type="button" onclick="closeLlmFlowModal()">닫기</button>
-                                    <button type="submit" id="llm-image-analysis-submit" ${question ? 'disabled' : ''}>${question ? '분석 중…' : '분석 시작'}</button>
+                                    <button type="submit" id="llm-image-analysis-submit" ${question ? 'disabled' : ''}>${question ? (questionMode ? '답변 중…' : '분석 중…') : (questionMode ? '질문하기' : '분석 시작')}</button>
                                 </div>
                             </form>
                             <div id="llm-image-analysis-result" aria-live="polite">${question ? '<div role="status" style="color:var(--text2); font-size:0.85rem;">이미지 분석 대기·진행 중… LB · LLM에서 작업 상태를 확인할 수 있습니다.</div>' : ''}</div>
@@ -47626,6 +47713,11 @@
             if (analysis) {
                 const input = document.getElementById('llm-image-analysis-question');
                 const submit = document.getElementById('llm-image-analysis-submit');
+                const mode = document.getElementById('llm-image-analysis-mode');
+                mode.addEventListener('change', () => openLlmFlowModal(name, {
+                    ...options, analysisMode: mode.value, question: '', draftQuestion: input.value,
+                    maxRounds: Number(document.getElementById('llm-image-analysis-max-rounds')?.value) || options.maxRounds,
+                }));
                 document.getElementById('llm-image-analysis-cancel').addEventListener('click', async () => {
                     const jobId = overlay._analysisJob?.job_id;
                     if (!jobId) return;
@@ -47645,20 +47737,20 @@
                     const nextQuestion = input.value.trim();
                     if (!nextQuestion) {
                         console.warn('[IMAGE_ANALYSIS] 질문이 비어 있어 분석을 시작하지 않습니다.');
-                        showToast('원인을 알고 싶은 내용을 입력해 주세요.', 'error');
+                        showToast('분석할 내용이나 질문을 입력해 주세요.', 'error');
                         input.focus();
                         return;
                     }
                     submit.disabled = true;
-                    const maxRounds = Number(document.getElementById('llm-image-analysis-max-rounds').value);
-                    if (!Number.isInteger(maxRounds) || maxRounds < 1 || maxRounds > 10) {
+                    const maxRounds = Number(document.getElementById('llm-image-analysis-max-rounds')?.value ?? options.maxRounds);
+                    if (!questionMode && (!Number.isInteger(maxRounds) || maxRounds < 1 || maxRounds > 10)) {
                         submit.disabled = false;
                         showToast('최대 시험 횟수는 1~10회로 입력해 주세요.', 'error');
                         return;
                     }
                     return openLlmFlowModal(name, {...options, question: nextQuestion, maxRounds});
                 });
-                const existingJob = _llmFlowAnalysisJobs.get(name);
+                const existingJob = !questionMode && _llmFlowAnalysisJobs.get(name);
                 if (!question && !existingJob) {
                     input.focus();
                     return;
@@ -47666,10 +47758,10 @@
             }
 
             try {
-                const existingJob = analysis ? _llmFlowAnalysisJobs.get(name) : null;
-                const resp = existingJob && !question ? {ok: true, json: async () => ({job: existingJob})} : await fetch(analysis ? '/api/illustration_auto_feedback' : apiUrl, analysis ? {
+                const existingJob = analysis && !questionMode ? _llmFlowAnalysisJobs.get(name) : null;
+                const resp = existingJob && !question ? {ok: true, json: async () => ({job: existingJob})} : await fetch(analysis && !questionMode ? '/api/illustration_auto_feedback' : apiUrl, analysis ? {
                     method: 'POST', headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({name, question, direction: question, max_rounds: Number(options.maxRounds) || 3}),
+                    body: JSON.stringify(questionMode ? {question, analysis_mode: 'question'} : {name, question, direction: question, max_rounds: Number(options.maxRounds) || 3}),
                 } : {method: 'GET'});
                 const data = await resp.json();
                 if (analysis && resp.ok && data.job) _llmFlowAnalysisJobs.set(name, data.job);
@@ -47721,8 +47813,9 @@
                 if (analysis && document.getElementById('llm-flow-overlay') === overlay && (!overlay._analysisJob || ['completed', 'failed', 'cancelled'].includes(overlay._analysisJob.status))) {
                     const submit = document.getElementById('llm-image-analysis-submit');
                     submit.disabled = false;
-                    submit.textContent = '분석 시작';
+                    submit.textContent = questionMode ? '질문하기' : '분석 시작';
                     document.getElementById('llm-image-analysis-question').readOnly = false;
+                    document.getElementById('llm-image-analysis-mode').disabled = false;
                 }
             }
         }
@@ -47976,6 +48069,8 @@
                 if (input) { input.readOnly = !terminal; if (!input.value) input.value = job.question; }
                 const maxRounds = document.getElementById('llm-image-analysis-max-rounds');
                 if (maxRounds) maxRounds.disabled = !terminal;
+                const mode = document.getElementById('llm-image-analysis-mode');
+                if (mode) mode.disabled = !terminal;
                 const cancel = document.getElementById('llm-image-analysis-cancel');
                 if (cancel) { cancel.hidden = terminal; cancel.disabled = !!job.cancel_requested; }
                 if (terminal && overlay._analysisPollTimer) { clearInterval(overlay._analysisPollTimer); overlay._analysisPollTimer = null; }
@@ -47985,7 +48080,7 @@
                 const result = document.getElementById('llm-image-analysis-result') || body;
                 result.innerHTML = `
                     <section class="lighbd-detail-section">
-                        <div class="lighbd-detail-section-title">이미지 분석 결과</div>
+                        <div class="lighbd-detail-section-title">${data.analysis_mode === 'question' ? '질문 답변' : '이미지 분석 결과'}</div>
                         <pre class="lighbd-detail-content" style="white-space:pre-wrap; overflow-wrap:anywhere;">${escapeHtml(data.analysis)}</pre>
                     </section>`;
                 return;
@@ -49004,8 +49099,8 @@
             },
             {
                 key: 'outfit_workflow',
-                label: '복장 · 워크플로우',
-                description: '복장 추출·정제와 수동 워크플로우 복원 작업',
+                label: '워크플로우',
+                description: '수동 그리기와 워크플로우 복원 작업',
                 color: '#8b7ce8',
             },
             {
@@ -49081,7 +49176,7 @@
             { key: 'illustration_original_asset', label: '삽화 원본 에셋 선택',          kind: 'JSON · 1단계', modality: 'text', group: 'illustration_pipeline' },
             { key: 'illustration_original_asset_recovery', label: '삽화 원본 에셋 복구', kind: 'JSON · 실패 후보 재선택', modality: 'text', group: 'illustration_pipeline' },
             { key: 'illustration_call1',       label: '삽화 OUTFIT (복장·헤어)',         kind: 'JSON · 단일 상태 추적', modality: 'text', group: 'illustration_pipeline' },
-            { key: 'illustration_time_place', label: '삽화 TIME & PLACE (시간·장소)', kind: 'JSON · 독립 상태 추적', modality: 'text', group: 'illustration_pipeline' },
+            { key: 'illustration_time_place', label: '삽화 TIME & PLACE (시간·장소·조명)', kind: 'JSON · 독립 상태 추적', modality: 'text', group: 'illustration_pipeline' },
             { key: 'illustration_call2_select', label: '삽화 SLOT-SELECTER (장면 선택)',   kind: 'JSON · 장면 수·순서·인물', modality: 'text', group: 'illustration_pipeline' },
             { key: 'illustration_call2_plan',  label: '삽화 PLAN',               kind: '텍스트 · 배치별 시각 계획', modality: 'text', group: 'illustration_pipeline' },
             { key: 'illustration_call2_keyvis', label: '삽화 KEYVIS',              kind: '텍스트', modality: 'text', group: 'illustration_pipeline' },
@@ -49296,7 +49391,7 @@
             };
             let html = '';
             for (const modality of LLM_ROUTING_MODALITIES) {
-                const tasks = LLM_ROUTING_TASKS.filter(task => task.modality === modality.key);
+                const tasks = LLM_ROUTING_TASKS.filter(task => !task.locked && task.modality === modality.key);
                 const routes = tasks.map(readDetailedLlmRoute);
                 if (routes.some(route => !route)) {
                     console.error('[LLM_ROUTE_EASY] 상세 설정을 읽지 못해 쉬운 설정 렌더링을 중단합니다:', modality.key);
@@ -49397,7 +49492,7 @@
             try {
                 const modalityInfo = LLM_ROUTING_MODALITIES.find(item => item.key === modality);
                 if (!modalityInfo) throw new Error(`알 수 없는 작업 분류입니다: ${modality}`);
-                const tasks = LLM_ROUTING_TASKS.filter(task => task.modality === modality);
+                const tasks = LLM_ROUTING_TASKS.filter(task => !task.locked && task.modality === modality);
                 if (!tasks.length) throw new Error(`${modalityInfo.label}에 포함된 작업이 없습니다.`);
                 const routeSlots = LLM_SLOTS.map(slot => `llm${slot}`);
                 const primary = document.getElementById(`llm-route-easy-${modality}-primary`)?.value || '';
@@ -49503,7 +49598,8 @@
             let html = '';
 
             for (const [groupIndex, group] of LLM_ROUTING_GROUPS.entries()) {
-                const groupTasks = LLM_ROUTING_TASKS.filter(task => task.group === group.key);
+                // 잠긴 작업은 등록과 저장값만 유지하고 분기 설정에서는 숨긴다.
+                const groupTasks = LLM_ROUTING_TASKS.filter(task => !task.locked && task.group === group.key);
                 html += `<section class="llm-route-group" style="--route-group-color: ${group.color};" aria-labelledby="llm-route-group-${group.key}">`;
                 html += '<header class="llm-route-group-header">';
                 html += `<span class="llm-route-group-number">${String(groupIndex + 1).padStart(2, '0')}</span>`;
@@ -82462,7 +82558,7 @@
                                     </details>
                             </div>
                             <div id="illust-call-content-time_place" data-illust-call-panel="time_place" role="tabpanel" aria-labelledby="illust-call-tab-time_place" hidden>
-                                <p class="illust-prompt-node-help">OUTFIT·SLOT-SELECTER와 병렬로 캐릭터별 시간대와 장소를 추적합니다. time과 place는 각각 변경된 SLOT에서만 출력하고 이전 값을 이어받습니다.</p>
+                                <p class="illust-prompt-node-help">OUTFIT·SLOT-SELECTER와 병렬로 캐릭터별 시간대·장소·조명을 추적합니다. time, place, lighting은 각각 변경된 SLOT에서만 출력하고 이전 값을 이어받습니다.</p>
                                 <details open style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
                                     <summary style="cursor:pointer; font-size:0.8rem; font-weight:600;">TIME &amp; PLACE 독립 상태 추적</summary>
                                     <textarea id="lighbd-prompt-time_place" data-lighbd-prompt="time_place" style="width:100%; height:300px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;"></textarea>
@@ -82754,13 +82850,26 @@
                         <div id="illust-history-detail-status" class="illust-history-detail-note">불러오는 중...</div>
                         <div id="illust-history-detail-content" style="display:none;">
                             <div id="illust-history-detail-meta" class="illust-history-detail-meta"></div>
-                            <details class="illust-history-detail-section" open>
+                            <details class="illust-history-detail-section">
                                 <summary>원문 CHAT 메시지</summary>
                                 <div id="illust-history-detail-messages"></div>
                             </details>
-                            <details class="illust-history-detail-section" open>
-                                <summary>캐릭터 복장 추적 상태</summary>
-                                <pre id="illust-history-detail-characters"></pre>
+                            <details class="illust-history-detail-section">
+                                <summary>캐릭터 복장·머리 상태 편집</summary>
+                                <div class="illust-history-state-editor">
+                                    <div class="illust-history-detail-note">복장과 머리 태그를 쉼표로 구분해 편집하세요. 각 상태는 한 번만 수정하면 됩니다. 이전 변경 기록은 그대로 유지됩니다.</div>
+                                    <section class="illust-history-state-group" aria-labelledby="illust-history-next-title">
+                                        <h3 id="illust-history-next-title">다음 대화에 적용할 저장 상태</h3>
+                                        <p>이어서 진행할 때 사용할 현재 복장과 머리입니다.</p>
+                                        <div id="illust-history-detail-characters"></div>
+                                    </section>
+                                    <section class="illust-history-state-group" aria-labelledby="illust-history-start-title">
+                                        <h3 id="illust-history-start-title">현재 장면 재생성에 적용할 시작 상태</h3>
+                                        <p>같은 장면을 다시 생성할 때 사용할 시작 복장과 머리입니다. 현재 장면의 변화가 이 상태에 적용됩니다.</p>
+                                        <div id="illust-history-detail-state-before"></div>
+                                    </section>
+                                    <button id="illust-history-state-save" class="illust-settings-action is-primary" type="button" onclick="openIllustrationChatHistory(document.getElementById('illust-history-detail-modal').dataset.historyId, true)">상태 저장</button>
+                                </div>
                             </details>
                             <details class="illust-history-detail-section">
                                 <summary>현재 턴·연속성·리롤 상태</summary>
@@ -82779,14 +82888,10 @@
                                 <pre id="illust-history-detail-profile"></pre>
                             </details>
                             <details class="illust-history-detail-section">
-                                <summary>CALL2 출력</summary>
+                                <summary>장면 묘사 최종 결과 (DETAIL·KEYVIS)</summary>
                                 <pre id="illust-history-detail-call2"></pre>
                             </details>
                             <details class="illust-history-detail-section">
-                                <summary>POST PROCESS 최초 출력</summary>
-                                <pre id="illust-history-detail-call3-initial"></pre>
-                            </details>
-                            <details class="illust-history-detail-section" open>
                                 <summary>POST PROCESS 최종 출력</summary>
                                 <pre id="illust-history-detail-call3-final"></pre>
                             </details>
@@ -82887,13 +82992,92 @@
                 messagesRoot.appendChild(article);
             });
 
-            _setIllustrationHistoryDetailText('illust-history-detail-characters', record?.characters || {}, true);
+            for (const [id, states] of [
+                ['illust-history-detail-characters', record?.characters || {}],
+                ['illust-history-detail-state-before', activeTurn.state_before || {}],
+            ]) {
+                const root = document.getElementById(id);
+                root.replaceChildren();
+                // Keep all metadata and untouched checkpoints exactly as loaded.
+                root.dataset.states = JSON.stringify(states);
+                if (!Object.keys(states).length) {
+                    const empty = document.createElement('div');
+                    empty.className = 'illust-history-detail-note';
+                    empty.textContent = '저장된 복장·머리 상태가 없습니다. 생성 시 대화와 캐릭터 설정에서 판단합니다.';
+                    root.appendChild(empty);
+                }
+                for (const [key, tracked] of Object.entries(states)) {
+                    const card = document.createElement('fieldset');
+                    card.className = 'illust-history-state-character';
+                    card.dataset.character = key;
+                    const title = document.createElement('legend');
+                    title.textContent = tracked?.canonical_name || key;
+                    card.appendChild(title);
+                    const chain = Array.isArray(tracked?.call1_status_history) && tracked.call1_status_history.length
+                        ? tracked.call1_status_history
+                        : typeof tracked?.call1_status === 'string' ? [tracked.call1_status] : [];
+                    const fields = document.createElement('div');
+                    fields.className = 'illust-history-state-fields';
+                    card.appendChild(fields);
+                    if (!chain.length) {
+                        fields.textContent = '저장된 복장·머리 상태가 없습니다.';
+                    }
+                    const past = document.createElement('details');
+                    past.className = 'illust-history-state-past';
+                    const summary = document.createElement('summary');
+                    summary.textContent = `이전 변경 기록 ${Math.max(0, chain.length - 1)}개 · 읽기 전용`;
+                    past.appendChild(summary);
+                    chain.forEach((raw, index) => {
+                        let parsed;
+                        try {
+                            parsed = JSON.parse(raw);
+                        } catch (error) {
+                            console.warn('[ILLUST_HISTORY] 복장·머리 필드로 읽을 수 없어 원문 표시:', {id, key, index, raw, error});
+                        }
+                        const tags = parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+                            && ['outfit', 'hair'].some(field => typeof parsed[field] === 'string')
+                            && ['outfit', 'hair'].every(field => parsed[field] === undefined || typeof parsed[field] === 'string');
+                        const values = tags
+                            ? [['outfit', '복장', parsed.outfit ?? ''], ['hair', '머리', parsed.hair ?? '']]
+                            : [['raw', '저장된 상태 원문', typeof raw === 'string' ? raw : _illustrationHistoryJson(raw)]];
+                        const latest = index === chain.length - 1;
+                        const entry = document.createElement('dl');
+                        if (!latest) {
+                            const heading = document.createElement('dt');
+                            heading.textContent = `이전 상태 ${index + 1}`;
+                            entry.append(heading, document.createElement('dd'));
+                        }
+                        for (const [field, label, text] of values) {
+                            if (latest) {
+                                const labelNode = document.createElement('label');
+                                labelNode.textContent = label;
+                                const input = document.createElement('textarea');
+                                input.dataset.field = field;
+                                input.defaultValue = text;
+                                input.rows = field === 'outfit' ? 4 : 3;
+                                input.spellcheck = false;
+                                input.setAttribute('aria-label', `${title.textContent} · ${label}`);
+                                labelNode.appendChild(input);
+                                fields.appendChild(labelNode);
+                            } else {
+                                const term = document.createElement('dt');
+                                const description = document.createElement('dd');
+                                term.textContent = label;
+                                description.textContent = text || '(비어 있음)';
+                                entry.append(term, description);
+                            }
+                        }
+                        if (!latest) past.appendChild(entry);
+                    });
+                    if (chain.length > 1) card.appendChild(past);
+                    root.appendChild(card);
+                }
+            }
             _setIllustrationHistoryDetailText('illust-history-detail-active-turn', activeTurn, true);
             _setIllustrationHistoryDetailText('illust-history-detail-call1', pipelineResult.call1_result || {}, true);
             _setIllustrationHistoryDetailText('illust-history-detail-time-place', pipelineResult.time_place_result || {}, true);
             _setIllustrationHistoryDetailText('illust-history-detail-profile', pipelineResult.profile_result || {}, true);
             _setIllustrationHistoryDetailText('illust-history-detail-call2', pipelineResult.call2_out || '');
-            _setIllustrationHistoryDetailText('illust-history-detail-call3-initial', pipelineResult.call3_initial_out || '');
             _setIllustrationHistoryDetailText('illust-history-detail-call3-final', pipelineResult.call3_out || '');
             _setIllustrationHistoryDetailText('illust-history-detail-wardrobe', {
                 wardrobe_events: pipelineResult.wardrobe_events || [],
@@ -82913,7 +83097,7 @@
             content.style.display = '';
         }
 
-        async function openIllustrationChatHistory(historyId) {
+        async function openIllustrationChatHistory(historyId, saveState = false) {
             if (!historyId) {
                 console.error('[ILLUST_HISTORY] 열람할 historyId가 비어 있습니다.');
                 return;
@@ -82921,22 +83105,75 @@
             const modal = _ensureIllustrationChatHistoryDetailModal();
             const status = document.getElementById('illust-history-detail-status');
             const content = document.getElementById('illust-history-detail-content');
+            const saveButton = document.getElementById('illust-history-state-save');
             modal.dataset.historyId = historyId;
             modal.classList.add('visible');
+            if (!saveState) {
+                modal.querySelectorAll('details').forEach(section => { section.open = false; });
+                const body = modal.querySelector('.modal-body');
+                if (body) body.scrollTop = 0;
+            }
             if (status) {
                 status.style.display = '';
-                status.textContent = '히스토리 상세 내용을 불러오는 중...';
+                status.textContent = saveState ? '캐릭터 상태를 저장하는 중...' : '히스토리 상세 내용을 불러오는 중...';
             }
-            if (content) content.style.display = 'none';
+            if (content && !saveState) content.style.display = 'none';
+            if (saveButton) saveButton.disabled = true;
             try {
-                const response = await fetch('/api/illustration_context/chat-histories/' + encodeURIComponent(historyId));
+                let options;
+                if (saveState) {
+                    const body = {};
+                    for (const [id, field] of [
+                        ['illust-history-detail-characters', 'characters'],
+                        ['illust-history-detail-state-before', 'state_before'],
+                    ]) {
+                        const root = document.getElementById(id);
+                        const states = JSON.parse(root.dataset.states);
+                        for (const card of root.querySelectorAll('[data-character]')) {
+                            const inputs = [...card.querySelectorAll('textarea[data-field]')];
+                            if (!inputs.some(input => input.value !== input.defaultValue)) continue;
+                            const tracked = states[card.dataset.character];
+                            const chain = tracked.call1_status_history;
+                            const hasHistory = Array.isArray(chain) && chain.length > 0;
+                            const previous = hasHistory ? chain[chain.length - 1] : tracked.call1_status;
+                            const rawInput = inputs.find(input => input.dataset.field === 'raw');
+                            let updated;
+                            if (rawInput) {
+                                updated = rawInput.value;
+                            } else {
+                                const tags = JSON.parse(previous);
+                                for (const input of inputs) {
+                                    if (input.value !== input.defaultValue) tags[input.dataset.field] = input.value;
+                                }
+                                updated = JSON.stringify(tags);
+                            }
+                            if (hasHistory) chain[chain.length - 1] = updated;
+                            tracked.call1_status = updated;
+                        }
+                        body[field] = states;
+                    }
+                    options = {
+                        method: 'POST', headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify(body),
+                    };
+                }
+                const response = await fetch('/api/illustration_context/chat-histories/' + encodeURIComponent(historyId), options);
                 const data = await response.json();
                 if (!response.ok) throw new Error(data.error || ('HTTP ' + response.status));
                 if (modal.dataset.historyId !== historyId) return;
                 _renderIllustrationChatHistoryDetail(data.history || {});
+                if (saveState) {
+                    showToast('캐릭터 복장·헤어 상태를 저장했습니다.', 'success');
+                    await loadIllustrationChatHistories();
+                }
             } catch (e) {
-                console.error('[ILLUST_HISTORY] 상세 로드 실패:', e);
-                if (status) status.textContent = '상세 로드 실패: ' + (e.message || e);
+                console.error('[ILLUST_HISTORY] 상세 조회/상태 저장 실패:', {historyId, saveState, error: e});
+                if (modal.dataset.historyId === historyId) {
+                    if (status) status.textContent = (saveState ? '상태 저장 실패: ' : '상세 로드 실패: ') + (e.message || e);
+                    if (saveState) showToast('상태 저장 실패: ' + (e.message || e), 'error');
+                }
+            } finally {
+                if (saveButton && modal.dataset.historyId === historyId) saveButton.disabled = false;
             }
         }
 
@@ -83091,7 +83328,7 @@
                     {key: 'illustration_output_mode', label: '출력 모드', type: 'select', help: '일반 삽화(OUTFIT/CALL2/POST PROCESS + Comfy), 원본 에셋(업로드 원본 선택), 또는 둘 다를 반환합니다. 원본 에셋 장수는 원본 에셋 출력 탭에서 설정합니다.', options: [{value: 'illustration', label: '일반 삽화'}, {value: 'original_asset', label: '원본 에셋'}, {value: 'both', label: '일반 삽화 + 원본 에셋'}], onchange: 'onIllustrationOutputModeChange(this)'},
                     {key: 'nsfw', label: 'NSFW 태깅', type: 'toggle', help: 'DETAIL과 KEYVIS에 성인 장면용 태깅 지침을 적용합니다. Manga 대사 모드의 버블 타입에도 함께 반영됩니다.'},
                     {key: 'outfit_enabled', label: 'OUTFIT 복장·헤어 추적', type: 'toggle', help: '켜면 복장·헤어를 미리 추적합니다. 끄면 원문·이전 문맥·프로필을 보고 후속 LLM이 현재 상태를 판단합니다.'},
-                    {key: 'time_place_enabled', label: 'TIME & PLACE 시간·장소 추적', type: 'toggle', help: '켜면 시간·장소를 미리 추적합니다. 끄면 후속 LLM이 원문과 이전 문맥에서 판단합니다.'},
+                    {key: 'time_place_enabled', label: 'TIME & PLACE 시간·장소·조명 추적', type: 'toggle', help: '켜면 시간·장소·조명을 미리 추적하고 DETAIL이 해당 조건을 이어받습니다. 끄면 후속 LLM이 원문과 이전 문맥에서 판단합니다.'},
                     {key: 'call2_plan_enabled', label: 'PLAN 시각 계획', type: 'toggle', help: '켜면 장면의 순간·구도·동작을 미리 계획합니다. 끄면 SLOT-SELECTER 결과와 원문을 DETAIL에 직접 전달해 판단하게 합니다.'},
                     {key: 'key_visual', label: '대표 이미지 생성', type: 'toggle', help: '켜면 일반 장면 외에 대표 이미지 한 장을 추가합니다. 끄면 DETAIL 통합·별도 LLM 방식 모두 대표 이미지를 생성하지 않습니다.'},
                     {key: 'keyvis_in_detail_enabled', label: 'DETAIL에서 KEYVIS 함께 예측', type: 'toggle', dependsOn: ['key_visual'], help: '켜면 첫 DETAIL 배치에서 일반 장면과 대표 이미지 한 장을 함께 작성하고 DETAIL의 LLM·재시도 설정을 사용합니다. 끄면 KEYVIS에 지정한 LLM으로 별도 예측합니다. 마스크 예측 방식은 두 모드 모두 적용됩니다.'},
@@ -83099,12 +83336,14 @@
                     {key: 'multi_char_mask_enabled', label: '마스크 사용', type: 'toggle', help: '2명 이상 장면에서 캐릭터별 Regional RGB 마스크를 계산합니다. 끄면 마스크 LLM 호출과 Regional 마스크 전달 없이 일반 다중 캐릭터 프롬프트로 생성합니다.'},
                     {key: 'multi_char_mask_inline_enabled', label: '마스크 예측 방식', type: 'select', options: [{value: false, label: '별도 LLM으로 예측'}, {value: true, label: '현재 모델에서 예측'}], onchange: 'onIllustrationContextToggleChange(this)', help: '현재 모델에서 예측하면 DETAIL·KEYVIS에 마스크 지침을 합치고 기존 출력 형식을 마스크 형식으로 교체해 한 번에 작성합니다. 별도 LLM으로 예측하면 MULTI-CHAR-MASK 전용 LLM을 호출합니다. 이미 완성된 프롬프트를 입력하는 경로에서는 별도 LLM을 사용합니다.', dependsOn: ['multi_char_mask_enabled']},
                     {key: 'single_char_mask_enabled', label: '1인도 마스크', type: 'toggle', help: 'MULTI-CHAR-MASK가 켜져 있을 때 1인 장면에도 마스크를 계산합니다. 끄면 일반 삽화와 대표 이미지의 1인 장면은 마스크 없이 생성합니다.', dependsOn: ['multi_char_mask_enabled']},
+                    {key: 'single_char_mask_skip_enabled', label: '면적 기준으로 1인 마스크 생략', type: 'toggle', help: '켜면 예측한 1인 영역의 화면 점유율이 아래 기준을 초과할 때 마스크를 생략합니다. 끄면 면적과 관계없이 1인 마스크를 유지합니다. 2명 이상 장면에는 적용하지 않습니다.', dependsOn: ['multi_char_mask_enabled', 'single_char_mask_enabled']},
+                    {key: 'single_char_mask_skip_area_percent', label: '생략 기준 면적 (%)', type: 'number', min: 0, max: 100, step: 0.1, help: '예측한 인물 영역의 가로×세로 면적을 전체 화면과 비교합니다. 기본값은 30%이며, 기준과 같으면 유지하고 초과하면 생략합니다. 일반 삽화와 대표 이미지에 동일하게 적용합니다.', dependsOn: ['multi_char_mask_enabled', 'single_char_mask_enabled', 'single_char_mask_skip_enabled']},
                 ],
                 callInfo: [
                     {label: '생성 순서', text: '등장인물·프로필 결정 → 켜진 상태 추적 단계와 SLOT-SELECTER 장면 선택 병렬 → PLAN 또는 DETAIL. PLAN을 끄면 SLOT-SELECTER에서 DETAIL로 직접 연결하고, 상태 추적을 끄면 원문·이전 문맥을 전달합니다. KEYVIS는 선택한 방식에 따라 첫 DETAIL 배치에서 함께 예측하거나 별도 호출합니다. 각 이미지의 묘사와 필요한 마스크가 준비되면 생성 큐에 등록하며, POST PROCESS 대사 완료를 기다리지 않습니다.'},
                     {label: '자동 프로필 결정', text: '등장인물 판별 뒤 다중 프로필 캐릭터가 있으면 캐릭터별로 프로필 타임라인을 결정합니다. 해당 캐릭터가 없으면 프로필 LLM 호출은 자동 생략합니다.'},
                     {label: 'OUTFIT 상태 추적', text: 'ON이면 복장·헤어의 시작 상태와 현재 변화 사건을 추적합니다. OFF이면 호출을 생략하고 후속 LLM이 문맥에서 판단합니다. 상태 추적·장면 계획 히스토리 범위는 채팅 히스토리 탭에서 설정합니다.'},
-                    {label: 'TIME & PLACE 상태 추적', text: 'ON이면 별도 호출에서 캐릭터별 time(넓은 시간대)과 place(간단한 장소)를 추적합니다. OFF이면 후속 LLM이 원문에서 판단합니다. 각 항목은 변경된 SLOT에서만 출력하며 복장·헤어와 독립적으로 이어받습니다. 노드 상세에서 시간·장소 시간표를 확인할 수 있습니다.'},
+                    {label: 'TIME & PLACE 상태 추적', text: 'ON이면 캐릭터별 time(넓은 시간대), place(구체적인 공간), lighting(광원과 조명 상태)을 함께 추적합니다. OFF이면 후속 LLM이 원문에서 판단합니다. 각 항목은 변경된 SLOT에서만 출력하며 복장·헤어와 독립적으로 이어받습니다. DETAIL은 이 조명 조건 안에서 구도를 정합니다. 노드 상세에서 시간·장소·조명 시간표를 확인할 수 있습니다.'},
                     {label: 'DETAIL 이미지 묘사', text: '해당 장면의 프로필과 켜진 단계의 분석 결과를 이미지 태그로 확장합니다. 생략한 계획·상태는 원문과 이전 문맥에서 직접 판단합니다. 병렬 처리 여부와 최대 동시 요청 수는 DETAIL 탭에서 PLAN과 독립적으로 설정합니다. 느린 배치 재요청은 PLAN과 DETAIL이 각각 관리합니다.'},
                     {label: 'KEYVIS 대표 이미지', text: '일반 장면 외 대표 이미지 한 장을 추가하며 POST PROCESS 대사 대상에는 포함하지 않습니다. DETAIL 통합 예측은 DETAIL의 LLM·재시도 설정을, 별도 예측은 KEYVIS 설정을 사용합니다. 대표 이미지 지침은 LLM 프롬프트 탭의 keyvisual.txt와 system.txt에서 설정합니다.'},
                     {label: 'MULTI-CHAR-MASK', text: '마스크 기능이 켜져 있고 Comfy 공급자·V3 형식의 장면에 캐릭터가 2~3명일 때 영역을 계산합니다. 1인도 마스크를 켜면 1인 장면에도 적용합니다. 마스크 예측 방식에서 현재 모델을 선택하면 DETAIL·KEYVIS가 마스크를 함께 작성하고, 별도 LLM을 선택하면 해당 묘사 완료 후 전용 LLM으로 계산합니다. 완성 프롬프트 입력은 별도 호출을 유지합니다.'},
@@ -83294,7 +83533,7 @@
             if (group.key === 'pipeline') {
                 const fieldsets = [
                     ['KEYVIS', ['key_visual', 'keyvis_in_detail_enabled', 'minimal_background_description']],
-                    ['MULTI-CHAR-MASK', ['multi_char_mask_enabled', 'multi_char_mask_inline_enabled', 'single_char_mask_enabled']],
+                    ['MULTI-CHAR-MASK', ['multi_char_mask_enabled', 'multi_char_mask_inline_enabled', 'single_char_mask_enabled', 'single_char_mask_skip_enabled', 'single_char_mask_skip_area_percent']],
                 ];
                 content = group.fields.filter(field => !fieldsets.some(([, keys]) => keys.includes(field.key)))
                     .map(field => _renderIllustrationContextField(field)).join('') + fieldsets.map(([title, keys]) => `

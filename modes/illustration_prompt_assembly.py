@@ -79,9 +79,23 @@ class PromptText(str):
 
 def variable(value, label):
     if is_symbolic():
+        if label == "프로필·복장 기준":
+            return prompt_join(" · ", (variable("", item) for item in (
+                "캐릭터 얼굴·눈·절대·부정 태그", "lb-xnai.lb.extra 외형·복장",
+            )))
+        if label == "이 호출의 장면·프로필·상태":
+            # Explain the contents of DETAIL's existing scene bundle in the
+            # preview. Runtime serialization and its variable span stay intact.
+            return prompt_join(" · ", (variable("", item) for item in (
+                "선택된 장면", "현재 대화의 등록 인물", "캐릭터 프로필", "복장·머리 상태", "시간·장소",
+            )))
         label = {
             "과거 대화": "과거 문맥 입력",
             "대사 귀속용 과거 대화": "과거 문맥 입력",
+            "시점별 확정 프로필": "캐릭터 프로필",
+            "복장·머리 상태 타임라인": "복장·머리 상태",
+            "시간·장소 상태 타임라인": "시간·장소",
+            "슬롯이 삽입된 현재 원문": "현재 원문과 구간",
             "역번역 변수: {character_names}": "보호할 캐릭터 이름",
             "역번역 변수: {chunk_index}": "역번역 묶음 번호",
             "역번역 변수: {chunk_total}": "역번역 묶음 수",

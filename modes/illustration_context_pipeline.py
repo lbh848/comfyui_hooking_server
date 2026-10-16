@@ -195,6 +195,8 @@ DEFAULT_TOGGLES = {
     "multi_char_mask_enabled": True,
     "multi_char_mask_inline_enabled": False,
     "single_char_mask_enabled": True,
+    "single_char_mask_skip_enabled": True,
+    "single_char_mask_skip_area_percent": 30.0,
     "speak_enabled": True,
     "call3_prompt_mode": "speak",
     "speak_language": "한국어",
@@ -429,8 +431,21 @@ def merged_toggles(value: dict | None) -> dict:
                 )
                 out["prompt_format"] = "v3"
     for key in ("outfit_enabled", "time_place_enabled", "call2_plan_enabled", "call2_parallel_enabled",
-                "call2_detail_parallel_enabled", "multi_char_mask_inline_enabled", "keyvis_in_detail_enabled"):
+                "call2_detail_parallel_enabled", "multi_char_mask_inline_enabled", "keyvis_in_detail_enabled",
+                "single_char_mask_skip_enabled"):
         out[key] = _bool(out[key])
+    try:
+        area_percent = float(out["single_char_mask_skip_area_percent"])
+        if not math.isfinite(area_percent):
+            raise ValueError(f"유한하지 않은 면적 비율: {area_percent!r}")
+        out["single_char_mask_skip_area_percent"] = max(0.0, min(100.0, area_percent))
+        if out["single_char_mask_skip_area_percent"] != area_percent:
+            print(f"[ILLUST_CONTEXT] 마스크 생략 면적을 0~100%로 보정: {area_percent!r}")
+    except (TypeError, ValueError, OverflowError) as exc:
+        print(f"[ILLUST_CONTEXT] 마스크 생략 면적 값 오류, 기본값 사용: "
+              f"value={out['single_char_mask_skip_area_percent']!r}, error={exc}")
+        traceback.print_exc()
+        out["single_char_mask_skip_area_percent"] = DEFAULT_TOGGLES["single_char_mask_skip_area_percent"]
     prompt_format = str(out.get("prompt_format") or "").strip().lower()
     if prompt_format not in ("v1", "v3", "chansub"):
         print(f"[ILLUST_CONTEXT] 지원하지 않는 프롬프트 입력 형식 {prompt_format!r}, V3 사용")
@@ -5840,6 +5855,9 @@ def _descriptor(raw: dict, kind: str, fallback_slot: int) -> dict:
     for ch in raw.get("characters") or []:
         if not isinstance(ch, dict):
             continue
+        if ch.get("negative"):
+            print(f"[ILLUST_CONTEXT:CALL2] LLM negative ignored (disabled): "
+                  f"kind={kind}, name={ch.get('name')!r}, value={ch['negative']!r}")
         raw_authority_exceptions = ch.get("authority_exceptions") or []
         if not isinstance(raw_authority_exceptions, list):
             print(
@@ -5850,7 +5868,7 @@ def _descriptor(raw: dict, kind: str, fallback_slot: int) -> dict:
             raw_authority_exceptions = [raw_authority_exceptions]
         chars.append({
             "positive": str(ch.get("positive") or "").strip(),
-            "negative": str(ch.get("negative") or "").strip(),
+            "negative": "",  # LLM negative control disabled; keep descriptor compatibility.
             "name": str(ch.get("name") or "").strip(),
             "position": str(ch.get("position") or "").strip(),
             "authority_exceptions": [
@@ -6103,7 +6121,7 @@ async def _run_call2_keyvis(
     if not allowed:
         print(
             "[ILLUST_CONTEXT:CALL2_KEYVIS] 현재 canonical roster가 비어 있음: "
-            "CHARACTER DICTIONARY와 현재 문맥에 명시된 canonical 이름만 사용하도록 요청"
+            "선택된 프로필과 현재 문맥에 명시된 canonical 이름만 사용하도록 요청"
         )
     roster_text = json.dumps(allowed, ensure_ascii=False)
     messages.append(prompt_builders.keyvis_task_message(
@@ -7316,6 +7334,7 @@ async def _call_pipeline_llm(
             if provider_metadata.get("tps") is not None
             else (tokens / elapsed if elapsed > 0 else 0.0)
         )
+        illustration_flow.llm_metadata(tps=tps)
         ttft = float(
             provider_metadata.get("ttft")
             if provider_metadata.get("ttft") is not None
@@ -9931,7 +9950,11 @@ def build_raw_prompt(descriptor: dict, narrative: str, prompts: dict, toggles: d
         positive = positive.rstrip() + "\n" + variable(positive_note, "추가 긍정 프롬프트")
     negative = PromptText(negative_part.strip() if marker else "")
     if char_negative:
-        negative = prompt_join(", ", (x for x in (negative, variable(char_negative, "캐릭터별 부정 태그")) if x))
+        print(f"[ILLUST_CONTEXT] LLM negative ignored (disabled): "
+              f"slot={descriptor.get('slot')}, value={char_negative!r}")
+        # LLM-generated negatives disabled by user request. Presets and the
+        # direct negative_note below remain authoritative. Kept for reversal:
+        # negative = prompt_join(", ", (x for x in (negative, variable(char_negative, "캐릭터별 부정 태그")) if x))
     if str(toggles.get("negative_note") or "").strip():
         negative = prompt_join(", ", (x for x in (negative, variable(str(toggles["negative_note"]).strip(), "추가 부정 프롬프트")) if x))
     return positive.strip(), negative.strip()
