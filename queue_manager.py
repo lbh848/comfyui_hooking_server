@@ -366,6 +366,9 @@ class QueueManager:
 
     def __init__(self):
         self.items: list[QueueItem] = []
+        # 항목은 UI 표시 후 제거해도 배치 종료 집계는 유지한다.
+        # 실제 작업 종료 시에만 갱신하며 WS 수신 여부와 무관하다.
+        self._batch_results: dict[str, dict] = {}
         self.current_item: Optional[QueueItem] = None
         # current_external_item/_external_worker_task는 기존 상태 소비자와의 호환용이다.
         # 실제 챈섭 동시 실행 상태는 worker id별 dict에서 관리한다.
@@ -456,6 +459,24 @@ class QueueManager:
     def _settle_future(self, item: QueueItem) -> None:
         """아이템이 종료 상태(completed/failed/cancelled)에 도달했을 때
         completion_future를 해결한다. 이미 해결된 경우 무시."""
+        batch_id = item.batch_id or item.params.get("batch_id")
+        batch = self._batch_results.get(batch_id)
+        if (batch is not None and item.status in ("completed", "failed", "cancelled")
+                and item.id not in batch["item_ids"]):
+            batch["item_ids"].add(item.id)
+            count_key = {"completed": "success", "failed": "fail", "cancelled": "cancelled"}[item.status]
+            batch[count_key] += 1
+            if item.status == "failed":
+                img = item.params.get("image") or {}
+                batch["failures"].append({
+                    "character": img.get("character") or item.params.get("char_name", ""),
+                    "filename": img.get("filename") or item.params.get("filename", ""),
+                    "reason": item.error or "큐 처리 실패",
+                })
+            if len(batch["item_ids"]) == batch["total"]:
+                batch["completed_at"] = item.completed_at or time.time()
+                print(f"[QUEUE:BATCH] 종료: batch_id={batch_id}, total={batch['total']}, "
+                      f"success={batch['success']}, fail={batch['fail']}, cancelled={batch['cancelled']}")
         fut = getattr(item, "completion_future", None)
         if fut is None or fut.done():
             return
@@ -746,6 +767,10 @@ class QueueManager:
             return []
         batch_id = uuid.uuid4().hex[:12]
         batch_total = len(items_spec)
+        self._batch_results[batch_id] = {
+            "total": batch_total, "success": 0, "fail": 0, "cancelled": 0,
+            "failures": [], "item_ids": set(), "completed_at": None,
+        }
         created = []
         for idx, spec in enumerate(items_spec, start=1):
             params = dict(spec.get("params", {}))
@@ -1256,12 +1281,28 @@ class QueueManager:
         return data
 
     def get_status(self) -> dict:
+        # 종료된 배치는 원클릭 대기/재연결보다 긴 6시간 보관한다.
+        # 진행 중인 배치는 시간에 관계없이 보존한다.
+        cutoff = time.time() - 6 * 60 * 60
+        self._batch_results = {
+            batch_id: batch for batch_id, batch in self._batch_results.items()
+            if batch["completed_at"] is None or batch["completed_at"] >= cutoff
+        }
         current_externals = [
             self._item_status_dict(item)
             for _, item in sorted(self.current_external_items.items())
         ]
         return {
             "items": [self._item_status_dict(i) for i in self.items],
+            "batches": {
+                batch_id: {
+                    "total": batch["total"], "success": batch["success"],
+                    "fail": batch["fail"], "cancelled": batch["cancelled"],
+                    "remaining": batch["total"] - len(batch["item_ids"]),
+                    "failures": [dict(failure) for failure in batch["failures"]],
+                }
+                for batch_id, batch in self._batch_results.items()
+            },
             "current": self._item_status_dict(self.current_item) if self.current_item else None,
             "current_external": current_externals[0] if current_externals else None,
             "current_externals": current_externals,
@@ -1925,6 +1966,8 @@ class QueueManager:
                         f"[QUEUE] 런타임 작업 중단: id={item.id}, "
                         f"type={item.type}, reason={item.error}"
                     )
+                elif isinstance(result, dict) and result.get("success") is False:
+                    raise RuntimeError(result.get("error") or "작업이 실패 결과를 반환했습니다")
                 else:
                     item.status = "completed"
                     item.progress = 100.0

@@ -31889,10 +31889,10 @@
         function startQueuePoll() {
             if (_queuePollTimer) return;
             _queuePollTimer = setInterval(() => {
-                if (document.hidden) return;
+                if (document.hidden && !Object.keys(_tagBatches).length) return;
                 fetch('/api/queue/status').then(r => r.json()).then(data => {
                     handleQueueUpdated(data);
-                }).catch(() => {});
+                }).catch(error => console.warn('[QUEUE] 작업 상태 조회 실패:', error));
             }, 10000);
         }
         startQueuePoll();
@@ -44858,9 +44858,8 @@
         }
 
         // ─── 일괄 태깅/정제 배치 추적 (이미지별 분할 큐 + 장당 디바운스 화면 갱신) ───
-        // batch_id → { label, total, remaining, success, fail, failures, source, refreshFn, refreshTimer, processedIds:Set, finalizeFn }
-        // 1000장=1000항목이 동일 batch_id 공유. completed/failed 이벤트가 올 때마다 remaining-- 하고
-        // 디바운스(600ms)로 화면 갱신 1회 → 전체 reload 스래싱 방지. remaining 0에서 finalize(토스트 1회).
+        // 완료 수와 단계 전환은 서버 큐의 배치 집계로만 결정한다.
+        // 개별 이미지 이벤트는 디바운스 화면 갱신에만 사용한다.
         const _tagBatches = {};
 
         function _tagBatchStatusEl(source) {
@@ -44902,7 +44901,7 @@
                 label: label || '', total: total, remaining: total, success: 0, fail: 0, cancelled: 0,
                 failures: [],
                 source: source, refreshFn: opts.refreshFn || _tagBatchRefreshFn(source),
-                refreshTimer: null, processedIds: new Set(), finalizeFn: opts.finalizeFn || null,
+                refreshTimer: null, finalizeFn: opts.finalizeFn || null,
             };
         }
 
@@ -44935,45 +44934,32 @@
             if (!data || !data.batch_id) return;
             const b = _tagBatches[data.batch_id];
             if (!b) return;
-            const phase = data.phase;
-            if (phase !== 'completed' && phase !== 'failed') return;
-            const key = (data.filename || '') + '#' + (data.batch_index || '');
-            if (b.processedIds.has(key)) return; // 중복 이벤트 방지
-            b.processedIds.add(key);
-            b.remaining = Math.max(0, b.remaining - 1);
-            if (phase === 'completed') {
-                b.success++;
-            } else {
-                b.fail++;
-                b.failures.push({
-                    character: data.character || data.char_name || '',
-                    filename: data.filename || '',
-                    reason: data.error || '태그 분석 실패',
-                });
-            }
-            _botOneClickSyncTagBatchRecord(data.batch_id);
-            const statusEl = _tagBatchStatusEl(b.source);
-            if (statusEl) statusEl.textContent = `${b.label || '일괄 작업'}: 완료 ${b.success} / 실패 ${b.fail} (남은 ${b.remaining})`;
-            if (phase === 'completed') _scheduleTagBatchRefresh(data.batch_id);
-            if (b.remaining === 0) _finalizeTagBatch(data.batch_id);
+            if (data.phase === 'completed') _scheduleTagBatchRefresh(data.batch_id);
         }
 
-        // WS 누락 보정: /api/queue/status 폴백에서 남은(pending+processing) 개수로 remaining 보정.
-        // 백엔드는 완료 항목을 ~2초 후 큐에서 제거하므로, 완료 수 대신 '아직 끝나지 않은 수' 기준이 견고하다.
-        function _reconcileTagBatchesFromQueue(items) {
-            if (!items || !items.length) return;
+        // queue_updated와 /api/queue/status 모두 같은 서버 집계를 사용한다.
+        // items가 비어 있어도 보관된 배치 결과로 완료하고 다음 단계를 시작한다.
+        function _reconcileTagBatchesFromQueue(items, batches) {
+            if (!batches) return;
             for (const batchId of Object.keys(_tagBatches)) {
                 const b = _tagBatches[batchId];
-                const grp = items.filter(i => i.batch_id === batchId);
-                if (!grp.length) continue;
-                const pendingProc = grp.filter(i => i.status === 'pending' || i.status === 'processing').length;
-                if (pendingProc < b.remaining) {
-                    b.remaining = pendingProc;
-                    _botOneClickSyncTagBatchRecord(batchId);
-                    const statusEl = _tagBatchStatusEl(b.source);
-                    if (statusEl) statusEl.textContent = `${b.label || '일괄 작업'}: 완료 ${b.success} / 실패 ${b.fail} (남은 ${b.remaining})`;
-                    if (b.remaining === 0) _finalizeTagBatch(batchId);
-                }
+                const batch = batches[batchId];
+                if (!batch) continue;
+                const done = batch.success + batch.fail + batch.cancelled;
+                // HTTP 응답이 더 최신 WS 상태보다 늦게 도착해도 집계를 되돌리지 않는다.
+                if (done < b.success + b.fail + b.cancelled) continue;
+                const changed = done !== b.success + b.fail + b.cancelled;
+                b.total = batch.total;
+                b.success = batch.success;
+                b.fail = batch.fail;
+                b.cancelled = batch.cancelled;
+                b.remaining = batch.remaining;
+                b.failures = batch.failures || [];
+                _botOneClickSyncTagBatchRecord(batchId);
+                const statusEl = _tagBatchStatusEl(b.source);
+                if (statusEl) statusEl.textContent = `${b.label || '일괄 작업'}: 완료 ${b.success} / 실패 ${b.fail} / 취소 ${b.cancelled} (남은 ${b.remaining})`;
+                if (b.remaining === 0 && done === b.total) _finalizeTagBatch(batchId);
+                else if (changed) _scheduleTagBatchRefresh(batchId);
             }
         }
 
@@ -85342,17 +85328,7 @@
                         waiter.mark(record.name, false, item.error || '큐 처리 실패');
                     }
                 }
-                for (const record of run.tagBatches) {
-                    if (!record.cancelChecked) continue;
-                    const tracker = _tagBatches[record.batchId];
-                    if (!tracker) continue;
-                    const activeCount = items.filter(item =>
-                        item.batch_id === record.batchId && (item.status === 'pending' || item.status === 'waiting' || item.status === 'processing')
-                    ).length;
-                    tracker.cancelled = Math.max(Number(tracker.cancelled || 0), record.cancelledCount);
-                    if (activeCount < tracker.remaining) tracker.remaining = activeCount;
-                    if (tracker.remaining === 0) _finalizeTagBatch(record.batchId);
-                }
+                _reconcileTagBatchesFromQueue(items, status.batches);
             } catch (e) {
                 const message = `중단 후 큐 상태 확인 실패: ${e.message || e}`;
                 console.error('[BOT_ONE_CLICK] ' + message, e);
@@ -85594,24 +85570,7 @@
 
         function _botOneClickTrackTagBatch(batchId, label, total, source) {
             return new Promise(resolve => {
-                let settled = false;
-                const finish = result => {
-                    if (settled) return;
-                    settled = true;
-                    clearTimeout(timer);
-                    resolve(result);
-                };
-                const timer = setTimeout(() => {
-                    console.error('[BOT_ONE_CLICK] 태그 배치 대기 시간 초과:', batchId, label);
-                    delete _tagBatches[batchId];
-                    finish({
-                        success: 0,
-                        fail: total,
-                        timeout: true,
-                        failures: [_botOneClickIssue('', '태그 분석 완료 이벤트 대기 시간 초과')],
-                    });
-                }, 30 * 60 * 1000);
-                _startTagBatch(batchId, label, total, source, {finalizeFn: finish});
+                _startTagBatch(batchId, label, total, source, {finalizeFn: resolve});
             });
         }
 
@@ -98748,9 +98707,9 @@
                 loadBackups(true);
             }
 
-            // 일괄 태깅/정제 배치 — WS completed 누락 보정(폴백 폴링 포함).
+            // 큐가 계산한 실제 종료 수로 일괄 작업 완료 및 후속 단계 전환.
             if (typeof _reconcileTagBatchesFromQueue === 'function') {
-                _reconcileTagBatchesFromQueue(data.items);
+                _reconcileTagBatchesFromQueue(data.items, data.batches);
             }
         }
 
