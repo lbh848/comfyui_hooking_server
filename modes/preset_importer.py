@@ -1712,22 +1712,25 @@ def _backup_existing_files(paths: list[str]) -> dict[str, str | None]:
 def _persist_transaction(
     active_tags: dict,
     hidden_tags: dict,
-    manifest: dict,
+    manifest: dict | None = None,
 ) -> list[str]:
-    paths = [TAGS_FILE, HIDDEN_TAGS_FILE, MANIFEST_FILE]
+    paths = [TAGS_FILE, HIDDEN_TAGS_FILE]
+    if manifest is not None:
+        paths.append(MANIFEST_FILE)
     backups = _backup_existing_files(paths)
     temporary: dict[str, str] = {}
     replaced: list[str] = []
     try:
         temporary[TAGS_FILE] = _write_json_temp(TAGS_FILE, active_tags)
         temporary[HIDDEN_TAGS_FILE] = _write_json_temp(HIDDEN_TAGS_FILE, hidden_tags)
-        temporary[MANIFEST_FILE] = _write_json_temp(MANIFEST_FILE, manifest)
+        if manifest is not None:
+            temporary[MANIFEST_FILE] = _write_json_temp(MANIFEST_FILE, manifest)
         for path in paths:
             os.replace(temporary[path], path)
             replaced.append(path)
         print(
             "[PRESET_IMPORT] 원자적 커밋 완료: "
-            f"tags={TAGS_FILE}, hidden={HIDDEN_TAGS_FILE}, manifest={MANIFEST_FILE}"
+            f"files={paths}"
         )
         return [backup for backup in backups.values() if backup]
     except Exception as exc:
@@ -1765,6 +1768,116 @@ def _persist_transaction(
                     f"path={temp_path}, error={cleanup_exc}"
                 )
                 traceback.print_exc()
+
+
+def managed_values_equal(category: str, left: Any, right: Any) -> bool:
+    """관리 화면의 값 비교와 같은 규칙. 저장할 원본 값은 변환하지 않는다."""
+    if category == "natural_language_presets":
+        return isinstance(left, str) and isinstance(right, str) and left.strip() == right.strip()
+    left_tags = left if isinstance(left, list) else [left]
+    right_tags = right if isinstance(right, list) else [right]
+    return {str(tag).strip().lower() for tag in left_tags if str(tag).strip()} == {
+        str(tag).strip().lower() for tag in right_tags if str(tag).strip()
+    }
+
+
+def transfer_managed_presets(
+    presets: Any, active_tags: dict, hidden_tags: dict, *, commit: bool = False,
+) -> dict:
+    """네이티브 프리셋을 순서대로 검토하고, 선택한 항목만 기존 트랜잭션으로 저장한다."""
+    from .asset_mode import PRESET_MGMT_CATEGORIES
+
+    if not isinstance(presets, list) or not presets:
+        print(f"[PRESET_TRANSFER] 프리셋 목록 누락: presets={presets!r}, commit={commit}")
+        raise PresetImportError("가져올 프리셋 목록이 비어 있거나 배열이 아닙니다.")
+    stores = {"active": copy.deepcopy(active_tags), "hidden": copy.deepcopy(hidden_tags)}
+    rows = []
+    changed = 0
+    for index, item in enumerate(presets):
+        row = {"index": index, "status": "invalid", "action": "skip", "outcome": "skipped"}
+        try:
+            if not isinstance(item, dict):
+                raise PresetImportError("프리셋 항목이 객체가 아닙니다.")
+            category, name, value = item.get("category"), item.get("name"), item.get("value")
+            state = item.get("state", "active")
+            if category not in PRESET_MGMT_CATEGORIES:
+                raise PresetImportError(f"이 편집기에서 저장할 수 없는 카테고리: {category}")
+            if not isinstance(name, str) or not name.strip():
+                raise PresetImportError("프리셋 이름이 비어 있습니다.")
+            if state not in stores:
+                raise PresetImportError(f"저장 위치를 알 수 없습니다: {state}")
+            if category == "natural_language_presets":
+                valid_value = isinstance(value, str)
+            else:
+                valid_value = isinstance(value, list) and all(isinstance(tag, str) for tag in value)
+            if not valid_value:
+                raise PresetImportError("내용은 태그 문자열 배열 또는 자연어 문자열이어야 합니다.")
+            existing = []
+            for existing_state, store in stores.items():
+                values = store.get(category, {})
+                if not isinstance(values, dict):
+                    raise PresetImportError(f"기존 {existing_state}/{category} 데이터 구조 오류")
+                existing.extend({"name": key, "value": val, "state": existing_state} for key, val in values.items())
+            same_name = [entry for entry in existing if entry["name"] == name]
+            same_content = [entry for entry in existing if managed_values_equal(category, entry["value"], value)]
+            identical = any(entry in same_content for entry in same_name)
+            status = "identical" if identical else "name_conflict" if same_name else "same_content" if same_content else "new"
+            used_names = {entry["name"] for entry in existing}
+            used_names.update(other.get("name") for other in presets if isinstance(other, dict)
+                              and other.get("category") == category and isinstance(other.get("name"), str))
+            suffix = 2
+            suggested_name = f"{name} ({suffix})"
+            while suggested_name in used_names:
+                suffix += 1
+                suggested_name = f"{name} ({suffix})"
+            action = item.get("action", "add" if status == "new" else "skip")
+            row.update(category=category, name=name, value=copy.deepcopy(value), state=state,
+                       status=status, same_name=copy.deepcopy(same_name), same_content=copy.deepcopy(same_content),
+                       suggested_name=suggested_name, action=action, new_name=item.get("new_name", suggested_name))
+            if identical or action == "skip":
+                row["action"] = "skip"
+                print(f"[PRESET_TRANSFER] 건너뜀: index={index}, category={category}, name={name!r}, reason={status if identical else '선택 제외'}, commit={commit}")
+                rows.append(row)
+                continue
+            target_name, target_state = name, state
+            if action == "rename":
+                target_name = row["new_name"]
+                if not isinstance(target_name, str) or not target_name.strip():
+                    raise PresetImportError("다른 이름으로 추가할 이름을 입력해주세요.")
+                target_name = target_name.strip()
+                if any(entry["name"] == target_name for entry in existing):
+                    raise PresetImportError(f"새 이름이 이미 사용 중입니다: {target_name}")
+            elif action == "replace":
+                target_state = item.get("target_state", same_name[0]["state"] if len(same_name) == 1 else "")
+                target = next((entry for entry in same_name if entry["state"] == target_state), None)
+                if target is None:
+                    raise PresetImportError("교체할 기존 프리셋의 활성·숨김 위치를 선택해주세요.")
+                if commit and ("expected_value" not in item or item["expected_value"] != target["value"]):
+                    raise PresetImportError("검토 이후 기존 내용이 변경되었습니다. 다시 비교한 뒤 교체해주세요.")
+                row.update(target_state=target_state, expected_value=copy.deepcopy(target["value"]))
+            elif action == "add":
+                if same_name:
+                    raise PresetImportError("같은 이름이 있습니다. 다른 이름으로 추가하거나 기존 내용 교체를 선택해주세요.")
+            else:
+                raise PresetImportError(f"처리 방법을 알 수 없습니다: {action}")
+            stores[target_state].setdefault(category, {})[target_name] = copy.deepcopy(value)
+            row.update(outcome="saved" if commit else "ready", target_name=target_name, target_state=target_state)
+            changed += 1
+        except (PresetImportError, TypeError) as exc:
+            print(f"[PRESET_TRANSFER] 항목 처리 실패: index={index}, input={item!r}, commit={commit}, error={exc}")
+            traceback.print_exc()
+            row.update(error=str(exc), outcome="error")
+        rows.append(row)
+    backups = []
+    if commit and changed:
+        backups = _persist_transaction(stores["active"], stores["hidden"])
+    result = {"success": True, "items": rows, "saved_count": changed if commit else 0,
+              "ready_count": changed, "error_count": sum(row["outcome"] == "error" for row in rows),
+              "skipped_count": sum(row["outcome"] == "skipped" for row in rows), "backups": backups}
+    if commit and changed:
+        result["active_tags"] = stores["active"]
+    print(f"[PRESET_TRANSFER] 처리 완료: commit={commit}, selected={changed}, errors={result['error_count']}, skipped={result['skipped_count']}")
+    return result
 
 
 def commit_draft(

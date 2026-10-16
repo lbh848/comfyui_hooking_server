@@ -600,6 +600,22 @@
       "relative_path": "models/loras/flat0521_anima_lora_comfy.safetensors",
       "size": 33237056,
       "sha256": "601b82181af58b98b49ee6b6eeb3b1c2417dc464aeb818a2c41d2685e0ed0727"
+    },
+    {
+      "id": "nova-anime-am-v4.0",
+      "url": "https://civitai.com/api/download/models/3201770?fileId=3083049",
+      "auth": "civitai",
+      "relative_path": "models/diffusion_models/novaAnimeAM_v40.safetensors",
+      "size": 4182350184,
+      "sha256": "6235640723b9d126fa8f4317ee5405105815e9df30cd12ec7c4c2de331c476ad"
+    },
+    {
+      "id": "anima-matsuda-hikari-v1.0",
+      "url": "https://civitai.com/api/download/models/3307880?fileId=3193024",
+      "auth": "civitai",
+      "relative_path": "models/loras/matsuda_hikari.safetensors",
+      "size": 138663783,
+      "sha256": "8c4d55121f5bddc3ce87ddc5f20d75b0168639dd929a3234fcf9a558d66f2bb6"
     }
   ],
   "workflows": {

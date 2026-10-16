@@ -25440,6 +25440,14 @@ async def handle_api_asset_mode_tags_post(request: web.Request) -> web.Response:
                 original_name=body.get("original_name", ""),
                 target_state=body.get("target_state", "active"),
             )
+        elif action in {"preview_managed_presets", "import_managed_presets"}:
+            async with _PRESET_IMPORT_COMMIT_LOCK:
+                result = preset_importer.transfer_managed_presets(
+                    body.get("presets"), asset_mode.get_tags(), asset_mode.load_hidden_tags(),
+                    commit=action == "import_managed_presets",
+                )
+                if "active_tags" in result:
+                    asset_mode._tags = result.pop("active_tags")
         elif action == "rename_preset":
             result = asset_mode.rename_preset(
                 body.get("category", ""), body.get("old_name", ""), body.get("new_name", ""))

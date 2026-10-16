@@ -15321,6 +15321,16 @@
         .pm-tag-highlight { padding: 0 2px; border-radius: 3px; background: color-mix(in srgb, #ffd54f 30%, transparent); color: var(--text); }
         .pm-trace-empty { padding: 30px 20px; border: 1px dashed var(--border); border-radius: 10px; color: var(--text2); text-align: center; font-size: 0.76rem; }
         .pm-hide-view { padding: 17px; }
+        .pmt-shell { padding: 17px; display: grid; gap: 16px; overflow: auto; }
+        .pmt-controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 12px 0; }
+        .pmt-controls .pm-input { width: auto; min-width: 150px; flex: 1; }
+        .pmt-list { display: grid; gap: 8px; max-height: 440px; overflow: auto; }
+        .pmt-row { padding: 12px; border: 1px solid var(--border); border-radius: 9px; display: grid; gap: 8px; min-width: 0; }
+        .pmt-row label { display: flex; gap: 8px; align-items: center; overflow-wrap: anywhere; }
+        .pmt-value { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 160px; overflow: auto; font-size: .75rem; margin: 6px 0; }
+        .pmt-error { color: var(--error); font-size: .78rem; }
+        .pmt-summary { font-size: .8rem; white-space: pre-wrap; }
+        .pmt-shell fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
         .pm-category-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 13px; }
         .pm-category-tab { padding: 6px 10px; border-radius: 7px; border: 1px solid var(--border); background: color-mix(in srgb, var(--surface) 84%, transparent); color: var(--text2); font-size: 0.72rem; cursor: pointer; }
         .pm-category-tab:hover { color: var(--text); }
@@ -20861,6 +20871,10 @@
                             <span class="pm-sidebar-icon">⇲</span>
                             <span class="pm-sidebar-label">SD studio<br>프리셋 임포트</span>
                         </button>
+                        <button class="pm-sidebar-btn" id="pm-sidebar-transfer" onclick="pmSwitchView('transfer')">
+                            <span class="pm-sidebar-icon">⇄</span>
+                            <span class="pm-sidebar-label">프리셋<br>내보내기·가져오기</span>
+                        </button>
                     </div>
                     <div class="pm-main">
                         <!-- 통합 추가 / 조회 / 수정 / 추적 -->
@@ -21042,6 +21056,40 @@
                                     <div class="pm-hide-list" id="pm-hide-hidden-grid"></div>
                                 </section>
                             </div>
+                        </div>
+
+                        <div id="pm-view-transfer" class="pm-view pmt-shell" style="display:none;">
+                            <section class="pm-section">
+                                <div class="pm-section-title">선택한 프리셋 내보내기</div>
+                                <div class="pm-section-note">프리셋 편집의 9개 카테고리에서 필요한 항목만 JSON으로 다운로드합니다. 이름·내용·활성/숨김 상태를 보존합니다.</div>
+                                <div class="pmt-controls">
+                                    <select id="pmt-export-category" class="pm-input" aria-label="내보낼 카테고리" onchange="pmtRenderTransfer()"><option value="">전체 카테고리</option></select>
+                                    <select id="pmt-export-state" class="pm-input" aria-label="내보낼 상태" onchange="pmtRenderTransfer()"><option value="">활성·숨김 모두</option><option value="active">활성</option><option value="hidden">숨김</option></select>
+                                    <input id="pmt-export-search" class="pm-input" type="search" placeholder="이름이나 내용 검색" aria-label="내보낼 프리셋 검색" oninput="pmtRenderTransfer()">
+                                </div>
+                                <div class="pmt-controls">
+                                    <button class="pm-btn" onclick="pmtSelectExport(-1, true)">검색 결과 전체 선택</button>
+                                    <button class="pm-btn pm-btn-quiet" onclick="pmtSelectExport(-1, false)">검색 결과 선택 해제</button>
+                                    <button class="pm-btn pm-btn-quiet" onclick="pmTransferSelection.clear(); pmtRenderTransfer()">모든 선택 해제</button>
+                                    <button id="pmt-export-button" class="pm-btn pm-btn-primary" onclick="pmtDownload()" disabled>선택 다운로드 (0)</button>
+                                </div>
+                                <div id="pmt-export-list" class="pmt-list"></div>
+                            </section>
+                            <section class="pm-section">
+                                <div class="pm-section-title">프리셋 가져오기</div>
+                                <div class="pm-section-note">위에서 내보낸 JSON을 선택한 뒤 필요한 항목과 처리 방법을 고르세요. 같은 카테고리의 활성·숨김 항목 및 파일 안의 항목을 순서대로 비교합니다. 태그는 순서·대소문자·앞뒤 공백을 제외해 비교하며 원본 내용은 그대로 저장합니다.</div>
+                                <fieldset id="pmt-import-controls">
+                                    <div class="pmt-controls">
+                                        <input id="pmt-file" type="file" accept=".json,application/json" aria-label="가져올 프리셋 JSON" onchange="pmtReadFile()">
+                                        <button class="pm-btn" onclick="pmtSelectImport(true)">가져올 수 있는 항목 선택</button>
+                                        <button class="pm-btn pm-btn-quiet" onclick="pmtSelectImport(false)">전체 제외</button>
+                                        <button class="pm-btn" onclick="pmtPreview()">다시 비교</button>
+                                        <button id="pmt-import-button" class="pm-btn pm-btn-primary" onclick="pmtCommit()" disabled>선택 가져오기 (0)</button>
+                                    </div>
+                                    <div id="pmt-import-list" class="pmt-list"><div class="pm-empty">가져올 파일을 선택해주세요.</div></div>
+                                </fieldset>
+                                <div id="pmt-result" class="pmt-summary" role="status" aria-live="polite"></div>
+                            </section>
                         </div>
 
                         <!-- SDStudio 하이브리드 가져오기 -->
@@ -104662,6 +104710,11 @@
         let pmImportCreateChain = true;
         let pmImportChainName = '';
         let pmImportCreatedChainName = '';
+        let pmTransferSelection = new Set();
+        let pmTransferExportEntries = [];
+        let pmTransferItems = [];
+        let pmTransferReview = [];
+        let pmTransferBusy = false;
 
         const PM_CATEGORIES = {
             appearances: '외모',
@@ -104881,6 +104934,7 @@
                 pmRenderLibrary();
                 pmRenderHideView();
                 pmRenderEditorState();
+                if (pmCurrentView === 'transfer') pmtRenderTransfer();
             } catch (error) {
                 console.error('[PM] 데이터 로드 실패:', error);
                 showToast('프리셋 데이터 로드 실패', 'error');
@@ -104916,14 +104970,16 @@
         }
 
         function pmSwitchView(view) {
-            pmCurrentView = ['manage', 'hide', 'import'].includes(view) ? view : 'manage';
+            pmCurrentView = ['manage', 'hide', 'import', 'transfer'].includes(view) ? view : 'manage';
             document.querySelectorAll('.pm-sidebar-btn').forEach(button => button.classList.remove('active'));
             document.getElementById(`pm-sidebar-${pmCurrentView}`).classList.add('active');
             document.getElementById('pm-view-manage').style.display = pmCurrentView === 'manage' ? '' : 'none';
             document.getElementById('pm-view-hide').style.display = pmCurrentView === 'hide' ? '' : 'none';
             document.getElementById('pm-view-import').style.display = pmCurrentView === 'import' ? '' : 'none';
+            document.getElementById('pm-view-transfer').style.display = pmCurrentView === 'transfer' ? '' : 'none';
             if (pmCurrentView === 'hide') pmRenderHideView();
             else if (pmCurrentView === 'import') pmiRenderCurrentStep();
+            else if (pmCurrentView === 'transfer') pmtRenderTransfer();
             else pmRenderLibrary();
         }
 
@@ -105704,6 +105760,196 @@
         }
 
         // ─── SDStudio 하이브리드 프리셋 가져오기 ───────────
+        // ─── 네이티브 프리셋 내보내기 / 가져오기 ────────────
+        function pmtRenderTransfer() {
+            const categorySelect = document.getElementById('pmt-export-category');
+            if (categorySelect.options.length === 1) {
+                for (const [category, label] of Object.entries(PM_CATEGORIES)) {
+                    categorySelect.add(new Option(label, category));
+                }
+            }
+            const category = categorySelect.value;
+            const state = document.getElementById('pmt-export-state').value;
+            const query = document.getElementById('pmt-export-search').value.trim().toLocaleLowerCase();
+            const all = Object.keys(PM_CATEGORIES).flatMap(key => pmGetEntries(key));
+            const keys = new Set(all.map(entry => JSON.stringify([entry.category, entry.state, entry.name])));
+            pmTransferSelection = new Set([...pmTransferSelection].filter(key => keys.has(key)));
+            pmTransferExportEntries = all.filter(entry => (!category || entry.category === category)
+                && (!state || entry.state === state)
+                && (!query || `${entry.name} ${pmValueToText(entry.value, entry.category)}`.toLocaleLowerCase().includes(query)));
+            document.getElementById('pmt-export-list').innerHTML = pmTransferExportEntries.map((entry, index) => {
+                const selected = pmTransferSelection.has(JSON.stringify([entry.category, entry.state, entry.name]));
+                return `<label class="pm-card${selected ? ' selected' : ''}">
+                    <input type="checkbox" ${selected ? 'checked' : ''} onchange="pmtSelectExport(${index}, this.checked)">
+                    <span style="min-width:0;"><span class="pm-card-name">${pmEscapeHtml(entry.name)}</span>
+                    <span class="pm-card-count" style="display:block;">${PM_CATEGORIES[entry.category]} · ${entry.state === 'hidden' ? '숨김' : '활성'} · ${pmValueCountLabel(entry.value, entry.category)}</span>
+                    <span class="pmt-value" style="display:block;">${pmEscapeHtml(pmValueToText(entry.value, entry.category).slice(0, 180))}</span></span></label>`;
+            }).join('') || '<div class="pm-empty">조건에 맞는 프리셋이 없습니다.</div>';
+            const exportButton = document.getElementById('pmt-export-button');
+            exportButton.disabled = !pmTransferSelection.size;
+            exportButton.textContent = `선택 다운로드 (${pmTransferSelection.size})`;
+
+            const labels = { new: '신규', identical: '이름·내용 동일 — 건너뛰기', same_content: '다른 이름·같은 내용', name_conflict: '같은 이름·다른 내용', invalid: '읽을 수 없는 항목' };
+            document.getElementById('pmt-import-controls').disabled = pmTransferBusy;
+            document.getElementById('pmt-import-list').innerHTML = pmTransferReview.map((row, index) => {
+                const item = pmTransferItems[index];
+                const disabled = row.status === 'identical' || row.status === 'invalid';
+                const selected = !disabled && item.action !== 'skip';
+                const action = item?.action === 'replace' ? `replace:${item.target_state}` : item?.action;
+                const options = [['skip', '건너뛰기']];
+                if (!row.same_name?.length) options.push(['add', row.status === 'same_content' ? '같은 내용도 이 이름으로 추가' : '신규 추가']);
+                options.push(['rename', '다른 이름으로 추가']);
+                for (const match of row.same_name || []) options.push([`replace:${match.state}`, `기존 ${match.state === 'hidden' ? '숨김' : '활성'} 내용 교체`]);
+                const comparisons = (row.same_name || []).map(match => `<div class="pm-section-note">기존 ${match.state === 'hidden' ? '숨김' : '활성'} · ${pmEscapeHtml(match.name)}</div><pre class="pmt-value">${pmEscapeHtml(pmValueToText(match.value, row.category))}</pre>`).join('');
+                const sameContent = (row.same_content || []).map(match => `${match.name} (${match.state === 'hidden' ? '숨김' : '활성'})`).join(', ');
+                return `<div class="pmt-row">
+                    <label><input type="checkbox" ${selected ? 'checked' : ''} ${disabled ? 'disabled' : ''} onchange="pmtChangeImport(${index}, 'selected', this.checked)"><strong>${pmEscapeHtml(row.name || `항목 ${index + 1}`)}</strong></label>
+                    <div class="pm-section-note">${pmEscapeHtml(PM_CATEGORIES[row.category] || '')} · ${row.state === 'hidden' ? '숨김' : '활성'} · ${labels[row.status]}</div>
+                    ${sameContent ? `<div class="pm-section-note">동일 내용: ${pmEscapeHtml(sameContent)}</div>` : ''}
+                    <details><summary>가져올 내용${comparisons ? '과 기존 내용 비교' : ''}</summary><pre class="pmt-value">${pmEscapeHtml(pmValueToText(row.value, row.category))}</pre>${comparisons}</details>
+                    ${disabled ? '' : `<div class="pmt-controls"><select class="pm-input" aria-label="${pmEscapeHtml(row.name).replace(/"/g, '&quot;')} 처리 방법" onchange="pmtChangeImport(${index}, 'action', this.value)">${options.map(([value, label]) => `<option value="${value}" ${value === action ? 'selected' : ''}>${label}</option>`).join('')}</select>
+                    ${item.action === 'rename' ? `<input class="pm-input" aria-label="추가할 새 이름" value="${pmEscapeHtml(item.new_name).replace(/"/g, '&quot;')}" onchange="pmtChangeImport(${index}, 'new_name', this.value)">` : ''}</div>`}
+                    ${row.error ? `<div class="pmt-error">${pmEscapeHtml(row.error)}</div>` : ''}</div>`;
+            }).join('') || '<div class="pm-empty">가져올 파일을 선택해주세요.</div>';
+            const count = pmTransferReview.filter(row => row.outcome === 'ready').length;
+            const importButton = document.getElementById('pmt-import-button');
+            importButton.textContent = `선택 가져오기 (${count})`;
+            importButton.disabled = pmTransferBusy || !count;
+        }
+
+        function pmtSelectExport(index, checked) {
+            const entries = index < 0 ? pmTransferExportEntries : [pmTransferExportEntries[index]];
+            for (const entry of entries) {
+                const key = JSON.stringify([entry.category, entry.state, entry.name]);
+                if (checked) pmTransferSelection.add(key);
+                else pmTransferSelection.delete(key);
+            }
+            pmtRenderTransfer();
+        }
+
+        function pmtDownload() {
+            const presets = Object.keys(PM_CATEGORIES).flatMap(category => pmGetEntries(category))
+                .filter(entry => pmTransferSelection.has(JSON.stringify([entry.category, entry.state, entry.name])));
+            if (!presets.length) {
+                console.warn('[PRESET_TRANSFER] 다운로드 제외: 선택한 프리셋 없음');
+                showToast('내보낼 프리셋을 선택해주세요.', 'error');
+                return;
+            }
+            const blob = new Blob([JSON.stringify({ format: 'asset-illustration-presets', version: 1, presets }, null, 2) + '\n'], { type: 'application/json;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `illustration-presets-${new Date().toISOString().slice(0, 10)}.json`;
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+            showToast(`${presets.length}개 프리셋 다운로드`, 'success');
+        }
+
+        async function pmtReadFile() {
+            const file = document.getElementById('pmt-file').files[0];
+            if (!file || pmTransferBusy) return;
+            pmTransferItems = [];
+            pmTransferReview = [];
+            pmTransferBusy = true;
+            pmtRenderTransfer();
+            try {
+                const documentValue = JSON.parse((await file.text()).replace(/^\uFEFF/, ''));
+                if (!Array.isArray(documentValue?.presets) || !documentValue.presets.length) throw new Error('프리셋 목록이 없습니다. 이 화면에서 내보낸 JSON 파일을 선택해주세요.');
+                // 파일은 데이터만 공급한다. 파일에 포함된 처리 방법이나 교체 지시는 사용하지 않는다.
+                pmTransferItems = documentValue.presets.map(item => item && typeof item === 'object'
+                    ? { category: item.category, name: item.name, value: item.value, state: item.state ?? 'active' } : item);
+                document.getElementById('pmt-result').textContent = `${file.name} · ${pmTransferItems.length}개 항목`;
+            } catch (error) {
+                console.error('[PRESET_TRANSFER] 파일 읽기 실패:', { file: file.name, error });
+                document.getElementById('pmt-result').textContent = `파일 읽기 실패: ${error.message}`;
+            } finally {
+                pmTransferBusy = false;
+            }
+            if (pmTransferItems.length) await pmtPreview();
+            else pmtRenderTransfer();
+        }
+
+        async function pmtPreview(notice = '') {
+            if (pmTransferBusy || !pmTransferItems.length) return;
+            pmTransferBusy = true;
+            pmtRenderTransfer();
+            try {
+                const data = await pmiRequest('/api/asset_mode/tags', { action: 'preview_managed_presets', presets: pmTransferItems });
+                if (!data.success) throw new Error(data.error || '비교 실패');
+                pmTransferReview = data.items;
+                pmTransferItems = data.items.map(row => row.status === 'invalid' ? pmTransferItems[row.index] : {
+                    category: row.category, name: row.name, value: row.value, state: row.state,
+                    action: row.action, new_name: row.new_name, target_state: row.target_state, expected_value: row.expected_value,
+                });
+                document.getElementById('pmt-result').textContent = `${notice}${notice ? '\n' : ''}가져오기 예정 ${data.ready_count}개 · 제외 ${data.skipped_count}개 · 확인 필요 ${data.error_count}개`;
+            } catch (error) {
+                console.error('[PRESET_TRANSFER] 비교 실패:', error);
+                pmTransferReview = [];
+                document.getElementById('pmt-result').textContent = `${notice}${notice ? '\n' : ''}비교 실패: ${error.message}`;
+            } finally {
+                pmTransferBusy = false;
+                pmtRenderTransfer();
+            }
+        }
+
+        async function pmtChangeImport(index, field, value) {
+            if (pmTransferBusy) return;
+            const item = pmTransferItems[index], row = pmTransferReview[index];
+            if (field === 'selected') item.action = value ? (row.same_name.length ? 'rename' : 'add') : 'skip';
+            else if (field === 'new_name') item.new_name = value;
+            else if (value.startsWith('replace:')) {
+                item.action = 'replace';
+                item.target_state = value.split(':')[1];
+                item.expected_value = row.same_name.find(entry => entry.state === item.target_state).value;
+            } else item.action = value;
+            await pmtPreview();
+        }
+
+        async function pmtSelectImport(selected) {
+            if (pmTransferBusy) return;
+            pmTransferReview.forEach((row, index) => {
+                if (row.status === 'invalid' || row.status === 'identical') return;
+                pmTransferItems[index].action = selected ? (row.same_name.length ? 'rename' : 'add') : 'skip';
+            });
+            await pmtPreview();
+        }
+
+        async function pmtCommit() {
+            if (pmTransferBusy || !pmTransferReview.some(row => row.outcome === 'ready')) return;
+            const replacements = pmTransferReview.filter(row => row.outcome === 'ready' && row.action === 'replace').length;
+            if (replacements && !confirm(`기존 프리셋 ${replacements}개의 내용을 교체할까요?\n현재 활성·숨김 상태는 유지되며, 저장 전에 기존 파일을 백업합니다.`)) return;
+            pmTransferBusy = true;
+            pmtRenderTransfer();
+            let notice = '';
+            try {
+                const data = await pmiRequest('/api/asset_mode/tags', { action: 'import_managed_presets', presets: pmTransferItems });
+                if (!data.success) throw new Error(data.error || '가져오기 실패');
+                notice = `저장 ${data.saved_count}개 · 건너뜀 ${data.skipped_count}개 · 미해결 ${data.error_count}개${data.backups.length ? ' · 기존 파일 백업 완료' : ''}`;
+                const saved = new Set(data.items.filter(row => row.outcome === 'saved').map(row => row.index));
+                pmTransferItems = pmTransferItems.filter((_, index) => !saved.has(index));
+                pmTransferReview = [];
+                if (data.saved_count) {
+                    await pmLoadData();
+                    await pmRefreshAssetConsumers();
+                }
+                showToast(notice, data.error_count ? 'error' : 'success');
+            } catch (error) {
+                console.error('[PRESET_TRANSFER] 가져오기 실패:', error);
+                notice = `가져오기 실패: ${error.message}`;
+            } finally {
+                pmTransferBusy = false;
+                document.getElementById('pmt-result').textContent = notice;
+                pmtRenderTransfer();
+            }
+            // 실패 항목도 최신 값으로 다시 비교하되, 교체는 사용자가 다시 선택하게 한다.
+            if (pmTransferItems.length) {
+                pmTransferItems.forEach(item => { if (item?.action === 'replace') item.action = 'skip'; });
+                await pmtPreview(notice);
+            }
+        }
+
         function pmiClone(value) {
             if (typeof structuredClone === 'function') return structuredClone(value);
             return JSON.parse(JSON.stringify(value));
