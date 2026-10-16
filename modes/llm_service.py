@@ -700,8 +700,11 @@ def _gemini_base64_protocol(service: str) -> str:
             "Extract the PDF's embedded native text exactly, decode that complete text as one UTF-8 Base64 block,",
             "Read the PDF's pictured text in page order, ignore visual line wrapping, decode the complete text as one UTF-8 Base64 block,",
         )
-    if (_stream_metadata_ctx.get() or {}).get("task_key") == "illustration_call3":
-        # Keep input decoding rules, replacing the response encoding rules.
+    if (_stream_metadata_ctx.get() or {}).get("task_key") in (
+        "illustration_call3", "llm_test", "llm_thinking_check",
+    ):
+        # Free-form diagnostics and dialogue keep their requested output format.
+        # Input PDF/Base64 transport still follows the active slot settings.
         response_rule = f"{4 if use_pdf else 3}. Compose the requested response."
         return protocol.partition(response_rule)[0] + (
             "Return the requested response directly in its original format and target language. "
@@ -3197,7 +3200,9 @@ async def _dispatch(messages: list, service: str, model: str) -> str:
     """현재 LLM 슬롯의 실제 API 동시 요청 상한을 적용해 호출한다."""
     use_base64 = _gemini_base64_enabled(service)
     response_base64 = use_base64 and (
-        (_stream_metadata_ctx.get() or {}).get("task_key") != "illustration_call3"
+        (_stream_metadata_ctx.get() or {}).get("task_key") not in (
+            "illustration_call3", "llm_test", "llm_thinking_check",
+        )
     )
     try:
         pdf_messages, pdf_metadata = _prepare_gemini_pdf_messages(messages, service)
@@ -6447,7 +6452,9 @@ async def _dispatch_stream(messages: list, service: str, model: str):
         else pdf_messages
     )
     decoder = _GeminiBase64StreamDecoder() if use_base64 and (
-        (_stream_metadata_ctx.get() or {}).get("task_key") != "illustration_call3"
+        (_stream_metadata_ctx.get() or {}).get("task_key") not in (
+            "illustration_call3", "llm_test", "llm_thinking_check",
+        )
     ) else None
 
     async def _iter_events():

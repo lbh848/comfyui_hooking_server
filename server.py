@@ -10990,6 +10990,16 @@ async def handle_api_llm_test_stream(request: web.Request) -> web.StreamResponse
     async def run_queued_test(_queue_item) -> dict:
         nonlocal response_finished, history_logged, terminal_error
         started = time.time()
+        # Single-shot and tracked streams share the same diagnostic contract.
+        test_metadata_token = llm_service._stream_metadata_ctx.set({
+            **dict(llm_service._stream_metadata_ctx.get() or {}),
+            **dict(execution_context.metadata),
+            "task_key": task_key,
+            "call_name": call_name,
+            "execution_id": execution_id,
+            "parent_execution_id": execution_context.parent_execution_id,
+            "llm_slot": target,
+        })
         try:
             if use_stream:
                 tracked_sse_stream_id = ""
@@ -11211,6 +11221,7 @@ async def handle_api_llm_test_stream(request: web.Request) -> web.StreamResponse
                     )
                     traceback.print_exc()
         finally:
+            llm_service._stream_metadata_ctx.reset(test_metadata_token)
             elapsed = time.time() - started
             if not history_record.get("elapsed"):
                 history_record["elapsed"] = round(elapsed, 3)
