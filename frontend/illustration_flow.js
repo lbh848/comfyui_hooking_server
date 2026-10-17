@@ -510,6 +510,7 @@
         // Names also classify reserved LLM nodes before routing metadata arrives.
         const stageRules = [
             ['SLOT-SELECTER', 'call2_select', 2, 3],
+            ['PLAN', 'call2_plan', 3, 0],
             ['DETAIL', 'call2_detail', 4, 0],
             ['KEYVIS', 'call2_keyvis', 4, 1],
             ['POST PROCESS', 'call3', 4, 3],
@@ -1072,7 +1073,7 @@
         const isNew = current?.id !== next.id;
         for (const node of next.nodes || []) {
             for (const field of ['label', 'source_call_name']) {
-                if (typeof node[field] === 'string') node[field] = node[field].replaceAll('CALL2-SELECT', 'SLOT-SELECTER').replaceAll('CALL2-DETAIL', 'DETAIL').replaceAll('CALL2-KEYVIS', 'KEYVIS').replaceAll('CALL3', 'POST PROCESS');
+                if (typeof node[field] === 'string') node[field] = node[field].replaceAll('CALL2-SELECT', 'SLOT-SELECTER').replaceAll('CALL2-PLAN', 'PLAN').replaceAll('CALL2-DETAIL', 'DETAIL').replaceAll('CALL2-KEYVIS', 'KEYVIS').replaceAll('CALL3', 'POST PROCESS');
             }
         }
         flows[kind] = next;
@@ -1306,7 +1307,7 @@
             if (!response.ok) throw Error(response.status === 404 ? '새 요청이 접수되어 이전 상세 정보가 종료되었습니다.' : `상세 조회 실패 (${response.status})`);
             const {node: n} = await response.json();
             for (const field of ['label', 'source_call_name']) {
-                if (typeof n[field] === 'string') n[field] = n[field].replaceAll('CALL2-SELECT', 'SLOT-SELECTER').replaceAll('CALL2-DETAIL', 'DETAIL').replaceAll('CALL2-KEYVIS', 'KEYVIS').replaceAll('CALL3', 'POST PROCESS');
+                if (typeof n[field] === 'string') n[field] = n[field].replaceAll('CALL2-SELECT', 'SLOT-SELECTER').replaceAll('CALL2-PLAN', 'PLAN').replaceAll('CALL2-DETAIL', 'DETAIL').replaceAll('CALL2-KEYVIS', 'KEYVIS').replaceAll('CALL3', 'POST PROCESS');
             }
             if (request !== detailRequest || runId !== flow?.id || !detailModal.open) return;
             const imageUrl = nodeImageUrl(n, flow.status);

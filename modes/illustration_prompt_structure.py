@@ -84,8 +84,8 @@ def build_prompt_structure(prompts=None):
               ["선택된 원문 앵커·등장인물"], shared_parts + [prompt_part("call2_select", "SLOT-SELECTER 전용 프롬프트", "SLOT-SELECTER > 장면 선택 지침")],
               builders.selection_messages(prompts, role_context, names, names, "_input_", toggles, {}, [], "_input_", "_input_"),
               notes="OUTFIT·TIME & PLACE와 병렬입니다. 싱글 프리셋 인물 후보는 CHARACTER·PROFILE 이후 서버가 만듭니다. LoRA 등록 인물이 없으면 사용자 페르소나를 제외한 등록 인물, 그것도 없으면 현재 등장인물을 사용합니다. 집중 대상·연출 지시는 입력됐을 때 포함합니다.")
-        stage("plan", "CALL2-PLAN · 선택 장면 구체화", "선택된 앵커에서 그릴 순간을 판단하고, 프로필과 상태를 반영해 장면을 묘사합니다.",
-              ["구체화된 장면 계획"], shared_parts + [prompt_part("call2_plan", "PLAN 전용 프롬프트", "CALL2-PLAN > 장면 구체화 지침")],
+        stage("plan", "PLAN · 선택 장면 구체화", "선택된 앵커에서 그릴 순간을 판단하고, 프로필과 상태를 반영해 장면을 묘사합니다.",
+              ["구체화된 장면 계획"], shared_parts + [prompt_part("call2_plan", "PLAN 전용 프롬프트", "PLAN > 장면 구체화 지침")],
               builders.plan_messages(prompts, role_context, batch, set(names), names, tracking, [], "_input_", "_input_", toggles, time_place=time_place,
                                      prior_status=prior_status, prior_time_place=prior_time_place),
               condition="PLAN 설정 ON",

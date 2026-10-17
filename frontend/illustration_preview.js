@@ -125,7 +125,7 @@
             data-illust-preview-node="${escape(node.name)}" data-preview-id="${escape(node.id)}"
             data-enabled="${node.enabled}" data-condition="${escape(node.condition)}"
             data-batch-index="${node.index}" data-batch-count="${node.count}">
-            <strong>${escape(node.name.replaceAll('CALL2-SELECT', 'SLOT-SELECTER').replaceAll('CALL2-DETAIL', 'DETAIL').replaceAll('CALL2-KEYVIS', 'KEYVIS').replaceAll('CALL3', 'POST PROCESS'))}${node.count > 1 ? `<small class="illust-flow-preview-batch-index">${node.index}/${node.count}</small>` : ''}<small class="illust-preview-activation" data-activation="${node.enabled ? 'on' : 'off'}">사용 ${node.enabled ? 'ON' : 'OFF'}</small></strong>
+            <strong>${escape(node.name.replaceAll('CALL2-SELECT', 'SLOT-SELECTER').replaceAll('CALL2-PLAN', 'PLAN').replaceAll('CALL2-DETAIL', 'DETAIL').replaceAll('CALL2-KEYVIS', 'KEYVIS').replaceAll('CALL3', 'POST PROCESS'))}${node.count > 1 ? `<small class="illust-flow-preview-batch-index">${node.index}/${node.count}</small>` : ''}<small class="illust-preview-activation" data-activation="${node.enabled ? 'on' : 'off'}">사용 ${node.enabled ? 'ON' : 'OFF'}</small></strong>
             <span>${node.enabled ? '' : '생략 · '}${escape(node.description)}</span>
             ${node.condition && node.enabled ? `<span class="illust-preview-condition">조건: ${escape(node.condition)}</span>` : ''}
             ${node.llm ? `<span class="illust-preview-llm">${node.llm.slot.toUpperCase()} · 슬롯 공유 상한 ${node.llm.limit}개</span>` : ''}
@@ -154,6 +154,7 @@
     }
 
     let current = null;
+    const frameInterval = 1000 / 60;
     const ns = 'http://www.w3.org/2000/svg';
     const stateLabels = {waiting: '대기', processing: '처리 중', completed: '완료', skipped: '조건 생략', disabled: 'OFF'};
     const element = (tag, className, text) => {
@@ -175,8 +176,16 @@
         if (!isVisible()) {pause(); return;}
         const {root, cards, plan, svg} = current;
         const bounds = root.getBoundingClientRect();
-        svg.setAttribute('width', root.clientWidth);
-        svg.setAttribute('height', root.clientHeight);
+        // Read geometry before changing the SVG. Ancestor style notifications
+        // often leave the graph unchanged, so do not rebuild it in that case.
+        const width = root.clientWidth, height = root.clientHeight;
+        const cardBounds = new Map([...cards].map(([id, card]) => [id, card.node.getBoundingClientRect()]));
+        const layout = JSON.stringify([width, height, [...cardBounds].map(([id, rect]) =>
+            [id, rect.left - bounds.left, rect.top - bounds.top, rect.width, rect.height])]);
+        if (current.layout === layout) {play(); return;}
+        current.layout = layout;
+        svg.setAttribute('width', width);
+        svg.setAttribute('height', height);
         svg.replaceChildren();
         const marker = svgElement('marker', {id: 'illust-preview-arrow', viewBox: '0 0 10 10',
             refX: '8', refY: '5', markerWidth: '5', markerHeight: '5', orient: 'auto-start-reverse'});
@@ -184,8 +193,8 @@
         const defs = svgElement('defs', {}); defs.append(marker); svg.append(defs);
         current.edges = [];
         current.connections.forEach(({from: parent, to: job, transfers}) => {
-            const a = cards.get(parent.id).node.getBoundingClientRect();
-            const b = cards.get(job.id).node.getBoundingClientRect();
+            const a = cardBounds.get(parent.id);
+            const b = cardBounds.get(job.id);
             const ax = a.right - bounds.left, ay = a.top + a.height / 2 - bounds.top;
             const bx = b.left - bounds.left, by = b.top + b.height / 2 - bounds.top;
             const sameColumn = Math.abs(a.left - b.left) < 40;
@@ -210,38 +219,48 @@
         const transferTimes = new Map(current.edges.map(edge =>
             [JSON.stringify([edge.path.dataset.fromNode, edge.path.dataset.toNode]), edge.path.getTotalLength() / packetSpeed]));
         current.model = buildIllustrationPreviewSimulation(plan, transferTimes);
+        cards.forEach(card => {card.jobs = [];});
+        current.model.jobs.forEach(job => {cards.get(job.card).jobs.push(job);});
+        current.groupStatuses.forEach(group => {
+            const slots = new Set(group.jobs.map(job => job.llm.slot));
+            group.slotJobs = current.model.jobs.filter(job => job.llm && slots.has(job.llm.slot));
+        });
         current.connections = buildIllustrationPreviewConnections(current.model, plan, transferTimes);
         current.connections.forEach((connection, index) => {current.edges[index].transfers = connection.transfers;});
         current.time %= current.model.duration;
-        paint();
-        play();
+        if (current.playing) paint();
+        else play();
     }
 
     function paint() {
         if (!current) return;
         const {time, model, cards, status} = current;
-        current.root.dataset.simulationPlaying = String(current.playing);
-        const grouped = new Map();
-        model.jobs.forEach(job => {
-            const list = grouped.get(job.card) || [];
-            list.push(job); grouped.set(job.card, list);
+        const playing = String(current.playing);
+        if (current.root.dataset.simulationPlaying !== playing) current.root.dataset.simulationPlaying = playing;
+        // Read all moving points before DOM writes to avoid alternating SVG
+        // geometry reads and layout-invalidating updates for every edge.
+        const edgeStates = current.edges.map(edge => {
+            const transfer = edge.transfers.find(value => time >= value.start && time < value.end);
+            return {edge, transfer,
+                position: transfer ? edge.path.getPointAtLength((time - transfer.start) * packetSpeed) : null};
         });
         cards.forEach(card => {
-            const jobs = grouped.get(card.id) || [];
+            const jobs = card.jobs || [];
             const finished = jobs.filter(job => time >= job.end).length;
             const active = jobs.filter(job => time >= job.start && time < job.end);
             const state = !card.enabled ? 'disabled' : !jobs.length ? 'skipped'
                 : active.length ? 'processing' : finished === jobs.length ? 'completed' : 'waiting';
-            card.node.dataset.simulationState = state;
-            card.state.textContent = (state === 'skipped' && card.condition ? '조건부 경로 · 이번 모의 실행에서 제외' : stateLabels[state])
+            if (card.node.dataset.simulationState !== state) card.node.dataset.simulationState = state;
+            const stateText = (state === 'skipped' && card.condition ? '조건부 경로 · 이번 모의 실행에서 제외' : stateLabels[state])
                 + (jobs.length > 1 ? ` · ${finished}/${jobs.length}개` : '');
+            if (card.state.textContent !== stateText) card.state.textContent = stateText;
             const sample = active[0] || jobs[0];
-            card.data.textContent = (sample ? `${sample.input} → ${sample.output}` : card.description).replaceAll('CALL2-SELECT', 'SLOT-SELECTER').replaceAll('CALL2-DETAIL', 'DETAIL').replaceAll('CALL2-KEYVIS', 'KEYVIS').replaceAll('CALL3', 'POST PROCESS');
+            const dataText = (sample ? `${sample.input} → ${sample.output}` : card.description).replaceAll('CALL2-SELECT', 'SLOT-SELECTER').replaceAll('CALL2-PLAN', 'PLAN').replaceAll('CALL2-DETAIL', 'DETAIL').replaceAll('CALL2-KEYVIS', 'KEYVIS').replaceAll('CALL3', 'POST PROCESS');
+            if (card.data.textContent !== dataText) card.data.textContent = dataText;
         });
         current.groupStatuses.forEach(group => {
             const slots = new Map();
-            const groupSlots = new Set(group.jobs.map(job => job.llm.slot));
-            model.jobs.filter(job => job.llm && groupSlots.has(job.llm.slot)).forEach(job => {
+            (group.slotJobs || []).forEach(job => {
                 const counts = slots.get(job.llm.slot) || {limit: job.llm.limit, active: 0, waiting: 0, completed: 0, total: 0};
                 counts.total++;
                 if (time >= job.end) counts.completed++;
@@ -249,23 +268,23 @@
                 else counts.waiting++;
                 slots.set(job.llm.slot, counts);
             });
-            group.node.textContent = [...slots].map(([slot, counts]) =>
+            const groupText = [...slots].map(([slot, counts]) =>
                 `${slot.toUpperCase()} 슬롯 전체 · 상한 ${counts.limit}개 · 처리 중 ${counts.active}개 · 대기 ${counts.waiting}개 · 완료 ${counts.completed}/${counts.total}`
             ).join(' / ') || 'OFF · 실행 대상 없음';
+            if (group.node.textContent !== groupText) group.node.textContent = groupText;
         });
-        current.edges.forEach(edge => {
-            const transfer = edge.transfers.find(value => time >= value.start && time < value.end);
-            const moving = Boolean(transfer);
-            edge.packet.style.display = moving ? '' : 'none';
-            edge.path.dataset.transferred = String(edge.transfers.some(value => time >= value.end));
-            if (moving) {
+        edgeStates.forEach(({edge, transfer, position}) => {
+            const display = transfer ? '' : 'none';
+            if (edge.packet.style.display !== display) edge.packet.style.display = display;
+            const transferred = String(edge.transfers.some(value => time >= value.end));
+            if (edge.path.dataset.transferred !== transferred) edge.path.dataset.transferred = transferred;
+            if (transfer) {
                 const progress = (time - transfer.start) / (transfer.end - transfer.start);
-                const position = edge.path.getPointAtLength((time - transfer.start) * packetSpeed);
                 edge.packet.setAttribute('cx', position.x); edge.packet.setAttribute('cy', position.y);
                 edge.packet.style.opacity = String(Math.min(1, progress * 6, (1 - progress) * 6));
             }
         });
-        const activeNames = [...new Set(model.jobs.filter(job => time >= job.start && time < job.end).map(job => job.name.replaceAll('CALL2-SELECT', 'SLOT-SELECTER').replaceAll('CALL2-DETAIL', 'DETAIL').replaceAll('CALL2-KEYVIS', 'KEYVIS').replaceAll('CALL3', 'POST PROCESS')))];
+        const activeNames = [...new Set(model.jobs.filter(job => time >= job.start && time < job.end).map(job => job.name.replaceAll('CALL2-SELECT', 'SLOT-SELECTER').replaceAll('CALL2-PLAN', 'PLAN').replaceAll('CALL2-DETAIL', 'DETAIL').replaceAll('CALL2-KEYVIS', 'KEYVIS').replaceAll('CALL3', 'POST PROCESS')))];
         const text = model.blocked.length ? '실행 계획에 진행할 수 없는 작업이 있습니다' : activeNames.length
             ? `FLOW 자동 재생 · ${activeNames.join(' + ')}`
             : 'FLOW 자동 재생 · 다음 단계로 데이터 전달 중';
@@ -282,9 +301,16 @@
 
     function tick(now) {
         if (!current?.playing) return;
+        if (now < current.nextFrameAt - 0.1) {
+            current.frame = requestAnimationFrame(tick);
+            return;
+        }
         if (!isVisible()) {pause(); return;}
         current.time = (current.time + (now - current.lastTime) / 1000) % current.model.duration;
         current.lastTime = now;
+        // Keep a 60 Hz deadline without slowing the simulation on a high-refresh
+        // monitor or replaying missed frames after a stall. Allow clock rounding.
+        current.nextFrameAt += frameInterval * Math.max(1, Math.floor((now - current.nextFrameAt) / frameInterval) + 1);
         paint();
         current.frame = requestAnimationFrame(tick);
     }
@@ -293,6 +319,7 @@
         if (!current || current.playing || !isVisible()) return;
         if (current.time >= current.model.duration) current.time = 0;
         current.playing = true; current.lastTime = performance.now();
+        current.nextFrameAt = current.lastTime + frameInterval;
         paint(); current.frame = requestAnimationFrame(tick);
     }
 

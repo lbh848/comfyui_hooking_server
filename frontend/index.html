@@ -17568,6 +17568,7 @@
                         <div style="background:rgba(13,71,161,0.08); border-radius:8px; padding:10px; margin-top:8px;">
                             <div class="section-title">캐릭터 로라 자동 세팅</div>
                             <button id="btn-bot-auto-lora" onclick="openBotAutoLoraSetupModal()" style="width:100%; background:#0D47A1; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">선택 캐릭터 로라 자동 세팅</button>
+                            <button id="btn-bot-style-lora" onclick="openBotAutoLoraSetupModal('style')" style="width:100%; margin-top:4px; background:#00838F; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">스타일 일괄 세팅</button>
                             <div id="bot-auto-lora-status" style="font-size:0.7rem; color:var(--text2); margin-top:4px; display:none;"></div>
                         </div>
                         <div style="background:rgba(156,39,176,0.08); border-radius:8px; padding:10px; margin-top:8px;">
@@ -28425,10 +28426,10 @@
         </div>
     </div>
 
-    <script src="/illustration_flow.js?v=20261016-manager-edit"></script>
+    <script src="/illustration_flow.js?v=20261017-plan-label"></script>
     <script src="/illustration_prompt_inspector.js"></script>
-    <script src="/illustration_preview.js?v=20261015-stage-names"></script>
-    <script src="/llm_thinking_check.js"></script>
+    <script src="/illustration_preview.js?v=20261017-plan-label"></script>
+    <script src="/llm_thinking_check.js?v=20261017-plan-label"></script>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
     <script>
@@ -44247,13 +44248,13 @@
                 color: '#e4a149',
                 label: '삽화 생성',
                 fixed: true,
-                description: '일반 흐름은 CALL2 뒤 이미지 생성을 시작하고 POST PROCESS(조건부)를 일부 생성과 병렬 실행합니다. 프롬프트 배치는 CALL 빌드를 건너뜁니다.',
+                description: '일반 흐름은 DETAIL 뒤 이미지 생성을 시작하고 POST PROCESS(조건부)를 일부 생성과 병렬 실행합니다. 프롬프트 배치는 프롬프트 빌드를 건너뜁니다.',
                 steps: [
                     {
                         type: 'illustration_llm_build',
                         lane: 'llm',
                         laneLabel: 'LLM',
-                        label: 'OUTFIT/CALL2 프롬프트 빌드',
+                        label: 'OUTFIT/PLAN/DETAIL 프롬프트 빌드',
                         qualifier: '경로별',
                     },
                     {
@@ -46998,7 +46999,7 @@
                     const state = _lighbdLlmStreams.get(id) || _createLighbdStreamState(id);
                     state.active = true;
                     state.slot = item.llm_slot || state.slot;
-                    state.callName = (item.call_name || item.task_key || state.callName).replaceAll('CALL2-SELECT', 'SLOT-SELECTER').replaceAll('CALL2-DETAIL', 'DETAIL').replaceAll('CALL2-KEYVIS', 'KEYVIS').replaceAll('CALL3', 'POST PROCESS');
+                    state.callName = (item.call_name || item.task_key || state.callName).replaceAll('CALL2-SELECT', 'SLOT-SELECTER').replaceAll('CALL2-PLAN', 'PLAN').replaceAll('CALL2-DETAIL', 'DETAIL').replaceAll('CALL2-KEYVIS', 'KEYVIS').replaceAll('CALL3', 'POST PROCESS');
                     state.model = item.model || state.model;
                     state.status = item.status || ((state.callName ? state.callName + ' · ' : '') + '스트리밍');
                     state.output = String(item.text || '');
@@ -47074,7 +47075,7 @@
             const isNewStream = !_lighbdLlmStreams.has(streamId);
             const state = _lighbdLlmStreams.get(streamId) || _createLighbdStreamState(streamId);
             state.slot = data.llm_slot || state.slot;
-            state.callName = (data.call_name || data.task_key || state.callName).replaceAll('CALL2-SELECT', 'SLOT-SELECTER').replaceAll('CALL2-DETAIL', 'DETAIL').replaceAll('CALL2-KEYVIS', 'KEYVIS').replaceAll('CALL3', 'POST PROCESS');
+            state.callName = (data.call_name || data.task_key || state.callName).replaceAll('CALL2-SELECT', 'SLOT-SELECTER').replaceAll('CALL2-PLAN', 'PLAN').replaceAll('CALL2-DETAIL', 'DETAIL').replaceAll('CALL2-KEYVIS', 'KEYVIS').replaceAll('CALL3', 'POST PROCESS');
             state.model = data.model || state.model;
             for (const key of ['started_at', 'last_event_at', 'thinking_started_at', 'thinking_ended_at', 'response_started_at', 'response_ended_at']) {
                 if (data[key] !== undefined) state[key] = data[key] == null ? null : Number(data[key]);
@@ -47516,7 +47517,7 @@
                 const outputText = r.output || '';
                 const stats = `${_formatLighbdInputTokens(r)} · 출력 ${r.completion_tokens ?? 0} · ${r.elapsed ?? 0}s · ${r.tps ?? 0} t/s` + (r.ttft ? ` · TTFT ${r.ttft}s` : '');
                 const callBadge = r.call_name
-                    ? `<span style="font-size:0.7rem; padding:1px 6px; border-radius:3px; background:rgba(0,188,212,0.16); color:#4dd0e1; font-weight:600;">${escapeHtml(r.call_name.replaceAll('CALL2-SELECT', 'SLOT-SELECTER').replaceAll('CALL2-DETAIL', 'DETAIL').replaceAll('CALL2-KEYVIS', 'KEYVIS').replaceAll('CALL3', 'POST PROCESS'))}</span>`
+                    ? `<span style="font-size:0.7rem; padding:1px 6px; border-radius:3px; background:rgba(0,188,212,0.16); color:#4dd0e1; font-weight:600;">${escapeHtml(r.call_name.replaceAll('CALL2-SELECT', 'SLOT-SELECTER').replaceAll('CALL2-PLAN', 'PLAN').replaceAll('CALL2-DETAIL', 'DETAIL').replaceAll('CALL2-KEYVIS', 'KEYVIS').replaceAll('CALL3', 'POST PROCESS'))}</span>`
                     : '';
                 return `
                     <div class="lighbd-history-card">
@@ -47616,7 +47617,7 @@
                 <div class="lighbd-detail-shell" role="dialog" aria-modal="true" aria-labelledby="lighbd-detail-title">
                     <div class="lighbd-modal-head">
                         <div class="lighbd-modal-title" id="lighbd-detail-title">
-                            ${escapeHtml((record.call_name || record.task_key || 'LLM 요청 상세').replaceAll('CALL2-SELECT', 'SLOT-SELECTER').replaceAll('CALL2-DETAIL', 'DETAIL').replaceAll('CALL2-KEYVIS', 'KEYVIS').replaceAll('CALL3', 'POST PROCESS'))}
+                            ${escapeHtml((record.call_name || record.task_key || 'LLM 요청 상세').replaceAll('CALL2-SELECT', 'SLOT-SELECTER').replaceAll('CALL2-PLAN', 'PLAN').replaceAll('CALL2-DETAIL', 'DETAIL').replaceAll('CALL2-KEYVIS', 'KEYVIS').replaceAll('CALL3', 'POST PROCESS'))}
                             <div class="lighbd-modal-subtitle">${escapeHtml(record.ts || '')} · ${escapeHtml(llmRouteSlotModelName(record.llm_slot, true, record.model || '') || '모델 정보 없음')}</div>
                         </div>
                         <span style="font-size:.7rem;padding:3px 8px;border-radius:6px;background:${statusMeta.background};color:${statusMeta.color};font-weight:700;">${statusMeta.label}</span>
@@ -48235,7 +48236,7 @@
             const rawOutput = record.output || '';
             const rawOutputText = _formatLighbdHistoryContent(rawOutput);
             const qualityOutput = _renderIllustrationQualityInspectionOutput(record);
-            const callName = (record.call_name || record.task_key || 'LLM 호출').replaceAll('CALL2-SELECT', 'SLOT-SELECTER').replaceAll('CALL2-DETAIL', 'DETAIL').replaceAll('CALL2-KEYVIS', 'KEYVIS').replaceAll('CALL3', 'POST PROCESS');
+            const callName = (record.call_name || record.task_key || 'LLM 호출').replaceAll('CALL2-SELECT', 'SLOT-SELECTER').replaceAll('CALL2-PLAN', 'PLAN').replaceAll('CALL2-DETAIL', 'DETAIL').replaceAll('CALL2-KEYVIS', 'KEYVIS').replaceAll('CALL3', 'POST PROCESS');
             const stats = `${_formatLighbdInputTokens(record)} · 출력 ${record.completion_tokens ?? 0} · 한도 ${record.max_output_tokens ?? '-'} · 종료 ${record.finish_reason || '-'} · ${record.elapsed ?? 0}s · ${record.tps ?? 0} t/s`;
             const providerSection = (record.finish_reason || record.finish_message || record.max_output_tokens != null)
                 ? `<section class="lighbd-detail-section" style="border:none; border-top:1px solid var(--border); border-radius:0;">
@@ -48312,8 +48313,8 @@
                 lines.push('1. **CHARACTER-RESOLVE** — 토글과 무관하게 CURRENT 본문만 보고 현재 등장인물을 결정합니다. PAST와 프로필 카탈로그는 받지 않으며, 과거 추적 여부는 서버 상태에서 결합합니다.');
                 lines.push('2. **PROFILE-RESOLVE** — 다중 프로필 추론을 켠 경우에만, 앞 단계가 확정한 CURRENT 다중 프로필 캐릭터를 캐릭터별로 병렬 판정합니다. 각 호출은 한 캐릭터의 START·이후 변환 프로필과 구체적인 판단 reason을 반환합니다. PAST는 받지 않습니다. 끄면 서버가 등록 기본 프로필을 적용합니다.');
                 lines.push('3. **ORIGINAL-ASSET** — 켜진 경우, 확정 프로필을 기준으로 현재 장면에 맞는 등록 원본 에셋과 삽입 슬롯을 선택.');
-                lines.push('5. **OUTFIT** (enhance) — 앞 단계가 확정한 CURRENT 캐릭터를 기준으로 복장·헤어스타일 변화 사건만 분석해 CALL2에 전달. 지칭어는 문맥상 해석하되 본문을 치환하지 않습니다.');
-                lines.push('6. **TIME & PLACE / SLOT-SELECTER → 선택적 CALL2-PLAN → DETAIL** — TIME & PLACE는 캐릭터별 시간·장소를 독립적으로 추적하고, SLOT-SELECTER는 OUTFIT·TIME & PLACE와 동시에 장면·인물·순서를 선택합니다. 각 PLAN 배치가 완료되면 해당 장면의 구도·동작·접촉과 SLOT 상태를 바로 DETAIL에 전달합니다.');
+                lines.push('5. **OUTFIT** (enhance) — 앞 단계가 확정한 CURRENT 캐릭터를 기준으로 복장·헤어스타일 변화 사건만 분석해 PLAN/DETAIL에 전달. 지칭어는 문맥상 해석하되 본문을 치환하지 않습니다.');
+                lines.push('6. **TIME & PLACE / SLOT-SELECTER → 선택적 PLAN → DETAIL** — TIME & PLACE는 캐릭터별 시간·장소를 독립적으로 추적하고, SLOT-SELECTER는 OUTFIT·TIME & PLACE와 동시에 장면·인물·순서를 선택합니다. 각 PLAN 배치가 완료되면 해당 장면의 구도·동작·접촉과 SLOT 상태를 바로 DETAIL에 전달합니다.');
                 lines.push('7. **DETAIL / KEYVIS** — DETAIL은 PLAN 장면별 개요·프로필·상태를 이미지 태그로 확장합니다. KEYVIS는 대표 이미지 한 장을 선택·묘사하며 설정에 따라 DETAIL에 통합하거나 별도로 호출합니다.');
                 lines.push('8. **MULTI-CHAR-MASK** — 필요한 다중 캐릭터 이미지의 영역을 계산합니다. 각 DETAIL 배치나 KEYVIS가 끝나면 마스크를 준비한 뒤 해당 이미지를 즉시 생성 큐에 등록합니다.');
                 lines.push('9. **POST PROCESS** (speak/manga/subtitle) — 일반 장면의 대사/생각 작성. 대표 이미지는 대사 대상에서 제외하며 이미지 생성과 병렬 실행합니다.');
@@ -48321,7 +48322,7 @@
                  lines.push('');
                 lines.push('**결과 요약(본문 최하단, 시간순):** ');
                 lines.push('- **③ 캐릭터 원본(lb.extra)** — 이 그림 캐릭터들의 원형 외형/복장 태그(태그 누락 점검용). ');
-                lines.push('- **① FINAL RESULT** — CALL2가 뽑은 구조화 결과([SPEAK]/[Name]/[SETUP]/[CHAR]/[SUPPLEMENT], preset 치환 · V3 마커). ');
+                lines.push('- **① FINAL RESULT** — DETAIL이 뽑은 구조화 결과([SPEAK]/[Name]/[SETUP]/[CHAR]/[SUPPLEMENT], preset 치환 · V3 마커). ');
                 lines.push('- **② 치환 후 최종 프롬프트** — 위 결과를 process_prompt가 평탄화(LoRA/품질/flatten)한 실제 SD 입력.');
             }
             lines.push('');
@@ -48329,7 +48330,7 @@
             lines.push('');
             for (let i = 0; i < records.length; i++) {
                 const r = records[i];
-                const callName = (r.call_name || r.task_key || 'LLM 호출').replaceAll('CALL2-SELECT', 'SLOT-SELECTER').replaceAll('CALL2-DETAIL', 'DETAIL').replaceAll('CALL2-KEYVIS', 'KEYVIS').replaceAll('CALL3', 'POST PROCESS');
+                const callName = (r.call_name || r.task_key || 'LLM 호출').replaceAll('CALL2-SELECT', 'SLOT-SELECTER').replaceAll('CALL2-PLAN', 'PLAN').replaceAll('CALL2-DETAIL', 'DETAIL').replaceAll('CALL2-KEYVIS', 'KEYVIS').replaceAll('CALL3', 'POST PROCESS');
                 const status = r.status || (r.error ? 'error' : 'ok');
                 lines.push(`## ${i + 1}. ${callName}`);
                 lines.push('');
@@ -71685,7 +71686,7 @@
             if (!container) return;
             if (!styleLoras || styleLoras.length === 0) { container.innerHTML = ''; return; }
             container.innerHTML = styleLoras.map((lora, i) => {
-                const source = lora.source === 'style' ? '스타일' : `${escHtml(lora.character || '')}`;
+                const source = lora.source === 'style' ? '스타일' : lora.source === 'instance' ? '인스턴스' : (lora.character || '');
                 const fallback = (lora.project_id && lora.first_image)
                     ? `/api/style_lora/image/${encodeURIComponent(lora.project_id)}/${encodeURIComponent(lora.first_image)}`
                     : '';
@@ -71893,8 +71894,8 @@
         }
 
         // ─── 스타일(그림체) LoRA getter/setter/save ───────────────
-        function getBotCharStyleLoras(charName) {
-            const card = _visualCardProfile(charName);
+        function getBotCharStyleLoras(charName, visualCardId = '') {
+            const card = _visualCardProfileById(charName, visualCardId);
             if (!card) return [];
             card.render_overrides = card.render_overrides || {};
             if (!Array.isArray(card.render_overrides.style_loras)) {
@@ -71903,8 +71904,8 @@
             return card.render_overrides.style_loras;
         }
 
-        function setBotCharStyleLoras(charName, styleLoras) {
-            const card = _visualCardProfile(charName);
+        function setBotCharStyleLoras(charName, styleLoras, visualCardId = '') {
+            const card = _visualCardProfileById(charName, visualCardId);
             if (!card) return;
             card.render_overrides = card.render_overrides || {};
             card.render_overrides.style_loras = styleLoras;
@@ -77181,21 +77182,20 @@
 
         function switchBotCharLoraPickerTab(tab) {
             _botCharLoraPickerState.tab = tab;
-            const assetBtn = document.getElementById('bclp-tab-asset');
-            const instanceBtn = document.getElementById('bclp-tab-instance');
-            const botBtn = document.getElementById('bclp-tab-bot');
-            [assetBtn, instanceBtn, botBtn].forEach(btn => {
-                btn.style.background = 'var(--surface2)'; btn.style.color = 'var(--text)';
+            ['asset', 'instance', 'bot', 'style'].forEach(name => {
+                const btn = document.getElementById('bclp-tab-' + name);
+                if (!btn) return;
+                btn.style.background = name === tab ? 'var(--accent)' : 'var(--surface2)';
+                btn.style.color = name === tab ? '#fff' : 'var(--text)';
             });
             if (tab === 'asset') {
-                assetBtn.style.background = 'var(--accent)'; assetBtn.style.color = '#fff';
-                loadBclpAssetCharacters();
+                return loadBclpAssetCharacters();
             } else if (tab === 'instance') {
-                instanceBtn.style.background = 'var(--accent)'; instanceBtn.style.color = '#fff';
-                loadBclpInstanceLoras();
+                return loadBclpInstanceLoras();
+            } else if (tab === 'style') {
+                return loadBclpStyleLoras();
             } else {
-                botBtn.style.background = 'var(--accent)'; botBtn.style.color = '#fff';
-                loadBclpBotGrid();
+                return loadBclpBotGrid();
             }
         }
 
@@ -77455,10 +77455,10 @@
                 card.onmouseleave = () => { card.style.borderColor = 'var(--border)'; };
                 card.onclick = () => {
                     const isFace = _botCharLoraPickerState.isFaceLora;
-                    const loras = isFace ? getBotCharFaceLoras(_botCharLoraPickerState.charName) : getBotCharLoras(_botCharLoraPickerState.charName);
-                    let addedCount = 0;
+                    const isStyle = _botCharLoraPickerState.isStyleLora;
+                    const addedLoras = [];
                     for (const [profile, pData] of Object.entries(item.profiles)) {
-                        loras.push({
+                        addedLoras.push({
                             source: 'instance',
                             name: `${item.lora_id} (${profile})`,
                             character: 'instance',
@@ -77469,19 +77469,30 @@
                             BASE: profile,
                             lora_id: item.lora_id,
                         });
-                        addedCount++;
                     }
-                    if (isFace) {
+                    if (_botCharLoraPickerState.onSelect) {
+                        _botCharLoraPickerState.onSelect(addedLoras);
+                    } else if (isStyle) {
+                        const loras = getBotCharStyleLoras(_botCharLoraPickerState.charName);
+                        loras.push(...addedLoras);
+                        setBotCharStyleLoras(_botCharLoraPickerState.charName, loras);
+                        renderBotCharStyleLoraList(_botCharLoraPickerState.charIdx, _botCharLoraPickerState.charName, loras);
+                        saveBotCharStyleLoras(_botCharLoraPickerState.charName);
+                    } else if (isFace) {
+                        const loras = getBotCharFaceLoras(_botCharLoraPickerState.charName);
+                        loras.push(...addedLoras);
                         setBotCharFaceLoras(_botCharLoraPickerState.charName, loras);
                         renderBotCharFaceLoraList(_botCharLoraPickerState.charIdx, _botCharLoraPickerState.charName, loras);
                         saveBotCharFaceLoras(_botCharLoraPickerState.charName);
                     } else {
+                        const loras = getBotCharLoras(_botCharLoraPickerState.charName);
+                        loras.push(...addedLoras);
                         setBotCharLoras(_botCharLoraPickerState.charName, loras);
                         renderBotCharLoraList(_botCharLoraPickerState.charIdx, _botCharLoraPickerState.charName, loras);
                         saveBotCharLoras(_botCharLoraPickerState.charName);
                     }
                     document.getElementById('bot-char-lora-picker-overlay').remove();
-                    showToast(`인스턴스 ${isFace ? '얼굴 ' : ''}LoRA "${item.lora_id}" ${addedCount}개 추가됨`, 'success');
+                    showToast(`인스턴스 ${isStyle ? '스타일 ' : isFace ? '얼굴 ' : ''}LoRA "${item.lora_id}" ${addedLoras.length}개 선택됨`, 'success');
                 };
                 grid.appendChild(card);
             };
@@ -77501,19 +77512,23 @@
         }
 
         // ─── 스타일(그림체) LoRA 피커 ───
-        async function openBotCharStyleLoraPicker(charName, charIdx) {
-            _botCharLoraPickerState = { charName, charIdx, tab: 'style', assetData: null, instanceData: null, styleData: null, botStep: 'bots', botBots: null, botProjects: null, botSelectedBot: '', botSelectedProject: '', botSelectedChar: '', isFaceLora: false, isStyleLora: true };
+        async function openBotCharStyleLoraPicker(charName, charIdx, onSelect = null) {
+            _botCharLoraPickerState = { charName, charIdx, onSelect, tab: 'style', assetData: null, instanceData: null, styleData: null, botStep: 'bots', botBots: null, botProjects: null, botSelectedBot: '', botSelectedProject: '', botSelectedChar: '', isFaceLora: false, isStyleLora: true };
             const overlay = document.createElement('div');
             overlay.id = 'bot-char-lora-picker-overlay';
-            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:330; display:flex; align-items:center; justify-content:center;';
+            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:350; display:flex; align-items:center; justify-content:center;';
             overlay.innerHTML = `
                 <div style="background:var(--surface); border-radius:12px; padding:24px; max-width:1100px; width:95%; max-height:95vh; display:flex; flex-direction:column;">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
                         <h3 style="margin:0;">스타일(그림체) LoRA 선택</h3>
                         <button onclick="document.getElementById('bot-char-lora-picker-overlay').remove()" style="background:none; border:none; color:var(--text); font-size:1.2rem; cursor:pointer;">x</button>
                     </div>
+                    <div style="display:flex; margin-bottom:12px; border:1px solid var(--border); border-radius:8px; overflow:hidden;">
+                        <button id="bclp-tab-style" onclick="switchBotCharLoraPickerTab('style')" style="flex:1; padding:8px; border:none; background:var(--accent); color:#fff; cursor:pointer; font-size:0.85rem; font-weight:600;">스타일에서 탐색</button>
+                        <button id="bclp-tab-instance" onclick="switchBotCharLoraPickerTab('instance')" style="flex:1; padding:8px; border:none; background:var(--surface2); color:var(--text); cursor:pointer; font-size:0.85rem; font-weight:600;">인스턴스에서 탐색</button>
+                    </div>
                     <div id="bclp-breadcrumb" style="margin-bottom:10px; font-size:0.8rem; color:var(--text2); display:flex; align-items:center; gap:4px; flex-wrap:wrap;"></div>
-                    <div id="bclp-grid" style="display:grid; grid-template-columns:repeat(3,1fr); gap:12px; overflow-y:auto; max-height:calc(95vh - 130px);"></div>
+                    <div id="bclp-grid" style="display:grid; grid-template-columns:repeat(3,1fr); gap:12px; overflow-y:auto; max-height:calc(95vh - 160px);"></div>
                 </div>`;
             document.body.appendChild(overlay);
             await loadBclpStyleLoras();
@@ -77559,8 +77574,7 @@
                 card.onmouseenter = () => { card.style.borderColor = 'var(--accent)'; };
                 card.onmouseleave = () => { card.style.borderColor = 'var(--border)'; };
                 card.onclick = () => {
-                    const styleLoras = getBotCharStyleLoras(_botCharLoraPickerState.charName);
-                    let addedCount = 0;
+                    const addedLoras = [];
                     for (const [pf, pData] of Object.entries(item.profiles || {})) {
                         let prev = '';
                         const rawPrev = pData.preview_url || '';
@@ -77572,7 +77586,7 @@
                         } else if (item.first_image) {
                             prev = `/api/style_lora/image/${enc(item.project_id)}/${enc(item.first_image)}`;
                         }
-                        styleLoras.push({
+                        addedLoras.push({
                             source: 'style',
                             name: `${item.name || item.project_id} (${pf})`,
                             character: 'style',
@@ -77584,13 +77598,18 @@
                             BASE: pf,
                             project_id: item.project_id,
                         });
-                        addedCount++;
                     }
-                    setBotCharStyleLoras(_botCharLoraPickerState.charName, styleLoras);
-                    renderBotCharStyleLoraList(_botCharLoraPickerState.charIdx, _botCharLoraPickerState.charName, styleLoras);
-                    saveBotCharStyleLoras(_botCharLoraPickerState.charName);
+                    if (_botCharLoraPickerState.onSelect) {
+                        _botCharLoraPickerState.onSelect(addedLoras);
+                    } else {
+                        const styleLoras = getBotCharStyleLoras(_botCharLoraPickerState.charName);
+                        styleLoras.push(...addedLoras);
+                        setBotCharStyleLoras(_botCharLoraPickerState.charName, styleLoras);
+                        renderBotCharStyleLoraList(_botCharLoraPickerState.charIdx, _botCharLoraPickerState.charName, styleLoras);
+                        saveBotCharStyleLoras(_botCharLoraPickerState.charName);
+                    }
                     document.getElementById('bot-char-lora-picker-overlay').remove();
-                    showToast(`스타일(그림체) LoRA "${item.name || item.project_id}" ${addedCount}개 추가됨`, 'success');
+                    showToast(`스타일(그림체) LoRA "${item.name || item.project_id}" ${addedLoras.length}개 선택됨`, 'success');
                 };
                 grid.appendChild(card);
             });
@@ -77774,7 +77793,7 @@
             return `${charName || ''}::${visualCardId || 'legacy'}`;
         }
 
-        const _ALR_PROFILE_LABELS = {character: '캐릭터 LoRA', face: '얼굴 LoRA'};
+        const _ALR_PROFILE_LABELS = {character: '캐릭터 LoRA', face: '얼굴 LoRA', style: '스타일 LoRA'};
 
         function _alrProfileLabel(profile) {
             return _ALR_PROFILE_LABELS[profile] || profile;
@@ -77785,6 +77804,9 @@
             const overrides = card?.render_overrides || {};
             if (profile === 'face') {
                 return Array.isArray(overrides.face_loras) ? overrides.face_loras : [];
+            }
+            if (profile === 'style') {
+                return Array.isArray(overrides.style_loras) ? overrides.style_loras : [];
             }
             // 이전 1인 설정을 모든 인원수에 공통 적용한다. 빈 목록도 유지한다.
             // 편집 시 setBotCharLoras가 구형 키를 제거하고 loras만 저장한다.
@@ -77854,7 +77876,7 @@
             return targets;
         }
 
-        function openBotAutoLoraSetupModal() {
+        function openBotAutoLoraSetupModal(profile = 'character') {
             if (!botCurrentBot) { showToast('봇을 먼저 선택하세요', 'error'); return; }
             const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
             if (!bot || !bot.characters || bot.characters.length === 0) {
@@ -77866,7 +77888,8 @@
                 showToast('자동 세팅 가능한 프로필 카드가 없습니다', 'error');
                 return;
             }
-            const checkedTargetsByProfile = {character: {}, face: {}};
+            const isStyle = profile === 'style';
+            const checkedTargetsByProfile = isStyle ? {style: {}} : {character: {}, face: {}};
             Object.keys(checkedTargetsByProfile).forEach(profile => {
                 targets.forEach(target => {
                     checkedTargetsByProfile[profile][target.key] = true;
@@ -77876,8 +77899,8 @@
                 step: 1,
                 targets,
                 checkedTargetsByProfile,
-                checkedTargets: checkedTargetsByProfile.character,
-                profile: 'character',
+                checkedTargets: checkedTargetsByProfile[profile],
+                profile,
                 targetFilter: 'all',
                 targetSearch: '',
                 targetStrengthCondition: 'all',
@@ -77885,7 +77908,8 @@
                 sourceFilter: 'all',
                 conflict: 'add',
                 strength: 0.5,
-                tab: 'instance',
+                tab: isStyle ? 'style' : 'instance',
+                styleLoras: [],
                 instanceItems: null, instanceLoaded: false,
                 botProjects: null, botProjectsLoaded: false,
                 botSelectedProject: '', botProjectData: null,
@@ -77903,7 +77927,7 @@
                 <div style="background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:18px; max-width:1220px; width:96%; height:92vh; max-height:95vh; display:flex; flex-direction:column; box-shadow:0 18px 60px rgba(0,0,0,.35);">
                     <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom:12px;">
                         <div>
-                            <h3 style="margin:0 0 3px;">선택 캐릭터 LoRA 자동 세팅</h3>
+                            <h3 style="margin:0 0 3px;">${isStyle ? '선택 캐릭터 스타일 일괄 세팅' : '선택 캐릭터 LoRA 자동 세팅'}</h3>
                             <div id="alr-step-label" style="font-size:.75rem; color:var(--text2);">1/3 · 상태를 확인하고 세팅할 프로필 카드를 선택하세요.</div>
                         </div>
                         <button type="button" aria-label="닫기" onclick="document.getElementById('bot-auto-lora-overlay').remove()" style="background:var(--surface2); border:1px solid var(--border); border-radius:7px; color:var(--text); width:32px; height:32px; cursor:pointer;">✕</button>
@@ -77913,9 +77937,10 @@
                         <div id="alr-overview" style="display:grid; grid-template-columns:repeat(auto-fit,minmax(110px,1fr)); gap:7px; margin-bottom:10px;"></div>
                         <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:9px; padding:9px; border:1px solid var(--border); border-radius:9px; background:var(--surface2);">
                             <span style="font-size:.72rem; color:var(--text2); font-weight:700;">세팅 대상</span>
+                            ${isStyle ? '<span style="font-size:.78rem; font-weight:700;">스타일 LoRA · 선택한 카드에 같은 스타일을 적용합니다.</span>' : `
                             <button type="button" class="alr-profile-btn" data-profile="character" onclick="_alrSetProfile('character')" style="padding:6px 12px; border:1px solid var(--border); border-radius:6px; cursor:pointer; font-weight:700;">캐릭터 LoRA</button>
                             <button type="button" class="alr-profile-btn" data-profile="face" onclick="_alrSetProfile('face')" style="padding:6px 12px; border:1px solid var(--border); border-radius:6px; cursor:pointer; font-weight:700;">얼굴 LoRA</button>
-                            <span style="font-size:.68rem; color:var(--text2);">대상을 바꾸면 해당 종류의 모든 카드가 기본 선택됩니다.</span>
+                            <span style="font-size:.68rem; color:var(--text2);">대상을 바꾸면 해당 종류의 모든 카드가 기본 선택됩니다.</span>`}
                         </div>
                         <div style="display:flex; gap:7px; align-items:center; margin-bottom:8px; flex-wrap:wrap;">
                             <input id="alr-target-search" type="search" placeholder="캐릭터 또는 카드 이름 검색" oninput="_alrSetTargetSearch(this.value)" style="min-width:230px; flex:1; max-width:380px; padding:7px 9px; border:1px solid var(--border); border-radius:6px; background:var(--surface2); color:var(--text);">
@@ -77933,21 +77958,21 @@
                         </div>
                         <div id="alr-char-grid" style="overflow-y:auto; flex:1 1 0; min-height:340px; display:grid; grid-template-columns:repeat(auto-fill,minmax(255px,1fr)); align-content:start; gap:8px; padding:8px; border:1px solid var(--border); border-radius:9px;"></div>
                         <div style="display:flex; justify-content:flex-end; margin-top:10px;">
-                            <button id="alr-continue-btn" onclick="_alrGoStep2()" style="background:#0D47A1; color:#fff; border:none; padding:9px 20px; border-radius:7px; cursor:pointer; font-weight:700;">다음: 자동 매칭 검토</button>
+                            <button id="alr-continue-btn" onclick="_alrGoStep2()" style="background:#0D47A1; color:#fff; border:none; padding:9px 20px; border-radius:7px; cursor:pointer; font-weight:700;">${isStyle ? '다음: 스타일 LoRA 선택' : '다음: 자동 매칭 검토'}</button>
                         </div>
                     </div>
 
                     <div id="alr-step2" style="display:none; flex-direction:column; flex:1; min-height:0;">
                         <div style="display:flex; gap:9px; margin-bottom:9px; flex-wrap:wrap;">
                             <div style="background:rgba(13,71,161,.12); border:1px solid rgba(59,130,246,.35); border-radius:8px; padding:7px 11px; min-width:145px;"><div style="font-size:.67rem; color:var(--text2);">세팅 대상</div><div id="alr-selected-profile-label" style="font-size:.82rem; font-weight:800;"></div></div>
-                            <div style="background:var(--surface2); border:1px solid var(--border); border-radius:8px; padding:7px 11px;"><div style="font-size:.67rem; color:var(--text2); margin-bottom:3px;">기존 설정 처리</div><label style="font-size:.76rem; margin-right:9px;"><input type="radio" name="alr-conflict" value="add" checked onchange="_alrSetConflict(this.value)"> 기존에 추가</label><label style="font-size:.76rem;"><input type="radio" name="alr-conflict" value="overwrite" onchange="_alrSetConflict(this.value)"> 매칭된 LoRA로 교체</label></div>
+                            <div style="background:var(--surface2); border:1px solid var(--border); border-radius:8px; padding:7px 11px;"><div style="font-size:.67rem; color:var(--text2); margin-bottom:3px;">기존 설정 처리</div><label style="font-size:.76rem; margin-right:9px;"><input type="radio" name="alr-conflict" value="add" checked onchange="_alrSetConflict(this.value)"> 기존에 추가</label><label style="font-size:.76rem;"><input type="radio" name="alr-conflict" value="overwrite" onchange="_alrSetConflict(this.value)"> ${isStyle ? '선택한 스타일로 교체' : '매칭된 LoRA로 교체'}</label></div>
                             <div style="background:var(--surface2); border:1px solid var(--border); border-radius:8px; padding:7px 11px; min-width:175px;"><div style="font-size:.67rem; color:var(--text2); margin-bottom:3px;">적용 강도: <b id="alr-strength-val" style="color:var(--text);">0.50</b></div><input type="range" min="0" max="1" step="0.05" value="0.5" oninput="_alrSetStrength(this.value)" style="width:100%;"></div>
                         </div>
-                        <div style="display:flex; gap:0; margin-bottom:7px; border:1px solid var(--border); border-radius:8px; overflow:hidden;">
+                        <div style="display:${isStyle ? 'none' : 'flex'}; gap:0; margin-bottom:7px; border:1px solid var(--border); border-radius:8px; overflow:hidden;">
                             <button onclick="switchAutoLoraTab('instance')" id="alr-tab-instance" style="flex:1; padding:8px; border:none; background:var(--surface2); color:var(--text); cursor:pointer; font-size:.8rem; font-weight:700;">인스턴스 LoRA 자동 매칭</button>
                             <button onclick="switchAutoLoraTab('bot')" id="alr-tab-bot" style="flex:1; padding:8px; border:none; background:var(--surface2); color:var(--text); cursor:pointer; font-size:.8rem; font-weight:700;">현재 봇 학습 프로젝트</button>
                         </div>
-                        <div style="display:flex; align-items:center; gap:8px; margin-bottom:7px; flex-wrap:wrap;"><div id="alr-source-summary" style="font-size:.73rem; color:var(--text2); flex:1;"></div><select id="alr-source-filter" onchange="_alrSetSourceFilter(this.value)" style="padding:6px 8px; border:1px solid var(--border); border-radius:6px; background:var(--surface2); color:var(--text); font-size:.72rem;"><option value="all">선택 대상 전체</option><option value="matched">매칭됨만</option><option value="unmatched">매칭 없음만</option></select></div>
+                        <div style="display:flex; align-items:center; gap:8px; margin-bottom:7px; flex-wrap:wrap;"><div id="alr-source-summary" style="font-size:.73rem; color:var(--text2); flex:1;"></div><select id="alr-source-filter" onchange="_alrSetSourceFilter(this.value)" style="display:${isStyle ? 'none' : 'inline-block'}; padding:6px 8px; border:1px solid var(--border); border-radius:6px; background:var(--surface2); color:var(--text); font-size:.72rem;"><option value="all">선택 대상 전체</option><option value="matched">매칭됨만</option><option value="unmatched">매칭 없음만</option></select></div>
                         <div id="alr-tab-content" style="flex:1 1 0; overflow-y:auto; border:1px solid var(--border); border-radius:9px; padding:9px; min-height:300px;"></div>
                         <div style="display:flex; justify-content:space-between; align-items:center; margin-top:10px; gap:8px;"><div id="alr-exec-status" style="font-size:.72rem; color:var(--text2); flex:1;"></div><button onclick="_alrBackStep1()" style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:8px 16px; border-radius:6px; cursor:pointer;">뒤로</button><button onclick="_alrGoStep3()" style="background:#0D47A1; color:#fff; border:none; padding:8px 16px; border-radius:6px; cursor:pointer; font-weight:700;">다음: 변경 확인</button></div>
                     </div>
@@ -77971,6 +77996,15 @@
             const el = document.getElementById('alr-overview');
             if (!el || !_botAutoLoraState) return;
             const targets = _botAutoLoraState.targets;
+            if (_botAutoLoraState.profile === 'style') {
+                const configured = targets.filter(target => _alrTargetStatus(target, 'style').configured).length;
+                el.innerHTML = [
+                    _alrOverviewCard('전체 프로필 카드', targets.length),
+                    _alrOverviewCard('스타일 설정됨', configured, '#22c55e'),
+                    _alrOverviewCard('스타일 미설정', targets.length - configured, '#f59e0b'),
+                ].join('');
+                return;
+            }
             const counts = {};
             ['character', 'face'].forEach(profile => {
                 counts[profile] = targets.filter(target => _alrTargetStatus(target, profile).configured).length;
@@ -77988,7 +78022,7 @@
             const color = status.configured ? '#22c55e' : '#f59e0b';
             const background = status.configured ? 'rgba(34,197,94,.13)' : 'rgba(245,158,11,.12)';
             const title = status.configured ? `${status.names.join(', ')} · ${status.sources.join(', ')}` : '등록된 LoRA 없음';
-            const short = profile === 'face' ? '얼굴' : '캐릭터';
+            const short = profile === 'style' ? '스타일' : profile === 'face' ? '얼굴' : '캐릭터';
             return `<span title="${escAttr(title)}" style="padding:3px 6px; border:1px solid ${active ? color : 'var(--border)'}; border-radius:999px; background:${background}; color:${color}; font-size:.63rem; font-weight:${active ? '800' : '600'}; white-space:nowrap;">${short} ${status.configured ? status.count + '개' : '미설정'}</span>`;
         }
 
@@ -78045,7 +78079,7 @@
                 return `<label style="display:flex; gap:9px; padding:8px; border:1px solid ${checked ? 'var(--accent)' : 'var(--border)'}; border-radius:8px; background:${checked ? 'color-mix(in srgb,var(--accent) 9%,var(--surface2))' : 'var(--surface2)'}; cursor:pointer; box-sizing:border-box; min-width:0;">
                     <input type="checkbox" class="alr-char-check" data-target-key="${escAttr(target.key)}" ${checked} onchange="_alrToggleTarget(this.dataset.targetKey,this.checked)" style="width:17px; height:17px; cursor:pointer; flex-shrink:0; margin-top:2px;">
                     ${img}
-                    <div style="min-width:0; flex:1;"><div style="font-size:.77rem; font-weight:800; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${escAttr(target.name)}">${escHtml(target.name)}</div><div style="font-size:.67rem; color:var(--text2); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">[${target.visualCardIndex}] ${escHtml(target.visualCardLabel)}</div><div style="display:flex; gap:3px; flex-wrap:wrap; margin:6px 0 5px;">${_alrStatusPill('character', character, _botAutoLoraState.profile === 'character')}${_alrStatusPill('face', face, _botAutoLoraState.profile === 'face')}</div><div style="font-size:.63rem; color:${current.configured ? 'var(--text2)' : '#f59e0b'}; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escAttr(current.names.join(', '))}">${escHtml(names)}</div></div>
+                    <div style="min-width:0; flex:1;"><div style="font-size:.77rem; font-weight:800; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${escAttr(target.name)}">${escHtml(target.name)}</div><div style="font-size:.67rem; color:var(--text2); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">[${target.visualCardIndex}] ${escHtml(target.visualCardLabel)}</div><div style="display:flex; gap:3px; flex-wrap:wrap; margin:6px 0 5px;">${_botAutoLoraState.profile === 'style' ? _alrStatusPill('style', current, true) : _alrStatusPill('character', character, _botAutoLoraState.profile === 'character') + _alrStatusPill('face', face, _botAutoLoraState.profile === 'face')}</div><div style="font-size:.63rem; color:${current.configured ? 'var(--text2)' : '#f59e0b'}; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escAttr(current.names.join(', '))}">${escHtml(names)}</div></div>
                 </label>`;
             }).join('');
             _alrSyncCharCount();
@@ -78164,11 +78198,13 @@
             document.getElementById('alr-step1').style.display = 'none';
             document.getElementById('alr-step2').style.display = 'flex';
             document.getElementById('alr-step3').style.display = 'none';
-            document.getElementById('alr-step-label').textContent = '2/3 · 자동 매칭된 LoRA를 검토하고 적용 방식을 정하세요.';
+            document.getElementById('alr-step-label').textContent = _botAutoLoraState.profile === 'style'
+                ? '2/3 · 함께 적용할 스타일 LoRA 또는 인스턴스 LoRA를 선택하세요.'
+                : '2/3 · 자동 매칭된 LoRA를 검토하고 적용 방식을 정하세요.';
             document.getElementById('alr-selected-profile-label').textContent = _alrProfileLabel(_botAutoLoraState.profile);
             const status = document.getElementById('alr-exec-status');
             if (status) status.textContent = '';
-            switchAutoLoraTab('instance');
+            switchAutoLoraTab(_botAutoLoraState.profile === 'style' ? 'style' : 'instance');
         }
         function _alrBackStep1() {
             _botAutoLoraState.step = 1;
@@ -78221,6 +78257,13 @@
             const c = document.getElementById('alr-tab-content');
             if (!c || !_botAutoLoraState) return;
             const targets = _alrCheckedTargets();
+            if (_botAutoLoraState.profile === 'style') {
+                c.innerHTML = `<div style="font-size:.75rem; color:var(--text2); margin-bottom:10px;">선택한 ${targets.length}개 프로필 카드에 아래 LoRA를 같은 강도로 적용합니다.</div>
+                    <button id="alr-style-pick-btn" onclick="openBotCharStyleLoraPicker('', -1, loras => { _botAutoLoraState.styleLoras.push(...loras); _renderAutoLoraTab(); })" style="padding:8px 14px; border:1px dashed var(--accent); border-radius:7px; background:var(--surface2); color:var(--text); cursor:pointer;">+ 스타일 / 인스턴스 LoRA 선택</button>
+                    <div style="display:flex; flex-direction:column; gap:7px; margin-top:12px;">${_botAutoLoraState.styleLoras.map((lora, index) => `<div style="display:flex; align-items:center; gap:10px; padding:9px; border:1px solid var(--border); border-radius:7px; background:var(--surface2);">${lora.preview_url ? `<img src="${escAttr(lora.preview_url)}" loading="lazy" style="width:64px; height:64px; object-fit:contain; border-radius:5px;">` : ''}<div style="flex:1; min-width:0;"><b style="font-size:.78rem;">${escHtml(_alrLoraDisplayName(lora))}</b><div style="font-size:.68rem; color:var(--text2);">${lora.source === 'instance' ? '인스턴스' : '스타일'} · ${escHtml(lora.BASE || 'anima')} · ${escHtml(lora.trigger || '트리거 없음')}</div></div><button onclick="_botAutoLoraState.styleLoras.splice(${index}, 1); _renderAutoLoraTab()" style="border:1px solid var(--border); border-radius:5px; background:var(--surface); color:var(--error); padding:5px 8px; cursor:pointer;">제거</button></div>`).join('') || '<div style="font-size:.75rem; color:var(--text2); padding:16px 0;">일괄 적용할 LoRA를 선택하세요.</div>'}</div>`;
+                _alrUpdateSourceSummary();
+                return;
+            }
             if (_botAutoLoraState.tab === 'instance') _renderAutoLoraInstance(targets, c);
             else _renderAutoLoraBot(targets, c);
         }
@@ -78293,6 +78336,11 @@
         }
 
         function _alrCandidates(target) {
+            if (_botAutoLoraState?.profile === 'style') {
+                return _botAutoLoraState.styleLoras.map(lora => ({
+                    key: _alrBKey(target.key, lora.lora_path), lora,
+                }));
+            }
             return _botAutoLoraState?.tab === 'bot' ? _alrBotCandidates(target) : _alrInstanceCandidates(target);
         }
 
@@ -78317,6 +78365,10 @@
                 selected += candidates.filter(candidate => _alrLoraIsChecked(candidate.key)).length;
             });
             const unmatched = targets.length - matched;
+            if (_botAutoLoraState.profile === 'style') {
+                el.textContent = `대상 ${targets.length}개 카드 · 선택 LoRA ${_botAutoLoraState.styleLoras.length}개`;
+                return;
+            }
             el.innerHTML = `대상 <b style="color:var(--text)">${targets.length}</b> · 매칭됨 <b style="color:#22c55e">${matched}</b> · 매칭 없음 <b style="color:${unmatched ? '#f59e0b' : 'var(--text2)'}">${unmatched}</b> · 적용 후보 <b style="color:var(--text)">${selected}</b>`;
         }
 
@@ -78489,7 +78541,7 @@
                 removed: canApply ? removed : 0,
                 duplicates, canApply,
                 reason: availableCandidates.length === 0
-                    ? '자동 매칭 후보 없음'
+                    ? (profile === 'style' ? '선택한 스타일 LoRA 없음' : '자동 매칭 후보 없음')
                     : selectedCandidates.length === 0
                         ? '적용 후보가 모두 체크 해제됨'
                         : '이미 같은 LoRA가 설정됨',
@@ -78526,7 +78578,9 @@
             document.getElementById('alr-step1').style.display = 'none';
             document.getElementById('alr-step3').style.display = 'none';
             document.getElementById('alr-step2').style.display = 'flex';
-            document.getElementById('alr-step-label').textContent = '2/3 · 자동 매칭된 LoRA를 검토하고 적용 방식을 정하세요.';
+            document.getElementById('alr-step-label').textContent = _botAutoLoraState.profile === 'style'
+                ? '2/3 · 함께 적용할 스타일 LoRA 또는 인스턴스 LoRA를 선택하세요.'
+                : '2/3 · 자동 매칭된 LoRA를 검토하고 적용 방식을 정하세요.';
             _renderAutoLoraTab();
         }
 
@@ -78541,7 +78595,7 @@
             const actionable = plans.filter(plan => plan.canApply);
             const added = actionable.reduce((sum, plan) => sum + plan.added, 0);
             const removed = actionable.reduce((sum, plan) => sum + plan.removed, 0);
-            const sourceLabel = _botAutoLoraState.tab === 'bot' ? `봇 프로젝트 · ${_botAutoLoraState.botSelectedProject}` : '인스턴스 LoRA';
+            const sourceLabel = _botAutoLoraState.profile === 'style' ? '선택한 스타일 / 인스턴스 LoRA' : _botAutoLoraState.tab === 'bot' ? `봇 프로젝트 · ${_botAutoLoraState.botSelectedProject}` : '인스턴스 LoRA';
             const summary = document.getElementById('alr-review-summary');
             if (summary) summary.innerHTML = `<div style="display:flex;gap:7px;flex-wrap:wrap;align-items:center;padding:9px 11px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);font-size:.73rem;"><b>${escHtml(_alrProfileLabel(_botAutoLoraState.profile))}</b><span style="color:var(--text2);">${escHtml(sourceLabel)}</span><span style="margin-left:auto;">변경 <b style="color:#22c55e;">${actionable.length}</b> · 건너뜀 <b style="color:${plans.length - actionable.length ? '#f59e0b' : 'var(--text2)'};">${plans.length - actionable.length}</b> · 추가 ${added}${removed ? ` · 제거 ${removed}` : ''}</span></div>`;
             const list = document.getElementById('alr-review-list');
@@ -78564,7 +78618,7 @@
                 executeButton.disabled = actionable.length === 0 || _botAutoLoraState.executing || _botAutoLoraState.completed;
                 executeButton.style.opacity = executeButton.disabled ? '.45' : '1';
                 executeButton.style.cursor = executeButton.disabled ? 'not-allowed' : 'pointer';
-                executeButton.textContent = _botAutoLoraState.executing ? '세팅 저장 중…' : '확인 후 자동 세팅 실행';
+                executeButton.textContent = _botAutoLoraState.executing ? '세팅 저장 중…' : _botAutoLoraState.profile === 'style' ? '확인 후 스타일 일괄 세팅' : '확인 후 자동 세팅 실행';
             }
             const backButton = document.getElementById('alr-review-back-btn');
             if (backButton) backButton.disabled = _botAutoLoraState.executing;
@@ -78572,7 +78626,7 @@
             if (closeButton) closeButton.style.display = _botAutoLoraState.completed ? 'inline-block' : 'none';
             const status = document.getElementById('alr-review-status');
             if (status && !_botAutoLoraState.executing && !_botAutoLoraState.completed) {
-                status.textContent = actionable.length ? '매칭 후보가 없는 카드는 기존 설정을 유지하고 건너뜁니다.' : '실행 가능한 변경이 없습니다.';
+                status.textContent = actionable.length ? (_botAutoLoraState.profile === 'style' ? '선택한 카드의 스타일 LoRA 설정에 적용합니다.' : '매칭 후보가 없는 카드는 기존 설정을 유지하고 건너뜁니다.') : '실행 가능한 변경이 없습니다.';
                 status.style.color = actionable.length ? 'var(--text2)' : '#f59e0b';
             }
         }
@@ -78599,6 +78653,7 @@
             const status = document.getElementById('alr-review-status');
             const profile = _botAutoLoraState.profile;
             const isFace = profile === 'face';
+            const isStyle = profile === 'style';
             let totalAdded = 0;
             let totalRemoved = 0;
             let successCount = 0;
@@ -78625,14 +78680,17 @@
                     if (!_visualCardProfileById(target.name, target.visualCardId || '')) {
                         throw new Error(`프로필 카드 없음(${target.visualCardId || 'legacy'})`);
                     }
-                    if (isFace) {
+                    if (isStyle) {
+                        setBotCharStyleLoras(target.name, _alrCloneLoras(plan.after), target.visualCardId || '');
+                    } else if (isFace) {
                         setBotCharFaceLoras(target.name, _alrCloneLoras(plan.after), target.visualCardId || '');
                     } else {
                         setBotCharLoras(target.name, _alrCloneLoras(plan.after), target.visualCardId || '');
                     }
                     await _saveVisualCardState(target.name, {quiet:true});
                     if ((_visualCardProfile(target.name)?.id || '') === (target.visualCardId || '')) {
-                        if (isFace) renderBotCharFaceLoraList(charIdx, target.name, plan.after);
+                        if (isStyle) renderBotCharStyleLoraList(charIdx, target.name, plan.after);
+                        else if (isFace) renderBotCharFaceLoraList(charIdx, target.name, plan.after);
                         else renderBotCharLoraList(charIdx, target.name, plan.after);
                     }
                     successCount++;
@@ -78641,7 +78699,8 @@
                     _botAutoLoraState.executionResults[target.key] = {state: 'success', message: `저장 완료 · ${plan.added}개 추가${plan.removed ? ` / ${plan.removed}개 제거` : ''}`};
                 } catch (error) {
                     // 저장 실패 시 화면 메모리도 실행 전 상태로 되돌린다.
-                    if (isFace) setBotCharFaceLoras(target.name, _alrCloneLoras(plan.current), target.visualCardId || '');
+                    if (isStyle) setBotCharStyleLoras(target.name, _alrCloneLoras(plan.current), target.visualCardId || '');
+                    else if (isFace) setBotCharFaceLoras(target.name, _alrCloneLoras(plan.current), target.visualCardId || '');
                     else setBotCharLoras(target.name, _alrCloneLoras(plan.current), target.visualCardId || '');
                     failCount++;
                     console.error(`[BOT_AUTO_LORA] ${targetLabel} 세팅 실패:`, error);
@@ -78651,7 +78710,7 @@
             _botAutoLoraState.executing = false;
             _botAutoLoraState.completed = true;
             const skippedCount = plans.length - actionable.length;
-            const msg = `자동 세팅 완료 · 성공 ${successCount} / 실패 ${failCount} / 건너뜀 ${skippedCount} · LoRA ${totalAdded}개 추가${totalRemoved ? ` / ${totalRemoved}개 제거` : ''}`;
+            const msg = `${isStyle ? '스타일 일괄 세팅' : '자동 세팅'} 완료 · 성공 ${successCount} / 실패 ${failCount} / 건너뜀 ${skippedCount} · LoRA ${totalAdded}개 추가${totalRemoved ? ` / ${totalRemoved}개 제거` : ''}`;
             const statusBar = document.getElementById('bot-auto-lora-status');
             if (statusBar) { statusBar.style.display = 'block'; statusBar.textContent = msg; }
             _alrRenderReview();
@@ -82510,7 +82569,7 @@
                                 <button id="illust-call-tab-call1" class="illust-prompt-node-tab" type="button" role="tab" data-illust-call-tab="call1" aria-selected="false" aria-controls="illust-call-content-call1" onclick="switchIllustCallTab('call1')">OUTFIT</button>
                                 <button id="illust-call-tab-time_place" class="illust-prompt-node-tab" type="button" role="tab" data-illust-call-tab="time_place" aria-selected="false" aria-controls="illust-call-content-time_place" onclick="switchIllustCallTab('time_place')">TIME &amp; PLACE</button>
                                 <button id="illust-call-tab-call2_select" class="illust-prompt-node-tab" type="button" role="tab" data-illust-call-tab="call2_select" aria-selected="false" aria-controls="illust-call-content-call2_select" onclick="switchIllustCallTab('call2_select')">SLOT-SELECTER</button>
-                                <button id="illust-call-tab-call2_plan" class="illust-prompt-node-tab" type="button" role="tab" data-illust-call-tab="call2_plan" aria-selected="false" aria-controls="illust-call-content-call2_plan" onclick="switchIllustCallTab('call2_plan')">CALL2-PLAN</button>
+                                <button id="illust-call-tab-call2_plan" class="illust-prompt-node-tab" type="button" role="tab" data-illust-call-tab="call2_plan" aria-selected="false" aria-controls="illust-call-content-call2_plan" onclick="switchIllustCallTab('call2_plan')">PLAN</button>
                                 <button id="illust-call-tab-call2_detail" class="illust-prompt-node-tab" type="button" role="tab" data-illust-call-tab="call2_detail" aria-selected="false" aria-controls="illust-call-content-call2_detail" onclick="switchIllustCallTab('call2_detail')">DETAIL</button>
                                 <button id="illust-call-tab-call2_keyvis" class="illust-prompt-node-tab" type="button" role="tab" data-illust-call-tab="call2_keyvis" aria-selected="false" aria-controls="illust-call-content-call2_keyvis" onclick="switchIllustCallTab('call2_keyvis')">KEYVIS</button>
                                 <button id="illust-call-tab-call3" class="illust-prompt-node-tab" type="button" role="tab" data-illust-call-tab="call3" aria-selected="false" aria-controls="illust-call-content-call3" onclick="switchIllustCallTab('call3')">POST PROCESS</button>
@@ -83308,7 +83367,7 @@
                 key: 'pipeline', title: '파이프라인',
                 description: '출력 방식과 단계별 사용 여부를 설정합니다. OUTFIT·TIME & PLACE·PLAN은 독립적으로 끌 수 있으며, 생략한 판단은 원문을 받은 후속 LLM이 수행합니다.',
                 fields: [
-                    {key: 'illustration_output_mode', label: '출력 모드', type: 'select', help: '일반 삽화(OUTFIT/CALL2/POST PROCESS + Comfy), 원본 에셋(업로드 원본 선택), 또는 둘 다를 반환합니다. 원본 에셋 장수는 원본 에셋 출력 탭에서 설정합니다.', options: [{value: 'illustration', label: '일반 삽화'}, {value: 'original_asset', label: '원본 에셋'}, {value: 'both', label: '일반 삽화 + 원본 에셋'}], onchange: 'onIllustrationOutputModeChange(this)'},
+                    {key: 'illustration_output_mode', label: '출력 모드', type: 'select', help: '일반 삽화(OUTFIT/PLAN/DETAIL/POST PROCESS + Comfy), 원본 에셋(업로드 원본 선택), 또는 둘 다를 반환합니다. 원본 에셋 장수는 원본 에셋 출력 탭에서 설정합니다.', options: [{value: 'illustration', label: '일반 삽화'}, {value: 'original_asset', label: '원본 에셋'}, {value: 'both', label: '일반 삽화 + 원본 에셋'}], onchange: 'onIllustrationOutputModeChange(this)'},
                     {key: 'nsfw', label: 'NSFW 태깅', type: 'toggle', help: 'DETAIL과 KEYVIS에 성인 장면용 태깅 지침을 적용합니다. Manga 대사 모드의 버블 타입에도 함께 반영됩니다.'},
                     {key: 'outfit_enabled', label: 'OUTFIT 복장·헤어 추적', type: 'toggle', help: '켜면 복장·헤어를 미리 추적합니다. 끄면 원문·이전 문맥·프로필을 보고 후속 LLM이 현재 상태를 판단합니다.'},
                     {key: 'time_place_enabled', label: 'TIME & PLACE 시간·장소·조명 추적', type: 'toggle', help: '켜면 시간·장소·조명을 미리 추적하고 DETAIL이 해당 조건을 이어받습니다. 끄면 후속 LLM이 원문과 이전 문맥에서 판단합니다.'},
@@ -83365,7 +83424,7 @@
                     {
                         key: 'call2_parallel_slow_retry_enabled', label: '느리다고? 다시해!', type: 'toggle',
                         help: '일부 PLAN 배치만 뒤처질 때 같은 배치를 한 번 더 요청해 먼저 검증된 결과를 사용합니다.',
-                        tooltip: '설정한 N개 이하의 PLAN 배치만 남았을 때 진행률/TPS 조건을 평가합니다. 복제 요청도 CALL2 최대 동시 요청 수를 공유합니다. 배정된 장면의 anchor·인물·순서가 일치하는 결과를 사용하며 패배 요청은 취소합니다. 비스트리밍 LLM은 진행률과 TPS를 0으로 간주하며 중복 호출만큼 비용이 늘 수 있습니다.',
+                        tooltip: '설정한 N개 이하의 PLAN 배치만 남았을 때 진행률/TPS 조건을 평가합니다. 복제 요청도 PLAN 최대 동시 요청 수를 공유합니다. 배정된 장면의 anchor·인물·순서가 일치하는 결과를 사용하며 패배 요청은 취소합니다. 비스트리밍 LLM은 진행률과 TPS를 0으로 간주하며 중복 호출만큼 비용이 늘 수 있습니다.',
                         dependsOn: ['call2_plan_enabled', 'call2_parallel_enabled'], requiresMin: {key: 'call2_parallel_max_concurrency', value: 2}, lockToggle: true,
                     },
                     {key: 'call2_parallel_slow_retry_remaining', label: '재요청할 남은 개수 (N)', type: 'number', min: 1, max: 16, help: '실행 중인 PLAN 배치가 이 개수 이하로 남았을 때 느린 요청을 검사합니다.', dependsOn: ['call2_plan_enabled', 'call2_parallel_enabled', 'call2_parallel_slow_retry_enabled'], requiresMin: {key: 'call2_parallel_max_concurrency', value: 2}},
@@ -83407,7 +83466,7 @@
             },
             {
                 key: 'output', title: '최종 프롬프트',
-                description: 'CALL2/POST PROCESS 결과를 이미지 생성용 RAW 프롬프트로 조립하는 방식을 설정합니다.',
+                description: 'DETAIL/POST PROCESS 결과를 이미지 생성용 RAW 프롬프트로 조립하는 방식을 설정합니다.',
                 fields: [
                     {
                         key: 'prompt_format', label: '프롬프트 입력 형식', type: 'select', stacked: true,

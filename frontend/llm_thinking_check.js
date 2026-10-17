@@ -13,7 +13,7 @@
         const add = (slot, name, role) => {
             if (!validSlot(slot)) return;
             if (!assigned.has(slot)) assigned.set(slot, new Set());
-            assigned.get(slot).add(`${name} (${role})`);
+            assigned.get(slot).add(`${name.replaceAll('CALL2-SELECT', 'SLOT-SELECTER').replaceAll('CALL2-PLAN', 'PLAN').replaceAll('CALL2-DETAIL', 'DETAIL').replaceAll('CALL2-KEYVIS', 'KEYVIS').replaceAll('CALL3', 'POST PROCESS')} (${role})`);
         };
         for (const name of new Set(names)) {
             const [task] = getIllustrationPreviewTasks([name]);
@@ -91,7 +91,7 @@
                 color = 'green'; summary = 'Think 미사용 · 폴백 응답 확인';
             }
         }
-        return {color, summary, details: [name, summary, ...problems, ...details,
+        return {color, summary, details: [name.replaceAll('CALL2-SELECT', 'SLOT-SELECTER').replaceAll('CALL2-PLAN', 'PLAN').replaceAll('CALL2-DETAIL', 'DETAIL').replaceAll('CALL2-KEYVIS', 'KEYVIS').replaceAll('CALL3', 'POST PROCESS'), summary, ...problems, ...details,
             '추론 정보가 없는 검사 응답은 Think 미사용으로 취급합니다.'].join('\n\n')};
     }
 
@@ -141,7 +141,7 @@
             badge.dataset.thinkingHealth = health.color;
             badge.dataset.thinkingTooltip = health.details;
             badge.textContent = {red: '!', yellow: '!', green: '✓', gray: '?'}[health.color];
-            badge.setAttribute('aria-label', `${node.dataset.illustPreviewNode} · ${health.summary}`);
+            badge.setAttribute('aria-label', `${node.dataset.illustPreviewNode.replaceAll('CALL2-SELECT', 'SLOT-SELECTER').replaceAll('CALL2-PLAN', 'PLAN').replaceAll('CALL2-DETAIL', 'DETAIL').replaceAll('CALL2-KEYVIS', 'KEYVIS').replaceAll('CALL3', 'POST PROCESS')} · ${health.summary}`);
             if (tooltipOwner === badge) showTooltip(badge);
         }
     }
