@@ -82,6 +82,7 @@
     function selectStage(key, variantKey = '') {
         const definition = stages.find(item => item.key === key);
         if (!definition) { console.error('[ILLUST_STRUCTURE] 단계 없음:', key); return; }
+        variantKey = variantKey || definition.active_variant || definition.variants?.[0]?.key || '';
         const variant = definition.variants?.find(item => item.key === variantKey);
         const stage = {...definition, ...variant, key: definition.key};
         selectedKey = key;
@@ -91,6 +92,9 @@
         });
         const detail = root.querySelector('#illust-structure-detail');
         detail.replaceChildren(el('h3', '', stage.title), el('p', 'illust-structure-purpose', stage.purpose));
+        detail.append(el('p', 'illust-structure-activation', stage.enabled === false
+            ? '현재 설정: OFF · 이 단계는 실행하지 않습니다. 아래 내용은 참고용 구성입니다.'
+            : stage.enabled === true ? '현재 설정: ON' : '조건부 실행 · 실제 입력에 따라 결정됩니다.'));
         if (stage.condition) detail.append(el('p', 'illust-structure-condition', '실행 조건: ' + stage.condition));
         const formula = el('div', 'illust-structure-formula');
         formula.append(el('strong', '', stage.key === 'assemble' ? '출력 조립' : '시스템 조립'), recipe(stage.system_parts));
@@ -109,10 +113,11 @@
         if (stage.variants) {
             const label = el('label', 'illust-structure-variant', '지침 모드');
             const select = el('select'); select.setAttribute('aria-label', stage.key === 'call3' ? '대사 프롬프트 모드' : '마스크 예측 방식');
-            stage.variants.forEach(variant => {const option = el('option', '', variant.label); option.value = variant.key; select.append(option);});
+            stage.variants.forEach(variant => {const option = el('option', '', variant.label + (variant.key === definition.active_variant ? ' · 현재 설정' : ' · 비교용')); option.value = variant.key; select.append(option);});
             select.value = variantKey || stage.variants[0].key;
             select.onchange = () => selectStage(key, select.value);
             label.append(select); detail.append(label);
+            if (variantKey !== definition.active_variant) detail.append(el('p', 'illust-structure-hint', '다른 모드의 구성을 비교 중입니다. 실제 생성 설정은 변경되지 않습니다.'));
         }
         detail.append(messages); renderMessages(messages, stage);
         detail.append(output);
@@ -133,9 +138,12 @@
             group.keys.forEach(key => {
                 const stage = stages.find(item => item.key === key);
                 const node = el('button', 'illust-structure-node'); node.type = 'button'; node.dataset.key = key;
+                node.dataset.enabled = stage.enabled === true ? 'true' : stage.enabled === false ? 'false' : 'conditional';
+                node.classList.toggle('is-disabled', stage.enabled === false);
                 node.setAttribute('aria-controls', 'illust-structure-detail');
                 node.append(el('strong', '', stage.title));
-                if (stage.condition) node.append(el('span', 'illust-structure-condition', stage.condition));
+                node.append(el('span', 'illust-structure-activation', stage.enabled === true ? '현재 설정 ON' : stage.enabled === false ? '현재 설정 OFF' : '조건부 실행'));
+                if (stage.condition) node.append(el('span', 'illust-structure-condition', '실행 조건: ' + stage.condition));
                 node.title = '결과: ' + stage.outputs.map(label => '{' + label + '}').join(' · ');
                 node.onclick = () => selectStage(key); nodes.append(node);
             });
@@ -145,14 +153,23 @@
         const detail = el('section', 'illust-structure-detail'); detail.id = 'illust-structure-detail';
         content.append(overview, detail);
         selectStage(stages.some(stage => stage.key === selectedKey) ? selectedKey : stages[0].key);
-        status.textContent = '현재 조립 구조 · ' + stages.length + '단계 · 조건부 입력도 함께 표시';
+        status.textContent = '현재 설정 기준 · ' + stages.length + '단계 · OFF 단계와 조건부 지침은 참고용으로 함께 표시';
     }
     async function refresh() {
         if (!root) return;
         const version = ++refreshVersion;
         status.textContent = '현재 프롬프트 구성을 불러오는 중…';
         try {
-            const response = await fetch('/api/illustration_context/prompt-structure', {cache: 'no-store'});
+            const toggles = typeof _illustrationContextToggles === 'undefined' ? {} : {..._illustrationContextToggles};
+            document.getElementById('illust-tab-content-toggles')?.querySelectorAll('[data-illust-toggle]').forEach(control => {
+                const field = ILLUSTRATION_CONTEXT_TOGGLE_FIELDS.find(field => field.key === control.dataset.illustToggle);
+                const option = field?.options?.find(option => typeof option === 'object' && String(option.value) === control.value);
+                toggles[control.dataset.illustToggle] = control.type === 'checkbox' ? control.checked : (option?.value ?? control.value);
+            });
+            const response = await fetch('/api/illustration_context/prompt-structure', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({toggles}), cache: 'no-store',
+            });
             if (!response.ok) throw Error('구성 조회 실패 (HTTP ' + response.status + ')');
             const data = await response.json();
             if (version !== refreshVersion) return;
@@ -185,6 +202,9 @@
             #illust-assembled-inputs .illust-structure-nodes{display:grid;grid-template-rows:subgrid;grid-row:2 / -1;min-width:0}
             #illust-assembled-inputs .illust-structure-node{width:100%;min-width:0;display:flex;flex-direction:column;gap:4px;text-align:left;border:1px solid var(--border);border-radius:6px;padding:9px 10px;color:var(--text);background:var(--surface);cursor:pointer;font-size:.76rem;overflow-wrap:anywhere}
             #illust-assembled-inputs .illust-structure-node.active{border-color:#81baff;box-shadow:inset 3px 0 #81baff}
+            #illust-assembled-inputs .illust-structure-node.is-disabled{background:var(--surface2);border-style:dashed;color:var(--text2)}
+            #illust-assembled-inputs .illust-structure-activation{font-size:.74rem;font-weight:700;margin:2px 0;color:#81baff}
+            #illust-assembled-inputs .is-disabled .illust-structure-activation{color:var(--text2)}
             #illust-assembled-inputs .illust-structure-node:focus-visible{outline:2px solid #81baff;outline-offset:2px}
             #illust-assembled-inputs .illust-structure-node-result{font-size:.72rem;color:#a8ceff}
             #illust-assembled-inputs .illust-structure-condition{font-size:.72rem;color:var(--text2);margin:0}
@@ -211,6 +231,7 @@
             #illust-assembled-inputs .illust-input-role-help{margin:0;padding:7px 12px;font-size:.75rem;color:var(--text2)}
             #illust-assembled-inputs pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.7 ui-monospace,monospace;max-height:430px;overflow:auto;padding:12px;margin:0;background:var(--surface);color:var(--text)}
             #illust-assembled-inputs .illust-structure-variant{display:flex;align-items:center;gap:10px;margin:12px 0;font-size:.8rem}
+            #illust-assembled-inputs .illust-structure-variant select{flex:1;min-width:0;max-width:100%}
             #illust-assembled-inputs select{background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:5px;padding:6px}
             #illust-assembled-inputs .illust-input-error{color:#ff8585;overflow-wrap:anywhere}
             @media(max-width:1000px){#illust-assembled-inputs .illust-structure-flow{grid-template-columns:repeat(4,minmax(0,1fr))}#illust-assembled-inputs .illust-structure-lane::before{display:none}}

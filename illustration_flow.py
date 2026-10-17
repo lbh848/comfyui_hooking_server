@@ -53,7 +53,7 @@ def snapshot(run=None, *, kind="illustration"):
         return None
     return {key: copy.deepcopy(value) for key, value in run.items() if key not in {"nodes", "publish_pending", "_active_llm_tasks", "_frontier"}} | {
         "nodes": [{k: copy.deepcopy(v) for k, v in node.items()
-                   if k not in {"input", "input_variables", "output", "attempts", "_preview_image", "_preview_mask", "call1_state_table", "time_place_state_table"}} | {
+                   if k not in {"input", "input_variables", "output", "attempts", "_preview_image", "_preview_mask", "call1_state_table", "time_place_state_table", "profile_state_table"}} | {
                        "attempt_count": sum(event.get("type") == "attempt_start" for event in node.get("attempts", [])),
                    } for node in run["nodes"].values()]
     }
@@ -800,7 +800,7 @@ def record_state_table(table, *, label, field):
         return
     for node_id in _frontier.get():
         node = run["nodes"].get(node_id)
-        if node and (node["label"] == label or (label == "OUTFIT" and node["label"] == "CALL1")):
+        if node and (node["label"] in {label, label + "-REPAIR"} or (label == "OUTFIT" and node["label"] == "CALL1")):
             update(run, node_id, **{field: copy.deepcopy(table)})
             return
     print(f"[ILLUST_FLOW:{label}] 상태표를 연결할 노드 없음: frontier={_frontier.get()!r}")

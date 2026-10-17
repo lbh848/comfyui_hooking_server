@@ -128,6 +128,10 @@
             .if-auto-open-settings{padding:10px 22px;border-bottom:1px solid #64748b33}.if-auto-open-toggle{display:flex;align-items:center;gap:9px;width:fit-content;font-size:13px;cursor:pointer}.if-auto-open-toggle input{appearance:none;flex-shrink:0;width:34px;height:20px;margin:0;border:1px solid #64748b;border-radius:12px;background:#475569;cursor:pointer;position:relative}.if-auto-open-toggle input::after{content:'';position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:#e2e8f0;transition:transform .15s}.if-auto-open-toggle input:checked{background:#2563eb;border-color:#60a5fa}.if-auto-open-toggle input:checked::after{transform:translateX(14px)}.if-auto-open-toggle input:focus-visible{outline:3px solid #60a5fa;outline-offset:3px}.if-auto-open-state{font-size:12px;color:var(--text2,#94a3b8)}.if-auto-open-help{font-size:12px;color:var(--text2,#94a3b8);margin:5px 0 0;overflow-wrap:anywhere}
             .if-legend{padding:10px 22px;gap:18px;font-size:12px;border-bottom:1px solid #64748b33}.if-legend-group{gap:12px}.if-legend-label{color:var(--text2,#94a3b8);font-weight:650}.if-legend-status .if-legend-item::before{content:'●';color:var(--state);margin-right:5px}.if-legend-executor .if-legend-item::before{content:'';display:inline-block;width:13px;height:13px;border-radius:4px;background:color-mix(in srgb,var(--bg2,#172033) 68%,var(--node-tint) 32%);border:1px solid var(--node-tint);margin-right:6px;vertical-align:-2px}
             .if-viewport{height:min(65vh,660px);min-height:0;flex-shrink:1;overflow:auto;background-color:var(--bg,#0b1220);background-image:radial-gradient(#94a3b822 1px,transparent 1px);background-size:20px 20px;padding:0;position:relative}
+            .if-timeline{flex-shrink:0;padding:12px 22px;border-bottom:1px solid #64748b44}.if-timeline-heading{display:flex;justify-content:space-between;gap:12px;margin-bottom:10px;font-size:12px;color:var(--text2,#94a3b8)}.if-timeline-heading strong{color:var(--text,#e2e8f0);font-size:13px}.if-timeline-chart{display:grid;grid-template-columns:92px minmax(0,1fr);gap:8px 12px;align-items:center}
+            .if-time-label{font-size:12px;font-weight:650}.if-time-total{display:block;font-size:11px;font-weight:400;color:var(--text2,#94a3b8)}.if-time-track{position:relative;height:28px;border:1px solid #64748b44;border-radius:5px;background-color:#64748b0c;background-image:linear-gradient(to right,#64748b33 1px,transparent 1px);background-size:var(--tick-width,25%) 100%;overflow:hidden}.if-time-empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--text2,#94a3b8);font-size:11px}
+            .if-time-bar{position:absolute;top:4px;bottom:4px;min-width:2px;border-radius:3px;background:var(--time-color);opacity:.85;box-sizing:border-box}.if-time-bar[data-active=true]{opacity:1;box-shadow:inset -3px 0 0 #fff9}.if-time-bar:focus-visible{outline:2px solid var(--text,#fff);outline-offset:-2px}.if-time-axis{position:relative;height:16px;font-size:10px;color:var(--text2,#94a3b8)}.if-time-tick{position:absolute;top:0;transform:translateX(-50%);white-space:nowrap}.if-time-tick:first-child{transform:none}.if-time-tick:last-child{transform:translateX(-100%)}
+            @media(max-width:650px){.if-timeline{padding:10px 14px}.if-timeline-chart{grid-template-columns:72px minmax(0,1fr);column-gap:8px}.if-timeline-heading{font-size:10px;gap:6px}.if-time-axis{font-size:9px}}
             .if-space{position:relative}.if-canvas{position:relative;transform-origin:0 0}.if-edges{position:absolute;inset:0;overflow:visible;pointer-events:none}
             .if-direction{position:absolute;left:36px;top:12px;color:var(--text2,#94a3b8);font-size:12px}.if-step-column{position:absolute;top:44px;box-sizing:border-box;width:246px;border:1px solid #64748b33;border-radius:10px;background:#64748b06;pointer-events:none}.if-step-title{padding:8px 12px;border-bottom:1px solid #64748b33;color:var(--text2,#94a3b8);font-size:12px;font-weight:750}
             .if-node{position:absolute;box-sizing:border-box;width:222px;height:98px;border:1px solid #64748b77;border-left:4px solid var(--state);border-radius:11px;background:color-mix(in srgb,var(--bg2,#172033) 68%,var(--node-tint,#94a3b8) 32%);padding:12px 22px 10px 13px;box-shadow:0 4px 15px #0002}
@@ -236,7 +240,25 @@
         legend.append(statusLegend, executorLegend);
         const viewport = element('div', 'if-viewport'); viewport.id = 'if-flow-panel';
         viewport.setAttribute('role', 'tabpanel'); viewport.tabIndex = 0;
-        modal.append(header, tabs, autoOpenSettings, legend, viewport, element('footer', 'if-footer', '출력 ●을 클릭하면 상세 내용을 볼 수 있습니다. 생성 이미지 전체 품질 검사 노드의 주황색 출력 ●에서는 모든 이미지를 한 화면에서 평가할 수 있습니다.'));
+        const timeline = element('section', 'if-timeline'); timeline.hidden = true;
+        timeline.setAttribute('aria-label', '모델 추론과 GPU 생성의 공통 시간축');
+        const timelineHeading = element('div', 'if-timeline-heading');
+        timelineHeading.append(element('strong', '', '실행 시간'), element('span', 'if-timeline-elapsed'));
+        const timelineChart = element('div', 'if-timeline-chart');
+        for (const [executor, label] of [['llm', '모델 추론'], ['comfy', 'GPU 생성']]) {
+            const name = element('div', 'if-time-label', label);
+            name.append(element('span', 'if-time-total'));
+            const track = element('div', 'if-time-track'); track.dataset.executor = executor;
+            track.style.setProperty('--time-color', executorColors[executor]);
+            track.setAttribute('role', 'group'); track.setAttribute('aria-label', label);
+            track.append(element('span', 'if-time-empty', '실행 전'));
+            timelineChart.append(name, track);
+        }
+        const axisLabel = element('span', 'if-time-total', '경과 시간');
+        timelineChart.append(axisLabel, element('div', 'if-time-axis'));
+        timeline.title = '요청 시작을 0초로 두고 두 줄에 같은 시간축을 사용합니다. 빈 구간은 실행 기록이 없는 시간이며, 병렬 실행이 겹친 구간은 한 번만 표시합니다. 모델 추론은 LLM 호출 경과(추론·응답·재시도 포함), GPU 생성은 기록된 Comfy 실행 구간입니다.';
+        timeline.append(timelineHeading, timelineChart);
+        modal.append(header, tabs, autoOpenSettings, timeline, legend, viewport, element('footer', 'if-footer', '출력 ●을 클릭하면 상세 내용을 볼 수 있습니다. 생성 이미지 전체 품질 검사 노드의 주황색 출력 ●에서는 모든 이미지를 한 화면에서 평가할 수 있습니다.'));
         modal.addEventListener('close', () => {
             hideTooltip();
             if (developerModal?.open) developerModal.close();
@@ -250,6 +272,7 @@
             rehomeToast();
             clearInterval(ticker);
             ticker = setInterval(() => {
+                render(true);
                 const nodes = new Map((flow?.nodes || []).map(n => [n.id, n]));
                 modal.querySelectorAll('.if-node').forEach(card => {
                     const n = nodes.get(card.dataset.nodeId);
@@ -901,9 +924,78 @@
             n.mask_url, Object.hasOwn(n, 'mask_url'), mask?.id, result, n.image_nodes,
             img?.naturalWidth, img?.naturalHeight, img?.dataset.failed]);
     }
-    function render() {
+    function render(timelineOnly = false) {
         updateStopButton();
         if (!modal?.open) return;
+        const timeline = modal.querySelector('.if-timeline');
+        timeline.hidden = activeTab !== 'illustration' || !flow;
+        if (!timeline.hidden) {
+            const nodes = flow.nodes || [];
+            const origin = flow.created_at;
+            const live = ['waiting', 'processing', 'cancelling'].includes(flow.status)
+                || nodes.some(n => ['waiting', 'processing', 'cancelling'].includes(n.status)
+                    && Number.isFinite(n.started_at) && !Number.isFinite(n.ended_at));
+            const end = Math.max(origin, flow.updated_at || origin,
+                ...nodes.map(n => Number.isFinite(n.ended_at) ? n.ended_at : origin),
+                live ? Date.now() / 1000 : origin);
+            const duration = Math.max(0, end - origin);
+            // Keep subsecond startup delays near the left edge instead of zooming
+            // the first second to fill the chart and sliding both ends on each update.
+            const range = Math.max(60, duration);
+            const desiredStep = range / 5;
+            const magnitude = 10 ** Math.floor(Math.log10(desiredStep));
+            const step = [1, 2, 5, 10].find(value => value * magnitude >= desiredStep) * magnitude;
+            const ticks = Math.ceil(range / step);
+            const span = ticks * step;
+            updateText(timeline.querySelector('.if-timeline-elapsed'), `요청 시작 0초 · ${live ? '진행' : '종료'} ${duration.toFixed(1)}초`);
+            const axis = timeline.querySelector('.if-time-axis');
+            for (let index = 0; index <= ticks; index += 1) {
+                const tick = axis.children[index] || element('span', 'if-time-tick');
+                if (!tick.parentNode) axis.append(tick);
+                tick.style.left = `${index / ticks * 100}%`;
+                updateText(tick, `${(index * step).toLocaleString('ko-KR', {maximumFractionDigits: 1})}초`);
+            }
+            while (axis.children.length > ticks + 1) axis.lastElementChild.remove();
+            for (const track of timeline.querySelectorAll('.if-time-track')) {
+                const executor = track.dataset.executor;
+                // Union intervals on one row; parallel work never creates extra rows or double-counts time.
+                const intervals = nodes.filter(n => nodeExecutor(n) === executor && Number.isFinite(n.started_at))
+                    .map(n => ({start: Math.max(origin, n.started_at),
+                        end: Number.isFinite(n.ended_at) ? n.ended_at
+                            : ['waiting', 'processing', 'cancelling'].includes(n.status) ? end
+                            : n.last_event_at || flow.updated_at || n.started_at,
+                        active: !Number.isFinite(n.ended_at) && ['waiting', 'processing', 'cancelling'].includes(n.status),
+                    })).filter(interval => interval.end >= interval.start)
+                    .sort((a, b) => a.start - b.start || a.end - b.end);
+                const segments = [];
+                for (const interval of intervals) {
+                    const previous = segments[segments.length - 1];
+                    if (previous && interval.start <= previous.end) {
+                        previous.end = Math.max(previous.end, interval.end);
+                        previous.active ||= interval.active;
+                    } else segments.push({...interval});
+                }
+                track.style.setProperty('--tick-width', `${100 / ticks}%`);
+                const total = segments.reduce((seconds, segment) => seconds + segment.end - segment.start, 0);
+                updateText(track.previousElementSibling.querySelector('.if-time-total'), `${total.toFixed(1)}초`);
+                const empty = track.querySelector('.if-time-empty');
+                empty.hidden = segments.length > 0;
+                updateText(empty, live ? '실행 전' : '실행 기록 없음');
+                const bars = new Map([...track.querySelectorAll('.if-time-bar')].map(bar => [bar.dataset.start, bar]));
+                for (const segment of segments) {
+                    const key = String(segment.start);
+                    const bar = bars.get(key) || element('span', 'if-time-bar');
+                    if (!bar.parentNode) {bar.tabIndex = 0; bar.setAttribute('role', 'img'); track.append(bar);}
+                    bars.delete(key); bar.dataset.start = key; bar.dataset.active = String(segment.active);
+                    bar.style.left = `${(segment.start - origin) / span * 100}%`;
+                    bar.style.width = `${(segment.end - segment.start) / span * 100}%`;
+                    bar.title = `${executor === 'llm' ? '모델 추론' : 'GPU 생성'} · ${(segment.start - origin).toFixed(1)}–${(segment.end - origin).toFixed(1)}초 · ${(segment.end - segment.start).toFixed(1)}초${segment.active ? ' · 진행 중' : ''}`;
+                    bar.setAttribute('aria-label', bar.title);
+                }
+                bars.forEach(bar => bar.remove());
+            }
+        }
+        if (timelineOnly) return;
         const viewport = modal.querySelector('.if-viewport');
         modal.querySelectorAll('.if-tab').forEach(tab => {
             const active = tab.dataset.tab === activeTab;
@@ -1014,7 +1106,7 @@
                 preview.remove(); card.style.height = ''; delete card.dataset.previewKind;
             }
             let title = card.querySelector('.if-node-title');
-            const hasStateTable = ['OUTFIT', 'CALL1', 'TIME & PLACE'].includes(n.label);
+            const hasStateTable = ['OUTFIT', 'CALL1', 'TIME & PLACE', 'PROFILE-RESOLVE', 'PROFILE-RESOLVE-REPAIR'].includes(n.label);
             if (title.tagName !== (hasStateTable ? 'BUTTON' : 'DIV')) {
                 const nextTitle = hasStateTable ? button(n.label, () => openDetail(n.id)) : element('div');
                 title.replaceWith(nextTitle); title = nextTitle;
@@ -1234,29 +1326,33 @@
                 loading.style.color = n.status === 'processing' || n.status === 'waiting' ? '' : '#fecdd3';
             });
     }
+    window.appendIllustrationTrackedStateTable = appendTrackedStateTable;
     function appendTrackedStateTable(n, body) {
+        const profile = !!n.profile_state_table;
         const timePlace = !!n.time_place_state_table;
-        const data = timePlace ? n.time_place_state_table : n.call1_state_table;
+        const data = profile ? n.profile_state_table : timePlace ? n.time_place_state_table : n.call1_state_table;
         if (!data) return;
-        const title = timePlace ? 'TIME & PLACE 시간표' : '복장·헤어 시간표';
-        const fields = timePlace ? [['time', 'TIME'], ['place', 'PLACE'], ['lighting', 'LIGHTING']] : [['outfit', '복장'], ['hair', '헤어']];
-        body.append(element('h3', '', title), element('p', 'if-subtitle', `왼쪽에서 오른쪽으로 상태를 이어받습니다. 파란색은 ${timePlace ? 'TIME & PLACE' : 'OUTFIT'}가 직접 출력한 값이고, 회색은 앞 SLOT에서 이어받은 값입니다. 각 항목은 새 값이 나오는 지점부터 독립적으로 바뀝니다.`));
+        const title = profile ? 'PROFILE-RESOLVE 프로필 시간표' : timePlace ? 'TIME & PLACE 시간표' : '복장·헤어 시간표';
+        const fields = profile ? [['profile', '적용 카드 ID'], ['reason', '판단 근거']] : timePlace ? [['time', 'TIME'], ['place', 'PLACE'], ['lighting', 'LIGHTING']] : [['outfit', '복장'], ['hair', '헤어']];
+        body.append(element('h3', '', title), element('p', 'if-subtitle', profile
+            ? '파란색은 확정된 시작·변경점이고, 회색은 앞선 프로필과 근거를 이어받은 값입니다. START는 첫 등장 시의 상태이며, 이후 C 칸은 해당 원문 구간이 끝난 시점의 상태입니다. 등장 이전 구간의 출현을 뜻하지 않습니다.'
+            : `왼쪽에서 오른쪽으로 상태를 이어받습니다. 파란색은 ${timePlace ? 'TIME & PLACE' : 'OUTFIT'}가 직접 출력한 값이고, 회색은 앞 SLOT에서 이어받은 값입니다. 각 항목은 새 값이 나오는 지점부터 독립적으로 바뀝니다.`));
         const wrap = element('div', 'if-state-table-wrap'), table = element('table', 'if-state-table');
-        wrap.dataset.detailScrollKey = timePlace ? 'time-place-state-table' : 'call1-state-table';
-        table.setAttribute('aria-label', timePlace ? 'TIME & PLACE 슬롯별 시간·장소·조명 상태' : 'OUTFIT 슬롯별 복장·헤어 상태');
+        wrap.dataset.detailScrollKey = profile ? 'profile-state-table' : timePlace ? 'time-place-state-table' : 'call1-state-table';
+        table.setAttribute('aria-label', profile ? 'PROFILE-RESOLVE 구간별 프로필·판단 근거' : timePlace ? 'TIME & PLACE 슬롯별 시간·장소·조명 상태' : 'OUTFIT 슬롯별 복장·헤어 상태');
         const head = element('thead'), header = element('tr'), corner = element('th', '', '인물'); corner.scope = 'col'; header.append(corner);
-        data.slots.forEach(slot => {const th = element('th', '', `SLOT${slot}`); th.scope = 'col'; header.append(th);});
+        data.slots.forEach(slot => {const th = element('th', '', typeof slot === 'number' ? `SLOT${slot}` : slot); th.scope = 'col'; header.append(th);});
         head.append(header); table.append(head);
         const rows = element('tbody');
         data.characters.forEach(name => {
             const row = element('tr'), label = element('th', '', name); label.scope = 'row'; row.append(label);
             data.slots.forEach(slot => {
-                const key = `SLOT${slot}`, cell = element('td');
+                const key = typeof slot === 'number' ? `SLOT${slot}` : slot, cell = element('td');
                 const state = data.states[key][name], changes = data.changes[key]?.[name] || {};
                 fields.forEach(([field, caption]) => {
                     const direct = Object.hasOwn(changes, field), section = element('div', `if-state-tags ${direct ? 'if-state-direct' : 'if-state-inherited'}`);
                     section.dataset.field = field; section.dataset.source = direct ? 'direct' : 'inherited';
-                    section.append(element('div', 'if-state-tag-label', `${caption} · ${direct ? '직접' : '이어받음'}`), element('div', '', state[field] || (timePlace ? '(정보 없음)' : '(태그 없음)'))); cell.append(section);
+                    section.append(element('div', 'if-state-tag-label', `${caption} · ${direct ? (profile ? '판정' : '직접') : '이어받음'}`), element('div', '', state[field] || (profile || timePlace ? '(정보 없음)' : '(태그 없음)'))); cell.append(section);
                 });
                 row.append(cell);
             });
@@ -1264,7 +1360,6 @@
         });
         table.append(rows); wrap.append(table); body.append(wrap);
     }
-
     function detailText(text, key) {
         const pre = element('pre', '', text);
         pre.dataset.detailScrollKey = key;

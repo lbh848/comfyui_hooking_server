@@ -51,26 +51,27 @@ def time_place_messages(prompts, names, prior_state, past_text, segmented,
          + variable(blank_state_table(names, anchors), "빈 시간·장소 시간표")},
     ]
 
-def selection_messages(prompts, role_context, names, single_names, scene_count, toggles, prior_status, plan_profiles, past_text, segment_catalog):
+def selection_messages(prompts, role_context, names, single_names, scene_count, toggles, prior_status, past_text, segment_catalog):
     return [
         {"role": "system", "content": role_context + "\n\n" + prompts["call2_select"]},
-        {"role": "user", "content": "# CURRENT CANONICAL NAMES\n" + variable(json.dumps(names, ensure_ascii=False), "현재 대화의 등록 인물")
-         + ("\n# SINGLE SUBJECTS\n" + variable(json.dumps(single_names, ensure_ascii=False), "싱글 프리셋 인물 후보(LoRA 우선)") if single_names is not None else "")
+        {"role": "user", "content": "# SCENE SELECTION WITH CURRENT PARTICIPATION\n"
+         "Use the CURRENT participants you resolve from the registered roster for scene_plan.characters. "
+         "Keep every registered CURRENT participant in the top-level characters, including those not selected for an image.\n"
+         + ("\n# SINGLE SUBJECTS\n" + variable(single_names, "싱글 프리셋 인물 후보(LoRA 우선)") if single_names is not None else "")
          + "\n\n# REQUESTED COUNT / CHARACTER LIMIT\n" + variable(scene_count, "요청 장면 수 설정")
          + "\nMaximum fully visible characters per image: " + variable(toggles['character_limit'], "인물 수 제한") + "."
          + ("\nClient focus: " + variable(toggles["focus"], "사용자 집중 대상") if str(toggles.get("focus") or "").strip() else "")
          + ("\nClient direction: " + variable(toggles["direction"], "사용자 연출 지시") if str(toggles.get("direction") or "").strip() else "")
          + "\n\n# PREVIOUS SAVED OUTFIT AND HAIRSTYLE (BEFORE CURRENT; READ-ONLY)\n"
          + variable(json.dumps(prior_status, ensure_ascii=False), "이전 저장 상태")
-         + "\n\n# SELECTED PROFILE TIMELINE FOR CURRENT NAMES (READ-ONLY)\n" + variable(json.dumps(plan_profiles, ensure_ascii=False), "선택된 프로필 타임라인")
          + "\n\n# BOUNDED EARLIER CONTEXT (FACTS ONLY, NO NEW SCENE CANDIDATES)\n"
          + variable(past_text or "(none)", "과거 대화")
-         + "\n\n# FULL CURRENT CANDIDATE SEGMENTS (ANCHORS ONLY; NO SLOTS)\n" + variable(segment_catalog, "현재 장면 후보 원문")
-         + "\n\nReturn only {\"scene_plan\":[{\"anchor_segment\":\"C001\",\"characters\":[\"canonical name\"]}]}. Output anchors and names only; PLAN chooses the concrete instant and writes scene_brief."},
+         + ("\n\n# FULL CURRENT CANDIDATE SEGMENTS (ANCHORS ONLY; NO SLOTS)\n" + variable(segment_catalog, "현재 장면 후보 원문") if segment_catalog else "")
+         + "\n\nAdd scene_plan to the character-resolution response. Each item has anchor_segment, characters and a short scene_brief stating the selection intent."},
     ]
 
 def plan_messages(prompts, role_context, batch, batch_names, single_names, tracking, plan_profiles, past_text, segmented, toggles,
-                  *, segment_slots=None, time_place=None, prior_status=None, prior_time_place=None):
+                  *, segment_slots=None, time_place=None, prior_status=None, prior_time_place=None, registered_names=None):
     anchors = {f"SLOT{slot}": anchor for anchor, slot in (segment_slots or {}).items()}
     return [
         {"role": "system", "content": role_context + "\n\n" + prompts["call2_plan"]},
@@ -100,16 +101,22 @@ def plan_messages(prompts, role_context, batch, batch_names, single_names, track
          + variable(past_text or "(none)", "과거 대화")
          + "\n\n# FULL CURRENT SOURCE SEGMENTS (REFERENCE ONLY; DO NOT RESELECT)\n"
          + variable(segmented, "현재 원문과 구간")
+         + ("\n\n# CURRENT REGISTERED PARTICIPANTS (IDENTITY REFERENCE; NOT ADDITIONAL CAST)\n"
+            + variable(json.dumps(registered_names, ensure_ascii=False), "현재 등록 인물 구분")
+            if registered_names is not None else "")
+         + "\n\nMaximum separately depicted people per image, including NPCs: "
+         + variable(toggles.get("character_limit", 3), "인물 수 제한") + "."
          + ("\n\nClient focus: " + variable(toggles["focus"], "사용자 집중 대상") if str(toggles.get("focus") or "").strip() else "")
          + ("\nClient direction: " + variable(toggles["direction"], "사용자 연출 지시") if str(toggles.get("direction") or "").strip() else "")
-         + "\n\nChoose one source-supported visible instant within each assigned anchor and write its complete grounded scene_brief. "
-         + "Keep every assigned anchor_segment and characters array in the same order, and make the brief's visible cast match that array. "
+         + "\n\nExpand each supplied scene_brief into a complete grounded visual brief, preserving its selection intent. "
+         + "Keep every assigned anchor_segment and registered characters array in the same order. "
+         + "Describe any source-grounded NPC and its policy-permitted visibility in scene_brief, not that array. "
          + "Return only {\"scene_plan\":[{\"anchor_segment\":\"C001\",\"characters\":[\"canonical name\"],\"scene_brief\":\"complete visual brief\"}]}."},
     ]
 
 def detail_messages(detail_system, batch, slots, *, past_text="", segmented="", toggles=None,
                     prior_status=None, prior_time_place=None, mask_inline=False,
-                    mask_prompt="", canvas_sizes=None, keyvis_messages=None):
+                    mask_prompt="", canvas_sizes=None, keyvis_messages=None, registered_names=None):
     prepared = [{"slot": scene["anchor_segment"] if "anchor_segment" in scene else scene["slot"],
                  **{key: value for key, value in scene.items() if key not in {"slot", "anchor_segment"}}}
                 for scene in batch]
@@ -162,6 +169,11 @@ def detail_messages(detail_system, batch, slots, *, past_text="", segmented="", 
             + variable(past_text, "과거 대화") if past_text else "")
          + ("\n\n# FULL CURRENT SOURCE SEGMENTS (REFERENCE ONLY; ASSIGNED ANCHORS FIXED)\n"
             + variable(segmented, "현재 원문과 구간") if segmented else "")
+         + ("\n\n# CURRENT REGISTERED PARTICIPANTS (IDENTITY REFERENCE; NOT ADDITIONAL CAST)\n"
+            + variable(json.dumps(registered_names, ensure_ascii=False), "현재 등록 인물 구분")
+            if registered_names is not None else "")
+         + "\n\nMaximum separately depicted people per image, including NPCs: "
+         + variable((toggles or {}).get("character_limit", 3), "인물 수 제한") + "."
          + ("\n\nClient focus: " + variable(toggles["focus"], "사용자 집중 대상")
             if toggles and str(toggles.get("focus") or "").strip() else "")
          + ("\nClient direction: " + variable(toggles["direction"], "사용자 연출 지시")
@@ -198,7 +210,7 @@ def role_context(protected, lb_extra_system_prompt):
     return prompt_join("\n\n", (part for part in (protected,
         lb_extra_system_prompt_block(lb_extra_system_prompt) if lb_extra_system_prompt else "",) if part))
 
-def resolution_messages(profile_inference_enabled, selected_names, tracked_state, catalog, segmented_current, card_identity_context, persona_context, profile_system):
+def resolution_messages(profile_inference_enabled, selected_names, tracked_state, catalog, segmented_current, card_identity_context, persona_context, profile_system, *, selection=None, anchors=None):
     if profile_inference_enabled:
         user_content = (
             "# TARGET CURRENT MULTI-PROFILE CHARACTER\n"
@@ -209,14 +221,21 @@ def resolution_messages(profile_inference_enabled, selected_names, tracked_state
             + variable(catalog or "(none)", "등록 프로필 목록")
             + "\n\n# FULL CURRENT CONTEXT SEGMENTS\n"
             + variable(segmented_current, "현재 원문과 구간")
+            + "\n\n# EMPTY CHARACTER BY TIME TABLE (LEFT TO RIGHT; INPUT ONLY)\n"
+            + variable(blank_state_table(selected_names, ["START", *(anchors or [])]), "빈 프로필 시간표")
         )
     else:
         user_content = (
             "# COMPLETE REGISTERED CHARACTER ROSTER\n"
             + variable(json.dumps(selected_names, ensure_ascii=False), "등록 캐릭터 목록")
             + ("\n\n" + variable(card_identity_context, "캐릭터 카드 정체성 자료") if card_identity_context else "")
+            + ("\n\n" + selection[1]["content"] if selection else "")
             + "\n\n# FULL CURRENT CONTEXT SEGMENTS\n"
             + variable(segmented_current, "현재 원문과 구간")
+            + ("\n\n# SELECTABLE CURRENT ANCHORS\n"
+               + variable(json.dumps(anchors, ensure_ascii=False), "선택 가능한 CURRENT 앵커")
+               + "\nChoose the requested number of distinct anchors from this complete list."
+               if selection and anchors is not None else "")
             + "\n\n# FINAL CANONICAL NAME OUTPUT AUTHORITY\n"
             "The preceding CURRENT narrative is the only participation and identity "
             "evidence. Its name spellings, aliases, titles, and localized forms are never "
@@ -226,15 +245,17 @@ def resolution_messages(profile_inference_enabled, selected_names, tracked_state
             + variable(json.dumps(selected_names, ensure_ascii=False), "출력 가능한 등록 이름")
             + "\nBefore returning, compare every characters[].name against that list. "
             "If a value is not an exact member, replace it with the exact registered name "
-            "when identity is established; otherwise omit the item and add an uncertainty. "
+            "when identity is established; otherwise omit the item. "
             "Return only this JSON shape:\n"
             '{"characters":[{"name":"exact registered name from the list above"'
-            '}],"uncertainties":[]}'
+            '}]'
+            + (',"scene_plan":[{"anchor_segment":"C001","characters":["exact registered name"],"scene_brief":"short selection intent"}]}'
+               if selection else '}')
         )
     if persona_context:
         user_content = variable(persona_context, "등록 사용자 페르소나") + "\n\n" + user_content
     return [
-        {"role": "system", "content": str(profile_system or "").strip()},
+        {"role": "system", "content": prompt_join("\n\n", [selection[0]["content"], profile_system]) if selection else str(profile_system or "").strip()},
         {"role": "user", "content": user_content},
     ]
 
@@ -386,7 +407,7 @@ def mask_messages(system_prompt, scene_payload, *, mask_inline=False, generation
         mask = re.sub(r"(?m)^The scene and every character prompt are already defined[^\n]*", "", mask)
         mask = re.sub(r"(?m)^Read the full camera[^\n]*", "Read the complete assigned context, resolved profiles, tracked state and visual brief. Decide the visible bodies and their physical relations together with the final image text; never infer geometry from an isolated word.", mask)
         mask = re.sub(r"(?m)^Return exactly one JSON object[^\n]*", "", mask)
-        mask = re.sub(r"(?m)^- Emit exactly one region for every input character[^\n]*", "- Emit exactly one region for every named identity selected for the image under the generation task, and no other identities. Copy each canonical name exactly.", mask)
+        mask = re.sub(r"(?m)^- Emit exactly one region for every input character[^\n]*", "- Emit exactly one region for each independently depicted participant selected under the generation task, including any NPC that task permits. Preserve assigned registered names and their order, then append NPC role labels. An anonymous fragment receives no region.", mask)
         mask = re.sub(r"(?m)^- Do not output `character_prompt`[^\n]*", "- Each region's `character_prompt` contains that named person's final visible identity, current wardrobe or coverage, pose, action, expression and gaze. Do not output logical outfit records.", mask)
         mask = mask.replace("Use the validated character data only to infer spatial geometry.",
                             "Keep named character identity and wardrobe only in that region's `character_prompt`.")
@@ -406,12 +427,12 @@ def mask_messages(system_prompt, scene_payload, *, mask_inline=False, generation
             "INTEGRATED IMAGE TEXT AND REGIONS\nWrite the final image prompt and predict its body regions in this same response. The following shared fields and region fields are the complete output contract.",
             mask.strip(),
             "FIELD OWNERSHIP\n`background_prompt` owns shared camera, framing, environment including static shared objects, time and lighting. `composition_prompt` owns placement, visible extent, body support, action, contact, occlusion and any permitted anonymous fragment. `regions[].character_prompt` owns only its named character's visible identity, current wardrobe or coverage and main pose/action. Describe each fact once in its owning field. An anonymous fragment has no region or identity of its own."
-            + ("" if keyvis else " For a source-supported image with no named visible subject, return an empty regions array and describe its composition without inventing a person."),
+            + ("" if keyvis else " For a source-supported image with no independently depicted person, return an empty regions array and describe its composition without inventing a person."),
             ("CANVAS\n" + variable(json.dumps(canvas_sizes, ensure_ascii=False), "인물 수별 실제 캔버스 크기")
-             + "\nUse solo for one named identity and group for two or three. Each pair is [width, height] in pixels; normalize horizontal bounds by width and vertical bounds by height." if canvas_sizes else ""),
+             + "\nUse the solo canvas for one independently depicted person and the group canvas for two or three, including NPCs. Each pair is [width, height] in pixels; normalize horizontal bounds by width and vertical bounds by height." if canvas_sizes else ""),
             ("CLIENT POSITIVE NOTE\n" + variable(positive_note, "추가 긍정 프롬프트")
              + "\nUse this supplied context when planning the geometry; the renderer appends this note separately." if positive_note else ""),
-            "OUTPUT\nUse English for image-prompt content and preserve exact canonical names. Return only one JSON object in this shape (number means a finite JSON number derived from the chosen composition):\n" + shape,
+            "OUTPUT\nUse English for image-prompt content, preserve exact registered canonical names and use role labels for any NPCs permitted by the generation task. Return only one JSON object in this shape (number means a finite JSON number derived from the chosen composition):\n" + shape,
         ) if part))
     return [{
         "role": "system",

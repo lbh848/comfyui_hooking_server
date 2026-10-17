@@ -620,7 +620,7 @@ def resolve_visual_base(
     if profile is None:
         fallback_id = _clean_text(character_profiles.get("default_visual_profile_id"))
         print(
-            f"[CHARACTER_CARD] 카드 ID를 찾지 못해 [1] 사용: "
+            f"[CHARACTER_CARD] 카드 ID를 찾지 못해 등록 기본 카드 사용: "
             f"character={character_profiles.get('name')!r}, requested={profile_id!r}, "
             f"fallback={fallback_id!r}"
         )
@@ -633,11 +633,7 @@ def resolve_visual_base(
     return {
         "character": _clean_text(character_profiles.get("name")),
         "visual_profile_id": profile["id"],
-        "visual_profile_name": (
-            visual_profile_names(profile)[0]
-            if visual_profile_names(profile)
-            else profile["label"]
-        ),
+        "visual_profile_name": profile["id"],
         "visual_profile_label": profile["label"],
         "appearance": deepcopy(profile.get("appearance") or []),
         "outfit": deepcopy(profile.get("default_outfit") or []),
@@ -708,8 +704,8 @@ def _selection_guide_without_profile_labels(
 ) -> str:
     """Mask registered labels while preserving authored semantic criteria."""
     replacements: list[tuple[str, str]] = []
-    for index, profile in enumerate(profiles, start=1):
-        placeholder = f"[{index}]"
+    for profile in profiles:
+        placeholder = _clean_text(profile.get("id"))
         for label in _profile_label_variants(character_name, profile):
             replacements.append((label, placeholder))
 
@@ -724,7 +720,7 @@ def _selection_guide_without_profile_labels(
 
 
 def build_natural_profile_catalog(effective_profiles: dict[str, dict]) -> str:
-    """Render label-neutral, user-authored rules for semantic profile resolution."""
+    """Pair user-authored selection rules with the exact IDs used for rendering."""
     sections: list[str] = []
     for character_name, character in effective_profiles.items():
         profiles = character.get("profiles") or []
@@ -738,21 +734,14 @@ def build_natural_profile_catalog(effective_profiles: dict[str, dict]) -> str:
             character,
             _clean_text(character.get("default_visual_profile_id")),
         )
-        default_index = next(
-            (
-                index
-                for index, profile in enumerate(profiles, start=1)
-                if profile is default_profile
-            ),
-            1,
-        )
+        default_id = (default_profile or profiles[0])["id"]
         lines = [
             f"### {character_name}",
-            f"Declared default profile_ref: [{default_index}]. "
+            f"Declared default profile_id: `{default_id}`. "
             "Use it only without valid tracked continuity or another supported card, "
             "and only if CURRENT does not contradict its conditions.",
         ]
-        for index, profile in enumerate(profiles):
+        for profile in profiles:
             raw_guide = (
                 _clean_text(profile.get("selection_guide_english"))
                 or _clean_text(profile.get("selection_guide"))
@@ -777,21 +766,22 @@ def build_natural_profile_catalog(effective_profiles: dict[str, dict]) -> str:
                 else "No appearance reference supplied."
             )
             lines.append(
-                f"- [{index + 1}] — Selection conditions: {guide}"
+                f"- profile_id `{profile['id']}` — Selection conditions: {guide}"
             )
             lines.append(
                 "  Appearance reference (identification support only): "
                 f"{visual_context}"
             )
             lines.append(
-                f"  If selected, output `[{index + 1}]` as profile_ref."
+                f"  If selected, copy `{profile['id']}` verbatim as profile_id."
             )
         sections.append("\n".join(lines))
     if not sections:
         return ""
     authority = (
-        "Profile names, aliases, and internal IDs are omitted because they are not "
-        "selection evidence; use the bracketed references. Read Selection conditions "
+        "Each profile_id is the exact card ID used for saved state and rendering. "
+        "Copy it unchanged; do not substitute a list position, display label, or alias. "
+        "IDs identify cards and are not selection evidence. Read Selection conditions "
         "semantically as the applicability contract. Story state is primary. Appearance "
         "reference is separate identification support only: matching details can support "
         "identification, but the reference does not establish applicability by itself, "

@@ -760,10 +760,9 @@ DEFAULT_CONFIG = {
         # 폴백 없음(fallback_target 미지정)이 기본.
         "illustration_call1":      _llm_route_defaults(),  # 복장·헤어 변화 JSON 분석
         "illustration_time_place": _llm_route_defaults(),  # 캐릭터별 시간·장소 독립 추적
-        "illustration_character_resolve": _llm_route_defaults(),  # 생성 최전단 CURRENT 등장인물 판별(항상 실행)
+        "illustration_character_resolve": _llm_route_defaults(),  # 생성 최전단 CURRENT 등장인물·장면 선택
         "illustration_profile_context_translate": _llm_route_defaults(),  # CURRENT 카드 자연어의 지연 영어 번역
         "illustration_profile_resolve": _llm_route_defaults(),  # 확정 CURRENT 다중 프로필 결정(토글 시)
-        "illustration_call2_select": _llm_route_defaults(),  # CALL2 전역 장면 선택
         "illustration_call2_plan": _llm_route_defaults(),  # CALL2 선택 장면 병렬 PLAN
         "illustration_call2":      _llm_route_defaults(),  # CALL2 DETAIL 및 기존 단일/폴백 경로
         "illustration_call2_keyvis": _llm_route_defaults(),  # CALL2 독립 Key Visual
@@ -924,11 +923,7 @@ def _merge_llm_routing_config(raw_config: dict) -> dict:
     merged_routing = {}
     legacy_call2_entry = raw_routing.get("illustration_call2")
     for task_key, default_entry in DEFAULT_CONFIG["llm_routing"].items():
-        if task_key == "illustration_call2_select" and task_key not in raw_routing:
-            # Selection was formerly part of PLAN; retain that configured route
-            # until the user saves an independent selection route.
-            raw_entry = raw_routing.get("illustration_call2_plan", legacy_call2_entry) or {}
-        elif (
+        if (
             task_key in _CALL2_COMPAT_SPLIT_ROUTE_KEYS
             and task_key not in raw_routing
             and isinstance(legacy_call2_entry, dict)
@@ -979,7 +974,7 @@ def _merge_llm_routing_config(raw_config: dict) -> dict:
         merged_routing[task_key] = entry
 
     for task_key, raw_entry in raw_routing.items():
-        if task_key in {"illustration_call2_authority_audit", "illustration_call2_fix"}:
+        if task_key in {"illustration_call2_authority_audit", "illustration_call2_fix", "illustration_call2_select"}:
             print(f"[CONFIG] 제거된 삽화 LLM 작업 설정 제외: task={task_key!r}")
             continue
         if task_key in merged_routing:
@@ -1009,7 +1004,7 @@ def _normalize_llm_routing_for_save(raw_routing) -> dict:
             inherited.update(legacy_call2_entry)
             candidate[task_key] = inherited
     for task_key, raw_entry in raw_routing.items():
-        if task_key in {"illustration_call2_authority_audit", "illustration_call2_fix"}:
+        if task_key in {"illustration_call2_authority_audit", "illustration_call2_fix", "illustration_call2_select"}:
             print(f"[CONFIG] 제거된 삽화 LLM 작업 저장 제외: task={task_key!r}")
             continue
         if not isinstance(task_key, str) or not task_key.strip():
@@ -1019,9 +1014,6 @@ def _normalize_llm_routing_for_save(raw_routing) -> dict:
         base = candidate.get(task_key, {})
         base.update(raw_entry)
         candidate[task_key] = base
-
-    if "illustration_call2_select" not in raw_routing:
-        candidate["illustration_call2_select"] = copy.deepcopy(candidate["illustration_call2_plan"])
 
     normalized = {}
     for task_key, entry in candidate.items():
@@ -2275,6 +2267,7 @@ def register_and_enqueue_illustration(
     client_id: str = "",
     extra_data: dict | None = None,
     save_node_id: str | None = None,
+    illustration_flow_auto_open: bool = True,
 ) -> None:
     """삽화 엔트리 사전 등록 + 통합 큐 적재.
 
@@ -2303,7 +2296,10 @@ def register_and_enqueue_illustration(
     }
     asyncio.create_task(queue_manager.add_item(
         "illustration", label,
-        {"prompt_id": prompt_id, "prompt_data": prompt_data, "raw_body": raw_body},
+        {
+            "prompt_id": prompt_id, "prompt_data": prompt_data, "raw_body": raw_body,
+            "illustration_flow_auto_open": illustration_flow_auto_open,
+        },
         priority=0,
     ))
 
@@ -8608,6 +8604,9 @@ async def process_illustration_context_queue_item(item) -> dict:
                     stream_notify=stream_notify,
                     progress=progress,
                     history_ids_sink=llm_trace,
+                    extra_instruction=extra_instruction,
+                    first_pass_single_v5=first_pass_single_v5,
+                    character_names=character_names,
                 )
             )
             profile_authority = illustration_context_pipeline.profile_authority_text(
@@ -8946,9 +8945,16 @@ async def process_illustration_context_queue_item(item) -> dict:
                     "items": [],
                     "context": "",
                     "prompt_format": illust_toggles.get("prompt_format", "v3"),
-                    "character_states_after": copy.deepcopy(
-                        (history_plan or {}).get("state_before") or {}
-                    ),
+                    "character_states_after": illustration_context_pipeline.apply_visual_base_events(
+                        illustration_context_pipeline.apply_initial_visual_bases(
+                            (history_plan or {}).get("state_before") or {},
+                            profile_result.get("initial_visual_bases") or [],
+                            str((history_plan or {}).get("current_message_id") or ""),
+                            effective_visual_profiles),
+                        profile_result.get("current_characters") or [],
+                        profile_result.get("visual_base_events") or [],
+                        str((history_plan or {}).get("current_message_id") or ""),
+                        effective_visual_profiles),
                     "profile_output": profile_output,
                     "profile_result": profile_result,
                     "llm_trace": list(llm_trace),
@@ -10042,11 +10048,26 @@ async def handle_api_illustration_context_bridge_image(request: web.Request) -> 
 
 async def handle_api_illustration_prompt_structure(request: web.Request) -> web.Response:
     """Read the current assembly with named variables, without running an LLM."""
+    body = {}
     try:
         from modes.illustration_prompt_structure import build_prompt_structure
-        return web.json_response(build_prompt_structure(), headers={"Cache-Control": "no-store"})
+        body = await request.json() if request.method == "POST" else {}
+        if not isinstance(body, dict) or not isinstance(body.get("toggles", {}), dict):
+            raise ValueError("toggles must be object")
+        config = copy.deepcopy(app_config)
+        config["illustration_context_toggles"] = {
+            **(config.get("illustration_context_toggles") or {}), **body.get("toggles", {}),
+        }
+        snapshot = _capture_illustration_runtime_snapshot(config, asset_instruction="")
+        return web.json_response(build_prompt_structure(
+            toggles=snapshot["illustration_context_toggles"], provider=snapshot["provider"]),
+            headers={"Cache-Control": "no-store"})
+    except ValueError as e:
+        print(f"[ILLUST_CONTEXT] prompt structure 입력 파싱 실패: input={body!r}, error={e}")
+        traceback.print_exc()
+        return web.json_response({"error": str(e)}, status=400)
     except Exception as e:
-        print(f"[ILLUST_CONTEXT] prompt structure 조회 실패: input={dict(request.query)!r}, error={e}")
+        print(f"[ILLUST_CONTEXT] prompt structure 조회 실패: input={body!r}, error={e}")
         traceback.print_exc()
         return web.json_response({"error": str(e)}, status=500)
 
@@ -12153,6 +12174,7 @@ async def handle_prompt(request: web.Request) -> web.Response:
             client_id=body.get("client_id", ""),
             extra_data=body.get("extra_data", {}),
             save_node_id=save_node,
+            illustration_flow_auto_open=False,
         )
         return web.json_response(
             {"prompt_id": prompt_id, "number": len(prompts), "node_errors": {}}
@@ -17669,7 +17691,7 @@ async def handle_api_reschedule_with_modified_prompt(
             "illustration_visual_states": src_visual_states,
             "label": "수정재생성",
             "illustration_flow_run_id": str(body.get("illustration_flow_run_id") or ""),
-            "illustration_flow_auto_open": _body is not None,
+            "illustration_flow_auto_open": _body is not None and body.get("illustration_flow_auto_open") is not False,
         }
         if not _return_queue_result:
             request_id, item = await _enqueue_regeneration_request(**attempt_kwargs)
@@ -19786,6 +19808,7 @@ async def _run_illustration_auto_feedback_job(job_id: str, body: dict) -> None:
                 "negative": modified_negative,
                 "identity_edit": copy.deepcopy(current_identity),
                 "illustration_multi_char": copy.deepcopy(current_multi_char),
+                "illustration_flow_auto_open": False,
             }
             if camera_control_present:
                 regenerate_body["camera_control"] = copy.deepcopy(camera_control)
@@ -22606,6 +22629,7 @@ app.router.add_get("/api/illustration_context/bridge/session/{sid}", handle_api_
 app.router.add_get("/api/illustration_context/bridge/session/{sid}/image/{slot}", handle_api_illustration_context_bridge_image)
 app.router.add_get("/api/illustration_context/prompts", handle_api_illustration_context_prompts)
 app.router.add_get("/api/illustration_context/prompt-structure", handle_api_illustration_prompt_structure)
+app.router.add_post("/api/illustration_context/prompt-structure", handle_api_illustration_prompt_structure)
 app.router.add_post("/api/illustration_context/execution-preview", handle_api_illustration_execution_preview)
 app.router.add_post("/api/illustration_context/prompts", handle_api_illustration_context_prompts)
 app.router.add_get("/api/illustration_context/toggles", handle_api_illustration_context_toggles)
@@ -23836,6 +23860,7 @@ async def _image_comparison_diagnostic_async(
                 "chansub_quality_tag_start": 0,
                 "chansub_quality_tag_count": 0,
                 "diagnostic_capture_workflow": True,
+                "illustration_flow_auto_open": False,
             },
             priority=0,
         )
@@ -29447,6 +29472,7 @@ async def handle_api_character_maker_generate(request: web.Request) -> web.Respo
                     "chansub_quality_tag_count": prompt_data[
                         "chansub_quality_tag_count"
                     ],
+                    "illustration_flow_auto_open": False,
                 },
                 priority=0,
             )

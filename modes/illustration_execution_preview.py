@@ -11,7 +11,7 @@ from modes import llm_service
 from queue_manager import QueueItem
 
 
-STEPS = ["등장인물·프로필", "문맥·장면 선택", "시각 계획",
+STEPS = ["등장인물·장면 선택·프로필", "상태 추적", "시각 계획",
          "장면 묘사·대표 이미지·대사", "분기 준비", "이미지 생성", "후속 처리"]
 
 
@@ -126,8 +126,8 @@ async def build_execution_plan(*, config, snapshot, visual_profiles, translation
     current_profiles = pipeline._selected_visual_profiles(profiles, current_names, multiple_only=False)
     multiple = pipeline._selected_visual_profiles(current_profiles, list(current_profiles), multiple_only=True)
     character_card = card("CHARACTER-RESOLVE", 1,
-                          f"등록 캐릭터 {len(profiles)}명 중 CURRENT 등장인물 판별 · 모의 결과 {len(current_profiles)}명" if profiles
-                          else "등록된 캐릭터가 없어 호출 생략", enabled=bool(profiles) and not prompt_batch)
+                          f"CURRENT 등장인물 {len(current_profiles)}명 판별" + (f" · 일반 장면 {scene_count}개 선택" if illustration else ""),
+                          enabled=bool(profiles or illustration) and not prompt_batch)
     context = []
     _prepared, cache_summary, _misses, _targets = pipeline.plan_profile_context_translations(
         multiple, cache_namespace=snapshot["bot_name"], cache=translation_cache,
@@ -151,7 +151,7 @@ async def build_execution_plan(*, config, snapshot, visual_profiles, translation
     async def preview_profile_stage(operation, *args, **kwargs):
         nonlocal context
         if operation is pipeline._run_character_resolution:
-            context = [job(character_card, output=f"CURRENT 등장인물 {len(current_profiles)}명")]
+            context = [job(character_card, output=f"CURRENT 등장인물 {len(current_profiles)}명" + (f" · 선택 장면 {scene_count}개" if illustration else ""))]
             result = pipeline._materialize_profile_character_records(
                 [{"name": name, "in_history": False, "profile_timeline": []} for name in current_profiles], profiles,
             )
@@ -182,7 +182,8 @@ async def build_execution_plan(*, config, snapshot, visual_profiles, translation
         # Replay the actual orchestration; only the external stage effects are
         # replaced. Never monkeypatch globals shared with live requests.
         await pipeline.resolve_profiles_before_generation(
-            payload={"chats": [{"role": "char", "data": "모의 CURRENT 입력"}]},
+            payload={"chats": [{"role": "char", "data": "모의 CURRENT 입력"}],
+                     "target_slotted": "모의 CURRENT 입력\n\n[Slot 0]"},
             toggles=toggles, history_plan=None, visual_profiles=profiles,
             profile_translation_namespace=snapshot["bot_name"], stage_runner=preview_profile_stage,
         )
@@ -190,13 +191,12 @@ async def build_execution_plan(*, config, snapshot, visual_profiles, translation
             notes.append(f"모의 CURRENT 등장인물 {len(current_profiles)}명: {', '.join(current_profiles) or '(없음)'}. 인원 수로 지정하면 등록 순서대로 선택합니다. ON인 프로필 준비·판정을 끝낸 뒤 다음 단계로 진행합니다.")
 
     scenes = [{"slot": i} for i in range(scene_count)]
-    front = []
+    front = list(context)
     for name, desc, enabled in [("OUTFIT", "하나의 복장·헤어 상태 타임라인", toggles["outfit_enabled"]),
-                                ("TIME & PLACE", "독립적인 캐릭터별 시간·장소 타임라인", toggles["time_place_enabled"]),
-                                ("CALL2-SELECT", f"일반 장면 {scene_count}개 선택", True)]:
+                                ("TIME & PLACE", "독립적인 캐릭터별 시간·장소 타임라인", toggles["time_place_enabled"])]:
         node = card(name, 2, desc, enabled=illustration and not prompt_batch and enabled, group="call1_select")
         if node["enabled"]:
-            front.append(job(node, context, output="선택 장면" if name == "CALL2-SELECT" else "상태 타임라인"))
+            front.append(job(node, context, output="상태 타임라인"))
     plan_batches = pipeline._balanced_call2_scene_plan_batches(
         scenes, toggles["call2_parallel_max_concurrency"] if toggles["call2_parallel_enabled"] else 1)
     plans = []
@@ -206,7 +206,7 @@ async def build_execution_plan(*, config, snapshot, visual_profiles, translation
                                   index=i, count=len(plan_batches)), front, output="시각 계획"))
     else:
         card("CALL2-PLAN", 3, "일반 삽화 OFF" if not illustration else
-             "완성 프롬프트 입력" if prompt_batch else "PLAN OFF · SELECT에서 DETAIL로 직접 전달", enabled=False)
+             "완성 프롬프트 입력" if prompt_batch else "PLAN OFF · CHARACTER-RESOLVE 선택 장면을 DETAIL로 직접 전달", enabled=False)
     detail_batches = pipeline._detail_batches_for_plan_batches(
         plan_batches, toggles["call2_detail_parallel_max_concurrency"]
         if toggles["call2_detail_parallel_enabled"] else 1)
@@ -217,7 +217,7 @@ async def build_execution_plan(*, config, snapshot, visual_profiles, translation
             sources = [index for index, source in enumerate(plan_batches)
                        if any(scene["slot"] in slots for scene in source)]
             description = (f"PLAN {', '.join(str(index + 1) for index in sources)} 완료 즉시"
-                           if toggles["call2_plan_enabled"] else "SLOT-SELECTER 완료 후 원문에서 직접 판단")
+                           if toggles["call2_plan_enabled"] else "CHARACTER-RESOLVE 선택 장면과 원문에서 직접 판단")
             if mask_inline:
                 description += " · MULTI-CHAR-MASK 함께 예측"
             if keyvis_in_detail and i == 1:

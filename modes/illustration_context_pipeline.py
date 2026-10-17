@@ -39,7 +39,6 @@ from modes.visual_profiles import (
     profile_by_name,
     resolve_visual_base,
     tag_values as visual_tag_values,
-    visual_profile_names,
 )
 from modes.illustration_prompt_assembly import PromptText, input_variables, is_symbolic, prompt_join, prompt_sub, symbolic_call2_template, variable
 from modes import illustration_prompt_builders as prompt_builders
@@ -246,15 +245,21 @@ def render_output_count_rule(min_value: int, max_value: int) -> str:
 
 
 def render_plan_output_count_rule(toggles: dict, available_slot_count: int) -> str:
-    """Render the PLAN count contract; auto chooses only inside the hard range."""
+    """Render the selection count in the units consumed by scene_plan."""
     available = max(0, int(available_slot_count))
     minimum = min(int(toggles["output_count_min"]), available)
     maximum = min(int(toggles["output_count_max"]), available)
-    rule = render_output_count_rule(minimum, maximum)
+    rule = (
+        "## Scene Selection Count\n"
+        f"The scene_plan array must contain a minimum of {minimum} and a maximum of {maximum} items. "
+        "Each item selects one distinct supplied CURRENT anchor. "
+        "Choose passages supporting different visible actions, reactions or relationships; "
+        "do not repeat an anchor to meet the count."
+    )
     if str(toggles.get("scene_mode")) == "auto":
         rule += (
             "\nWithin this hard range, choose the count that best represents the "
-            f"narrative across the {available} available slots."
+            f"narrative across the {available} available CURRENT anchors."
         )
     return rule
 
@@ -1953,7 +1958,6 @@ def _call1_state_for_prompt(
     removed_visual = 0
     removed_default = 0
     preserved_default = 0
-    profile_ids_replaced = 0
     profile_timelines_removed = 0
     malformed = []
     for name, tracked in result.items():
@@ -1966,30 +1970,6 @@ def _call1_state_for_prompt(
         if "visual_base_timeline" in tracked:
             tracked.pop("visual_base_timeline", None)
             profile_timelines_removed += 1
-        tracked_profile_id = str(
-            tracked.pop("active_visual_profile_id", "") or ""
-        ).strip()
-        if tracked_profile_id:
-            canonical_name = str(tracked.get("canonical_name") or name).strip()
-            character_profiles = _authority_values_for_name(
-                visual_profiles or {},
-                canonical_name,
-            )
-            profile = (
-                profile_by_id(character_profiles, tracked_profile_id)
-                if isinstance(character_profiles, dict)
-                else None
-            )
-            semantic_names = visual_profile_names(profile or {})
-            if semantic_names:
-                tracked["active_visual_profile"] = semantic_names[0]
-                profile_ids_replaced += 1
-            else:
-                print(
-                    f"[ILLUST_CONTEXT:OUTFIT] 추적 프로필 ID의 의미 이름을 찾지 못해 "
-                    f"OUTFIT 입력에서 제거: character={canonical_name!r}, "
-                    f"profile_id={tracked_profile_id!r}"
-                )
         if "default_outfit_reference" in tracked:
             canonical_name = str(tracked.get("canonical_name") or name).strip()
             if canonical_name.casefold() in costume_names:
@@ -2010,7 +1990,6 @@ def _call1_state_for_prompt(
             f"[ILLUST_CONTEXT:OUTFIT] 입력 상태 정리: characters={len(result)}, "
             f"visual_removed={removed_visual}, default_duplicate_removed={removed_default}, "
             f"default_preserved_without_extra={preserved_default}, "
-            f"profile_ids_replaced={profile_ids_replaced}, "
             f"profile_timelines_removed={profile_timelines_removed}, "
             f"chars={before_chars}->{after_chars} (-{before_chars - after_chars})"
         )
@@ -2255,7 +2234,7 @@ def _profile_state_for_prompt(
     character_names: list[str],
     visual_profiles: dict[str, dict] | None,
 ) -> dict[str, dict]:
-    """Render only the prior semantic profile state needed by PROFILE-RESOLVE."""
+    """Pass the saved card ID and state to PROFILE-RESOLVE without renumbering."""
     result: dict[str, dict] = {}
     states = character_state if isinstance(character_state, dict) else {}
     for name in character_names or []:
@@ -2281,27 +2260,14 @@ def _profile_state_for_prompt(
             if isinstance(character_profiles, dict) and profile_id
             else None
         )
-        registered_profiles = (
-            list(character_profiles.get("profiles") or [])
-            if isinstance(character_profiles, dict)
-            else []
-        )
-        profile_number = next(
-            (
-                index
-                for index, candidate in enumerate(registered_profiles, start=1)
-                if candidate is profile
-            ),
-            0,
-        )
-        if not profile_number:
+        if profile is None:
             print(
-                f"[ILLUST_CONTEXT:PROFILE_RESOLVE] 이전 프로필 참조 번호 없음: "
+                f"[ILLUST_CONTEXT:PROFILE_RESOLVE] 이전 프로필 카드 없음: "
                 f"character={canonical_name!r}, profile_id={profile_id!r}"
             )
             continue
         item = {
-            "active_profile_ref": f"[{profile_number}]",
+            "active_visual_profile_id": profile_id,
         }
         state_description = str(
             tracked.get("active_visual_profile_state") or ""
@@ -3391,94 +3357,6 @@ def parse_call1_analysis(
     }
 
 
-def _parse_legacy_profile_resolution(
-    text: str,
-    current_context: str,
-    segments: dict[str, dict],
-    current_characters: list[dict],
-    visual_profiles: dict[str, dict] | None,
-) -> dict | None:
-    """Validate the dedicated PROFILE-RESOLVE four-field event schema."""
-    raw = _json_object_from_text(text)
-    if raw is None:
-        print("[ILLUST_CONTEXT:PROFILE_RESOLVE] JSON object 파싱 실패")
-        return None
-    raw_events = raw.get("profile_events")
-    if not isinstance(raw_events, list):
-        print(
-            "[ILLUST_CONTEXT:PROFILE_RESOLVE] profile_events가 list가 아님: "
-            f"type={type(raw_events).__name__}"
-        )
-        return None
-
-    names = []
-    normalized_current = []
-    for item in current_characters or []:
-        if isinstance(item, dict):
-            name = str(item.get("name") or "").strip()
-            confidence = item.get("confidence", 1.0)
-        else:
-            name = str(item or "").strip()
-            confidence = 1.0
-        if not name or name.casefold() in {value.casefold() for value in names}:
-            continue
-        names.append(name)
-        normalized_current.append({"name": name, "confidence": confidence})
-
-    selected_profiles = _selected_visual_profiles(
-        visual_profiles,
-        names,
-        multiple_only=True,
-    )
-    composite = {
-        "reference_assignments": [],
-        "history_characters": [],
-        "current_characters": normalized_current,
-        "profile_events": raw_events,
-        "wardrobe_events": [],
-        "hairstyle_events": [],
-        "unresolved_references": [],
-    }
-    parsed = parse_call1_analysis(
-        json.dumps(composite, ensure_ascii=False),
-        current_context,
-        segments,
-        ", ".join(names),
-        visual_profiles=selected_profiles,
-    )
-    if parsed is None:
-        print("[ILLUST_CONTEXT:PROFILE_RESOLVE] 프로필 사건 검증 실패")
-        return None
-    parsed_events = list(parsed.get("profile_events") or [])
-    start_counts = {
-        name.casefold(): sum(
-            1
-            for event in parsed_events
-            if str(event.get("character") or "").strip().casefold() == name.casefold()
-            and str(event.get("segment_id") or "").strip().upper() == "START"
-        )
-        for name in selected_profiles
-    }
-    incomplete = [
-        name
-        for name in selected_profiles
-        if start_counts.get(name.casefold(), 0) != 1
-    ]
-    if incomplete:
-        print(
-            "[ILLUST_CONTEXT:PROFILE_RESOLVE] 다중 프로필 캐릭터 START 완전성 검증 실패: "
-            f"characters={incomplete}, counts={start_counts}"
-        )
-        return None
-    return {
-        "profile_events": parsed_events,
-        "initial_visual_bases": list(parsed.get("initial_visual_bases") or []),
-        "visual_base_events": list(parsed.get("visual_base_events") or []),
-        "validation_warnings": list(parsed.get("validation_warnings") or []),
-        "validation_errors": list(parsed.get("validation_errors") or []),
-    }
-
-
 def _materialize_profile_character_records(
     characters: list[dict],
     visual_profiles: dict[str, dict] | None,
@@ -3526,16 +3404,10 @@ def _materialize_profile_character_records(
                     f"character={name!r}, at={segment_id!r}, profile_id={profile_id!r}"
                 )
                 continue
-            profile_names = visual_profile_names(profile)
-            profile_name = (
-                profile_names[0]
-                if profile_names
-                else str(profile.get("label") or profile_id).strip()
-            )
             profile_events.append({
                 "segment_id": segment_id,
                 "character": name,
-                "profile": profile_name,
+                "profile": profile_id,
                 "profile_id": profile_id,
                 "state": reason,
                 "confidence": 1.0,
@@ -3544,7 +3416,7 @@ def _materialize_profile_character_records(
                 initial_visual_bases.append({
                     "character": name,
                     "target_visual_profile_id": profile_id,
-                    "visual_profile_name": profile_name,
+                    "visual_profile_name": profile_id,
                     "initial_state": reason,
                     "anchor_segment": "START",
                     "evidence": [reason] if reason else [],
@@ -3555,7 +3427,7 @@ def _materialize_profile_character_records(
                     "segment_id": segment_id,
                     "character": name,
                     "target_visual_profile_id": profile_id,
-                    "visual_profile_name": profile_name,
+                    "visual_profile_name": profile_id,
                     "visual_change": reason,
                     "evidence": reason,
                     "confidence": 1.0,
@@ -3656,24 +3528,11 @@ def parse_profile_resolution(
     *,
     profile_inference_enabled: bool = True,
 ) -> dict | None:
-    """Validate the compact CURRENT-character/profile contract.
-
-    Legacy four-field ``profile_events`` output remains readable for stored records
-    and older callers, while new calls use ``characters[].profile_timeline``.
-    """
+    """Validate CURRENT characters and timelines containing exact card IDs."""
     raw = _json_object_from_text(text)
     if raw is None:
         print("[ILLUST_CONTEXT:PROFILE_RESOLVE] JSON object 파싱 실패")
         return None
-    if "characters" not in raw and "profile_events" in raw:
-        return _parse_legacy_profile_resolution(
-            text,
-            current_context,
-            segments,
-            current_characters or [],
-            visual_profiles,
-        )
-
     raw_characters = raw.get("characters")
     raw_uncertainties = raw.get("uncertainties")
     if not isinstance(raw_characters, list) or not isinstance(raw_uncertainties, list):
@@ -3734,7 +3593,7 @@ def parse_profile_resolution(
                 print(f"[ILLUST_CONTEXT:PROFILE_RESOLVE] {warning}")
                 in_history = False
         else:
-            # CHARACTER-RESOLVE sees CURRENT only. Prior participation is derived
+            # CHARACTER-RESOLVE establishes participation from CURRENT. History is derived
             # deterministically from the server's tracked state after this parse.
             in_history = False
 
@@ -3787,35 +3646,16 @@ def parse_profile_resolution(
                     invalid_reasons.append(f"event[{event_index}] 형식 오류")
                     continue
                 at = str(event.get("at") or "").strip().upper()
-                profile_ref = str(event.get("profile_ref") or "").strip()
-                profile_id = ""
+                profile_id = str(event.get("profile_id") or "").strip()
                 if at != "START" and at not in (segments or {}):
                     invalid_reasons.append(
                         f"event[{event_index}] 존재하지 않는 구간 {at!r}"
                     )
                     continue
-                profile = None
-                if profile_ref:
-                    match = re.fullmatch(r"\[(\d+)\]", profile_ref)
-                    profile_number = int(match.group(1)) if match else 0
-                    if 1 <= profile_number <= len(registered_profiles):
-                        profile = registered_profiles[profile_number - 1]
-                        profile_id = str(profile.get("id") or "").strip()
-                    else:
-                        invalid_reasons.append(
-                            f"event[{event_index}] 등록되지 않은 profile_ref "
-                            f"{profile_ref!r}"
-                        )
-                        continue
-                else:
-                    # Stored records and pre-migration callers may still contain the
-                    # former internal-ID contract. New resolver prompts never expose it.
-                    profile_id = str(event.get("profile_id") or "").strip()
-                    profile = profile_by_id(character_profiles, profile_id)
+                profile = profile_by_id(character_profiles, profile_id)
                 if not isinstance(profile, dict):
                     invalid_reasons.append(
-                        f"event[{event_index}] 등록되지 않은 profile_ref/profile_id "
-                        f"{profile_ref or profile_id!r}"
+                        f"event[{event_index}] 등록되지 않은 profile_id {profile_id!r}"
                     )
                     continue
                 previous_id = seen_points.get(at)
@@ -3835,7 +3675,7 @@ def parse_profile_resolution(
                 if not reason:
                     warning = (
                         f"프로필 판단 reason 누락: character={name}, "
-                        f"at={at}, profile_ref={profile_ref or profile_id!r}"
+                        f"at={at}, profile_id={profile_id!r}"
                     )
                     warnings.append(warning)
                     print(f"[ILLUST_CONTEXT:PROFILE_RESOLVE] {warning}")
@@ -3922,7 +3762,7 @@ def _mark_current_characters_with_tracked_history(
     previous_state: dict | None,
     visual_profiles: dict[str, dict] | None,
 ) -> dict:
-    """Derive prior participation without exposing PAST narrative to the LLM."""
+    """Derive prior participation from saved state, independently of LLM selection."""
     tracked_names = {
         str(value.get("canonical_name") or key).strip().casefold()
         for key, value in (
@@ -3949,13 +3789,17 @@ def _mark_current_characters_with_tracked_history(
         "[ILLUST_CONTEXT:CHARACTER_RESOLVE] 서버 추적 상태로 과거 참여 표시: "
         f"current={[item['name'] for item in characters]}, history={history_names}"
     )
-    return _materialize_profile_character_records(
+    result = _materialize_profile_character_records(
         characters,
         visual_profiles,
         uncertainties=list((character_result or {}).get("uncertainties") or []),
         warnings=list((character_result or {}).get("validation_warnings") or []),
         repair_requests=list((character_result or {}).get("repair_requests") or []),
     )
+    for key in ("scene_plan", "character_output"):
+        if key in character_result:
+            result[key] = deepcopy(character_result[key])
+    return result
 
 
 def _default_profile_result(
@@ -4211,18 +4055,18 @@ def profile_authority_text(
         if not isinstance(event, dict):
             continue
         name = str(event.get("character") or "").strip()
-        profile_name = str(event.get("profile") or "").strip()
+        profile_id = str(event.get("profile_id") or "").strip()
         segment_id = str(event.get("segment_id") or "").strip().upper()
         state = str(event.get("state") or "").strip()
         character_profiles = _authority_values_for_name(visual_profiles or {}, name)
-        if not name or not profile_name or not isinstance(character_profiles, dict):
+        if not name or not profile_id or not isinstance(character_profiles, dict):
             print(
                 "[ILLUST_CONTEXT:PROFILE_RESOLVE] 권위 문맥 구성용 캐릭터/프로필 없음: "
-                f"character={name!r}, profile={profile_name!r}"
+                f"character={name!r}, profile_id={profile_id!r}"
             )
             continue
         try:
-            profile = profile_by_name(character_profiles, profile_name)
+            profile = profile_by_id(character_profiles, profile_id)
             base = (
                 resolve_visual_base(character_profiles, str(profile.get("id") or ""))
                 if isinstance(profile, dict)
@@ -4231,20 +4075,20 @@ def profile_authority_text(
         except Exception as e:
             print(
                 "[ILLUST_CONTEXT:PROFILE_RESOLVE] 권위 문맥 프로필 해석 실패: "
-                f"character={name!r}, profile={profile_name!r}, error={e}"
+                f"character={name!r}, profile_id={profile_id!r}, error={e}"
             )
             traceback.print_exc()
             continue
         if not isinstance(profile, dict):
             print(
                 "[ILLUST_CONTEXT:PROFILE_RESOLVE] 권위 문맥 등록 프로필 없음: "
-                f"character={name!r}, profile={profile_name!r}"
+                f"character={name!r}, profile_id={profile_id!r}"
             )
             continue
         if not isinstance(base, dict):
             print(
                 "[ILLUST_CONTEXT:PROFILE_RESOLVE] 권위 문맥 프로필 기반값 없음: "
-                f"character={name!r}, profile={profile_name!r}"
+                f"character={name!r}, profile_id={profile_id!r}"
             )
             continue
         appearance_values = visual_tag_values(base.get("appearance") or [])
@@ -4255,7 +4099,7 @@ def profile_authority_text(
             appearance_values.insert(0, gender_tag)
         appearance = ", ".join(appearance_values) or "(none)"
         outfit = ", ".join(visual_tag_values(base.get("outfit") or [])) or "(none)"
-        lines.append(f"### {segment_id} · {name} · {profile_name}")
+        lines.append(f"### {segment_id} · {name} · {profile['id']}")
         if state:
             lines.append(f"- profile state: {state}")
         lines.extend([
@@ -6992,7 +6836,6 @@ _CALL_TASK_KEYS = {
     "PROFILE-RESOLVE-REPAIR": "illustration_profile_resolve",
     PROFILE_CONTEXT_TRANSLATE_CALL_NAME: PROFILE_CONTEXT_TRANSLATE_TASK_KEY,
     "CALL2": "illustration_call2",
-    "CALL2-SELECT": "illustration_call2_select",
     "CALL2-PLAN": "illustration_call2_plan",
     "CALL2-KEYVIS": "illustration_call2_keyvis",
     "CALL2-FALLBACK": "illustration_call2",
@@ -7019,10 +6862,10 @@ _CALL_QUEUE_SUBTASK_GROUPS = {
     "OUTFIT": ("call1", "OUTFIT 복장·헤어 분석"),
     "CALL1": ("call1", "OUTFIT 복장·헤어 분석"),
     "TIME & PLACE": ("time_place", "TIME & PLACE 시간·장소 추적"),
-    "CHARACTER-RESOLVE": ("character_resolve", "CURRENT 등장인물 판별"),
+    "CHARACTER-RESOLVE": ("character_resolve", "CURRENT 등장인물·장면 선택"),
     "CHARACTER-RESOLVE-REPAIR": (
         "character_resolve",
-        "CURRENT 등장인물 이름 교정",
+        "CURRENT 등장인물·장면 교정",
     ),
     "PROFILE-RESOLVE": ("profile_resolve", "CURRENT 프로필 캐릭터별 병렬 결정"),
     "PROFILE-RESOLVE-REPAIR": ("profile_resolve", "프로필 오류 항목 교정"),
@@ -7031,7 +6874,6 @@ _CALL_QUEUE_SUBTASK_GROUPS = {
         "프로필 영어 컨텍스트 번역",
     ),
     "CALL2": ("call2", "CALL2 장면/태그 빌드"),
-    "CALL2-SELECT": ("call2_select", "SLOT-SELECTER 장면 선택"),
     "CALL2-PLAN": ("call2_plan", "CALL2 장면 PLAN"),
     "CALL2-DETAIL": ("call2_detail", "DETAIL 장면 묘사"),
     "CALL2-KEYVIS": ("call2_keyvis", "KEYVIS 대표 이미지"),
@@ -8363,6 +8205,7 @@ async def _run_resolution_stage(
     profile_inference_enabled: bool,
     stream_notify,
     history_ids_sink: list[str] | None = None,
+    selection_messages: list[dict] | None = None,
 ) -> tuple[str, dict]:
     """Run one separated CHARACTER or PROFILE resolution stage.
 
@@ -8380,7 +8223,7 @@ async def _run_resolution_stage(
         current_names,
         multiple_only=False,
     )
-    if not selected_profiles:
+    if not selected_profiles and selection_messages is None:
         print(
             f"[ILLUST_CONTEXT:{stage_call_name.replace('-', '_')}] "
             "등록 캐릭터가 없어 단계 호출 건너뜀: "
@@ -8418,7 +8261,8 @@ async def _run_resolution_stage(
     )
     messages = _normalize_messages(prompt_builders.resolution_messages(
         profile_inference_enabled, selected_names, tracked_state, catalog,
-        segmented_current, card_identity_context, persona_context, profile_system))
+        segmented_current, card_identity_context, persona_context, profile_system,
+        selection=selection_messages, anchors=list(current_segments)))
 
     def validate_shape(result):
         raw = _json_object_from_text(result)
@@ -8426,7 +8270,7 @@ async def _run_resolution_stage(
             return False, f"{stage_call_name} JSON object 없음"
         if not isinstance(raw.get("characters"), list):
             return False, f"{stage_call_name} characters가 list가 아님"
-        if not isinstance(raw.get("uncertainties"), list):
+        if profile_inference_enabled and not isinstance(raw.get("uncertainties"), list):
             return False, f"{stage_call_name} uncertainties가 list가 아님"
         return True, ""
 
@@ -8513,14 +8357,6 @@ async def _run_resolution_stage(
                     raw,
                     [],
                 )
-            if not isinstance(raw.get("uncertainties"), list):
-                return (
-                    False,
-                    f"{repair_call_name} 이름 교정 uncertainties가 list가 아님",
-                    {},
-                    raw,
-                    [],
-                )
             replacements = {}
             used_names = set(accepted_names)
             invalid_items = []
@@ -8597,8 +8433,7 @@ async def _run_resolution_stage(
                     "authoritative and unavailable. A repair name must be copied verbatim "
                     "from REMAINING AVAILABLE REGISTERED NAMES, and each available name may "
                     "be used at most once. Return only this JSON shape:\n"
-                    '{"repairs":[{"source_index":1,"name":"exact canonical name"}],'
-                    '"uncertainties":[]}\n'
+                    '{"repairs":[{"source_index":1,"name":"exact canonical name"}]}\n'
                     "Do not return character objects, in_history, profile data, appearance, "
                     "or outfit decisions; the server preserves every non-name field from "
                     "the rejected source item. Keep source_index unchanged. Repair an item "
@@ -8609,8 +8444,7 @@ async def _run_resolution_stage(
                     "Never choose a roster character merely from role, appearance, outfit, "
                     "profile, or name resemblance. If the item is an unregistered distinct "
                     "person, refers to an already accepted identity, or remains uncertain, "
-                    "omit that source_index from repairs and explain the omission briefly in "
-                    "uncertainties."
+                    "omit that source_index from repairs."
                 ),
             },
             {
@@ -8634,8 +8468,7 @@ async def _run_resolution_stage(
                     "translate, transliterate, localize, or reuse an invalid_name. Omit a "
                     "target when the discourse does not establish which exact remaining "
                     "registered name it is. Return only:\n"
-                    '{"repairs":[{"source_index":1,"name":"exact remaining registered name"}],'
-                    '"uncertainties":[]}'
+                    '{"repairs":[{"source_index":1,"name":"exact remaining registered name"}]}'
                 ),
             },
         ])
@@ -8703,6 +8536,7 @@ async def _run_resolution_stage(
                 continue
             merged_characters.append(deepcopy(item))
         raw_output = json.dumps({
+            **primary_raw,
             "characters": merged_characters,
             "uncertainties": [
                 *list(primary_raw.get("uncertainties") or []),
@@ -8811,8 +8645,8 @@ async def _run_resolution_stage(
                         + "\n\n# PARTIAL REPAIR CONTRACT\n"
                         "Correct only the supplied rejected characters. Return the same "
                         "characters/uncertainties schema and include exactly those characters. "
-                           "Preserve every valid narrative decision, but use only bracketed "
-                           "profile_ref values supplied for that character. Do not output "
+                           "Preserve every valid narrative decision, but copy the exact "
+                           "profile_id supplied for that character. Do not output "
                            "unrelated characters."
                     ),
                 },
@@ -8922,18 +8756,29 @@ async def _run_resolution_stage(
         )
     else:
         raw_output = json.dumps({
+            **({"scene_plan": normalized_raw.get("scene_plan")} if selection_messages is not None else {}),
             "characters": [
                 {"name": str(item.get("name") or "").strip()}
                 for item in parsed.get("characters") or []
                 if isinstance(item, dict) and str(item.get("name") or "").strip()
             ],
-            "uncertainties": list(parsed.get("uncertainties") or []),
         }, ensure_ascii=False)
     current_result_names = [
         str(item.get("name") or "").strip()
         for item in parsed.get("characters") or []
         if isinstance(item, dict) and str(item.get("name") or "").strip()
     ]
+    if profile_inference_enabled:
+        from modes.illustration_scene_pipeline import fill_state_table
+
+        changes = {}
+        for event in parsed.get("profile_events") or []:
+            changes.setdefault(event["segment_id"], {})[event["character"]] = {
+                "profile": event["profile_id"], "reason": event["state"],
+            }
+        parsed["state_table"] = fill_state_table(changes, current_result_names, ["START", *current_segments])
+        illustration_flow.record_state_table(
+            parsed["state_table"], label="PROFILE-RESOLVE", field="profile_state_table")
     print(
         f"[ILLUST_CONTEXT:{stage_call_name.replace('-', '_')}] 단계 완료: "
         f"characters={current_result_names}, events={len(parsed['profile_events'])}, "
@@ -8953,9 +8798,12 @@ async def _run_character_resolution(
     visual_profiles: dict[str, dict] | None,
     stream_notify,
     history_ids_sink: list[str] | None = None,
+    selection_messages: list[dict] | None = None,
+    toggles: dict | None = None,
+    first_pass_single_v5: bool = False,
 ) -> tuple[str, dict]:
-    """Always-on CURRENT participation observation without PAST narrative."""
-    return await _run_resolution_stage(
+    """Resolve CURRENT participation and optional source-anchor selection together."""
+    raw_output, parsed = await _run_resolution_stage(
         profile_system=character_system,
         segmented_current=segmented_current,
         current_context=current_context,
@@ -8966,7 +8814,89 @@ async def _run_character_resolution(
         profile_inference_enabled=False,
         stream_notify=stream_notify,
         history_ids_sink=history_ids_sink,
+        selection_messages=selection_messages,
     )
+    if selection_messages is None:
+        return raw_output, parsed
+
+    from modes import illustration_scene_pipeline as scenes
+
+    names = [item["name"] for item in parsed.get("current_characters") or []]
+    single_names = single_preset_subject_candidates(visual_profiles, names)[0] if first_pass_single_v5 else None
+    segment_slots, _catalog, reason = build_segment_slot_map(current_context, current_segments)
+    if reason:
+        print(f"[ILLUST_CONTEXT:CHARACTER_RESOLVE] 장면 앵커 매핑 실패: reason={reason}, segments={current_segments!r}")
+        raise ValueError(f"CHARACTER-RESOLVE 장면 앵커 매핑 실패: {reason}")
+    candidates = list(segment_slots.values())
+    toggles = merged_toggles(toggles)
+    selection = _json_object_from_text(raw_output) or {}
+    preserved = []
+    used = set()
+    for item in selection.get("scene_plan") if isinstance(selection.get("scene_plan"), list) else []:
+        try:
+            valid = scenes.parse_plan(json.dumps({"scene_plan": [item]}, ensure_ascii=False),
+                segments=current_segments, slot_map=segment_slots, candidates=candidates,
+                names=names, toggles={**toggles, "output_count_min": 1, "output_count_max": 1},
+                single_names=single_names, stage="CALL2-SELECT")[0]
+            if valid["anchor_segment"] in used:
+                print(f"[ILLUST_CONTEXT:CHARACTER_RESOLVE] 중복 선택 앵커 교정 대상: {item!r}")
+                continue
+            used.add(valid["anchor_segment"])
+            preserved.append(valid)
+        except (ValueError, TypeError) as exc:
+            print(f"[ILLUST_CONTEXT:CHARACTER_RESOLVE] 선택 장면 교정 대상: item={item!r}, error={exc}")
+            traceback.print_exc()
+
+    def validate_selection(response):
+        try:
+            selected = scenes.parse_plan(response, segments=current_segments, slot_map=segment_slots,
+                candidates=candidates, names=names, toggles=toggles,
+                single_names=single_names, stage="CALL2-SELECT")
+            if any(item not in selected for item in preserved):
+                print(f"[ILLUST_CONTEXT:CHARACTER_RESOLVE] 교정에서 유효한 장면 누락: preserved={preserved!r}, selected={selected!r}")
+                return False, "이미 유효한 선택 장면을 보존해야 합니다"
+            return True, ""
+        except (ValueError, TypeError) as exc:
+            print(f"[ILLUST_CONTEXT:CHARACTER_RESOLVE] 선택 출력 오류: error={exc}, response={response!r}")
+            traceback.print_exc()
+            return False, str(exc)
+
+    # Count, identity and anchor checks are the existing selector contract. Keep
+    # the resolved roster and every usable scene when repairing only selection.
+    selection_output = json.dumps({"scene_plan": preserved}, ensure_ascii=False)
+    valid, reason = validate_selection(raw_output)
+    if not valid:
+        print(f"[ILLUST_CONTEXT:CHARACTER_RESOLVE] 장면 선택 부분 교정: reason={reason}, preserved={preserved!r}")
+        over_count = len(preserved) > min(toggles["output_count_max"], len(candidates))
+        if over_count:
+            # Over-count requires the model to choose a subset; retain all
+            # existing candidates as repair context, without locking every one.
+            preserved = []
+        repair_messages = _normalize_messages([
+            *prompt_builders.resolution_messages(False, candidate_names, {}, "", segmented_current,
+                _character_card_identity_context(visual_profiles, candidate_names),
+                _persona_identity_context(visual_profiles, candidate_names), character_system,
+                selection=selection_messages, anchors=list(current_segments)),
+            {"role": "user", "content":
+                "Repair only scene selection. The CURRENT roster is already resolved: "
+                + variable(names, "확정된 CURRENT 인물")
+                + ". Preserve these valid scene items exactly: " + variable(preserved, "보존할 선택 장면")
+                + ". Complete the requested scene_plan count using distinct anchors from the full CURRENT list "
+                "and the same supplied TRUSTED ACTIVE BOT IMAGE POLICY and client direction. "
+                + ("Reduce this previous candidate set to the requested count: "
+                   + variable(selection_output, "수량을 줄일 기존 유효 장면") + ". " if over_count else "")
+                + "Return the same characters and scene_plan JSON shape requested above, "
+                "keeping the resolved characters roster unchanged and scene_brief concise. "
+                + variable(reason, "선택 교정 사유")},
+        ])
+        selection_output = await _call_pipeline_llm("CHARACTER-RESOLVE-REPAIR", repair_messages,
+            stream_notify, result_validator=validate_selection, json_mode=True,
+            history_ids_sink=history_ids_sink)
+    parsed["scene_plan"] = scenes.parse_plan(selection_output, segments=current_segments,
+        slot_map=segment_slots, candidates=candidates, names=names, toggles=toggles,
+        single_names=single_names, stage="CALL2-SELECT")
+    parsed["character_output"] = json.dumps({**selection, "scene_plan": parsed["scene_plan"]}, ensure_ascii=False)
+    return parsed["character_output"], parsed
 
 
 async def _run_profile_resolution(
@@ -9129,30 +9059,12 @@ async def _run_profile_resolution(
     raw_characters = []
     for character in merged.get("characters") or []:
         name = str(character.get("name") or "").strip()
-        character_profiles = _authority_values_for_name(selected_profiles, name)
-        registered_profiles = (
-            list(character_profiles.get("profiles") or [])
-            if isinstance(character_profiles, dict)
-            else []
-        )
         raw_timeline = []
         for event in character.get("profile_timeline") or []:
             profile_id = str(event.get("profile_id") or "").strip()
-            profile_number = next((
-                profile_index
-                for profile_index, profile in enumerate(registered_profiles, start=1)
-                if str(profile.get("id") or "").strip() == profile_id
-            ), 0)
-            if not profile_number:
-                print(
-                    "[ILLUST_CONTEXT:PROFILE_RESOLVE_PARALLEL] "
-                    f"병합 출력용 profile_ref 역매핑 실패: "
-                    f"character={name}, profile_id={profile_id!r}"
-                )
-                continue
             raw_event = {
                 "at": str(event.get("at") or "").strip().upper(),
-                "profile_ref": f"[{profile_number}]",
+                "profile_id": profile_id,
                 "reason": str(event.get("reason") or "").strip(),
             }
             raw_timeline.append(raw_event)
@@ -9164,6 +9076,14 @@ async def _run_profile_resolution(
         "characters": raw_characters,
         "uncertainties": list(merged.get("uncertainties") or []),
     }, ensure_ascii=False)
+    from modes.illustration_scene_pipeline import fill_state_table
+
+    changes = {}
+    for event in merged.get("profile_events") or []:
+        changes.setdefault(event["segment_id"], {})[event["character"]] = {
+            "profile": event["profile_id"], "reason": event["state"],
+        }
+    merged["state_table"] = fill_state_table(changes, list(selected_profiles), ["START", *current_segments])
     print(
         "[ILLUST_CONTEXT:PROFILE_RESOLVE_PARALLEL] 캐릭터별 병렬 판정 병합 완료: "
         f"characters={[item.get('name') for item in raw_characters]}, "
@@ -9198,7 +9118,7 @@ def _merge_character_and_profile_stage_results(
                 profile_character.get("profile_timeline") or []
             ),
         })
-    return _materialize_profile_character_records(
+    result = _materialize_profile_character_records(
         merged_characters,
         visual_profiles,
         uncertainties=[
@@ -9211,6 +9131,12 @@ def _merge_character_and_profile_stage_results(
         ],
         repair_requests=list(profile_result.get("repair_requests") or []),
     )
+    if "state_table" in profile_result:
+        result["state_table"] = deepcopy(profile_result["state_table"])
+    for key in ("scene_plan", "character_output"):
+        if key in character_result:
+            result[key] = deepcopy(character_result[key])
+    return result
 
 
 def _parse_profile_context_translations(
@@ -9517,6 +9443,9 @@ async def resolve_profiles_before_generation(
     progress=None,
     history_ids_sink: list[str] | None = None,
     stage_runner=None,
+    extra_instruction: str = "",
+    first_pass_single_v5: bool = False,
+    character_names: str = "",
 ) -> tuple[str, dict]:
     """Resolve CURRENT characters and every applicable multi-profile timeline."""
     # The preview supplies side-effect-free stage implementations. The actual
@@ -9525,13 +9454,16 @@ async def resolve_profiles_before_generation(
         if stage_runner is not None:
             return await stage_runner(operation, *args, **kwargs)
         return await operation(*args, **kwargs)
+    toggles = merged_toggles(toggles)
+    if not visual_profiles and character_names:
+        visual_profiles = {name.strip(): {} for name in character_names.split(",") if name.strip()}
     candidate_names = [
         str(name or "").strip()
         for name, value in (visual_profiles or {}).items()
         if str(name or "").strip()
         and isinstance(value, dict)
     ]
-    if not candidate_names:
+    if not candidate_names and not toggles["illustration_enabled"]:
         print(
             "[ILLUST_CONTEXT:CHARACTER_RESOLVE] 등록된 캐릭터가 없어 "
             "최전단 호출 건너뜀"
@@ -9554,8 +9486,36 @@ async def resolve_profiles_before_generation(
     segmented_current, current_segments = _segment_current_context(
         current_context, slotted_context=current_slotted)
     if progress:
-        await progress(1, "character_resolve", "CURRENT 등장인물 판별")
+        await progress(1, "character_resolve", "CURRENT 등장인물·장면 선택" if toggles["illustration_enabled"] else "CURRENT 등장인물 판별")
     prompts = load_prompt_files()
+    selection = None
+    if toggles["illustration_enabled"]:
+        from modes import illustration_scene_pipeline as scenes
+
+        segment_slots, _catalog, reason = build_segment_slot_map(current_slotted, current_segments)
+        if reason:
+            print(f"[ILLUST_CONTEXT:CHARACTER_RESOLVE] 장면 앵커 매핑 실패: reason={reason}, segments={current_segments!r}")
+            raise ValueError(f"CHARACTER-RESOLVE 장면 앵커 매핑 실패: {reason}")
+        history_slice = ((history_plan or {}).get("call1_history") or []) if history_plan else chats[
+            max(0, target_index - int(toggles["call1_context_turns"])):target_index]
+        single_subjects = None
+        if first_pass_single_v5:
+            owners = [name for name in candidate_names if single_preset_subject_candidates(
+                visual_profiles, [name])[1] == "configured_character_identity_lora"]
+            non_persona = [name for name in candidate_names
+                          if (visual_profiles[name] or {}).get("is_persona") is not True]
+            single_subjects = (
+                "First resolve CURRENT participants. Among those participants, prefer registered identity-LoRA owners: "
+                + json.dumps(owners, ensure_ascii=False)
+                + ". Only if none participate in CURRENT, use CURRENT members of the registered non-persona roster: "
+                + json.dumps(non_persona, ensure_ascii=False)
+                + ". Only if that is also empty, use the CURRENT roster. Choose exactly one named subject per image."
+            )
+        protected = render_call2_prompt(prompts.get("call2_jailbreak", ""), toggles, include_server_limits=False)
+        selection = prompt_builders.selection_messages(
+            prompts, prompt_builders.role_context(protected, extra_instruction), candidate_names,
+            single_subjects, render_plan_output_count_rule(toggles, len(segment_slots)), toggles,
+            scenes.previous_statuses(candidate_names, history_plan), _history_messages_text(history_slice), "")
     character_output, character_result = await run_stage(_run_character_resolution,
         character_system=prompts.get("character_resolve", ""),
         segmented_current=segmented_current,
@@ -9565,6 +9525,9 @@ async def resolve_profiles_before_generation(
         visual_profiles=visual_profiles,
         stream_notify=stream_notify,
         history_ids_sink=history_ids_sink,
+        selection_messages=selection,
+        toggles=toggles,
+        first_pass_single_v5=first_pass_single_v5,
     )
     previous_state = (history_plan or {}).get("state_before") or {}
     character_result = _mark_current_characters_with_tracked_history(

@@ -12,7 +12,6 @@
         'OUTFIT': 'illustration_call1',
         'CALL1': 'illustration_call1',
         'TIME & PLACE': 'illustration_time_place',
-        'CALL2-SELECT': 'illustration_call2_select',
         'CALL2-PLAN': 'illustration_call2_plan',
         'CALL2-DETAIL': 'illustration_call2',
         'CALL2-KEYVIS': 'illustration_call2_keyvis',
@@ -116,7 +115,7 @@
     function renderIllustrationPreviewPlan(root, plan, activeGroup) {
         const escape = value => String(value ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;')
             .replaceAll('>', '&gt;').replaceAll('"', '&quot;');
-        const labels = {call1_select: 'OUTFIT + TIME & PLACE + SLOT-SELECTER',
+        const labels = {call1_select: 'OUTFIT + TIME & PLACE',
             call2_plan: 'PLAN 배치', call2_detail: 'DETAIL 배치', keyvis: 'KEYVIS',
             original_asset: 'Original Asset', profile_resolve: 'PROFILE-RESOLVE',
             illustration_images: '삽화', illustration_postprocess: '이미지 후처리',
