@@ -70322,8 +70322,6 @@
                     gender_tag: '',
                     image_name_tag: '',
                     loras: [],
-                    loras_group: [],
-                    loras_solo: [],
                     rep_images: [],
                     style_loras: [],
                     use_image_name_tag: false,
@@ -71469,15 +71467,7 @@
                             <div class="divider-v"></div>
                             <div style="flex:1; min-width:0;">
                                 <div class="card-section-title" style="display:inline-flex; align-items:center; gap:10px; margin-bottom:0;">
-                                    <span>로라 설정</span>
-                                    <div style="display:inline-flex; gap:0; border:1px solid var(--border); border-radius:4px; overflow:hidden; margin-left:4px;">
-                                        <button id="char-lora-tab-solo-${charIdx}" onclick="event.stopPropagation(); switchCharLoraProfile(${charIdx}, 'solo')"
-                                            style="padding:2px 8px; border:none; background:var(--accent); color:#fff; cursor:pointer; font-size:0.7rem; font-weight:600;">1인</button>
-                                        <button id="char-lora-tab-group-${charIdx}" onclick="event.stopPropagation(); switchCharLoraProfile(${charIdx}, 'group')"
-                                            style="padding:2px 8px; border:none; background:transparent; color:var(--text2); cursor:pointer; font-size:0.7rem; font-weight:600;">다인</button>
-                                    </div>
-                                    <button id="char-lora-copy-btn-${charIdx}" onclick="event.stopPropagation(); copyCharLoraToOtherProfile(${charIdx})"
-                                        style="font-size:0.65rem; padding:2px 6px; border:1px solid var(--border); background:var(--surface2); border-radius:4px; cursor:pointer; color:var(--text2); margin-left:4px;">다인으로 복사</button>
+                                    <span>캐릭터 로라 설정</span>
                                     <button class="lora-add-btn" onclick="event.stopPropagation(); openBotCharLoraPicker('${escAttr(char.name)}', ${charIdx})"
                                         style="font-size:0.75rem; padding:4px 10px; border:1px dashed var(--border); background:var(--surface2); border-radius:6px; cursor:pointer; color:var(--text2); transition:border-color 0.15s;">+ LoRA 추가</button>
                                 </div>
@@ -71584,14 +71574,10 @@
                     }
                 })(card, char.name, activeProfile?.id || ''));
 
-                // 기존 LoRA 목록 렌더링 (solo/group 프로필)
-                _charLoraProfiles[charIdx] = _charLoraProfiles[charIdx] || 'solo';
-                const loraKey = _charLoraProfiles[charIdx] === 'group' ? 'loras_group' : 'loras_solo';
-                const charLoras = char[loraKey] || char.loras || [];
-                if (charLoras.length > 0) {
-                    renderBotCharLoraList(charIdx, char.name, charLoras);
-                }
-                switchCharLoraProfile(charIdx, _charLoraProfiles[charIdx]);
+                // 인원수와 무관하게 현재 프로필 카드의 캐릭터 LoRA를 사용한다.
+                renderBotCharLoraList(charIdx, char.name, _alrTargetLoras({
+                    name: char.name, visualCardId: activeProfile?.id || '',
+                }, 'character'));
                 // 얼굴 LoRA 목록 렌더링
                 const charFaceLoras = char.face_loras || [];
                 if (charFaceLoras.length > 0) {
@@ -71743,74 +71729,25 @@
             }).join('');
         }
 
-        // ─── 캐릭터 일반 LoRA 프로필 (solo/group) ─────────────────
-        let _charLoraProfiles = {}; // charIdx -> 'solo' | 'group'
-
-        function switchCharLoraProfile(charIdx, profile) {
-            _charLoraProfiles[charIdx] = profile;
-            const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
-            if (!bot) return;
-            const rootChar = bot.characters[charIdx];
-            const char = rootChar ? _visualCardResolved(rootChar) : null;
-            if (!char) return;
-            const key = profile === 'group' ? 'loras_group' : 'loras_solo';
-            const loras = char[key] || char.loras || [];
-            renderBotCharLoraList(charIdx, char.name, loras);
-            // 탭 UI 갱신
-            const tabSolo = document.getElementById(`char-lora-tab-solo-${charIdx}`);
-            const tabGroup = document.getElementById(`char-lora-tab-group-${charIdx}`);
-            if (tabSolo) {
-                tabSolo.style.background = profile === 'solo' ? 'var(--accent)' : 'transparent';
-                tabSolo.style.color = profile === 'solo' ? '#fff' : 'var(--text2)';
-            }
-            if (tabGroup) {
-                tabGroup.style.background = profile === 'group' ? 'var(--accent)' : 'transparent';
-                tabGroup.style.color = profile === 'group' ? '#fff' : 'var(--text2)';
-            }
-            // 복사 버튼 갱신
-            const copyBtn = document.getElementById(`char-lora-copy-btn-${charIdx}`);
-            if (copyBtn) copyBtn.textContent = profile === 'solo' ? '다인으로 복사' : '1인으로 복사';
-        }
-
-        async function copyCharLoraToOtherProfile(charIdx) {
-            const profile = _charLoraProfiles[charIdx] || 'solo';
-            const targetProfile = profile === 'solo' ? 'group' : 'solo';
-            const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
-            if (!bot) return;
-            const rootChar = bot.characters[charIdx];
-            const char = rootChar ? _visualCardResolved(rootChar) : null;
-            if (!char) return;
-            const srcKey = profile === 'group' ? 'loras_group' : 'loras_solo';
-            const srcLoras = JSON.parse(JSON.stringify(char[srcKey] || char.loras || []));
-            const targetLabel = targetProfile === 'group' ? '다인' : '1인';
-            if (!confirm(`현재 설정을 ${targetLabel}으로 복사하시겠습니까? (${srcLoras.length}개 LoRA)`)) return;
-            setBotCharLoras(char.name, srcLoras, targetProfile);
-            await saveBotCharLoras(char.name, targetProfile);
-            showToast(`${targetLabel}으로 LoRA 복사 완료`, 'success');
-        }
-
-        function getBotCharLoras(charName, profile, visualCardId = '') {
+        // ─── 캐릭터 LoRA getter/setter/save ──────────────────────
+        function getBotCharLoras(charName, visualCardId = '') {
             const card = _visualCardProfileById(charName, visualCardId);
             if (!card) return [];
-            const key = profile === 'group' ? 'loras_group' : 'loras_solo';
-            card.render_overrides = card.render_overrides || {};
-            if (!Array.isArray(card.render_overrides[key])) {
-                const cardLegacyLoras = Array.isArray(card.render_overrides.loras)
-                    ? card.render_overrides.loras : [];
-                card.render_overrides[key] = JSON.parse(JSON.stringify(cardLegacyLoras));
-            }
-            return card.render_overrides[key];
+            const loras = _alrTargetLoras({name: charName, visualCardId}, 'character');
+            setBotCharLoras(charName, _alrCloneLoras(loras), visualCardId);
+            return card.render_overrides.loras;
         }
 
-        function setBotCharLoras(charName, loras, profile, visualCardId = '') {
+        function setBotCharLoras(charName, loras, visualCardId = '') {
             const card = _visualCardProfileById(charName, visualCardId);
             if (!card) return;
-            const key = profile === 'group' ? 'loras_group' : 'loras_solo';
             card.render_overrides = card.render_overrides || {};
-            card.render_overrides[key] = loras;
+            card.render_overrides.loras = loras;
+            delete card.render_overrides.loras_solo;
+            delete card.render_overrides.loras_group;
         }
 
-        async function saveBotCharLoras(charName, profile) {
+        async function saveBotCharLoras(charName) {
             try {
                 await _saveVisualCardState(charName, {quiet:true});
             } catch (e) {
@@ -71820,21 +71757,19 @@
         }
 
         async function updateBotCharLoraField(charIdx, charName, loraIdx, field, value) {
-            const profile = _charLoraProfiles[charIdx] || 'solo';
-            const loras = getBotCharLoras(charName, profile);
+            const loras = getBotCharLoras(charName);
             if (loras[loraIdx]) {
                 loras[loraIdx][field] = value;
-                await saveBotCharLoras(charName, profile);
+                await saveBotCharLoras(charName);
             }
         }
 
         async function removeBotCharLora(charIdx, charName, loraIdx) {
-            const profile = _charLoraProfiles[charIdx] || 'solo';
-            const loras = getBotCharLoras(charName, profile);
+            const loras = getBotCharLoras(charName);
             loras.splice(loraIdx, 1);
-            setBotCharLoras(charName, loras, profile);
+            setBotCharLoras(charName, loras);
             renderBotCharLoraList(charIdx, charName, loras);
-            await saveBotCharLoras(charName, profile);
+            await saveBotCharLoras(charName);
             showToast('LoRA 삭제됨', 'info');
         }
 
@@ -77199,8 +77134,7 @@
         let _botCharLoraPickerState = { charName: '', charIdx: -1, tab: 'asset', assetData: null, instanceData: null, botStep: 'bots', botBots: null, botProjects: null, botSelectedBot: '', botSelectedProject: '', botSelectedChar: '' };
 
         async function openBotCharLoraPicker(charName, charIdx) {
-            const profile = _charLoraProfiles[charIdx] || 'solo';
-            _botCharLoraPickerState = { charName, charIdx, tab: 'asset', assetData: null, instanceData: null, botStep: 'bots', botBots: null, botProjects: null, botSelectedBot: '', botSelectedProject: '', botSelectedChar: '', isFaceLora: false, profile };
+            _botCharLoraPickerState = { charName, charIdx, tab: 'asset', assetData: null, instanceData: null, botStep: 'bots', botBots: null, botProjects: null, botSelectedBot: '', botSelectedProject: '', botSelectedChar: '', isFaceLora: false };
             const overlay = document.createElement('div');
             overlay.id = 'bot-char-lora-picker-overlay';
             overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:330; display:flex; align-items:center; justify-content:center;';
@@ -77390,8 +77324,7 @@
                         const repSafetensors = repData.safetensors || '';
                         const matchedFile = files.find(f => f.safetensors === repSafetensors) || files[files.length - 1];
                         const isFace = _botCharLoraPickerState.isFaceLora;
-                        const profile = _botCharLoraPickerState.profile || 'solo';
-                        const loras = isFace ? getBotCharFaceLoras(_botCharLoraPickerState.charName) : getBotCharLoras(_botCharLoraPickerState.charName, profile);
+                        const loras = isFace ? getBotCharFaceLoras(_botCharLoraPickerState.charName) : getBotCharLoras(_botCharLoraPickerState.charName);
                         loras.push({
                             source: 'asset',
                             name: entry.name,
@@ -77407,9 +77340,9 @@
                             renderBotCharFaceLoraList(_botCharLoraPickerState.charIdx, _botCharLoraPickerState.charName, loras);
                             saveBotCharFaceLoras(_botCharLoraPickerState.charName);
                         } else {
-                            setBotCharLoras(_botCharLoraPickerState.charName, loras, profile);
+                            setBotCharLoras(_botCharLoraPickerState.charName, loras);
                             renderBotCharLoraList(_botCharLoraPickerState.charIdx, _botCharLoraPickerState.charName, loras);
-                            saveBotCharLoras(_botCharLoraPickerState.charName, profile);
+                            saveBotCharLoras(_botCharLoraPickerState.charName);
                         }
                         document.getElementById('bot-char-lora-picker-overlay').remove();
                         showToast(`${isFace ? '얼굴 ' : ''}LoRA "${entry.name}" (${sessionName}) 추가됨`, 'success');
@@ -77522,8 +77455,7 @@
                 card.onmouseleave = () => { card.style.borderColor = 'var(--border)'; };
                 card.onclick = () => {
                     const isFace = _botCharLoraPickerState.isFaceLora;
-                    const loraProfile = _botCharLoraPickerState.profile || 'solo';
-                    const loras = isFace ? getBotCharFaceLoras(_botCharLoraPickerState.charName) : getBotCharLoras(_botCharLoraPickerState.charName, loraProfile);
+                    const loras = isFace ? getBotCharFaceLoras(_botCharLoraPickerState.charName) : getBotCharLoras(_botCharLoraPickerState.charName);
                     let addedCount = 0;
                     for (const [profile, pData] of Object.entries(item.profiles)) {
                         loras.push({
@@ -77544,9 +77476,9 @@
                         renderBotCharFaceLoraList(_botCharLoraPickerState.charIdx, _botCharLoraPickerState.charName, loras);
                         saveBotCharFaceLoras(_botCharLoraPickerState.charName);
                     } else {
-                        setBotCharLoras(_botCharLoraPickerState.charName, loras, loraProfile);
+                        setBotCharLoras(_botCharLoraPickerState.charName, loras);
                         renderBotCharLoraList(_botCharLoraPickerState.charIdx, _botCharLoraPickerState.charName, loras);
-                        saveBotCharLoras(_botCharLoraPickerState.charName, loraProfile);
+                        saveBotCharLoras(_botCharLoraPickerState.charName);
                     }
                     document.getElementById('bot-char-lora-picker-overlay').remove();
                     showToast(`인스턴스 ${isFace ? '얼굴 ' : ''}LoRA "${item.lora_id}" ${addedCount}개 추가됨`, 'success');
@@ -77570,7 +77502,7 @@
 
         // ─── 스타일(그림체) LoRA 피커 ───
         async function openBotCharStyleLoraPicker(charName, charIdx) {
-            _botCharLoraPickerState = { charName, charIdx, tab: 'style', assetData: null, instanceData: null, styleData: null, botStep: 'bots', botBots: null, botProjects: null, botSelectedBot: '', botSelectedProject: '', botSelectedChar: '', isFaceLora: false, isStyleLora: true, profile: 'solo' };
+            _botCharLoraPickerState = { charName, charIdx, tab: 'style', assetData: null, instanceData: null, styleData: null, botStep: 'bots', botBots: null, botProjects: null, botSelectedBot: '', botSelectedProject: '', botSelectedChar: '', isFaceLora: false, isStyleLora: true };
             const overlay = document.createElement('div');
             overlay.id = 'bot-char-lora-picker-overlay';
             overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:330; display:flex; align-items:center; justify-content:center;';
@@ -77791,8 +77723,7 @@
                         card.onmouseleave = () => { card.style.borderColor = 'var(--border)'; card.style.background = 'transparent'; };
                         card.onclick = () => {
                             const isFace = _botCharLoraPickerState.isFaceLora;
-                            const loraProfile = _botCharLoraPickerState.profile || 'solo';
-                            const loras = isFace ? getBotCharFaceLoras(_botCharLoraPickerState.charName) : getBotCharLoras(_botCharLoraPickerState.charName, loraProfile);
+                            const loras = isFace ? getBotCharFaceLoras(_botCharLoraPickerState.charName) : getBotCharLoras(_botCharLoraPickerState.charName);
                             const botLoraPath = [
                                 _botCharLoraPickerState.botSelectedBot,
                                 'Lora',
@@ -77821,9 +77752,9 @@
                                 renderBotCharFaceLoraList(_botCharLoraPickerState.charIdx, _botCharLoraPickerState.charName, loras);
                                 saveBotCharFaceLoras(_botCharLoraPickerState.charName);
                             } else {
-                                setBotCharLoras(_botCharLoraPickerState.charName, loras, loraProfile);
+                                setBotCharLoras(_botCharLoraPickerState.charName, loras);
                                 renderBotCharLoraList(_botCharLoraPickerState.charIdx, _botCharLoraPickerState.charName, loras);
-                                saveBotCharLoras(_botCharLoraPickerState.charName, loraProfile);
+                                saveBotCharLoras(_botCharLoraPickerState.charName);
                             }
                             document.getElementById('bot-char-lora-picker-overlay').remove();
                             showToast(`${isFace ? '얼굴 ' : ''}LoRA "${ch.name}" (${repSession.name}) 추가됨`, 'success');
@@ -77843,7 +77774,7 @@
             return `${charName || ''}::${visualCardId || 'legacy'}`;
         }
 
-        const _ALR_PROFILE_LABELS = {solo: '1인 LoRA', group: '다인 LoRA', face: '얼굴 LoRA'};
+        const _ALR_PROFILE_LABELS = {character: '캐릭터 LoRA', face: '얼굴 LoRA'};
 
         function _alrProfileLabel(profile) {
             return _ALR_PROFILE_LABELS[profile] || profile;
@@ -77855,8 +77786,9 @@
             if (profile === 'face') {
                 return Array.isArray(overrides.face_loras) ? overrides.face_loras : [];
             }
-            const key = profile === 'group' ? 'loras_group' : 'loras_solo';
-            if (Array.isArray(overrides[key])) return overrides[key];
+            // 이전 1인 설정을 모든 인원수에 공통 적용한다. 빈 목록도 유지한다.
+            // 편집 시 setBotCharLoras가 구형 키를 제거하고 loras만 저장한다.
+            if (Array.isArray(overrides.loras_solo)) return overrides.loras_solo;
             return Array.isArray(overrides.loras) ? overrides.loras : [];
         }
 
@@ -77934,7 +77866,7 @@
                 showToast('자동 세팅 가능한 프로필 카드가 없습니다', 'error');
                 return;
             }
-            const checkedTargetsByProfile = {solo: {}, group: {}, face: {}};
+            const checkedTargetsByProfile = {character: {}, face: {}};
             Object.keys(checkedTargetsByProfile).forEach(profile => {
                 targets.forEach(target => {
                     checkedTargetsByProfile[profile][target.key] = true;
@@ -77944,8 +77876,8 @@
                 step: 1,
                 targets,
                 checkedTargetsByProfile,
-                checkedTargets: checkedTargetsByProfile.solo,
-                profile: 'solo',
+                checkedTargets: checkedTargetsByProfile.character,
+                profile: 'character',
                 targetFilter: 'all',
                 targetSearch: '',
                 targetStrengthCondition: 'all',
@@ -77981,8 +77913,7 @@
                         <div id="alr-overview" style="display:grid; grid-template-columns:repeat(auto-fit,minmax(110px,1fr)); gap:7px; margin-bottom:10px;"></div>
                         <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:9px; padding:9px; border:1px solid var(--border); border-radius:9px; background:var(--surface2);">
                             <span style="font-size:.72rem; color:var(--text2); font-weight:700;">세팅 대상</span>
-                            <button type="button" class="alr-profile-btn" data-profile="solo" onclick="_alrSetProfile('solo')" style="padding:6px 12px; border:1px solid var(--border); border-radius:6px; cursor:pointer; font-weight:700;">1인 LoRA</button>
-                            <button type="button" class="alr-profile-btn" data-profile="group" onclick="_alrSetProfile('group')" style="padding:6px 12px; border:1px solid var(--border); border-radius:6px; cursor:pointer; font-weight:700;">다인 LoRA</button>
+                            <button type="button" class="alr-profile-btn" data-profile="character" onclick="_alrSetProfile('character')" style="padding:6px 12px; border:1px solid var(--border); border-radius:6px; cursor:pointer; font-weight:700;">캐릭터 LoRA</button>
                             <button type="button" class="alr-profile-btn" data-profile="face" onclick="_alrSetProfile('face')" style="padding:6px 12px; border:1px solid var(--border); border-radius:6px; cursor:pointer; font-weight:700;">얼굴 LoRA</button>
                             <span style="font-size:.68rem; color:var(--text2);">대상을 바꾸면 해당 종류의 모든 카드가 기본 선택됩니다.</span>
                         </div>
@@ -78041,14 +77972,13 @@
             if (!el || !_botAutoLoraState) return;
             const targets = _botAutoLoraState.targets;
             const counts = {};
-            ['solo', 'group', 'face'].forEach(profile => {
+            ['character', 'face'].forEach(profile => {
                 counts[profile] = targets.filter(target => _alrTargetStatus(target, profile).configured).length;
             });
-            const empty = targets.filter(target => ['solo', 'group', 'face'].every(profile => !_alrTargetStatus(target, profile).configured)).length;
+            const empty = targets.filter(target => ['character', 'face'].every(profile => !_alrTargetStatus(target, profile).configured)).length;
             el.innerHTML = [
                 _alrOverviewCard('전체 프로필 카드', targets.length),
-                _alrOverviewCard('1인 설정됨', `${counts.solo} / ${targets.length}`, counts.solo ? '#22c55e' : 'var(--text2)'),
-                _alrOverviewCard('다인 설정됨', `${counts.group} / ${targets.length}`, counts.group ? '#22c55e' : 'var(--text2)'),
+                _alrOverviewCard('캐릭터 설정됨', `${counts.character} / ${targets.length}`, counts.character ? '#22c55e' : 'var(--text2)'),
                 _alrOverviewCard('얼굴 설정됨', `${counts.face} / ${targets.length}`, counts.face ? '#22c55e' : 'var(--text2)'),
                 _alrOverviewCard('완전 미설정', empty, empty ? '#f59e0b' : '#22c55e'),
             ].join('');
@@ -78058,7 +77988,7 @@
             const color = status.configured ? '#22c55e' : '#f59e0b';
             const background = status.configured ? 'rgba(34,197,94,.13)' : 'rgba(245,158,11,.12)';
             const title = status.configured ? `${status.names.join(', ')} · ${status.sources.join(', ')}` : '등록된 LoRA 없음';
-            const short = profile === 'solo' ? '1인' : profile === 'group' ? '다인' : '얼굴';
+            const short = profile === 'face' ? '얼굴' : '캐릭터';
             return `<span title="${escAttr(title)}" style="padding:3px 6px; border:1px solid ${active ? color : 'var(--border)'}; border-radius:999px; background:${background}; color:${color}; font-size:.63rem; font-weight:${active ? '800' : '600'}; white-space:nowrap;">${short} ${status.configured ? status.count + '개' : '미설정'}</span>`;
         }
 
@@ -78106,8 +78036,7 @@
             grid.innerHTML = visibleTargets.map(target => {
                 const checked = _botAutoLoraState.checkedTargets[target.key] ? 'checked' : '';
                 const current = _alrTargetStatus(target, _botAutoLoraState.profile);
-                const solo = _alrTargetStatus(target, 'solo');
-                const group = _alrTargetStatus(target, 'group');
+                const character = _alrTargetStatus(target, 'character');
                 const face = _alrTargetStatus(target, 'face');
                 const img = target.rep
                     ? `<img src="/api/bot_lora/char_image/${enc(botCurrentBot)}/${enc(target.name)}/${enc(target.rep)}" loading="lazy" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';" style="width:84px; height:84px; object-fit:cover; display:block; border-radius:6px; flex-shrink:0;"><div style="width:84px; height:84px; display:none; align-items:center; justify-content:center; background:var(--surface); border-radius:6px; font-size:1.4rem; flex-shrink:0;">👤</div>`
@@ -78116,7 +78045,7 @@
                 return `<label style="display:flex; gap:9px; padding:8px; border:1px solid ${checked ? 'var(--accent)' : 'var(--border)'}; border-radius:8px; background:${checked ? 'color-mix(in srgb,var(--accent) 9%,var(--surface2))' : 'var(--surface2)'}; cursor:pointer; box-sizing:border-box; min-width:0;">
                     <input type="checkbox" class="alr-char-check" data-target-key="${escAttr(target.key)}" ${checked} onchange="_alrToggleTarget(this.dataset.targetKey,this.checked)" style="width:17px; height:17px; cursor:pointer; flex-shrink:0; margin-top:2px;">
                     ${img}
-                    <div style="min-width:0; flex:1;"><div style="font-size:.77rem; font-weight:800; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${escAttr(target.name)}">${escHtml(target.name)}</div><div style="font-size:.67rem; color:var(--text2); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">[${target.visualCardIndex}] ${escHtml(target.visualCardLabel)}</div><div style="display:flex; gap:3px; flex-wrap:wrap; margin:6px 0 5px;">${_alrStatusPill('solo', solo, _botAutoLoraState.profile === 'solo')}${_alrStatusPill('group', group, _botAutoLoraState.profile === 'group')}${_alrStatusPill('face', face, _botAutoLoraState.profile === 'face')}</div><div style="font-size:.63rem; color:${current.configured ? 'var(--text2)' : '#f59e0b'}; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escAttr(current.names.join(', '))}">${escHtml(names)}</div></div>
+                    <div style="min-width:0; flex:1;"><div style="font-size:.77rem; font-weight:800; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${escAttr(target.name)}">${escHtml(target.name)}</div><div style="font-size:.67rem; color:var(--text2); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">[${target.visualCardIndex}] ${escHtml(target.visualCardLabel)}</div><div style="display:flex; gap:3px; flex-wrap:wrap; margin:6px 0 5px;">${_alrStatusPill('character', character, _botAutoLoraState.profile === 'character')}${_alrStatusPill('face', face, _botAutoLoraState.profile === 'face')}</div><div style="font-size:.63rem; color:${current.configured ? 'var(--text2)' : '#f59e0b'}; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escAttr(current.names.join(', '))}">${escHtml(names)}</div></div>
                 </label>`;
             }).join('');
             _alrSyncCharCount();
@@ -78699,7 +78628,7 @@
                     if (isFace) {
                         setBotCharFaceLoras(target.name, _alrCloneLoras(plan.after), target.visualCardId || '');
                     } else {
-                        setBotCharLoras(target.name, _alrCloneLoras(plan.after), profile, target.visualCardId || '');
+                        setBotCharLoras(target.name, _alrCloneLoras(plan.after), target.visualCardId || '');
                     }
                     await _saveVisualCardState(target.name, {quiet:true});
                     if ((_visualCardProfile(target.name)?.id || '') === (target.visualCardId || '')) {
@@ -78713,7 +78642,7 @@
                 } catch (error) {
                     // 저장 실패 시 화면 메모리도 실행 전 상태로 되돌린다.
                     if (isFace) setBotCharFaceLoras(target.name, _alrCloneLoras(plan.current), target.visualCardId || '');
-                    else setBotCharLoras(target.name, _alrCloneLoras(plan.current), profile, target.visualCardId || '');
+                    else setBotCharLoras(target.name, _alrCloneLoras(plan.current), target.visualCardId || '');
                     failCount++;
                     console.error(`[BOT_AUTO_LORA] ${targetLabel} 세팅 실패:`, error);
                     _botAutoLoraState.executionResults[target.key] = {state: 'error', message: `저장 실패: ${error.message}`};

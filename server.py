@@ -6342,14 +6342,13 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                 # 4-1. 인스턴스 LoRA 사용 횟수 증가 (V1/챈섭은 LoRA 미사용 → 제외)
                 from modes.instance_lora_mode import increment_usage as _increment_instance_lora_usage
                 characters_list = bot.get("characters", [])
-                _lora_key = "loras_group" if is_multi else "loras_solo"
                 _incremented = set()
                 _lora_active = illustration_provider == "comfy" and prompt_format != "v1"
                 for _cn in (detected if _lora_active else []):
                     _cd = next((c for c in characters_list if c["name"] == _cn), None)
                     if not _cd:
                         continue
-                    for _lora in _cd.get(_lora_key, _cd.get("loras", [])):
+                    for _lora in _cd.get("loras_solo", _cd.get("loras", [])) or []:
                         if _lora.get("source") == "instance":
                             _lid = _lora.get("lora_id") or _lora.get("lora_path", "")
                             if _lid and _lid not in _incremented:

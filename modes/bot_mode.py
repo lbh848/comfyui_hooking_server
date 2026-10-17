@@ -427,7 +427,7 @@ TAG_FILTER_PROFILES_FILE = os.path.join(ASSET_DATA_DIR, "tag_filter_profiles.jso
 
 
 def _migrate_solo_group(data: dict):
-    """기존 loras/illust_settings를 loras_solo/illust_settings_solo로 마이그레이션."""
+    """기존 삽화 생성 설정을 solo/group 프로필로 마이그레이션."""
     changed = False
     for bot in data.get("bots", []):
         # illust_settings → illust_settings_solo
@@ -440,16 +440,6 @@ def _migrate_solo_group(data: dict):
             changed = True
         for char in bot.get("characters", []):
             changed_card_fields = set()
-            # loras → loras_solo
-            if "loras" in char and "loras_solo" not in char:
-                char["loras_solo"] = char["loras"]
-                changed_card_fields.add("loras_solo")
-                changed = True
-                print(f"[BOT_MODE] 마이그레이션: loras → loras_solo ({bot['name']}/{char['name']})")
-            if "loras_group" not in char:
-                char["loras_group"] = []
-                changed_card_fields.add("loras_group")
-                changed = True
             # gender_tag 기본값 보정 — 드롭박스 표시 기본값(1girl)과 일치. 비어 있으면 1girl 로 채운다.
             gt = (char.get("gender_tag") or "").strip()
             if gt not in ("1girl", "1boy", "1male"):
@@ -2235,8 +2225,6 @@ class BotMode:
                     "gender_tag": "",
                     "image_name_tag": "",
                     "loras": [],
-                    "loras_group": [],
-                    "loras_solo": [],
                     "rep_images": [],
                     "style_loras": [],
                     "use_image_name_tag": False,

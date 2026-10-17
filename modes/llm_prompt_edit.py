@@ -478,8 +478,8 @@ def recover_triggers(blocks: dict, bot_name: str) -> dict:
 
     반환: {"anima": set[str], "sdxl": set[str]}
 
-    bot.json 에서 각 캐릭터의 loras_solo/loras_group(다인이면 loras_group 우선) 의
-    trigger 필드를 수집한다(illust_prompt_builder.py 369 참조).
+    bot.json 에서 각 캐릭터의 공통 LoRA trigger 필드를 수집한다.
+    이전 1인 설정을 인원수와 무관하게 사용하며, 다인 설정은 읽지 않는다.
     bot.json 로드/매칭 실패 시 폴백: CHAR_LIST 의 캐릭터명 자체를 트리거로 사용
     (트리거 기본값 = 캐릭터명). 절대 예외를 던지지 않는다(best-effort).
     """
@@ -503,8 +503,6 @@ def recover_triggers(blocks: dict, bot_name: str) -> dict:
         return {"anima": anima, "sdxl": sdxl}
 
     characters = bot.get("characters", []) if isinstance(bot, dict) else []
-    is_multi = len(char_names) >= 2
-    lora_key = "loras_group" if is_multi else "loras_solo"
 
     for char_name in char_names:
         # 대소문자 무관 캐릭터 매칭
@@ -518,7 +516,7 @@ def recover_triggers(blocks: dict, bot_name: str) -> dict:
             anima.add(char_name)
             sdxl.add(char_name)
             continue
-        loras = list(char_data.get(lora_key, char_data.get("loras", [])) or [])
+        loras = list(char_data.get("loras_solo", char_data.get("loras", [])) or [])
         # 그림체 LoRA 트리거도 메인 ANIMA/SDXL 프롬프트 접두부에 포함된다.
         # 이를 누락하면 캐릭터 교체 시 이전 그림체 트리거가 장면 태그로 오인되어 남는다.
         loras.extend(char_data.get("style_loras", []) or [])
@@ -566,8 +564,6 @@ def collect_character_triggers(bot: dict, character_names: list[str]) -> dict:
     """선택 캐릭터의 메인/Regional Conditioning 트리거를 수집한다."""
     names = validate_character_selection(bot, character_names)
     characters = bot.get("characters") or []
-    is_multi = len(names) >= 2
-    lora_key = "loras_group" if is_multi else "loras_solo"
     anima = []
     sdxl = []
     anima_by_char = {name: [] for name in names}
@@ -590,7 +586,7 @@ def collect_character_triggers(bot: dict, character_names: list[str]) -> dict:
         )
         if character is None:
             raise ValueError(f"선택 캐릭터 데이터를 찾을 수 없습니다: {name}")
-        for lora in character.get(lora_key, character.get("loras", [])) or []:
+        for lora in character.get("loras_solo", character.get("loras", [])) or []:
             if not isinstance(lora, dict):
                 continue
             trigger = lora.get("trigger", name)

@@ -893,9 +893,8 @@ class IllustPromptBuilder:
                 f"names={prompt_only_chars}, excluded=[cache, face_id, lora, face_lora]"
             )
 
-        # ─── 캐릭터 수에 따른 LoRA 프로필 선택 ───
+        # ─── 캐릭터 수에 따른 구도/생성 설정 선택 ───
         is_multi = len(detected_chars) >= 2
-        lora_key = "loras_group" if is_multi else "loras_solo"
 
         # ─── 감지된 캐릭터의 LoRA/트리거워드 정보 수집 ───
         anima_triggers = []
@@ -911,7 +910,9 @@ class IllustPromptBuilder:
             char_data = next((c for c in characters if c["name"] == char_name), None)
             if not char_data:
                 continue
-            for lora in char_data.get(lora_key, char_data.get("loras", [])):
+            # Apply the old solo setting to every scene, including an explicitly
+            # empty list. Newly edited cards store only the shared loras field.
+            for lora in char_data.get("loras_solo", char_data.get("loras", [])) or []:
                 trigger = lora.get("trigger", char_name)
                 base = lora.get("BASE", "anima")
                 lora_path = self._resolve_lora_path(lora)
