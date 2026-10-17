@@ -83514,12 +83514,11 @@
             },
             {
                 key: 'call3', title: 'POST PROCESS',
-                description: '장면 대사 생성과 봇별 대사창·말풍선·자막 합성을 설정합니다. 이미지 합성 실행 여부는 파이프라인의 POST PROCESS 토글에서 설정합니다.',
+                description: '장면 대사의 언어·감정과 봇별 대사창·말풍선·자막 합성을 설정합니다. 대사 생성과 이미지 합성 실행 여부는 파이프라인의 POST PROCESS 토글에서 함께 설정합니다.',
                 fields: [
-                    {key: 'speak_enabled', label: '장면 대사 생성', type: 'toggle', help: 'POST PROCESS가 일반 장면의 대사를 생성합니다. Speak·말풍선·자막에 공통 적용되며 대표 이미지는 대사 대상에서 제외합니다.'},
-                    {key: 'speak_language', label: '대사 언어', type: 'select', help: 'POST PROCESS가 생성할 장면 대사의 언어를 선택합니다.', options: ['한국어', '영어', '일어', '중어'], dependsOn: ['speak_enabled']},
-                    {key: 'speak_emotion_enabled', label: 'SPEAK 감정 태그', type: 'toggle', help: 'Speak 모드에서 대사에 감정 태그를 덧붙입니다.', dependsOn: ['speak_enabled']},
-                    {key: 'speak_emotions', label: '허용 감정', type: 'text', help: 'Speak 감정 태그를 켰을 때 사용할 감정 이름을 세미콜론(;)으로 구분해 입력합니다.', placeholder: '기쁨; 분노; 당황; 슬픔', dependsOn: ['speak_enabled', 'speak_emotion_enabled']},
+                    {key: 'speak_language', label: '대사 언어', type: 'select', help: 'POST PROCESS가 생성할 일반 장면 대사의 언어를 선택합니다. 대표 이미지는 대사 대상에서 제외합니다.', options: ['한국어', '영어', '일어', '중어']},
+                    {key: 'speak_emotion_enabled', label: 'SPEAK 감정 태그', type: 'toggle', help: 'Speak 모드에서 대사에 감정 태그를 덧붙입니다.'},
+                    {key: 'speak_emotions', label: '허용 감정', type: 'text', help: 'Speak 감정 태그를 켰을 때 사용할 감정 이름을 세미콜론(;)으로 구분해 입력합니다.', placeholder: '기쁨; 분노; 당황; 슬픔', dependsOn: ['speak_emotion_enabled']},
                 ],
             },
             {
@@ -83650,7 +83649,7 @@
                     <div class="illust-setting-row">
                         <label class="illust-setting-copy" for="postprocess-toggle">
                             <span class="illust-setting-label">POST PROCESS</span>
-                            <span class="illust-setting-help">이미지에 대사창·말풍선·자막을 합성합니다. 대사 생성과 봇별 합성 방식·미리보기는 POST PROCESS에서 설정합니다.</span>
+                            <span class="illust-setting-help">일반 장면의 대사를 생성하고 이미지에 대사창·말풍선·자막을 합성합니다. 대사 옵션과 봇별 합성 방식·미리보기는 POST PROCESS에서 설정합니다.</span>
                         </label>
                         <div class="illust-setting-control illust-setting-toggle-control">
                             <label class="toggle-switch sm" aria-label="POST PROCESS">
@@ -83663,10 +83662,7 @@
             }
             if (group.key === 'call3') {
                 content = `
-                    ${_renderIllustrationContextField(group.fields[0])}
-                    <div class="illust-settings-dependent" aria-label="장면별 대사 생성 세부 옵션">
-                        ${group.fields.slice(1).map(field => _renderIllustrationContextField(field)).join('')}
-                    </div>
+                    ${group.fields.map(field => _renderIllustrationContextField(field)).join('')}
                     <div id="illust-postprocess-host"></div>`;
             }
             if (group.key === 'call2_plan_detail') {
@@ -84060,6 +84056,7 @@
             }
             delete body.profile_resolve_enabled;
             delete body.call3_enabled;
+            delete body.speak_enabled;
             delete body.compat_character_divider;
             for (const field of ILLUSTRATION_CONTEXT_TOGGLE_FIELDS) {
                 const el = document.querySelector(`[data-illust-toggle="${field.key}"]`);

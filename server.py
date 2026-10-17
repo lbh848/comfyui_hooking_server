@@ -2425,6 +2425,9 @@ def _capture_illustration_runtime_snapshot(
     toggles = illustration_context_pipeline.merged_toggles(
         raw_toggles
     )
+    # The pipeline master controls dialogue generation and image composition.
+    # Retired dialogue switches must not veto the one visible control.
+    toggles["speak_enabled"] = bool(config_snapshot.get("postprocess_enabled", False))
     toggles["original_asset_instruction"] = (
         bot_mode.get_asset_output_instruction(bot_name)
         if asset_instruction is None else asset_instruction
