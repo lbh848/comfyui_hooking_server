@@ -65508,7 +65508,7 @@
                 : '<div style="width:48px; height:48px; background:var(--surface1); border-radius:6px; display:flex; align-items:center; justify-content:center; flex-shrink:0; font-size:0.7rem; color:var(--text-secondary);">No img</div>';
             const faceToggle = ch.has_face_image
                 ? `<label style="display:flex; align-items:center; gap:4px; margin-left:auto; cursor:pointer; flex-shrink:0;" onclick="event.stopPropagation()">
-                        <input type="checkbox" class="${faceClass}" data-role="face" data-character="${escapeHtml(ch.name)}" data-visual-card-id="${escapeHtml(cardId)}" checked style="width:16px; height:16px; cursor:pointer;" onchange="_botLoraRefreshCard(this)">
+                        <input type="checkbox" class="${faceClass}" data-role="face" data-character="${escapeHtml(ch.name)}" data-visual-card-id="${escapeHtml(cardId)}" style="width:16px; height:16px; cursor:pointer;" onchange="_botLoraRefreshCard(this)">
                         <span style="font-size:0.72rem; color:var(--text-secondary); white-space:nowrap;">얼굴</span>
                    </label>`
                 : '';
