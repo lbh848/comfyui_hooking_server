@@ -80736,12 +80736,17 @@
             const items = [];
             const skipProtected = [];
             const skipNoImage = [];
+            const duplicateGroups = [];
             _repBatchRowData.forEach(row => {
                 if (!row.loaded || row.error) {
                     (row.profiles || []).forEach(profile => skipNoImage.push(`${row.charName}/${profile.profileLabel}`));
                     return;
                 }
-                row.profiles.forEach(profile => {
+                // 보호되어 유지되는 대표도 포함해 적용 후의 상태를 비교한다.
+                const finalReps = row.profiles.map(profile =>
+                    profile.removePending || profile.isNew ? '' : profile.rep0
+                );
+                row.profiles.forEach((profile, profileIndex) => {
                     if (profile.removePending) {
                         items.push({
                             char_name: row.charName,
@@ -80776,9 +80781,30 @@
                         item.profile_label = profile.profileLabel;
                     }
                     items.push(item);
+                    finalReps[profileIndex] = target;
+                });
+                // 같은 파일명이라도 캐릭터 폴더가 다르면 별개의 이미지다.
+                const cardsByImage = new Map();
+                finalReps.forEach((filename, profileIndex) => {
+                    if (!filename) return;
+                    if (!cardsByImage.has(filename)) cardsByImage.set(filename, []);
+                    const profile = row.profiles[profileIndex];
+                    cardsByImage.get(filename).push(`[${profileIndex + 1}] ${profile.profileLabel}`);
+                });
+                cardsByImage.forEach((cards, filename) => {
+                    if (cards.length > 1) {
+                        duplicateGroups.push(`캐릭터: ${row.charName}\n이미지: ${filename}\n중복 카드: ${cards.join(', ')}`);
+                    }
                 });
             });
             if (items.length === 0) { showToast('적용할 프로필 변경이 없습니다', 'error'); return; }
+            if (duplicateGroups.length > 0 && !confirm(
+                '같은 대표 이미지가 여러 카드에 중복 설정됩니다.\n\n' +
+                duplicateGroups.join('\n\n') + '\n\n이대로 적용하시겠습니까?'
+            )) {
+                console.log('[BOT] 대표 이미지 중복 경고에서 일괄 설정 취소:', duplicateGroups);
+                return;
+            }
             const btn = document.getElementById('rep-batch-apply');
             if (btn) { btn.disabled = true; btn.textContent = '적용 중…'; }
             try {
