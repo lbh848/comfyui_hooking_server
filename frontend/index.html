@@ -5812,15 +5812,16 @@
         }
         .illust-history-state-editor label {
             display: grid;
+            align-content: start;
             gap: 6px;
             color: var(--text2);
             font-size: 0.75rem;
         }
-        .illust-history-state-editor textarea {
+        .illust-history-state-editor textarea,
+        .illust-history-state-editor select {
             box-sizing: border-box;
             width: 100%;
-            min-height: 92px;
-            resize: vertical;
+            min-width: 0;
             padding: 10px;
             border: 1px solid var(--border);
             border-radius: 6px;
@@ -5828,7 +5829,12 @@
             color: var(--text);
             font: 0.75rem/1.55 ui-monospace, SFMono-Regular, Consolas, monospace;
         }
-        .illust-history-state-editor textarea:focus {
+        .illust-history-state-editor textarea {
+            min-height: 92px;
+            resize: vertical;
+        }
+        .illust-history-state-editor textarea:focus,
+        .illust-history-state-editor select:focus {
             outline: 2px solid var(--accent);
             outline-offset: 1px;
         }
@@ -82904,7 +82910,7 @@
                             <details class="illust-history-detail-section">
                                 <summary>캐릭터 프로필·복장·머리 상태 편집</summary>
                                 <div class="illust-history-state-editor">
-                                    <div class="illust-history-detail-note">프로필과 판단 근거, 복장·머리 태그를 편집할 수 있습니다. 프로필을 바꾸고 근거를 새로 입력하지 않으면 기존 근거는 비워집니다. 이전 변경 기록은 그대로 유지됩니다.</div>
+                                    <div class="illust-history-detail-note">등록된 프로필 카드를 선택하고 복장·머리 태그를 편집할 수 있습니다. 프로필을 바꾸면 기존 판단 근거는 비워지며, 필요한 경우 새 근거를 입력할 수 있습니다. 이전 변경 기록은 그대로 유지됩니다.</div>
                                     <section class="illust-history-state-group" aria-labelledby="illust-history-next-title">
                                         <h3 id="illust-history-next-title">다음 대화에 적용할 저장 상태</h3>
                                         <p>이어서 진행할 때 사용할 현재 프로필·복장·머리입니다.</p>
@@ -82981,7 +82987,7 @@
             element.textContent = rendered || '(없음)';
         }
 
-        function _renderIllustrationChatHistoryDetail(record) {
+        function _renderIllustrationChatHistoryDetail(record, profileOptions = {}) {
             const meta = document.getElementById('illust-history-detail-meta');
             const messagesRoot = document.getElementById('illust-history-detail-messages');
             const content = document.getElementById('illust-history-detail-content');
@@ -83040,6 +83046,7 @@
                 messagesRoot.appendChild(article);
             });
 
+            const participants = {...(record?.characters || {}), ...(activeTurn.state_before || {})};
             for (const [id, states] of [
                 ['illust-history-detail-characters', record?.characters || {}],
                 ['illust-history-detail-state-before', activeTurn.state_before || {}],
@@ -83054,23 +83061,43 @@
                     empty.textContent = '저장된 프로필·복장·머리 상태가 없습니다. 생성 시 대화와 캐릭터 설정에서 판단합니다.';
                     root.appendChild(empty);
                 }
-                for (const [key, tracked] of Object.entries(states)) {
+                for (const [key, participant] of Object.entries(participants)) {
+                    const tracked = states[key] || {};
                     const card = document.createElement('fieldset');
                     card.className = 'illust-history-state-character';
                     card.dataset.character = key;
                     const title = document.createElement('legend');
-                    title.textContent = tracked?.canonical_name || key;
+                    title.textContent = tracked.canonical_name || participant?.canonical_name || key;
+                    card.dataset.canonicalName = title.textContent;
                     card.appendChild(title);
-                    if (tracked?.active_visual_profile_id) {
+                    const registeredName = Object.keys(profileOptions).find(name => name.toLowerCase() === title.textContent.toLowerCase());
+                    const choices = profileOptions[registeredName] || [];
+                    if (choices.length || tracked.active_visual_profile_id) {
                         const profileFields = document.createElement('div');
                         profileFields.className = 'illust-history-state-fields';
-                        for (const [field, label] of [['active_visual_profile_id', '적용 프로필 ID'], ['active_visual_profile_state', '프로필 상태·판단 근거']]) {
+                        for (const [field, label] of [['active_visual_profile_id', '적용 프로필 카드'], ['active_visual_profile_state', '프로필 상태·판단 근거 (선택)']]) {
                             const labelNode = document.createElement('label');
                             labelNode.textContent = label;
-                            const input = document.createElement('textarea');
+                            const isProfile = field === 'active_visual_profile_id';
+                            const input = document.createElement(isProfile ? 'select' : 'textarea');
                             input.dataset.profileField = field;
-                            input.defaultValue = String(tracked[field] || '');
-                            input.rows = field === 'active_visual_profile_id' ? 1 : 3;
+                            input.dataset.initialValue = String(tracked[field] || '');
+                            if (isProfile) {
+                                const options = [{id: '', label: '대화와 설정으로 판단'}, ...choices];
+                                if (tracked[field] && !choices.some(option => option.id === tracked[field])) {
+                                    options.push({id: tracked[field], label: '저장된 카드 · 현재 등록 목록에 없음'});
+                                }
+                                for (const option of options) {
+                                    const node = document.createElement('option');
+                                    node.value = option.id;
+                                    node.textContent = option.id
+                                        ? option.id + (option.label && option.label !== option.id ? ` · ${option.label}` : '')
+                                        : option.label;
+                                    input.appendChild(node);
+                                }
+                            }
+                            input.value = input.dataset.initialValue;
+                            input.rows = 3;
                             input.spellcheck = false;
                             input.setAttribute('aria-label', `${title.textContent} · ${label}`);
                             labelNode.appendChild(input);
@@ -83224,14 +83251,16 @@
                         const root = document.getElementById(id);
                         const states = JSON.parse(root.dataset.states);
                         for (const card of root.querySelectorAll('[data-character]')) {
-                            const tracked = states[card.dataset.character];
-                            const profileInputs = [...card.querySelectorAll('textarea[data-profile-field]')];
-                            const changedProfile = profileInputs.find(input => input.dataset.profileField === 'active_visual_profile_id' && input.value !== input.defaultValue);
-                            if (changedProfile) tracked.active_visual_profile_state = '';
-                            for (const input of profileInputs) {
-                                if (input.value !== input.defaultValue) tracked[input.dataset.profileField] = input.value;
-                            }
+                            const profileInputs = [...card.querySelectorAll('[data-profile-field]')];
+                            const changedInputs = profileInputs.filter(input => input.value !== input.dataset.initialValue);
                             const inputs = [...card.querySelectorAll('textarea[data-field]')];
+                            if (!changedInputs.length && !inputs.some(input => input.value !== input.defaultValue)) continue;
+                            const tracked = states[card.dataset.character] ||= {canonical_name: card.dataset.canonicalName};
+                            const changedProfile = changedInputs.find(input => input.dataset.profileField === 'active_visual_profile_id');
+                            if (changedProfile) tracked.active_visual_profile_state = '';
+                            for (const input of changedInputs) {
+                                tracked[input.dataset.profileField] = input.value;
+                            }
                             if (!inputs.some(input => input.value !== input.defaultValue)) continue;
                             const chain = tracked.call1_status_history;
                             const hasHistory = Array.isArray(chain) && chain.length > 0;
@@ -83261,7 +83290,7 @@
                 const data = await response.json();
                 if (!response.ok) throw new Error(data.error || ('HTTP ' + response.status));
                 if (modal.dataset.historyId !== historyId) return;
-                _renderIllustrationChatHistoryDetail(data.history || {});
+                _renderIllustrationChatHistoryDetail(data.history || {}, data.profile_options || {});
                 if (saveState) {
                     showToast('캐릭터 프로필·복장·헤어 상태를 저장했습니다.', 'success');
                     await loadIllustrationChatHistories();

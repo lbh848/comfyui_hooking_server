@@ -10256,7 +10256,28 @@ async def handle_api_illustration_chat_history_detail(request: web.Request) -> w
             record = illustration_chat_history.get_history(history_id)
         if record is None:
             return web.json_response({"error": "history not found"}, status=404)
-        return web.json_response({"history": record})
+        from modes.bot_mode import _load_lb_extra
+        from modes.visual_profiles import effective_bot_profiles
+
+        profile_options = {}
+        bot_name = str((record.get("source") or {}).get("bot_name") or "")
+        if bot_name:
+            data = _load_bot_data_readonly()
+            bot = next((item for item in data["bots"] if item.get("name") == bot_name), None)
+            if bot is not None:
+                extra = _load_lb_extra(bot_name)
+                if isinstance(extra, dict):
+                    extra = extra.get("edited") or []
+                profile_options = {
+                    name: [{"id": profile["id"], "label": profile.get("label", "")}
+                           for profile in character.get("profiles") or []]
+                    for name, character in effective_bot_profiles(bot, extra or []).items()
+                }
+            else:
+                print(f"[ILLUST_HISTORY] 히스토리 봇이 없어 카드 목록 생략: history={history_id}, bot={bot_name!r}")
+        else:
+            print(f"[ILLUST_HISTORY] 봇 이름이 없어 카드 목록 생략: history={history_id}")
+        return web.json_response({"history": record, "profile_options": profile_options})
     except FileNotFoundError as e:
         print(f"[ILLUST_HISTORY] 상세/편집/삭제 대상 없음: history={history_id}, error={e}")
         traceback.print_exc()
