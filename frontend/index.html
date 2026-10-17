@@ -41147,8 +41147,7 @@
         async function comfyInstallerStartUpdate() {
             if (!window.confirm(
                 '업데이트를 시작할까요?\n\n' +
-                '후킹 서버 코드가 바뀌면 먼저 재시작한 뒤 업데이트를 한 번 더 실행합니다.\n' +
-                'Comfy/Python/커스텀 노드 변경과 기동 상태를 검증하며, 워크플로우 E2E는 업데이트 완료 후 별도 버튼에서 선택 실행합니다.'
+                '업데이트가 종료되면 재시작 후 한 번 더 업데이트를 눌러봐 주세요.'
             )) return;
             const button = document.getElementById('comfy-installer-update-btn');
             let accepted = false;
