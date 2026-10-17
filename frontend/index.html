@@ -70715,11 +70715,6 @@
                         </div>
                         <div id="visual-guide-list" class="visual-guide-list"></div>
                         <div class="visual-guide-footer">
-                            <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;font-size:.75rem;color:var(--text2)">
-                                <b style="color:var(--text)">적용 방식</b>
-                                <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="radio" name="visual-guide-apply-mode" value="preserve"> 비어 있는 값만 채우기</label>
-                                <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="radio" name="visual-guide-apply-mode" value="overwrite" checked> 기존 값도 교체</label>
-                            </div>
                             <div style="flex:1"></div>
                             <span id="visual-guide-footer-status" style="font-size:.7rem;color:var(--text2)"></span>
                             <button type="button" onclick="closeVisualGuideGeneratorModal()" style="padding:7px 13px;border:1px solid var(--border);border-radius:7px;background:var(--surface2);color:var(--text);cursor:pointer">취소</button>
@@ -71221,7 +71216,7 @@
                 showToast(`${emptyGuide.character} [${emptyGuide.profileIndex + 1}]의 선택 기준이 비어 있습니다.`, 'error');
                 return;
             }
-            const overwrite = document.querySelector('input[name="visual-guide-apply-mode"]:checked')?.value === 'overwrite';
+            const overwrite = true;
             state.busy = true;
             _renderVisualGuideRows();
             try {
