@@ -1335,7 +1335,7 @@
         const title = profile ? 'PROFILE-RESOLVE 프로필 시간표' : timePlace ? 'TIME & PLACE 시간표' : '복장·헤어 시간표';
         const fields = profile ? [['profile', '적용 카드 ID'], ['reason', '판단 근거']] : timePlace ? [['time', 'TIME'], ['place', 'PLACE'], ['lighting', 'LIGHTING']] : [['outfit', '복장'], ['hair', '헤어']];
         body.append(element('h3', '', title), element('p', 'if-subtitle', profile
-            ? '파란색은 확정된 시작·변경점이고, 회색은 앞선 프로필과 근거를 이어받은 값입니다. START는 첫 등장 시의 상태이며, 이후 C 칸은 해당 원문 구간이 끝난 시점의 상태입니다. 등장 이전 구간의 출현을 뜻하지 않습니다.'
+            ? '파란색은 확정된 시작·변경점이고, 회색은 앞선 프로필과 근거를 이어받은 값입니다. START는 첫 등장 시의 상태이며, 이후 C 칸은 해당 원문 구간이 끝난 시점의 상태입니다.'
             : `왼쪽에서 오른쪽으로 상태를 이어받습니다. 파란색은 ${timePlace ? 'TIME & PLACE' : 'OUTFIT'}가 직접 출력한 값이고, 회색은 앞 SLOT에서 이어받은 값입니다. 각 항목은 새 값이 나오는 지점부터 독립적으로 바뀝니다.`));
         const wrap = element('div', 'if-state-table-wrap'), table = element('table', 'if-state-table');
         wrap.dataset.detailScrollKey = profile ? 'profile-state-table' : timePlace ? 'time-place-state-table' : 'call1-state-table';
