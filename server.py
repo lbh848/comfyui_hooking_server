@@ -10256,22 +10256,18 @@ async def handle_api_illustration_chat_history_detail(request: web.Request) -> w
             record = illustration_chat_history.get_history(history_id)
         if record is None:
             return web.json_response({"error": "history not found"}, status=404)
-        from modes.bot_mode import _load_lb_extra
-        from modes.visual_profiles import effective_bot_profiles
-
         profile_options = {}
         bot_name = str((record.get("source") or {}).get("bot_name") or "")
         if bot_name:
             data = _load_bot_data_readonly()
             bot = next((item for item in data["bots"] if item.get("name") == bot_name), None)
             if bot is not None:
-                extra = _load_lb_extra(bot_name)
-                if isinstance(extra, dict):
-                    extra = extra.get("edited") or []
                 profile_options = {
-                    name: [{"id": profile["id"], "label": profile.get("label", "")}
-                           for profile in character.get("profiles") or []]
-                    for name, character in effective_bot_profiles(bot, extra or []).items()
+                    character["name"]: [
+                        {key: profile[key] for key in ("id", "label", "rep_image")}
+                        for profile in character["profiles"]
+                    ]
+                    for character in _build_restore_manual_character_choices(bot_name, bot)
                 }
             else:
                 print(f"[ILLUST_HISTORY] 히스토리 봇이 없어 카드 목록 생략: history={history_id}, bot={bot_name!r}")
