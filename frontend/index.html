@@ -31798,6 +31798,9 @@
                         detail = (await resp.text()).slice(0, 300);
                     }
                 } catch (_) { /* 본문 읽기 실패는 무시 */ }
+                if (resp.status === 401) {
+                    detail = '로그인이 만료되었거나 필요합니다. 새로고침 후 다시 로그인해 주세요.';
+                }
                 const method = (options && options.method) || 'GET';
                 const msg = `HTTP ${resp.status}${detail ? ' - ' + detail : ''}`;
                 console.error(`[fetchJSON] ${method} ${url} 실패: ${msg}`);
@@ -49468,8 +49471,7 @@
         // ─── LLM API 키 별도 저장 (key/llm_keys.json) ───
         async function loadLlmKeys() {
             try {
-                const resp = await fetch('/api/llm/keys');
-                const data = await resp.json();
+                const data = await fetchJSON('/api/llm/keys');
                 for (const slot of LLM_SLOTS) {
                     const suffix = llmSlotSuffix(slot);
                     const el = document.getElementById(`setting-llm-api-key${suffix}`);
@@ -49477,6 +49479,7 @@
                 }
             } catch (e) {
                 console.error('load LLM keys:', e);
+                showToast('LLM API 키 조회 실패: ' + e.message, 'error');
             }
         }
 
@@ -49487,13 +49490,14 @@
                 payload[`llm_api_key${suffix}`] = (document.getElementById(`setting-llm-api-key${suffix}`) || {}).value || '';
             }
             try {
-                await fetch('/api/llm/keys', {
+                await fetchJSON('/api/llm/keys', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload),
                 });
             } catch (e) {
                 console.error('save LLM keys:', e);
+                throw new Error('LLM API 키 저장 실패: ' + e.message);
             }
         }
 
