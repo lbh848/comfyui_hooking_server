@@ -56267,18 +56267,20 @@
 
         async function removeLoraEntry() {
             if (!loraCurrentEntry) { showToast('삭제할 LoRA 항목을 선택하세요', 'error'); return; }
-            if (!confirm(`"${loraCurrentEntry}" 항목과 폴더를 삭제하시겠습니까?`)) return;
+            if (!confirm(`프로젝트 "${loraCurrentEntry}"를 삭제하시겠습니까?\n\n프로젝트의 이미지와 학습된 LoRA 파일(대표 및 모든 학습 결과)이 함께 삭제됩니다.\n삭제한 파일은 복구할 수 없습니다.`)) return;
             try {
                 const resp = await fetchJSON('/api/lora/manage/delete', {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ name: loraCurrentEntry, character: loraCurrentCharacter })                });
                 if (resp.success) {
-                    showToast('삭제 완료', 'success');
+                    if (resp.modal_sync_warning) {
+                        showToast(`로컬 프로젝트와 LoRA는 삭제됐지만 원격 LoRA 삭제 예약에 실패했습니다: ${resp.modal_sync_warning}`, 'error');
+                    } else showToast('프로젝트 및 LoRA 삭제 완료', 'success');
                     await enterLoraCharacter(loraCurrentCharacter);
                 } else {
                     showToast(resp.error || '삭제 실패', 'error');
                 }
-            } catch (e) { console.error('[LORA_MANAGE] 삭제 실패:', e); showToast('삭제 실패', 'error'); }
+            } catch (e) { console.error('[LORA_MANAGE] 삭제 실패:', e); showToast(`삭제 실패: ${e.message || e}`, 'error'); }
         }
 
         // ─── LoRA 항목 복제 ─────────────────────────────────
@@ -62764,14 +62766,16 @@
             if (!pid) { showToast('삭제할 프로젝트를 드롭박스에서 선택하세요', 'error'); return; }
             const proj = _styleLora.projects.find(p => p.id === pid);
             const name = proj ? proj.name : pid;
-            if (!confirm(`프로젝트 "${name}" 와 모든 이미지/학습결과를 삭제할까요?`)) return;
+            if (!confirm(`프로젝트 "${name}"를 삭제하시겠습니까?\n\n프로젝트의 이미지와 학습된 LoRA 파일(대표 및 모든 학습 결과)이 함께 삭제됩니다.\n삭제한 파일은 복구할 수 없습니다.`)) return;
             try {
                 const resp = await fetchJSON('/api/style_lora/project/delete', {
                     method: 'POST', headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({project: pid})
                 });
                 if (resp.success) {
-                    showToast('프로젝트 삭제됨', 'success');
+                    if (resp.modal_sync_warning) {
+                        showToast(`로컬 프로젝트와 LoRA는 삭제됐지만 원격 LoRA 삭제 예약에 실패했습니다: ${resp.modal_sync_warning}`, 'error');
+                    } else showToast('프로젝트 및 LoRA 삭제 완료', 'success');
                     if (_styleLora.currentProject === pid) { _styleLora.currentProject = null; _showStyleListView(); }
                     await loadStyleProjects();
                 } else showToast(resp.error || '삭제 실패', 'error');
@@ -65178,19 +65182,21 @@
 
         async function removeBotLoraProject() {
             if (!botLoraCurrentBot || !botLoraCurrentProject) return;
-            if (!confirm(`프로젝트 "${botLoraCurrentProject}"를 삭제하시겠습니까?`)) return;
+            if (!confirm(`프로젝트 "${botLoraCurrentProject}"를 삭제하시겠습니까?\n\n프로젝트의 이미지와 학습된 LoRA 파일(대표 및 모든 학습 결과)이 함께 삭제됩니다.\n삭제한 파일은 복구할 수 없습니다.`)) return;
             try {
                 const resp = await fetchJSON('/api/bot_lora/project/delete', {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ bot: botLoraCurrentBot, project: botLoraCurrentProject })
                 });
                 if (resp.success) {
-                    showToast('프로젝트 삭제 완료', 'success');
+                    if (resp.modal_sync_warning) {
+                        showToast(`로컬 프로젝트와 LoRA는 삭제됐지만 원격 LoRA 삭제 예약에 실패했습니다: ${resp.modal_sync_warning}`, 'error');
+                    } else showToast('프로젝트 및 LoRA 삭제 완료', 'success');
                     enterBotLoraBot(botLoraCurrentBot);
                 } else {
                     showToast(resp.error || '삭제 실패', 'error');
                 }
-            } catch (e) { console.error('[BOT_LORA] 프로젝트 삭제 실패:', e); showToast('삭제 실패', 'error'); }
+            } catch (e) { console.error('[BOT_LORA] 프로젝트 삭제 실패:', e); showToast(`삭제 실패: ${e.message || e}`, 'error'); }
         }
 
         async function saveBotLoraConfig() {

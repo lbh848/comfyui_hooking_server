@@ -1301,9 +1301,11 @@ def _save_lora_manage(data: dict):
         with open(LORA_MANAGE_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
         print(f"[LORA_MANAGE] 저장 완료")
+        return True
     except Exception as e:
         print(f"[LORA_MANAGE] 저장 실패: {e}")
         traceback.print_exc()
+        return False
 
 
 def get_block_tag_rules() -> list:
@@ -1590,8 +1592,10 @@ def _cleanup_empty_dirs(path: str):
 def remove_lora_entry(name: str, character: str, lora_load_path: str = "") -> dict:
     """LoRA 항목 삭제 (메타데이터 + 폴더)"""
     if not name:
+        print(f"[LORA_MANAGE] 삭제 실패 - 이름 누락: character={character!r}")
         return {"success": False, "error": "이름 누락"}
     if not character:
+        print(f"[LORA_MANAGE] 삭제 실패 - 캐릭터 누락: name={name!r}")
         return {"success": False, "error": "캐릭터 누락"}
 
     data = _load_lora_manage()
@@ -1608,6 +1612,7 @@ def remove_lora_entry(name: str, character: str, lora_load_path: str = "") -> di
         except Exception as e:
             print(f"[LORA_MANAGE] 에셋 폴더 삭제 실패: {entry_path} - {e}")
             traceback.print_exc()
+            return {"success": False, "error": f"프로젝트 파일 삭제 실패: {e}. 일부 파일은 이미 삭제되었을 수 있습니다. 원인을 해결한 뒤 다시 시도하세요."}
     _cleanup_empty_dirs(os.path.dirname(entry_path))
 
     # lora_load_path 항목 폴더도 삭제
@@ -1620,13 +1625,16 @@ def remove_lora_entry(name: str, character: str, lora_load_path: str = "") -> di
             except Exception as e:
                 print(f"[LORA_MANAGE] 로드 경로 폴더 삭제 실패: {load_entry_dir} - {e}")
                 traceback.print_exc()
+                return {"success": False, "error": f"LoRA 파일 삭제 실패: {e}. 일부 파일은 이미 삭제되었을 수 있습니다. 원인을 해결한 뒤 다시 시도하세요."}
             _cleanup_empty_dirs(os.path.dirname(load_entry_dir))
 
     del data["loras"][character][name]
     # 캐릭터 하위가 비었으면 캐릭터 키도 삭제
     if not data["loras"][character]:
         del data["loras"][character]
-    _save_lora_manage(data)
+    if not _save_lora_manage(data):
+        print(f"[LORA_MANAGE] 삭제 후 관리정보 저장 실패: {character}/{name}")
+        return {"success": False, "error": "파일은 삭제했지만 프로젝트 관리정보 저장에 실패했습니다. 다시 시도하세요."}
     print(f"[LORA_MANAGE] LoRA 삭제: {character}/{name}")
     return {"success": True}
 

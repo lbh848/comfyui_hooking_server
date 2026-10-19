@@ -482,9 +482,11 @@ def _save_bot_lora_manage(data: dict):
         with open(BOT_LORA_MANAGE_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
         print("[BOT_LORA_MANAGE] 저장 완료")
+        return True
     except Exception as e:
         print(f"[BOT_LORA_MANAGE] 저장 실패: {e}")
         traceback.print_exc()
+        return False
 
 
 def _get_project_config(data: dict, bot_name: str, project_name: str) -> dict | None:
@@ -1039,6 +1041,7 @@ def duplicate_project(bot_name: str, src_project_name: str, dst_project_name: st
 def remove_project(bot_name: str, project_name: str, lora_load_path: str = "") -> dict:
     """학습 프로젝트 삭제"""
     if not bot_name or not project_name:
+        print(f"[BOT_LORA] 프로젝트 삭제 실패 - 이름 누락: bot={bot_name!r}, project={project_name!r}")
         return {"success": False, "error": "봇/프로젝트 이름 누락"}
 
     data = _load_bot_lora_manage()
@@ -1055,6 +1058,8 @@ def remove_project(bot_name: str, project_name: str, lora_load_path: str = "") -
             print(f"[BOT_LORA] 프로젝트 폴더 삭제: {project_dir}")
         except Exception as e:
             print(f"[BOT_LORA] 프로젝트 폴더 삭제 실패: {project_dir} - {e}")
+            traceback.print_exc()
+            return {"success": False, "error": f"프로젝트 파일 삭제 실패: {e}. 일부 파일은 이미 삭제되었을 수 있습니다. 원인을 해결한 뒤 다시 시도하세요."}
 
     # 학습된 LoRA 폴더도 삭제
     if lora_load_path:
@@ -1071,12 +1076,16 @@ def remove_project(bot_name: str, project_name: str, lora_load_path: str = "") -
                                 print(f"[BOT_LORA] 학습 폴더 삭제: {trained_dir}")
                             except Exception as e:
                                 print(f"[BOT_LORA] 학습 폴더 삭제 실패: {trained_dir} - {e}")
+                                traceback.print_exc()
+                                return {"success": False, "error": f"LoRA 파일 삭제 실패: {e}. 일부 파일은 이미 삭제되었을 수 있습니다. 원인을 해결한 뒤 다시 시도하세요."}
                 break
 
     del bot_projects[project_name]
     if not bot_projects:
         del data["bot_loras"][bot_name]
-    _save_bot_lora_manage(data)
+    if not _save_bot_lora_manage(data):
+        print(f"[BOT_LORA] 삭제 후 관리정보 저장 실패: {bot_name}/{project_name}")
+        return {"success": False, "error": "파일은 삭제했지만 프로젝트 관리정보 저장에 실패했습니다. 다시 시도하세요."}
     print(f"[BOT_LORA] 프로젝트 삭제: {bot_name}/{project_name}")
     return {"success": True}
 

@@ -147,9 +147,11 @@ def _save_data(data: dict):
     try:
         with open(STYLE_LORA_MANAGE_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
+        return True
     except Exception as e:
         print(f"[STYLE_LORA] JSON 세이브 실패: {e}")
         traceback.print_exc()
+        return False
 
 
 # ─── 프로젝트 CRUD ─────────────────────────────────────────────
@@ -223,10 +225,6 @@ def delete_project(project_id: str, style_lora_load_path: str = "", _data: dict 
             print(f"[STYLE_LORA] 삭제 대상 없음: {project_id}")
         return {"success": False, "error": "존재하지 않는 프로젝트입니다"}
 
-    projects.pop(project_id, None)
-    if own_data:
-        _save_data(data)
-
     # 학습 이미지 폴더 삭제
     ppath = _project_dir(project_id)
     if os.path.isdir(ppath):
@@ -234,6 +232,8 @@ def delete_project(project_id: str, style_lora_load_path: str = "", _data: dict 
             shutil.rmtree(ppath)
         except Exception as e:
             print(f"[STYLE_LORA] 프로젝트 폴더 삭제 실패: {ppath} - {e}")
+            traceback.print_exc()
+            return {"success": False, "error": f"프로젝트 파일 삭제 실패: {e}. 일부 파일은 이미 삭제되었을 수 있습니다. 원인을 해결한 뒤 다시 시도하세요."}
 
     # 학습 결과물 삭제 (anima/sdxl). 저장 경로 키: {project}
     storage_key = _safe_dirname(project_id)
@@ -246,7 +246,13 @@ def delete_project(project_id: str, style_lora_load_path: str = "", _data: dict 
                     print(f"[STYLE_LORA] 학습 결과 삭제: {trained_dir}")
                 except Exception as e:
                     print(f"[STYLE_LORA] 학습 결과 삭제 실패: {trained_dir} - {e}")
+                    traceback.print_exc()
+                    return {"success": False, "error": f"LoRA 파일 삭제 실패: {e}. 일부 파일은 이미 삭제되었을 수 있습니다. 원인을 해결한 뒤 다시 시도하세요."}
 
+    projects.pop(project_id, None)
+    if own_data and not _save_data(data):
+        print(f"[STYLE_LORA] 삭제 후 관리정보 저장 실패: {project_id}")
+        return {"success": False, "error": "파일은 삭제했지만 프로젝트 관리정보 저장에 실패했습니다. 다시 시도하세요."}
     print(f"[STYLE_LORA] 프로젝트 삭제: {project_id}")
     return {"success": True}
 
