@@ -84257,7 +84257,7 @@
                             <div style="display:flex; flex-wrap:wrap; justify-content:flex-end; gap:5px;">
                                 <button onclick="botOneClickSelectCharacters(true)" style="padding:3px 9px; border:1px solid var(--border); border-radius:5px; background:var(--surface2); color:var(--text); cursor:pointer; font-size:0.68rem;">전체 선택</button>
                                 <button onclick="botOneClickSelectCharacters(false)" style="padding:3px 9px; border:1px solid var(--border); border-radius:5px; background:var(--surface2); color:var(--text); cursor:pointer; font-size:0.68rem;">전체 해제</button>
-                                <button id="bot-one-click-select-face-changed" onclick="botOneClickSelectCharacters('face_changed')" title="현재 대표와 FACE 원본의 내용이 다른 캐릭터만 선택합니다. 출처 기록이 없는 기존 FACE는 제외합니다." style="padding:3px 9px; border:1px solid var(--border); border-radius:5px; background:var(--surface2); color:var(--text); cursor:pointer; font-size:0.68rem;">FACE 이미지와 대표가 다름</button>
+                                <button id="bot-one-click-select-face-changed" onclick="botOneClickSelectCharacters('face_changed')" title="대표 이미지가 있는 카드 중 FACE가 없거나, 현재 대표와 FACE 원본의 내용이 다른 캐릭터를 선택합니다. 출처 기록이 없는 기존 FACE는 제외합니다." style="padding:3px 9px; border:1px solid var(--border); border-radius:5px; background:var(--surface2); color:var(--text); cursor:pointer; font-size:0.68rem;">FACE 없음 / 대표와 다름</button>
                             </div>
                         </div>
                         <input id="bot-one-click-char-search" type="search" placeholder="캐릭터 이름 검색" oninput="filterBotOneClickCharacters()" style="width:100%; box-sizing:border-box; margin-bottom:7px; padding:7px 9px; border:1px solid var(--border); border-radius:6px; background:var(--surface2); color:var(--text); font-size:0.76rem;">
@@ -84331,6 +84331,10 @@
                     if (_botOneClickWizard !== wizard) return;
                     const images = data.images || [];
                     const changed = new Set(images.filter(image => image.face_matches_rep === false).map(image => image.character));
+                    const faceKeys = new Set(images.map(_botVisualTargetKey));
+                    const bot = (botData?.bots || []).find(item => item.name === wizard.botName);
+                    const missing = _botVisualTargets(bot).filter(target => target.rep_images.length && !faceKeys.has(_botVisualTargetKey(target)));
+                    missing.forEach(target => changed.add(target.character));
                     let selectedCount = 0;
                     document.querySelectorAll('.bot-one-click-char-check:not([disabled])').forEach(input => {
                         input.checked = changed.has(input.dataset.name);
@@ -84338,12 +84342,12 @@
                     });
                     updateBotOneClickSelectionUi();
                     const unknownCount = images.filter(image => image.face_matches_rep == null).length;
-                    showToast(`${selectedCount}명 선택${unknownCount ? ` · 출처 판정 불가 FACE ${unknownCount}개 제외` : ''}`, 'info');
+                    showToast(`${selectedCount}명 선택${missing.length ? ` · FACE 없는 카드 ${missing.length}개 포함` : ''}${unknownCount ? ` · 출처 판정 불가 FACE ${unknownCount}개 제외` : ''}`, 'info');
                 } catch (error) {
                     console.error('[BOT_ONE_CLICK] FACE 출처 비교 실패:', error);
                     showToast(`FACE 출처 비교 실패: ${error.message || error}`, 'error');
                 } finally {
-                    if (button) { button.disabled = false; button.textContent = 'FACE 이미지와 대표가 다름'; }
+                    if (button) { button.disabled = false; button.textContent = 'FACE 없음 / 대표와 다름'; }
                 }
                 return;
             }
