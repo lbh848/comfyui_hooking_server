@@ -84254,9 +84254,10 @@
                                 <div style="font-size:0.86rem; font-weight:700;">1. 캐릭터 선택</div>
                                 <div id="bot-one-click-selected-count" style="font-size:0.68rem; color:#38BDF8; margin-top:2px;">${eligibleCount}명 선택</div>
                             </div>
-                            <div style="display:flex; gap:5px;">
+                            <div style="display:flex; flex-wrap:wrap; justify-content:flex-end; gap:5px;">
                                 <button onclick="botOneClickSelectCharacters(true)" style="padding:3px 9px; border:1px solid var(--border); border-radius:5px; background:var(--surface2); color:var(--text); cursor:pointer; font-size:0.68rem;">전체 선택</button>
                                 <button onclick="botOneClickSelectCharacters(false)" style="padding:3px 9px; border:1px solid var(--border); border-radius:5px; background:var(--surface2); color:var(--text); cursor:pointer; font-size:0.68rem;">전체 해제</button>
+                                <button id="bot-one-click-select-face-changed" onclick="botOneClickSelectCharacters('face_changed')" title="현재 대표와 FACE 원본의 내용이 다른 캐릭터만 선택합니다. 출처 기록이 없는 기존 FACE는 제외합니다." style="padding:3px 9px; border:1px solid var(--border); border-radius:5px; background:var(--surface2); color:var(--text); cursor:pointer; font-size:0.68rem;">FACE 이미지와 대표가 다름</button>
                             </div>
                         </div>
                         <input id="bot-one-click-char-search" type="search" placeholder="캐릭터 이름 검색" oninput="filterBotOneClickCharacters()" style="width:100%; box-sizing:border-box; margin-bottom:7px; padding:7px 9px; border:1px solid var(--border); border-radius:6px; background:var(--surface2); color:var(--text); font-size:0.76rem;">
@@ -84319,7 +84320,33 @@
             updateBotOneClickStageSelectionUi();
         }
 
-        function botOneClickSelectCharacters(checked) {
+        async function botOneClickSelectCharacters(checked) {
+            if (checked === 'face_changed') {
+                const wizard = _botOneClickWizard;
+                const button = document.getElementById('bot-one-click-select-face-changed');
+                if (!wizard || button?.disabled) return;
+                if (button) { button.disabled = true; button.textContent = 'FACE 출처 비교 중…'; }
+                try {
+                    const data = await _botOneClickJson(`/api/bot_mode/utility_preview?bot=${encodeURIComponent(wizard.botName)}`);
+                    if (_botOneClickWizard !== wizard) return;
+                    const images = data.images || [];
+                    const changed = new Set(images.filter(image => image.face_matches_rep === false).map(image => image.character));
+                    let selectedCount = 0;
+                    document.querySelectorAll('.bot-one-click-char-check:not([disabled])').forEach(input => {
+                        input.checked = changed.has(input.dataset.name);
+                        if (input.checked) selectedCount++;
+                    });
+                    updateBotOneClickSelectionUi();
+                    const unknownCount = images.filter(image => image.face_matches_rep == null).length;
+                    showToast(`${selectedCount}명 선택${unknownCount ? ` · 출처 판정 불가 FACE ${unknownCount}개 제외` : ''}`, 'info');
+                } catch (error) {
+                    console.error('[BOT_ONE_CLICK] FACE 출처 비교 실패:', error);
+                    showToast(`FACE 출처 비교 실패: ${error.message || error}`, 'error');
+                } finally {
+                    if (button) { button.disabled = false; button.textContent = 'FACE 이미지와 대표가 다름'; }
+                }
+                return;
+            }
             document.querySelectorAll('.bot-one-click-char-check:not([disabled])').forEach(input => { input.checked = checked; });
             updateBotOneClickSelectionUi();
         }

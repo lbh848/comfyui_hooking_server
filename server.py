@@ -5068,6 +5068,35 @@ async def _run_data_patch_utility(
         [local_char_dir] if local_char_dir and os.path.isdir(local_char_dir) else None
     )
 
+    # 설정의 대표가 아니라 워크플로우가 실제로 읽는 패치된 입력을 기록한다.
+    # 대표를 바꾼 뒤 데이터 패치를 생략해도 이전 입력을 새 대표로 오인하지 않는다.
+    source_record = None
+    staged_rep_path = ""
+    source_dir = local_char_dir
+    if source_dir and not target["is_primary"]:
+        source_dir = os.path.join(source_dir, "_visual_profiles", visual_card_id)
+    try:
+        staged_reps = [
+            os.path.join(source_dir, name)
+            for name in os.listdir(source_dir) if os.path.splitext(name)[0] == "representation"
+            and os.path.isfile(os.path.join(source_dir, name))
+        ] if source_dir and os.path.isdir(source_dir) else []
+        if len(staged_reps) == 1:
+            staged_rep_path = staged_reps[0]
+            source_hash = compute_file_hash(staged_rep_path)
+            source_name = os.path.basename(staged_rep_path)
+            for rep_name in target["rep_images"]:
+                rep_path = os.path.join(char_dir, rep_name)
+                if os.path.isfile(rep_path) and compute_file_hash(rep_path) == source_hash:
+                    source_name = rep_name
+                    break
+            source_record = {"source_filename": source_name, "source_sha256": source_hash}
+        else:
+            print(f"[DATA_PATCH_UTILITY] FACE 출처 기록 생략(대표 입력 특정 불가): {source_dir!r}, files={staged_reps!r}")
+    except Exception as exc:
+        print(f"[DATA_PATCH_UTILITY] FACE 출처 입력 조회 실패: {source_dir!r} - {exc}")
+        traceback.print_exc()
+
     img_bytes, submit_meta = await submit_workflow_to_comfy(
         wf,
         task_key="utility_debug",
@@ -5076,6 +5105,18 @@ async def _run_data_patch_utility(
     )
     if not img_bytes:
         raise RuntimeError(f"{char_name}: {submit_meta or '이미지 없음'}")
+
+    if source_record:
+        try:
+            if compute_file_hash(staged_rep_path) != source_record["source_sha256"]:
+                print(f"[DATA_PATCH_UTILITY] FACE 출처 기록 생략(실행 중 대표 입력 변경): {staged_rep_path}")
+                source_record = None
+            else:
+                source_record["face_sha256"] = hashlib.sha256(img_bytes).hexdigest()
+        except Exception as exc:
+            print(f"[DATA_PATCH_UTILITY] FACE 출처 입력 재확인 실패: {staged_rep_path!r} - {exc}")
+            traceback.print_exc()
+            source_record = None
 
     # 원격 실행이었으면 회수한 캐시를 로컬 input 폴더에 되돌려 놓는다.
     captured = []
@@ -5122,7 +5163,9 @@ async def _run_data_patch_utility(
     backup_paths = [
         (os.path.join(artifact_dir, "_face_image.webp"), "_face_image.webp"),
         (os.path.join(artifact_dir, "_face_image_prompt.json"), "_face_image_prompt.json"),
+        (os.path.join(artifact_dir, "_face_image_source.json"), "_face_image_source.json"),
     ]
+    existing_paths = {path for path, _ in backup_paths if os.path.isfile(path)}
     backup_dir = os.path.join(artifact_dir, f"_face_backup_{uuid.uuid4().hex}")
     backed_up = []
     try:
@@ -5147,6 +5190,12 @@ async def _run_data_patch_utility(
         old_prompt_path = os.path.join(artifact_dir, "_face_image_prompt.json")
         if os.path.isfile(old_prompt_path):
             os.remove(old_prompt_path)
+        source_record_path = os.path.join(artifact_dir, "_face_image_source.json")
+        if source_record:
+            with open(source_record_path, "w", encoding="utf-8") as source_file:
+                json.dump(source_record, source_file, ensure_ascii=False, indent=2)
+        elif os.path.isfile(source_record_path):
+            os.remove(source_record_path)
     except Exception as exc:
         print(
             "[DATA_PATCH_UTILITY] 새 FACE 교체 실패: "
@@ -5160,6 +5209,14 @@ async def _run_data_patch_utility(
                 print(
                     f"[DATA_PATCH_UTILITY] FACE 되돌리기 실패: {src_path!r} - {restore_exc}"
                 )
+                traceback.print_exc()
+        for path, _ in backup_paths:
+            if path not in existing_paths and os.path.isfile(path):
+                try:
+                    os.remove(path)
+                except OSError as cleanup_exc:
+                    print(f"[DATA_PATCH_UTILITY] 실패한 새 FACE 파일 정리 실패: {path!r} - {cleanup_exc}")
+                    traceback.print_exc()
         try:
             if os.path.isfile(temp_result_path):
                 os.remove(temp_result_path)

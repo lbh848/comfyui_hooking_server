@@ -9,6 +9,7 @@ import asyncio
 import base64
 from copy import deepcopy
 import hashlib
+from io import BytesIO
 import json
 import math
 import os
@@ -3173,6 +3174,24 @@ class BotMode:
                     f"?visual_card_id={quote(rep['visual_card_id'], safe='')}"
                     if not rep["is_primary"] else ""
                 )
+                face_matches_rep = None
+                source_path = os.path.join(os.path.dirname(rep["filepath"]), "_face_image_source.json")
+                try:
+                    if os.path.isfile(source_path) and rep.get("rep_images"):
+                        with open(source_path, "r", encoding="utf-8") as source_file:
+                            source = json.load(source_file)
+                        # 출처가 현재 FACE에 속하는지 확인한다. 수동 교체한 FACE는 판정 불가다.
+                        if (source.get("source_sha256") and
+                                source.get("face_sha256") == BotDataPatcher._program_embedding_hash(rep["filepath"])):
+                            rep_path = os.path.join(BOT_DIR, bot_name, rep["character"], rep["rep_images"][0])
+                            face_matches_rep = source["source_sha256"] == BotDataPatcher._program_embedding_hash(rep_path)
+                        else:
+                            print(f"[BOT_MODE] FACE 출처 판정 불가(기록 불완전 또는 FACE 교체): {source_path}")
+                    else:
+                        print(f"[BOT_MODE] FACE 출처 판정 불가(기록 또는 대표 없음): {source_path}")
+                except Exception as e:
+                    print(f"[BOT_MODE] FACE 출처 비교 실패: {source_path} - {e}")
+                    traceback.print_exc()
                 results.append({
                     "character": rep["character"],
                     "visual_card_id": rep["visual_card_id"],
@@ -3182,6 +3201,7 @@ class BotMode:
                     "filename": rep["filename"],
                     "prompt": prompt,
                     "negative": negative,
+                    "face_matches_rep": face_matches_rep,
                     "url": (
                         f"/api/bot_mode/image/{quote(bot_name, safe='')}/"
                         f"{quote(rep['character'], safe='')}/{rep['filename']}{card_query}"
@@ -6820,7 +6840,9 @@ class BotDataPatcher:
                     )
                 else:
                     try:
-                        with Image.open(rep_path) as opened:
+                        with open(rep_path, "rb") as rep_file:
+                            rep_bytes = rep_file.read()
+                        with Image.open(BytesIO(rep_bytes)) as opened:
                             source_image = opened.convert("RGB")
                         crop, detected_confidence = face_detector.crop_face(
                             source_image,
@@ -6864,6 +6886,11 @@ class BotDataPatcher:
                                 "confirmed_sha256": source_hash,
                                 "save_new_face": True,
                                 "preview_path": preview_path,
+                                "face_source": {
+                                    "source_filename": rep_name,
+                                    "source_sha256": hashlib.sha256(rep_bytes).hexdigest(),
+                                    "face_sha256": source_hash,
+                                },
                             })
                             response.update({
                                 "status": "extracted",
@@ -6993,6 +7020,7 @@ class BotDataPatcher:
                 )
                 face_path = os.path.join(artifact_dir, "_face_image.webp")
                 prompt_path = os.path.join(artifact_dir, "_face_image_prompt.json")
+                source_record_path = os.path.join(artifact_dir, "_face_image_source.json")
                 cache_path = os.path.join(artifact_dir, "_face_image.l14.npz")
                 backup_char_dir = os.path.join(
                     backup_root,
@@ -7007,9 +7035,11 @@ class BotDataPatcher:
                 save_new_face = bool(item.get("save_new_face"))
                 face_existed = os.path.isfile(face_path)
                 prompt_existed = os.path.isfile(prompt_path)
+                source_record_existed = os.path.isfile(source_record_path)
                 cache_existed = os.path.isfile(cache_path)
                 face_backup = ""
                 prompt_backup = ""
+                source_record_backup = ""
                 tmp_face_path = f"{face_path}.tmp-{uuid.uuid4().hex}"
 
                 try:
@@ -7025,6 +7055,7 @@ class BotDataPatcher:
                     if save_new_face:
                         face_backup = self._program_embedding_backup_file(face_path, backup_char_dir)
                         prompt_backup = self._program_embedding_backup_file(prompt_path, backup_char_dir)
+                        source_record_backup = self._program_embedding_backup_file(source_record_path, backup_char_dir)
                         os.makedirs(artifact_dir, exist_ok=True)
                         shutil.copy2(source_path, tmp_face_path)
                         os.replace(tmp_face_path, face_path)
@@ -7032,6 +7063,8 @@ class BotDataPatcher:
                             os.remove(prompt_path)
                             print(f"[PROGRAM_EMBEDDING] 오래된 FACE 프롬프트 제거: {prompt_path}")
                         source_hash = self._program_embedding_hash(face_path)
+                        with open(source_record_path, "w", encoding="utf-8") as source_file:
+                            json.dump(item["face_source"], source_file, ensure_ascii=False, indent=2)
 
                     saved = face_embedder.write_embedding_cache(
                         cache_path,
@@ -7084,6 +7117,10 @@ class BotDataPatcher:
                                 os.remove(face_path)
                             if prompt_existed and prompt_backup:
                                 shutil.copy2(prompt_backup, prompt_path)
+                            if source_record_existed and source_record_backup:
+                                shutil.copy2(source_record_backup, source_record_path)
+                            elif not source_record_existed and os.path.isfile(source_record_path):
+                                os.remove(source_record_path)
                         except Exception as rollback_error:
                             print(
                                 f"[PROGRAM_EMBEDDING] FACE 롤백 실패({bot_name}/{char_name}): "
@@ -7493,61 +7530,10 @@ class BotDataPatcher:
             if not char_name:
                 return _json_error("캐릭터 이름이 비어있습니다.")
 
-            # 기존 유틸리티 결과 + 프롬프트 삭제
-            char_dir = os.path.join(BOT_DIR, bot_name, char_name)
-            result_path = os.path.join(char_dir, "_face_image.webp")
-            for old in ["_face_image.webp", "_face_image_prompt.json"]:
-                old_path = os.path.join(char_dir, old)
-                if os.path.isfile(old_path):
-                    os.remove(old_path)
-                    print(f"[UTILITY] 기존 파일 삭제: {old_path}")
-
-            # 워크플로우 로드
-            wf_api, wf_err = await self._load_utility_workflow()
-            if wf_err:
-                return _json_error(wf_err)
-
-            # 봇 데이터 로드
-            data = _load_bot_data()
-            bot = next((b for b in data["bots"] if b["name"] == bot_name), None)
-            if not bot:
-                return _json_error(f"봇을 찾을 수 없습니다: {bot_name}")
-            char = next((c for c in bot.get("characters", []) if c["name"] == char_name), None)
-            if not char:
-                return _json_error(f"캐릭터를 찾을 수 없습니다: {char_name}")
-            if not char.get("rep_images"):
-                return _json_error(f"대표 이미지가 없는 캐릭터입니다: {char_name}")
-
-            # 설정 로드 (봇별 패치 설정 사용)
-            settings = _load_patch_settings(bot_name)
-            prompt_text = build_utility_prompt(bot_name, char_name, settings)
-            print(f"[UTILITY] 실행: {char_name} | 프롬프트:\n{prompt_text}")
-
-            # 워크플로우에 프롬프트 주입
-            import copy
-            wf = copy.deepcopy(wf_api)
-            for nid, ninfo in wf.items():
-                if not isinstance(ninfo, dict):
-                    continue
-                title = ninfo.get("_meta", {}).get("title", "")
-                if title == "긍정프롬프트":
-                    ninfo["inputs"]["value"] = prompt_text
-
-            # ComfyUI에 제출
-            from server import submit_workflow_to_comfy
-            img_bytes, submit_err = await submit_workflow_to_comfy(
-                wf,
-                task_key="utility_debug",
-            )
-            if submit_err or not img_bytes:
-                return _json_error(f"{char_name}: {submit_err or '이미지 없음'}")
-
-            # 결과 이미지 저장
-            os.makedirs(os.path.dirname(result_path), exist_ok=True)
-            with open(result_path, "wb") as f:
-                f.write(img_bytes)
-            print(f"[UTILITY] {char_name} 결과 저장: {result_path} ({len(img_bytes):,} bytes)")
-            return _json_ok({"character": char_name, "message": f"{char_name} 완료"})
+            # 큐 실행과 같은 FACE 저장·출처 기록·실패 복구 경로를 사용한다.
+            from server import _run_data_patch_utility
+            result = await _run_data_patch_utility(bot_name, char_name)
+            return _json_ok(result)
         except Exception as e:
             print(f"[UTILITY] 실행 실패: {e}")
             traceback.print_exc()
