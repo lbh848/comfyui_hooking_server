@@ -53,6 +53,7 @@ BUILTIN_PRESETS_DIR = os.path.join(BASE_DIR, "prompts", "bot_system_prompt")
 BUILTIN_PRESETS_FILE = os.path.join(BUILTIN_PRESETS_DIR, "presets.json")
 _builtin_presets_cache = None
 _builtin_presets_mtime = -1.0
+_bot_backup_digest_cache = {}
 
 DEFAULT_BOT_DATA = {
     "bots": [],
@@ -588,53 +589,142 @@ def _load_bot_data() -> dict:
         try:
             with open(BOT_DATA_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                print(f"[BOT_MODE] bot.json 로드 완료")
-                if "bots" not in data:
-                    data["bots"] = []
-                # 새 필드 자동 마이그레이션
-                if "positive_whitelist" not in data:
-                    data["positive_whitelist"] = []
-                if "positive_blacklist" not in data:
-                    data["positive_blacklist"] = []
-                if "system_prompt_presets" not in data:
-                    data["system_prompt_presets"] = {}
-                for bot in data.get("bots", []):
-                    if "system_prompt" not in bot:
-                        bot["system_prompt"] = ""
-                # system_prompt_preset 필드 보장 (프리셋 기반 모델)
-                _migrate_system_prompt_preset(data)
-                # solo/group 프로필 마이그레이션
-                _migrate_solo_group(data)
-                # 후처리 봇별 설정 마이그레이션 (config.json → bot.json)
-                _migrate_postprocess_vn(data)
-                return data
+            # 마이그레이션이 같은 파일을 교체 저장하므로 Windows 읽기 핸들을 먼저 닫는다.
+            print(f"[BOT_MODE] bot.json 로드 완료")
+            if "bots" not in data:
+                data["bots"] = []
+            # 새 필드 자동 마이그레이션
+            if "positive_whitelist" not in data:
+                data["positive_whitelist"] = []
+            if "positive_blacklist" not in data:
+                data["positive_blacklist"] = []
+            if "system_prompt_presets" not in data:
+                data["system_prompt_presets"] = {}
+            for bot in data.get("bots", []):
+                if "system_prompt" not in bot:
+                    bot["system_prompt"] = ""
+            # system_prompt_preset 필드 보장 (프리셋 기반 모델)
+            _migrate_system_prompt_preset(data)
+            # solo/group 프로필 마이그레이션
+            _migrate_solo_group(data)
+            # 후처리 봇별 설정 마이그레이션 (config.json → bot.json)
+            _migrate_postprocess_vn(data)
+            return data
         except Exception as e:
-            print(f"[BOT_MODE] bot.json 로드 실패: {e}")
+            print(f"[BOT_MODE] bot.json 로드/마이그레이션 실패 — 기존 파일 보존: path={BOT_DATA_FILE}, error={e}")
             traceback.print_exc()
+            raise
+    print(f"[BOT_MODE] bot.json이 없어 기본 데이터를 생성합니다: {BOT_DATA_FILE}")
     data = copy_default()
     _save_bot_data(data)
     return data
 
 
 def _save_bot_data(data: dict):
-    """bot.json 저장."""
+    """변경된 bot.json만 교체 저장하고 서로 다른 내용의 최근 백업 100개를 보관한다."""
+    global _bot_backup_digest_cache
+    temp_path = ""
     try:
-        os.makedirs(ASSET_DATA_DIR, exist_ok=True)
+        serialized = json.dumps(data, indent=2, ensure_ascii=False)
         if os.path.isfile(BOT_DATA_FILE):
-            backup_dir = os.path.join(ASSET_DATA_DIR, "backups")
+            try:
+                with open(BOT_DATA_FILE, "r", encoding="utf-8") as f:
+                    unchanged = json.load(f) == data
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                print(f"[BOT_MODE] 기존 bot.json 내용 비교 실패 — 원본을 백업한 뒤 요청 데이터 저장: {BOT_DATA_FILE}")
+                traceback.print_exc()
+            else:
+                if unchanged:
+                    print("[BOT_MODE] bot.json 내용 변경 없음 — 파일 교체와 중복 백업 생성 생략")
+                    return
+        os.makedirs(ASSET_DATA_DIR, exist_ok=True)
+        temp_path = os.path.join(ASSET_DATA_DIR, f".bot.json.{uuid.uuid4().hex}.tmp")
+        with open(temp_path, "w", encoding="utf-8") as f:
+            f.write(serialized)
+            f.flush()
+            os.fsync(f.fileno())
+        backup_dir = os.path.join(ASSET_DATA_DIR, "backups")
+        if os.path.isfile(BOT_DATA_FILE):
             os.makedirs(backup_dir, exist_ok=True)
             stamp = time.strftime("%Y%m%d_%H%M%S")
             backup_name = f"bot.json.bak_{stamp}_{uuid.uuid4().hex[:8]}"
             backup_path = os.path.join(backup_dir, backup_name)
             shutil.copy2(BOT_DATA_FILE, backup_path)
             print(f"[BOT_MODE] bot.json 저장 전 백업 완료: {backup_path}")
-        with open(BOT_DATA_FILE, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
+        os.replace(temp_path, BOT_DATA_FILE)
+        temp_path = ""
         print("[BOT_MODE] bot.json 저장 완료")
     except Exception as e:
         print(f"[BOT_MODE] bot.json 저장 실패: {e}")
         traceback.print_exc()
         raise
+    finally:
+        if temp_path and os.path.isfile(temp_path):
+            try:
+                os.remove(temp_path)
+            except Exception:
+                print(f"[BOT_MODE] 저장 임시 파일 정리 실패: {temp_path}")
+                traceback.print_exc()
+
+    # 저장 성공 뒤 정리한다. 백업 정리 실패를 데이터 저장 실패로 보고하지 않는다.
+    try:
+        if os.path.isdir(backup_dir):
+            with os.scandir(backup_dir) as entries:
+                backups = sorted(
+                    (entry for entry in entries if entry.is_file(follow_symlinks=False)
+                     and re.fullmatch(r"bot\.json\.bak_\d{8}_\d{6}_[0-9a-f]{8}", entry.name)),
+                    # copy2가 원본 mtime을 보존하므로 백업 생성 시각으로 정렬한다.
+                    key=lambda entry: (entry.name[:28], entry.stat().st_ctime_ns, entry.name),
+                    reverse=True,
+                )
+            seen_contents = set()
+            retained_digests = {}
+            duplicate_count = expired_count = 0
+            checked_count = cached_count = 0
+            for entry in backups:
+                stat = entry.stat()
+                signature = (stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns, stat.st_ino)
+                cached = _bot_backup_digest_cache.get(entry.path)
+                if cached and cached[0] == signature:
+                    digest = cached[1]
+                    cached_count += 1
+                else:
+                    with open(entry.path, "rb") as f:
+                        backup_bytes = f.read()
+                    try:
+                        # 들여쓰기와 객체 키 순서만 다른 JSON도 같은 내용으로 취급한다.
+                        content = json.dumps(
+                            json.loads(backup_bytes), sort_keys=True, ensure_ascii=False,
+                            separators=(",", ":"),
+                        ).encode("utf-8")
+                    except (json.JSONDecodeError, UnicodeDecodeError):
+                        print(f"[BOT_MODE] 백업 JSON 해석 실패 — 원본 바이트로 중복 비교: {entry.path}")
+                        traceback.print_exc()
+                        content = backup_bytes
+                    digest = hashlib.sha256(content).digest()
+                    checked_count += 1
+                if digest in seen_contents:
+                    duplicate_count += 1
+                else:
+                    seen_contents.add(digest)
+                    if len(seen_contents) <= 100:
+                        retained_digests[entry.path] = (signature, digest)
+                        continue
+                    expired_count += 1
+                os.remove(entry.path)
+            _bot_backup_digest_cache = retained_digests
+            print(
+                f"[BOT_MODE] 백업 내용 검사: 새 파일/변경 파일 {checked_count}개, "
+                f"변경 없는 파일 {cached_count}개 재사용"
+            )
+            if duplicate_count or expired_count:
+                print(
+                    f"[BOT_MODE] bot.json 중복 백업 {duplicate_count}개, 오래된 고유 백업 {expired_count}개 정리"
+                    " · 서로 다른 내용의 최근 100개 보관"
+                )
+    except Exception:
+        print(f"[BOT_MODE] bot.json 백업 보관 개수 정리 실패: {backup_dir}")
+        traceback.print_exc()
 
 
 def copy_default() -> dict:

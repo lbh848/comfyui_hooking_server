@@ -70911,7 +70911,8 @@
                     </select>
                     <div style="display:flex; align-items:center; gap:6px; margin-top:6px;">
                         <input type="range" min="0" max="1" step="0.01" value="${lora.strength ?? 0.5}"
-                            oninput="updateBotCharLoraField(${charIdx},'${escAttr(charName)}',${i},'strength',parseFloat(this.value)); this.nextElementSibling.textContent=parseFloat(this.value).toFixed(2)"
+                            oninput="this.nextElementSibling.textContent=parseFloat(this.value).toFixed(2)"
+                            onchange="updateBotCharLoraField(${charIdx},'${escAttr(charName)}',${i},'strength',parseFloat(this.value))"
                             onclick="event.stopPropagation()"
                             style="flex:1; cursor:pointer;">
                         <span style="font-size:0.7rem; min-width:28px; text-align:right;">${(lora.strength ?? 0.5).toFixed(2)}</span>
@@ -70950,7 +70951,8 @@
                     </select>
                     <div style="display:flex; align-items:center; gap:6px; margin-top:6px;">
                         <input type="range" min="0" max="1" step="0.01" value="${lora.strength ?? 0.5}"
-                            oninput="updateBotCharFaceLoraField(${charIdx},'${escAttr(charName)}',${i},'strength',parseFloat(this.value)); this.nextElementSibling.textContent=parseFloat(this.value).toFixed(2)"
+                            oninput="this.nextElementSibling.textContent=parseFloat(this.value).toFixed(2)"
+                            onchange="updateBotCharFaceLoraField(${charIdx},'${escAttr(charName)}',${i},'strength',parseFloat(this.value))"
                             onclick="event.stopPropagation()"
                             style="flex:1; cursor:pointer;">
                         <span style="font-size:0.7rem; min-width:28px; text-align:right;">${(lora.strength ?? 0.5).toFixed(2)}</span>
@@ -71000,7 +71002,8 @@
                     </select>
                     <div style="display:flex; align-items:center; gap:6px; margin-top:6px;">
                         <input type="range" min="0" max="1" step="0.01" value="${lora.strength ?? 0.5}"
-                            oninput="updateBotCharStyleLoraField(${charIdx},'${escAttr(charName)}',${i},'strength',parseFloat(this.value)); this.nextElementSibling.textContent=parseFloat(this.value).toFixed(2)"
+                            oninput="this.nextElementSibling.textContent=parseFloat(this.value).toFixed(2)"
+                            onchange="updateBotCharStyleLoraField(${charIdx},'${escAttr(charName)}',${i},'strength',parseFloat(this.value))"
                             onclick="event.stopPropagation()"
                             style="flex:1; cursor:pointer;">
                         <span style="font-size:0.7rem; min-width:28px; text-align:right;">${(lora.strength ?? 0.5).toFixed(2)}</span>
