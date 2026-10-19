@@ -719,6 +719,8 @@ DEFAULT_CONFIG = {
         "refine_lora_prompt":      _llm_route_defaults(max_retries=2, fallback_max_retries=2),
         "refine_lora_test_setup":  _llm_route_defaults(max_retries=2, fallback_max_retries=2),
         "lora_prompt_review":      _llm_route_defaults(),
+        "lora_feedback_observe":   _llm_route_defaults(),
+        "lora_feedback_compare":   _llm_route_defaults(),
         "asset_name_mapping_auto_fix": _llm_route_defaults(
             max_retries=1, fallback_max_retries=1,
         ),
@@ -2839,6 +2841,7 @@ async def save_backup(
     llm_trace: list = None,
     llm_final_result: dict = None,
     execution_target: str = "",
+    manual_character_tags: dict = None,
 ):
     """이미지(WebP q80 + 원본 워크플로우 메타데이터)와 원본 워크플로우를 백업한다.
     bot_name: 봇/워크플로우 컨텍스트 딱지 (bot 모드일 때 봇 이름).
@@ -3152,6 +3155,24 @@ async def save_backup(
             f"[BACKUP:VISUAL_PROFILE] 상태 저장: base={base_name}, "
             f"states={backup_visual_states}"
         )
+    if manual_character_tags:
+        # Keep the exact editable inputs with their image, independent of later card edits.
+        snapshots = copy.deepcopy(manual_character_tags)
+        previous_versions = {name: 0 for name in snapshots}
+        for previous_path in glob.glob(os.path.join(WORKFLOW_BACKUP_DIR, "*_info.json")):
+            previous_name = os.path.basename(previous_path)[:-len("_info.json")]
+            previous_info = _read_backup_info_for_scan(WORKFLOW_BACKUP_DIR, previous_name) or {}
+            if previous_info.get("bot_name") != bot_name:
+                continue
+            for name, snapshot in snapshots.items():
+                previous = (previous_info.get("manual_character_tags") or {}).get(name)
+                if isinstance(previous, dict) and previous.get("visual_profile_id") == snapshot.get("visual_profile_id"):
+                    previous_versions[name] = max(previous_versions[name], int(previous.get("version") or 0))
+        for name, snapshot in snapshots.items():
+            snapshot["version"] = previous_versions[name] + 1
+        info_to_save["manual_character_tags"] = snapshots
+        print(f"[BACKUP:MANUAL_HISTORY] 버전 저장: base={base_name}, bot={bot_name!r}, versions="
+              f"{ {name: item['version'] for name, item in snapshots.items()} }")
     # LLM 흐름 추적: 이 백업을 만든 삽화 파이프라인(MULTI-CHAR-MASK~CALL3)이 거친
     # 모든 LLM 호출의 history_id. 프론트의 "LLM 흐름" 버튼이 lighbd_history.jsonl
     # 에서 이 id들로 레코드를 정확히 매칭해 자르기 없이 보여준다. 빈 목록이면 버튼 비활성.
@@ -5512,6 +5533,7 @@ async def _finalize_deferred_illustration_prompt(prompt_id: str, speak_text: str
             llm_trace=entry.get("_llm_trace"),
             llm_final_result=entry.get("_llm_final_result"),
             execution_target=str(state.get("execution_target") or ""),
+            manual_character_tags=state.get("manual_character_tags"),
         )
 
         save_node_id = entry.get("save_node_id") or "9"
@@ -5942,10 +5964,10 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                         if [name.casefold() for name in declared_order] != [
                             name.casefold() for name in ordered_names
                         ]:
-                            raise ValueError(
-                                f"큐 캐릭터 순서와 레이아웃 순서가 다릅니다: "
-                                f"declared={declared_order}, layout={ordered_names}"
-                            )
+                            reason = f"큐/마스크 순서 차이; 마스크의 실제 이름으로 연결: {declared_order!r} -> {ordered_names!r}"
+                            print(f"[MULTI_CHAR:MASK] 경고: {reason}")
+                            illustration_flow.llm_metadata(validation_warnings=[{
+                                "stage": "MASK", "reason": reason, "input": queued_multi_char}])
 
                         canonical_order, matched_card_order = (
                             builder.resolve_multi_char_character_order(
@@ -5966,11 +5988,10 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                         if set(detected_by_name) != {
                             name.casefold() for name in registered_card_order
                         }:
-                            raise ValueError(
-                                f"RAW 감지 등록 캐릭터와 마스크 등록 캐릭터가 다릅니다: "
-                                f"detected={detected}, mask={ordered_names}, "
-                                f"cards={registered_card_order}"
-                            )
+                            reason = f"RAW 감지 명단과 마스크 명단 차이; 실제 마스크 명단 사용: {detected!r}, {ordered_names!r}"
+                            print(f"[MULTI_CHAR:MASK] 경고: {reason}")
+                            illustration_flow.llm_metadata(validation_warnings=[{
+                                "stage": "MASK", "reason": reason, "input": queued_multi_char}])
                         # CHAR_LIST와 regional prompt는 모든 인물을 유지한다. 카드
                         # 전용 캐시/FaceID/LoRA는 빌더가 registered subset만 사용한다.
                         detected = list(canonical_order)
@@ -5999,7 +6020,7 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                             separated_background_sections.get("setup") or ""
                         ).strip()
                         if not separated_background_prompt:
-                            raise ValueError("배경 분리 프롬프트가 단어 규칙 처리 후 비어 있습니다")
+                            print("[MULTI_CHAR:PROMPT] 경고: 배경 프롬프트가 비어 있음; 다른 구성요소 사용")
                         separated_composition_raw = (
                             f"[SUPPLEMENT]\n{str(layout.get('composition_prompt') or '').strip()}"
                         )
@@ -6016,7 +6037,7 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                             separated_composition_sections.get("supplement") or ""
                         ).strip()
                         if not separated_composition_prompt:
-                            raise ValueError("구도 선행 프롬프트가 단어 규칙 처리 후 비어 있습니다")
+                            print("[MULTI_CHAR:PROMPT] 경고: 구도 프롬프트가 비어 있음; 다른 구성요소 사용")
                         char_inform = []
                         for name, card_name in zip(
                             ordered_names,
@@ -6032,9 +6053,7 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                                 character.get("positive") or ""
                             ).strip()
                             if not separated_character_prompt:
-                                raise ValueError(
-                                    f"검증된 Call2 캐릭터 positive가 비어 있습니다: {name!r}"
-                                )
+                                print(f"[MULTI_CHAR:PROMPT] 경고: 빈 캐릭터 positive 유지: {name!r}")
                             regional_copy = str(
                                 region.get("character_prompt") or ""
                             ).strip()
@@ -6064,13 +6083,21 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                             )
                             tags_for_character = str(per_char_sections.get("char") or "").strip()
                             if not tags_for_character:
-                                raise ValueError(f"캐릭터별 태그가 비어 있습니다: {name!r}")
+                                print(f"[MULTI_CHAR:PROMPT] 경고: 빈 캐릭터 태그 유지: {name!r}")
                             char_inform.append(tags_for_character)
                             if card_name and name.casefold() != card_name.casefold():
                                 print(
                                     f"[MULTI_CHAR:PROMPT] 인식 이름을 캐릭터 카드에 연결: "
                                     f"source={name!r}, card={card_name!r}"
                                 )
+                        if not any((separated_background_prompt, separated_composition_prompt, *char_inform)):
+                            print(f"[MULTI_CHAR:PROMPT] 전체 생성 프롬프트 없음: slot={queued_names!r}")
+                            raise ValueError("생성에 사용할 분리 프롬프트가 전부 비어 있습니다")
+                        if not all((separated_background_prompt, separated_composition_prompt, *char_inform)):
+                            illustration_flow.llm_metadata(validation_warnings=[{
+                                "stage": "MASK", "reason": "일부 분리 프롬프트 누락; 제공된 내용으로 진행",
+                                "input": {"background": separated_background_prompt, "composition": separated_composition_prompt,
+                                          "characters": char_inform}}])
                         multi_char_prompt_context = {
                             "enable": True,
                             "mask_render_version": int(layout.get("mask_render_version") or 1),
@@ -6407,6 +6434,7 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                 "illustration_visual_states": copy.deepcopy(
                     backup_visual_states
                 ),
+                "manual_character_tags": copy.deepcopy(raw_body.get("illustration_manual_character_tags")),
                 # 후처리는 별도 태스크에서 나중에 실행되므로, 생성 시점의 Comfy 실행처를
                 # 보존해 둔다. _finalize_deferred_illustration_prompt가 save_backup으로
                 # 전달하며, Modal 삽화가 M 딱지로 남기 위한 근거.
@@ -6453,6 +6481,7 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
             illustration_visual_states=backup_visual_states,
             llm_trace=(prompts.get(prompt_id) or {}).get("_llm_trace"),
             llm_final_result=(prompts.get(prompt_id) or {}).get("_llm_final_result"),
+            manual_character_tags=raw_body.get("illustration_manual_character_tags"),
         )
 
         # 프록시 응답 설정
@@ -8691,24 +8720,25 @@ async def process_illustration_context_queue_item(item) -> dict:
                 illustration_flow.raise_if_cancel_requested()
                 keyvis_items = keyvis_built.get("items") or []
                 if len(keyvis_items) != 1:
-                    print(
-                        f"[ILLUST_CONTEXT:KEYVIS] 조기 등록 항목 수 불일치: "
-                        f"session={session_id}, count={len(keyvis_items)}"
-                    )
-                    raise RuntimeError("KEYVIS 조기 등록 항목은 정확히 하나여야 합니다")
-                descriptor = keyvis_items[0]
-                if str(descriptor.get("kind") or "") != "keyvis":
-                    print(
-                        f"[ILLUST_CONTEXT:KEYVIS] 조기 등록 descriptor 종류 불일치: "
-                        f"session={session_id}, kind={descriptor.get('kind')!r}"
-                    )
-                    raise RuntimeError("KEYVIS 조기 등록 descriptor가 아닙니다")
-                if early_keyvis_pair is not None or not early_descriptor_slots or early_descriptor_slots[0] != -1 or child_pairs[0] is not None:
-                    print(
-                        f"[ILLUST_CONTEXT:KEYVIS] 중복/미등록 조기 등록 요청 거부: "
-                        f"session={session_id}, planned={early_descriptor_slots}, already={early_keyvis_pair is not None}"
-                    )
-                    raise RuntimeError("KEYVIS가 이미 조기 등록되었거나 PLAN에 없습니다")
+                    print(f"[ILLUST_CONTEXT:KEYVIS] 항목 수 차이: count={len(keyvis_items)}")
+                    illustration_flow.llm_metadata(validation_warnings=[{
+                        "stage": "QUEUE", "reason": "대표 이미지 수 차이; 사용 가능한 항목 사용", "input": keyvis_items}])
+                descriptor = next((item for item in keyvis_items
+                                   if isinstance(item, dict) and item.get("kind") == "keyvis"), None)
+                if descriptor is None:
+                    print(f"[ILLUST_CONTEXT:KEYVIS] 등록할 대표 이미지 없음: {keyvis_items!r}")
+                    return
+                if early_keyvis_pair is not None:
+                    print(f"[ILLUST_CONTEXT:KEYVIS] 이미 등록한 대표 이미지 유지: session={session_id}")
+                    illustration_flow.llm_metadata(validation_warnings=[{
+                        "stage": "QUEUE", "reason": "대표 이미지 중복 등록 요청", "input": descriptor}])
+                    return
+                if -1 not in early_descriptor_slots:
+                    print(f"[ILLUST_CONTEXT:KEYVIS] 초기 예약 밖의 대표 이미지 등록: session={session_id}")
+                    illustration_flow.llm_metadata(validation_warnings=[{
+                        "stage": "QUEUE", "reason": "초기 예약에 없는 대표 이미지", "input": descriptor}])
+                    early_descriptor_slots.insert(0, -1)
+                    child_pairs.insert(0, None)
                 preliminary_format = keyvis_built.get("prompt_format", "v3")
                 if (
                     _is_multi_char_descriptor(descriptor, preliminary_format)
@@ -8721,8 +8751,10 @@ async def process_illustration_context_queue_item(item) -> dict:
                     raise RuntimeError("KEYVIS 다중 캐릭터 레이아웃이 준비되지 않았습니다")
                 total_count = int(keyvis_built.get("total_count") or 0)
                 if total_count != len(child_pairs):
-                    print(f"[ILLUST_CONTEXT:KEYVIS] 계획된 이미지 수 불일치: session={session_id}, planned={len(child_pairs)}, actual={total_count}")
-                    raise RuntimeError("KEYVIS 등록 이미지 수가 PLAN과 다릅니다")
+                    print(f"[ILLUST_CONTEXT:KEYVIS] 예약 수와 다른 출력: planned={len(child_pairs)}, actual={total_count}")
+                    illustration_flow.llm_metadata(validation_warnings=[{
+                        "stage": "QUEUE", "reason": "KEYVIS 예약 수와 출력 수 차이",
+                        "input": {"planned": len(child_pairs), "actual": total_count}}])
                 early_keyvis_pair = await _enqueue_child(
                     descriptor,
                     1,
@@ -8733,7 +8765,7 @@ async def process_illustration_context_queue_item(item) -> dict:
                     queue_priority=0,
                     llm_trace=_child_llm_trace([], descriptor),
                 )
-                child_pairs[0] = early_keyvis_pair
+                child_pairs[early_descriptor_slots.index(-1)] = early_keyvis_pair
                 early_dispatch = True
                 print(
                     f"[ILLUST_CONTEXT:KEYVIS] KEYVIS 프롬프트 확정 · 이미지 즉시 등록: "
@@ -8747,12 +8779,15 @@ async def process_illustration_context_queue_item(item) -> dict:
                 scene_slots = plan_built.get("scene_slots") or []
                 expected_slots = ([-1] if plan_built.get("keyvis_planned") else []) + list(scene_slots)
                 total_count = plan_built.get("total_count")
-                if (child_pairs or early_descriptor_slots or not expected_slots
-                        or any(type(slot) is not int for slot in expected_slots)
-                        or len(set(expected_slots)) != len(expected_slots)
-                        or total_count != len(expected_slots)):
-                    print(f"[ILLUST_CONTEXT] PLAN 슬롯 예약 오류: session={session_id}, expected={expected_slots!r}, total={total_count!r}, existing={early_descriptor_slots!r}")
-                    raise RuntimeError("CALL2-PLAN 이미지 슬롯 예약에 실패했습니다")
+                if any(type(slot) is not int for slot in expected_slots):
+                    print(f"[ILLUST_CONTEXT] 읽을 수 없는 예약 slot: {expected_slots!r}")
+                    raise ValueError("이미지를 연결할 slot을 읽을 수 없습니다")
+                if len(set(expected_slots)) != len(expected_slots) or total_count != len(expected_slots):
+                    print(f"[ILLUST_CONTEXT] 예약 수/중복 경고: slots={expected_slots!r}, total={total_count!r}")
+                    illustration_flow.llm_metadata(validation_warnings=[{
+                        "stage": "QUEUE", "reason": "예약 slot 수 또는 중복 차이",
+                        "input": plan_built}])
+                expected_slots = list(dict.fromkeys(expected_slots))
                 early_descriptor_slots = expected_slots
                 child_pairs = [None] * len(expected_slots)
                 if not original_asset_enabled:
@@ -8771,17 +8806,33 @@ async def process_illustration_context_queue_item(item) -> dict:
                 illustration_flow.raise_if_cancel_requested()
                 ready_items = call2_built.get("items") or []
                 total_count = call2_built.get("total_count")
-                if not ready_items or not early_descriptor_slots or total_count != len(child_pairs):
-                    print(f"[ILLUST_CONTEXT] DETAIL 배치 등록 형식 오류: session={session_id}, items={len(ready_items)}, total={total_count!r}, planned={early_descriptor_slots!r}")
-                    raise RuntimeError("DETAIL 배치의 등록 항목/PLAN 이미지 수가 다릅니다")
+                if not ready_items:
+                    print(f"[ILLUST_CONTEXT] 등록할 DETAIL 항목 없음: session={session_id}")
+                    return
+                if total_count != len(child_pairs):
+                    print(f"[ILLUST_CONTEXT] DETAIL 예약 수 차이: planned={len(child_pairs)}, actual={total_count}")
+                    illustration_flow.llm_metadata(validation_warnings=[{
+                        "stage": "QUEUE", "reason": "예약 이미지 수와 출력 수 차이", "input": total_count}])
                 preliminary_format = call2_built.get("prompt_format", "v3")
                 for descriptor in ready_items:
                     slot = descriptor.get("slot") if isinstance(descriptor, dict) else None
-                    if (not isinstance(descriptor, dict) or descriptor.get("kind") != "scene"
-                            or type(slot) is not int or slot not in early_descriptor_slots
-                            or slot in dispatched_scene_slots):
-                        print(f"[ILLUST_CONTEXT] DETAIL 배치 slot 중복/미배정: session={session_id}, slot={slot!r}, assigned={sorted(dispatched_scene_slots)}, planned={early_descriptor_slots!r}")
-                        raise RuntimeError(f"DETAIL 배치의 이미지 slot이 PLAN과 다릅니다: {slot!r}")
+                    if not isinstance(descriptor, dict) or descriptor.get("kind") != "scene" or type(slot) is not int:
+                        print(f"[ILLUST_CONTEXT] 연결할 수 없는 DETAIL 항목 제외: {descriptor!r}")
+                        illustration_flow.llm_metadata(validation_warnings=[{
+                            "stage": "QUEUE", "reason": "이미지 slot에 연결할 수 없는 항목", "input": descriptor}])
+                        continue
+                    if slot in dispatched_scene_slots:
+                        print(f"[ILLUST_CONTEXT] 이미 등록한 slot 유지: {slot}")
+                        illustration_flow.llm_metadata(validation_warnings=[{
+                            "stage": "QUEUE", "reason": "이미 등록한 slot의 중복 출력", "input": descriptor}])
+                        continue
+                    if slot not in early_descriptor_slots:
+                        print(f"[ILLUST_CONTEXT] 초기 예약 밖의 실제 출력 slot 등록: {slot}")
+                        illustration_flow.llm_metadata(validation_warnings=[{
+                            "stage": "QUEUE", "reason": "초기 예약과 다른 출력 slot", "input": descriptor}])
+                        early_descriptor_slots.append(slot)
+                        child_pairs.append(None)
+                    total_count = len(child_pairs)
                     dispatched_scene_slots.add(slot)
                     index = early_descriptor_slots.index(slot) + 1
                     is_multi = _is_multi_char_descriptor(descriptor, preliminary_format)
@@ -8800,7 +8851,7 @@ async def process_illustration_context_queue_item(item) -> dict:
                         llm_trace=_child_llm_trace([], descriptor),
                     )
                 early_dispatch = True
-                print(f"[ILLUST_CONTEXT] DETAIL 배치 완료 · 이미지 즉시 등록: session={session_id}, slots={[entry['slot'] for entry in ready_items]}, queued={sum(pair is not None for pair in child_pairs)}/{total_count}, provider={illustration_provider_snapshot}")
+                print(f"[ILLUST_CONTEXT] DETAIL 배치 완료 · 이미지 즉시 등록: session={session_id}, slots={[entry.get('slot') for entry in ready_items if isinstance(entry, dict)]}, queued={sum(pair is not None for pair in child_pairs)}/{total_count}, provider={illustration_provider_snapshot}")
                 if original_asset_enabled:
                     if any(pair is not None for pair in child_pairs):
                         used_slots = (
@@ -8883,42 +8934,28 @@ async def process_illustration_context_queue_item(item) -> dict:
                 history_finalize_attempted = True
                 illustration_chat_history.finalize_history(history_plan, built)
             raw_items = built.get("items") or []
+            final_slots = [entry.get("slot") for entry in raw_items]
+            if early_descriptor_slots != final_slots:
+                print(f"[ILLUST_CONTEXT] 예약/최종 결과 차이; 실제 slot으로 연결: early={early_descriptor_slots}, final={final_slots}")
+                illustration_flow.llm_metadata(validation_warnings=[{
+                    "stage": "QUEUE", "reason": "예약과 최종 이미지 수/slot/순서 차이",
+                    "input": {"reserved": early_descriptor_slots, "final": final_slots}}])
+            pairs_by_slot = dict(zip(early_descriptor_slots, child_pairs))
+            # Keep images already queued even if a later summary omits them.
+            for slot, pair in pairs_by_slot.items():
+                if pair is not None and slot not in final_slots and pair[0] in child_descriptors:
+                    print(f"[ILLUST_CONTEXT] 최종 목록에 없는 등록 이미지 유지: slot={slot}")
+                    raw_items.append(copy.deepcopy(child_descriptors[pair[0]]))
+                    final_slots.append(slot)
             if illustration_enabled and not raw_items:
                 print(f"[ILLUST_CONTEXT] 생성할 장면이 없음: session={session_id}")
                 raise RuntimeError("CALL 결과에 생성할 장면이 없습니다")
-            if illustration_enabled:
-                final_scene_slots = {
-                    entry.get("slot") for entry in raw_items
-                    if isinstance(entry, dict) and entry.get("kind") == "scene"
-                }
-                if dispatched_scene_slots != final_scene_slots:
-                    print(f"[ILLUST_CONTEXT] DETAIL 배치 조기 등록 누락/초과: session={session_id}, registered={sorted(dispatched_scene_slots)}, final={sorted(final_scene_slots)}")
-                    raise RuntimeError("DETAIL 배치 이미지 등록 결과와 최종 장면 slot이 다릅니다")
-
-            if len(child_pairs) != len(raw_items):
-                print(
-                    f"[ILLUST_CONTEXT] 조기 등록/최종 장면 수 불일치: "
-                    f"session={session_id}, early={len(child_pairs)}, final={len(raw_items)}"
-                )
-                raise RuntimeError("CALL2 조기 등록 결과와 CALL3 최종 결과 수가 다릅니다")
-            final_slots = [entry.get("slot") for entry in raw_items]
-            # early dispatch 시점은 CALL3 전이라 descriptor.speak 가 비어, stash 한
-            # _llm_final_result 의 [SPEAK] 가 항상 None 이 된다. 최종 descriptor(post-CALL3,
-            # speak 반영) 로 같은 인덱스 자식 백업의 FINAL RESULT 를 갱신한다.
-            # child_pairs 와 raw_items 는 동일 descriptors 순서를 유지한다(위 길이 검증).
-            for _i, _pair in enumerate(child_pairs):
-                if _pair is None or _i >= len(raw_items):
-                    continue
-                _cid = _pair[0]
-                if _cid in prompts and isinstance(raw_items[_i], dict):
-                    prompts[_cid]["_llm_final_result"] = _build_llm_final_result(raw_items[_i])
-                    child_descriptors[_cid] = copy.deepcopy(raw_items[_i])
-            if early_descriptor_slots != final_slots:
-                print(
-                    f"[ILLUST_CONTEXT] 조기 등록/최종 슬롯 순서 불일치: "
-                    f"session={session_id}, early={early_descriptor_slots}, final={final_slots}"
-                )
-                raise RuntimeError("CALL2 조기 등록 결과와 CALL3 최종 슬롯 순서가 다릅니다")
+            child_pairs = [pairs_by_slot.get(slot) for slot in final_slots]
+            early_descriptor_slots = final_slots
+            for descriptor, pair in zip(raw_items, child_pairs):
+                if pair is not None and pair[0] in prompts:
+                    prompts[pair[0]]["_llm_final_result"] = _build_llm_final_result(descriptor)
+                    child_descriptors[pair[0]] = copy.deepcopy(descriptor)
 
             # Completed batches and Key Visual already queued their ready images.
             # Only a multi-character descriptor whose layout failed may remain
@@ -8930,11 +8967,15 @@ async def process_illustration_context_queue_item(item) -> dict:
                 descriptor = raw_items[index - 1]
                 if not _is_multi_char_descriptor(descriptor, built.get("prompt_format", "v3")):
                     print(f"[ILLUST_CONTEXT] 조기 이미지 등록 누락: session={session_id}, slot={descriptor.get('slot')}, index={index}")
-                    raise RuntimeError(f"완료된 장면 이미지가 큐에 등록되지 않았습니다: slot={descriptor.get('slot')}")
+                    illustration_flow.llm_metadata(validation_warnings=[{
+                        "stage": "QUEUE", "reason": "사용 불가 장면의 큐 등록 실패", "input": descriptor}])
+                    continue
                 layout_error = str(descriptor.get("multi_char_layout_error") or "").strip()
                 if not layout_error and isinstance(descriptor.get("multi_char_layout"), dict):
                     print(f"[ILLUST_CONTEXT:MULTI_CHAR] 레이아웃 완료 이미지의 조기 등록 누락: session={session_id}, slot={descriptor.get('slot')}")
-                    raise RuntimeError(f"다중 캐릭터 이미지가 큐에 등록되지 않았습니다: slot={descriptor.get('slot')}")
+                    illustration_flow.llm_metadata(validation_warnings=[{
+                        "stage": "QUEUE", "reason": "해당 마스크 이미지의 큐 등록 실패", "input": descriptor}])
+                    continue
                 if not layout_error:
                     layout_error = "다중 캐릭터 마스크 레이아웃이 생성되지 않았습니다"
                     descriptor["multi_char_layout_error"] = layout_error
@@ -9024,7 +9065,7 @@ async def process_illustration_context_queue_item(item) -> dict:
                 descriptor = raw_items[idx]
                 fail_reason = str(
                     descriptor.get("multi_char_layout_error")
-                    or "다중 캐릭터 마스크 레이아웃 준비 실패"
+                    or "이미지 큐 등록 실패"
                 )
                 print(
                     f"[ILLUST_CONTEXT:MULTI_CHAR] 레이아웃 실패 슬롯 제외: "
@@ -9472,10 +9513,11 @@ async def handle_illustration_flow_cancel(request: web.Request) -> web.Response:
         if not result.get("found"):
             print(f"[ILLUST_FLOW] 중단 API 대상 없음: run={run_id}")
             return web.json_response({"success": False, "error": "실행 중인 흐름을 찾을 수 없습니다"}, status=404)
+        feedback_flow = illustration_flow.snapshot(kind="lora_feedback")
         return web.json_response({
             "success": True,
             **result,
-            "flow": illustration_flow.snapshot(),
+            "flow": feedback_flow if feedback_flow and feedback_flow["id"] == run_id else illustration_flow.snapshot(),
         }, headers={"Cache-Control": "no-store"})
     except Exception as exc:
         print(f"[ILLUST_FLOW] 중단 API 실패: error={type(exc).__name__}: {exc}")
@@ -13701,6 +13743,37 @@ async def handle_api_backups(request: web.Request) -> web.Response:
     for _pat in ("*.webp", "*.avif"):
         files.extend(glob.glob(os.path.join(backup_dir, _pat)))
     files = sorted(set(files), key=os.path.getmtime, reverse=True)
+
+    manual_character = str(request.query.get("manual_character") or "").strip()
+    if manual_character:
+        bot_name = str(request.query.get("bot_name") or app_config.get("bot_selected") or "")
+        profile_id = str(request.query.get("visual_profile_id") or "")
+        if not profile_id:
+            try:
+                names, profile_ids = _resolve_restore_manual_visual_profiles(bot_name, [manual_character], {})
+                manual_character = names[0]
+                profile_id = profile_ids[manual_character]
+            except Exception as error:
+                print(f"[MANUAL_HISTORY] 기본 카드 조회 실패: bot={bot_name!r}, character={manual_character!r}, error={error}")
+                traceback.print_exc()
+                return web.json_response({"error": str(error)}, status=400)
+        versions = []
+        for path in files:
+            base, extension = os.path.splitext(os.path.basename(path))
+            info = _read_backup_info_for_scan(backup_dir, base) or {}
+            snapshot = (info.get("manual_character_tags") or {}).get(manual_character)
+            if (info.get("bot_name") == bot_name and isinstance(snapshot, dict)
+                    and snapshot.get("visual_profile_id") == profile_id):
+                versions.append({
+                    "name": base,
+                    "image_url": f"/api/backup_image/{base}{extension}",
+                    "mtime": os.path.getmtime(path),
+                    "character_tags": snapshot,
+                })
+        versions.sort(key=lambda item: (item["character_tags"].get("version", 0), item["mtime"]), reverse=True)
+        print(f"[MANUAL_HISTORY] 버전 조회: bot={bot_name!r}, character={manual_character!r}, "
+              f"profile={profile_id!r}, found={len(versions)}, shown={min(8, len(versions))}")
+        return web.json_response({"backups": versions[:8], "limit": 8, "has_more": False})
 
     # ─── 필터 적용 ───
     if filter_param == "bot_none" or filter_param.startswith("bot:"):
@@ -21512,8 +21585,29 @@ async def _build_restore_manual_multi_char_context(result: dict) -> dict:
 async def handle_api_restore_manual_draw(request: web.Request) -> web.Response:
     """수동 그리기: 복원 프롬프트 파일로 프롬프트를 만들어 그림을 그린다.
     bot이 선택되어 있으면(삽화 모드는 항상 ON) illustration 큐로 들어가 동일한 파이프라인을 탄다."""
-    prompt_file = workflow_profiles.normalize_restore_prompt_file(
-        app_config.get("restore_prompt_file", "")
+    body = {}
+    try:
+        parsed_body = await request.json()
+        if not isinstance(parsed_body, dict):
+            print(
+                f"[RESTORE_MANUAL] 요청 JSON 루트가 object가 아님: "
+                f"type={type(parsed_body).__name__}"
+            )
+            return web.json_response({"error": "요청 형식이 올바르지 않습니다"}, status=400)
+        body = parsed_body
+    except Exception as e:
+        print(f"[RESTORE_MANUAL] 요청 JSON 파싱 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"error": "요청 JSON을 읽지 못했습니다"}, status=400)
+
+    # 집중 편집은 설정을 저장하지 않고 기존 LLM 수동 그리기를 1회 실행한다.
+    # 요청에서 임의의 모듈 경로를 받아 실행하지 않는다.
+    prompt_file = (
+        RESTORE_WORKFLOW_PROMPT_LLM
+        if body.get("prompt_file") == RESTORE_WORKFLOW_PROMPT_LLM
+        else workflow_profiles.normalize_restore_prompt_file(
+            app_config.get("restore_prompt_file", "")
+        )
     )
     if not prompt_file:
         print("[RESTORE_MANUAL] 복원 프롬프트 파일이 지정되지 않음")
@@ -21539,21 +21633,6 @@ async def handle_api_restore_manual_draw(request: web.Request) -> web.Response:
     if not os.path.isfile(filepath):
         print(f"[RESTORE_MANUAL] 복원 프롬프트 파일 없음: path={filepath!r}")
         return web.json_response({"error": f"복원 프롬프트 파일 없음: {prompt_file}"}, status=400)
-
-    body = {}
-    try:
-        parsed_body = await request.json()
-        if not isinstance(parsed_body, dict):
-            print(
-                f"[RESTORE_MANUAL] 요청 JSON 루트가 object가 아님: "
-                f"type={type(parsed_body).__name__}"
-            )
-            return web.json_response({"error": "요청 형식이 올바르지 않습니다"}, status=400)
-        body = parsed_body
-    except Exception as e:
-        print(f"[RESTORE_MANUAL] 요청 JSON 파싱 실패: {e}")
-        traceback.print_exc()
-        return web.json_response({"error": "요청 JSON을 읽지 못했습니다"}, status=400)
 
     char_name = None
     situation = None
@@ -21683,6 +21762,8 @@ async def handle_api_restore_manual_draw(request: web.Request) -> web.Response:
                 kwargs["speak_text"] = speak_text
             if "postprocess_mode" in run_params:
                 kwargs["postprocess_mode"] = postprocess_mode
+            if "character_tags" in body:
+                kwargs["character_tags"] = body["character_tags"]
         elif char_name and "char_name" in run_params:
             kwargs["char_name"] = char_name
             print(f"[RESTORE_MANUAL] 지정 캐릭터로 그리기: {char_name!r}")
@@ -21723,6 +21804,11 @@ async def handle_api_restore_manual_draw(request: web.Request) -> web.Response:
                 # Preserve the LLM's character exclusions through RAW parsing;
                 # otherwise card absolute tags can reintroduce excluded traits.
                 raw_body["illustration_scene_detail_authoritative"] = True
+                raw_body["illustration_manual_character_tags"] = {
+                    name: {**copy.deepcopy(tags), "visual_profile_id": visual_profile_ids[name]}
+                    for name, tags in (result.get("character_tags") or {}).items()
+                    if name in visual_profile_ids
+                }
             result_characters = (
                 result.get("characters") if isinstance(result, dict) else []
             ) or []
@@ -31852,6 +31938,46 @@ async def handle_api_bot_lora_training_export(request):
 
 def _safe_dirname_bot(name: str) -> str:
     return "".join(c for c in name if c.isalnum() or c in (' ', '_', '-', '.')).strip() or "unnamed"
+
+
+async def handle_api_bot_lora_feedback(request):
+    """Start feedback training, or inspect existing results without saving tags."""
+    try:
+        body = await request.json()
+        bot, project = body.get("bot", ""), body.get("project", "")
+        from modes.bot_lora_mode import get_project_data
+        config = load_config()
+        load_path = config.get("bot_lora_load_path") or os.path.join(config.get("lora_load_path", ""), "SOYA_BOT_LORA")
+        data = get_project_data(bot, project, load_path)
+        if not data.get("success", True):
+            raise ValueError(data.get("error", "프로젝트를 찾을 수 없습니다"))
+        selected = body.get("characters")
+        available = {(c["name"], c.get("visual_card_id", "")): c for c in data.get("characters", [])}
+        targets = selected if selected is not None else [{"character": c["name"], "visual_card_id": c.get("visual_card_id", "")} for c in available.values() if not c.get("skip_training")]
+        if not targets or any((c.get("character"), c.get("visual_card_id", "")) not in available for c in targets):
+            raise ValueError("프로젝트에 포함된 학습할 캐릭터 카드를 선택하세요")
+        rounds = int(body.get("max_rounds", 3))
+        if rounds < 1:
+            raise ValueError("학습 횟수는 1 이상이어야 합니다")
+        for queued in queue_manager.items:
+            if queued.type == "bot_lora_feedback" and queued.status in {"pending", "waiting", "processing"}:
+                raise ValueError("오토피드백 작업이 진행 중입니다. 완료하거나 작업 흐름에서 중단하세요.")
+        item = await queue_manager.add_item("bot_lora_feedback", f"[오토피드백] {bot} / {project}", {
+            "bot": bot, "project": project, "characters": targets, "max_rounds": rounds,
+            "action": "analyze" if body.get("action") == "analyze" else "start", "session": body.get("session", ""),
+        })
+        return web.json_response({"success": True, "queue_item_id": item.id})
+    except (ValueError, TypeError, KeyError) as exc:
+        print(f"[LORA_FEEDBACK:API] 시작 실패: {exc}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(exc)}, status=400)
+    except Exception as exc:
+        print(f"[LORA_FEEDBACK:API] 큐 등록 실패: {exc}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(exc)}, status=500)
+
+
+app.router.add_post("/api/bot_lora/feedback", handle_api_bot_lora_feedback)
 
 
 async def handle_api_bot_lora_training_start(request):

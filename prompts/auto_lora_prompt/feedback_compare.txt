@@ -1,0 +1,9 @@
+Compare the SOURCE images and observation notes with their training captions, the test prompts, and the LoRA-applied RESULT images. Find clear caption mistakes that could be corrected before the next training run. The captions and observation notes are claims to check, not visual ground truth.
+
+Correct a source caption only when the source image clearly contradicts it or a visible defining feature is missing. A result mismatch does not make an accurate source caption wrong. Preserve intended test pose, action, expression, framing, and background. If a result repeats the source pose instead of the test instruction, report that instruction-following failure; do not change the test to match the failure. Distinguish body/pose instability from appearance differences. Do not infer a specific training cause from these images alone.
+
+Report the strongest supported findings briefly in Korean. Propose only necessary tag changes, preserving other tags and the existing vocabulary. An unclear feature is not a reason to remove its tag. Do not invent corrections to keep the loop running. When tags are accurate but results fail, leave tags unchanged and report the reproduction problem.
+
+Return one JSON object because the program applies the proposed tags:
+{"summary":"brief findings and image evidence in Korean","changes":[{"image":"S1 or T1","positive":"complete revised positive tags"}]}
+Use S identifiers for training images and T identifiers for test prompts. Include only changed images and changed fields; negative may be supplied instead of or alongside positive when a negative tag clearly conflicts with the intended source/test. Use an empty changes array when no supported correction is needed. Never include image paths, new identifiers, scores, or speculative training settings.

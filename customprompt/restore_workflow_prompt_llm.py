@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import datetime
+import copy
 import json
 import os
 import random
@@ -134,6 +135,7 @@ def _character_context(
     bot_name: str,
     character: dict,
     visual_profile_id: str = "",
+    character_tags: dict | None = None,
 ) -> dict:
     name = str(character.get("name") or "").strip()
     entry = _get_lb_extra_entry(bot_name, name)
@@ -167,14 +169,14 @@ def _character_context(
         or character.get("gender_tag")
         or "1girl"
     ).strip() or "1girl"
-    appearance = _collect_tags(
-        {"appearance": visual_base.get("appearance") or []},
-        "appearance",
-    )
-    outfit = _collect_tags(
-        {"outfit": visual_base.get("outfit") or []},
-        "outfit",
-    )
+    # A present empty list is an intentional draft edit, not a saved-card fallback.
+    tag_source = {
+        "appearance": visual_base.get("appearance") or [],
+        "outfit": visual_base.get("outfit") or [],
+        **(character_tags if character_tags is not None else {}),
+    }
+    appearance = _collect_tags(tag_source, "appearance")
+    outfit = _collect_tags(tag_source, "outfit")
     if not appearance and not outfit:
         print(
             f"{LOG_PREFIX} 외모/복장 태그가 모두 비어 있음: "
@@ -184,13 +186,18 @@ def _character_context(
     print(
         f"{LOG_PREFIX} 프로필 카드 적용: bot={bot_name!r}, "
         f"character={name!r}, profile={visual_base['visual_profile_id']!r}, "
-        f"label={visual_base['visual_profile_label']!r}, source={source}"
+        f"label={visual_base['visual_profile_label']!r}, source={source}, "
+        f"tags_source={'draft' if character_tags is not None else 'saved'}"
     )
     return {
         "name": name,
         "gender_tag": gender,
         "appearance_tags": appearance,
         "outfit_tags": outfit,
+        "character_tags": copy.deepcopy({
+            "appearance": tag_source["appearance"],
+            "outfit": tag_source["outfit"],
+        }),
         **{
             key: str(visual_base["render_overrides"].get(key) or "").strip()
             for key in ("face_tags", "eye_tags", "absolute_tags", "character_negative")
@@ -209,12 +216,17 @@ def _build_system_prompt(character_count: int, generate_speak: bool) -> str:
     )
     return (
         "You create a structured anime illustration scene for an image-generation pipeline.\n"
-        "Compose a scene around the supplied characters. Their identity and outfit are a "
-        "copy-and-delete task, not a character-design task.\n\n"
+        "The highest priority is complete preservation of every supplied appearance and "
+        "outfit detail for each character. Compose the scene around these references. "
+        "Only the owner's explicit exclusions authorize removing a conflicting source trait; "
+        "all other details must survive. This is not a character-design task.\n\n"
         "CHARACTER REFERENCES\n"
         "For each character, copy the supplied gender, appearance, outfit, face, eye and "
         "absolute tags into that character's tags. Preserve spellings, symbols and weights; "
-        "deduplicate repeated tags. These sources complement each other.\n"
+        "deduplicate repeated tags. These sources complement each other. Keep every supplied "
+        "garment, layer, accessory, color, pattern, material and distinguishing detail, "
+        "including small details. Do not summarize an outfit or retain only key identity traits. "
+        "Do not drop details to shorten the prompt or because the chosen crop hides them.\n"
         "The character's exclusions authorize deletion only: remove supplied traits that "
         "conflict with them, interpreting their meaning in context. An exclusion is not "
         "evidence for any replacement or opposite trait. If the sources leave an attribute "
@@ -229,6 +241,10 @@ def _build_system_prompt(character_count: int, generate_speak: bool) -> str:
         "needed for the situation. Read the whole situation in context. Keep all character "
         "traits in their owning character's tags; setup and supplement are shared scene details. "
         "Do not introduce extra identity or outfit traits through scene details.\n\n"
+        "When choosing the scene yourself, choose framing, pose and action that let the "
+        "supplied appearance and complete outfit be inspected together. Adapt the scene "
+        "to the references, including head-to-toe framing when the supplied clothing requires "
+        "it; do not crop away or obscure referenced details for a dramatic composition.\n\n"
         "Return exactly one JSON object and no markdown or prose:\n"
         "{\n"
         '  "setup": "shared camera, framing, environment, time, weather, and lighting tags",\n'
@@ -252,8 +268,10 @@ def _build_system_prompt(character_count: int, generate_speak: bool) -> str:
         f"5. {dialogue_rule}\n"
         "6. Dialogue type must be exactly speech or thought. Do not include quotation marks "
         "inside dialogue text.\n\n"
-        "Before returning, check that every identity and outfit trait came from that "
-        "character's positive references, not from filling a gap left by an exclusion."
+        "Before returning, compare each character's tags with every appearance and outfit "
+        "detail in its references. Restore any omission unless that owner's explicit "
+        "exclusion requires it. Check that no identity or outfit trait was invented to "
+        "fill a gap left by an exclusion."
     )
 
 
@@ -278,9 +296,13 @@ def _build_user_prompt(
         ])
     parts.extend([
         "\nSITUATION TO STAGE",
-        str(situation or "").strip() or "Choose a natural setting and action for these characters.",
+        str(situation or "").strip() or (
+            "Choose a natural setting, action and framing that clearly show all supplied "
+            "appearance and outfit details. Complete reference coverage comes first."
+        ),
         f"Dialogue presentation mode: {str(postprocess_mode or 'vn').strip().lower()}",
-        "Return the scene JSON. Copy the character references, apply deletions only, "
+        "Return the scene JSON. Copy ALL appearance and outfit details for each owner, "
+        "apply only explicit exclusions, "
         "and add scene/action tags without completing unspecified character traits.",
     ])
     return "\n".join(parts)
@@ -508,6 +530,7 @@ async def run(
     postprocess_test: bool = False,
     speak_text: str | None = None,
     postprocess_mode: str = "vn",
+    character_tags: dict[str, dict] | None = None,
 ) -> dict:
     config = _read_json(CONFIG_PATH) or {}
     bot_name = str(config.get("bot_selected") or "").strip()
@@ -536,6 +559,10 @@ async def run(
             for name, profile_id in (visual_profile_ids or {}).items()
             if str(name or "").strip()
         }
+        requested_tags = {
+            str(name).strip().casefold(): tags
+            for name, tags in (character_tags or {}).items()
+        }
         character_contexts = [
             _character_context(
                 bot_name,
@@ -544,6 +571,7 @@ async def run(
                     str(character.get("name") or "").strip().casefold(),
                     "",
                 ),
+                requested_tags.get(str(character.get("name") or "").strip().casefold()),
             )
             for character in selected
         ]
@@ -697,5 +725,9 @@ async def run(
         "setup": scene["setup"],
         "supplement": scene["supplement"],
         "characters": scene["characters"],
+        "character_tags": {
+            context["name"]: copy.deepcopy(context["character_tags"])
+            for context in character_contexts
+        },
         "speak_text": final_speak,
     }

@@ -3609,7 +3609,7 @@ def _track_flow_llm(fn):
     @functools.wraps(fn)
     async def wrapped(*args, **kwargs):
         run = illustration_flow._run.get()
-        if run is None or run.get("kind") not in {"video", "illustration"} or illustration_flow._node.get() is not None:
+        if run is None or run.get("kind") not in {"video", "illustration", "lora_feedback"} or illustration_flow._node.get() is not None:
             return await fn(*args, **kwargs)
         bound = signature.bind(*args, **kwargs)
         inputs = bound.arguments

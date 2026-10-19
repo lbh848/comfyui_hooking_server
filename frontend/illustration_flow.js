@@ -6,19 +6,21 @@
     let qualityInspectionEnabled = false, qualityInspectionRequest = 0;
     let scale = 1, previousFocus = null;
     let activeTab = 'illustration';
-    const flows = {illustration: null, video: null, video_input: null};
+    const flows = {illustration: null, video: null, video_input: null, lora_feedback: null};
     const views = {
         illustration: {scale: 1, scroll: [0, 0]},
         video: {scale: 1, scroll: [0, 0]},
         video_input: {scale: 1, scroll: [0, 0]},
+        lora_feedback: {scale: 1, scroll: [0, 0]},
     };
     const tabLabels = {
         illustration: '삽화 흐름 보기',
         video: '영상 흐름 보기',
         video_input: '영상 입력 개선',
+        lora_feedback: 'LoRA 오토피드백 학습',
     };
     const autoOpenStorageKey = kind => `workflow-flow-auto-open-${kind}`;
-    const autoOpenEnabled = {illustration: true, video: true, video_input: false};
+    const autoOpenEnabled = {illustration: true, video: true, video_input: false, lora_feedback: true};
     Object.keys(autoOpenEnabled).forEach(kind => {
         try {
             const saved = localStorage.getItem(autoOpenStorageKey(kind));
@@ -343,7 +345,8 @@
     function nodeState(n) {
         const progress = n.status === 'processing' && Number.isFinite(n.progress) ? ` · ${Math.round(n.progress)}%` : '';
         const speed = nodeExecutor(n) === 'llm' && Number.isFinite(n.tps) ? ` · ${n.tps.toFixed(1)} t/s` : '';
-        return `${labels[n.status] || n.status}${progress} · ${elapsed(n)}${speed}`;
+        const warnings = n.validation_warnings?.length ? ` · ⚠ 경고 ${n.validation_warnings.length}` : '';
+        return `${n.status === 'completed' && warnings ? '경고 후 통과' : labels[n.status] || n.status}${progress} · ${elapsed(n)}${speed}${warnings}`;
     }
     function switchTab(kind) {
         init();
@@ -359,7 +362,7 @@
     }
     function updateStopButton() {
         if (!stopButton) return;
-        stopButton.hidden = activeTab !== 'illustration';
+        stopButton.hidden = !['illustration', 'lora_feedback'].includes(activeTab);
         developerButton.hidden = activeTab !== 'illustration';
         const terminal = ['completed', 'failed', 'cancelled', 'skipped'].includes(flow?.status);
         const cancelling = Boolean(flow?.cancel_requested) || flow?.status === 'cancelling';
@@ -461,7 +464,7 @@
     async function cancelCurrentFlow() {
         const runId = flow?.id;
         if (!runId || stopButton?.disabled) return;
-        if (!window.confirm('현재 삽화 처리 흐름을 중단하시겠습니까?')) return;
+        if (!window.confirm(activeTab === 'lora_feedback' ? '오토피드백 학습을 중단하시겠습니까? 진행 중인 GPU 학습은 마무리하고 다음 회차를 중단합니다.' : '현재 삽화 처리 흐름을 중단하시겠습니까?')) return;
         stopButton.disabled = true;
         stopButton.textContent = '중단 중…';
         try {
@@ -472,9 +475,9 @@
             });
             const payload = await response.json().catch(() => ({}));
             if (!response.ok || !payload.success) throw Error(payload.error || `중단 요청 실패 (${response.status})`);
-            if (payload.flow && payload.flow.id === runId) receive(payload.flow, false);
+            if (payload.flow && payload.flow.id === runId) receive(payload.flow, false, activeTab);
             else await refresh();
-            showToast('삽화 처리 흐름 중단을 요청했습니다.', 'success');
+            showToast('작업 흐름 중단을 요청했습니다.', 'success');
         } catch (error) {
             console.error('[ILLUST_FLOW] 중단 요청 실패:', error);
             showToast(error.message || '삽화 처리 흐름 중단에 실패했습니다.', 'error');
@@ -928,7 +931,7 @@
         updateStopButton();
         if (!modal?.open) return;
         const timeline = modal.querySelector('.if-timeline');
-        timeline.hidden = activeTab !== 'illustration' || !flow;
+        timeline.hidden = !['illustration', 'lora_feedback'].includes(activeTab) || !flow;
         if (!timeline.hidden) {
             const nodes = flow.nodes || [];
             const origin = flow.created_at;
@@ -1011,7 +1014,7 @@
         if (!flow) {
             hideTooltip();
             modal.querySelector('.if-subtitle').textContent = `${tabLabels[activeTab]} · 최신 요청의 실행 상태`;
-            const name = activeTab === 'video_input' ? '영상 입력 개선' : activeTab === 'video' ? '영상' : '삽화';
+            const name = activeTab === 'lora_feedback' ? 'LoRA 오토피드백 학습' : activeTab === 'video_input' ? '영상 입력 개선' : activeTab === 'video' ? '영상' : '삽화';
             const empty = element('div', 'if-empty', `아직 ${name} 요청이 없습니다. 요청이 들어오면 여기에 처리 흐름이 표시됩니다.`);
             if (activeTab === 'video') empty.append(element('small', '', '연출 작성·참조 분석 → 프롬프트 작성·후보 선택 → 영상 생성 → 후처리 → 결과 반환'));
             if (activeTab === 'video_input') empty.append(element('small', '', '입력 상태와 AI 다듬기 결과, 적용·되돌리기 선택을 한 세션 안에 이어서 보존합니다.'));
@@ -1430,6 +1433,28 @@
                 meta.append(element('dt', '', key), item);
             });
             body.append(meta);
+            if (n.validation_warnings?.length) {
+                body.append(element('h3', '', `⚠ 프롬프트 점검 경고 (${n.validation_warnings.length})`));
+                body.append(element('p', 'if-subtitle', '사용 가능한 결과로 계속 진행했습니다. 경고 사유와 원문 출력을 확인하세요.'));
+                n.validation_warnings.forEach((warning, index) => {
+                    body.append(element('p', '', `${warning.stage || n.label}: ${warning.reason || warning}`));
+                    if (warning.input !== undefined) body.append(detailText(stringify(warning.input), `warning-${index}`));
+                });
+            }
+            let displayInput = n.input;
+            if (activeTab === 'lora_feedback' && Array.isArray(n.input)) {
+                const gallery = element('div'); gallery.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;';
+                let imageLabel = '';
+                displayInput = n.input.map(message => ({...message, content: Array.isArray(message.content) ? message.content.map(part => {
+                    if (part.type === 'text') imageLabel = part.text;
+                    if (part.type !== 'image_url') return part;
+                    const figure = element('figure'); figure.style.margin = '0';
+                    const img = element('img'); img.src = part.image_url.url; img.alt = imageLabel; img.style.cssText = 'width:100%;max-height:340px;object-fit:contain;';
+                    figure.append(img, element('figcaption', '', imageLabel)); gallery.append(figure);
+                    return {type: 'image_url', image_url: {url: `[${imageLabel} 이미지]`}};
+                }) : message.content}));
+                if (gallery.childElementCount) body.append(element('h3', '', '판단에 사용한 이미지'), gallery);
+            }
             if (executor === 'llm') body.append(element('p', 'if-subtitle', 'THINK 시간은 첫 추론 수신부터 본문 첫 수신까지, 응답 시간은 본문 첫 수신부터 마지막 수신까지입니다. 진행 중에는 현재 시각까지 갱신합니다. 내부 추론 시간을 추정하지 않으며 추론 수신 기록이 없으면 미수신으로 표시합니다.'));
             const attempts = [];
             for (const event of n.attempts || []) {
@@ -1445,7 +1470,7 @@
                 const state = a.type === 'attempt_failure' ? '실패' : a.type === 'attempt_success' ? '성공' : '진행 중';
                 const summary = element('summary'), content = element('div', 'if-attempt-content');
                 summary.append(element('span', 'if-attempt-title', `${index + 1}회 · ${a.phase === 'fallback' ? '폴백' : '주 경로'} · ${(window.llmRouteSlotModelName?.(a.slot || a.llm_slot, true, a.model || '') || a.model) || '모델 미확정'} · ${a.slot || a.llm_slot || ''} · ${state}`));
-                content.append(element('h3', '', '입력'), detailText(stringify(n.input) || '아직 입력이 없습니다.', `attempt-${index}`));
+                content.append(element('h3', '', '입력'), detailText(stringify(displayInput) || '아직 입력이 없습니다.', `attempt-${index}`));
                 if (a.type === 'attempt_failure') {
                     const failure = [...new Set([a.reason, a.error].filter(Boolean))];
                     if (a.raw_response !== undefined && a.raw_response !== null && a.raw_response !== '') failure.push(`실패 응답\n${stringify(a.raw_response)}`);
@@ -1455,7 +1480,7 @@
                 body.append(d);
             });
             const output = detailOutput(n);
-            body.append(element('h3', '', '입력'), detailText(stringify(n.input) || '아직 입력이 없습니다.', 'input'));
+            body.append(element('h3', '', '입력'), detailText(stringify(displayInput) || '아직 입력이 없습니다.', 'input'));
             body.append(element('h3', '', '출력'));
             if (activeTab === 'illustration' && nodePreviewKind(n) === 'image' && imageUrl) {
                 const img = element('img', 'if-detail-image'); img.src = imageUrl; img.alt = `${n.label} 생성 결과`; body.append(img);
@@ -1496,9 +1521,11 @@
     window.llmStreamTimingDetails = timingDetails;
     window.receiveVideoFlow = (next, autoOpen) => receive(next, autoOpen, 'video');
     window.receiveVideoInputFlow = (next, autoOpen) => receive(next, autoOpen, 'video_input');
+    window.receiveLoraFeedbackFlow = (next, autoOpen) => receive(next, autoOpen, 'lora_feedback');
     window.rehomeIllustrationToast = rehomeToast;
     window.refreshIllustrationFlow = refresh;
     window.openIllustrationFlowDeveloperMode = openDeveloperMode;
     window.openWorkflowFlow = async () => {init(); previousFocus = document.activeElement; if (!modal.open) {flowBackdrop.hidden = false; modal.show(); modal.dispatchEvent(new Event('if-open'));} render(); await refresh();};
     window.openIllustrationFlow = async () => {switchTab('illustration'); await window.openWorkflowFlow();};
+    window.openLoraFeedbackFlow = async () => {switchTab('lora_feedback'); await window.openWorkflowFlow();};
 })();

@@ -92,7 +92,7 @@ def sync_multi_char_shared_tags(positive: str) -> str:
 
         background_prompt = str(payload.get("background_prompt") or "").strip()
         if not background_prompt:
-            raise ValueError("MULTI_CHAR.background_prompt가 비어 있습니다")
+            print("[MULTI_CHAR:PROMPT] 경고: 빈 배경 프롬프트; 제공된 공통/인물 태그로 진행")
         shared_before = [
             value
             for value in (
@@ -1279,10 +1279,6 @@ class IllustPromptBuilder:
                 len(ordered_names) >= 1
                 and ordered_names == list(detected_chars)
                 and len(char_inform) == len(ordered_names)
-                and all(char_inform)
-                and background_prompt
-                and composition_prompt
-                and mask_fingerprint
             ):
                 # Shared text reaches every region. It must never carry the
                 # whole-image count, including archived LLM count mistakes.
@@ -1336,7 +1332,10 @@ class IllustPromptBuilder:
                         f"names={ordered_names}, char_inform={char_inform}, "
                         f"triggers={char_trigger_list}"
                     )
-                    raise ValueError("트리거 중복 제거 후 MULTI_CHAR 캐릭터 태그가 비었습니다")
+                    import illustration_flow
+                    illustration_flow.llm_metadata(validation_warnings=[{
+                        "stage": "MASK", "reason": "일부 캐릭터 태그가 비어 있음; 제공된 공통 프롬프트로 진행",
+                        "input": multi_char_context}])
                 multi_payload = {
                     "enable": True,
                     "char_num": len(ordered_names),

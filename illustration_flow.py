@@ -18,6 +18,7 @@ _reserved = contextvars.ContextVar("illustration_flow_reserved", default=None)
 _latest = None
 _latest_video = None
 _latest_video_input = None
+_latest_lora_feedback = None
 _notify = None
 ROOT_TYPES = {"illustration", "illustration_llm_build", "illustration_easy_edit", "character_maker_illustration", "regenerate"}
 BACKGROUND_LLM_TYPES = {"illustration_quality_inspection"}
@@ -47,20 +48,23 @@ def snapshot(run=None, *, kind="illustration"):
         "illustration": _latest,
         "video": _latest_video,
         "video_input": _latest_video_input,
+        "lora_feedback": _latest_lora_feedback,
     }
     run = run if run is not None else latest_by_kind.get(kind)
     if run is None:
         return None
     return {key: copy.deepcopy(value) for key, value in run.items() if key not in {"nodes", "publish_pending", "_active_llm_tasks", "_frontier"}} | {
         "nodes": [{k: copy.deepcopy(v) for k, v in node.items()
-                   if k not in {"input", "input_variables", "output", "attempts", "_preview_image", "_preview_mask", "call1_state_table", "time_place_state_table", "profile_state_table"}} | {
+                   if k not in {"input", "input_variables", "output", "attempts", "_preview_image", "_preview_mask", "call1_state_table", "time_place_state_table", "profile_state_table", "validation_warnings"}} | {
                        "attempt_count": sum(event.get("type") == "attempt_start" for event in node.get("attempts", [])),
+                       "validation_warnings": [{k: copy.deepcopy(v) for k, v in warning.items() if k != "input"}
+                                               for warning in node.get("validation_warnings", [])],
                    } for node in run["nodes"].values()]
     }
 
 
 def detail(run_id, node_id):
-    for run in (_latest, _latest_video, _latest_video_input):
+    for run in (_latest, _latest_video, _latest_video_input, _latest_lora_feedback):
         if run is not None and run["id"] == run_id:
             node = run["nodes"].get(node_id)
             return {key: copy.deepcopy(value) for key, value in node.items()
@@ -138,20 +142,21 @@ def request_cancel(run_id):
     if not normalized:
         print(f"[ILLUST_FLOW] 중단 요청 실패: run_id={run_id!r}")
         return False
-    if _latest is None or _latest["id"] != normalized:
+    run = next((r for r in (_latest, _latest_lora_feedback) if r is not None and r["id"] == normalized), None)
+    if run is None:
         print(f"[ILLUST_FLOW] 중단할 실행 없음: run={normalized}")
         return False
-    if _latest["status"] in TERMINAL:
+    if run["status"] in TERMINAL:
         print(
             f"[ILLUST_FLOW] 이미 종료된 실행 중단 생략: "
-            f"run={normalized}, status={_latest['status']}"
+            f"run={normalized}, status={run['status']}"
         )
         return False
-    _latest["cancel_requested"] = True
-    _latest["status"] = "cancelling"
+    run["cancel_requested"] = True
+    run["status"] = "cancelling"
     active_llm_tasks = [
         task
-        for task in list(_latest.get("_active_llm_tasks") or ())
+        for task in list(run.get("_active_llm_tasks") or ())
         if task is not None and not task.done()
     ]
     for task in active_llm_tasks:
@@ -160,7 +165,7 @@ def request_cancel(run_id):
         f"[ILLUST_FLOW] 사용자 중단 요청 등록: run={normalized}, "
         f"active_llm_cancelled={len(active_llm_tasks)}"
     )
-    changed(_latest)
+    changed(run)
     return True
 
 
@@ -197,7 +202,7 @@ def unregister_active_llm_task(registration):
 def changed(run):
     run["revision"] += 1
     run["updated_at"] = time.time()
-    latest_runs = (_latest, _latest_video, _latest_video_input)
+    latest_runs = (_latest, _latest_video, _latest_video_input, _latest_lora_feedback)
     if any(run is latest for latest in latest_runs) and _notify is not None:
         # Coalesce a burst of state changes without streaming full prompts.
         if not run.get("publish_pending"):
@@ -206,10 +211,11 @@ def changed(run):
                 try:
                     await asyncio.sleep(0.05)
                     run["publish_pending"] = False
-                    if any(run is latest for latest in (_latest, _latest_video, _latest_video_input)):
+                    if any(run is latest for latest in (_latest, _latest_video, _latest_video_input, _latest_lora_feedback)):
                         event_type = {
                             "video": "video_flow",
                             "video_input": "video_input_flow",
+                            "lora_feedback": "lora_feedback_flow",
                         }.get(run.get("kind"), "illustration_flow")
                         await _notify(event_type, snapshot(run))
                 except Exception as exc:
@@ -433,8 +439,20 @@ def stage(label, *, executor="process", layout_group=None):
 
 
 def queue_added(item):
-    global _latest, _latest_video, _latest_video_input
+    global _latest, _latest_video, _latest_video_input, _latest_lora_feedback
     run = _run.get()
+    if item.type == "bot_lora_feedback" or (item.type == "bot_lora_training" and (item.params or {}).get("feedback_run_id") and run is not None and run.get("kind") == "lora_feedback"):
+        root = item.type == "bot_lora_feedback"
+        if root:
+            run = {"id": item.id, "kind": "lora_feedback", "label": item.label,
+                   "status": "waiting", "cancel_requested": False, "created_at": time.time(),
+                   "updated_at": time.time(), "revision": 0, "nodes": {}, "_active_llm_tasks": set()}
+            _latest_lora_feedback = run
+        node_id = add_node(run, item.label, dependencies=() if root else _frontier.get(),
+                           node_id=item.id, kind="request" if root else "training", task_key=item.type,
+                           executor="process" if root else "comfy", input=serializable(item.params))
+        item._illustration_flow = (run, node_id, root)
+        return
     if item.type in VIDEO_INPUT_TYPES:
         session_id = str((item.params or {}).get("video_input_session_id") or item.id).strip()
         nested = run is not None and run.get("kind") == "video_input"
@@ -493,7 +511,7 @@ def queue_added(item):
         )
         item._illustration_flow = (run, node_id, is_root)
         return
-    if run is not None and run.get("kind") in {"video", "video_input"}:
+    if run is not None and run.get("kind") in {"video", "video_input", "lora_feedback"}:
         run = None
     if run is None and item.type not in ROOT_TYPES:
         return
@@ -783,8 +801,21 @@ def llm_call(fn):
 
 
 def llm_metadata(**fields):
-    if _run.get() is not None and _node.get() is not None:
-        update(_run.get(), _node.get(), **fields)
+    run, node_id = _run.get(), _node.get()
+    warnings = fields.get("validation_warnings")
+    if warnings and run is not None:
+        # Parsers may run immediately after the LLM wrapper has completed.
+        if node_id is None or run["nodes"].get(node_id, {}).get("kind") != "llm":
+            node_id = next((value for value in reversed(_frontier.get())
+                            if run["nodes"].get(value, {}).get("kind") == "llm"), node_id)
+        if node_id is not None:
+            existing = list(run["nodes"][node_id].get("validation_warnings") or [])
+            for warning in warnings:
+                if warning not in existing:
+                    existing.append(copy.deepcopy(warning))
+            fields["validation_warnings"] = existing
+    if run is not None and node_id is not None:
+        update(run, node_id, **fields)
 
 
 def record_call1_state_table(table):

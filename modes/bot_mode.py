@@ -1772,29 +1772,46 @@ class BotMode:
 
     async def _add_character(self, data, body):
         bot_name = body.get("bot_name", "").strip()
-        char_name = body.get("char_name", "")
-        validation_error = validate_bot_storage_name(char_name, "캐릭터 이름")
-        if validation_error:
-            print(
-                "[BOT_MODE] 캐릭터 추가 이름 거부: "
-                f"bot={bot_name!r}, name={char_name!r}, reason={validation_error}"
-            )
-            return _json_error(validation_error)
+        batch = "char_names" in body
+        names = body.get("char_names") if batch else [body.get("char_name", "")]
+        if not isinstance(names, list) or not names:
+            print(f"[BOT_MODE] 캐릭터 추가 목록 없음/형식 오류: bot={bot_name!r}, names={names!r}")
+            return _json_error("추가할 캐릭터 이름 목록이 필요합니다.")
         if not bot_name:
             print("[BOT_MODE] 캐릭터 추가 실패: 봇 이름이 비어있음")
             return _json_error("봇 이름이 비어있습니다.")
         bot = next((b for b in data["bots"] if b["name"] == bot_name), None)
         if not bot:
+            print(f"[BOT_MODE] 캐릭터 추가 실패: 봇 없음 {bot_name!r}")
             return _json_error(f"봇을 찾을 수 없음: {bot_name}")
-        if any(c["name"] == char_name for c in bot.get("characters", [])):
-            return _json_error(f"이미 존재하는 캐릭터: {char_name}")
-        if "characters" not in bot:
-            bot["characters"] = []
-        bot["characters"].append({"name": char_name})
-        os.makedirs(os.path.join(BOT_DIR, bot_name, char_name), exist_ok=True)
-        _save_bot_data(data)
-        print(f"[BOT_MODE] 캐릭터 추가: {bot_name}/{char_name}")
-        return _json_ok({"bots": data["bots"]})
+        added, errors = [], []
+        for char_name in names:
+            error = validate_bot_storage_name(char_name, "캐릭터 이름")
+            if not error and any(c["name"] == char_name for c in bot.get("characters", [])):
+                error = f"이미 존재하는 캐릭터: {char_name}"
+            if error:
+                print(f"[BOT_MODE] 캐릭터 추가 건너뜀: bot={bot_name!r}, name={char_name!r}, reason={error}")
+                if not batch:
+                    return _json_error(error)
+                errors.append({"character": char_name, "error": error})
+                continue
+            try:
+                os.makedirs(os.path.join(BOT_DIR, bot_name, char_name), exist_ok=True)
+            except Exception as exc:
+                print(f"[BOT_MODE] 캐릭터 폴더 생성 실패: bot={bot_name!r}, name={char_name!r}, error={exc}")
+                traceback.print_exc()
+                if not batch:
+                    raise
+                errors.append({"character": char_name, "error": str(exc)})
+                continue
+            bot.setdefault("characters", []).append({"name": char_name})
+            added.append(char_name)
+        if added:
+            _save_bot_data(data)
+            print(f"[BOT_MODE] 캐릭터 추가 완료: bot={bot_name!r}, count={len(added)} · 일괄 저장 1회")
+        else:
+            print(f"[BOT_MODE] 추가된 캐릭터 없어 저장 건너뜀: bot={bot_name!r}, errors={errors!r}")
+        return _json_ok({"bots": data["bots"], "added": added, "errors": errors})
 
     async def _remove_character(self, data, body):
         bot_name = body.get("bot_name", "").strip()
@@ -4353,17 +4370,15 @@ class BotMode:
             return _json_error(str(e), 500)
 
     async def handle_save_character_cards(self, request):
-        """POST complete character cards into bot.json on the logical character."""
+        """Save edits against the latest cards, preserving fields unchanged from base."""
         try:
             body = await request.json()
             bot_name = str(body.get("bot_name") or "").strip()
-            char_name = str(body.get("character") or "").strip()
-            if not bot_name or not char_name:
-                print(
-                    f"[CHARACTER_CARD:API] 저장 입력 누락: "
-                    f"bot={bot_name!r}, character={char_name!r}"
-                )
-                return _json_error("봇 이름과 캐릭터 이름이 필요합니다.")
+            batch = "characters" in body
+            items = body.get("characters") if batch else [body]
+            if not bot_name or not isinstance(items, list) or not items:
+                print(f"[CHARACTER_CARD:API] 저장 입력 누락/형식 오류: bot={bot_name!r}, items={items!r}")
+                return _json_error("봇 이름과 저장할 캐릭터 카드가 필요합니다.")
 
             async with self._lock:
                 data = _load_bot_data()
@@ -4374,37 +4389,6 @@ class BotMode:
                 if bot is None:
                     print(f"[CHARACTER_CARD:API] 저장할 봇 없음: bot={bot_name!r}")
                     return _json_error(f"봇을 찾을 수 없습니다: {bot_name}", 404)
-                root_character = next(
-                    (
-                        item for item in bot.get("characters", [])
-                        if str(item.get("name") or "").casefold() == char_name.casefold()
-                    ),
-                    None,
-                )
-                if root_character is None:
-                    print(
-                        f"[CHARACTER_CARD:API] 저장할 캐릭터 없음: "
-                        f"bot={bot_name!r}, character={char_name!r}"
-                    )
-                    return _json_error(f"캐릭터를 찾을 수 없습니다: {char_name}", 404)
-                canonical_name = str(root_character.get("name") or char_name)
-                raw_character = body.get("data")
-                if not isinstance(raw_character, dict):
-                    print(
-                        f"[CHARACTER_CARD:API] 저장 데이터 없음/형식 오류: "
-                        f"bot={bot_name!r}, character={canonical_name!r}, "
-                        f"value={raw_character!r}"
-                    )
-                    return _json_error("저장할 캐릭터 카드 데이터가 필요합니다.")
-                supplied_name = str(raw_character.get("name") or "").strip()
-                if supplied_name and supplied_name.casefold() != canonical_name.casefold():
-                    print(
-                        f"[CHARACTER_CARD:API] 캐릭터 이름 불일치: "
-                        f"route={canonical_name!r}, data={supplied_name!r}"
-                    )
-                    return _json_error("경로와 데이터의 캐릭터 이름이 일치하지 않습니다.")
-                cards = character_profiles_to_cards(raw_character)
-                stored_cards = store_visual_cards(root_character, cards)
                 portable_value = _load_lb_extra(bot_name)
                 if isinstance(portable_value, dict) and "edited" in portable_value:
                     portable_value = portable_value.get("edited")
@@ -4412,6 +4396,82 @@ class BotMode:
                     raise VisualProfileValidationError(
                         "저장된 이식용 평면 데이터 형식이 올바르지 않습니다."
                     )
+                saved_characters, errors = [], []
+                for item in items:
+                    char_name = str(item.get("character") or "").strip() if isinstance(item, dict) else ""
+                    root_character = next(
+                        (character for character in bot.get("characters", [])
+                         if str(character.get("name") or "").casefold() == char_name.casefold()),
+                        None,
+                    )
+                    if root_character is None:
+                        error = f"캐릭터를 찾을 수 없습니다: {char_name}"
+                        print(f"[CHARACTER_CARD:API] 저장 건너뜀: bot={bot_name!r}, error={error}")
+                        if not batch:
+                            return _json_error(error, 404)
+                        errors.append({"character": char_name, "error": error})
+                        continue
+                    canonical_name = str(root_character.get("name") or char_name)
+                    raw_character = item.get("data")
+                    try:
+                        if not isinstance(raw_character, dict):
+                            raise VisualProfileValidationError("저장할 캐릭터 카드 데이터가 필요합니다.")
+                        supplied_name = str(raw_character.get("name") or "").strip()
+                        if supplied_name and supplied_name.casefold() != canonical_name.casefold():
+                            raise VisualProfileValidationError("경로와 데이터의 캐릭터 이름이 일치하지 않습니다.")
+                        cards = character_profiles_to_cards(raw_character)
+                        if "base" in item:
+                            # The editor sends its original snapshot as well as its draft.
+                            # A stale, unchanged face/eye/LoRA value is not a user edit.
+                            base_cards = character_profiles_to_cards(item["base"])
+                            base_by_id = {card["id"]: card for card in base_cards}
+                            extra_character = next(
+                                (entry for entry in portable_value or []
+                                 if isinstance(entry, dict) and str(entry.get("name") or "").casefold() == canonical_name.casefold()),
+                                None,
+                            )
+                            current_cards, _source = effective_character_cards(root_character, extra_character)
+                            current_by_id = {card["id"]: card for card in current_cards}
+                            submitted_ids = [card["id"] for card in cards]
+                            base_ids = [card["id"] for card in base_cards]
+                            missing = object()
+                            for card in cards:
+                                card_id = card["id"]
+                                if card_id not in base_by_id:
+                                    current_by_id[card_id] = deepcopy(card)
+                                    continue
+                                if card_id not in current_by_id:
+                                    # Another editor deleted this card; an old snapshot must
+                                    # not resurrect it along with unrelated edits.
+                                    print(f"[CHARACTER_CARD:API] 이미 삭제된 카드 저장 건너뜀: character={canonical_name!r}, card={card_id!r}")
+                                    continue
+                                previous = base_by_id[card_id]
+                                current = current_by_id[card_id]
+                                for field in previous.keys() | card.keys():
+                                    if previous.get(field, missing) == card.get(field, missing):
+                                        continue
+                                    if field in card:
+                                        current[field] = deepcopy(card[field])
+                                    else:
+                                        current.pop(field, None)
+                            for card_id in base_by_id.keys() - set(submitted_ids):
+                                current_by_id.pop(card_id, None)
+                            # Preserve another editor's additions/order unless this editor
+                            # explicitly changed the card list. IDs, never indices, bind edits.
+                            order = submitted_ids if submitted_ids != base_ids else [card["id"] for card in current_cards]
+                            order += [card_id for card_id in current_by_id if card_id not in order]
+                            cards = [current_by_id[card_id] for card_id in order if card_id in current_by_id]
+                        stored_cards = store_visual_cards(root_character, cards)
+                        saved_characters.append(cards_to_character_profiles(canonical_name, stored_cards))
+                    except VisualProfileValidationError as exc:
+                        print(f"[CHARACTER_CARD:API] 카드 저장 건너뜀: bot={bot_name!r}, character={canonical_name!r}, error={exc}")
+                        traceback.print_exc()
+                        if not batch:
+                            return _json_error(str(exc))
+                        errors.append({"character": canonical_name, "error": str(exc)})
+                if not saved_characters:
+                    print(f"[CHARACTER_CARD:API] 저장 가능한 카드 없어 저장 건너뜀: bot={bot_name!r}, errors={errors!r}")
+                    return _json_ok({"saved": False, "characters": [], "errors": errors, "error": "저장 가능한 캐릭터 카드가 없습니다."})
                 synchronized, portable_changed = sync_primary_cards_to_portable_data(
                     bot,
                     portable_value,
@@ -4419,19 +4479,15 @@ class BotMode:
                 _save_bot_data(data)
                 if portable_changed:
                     _save_lb_extra(bot_name, synchronized)
-                saved_character = cards_to_character_profiles(
-                    canonical_name,
-                    stored_cards,
-                )
                 print(
                     f"[CHARACTER_CARD:API] 카드 저장 완료: bot={bot_name!r}, "
-                    f"character={canonical_name!r}, cards={len(stored_cards)}, "
+                    f"characters={len(saved_characters)}, skipped={len(errors)}, "
                     f"portable_card_1_sync={portable_changed}"
                 )
                 return _json_ok({
                     "saved": True,
                     "source": "cards",
-                    "character": saved_character,
+                    **({"characters": saved_characters, "errors": errors} if batch else {"character": saved_characters[0]}),
                     "portable_data": synchronized,
                     "max_cards": MAX_VISUAL_CARDS,
                     "bots": data["bots"],

@@ -3581,6 +3581,40 @@
             transform: translateX(24px);
         }
 
+        .lb-extra-mindmap-profile-row[data-skipped="true"] {
+            filter: grayscale(1);
+            opacity: 0.72;
+            background: color-mix(in srgb, var(--text2) 10%, var(--surface));
+            border-radius: 8px;
+        }
+
+        .lb-extra-refine-toggle {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            margin: 6px 0;
+            padding: 5px 10px;
+            border: 1px solid var(--border);
+            border-radius: 7px;
+            background: var(--surface);
+            cursor: pointer;
+            user-select: none;
+        }
+        .lb-extra-refine-toggle[data-skipped="true"] {
+            border-color: var(--accent);
+            background: color-mix(in srgb, var(--accent) 13%, var(--surface));
+        }
+        .lb-extra-refine-toggle .toggle-switch { flex: 0 0 50px; }
+        .lb-extra-refine-toggle input:focus-visible + .toggle-slider {
+            outline: 2px solid var(--text);
+            outline-offset: 3px;
+        }
+        .lb-extra-refine-toggle input:disabled + .toggle-slider {
+            opacity: 0.5;
+            cursor: wait;
+        }
+
         /* 잠금 영역: 사용 중단/보류 컨트롤을 회색 음영 처리하고 클릭 차단.
            해제하려면 컨테이너에서 ui-locked 클래스만 제거하면 됨. */
         .ui-locked {
@@ -19934,6 +19968,12 @@
                                     전체 순차 학습 시작
                                 </button>
                             </div>
+                            <div style="margin-bottom:8px; padding:10px; border:1px solid var(--border); border-radius:6px;">
+                                <strong style="font-size:0.85rem;">자동 학습 계획자 · 오토피드백</strong>
+                                <p style="font-size:0.75rem; color:var(--text-secondary); line-height:1.5;">원본 관찰 → 학습 → 결과 대조 → 태그 수정 → 재학습. 수정할 근거가 없으면 종료합니다.</p>
+                                <button type="button" onclick="openBotLoraFeedback()" style="width:100%; padding:8px; background:var(--accent); color:#fff; border:none; border-radius:5px; cursor:pointer;">오토피드백 학습</button>
+                                <button type="button" onclick="openLoraFeedbackFlow()" style="width:100%; margin-top:5px; padding:6px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:5px; cursor:pointer;">학습 작업 흐름 보기</button>
+                            </div>
                             <!-- Raw 보기 -->
                             <button onclick="previewBotLoraPromptsRaw()" style="width:100%; padding:6px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:6px; cursor:pointer; font-size:0.8rem; font-weight:600;">프롬프트 Raw 보기</button>
                         </div>
@@ -20573,7 +20613,7 @@
     </div>
 
     <!-- LLM 수동 그리기 설정 모달 (restore_workflow_prompt_llm 전용) -->
-    <div class="modal" id="restore-char-select-modal">
+    <div class="modal" id="restore-char-select-modal" style="z-index:300;">
         <div class="modal-content" style="max-width:640px;">
             <div class="modal-header">
                 <h2>🖌️ LLM 수동 그리기</h2>
@@ -20645,6 +20685,7 @@
                             <input type="radio" name="restore-situation-mode" value="custom" onchange="onRestoreSituationModeChange()"> ✍️ 직접 입력
                         </label>
                     </div>
+                    <div style="margin-bottom:9px; font-size:0.75rem; color:var(--text-secondary);">외형(appearance)과 복장(outfit)을 빠짐없이 보존하는 것을 최우선으로 장면과 구도를 정합니다. 지정한 제외 조건만 반영합니다.</div>
                     <textarea id="restore-situation-input" rows="4" disabled placeholder="예: 카페 창가에서 두 사람이 마주 앉아 대화하는 장면" style="width:100%; box-sizing:border-box; padding:8px; border:1px solid var(--border); border-radius:6px; background:var(--surface1); color:var(--text); font-family:inherit; font-size:0.85rem; resize:vertical;"></textarea>
                 </div>
 
@@ -31603,6 +31644,9 @@
                         case 'video_input_flow':
                             receiveVideoInputFlow(msg.data, true);
                             break;
+                        case 'lora_feedback_flow':
+                            if (typeof receiveLoraFeedbackFlow === 'function') receiveLoraFeedbackFlow(msg.data, true);
+                            break;
                         case 'illustration_warning':
                             showToast(msg.data.message, 'warning');
                             break;
@@ -31764,6 +31808,7 @@
 
         async function handleBackupCreated(data) {
             console.log('[Backup] 새 백업 생성:', data.name);
+            if (document.getElementById('focus-edit-overlay')) _renderFocusEditPhoto(true);
             if (typeof loadBackups === 'function') {
                 await loadBackups(true);
                 console.log('[Backup] 목록 갱신 완료');
@@ -44166,6 +44211,17 @@
                 ],
             },
             {
+                id: 'bot-lora-feedback',
+                number: '03-A',
+                color: '#46b98a',
+                label: '봇 LoRA 오토피드백 학습',
+                description: '원본 관찰 후 GPU 학습·결과 대조·태그 수정을 반복합니다. 태그를 수정할 근거가 없거나 지정 횟수에 도달하면 종료합니다.',
+                steps: [
+                    {type: 'bot_lora_feedback', lane: 'llm', laneLabel: '비전 LLM', label: '원본 관찰·태그 대조'},
+                    {type: 'bot_lora_training', lane: 'gpu', laneLabel: 'Comfy', label: '학습·결과 생성', qualifier: '지정 횟수까지 반복'},
+                ],
+            },
+            {
                 id: 'qwen-edit',
                 number: '04',
                 color: '#4caed0',
@@ -44290,6 +44346,12 @@
                         types: ['llm_test'],
                         label: 'LLM 연결 테스트',
                         description: '설정 화면의 일회성 연결 확인',
+                    },
+                    {
+                        types: ['bot_lora_feedback'],
+                        label: '봇 LoRA 오토피드백 학습',
+                        description: '원본 관찰과 결과 대조 사이의 GPU 학습은 봇 LoRA 큐로 실행',
+                        sequenceSetId: 'bot-lora-feedback',
                     },
                 ],
             },
@@ -45863,6 +45925,12 @@
                 return;
             }
             statusEl.textContent = `${_restoreDrawState.characters.length}명 중 ${count}명을 선택해 그립니다.`;
+            const draft = _restoreDrawState.focusCharacter;
+            if (draft && [1, ...(count === 2 ? [2] : [])].some(slot =>
+                document.getElementById(`restore-character-select-${slot}`).value === draft.name
+                && document.getElementById(`restore-profile-select-${slot}`).value === draft.visual_profile_id)) {
+                statusEl.textContent += ` ${draft.name}: 저장 전 집중 편집본의 appearance·outfit을 이번 그림에 적용합니다.`;
+            }
             statusEl.style.color = 'var(--text-secondary)';
         }
 
@@ -45949,6 +46017,14 @@
                     character_count: characterCount,
                     char_names: charNames,
                     visual_profile_ids: visualProfileIds,
+                    ...(_restoreDrawState.focusCharacter
+                        && visualProfileIds[_restoreDrawState.focusCharacter.name] === _restoreDrawState.focusCharacter.visual_profile_id
+                        ? { character_tags: {
+                            [_restoreDrawState.focusCharacter.name]: {
+                                appearance: _restoreDrawState.focusCharacter.appearance,
+                                outfit: _restoreDrawState.focusCharacter.outfit,
+                            },
+                        } } : {}),
                     situation_mode: situationMode,
                     situation,
                     postprocess_test: postprocessTest,
@@ -45969,7 +46045,7 @@
             });
         }
 
-        async function openRestoreDrawModal() {
+        async function openRestoreDrawModal(focusCharacter = null) {
             const modal = document.getElementById('restore-char-select-modal');
             const statusEl = document.getElementById('restore-char-select-status');
             const confirmBtn = document.getElementById('restore-draw-confirm-btn');
@@ -46011,6 +46087,7 @@
                 _restoreDrawState = {
                     botName: String(data.bot_name || ''),
                     characters,
+                    focusCharacter,
                 };
                 const select1 = document.getElementById('restore-character-select-1');
                 const select2 = document.getElementById('restore-character-select-2');
@@ -46018,8 +46095,20 @@
                 _fillRestoreCharacterSelect(select2, characters);
                 select1.selectedIndex = 0;
                 select2.selectedIndex = characters.length > 1 ? 1 : 0;
+                if (focusCharacter) {
+                    select1.value = focusCharacter.name;
+                    if (!select1.value) throw new Error('집중 편집 중인 캐릭터를 선택된 봇에서 찾지 못했습니다.');
+                    select2.value = characters.find(character => character.name !== focusCharacter.name)?.name || focusCharacter.name;
+                }
                 _fillRestoreProfileSelect(1);
                 _fillRestoreProfileSelect(2);
+                if (focusCharacter) {
+                    const profileSelect = document.getElementById('restore-profile-select-1');
+                    if (focusCharacter.visual_profile_id) profileSelect.value = focusCharacter.visual_profile_id;
+                    if (!profileSelect.value) throw new Error('집중 편집 중인 프로필 카드를 찾지 못했습니다.');
+                    focusCharacter.visual_profile_id = profileSelect.value;
+                    _updateRestoreProfileThumbnail(1);
+                }
 
                 const twoRadio = document.querySelector('input[name="restore-character-count"][value="2"]');
                 twoRadio.disabled = characters.length < 2;
@@ -46035,7 +46124,22 @@
             return pendingChoice;
         }
 
-        async function manualRestoreDraw() {
+        async function manualRestoreDraw(focusIndex = null) {
+            let focusCharacter = null;
+            if (focusIndex !== null) {
+                const edited = _lbExtraEdited[focusIndex];
+                if (!edited) {
+                    console.error('[수동 그리기] 집중 편집본을 찾지 못했습니다:', focusIndex);
+                    showToast('집중 편집 중인 캐릭터 데이터가 없습니다.', 'error');
+                    return;
+                }
+                focusCharacter = JSON.parse(JSON.stringify({
+                    name: edited.name,
+                    visual_profile_id: _visualCardFocusSession?.profileId || '',
+                    appearance: edited.appearance || [],
+                    outfit: edited.outfit || [],
+                }));
+            }
             // WS 연결 확인 및 재연결
             if (!isFrontendWsHealthy()) {
                 console.log('[수동 그리기] WS 재연결...');
@@ -46070,9 +46174,22 @@
                 }
             }
 
-            // restore_workflow_prompt_llm.py 일 때 인원/캐릭터/상황/후처리 모달 사용
+            // 집중 편집은 현재 카드와 편집본으로 바로 자동 생성합니다.
             let requestBody = {};
-            if ((currentConfig.restore_prompt_file || '') === 'restore_workflow_prompt_llm.py') {
+            if (focusCharacter) {
+                requestBody = {
+                    prompt_file: 'restore_workflow_prompt_llm.py',
+                    character_count: 1,
+                    char_names: [focusCharacter.name],
+                    visual_profile_ids: focusCharacter.visual_profile_id
+                        ? { [focusCharacter.name]: focusCharacter.visual_profile_id } : {},
+                    character_tags: { [focusCharacter.name]: {
+                        appearance: focusCharacter.appearance,
+                        outfit: focusCharacter.outfit,
+                    } },
+                    situation_mode: 'llm',
+                };
+            } else if ((currentConfig.restore_prompt_file || '') === 'restore_workflow_prompt_llm.py') {
                 const choice = await openRestoreDrawModal();
                 if (choice === null) {
                     console.log('[수동 그리기] 모달 취소로 중단');
@@ -46081,8 +46198,9 @@
                 requestBody = choice;
             }
 
-            const btn = document.getElementById('restore-manual-btn');
-            btn.disabled = true;
+            const drawLabel = focusCharacter ? '자동 그리기' : '수동 그리기';
+            const btn = document.getElementById(focusCharacter ? 'fe-btn-manual-draw' : 'restore-manual-btn');
+            if (btn) btn.disabled = true;
             _setHeaderControlLabel(btn, '큐 등록 중...');
             try {
                 const resp = await fetch('/api/restore_manual_draw', {
@@ -46092,22 +46210,23 @@
                 });
                 const data = await resp.json();
                 if (data.success && data.queued) {
-                    showToast('수동 그리기가 큐에 등록되었습니다', 'success');
+                    showToast(`${drawLabel}가 큐에 등록되었습니다`, 'success');
                     loadBackups(true);
                 } else if (data.success) {
-                    showToast('수동 그리기 완료', 'success');
+                    showToast(`${drawLabel} 완료`, 'success');
                     loadBackups(true);
                     if (data.image) {
                         openLightbox(data.image);
                     }
                 } else {
-                    showToast(`수동 그리기 실패: ${data.error}`, 'error');
+                    showToast(`${drawLabel} 실패: ${data.error}`, 'error');
                 }
             } catch (e) {
-                showToast(`수동 그리기 오류: ${e.message}`, 'error');
+                console.error(`[${drawLabel}] 요청 실패:`, e);
+                showToast(`${drawLabel} 오류: ${e.message}`, 'error');
             } finally {
-                btn.disabled = false;
-                _setHeaderControlLabel(btn, '삽화 수동 그리기');
+                if (btn) btn.disabled = false;
+                _setHeaderControlLabel(btn, `삽화 ${drawLabel}`);
             }
         }
 
@@ -48923,6 +49042,8 @@
             { key: 'refine_lora_prompt',       label: 'LoRA/에셋/스타일 정제', kind: '비전', modality: 'vision', group: 'asset_management' },
             { key: 'refine_lora_test_setup',   label: '테스트 이미지 일괄 세팅(봇/에셋)',kind: '텍스트', modality: 'text', group: 'asset_management' },
             { key: 'lora_prompt_review',       label: 'LoRA 프롬프트 2차 검수', kind: '비전/JSON', modality: 'vision', group: 'asset_management' },
+            { key: 'lora_feedback_observe', label: '오토피드백 · 원본 관찰', kind: '비전/자연어', modality: 'vision', group: 'asset_management' },
+            { key: 'lora_feedback_compare', label: '오토피드백 · 태그·학습 결과 대조', kind: '다중 비전/태그 수정', modality: 'vision', group: 'asset_management' },
             { key: 'asset_name_mapping_auto_fix', label: '에셋 이름 자동 수정', kind: 'JSON', modality: 'text', group: 'asset_management' },
             { key: 'asset_name_mapping_full',  label: '에셋 이름 전체 매핑', kind: 'JSON', modality: 'text', group: 'asset_management' },
             { key: 'preset_import_classify',   label: '프리셋 가져오기 분류', kind: 'JSON', modality: 'text', group: 'asset_management' },
@@ -65260,6 +65381,49 @@
             } catch (e) { console.error('[BOT_LORA] skip_training 업데이트 실패:', e); showToast('스킵 설정 실패', 'error'); }
         }
 
+        function openBotLoraFeedback() {
+            if (!botLoraCurrentBot || !botLoraCurrentProject) {
+                showToast('봇 LoRA 프로젝트를 선택하세요.', 'error'); return;
+            }
+            const units = botLoraProjectData?.characters || [];
+            const bot = botLoraCurrentBot, project = botLoraCurrentProject;
+            const dialog = document.createElement('dialog');
+            dialog.style.cssText = 'margin:auto;width:min(620px,90vw);max-height:80vh;overflow:auto;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:12px;padding:20px;';
+            dialog.innerHTML = `<h3>오토피드백 학습</h3>
+                <p>선택한 카드마다 태그를 수정하며 반복 학습합니다. 변경 전 태그는 백업하고, 올바른 태그는 유지합니다.</p>
+                <label>카드별 최대 학습 횟수 <input type="number" min="1" value="3" data-rounds style="width:70px;"></label>
+                <p style="font-size:0.8rem;color:var(--text-secondary);">마지막 회차의 수정 제안은 적용하지 않습니다. ‘현재 결과 분석’은 최신 결과와 현재 저장된 태그를 대조하며 저장·학습하지 않습니다.</p>
+                <div>${units.map((unit, index) => `<label style="display:block;padding:8px;border-bottom:1px solid var(--border);"><input type="checkbox" value="${index}" ${unit.skip_training ? '' : 'checked'}> ${escapeHtml(unit.name)} · ${escapeHtml(unit.visual_card_label || unit.visual_card_id || '기본 카드')}</label>`).join('')}</div>
+                <p data-status role="status"></p>
+                <div style="display:flex;gap:8px;margin-top:16px;"><button type="button" data-start>태그 자동 수정·반복 학습 시작</button><button type="button" data-analyze>현재 결과 분석</button><button type="button" data-close>닫기</button></div>`;
+            dialog.querySelector('[data-close]').onclick = () => dialog.close();
+            dialog.addEventListener('close', () => dialog.remove());
+            const start = async action => {
+                const characters = [...dialog.querySelectorAll('input[type=checkbox]:checked')].map(input => {
+                    const unit = units[Number(input.value)];
+                    return {character: unit.name, visual_card_id: unit.visual_card_id || ''};
+                });
+                if (!characters.length) {dialog.querySelector('[data-status]').textContent = '캐릭터 카드를 선택하세요.'; return;}
+                const buttons = dialog.querySelectorAll('[data-start], [data-analyze]');
+                buttons.forEach(button => button.disabled = true);
+                try {
+                    const result = await fetchJSON('/api/bot_lora/feedback', {method: 'POST', headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({bot, project, characters, action, max_rounds: Number(dialog.querySelector('[data-rounds]').value)})});
+                    if (!result.success) throw new Error(result.error || '큐 등록 실패');
+                    dialog.close();
+                    await openLoraFeedbackFlow();
+                    showToast('오토피드백 작업을 큐에 추가했습니다.', 'success');
+                } catch (error) {
+                    console.error('[LORA_FEEDBACK] 시작 실패:', error);
+                    dialog.querySelector('[data-status]').textContent = error.message;
+                    buttons.forEach(button => button.disabled = false);
+                }
+            };
+            dialog.querySelector('[data-start]').onclick = () => start('start');
+            dialog.querySelector('[data-analyze]').onclick = () => start('analyze');
+            document.body.append(dialog); dialog.showModal();
+        }
+
         async function startBotLoraTraining() {
             if (!botLoraCurrentBot || !botLoraCurrentProject) return;
             const allChars = botLoraProjectData?.characters || [];
@@ -69036,8 +69200,8 @@
                 console.error('[BOT] 탭 데이터 준비 실패:', e);
                 showBotView('empty');
                 const botEmptyState = document.getElementById('bot-empty-state');
-                botEmptyState.querySelector('h3').textContent = '삽화 라이브러리';
-                botEmptyState.querySelector('p').textContent = '캐릭터를 선택해 주세요.';
+                botEmptyState.querySelector('h3').textContent = '봇 목록을 불러오지 못했습니다.';
+                botEmptyState.querySelector('p').textContent = e.message || String(e);
                 const constructionIcon = botEmptyState.querySelector('.construction-icon');
                 if (constructionIcon) constructionIcon.style.display = '';
             }
@@ -69487,7 +69651,10 @@
                 const data = JSON.parse(JSON.stringify(result.character));
                 const defaultIndex = Math.max(0, (data.profiles || []).findIndex(p => p.id === data.default_visual_profile_id));
                 if (defaultIndex > 0) data.profiles.unshift(data.profiles.splice(defaultIndex, 1)[0]);
-                _visualCardStates[charName.toLowerCase()] = {source: result.source || 'legacy', data};
+                _visualCardStates[charName.toLowerCase()] = {
+                    source: result.source || 'legacy', data,
+                    base: JSON.parse(JSON.stringify(data)),
+                };
                 if (!Number.isInteger(_visualCardSlots[charName])) _visualCardSlots[charName] = 0;
             } catch (error) {
                 console.error(`[VISUAL_CARD] ${charName} 카드 로드 실패`, error);
@@ -69500,6 +69667,7 @@
                         profiles: [{id:'card_1', label:'카드 1', selection_guide:'', aliases:[], appearance:[], default_outfit:[], skip_lb_extra_batch_refine:false, render_overrides:{}}]
                     }
                 };
+                _visualCardStates[charName.toLowerCase()].base = JSON.parse(JSON.stringify(_visualCardStates[charName.toLowerCase()].data));
                 console.error('[VISUAL_CARD] 임시 기본 카드 사용', root.name);
             }
         }
@@ -69516,20 +69684,31 @@
         }
 
         async function _saveVisualCardState(charName, {quiet = false} = {}) {
-            const state = _visualCardState(charName);
-            if (!state) throw new Error(`저장할 캐릭터 카드가 없습니다: ${charName}`);
             try {
+                const batch = Array.isArray(charName);
+                const names = batch ? [...new Set(charName)] : [charName];
+                const characters = names.map(name => {
+                    const state = _visualCardState(name);
+                    if (!state) throw new Error(`저장할 캐릭터 카드가 없습니다: ${name}`);
+                    return {character: name, data: state.data, base: state.base};
+                });
                 const response = await fetch('/api/bot_mode/character_cards', {
                     method: 'POST',
                     headers: {'Content-Type':'application/json'},
-                    body: JSON.stringify({bot_name:botCurrentBot, character:charName, data:state.data})
+                    body: JSON.stringify({bot_name:botCurrentBot, ...(batch ? {characters} : characters[0])})
                 });
                 const result = await response.json();
-                if (!response.ok || !result.saved || !result.character) throw new Error(result.error || '저장 실패');
-                state.source = result.source || 'cards';
-                state.data = result.character;
+                const saved = batch ? result.characters : [result.character];
+                if (!response.ok || !result.saved || !Array.isArray(saved) || !saved.length || !saved[0]) throw new Error(result.error || '저장 실패');
+                saved.forEach(character => {
+                    const state = _visualCardState(character.name || charName);
+                    if (!state) throw new Error(`저장 응답의 캐릭터 카드를 찾지 못했습니다: ${character.name}`);
+                    state.source = result.source || 'cards';
+                    state.data = character;
+                    state.base = JSON.parse(JSON.stringify(character));
+                });
                 if (result.bots) botData.bots = result.bots;
-                return result.character;
+                return batch ? result : result.character;
             } catch (error) {
                 console.error(`[VISUAL_CARD] ${charName} 카드 저장 실패`, error);
                 if (!quiet) showToast('캐릭터 카드 저장 실패: ' + error.message, 'error');
@@ -69644,9 +69823,23 @@
             catch (error) { showToast('자연어 선택 기준 저장 실패: ' + error.message, 'error'); }
         }
 
+        const _visualCardMetadataResizeObserver = new ResizeObserver(entries => {
+            for (const {target: group, contentRect} of entries) {
+                // Height changes come from this autosizer; only width/visibility changes need another pass.
+                if (group._visualCardMetadataWidth === contentRect.width) continue;
+                group._visualCardMetadataWidth = contentRect.width;
+                if (contentRect.width > 0) resizeVisualCardMetadataGroup(group);
+            }
+        });
+
         function resizeVisualCardMetadataGroup(group) {
             if (!group) {
                 console.error('[VISUAL_CARD] 높이를 맞출 메타데이터 영역이 없습니다.');
+                return;
+            }
+            if (!group.getClientRects().length) {
+                // Hidden tabs report zero dimensions. The observer retries when they become visible.
+                console.debug('[VISUAL_CARD] 숨겨진 메타데이터 영역의 높이 계산을 표시 시점까지 연기합니다.');
                 return;
             }
             const textareas = [...group.querySelectorAll('.visual-card-metadata-textarea')];
@@ -70649,6 +70842,7 @@
 
         async function renderBotCharacters() {
             const grid = document.getElementById('bot-character-grid');
+            _visualCardMetadataResizeObserver.disconnect();
             grid.innerHTML = '';
             const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
             const countEl = document.getElementById('bot-char-count');
@@ -70871,6 +71065,9 @@
             }
             showBotView('chars');
             grid.querySelectorAll('.visual-card-metadata-grid').forEach(resizeVisualCardMetadataGroup);
+            grid.querySelectorAll('.visual-card-metadata-grid').forEach(group => {
+                _visualCardMetadataResizeObserver.observe(group);
+            });
             const searchEmpty = document.createElement('div');
             searchEmpty.id = 'bot-character-search-empty';
             searchEmpty.className = 'character-search-empty';
@@ -71250,6 +71447,7 @@
         // 집중 편집 모드 상태
         let _focusEditCharIdx = -1;
         let _focusEditPhotoIdx = 0;
+        let _focusEditHistory = { items: [], requestId: 0, error: '' };
 
         async function exportLbExtraTxt() {
             const panel = document.getElementById('illust-tab-content-extra');
@@ -71842,10 +72040,7 @@
                     console.error('[LB_EXTRA:TREE] 이름이 비어 있는 태그를 건너뜁니다', { item, tone });
                     return '';
                 }
-                const description = _lbExtraShowDesc && desc
-                    ? `<span style="font-size:0.66rem; color:var(--text2);">— ${escHtml(desc)}</span>`
-                    : '';
-                return `<span title="${escAttr(desc)}" style="background:${palette.bg}; border:1px solid ${palette.border}; padding:2px 7px; border-radius:4px; font-size:0.74rem; display:inline-flex; align-items:center; gap:4px;">${escHtml(tag)}${description}</span>`;
+                return `<span class="lb-extra-tree-tag" data-tag="${escAttr(tag)}" data-desc="${escAttr(desc)}" style="background:${palette.bg}; border:1px solid ${palette.border}; padding:2px 7px; border-radius:4px; font-size:0.74rem; display:inline-flex; align-items:center; gap:4px; cursor:help;">${escHtml(tag)}</span>`;
             }).join('');
         }
 
@@ -71962,6 +72157,7 @@
         function _renderLbExtraContent() {
             const el = document.getElementById('lb-extra-content');
             if (!el) return;
+            _hideTagChipTooltip();
             if (_lbExtraTab === 'systemPrompt') {
                 _renderSystemPromptTab();
                 return;
@@ -72060,7 +72256,7 @@
                     const isLastProfile = pi === profiles.length - 1;
 
                     return `
-                        <div class="lb-extra-mindmap-profile-row" style="display:grid; grid-template-columns:24px minmax(220px,300px) 34px minmax(340px,1fr); align-items:stretch;">
+                        <div class="lb-extra-mindmap-profile-row" data-skipped="${skipsBatchRefine}" style="display:grid; grid-template-columns:24px minmax(220px,300px) 34px minmax(340px,1fr); align-items:stretch;">
                             <div aria-hidden="true" style="position:relative; min-height:92px;">
                                 <span style="position:absolute; left:11px; top:${isFirstProfile ? '50%' : '0'}; bottom:${isLastProfile ? '50%' : '0'}; border-left:2px solid color-mix(in srgb, var(--accent) 55%, var(--border));"></span>
                                 <span style="position:absolute; left:11px; right:0; top:50%; border-top:2px solid color-mix(in srgb, var(--accent) 55%, var(--border));"></span>
@@ -72068,12 +72264,16 @@
                             <div class="lb-extra-mindmap-profile" style="align-self:center; margin:5px 0; padding:9px 10px; border:${isDefaultProfile ? '2px solid var(--accent)' : '1px solid var(--border)'}; border-radius:8px; background:${isDefaultProfile ? 'color-mix(in srgb, var(--accent) 8%, var(--surface))' : 'var(--surface2)'}; box-shadow:0 1px 5px rgba(0,0,0,0.07);">
                                 <div style="display:flex; align-items:center; gap:5px; flex-wrap:wrap;">
                                     <span style="font-weight:750; font-size:0.8rem;">프로필 [${pi + 1}] ${escHtml(profileLabel)}</span>
+                                    ${skipsBatchRefine ? '<span title="일괄 정제에서 제외되어 고정된 프로필" aria-label="일괄 정제 고정" style="font-size:0.8rem;">🔒</span>' : ''}
                                     ${isDefaultProfile ? _lbExtraTreeBadge('기본 프로필') : ''}
-                                    <label title="이 카드를 프로필 카드 일괄 정제 대상에서 제외합니다." onclick="event.stopPropagation();" style="margin-left:auto; display:inline-flex; align-items:center; gap:4px; padding:2px 6px; border:1px solid ${skipsBatchRefine ? 'rgba(245,158,11,0.55)' : 'var(--border)'}; border-radius:999px; background:${skipsBatchRefine ? 'rgba(245,158,11,0.13)' : 'var(--surface)'}; color:${skipsBatchRefine ? '#B45309' : 'var(--text2)'}; font-size:0.62rem; font-weight:650; cursor:pointer; user-select:none; white-space:nowrap;">
-                                        <input type="checkbox" ${skipsBatchRefine ? 'checked' : ''} onchange="event.stopPropagation(); _setLbExtraBatchRefineSkipped('${escAttr(char.name)}', ${pi}, this)" style="width:13px; height:13px; margin:0; cursor:pointer;">
-                                        <span>일괄 정제 스킵</span>
-                                    </label>
                                 </div>
+                                <label class="lb-extra-refine-toggle" data-skipped="${skipsBatchRefine}" title="켜면 이 프로필 카드를 일괄 LLM 정제에서 제외합니다." onclick="event.stopPropagation();">
+                                    <span style="font-size:0.8rem; font-weight:750; color:var(--text);">일괄 정제 스킵</span>
+                                    <span class="toggle-switch">
+                                        <input type="checkbox" role="switch" aria-label="${escAttr(char.name)} · ${escAttr(profileLabel)} 일괄 정제 스킵" ${skipsBatchRefine ? 'checked' : ''} onchange="event.stopPropagation(); _setLbExtraBatchRefineSkipped('${escAttr(char.name)}', ${pi}, this)">
+                                        <span class="toggle-slider" aria-hidden="true"></span>
+                                    </span>
+                                </label>
                                 <code style="display:block; font-size:0.64rem; color:var(--text2); margin-top:3px;">${escHtml(profileId)}</code>
                                 ${guide ? `<div title="${escAttr(guide)}" style="font-size:0.69rem; color:var(--text2); line-height:1.35; margin-top:6px; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;">${escHtml(guide)}</div>` : ''}
                                 ${aliases.length ? `<div title="${escAttr(aliases.join(', '))}" style="font-size:0.67rem; color:var(--text2); margin-top:5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">별칭 · ${aliases.map(escHtml).join(', ')}</div>` : ''}
@@ -72123,6 +72323,10 @@
         function _attachLbExtraChipTooltips() {
             const el = document.getElementById('lb-extra-content');
             if (!el) return;
+
+            el.querySelectorAll('.lb-extra-tree-tag').forEach(chip => {
+                _attachTagChipTooltip(chip, chip.dataset.tag, chip.dataset.desc || '', () => _lbExtraShowDesc);
+            });
 
             // 편집본 칩 (data-tti) -> _lbExtraEdited
             el.querySelectorAll('.lb-extra-tag').forEach(chip => {
@@ -72645,6 +72849,7 @@
 
             _focusEditCharIdx = ci;
             _focusEditPhotoIdx = 0;
+            _focusEditHistory = { items: [], requestId: 0, error: '' };
             const cardSession = _visualCardFocusSession;
             const cardActions = cardSession
                 ? '<button onclick="saveVisualCardFocusEdit()" id="fe-card-save" style="background:#1565C0;color:#fff;border:none;padding:5px 12px;border-radius:6px;cursor:pointer;font-size:.8rem;font-weight:600">카드에 저장</button><button onclick="_closeFocusEditModal()" style="background:var(--surface2);color:var(--text);border:1px solid var(--border);padding:5px 12px;border-radius:6px;cursor:pointer;font-size:.8rem">취소</button>'
@@ -72666,6 +72871,7 @@
                             </span>
                         </label>
                         <div style="flex:1;"></div>
+                        <button onclick="manualRestoreDraw(_focusEditCharIdx)" id="fe-btn-manual-draw" title="현재 편집본으로 장면을 자동 구성해 바로 그립니다" style="background:var(--accent); color:#fff; border:none; padding:5px 12px; border-radius:6px; cursor:pointer; font-size:0.8rem; font-weight:600;"><span class="control-label">삽화 자동 그리기</span></button>
                         <button onclick="_focusEditLlmRefine(_focusEditCharIdx)" id="fe-btn-llm-refine" style="background:#7C3AED; color:#fff; border:none; padding:5px 12px; border-radius:6px; cursor:pointer; font-size:0.8rem; font-weight:600;">LLM 정제</button>
                         <button onclick="_openLbExtraRefinePromptEditor()" style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:5px 12px; border-radius:6px; cursor:pointer; font-size:0.8rem; font-weight:600;">LLM 프롬프트</button>
                         ${cardActions}
@@ -72673,12 +72879,17 @@
                     </div>
                     <div style="flex:1; display:flex; overflow:hidden;">
                         <div style="flex:1; display:flex; flex-direction:column; border-right:1px solid var(--border); padding:16px; overflow:hidden;">
-                            <div id="fe-photo-container" style="flex:1; display:flex; align-items:center; justify-content:center; overflow:hidden; background:var(--surface2); border-radius:6px;"></div>
+                            <div id="fe-photo-container" style="flex:3 1 0; min-height:100px; display:flex; align-items:center; justify-content:center; overflow:hidden; background:var(--surface2); border-radius:6px;"></div>
                             <div style="display:flex; align-items:center; justify-content:center; gap:12px; padding-top:12px; flex-shrink:0;">
                                 <button onclick="_focusEditPrevPhoto()" id="fe-photo-prev" style="padding:6px 14px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); cursor:pointer; font-size:0.9rem;">◀</button>
                                 <span id="fe-photo-counter" style="color:var(--text2); font-size:0.85rem; min-width:50px; text-align:center;">0/0</span>
                                 <button onclick="_focusEditNextPhoto()" id="fe-photo-next" style="padding:6px 14px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); cursor:pointer; font-size:0.9rem;">▶</button>
                             </div>
+                            <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-top:14px; padding-top:10px; border-top:1px solid var(--border); flex-shrink:0;">
+                                <strong style="font-size:0.82rem;">그리기 내역 · 최근 8개</strong>
+                                <button onclick="_renderFocusEditPhoto(true)" style="background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:5px; padding:3px 8px; cursor:pointer;">새로고침</button>
+                            </div>
+                            <div id="fe-version-history" style="flex:1 1 0; min-height:80px; overflow-y:auto; margin-top:8px;"></div>
                         </div>
                         <div style="flex:1; display:flex; flex-direction:column; overflow:hidden;">
                             <div style="flex:1; overflow-y:auto; padding:16px; border-bottom:1px solid var(--border);">
@@ -72716,6 +72927,7 @@
             });
 
             _renderFocusEditContent();
+            _renderFocusEditPhoto(true);
         }
 
         function _closeFocusEditModal() {
@@ -72723,6 +72935,7 @@
             if (overlay) overlay.remove();
             _focusEditCharIdx = -1;
             _focusEditPhotoIdx = 0;
+            _focusEditHistory = { items: [], requestId: 0, error: '' };
             _restoreVisualCardFocusSession();
             if (document.getElementById('lb-extra-content')) {
                 _renderLbExtraContent();
@@ -72956,6 +73169,7 @@
             _lbExtraBatchCancelled = false;
             _lbExtraBatchAbort = controller;
             let success = 0, failed = 0;
+            const pendingUpdates = [];
 
             const logEl = () => document.getElementById('lb-batch-log');
             const logLine = (text) => { const el = logEl(); if (el) { el.innerHTML += escHtml(text) + '<br>'; el.scrollTop = el.scrollHeight; } };
@@ -73008,24 +73222,16 @@
                     catch (_) { data = { success: false, error: `JSON 아님 (HTTP ${resp.status}): ${text.slice(0, 120)}` }; }
                     if (!data.success) {
                         failed++;
+                        console.error('[LB_EXTRA_BATCH] 정제 실패:', {character: target.character, visualCardId: target.visualCardId, error: data.error});
                         logLine(`✗ ${targetLabel}: ${data.error || '실패'}`);
                     } else {
                         const refinedAppearance = _lbExtraRefineResultToTags(ci, data.data.appearance, target.visualCardId);
                         const refinedOutfit = _lbExtraRefineResultToTags(ci, data.data.outfit, target.visualCardId);
                         profile.appearance = JSON.parse(JSON.stringify(refinedAppearance));
                         profile.default_outfit = JSON.parse(JSON.stringify(refinedOutfit));
-                        try {
-                            await _saveVisualCardState(target.character, {quiet:true});
-                        } catch (saveError) {
-                            cardState.data.profiles[profileIndex] = previousProfile;
-                            throw saveError;
-                        }
-                        if (target.isPortable && _lbExtraEdited[ci]) {
-                            _lbExtraEdited[ci].appearance = JSON.parse(JSON.stringify(refinedAppearance));
-                            _lbExtraEdited[ci].outfit = JSON.parse(JSON.stringify(refinedOutfit));
-                        }
+                        pendingUpdates.push({target, previousProfile, refinedAppearance, refinedOutfit});
                         success++;
-                        logLine(`✓ ${targetLabel}: appearance ${refinedAppearance.length} / outfit ${refinedOutfit.length}${target.isPortable ? ' · 이식용 동기화' : ''}`);
+                        logLine(`✓ ${targetLabel}: appearance ${refinedAppearance.length} / outfit ${refinedOutfit.length} · 저장 대기`);
                     }
                 } catch (e) {
                     if (e.name === 'AbortError' || _lbExtraBatchCancelled) { logLine('— 사용자 중단 —'); break; }
@@ -73038,9 +73244,43 @@
                 if (sum) sum.textContent = `성공 ${success} · 실패 ${failed}`;
             }
 
-            // 완료/중단 UI 갱신
             const finishedCancelled = _lbExtraBatchCancelled;
             _lbExtraBatchAbort = null;
+            if (pendingUpdates.length) {
+                const cancelButton = document.getElementById('lb-batch-cancel-btn');
+                if (cancelButton) { cancelButton.disabled = true; cancelButton.textContent = '저장 중…'; }
+                logLine(`정제 완료된 ${pendingUpdates.length}개 카드 일괄 저장 중…`);
+                const saveErrors = new Map();
+                try {
+                    const result = await _saveVisualCardState(pendingUpdates.map(item => item.target.character), {quiet:true});
+                    (result.errors || []).forEach(item => saveErrors.set(item.character, item.error));
+                } catch (error) {
+                    console.error('[LB_EXTRA_BATCH] 일괄 저장 실패:', error);
+                    pendingUpdates.forEach(item => saveErrors.set(item.target.character, error.message));
+                }
+                for (const {target, previousProfile, refinedAppearance, refinedOutfit} of pendingUpdates) {
+                    const ci = target.ci;
+                    const error = saveErrors.get(target.character);
+                    if (error) {
+                        const profiles = _visualCardState(target.character)?.data?.profiles || [];
+                        const profileIndex = profiles.findIndex(profile => profile.id === target.visualCardId);
+                        if (profileIndex >= 0) profiles[profileIndex] = previousProfile;
+                        success--;
+                        failed++;
+                        console.error('[LB_EXTRA_BATCH] 카드 저장 실패:', {character: target.character, visualCardId: target.visualCardId, error});
+                        logLine(`✗ ${target.character} · ${target.visualCardLabel}: 저장 실패 · ${error}`);
+                        continue;
+                    }
+                    if (target.isPortable && _lbExtraEdited[ci]) {
+                        _lbExtraEdited[ci].appearance = JSON.parse(JSON.stringify(refinedAppearance));
+                        _lbExtraEdited[ci].outfit = JSON.parse(JSON.stringify(refinedOutfit));
+                    }
+                }
+                logLine(`일괄 저장 완료: ${success}개 카드`);
+            }
+            const summary = document.getElementById('lb-batch-summary');
+            if (summary) summary.textContent = `성공 ${success} · 실패 ${failed}`;
+            // 완료/중단 UI 갱신
             const cnt = document.getElementById('lb-batch-count');
             const bar = document.getElementById('lb-batch-bar');
             const badge = document.getElementById('lb-batch-status-badge');
@@ -73054,6 +73294,7 @@
             }
             logLine(`\n최종: 성공 ${success} / 실패 ${failed}${finishedCancelled ? ' (중단)' : ''}`);
             if (cancelBtn) {
+                cancelBtn.disabled = false;
                 cancelBtn.textContent = '닫기';
                 cancelBtn.style.background = 'var(--surface2)';
                 cancelBtn.style.color = 'var(--text)';
@@ -73449,13 +73690,27 @@
             _renderFocusEditPhoto();
         }
 
-        function _renderFocusEditPhoto() {
+        async function _renderFocusEditPhoto(refreshHistory = false, restoreIndex = null) {
             const ci = _focusEditCharIdx;
             const container = document.getElementById('fe-photo-container');
             const counter = document.getElementById('fe-photo-counter');
             const prevBtn = document.getElementById('fe-photo-prev');
             const nextBtn = document.getElementById('fe-photo-next');
             if (!container || ci < 0 || !_lbExtraOriginal[ci]) return;
+
+            if (restoreIndex !== null) {
+                const snapshot = _focusEditHistory.items[restoreIndex]?.character_tags;
+                if (!snapshot || !Array.isArray(snapshot.appearance) || !Array.isArray(snapshot.outfit)) {
+                    console.error('[FOCUS_HISTORY] 복원할 외형·복장 기록이 없습니다:', restoreIndex, snapshot);
+                    showToast('해당 버전의 외형·복장 값을 불러올 수 없습니다.', 'error');
+                    return;
+                }
+                _lbExtraEdited[ci].appearance = JSON.parse(JSON.stringify(snapshot.appearance));
+                _lbExtraEdited[ci].outfit = JSON.parse(JSON.stringify(snapshot.outfit));
+                _renderFocusEditContent();
+                showToast(`V${snapshot.version}의 appearance·outfit을 편집본으로 불러왔습니다.`, 'success');
+                return;
+            }
 
             const images = _focusEditRepImages(ci);
 
@@ -73464,17 +73719,57 @@
                 if (counter) counter.textContent = '0/0';
                 if (prevBtn) prevBtn.disabled = true;
                 if (nextBtn) nextBtn.disabled = true;
-                return;
-            }
-            if (_focusEditPhotoIdx >= images.length) _focusEditPhotoIdx = 0;
-            if (_focusEditPhotoIdx < 0) _focusEditPhotoIdx = images.length - 1;
+            } else {
+                if (_focusEditPhotoIdx >= images.length) _focusEditPhotoIdx = 0;
+                if (_focusEditPhotoIdx < 0) _focusEditPhotoIdx = images.length - 1;
 
-            const imgName = images[_focusEditPhotoIdx];
-            const url = `/api/bot_mode/image/${encodeURIComponent(botCurrentBot)}/${encodeURIComponent(_lbExtraOriginal[ci].name)}/${encodeURIComponent(imgName)}`;
-            container.innerHTML = `<img src="${url}" alt="${escAttr(imgName)}" style="max-width:100%; max-height:100%; object-fit:contain; border-radius:6px;">`;
-            if (counter) counter.textContent = `${_focusEditPhotoIdx + 1}/${images.length}`;
-            if (prevBtn) prevBtn.disabled = images.length <= 1;
-            if (nextBtn) nextBtn.disabled = images.length <= 1;
+                const imgName = images[_focusEditPhotoIdx];
+                const url = `/api/bot_mode/image/${encodeURIComponent(botCurrentBot)}/${encodeURIComponent(_lbExtraOriginal[ci].name)}/${encodeURIComponent(imgName)}`;
+                container.innerHTML = `<img src="${url}" alt="${escAttr(imgName)}" style="max-width:100%; max-height:100%; object-fit:contain; border-radius:6px; cursor:zoom-in;">`;
+                container.querySelector('img').onclick = () => openLightbox(url);
+                if (counter) counter.textContent = `${_focusEditPhotoIdx + 1}/${images.length}`;
+                if (prevBtn) prevBtn.disabled = images.length <= 1;
+                if (nextBtn) nextBtn.disabled = images.length <= 1;
+            }
+
+            const historyEl = document.getElementById('fe-version-history');
+            if (!historyEl) return;
+            const state = _focusEditHistory;
+            if (refreshHistory) {
+                const requestId = ++state.requestId;
+                const query = new URLSearchParams({
+                    bot_name: botCurrentBot,
+                    manual_character: _lbExtraOriginal[ci].name,
+                    visual_profile_id: _visualCardFocusSession?.profileId || '',
+                });
+                if (!state.items.length) historyEl.textContent = '버전 내역을 불러오는 중…';
+                try {
+                    const response = await fetch('/api/backups?' + query);
+                    const data = await response.json();
+                    if (!response.ok || data.error) throw new Error(data.error || `HTTP ${response.status}`);
+                    if (_focusEditHistory !== state || state.requestId !== requestId) return;
+                    state.items = (data.backups || []).slice(0, 8);
+                    state.error = '';
+                } catch (error) {
+                    console.error('[FOCUS_HISTORY] 버전 내역 조회 실패:', error);
+                    if (_focusEditHistory !== state || state.requestId !== requestId) return;
+                    state.error = '버전 내역을 불러오지 못했습니다. 새로고침으로 다시 시도하세요.';
+                }
+            }
+            historyEl.innerHTML = (state.error ? `<div style="color:var(--error); font-size:0.75rem;">${escHtml(state.error)}</div>` : '')
+                + (state.items.length ? `<div style="display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px;">${state.items.map((item, index) => `
+                    <article style="border:1px solid var(--border); border-radius:6px; padding:7px; min-width:0;">
+                        <div style="font-size:0.75rem; margin-bottom:5px;"><strong>V${escHtml(String(item.character_tags.version))}</strong> · ${escHtml(new Date(item.mtime * 1000).toLocaleString())}</div>
+                        <img data-history-image="${index}" src="${escAttr(item.image_url)}" alt="V${escAttr(String(item.character_tags.version))}" style="width:100%; height:120px; object-fit:contain; background:var(--surface2); border-radius:4px; cursor:zoom-in;" loading="lazy">
+                        <button data-history-restore="${index}" style="display:block; width:100%; margin-top:6px; padding:5px; border:1px solid var(--border); border-radius:4px; background:var(--surface2); color:var(--text); cursor:pointer;">해당값 불러오기</button>
+                    </article>`).join('')}</div>`
+                    : '<div style="color:var(--text2); font-size:0.78rem; padding:8px 0;">자동 그리기를 완료하면 이미지와 당시 편집값이 여기에 기록됩니다.</div>');
+            historyEl.querySelectorAll('[data-history-image]').forEach(image => {
+                image.onclick = () => openLightbox(state.items[Number(image.dataset.historyImage)].image_url);
+            });
+            historyEl.querySelectorAll('[data-history-restore]').forEach(button => {
+                button.onclick = () => _renderFocusEditPhoto(false, Number(button.dataset.historyRestore));
+            });
         }
 
         function _attachFocusEditDnD() {
@@ -77219,7 +77514,7 @@
                         <div id="alr-overview" style="display:grid; grid-template-columns:repeat(auto-fit,minmax(110px,1fr)); gap:7px; margin-bottom:10px;"></div>
                         <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:9px; padding:9px; border:1px solid var(--border); border-radius:9px; background:var(--surface2);">
                             <span style="font-size:.72rem; color:var(--text2); font-weight:700;">세팅 대상</span>
-                            ${isStyle ? '<span style="font-size:.78rem; font-weight:700;">스타일 LoRA · 선택한 카드에 같은 스타일을 적용합니다.</span>' : `
+                            ${isStyle ? '<span style="font-size:.78rem; font-weight:700;">스타일 LoRA · 선택한 카드의 스타일을 일괄 변경합니다.</span>' : `
                             <button type="button" class="alr-profile-btn" data-profile="character" onclick="_alrSetProfile('character')" style="padding:6px 12px; border:1px solid var(--border); border-radius:6px; cursor:pointer; font-weight:700;">캐릭터 LoRA</button>
                             <button type="button" class="alr-profile-btn" data-profile="face" onclick="_alrSetProfile('face')" style="padding:6px 12px; border:1px solid var(--border); border-radius:6px; cursor:pointer; font-weight:700;">얼굴 LoRA</button>
                             <span style="font-size:.68rem; color:var(--text2);">대상을 바꾸면 해당 종류의 모든 카드가 기본 선택됩니다.</span>`}
@@ -77247,8 +77542,8 @@
                     <div id="alr-step2" style="display:none; flex-direction:column; flex:1; min-height:0;">
                         <div style="display:flex; gap:9px; margin-bottom:9px; flex-wrap:wrap;">
                             <div style="background:rgba(13,71,161,.12); border:1px solid rgba(59,130,246,.35); border-radius:8px; padding:7px 11px; min-width:145px;"><div style="font-size:.67rem; color:var(--text2);">세팅 대상</div><div id="alr-selected-profile-label" style="font-size:.82rem; font-weight:800;"></div></div>
-                            <div style="background:var(--surface2); border:1px solid var(--border); border-radius:8px; padding:7px 11px;"><div style="font-size:.67rem; color:var(--text2); margin-bottom:3px;">기존 설정 처리</div><label style="font-size:.76rem; margin-right:9px;"><input type="radio" name="alr-conflict" value="add" checked onchange="_alrSetConflict(this.value)"> 기존에 추가</label><label style="font-size:.76rem;"><input type="radio" name="alr-conflict" value="overwrite" onchange="_alrSetConflict(this.value)"> ${isStyle ? '선택한 스타일로 교체' : '매칭된 LoRA로 교체'}</label></div>
-                            <div style="background:var(--surface2); border:1px solid var(--border); border-radius:8px; padding:7px 11px; min-width:175px;"><div style="font-size:.67rem; color:var(--text2); margin-bottom:3px;">적용 강도: <b id="alr-strength-val" style="color:var(--text);">0.50</b></div><input type="range" min="0" max="1" step="0.05" value="0.5" oninput="_alrSetStrength(this.value)" style="width:100%;"></div>
+                            <div style="background:var(--surface2); border:1px solid var(--border); border-radius:8px; padding:7px 11px;"><div style="font-size:.67rem; color:var(--text2); margin-bottom:3px;">기존 설정 처리</div><label style="font-size:.76rem; margin-right:9px;"><input type="radio" name="alr-conflict" value="add" checked onchange="_alrSetConflict(this.value)"> 기존에 추가</label><label style="font-size:.76rem;"><input type="radio" name="alr-conflict" value="overwrite" onchange="_alrSetConflict(this.value)"> ${isStyle ? '선택한 스타일로 교체' : '매칭된 LoRA로 교체'}</label>${isStyle ? '<label style="font-size:.76rem; margin-left:9px;"><input type="radio" name="alr-conflict" value="clear" onchange="_alrSetConflict(this.value)"> 스타일 모두 제거</label>' : ''}</div>
+                            <div id="alr-strength-control" style="background:var(--surface2); border:1px solid var(--border); border-radius:8px; padding:7px 11px; min-width:175px;"><div style="font-size:.67rem; color:var(--text2); margin-bottom:3px;">적용 강도: <b id="alr-strength-val" style="color:var(--text);">0.50</b></div><input type="range" min="0" max="1" step="0.05" value="0.5" oninput="_alrSetStrength(this.value)" style="width:100%;"></div>
                         </div>
                         <div style="display:${isStyle ? 'none' : 'flex'}; gap:0; margin-bottom:7px; border:1px solid var(--border); border-radius:8px; overflow:hidden;">
                             <button onclick="switchAutoLoraTab('instance')" id="alr-tab-instance" style="flex:1; padding:8px; border:none; background:var(--surface2); color:var(--text); cursor:pointer; font-size:.8rem; font-weight:700;">인스턴스 LoRA 자동 매칭</button>
@@ -77481,7 +77776,7 @@
             document.getElementById('alr-step2').style.display = 'flex';
             document.getElementById('alr-step3').style.display = 'none';
             document.getElementById('alr-step-label').textContent = _botAutoLoraState.profile === 'style'
-                ? '2/3 · 함께 적용할 스타일 LoRA 또는 인스턴스 LoRA를 선택하세요.'
+                ? '2/3 · 스타일 추가·교체 또는 모두 제거를 선택하세요.'
                 : '2/3 · 자동 매칭된 LoRA를 검토하고 적용 방식을 정하세요.';
             document.getElementById('alr-selected-profile-label').textContent = _alrProfileLabel(_botAutoLoraState.profile);
             const status = document.getElementById('alr-exec-status');
@@ -77510,7 +77805,8 @@
         function _alrSetConflict(value) {
             if (!_botAutoLoraState) return;
             _botAutoLoraState.conflict = value;
-            _alrUpdateSourceSummary();
+            if (_botAutoLoraState.profile === 'style') _renderAutoLoraTab();
+            else _alrUpdateSourceSummary();
         }
         function _alrSetStrength(value) {
             if (!_botAutoLoraState) return;
@@ -77540,6 +77836,14 @@
             if (!c || !_botAutoLoraState) return;
             const targets = _alrCheckedTargets();
             if (_botAutoLoraState.profile === 'style') {
+                const clearStyle = _botAutoLoraState.conflict === 'clear';
+                const strengthControl = document.getElementById('alr-strength-control');
+                if (strengthControl) strengthControl.style.display = clearStyle ? 'none' : '';
+                if (clearStyle) {
+                    c.innerHTML = `<div style="font-size:.78rem; line-height:1.7; padding:12px;">선택한 ${targets.length}개 프로필 카드의 스타일 LoRA를 모두 제거합니다.<br>다음 단계에서 카드별 제거 목록을 확인하세요.</div>`;
+                    _alrUpdateSourceSummary();
+                    return;
+                }
                 c.innerHTML = `<div style="font-size:.75rem; color:var(--text2); margin-bottom:10px;">선택한 ${targets.length}개 프로필 카드에 아래 LoRA를 같은 강도로 적용합니다.</div>
                     <button id="alr-style-pick-btn" onclick="openBotCharStyleLoraPicker('', -1, loras => { _botAutoLoraState.styleLoras.push(...loras); _renderAutoLoraTab(); })" style="padding:8px 14px; border:1px dashed var(--accent); border-radius:7px; background:var(--surface2); color:var(--text); cursor:pointer;">+ 스타일 / 인스턴스 LoRA 선택</button>
                     <div style="display:flex; flex-direction:column; gap:7px; margin-top:12px;">${_botAutoLoraState.styleLoras.map((lora, index) => `<div style="display:flex; align-items:center; gap:10px; padding:9px; border:1px solid var(--border); border-radius:7px; background:var(--surface2);">${lora.preview_url ? `<img src="${escAttr(lora.preview_url)}" loading="lazy" style="width:64px; height:64px; object-fit:contain; border-radius:5px;">` : ''}<div style="flex:1; min-width:0;"><b style="font-size:.78rem;">${escHtml(_alrLoraDisplayName(lora))}</b><div style="font-size:.68rem; color:var(--text2);">${lora.source === 'instance' ? '인스턴스' : '스타일'} · ${escHtml(lora.BASE || 'anima')} · ${escHtml(lora.trigger || '트리거 없음')}</div></div><button onclick="_botAutoLoraState.styleLoras.splice(${index}, 1); _renderAutoLoraTab()" style="border:1px solid var(--border); border-radius:5px; background:var(--surface); color:var(--error); padding:5px 8px; cursor:pointer;">제거</button></div>`).join('') || '<div style="font-size:.75rem; color:var(--text2); padding:16px 0;">일괄 적용할 LoRA를 선택하세요.</div>'}</div>`;
@@ -77639,6 +77943,11 @@
             const el = document.getElementById('alr-source-summary');
             if (!el || !_botAutoLoraState) return;
             const targets = _alrCheckedTargets();
+            if (_botAutoLoraState.profile === 'style' && _botAutoLoraState.conflict === 'clear') {
+                const removed = targets.reduce((sum, target) => sum + _alrTargetLoras(target, 'style').length, 0);
+                el.textContent = `대상 ${targets.length}개 카드 · 제거할 스타일 LoRA ${removed}개`;
+                return;
+            }
             let matched = 0;
             let selected = 0;
             targets.forEach(target => {
@@ -77790,6 +78099,14 @@
         function _alrBuildTargetPlan(target) {
             const profile = _botAutoLoraState.profile;
             const current = _alrCloneLoras(_alrTargetLoras(target, profile));
+            if (profile === 'style' && _botAutoLoraState.conflict === 'clear') {
+                return {
+                    target, profile, current, after: [],
+                    availableCandidates: [], selectedCandidates: [],
+                    added: 0, removed: current.length, duplicates: 0,
+                    canApply: current.length > 0, reason: '제거할 스타일 LoRA 없음',
+                };
+            }
             const availableCandidates = _alrCandidates(target);
             const selectedCandidates = availableCandidates.filter(candidate => _alrLoraIsChecked(candidate.key));
             let after = _alrCloneLoras(current);
@@ -77861,7 +78178,7 @@
             document.getElementById('alr-step3').style.display = 'none';
             document.getElementById('alr-step2').style.display = 'flex';
             document.getElementById('alr-step-label').textContent = _botAutoLoraState.profile === 'style'
-                ? '2/3 · 함께 적용할 스타일 LoRA 또는 인스턴스 LoRA를 선택하세요.'
+                ? '2/3 · 스타일 추가·교체 또는 모두 제거를 선택하세요.'
                 : '2/3 · 자동 매칭된 LoRA를 검토하고 적용 방식을 정하세요.';
             _renderAutoLoraTab();
         }
@@ -77877,7 +78194,8 @@
             const actionable = plans.filter(plan => plan.canApply);
             const added = actionable.reduce((sum, plan) => sum + plan.added, 0);
             const removed = actionable.reduce((sum, plan) => sum + plan.removed, 0);
-            const sourceLabel = _botAutoLoraState.profile === 'style' ? '선택한 스타일 / 인스턴스 LoRA' : _botAutoLoraState.tab === 'bot' ? `봇 프로젝트 · ${_botAutoLoraState.botSelectedProject}` : '인스턴스 LoRA';
+            const clearStyle = _botAutoLoraState.profile === 'style' && _botAutoLoraState.conflict === 'clear';
+            const sourceLabel = clearStyle ? '스타일 모두 제거' : _botAutoLoraState.profile === 'style' ? '선택한 스타일 / 인스턴스 LoRA' : _botAutoLoraState.tab === 'bot' ? `봇 프로젝트 · ${_botAutoLoraState.botSelectedProject}` : '인스턴스 LoRA';
             const summary = document.getElementById('alr-review-summary');
             if (summary) summary.innerHTML = `<div style="display:flex;gap:7px;flex-wrap:wrap;align-items:center;padding:9px 11px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);font-size:.73rem;"><b>${escHtml(_alrProfileLabel(_botAutoLoraState.profile))}</b><span style="color:var(--text2);">${escHtml(sourceLabel)}</span><span style="margin-left:auto;">변경 <b style="color:#22c55e;">${actionable.length}</b> · 건너뜀 <b style="color:${plans.length - actionable.length ? '#f59e0b' : 'var(--text2)'};">${plans.length - actionable.length}</b> · 추가 ${added}${removed ? ` · 제거 ${removed}` : ''}</span></div>`;
             const list = document.getElementById('alr-review-list');
@@ -77885,7 +78203,7 @@
                 const target = plan.target;
                 const result = _botAutoLoraState.executionResults[target.key];
                 const badgeText = plan.canApply
-                    ? (_botAutoLoraState.conflict === 'overwrite' ? `교체 · ${plan.removed}개 제거 / ${plan.added}개 추가` : `${plan.added}개 추가`)
+                    ? (clearStyle ? `스타일 ${plan.removed}개 제거` : _botAutoLoraState.conflict === 'overwrite' ? `교체 · ${plan.removed}개 제거 / ${plan.added}개 추가` : `${plan.added}개 추가`)
                     : `건너뜀 · ${plan.reason}`;
                 const badgeColor = plan.canApply ? '#22c55e' : '#f59e0b';
                 let resultHtml = '';
@@ -77900,7 +78218,7 @@
                 executeButton.disabled = actionable.length === 0 || _botAutoLoraState.executing || _botAutoLoraState.completed;
                 executeButton.style.opacity = executeButton.disabled ? '.45' : '1';
                 executeButton.style.cursor = executeButton.disabled ? 'not-allowed' : 'pointer';
-                executeButton.textContent = _botAutoLoraState.executing ? '세팅 저장 중…' : _botAutoLoraState.profile === 'style' ? '확인 후 스타일 일괄 세팅' : '확인 후 자동 세팅 실행';
+                executeButton.textContent = _botAutoLoraState.executing ? '세팅 저장 중…' : clearStyle ? '확인 후 스타일 모두 제거' : _botAutoLoraState.profile === 'style' ? '확인 후 스타일 일괄 세팅' : '확인 후 자동 세팅 실행';
             }
             const backButton = document.getElementById('alr-review-back-btn');
             if (backButton) backButton.disabled = _botAutoLoraState.executing;
@@ -77908,7 +78226,7 @@
             if (closeButton) closeButton.style.display = _botAutoLoraState.completed ? 'inline-block' : 'none';
             const status = document.getElementById('alr-review-status');
             if (status && !_botAutoLoraState.executing && !_botAutoLoraState.completed) {
-                status.textContent = actionable.length ? (_botAutoLoraState.profile === 'style' ? '선택한 카드의 스타일 LoRA 설정에 적용합니다.' : '매칭 후보가 없는 카드는 기존 설정을 유지하고 건너뜁니다.') : '실행 가능한 변경이 없습니다.';
+                status.textContent = actionable.length ? (clearStyle ? '선택한 카드의 스타일 LoRA를 모두 제거합니다.' : _botAutoLoraState.profile === 'style' ? '선택한 카드의 스타일 LoRA 설정에 적용합니다.' : '매칭 후보가 없는 카드는 기존 설정을 유지하고 건너뜁니다.') : '실행 가능한 변경이 없습니다.';
                 status.style.color = actionable.length ? 'var(--text2)' : '#f59e0b';
             }
         }
@@ -77941,6 +78259,7 @@
             let successCount = 0;
             let failCount = 0;
             let processed = 0;
+            const pendingPlans = [];
             for (const plan of plans) {
                 const target = plan.target;
                 const targetLabel = `${target.name} · [${target.visualCardIndex}] ${target.visualCardLabel}`;
@@ -77952,7 +78271,7 @@
                 processed++;
                 if (status) {
                     status.style.color = 'var(--text2)';
-                    status.textContent = `저장 중 ${processed} / ${actionable.length} · ${targetLabel}`;
+                    status.textContent = `변경 준비 ${processed} / ${actionable.length} · ${targetLabel}`;
                 }
                 try {
                     const charIdx = bot.characters.findIndex(character => character.name === target.name);
@@ -77969,7 +78288,41 @@
                     } else {
                         setBotCharLoras(target.name, _alrCloneLoras(plan.after), target.visualCardId || '');
                     }
-                    await _saveVisualCardState(target.name, {quiet:true});
+                    pendingPlans.push(plan);
+                } catch (error) {
+                    // 저장 실패 시 화면 메모리도 실행 전 상태로 되돌린다.
+                    if (isStyle) setBotCharStyleLoras(target.name, _alrCloneLoras(plan.current), target.visualCardId || '');
+                    else if (isFace) setBotCharFaceLoras(target.name, _alrCloneLoras(plan.current), target.visualCardId || '');
+                    else setBotCharLoras(target.name, _alrCloneLoras(plan.current), target.visualCardId || '');
+                    failCount++;
+                    console.error(`[BOT_AUTO_LORA] ${targetLabel} 세팅 실패:`, error);
+                    _botAutoLoraState.executionResults[target.key] = {state: 'error', message: `저장 실패: ${error.message}`};
+                }
+            }
+            if (pendingPlans.length) {
+                if (status) status.textContent = `${pendingPlans.length}개 카드 변경을 일괄 저장 중…`;
+                const saveErrors = new Map();
+                try {
+                    const result = await _saveVisualCardState(pendingPlans.map(plan => plan.target.name), {quiet:true});
+                    (result.errors || []).forEach(item => saveErrors.set(item.character, item.error));
+                } catch (error) {
+                    console.error('[BOT_AUTO_LORA] 일괄 저장 실패:', error);
+                    pendingPlans.forEach(plan => saveErrors.set(plan.target.name, error.message));
+                }
+                for (const plan of pendingPlans) {
+                    const target = plan.target;
+                    const error = saveErrors.get(target.name);
+                    if (error) {
+                        // 저장 실패 시 화면 메모리도 실행 전 상태로 되돌린다.
+                        if (isStyle) setBotCharStyleLoras(target.name, _alrCloneLoras(plan.current), target.visualCardId || '');
+                        else if (isFace) setBotCharFaceLoras(target.name, _alrCloneLoras(plan.current), target.visualCardId || '');
+                        else setBotCharLoras(target.name, _alrCloneLoras(plan.current), target.visualCardId || '');
+                        failCount++;
+                        console.error('[BOT_AUTO_LORA] 카드 저장 실패:', {target: target.key, error});
+                        _botAutoLoraState.executionResults[target.key] = {state: 'error', message: `저장 실패: ${error}`};
+                        continue;
+                    }
+                    const charIdx = bot.characters.findIndex(character => character.name === target.name);
                     if ((_visualCardProfile(target.name)?.id || '') === (target.visualCardId || '')) {
                         if (isStyle) renderBotCharStyleLoraList(charIdx, target.name, plan.after);
                         else if (isFace) renderBotCharFaceLoraList(charIdx, target.name, plan.after);
@@ -77979,14 +78332,6 @@
                     totalAdded += plan.added;
                     totalRemoved += plan.removed;
                     _botAutoLoraState.executionResults[target.key] = {state: 'success', message: `저장 완료 · ${plan.added}개 추가${plan.removed ? ` / ${plan.removed}개 제거` : ''}`};
-                } catch (error) {
-                    // 저장 실패 시 화면 메모리도 실행 전 상태로 되돌린다.
-                    if (isStyle) setBotCharStyleLoras(target.name, _alrCloneLoras(plan.current), target.visualCardId || '');
-                    else if (isFace) setBotCharFaceLoras(target.name, _alrCloneLoras(plan.current), target.visualCardId || '');
-                    else setBotCharLoras(target.name, _alrCloneLoras(plan.current), target.visualCardId || '');
-                    failCount++;
-                    console.error(`[BOT_AUTO_LORA] ${targetLabel} 세팅 실패:`, error);
-                    _botAutoLoraState.executionResults[target.key] = {state: 'error', message: `저장 실패: ${error.message}`};
                 }
             }
             _botAutoLoraState.executing = false;
@@ -79332,23 +79677,29 @@
                 confirmBtn.style.cursor = 'not-allowed';
             }
 
-            // 1) 캐릭터 생성
+            // 1) 새 캐릭터를 한 요청으로 생성해 bot.json도 한 번만 저장한다.
             let added = 0;
-            for (const name of names) {
-                currentStep++;
-                setStatus(`캐릭터 준비 ${currentStep}/${totalSteps} · 동일 이미지 ${duplicateSkipped}장 전송 생략`);
+            const failedNames = new Set();
+            if (names.length) {
+                setStatus(`캐릭터 ${names.length}개 일괄 추가 중…`);
                 try {
                     const resp = await fetch('/api/bot_mode/action', {
                         method: 'POST',
                         headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({action: 'add_character', bot_name: botCurrentBot, char_name: name})
+                        body: JSON.stringify({action: 'add_character', bot_name: botCurrentBot, char_names: names})
                     });
                     const data = await resp.json();
-                    if (data.error) { console.error(`[BOT] 캐릭터 "${name}" 추가 실패:`, data.error); }
-                    else { added++; }
+                    if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
+                    added = (data.added || []).length;
+                    (data.errors || []).forEach(item => {
+                        failedNames.add(item.character);
+                        console.error('[BOT] 캐릭터 추가 실패:', item);
+                    });
                 } catch (e) {
-                    console.error(`[BOT] 캐릭터 "${name}" 추가 실패:`, e);
+                    names.forEach(name => failedNames.add(name));
+                    console.error('[BOT] 캐릭터 일괄 추가 실패:', e);
                 }
+                currentStep += names.length;
             }
 
             // 2) 이미지 업로드 (파일명에서 추출한 캐릭터명에 맞춰 업로드)
@@ -79361,6 +79712,12 @@
                 if (!item) {
                     uploadFailed++;
                     console.error(`[BOT] 이미지 "${detail.filename}" 업로드 실패: 선택 파일을 찾을 수 없습니다.`);
+                    continue;
+                }
+                if (failedNames.has(detail.name)) {
+                    uploadFailed++;
+                    currentStep++;
+                    console.error('[BOT] 캐릭터 생성 실패로 이미지 업로드 건너뜀:', {character: detail.name, filename: item.name});
                     continue;
                 }
                 const targetName = detail.existingFilename || detail.filename;
@@ -79425,12 +79782,13 @@
             document.getElementById('bot-batch-add-modal').style.display = 'none';
             renderBotCharacters();
             const resultParts = [`캐릭터 ${added}개 추가`];
+            if (failedNames.size) resultParts.push(`캐릭터 ${failedNames.size}개 실패`);
             if (uploaded) resultParts.push(`이미지 ${uploaded}장 추가`);
             if (replaced) resultParts.push(`${replaced}장 교체`);
             if (duplicateSkipped) resultParts.push(`동일 이미지 ${duplicateSkipped}장 건너뜀`);
             if (uploadFailed) resultParts.push(`${uploadFailed}장 실패`);
             if (!uploaded && !replaced && !duplicateSkipped && !uploadFailed) resultParts.push('이미지 변경 없음');
-            showToast(resultParts.join(', '), uploadFailed ? 'error' : 'success');
+            showToast(resultParts.join(', '), uploadFailed || failedNames.size ? 'error' : 'success');
         }
 
         async function removeBotCharacter(charName) {
@@ -86647,6 +87005,17 @@
                     const data = await resp.json();
                     if (data && data.bots) {
                         botData = data;
+                        // Queue saves update botData and the independently cached card editor.
+                        // Keep local drafts; the save API merges their changed fields later.
+                        for (const [key, state] of Object.entries(_visualCardStates)) {
+                            if (state.base && JSON.stringify(state.data) === JSON.stringify(state.base)) {
+                                delete _visualCardStates[key];
+                            } else {
+                                console.debug('[VISUAL_CARD] 편집 중인 카드 초안 보존:', key);
+                            }
+                        }
+                        const bot = (botData.bots || []).find(item => item.name === botCurrentBot);
+                        if (bot) await _ensureVisualCardStates(bot);
                         const grid = document.getElementById('bot-character-grid');
                         if (grid && grid.style.display !== 'none' && botCurrentBot && typeof renderBotCharacters === 'function') {
                             renderBotCharacters();
@@ -87734,7 +88103,7 @@
                 const desc = (await _lookupTagDescription(tagName)) || preloaded;
                 if (!desc) return;
                 // 마우스가 이미 칩을 벗어났을 수도 있음 — 칩이 여전히 hover인지 확인
-                if (!chip.matches(':hover')) return;
+                if ((gateFn && !gateFn()) || !chip.matches(':hover')) return;
                 tooltip.textContent = desc;
                 tooltip.style.display = 'block';
                 const rect = chip.getBoundingClientRect();
@@ -97459,6 +97828,7 @@
             instance_lora_analysis: '인스턴스분석',
             instance_lora_prompt_refine: '프롬프트 정제',
             lora_prompt_review: '프롬프트 2차 검수',
+            bot_lora_feedback: 'LoRA 오토피드백 학습',
             bot_llm_face_tag_analysis: 'LLM 얼굴분석',
             bot_lb_extra_refine: 'lb.extra 프로필 정제',
             qwen_edit_translate: 'EDIT 번역',

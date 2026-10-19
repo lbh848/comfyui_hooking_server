@@ -3534,8 +3534,8 @@ def parse_profile_resolution(
         print("[ILLUST_CONTEXT:PROFILE_RESOLVE] JSON object 파싱 실패")
         return None
     raw_characters = raw.get("characters")
-    raw_uncertainties = raw.get("uncertainties")
-    if not isinstance(raw_characters, list) or not isinstance(raw_uncertainties, list):
+    raw_uncertainties = raw.get("uncertainties", [])
+    if not isinstance(raw_characters, list):
         print(
             "[ILLUST_CONTEXT:PROFILE_RESOLVE] 최상위 스키마 오류: "
             f"characters={type(raw_characters).__name__}, "
@@ -3566,13 +3566,17 @@ def parse_profile_resolution(
             print(f"[ILLUST_CONTEXT:PROFILE_RESOLVE] {warning}")
             continue
         raw_name = str(item.get("name") or "").strip()
-        name = registered_names.get(raw_name.casefold(), "")
+        name = raw_name
         if not name:
-            warning = f"등록되지 않은 CURRENT 캐릭터로 폐기: index={index}, name={raw_name!r}"
+            warning = f"이름이 없는 CURRENT 항목만 제외: index={index}, item={item!r}"
             warnings.append(warning)
             name_contract_errors.append(warning)
             print(f"[ILLUST_CONTEXT:PROFILE_RESOLVE] {warning}")
             continue
+        if name.casefold() not in registered_names:
+            warning = f"등록 목록 밖 인물도 원문 이름 유지: {name!r}"
+            warnings.append(warning)
+            print(f"[ILLUST_CONTEXT:PROFILE_RESOLVE] {warning}")
         folded = name.casefold()
         if folded in seen_names:
             warning = f"중복 CURRENT 캐릭터로 후속 항목 폐기: character={name}"
@@ -3707,19 +3711,14 @@ def parse_profile_resolution(
                 "reasons": invalid_reasons,
                 "raw_profile_timeline": deepcopy(raw_timeline),
             }
-            repair_requests.append(request)
-            warning = f"프로필 타임라인 부분 교정 필요: {request}"
+            warning = f"프로필 타임라인 점검 경고; 자동 교정 없음: {request}"
             warnings.append(warning)
             print(f"[ILLUST_CONTEXT:PROFILE_RESOLVE] {warning}")
 
-    if name_contract_errors:
-        print(
-            "[ILLUST_CONTEXT:PROFILE_RESOLVE] 등록명 계약 위반으로 응답 전체 거부: "
-            f"errors={name_contract_errors}"
-        )
-        return None
-
     uncertainties = []
+    if not isinstance(raw_uncertainties, list):
+        warnings.append(f"uncertainties 배열 형식 차이: {raw_uncertainties!r}")
+        raw_uncertainties = []
     for index, item in enumerate(raw_uncertainties, start=1):
         if not isinstance(item, str) or not item.strip():
             warning = f"불확실성 항목 형식 오류로 폐기: index={index}, item={item!r}"
@@ -3733,6 +3732,10 @@ def parse_profile_resolution(
         warnings.append(warning)
         print(f"[ILLUST_CONTEXT:PROFILE_RESOLVE] {warning}")
 
+    if warnings:
+        illustration_flow.llm_metadata(validation_warnings=[
+            {"stage": "PROFILE-RESOLVE" if profile_inference_enabled else "CHARACTER-RESOLVE",
+             "reason": warning, "input": raw} for warning in warnings])
     return _materialize_profile_character_records(
         normalized_characters,
         visual_profiles,
@@ -5779,7 +5782,7 @@ def _parse_call2_keyvis_output(
     local_toggles.update({
         "key_visual": True,
         # Keep accidental scene objects in the parsed result so this validator
-        # can reject the KEYVIS response whenever any scene was emitted.
+        # can report unexpected ordinary scenes without rejecting the KEYVIS.
         "scene_mode": "auto",
     })
     raw = None
@@ -5798,10 +5801,6 @@ def _parse_call2_keyvis_output(
         if not isinstance(raw, dict) or not isinstance(raw.get("keyvis"), dict):
             reason = "자체 마스크 KEYVIS 응답에 keyvis object가 없습니다"
             print(f"[ILLUST_CONTEXT:{source}] {reason}: input={text!r}")
-            return None, reason
-        if raw.get("scenes") and not allow_scenes:
-            reason = "KEYVIS 전용 응답에 scenes가 포함됨"
-            print(f"[ILLUST_CONTEXT:{source}] {reason}: input={raw!r}")
             return None, reason
         try:
             descriptor = illustration_scene_pipeline._parse_detail_scene(
@@ -5830,62 +5829,36 @@ def _parse_call2_keyvis_output(
         if str(item.get("kind") or "") == "scene"
     ]
 
-    def fail(reason: str) -> tuple[None, str]:
-        print(f"[ILLUST_CONTEXT:{source}] 독립 KEYVIS 검증 실패: {reason}")
-        return None, reason
-
+    warnings = []
     if len(keyvis) != 1:
-        return fail(f"keyvis 수 불일치: expected=1, actual={len(keyvis)}")
-    if scenes and not allow_scenes:
-        return fail(
-            "KEYVIS 전용 응답에 scene이 포함됨: "
-            f"slots={[item.get('slot') for item in scenes]}"
-        )
-
-    descriptor = keyvis[0]
-    characters = [
-        item for item in descriptor.get("characters") or []
-        if isinstance(item, dict)
-    ]
-    if not str(descriptor.get("camera") or "").strip():
-        return fail("background_prompt가 비어 있음" if mask_inline else "camera가 비어 있음")
-    if not str(descriptor.get("scene") or "").strip():
-        return fail("composition_prompt가 비어 있음" if mask_inline else "scene이 비어 있음")
-    if not characters:
-        return fail("regions가 비어 있음" if mask_inline else "characters가 비어 있음")
-    character_limit = max(1, min(3, int(toggles.get("character_limit", 3))))
-    if len(characters) > character_limit:
-        return fail(
-            f"완전 가시 캐릭터가 설정 상한을 초과함: "
-            f"count={len(characters)}, limit={character_limit}"
-        )
-
-    actual_names = []
-    for index, character in enumerate(characters, start=1):
-        name = str(character.get("name") or "").strip()
-        positive = str(character.get("positive") or "").strip()
-        if not name:
-            return fail(f"{'regions' if mask_inline else 'characters'}[{index}].name이 비어 있음")
-        if not positive:
-            return fail(f"regions[{index}].character_prompt가 비어 있음" if mask_inline
-                        else f"characters[{index}].positive가 비어 있음")
-        if name.casefold() in {value.casefold() for value in actual_names}:
-            return fail(f"캐릭터 이름이 중복됨: name={name!r}")
-        actual_names.append(name)
-
-    allowed = {
-        str(name or "").strip().casefold(): str(name or "").strip()
-        for name in allowed_character_names
-        if str(name or "").strip()
-    }
-    if allowed:
-        unexpected = [name for name in actual_names if name.casefold() not in allowed]
-        if unexpected:
-            print(
-                f"[ILLUST_CONTEXT:{source}] canonical 목록 밖 이름도 반환값 유지: "
-                f"unexpected={unexpected}, "
-                f"allowed={list(allowed.values())}"
-            )
+        warnings.append(f"keyvis 수 차이: expected=1, actual={len(keyvis)}")
+    if scenes and not allow_scenes or mask_inline and raw.get("scenes") and not allow_scenes:
+        warnings.append("KEYVIS 전용 응답에 일반 장면도 포함됨; 대표 이미지 사용")
+    usable = [item for item in keyvis if any(str(value or "").strip() for value in (
+        item.get("camera"), item.get("scene"), item.get("supplement"),
+        *(character.get("positive") for character in item.get("characters") or [] if isinstance(character, dict))))]
+    if not usable:
+        reason = "KEYVIS: 생성에 사용할 프롬프트 없음"
+        print(f"[ILLUST_CONTEXT:{source}] {reason}: input={text!r}")
+        return None, reason
+    descriptor = usable[0]
+    characters = descriptor.get("characters") or []
+    if not descriptor.get("camera") or not descriptor.get("scene") or not characters:
+        warnings.append("카메라/장면/인물 필드 일부가 비어 있음; 제공된 프롬프트로 진행")
+    if len(characters) > int(toggles.get("character_limit", 3)):
+        warnings.append("설정과 다른 인물 수")
+    actual_names = [str(item.get("name") or "").strip() for item in characters]
+    if len(set(actual_names)) != len(actual_names) or any(not name for name in actual_names):
+        warnings.append("인물 이름 누락 또는 중복")
+    if any(not str(item.get("positive") or "").strip() for item in characters):
+        warnings.append("일부 인물 프롬프트가 비어 있음")
+    if set(actual_names) - set(allowed_character_names):
+        warnings.append("확정 로스터 바깥 인물 포함")
+    for reason in warnings:
+        print(f"[ILLUST_CONTEXT:{source}] 경고: {reason}")
+    if warnings:
+        illustration_flow.llm_metadata(validation_warnings=[
+            {"stage": source, "reason": reason, "input": text} for reason in warnings])
     return descriptor, ""
 
 
@@ -7346,161 +7319,15 @@ async def _build_call3_dialogue_with_recovery(
         character_names,
         speak_language,
     )
-    if call3_valid:
-        state["output"] = normalized_initial_output
-        state["silent_slots"] = [
-            slot for slot in selected_slots
-            if slot not in parse_speak_output(normalized_initial_output)
-        ]
-        return state
-
-    state["failure_reason"] = call3_failure_reason
-    baseline_output, baseline_recovery = recover_call3_partial_output(
-        normalized_initial_output,
-        selected_slots,
-        character_names,
-        speak_language,
-    )
-    removed_entries = list(baseline_recovery["removed_entries"])
-    repair_slots = list(dict.fromkeys([
-        *baseline_recovery["missing_headers"],
-        *[
-            int(entry["slot"])
-            for entry in removed_entries
-            if entry.get("slot") is not None
-        ],
-    ]))
-    # Header order, unexpected slots, and duplicates are structural defects that
-    # the server can repair deterministically. Only genuinely missing dialogue
-    # slots or slots containing an unsafe localized roster leak need another LLM.
-    if not repair_slots:
-        print(
-            "[ILLUST_CONTEXT:CALL3-RECOVERY] LLM 없이 구조만 슬롯별 정규화: "
-            f"slots={selected_slots}, reason={call3_failure_reason}"
-        )
-        state.update({
-            "output": baseline_output,
-            "partial_recovery_used": True,
-            "dialogue_drop_recovery_used": bool(removed_entries),
-            "dropped_dialogue_entries": removed_entries,
-            "silent_slots": baseline_recovery["silent_slots"],
-        })
-        return state
-
-    state["correction_used"] = True
-    state["partial_recovery_used"] = True
-    state["dialogue_drop_recovery_used"] = bool(removed_entries)
-    state["dropped_dialogue_entries"] = removed_entries
-    # 검증/로그에는 내부 호출명을 유지하되 교정 LLM에는 실패 내용만 전달한다.
-    # CALL 번호는 서버 라우팅 명칭일 뿐 모델의 역할 설명이 아니다.
-    failure_role = "dialogue output"
-    model_failure_reason = re.sub(
-        r"\bCALL[1235](?:-[A-Z-]+)?\b",
-        failure_role,
-        call3_failure_reason,
-        flags=re.IGNORECASE,
-    )
-    roster_correction_instruction = ""
-    if _call3_dialogue_requires_localized_names(speak_language):
-        roster_correction_instruction = (
-            "Keep each exact roster identifier as machine-readable speaker metadata only "
-            "in the speaker field. Never repeat a roster identifier in the text field. "
-            "Infer a natural in-story form of address "
-            "from the original narrative and bounded scene windows; if uncertain, omit "
-            "the direct address. Preserve the speaker field and required style tag. "
-        )
-    print(
-        f"[ILLUST_CONTEXT:CALL3-CORRECTION] 최초 CALL3 결과가 출력 계약을 위반해 "
-        f"실패 슬롯만 교정 호출 1회 실행: repair_slots={repair_slots}, "
-        f"preserved_slots={[slot for slot in selected_slots if slot not in set(repair_slots)]}, "
-        f"reason={call3_failure_reason}"
-    )
-    anchor_by_slot = {slot: anchor for anchor, slot in (segment_slots or {}).items()}
-    model_repair_slots = [anchor_by_slot.get(slot, slot) for slot in repair_slots]
-    if segment_slots:
-        model_failure_reason = "Missing or invalid required scene objects or dialogue entries for the listed C anchors."
-    retry_messages = deepcopy(speak_messages)
-    retry_messages.extend([{
-        "role": "assistant",
-        "content": variable(initial_output if segment_slots else normalized_initial_output, "교정할 이전 LLM 응답"),
-    }, {
-        "role": "user",
-        "content": (
-            "Repair only the failed scene slots listed below. Every other scene object has "
-            "already passed validation and is preserved by the server; do not repeat, rewrite, "
-            "summarize, or mention it. "
-            + "Repair anchors, in order: " + variable(model_repair_slots, "교정할 원문 앵커 목록") + ". "
-            + 'Return one JSON object with a scenes array. Emit exactly one scene object '
-            + 'for every repair anchor, using its exact value in slot, and no other scenes. '
-            + 'Each scene has an entries array; each entry has speaker, type (speech or thought), '
-            + 'text, and an optional tag. '
-            "A scene that should intentionally remain silent, or has no suitable "
-            "visible or narratively present speaker, must have an empty entries array. "
-            "Do not invent narration, action description, dialogue, or "
-            "thought merely to fill such a scene. Every other scene must contain at "
-            "least one dialogue, thought, or inner monologue entry. "
-            "Write every dialogue and thought in " + variable(speak_language, "출력 언어") + "; this language rule is mandatory. "
-            + roster_correction_instruction
-            + "Character names in speaker fields, slot anchors, JSON keys, type values, and required tags are "
-            "the only language exceptions. "
-            "Validation failure to fix: " + variable(model_failure_reason, "교정할 오류 내용") + ". "
-            "An intentionally silent scene uses entries: [], never a placeholder entry. "
-            "Output only the repaired JSON object. Apply any active Base64 transport to "
-            "JSON string values only; never encode keys or the complete document."
-        ),
-    }])
-    try:
-        corrected_output = await _call_pipeline_llm(
-            correction_call_name,
-            _normalize_messages(retry_messages),
-            stream_notify,
-            json_mode=True,
-            result_validator=lambda result: validate_call3_output_contract(
-                normalize_call3_dialogue_output(result, segment_slots),
-                repair_slots,
-                character_names,
-                speak_language,
-            ),
-        )
-        corrected_output = normalize_call3_dialogue_output(corrected_output, segment_slots)
-        merged_output = _merge_call3_slot_repairs(
-            baseline_output,
-            corrected_output,
-            selected_slots,
-            repair_slots,
-        )
-        merged_valid, merged_reason = validate_call3_output_contract(
-            merged_output,
-            selected_slots,
-            character_names,
-            speak_language,
-        )
-        if not merged_valid:
-            print(
-                "[ILLUST_CONTEXT:CALL3-RECOVERY] 슬롯별 교정 병합 후 검증 실패: "
-                f"repair_slots={repair_slots}, reason={merged_reason}"
-            )
-            raise ValueError(merged_reason or "CALL3 슬롯별 교정 병합 실패")
-        state["output"] = merged_output
-        state["silent_slots"] = [
-            slot for slot in selected_slots
-            if slot not in parse_speak_output(merged_output)
-        ]
-        return state
-    except Exception as correction_error:
-        state["failure_reason"] = str(correction_error)
-        print(
-            "[ILLUST_CONTEXT:CALL3-RECOVERY] CALL3 교정/라우팅 폴백 소진, "
-            "최초 결과에서 안전한 슬롯별 대사만 복구하고 이미지 파이프라인 계속: "
-            f"repair_slots={repair_slots}, error={type(correction_error).__name__}: "
-            f"{correction_error}"
-        )
-        traceback.print_exc()
-        state.update({
-            "output": baseline_output,
-            "silent_slots": baseline_recovery["silent_slots"],
-        })
-        return state
+    if not call3_valid:
+        print(f"[ILLUST_CONTEXT:CALL3] 대사 점검 경고; 원문 출력 유지: {call3_failure_reason}")
+        illustration_flow.llm_metadata(validation_warnings=[{
+            "stage": "CALL3", "reason": call3_failure_reason, "input": normalized_initial_output,
+        }])
+    state["output"] = normalized_initial_output
+    state["silent_slots"] = [slot for slot in selected_slots
+                             if slot not in parse_speak_output(normalized_initial_output)]
+    return state
 
 
 class ParallelPipelineJobsError(RuntimeError):
@@ -8240,11 +8067,6 @@ async def _run_resolution_stage(
         selected_profiles,
         selected_names,
     )
-    repair_call_name = (
-        "PROFILE-RESOLVE-REPAIR"
-        if profile_inference_enabled
-        else "CHARACTER-RESOLVE-REPAIR"
-    )
     catalog = (
         build_natural_profile_catalog(selected_profiles)
         if profile_inference_enabled
@@ -8270,21 +8092,7 @@ async def _run_resolution_stage(
             return False, f"{stage_call_name} JSON object 없음"
         if not isinstance(raw.get("characters"), list):
             return False, f"{stage_call_name} characters가 list가 아님"
-        if profile_inference_enabled and not isinstance(raw.get("uncertainties"), list):
-            return False, f"{stage_call_name} uncertainties가 list가 아님"
         return True, ""
-
-    def validate_canonical_names(names):
-        def validate(result):
-            valid, reason = validate_shape(result)
-            if not valid:
-                return valid, reason
-            errors = _profile_resolution_name_contract_errors(result, names)
-            if errors:
-                return False, f"{stage_call_name} 등록명 계약 위반: " + "; ".join(errors)
-            return True, ""
-
-        return validate
 
     raw_output = await _call_pipeline_llm(
         stage_call_name,
@@ -8294,285 +8102,8 @@ async def _run_resolution_stage(
         json_mode=True,
         history_ids_sink=history_ids_sink,
     )
-    name_contract_issues = _profile_resolution_name_contract_issues(
-        raw_output,
-        selected_names,
-    )
-    name_repair_warnings: list[str] = []
-    if name_contract_issues:
-        print(
-            f"[ILLUST_CONTEXT:{stage_call_name.replace('-', '_')}] "
-            "등록명 계약 위반 감지, "
-            f"오류 항목만 교정 호출: issues={name_contract_issues}"
-        )
-        primary_raw = _json_object_from_text(raw_output) or {}
-        rejected_indices = {
-            int(issue.get("source_index") or 0)
-            for issue in name_contract_issues
-            if int(issue.get("source_index") or 0) > 0
-        }
-        accepted_names = [
-            str(item.get("name") or "").strip()
-            for index, item in enumerate(
-                primary_raw.get("characters") or [],
-                start=1,
-            )
-            if index not in rejected_indices
-            and isinstance(item, dict)
-            and str(item.get("name") or "").strip()
-        ]
-        accepted_name_set = set(accepted_names)
-        available_names = [
-            name for name in selected_names
-            if name not in accepted_name_set
-        ]
-        available_name_set = set(available_names)
-        primary_characters = list(primary_raw.get("characters") or [])
-        repairable_name_issues = [
-            issue for issue in name_contract_issues
-            if int(issue.get("source_index") or 0) in rejected_indices
-            and isinstance(issue.get("item"), dict)
-        ]
-        repairable_indices = {
-            int(issue.get("source_index") or 0)
-            for issue in repairable_name_issues
-        }
-
-        def inspect_name_item_repairs(result):
-            raw = _json_object_from_text(result)
-            if raw is None:
-                return (
-                    False,
-                    f"{repair_call_name} 이름 교정 JSON object 없음",
-                    {},
-                    {},
-                    [],
-                )
-            repairs = raw.get("repairs")
-            if not isinstance(repairs, list):
-                return (
-                    False,
-                    f"{repair_call_name} 이름 교정 repairs가 list가 아님",
-                    {},
-                    raw,
-                    [],
-                )
-            replacements = {}
-            used_names = set(accepted_names)
-            invalid_items = []
-            for repair_index, repair in enumerate(repairs, start=1):
-                source_index = None
-                name = ""
-                reason = ""
-                if not isinstance(repair, dict):
-                    reason = f"repairs[{repair_index}]가 object가 아님"
-                else:
-                    source_index = repair.get("source_index")
-                    name = str(repair.get("name") or "").strip()
-                    if not isinstance(source_index, int) or isinstance(source_index, bool):
-                        reason = f"source_index가 정수가 아님: {source_index!r}"
-                    elif source_index not in repairable_indices:
-                        reason = f"교정 가능한 거부 항목이 아님: {source_index!r}"
-                    elif source_index in replacements:
-                        reason = f"source_index 중복: {source_index}"
-                    elif name in accepted_name_set:
-                        reason = f"이미 승인된 캐릭터 중복: {name!r}"
-                    elif name not in available_name_set:
-                        reason = f"사용 가능한 정확한 등록명이 아님: {name!r}"
-                    elif name in used_names:
-                        reason = f"교정 결과 캐릭터 중복: {name!r}"
-                    else:
-                        original = primary_characters[source_index - 1]
-                        replacement = deepcopy(original)
-                        replacement["name"] = name
-                        replacements[source_index] = replacement
-                        used_names.add(name)
-                if reason:
-                    invalid_items.append(
-                        f"repair_index={repair_index}, source_index={source_index!r}, "
-                        f"name={name!r}, reason={reason}"
-                    )
-            if repairs and not replacements:
-                return (
-                    False,
-                    f"{repair_call_name} 이름 교정 유효 항목 없음: "
-                    + "; ".join(invalid_items),
-                    {},
-                    raw,
-                    invalid_items,
-                )
-            return True, "", replacements, raw, invalid_items
-
-        def validate_name_item_repairs(result):
-            valid, reason, _replacements, _raw, _invalid = (
-                inspect_name_item_repairs(result)
-            )
-            return valid, reason
-
-        repair_context = "\n\n".join(x for x in (
-            persona_context,
-            card_identity_context if not profile_inference_enabled else "",
-            "# FULL CURRENT CONTEXT SEGMENTS\n" + segmented_current,
-        ) if x)
-        repair_targets = [
-            {
-                "source_index": int(issue.get("source_index") or 0),
-                "invalid_name": str(
-                    (issue.get("item") or {}).get("name") or ""
-                ).strip(),
-            }
-            for issue in repairable_name_issues
-        ]
-        repair_messages = _normalize_messages([
-            {
-                "role": "system",
-                "content": (
-                    "# REJECTED-ITEM CANONICAL NAME REPAIR\n"
-                    "Resolve only the canonical name of each supplied rejected character "
-                    "item from the natural-language discourse. Accepted names are "
-                    "authoritative and unavailable. A repair name must be copied verbatim "
-                    "from REMAINING AVAILABLE REGISTERED NAMES, and each available name may "
-                    "be used at most once. Return only this JSON shape:\n"
-                    '{"repairs":[{"source_index":1,"name":"exact canonical name"}]}\n'
-                    "Do not return character objects, in_history, profile data, appearance, "
-                    "or outfit decisions; the server preserves every non-name field from "
-                    "the rejected source item. Keep source_index unchanged. Repair an item "
-                    "only when the full discourse establishes its exact registered identity. "
-                    "The rejected item's existing name is known-invalid evidence, not a "
-                    "permitted output value; never copy or preserve it unless that exact "
-                    "spelling independently appears in REMAINING AVAILABLE REGISTERED NAMES. "
-                    "Never choose a roster character merely from role, appearance, outfit, "
-                    "profile, or name resemblance. If the item is an unregistered distinct "
-                    "person, refers to an already accepted identity, or remains uncertain, "
-                    "omit that source_index from repairs."
-                ),
-            },
-            {
-                "role": "user",
-                "content": (
-                    "# REJECTED CHARACTER ITEMS ONLY\n"
-                    + variable(json.dumps(repairable_name_issues, ensure_ascii=False, indent=2), "교정할 캐릭터 항목")
-                    + "\n\n"
-                    + variable(repair_context, "이름 교정용 문맥")
-                    + "\n\n# FINAL CANONICAL NAME REPAIR AUTHORITY\n"
-                    "The invalid_name values below came from the rejected response. They "
-                    "identify what must be corrected and must not be copied into repairs.\n"
-                    "# REPAIR TARGETS\n"
-                    + variable(json.dumps(repair_targets, ensure_ascii=False, indent=2), "교정 대상 이름")
-                    + "\n\n# ALREADY ACCEPTED CHARACTER NAMES (UNAVAILABLE)\n"
-                    + variable(json.dumps(accepted_names, ensure_ascii=False), "이미 확정된 이름")
-                    + "\n\n# REMAINING AVAILABLE REGISTERED NAMES (ONLY VALID name VALUES)\n"
-                    + variable(json.dumps(available_names, ensure_ascii=False), "남은 등록 이름")
-                    + "\nCopy every repairs[].name character-for-character from the "
-                    "REMAINING AVAILABLE REGISTERED NAMES list immediately above. Never "
-                    "translate, transliterate, localize, or reuse an invalid_name. Omit a "
-                    "target when the discourse does not establish which exact remaining "
-                    "registered name it is. Return only:\n"
-                    '{"repairs":[{"source_index":1,"name":"exact remaining registered name"}]}'
-                ),
-            },
-        ])
-        replacements = {}
-        repair_uncertainties = []
-        if not repairable_name_issues:
-            warning = (
-                "이름 교정 가능한 object 항목이 없어 거부 항목 폐기: "
-                f"source_indices={sorted(rejected_indices)}"
-            )
-            print(f"[ILLUST_CONTEXT:{stage_call_name.replace('-', '_')}] {warning}")
-            name_repair_warnings.append(warning)
-        elif not available_names:
-            warning = (
-                "이름 교정에 사용할 미배정 등록명이 없어 거부 항목 폐기: "
-                f"source_indices={sorted(rejected_indices)}, "
-                f"accepted_names={accepted_names}"
-            )
-            print(f"[ILLUST_CONTEXT:{stage_call_name.replace('-', '_')}] {warning}")
-            name_repair_warnings.append(warning)
-        else:
-            try:
-                repair_output = await _call_pipeline_llm(
-                    repair_call_name,
-                    repair_messages,
-                    stream_notify,
-                    result_validator=validate_name_item_repairs,
-                    json_mode=True,
-                    history_ids_sink=history_ids_sink,
-                )
-                (
-                    repair_valid,
-                    repair_reason,
-                    replacements,
-                    repaired_raw,
-                    invalid_repair_items,
-                ) = inspect_name_item_repairs(repair_output)
-                if not repair_valid:
-                    raise ValueError(repair_reason)
-                repair_uncertainties = list(
-                    repaired_raw.get("uncertainties") or []
-                )
-                for invalid_item in invalid_repair_items:
-                    warning = f"이름 교정 응답 항목 폐기: {invalid_item}"
-                    print(f"[ILLUST_CONTEXT:{stage_call_name.replace('-', '_')}] {warning}")
-                    name_repair_warnings.append(warning)
-            except Exception as e:
-                warning = (
-                    "오류 항목 이름 교정 호출 실패로 거부 항목만 폐기하고 계속 진행: "
-                    f"source_indices={sorted(rejected_indices)}, error={e}"
-                )
-                print(f"[ILLUST_CONTEXT:{stage_call_name.replace('-', '_')}] {warning}")
-                traceback.print_exc()
-                name_repair_warnings.append(warning)
-                replacements = {}
-                repair_uncertainties = []
-
-        discarded_indices = rejected_indices - set(replacements)
-        merged_characters = []
-        for index, item in enumerate(primary_characters, start=1):
-            if index in rejected_indices:
-                replacement = replacements.get(index)
-                if replacement is not None:
-                    merged_characters.append(replacement)
-                continue
-            merged_characters.append(deepcopy(item))
-        raw_output = json.dumps({
-            **primary_raw,
-            "characters": merged_characters,
-            "uncertainties": [
-                *list(primary_raw.get("uncertainties") or []),
-                *repair_uncertainties,
-            ],
-        }, ensure_ascii=False)
-        remaining_name_errors = _profile_resolution_name_contract_errors(
-            raw_output,
-            selected_names,
-        )
-        if remaining_name_errors:
-            print(
-                f"[ILLUST_CONTEXT:{stage_call_name.replace('-', '_')}] "
-                "안전 병합 후에도 등록명 계약 위반: "
-                f"errors={remaining_name_errors}, output={raw_output[:1000]!r}"
-            )
-            raise ValueError(
-                f"{stage_call_name} 안전 병합 내부 오류: "
-                + "; ".join(remaining_name_errors)
-            )
-        if discarded_indices:
-            warning = (
-                "미해결 이름 항목 폐기: "
-                f"source_indices={sorted(discarded_indices)}"
-            )
-            print(f"[ILLUST_CONTEXT:{stage_call_name.replace('-', '_')}] {warning}")
-            name_repair_warnings.append(warning)
-        print(
-            f"[ILLUST_CONTEXT:{stage_call_name.replace('-', '_')}] "
-            "오류 항목 이름 교정 병합 완료: "
-            f"repaired_indices={sorted(replacements)}, "
-            f"discarded_indices={sorted(discarded_indices)}"
-        )
-
     normalized_raw = _json_object_from_text(raw_output) or {}
-    normalized_uncertainties = list(normalized_raw.get("uncertainties") or [])
+    normalized_uncertainties = normalized_raw.get("uncertainties", [])
     if profile_inference_enabled:
         selected_name_set = set(selected_names)
         returned_by_name = {
@@ -8617,136 +8148,6 @@ async def _run_resolution_stage(
     )
     if parsed is None:
         raise ValueError(f"{stage_call_name} 최종 응답 파싱 실패")
-    if name_repair_warnings:
-        parsed["validation_warnings"] = [
-            *list(parsed.get("validation_warnings") or []),
-            *name_repair_warnings,
-        ]
-        parsed["validation_errors"] = list(parsed["validation_warnings"])
-    repair_requests = list(parsed.get("repair_requests") or [])
-    if profile_inference_enabled and repair_requests:
-        repair_names = [
-            str(item.get("character") or "").strip()
-            for item in repair_requests
-            if isinstance(item, dict) and str(item.get("character") or "").strip()
-        ]
-        repair_names = list(dict.fromkeys(repair_names))
-        repair_profiles = _selected_visual_profiles(
-            selected_profiles,
-            repair_names,
-            multiple_only=True,
-        )
-        if repair_profiles:
-            repair_messages = _normalize_messages([
-                {
-                    "role": "system",
-                    "content": (
-                        str(profile_system or "").strip()
-                        + "\n\n# PARTIAL REPAIR CONTRACT\n"
-                        "Correct only the supplied rejected characters. Return the same "
-                        "characters/uncertainties schema and include exactly those characters. "
-                           "Preserve every valid narrative decision, but copy the exact "
-                           "profile_id supplied for that character. Do not output "
-                           "unrelated characters."
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": (
-                        "# REJECTED CHARACTER PROFILE ITEMS\n"
-                        + variable(json.dumps(repair_requests, ensure_ascii=False, indent=2), "교정할 프로필 항목")
-                        + "\n\n# PREVIOUSLY TRACKED PROFILE STATE\n"
-                        + variable(json.dumps(tracked_state, ensure_ascii=False, indent=2), "이전 프로필 추적 상태")
-                        + ("\n\n" + variable(persona_context, "등록 사용자 페르소나") if persona_context else "")
-                        + "\n\n# REGISTERED PROFILE CATALOG FOR REJECTED CHARACTERS\n"
-                        + variable(build_natural_profile_catalog(repair_profiles), "교정 대상 등록 프로필")
-                        + "\n\n# FULL CURRENT CONTEXT SEGMENTS\n"
-                        + variable(segmented_current, "현재 원문과 구간")
-                    ),
-                },
-            ])
-            try:
-                repair_output = await _call_pipeline_llm(
-                    "PROFILE-RESOLVE-REPAIR",
-                    repair_messages,
-                    stream_notify,
-                    result_validator=validate_canonical_names(repair_names),
-                    json_mode=True,
-                    history_ids_sink=history_ids_sink,
-                )
-                remaining_name_errors = _profile_resolution_name_contract_errors(
-                    repair_output,
-                    repair_names,
-                )
-                if remaining_name_errors:
-                    raise ValueError(
-                        "PROFILE-RESOLVE 부분 교정 등록명 위반: "
-                        + "; ".join(remaining_name_errors)
-                    )
-                repaired = parse_profile_resolution(
-                    repair_output,
-                    current_context,
-                    current_segments,
-                    [{"name": name, "confidence": 1.0} for name in repair_names],
-                    repair_profiles,
-                    profile_inference_enabled=True,
-                )
-                if repaired is None:
-                    print(
-                        "[ILLUST_CONTEXT:PROFILE_RESOLVE] 부분 교정 응답 파싱 실패: "
-                        f"characters={repair_names}"
-                    )
-                else:
-                    still_invalid = {
-                        str(item.get("character") or "").strip().casefold()
-                        for item in repaired.get("repair_requests") or []
-                        if isinstance(item, dict)
-                    }
-                    repaired_by_name = {
-                        str(item.get("name") or "").strip().casefold(): item
-                        for item in repaired.get("characters") or []
-                        if isinstance(item, dict) and str(item.get("name") or "").strip()
-                    }
-                    merged_characters = deepcopy(parsed.get("characters") or [])
-                    repaired_names = []
-                    for item in merged_characters:
-                        name = str(item.get("name") or "").strip()
-                        folded = name.casefold()
-                        replacement = repaired_by_name.get(folded)
-                        if replacement is None or folded in still_invalid:
-                            continue
-                        item["profile_timeline"] = deepcopy(
-                            replacement.get("profile_timeline") or []
-                        )
-                        repaired_names.append(name)
-                    remaining_requests = [
-                        item for item in repair_requests
-                        if str(item.get("character") or "").strip().casefold()
-                        not in {name.casefold() for name in repaired_names}
-                    ]
-                    repair_warnings = list(parsed.get("validation_warnings") or [])
-                    repair_warnings.extend(repaired.get("validation_warnings") or [])
-                    if repaired_names:
-                        message = f"부분 교정 반영 완료: characters={repaired_names}"
-                        repair_warnings.append(message)
-                        print(f"[ILLUST_CONTEXT:PROFILE_RESOLVE] {message}")
-                    parsed = _materialize_profile_character_records(
-                        merged_characters,
-                        selected_profiles,
-                        uncertainties=[
-                            *list(parsed.get("uncertainties") or []),
-                            *list(repaired.get("uncertainties") or []),
-                        ],
-                        warnings=repair_warnings,
-                        repair_requests=remaining_requests,
-                    )
-            except Exception as e:
-                print(
-                    "[ILLUST_CONTEXT:PROFILE_RESOLVE] 부분 교정 호출 실패, "
-                    f"안전 폴백 진행: characters={repair_names}, error={e}"
-                )
-                traceback.print_exc()
-
     if profile_inference_enabled:
         parsed = _apply_profile_resolution_fallbacks(
             parsed,
@@ -8830,69 +8231,7 @@ async def _run_character_resolution(
     candidates = list(segment_slots.values())
     toggles = merged_toggles(toggles)
     selection = _json_object_from_text(raw_output) or {}
-    preserved = []
-    used = set()
-    for item in selection.get("scene_plan") if isinstance(selection.get("scene_plan"), list) else []:
-        try:
-            valid = scenes.parse_plan(json.dumps({"scene_plan": [item]}, ensure_ascii=False),
-                segments=current_segments, slot_map=segment_slots, candidates=candidates,
-                names=names, toggles={**toggles, "output_count_min": 1, "output_count_max": 1},
-                single_names=single_names, stage="CALL2-SELECT")[0]
-            if valid["anchor_segment"] in used:
-                print(f"[ILLUST_CONTEXT:CHARACTER_RESOLVE] 중복 선택 앵커 교정 대상: {item!r}")
-                continue
-            used.add(valid["anchor_segment"])
-            preserved.append(valid)
-        except (ValueError, TypeError) as exc:
-            print(f"[ILLUST_CONTEXT:CHARACTER_RESOLVE] 선택 장면 교정 대상: item={item!r}, error={exc}")
-            traceback.print_exc()
-
-    def validate_selection(response):
-        try:
-            selected = scenes.parse_plan(response, segments=current_segments, slot_map=segment_slots,
-                candidates=candidates, names=names, toggles=toggles,
-                single_names=single_names, stage="CALL2-SELECT")
-            if any(item not in selected for item in preserved):
-                print(f"[ILLUST_CONTEXT:CHARACTER_RESOLVE] 교정에서 유효한 장면 누락: preserved={preserved!r}, selected={selected!r}")
-                return False, "이미 유효한 선택 장면을 보존해야 합니다"
-            return True, ""
-        except (ValueError, TypeError) as exc:
-            print(f"[ILLUST_CONTEXT:CHARACTER_RESOLVE] 선택 출력 오류: error={exc}, response={response!r}")
-            traceback.print_exc()
-            return False, str(exc)
-
-    # Count, identity and anchor checks are the existing selector contract. Keep
-    # the resolved roster and every usable scene when repairing only selection.
-    selection_output = json.dumps({"scene_plan": preserved}, ensure_ascii=False)
-    valid, reason = validate_selection(raw_output)
-    if not valid:
-        print(f"[ILLUST_CONTEXT:CHARACTER_RESOLVE] 장면 선택 부분 교정: reason={reason}, preserved={preserved!r}")
-        over_count = len(preserved) > min(toggles["output_count_max"], len(candidates))
-        if over_count:
-            # Over-count requires the model to choose a subset; retain all
-            # existing candidates as repair context, without locking every one.
-            preserved = []
-        repair_messages = _normalize_messages([
-            *prompt_builders.resolution_messages(False, candidate_names, {}, "", segmented_current,
-                _character_card_identity_context(visual_profiles, candidate_names),
-                _persona_identity_context(visual_profiles, candidate_names), character_system,
-                selection=selection_messages, anchors=list(current_segments)),
-            {"role": "user", "content":
-                "Repair only scene selection. The CURRENT roster is already resolved: "
-                + variable(names, "확정된 CURRENT 인물")
-                + ". Preserve these valid scene items exactly: " + variable(preserved, "보존할 선택 장면")
-                + ". Complete the requested scene_plan count using distinct anchors from the full CURRENT list "
-                "and the same supplied TRUSTED ACTIVE BOT IMAGE POLICY and client direction. "
-                + ("Reduce this previous candidate set to the requested count: "
-                   + variable(selection_output, "수량을 줄일 기존 유효 장면") + ". " if over_count else "")
-                + "Return the same characters and scene_plan JSON shape requested above, "
-                "keeping the resolved characters roster unchanged and scene_brief concise. "
-                + variable(reason, "선택 교정 사유")},
-        ])
-        selection_output = await _call_pipeline_llm("CHARACTER-RESOLVE-REPAIR", repair_messages,
-            stream_notify, result_validator=validate_selection, json_mode=True,
-            history_ids_sink=history_ids_sink)
-    parsed["scene_plan"] = scenes.parse_plan(selection_output, segments=current_segments,
+    parsed["scene_plan"] = scenes.parse_plan(raw_output, segments=current_segments,
         slot_map=segment_slots, candidates=candidates, names=names, toggles=toggles,
         single_names=single_names, stage="CALL2-SELECT")
     parsed["character_output"] = json.dumps({**selection, "scene_plan": parsed["scene_plan"]}, ensure_ascii=False)

@@ -111,6 +111,7 @@ LLM_QUEUE_PRIORITY_TYPES = (
     "bot_llm_face_tag_analysis",
     "qwen_edit_translate",
     "llm_test",
+    "bot_lora_feedback",
 )
 
 DEFAULT_GPU_QUEUE_TYPE_ORDER = {
@@ -254,6 +255,7 @@ def normalize_queue_priority_orders(config: dict) -> tuple[dict[str, int], dict[
 # 별도 워커풀(설정된 LLM 슬롯별 동시 요청 상한의 합)에서 처리한다.
 # 실제 API 동시성은 llm_service의 슬롯별 게이트가 최종 제한한다.
 LLM_TYPES = frozenset({
+    "bot_lora_feedback",           # 원본 관찰/결과 대조, GPU 학습은 기존 큐에 위임
     "llm_test",                    # 설정 화면 LLM1~10 연결 테스트
     "illustration_llm_build",       # CHAT -> OUTFIT/CALL2/CALL3 -> 다중 삽화 큐 생성
     "illustration_easy_edit",       # 저장 슬롯 -> 기존 편하게 수정 LLM -> 수정 재생성
@@ -891,6 +893,7 @@ class QueueManager:
         active_cancelled = 0
         active_finishing = 0
         image_types = {"illustration", "character_maker_illustration"}
+        image_types.add("bot_lora_training")  # 이미 시작한 학습은 마무리하고 다음 회차를 중단한다.
         for item in self.items:
             binding = getattr(item, "_illustration_flow", None)
             if not binding or binding[0].get("id") != normalized:
@@ -3063,6 +3066,7 @@ class QueueManager:
             VIDEO_POSTPROCESS_TYPE: self._handle_video_postprocess,
             "asset_lora_training": self._handle_asset_lora_training,
             "bot_lora_training": self._handle_bot_lora_training,
+            "bot_lora_feedback": self._handle_bot_lora_feedback,
             "instance_lora_training": self._handle_instance_lora_training,
             "instance_lora_face_extract": self._handle_instance_lora_face_extract,
             "instance_lora_analysis": self._handle_instance_lora_analysis,
@@ -4408,6 +4412,10 @@ class QueueManager:
             "exported_count": export_result.get("count", 0),
         }
 
+    async def _handle_bot_lora_feedback(self, item: QueueItem) -> dict:
+        from modes.bot_lora_feedback import run_feedback
+        return await run_feedback(self, item)
+
     async def _handle_bot_lora_training(self, item: QueueItem) -> dict:
         """봇 LoRA 학습 - 단일 캐릭터 처리 (캐릭터별 큐 아이템으로 분리되어 호출됨)."""
         params = item.params
@@ -4509,6 +4517,25 @@ class QueueManager:
             effective_test_images, save_after, dim, alpha,
         )
 
+        feedback_context = None
+        if params.get("feedback_run_id"):
+            from modes.bot_lora_feedback import feedback_inputs, BACKUPS
+            from modes.bot_lora_mode import list_bot_trained_sessions
+            from pathlib import Path
+            feedback_load_path = config.get("bot_lora_load_path") or os.path.join(config.get("lora_load_path", ""), "SOYA_BOT_LORA")
+            previous_sessions = {s["name"] for s in list_bot_trained_sessions(feedback_load_path, bot_name, project_name, char_name, visual_card_id)}
+            feedback_context = feedback_inputs(bot_name, project_name, char_name, visual_card_id, training=images, tests=effective_test_images)
+            # The queue owns item.id; request parameters must not choose a disk path.
+            capture_dir = BACKUPS / item.id
+            capture_dir.mkdir(parents=True, exist_ok=True)
+            for source in feedback_context["sources"]:
+                source_path = Path(source["filepath"])
+                captured = capture_dir / f"{source['id']}{source_path.suffix}"
+                shutil.copy2(source_path, captured)
+                source["original_filepath"] = source["filepath"]
+                source["filepath"] = str(captured)
+            (capture_dir / "inputs.json").write_text(json.dumps(feedback_context, ensure_ascii=False, indent=2), encoding="utf-8")
+
         workflow_paths = config.get("lora_training_workflow_source_paths", {})
         if isinstance(workflow_paths, dict) and workflow_paths:
             workflow_path = workflow_paths.get(profile, "")
@@ -4576,7 +4603,15 @@ class QueueManager:
                 job_id=item.id if CURRENT_COMFY_EXECUTION_TARGET.get() in REMOTE_COMFY_TARGETS else "",
             )
 
-        return {"success": True, "character": char_name}
+        result = {"success": True, "character": char_name}
+        if feedback_context is not None:
+            sessions = list_bot_trained_sessions(feedback_load_path, bot_name, project_name, char_name, visual_card_id)
+            created = [s["name"] for s in sessions if s["name"] not in previous_sessions]
+            if len(created) != 1:
+                print(f"[LORA_FEEDBACK] 이번 학습 세션 식별 실패: item={item.id}, created={created}, root={feedback_load_path}")
+                raise RuntimeError("이번 학습 결과 세션을 확인할 수 없습니다. LoRA 저장/조회 경로를 확인하세요.")
+            result.update(session=created[0], feedback_inputs=feedback_context)
+        return result
 
     async def _handle_instance_lora_face_extract(self, item: QueueItem) -> dict:
         """인스턴스 LoRA 얼굴 추출 - 원본 이미지에서 얼굴을 잘라 인스턴스에 저장."""

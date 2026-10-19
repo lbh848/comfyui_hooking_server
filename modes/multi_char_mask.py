@@ -43,7 +43,14 @@ def _prompt_text(value: object, field: str, *, required: bool) -> str:
     if value is None and not required:
         return ""
     if not isinstance(value, str):
-        raise ValueError(f"{field} 값이 문자열이 아닙니다: {type(value).__name__}")
+        if required:
+            raise ValueError(f"{field} 값이 문자열이 아닙니다: {type(value).__name__}")
+        import illustration_flow
+        reason = f"{field} 문자열 형식 차이; 제공된 값을 유지"
+        print(f"[MULTI_CHAR:MASK] 경고: {reason}, input={value!r}")
+        illustration_flow.llm_metadata(validation_warnings=[{
+            "stage": "MULTI-CHAR-MASK", "reason": reason, "input": deepcopy(value)}])
+        return json.dumps(value, ensure_ascii=False)
     prompt = value.strip()
     if required and not prompt:
         raise ValueError(f"{field} 값이 비어 있습니다")
@@ -78,12 +85,12 @@ def validate_multi_char_layout(
     background_prompt = _prompt_text(
         layout.get("background_prompt"),
         "background_prompt",
-        required=require_prompt_separation,
+        required=False,
     )
     composition_prompt = _prompt_text(
         layout.get("composition_prompt"),
         "composition_prompt",
-        required=require_prompt_separation,
+        required=False,
     )
     raw_regions = layout.get("regions")
     if not isinstance(raw_regions, list):
@@ -109,7 +116,7 @@ def validate_multi_char_layout(
         character_prompt = _prompt_text(
             raw.get("character_prompt"),
             f"regions[{source_index}].character_prompt",
-            required=bool(require_character_prompt),
+            required=False,
         )
         positive = _prompt_text(
             raw.get("positive"),
@@ -151,11 +158,8 @@ def validate_multi_char_layout(
         if "outfit_state" in raw:
             outfit_state = raw.get("outfit_state")
             if outfit_state is not None and not isinstance(outfit_state, dict):
-                raise ValueError(
-                    f"regions[{source_index}].outfit_state가 object가 아닙니다: "
-                    f"{type(outfit_state).__name__}"
-                )
-            normalized_region["outfit_state"] = deepcopy(outfit_state or {})
+                print(f"[MULTI_CHAR:MASK] outfit_state 형식 차이; 원문 유지: {outfit_state!r}")
+            normalized_region["outfit_state"] = deepcopy(outfit_state)
         validated.append(normalized_region)
 
     missing = set(normalized_to_original) - seen
@@ -183,6 +187,13 @@ def validate_multi_char_layout(
         normalized_layout["background_prompt"] = background_prompt
     if composition_prompt or require_prompt_separation:
         normalized_layout["composition_prompt"] = composition_prompt
+    if (require_prompt_separation and (not background_prompt or not composition_prompt)
+            or require_character_prompt and any(not region["character_prompt"] for region in regions)):
+        import illustration_flow
+        reason = "일부 분리 프롬프트 누락; 제공된 프롬프트와 마스크로 진행"
+        print(f"[MULTI_CHAR:MASK] 경고: {reason}, input={layout!r}")
+        illustration_flow.llm_metadata(validation_warnings=[{
+            "stage": "MULTI-CHAR-MASK", "reason": reason, "input": deepcopy(layout)}])
     return normalized_layout
 
 
@@ -351,10 +362,11 @@ def normalize_multi_char_snapshot(context: object) -> dict | None:
     if [name.casefold() for name in expected_names] != [
         name.casefold() for name in normalized_order
     ]:
-        raise ValueError(
-            "다중 캐릭터 선언 순서와 정규화된 마스크 순서가 다릅니다: "
-            f"declared={expected_names}, normalized={normalized_order}"
-        )
+        import illustration_flow
+        reason = f"선언 순서와 실제 마스크 순서 차이: {expected_names!r} -> {normalized_order!r}"
+        print(f"[MULTI_CHAR:MASK] 경고: {reason}")
+        illustration_flow.llm_metadata(validation_warnings=[{
+            "stage": "MULTI-CHAR-MASK", "reason": reason, "input": deepcopy(context)}])
 
     # 재생성 스냅샷에는 고정 마스크에 필요한 기하 정보만 저장한다. 캐릭터별/배경
     # 프롬프트는 [MULTI_CHAR] 제어 블록이 수정 재생성마다 갱신하므로 중복 저장하지 않는다.
@@ -378,10 +390,11 @@ def normalize_multi_char_snapshot(context: object) -> dict | None:
     fingerprint = layout_fingerprint(mask_layout)
     declared_fingerprint = str(context.get("mask_fingerprint") or "").strip()
     if declared_fingerprint and declared_fingerprint != fingerprint:
-        raise ValueError(
-            "저장된 마스크 지문과 레이아웃 지문이 다릅니다: "
-            f"declared={declared_fingerprint}, actual={fingerprint}"
-        )
+        import illustration_flow
+        reason = f"저장된 마스크 지문 차이; 실제 레이아웃 사용: {declared_fingerprint} -> {fingerprint}"
+        print(f"[MULTI_CHAR:MASK] 경고: {reason}")
+        illustration_flow.llm_metadata(validation_warnings=[{
+            "stage": "MULTI-CHAR-MASK", "reason": reason, "input": deepcopy(context)}])
     return {
         "version": MULTI_CHAR_SNAPSHOT_VERSION,
         "enable": True,
@@ -424,10 +437,11 @@ def validate_multi_char_prompt_context(positive: object, context: object) -> dic
         )
     prompt_fingerprint = str(payload.get("mask_fingerprint") or "").strip()
     if prompt_fingerprint != snapshot["mask_fingerprint"]:
-        raise ValueError(
-            "프롬프트 마스크 지문과 백업 레이아웃 지문이 다릅니다: "
-            f"prompt={prompt_fingerprint!r}, mask={snapshot['mask_fingerprint']!r}"
-        )
+        import illustration_flow
+        reason = f"프롬프트 마스크 지문 차이; 연결 가능한 실제 레이아웃 사용: {prompt_fingerprint!r}"
+        print(f"[MULTI_CHAR:MASK] 경고: {reason}")
+        illustration_flow.llm_metadata(validation_warnings=[{
+            "stage": "MULTI-CHAR-MASK", "reason": reason, "input": deepcopy(payload)}])
     return snapshot
 
 
