@@ -15,7 +15,7 @@
            170      TOML 모달·LoRA 칩 설명 툴팁        180  영상 참조 피커 모달
            190      영상 방향 편집·삽화 히스토리 상세·LoRA 정제/세팅 모달·프롬프트 자동완성
            200      봇 테스트 시스템 프롬프트 편집     210  ComfyUI 인스톨러 무결성/E2E 모달
-           220      이미지 크롭 모달·공용 ? 툴팁       230  복장 추출 진행 토스트
+           220      이미지 크롭 모달·공용 ? 툴팁
            240      인스턴스 LoRA 프롬프트 편집 오버레이  250  캐릭터 메이커 설정 드로어
            260      활성 봇 플로트 버튼                270  JS 오버레이 표준층(범용 모달·라이트박스·이름치환 마법사)
            280~320  표준층 위 2~3단(컨펌·카메라·오토피드백·LB 일괄·도움말 버블)
@@ -1287,55 +1287,6 @@
         .toast.warning {
             background: #e67e22;
             color: #fff;
-        }
-
-        /* ─── 복장 추출 진행 토스트 (우측 하단 고정) ─── */
-        .outfit-progress-toast {
-            position: fixed;
-            bottom: 24px;
-            right: 24px;
-            min-width: 280px;
-            max-width: 380px;
-            background: var(--surface);
-            border: 1px solid var(--accent);
-            border-left: 4px solid var(--accent);
-            border-radius: 10px;
-            padding: 14px 18px;
-            z-index: 230;
-            display: none;
-            box-shadow: 0 4px 24px rgba(0,0,0,0.5);
-            font-size: 0.85rem;
-            color: var(--text);
-        }
-        .outfit-progress-toast.visible {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-        }
-        .outfit-progress-toast .spinner {
-            width: 20px;
-            height: 20px;
-            border: 3px solid var(--border);
-            border-top-color: var(--accent);
-            border-radius: 50%;
-            animation: outfit-spin 0.8s linear infinite;
-            flex-shrink: 0;
-        }
-        @keyframes outfit-spin {
-            to { transform: rotate(360deg); }
-        }
-        .outfit-progress-toast .progress-body {
-            display: flex;
-            flex-direction: column;
-            gap: 4px;
-        }
-        .outfit-progress-toast .progress-title {
-            font-weight: 700;
-            font-size: 0.9rem;
-        }
-        .outfit-progress-toast .progress-detail {
-            font-size: 0.78rem;
-            color: var(--text2);
         }
 
         /* ─── 모달 공통 ─── */
@@ -16826,15 +16777,6 @@
         <pre id="lighbd-llm-output" style="margin:0; max-height:140px; overflow:hidden; padding:6px; border-radius:6px; border:1px solid var(--border); background:rgba(0,0,0,0.25); color:var(--text); font-family:monospace; font-size:0.72rem; line-height:1.4; white-space:pre-wrap; word-break:break-word;">-</pre>
     </div>
 
-    <!-- 복장 추출 진행 토스트 (우측 하단) -->
-    <div id="outfit-progress-toast" class="outfit-progress-toast">
-        <div class="spinner"></div>
-        <div class="progress-body">
-            <div class="progress-title" id="outfit-progress-title">복장 추출 진행중 (재생성 금지)</div>
-            <div class="progress-detail" id="outfit-progress-detail">-</div>
-        </div>
-    </div>
-
     <div class="status-bar" id="status-bar">
         <div class="info-grid" id="conversion-status">
             <div class="info-item">
@@ -26563,66 +26505,14 @@
                         </div>
                     </div>
 
-                    <!-- 완료 알림 (현재 미사용 — 배치 모드 제거로 트리거 없음, 일시 잠금) -->
-                    <div class="setting-row ui-locked" data-lock-reason="현재 미사용으로 일시 잠금">
-                        <div class="setting-label">
-                            <div class="title">완료 알림</div>
-                            <div class="desc">배치 그림 완성 시 알림음 + 탭 반짝임</div>
-                        </div>
-                        <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
-                            <label class="toggle-switch">
-                                <input type="checkbox" id="setting-notification-enabled" onchange="updateNotificationStatus(this.checked)">
-                                <span class="toggle-slider"></span>
-                            </label>
-                            <span id="notification-status" class="toggle-status">OFF</span>
-                        </div>
-                    </div>
-
-                    <!-- ===== 잠금 영역: 복장 추출 모드 ~ 프롬프트 강화 모드 (현재 미사용, 일시 잠금) =====
-                         해제하려면 아래 래퍼의 ui-locked 클래스만 제거 -->
+                    <!-- 프롬프트 강화 설정 (현재 미사용) -->
                     <div class="ui-locked" data-lock-reason="현재 미사용으로 일시 잠금">
-
-                    <!-- 복장 추출 모드 -->
-                    <div class="setting-row">
-                        <div class="setting-label">
-                            <div class="title">👕 복장 추출 모드 <span class="beta-badge">BETA</span></div>
-                            <div class="desc">배치 모드에서 이미지 생성 후 자동으로 복장/캐릭터 추출 (배치 모드 활성화 시에만 작동)</div>
-                        </div>
-                        <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
-                            <label class="toggle-switch">
-                                <input type="checkbox" id="setting-outfit-enabled" onchange="updateOutfitStatus(this.checked)">
-                                <span class="toggle-slider"></span>
-                            </label>
-                            <span id="outfit-status" class="toggle-status">OFF</span>
-                        </div>
-                    </div>
-
-                    <div class="form-group" style="margin-top: 4px;">
-                        <label style="font-size: 0.8rem; margin-bottom: 4px;">복장 추출 워크플로우 파일명 (위 베이스 경로 공유)</label>
-                        <div class="autocomplete-wrapper">
-                            <input type="text" id="setting-outfit-workflow-filename" placeholder="예: 복장추출워크플로우.json"
-                                   oninput="onOutfitFilenameInput(this.value)" onfocus="onOutfitFilenameInput(this.value)">
-                            <div class="autocomplete-list" id="outfit-workflow-autocomplete"></div>
-                        </div>
-                        <div class="hint">공통설정 탭의 '베이스 경로'에서 검색됩니다</div>
-                    </div>
-                    <input type="hidden" id="setting-outfit-workflow-source-path">
-
-                    <!-- 복장정리프롬프트 선택 -->
-                    <div class="form-group" style="margin-top: 8px;">
-                        <label style="font-size: 0.8rem; margin-bottom: 4px;">복장정리프롬프트 선택 (customprompt/)</label>
-                        <select id="setting-outfit-prompt-file" onchange="onOutfitPromptFileChange(this.value)"
-                                style="width: 100%; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: 0.85rem;">
-                            <option value="">(선택 안함)</option>
-                        </select>
-                        <div class="hint">customprompt/ 폴더의 파이썬 파일을 선택하면 LLM으로 복장 통합 결과를 생성합니다</div>
-                    </div>
 
                     <!-- 프롬프트 강화 모드 -->
                     <div class="setting-row">
                         <div class="setting-label">
                             <div class="title">✨ 프롬프트 강화 모드 <span class="beta-badge">BETA</span></div>
-                            <div class="desc">배치 프롬프트의 캐릭터 복장 묘사를 LLM으로 자동 강화 (배치 모드 필수, 복장 추출 모드와 함께 사용하면 더 정확)</div>
+                            <div class="desc">이전 프롬프트 강화 자동 실행 설정 (현재 사용 중지)</div>
                         </div>
                         <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
                             <label class="toggle-switch">
@@ -26646,21 +26536,6 @@
                     </div>
                     <!-- ===== 잠금 영역 끝 ===== -->
 
-                    <!-- 워크플로우 복원 프롬프트 (현재 미사용 — outfit 모드 완료 트리거가 잠금 클러스터와 함께 휴면, 일시 잠금) -->
-                    <div class="setting-row ui-locked" data-lock-reason="현재 미사용으로 일시 잠금">
-                        <div class="setting-label">
-                            <div class="title">🔄 워크플로우 복원 프롬프트</div>
-                            <div class="desc">포스트 프로세스 종료 후 지정 프롬프트를 통해 베이스 워크플로우 로드</div>
-                        </div>
-                        <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
-                            <label class="toggle-switch">
-                                <input type="checkbox" id="setting-restore-enabled" onchange="updateRestoreStatus(this.checked)">
-                                <span class="toggle-slider"></span>
-                            </label>
-                            <span id="restore-status" class="toggle-status">OFF</span>
-                        </div>
-                    </div>
-
                     <!-- 워크플로우 복원 프롬프트 수동 작동 버튼 -->
                     <div class="setting-row" style="margin-top: 10px;">
                         <div class="setting-label">
@@ -26683,7 +26558,7 @@
                                 style="width: 100%; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: 0.85rem;">
                             <option value="">(선택 안함)</option>
                         </select>
-                        <div class="hint">모드(복장 추출 등) 종료 후 원래 워크플로우를 자동 실행하여 가중치를 VRAM에 프리로드합니다</div>
+                        <div class="hint">수동 그리기에서 실행할 프롬프트 파일을 선택합니다</div>
                     </div>
                 </div>
 
@@ -28260,58 +28135,6 @@
             <div class="modal-footer">
                 <button class="cancel" onclick="auCloseUploadModal()">취소</button>
                 <button class="confirm" id="au-modal-upload-btn" onclick="auDoUpload()" disabled style="background:#FF9800;">업로드</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- 복장 추출 결과 모달 -->
-    <div class="modal" id="outfit-results-modal" onclick="if (event.target === this) closeOutfitResultsModal()">
-        <div class="modal-content" style="max-width: 1200px;">
-            <div class="modal-header">
-                <h2>👕 복장 추출 결과</h2>
-                <button class="modal-close" onclick="closeOutfitResultsModal()">&times;</button>
-            </div>
-            <!-- 이미지 업로드 영역 -->
-            <div style="padding: 12px 20px; border-bottom: 1px solid var(--border);">
-                <div style="display: flex; gap: 10px; align-items: center;">
-                    <label style="cursor: pointer; padding: 6px 14px; background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-size: 0.85rem;">
-                        📁 이미지 선택
-                        <input type="file" id="outfit-upload-input" accept="image/*" style="display: none;" onchange="onOutfitImageSelected(this)">
-                    </label>
-                    <span id="outfit-upload-filename" style="font-size: 0.8rem; color: var(--text2);">이미지를 선택하세요</span>
-                    <button id="outfit-upload-btn" onclick="uploadAndExtractOutfit()" disabled style="padding: 6px 14px; background: var(--accent); color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 0.85rem; opacity: 0.5;">
-                        🧪 추출 실행
-                    </button>
-                </div>
-                <div id="outfit-upload-preview" style="display: none; margin-top: 8px; max-height: 150px; overflow: hidden;">
-                    <img id="outfit-preview-img" style="max-height: 150px; border-radius: 4px;">
-                </div>
-            </div>
-            <div class="modal-body" id="outfit-results-body" style="max-height: 60vh; overflow-y: auto;">
-                <div class="empty-state">
-                    <p>복장 추출 결과가 없습니다</p>
-                    <p style="font-size: 0.8rem; color: var(--text2); margin-top: 8px;">배치 모드 + 복장 추출 모드 활성화 후 이미지를 생성하면 자동으로 결과가 표시됩니다</p>
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button id="outfit-extract-btn" onclick="manualOutfitExtract()">🧪 복장 추출 실행</button>
-                <button id="llm-run-btn" onclick="openLlmCharacterSelect()">🤖 LLM 복장정리 실행</button>
-                <button class="cancel" onclick="closeOutfitResultsModal()">닫기</button>
-                <button class="confirm" onclick="refreshOutfitResults()">새로고침</button>
-                <button style="background: var(--error); color: #fff; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer;" onclick="clearOutfitResults()">🗑️ 초기화</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- LLM 캐릭터 선택 모달 -->
-    <div class="modal" id="llm-character-select-modal" onclick="if (event.target === this) closeLlmCharacterSelectModal()">
-        <div class="modal-content" style="max-width: 420px;">
-            <div class="modal-header">
-                <h2>🤖 LLM 복장정리 대상 선택</h2>
-                <button class="modal-close" onclick="closeLlmCharacterSelectModal()">&times;</button>
-            </div>
-            <div class="modal-body" id="llm-character-select-body" style="padding: 16px;">
-                <!-- 동적으로 생성됨 -->
             </div>
         </div>
     </div>
@@ -31722,54 +31545,6 @@
                         // 공용 이미지 생성 진행도
                         case 'generation_progress':
                             updateTopProgress(msg.data.value || 0, msg.data.max || 0);
-                            break;
-                        // 복장 추출 이벤트
-                        case 'outfit_processing_started':
-                            showToast(`복장 추출 시작 (배치 ${msg.data.batch_id}, ${msg.data.total}개)`, 'info');
-                            showOutfitProgress('복장 추출 진행중 (재생성 금지)', `0 / ${msg.data.total} 처리 대기`);
-                            autoRefreshOutfitResults();
-                            break;
-                        case 'outfit_image_processing':
-                            showToast(`복장 추출 처리 중... (${msg.data.index + 1}/${msg.data.total})`, 'info');
-                            updateOutfitProgress(undefined, `${msg.data.index + 1} / ${msg.data.total} 처리 중...`);
-                            break;
-                        case 'outfit_image_completed':
-                            if (msg.data.status === 'completed' && msg.data.character_count > 0) {
-                                showToast(`복장 추출 완료 (${msg.data.character_count}개 캐릭터)`, 'success');
-                                updateOutfitProgress(undefined, `${msg.data.index + 1} / ${msg.data.total} 완료`);
-                                autoRefreshOutfitResults();
-                                // 단일 이미지 처리 시 LLM 자동 실행 (배치의 경우 outfit_batch_completed에서 실행)
-                                if (msg.data.total === 1) {
-                                    updateOutfitProgress('LLM 복장정리 진행중', '잠시만 기다려주세요...');
-                                    runLlmPrompt();
-                                }
-                            }
-                            break;
-                        case 'outfit_batch_completed':
-                            showToast('복장 추출 배치 완료', 'success');
-                            autoRefreshOutfitResults();
-                            // llm_dirty 캐릭터 조회 후 자동 LLM 실행
-                            (async () => {
-                                try {
-                                    const resp = await fetch('/api/outfit_mode/results');
-                                    const data = await resp.json();
-                                    const dirtyChars = (data.characters || [])
-                                        .filter(ch => ch.llm_dirty)
-                                        .map(ch => ch.name);
-                                    if (dirtyChars.length > 0) {
-                                        updateOutfitProgress('LLM 복장정리 진행중', `${dirtyChars.length}명 처리 중...`);
-                                        runLlmForCharacters(dirtyChars);
-                                    } else {
-                                        hideOutfitProgress();
-                                    }
-                                } catch (e) {
-                                    console.error('[LLM] llm_dirty 조회 오류:', e);
-                                    hideOutfitProgress();
-                                }
-                            })();
-                            break;
-                        case 'outfit_llm_completed':
-                            autoRefreshOutfitResults();
                             break;
                         // lighbd LLM 스트리밍 (우하단 위젯)
                         case 'lighbd_llm_stream':
@@ -36558,15 +36333,6 @@
 
         // ─── 재생성 ───
         async function regenerate(name, btn) {
-            // 복장 추출 진행 중이면 재생성 금지 (LLM 복장정리 중에는 허용)
-            const outfitToast = document.getElementById('outfit-progress-toast');
-            const progressTitle = document.getElementById('outfit-progress-title');
-            const isOutfitExtraction = progressTitle && progressTitle.textContent.includes('복장 추출');
-            if (outfitToast && outfitToast.classList.contains('visible') && isOutfitExtraction) {
-                showToast('복장 추출 진행중 (복장 추출 중엔 재생성 금지)', 'warning');
-                return;
-            }
-
             // [SEED] 블록 감지 → 시드 변경 여부 선택 모달
             const promptData = promptDataMap.get(name) || {};
             const positive = promptData.enhanced_positive || promptData.positive || '';
@@ -38872,7 +38638,6 @@
             { key: 'asset_generation', label: '에셋 생성', description: '에셋 이미지 생성', modalSupported: true },
             { key: 'qwen_edit', label: 'EDIT', description: 'Qwen Edit 및 ANIMA Inpainting', modalSupported: true },
             { key: 'tag_analysis', label: '태그 분석', description: 'Comfy 워크플로우 기반 이미지 태그 분석', modalSupported: false },
-            { key: 'outfit', label: '복장 추출', description: '복장 추출 워크플로우', modalSupported: false },
             { key: 'asset_lora_training', label: '에셋 LoRA', description: '에셋 LoRA 학습', modalSupported: true },
             { key: 'bot_lora_training', label: '봇 LoRA', description: '봇 캐릭터 LoRA 학습', modalSupported: true },
             { key: 'instance_lora', label: '인스턴스 / 스타일 LoRA', description: '인스턴스·스타일 LoRA 분석 및 학습', modalSupported: true },
@@ -43940,16 +43705,6 @@
             document.getElementById('setting-embedding-model').value = currentConfig.embedding_model || 'voyage-4-large';
             onEmbeddingProviderChange();
 
-            // 완료 알림
-            const notificationEnabled = currentConfig.notification_enabled !== false;
-            document.getElementById('setting-notification-enabled').checked = notificationEnabled;
-            updateNotificationStatus(notificationEnabled);
-
-            // 복장 추출 모드 설정
-            const outfitEnabled = currentConfig.outfit_mode_enabled || false;
-            document.getElementById('setting-outfit-enabled').checked = outfitEnabled;
-            updateOutfitStatus(outfitEnabled);
-
             // 삽화 모드: 항상 ON 고정 (서버가 True 강제). 토글은 비활성화.
             document.getElementById('bot-mode-toggle').checked = true;
             updateBotModeStatus(true);
@@ -43969,21 +43724,11 @@
                 const botSelect = document.getElementById('bot-select');
                 if (botSelect) botSelect.value = botSelected;
             }
-            // 복장 워크플로우 소스 경로에서 파일명만 추출 (베이스 경로는 메인과 공유)
-            const outfitSourcePath = currentConfig.outfit_workflow_source_path || '';
-            const outfitParts = splitWorkflowPath(outfitSourcePath);
-            document.getElementById('setting-outfit-workflow-filename').value = outfitParts.filename;
-            document.getElementById('setting-outfit-workflow-source-path').value = outfitSourcePath;
-
-            // 복장정리프롬프트 파일 목록 로드
+            // 프롬프트 파일 목록 로드
             await loadCustompromptFiles();
-            document.getElementById('setting-outfit-prompt-file').value = currentConfig.outfit_prompt_file || '';
 
             // 워크플로우 복원 프롬프트 파일 목록 로드
             await loadRestorePromptFiles();
-            const restoreEnabled = currentConfig.restore_mode_enabled || false;
-            document.getElementById('setting-restore-enabled').checked = restoreEnabled;
-            updateRestoreStatus(restoreEnabled);
             // loadRestorePromptFiles가 현재 삽화 프로필과 호환되는 값만 자동 선택한다.
 
             // 워크플로우 복원 프롬프트 수동 작동 설정
@@ -44200,9 +43945,8 @@
             for (const profile of ['v1', 'v3', 'v3_anima']) {
                 updateIllustrationWorkflowPath(profile);
             }
-            // 베이스 경로 변경 시 에셋/복장/로라/유틸리티 경로도 함께 갱신
+            // 베이스 경로 변경 시 에셋/로라/유틸리티 경로도 함께 갱신
             updateUtilityWorkflowPath();
-            updateOutfitWorkflowPath();
             updateAssetWorkflowPath();
             updateAnimaAssetWorkflowPath();
             updateAnimaOnlyAssetWorkflowPath();
@@ -45062,12 +44806,7 @@
                 embedding_url: '임베딩 URL',
                 embedding_api_key: '임베딩 API Key',
                 embedding_model: '임베딩 모델',
-                notification_enabled: '완료 알림',
-                outfit_mode_enabled: '복장 추출 모드',
-                outfit_workflow_source_path: '복장 워크플로우 경로',
-                outfit_prompt_file: '복장 프롬프트 파일',
                 restore_prompt_file: '복원 프롬프트 파일',
-                restore_mode_enabled: '복원 모드',
                 restore_manual_enabled: '수동 복원 모드',
                 enhance_mode_enabled: '프롬프트 강화 모드',
                 enhance_prompt_file: '강화 프롬프트 파일',
@@ -45485,15 +45224,10 @@
                 embedding_url: document.getElementById('setting-embedding-url').value,
                 embedding_api_key: document.getElementById('setting-embedding-api-key').value,
                 embedding_model: document.getElementById('setting-embedding-model').value,
-                notification_enabled: document.getElementById('setting-notification-enabled').checked,
                 bot_mode_enabled: document.getElementById('bot-mode-toggle').checked,
                 bot_selected: botCurrentBot || '',
-                outfit_mode_enabled: document.getElementById('setting-outfit-enabled').checked,
-                outfit_workflow_source_path: document.getElementById('setting-outfit-workflow-source-path').value,
                 utility_workflow_source_path: document.getElementById('setting-utility-workflow-source-path').value,
-                outfit_prompt_file: document.getElementById('setting-outfit-prompt-file').value,
                 restore_prompt_file: document.getElementById('setting-restore-prompt-file').value,
-                restore_mode_enabled: document.getElementById('setting-restore-enabled').checked,
                 restore_manual_enabled: document.getElementById('setting-restore-manual-enabled').checked,
                 enhance_mode_enabled: document.getElementById('setting-enhance-enabled').checked,
                 enhance_prompt_file: document.getElementById('setting-enhance-prompt-file').value,
@@ -45589,19 +45323,6 @@
                     updateHeaderButtonsVisibility();
                     // 캐릭터 메이커 에셋 워크플로우 타입을 전역 config 값으로 즉시 동기화
                     cmSyncWorkflowFromConfig();
-                    // 복장 추출 모드 설정 동기화
-                    try {
-                        await fetch('/api/outfit_mode/config', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                                enabled: config.outfit_mode_enabled,
-                                source_path: config.outfit_workflow_source_path
-                            })
-                        });
-                    } catch (e) {
-                        console.error('복장 추출 모드 설정 동기화 실패:', e);
-                    }
                     return true;
                 } else {
                     showToast('설정 저장 실패', 'error');
@@ -45763,8 +45484,6 @@
                         selectIllustrationWorkflowFile(list.dataset.illustrationProfile, path, filename);
                     } else if (list.id === 'utility-autocomplete') {
                         selectUtilityFile(path, filename);
-                    } else if (list.id === 'outfit-workflow-autocomplete') {
-                        selectOutfitWorkflowFile(path, filename);
                     } else if (list.id === 'asset-workflow-autocomplete') {
                         selectAssetWorkflowFile(path, filename);
                     } else if (list.id === 'tag-analysis-workflow-autocomplete') {
@@ -45845,22 +45564,6 @@
             }, duration);
         }
 
-        // ─── 복장 추출 진행 토스트 (우측 하단, 수동 종료) ───
-        function showOutfitProgress(title, detail) {
-            const el = document.getElementById('outfit-progress-toast');
-            document.getElementById('outfit-progress-title').textContent = title || '복장 추출 진행중 (재생성 금지)';
-            document.getElementById('outfit-progress-detail').textContent = detail || '';
-            el.classList.add('visible');
-        }
-        function updateOutfitProgress(title, detail) {
-            const el = document.getElementById('outfit-progress-toast');
-            if (!el.classList.contains('visible')) return;
-            if (title !== undefined) document.getElementById('outfit-progress-title').textContent = title;
-            if (detail !== undefined) document.getElementById('outfit-progress-detail').textContent = detail;
-        }
-        function hideOutfitProgress() {
-            document.getElementById('outfit-progress-toast').classList.remove('visible');
-        }
 
         // ─── 라이트박스 ───
         function openLightbox(src) {
@@ -45937,26 +45640,12 @@
             });
         }
 
-        // ─── 완료 알림 ───
-        function updateNotificationStatus(checked) {
-            const el = document.getElementById('notification-status');
-            el.textContent = checked ? 'ON' : 'OFF';
-            el.className = 'toggle-status ' + (checked ? 'on' : 'off');
-        }
 
-        // ─── 복장 추출 모드 ───
-        function updateOutfitStatus(checked) {
-            document.getElementById('outfit-status').textContent = checked ? 'ON' : 'OFF';
-            updateHeaderButtonsVisibility();
-        }
 
         function updateEnhanceStatus(checked) {
             document.getElementById('enhance-status').textContent = checked ? 'ON' : 'OFF';
         }
 
-        function updateRestoreStatus(checked) {
-            document.getElementById('restore-status').textContent = checked ? 'ON' : 'OFF';
-        }
 
         function updateRestoreManualStatus(checked) {
             document.getElementById('restore-manual-status').textContent = checked ? 'ON' : 'OFF';
@@ -45996,12 +45685,7 @@
 
         // ─── 헤더 버튼 가시성 업데이트 ───
         function updateHeaderButtonsVisibility() {
-            const outfitOn = document.getElementById('setting-outfit-enabled').checked;
             const restoreManualOn = document.getElementById('setting-restore-manual-enabled').checked;
-
-            // 복장 추출 버튼: 복장 모드 ON일 때만
-            const outfitBtn = document.getElementById('outfit-btn');
-            if (outfitBtn) outfitBtn.style.display = outfitOn ? '' : 'none';
 
             // 수동 그리기 버튼: 수동 복원 모드 ON일 때만
             const restoreManualBtn = document.getElementById('restore-manual-btn');
@@ -50196,23 +49880,12 @@
             }
         }
 
-        // ─── 복장정리프롬프트 파일 목록 로드 ───
+        // ─── 프롬프트 강화 파일 목록 로드 ───
         async function loadCustompromptFiles() {
             try {
                 const resp = await fetch('/api/customprompt_files');
                 const data = await resp.json();
                 const files = data.files || [];
-                // 복장정리프롬프트 select 채우기
-                const outfitSelect = document.getElementById('setting-outfit-prompt-file');
-                const outfitValue = outfitSelect.value;
-                while (outfitSelect.options.length > 1) outfitSelect.remove(1);
-                files.forEach(f => {
-                    const opt = document.createElement('option');
-                    opt.value = f;
-                    opt.textContent = f;
-                    outfitSelect.appendChild(opt);
-                });
-                outfitSelect.value = outfitValue;
                 // 프롬프트 강화 select 채우기
                 const enhanceSelect = document.getElementById('setting-enhance-prompt-file');
                 const enhanceValue = enhanceSelect.value;
@@ -50229,9 +49902,6 @@
             }
         }
 
-        function onOutfitPromptFileChange(value) {
-            // 설정 저장 시 반영됨
-        }
 
         // ─── 워크플로우 복원 프롬프트 파일 목록 로드 ───
         async function loadRestorePromptFiles() {
@@ -50272,103 +49942,6 @@
             }
         }
 
-        // ─── LLM 복장정리 실행 ───
-        let _llmRunning = false;
-        let _llmPending = false;
-
-        function openLlmCharacterSelect() {
-            const body = document.getElementById('llm-character-select-body');
-            const names = Object.keys(_outfitCharacterNames || {});
-            if (!names.length) {
-                showToast('복장 추출 결과가 없습니다', 'error');
-                return;
-            }
-            let html = `<button onclick="runLlmPrompt(null)" style="width:100%;padding:12px;margin-bottom:12px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:0.95rem;cursor:pointer;text-align:left;">
-                🤖 <strong>전체 캐릭터</strong> <span style="color:var(--text2);font-size:0.8rem;">(${names.length}명)</span></button>`;
-            html += `<div style="font-size:0.75rem;color:var(--text2);margin-bottom:8px;padding-left:4px;">또는 개별 캐릭터 선택:</div>`;
-            names.forEach(name => {
-                const dirty = _outfitCharacterNames[name];
-                const dirtyBadge = dirty ? ' <span style="color:#f44336;font-size:0.7rem;">● 미실행</span>' : '';
-                html += `<button onclick="runLlmPrompt('${name.replace(/'/g, "\\'")}')" style="width:100%;padding:10px 12px;margin-bottom:6px;background:var(--surface);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:0.9rem;cursor:pointer;text-align:left;">
-                    ${name}${dirtyBadge}</button>`;
-            });
-            body.innerHTML = html;
-            document.getElementById('llm-character-select-modal').classList.add('visible');
-        }
-
-        function closeLlmCharacterSelectModal() {
-            document.getElementById('llm-character-select-modal').classList.remove('visible');
-        }
-
-        async function runLlmPrompt(characterName) {
-            closeLlmCharacterSelectModal();
-            if (_llmRunning) {
-                _llmPending = true;
-                return;
-            }
-            _llmRunning = true;
-            const btn = document.getElementById('llm-run-btn');
-            btn.disabled = true;
-            btn.textContent = '🤖 LLM 실행중...';
-            showOutfitProgress('LLM 복장정리 진행중', characterName ? `'${characterName}' 처리 중...` : '전체 캐릭터 처리 중...');
-            try {
-                const payload = characterName ? { character: characterName } : {};
-                const resp = await fetch('/api/outfit_mode/run_llm', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload),
-                });
-                const data = await resp.json();
-                if (data.success) {
-                    const label = characterName ? `'${characterName}'` : `전체 (${data.results.length}명)`;
-                    showToast(`LLM 복장정리 완료: ${label}`, 'success');
-                    refreshOutfitResults();
-                } else {
-                    showToast('LLM 실행 실패: ' + (data.error || '알 수 없는 오류'), 'error');
-                }
-            } catch (e) {
-                showToast('LLM 실행 오류: ' + e.message, 'error');
-            } finally {
-                btn.disabled = false;
-                btn.textContent = '🤖 LLM 복장정리 실행';
-                _llmRunning = false;
-                hideOutfitProgress();
-                if (_llmPending) {
-                    _llmPending = false;
-                    runLlmPrompt(characterName);
-                }
-            }
-        }
-
-        // 지정된 캐릭터 목록에 대해서만 LLM 실행 (자동 트리거용)
-        async function runLlmForCharacters(characters) {
-            if (!characters || characters.length === 0) return;
-            if (_llmRunning) return;  // 이미 실행 중이면 스킵
-            _llmRunning = true;
-            const btn = document.getElementById('llm-run-btn');
-            if (btn) { btn.disabled = true; btn.textContent = '🤖 LLM 실행중...'; }
-            updateOutfitProgress('LLM 복장정리 진행중', `${characters.length}명 처리 중...`);
-            try {
-                const payload = { characters: characters };
-                const resp = await fetch('/api/outfit_mode/run_llm', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload),
-                });
-                const data = await resp.json();
-                if (data.success) {
-                    showToast(`LLM 복장정리 완료: ${data.results.length}명`, 'success');
-                    refreshOutfitResults();
-                }
-            } catch (e) {
-                console.error('[LLM] 자동 실행 오류:', e);
-            } finally {
-                if (btn) { btn.disabled = false; btn.textContent = '🤖 LLM 복장정리 실행'; }
-                _llmRunning = false;
-                hideOutfitProgress();
-            }
-        }
-
         function updateUtilityWorkflowPath() {
             const baseDir = document.getElementById('setting-workflow-base-dir').value.trim();
             const filename = document.getElementById('setting-utility-filename').value.trim();
@@ -50377,37 +49950,6 @@
             document.getElementById('setting-utility-workflow-source-path').value = fullPath;
         }
 
-        function updateOutfitWorkflowPath() {
-            // 메인 워크플로우의 베이스 경로를 공유
-            const baseDir = document.getElementById('setting-workflow-base-dir').value.trim();
-            const filename = document.getElementById('setting-outfit-workflow-filename').value.trim();
-            const sep = baseDir && baseDir.includes('\\') ? '\\' : '/';
-            const fullPath = baseDir && filename ? baseDir.replace(/[\\/]+$/, '') + sep + filename : '';
-            document.getElementById('setting-outfit-workflow-source-path').value = fullPath;
-        }
-
-        let outfitAutocompleteTimeout = null;
-        async function onOutfitFilenameInput(value) {
-            updateOutfitWorkflowPath();
-            const list = document.getElementById('outfit-workflow-autocomplete');
-            const baseDir = document.getElementById('setting-workflow-base-dir').value.trim();
-            clearTimeout(outfitAutocompleteTimeout);
-            outfitAutocompleteTimeout = setTimeout(async () => {
-                try {
-                    const params = new URLSearchParams({ search: value, base_dir: baseDir });
-                    const data = await fetchJSON(`/api/workflow_files?${params}`);
-                    renderAutocompleteItems(data.files, list);
-                } catch (e) {
-                    list.classList.remove('visible');
-                }
-            }, 300);
-        }
-
-        function selectOutfitWorkflowFile(fullPath, filename) {
-            document.getElementById('setting-outfit-workflow-filename').value = filename;
-            document.getElementById('setting-outfit-workflow-source-path').value = fullPath;
-            document.getElementById('outfit-workflow-autocomplete').classList.remove('visible');
-        }
 
         // 에셋 생성 워크플로우 자동완성
         let assetAutocompleteTimeout;
@@ -50938,242 +50480,6 @@
             document.getElementById('setting-face-extract-workflow-source-path').value = combineWorkflowPath(baseDir, filename);
         }
 
-        // ─── 복장 추출 결과 모달 ───
-        function openOutfitResultsModal() {
-            document.getElementById('outfit-results-modal').classList.add('visible');
-            refreshOutfitResults();
-        }
-
-        function closeOutfitResultsModal() {
-            document.getElementById('outfit-results-modal').classList.remove('visible');
-        }
-
-        async function clearOutfitResults() {
-            if (!confirm('모든 복장 추출 결과를 초기화하시겠습니까? (이미지, 프롬프트 모두 삭제됩니다)')) return;
-            try {
-                const resp = await fetch('/api/outfit_mode/clear', { method: 'POST' });
-                const data = await resp.json();
-                if (data.success) {
-                    showToast('복장 추출 결과가 초기화되었습니다', 'success');
-                    refreshOutfitResults();
-                } else {
-                    showToast('초기화 실패', 'error');
-                }
-            } catch (e) {
-                showToast('초기화 오류: ' + e.message, 'error');
-            }
-        }
-
-        async function manualOutfitExtract() {
-            const btn = document.getElementById('outfit-extract-btn');
-            btn.disabled = true;
-            btn.textContent = '🧪 추출 중...';
-            try {
-                const resp = await fetch('/api/outfit_mode/extract', { method: 'POST' });
-                const data = await resp.json();
-                if (data.success) {
-                    showToast(`복장 추출 시작: ${data.message}`, 'success');
-                } else {
-                    showToast(`복장 추출 실패: ${data.error || data.message}`, 'error');
-                }
-            } catch (e) {
-                showToast(`복장 추출 오류: ${e}`, 'error');
-            } finally {
-                btn.disabled = false;
-                btn.textContent = '🧪 복장 추출 실행';
-            }
-        }
-
-        let _outfitUploadBytes = null;
-
-        function onOutfitImageSelected(input) {
-            const file = input.files[0];
-            const nameSpan = document.getElementById('outfit-upload-filename');
-            const btn = document.getElementById('outfit-upload-btn');
-            const preview = document.getElementById('outfit-upload-preview');
-            const img = document.getElementById('outfit-preview-img');
-
-            if (!file) {
-                _outfitUploadBytes = null;
-                nameSpan.textContent = '이미지를 선택하세요';
-                btn.disabled = true;
-                btn.style.opacity = '0.5';
-                preview.style.display = 'none';
-                return;
-            }
-
-            nameSpan.textContent = file.name;
-            btn.disabled = false;
-            btn.style.opacity = '1';
-
-            // 미리보기
-            const reader = new FileReader();
-            reader.onload = (e) => {
-                img.src = e.target.result;
-                preview.style.display = '';
-            };
-            reader.readAsDataURL(file);
-
-            // 바이트 저장
-            const byteReader = new FileReader();
-            byteReader.onload = (e) => {
-                _outfitUploadBytes = new Uint8Array(e.target.result);
-            };
-            byteReader.readAsArrayBuffer(file);
-        }
-
-        async function uploadAndExtractOutfit() {
-            if (!_outfitUploadBytes) {
-                showToast('이미지를 먼저 선택하세요', 'error');
-                return;
-            }
-
-            const btn = document.getElementById('outfit-upload-btn');
-            btn.disabled = true;
-            btn.textContent = '⏳ 처리 중...';
-            showOutfitProgress('복장 추출 진행중 (재생성 금지)', '이미지 업로드 중...');
-
-            try {
-                const formData = new FormData();
-                formData.append('image', new Blob([_outfitUploadBytes]), 'upload.png');
-                formData.append('label', 'manual');
-
-                const resp = await fetch('/api/outfit_mode/extract_upload', {
-                    method: 'POST',
-                    body: formData,
-                });
-                const data = await resp.json();
-
-                if (data.success) {
-                    const charCount = (data.characters || []).length;
-                    showToast(`복장 추출 완료: ${charCount}개 캐릭터`, 'success');
-                    updateOutfitProgress('LLM 복장정리 진행중', '잠시만 기다려주세요...');
-                    refreshOutfitResults();
-                } else {
-                    showToast(`복장 추출 실패: ${data.error || '알 수 없는 오류'}`, 'error');
-                    hideOutfitProgress();
-                }
-            } catch (e) {
-                showToast(`업로드 오류: ${e}`, 'error');
-                hideOutfitProgress();
-            } finally {
-                btn.disabled = false;
-                btn.textContent = '🧪 추출 실행';
-            }
-        }
-
-        let _outfitCharacterNames = {};
-
-        function autoRefreshOutfitResults() {
-            // 복장 결과 모달이 열려있을 때만 자동 새로고침
-            const modal = document.getElementById('outfit-results-modal');
-            if (modal && modal.classList.contains('visible')) {
-                refreshOutfitResults();
-            }
-        }
-
-        async function refreshOutfitResults() {
-            const body = document.getElementById('outfit-results-body');
-            try {
-                const resp = await fetch('/api/outfit_mode/results');
-                const data = await resp.json();
-                const characters = data.characters || [];
-
-                // 캐릭터 이름 + llm_dirty 상태 캐시
-                _outfitCharacterNames = {};
-                characters.forEach(ch => { _outfitCharacterNames[ch.name] = ch.llm_dirty; });
-
-                if (characters.length === 0) {
-                    body.innerHTML = `
-                        <div class="empty-state">
-                            <p>복장 추출 결과가 없습니다</p>
-                            <p style="font-size: 0.8rem; color: var(--text2); margin-top: 8px;">배치 모드 + 복장 추출 모드 활성화 후 이미지를 생성하면 자동으로 결과가 표시됩니다</p>
-                        </div>`;
-                    return;
-                }
-
-                let html = '';
-                characters.forEach(ch => {
-                    const entryCount = ch.entries ? ch.entries.length : 0;
-                    html += `<div style="margin-bottom: 20px; border: 1px solid var(--border); border-radius: 10px; overflow: hidden;">`;
-
-                    // 캐릭터 헤더
-                    html += `<div style="background: var(--surface2); padding: 10px 16px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border);">`;
-                    html += `<div style="display: flex; align-items: center; gap: 8px;">`;
-                    html += `<strong style="font-size: 1.05rem;">${ch.name}</strong>`;
-                    if (ch.llm_dirty) {
-                        html += `<span style="width: 10px; height: 10px; background: #f44336; border-radius: 50%; display: inline-block;" title="업데이트 필요"></span>`;
-                    } else {
-                        html += `<span style="width: 10px; height: 10px; background: #4caf50; border-radius: 50%; display: inline-block;" title="최신 상태"></span>`;
-                    }
-                    html += `</div>`;
-                    html += `<span style="font-size: 0.75rem; color: var(--text2);">${entryCount}/10 결과</span>`;
-                    html += `</div>`;
-
-                    // 가로 이미지 스크롤 영역
-                    if (ch.entries && ch.entries.length > 0) {
-                        html += `<div style="padding: 12px 16px; overflow-x: auto; white-space: nowrap;">`;
-                        ch.entries.forEach((entry, idx) => {
-                            const ts = entry.timestamp ? new Date(entry.timestamp * 1000).toLocaleString() : '';
-                            html += `<div style="display: inline-block; width: 180px; margin-right: 12px; vertical-align: top; white-space: normal; background: var(--surface); border-radius: 8px; border: 1px solid var(--border); overflow: hidden; position: relative;">`;
-
-                            // 삭제 X 버튼
-                            html += `<button onclick="event.stopPropagation(); deleteOutfitEntry('${ch.name.replace(/'/g, "\\'")}', ${idx})" style="position: absolute; top: 4px; right: 4px; width: 22px; height: 22px; border-radius: 50%; border: none; background: rgba(0,0,0,0.6); color: #fff; font-size: 14px; line-height: 22px; text-align: center; cursor: pointer; z-index: 20; padding: 0; display: flex; align-items: center; justify-content: center;" title="이 항목 삭제">&#10005;</button>`;
-
-                            // 이미지
-                            if (entry.image_filename) {
-                                html += `<img src="/api/outfit_mode/result_image/${entry.image_filename}" style="width: 100%; height: 140px; object-fit: cover; display: block;" loading="lazy" onerror="this.style.display='none'">`;
-                            } else {
-                                html += `<div style="width: 100%; height: 140px; background: var(--surface2); display: flex; align-items: center; justify-content: center; color: var(--text2); font-size: 0.75rem;">이미지 없음</div>`;
-                            }
-
-                            // 정보
-                            html += `<div style="padding: 8px;">`;
-                            html += `<div style="font-size: 0.7rem; color: var(--text2); margin-bottom: 4px;">#${idx + 1} · ${ts}</div>`;
-                            html += `<div style="font-size: 0.7rem; color: var(--accent); margin-bottom: 4px; overflow: hidden; text-overflow: ellipsis; max-height: 32px;" title="${(entry.positive_prompt || '').replace(/"/g, '&quot;')}">프롬프트: ${(entry.positive_prompt || '(수동)').substring(0, 40)}${(entry.positive_prompt || '').length > 40 ? '...' : ''}</div>`;
-                            html += `<div style="font-size: 0.75rem; color: var(--text); max-height: 60px; overflow-y: auto; word-break: break-all; line-height: 1.3;">${entry.outfit_prompt || '(없음)'}</div>`;
-                            html += `</div>`;
-                            html += `</div>`;
-                        });
-                        html += `</div>`;
-                    }
-
-                    // llm result
-                    if (ch.llm_result) {
-                        html += `<div style="padding: 8px 16px 12px; border-top: 1px solid var(--border);">`;
-                        html += `<div style="font-size: 0.7rem; color: var(--text2); margin-bottom: 4px; cursor: pointer; user-select: none;" onclick="this.nextElementSibling.style.display = this.nextElementSibling.style.display === 'none' ? '' : 'none'">▶ 복장 통합 결과 (클릭하여 펼치기/접기)</div>`;
-                        html += `<pre style="display: none; font-size: 0.75rem; color: var(--text); background: var(--surface2); padding: 8px; border-radius: 6px; white-space: pre-wrap; word-break: break-all; max-height: 150px; overflow-y: auto; margin: 0;">${ch.llm_result}</pre>`;
-                        html += `</div>`;
-                    }
-
-                    html += `</div>`;
-                });
-                body.innerHTML = html;
-            } catch (e) {
-                body.innerHTML = `<div style="color: var(--error);">결과 로드 실패: ${e.message}</div>`;
-            }
-        }
-
-        async function deleteOutfitEntry(characterName, entryIndex) {
-            if (!confirm(`"${characterName}"의 #${entryIndex + 1} 항목을 삭제하시겠습니까?`)) return;
-            try {
-                const resp = await fetch('/api/outfit_mode/delete_entry', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ character_name: characterName, entry_index: entryIndex })
-                });
-                const data = await resp.json();
-                if (data.success) {
-                    refreshOutfitResults();
-                } else {
-                    alert('삭제 실패: 항목을 찾을 수 없습니다');
-                }
-            } catch (e) {
-                alert('삭제 실패: ' + e.message);
-            }
-        }
-
-        // ─── 모드 로그 모달 ───
         function openModeLogModal() {
             document.getElementById('mode-log-modal').classList.add('visible');
             refreshModeLogs();
@@ -51201,7 +50507,7 @@
                     const mode = log.mode || '';
                     const action = log.action || '';
                     const dataStr = log.data ? JSON.stringify(log.data, null, 0) : '';
-                    const modeColor = mode === 'batch_mode' ? '#4fc3f7' : mode === 'outfit_mode' ? '#ffb74d' : 'var(--text2)';
+                    const modeColor = 'var(--text2)';
                     html += `<div style="padding: 2px 0; border-bottom: 1px solid var(--border);">`;
                     html += `<span style="color: var(--text2);">${ts}</span> `;
                     html += `<span style="color: ${modeColor}; font-weight: 600;">[${mode}]</span> `;
@@ -51232,15 +50538,9 @@
             try {
                 const cfg = await loadCurrentConfig();
                 applyIllustrationProviderConfig(cfg);
-                const outfitOn = cfg.outfit_mode_enabled || false;
-                document.getElementById('setting-outfit-enabled').checked = outfitOn;
-                updateOutfitStatus(outfitOn);
                 const enhanceOn = cfg.enhance_mode_enabled || false;
                 document.getElementById('setting-enhance-enabled').checked = enhanceOn;
                 updateEnhanceStatus(enhanceOn);
-                const restoreOn = cfg.restore_mode_enabled || false;
-                document.getElementById('setting-restore-enabled').checked = restoreOn;
-                updateRestoreStatus(restoreOn);
                 const restoreManualOn = cfg.restore_manual_enabled || false;
                 document.getElementById('setting-restore-manual-enabled').checked = restoreManualOn;
                 updateRestoreManualStatus(restoreManualOn);
@@ -51257,79 +50557,6 @@
                 updateHeaderButtonsVisibility();
             } catch (e) { /* 무시 */ }
         })();
-        // === 배치 완료 알림: 알림음 + 탭 반짝임 ===
-        const _originalTitle = document.title;
-        let _blinkTimer = null;
-        let _blinkVisible = true;
-
-        // Web Audio API: 백그라운드 탭에서도 소리 재생
-        let _audioCtx = null;
-        let _audioBuffer = null;
-
-        function _initAudioContext() {
-            if (_audioCtx) return;
-            try {
-                _audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-                fetch('/api/sound/Beeper.wav')
-                    .then(r => r.arrayBuffer())
-                    .then(buf => _audioCtx.decodeAudioData(buf))
-                    .then(decoded => { _audioBuffer = decoded; })
-                    .catch(() => {});
-            } catch (e) {}
-        }
-
-        // 사용자 상호작용 시 AudioContext 활성화
-        document.addEventListener('click', function() { _initAudioContext(); }, { once: false });
-        document.addEventListener('keydown', function() { _initAudioContext(); }, { once: false });
-
-        function playNotificationSound() {
-            try {
-                if (_audioCtx && _audioBuffer) {
-                    const source = _audioCtx.createBufferSource();
-                    source.buffer = _audioBuffer;
-                    source.connect(_audioCtx.destination);
-                    source.start(0);
-                } else {
-                    // AudioContext 미활성화 상태 - 폴백
-                    const audio = new Audio('/api/sound/Beeper.wav');
-                    audio.volume = 1.0;
-                    audio.play().catch(() => {});
-                }
-            } catch (e) {}
-        }
-
-        function startBatchCompleteNotification() {
-            playNotificationSound();
-            // 탭이 비활성 상태일 때만 반짝임
-            if (document.hidden) {
-                startTabBlink();
-            }
-        }
-
-        function startTabBlink() {
-            stopTabBlink(); // 기존 타이머 정리
-            _blinkVisible = true;
-            _blinkTimer = setInterval(() => {
-                _blinkVisible = !_blinkVisible;
-                document.title = _blinkVisible ? '🔔 배치 완료!' : _originalTitle;
-            }, 800);
-        }
-
-        function stopTabBlink() {
-            if (_blinkTimer) {
-                clearInterval(_blinkTimer);
-                _blinkTimer = null;
-            }
-            document.title = _originalTitle;
-        }
-
-        // 사용자가 탭을 확인하면 원래대로 복구
-        document.addEventListener('visibilitychange', () => {
-            if (!document.hidden) {
-                stopTabBlink();
-            }
-        });
-
         // ─── 워크플로우 능력 테스트 ───
         let wfTestState = { running: false, total: 0, completed: 0, results: [] };
 
@@ -68284,7 +67511,6 @@
             const checked = document.querySelectorAll('.pp-emotion-char-check:checked').length;
             status.textContent = `선택 ${checked}/${total}`;
         }
-
 
 
         async function ppEmotionDoExtract() {

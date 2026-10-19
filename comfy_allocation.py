@@ -17,7 +17,6 @@ COMFY_TASK_DEFINITIONS: tuple[tuple[str, str, str], ...] = (
     ("asset_generation", "에셋 생성", "에셋 이미지 생성"),
     ("qwen_edit", "EDIT", "Qwen Edit 및 ANIMA Inpainting"),
     ("tag_analysis", "태그 분석", "Comfy 워크플로우 기반 이미지 태그 분석"),
-    ("outfit", "복장 추출", "복장 추출 워크플로우"),
     ("asset_lora_training", "에셋 LoRA", "에셋 LoRA 학습"),
     ("bot_lora_training", "봇 LoRA", "봇 캐릭터 LoRA 학습"),
     (
@@ -48,9 +47,6 @@ VIDEO_ENGINE_COMFY_TARGET = "video_engine"
 # 기준은 "GPU 가 필요한가" 가 아니라 **결과를 원격에서 회수할 길이 있는가** 다.
 # 컨테이너 파일시스템은 휘발성이라, 결과는 이미지 바이트·text_outputs·볼륨
 # artifact 중 하나로 돌아와야 한다. 그러지 못하면 실행이 성공해도 쓸모가 없다.
-#
-# outfit 만 빠져 있다. 워크플로우가 배포되지 않아(매니페스트 excluded_filenames)
-# 요구사항조차 알 수 없다. 바인딩이 없어 로컬 모델을 요구하지도 않는다.
 MODAL_SUPPORTED_COMFY_TASK_KEYS = frozenset(
     {
         "illustration",
@@ -155,9 +151,6 @@ COMFY_TASK_WORKFLOW_BINDINGS: dict[str, tuple[str, ...]] = {
         "tag_analysis_workflow_source_path",
         "asset_tag_analysis_workflow_source_path",
     ),
-    # 복장 추출 워크플로우는 배포되지 않는다(설치기 excluded_filenames).
-    # 매니페스트에 대응 바인딩이 없어 빈 튜플이 정답이다.
-    "outfit": (),
     # lora_training_* 는 에셋·봇·인스턴스 학습이 공유한다
     # (queue_manager.py:3691·3815·4694).
     "asset_lora_training": (

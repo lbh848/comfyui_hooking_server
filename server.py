@@ -85,7 +85,6 @@ import piexif
 import piexif.helper
 HAS_PIEXIF = True
 
-from modes import outfit_mode
 from modes import enhance_mode
 from modes import asset_mode
 from modes import preset_importer
@@ -620,12 +619,9 @@ DEFAULT_CONFIG = {
         }
     },
     "bot_selected": "",  # 삽화 모드에서 선택된 봇 이름
-    "notification_enabled": True,  # 배치 완료 알림
     "memo_enabled": True,  # 서버 실행 중에만 유지되는 전역 메모장
     "clamp_enabled": False,  # 프롬프트 가중치 클램프 활성화 여부
     "clamp_value": 1.2,  # 가중치 클램프 최대값
-    "outfit_mode_enabled": False,  # 복장 추출 모드 활성화 여부
-    "outfit_workflow_source_path": "",  # 복장 추출 워크플로우 원본 소스 전체 경로
     "llm_service": "openai",    # 선택 서비스: vertex / openai / claude (기존 서비스 호출은 호환 유지)
     "llm_model": "",    # 슬롯별 모델명. 미설정 연결은 실행하지 않는다.
     "llm_alias": "",    # 선택 표시 이름. 비어 있으면 실제 모델명을 표시한다.
@@ -783,9 +779,7 @@ DEFAULT_CONFIG = {
     "character_maker_rag_threshold": 0.0,
     "character_maker_rag_timeout_sec": 20.0,
     "character_maker_rag_autostart": False,  # 서버 시작 시 내장 RAG 미리 로드
-    "outfit_prompt_file": "",   # 복장정리프롬프트 파일명 (customprompt/)
     "restore_prompt_file": "",  # 워크플로우 복원 프롬프트 파일명 (customprompt/)
-    "restore_mode_enabled": False,  # 워크플로우 복원 프롬프트 활성화 여부
     "restore_manual_enabled": False,  # 워크플로우 복원 프롬프트 수동 작동 활성화 여부
     "enhance_mode_enabled": False,  # 프롬프트 강화 모드 활성화 여부
     "enhance_prompt_file": "",  # 프롬프트 강화 파일명 (customprompt/)
@@ -862,7 +856,7 @@ REPORT_FILE = os.path.join(REPORT_DIR, "enhence_prompt_report.md")
 
 # 폴더 생성
 for _d in [WORKFLOW_DIR, CURRENT_WORK_DIR, WORKFLOW_BACKUP_DIR, LOG_DIR, FRONTEND_DIR, MODE_WORKFLOW_DIR, CURRENT_MODE_WORK_DIR,
-           os.path.join(WORKFLOW_BACKUP_DIR, "mode", "outfit_mode"), REPORT_DIR,
+           REPORT_DIR,
            os.path.join(BASE_DIR, "asset_data"), os.path.join(BASE_DIR, "asset"),
            os.path.join(BASE_DIR, "bot"),
            os.path.join(BASE_DIR, "pose_data")]:
@@ -1507,13 +1501,6 @@ def effective_execution_target(task_key: str) -> str:
         return configured
     return ""
 
-
-# ─── 복장 추출 모드 초기화 (함수 의존성 없는 부분만) ───
-outfit_mode.enabled = app_config.get("outfit_mode_enabled", False)
-outfit_mode.outfit_workflow_source_path = app_config.get("outfit_workflow_source_path", "")
-outfit_mode.mode_log_func = mode_logger.log
-outfit_mode.load_results_from_disk()
-print(f"[OUTFIT_MODE] 초기화: enabled={outfit_mode.enabled}, source={outfit_mode.outfit_workflow_source_path}, characters={len(outfit_mode.character_results)}")
 
 # ─── 프롬프트 강화 모드 초기화 ───
 enhance_mode.enabled = app_config.get("enhance_mode_enabled", False)
@@ -5193,14 +5180,7 @@ async def _run_data_patch_utility(
         "message": f"{char_name}[{visual_card_index}] 완료",
     }
 
-outfit_mode.notify_frontend_func = notify_frontend
 enhance_mode.notify_frontend_func = notify_frontend
-# 복장 추출 모드 함수 의존성 설정 (convert_workflow_via_endpoint 정의 후)
-outfit_mode.convert_workflow_func = lambda workflow: convert_workflow_via_endpoint(
-    workflow,
-    task_key="outfit",
-)
-outfit_mode.compute_hash_func = compute_file_hash
 # 에셋 생성 모드 함수 의존성 설정
 asset_mode.notify_frontend_func = notify_frontend
 asset_mode.convert_workflow_func = lambda workflow: convert_workflow_via_endpoint(
@@ -5252,141 +5232,6 @@ asset_tool.submit_workflow_func = lambda workflow, progress_callback=None: submi
 asset_tool.build_prompt_with_workflow_func = build_prompt_with_workflow
 # 포즈 편집 모드 함수 의존성 설정
 pose_mode.notify_frontend_func = notify_frontend
-
-
-# ─── 워크플로우 복원 (모드 종료 후 가중치 프리로드) ─────────
-async def _do_restore_workflow():
-    """모드 처리 완료 후 원래 워크플로우를 실행하여 가중치를 VRAM에 프리로드한다."""
-    if not app_config.get("restore_mode_enabled", False):
-        return
-    prompt_file = app_config.get("restore_prompt_file", "")
-    if not prompt_file:
-        print("[RESTORE] 복원 프롬프트 파일이 비어 있어 자동 복원 스킵")
-        return
-    illustration_workflow_type = workflow_profiles.normalize_illustration_workflow_type(
-        app_config.get("illustration_workflow_type")
-    )
-    if not workflow_profiles.is_restore_prompt_compatible(
-        prompt_file,
-        illustration_workflow_type,
-    ):
-        print(
-            f"[RESTORE] 호환되지 않는 복원 프롬프트 스킵: "
-            f"workflow={illustration_workflow_type}, prompt={prompt_file!r}"
-        )
-        return
-
-    filepath = os.path.join(CUSTOMPROMPT_DIR, prompt_file)
-    if not os.path.isfile(filepath):
-        print(f"[RESTORE] 복원 프롬프트 파일 없음: {prompt_file}")
-        return
-
-    try:
-        # 프롬프트 파일 동적 로드
-        spec = importlib.util.spec_from_file_location("restore_prompt", filepath)
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-
-        if not hasattr(module, "run"):
-            print(f"[RESTORE] run() 함수 없음: {prompt_file}")
-            return
-
-        result = await module.run()
-        positive = result.get("positive", "") if isinstance(result, dict) else ""
-        negative = result.get("negative", "") if isinstance(result, dict) else ""
-
-        if not positive:
-            print("[RESTORE] 빈 프롬프트 - 스킵")
-            return
-
-        print(f"[RESTORE] 워크플로우 복원 실행: positive='{positive}'")
-        # 하이브리드 자동 복원은 로컬 V3 ONLY ANIMA 워크플로우를 실행해
-        # ComfyUI 가중치를 다시 올린다. 원격 챈섭은 VRAM 복원 대상이 아니다.
-        restore_provider = workflow_profiles.illustration_providers(
-            illustration_workflow_type
-        )[0]
-        bot_name = str(app_config.get("bot_selected") or "")
-        if bot_name:
-            # V3/챈섭 복원 프롬프트도 일반 삽화와 동일한 섹션 파싱·빌더를 거쳐야 한다.
-            # 현재 GPU 큐 콜백 안에서 실행되므로 새 GPU 항목을 기다리지 않고 같은
-            # 코루틴에서 process_prompt를 호출해 교착 없이 순차 실행한다.
-            restore_prompt_id = f"auto-restore-{uuid.uuid4().hex[:8]}"
-            restore_prompt_data = {
-                "restore_pos": {
-                    "_meta": {"title": "긍정프롬프트"},
-                    "inputs": {"value": positive},
-                    "class_type": "STRING",
-                },
-                "restore_neg": {
-                    "_meta": {"title": "부정프롬프트"},
-                    "inputs": {"value": negative},
-                    "class_type": "STRING",
-                },
-            }
-            prompts[restore_prompt_id] = {
-                "status": "running",
-                "prompt": restore_prompt_data,
-                "client_id": "",
-                "extra_data": {},
-                "outputs": {},
-                "filename": None,
-                "save_node_id": find_save_image_node(restore_prompt_data),
-                "image_bytes": None,
-                "timestamp": time.time(),
-            }
-            await process_prompt(
-                restore_prompt_id,
-                restore_prompt_data,
-                {
-                    "illustration_provider": restore_provider,
-                    "illustration_gen_method": "자동 복원",
-                },
-            )
-            img_bytes = prompts.get(restore_prompt_id, {}).get("image_bytes")
-            if img_bytes:
-                print(
-                    f"[RESTORE] 삽화 파이프라인 복원 완료 "
-                    f"(이미지 {len(img_bytes):,}B, provider={restore_provider})"
-                )
-                await notify_frontend(
-                    "restore_image_saved",
-                    {"positive": positive[:100]},
-                )
-            else:
-                print(
-                    f"[RESTORE] 삽화 파이프라인 복원 결과가 비어 있음: "
-                    f"prompt_id={restore_prompt_id}, provider={restore_provider}"
-                )
-            return
-
-        img_bytes, error = await generate_image_with_prompt(
-            positive,
-            negative,
-            provider=restore_provider,
-            illustration_workflow_type=illustration_workflow_type,
-            comfy_task_key="restore_regenerate",
-        )
-        if img_bytes:
-            print(f"[RESTORE] 복원 완료 (이미지 {len(img_bytes):,}B)")
-            await save_backup(
-                img_bytes,
-                "restore",
-                positive,
-                negative,
-                gen_method="자동 복원",
-            )
-            await notify_frontend("restore_image_saved", {"positive": positive[:100]})
-        else:
-            print(
-                f"[RESTORE] 복원 실행 결과가 비어 있음: "
-                f"provider={restore_provider}, error={error}"
-            )
-    except Exception as e:
-        print(f"[RESTORE] 복원 중 오류: {e}")
-        traceback.print_exc()
-
-
-outfit_mode.on_processing_complete = _do_restore_workflow
 
 
 # ─── 프롬프트 처리 ───────────────────────────────────────
@@ -17344,12 +17189,6 @@ async def handle_api_reload_workflow(request: web.Request) -> web.Response:
         ok = await update_workflow_if_needed(local_first_modal_fallback=True)
         if ok:
             print("[RELOAD] 워크플로우 갱신 완료")
-            # 복장 추출 모드 워크플로우도 갱신
-            if outfit_mode.enabled and outfit_mode.outfit_workflow_source_path:
-                try:
-                    await outfit_mode.update_outfit_workflow()
-                except Exception as e:
-                    print(f"[RELOAD] 복장 추출 워크플로우 갱신 실패: {e}")
             return web.json_response({"success": True, "message": "변경된 워크플로우가 성공적으로 로드되었습니다"})
         else:
             return web.json_response(
@@ -20197,155 +20036,6 @@ async def handle_api_set_llm_edit_template(request: web.Request) -> web.Response
         return web.json_response({"success": False, "error": str(e)})
 
 
-# ─── 복장 추출 모드 API ──────────────────────────────────
-async def handle_api_outfit_mode_status(request: web.Request) -> web.Response:
-    """복장 추출 모드 상태를 반환한다."""
-    return web.json_response(outfit_mode.get_status())
-
-
-async def handle_api_outfit_mode_config(request: web.Request) -> web.Response:
-    """복장 추출 모드 설정을 변경한다."""
-    global app_config
-    try:
-        body = await request.json()
-
-        if "enabled" in body:
-            outfit_mode.enabled = bool(body["enabled"])
-            app_config["outfit_mode_enabled"] = outfit_mode.enabled
-            print(f"[OUTFIT_MODE] enabled = {outfit_mode.enabled}")
-
-        if "source_path" in body:
-            outfit_mode.outfit_workflow_source_path = str(body["source_path"])
-            app_config["outfit_workflow_source_path"] = outfit_mode.outfit_workflow_source_path
-            # 소스 경로 변경 시 캐시 초기화
-            outfit_mode._outfit_api_workflow = None
-            outfit_mode._outfit_hash = ""
-            print(f"[OUTFIT_MODE] source_path = {outfit_mode.outfit_workflow_source_path}")
-
-        save_config(app_config)
-
-        return web.json_response({
-            "success": True,
-            "status": outfit_mode.get_status()
-        })
-    except Exception as e:
-        print(f"[ERROR] outfit_mode_config failed: {e}")
-        return web.json_response({"error": str(e)}, status=500)
-
-
-async def handle_api_outfit_mode_results(request: web.Request) -> web.Response:
-    """복장 추출 결과를 캐릭터별 그룹핑하여 반환한다."""
-    return web.json_response(outfit_mode.get_results())
-
-
-async def handle_api_outfit_mode_result_image(request: web.Request) -> web.Response:
-    """복장 추출 결과 이미지를 서빙한다."""
-    filename = request.match_info.get("filename", "")
-    if ".." in filename or "/" in filename or "\\" in filename:
-        return web.Response(status=400, text="Invalid filename")
-
-    # 캐릭터 결과에서 이미지 찾기
-    for char_data in outfit_mode.character_results.values():
-        for entry in char_data.entries:
-            if entry.image_filename == filename and entry.image_bytes:
-                return web.Response(body=entry.image_bytes, content_type="image/png")
-
-    # ComfyUI output에서 직접 조회 시도
-    try:
-        img_bytes = await fetch_real_image(
-            filename,
-            "",
-            "output",
-            task_key="outfit",
-        )
-        if img_bytes:
-            return web.Response(body=img_bytes, content_type="image/png")
-        print(f"[OUTFIT_MODE] 결과 이미지가 비어 있음: filename={filename!r}")
-    except Exception as e:
-        print(
-            "[OUTFIT_MODE] Comfy 결과 이미지 조회 실패: "
-            f"filename={filename!r}, error={type(e).__name__}: {e}"
-        )
-        traceback.print_exc()
-
-    print(f"[OUTFIT_MODE] 결과 이미지를 찾지 못함: filename={filename!r}")
-    return web.Response(status=404)
-
-
-async def handle_api_outfit_mode_extract(request: web.Request) -> web.Response:
-    """가장 최근 완료된 배치에 대해 수동으로 복장 추출을 실행한다."""
-    if not outfit_mode.enabled:
-        return web.json_response({"error": "복장 추출 모드가 비활성화됨"}, status=400)
-
-    # 워크플로우 준비 확인
-    ok = await outfit_mode.update_outfit_workflow()
-    if not ok:
-        return web.json_response({"error": "복장 추출 워크플로우를 로드할 수 없음"}, status=400)
-
-    # 가장 최근 완료된 배치 찾기
-    # 배치 모드 하위시스템 제거로 더 이상 배치 소스가 없음 → 항상 추출 불가
-    batch = None
-
-    if batch is None:
-        return web.json_response({"error": "추출할 배치가 없음"}, status=400)
-
-    # 이미 처리 중이면 큐에 추가
-    if outfit_mode._is_processing:
-        return web.json_response({
-            "success": False,
-            "message": f"이미 처리 중입니다. 대기 큐에 추가합니다.",
-            "batch_id": getattr(batch, 'batch_id', '?'),
-        })
-
-    # 비동기로 처리 시작
-    batch_id = getattr(batch, 'batch_id', '?')
-    print(f"[OUTFIT_MODE] 수동 복장 추출 시작: batch={batch_id}")
-    asyncio.create_task(outfit_mode.process_batch_images(batch))
-
-    return web.json_response({
-        "success": True,
-        "message": f"배치 {batch_id} 복장 추출 시작",
-        "batch_id": batch_id,
-    })
-
-
-async def handle_api_outfit_mode_extract_upload(request: web.Request) -> web.Response:
-    """업로드된 이미지로 복장 추출을 실행한다."""
-    if not outfit_mode.enabled:
-        return web.json_response({"error": "복장 추출 모드가 비활성화됨"}, status=400)
-
-    # multipart에서 이미지 읽기
-    try:
-        reader = await request.multipart()
-        image_bytes = None
-        label = "upload"
-        async for part in reader:
-            if part.name == "image":
-                image_bytes = await part.read()
-            elif part.name == "label":
-                label = (await part.read()).decode("utf-8", errors="replace")
-    except Exception as e:
-        return web.json_response({"error": f"이미지 읽기 실패: {e}"}, status=400)
-
-    if not image_bytes:
-        return web.json_response({"error": "이미지가 없음"}, status=400)
-
-    if outfit_mode._is_processing:
-        return web.json_response({"error": "이미 처리 중입니다. 잠시 후 다시 시도하세요."}, status=409)
-
-    print(f"[OUTFIT_MODE] 이미지 업로드 복장 추출: {len(image_bytes)} bytes, label={label}")
-    result = await outfit_mode.process_single_image(image_bytes, label=label)
-
-    if result is None:
-        return web.json_response({"error": "복장 추출 실패 (워크플로우 준비 안됨)"}, status=500)
-
-    return web.json_response({
-        "success": result.get("success", False),
-        "error": result.get("error"),
-        "characters": result.get("characters", []),
-    })
-
-
 # ─── 모드 로그 API ─────────────────────────────────────────
 async def handle_api_mode_logs(request: web.Request) -> web.Response:
     """최근 모드 로그를 반환한다."""
@@ -21253,15 +20943,6 @@ async def handle_api_config(request: web.Request) -> web.Response:
                 val = body["comfyui_port_illustration"]
                 REAL_COMFY_ILLUST_PORT = int(val) if val else None
 
-            # 복장 추출 모드 설정 업데이트
-            if "outfit_mode_enabled" in body:
-                outfit_mode.enabled = bool(body["outfit_mode_enabled"])
-            if "outfit_workflow_source_path" in body:
-                outfit_mode.outfit_workflow_source_path = str(body["outfit_workflow_source_path"])
-                outfit_mode._outfit_api_workflow = None
-                outfit_mode._outfit_hash = ""
-
-            # 프롬프트 강화 모드 설정 업데이트
             if "enhance_mode_enabled" in body:
                 enhance_mode.enabled = bool(body["enhance_mode_enabled"])
             if "enhance_prompt_file" in body:
@@ -22213,144 +21894,6 @@ async def handle_api_customprompt_files(request: web.Request) -> web.Response:
     })
 
 
-_llm_lock = asyncio.Lock()
-
-
-async def handle_api_outfit_run_llm(request: web.Request) -> web.Response:
-    """선택된 복장정리프롬프트로 LLM을 실행하여 결과를 복장 통합 결과에 반영한다.
-    body: {"character": "이름"} → 특정 캐릭터만, 없으면 전원
-    """
-    if _llm_lock.locked():
-        return web.json_response({"error": "LLM이 이미 실행 중입니다"}, status=409)
-
-    async with _llm_lock:
-        prompt_file = app_config.get("outfit_prompt_file", "")
-        if not prompt_file:
-            return web.json_response({"error": "복장정리프롬프트가 선택되지 않았습니다"}, status=400)
-
-        filepath = os.path.join(CUSTOMPROMPT_DIR, prompt_file)
-        if not os.path.isfile(filepath):
-            return web.json_response({"error": f"프롬프트 파일 없음: {prompt_file}"}, status=404)
-
-        if not outfit_mode.character_results:
-            return web.json_response({"error": "복장 추출 결과가 없습니다"}, status=400)
-
-        # 특정 캐릭터 지정 여부 확인
-        target_character = None
-        target_characters = None
-        try:
-            body = await request.json()
-            target_character = body.get("character", None)
-            target_characters = body.get("characters", None)  # 리스트 지정
-        except:
-            pass
-
-        # LLM 설정 동기화
-        llm_sync_config = {}
-        for slot in llm_service.LLM_SLOT_IDS:
-            suffix = llm_service._slot_suffix(slot)
-            llm_sync_config[f"llm_service{suffix}"] = app_config.get(f"llm_service{suffix}", "openai")
-            llm_sync_config[f"llm_model{suffix}"] = app_config.get(f"llm_model{suffix}", "")
-        llm_service.update_config(llm_sync_config)
-
-        try:
-            # 동적으로 프롬프트 모듈 로드
-            spec = importlib.util.spec_from_file_location("custom_prompt", filepath)
-            mod = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(mod)
-
-            if not hasattr(mod, "run"):
-                return web.json_response(
-                    {"error": f"{prompt_file} 에 run() 함수가 없습니다"}, status=400
-                )
-
-            results = []
-            skipped = []
-            for name, char_data in outfit_mode.character_results.items():
-                # 특정 캐릭터가 지정된 경우 해당 캐릭터만 처리
-                if target_character and name != target_character:
-                    continue
-
-                # 캐릭터 리스트가 지정된 경우 해당 캐릭터만 처리
-                if target_characters and name not in target_characters:
-                    continue
-
-                # 전체 실행 시 llm_dirty가 아니면 건너뜀
-                if not target_character and not target_characters and not char_data.llm_dirty:
-                    skipped.append(name)
-                    continue
-
-                outfit_list = [
-                    {"outfit_prompt": e.outfit_prompt, "positive_prompt": e.positive_prompt}
-                    for e in char_data.entries
-                ]
-                chat_list = [
-                    e.chat_content for e in char_data.entries if e.chat_content
-                ]
-                if not outfit_list:
-                    continue
-
-                # API 호출 시 항상 실행 (llm_dirty 무시)
-
-                print(f"[LLM_PROMPT] 실행: character={name}, entries={len(outfit_list)}, chats={len(chat_list)}")
-                try:
-                    result_text = await mod.run(name, outfit_list, chat_list,
-                                                previous_result=char_data.llm_result)
-                except Exception as e:
-                    print(f"[LLM_PROMPT] 캐릭터 '{name}' LLM 실패, 건너뜀: {e}")
-                    results.append({"character": name, "error": str(e)})
-                    continue
-
-                if not result_text or result_text.startswith("[LLM 실패]"):
-                    print(f"[LLM_PROMPT] 캐릭터 '{name}' 실패: {result_text}")
-                    results.append({"character": name, "error": result_text or "LLM 응답 없음"})
-                    continue
-
-                # 결과를 llm_result에 반영
-                char_data.llm_result = result_text
-                char_data.llm_dirty = False
-                results.append({"character": name, "result_length": len(result_text)})
-                print(f"[LLM_PROMPT] 완료: character={name}, length={len(result_text)}")
-
-            if skipped:
-                print(f"[LLM_PROMPT] 변경 없음, 건너뜀: {skipped}")
-
-            # 결과 디스크 저장
-            outfit_mode.save_results_to_disk()
-
-            # 프론트엔드에 알림
-            if outfit_mode.notify_frontend_func:
-                await outfit_mode.notify_frontend_func("outfit_llm_completed", {
-                    "characters": len(results),
-                })
-
-            return web.json_response({"success": True, "results": results})
-
-        except Exception as e:
-            traceback.print_exc()
-            return web.json_response({"error": str(e)}, status=500)
-
-
-async def handle_api_outfit_mode_delete_entry(request: web.Request) -> web.Response:
-    """특정 캐릭터의 특정 엔트리를 삭제한다."""
-    try:
-        body = await request.json()
-        character_name = body.get("character_name", "")
-        entry_index = body.get("entry_index", -1)
-        if not character_name or entry_index < 0:
-            return web.json_response({"error": "character_name과 entry_index가 필요합니다"}, status=400)
-        success = outfit_mode.delete_entry(character_name, entry_index)
-        return web.json_response({"success": success})
-    except Exception as e:
-        return web.json_response({"error": str(e)}, status=500)
-
-
-async def handle_api_outfit_mode_clear(request: web.Request) -> web.Response:
-    """복장 추출 결과를 초기화한다."""
-    outfit_mode.clear_results()
-    return web.json_response({"success": True})
-
-
 # ─── 프롬프트 강화 모드 API ──────────────────────────────────
 async def handle_api_enhance_mode_status(request: web.Request) -> web.Response:
     """프롬프트 강화 모드 상태를 반환한다."""
@@ -22731,15 +22274,6 @@ app.router.add_post(
 )
 app.router.add_get("/api/llm_edit_prompt_template", handle_api_get_llm_edit_template)
 app.router.add_post("/api/llm_edit_prompt_template", handle_api_set_llm_edit_template)
-# 복장 추출 모드 API
-app.router.add_get("/api/outfit_mode/status", handle_api_outfit_mode_status)
-app.router.add_post("/api/outfit_mode/config", handle_api_outfit_mode_config)
-app.router.add_get("/api/outfit_mode/results", handle_api_outfit_mode_results)
-app.router.add_get("/api/outfit_mode/result_image/{filename}", handle_api_outfit_mode_result_image)
-app.router.add_post("/api/outfit_mode/extract", handle_api_outfit_mode_extract)
-app.router.add_post("/api/outfit_mode/extract_upload", handle_api_outfit_mode_extract_upload)
-app.router.add_post("/api/outfit_mode/clear", handle_api_outfit_mode_clear)
-app.router.add_post("/api/outfit_mode/delete_entry", handle_api_outfit_mode_delete_entry)
 # 프롬프트 강화 모드 API
 app.router.add_get("/api/enhance_mode/status", handle_api_enhance_mode_status)
 app.router.add_post("/api/enhance_report", handle_api_enhance_report)
@@ -22751,7 +22285,6 @@ app.router.add_get("/api/mode_logs/export", handle_api_mode_logs_export)
 app.router.add_get("/api/mode_workflow_files", handle_api_mode_workflow_files)
 # LLM / Custom Prompt API
 app.router.add_get("/api/customprompt_files", handle_api_customprompt_files)
-app.router.add_post("/api/outfit_mode/run_llm", handle_api_outfit_run_llm)
 app.router.add_post("/api/restore_manual_draw", handle_api_restore_manual_draw)
 app.router.add_get("/api/restore_manual/characters", handle_api_restore_manual_characters)
 # 프론트엔드
@@ -23010,12 +22543,6 @@ def _apply_repaired_workflow_runtime(bindings: dict[str, str]) -> None:
             current_api_workflow = None
             current_conversion_info = {}
 
-        if "outfit_workflow_source_path" in bindings:
-            outfit_mode.outfit_workflow_source_path = str(
-                bindings["outfit_workflow_source_path"]
-            )
-            outfit_mode._outfit_api_workflow = None
-            outfit_mode._outfit_hash = ""
         if "asset_workflow_source_path" in bindings:
             asset_mode.workflow_source_path = str(
                 bindings["asset_workflow_source_path"]
@@ -24440,15 +23967,6 @@ app.router.add_get("/api/text_output", handle_api_text_output_list)
 app.router.add_get("/api/text_output/{node_title}", handle_api_text_output_get)
 app.router.add_delete("/api/text_output", handle_api_text_output_clear)
 
-
-SOUND_DIR = os.path.join(BASE_DIR, "modes", "sound")
-async def handle_sound_file(request: web.Request) -> web.Response:
-    filename = request.match_info.get("filename", "")
-    filepath = os.path.join(SOUND_DIR, filename)
-    if os.path.isfile(filepath):
-        return web.FileResponse(filepath)
-    return web.Response(text="Not found", status=404)
-app.router.add_get("/api/sound/{filename}", handle_sound_file)
 
 # ─── 공지 캐시 시스템 ──────────────────────────────────
 NOTI_CACHE_FILE = os.path.join(BASE_DIR, "notification_cache.json")
