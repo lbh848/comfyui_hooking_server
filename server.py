@@ -22089,40 +22089,21 @@ async def handle_api_workflow_files(request: web.Request) -> web.Response:
 async def log_middleware(request, handler):
     log_to_file("requests.log", f">>> {request.method} {request.path_qs}")
     try:
-        # 대시보드 API는 화면과 동일한 서명된 브라우저 세션을 요구한다.
-        # Risu가 직접 호출하는 최소 브리지와 로그인 절차만 공개한다.
-        # 경로 접두사로 브리지 전체를 허용하면 같은 영역의 설정/프롬프트도
-        # 노출되므로 실제로 라우팅된 핸들러를 기준으로 구분한다.
-        public_api_handlers = (
-            frontend_auth_controller.handle_status,
-            frontend_auth_controller.handle_setup,
-            frontend_auth_controller.handle_login,
-            frontend_auth_controller.handle_logout,
-            handle_api_illustration_context_manifest,
-            handle_api_illustration_context_bridge_health,
-            handle_api_illustration_context_bridge_bots,
-            handle_api_illustration_context_bridge_sessions,
-            handle_api_illustration_context_bridge_session,
-            handle_api_illustration_context_bridge_image,
-            handle_api_illustration_context_bridge_client_log,
+        # 키 조회·저장·삭제 API에만 대시보드의 서명된 세션을 요구한다.
+        # 태그 결과 전송 등 기존 연동 API에는 브라우저 로그인을 요구하지 않는다.
+        key_api = request.path in (
+            "/api/llm/keys",
+            "/api/llm/vertex_key",
+            "/api/chansub/key",
+            "/api/vast/key",
+            "/api/comfy-installer/civitai-key",
+            "/api/comfy-installer/troubleshooting/civitai-key",
         )
-        route_handler = request.match_info.handler
-        if request.method == "OPTIONS":
-            # OPTIONS에는 개별 라우트가 없으므로 preflight 대상 메서드로
-            # 다시 조회한다. 공개 브리지의 기존 CORS 응답을 유지한다.
-            preflight_route = await request.app.router.resolve(request.clone(
-                method=request.headers.get("Access-Control-Request-Method", "GET")
-            ))
-            route_handler = preflight_route.handler
-        management_api = (
-            request.path.startswith("/api/")
-            and route_handler not in public_api_handlers
-        )
-        if management_api and not frontend_auth_manager.verify_session(
+        if key_api and not frontend_auth_manager.verify_session(
             request.cookies.get(SESSION_COOKIE_NAME)
         ):
             print(
-                f"[FRONTEND_AUTH] 관리 API 로그인 필요: "
+                f"[FRONTEND_AUTH] 키 API 로그인 필요: "
                 f"method={request.method} path={request.path!r} peer={request.remote!r}"
             )
             response = web.json_response(
@@ -22132,7 +22113,7 @@ async def log_middleware(request, handler):
             )
         else:
             response = await handler(request)
-        if management_api and not response.prepared:
+        if key_api and not response.prepared:
             response.headers["Cache-Control"] = "no-store"
         log_to_file("requests.log", f"<<< {request.method} {request.path_qs} -> {response.status}")
         return response
@@ -22193,8 +22174,8 @@ app.router.add_post("/upload/image", handle_dummy)
 app.router.add_get("/embeddings", handle_dummy)
 app.router.add_get("/extensions", handle_dummy)
 
-# 대시보드 로그인 세션은 log_middleware에서 관리 API에도 적용한다.
-# ComfyUI 전송 경로와 Risu의 최소 브리지는 기존처럼 사용할 수 있다.
+# 프런트엔드 루트와 키 API만 대시보드 로그인 세션으로 보호한다.
+# ComfyUI/Soya 플러그인이 사용하는 기존 연동 API는 그대로 유지한다.
 frontend_auth_controller.register_routes(app)
 app.router.add_get("/api/backups", handle_api_backups)
 app.router.add_get("/api/backups/filters", handle_api_backups_filters)
