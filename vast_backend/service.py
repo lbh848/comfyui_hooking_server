@@ -5147,9 +5147,27 @@ class VastService:
 
                     images: list[dict[str, Any]] = []
                     videos: list[dict[str, Any]] = []
+                    mask_url = ""
                     for node_id, output in outputs.items():
                         if not isinstance(output, dict):
                             continue
+                        if output.get("soya_dynamic_mask"):
+                            reference = output["soya_dynamic_mask"][-1]
+                            try:
+                                async with session.get(f"{base}/view", params={
+                                    "filename": reference["filename"],
+                                    "subfolder": reference.get("subfolder", ""),
+                                    "type": reference.get("type", "temp"),
+                                }) as response:
+                                    response.raise_for_status()
+                                    content = await response.read()
+                                    if content:
+                                        mask_url = "data:image/png;base64," + base64.b64encode(content).decode("ascii")
+                                    else:
+                                        print(f"[VAST:MASK] Final mask empty: prompt={prompt_id}, ref={reference}")
+                            except Exception as exc:
+                                print(f"[VAST:MASK] Final mask unavailable: prompt={prompt_id}, ref={reference}, error={exc}")
+                                traceback.print_exc()
                         for output_key in ("images", "videos", "gifs"):
                             references = output.get(output_key)
                             if not isinstance(references, list):
@@ -5225,6 +5243,9 @@ class VastService:
                     "model_sync": {},
                     "lora_sync": {},
                     "images": images,
+                    "face_positions": [position for output in outputs.values()
+                                       for position in output.get("soya_face_positions", [])],
+                    "mask_url": mask_url,
                     "artifacts": [],
                     "deferred_artifacts": artifacts,
                     "video_artifacts": videos,
@@ -5261,6 +5282,8 @@ class VastService:
             "model_sync": {},
             "lora_sync": {},
             "content_type": first.get("content_type"),
+            "face_positions": list(result.get("face_positions") or []),
+            "mask_url": result.get("mask_url") or "",
         }
 
     async def generate_video(

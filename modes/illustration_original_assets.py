@@ -1,8 +1,7 @@
-"""Select and resolve bot-uploaded original assets without prompt-list expansion.
+"""Select and resolve uploaded original assets from the resolved character catalog.
 
-The LLM receives the user's natural-language command instructions and the current
-conversation only.  The potentially very large on-disk filename index is kept
-server-side and is used solely to validate and resolve the selected command.
+The LLM receives actual command filenames grouped by character alongside the
+user's instructions and conversation. The same index resolves the selected file.
 """
 
 from __future__ import annotations
@@ -263,6 +262,8 @@ def build_selection_messages(
     allowed_slots: list[int],
     requested_count: int,
     profile_authority: str = "",
+    asset_index: dict[str, list[OriginalAssetCandidate]] | None = None,
+    character_names: list[str] | None = None,
 ) -> list[dict]:
     instruction = str(instruction or "").strip()
     if len(instruction) > MAX_ORIGINAL_ASSET_INSTRUCTION_CHARS:
@@ -271,7 +272,27 @@ def build_selection_messages(
             f"chars={len(instruction)}, max={MAX_ORIGINAL_ASSET_INSTRUCTION_CHARS}"
         )
         instruction = instruction[:MAX_ORIGINAL_ASSET_INSTRUCTION_CHARS]
-    system = """You are a one-step original image asset selector. Your only selection target is [CURRENT RESPONSE WITH INSERTION SLOTS]. The asset command instructions define permitted command grammar and IDs; they are not evidence that a character, outfit, form, emotion, or action occurs in the story. No uploaded-file list is provided, so do not infer availability from one. Never select an asset for {{user}} when the instructions prohibit it. [PRESELECTED PROFILE AUTHORITY] was resolved before this stage. It fixes each character's chronological semantic form/state and appearance; preserve those facts and never infer a different transformation or profile state independently. A profile heading or profile name is opaque internal metadata: it is not an asset command, is not wardrobe evidence, and must never be copied or lexically matched to a command ID. Its profile-default outfit is only a fallback when the narrative evidence below leaves the current wardrobe unstated.
+    candidates_by_character: dict[str, list[str]] = {
+        name: [] for name in character_names or []
+    }
+    for candidates in (asset_index or {}).values():
+        if len(candidates) != 1:
+            print(
+                "[ILLUST_ORIGINAL_ASSET] 선택 표에서 중복 ID 제외: "
+                f"candidates={[candidate.command for candidate in candidates]!r}"
+            )
+            continue
+        candidate = candidates[0]
+        candidates_by_character.setdefault(candidate.character, []).append(candidate.command)
+    catalog_rows = ["| Character | Exact uploaded src |", "| --- | --- |"]
+    for name, commands in candidates_by_character.items():
+        for command in sorted(commands) or ["(no selectable uploaded assets)"]:
+            cells = [value.replace("|", "&#124;").replace("\r", " ").replace("\n", " ")
+                     for value in (name, command)]
+            catalog_rows.append("| " + " | ".join(cells) + " |")
+    if not candidates_by_character:
+        catalog_rows.append("| (none) | (no selectable uploaded assets) |")
+    system = """You are a one-step original image asset selector. Your only selection target is [CURRENT RESPONSE WITH INSERTION SLOTS]. [CHARACTER ASSET CATALOG] lists the actual uploaded command filenames for the supplied characters; character resolution is already complete for this request when provided. Choose only an exact src from this table. The user's asset instructions determine permitted subjects and usage conditions, but filename spelling and extensions come from the table, not from composing the instruction grammar. Neither source establishes that a character, outfit, form, emotion, or action occurs in the story. Catalog membership does not override the user's restrictions or make an absent subject present. A character with no selectable uploaded assets has no image choice; do not invent one or substitute another character's image. Never select an asset for {{user}} when the instructions prohibit it. [PRESELECTED PROFILE AUTHORITY] was resolved before this stage. It fixes each character's chronological semantic form/state and appearance; preserve those facts and never infer a different transformation or profile state independently. A profile heading or profile name is opaque internal metadata: it is not an asset command, is not wardrobe evidence, and must never be copied or lexically matched to a command ID. Its profile-default outfit is only a fallback when the narrative evidence below leaves the current wardrobe unstated.
 
 Apply this evidence priority whenever sources differ:
 1. The local passage immediately around the candidate slot in the current response.
@@ -291,7 +312,7 @@ Command-selection rules:
 - Never treat a profile heading/name, or words shared between that identifier and a command ID, as evidence of the current wardrobe. Compare the complete scene, profile state, and command meanings semantically; do not select by keyword or string similarity.
 - When the asset instructions provide multiple wardrobe variants compatible with the same semantic form/state, choose the variant matching the current narrative wardrobe. Selecting that wardrobe variant does not constitute changing the preselected profile.
 - Match the state suffix conservatively to an expression or action actually established at that moment. Do not exaggerate a smile or smirk into a crazy smile, infer an unseen action, or use a nearby emotional label without textual support.
-- Apply every special-situation condition in the user's instructions literally. Compose and copy only command IDs permitted by those instructions.
+- Apply every special-situation condition in the user's instructions literally. Copy the exact uploaded src for a permitted choice from the catalog; do not construct a new filename.
 - Treat one continuous, unchanged pose/expression/action as one visual beat. Do not spend multiple selections on near-duplicate states from the same beat. Select the same subject again only after the response establishes a meaningful visual change.
 
 Slot-placement rules:
@@ -307,7 +328,7 @@ Requirements:
 - If the current response contains fewer valid distinct visual beats than the requested maximum, return fewer selections. Never invent, weaken, or duplicate a choice merely to reach the maximum.
 - Use only the allowed Cxxx anchor IDs supplied below.
 - Do not repeat a slot.
-- Preserve command spelling, spaces, underscores, and capitalization from the user's instructions.
+- Preserve src spelling, spaces, underscores, capitalization, and extension from the catalog. Table cells escape a literal pipe as &#124;.
 - The server will reject invented commands and commands without an uploaded original file.
 - Accuracy rules above are mandatory. Prefer a less prominent but still valid distinct visual beat before returning fewer selections; if no such beat exists, stop below the maximum. Never relax presence, outfit/form, state, or non-duplication rules merely to fill remaining capacity.
 - This is the only selection stage; make the best valid choices now."""
@@ -316,6 +337,8 @@ Requirements:
         instruction or "(empty)",
         "[PRESELECTED PROFILE AUTHORITY]",
         str(profile_authority or "").strip() or "(no multi-profile character)",
+        "[CHARACTER ASSET CATALOG]",
+        "\n".join(catalog_rows),
         "[RECENT CONVERSATION CONTEXT]",
         str(conversation_context or "").strip() or "(none)",
         "[CURRENT RESPONSE WITH INSERTION SLOTS]",
@@ -341,6 +364,7 @@ async def select_original_assets(
     requested_count: int,
     asset_index: dict[str, list[OriginalAssetCandidate]],
     profile_authority: str = "",
+    character_names: list[str] | None = None,
 ) -> list[dict]:
     """Return per-item resolutions; invalid items carry an ``error`` value."""
     from modes import illustration_context_pipeline as pipeline
@@ -354,6 +378,8 @@ async def select_original_assets(
         allowed_slots=[anchor for anchor, slot in segment_slots.items() if slot in allowed_slots],
         requested_count=requested_count,
         profile_authority=profile_authority,
+        asset_index=asset_index,
+        character_names=character_names,
     )
 
     def validate(raw: str):
@@ -558,7 +584,7 @@ Return JSON only with this exact machine-consumed shape:
 {"selections":[{"src":"<one exact allowed candidate>","slot":"C001"}]}
 
 Requirements:
-- Return exactly one selection for every rejected slot.
+- Return at most one selection for each rejected slot. Omit a slot if no candidate depicts a permitted subject physically present there in the correct state and wardrobe. Do not replace an unavailable subject with another character just to fill the count.
 - Preserve each supplied Cxxx anchor ID exactly and do not repeat anchors.
 - Copy src exactly from the Allowed existing candidates for that same slot.
 - Never invent, shorten, combine, or rewrite a candidate.
@@ -574,7 +600,7 @@ Requirements:
         str(target_slotted or "").strip() or "(none)",
         "[REJECTED SELECTIONS AND ALLOWED EXISTING CANDIDATES]",
         "\n\n".join(recovery_blocks),
-        "[EXACT OUTPUT COUNT]",
+        "[MAXIMUM RECOVERY COUNT]",
         str(len(recovery_items)),
     ])
     return [

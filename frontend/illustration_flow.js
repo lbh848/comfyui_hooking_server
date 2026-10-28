@@ -122,6 +122,7 @@
             .if-call1-open{border:0;background:transparent;color:inherit;text-align:left;cursor:pointer;padding:0;width:100%;font:inherit}.if-call1-open:focus-visible{outline:2px solid #60a5fa;outline-offset:3px}
             .if-state-table-wrap{overflow:auto;max-height:55vh;border:1px solid #64748b55;border-radius:10px;margin:12px 0}.if-state-table{border-collapse:separate;border-spacing:0;width:max-content;min-width:100%;font-size:12px}.if-state-table th,.if-state-table td{border-right:1px solid #64748b44;border-bottom:1px solid #64748b44;padding:10px;vertical-align:top}.if-state-table thead th{position:sticky;top:0;background:var(--bg2,#111827);z-index:2}.if-state-table tbody th{position:sticky;left:0;background:var(--bg2,#111827);z-index:1;min-width:90px}.if-state-table td{min-width:190px;max-width:260px;overflow-wrap:anywhere}.if-state-tags+.if-state-tags{margin-top:8px}.if-state-direct{color:#93c5fd}.if-state-inherited{color:var(--text2,#94a3b8)}.if-state-tag-label{font-weight:700;font-size:11px;margin-bottom:3px}
             .if-developer{z-index:490;width:min(620px,94vw)}
+            .if-resolve-summary h3{font-size:14px;margin:18px 0 8px}.if-resolve-table{width:100%;min-width:0}.if-resolve-table th,.if-resolve-table td{white-space:pre-wrap;overflow-wrap:anywhere}.if-resolve-table td{min-width:100px;max-width:none}.if-resolve-table td:nth-child(4){min-width:260px}.if-resolve-table th:first-child{width:60px;min-width:60px;white-space:nowrap}
             .if-header{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:18px 22px;border-bottom:1px solid #64748b44}
             .if-header h2{font-size:19px;margin:0}.if-title-row{display:flex;align-items:center;gap:9px;flex-wrap:wrap}.if-subtitle{font-size:12px;color:var(--text2,#94a3b8);margin-top:4px;overflow-wrap:anywhere}
             .if-actions,.if-legend,.if-legend-group{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.if-button{border:1px solid #64748b66;border-radius:8px;background:transparent;color:inherit;padding:6px 11px;cursor:pointer}.if-button:hover{background:#64748b33}.if-button:disabled{opacity:.45;cursor:not-allowed}.if-button-danger{border-color:#fb718580;color:#fecdd3}.if-button-danger:not(:disabled):hover{background:#fb71851f}.if-button:focus-visible,.if-port:focus-visible{outline:3px solid #60a5fa;outline-offset:3px}
@@ -536,6 +537,9 @@
         // Names also classify reserved LLM nodes before routing metadata arrives.
         const stageRules = [
             ['SLOT-SELECTER', 'call2_select', 2, 3],
+            ['MANGA-CHARACTER-RESOLVE', 'manga_select', 1, 0],
+            ['PLANNER-MANGA', 'manga_plan', 3, 0],
+            ['DETAIL-MANGA', 'manga_detail', 4, 0],
             ['PLAN', 'call2_plan', 3, 0],
             ['DETAIL', 'call2_detail', 4, 0],
             ['KEYVIS', 'call2_keyvis', 4, 1],
@@ -564,6 +568,9 @@
         ];
         const stageOf = n => {
             if (kind !== 'illustration' || n.kind === 'request' || n.kind === 'result') return null;
+            // Each correction/redraw follows its own dependency; grouping it
+            // with the first generation would turn the displayed loop into a cycle.
+            if (String(n.layout_group || '').startsWith('visual_correction_')) return null;
             for (const value of [n.call_name, n.label]) {
                 const name = String(value || '');
                 const rule = stageRules.find(([label]) => name === label || name.startsWith(`${label} `) || name.startsWith(`${label}-`));
@@ -634,7 +641,7 @@
         const depthById = new Map(nodes.map(n => [n.id, groupDepth(layoutGroup(n))]));
         const laneById = new Map();
         if (kind === 'illustration') {
-            const plans = orderedNodes.filter(n => stageById.get(n.id)?.[1] === 'call2_plan');
+            const plans = orderedNodes.filter(n => ['call2_plan', 'manga_plan'].includes(stageById.get(n.id)?.[1]));
             const detailsByPlan = new Map(plans.map(n => [n.id, []]));
             const planAncestors = (id, visiting = new Set()) => {
                 if (!nodeById.has(id) || visiting.has(id)) return new Set();
@@ -643,7 +650,7 @@
                 return new Set((nodeById.get(id).dependencies || [])
                     .flatMap(parent => [...planAncestors(parent, nextVisiting)]));
             };
-            orderedNodes.filter(n => stageById.get(n.id)?.[1] === 'call2_detail').forEach(n => {
+            orderedNodes.filter(n => ['call2_detail', 'manga_detail'].includes(stageById.get(n.id)?.[1])).forEach(n => {
                 const parents = planAncestors(n.id);
                 // Aggregate DETAIL calls have no single PLAN row to align with.
                 if (parents.size === 1) detailsByPlan.get([...parents][0]).push(n);
@@ -749,7 +756,8 @@
         if (n.task_key === 'illustration_multi_char_mask' || n.layout_group === 'illustration_multi_char_mask'
                 || caption === 'MULTI-CHAR-MASK' || caption.startsWith('MULTI-CHAR-MASK ')
                 || caption === 'MULTI-CHAR_MASK' || caption.startsWith('MULTI-CHAR_MASK ')) return 'mask';
-        return n.kind === 'image' || n.layout_group === 'illustration_generation' || n.image_nodes?.length ? 'image' : '';
+        return n.kind === 'image' || n.task_key === 'illustration_visual_selection'
+            || n.layout_group === 'illustration_generation' || n.image_nodes?.length ? 'image' : '';
     }
     function nodeImageUrl(n, runStatus) {
         if (n.image_url) return n.image_url;
@@ -765,51 +773,120 @@
     function imageMaskNode(n, flow) {
         const masks = (flow.nodes || []).filter(node => nodePreviewKind(node) === 'mask');
         const slot = illustrationSlot(n);
-        const matching = slot === null ? [] : masks.filter(mask => illustrationSlot(mask) === slot);
+        const panel = String(n.call_name || n.label || '').match(/컷\s*(\d+)/)?.[1];
+        const matching = slot === null ? [] : masks.filter(mask => illustrationSlot(mask) === slot
+            && (!panel || String(mask.call_name || mask.label || '').match(/컷\s*(\d+)/)?.[1] === panel));
         const dependencies = masks.filter(mask => n.dependencies?.includes(mask.id));
         const candidates = matching.length ? matching
             : dependencies.length === 1 && (slot === null || illustrationSlot(dependencies[0]) === null) ? dependencies : [];
         return candidates.findLast(mask => mask.status === 'completed') || candidates.at(-1);
     }
-    function imageMaskOverlay(layout, img, maskUrl, container = null) {
+    function imageMaskOverlay(layout, img, maskUrl, container = null, faces = []) {
         if (container) {
             container.replaceChildren();
-            container.hidden = !layout?.regions?.length;
+            container.hidden = !layout?.regions?.length && !maskUrl && !faces.length;
             if (container.hidden) return;
         }
+        if (!maskUrl && !layout?.regions?.length && !faces.length) return null;
         const ns = 'http://www.w3.org/2000/svg', svg = document.createElementNS(ns, 'svg');
         const width = img.naturalWidth || layout?.mask_width || 100, height = img.naturalHeight || layout?.mask_height || 100;
         svg.classList.add('if-image-mask-overlay'); svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
         svg.setAttribute('aria-hidden', 'true');
+        if (container && (maskUrl || faces.length) && img.src) {
+            const source = document.createElementNS(ns, 'image');
+            source.setAttribute('href', img.src); source.setAttribute('width', width); source.setAttribute('height', height);
+            svg.append(source);
+        }
         if (maskUrl) {
             const mask = document.createElementNS(ns, 'image');
+            mask.classList.add('if-applied-mask');
             mask.setAttribute('href', maskUrl); mask.setAttribute('width', width); mask.setAttribute('height', height);
             mask.setAttribute('preserveAspectRatio', 'none');
             mask.onerror = () => console.error('[ILLUST_FLOW] 생성 마스크 표시 실패:', {url: maskUrl});
-            svg.style.mixBlendMode = 'screen'; svg.style.opacity = '.35';
+            mask.style.mixBlendMode = 'screen'; mask.style.opacity = '.35';
             svg.append(mask);
-            return svg;
         }
         const colors = ['#ef4444', '#22c55e', '#3b82f6'];
-        [...layout.regions].sort((a, b) => a.x + a.width / 2 - b.x - b.width / 2).forEach((region, index) => {
-            const rect = document.createElementNS(ns, 'rect'), color = colors[index % colors.length];
-            for (const field of ['x', 'y', 'width', 'height']) rect.setAttribute(field, Number(region[field]) * (field === 'x' || field === 'width' ? width : height));
+        (maskUrl ? [] : [...(layout?.regions || [])]).forEach((region, index) => {
+          (region.boxes?.length ? region.boxes : [region]).forEach(box => {
+            const rect = document.createElementNS(ns, 'rect'), color = colors['RGB'.indexOf(region.channel) >= 0 ? 'RGB'.indexOf(region.channel) : index % colors.length];
+            for (const field of ['x', 'y', 'width', 'height']) rect.setAttribute(field, Number(box[field]) * (field === 'x' || field === 'width' ? width : height));
             rect.setAttribute('fill', color); rect.setAttribute('fill-opacity', '.28');
             rect.setAttribute('stroke', color); rect.setAttribute('stroke-width', '1.5'); rect.setAttribute('vector-effect', 'non-scaling-stroke');
             const title = document.createElementNS(ns, 'title'); title.textContent = region.name || ''; rect.append(title);
             svg.append(rect);
+          });
+        });
+        (layout?.panels || []).forEach(panel => {
+            const rect = document.createElementNS(ns, 'rect'), label = document.createElementNS(ns, 'text');
+            rect.classList.add('if-mask-panel');
+            for (const field of ['x', 'y', 'width', 'height']) rect.setAttribute(field, Number(panel[field]) * (field === 'x' || field === 'width' ? width : height));
+            rect.setAttribute('fill', 'none'); rect.setAttribute('stroke', '#e2e8f0'); rect.setAttribute('stroke-width', '2');
+            rect.setAttribute('vector-effect', 'non-scaling-stroke');
+            label.textContent = `${panel.panel}컷`; label.setAttribute('x', panel.x * width + width * .01);
+            label.setAttribute('y', panel.y * height + height * .04); label.setAttribute('fill', '#e2e8f0');
+            label.setAttribute('font-size', Math.max(width, height) * .035);
+            svg.append(rect, label);
+        });
+        if (layout?.dialogue_mask) {
+            const occupied = document.createElementNS(ns, 'image');
+            occupied.setAttribute('href', `data:image/png;base64,${layout.dialogue_mask}`);
+            occupied.setAttribute('width', width); occupied.setAttribute('height', height);
+            occupied.setAttribute('preserveAspectRatio', 'none');
+            occupied.style.mixBlendMode = 'screen'; occupied.style.opacity = '.65';
+            const title = document.createElementNS(ns, 'title'); title.textContent = '대사 점유 영역';
+            occupied.append(title); svg.append(occupied);
+        }
+        faces.forEach(face => {
+            const [x1, y1, x2, y2] = face.bbox;
+            const rect = document.createElementNS(ns, 'rect'), label = document.createElementNS(ns, 'text');
+            rect.classList.add('if-face-box');
+            rect.setAttribute('x', x1 * width); rect.setAttribute('y', y1 * height);
+            rect.setAttribute('width', (x2 - x1) * width); rect.setAttribute('height', (y2 - y1) * height);
+            rect.setAttribute('fill', 'none'); rect.setAttribute('stroke', '#fde047');
+            rect.setAttribute('stroke-width', '2'); rect.setAttribute('vector-effect', 'non-scaling-stroke');
+            const fontSize = Math.max(width, height) * (container ? .032 : .055);
+            label.classList.add('if-face-name'); label.textContent = face.name;
+            label.setAttribute('x', (x1 > .75 ? x2 : x1) * width);
+            label.setAttribute('text-anchor', x1 > .75 ? 'end' : 'start');
+            label.setAttribute('y', y1 * height > fontSize * 1.3 ? y1 * height - fontSize * .25 : y1 * height + fontSize);
+            label.setAttribute('font-size', fontSize); label.setAttribute('font-weight', '700');
+            label.setAttribute('fill', '#fde047'); label.setAttribute('stroke', '#0f172a');
+            label.setAttribute('stroke-width', fontSize * .14); label.setAttribute('paint-order', 'stroke');
+            svg.append(rect, label);
         });
         if (container) {
+            const resultPreview = !!(maskUrl || faces.length);
+            const title = resultPreview ? 'FACE · 최종 마스크' : '재생성에 적용할 마스크 영역';
             svg.classList.remove('if-image-mask-overlay');
-            svg.style.width = `${Math.min(320, 280 * width / height)}px`;
+            svg.style.width = `${resultPreview ? Math.min(540, 400 * width / height) : Math.min(320, 280 * width / height)}px`;
             svg.removeAttribute('aria-hidden');
-            svg.setAttribute('role', 'img'); svg.setAttribute('aria-label', '재생성에 적용할 마스크 영역');
+            svg.setAttribute('role', 'img'); svg.setAttribute('aria-label', title);
             const legend = element('div', 'prompt-mask-legend');
-            [...svg.children].forEach((rect, index) => {
-                const line = element('div', '', `${'RGB'[index % colors.length]} · ${rect.textContent}`);
-                line.style.color = rect.getAttribute('stroke'); legend.append(line);
+            (layout?.regions || []).forEach((region, index) => {
+                const line = element('div', '', `${region.channel || 'RGB'[index]} · ${region.name}`);
+                line.style.color = colors[index % colors.length]; legend.append(line);
             });
-            container.append(element('strong', '', '재생성에 적용할 마스크 영역'), svg, legend);
+            container.append(element('strong', '', title));
+            if (resultPreview) {
+                const controls = element('div', 'prompt-mask-legend');
+                for (const [caption, available, selector] of [
+                    ['FACE', faces.length, '.if-face-box, .if-face-name'],
+                    ['최종 마스크', maskUrl, '.if-applied-mask'],
+                ]) {
+                    const label = element('label');
+                    if (available) {
+                        const toggle = element('input'); toggle.type = 'checkbox'; toggle.checked = true;
+                        toggle.onchange = () => svg.querySelectorAll(selector).forEach(node => {node.style.display = toggle.checked ? '' : 'none';});
+                        label.append(toggle, document.createTextNode(` ${caption}`));
+                    } else {
+                        label.textContent = `${caption} 기록 없음`;
+                    }
+                    controls.append(label);
+                }
+                container.append(controls);
+            }
+            container.append(svg, legend);
         }
         return svg;
     }
@@ -839,6 +916,7 @@
     }
     function nodePreview(n, flow, previewKey = n.id) {
         const kind = nodePreviewKind(n), preview = element('div', 'if-node-preview');
+        const isSelection = n.task_key === 'illustration_visual_selection';
         if (n.kind === 'result' && n.image_nodes?.length) {
             for (const id of n.image_nodes) {
                 const imageNode = flow.nodes.find(node => node.id === id);
@@ -849,30 +927,24 @@
             }
             return preview;
         }
-        preview.append(element('div', 'if-preview-title', kind === 'mask' ? '생성 영역' : '생성 이미지'));
+        preview.append(element('div', 'if-preview-title', kind === 'mask' ? '생성 영역' : isSelection ? '선택된 이미지' : '생성 이미지'));
         if (kind === 'mask') {
             const result = maskResults.get(maskResultKey(flow, n));
             if (result?.layout) {
-                const ns = 'http://www.w3.org/2000/svg', svg = document.createElementNS(ns, 'svg');
                 const imageNode = (flow.nodes || []).find(child => child.kind === 'image' && child.dependencies?.includes(n.id));
                 const image = imageNode && previewImages.get(imageNode.id);
                 const canvasWidth = image?.naturalWidth || result.layout.mask_width || 100;
                 const canvasHeight = image?.naturalHeight || result.layout.mask_height || 100;
-                svg.classList.add('if-mask-preview'); svg.setAttribute('viewBox', `0 0 ${canvasWidth} ${canvasHeight}`);
+                const svg = imageMaskOverlay(result.layout, {naturalWidth: canvasWidth, naturalHeight: canvasHeight});
+                svg.classList.remove('if-image-mask-overlay'); svg.classList.add('if-mask-preview'); svg.removeAttribute('aria-hidden');
                 svg.setAttribute('role', 'img'); svg.setAttribute('aria-label', `${n.label} 영역 배치`);
-                const colors = ['#ef4444', '#22c55e', '#3b82f6'];
-                const regions = [...result.layout.regions].sort((a, b) => a.x + a.width / 2 - b.x - b.width / 2);
-                regions.forEach((r, index) => {
-                    const rect = document.createElementNS(ns, 'rect');
-                    for (const field of ['x', 'y', 'width', 'height']) rect.setAttribute(field, Number(r[field]) * (field === 'x' || field === 'width' ? canvasWidth : canvasHeight));
-                    rect.setAttribute('fill', colors[index % colors.length]); rect.setAttribute('fill-opacity', '.65');
-                    rect.setAttribute('stroke', colors[index % colors.length]); rect.setAttribute('stroke-width', '.7');
-                    const title = document.createElementNS(ns, 'title'); title.textContent = r.name; rect.append(title); svg.append(rect);
-                });
+                const regions = result.layout.regions;
                 preview.append(svg);
                 regions.forEach((r, index) => {
                     const percent = v => `${(Number(v) * 100).toFixed(0)}%`;
-                    const line = element('div', 'if-mask-region', `${'RGB'[index]} · ${r.name} · 면적 ${(r.width * r.height * 100).toFixed(1)}%\nx ${percent(r.x)}, y ${percent(r.y)} · 폭 ${percent(r.width)}, 높이 ${percent(r.height)}`);
+                    const line = element('div', 'if-mask-region', r.boxes?.length
+                        ? `${r.channel || 'RGB'[index]} · ${r.name} · ${r.boxes.map(box => `${box.panel}컷`).join(', ')}`
+                        : `${r.channel || 'RGB'[index]} · ${r.name} · 면적 ${(r.width * r.height * 100).toFixed(1)}%\nx ${percent(r.x)}, y ${percent(r.y)} · 폭 ${percent(r.width)}, 높이 ${percent(r.height)}`);
                     line.style.color = ['#fecaca', '#bbf7d0', '#bfdbfe'][index % colors.length]; line.style.whiteSpace = 'pre-line'; preview.append(line);
                 });
                 preview.append(element('pre', 'if-mask-text', `구도: ${result.layout.composition_prompt || ''}\n배경: ${result.layout.background_prompt || ''}`));
@@ -881,22 +953,21 @@
             const url = nodeImageUrl(n, flow.status);
             if (url) {
                 const imageButton = button('', () => openDetail(n.id)); imageButton.className = 'if-preview-image-button';
-                imageButton.setAttribute('aria-label', `${n.label} 생성 이미지 크게 보기`);
+                imageButton.setAttribute('aria-label', `${n.label} ${isSelection ? '선택된 이미지' : '생성 이미지'} 크게 보기`);
                 const img = previewImages.get(previewKey) || element('img', 'if-preview-image');
                 if (img.getAttribute('src') !== url) {img.src = url; delete img.dataset.failed;}
                 img.alt = `${n.label} 생성 결과`; img.loading = 'lazy'; previewImages.set(previewKey, img);
                 img.onload = () => {if (activeTab === 'illustration' && flows.illustration?.id === flow.id) render();};
                 img.onerror = () => {console.error('[ILLUST_FLOW] 생성 이미지 표시 실패:', {node: n.id, url}); img.dataset.failed = 'true'; imageButton.replaceChildren(element('div', 'if-preview-empty', '이미지를 불러오지 못했습니다.'));};
-                const maskNode = imageMaskNode(n, flow);
+                const maskNode = isSelection ? null : imageMaskNode(n, flow);
                 const result = maskNode && maskResults.get(maskResultKey(flow, maskNode));
                 const recordedMask = Object.hasOwn(n, 'mask_url');
-                if ((n.mask_url || (!recordedMask && maskNode)) && img.dataset.failed !== 'true') {
+                if ((n.mask_url || (!recordedMask && maskNode) || n.face_positions?.length) && img.dataset.failed !== 'true') {
                     const toggle = element('label', 'if-mask-overlay-toggle'), input = element('input');
-                    const overlay = n.mask_url ? imageMaskOverlay(null, img, n.mask_url)
-                        : result?.layout ? imageMaskOverlay(result.layout, img) : null;
+                    const overlay = imageMaskOverlay(n.mask_url || !recordedMask ? result?.layout : null, img, n.mask_url, null, n.face_positions || []);
                     input.type = 'checkbox'; input.checked = maskOverlayNodes.has(previewKey); input.disabled = !overlay;
-                    input.dataset.maskOverlayNode = previewKey; input.setAttribute('aria-label', `${n.label} 마스크 겹쳐 보기`);
-                    toggle.title = result?.error || (overlay ? '생성 이미지 위에 인물 영역 마스크를 겹쳐 표시합니다.' : '마스크 결과를 기다리는 중입니다.');
+                    input.dataset.maskOverlayNode = previewKey; input.setAttribute('aria-label', `${n.label} MASK & 얼굴 보이기`);
+                    toggle.title = overlay ? '인물 영역 마스크와 마지막으로 추적한 얼굴 위치·캐릭터 이름을 겹쳐 표시합니다.' : result?.error || '마스크 결과를 기다리는 중입니다.';
                     if (overlay) {
                         overlay.toggleAttribute('hidden', !input.checked);
                         input.onchange = () => {
@@ -904,12 +975,12 @@
                             overlay.toggleAttribute('hidden', !input.checked);
                         };
                     }
-                    toggle.append(input, document.createTextNode('마스크 겹쳐 보기')); preview.append(toggle);
+                    toggle.append(input, document.createTextNode('MASK & 얼굴 보이기')); preview.append(toggle);
                     imageButton.append(img);
                     if (overlay) imageButton.append(overlay);
                 } else imageButton.append(img.dataset.failed ? element('div', 'if-preview-empty', '이미지를 불러오지 못했습니다.') : img);
                 preview.append(imageButton);
-            } else preview.append(element('div', 'if-preview-empty', n.error || '이미지 생성 대기'));
+            } else preview.append(element('div', 'if-preview-empty', n.error || (isSelection ? '이미지 선택 대기' : '이미지 생성 대기')));
         }
         return preview;
     }
@@ -924,7 +995,7 @@
             ? (flow.nodes || []).find(child => child.kind === 'image' && child.dependencies?.includes(n.id)) : n;
         const img = imageNode && previewImages.get(imageNode.id);
         return JSON.stringify([kind, n.label, n.status, n.error, nodeImageUrl(n, flow.status),
-            n.mask_url, Object.hasOwn(n, 'mask_url'), mask?.id, result, n.image_nodes,
+            n.mask_url, Object.hasOwn(n, 'mask_url'), n.face_positions, mask?.id, result, n.image_nodes,
             img?.naturalWidth, img?.naturalHeight, img?.dataset.failed]);
     }
     function render(timelineOnly = false) {
@@ -1123,7 +1194,7 @@
             const modelText = isQualityReview
                 ? '출력 ● 클릭 → 이미지 일괄 평가'
                 : n.mask_generation_mode === 'inline' ? `자체 생성 · ${n.source_call_name || '현재 모델'}`
-                : (executor === 'llm' ? (window.llmRouteSlotModelName?.(n.llm_slot, true, n.model || '') || n.model) : n.model) || (executor === 'llm' ? 'LLM' : executor === 'comfy' ? 'ComfyUI' : executor === 'human' ? '사람이 선택한 입력 상태' : '서버 처리');
+                : (executor === 'llm' ? (window.llmRouteSlotModelName?.(n.llm_slot, true, n.model || '') || n.model) : n.model) || (executor === 'llm' ? (n.status === 'waiting' ? '모델 배정 대기' : '모델 기록 없음') : executor === 'comfy' ? 'ComfyUI' : executor === 'human' ? '사람이 선택한 입력 상태' : '서버 처리');
             updateText(card.querySelector('.if-node-state'), nodeState(n));
             updateText(card.querySelector('.if-node-model'), modelText);
             let timing = card.querySelector('.if-node-timing');
@@ -1331,6 +1402,63 @@
     }
     window.appendIllustrationTrackedStateTable = appendTrackedStateTable;
     function appendTrackedStateTable(n, body) {
+        const callName = String(n.call_name || n.label || '').split(' ')[0];
+        if (n.task_key === 'illustration_character_resolve' || ['CHARACTER-RESOLVE', 'MANGA-CHARACTER-RESOLVE', 'CHARACTER-RESOLVE-REPAIR'].includes(callName)) {
+            const raw = n.output;
+            if (!hasDetailValue(raw)) return;
+            let resolved = raw;
+            try {
+                if (typeof raw === 'string') resolved = JSON.parse(raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1));
+            } catch (error) {
+                console.error('[ILLUST_FLOW] 캐릭터 리졸브 표 파싱 실패:', {callName, output: raw, status: n.status}, error);
+                body.append(element('p', 'if-subtitle', '표로 정리할 수 없는 응답입니다. RAW 출력을 확인하세요.'));
+                return;
+            }
+            if (!resolved || typeof resolved !== 'object') return;
+            const characters = Array.isArray(resolved.characters) ? resolved.characters : null;
+            const scenes = Array.isArray(resolved.scene_plan) ? resolved.scene_plan : null;
+            if (!characters && !scenes) return;
+            init();
+            const summary = element('section', 'if-resolve-summary');
+            const sections = [];
+            if (characters) sections.push({
+                key: 'characters', title: `전체 등장인물 (${characters.length}명)`, headers: ['순서', '캐릭터'],
+                rows: characters.map((character, index) => [index + 1, typeof character === 'string' ? character : character?.name ?? '—']),
+                empty: '등록된 등장인물 없음',
+            });
+            if (scenes) sections.push({
+                key: 'scenes', title: `선택 장면 (${scenes.length}개)`, headers: ['장면', '원문 구간', '등장인물', '장면 요약'],
+                rows: scenes.map((scene, index) => [index + 1, scene?.anchor_segment ?? '—',
+                    Array.isArray(scene?.characters) ? (scene.characters.map(character => typeof character === 'string' ? character : character?.name ?? '—').join('\n') || '등록 인물 없음') : '—',
+                    scene?.scene_brief ?? '—']),
+                empty: '선택된 장면 없음',
+            });
+            for (const section of sections) {
+                summary.append(element('h3', '', section.title));
+                const wrap = element('div', 'if-state-table-wrap'), table = element('table', 'if-state-table if-resolve-table');
+                wrap.dataset.detailScrollKey = `character-resolve-${section.key}`;
+                table.setAttribute('aria-label', section.title);
+                const head = element('thead'), header = element('tr'), rows = element('tbody');
+                section.headers.forEach(caption => {const cell = element('th', '', caption); cell.scope = 'col'; header.append(cell);});
+                head.append(header);
+                for (const values of section.rows) {
+                    const row = element('tr');
+                    values.forEach((value, index) => {
+                        const cell = element(index === 0 ? 'th' : 'td', '', value);
+                        if (index === 0) cell.scope = 'row';
+                        row.append(cell);
+                    });
+                    rows.append(row);
+                }
+                if (!section.rows.length) {
+                    const row = element('tr'), cell = element('td', '', section.empty);
+                    cell.colSpan = section.headers.length; row.append(cell); rows.append(row);
+                }
+                table.append(head, rows); wrap.append(table); summary.append(wrap);
+            }
+            body.append(summary);
+            return;
+        }
         const profile = !!n.profile_state_table;
         const timePlace = !!n.time_place_state_table;
         const data = profile ? n.profile_state_table : timePlace ? n.time_place_state_table : n.call1_state_table;

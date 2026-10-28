@@ -534,14 +534,16 @@ def recover_triggers(blocks: dict, bot_name: str) -> dict:
 
 
 def validate_character_selection(bot: object, character_names: object) -> list[str]:
-    """활성 봇의 1인/2인 캐릭터 선택을 검증하고 정식 이름으로 반환한다."""
+    """활성 봇의 캐릭터 선택을 검증하고 슬롯 순서대로 정식 이름을 반환한다."""
     if not isinstance(bot, dict):
         raise ValueError("활성 봇 데이터가 올바르지 않습니다")
     requested = [str(name or "").strip() for name in (character_names or [])]
-    if len(requested) not in (1, 2) or any(not name for name in requested):
-        raise ValueError(f"캐릭터 선택은 1명 또는 2명이어야 합니다: {requested}")
+    if not requested or any(not name for name in requested):
+        print(f"[LLM_EDIT:IDENTITY] 캐릭터 선택 누락: {requested}")
+        raise ValueError("각 슬롯의 캐릭터를 선택해주세요")
     if len({name.casefold() for name in requested}) != len(requested):
-        raise ValueError(f"같은 캐릭터를 두 슬롯에 선택할 수 없습니다: {requested}")
+        print(f"[LLM_EDIT:IDENTITY] 캐릭터 선택 중복: {requested}")
+        raise ValueError(f"같은 캐릭터를 여러 슬롯에 선택할 수 없습니다: {requested}")
 
     canonical = {
         str(character.get("name") or "").strip().casefold(): str(
@@ -1318,7 +1320,7 @@ def rebuild_v3_character_identity(
             traceback.print_exc()
             raise ValueError(f"기존 MULTI_CHAR 데이터를 읽지 못했습니다: {exc}") from exc
         if not isinstance(payload, dict) or payload.get("enable") is not True:
-            raise ValueError("2인 캐릭터 교체에는 활성 MULTI_CHAR 제어 블록이 필요합니다")
+            raise ValueError("다인 캐릭터 교체에는 활성 MULTI_CHAR 제어 블록이 필요합니다")
         snapshot_names = [str(name or "").strip() for name in multi_char_snapshot.get("character_order", [])]
         if [name.casefold() for name in snapshot_names] != [name.casefold() for name in names]:
             raise ValueError(
@@ -1343,7 +1345,7 @@ def rebuild_v3_character_identity(
             json.dumps(payload, ensure_ascii=False),
         )
     elif len(names) >= 2:
-        raise ValueError("2인 캐릭터 교체에 필요한 마스크 스냅샷이 없습니다")
+        raise ValueError("다인 캐릭터 교체에 필요한 마스크 스냅샷이 없습니다")
 
     print(
         f"[LLM_EDIT:IDENTITY] V3 캐릭터 제어 데이터 동기화 완료: "
@@ -1402,9 +1404,10 @@ def validate_v3_character_identity(positive: str, character_names: list[str]) ->
             )
 
     multi = blocks.get("MULTI_CHAR", "")
-    if len(names) == 2:
+    if len(names) > 1:
         if not multi:
-            raise ValueError("2인 선택인데 [MULTI_CHAR] 제어 블록이 없습니다")
+            print(f"[LLM_EDIT:IDENTITY] 다인 MULTI_CHAR 제어 블록 누락: characters={names}")
+            raise ValueError("다인 선택인데 [MULTI_CHAR] 제어 블록이 없습니다")
         payload = json.loads(multi)
         multi_names = [str(name or "").strip() for name in payload.get("char_name_list", [])]
         if [name.casefold() for name in multi_names] != [name.casefold() for name in names]:

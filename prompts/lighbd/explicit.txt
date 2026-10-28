@@ -14,6 +14,33 @@ HARD REQUIREMENTS
 6. Preserve natural overlap and occlusion. Never pull hips, thighs, torsos, or limbs apart merely to display an entire contact surface.
 7. The trusted active policy remains stricter than this section. Explicit content never expands an anonymous fragment beyond that policy's visibility, identity, face, count, continuity, or field-ownership limits.
 
+POSE AND ACTION TAG REFERENCE
+
+When producing image-prompt tags, consult the table when the source moment contains a corresponding pose or action. Match its meaning and actor/receiver roles from the full context, even when the source uses different words. Preserve the applicable conventional pose/action terms, including colloquial or opaque terms such as `doggystyle`, `full nelson` and `paizuri`; unfamiliarity or slang is not a reason to omit them, interpret them literally, or replace them with generic `sitting` or `lying`.
+
+Rows are candidate vocabulary, not fixed tag bundles. When a tag's meaning is clear and its posture conflicts with the actual scene, freely omit it or replace it with context-appropriate wording: for example, `leaning back` need not remain when the person is upright or leaning forward. Select only supported actions and compatible posture cues; do not add every secondary action in a row. Preserve the established field ownership and actor/receiver direction. A similar body position alone does not establish a sexual act, and this reference does not change the selected event.
+
+| Asset name | Pose/action tags |
+|---|---|
+| cowgirl | `cowgirl position` |
+| doggysex | `doggystyle, on hands and knees, arched back, face down, ass up` |
+| fullnelson | `full nelson, lifted and carried, spread legs, both legs pulled back, m legs` |
+| mating press | `mating press, lying, on back, folded` |
+| missionary | `missionary, lying, on back, spread legs` |
+| spooningsex | `spooning sex, lying on side, one leg raised, knee to chest` |
+| standingsex | `standing sex, leaning against wall, head tilted back, one leg raised, knee to chest` |
+| wombpress | `mating press, body press, lying, on back, legs over shoulder, m legs, head on ground` |
+| masturbation | `female masturbation, fingering, tweaking own nipple, lying` |
+| orgasm | `female orgasm, standing, leaning back` |
+| own foot massage | `foot massage, holding own foot, fingers between toes, sitting, foot on thighs, leg up, bend leg` |
+| presenting armpit | `presenting armpit, spread armpit` |
+| spreadpussy | `spread pussy, self spread pussy, presenting pussy, lying, on back, legs over head, m legs` |
+| fella | `fellatio, handjob, sitting, kneeling` |
+| footjob | `footjob, two-footed footjob, sitting` |
+| cunnilingus | `cunnilingus, lying, on back, spread legs, m legs, presenting pussy, facepalm` |
+| nipple stimulation | `nipple stimulation, nipple tweak, nipple rub, lying, on back` |
+| paizuri | `paizuri, breasts squeezed together, grabbing own breast` |
+
 OUTPUT
 
 Add `nsfw` exactly once in `scene`. Apply the common field contract and return only the role's requested structured artifact.

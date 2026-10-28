@@ -21,7 +21,7 @@ _latest_video_input = None
 _latest_lora_feedback = None
 _notify = None
 ROOT_TYPES = {"illustration", "illustration_llm_build", "illustration_easy_edit", "character_maker_illustration", "regenerate"}
-BACKGROUND_LLM_TYPES = {"illustration_quality_inspection"}
+BACKGROUND_LLM_TYPES = {"illustration_quality_inspection", "illustration_visual_correction", "illustration_visual_selection"}
 VIDEO_INPUT_TYPES = {
     "video_instruction_draft", "video_instruction_refine", "video_instruction_direct",
 }
@@ -104,8 +104,17 @@ def record_image_mask(image_bytes):
 
 
 async def record_comfy_dynamic_mask(outputs, fetch_image, *, port):
-    """Replace the initial preview with the final mask actually used by Comfy."""
+    """Record tracked face positions and the final mask actually used by Comfy."""
     for node_id, output in outputs.items():
+        if "soya_face_positions" in output:
+            run = _run.get()
+            for image_node_id in _frontier.get():
+                node = run["nodes"].get(image_node_id) if run is not None else None
+                if node is not None and node.get("kind") == "image":
+                    update(run, image_node_id, face_positions=copy.deepcopy(output["soya_face_positions"]))
+                    break
+            else:
+                print(f"[ILLUST_FLOW:FACE] No active image node; positions not recorded: node={node_id}")
         references = output.get("soya_dynamic_mask", [])
         if not references:
             continue
@@ -120,6 +129,7 @@ async def record_comfy_dynamic_mask(outputs, fetch_image, *, port):
                 return
             record_image_mask(image_bytes)
             print(f"[ILLUST_FLOW:MASK] Dynamic final mask recorded: node={node_id}")
+            return image_bytes
         except Exception as exc:
             print(f"[ILLUST_FLOW:MASK] Dynamic preview failed: node={node_id}, refs={references}, error={exc}")
             traceback.print_exc()
@@ -440,6 +450,10 @@ def stage(label, *, executor="process", layout_group=None):
 
 def queue_added(item):
     global _latest, _latest_video, _latest_video_input, _latest_lora_feedback
+    if (item.type == "illustration"
+            and ((item.params or {}).get("raw_body") or {}).get("illustration_gen_method") == "수동 복원"):
+        print(f"[ILLUST_FLOW] 수동 그리기는 작업 흐름 등록 생략: item={item.id}")
+        return
     run = _run.get()
     if item.type == "bot_lora_feedback" or (item.type == "bot_lora_training" and (item.params or {}).get("feedback_run_id") and run is not None and run.get("kind") == "lora_feedback"):
         root = item.type == "bot_lora_feedback"
@@ -558,7 +572,9 @@ def queue_added(item):
         kind="llm" if is_review else ("image" if item.type == "regenerate" else "request" if is_root else "image"),
         task_key=item.type,
         executor=executor,
-        layout_group="illustration_images" if item.type == "regenerate" else None if is_root or is_review else "illustration_images",
+        layout_group=(f"visual_correction_{item.id}" if item.type in {"illustration_visual_correction", "illustration_visual_selection"}
+                      else "illustration_images" if item.type == "regenerate"
+                      else None if is_root or is_review else "illustration_images"),
         **({"prompt_id": item.params["prompt_id"]} if not is_root and item.params.get("prompt_id") else {}),
         **({"inspection_scope": item.params.get("scope", "")} if is_review else {}),
         input={
@@ -674,9 +690,10 @@ def queue_execution(fn):
         if run.get("kind") == "video":
             executor = "comfy" if item.type in VIDEO_RENDER_TYPES else "process"
         waiting_comfy = getattr(item, "_comfy_submission", None) is not None and item.status == "waiting"
-        update(run, node_id, status="waiting" if waiting_comfy else "processing",
-               **({"started_at": None} if waiting_comfy else {}), ended_at=None,
-               summary="생성 대기" if waiting_comfy else "큐에서 실행 시작", executor=executor)
+        waiting_llm = is_review
+        update(run, node_id, status="waiting" if waiting_comfy or waiting_llm else "processing",
+               **({"started_at": None} if waiting_comfy or waiting_llm else {}), ended_at=None,
+               summary="생성 대기" if waiting_comfy else "LLM 호출 대기" if waiting_llm else "큐에서 실행 시작", executor=executor)
         if root:
             run["status"] = "processing"
             changed(run)
@@ -715,12 +732,13 @@ def queue_execution(fn):
                 # Images are delivered independently of the background review.
                 delivery_nodes = {
                     key: value for key, value in run["nodes"].items()
-                    if value.get("task_key") not in BACKGROUND_LLM_TYPES
+                    if value.get("task_key") != "illustration_quality_inspection"
                 }
                 depended = {d for n in delivery_nodes.values() for d in n["dependencies"]}
                 leaves = [n for n in delivery_nodes if n not in depended]
                 image_nodes = [key for key, value in delivery_nodes.items()
-                               if value.get("image_url") and value["created_at"] >= node["created_at"]]
+                               if value.get("image_url") and value.get("task_key") not in BACKGROUND_LLM_TYPES
+                               and value["created_at"] >= node["created_at"]]
                 add_node(run, "결과 반환", dependencies=leaves, status=status,
                          ended_at=time.time(), kind="result", executor="process", output=serializable(result),
                          image_nodes=image_nodes)

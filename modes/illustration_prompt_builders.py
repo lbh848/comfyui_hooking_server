@@ -1,6 +1,7 @@
 """Shared, side-effect-free message assembly for generation and the composition view."""
 import json
 import re
+from copy import deepcopy
 
 from modes.illustration_prompt_assembly import PromptText, prompt_join, prompt_sub, variable
 
@@ -35,10 +36,12 @@ def call1_messages(prompts, names, prior_status, baselines, past_text, segmented
     ]
 
 def time_place_messages(prompts, names, prior_state, past_text, segmented,
-                        *, slots=None, slotted="", segment_slots=None):
+                        *, slots=None, slotted="", segment_slots=None, toggles=None):
     anchors = list(segment_slots or {f"C{i + 1:03d}": slot for i, slot in enumerate(slots or [0])})
     return [
-        {"role": "system", "content": prompts["time_place"]},
+        {"role": "system", "content": role_context(
+            prompts["time_place"], "", genre=(toggles or {}).get("genre", ""),
+            genre_prompt=prompts.get("genre", ""))},
         {"role": "user", "content": "# CURRENT CANONICAL CHARACTERS\n"
          + variable(json.dumps(names, ensure_ascii=False), "현재 대화의 등록 인물")
          + "\n\n# PREVIOUS SAVED TIME AND PLACE (BEFORE CURRENT; APPLY NARRATIVE TRANSITIONS)\n"
@@ -52,12 +55,21 @@ def time_place_messages(prompts, names, prior_state, past_text, segmented,
     ]
 
 def selection_messages(prompts, role_context, names, single_names, scene_count, toggles, prior_status, past_text, segment_catalog):
+    from modes.illustration_context_pipeline import render_call2_prompt
+
+    explicit = ""
+    if toggles.get("nsfw"):
+        explicit = render_call2_prompt(prompts.get("call2_explicit", ""), toggles, include_server_limits=False)
+    else:
+        print("[ILLUST_CONTEXT:SELECT] NSFW OFF: NSFW 및 물리 접촉 지침 제외")
+    selection_key = "manga_select" if toggles.get("illustration_output_mode") in ("manga", "manga_both") else "call2_select"
     return [
-        {"role": "system", "content": role_context + "\n\n" + prompts["call2_select"]},
+        {"role": "system", "content": prompt_join("\n\n", (part for part in
+            (role_context, explicit, prompts[selection_key]) if part))},
         {"role": "user", "content": "# SCENE SELECTION WITH CURRENT PARTICIPATION\n"
-         "Use the CURRENT participants you resolve from the registered roster for scene_plan.characters. "
+         "scene_plan.characters contains only the selected visible registered CURRENT identities; [] is valid. "
          "Keep every registered CURRENT participant in the top-level characters, including those not selected for an image.\n"
-         + ("\n# SINGLE SUBJECTS\n" + variable(single_names, "싱글 프리셋 인물 후보(LoRA 우선)") if single_names is not None else "")
+         + ("\n# SINGLE SUBJECTS\n" + variable(single_names, "1인 선택 후보(등록 봇 캐릭터 우선)") if single_names is not None else "")
          + "\n\n# REQUESTED COUNT / CHARACTER LIMIT\n" + variable(scene_count, "요청 장면 수 설정")
          + "\nMaximum fully visible characters per image: " + variable(toggles['character_limit'], "인물 수 제한") + "."
          + ("\nClient focus: " + variable(toggles["focus"], "사용자 집중 대상") if str(toggles.get("focus") or "").strip() else "")
@@ -67,19 +79,39 @@ def selection_messages(prompts, role_context, names, single_names, scene_count, 
          + "\n\n# BOUNDED EARLIER CONTEXT (FACTS ONLY, NO NEW SCENE CANDIDATES)\n"
          + variable(past_text or "(none)", "과거 대화")
          + ("\n\n# FULL CURRENT CANDIDATE SEGMENTS (ANCHORS ONLY; NO SLOTS)\n" + variable(segment_catalog, "현재 장면 후보 원문") if segment_catalog else "")
-         + "\n\nAdd scene_plan to the character-resolution response. Each item has anchor_segment, characters and a short scene_brief stating the selection intent."},
+         + "\n\nAdd scene_plan to the character-resolution response. Each item has anchor_segment, characters and a short scene_brief stating the selection intent."
+         + (" For each manga page, begin scene_brief with its source range, such as C004-C008, followed by "
+            "one sentence about that passage's event. anchor_segment is the range's END: if a response or "
+            "consequence is part of the selected event, place the page after that response or consequence. "
+            "Keep the selected named subjects central throughout that passage."
+            if selection_key == "manga_select" else "")},
     ]
 
 def plan_messages(prompts, role_context, batch, batch_names, single_names, tracking, plan_profiles, past_text, segmented, toggles,
                   *, segment_slots=None, time_place=None, prior_status=None, prior_time_place=None, registered_names=None):
+    from modes.illustration_context_pipeline import render_call2_prompt
+
+    manga = toggles.get("illustration_output_mode") in ("manga", "manga_both")
+    system = role_context + "\n\n" + prompts["call2_plan"]
+    if manga:
+        explicit = ""
+        if toggles.get("nsfw"):
+            explicit = render_call2_prompt(prompts.get("call2_explicit", ""), toggles, include_server_limits=False)
+        else:
+            print("[ILLUST_CONTEXT:MANGA-PLAN] NSFW OFF: NSFW 및 물리 접촉 지침 제외")
+        system = prompt_join("\n\n", (part for part in (
+            role_context,
+            explicit,
+            prompts["manga_plan"],
+        ) if part))
     anchors = {f"SLOT{slot}": anchor for anchor, slot in (segment_slots or {}).items()}
     return [
-        {"role": "system", "content": role_context + "\n\n" + prompts["call2_plan"]},
+        {"role": "system", "content": system},
         {"role": "user", "content":
          "# ASSIGNED SELECTED SCENES (COUNT/ORDER/ANCHORS/CHARACTERS FIXED)\n"
          + variable(json.dumps({"scene_plan": batch}, ensure_ascii=False), "할당된 선택 장면")
          + ("\n\n# SINGLE SUBJECTS\n" + variable(json.dumps(
-             [name for name in single_names if name in batch_names], ensure_ascii=False), "싱글 프리셋 인물 후보(LoRA 우선)")
+             [name for name in single_names if name in batch_names], ensure_ascii=False), "1인 선택 후보(등록 봇 캐릭터 우선)")
             if single_names is not None else "")
          + ("\n\n# CURRENT TRACKED OUTFIT AND HAIRSTYLE (READ-ONLY)\n"
          + variable(json.dumps({anchors.get(slot, slot): {name: state for name, state in values.items() if name in batch_names}
@@ -109,17 +141,39 @@ def plan_messages(prompts, role_context, batch, batch_names, single_names, track
          + ("\n\nClient focus: " + variable(toggles["focus"], "사용자 집중 대상") if str(toggles.get("focus") or "").strip() else "")
          + ("\nClient direction: " + variable(toggles["direction"], "사용자 연출 지시") if str(toggles.get("direction") or "").strip() else "")
          + "\n\nExpand each supplied scene_brief into a complete grounded visual brief, preserving its selection intent. "
-         + "Keep every assigned anchor_segment and registered characters array in the same order. "
+         + ("Each assigned scene is ONE page with 3 or 4 sequential panels. In its scene_brief, write the panel sequence, "
+            "causal links and reading order. Return canvas and panels with page-relative bounds, panel scene_brief, "
+            "and dialogue entries (speaker, text, panel-local x, y, width). Include per-panel "
+            "source anchors and resolved profile/outfit/hair/time/place/lighting. Include the supplied identity and "
+            "exclusion details needed by the detailer at each depicted time. Dialogue output language: "
+            + variable(toggles.get("speak_language") or "한국어", "만화 대사 언어") + ". " if manga else "")
+         + "Keep every assigned anchor_segment and registered characters array in the same order, including an empty array. "
          + "Describe any source-grounded NPC and its policy-permitted visibility in scene_brief, not that array. "
-         + "Return only {\"scene_plan\":[{\"anchor_segment\":\"C001\",\"characters\":[\"canonical name\"],\"scene_brief\":\"complete visual brief\"}]}."},
+         + ("Use the complete scene_plan output contract in the system instructions; include every panel and its script."
+            if manga else "Return only {\"scene_plan\":[{\"anchor_segment\":\"C001\",\"characters\":[\"canonical name\"],\"scene_brief\":\"complete visual brief\"}]}.")},
     ]
 
 def detail_messages(detail_system, batch, slots, *, past_text="", segmented="", toggles=None,
                     prior_status=None, prior_time_place=None, mask_inline=False,
-                    mask_prompt="", canvas_sizes=None, keyvis_messages=None, registered_names=None):
+                    mask_prompt="", canvas_sizes=None, keyvis_messages=None, registered_names=None,
+                    plan_profiles=None, tracking=None, time_place=None, segment_slots=None):
+    manga = (toggles or {}).get("illustration_output_mode") in ("manga", "manga_both")
+    mask_inline = mask_inline or manga
+    batch_names = {character["name"] if isinstance(character, dict) else character
+                   for scene in batch for character in scene.get("characters", [])}
+    anchors = {f"SLOT{slot}": anchor for anchor, slot in (segment_slots or {}).items()}
     prepared = [{"slot": scene["anchor_segment"] if "anchor_segment" in scene else scene["slot"],
                  **{key: value for key, value in scene.items() if key not in {"slot", "anchor_segment"}}}
                 for scene in batch]
+    if manga:
+        # Pixels are retained for the renderer; DETAIL receives the measured
+        # geometry and exact script, not base64 image strings in its text input.
+        prepared = deepcopy(prepared)
+        for scene in prepared:
+            for panel in scene.get("panels") or []:
+                panel.pop("dialogue_overlay", None)
+                panel.pop("dialogue_mask", None)
+    manga_script = manga and any(not scene.get("panels") for scene in prepared)
     if keyvis_messages:
         # Scope the existing policies to their own image types. Context and the
         # final combined output contract are shared by this single LLM call.
@@ -132,8 +186,8 @@ def detail_messages(detail_system, batch, slots, *, past_text="", segmented="", 
             "KEY VISUAL INSTRUCTIONS (apply only to keyvis)", keyvis_system,
         ))
     if mask_inline or (toggles or {}).get("multi_char_mask_enabled", False):
-        detail_system = mask_messages(mask_prompt, {}, mask_inline=mask_inline,
-            generation_system=detail_system, canvas_sizes=canvas_sizes,
+        detail_system = mask_messages(mask_prompt, {"scenes": prepared} if manga else {}, mask_inline=mask_inline,
+            generation_system=detail_system, canvas_sizes=canvas_sizes, manga=manga,
             positive_note=str((toggles or {}).get("positive_note") or ""))[0]["content"]
     if keyvis_messages:
         if mask_inline:
@@ -161,6 +215,18 @@ def detail_messages(detail_system, batch, slots, *, past_text="", segmented="", 
         {"role": "system", "content": detail_system},
         {"role": "user", "content": "# ONLY THIS BATCH'S PREPARED SCENES\n"
          + variable(json.dumps({"scenes": prepared}, ensure_ascii=False), "이 호출의 장면·프로필·상태")
+         + ("\n\n# SELECTED PROFILE TIMELINE FOR ASSIGNED NAMES (READ-ONLY)\n"
+            + variable(json.dumps([item for item in plan_profiles if item["character"] in batch_names],
+                                  ensure_ascii=False), "해당 인물 프로필 타임라인")
+            if manga and plan_profiles is not None else "")
+         + ("\n\n# CURRENT TRACKED OUTFIT AND HAIRSTYLE (READ-ONLY)\n"
+            + variable(json.dumps({anchors.get(slot, slot): {name: state for name, state in values.items() if name in batch_names}
+                                  for slot, values in tracking.items()}, ensure_ascii=False), "추적된 복장·머리 상태")
+            if manga and tracking is not None else "")
+         + ("\n\n# CURRENT TRACKED TIME AND PLACE (READ-ONLY; SAME SLOT ALIGNMENT)\n"
+            + variable(json.dumps({anchors.get(slot, slot): {name: state for name, state in values.items() if name in batch_names}
+                                  for slot, values in time_place.items()}, ensure_ascii=False), "추적된 시간·장소 상태")
+            if manga and time_place is not None else "")
          + ("\n\n# PREVIOUS SAVED OUTFIT (BEFORE CURRENT; APPLY SOURCE CHANGES)\n"
             + variable(json.dumps(prior_status, ensure_ascii=False), "이전 저장 복장") if prior_status else "")
          + ("\n\n# PREVIOUS SAVED TIME AND PLACE (BEFORE CURRENT; APPLY SOURCE CHANGES)\n"
@@ -181,16 +247,47 @@ def detail_messages(detail_system, batch, slots, *, past_text="", segmented="", 
          + ("\n\nReturn one JSON object with a scenes array for exactly these C anchors: "
             if mask_inline else "\n\nReturn TOON inside <lb-xnai> with a scenes array for exactly these C anchors: ")
          + variable(json.dumps([scene["slot"] for scene in prepared]), "출력할 원문 앵커 목록")
-         + (". Each scene has slot, background_prompt, composition_prompt, regions "
+         + (". Each scene has slot, " + ("canvas [page pixel width, pixel height], " if manga_script else "")
+            + "characters (name, positive: shared appearance and wardrobe), and panels. "
+            "Each panel has panel, canvas [pixel width, pixel height], background_prompt, composition_prompt, "
+            + ("anchor_segment (its source instant), x/y/width/height (page-local placement), "
+               "dialogue [{speaker,text,x,y,width}] (panel-local placement), " if manga_script else "")
+            + "and regions aligned with the slot's characters array (character_prompt: pose/expression/placement, "
+            "x, y, width, height in panel-local coordinates). Do not repeat names or shared appearance in regions. "
+            "Use null for an absent character, keeping the other indices unchanged; [] means no depicted characters. " if manga else
+            ". Each scene has slot, background_prompt, composition_prompt, regions "
             "(name, character_prompt, x, y, width, height). " if mask_inline else
             ". Each scene has slot, camera, characters (name, positive, position), scene, supplement. ")
-         + "Use each scene's supplied profile/state and source chronology at its assigned anchor. "
-         + "For each scene with known time_place.lighting, copy that resolved English lighting description unchanged into its "
-         + ("background_prompt" if mask_inline else "scene")
+         + ("Each scene belongs to ONE 3- or 4-panel page. "
+            + ("PLAN OFF: the prepared scenes have selection intent only. Create the page layout, "
+               "source-faithful script and images together. Every panel includes dialogue: keep spoken lines "
+               "that carry the event, and use [] only for an intentionally silent beat. Saying a character "
+               "introduces themselves or makes an offer in an image prompt does not supply their dialogue. "
+               "The scene's slot is its recap endpoint. Choose every panel's action and dialogue from its "
+               "selected passage at or BEFORE that slot; later source text cannot complete this page. "
+               "Choose panel sizes around 0.75 MP at their page-placement aspect ratios. "
+               "Arrange the people with room for their script; the server renders it after this response. " if manga_script else
+               "Preserve the supplied script and panel plan. On a retry, return only the supplied outstanding panels; "
+               "completed panels are already retained. Copy each supplied canvas and keep people and causal clues "
+               "clear of the measured dialogue boxes. ")
+            + "Write one image descriptor per panel; the server adds its shared character text. "
+            "Do not put lettering or other panels in image prompts. "
+            + "Prepared profile/state at the assigned anchor describes "
+            "the page's END state; earlier panels use their own supported states in the timelines and source. "
+            "Dialogue output language: " + variable((toggles or {}).get("speak_language") or "한국어", "만화 대사 언어") + ". "
+            if manga else "Use each scene's supplied profile/state and source chronology at its assigned anchor. ")
+         + ("For each panel, include its source-grounded lighting at that instant in its description in " if manga else
+            "For each scene with known time_place.lighting, copy that resolved English lighting description unchanged into its ")
+         + ("panels[].background_prompt" if manga else "background_prompt" if mask_inline else "scene")
          + "; it already establishes the physical illumination even when its source is off-frame. "
          + "Do not shorten away its source/path or replace it with another time, mood or color treatment. "
          + ("The combined response must also contain exactly one keyvis object. " if keyvis_messages else "")
-         + ("Use the exact supplied C anchor as slot. "
+         + ("Use the exact supplied C anchor as slot. Define shared appearance and wardrobe only once in characters. "
+            "Facts that change within this page belong only in the relevant panel's character_prompt, "
+            "not in shared positive text. "
+            + ("Check that every panel includes its dialogue array before returning the JSON. " if manga_script else "")
+            + "No extra fields or prose." if manga else
+            "Use the exact supplied C anchor as slot. "
             "Write the final visible identities only in regions. No extra fields or prose."
             if mask_inline else "No extra fields.</lb-xnai>")},
     ]
@@ -206,9 +303,15 @@ def lb_extra_system_prompt_block(system_prompt):
     return "# TRUSTED ACTIVE BOT IMAGE POLICY\n" + variable(system_prompt, "lb-xnai.lb.extra 시스템 프롬프트")
 
 
-def role_context(protected, lb_extra_system_prompt):
+def role_context(protected, lb_extra_system_prompt, *, genre="", genre_prompt=""):
+    genre = str(genre or "").strip()
+    genre_context = (
+        "# GENRE AND WORLD SETTING\nDepiction genre: " + variable(genre, "묘사 장르")
+        + "\n\n" + genre_prompt
+    ) if genre else ""
     return prompt_join("\n\n", (part for part in (protected,
-        lb_extra_system_prompt_block(lb_extra_system_prompt) if lb_extra_system_prompt else "",) if part))
+        lb_extra_system_prompt_block(lb_extra_system_prompt) if lb_extra_system_prompt else "",
+        genre_context) if part))
 
 def resolution_messages(profile_inference_enabled, selected_names, tracked_state, catalog, segmented_current, card_identity_context, persona_context, profile_system, *, selection=None, anchors=None):
     if profile_inference_enabled:
@@ -246,11 +349,27 @@ def resolution_messages(profile_inference_enabled, selected_names, tracked_state
             + "\nBefore returning, compare every characters[].name against that list. "
             "If a value is not an exact member, replace it with the exact registered name "
             "when identity is established; otherwise omit the item. "
-            "Return only this JSON shape:\n"
-            '{"characters":[{"name":"exact registered name from the list above"'
-            '}]'
-            + (',"scene_plan":[{"anchor_segment":"C001","characters":["exact registered name"],"scene_brief":"short selection intent"}]}'
-               if selection else '}')
+            "Return characters: [] when CURRENT has no registered participants; unregistered participants remain valid source subjects. "
+            + ("The top-level characters array inventories ALL registered CURRENT speakers and actors, "
+               "including those absent from every selected page. Its size is independent of scene_plan "
+               "and has no per-image cast limit. Each scene's characters array may also be [] when no registered identity is selected. "
+               "Describe source-established NPCs, creatures and events in scene_brief, subject to the active image policy and visible-subject limit. "
+               "An empty registered array does not require an empty image or an added registered observer. "
+               "Each scene's characters lists all registered subjects selected for that view, including both participants of a shared shot. "
+               "For example, with registered A and B and a policy allowing shared views: "
+               "'A straightens B's collar, concentrating on the fastening' selects [A, B]; "
+               "'A's concentrated expression while adjusting an off-frame partner's collar' selects [A]; "
+               "'A accepts a key from an anonymous hand at the frame edge' also selects [A]. "
+               "A and B are illustrative placeholders, not output names. Choose the view under the active policy, "
+               "then make the brief and cast agree; a sentence led by A does not make a shared interaction a one-person image. "
+               "When selecting only one subject from a two-person event, make the partner's off-frame or minimal anonymous-fragment role clear in the brief. "
+               if selection else "")
+            + ("Return only a JSON object with characters and scene_plan arrays.\n"
+               "Each top-level characters item has name (an exact registered name from the list above).\n"
+               "Each scene_plan item has anchor_segment (an exact selectable C anchor), "
+               "scene_brief (one short English sentence expressing that selection intent), "
+               "then characters (an array of all registered names selected for this view; zero, one or multiple names). No extra fields."
+               if selection else 'Return only this JSON shape:\n{"characters":[{"name":"exact registered name from the list above"}]}')
         )
     if persona_context:
         user_content = variable(persona_context, "등록 사용자 페르소나") + "\n\n" + user_content
@@ -298,7 +417,8 @@ def keyvis_task_message(max_chars, roster_text, allowed, *, mask_inline=False):
     }
 
 def mask_messages(system_prompt, scene_payload, *, mask_inline=False, generation_system="",
-                  keyvis=False, canvas_sizes=None, positive_note=""):
+                  keyvis=False, manga=False, canvas_sizes=None, positive_note=""):
+    manga_script = manga and any(not scene.get("panels") for scene in scene_payload.get("scenes", []))
     if mask_inline or generation_system:
         generation = generation_system if isinstance(generation_system, PromptText) else PromptText(str(generation_system or ""))
         # Project instruction text only; source profiles and image tags stay intact.
@@ -356,17 +476,27 @@ def mask_messages(system_prompt, scene_payload, *, mask_inline=False, generation
                 "omit scene-wide solo and single-person focus tags.")
         generation = generation.replace(
             "Put scene-wide location, shared objects and an anonymous permitted partner fragment in `scene`, and the named person's own traits and main pose/action in their `positive`.",
-            "Put the shared setting and static objects in `background_prompt`, an anonymous permitted partner fragment and its physical relations in `composition_prompt`, and each named person's own traits and main pose/action in their `character_prompt`.")
+            "Put the shared setting and static objects in `background_prompt`, an anonymous permitted partner fragment and its physical relations in `composition_prompt`, "
+            + ("each named person's shared traits in their slot-level `positive`, and panel-specific pose/action in their region's `character_prompt`." if manga else
+               "and each named person's own traits and main pose/action in their `character_prompt`."))
         generation = generation.replace(
             "For Key Visual, `outfit_state` records its complete logical outfit, including off-frame items; `positive` contains only visible or coverage-defining garments.",
-            "Maintain the complete logical outfit as continuity context; `character_prompt` contains only visible or coverage-defining garments.")
+            "Maintain the complete logical outfit as continuity context; "
+            + ("shared wardrobe belongs in slot-level `positive`; only panel-specific changes belong in `character_prompt`." if manga else
+               "`character_prompt` contains only visible or coverage-defining garments."))
         generation = generation.replace(
             "Keep the complete logical outfit in `outfit_state`, only visible or coverage-defining garments in `positive`, and do not put logical outfit records in `supplement`.",
-            "Maintain the complete logical outfit as continuity context and include only visible or coverage-defining garments in `character_prompt`; do not output a logical outfit record.")
+            "Maintain the complete logical outfit as continuity context and include only visible or coverage-defining garments in "
+            + ("slot-level `positive`, with source-established changes only in the relevant panel's `character_prompt`" if manga else "`character_prompt`")
+            + "; do not output a logical outfit record.")
         generation = prompt_sub(
             r"(?m)^In `camera`, `scene`, `position` and `supplement`,[^\n]*",
-            "In `composition_prompt`, refer to people through their actual visible placement or pose using neutral terms such as person or figure. Do not put narrative names or distinguishing identity traits in either shared prompt. Identify an anonymous fragment by its visible region and frame entry without assigning an identity. Keep required image identity/LoRA trigger tokens in that person's `character_prompt`.",
+            "In `composition_prompt`, refer to people through their actual visible placement or pose using neutral terms such as person or figure. Use one consistent referent for each visible person. Bind that person's actions, expression and gaze to the same referent, without wording that suggests another actor. For a single visible subject, prefer direct pose-and-action phrasing. Describe a gaze toward an off-frame participant through its visible direction, without introducing that participant as another figure. When multiple people are intentionally visible, keep their references and actions distinct. Do not invent a placement to replace a name. Do not put narrative names or distinguishing identity traits in either shared prompt. Identify an anonymous fragment by its visible region and frame entry without assigning an identity. Keep required image identity/LoRA trigger tokens in that person's `character_prompt`.",
             generation)
+        if manga:
+            generation = generation.replace(
+                "Keep required image identity/LoRA trigger tokens in that person's `character_prompt`.",
+                "Keep required image identity/LoRA trigger tokens in that person's slot-level `positive`.")
         # Map field references, never narrative words or source/profile data.
         for old, new in (("characters[].positive", "regions[].character_prompt"),
                          ("characters[]", "regions[]"), ("characters[n]", "regions[n]"),
@@ -376,10 +506,14 @@ def mask_messages(system_prompt, scene_payload, *, mask_inline=False, generation
                          ("`scene`", "`composition_prompt`"),
                          ("`supplement`", "`composition_prompt`"),
                          ("`position`", "`composition_prompt`")):
+            if manga and (old.startswith("characters") or old in ("`characters`", "`positive`")):
+                continue
             generation = generation.replace(old, new)
         for old, new in (("positive", "character_prompt"), ("scene", "composition_prompt"),
                          ("supplement", "composition_prompt"), ("camera", "background_prompt"),
                          ("position", "composition_prompt")):
+            if manga and old == "positive":
+                continue
             generation = prompt_sub(r"(?<![\w`])" + old + r"(?=/supplement\b|[ \t]+field\b)", new, generation)
             generation = prompt_sub(r"(?<=scene/)" + old + r"\b", new, generation)
             generation = prompt_sub(r"\b(in|into|its|their) " + old + r"\b", r"\1 " + new, generation)
@@ -401,7 +535,6 @@ def mask_messages(system_prompt, scene_payload, *, mask_inline=False, generation
         generation = generation.replace("a natural supplement", "natural composition prose")
         generation = generation.replace("crop, and supplement", "crop, and composition prose")
         generation = generation.replace("occlusion, and supplement", "occlusion, and composition prose")
-
         mask = str(system_prompt or "").strip()
         mask = re.sub(r"\ADecompose one supplied illustration[^\n]*", "", mask)
         mask = re.sub(r"(?m)^The scene and every character prompt are already defined[^\n]*", "", mask)
@@ -422,14 +555,60 @@ def mask_messages(system_prompt, scene_payload, *, mask_inline=False, generation
                  '"composition_prompt":"...","regions":[{"name":"canonical name",'
                  '"character_prompt":"final image tags",'
                  '"x":number,"y":number,"width":number,"height":number}]}]}')
+        if manga:
+            mask = (
+                "MANGA PANEL GEOMETRY\nEach panel is a separate image-generation request with its own RGB mask. "
+                "Define the cast once in the slot's characters array. In each panel, align regions to that same "
+                "array order without repeating names: each object describes that character in this panel; null "
+                "means that character is absent. An empty regions array means no depicted characters. All body bounds are "
+                "normalized to the panel canvas [0,1], origin at top left. "
+                + ("Create the page layout and script before arranging people in this same response. "
+                   "Leave enough space for each dialogue item's text and line breaks; the server renders and measures "
+                   "the balloons after this call. " if manga_script else
+                   "The supplied dialogue boxes are measured from the already rendered script. ")
+                + "Keep each character region outside the entire rectangular "
+                "dialogue bboxes, including their corners. Place the corresponding speaker's head close beside "
+                "their own box with a small clear gap, preserving the action and reading order. Keep essential "
+                "contact and causal clues visible. The server excludes these full rectangles from character "
+                "conditioning. Preserve canonical order; "
+                "the server assigns channels. Anonymous fragments remain in panel prose without their own region."
+            )
+            shape = ('{"scenes":[{"slot":"Cxxx",' + ('"canvas":[1728,1728],' if manga_script else '')
+                     + '"characters":[{"name":"canonical name",'
+                     '"positive":"shared appearance and wardrobe"}],"panels":[{"panel":1,'
+                     + ('"anchor_segment":"C001","x":0.02,"y":0.02,"width":0.96,"height":0.31,'
+                        '"dialogue":[{"speaker":"canonical name","text":"source dialogue","x":0.05,"y":0.05,"width":0.3}],'
+                        if manga_script else '')
+                     + '"canvas":[1504,496],'
+                     '"background_prompt":"this panel camera, setting and lighting",'
+                     '"composition_prompt":"visible action and placement of people",'
+                     '"regions":[{"character_prompt":"pose, expression and placement",'
+                     '"x":number,"y":number,"width":number,"height":number}]}]}]}')
         system_prompt = prompt_join("\n\n", (part for part in (
             generation.strip(),
             "INTEGRATED IMAGE TEXT AND REGIONS\nWrite the final image prompt and predict its body regions in this same response. The following shared fields and region fields are the complete output contract.",
             mask.strip(),
-            "FIELD OWNERSHIP\n`background_prompt` owns shared camera, framing, environment including static shared objects, time and lighting. `composition_prompt` owns placement, visible extent, body support, action, contact, occlusion and any permitted anonymous fragment. `regions[].character_prompt` owns only its named character's visible identity, current wardrobe or coverage and main pose/action. Describe each fact once in its owning field. An anonymous fragment has no region or identity of its own."
+            ("FIELD OWNERSHIP\nEach slot's characters array defines canonical names and positive text "
+             "for appearance and wardrobe shared across its panels. Each panel owns canvas (its generation pixel size), "
+             "background_prompt (camera, setting, lighting), composition_prompt (contact and relations between people), "
+             "and regions (character_prompt for pose, expression and placement, plus body bounds). "
+             + ("It also owns its source anchor, page placement and dialogue array when no plan was supplied. "
+                if manga_script else "")
+             +
+             "The server combines shared positive text with that panel's character_prompt before each ANIMA request. "
+             "Do not repeat shared traits. Only source-established changes belong in the relevant panel's "
+             "character_prompt; omit those changing facts from shared positive text to avoid contradictions. "
+             "Keep dialogue in its script field and use its bboxes only to decide "
+             "the regions and visible placement. Image-prompt fields contain only the picture: no dialogue text, "
+             "balloon descriptions, bbox coordinates, reserved-space instructions or references to the script. "
+             "The server composites the script overlay. Return every assigned panel (3 or 4 initially, "
+             "only outstanding panels on a retry); "
+             "the example abbreviates the arrays."
+             if manga else
+             "FIELD OWNERSHIP\n`background_prompt` owns shared camera, framing, environment including static shared objects, time and lighting. `composition_prompt` owns placement, visible extent, body support, action, contact, occlusion and any permitted anonymous fragment. `regions[].character_prompt` owns only its named character's visible identity, current wardrobe or coverage and main pose/action. Describe each fact once in its owning field. An anonymous fragment has no region or identity of its own.")
             + ("" if keyvis else " For a source-supported image with no independently depicted person, return an empty regions array and describe its composition without inventing a person."),
             ("CANVAS\n" + variable(json.dumps(canvas_sizes, ensure_ascii=False), "인물 수별 실제 캔버스 크기")
-             + "\nUse the solo canvas for one independently depicted person and the group canvas for two or three, including NPCs. Each pair is [width, height] in pixels; normalize horizontal bounds by width and vertical bounds by height." if canvas_sizes else ""),
+             + "\nUse the solo canvas for one independently depicted person and the group canvas for two or three, including NPCs. Each pair is [width, height] in pixels; normalize horizontal bounds by width and vertical bounds by height." if canvas_sizes and not manga else ""),
             ("CLIENT POSITIVE NOTE\n" + variable(positive_note, "추가 긍정 프롬프트")
              + "\nUse this supplied context when planning the geometry; the renderer appends this note separately." if positive_note else ""),
             "OUTPUT\nUse English for image-prompt content, preserve exact registered canonical names and use role labels for any NPCs permitted by the generation task. Return only one JSON object in this shape (number means a finite JSON number derived from the chosen composition):\n" + shape,
@@ -444,8 +623,13 @@ def mask_messages(system_prompt, scene_payload, *, mask_inline=False, generation
 
 def keyvis_context_messages(keyvis_system, lb_extra_system_prompt, keyvis_profiles, tracking, past_text, slotted,
                             *, time_place=None, segment_slots=None, prior_status=None, prior_time_place=None,
-                            mask_inline=False, mask_prompt="", canvas_sizes=None, positive_note="", toggles=None):
+                            mask_inline=False, mask_prompt="", canvas_sizes=None, positive_note="", toggles=None,
+                            genre_prompt=""):
     anchors = {f"SLOT{slot}": anchor for anchor, slot in (segment_slots or {}).items()}
+    # Combined generation already receives this shared context from DETAIL.
+    if not (toggles or {}).get("keyvis_in_detail_enabled"):
+        keyvis_system = role_context(
+            keyvis_system, "", genre=(toggles or {}).get("genre", ""), genre_prompt=genre_prompt)
     if mask_inline or (toggles or {}).get("multi_char_mask_enabled", False):
         generation_system = prompt_join("\n\n", (part for part in (keyvis_system,
             lb_extra_system_prompt_block(lb_extra_system_prompt) if lb_extra_system_prompt else "") if part))

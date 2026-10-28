@@ -16,7 +16,6 @@ BACKUP_DIR = PROJECT_ROOT / "backups" / "model_backups"
 STAGING_DIR = MODEL_DIR / ".download"
 
 HF_REPO_ID = "byung-hyun/eye_segmentation_model"
-# 2026-07-19: yolov9c-face.onnx 를 opset12(DML 호환)로 재익스포트해 교체한 커밋.
 HF_REVISION = "631de80345123c291b9a2ebe6e33b44d2492ede5"
 HF_SUBFOLDER = "comfyui_hooking_server/models"
 
@@ -41,18 +40,6 @@ MODEL_FILES = {
     "bubble_predictor.onnx": (
         4_750_173,
         "b33987460d4562c85162d8662e86220cbceba7b1c3623b2e8734d22d89c78c80",
-    ),
-    "vitl14_visual.onnx": (
-        172_578_731,
-        "c2d5968e8c54661a5ce981da3fc00da7d9a5f5206daeb0f993e718adb79635b9",
-    ),
-    "yolov8m-face.onnx": (
-        103_835_563,
-        "b3b8a17732e40a06557900115f3298f262170f8519055c36855b6c88ceb4ecf9",
-    ),
-    "yolov9c-face.onnx": (
-        135_120_605,
-        "f3d1bc192eebc2b872be53213cbffb7be5cf32c649fc1d3eff85c9a1615a3577",
     ),
 }
 

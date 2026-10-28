@@ -6,6 +6,9 @@
     const nodeTime = 0.2;
 
     const taskKeys = {
+        'MANGA-CHARACTER-RESOLVE': 'illustration_character_resolve',
+        'PLANNER-MANGA': 'illustration_call2_plan',
+        'DETAIL-MANGA': 'illustration_call2',
         'CHARACTER-RESOLVE': 'illustration_character_resolve',
         'PROFILE-CONTEXT-TRANSLATE': 'illustration_profile_context_translate',
         'PROFILE-RESOLVE': 'illustration_profile_resolve',

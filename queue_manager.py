@@ -85,6 +85,8 @@ RESERVED_ILLUSTRATION_TYPE_ORDER = {
     "illustration_easy_edit": 2,
     "illustration_auto_feedback_llm": 2,
     "illustration_quality_inspection": 2,
+    "illustration_visual_correction": 2,
+    "illustration_visual_selection": 2,
     "illustration_image_analysis": 2,
     "restore_manual": 3,
 }
@@ -261,6 +263,8 @@ LLM_TYPES = frozenset({
     "illustration_easy_edit",       # 저장 슬롯 -> 기존 편하게 수정 LLM -> 수정 재생성
     "illustration_auto_feedback_llm", # 편하게 수정 오토피드백의 프롬프트 수정/비전 검수
     "illustration_quality_inspection", # 생성 직후 개별 검사 및 완성 세트 전체 품질 검사
+    "illustration_visual_correction",
+    "illustration_visual_selection",
     "illustration_image_analysis",  # 백업 이미지와 생성 기록의 원인 분석·자유 질문
     "instance_lora_prompt_refine",  # 태그 정제 / test_setup (instance·style·bot·asset 전부 LLM 호출)
     "lora_prompt_review",           # 1차 정제 + 설정된 route의 선택적 2차 비전 검수
@@ -717,6 +721,9 @@ class QueueManager:
             asyncio.ensure_future(self._deferred_prune(item))
             return item
         self.items.append(item)
+        if skip_notify and params.get("batch_id"):
+            # add_items_batch가 메타데이터를 붙인 뒤 정렬·워커 시작을 한 번에 한다.
+            return item
         self._gpu_wakeup.set()
         self._resort_pending()
         print(f"[QUEUE] 항목 추가: type={item_type}, label={label}, id={item.id}, priority={priority}, 대기={len([i for i in self.items if i.status == 'pending'])}")
@@ -763,8 +770,7 @@ class QueueManager:
     async def add_items_batch(self, items_spec: list, priority: int = 10) -> list:
         """배치 적재 — 1000장 = 1000항목을 동일 batch_id로 한 번에 적재.
         items_spec: [{params: dict, label: str}, ...].
-        항목당 add_item 호출은 skip_notify=True로 WS broadcast를 억제하고,
-        마지막에 _notify_queue_updated 1회만 전송(대량 적재 시 폭주 방지)."""
+        항목당 add_item은 등록만 하고 마지막에 정렬·워커 시작·WS 알림을 모아 처리한다."""
         if not items_spec:
             return []
         batch_id = uuid.uuid4().hex[:12]
@@ -774,26 +780,62 @@ class QueueManager:
             "failures": [], "item_ids": set(), "completed_at": None,
         }
         created = []
-        for idx, spec in enumerate(items_spec, start=1):
-            params = dict(spec.get("params", {}))
-            params["batch_id"] = batch_id
-            params["batch_index"] = idx
-            params["batch_total"] = batch_total
-            item = await self.add_item(
-                spec.get("type", "tag_analysis"),
-                spec.get("label", ""),
-                params,
-                priority=priority,
-                skip_notify=True,
-                depends_on=spec.get("depends_on"),
+        try:
+            for idx, spec in enumerate(items_spec, start=1):
+                params = dict(spec.get("params", {}))
+                params["batch_id"] = batch_id
+                params["batch_index"] = idx
+                params["batch_total"] = batch_total
+                item = await self.add_item(
+                    spec.get("type", "tag_analysis"),
+                    spec.get("label", ""),
+                    params,
+                    priority=priority,
+                    skip_notify=True,
+                    depends_on=spec.get("depends_on"),
+                )
+                item.batch_id = batch_id
+                item.batch_label = spec.get("batch_label")
+                item.batch_index = idx
+                item.batch_total = batch_total
+                created.append(item)
+        except Exception as exc:
+            print(
+                f"[QUEUE] 배치 적재 실패: batch_id={batch_id}, "
+                f"등록={len(created)}/{batch_total}, spec={spec!r}, error={exc}"
             )
-            item.batch_id = batch_id
-            item.batch_label = spec.get("batch_label")
-            item.batch_index = idx
-            item.batch_total = batch_total
-            created.append(item)
+            traceback.print_exc()
+            raise
+        finally:
+            # 일부 항목 등록 후 실패해도 이미 등록된 작업은 실행 가능하게 유지한다.
+            if created:
+                self._resort_pending()
+                self._gpu_wakeup.set()
+                if self._illust_wait_event is not None and any(
+                    item.type in ("illustration", "regenerate")
+                    and item.status == "pending" for item in created
+                ):
+                    self._illust_wait_event.set()
+                asyncio.ensure_future(self._process_loop())
+                asyncio.ensure_future(self._ensure_llm_workers())
+                execution_areas = {
+                    self._item_execution_area(item)[0]
+                    for item in created if item.status == "pending"
+                }
+                if execution_areas & {"external", "hybrid"}:
+                    asyncio.ensure_future(self._ensure_external_workers())
+                if execution_areas & {"modal", "comfy_parallel", "hybrid"} and any(
+                    self._modal_comfy_lane_allowed(item) for item in created
+                ):
+                    asyncio.ensure_future(self._ensure_modal_workers())
+                if execution_areas & {"vast", "comfy_parallel", "hybrid"} and any(
+                    self._vast_comfy_lane_allowed(item) for item in created
+                ):
+                    asyncio.ensure_future(self._ensure_vast_workers())
+                if "video_postprocess" in execution_areas:
+                    asyncio.ensure_future(self._ensure_video_postprocess_worker())
+                await self._notify_queue_updated()
         print(f"[QUEUE] 배치 적재 완료: batch_id={batch_id}, 항목 {batch_total}개")
-        await self._notify_queue_updated()
         return created
 
     async def cancel_batch(self, batch_id: str) -> int:
@@ -1521,32 +1563,33 @@ class QueueManager:
         candidate: QueueItem,
     ) -> bool:
         """서로 다른 레인에서도 같은 대상의 분석→정제→학습 순서를 보존한다."""
-        blocker_scope = self._dependency_scope(blocker)
-        candidate_scope = self._dependency_scope(candidate)
-        if blocker_scope is None or blocker_scope != candidate_scope:
-            return False
-
         analysis_types = {"instance_lora_analysis", "tag_analysis"}
         training_types = {
             "asset_lora_training",
             "bot_lora_training",
             "instance_lora_training",
         }
-        if (
+        if not ((
             candidate.type in ("instance_lora_prompt_refine", "lora_prompt_review")
             and blocker.type in analysis_types
-        ):
-            return True
-        if (
+        ) or (
             candidate.type in training_types
             and blocker.type
             in analysis_types | {"instance_lora_prompt_refine", "lora_prompt_review"}
-        ):
-            return True
-        return False
+        )):
+            return False
+        blocker_scope = self._dependency_scope(blocker)
+        return blocker_scope is not None and blocker_scope == self._dependency_scope(candidate)
 
     def _dependencies_ready(self, item: QueueItem) -> bool:
         explicit_ids = set(item.depends_on or [])
+        # 태깅 등 선행 단계는 명시된 의존성이 없으면 다른 항목을 기다리지 않는다.
+        # 매 이미지마다 전체 큐를 비교하면 N장 태깅이 N² 검사로 늘어난다.
+        if not explicit_ids and item.type not in (
+            "instance_lora_prompt_refine", "lora_prompt_review",
+            "asset_lora_training", "bot_lora_training", "instance_lora_training",
+        ):
+            return True
         for blocker in self.items:
             if blocker is item or blocker.status not in ("pending", "processing", "waiting"):
                 continue
@@ -1558,13 +1601,17 @@ class QueueManager:
 
     def _has_ready_pending(self, lane: str) -> bool:
         for item in self.items:
-            if item.status != "pending" or not self._dependencies_ready(item):
+            if item.status != "pending":
+                continue
+            # 레인부터 거른다. LLM 워커가 GPU 태깅 전체의 의존성을 검사하면 안 된다.
+            if lane == "llm":
+                if item.type in LLM_TYPES and self._dependencies_ready(item):
+                    return True
                 continue
             execution_area = self._item_execution_area(item)[0]
-            if lane == "llm" and item.type in LLM_TYPES:
-                return True
             if lane == "external" and execution_area in ("external", "hybrid"):
-                return True
+                if self._dependencies_ready(item):
+                    return True
             if (
                 lane == "gpu"
                 and item.type not in LLM_TYPES
@@ -1580,7 +1627,8 @@ class QueueManager:
                     )
                 )
             ):
-                return True
+                if self._dependencies_ready(item):
+                    return True
             if lane == "modal" and (
                 (
                     execution_area in ("modal", "comfy_parallel")
@@ -1591,7 +1639,8 @@ class QueueManager:
                     and self._modal_comfy_lane_allowed(item)
                 )
             ):
-                return True
+                if self._dependencies_ready(item):
+                    return True
             if lane == "vast" and (
                 (
                     execution_area in ("vast", "comfy_parallel")
@@ -1602,9 +1651,11 @@ class QueueManager:
                     and self._vast_comfy_lane_allowed(item)
                 )
             ):
-                return True
+                if self._dependencies_ready(item):
+                    return True
             if lane == "video_postprocess" and execution_area == "video_postprocess":
-                return True
+                if self._dependencies_ready(item):
+                    return True
         return False
 
     async def _notify_queue_updated(self):
@@ -2960,7 +3011,14 @@ class QueueManager:
                 )
                 value = 1
             total += value
-        return max(1, total)
+        # A context producer can await a queued visual correction. Keep a worker
+        # available for its child even with one configured API slot. The slot
+        # gates still enforce the actual network concurrency limits.
+        waiting_producers = sum(
+            item.type == "illustration_llm_build" and item.status in {"waiting", "processing"}
+            for item in self.items
+        )
+        return max(1, total) + waiting_producers
 
     async def _ensure_llm_workers(self):
         """활성 LLM 워커 수를 슬롯별 상한 합에 맞춘다. 부족하면 추가하고 초과면 축소한다."""
@@ -3049,6 +3107,8 @@ class QueueManager:
             "illustration_easy_edit": self._handle_illustration_easy_edit,
             "illustration_auto_feedback_llm": self._handle_runtime_llm_task,
             "illustration_quality_inspection": self._handle_runtime_llm_task,
+            "illustration_visual_correction": self._handle_runtime_llm_task,
+            "illustration_visual_selection": self._handle_runtime_llm_task,
             "illustration_image_analysis": self._handle_runtime_llm_task,
             "preset_import_classify": self._handle_runtime_llm_task,
             "character_maker_illustration": self._handle_character_maker_illustration,
@@ -3979,13 +4039,19 @@ class QueueManager:
                     "프롬프트는 다중 캐릭터인데 재생성 마스크 스냅샷이 없습니다"
                 )
 
-            if multi_char_context:
+            if multi_char_context and not prompt_multi_enabled:
+                print(
+                    f"[QUEUE:REGENERATE:MULTI_CHAR] 마스크 OFF: 적용 생략, 배치 보존; "
+                    f"item={item.id}, backup={backup_name}"
+                )
+
+            if multi_char_context and prompt_multi_enabled:
                 config = self.get_config() if self.get_config else {}
                 positive, multi_char_context = multi_char_mask.apply_solo_region_mask_policy(
                     positive, multi_char_context, (config or {}).get("illustration_context_toggles"),
                 )
 
-            if multi_char_context:
+            if multi_char_context and prompt_multi_enabled:
                 if provider != "comfy":
                     raise ValueError(
                         f"다중 캐릭터 마스크 재생성은 comfy 공급자만 지원합니다: {provider!r}"
@@ -4479,9 +4545,16 @@ class QueueManager:
             return re.sub(r'[\\/*?:"<>|]', '_', name).strip() or "unnamed"
 
         default_save_path = f"SOYA_BOT_LORA/{_safe_dirname_bot(bot_name)}/Lora/{_safe_dirname_bot(project_name)}/{_safe_dirname_bot(char_name)}"
-        lora_save_path = training_config.get("lora_save_path", default_save_path)
-        if not lora_save_path.rstrip("/").endswith(_safe_dirname_bot(char_name)):
-            lora_save_path = lora_save_path.rstrip("/") + "/" + _safe_dirname_bot(char_name)
+        lora_save_path = (training_config.get("lora_save_path") or default_save_path).replace("\\", "/").rstrip("/")
+        path_parts = lora_save_path.split("/")
+        safe_project = _safe_dirname_bot(project_name)
+        safe_character = _safe_dirname_bot(char_name)
+        # 같은 이름이어도 프로젝트와 캐릭터는 각각 별도의 폴더다.
+        if path_parts[-1] != safe_character or (
+            safe_project == safe_character
+            and path_parts[-2:] != [safe_project, safe_character]
+        ):
+            lora_save_path += "/" + safe_character
         if visual_card_id:
             lora_save_path = (
                 lora_save_path.rstrip("/")
@@ -6316,10 +6389,12 @@ class QueueManager:
                 })
             elif save_mode == "style_lora":
                 from modes.style_lora_mode import save_image_prompt as _style_save_prompt
-                _style_save_prompt(img["project"], img["filename"], {
+                saved = _style_save_prompt(img["project"], img["filename"], {
                     "positive": positive, "negative": "",
                     "original_positive": positive, "original_negative": "",
                 })
+                if not saved.get("success"):
+                    raise RuntimeError(f"태그 저장 실패: {saved.get('error', '알 수 없는 오류')}")
             else:
                 err = f"지원하지 않는 단일 태깅 source: {source}"
                 print(f"[QUEUE:TAG_ANALYSIS_SINGLE] {err}")
@@ -6973,12 +7048,14 @@ class QueueManager:
 
             refined_positive = result["data"].get("positive") or ""
             if refined_positive:
-                save_image_prompt(project, filename, {
+                saved = save_image_prompt(project, filename, {
                     "positive": refined_positive,
                     "negative": existing.get("negative", ""),
                     "original_positive": existing.get("original_positive") or current_positive,
                     "original_negative": existing.get("original_negative", existing.get("negative", "")),
                 })
+                if not saved.get("success"):
+                    raise RuntimeError(f"정제 결과 저장 실패: {saved.get('error', '알 수 없는 오류')}")
             await self._notify_progress(item, {"percentage": 100, "phase": "completed"})
             if self.notify_frontend:
                 await self.notify_frontend(event_type, {

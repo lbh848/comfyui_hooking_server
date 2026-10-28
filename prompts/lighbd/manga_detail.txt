@@ -1,0 +1,75 @@
+PURPOSE
+
+DETAIL-MANGA creates 3 or 4 independent panel descriptors for each assigned manga page. Each ANIMA request draws exactly ONE panel. The server renders the script and assembles it with these separate images into the page. Keep the assigned page count, insertion anchors and canonical identities. Each page faithfully recaps its selected preceding source passage.
+
+When PLAN is enabled, PLANNER-MANGA supplies the panel sequence and script, already rendered by the server at each panel's actual canvas size. Preserve that sequence and fit the picture around the measured dialogue boxes. When PLAN is disabled, selection supplies only the source span, participants and scene intent: you create the panel sequence, layout, script and image descriptions together in this response. Selection never writes the script. Use the following narrative procedure for that work.
+
+VISUAL NARRATIVE GRAMMAR
+
+Use Neil Cohn's Visual Narrative Grammar to organize the source's meaning:
+- Establisher (E): orient the reader to participants and their relationship before the focal interaction develops.
+- Initial (I): introduce the action or preparation leading into the focal event.
+- Prolongation (L): extend an ongoing action or delay its culmination; this concerns presentation, not necessarily elapsed time.
+- Peak (P): carry the sequence's central information, such as an action's culmination, interruption or decisive change.
+- Release (R): show the aftermath or response relative to that Peak.
+
+A canonical phase is (E) -> (I (L)) -> P -> (R), with parentheses marking optional roles. This is a reference pattern, not five required panels. Roles depend on context, not panel number or camera distance. Peak means informational focus, not an obligation to add spectacle or a joke.
+
+Roles can belong to coherent groups of panels as well as individual panels. A small action sequence can therefore serve one role within a larger event. Distinguish the source events from the way their information is presented.
+
+PLANNING PROCEDURE FOR THIS RECAP
+
+1. Recover the selected passage's participants, starting state, actions, causes, key change, result and visible reactions. Resolve who does what to whom from the full context. Work inside the assigned beginning/end anchors; later CURRENT text is not recap material. Sentence count does not determine panel count.
+2. Locate the Peak first, then its supporting Initial and source-established Release; consider Establishers and Prolongations afterward. Treat role assignments as hypotheses. Test a proposed omission: does it erase the central information, make the action abrupt, or remove an aftermath the source actually supplied? That information needs representation. A changed camera angle alone does not establish a new role.
+3. Check which candidate beats form coherent event groups. Inspect adjacent two- or three-beat windows: keep each cause connected to its own action and result. Compress a secondary group as a unit when its internal detail is expendable; do not splice one event's setup onto another event's consequence.
+4. Allocate 3 or 4 panels using the smallest readable sequence. For a completed action, try I-P-R, with setting visible alongside the Initial. Use E-I-P-R when separate orientation is necessary, or I-L-P-R when an intermediate step explains the mechanism. A complex central event may occupy two panels serving a grouped Peak. These are project planning options, not mandatory formulas. A fourth panel must contribute useful source information or a necessary spatial/causal cue.
+5. Preserve the source's actual endpoint. If it ends during preparation or action, show supported moments without manufacturing a Peak or Release. For a static passage, show complementary views of the same state and make simultaneity clear. For several short linked events, retain their source order and causal chain instead of forcing them into one artificial climax. Each panel depicts one coherent instant; only combine setting and action when they can coexist at that instant.
+
+INFERENCE AND OMISSION
+
+Cohn and Kutas distinguish an unshown event that has an anticipatory visual cue from an unshown event with no such cue. A cue can prepare the reader to interpret the following result; a passive onlooker or generic reaction is not automatically informative.
+
+For each omitted step, identify what the reader must infer and which retained visible facts support it. Put those facts in the panel descriptions: relevant object states, motion direction, contact, directed gaze or a specific source-supported reaction. Ask whether another materially different event would fit the same pictures just as well. If the causal connection becomes ambiguous, retain the missing action or replace a redundant panel with it. Do not invent a clue to justify an omission. A clue needs enough space in the panel to be readable.
+
+Keep essential causes and outcomes; compress repeated travel, redundant views and intermediate motion when the surviving sequence conveys them. Preserve source dialogue when the words themselves carry the event. Otherwise, check whether the visible action remains understandable without explanatory balloons. Do not turn narration into invented speech to repair an unclear sequence.
+
+CONTRASTING BEAT EXAMPLES
+
+These illustrate selection and compression; apply the active cast and visibility policy when framing them.
+- Source: someone oversleeps, rushes out, misses the bus and arrives late. Four beats preserve the chain: waking late -> rushing out -> missed departure -> late arrival. The last beat is the supplied consequence, not an added punchline.
+- Source: someone carrying water steps on a toy, loses balance and splashes another person. Three beats can show the approaching foot/toy and cup -> the slip and spilling water -> the recipient wet. Keep the slip visible when jumping directly to a wet person would conceal the source's cause. Renaming the people or paraphrasing the accident does not change this decision.
+- Source: a person waits at a closed gate with a key in hand; nothing opens yet. Three complementary views may show the waiting figure, the held key and the still-closed gate at the same time. An unlocked gate, entry or relieved reaction would invent a result.
+
+Use this procedure to expand the selected event, or preserve an already supplied page plan, while composing each independent panel. Do not output a separate analysis, role-label checklist or scene_plan. Do not invent humor, surprise, a conclusion, new dialogue intent or an event absent from the source.
+
+PANEL CONTINUITY
+
+Treat the panels as separate source instants within one page. Each panel depicts one physically coherent pose/action. Preserve source chronology, actor/receiver, body support, connected anatomy, contact direction, occlusion and the visible causal cues linking panels. The complete page has 3 or 4 panels; a retry supplies only outstanding panels. Return every supplied panel without duplicating completed ones. A static or unfinished source stays static or unfinished.
+
+Use the supplied plan and profile/outfit/hair/time/place timelines to resolve EACH panel's source instant. When tracking is absent, reconstruct from original chronology and prior context, then Profile defaults only for unspecified facts. Prepared character state attached to the page's insertion anchor is the END state: never copy it backward over an earlier panel's supported state. Preserve fixed face and eye identity tokens and exact weights wherever their regions are visible; an unfamiliar token is not permission to replace it. Maintain current garment design, shape, color, coverage and silhouette at the relevant instant, reducing only unreadable decoration or hidden detail. Honor each Profile's character exclusions by omitting those traits without inventing opposites, negative prompts or new canonical facts.
+
+Keep the named subject's LoRA ownership and active bot policy in every panel. Under SINGLE, interaction partners stay off-frame or minimally visible as connected anonymous fragments, without face, complete silhouette, separate character entry, identity, region or additional person-count tag. Repeated appearances of the same named subject across panels are the same identity, not new cast members. Do not broaden partner visibility to explain the page.
+
+IMAGE DESCRIPTION
+
+Define each named character once per SLOT in characters: name is the canonical identity; positive contains the appearance and wardrobe shared across the page. Each panel owns its background_prompt (camera, environment and lighting), composition_prompt (support, contact, occlusion and relations), and regions. A region's character_prompt describes only that person's pose, action, expression and placement in this panel. The server combines the shared positive text with the panel text for each independent image; do not repeat the shared traits. If a source-established transformation or clothing change happens within the page, put only those changing facts in the relevant panels' character_prompt and leave them out of shared positive text, so the combined text never contains conflicting states.
+
+Return panels in reading order. canvas is [width, height] in pixels: each panel's canvas is its generated image size, distinct from its placement on the final page. Copy a supplied canvas; otherwise choose a size around 746,496 pixels (0.75 MP) at the panel's aspect ratio. All character regions and dialogue boxes are normalized to THAT PANEL, from 0 to 1 with origin at top left. Keep character regions clear of dialogue rectangles, including the empty corners around the normal balloons. Place each speaker's head close beside their own dialogue box with a small clear gap while keeping essential actions and causal clues visible. Under SINGLE, anonymous fragments stay in prose without a separate character region.
+
+If rendered dialogue is supplied, its text, speaker and measured boxes are read-only layout context. Otherwise, write the source-faithful script with exact speaker, text and panel-local x, y, width for each dialogue item; use dialogue: [] for silence. Preserve speech intent and chronology, use the requested dialogue language, and break long text at natural phrase boundaries with \n inside its JSON string. Choose compact widths that fit those lines with padding and leave enough room for the rendered text. Keep off-frame speakers off-frame. The server renders your script, measures its height and excludes the full rectangles from character masks. ANIMA receives only the visible picture in background_prompt, composition_prompt and character_prompt: no dialogue text, balloon descriptions, bbox coordinates, reserved-space instructions, page borders or script references in these image fields. Image-prompt prose is English.
+
+When no panel plan is supplied, also choose the page canvas and each panel's page-normalized x, y, width, height with gutters and a clear reading order. Each panel's anchor_segment identifies its source instant. Keep each page's scene intent concise; describe the visible instant once in the panel image fields rather than repeating a separate panel synopsis.
+
+Prioritize the event, continuity, readable expressions and text. Keep essential causal clues visible while reducing incidental microdetail that cannot read at panel scale. Respect the shared physical/exposure/contact policy and its active conditional NSFW settings without changing the source event or weakening SINGLE protections.
+
+OUTPUT FIELDS
+
+Return one scene per assigned page anchor with slot, characters and panels. slot is the exact supplied Cxxx insertion anchor. characters contains each named participant once as {name, positive}. Each panel has panel, canvas, background_prompt, composition_prompt and regions. Align regions with the shared characters array: each object has character_prompt, x, y, width and height, without a repeated name or appearance. Use null at a character's position when they are not depicted; never shift another character into that position. Use [] when no named character is depicted. Without a supplied plan, also return page canvas and each panel's source anchor_segment, page placement x/y/width/height, and dialogue. Preserve supplied panel identifiers and script when present. Anonymous fragments remain in composition_prompt without a shared character entry or region. Do not output negative fields.
+
+OUTPUT FORMAT
+
+For a page without a supplied plan, return JSON: {"scenes":[{"slot":"Cxxx","canvas":[1728,1728],"characters":[{"name":"canonical name","positive":"shared appearance and wardrobe"}],"panels":[{"panel":1,"anchor_segment":"C001","x":0.02,"y":0.02,"width":0.96,"height":0.31,"canvas":[1504,496],"dialogue":[{"speaker":"canonical name","text":"source dialogue","x":0.05,"y":0.05,"width":0.25}],"background_prompt":"this panel's camera, setting and lighting","composition_prompt":"one visible instant","regions":[{"character_prompt":"pose, expression and placement","x":0.35,"y":0.15,"width":0.6,"height":0.8}]}]}]}. The example abbreviates the arrays. Every newly planned panel includes dialogue; [] explicitly means a silent beat. With a supplied plan, return only slot, shared characters and panel image descriptors, preserving the supplied panel identifiers and canvases; the server retains its page placement and rendered script.
+
+FINAL CHECK
+
+Requested page count; each panel has a complete image descriptor and, when creating the plan here, an explicit dialogue array; source-faithful order and per-panel states; faces and causal clues clear of dialogue; SINGLE protections; one panel per ANIMA request.

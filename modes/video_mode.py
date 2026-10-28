@@ -5174,6 +5174,7 @@ Preserve the user's explicit content, but discard invented micro-acting, generic
                     speak_text,
                     clean_settings,
                     str(info.get("bot_name") or ""),
+                    face_positions=info.get("face_positions"),
                 )
             elif postprocess_mode == "subtitle":
                 from modes.subtitle_render import compose_subtitle

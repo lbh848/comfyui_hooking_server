@@ -774,6 +774,7 @@ class AssetMode:
             "appearance": src.get("appearance", ""),
             "outfit": src.get("outfit", ""),
             "expression": src.get("expression", ""),
+            "group": src.get("group", ""),
         }
         self.save_tags()
         # 에셋 폴더 전체 복사
@@ -789,13 +790,26 @@ class AssetMode:
         self._log("character_duplicated", {"source": source_name, "new": new_name})
         return {"success": True}
 
-    def update_character(self, name: str, appearance: str = "", outfit: str = "", expression: str = "") -> dict:
+    def update_character(self, name: str, appearance: Optional[str] = None,
+                         outfit: Optional[str] = None, expression: Optional[str] = None,
+                         group: Optional[str] = None) -> dict:
         if name not in self._tags["characters"]:
+            print(f"[ASSET] 캐릭터 수정 실패: 존재하지 않는 캐릭터 name={name!r}, group={group!r}")
             return {"success": False, "error": "존재하지 않는 캐릭터"}
-        self._tags["characters"][name]["appearance"] = appearance
-        self._tags["characters"][name]["outfit"] = outfit
-        self._tags["characters"][name]["expression"] = expression
-        self.save_tags()
+        character = self._tags["characters"][name]
+        previous = character.copy()
+        try:
+            for key, value in (("appearance", appearance), ("outfit", outfit),
+                               ("expression", expression), ("group", group)):
+                if value is not None:
+                    character[key] = value.strip() if key == "group" else value
+            self.save_tags()
+        except Exception:
+            character.clear()
+            character.update(previous)
+            print(f"[ASSET] 캐릭터 수정 저장 실패: name={name!r}, group={group!r}")
+            traceback.print_exc()
+            raise
         return {"success": True}
 
     def list_characters(self) -> list[str]:

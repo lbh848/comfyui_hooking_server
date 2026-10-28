@@ -55,7 +55,10 @@ def _git_creationflags() -> int:
 
 
 def _list_untracked_files(root: Path) -> tuple[Path, ...]:
-    command = ["git", "ls-files", "--others", "--exclude-standard", "-z", "--"]
+    command = [
+        "git", "-c", f"safe.directory={root.resolve().as_posix()}",
+        "ls-files", "--others", "--exclude-standard", "-z", "--",
+    ]
     try:
         completed = subprocess.run(
             command,
@@ -382,7 +385,7 @@ def _restore_untracked_quarantine(
 
 
 def _run_git_capture(root: Path, *arguments: str) -> bytes:
-    command = ["git", *arguments]
+    command = ["git", "-c", f"safe.directory={root.resolve().as_posix()}", *arguments]
     try:
         completed = subprocess.run(
             command,

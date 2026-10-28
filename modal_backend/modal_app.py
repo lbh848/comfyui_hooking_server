@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import os
 import subprocess
@@ -1246,7 +1247,24 @@ class ComfyWorker:
                 f"ComfyUI 생성 실패: prompt_id={prompt_id}, messages={status.get('messages')}"
             )
         images: list[dict] = []
+        mask_url = ""
         for node_id, output in (history.get("outputs") or {}).items():
+            if output.get("soya_dynamic_mask"):
+                reference = output["soya_dynamic_mask"][-1]
+                try:
+                    view = requests.get("http://127.0.0.1:8188/view", params={
+                        "filename": reference["filename"],
+                        "subfolder": reference.get("subfolder", ""),
+                        "type": reference.get("type", "temp"),
+                    }, timeout=120)
+                    view.raise_for_status()
+                    if view.content:
+                        mask_url = "data:image/png;base64," + base64.b64encode(view.content).decode("ascii")
+                    else:
+                        print(f"[MODAL_COMFY:MASK] Final mask empty: prompt={prompt_id}, ref={reference}")
+                except Exception as exc:
+                    print(f"[MODAL_COMFY:MASK] Final mask unavailable: prompt={prompt_id}, ref={reference}, error={exc}")
+                    traceback.print_exc()
             for image in output.get("images", []):
                 if str(image.get("filename") or "").lower().endswith(".mp4"):
                     continue
@@ -1471,6 +1489,10 @@ class ComfyWorker:
         return {
             "prompt_id": prompt_id,
             "images": images,
+            "face_positions": [position
+                               for output in (history.get("outputs") or {}).values()
+                               for position in output.get("soya_face_positions", [])],
+            "mask_url": mask_url,
             "artifacts": artifacts,
             "video_artifacts": video_artifacts,
             "text_outputs": list(self.text_outputs),

@@ -8,6 +8,7 @@ to the configured vision provider only; LB Details keeps text and backup refs.
 from __future__ import annotations
 
 import io
+import base64
 import datetime
 import json
 import math
@@ -20,14 +21,21 @@ import uuid
 from typing import Any
 
 import illustration_flow
-from modes import lighbd_service, llm_service
+from modes import illustration_context_pipeline, lighbd_service, llm_service
+from modes.illustration_prompt_assembly import prompt_join, variable
 
 
 TASK_KEY = "illustration_quality_inspection"
+CORRECTION_TASK_KEY = "illustration_visual_correction"
+CORRECTION_SCOPE = "correction"
+SELECTION_TASK_KEY = "illustration_visual_selection"
+SELECTION_SCOPE = "selection"
+SELECTION_CALL_NAME = "VISUAL SELECTION"
 IMAGE_SCOPE = "image"
 OVERALL_SCOPE = "overall"
 IMAGE_CALL_NAME = "Illustration image quality inspection"
 OVERALL_CALL_NAME = "Illustration set quality inspection"
+CORRECTION_CALL_NAME = "VISUAL CORRECTION"
 HUMAN_RATINGS = {
     "good": "좋음",
     "normal": "보통",
@@ -69,6 +77,7 @@ _DUPLICATE_DESCRIPTOR_FIELDS = {
 }
 
 
+
 def _queue_item_id(queue_item: Any) -> str:
     if isinstance(queue_item, dict):
         return str(queue_item.get("id") or queue_item.get("queue_item_id") or "")
@@ -102,18 +111,18 @@ def _slot_number(value: Any, *, field: str) -> int:
 
 def _validate_entries(entries: Any, scope: str) -> list[dict]:
     try:
-        if scope not in {IMAGE_SCOPE, OVERALL_SCOPE}:
+        if scope not in {IMAGE_SCOPE, OVERALL_SCOPE, CORRECTION_SCOPE, SELECTION_SCOPE}:
             raise ValueError(f"unsupported illustration inspection scope: {scope!r}")
         if not isinstance(entries, list) or not entries:
             raise ValueError("illustration inspection requires a non-empty entries list")
-        if scope == IMAGE_SCOPE and len(entries) != 1:
+        if scope in {IMAGE_SCOPE, CORRECTION_SCOPE} and len(entries) != 1:
             raise ValueError("image inspection requires exactly one generated image")
         seen: set[int] = set()
         for index, item in enumerate(entries, start=1):
             if not isinstance(item, dict):
                 raise ValueError(f"illustration inspection entry {index} is not an object")
             slot = _slot_number(item.get("slot"), field=f"entry {index} slot")
-            if slot in seen:
+            if slot in seen and scope != SELECTION_SCOPE:
                 raise ValueError(f"illustration inspection has duplicate slot {slot}")
             image_bytes = item.get("image_bytes")
             if not isinstance(image_bytes, (bytes, bytearray, memoryview)) or not image_bytes:
@@ -166,8 +175,49 @@ def _descriptor_context(descriptor: dict[str, Any], slot: int) -> str:
     return f"Slot {slot} selected-scene context: " + " | ".join(parts)
 
 
-def _build_image_messages(context: str, entry: dict[str, Any]) -> list[dict[str, str]]:
+def _build_image_messages(context: str, entry: dict[str, Any], *, scope: str = IMAGE_SCOPE,
+                          prompts: dict | None = None, candidate_refs: list[dict] | None = None) -> list[dict[str, str]]:
     slot = _slot_number(entry.get("slot"), field="entry slot")
+    if scope in {CORRECTION_SCOPE, SELECTION_SCOPE}:
+        prompts = illustration_context_pipeline.load_prompt_files() if prompts is None else prompts
+        descriptor = entry.get("descriptor") or {}
+        layout = descriptor.get("multi_char_layout")
+        if isinstance(layout, dict):
+            editable = {key: layout.get(key) for key in (
+                "background_prompt", "composition_prompt", "regions")}
+            editable["regions"] = [{key: region[key] for key in (
+                "name", "character_prompt", "x", "y", "width", "height") if key in region}
+                for region in layout.get("regions") or []]
+        else:
+            editable = {key: descriptor.get(key, "") for key in ("camera", "scene", "supplement")}
+            editable["characters"] = [{key: char.get(key, "") for key in (
+                "name", "positive", "position")} for char in descriptor.get("characters") or []]
+        parts = ["SOURCE CHAT (only the target image is marked C001)", variable(str(context), "대화 원문·문맥 (대상 C001)"),
+                 "ORIGINAL SELECTED PROMPT" if scope == SELECTION_SCOPE else "CURRENT EDITABLE PROMPT",
+                 variable(json.dumps(editable, ensure_ascii=False), "원본 선택 프롬프트" if scope == SELECTION_SCOPE else "현재 편집 대상 프롬프트"),
+                 "ACTUAL GENERATOR PROMPT (diagnostic reference)", variable(str(entry.get("positive") or ""), "실제 생성 긍정 프롬프트"),
+                 "ACTUAL NEGATIVE PROMPT (reference, preserve externally)", variable(str(entry.get("negative") or ""), "실제 생성 부정 프롬프트")]
+        for key, label in (("scene_brief", "SELECTED MOMENT"),
+                           ("call1_scene_state", "OUTFIT"),
+                           ("time_place_scene_state", "TIME & PLACE")):
+            if descriptor.get(key):
+                parts.extend((label, variable(_natural_value(descriptor[key]), {
+                    "scene_brief": "선택된 장면", "call1_scene_state": "복장·머리 상태",
+                    "time_place_scene_state": "시간·장소·조명 상태",
+                }[key])))
+        if descriptor.get("anonymous_partner_fragment"):
+            parts.append("ACTIVE POLICY: one named subject; only the minimum connected anonymous partner fragment is permitted.")
+        if scope == SELECTION_SCOPE:
+            parts.append("SELECTION: Compare what changed in the bodies between images, especially any new or relocated part at their overlap. What shape is actually drawn, whose body is it part of, and where does it attach? A polished image with a part growing from the wrong body region loses to coherent anatomy. Natural crop and plausible occlusion are allowed. Return reason first with the numbered candidates' visible differences, then selected_candidate. Scene fit and aesthetics only break an anatomy tie.")
+            if candidate_refs is not None:
+                parts.extend(("SUPPLIED CANDIDATES", variable("\n".join(
+                    f"CANDIDATE {index}: {'original' if index == 0 else 'redraw ' + str(index)}; prompt reference: {ref['prompt_id']}"
+                    for index, ref in enumerate(candidate_refs)), "후보 번호·원본 및 교정 순서·생성 참조")))
+            return [{"role": "system", "content": prompts["visual_selection"]},
+                    {"role": "user", "content": prompt_join("\n\n", parts)}]
+        parts.append("DECISION: PASS unless the pixels clearly show a substantial defect in this selected view; minor or uncertain differences pass. For NonPASS, make the smallest concrete text change addressing the visible defect, including image-model mistakes. Compare it with CURRENT EDITABLE PROMPT: never return an unchanged field as a correction.")
+        return [{"role": "system", "content": prompts["visual_correction"]},
+                {"role": "user", "content": prompt_join("\n\n", parts)}]
     user = (
         "SOURCE NARRATIVE (complete original text)\n"
         f"{str(context or '(empty)')}\n\n"
@@ -259,8 +309,44 @@ def _json_object(raw: Any) -> dict[str, Any]:
     raise ValueError("inspection response is not a JSON object")
 
 
-def _parse_inspection_response(raw: Any, scope: str, slot: int | None = None) -> dict[str, Any]:
+def _parse_inspection_response(raw: Any, scope: str, slot: int | None = None, *, candidate_count: int = 0) -> dict[str, Any]:
     data = _json_object(raw)
+    if scope == SELECTION_SCOPE:
+        selected = _slot_number(data.get("selected_candidate"), field="selected candidate")
+        if not 0 <= selected < candidate_count:
+            raise ValueError(f"selected candidate {selected} has no image (count={candidate_count})")
+        return {"selected_candidate": selected, "reason": _raw_text(data.get("reason")).strip()}
+    if scope == CORRECTION_SCOPE:
+        decision = data.get("pass")
+        warnings = []
+        if isinstance(decision, str) and decision.strip().lower() in {"true", "false"}:
+            decision = decision.strip().lower() == "true"
+            warnings.append("pass string read as boolean")
+        elif type(decision) is int and decision in (0, 1):
+            decision = bool(decision)
+            warnings.append("pass integer read as boolean")
+        if type(decision) is not bool:
+            raise ValueError("visual correction pass must be a boolean")
+        reason = data.get("reason")
+        if reason is not None and not isinstance(reason, str):
+            warnings.append("optional reason retained as text")
+        result = {"pass": decision, "reason": _raw_text(reason).strip()}
+        if not result["pass"] and data.get("revised_prompt"):
+            try:
+                result["revised_prompt"] = _json_object(data["revised_prompt"])
+            except ValueError:
+                traceback.print_exc()
+                warnings.append("unreadable revised_prompt omitted; verdict and existing image preserved")
+        if not result["pass"] and not result.get("revised_prompt"):
+            warnings.append("no applicable revised_prompt; existing image preserved")
+        for warning in warnings:
+            print(f"[VISUAL_CORRECTION] WARNING: {warning}; slot={slot!r}, input={data!r}")
+        if warnings:
+            illustration_flow.llm_metadata(validation_warnings=[
+                {"stage": "VISUAL_CORRECTION", "reason": warning, "input": data}
+                for warning in warnings
+            ])
+        return result
     if scope == IMAGE_SCOPE:
         normalized_slot = _slot_number(slot, field="expected image slot")
         feedback = data.get("feedback")
@@ -287,10 +373,10 @@ def _parse_inspection_response(raw: Any, scope: str, slot: int | None = None) ->
 
 
 def _validate_inspection_response(
-    raw: Any, scope: str, slot: int | None = None
+    raw: Any, scope: str, slot: int | None = None, *, candidate_count: int = 0
 ) -> tuple[bool, str]:
     try:
-        _parse_inspection_response(raw, scope, slot)
+        _parse_inspection_response(raw, scope, slot, candidate_count=candidate_count)
         return True, ""
     except Exception as exc:
         print(
@@ -966,7 +1052,7 @@ def _history_record(
         traceback.print_exc()
         elapsed_value = 0.0
     return {
-        "task_key": TASK_KEY,
+        "task_key": SELECTION_TASK_KEY if scope == SELECTION_SCOPE else CORRECTION_TASK_KEY if scope == CORRECTION_SCOPE else TASK_KEY,
         "call_name": call_name,
         "history_id": str(history_id or uuid.uuid4().hex),
         "execution_id": str(execution_id or ""),
@@ -1025,26 +1111,33 @@ async def execute_inspection(
     flow_run_id = str(flow_run_id or "")
     queue_id = _queue_item_id(queue_item)
     refs = _image_refs(normalized_entries)
-    call_name = IMAGE_CALL_NAME if scope == IMAGE_SCOPE else OVERALL_CALL_NAME
-    expected_slot = refs[0]["slot"] if scope == IMAGE_SCOPE else None
+    task_key = SELECTION_TASK_KEY if scope == SELECTION_SCOPE else CORRECTION_TASK_KEY if scope == CORRECTION_SCOPE else TASK_KEY
+    call_name = SELECTION_CALL_NAME if scope == SELECTION_SCOPE else CORRECTION_CALL_NAME if scope == CORRECTION_SCOPE else IMAGE_CALL_NAME if scope == IMAGE_SCOPE else OVERALL_CALL_NAME
+    expected_slot = refs[0]["slot"] if scope != OVERALL_SCOPE else None
     messages = (
-        _build_image_messages(str(context or ""), normalized_entries[0])
-        if scope == IMAGE_SCOPE
+        _build_image_messages(str(context or ""), normalized_entries[0], scope=scope,
+                              candidate_refs=refs if scope == SELECTION_SCOPE else None)
+        if scope != OVERALL_SCOPE
         else _build_overall_messages(
             str(context or ""), normalized_entries, individual_results
         )
     )
+    if scope == SELECTION_SCOPE:
+        for index, ref in enumerate(refs):
+            ref["candidate"] = index
     execution_id = (
-        f"{TASK_KEY}:{scope}:{session_id}:"
+        f"{task_key}:{scope}:{session_id}:"
         f"{expected_slot if expected_slot is not None else 'set'}:{uuid.uuid4().hex[:12]}"
     )
+    if scope in {CORRECTION_SCOPE, SELECTION_SCOPE} and isinstance(getattr(queue_item, "params", None), dict):
+        queue_item.params.setdefault("llm_trace", []).append(execution_id)
     parent_execution_id = flow_run_id or session_id
     usage: dict[str, Any] = {}
     execution_context = None
     terminal_logged = False
     started = time.time()
     try:
-        active_slot = str(llm_service.routing_primary_slot(TASK_KEY) or "llm1")
+        active_slot = str(llm_service.routing_primary_slot(task_key) or "llm1")
     except Exception as exc:
         print(f"[ILLUSTRATION_QUALITY] primary slot lookup failed: {exc}")
         traceback.print_exc()
@@ -1088,7 +1181,7 @@ async def execute_inspection(
     try:
         illustration_flow.llm_metadata(
             input=messages,
-            status="processing",
+            status="waiting",
             inspection_scope=scope,
             history_id=execution_id,
             inspection_images=[dict(ref) for ref in refs],
@@ -1099,7 +1192,7 @@ async def execute_inspection(
 
     try:
         execution_context = llm_service.create_llm_execution_context(
-            TASK_KEY,
+            task_key,
             call_name=call_name,
             json_mode=True,
             execution_id=execution_id,
@@ -1113,12 +1206,16 @@ async def execute_inspection(
             },
         )
 
-        request_image = (
+        request_image = None if scope == SELECTION_SCOPE else (
             bytes(normalized_entries[0]["image_bytes"])
-            if scope == IMAGE_SCOPE
+            if scope != OVERALL_SCOPE
             else _contact_sheet(normalized_entries)
         )
-        request_mime = "application/octet-stream" if scope == IMAGE_SCOPE else "image/png"
+        request_mime = "application/octet-stream" if scope != OVERALL_SCOPE else "image/png"
+        request_images = [
+            (base64.b64encode(entry["image_bytes"]).decode("ascii"), "application/octet-stream", f"CANDIDATE {index}")
+            for index, entry in enumerate(normalized_entries)
+        ] if scope == SELECTION_SCOPE else None
 
         async def on_attempt_failure(event: Any) -> None:
             nonlocal active_slot, active_phase
@@ -1162,13 +1259,14 @@ async def execute_inspection(
                 traceback.print_exc()
 
         def result_validator(raw: Any) -> tuple[bool, str]:
-            return _validate_inspection_response(raw, scope, expected_slot)
+            return _validate_inspection_response(raw, scope, expected_slot, candidate_count=len(normalized_entries))
 
         result = await llm_service.callLLMVisionTaskResult(
-            TASK_KEY,
+            task_key,
             messages,
             image_bytes=request_image,
             image_mime=request_mime,
+            **({"images": request_images} if scope == SELECTION_SCOPE else {}),
             json_mode=True,
             result_validator=result_validator,
             metadata_sink=usage,
@@ -1209,7 +1307,7 @@ async def execute_inspection(
             terminal_logged = True
             raise RuntimeError(error)
 
-        parsed = _parse_inspection_response(raw_result, scope, expected_slot)
+        parsed = _parse_inspection_response(raw_result, scope, expected_slot, candidate_count=len(normalized_entries))
         record(
             status="ok",
             raw=raw_result,

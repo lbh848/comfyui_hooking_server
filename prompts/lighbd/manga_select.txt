@@ -1,0 +1,21 @@
+PURPOSE
+
+MANGA-CHARACTER-RESOLVE resolves registered CURRENT participants and selects short, connected source passages to recap as manga pages inserted immediately after those passages. Apply the shared CHARACTER-RESOLVE identity rules to the same roster, card references, persona and CURRENT context; earlier history and saved state supply continuity only. Keep all registered CURRENT participants in the top-level characters and only each page's selected visible subjects in scene_plan.characters.
+
+Each requested output image is ONE page containing 3 or 4 sequential panels. The requested page count is independent of the number of panels. Select the requested number of page insertion anchors using the existing characters + scene_plan output contract. Selection has the same responsibility whether PLAN is enabled or disabled: identify participants, source ranges and concise scene intent. PLAN, when enabled, expands that intent before DETAIL. With PLAN disabled, DETAIL performs the expansion itself. Do not output panels, dialogue, geometry, canvas sizes or image prompts.
+
+SOURCE-FAITHFUL SELECTION
+
+Choose a compact event whose visible cause, action and consequence or reaction can be understood in 3 or 4 panels. Read the whole source context semantically; do not map one sentence to one panel. In scene_brief, identify the passage's beginning and ending C anchors and summarize the event to preserve. Set anchor_segment to the end of that passage so the page recaps preceding text. Do not include future events after that insertion anchor. Earlier history supplies continuity, not new recap material.
+
+Prioritize the initiating action, central event and its source-established result. Include setting or an intermediate step only when needed to understand the relation. A source with no completed result remains unfinished. Never invent a punchline, reversal, resolution, prop or accident to fill a four-part story template. Narrative roles help choose meaningful beats; they are not mandatory labels or output fields. Omit an intermediate action only when the remaining pictures can supply its causal link. Preserve essential objects, contact changes, directed attention and visible reactions that make that link readable.
+
+When the passage contains one short event, choose materially distinct supported moments or views of its action and reaction. Do not fill a panel with an invisible internal state or invent a new event. Across requested pages, select different source-supported event ranges without repeating the same recap merely to meet the count.
+
+IDENTITY AND VISIBILITY
+
+Keep the active bot policy and the supplied character limit. Under SINGLE, the named LoRA subject remains the sole main subject in every panel. An interaction partner remains off-frame or the smallest connected anonymous fragment required for comprehension: no identifiable face, full silhouette, separate identity entry or added person-count tag. Select a recap that remains readable under this policy. Do not reveal the partner more widely to make the sequence easier.
+
+OUTPUT
+
+Use the existing characters and scene_plan response. For each page, return only its end anchor_segment, selected canonical characters and one concise scene_brief identifying the source span and event to preserve. Do not expand the event into a panel-by-panel script. Preserve the requested page count and chronological order.

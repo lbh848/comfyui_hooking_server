@@ -110,6 +110,7 @@ from modes import lighbd_service
 from modes import llm_prompt_edit
 from modes import illustration_camera
 from modes import illustration_quality_inspection
+from modes import illustration_scene_pipeline
 from modes import autocomplete_service
 from modes import asset_tool_mode
 from modes.qwen_edit_mode import QwenEditMode
@@ -635,6 +636,7 @@ DEFAULT_CONFIG = {
     "llm_custom_headers": "",         # LLM1 OpenAI 호환 요청에 병합할 HTTP header JSON object 문자열
     "illustration_context_toggles": {
         "illustration_output_mode": "illustration",
+        "genre": "",
         "original_asset_count": 1,
         "outfit_enabled": True,
         "time_place_enabled": True,
@@ -758,6 +760,8 @@ DEFAULT_CONFIG = {
         # 폴백 없음(fallback_target 미지정)이 기본.
         "illustration_call1":      _llm_route_defaults(),  # 복장·헤어 변화 JSON 분석
         "illustration_time_place": _llm_route_defaults(),  # 캐릭터별 시간·장소 독립 추적
+        "illustration_visual_correction": _llm_route_defaults(),
+        "illustration_visual_selection": _llm_route_defaults(),
         "illustration_character_resolve": _llm_route_defaults(),  # 생성 최전단 CURRENT 등장인물·장면 선택
         "illustration_profile_context_translate": _llm_route_defaults(),  # CURRENT 카드 자연어의 지연 영어 번역
         "illustration_profile_resolve": _llm_route_defaults(),  # 확정 CURRENT 다중 프로필 결정(토글 시)
@@ -970,7 +974,8 @@ def _merge_llm_routing_config(raw_config: dict) -> dict:
         merged_routing[task_key] = entry
 
     for task_key, raw_entry in raw_routing.items():
-        if task_key in {"illustration_call2_authority_audit", "illustration_call2_fix", "illustration_call2_select"}:
+        if task_key in {"illustration_call2_authority_audit", "illustration_call2_fix", "illustration_call2_select",
+                        "illustration_manga_select", "illustration_manga_plan", "illustration_manga_detail"}:
             print(f"[CONFIG] 제거된 삽화 LLM 작업 설정 제외: task={task_key!r}")
             continue
         if task_key in merged_routing:
@@ -1000,7 +1005,8 @@ def _normalize_llm_routing_for_save(raw_routing) -> dict:
             inherited.update(legacy_call2_entry)
             candidate[task_key] = inherited
     for task_key, raw_entry in raw_routing.items():
-        if task_key in {"illustration_call2_authority_audit", "illustration_call2_fix", "illustration_call2_select"}:
+        if task_key in {"illustration_call2_authority_audit", "illustration_call2_fix", "illustration_call2_select",
+                        "illustration_manga_select", "illustration_manga_plan", "illustration_manga_detail"}:
             print(f"[CONFIG] 제거된 삽화 LLM 작업 저장 제외: task={task_key!r}")
             continue
         if not isinstance(task_key, str) or not task_key.strip():
@@ -2416,7 +2422,12 @@ def _capture_illustration_runtime_snapshot(
     )
     # The pipeline master controls dialogue generation and image composition.
     # Retired dialogue switches must not veto the one visible control.
-    toggles["speak_enabled"] = bool(config_snapshot.get("postprocess_enabled", False))
+    toggles["speak_enabled"] = (
+        bool(config_snapshot.get("postprocess_enabled", False))
+        and toggles["illustration_output_mode"] not in ("manga", "manga_both")
+    )
+    if toggles["illustration_output_mode"] in ("manga", "manga_both"):
+        toggles["visual_correction_enabled"] = False
     toggles["original_asset_instruction"] = (
         bot_mode.get_asset_output_instruction(bot_name)
         if asset_instruction is None else asset_instruction
@@ -2961,7 +2972,10 @@ async def save_backup(
             if postprocess_mode == "bubble":
                 from modes.bubble_render import compose_bubble
                 _bs = {k: v for k, v in postprocess_settings.items() if k != "_mode"}
-                image_bytes = await asyncio.to_thread(compose_bubble, image_bytes, speak_text, _bs, bot_name)
+                image_bytes = await asyncio.to_thread(
+                    compose_bubble, image_bytes, speak_text, _bs, bot_name,
+                    face_positions=(backup_conversion_info or {}).get("face_positions"),
+                )
                 print(f"[BACKUP] 말풍선 합성 적용: speak_len={len(speak_text)}")
             elif postprocess_mode == "subtitle":
                 from modes.subtitle_render import compose_subtitle
@@ -3204,6 +3218,8 @@ async def save_backup(
             )
             if final_visual_states:
                 info_to_save["llm_final_result"]["visual_states"] = final_visual_states
+            if llm_final_result.get("manga_page"):
+                info_to_save["llm_final_result"]["manga_page"] = copy.deepcopy(llm_final_result["manga_page"])
         except Exception as e:
             print(f"[BACKUP] llm_final_result 정규화 실패, 무시: {e}")
             traceback.print_exc()
@@ -3785,6 +3801,7 @@ async def generate_image_with_prompt(
     chansub_quality_tag_count: int = 0,
     illustration_workflow_type: str | None = None,
     comfy_task_key: str = "illustration",
+    seed: int | None = None,
 ):
     """선택 공급자로 이미지를 생성한다.
 
@@ -3817,6 +3834,7 @@ async def generate_image_with_prompt(
                 "chansub_strip_builtin_quality_tags",
                 True,
             ),
+            **({"seed": seed} if seed is not None else {}),
         )
         if progress_callback and image_bytes:
             try:
@@ -3866,6 +3884,13 @@ async def generate_image_with_prompt(
             "conversion_info": copy.deepcopy(current_conversion_info),
         }
         risu_prompt = build_prompt(positive, negative)
+        if seed is not None:
+            for node in risu_prompt.values():
+                inputs = node.get("inputs", {})
+                for key in ("seed", "noise_seed"):
+                    if key in inputs and not isinstance(inputs[key], list):
+                        inputs[key] = int(seed)
+            print(f"[MANGA:SEED] 최종 워크플로우 공통 시드 적용: {seed}")
         # 비교 진단은 캐시용 API 그래프가 아니라 Comfy에 실제로 제출된 최종
         # 그래프를 비교해야 한다. ContextVar에만 보관해 일반 응답/백업에는
         # 노출하거나 저장하지 않는다.
@@ -3932,6 +3957,11 @@ async def generate_image_with_prompt(
                 risu_prompt,
                 **generate_kwargs,
             )
+            workflow_snapshot["conversion_info"] = {
+                **(workflow_snapshot.get("conversion_info") or {}),
+                "face_positions": copy.deepcopy(remote_result.get("face_positions") or []),
+                "mask_url": remote_result.get("mask_url") or "",
+            }
             if progress_callback:
                 await progress_callback(1, 1)
             await notify_frontend("generation_progress", {"value": 1, "max": 1})
@@ -4015,6 +4045,12 @@ async def generate_image_with_prompt(
     history = await fetch_real_history(real_prompt_id, port=illust_port)
     real_entry = history.get(real_prompt_id, {})
     real_outputs = real_entry.get("outputs", {})
+    workflow_snapshot["conversion_info"] = {
+        **(workflow_snapshot.get("conversion_info") or {}),
+        "face_positions": [copy.deepcopy(position)
+                           for output in real_outputs.values()
+                           for position in output.get("soya_face_positions", [])],
+    }
     execution_times = {
         event[0]: event[1]["timestamp"] / 1000
         for event in real_entry.get("status", {}).get("messages", [])
@@ -4033,8 +4069,12 @@ async def generate_image_with_prompt(
     else:
         print(f"[GEN:TIMING] Comfy 실행 시각 누락, 기존 요청 경과 시간 사용: prompt={real_prompt_id}, status={real_entry.get('status')}")
 
-    await illustration_flow.record_comfy_dynamic_mask(
+    final_mask = await illustration_flow.record_comfy_dynamic_mask(
         real_outputs, fetch_real_image, port=illust_port,
+    )
+    workflow_snapshot["conversion_info"]["mask_url"] = (
+        "data:image/png;base64," + base64.b64encode(final_mask).decode("ascii")
+        if final_mask else ""
     )
 
     real_images = []
@@ -6101,6 +6141,7 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                         multi_char_prompt_context = {
                             "enable": True,
                             "mask_render_version": int(layout.get("mask_render_version") or 1),
+                            **({"panels": copy.deepcopy(layout["panels"])} if layout.get("panels") else {}),
                             "char_name_list": list(detected),
                             "char_inform": char_inform,
                             "background_prompt": separated_background_prompt,
@@ -6154,6 +6195,12 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                 is_multi = len(detected) >= 2
                 settings_key = "illust_settings_group" if is_multi else "illust_settings_solo"
                 settings = bot.get(settings_key, bot.get("illust_settings", {}))
+                if raw_body.get("illustration_canvas"):
+                    canvas_w, canvas_h = raw_body["illustration_canvas"]
+                    settings = {**settings, "img_w": int(canvas_w), "img_h": int(canvas_h)}
+                    print(f"[MANGA:CANVAS] 컷 크기 적용: {canvas_w}x{canvas_h}")
+                if raw_body.get("illustration_seed") is not None:
+                    settings = {**settings, "seed": int(raw_body["illustration_seed"])}
                 print(f"[ILLUST] 프로필 선택: {'group' if is_multi else 'solo'} ({len(detected)}명)")
                 legacy_fragment_requested = bool(
                     raw_body.get("illustration_anonymous_partner_fragment", False)
@@ -6258,7 +6305,7 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
 
                 if raw_body.get("illustration_scene_detail_authoritative") is True:
                     # The image builder replaces incoming negatives with its
-                    # configured presets. Restore only DETAIL's RAW negative;
+                    # configured presets. Restore only the direct negative_note;
                     # never reintroduce profile/outfit positives or old flags.
                     negative = _append_authoritative_scene_negative(
                         negative,
@@ -6354,6 +6401,8 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
             chansub_quality_tag_start=chansub_quality_tag_start,
             chansub_quality_tag_count=chansub_quality_tag_count,
             illustration_workflow_type=illustration_workflow_type,
+            **({"seed": int(raw_body["illustration_seed"])}
+               if raw_body.get("illustration_seed") is not None else {}),
         )
         elapsed_time = time.time() - start_time
 
@@ -6380,14 +6429,16 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
 
         print(f"[INFO] 이미지 수신 완료: {len(img_bytes):,} bytes ({elapsed_time:.1f}s)")
 
-        # Keep the generated pixels and actual prompts before captions/composition.
-        # The session collector consumes this transient snapshot; it is never metadata.
+        # Keep pixels, prompts and generation metadata together for candidate selection.
+        # This transient source is released after inspection/postprocessing.
         if (
-            runtime_snapshot.get("illustration_quality_inspection_enabled", False)
+            (runtime_snapshot.get("illustration_quality_inspection_enabled", False)
+             or (runtime_snapshot.get("illustration_context_toggles") or {}).get("visual_correction_enabled", False))
             and raw_body.get("illustration_context_session_id")
         ):
             prompts[prompt_id]["_quality_inspection_source"] = {
                 "image_bytes": img_bytes, "positive": positive, "negative": negative,
+                "conversion_info": copy.deepcopy(generation_workflow_snapshot.get("conversion_info") or {}),
             }
 
         # 백업 저장 (WebP + 원본 워크플로우 JSON + 변환정보)
@@ -6455,6 +6506,10 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
             _backup_bot_name,
             force=_force_postprocess,
         )
+        if (runtime_snapshot.get("illustration_context_toggles") or {}).get("illustration_output_mode") in ("manga", "manga_both"):
+            _pp_settings = None
+            _force_postprocess = False
+            _speak_text = ""
         if _force_postprocess and not _pp_settings:
             print(
                 f"[ILLUST:POSTPROCESS] 1회성 후처리 설정을 만들지 못함: "
@@ -6572,6 +6627,11 @@ def _build_llm_final_result(descriptor: dict | None) -> dict | None:
     """
     if not isinstance(descriptor, dict):
         return None
+    if descriptor.get("panels"):
+        return {"raw_positive": "\n\n".join(str(panel.get("raw_positive") or "") for panel in descriptor["panels"]),
+                "character_names": list(dict.fromkeys(ch["name"] for panel in descriptor["panels"]
+                                                      for ch in panel.get("characters") or [])),
+                "manga_page": copy.deepcopy(descriptor)}
     raw_positive = str(descriptor.get("raw_positive") or "")
     names = [
         str(ch.get("name") or "").strip()
@@ -6597,10 +6657,10 @@ def _append_authoritative_scene_negative(
     provider: str,
     prompt_format: str,
 ) -> str:
-    """Keep DETAIL negatives alongside configured presets in each image format."""
+    """Keep direct user negative additions alongside the selected presets."""
     detail = str(raw_negative or "").strip()
     if not detail:
-        print("[ILLUST_CONTEXT:RAW] DETAIL RAW negative 비어 있음; 설정 preset만 유지")
+        print("[ILLUST_CONTEXT:RAW] 추가 부정 입력 없음; 선택 preset만 유지")
         return assembled_negative
 
     def append(part: str) -> str:
@@ -6832,33 +6892,6 @@ def build_active_lb_instruction(
     return strip_output_count_rule(collected["system_prompt"])
 
 
-def active_bot_uses_first_pass_single_v5(
-    bot_name: str,
-    trace_id: str = "",
-    request_cache: dict | None = None,
-) -> bool:
-    """Return the exact active preset scope used by Single V5 PLAN safeguards."""
-    collected = _collect_lb_extra_for_request(
-        bot_name,
-        trace_id,
-        "active_bot_uses_first_pass_single_v5",
-        request_cache,
-    )
-    if not collected:
-        print(
-            "[ILLUST_CONTEXT:CALL2_PLAN] 활성 봇 프리셋 확인 실패로 Single V5 "
-            f"주체 권위 비활성화: bot={bot_name!r}"
-        )
-        return False
-    preset_name = str(collected.get("system_prompt_preset") or "").strip()
-    enabled = preset_name == FIRST_PASS_SINGLE_V5_PRESET
-    print(
-        "[ILLUST_CONTEXT:CALL2_PLAN] Single V5 프리셋 범위 확인: "
-        f"bot={bot_name!r}, preset={preset_name!r}, enabled={enabled}"
-    )
-    return enabled
-
-
 def build_lb_extra_costume(
     bot_name: str,
     trace_id: str = "",
@@ -7046,6 +7079,7 @@ async def _select_original_asset_outputs(
     stream_notify,
     llm_trace: list[str],
     profile_authority: str = "",
+    resolved_character_names: list[str] | None = None,
 ) -> dict:
     """Run the single selector call, validate exact IDs, and read source bytes."""
     requested_count = int(toggles.get("original_asset_count") or 1)
@@ -7097,7 +7131,14 @@ async def _select_original_asset_outputs(
         )
         return result
 
-    character_names = _original_asset_bot_character_names(active_bot)
+    character_names = resolved_character_names
+    if character_names is None:
+        # Rerolls and prompt batches may not have a CHARACTER-RESOLVE result.
+        print(
+            f"[ILLUST_ORIGINAL_ASSET] 캐릭터 확정 결과 없음; 등록 캐릭터 에셋 표 사용: "
+            f"bot={active_bot!r}"
+        )
+        character_names = _original_asset_bot_character_names(active_bot)
     asset_index = illustration_original_assets.build_original_asset_index(
         os.path.join(BASE_DIR, "bot"),
         active_bot,
@@ -7133,6 +7174,7 @@ async def _select_original_asset_outputs(
         requested_count=effective_count,
         asset_index=asset_index,
         profile_authority=profile_authority,
+        character_names=character_names,
     )
     selection_shortfall = max(0, effective_count - len(selections))
     if selection_shortfall:
@@ -7706,7 +7748,7 @@ async def _enqueue_illustration_quality_inspection(
                                 f"state={getattr(dependency, 'status', '')!r}, "
                                 f"result={outcome!r}"
                             )
-            return await illustration_quality_inspection.execute_inspection(
+            result = await illustration_quality_inspection.execute_inspection(
                 queue_item,
                 scope=scope,
                 session_id=session_id,
@@ -7715,6 +7757,20 @@ async def _enqueue_illustration_quality_inspection(
                 flow_run_id=flow_run_id,
                 individual_results=individual_results,
             )
+            if scope == illustration_quality_inspection.SELECTION_SCOPE:
+                selected = snapshot_entries[result["selected_candidate"]]
+                queue_item.generated_image_bytes = bytes(selected["image_bytes"])
+                binding = getattr(queue_item, "_illustration_flow", None)
+                if binding:
+                    info = selected.get("conversion_info") or {}
+                    illustration_flow.update(binding[0], binding[1],
+                        face_positions=copy.deepcopy(info.get("face_positions") or []),
+                        mask_url=info.get("mask_url") or "")
+                    print(f"[VISUAL_SELECTION] 선택 이미지 정보 연결: prompt={selected.get('prompt_id')}, "
+                          f"faces={len(info.get('face_positions') or [])}, mask={bool(info.get('mask_url'))}")
+                else:
+                    print(f"[VISUAL_SELECTION] 작업 흐름 노드 없음; 선택 정보 표시 생략: prompt={selected.get('prompt_id')}")
+            return result
         finally:
             snapshot_entries.clear()
 
@@ -7722,12 +7778,20 @@ async def _enqueue_illustration_quality_inspection(
         slots = [entry["slot"] for entry in entries]
         if scope == illustration_quality_inspection.IMAGE_SCOPE:
             label = f"생성 이미지 자동 검사 · slot {slots[0]}"
+        elif scope == illustration_quality_inspection.CORRECTION_SCOPE:
+            label = f"비주얼 교정 · slot {slots[0]}"
+        elif scope == illustration_quality_inspection.SELECTION_SCOPE:
+            label = f"비주얼 교정 결과 선택 · slot {slots[0]} · {len(entries)}개 후보"
         elif scope == illustration_quality_inspection.OVERALL_SCOPE:
             label = f"생성 이미지 전체 품질 검사 · {len(entries)}장"
         else:
             raise ValueError(f"지원하지 않는 삽화 검사 범위: {scope!r}")
         queued = await queue_manager.add_item(
-            illustration_quality_inspection.TASK_KEY,
+            (illustration_quality_inspection.SELECTION_TASK_KEY
+             if scope == illustration_quality_inspection.SELECTION_SCOPE
+             else illustration_quality_inspection.CORRECTION_TASK_KEY
+             if scope == illustration_quality_inspection.CORRECTION_SCOPE
+             else illustration_quality_inspection.TASK_KEY),
             label,
             {"scope": scope, "session_id": session_id, "slots": slots},
             priority=0, runtime_handler=inspect,
@@ -7763,6 +7827,39 @@ def _illustration_mask_canvas_sizes(bot_name: str) -> dict:
     return sizes
 
 
+def _multi_char_queue_context(
+    descriptor: dict, prompt_format: str, illust_toggles: dict, provider: str,
+) -> dict | None:
+    """Share the saved Regional layout handoff between initial and RAW generation."""
+    if not illust_toggles.get("illustration_enabled", True):
+        return None
+    if not illustration_context_pipeline.should_enable_multi_char_layout(illust_toggles, provider):
+        return None
+    if str(prompt_format or "").strip().lower() != "v3":
+        return None
+    characters = [
+        character for character in (descriptor.get("characters") or [])
+        if isinstance(character, dict) and str(character.get("name") or "").strip()
+    ]
+    if not characters or (len(characters) == 1 and not illust_toggles.get("single_char_mask_enabled", True)):
+        return None
+    layout = descriptor.get("multi_char_layout")
+    if not isinstance(layout, dict):
+        return None
+    return {
+        "enable": True,
+        "char_num": len(characters),
+        "characters": copy.deepcopy(descriptor.get("characters") or []),
+        "character_order": list(layout.get("character_order") or []),
+        "background_prompt": str(layout.get("background_prompt") or "").strip(),
+        "composition_prompt": str(layout.get("composition_prompt") or "").strip(),
+        "layout": copy.deepcopy(layout),
+        "mask_location": "region_mask",
+        "single_char_mask_skip_enabled": illust_toggles["single_char_mask_skip_enabled"],
+        "single_char_mask_skip_area_percent": illust_toggles["single_char_mask_skip_area_percent"],
+    }
+
+
 async def process_illustration_context_queue_item(item) -> dict:
     """CALL2 뒤 이미지 큐와 CALL3를 병렬 실행하고 후처리 합류까지 기다린다."""
     params = item.params or {}
@@ -7780,8 +7877,14 @@ async def process_illustration_context_queue_item(item) -> dict:
         runtime_snapshot.get("illustration_workflow_type")
     )
     illust_toggles = illustration_context_pipeline.merged_toggles(
-        copy.deepcopy(runtime_snapshot.get("illustration_context_toggles") or {})
+        copy.deepcopy(runtime_snapshot.get("illustration_context_toggles") or {}), for_generation=True
     )
+    if payload.get("protocol") == "prompt_batch_v1" and any(entry.get("panels") for entry in payload.get("items") or []):
+        # Saved manga descriptors retain their generation semantics even when
+        # the user has since switched the ordinary illustration mode.
+        illust_toggles.update(illustration_enabled=True, original_asset_enabled=False,
+                             illustration_output_mode="manga", visual_correction_enabled=False)
+        runtime_snapshot["illustration_context_toggles"] = copy.deepcopy(illust_toggles)
     illustration_enabled = bool(illust_toggles.get("illustration_enabled", True))
     original_asset_enabled = bool(illust_toggles.get("original_asset_enabled", False))
     invalid_output_configuration = not illustration_enabled and not original_asset_enabled
@@ -7806,9 +7909,13 @@ async def process_illustration_context_queue_item(item) -> dict:
     child_pairs = []
     all_child_pairs = []
     child_descriptors = {}
+    manga_children = {}
+    manga_images = {}
     inspection_entries = {}
     inspection_queue_items: dict[int, Any] = {}
     inspection_enabled = bool(runtime_snapshot.get("illustration_quality_inspection_enabled", False))
+    correction_enabled = bool(illust_toggles["visual_correction_enabled"])
+    early_correction_tasks: dict[str, asyncio.Task] = {}
     early_descriptor_slots = []
     dispatched_scene_slots: set[int] = set()
     early_dispatch = False
@@ -7829,9 +7936,29 @@ async def process_illustration_context_queue_item(item) -> dict:
     # prompt_batch_v1 등 build_from_context 를 거치지 않는 경로는 빈 목록(버튼 비활성).
     llm_trace = []
 
-    def _quality_inspection_context() -> str:
+    def _quality_inspection_context(descriptor: dict | None = None) -> str:
         # Use the original built.context. Judge generated pixels
         # against the original chat so upstream hallucinations stay visible.
+        if descriptor is not None:
+            chats = copy.deepcopy(payload.get("chats") or [])
+            target_index, narrative = illustration_context_pipeline._latest_narrative(chats)
+            slotted = str(payload.get("target_slotted") or "") or illustration_context_pipeline.insert_slots(narrative)
+            target_slot = descriptor.get("slot")
+            if descriptor.get("anchor_segment"):
+                _, segments = illustration_context_pipeline._segment_current_context(
+                    illustration_context_pipeline.remove_slot_markers(slotted), slotted_context=slotted)
+                target_slot = (segments.get(descriptor["anchor_segment"]) or {}).get("slot", target_slot)
+            marked = illustration_context_pipeline._SLOT_MARKER_RE.sub(
+                lambda match: "[C001]" if int(match.group(1)) == target_slot else "", slotted)
+            if "[C001]" not in marked:
+                print(f"[VISUAL_CORRECTION] 슬롯 경계 없음; 선택 장면과 원문 함께 전달: slot={target_slot}")
+                marked = "[C001]\n" + marked
+            if target_index >= 0:
+                field = "data" if "data" in chats[target_index] else "content"
+                chats[target_index][field] = marked
+                return illustration_context_pipeline.context_text(chats)
+            print(f"[VISUAL_CORRECTION] 최신 CHAR 없음; 보존된 원문 사용: session={session_id}")
+            return "[C001]\n" + str(built.get("context") or "")
         return str(
             illustration_context_pipeline.context_text(payload.get("chats") or [])
             or built.get("context")
@@ -7860,29 +7987,6 @@ async def process_illustration_context_queue_item(item) -> dict:
         return bool(characters) and (
             len(characters) != 1 or bool(illust_toggles.get("single_char_mask_enabled", True))
         )
-
-    def _multi_char_queue_context(descriptor: dict, prompt_format: str) -> dict | None:
-        if not _is_multi_char_descriptor(descriptor, prompt_format):
-            return None
-        layout = descriptor.get("multi_char_layout")
-        if not isinstance(layout, dict):
-            return None
-        characters = copy.deepcopy(descriptor.get("characters") or [])
-        order = list(layout.get("character_order") or [])
-        background_prompt = str(layout.get("background_prompt") or "").strip()
-        composition_prompt = str(layout.get("composition_prompt") or "").strip()
-        return {
-            "enable": True,
-            "char_num": len(characters),
-            "characters": characters,
-            "character_order": order,
-            "background_prompt": background_prompt,
-            "composition_prompt": composition_prompt,
-            "layout": copy.deepcopy(layout),
-            "mask_location": "region_mask",
-            "single_char_mask_skip_enabled": illust_toggles["single_char_mask_skip_enabled"],
-            "single_char_mask_skip_area_percent": illust_toggles["single_char_mask_skip_area_percent"],
-        }
 
     async def progress(
         value: float,
@@ -7967,13 +8071,14 @@ async def process_illustration_context_queue_item(item) -> dict:
             len(failures),
             max(0, int(requested_count) - len(sorted_images)),
         )
-        illustration_context_pipeline.set_session_result(
-            session_id,
-            sorted_items,
-            sorted_images,
-            requested_count=requested_count,
-            failures=failures,
-        )
+        if raw_body.get("illustration_regenerate_session_id"):
+            for descriptor, picture in zip(sorted_items, sorted_images):
+                if not illustration_context_pipeline.update_session_image_by_slot(
+                        session_id, descriptor["slot"], picture, item_updates=descriptor):
+                    raise RuntimeError(f"만화 재생성 결과를 슬롯에 저장하지 못했습니다: {descriptor['slot']}")
+        else:
+            illustration_context_pipeline.set_session_result(
+                session_id, sorted_items, sorted_images, requested_count=requested_count, failures=failures)
         original = prompts[original_prompt_id]
         original["image_bytes"] = sorted_images[0]
         original["_serve_image_bytes_original"] = (
@@ -8049,8 +8154,36 @@ async def process_illustration_context_queue_item(item) -> dict:
         defer_postprocess,
         queue_priority=None,
         llm_trace=None,
+        start_correction=True,
     ):
         illustration_flow.raise_if_cancel_requested()
+        if descriptor.get("panels"):
+            if descriptor.get("seed") is None:
+                import random
+                bot = next((entry for entry in _load_bot_data_readonly()["bots"]
+                            if entry.get("name") == active_bot), {})
+                first_panel = descriptor["panels"][0]
+                profile = "group" if len(first_panel.get("characters") or []) >= 2 else "solo"
+                page_settings = bot.get(f"illust_settings_{profile}", bot.get("illust_settings", {}))
+                seed = int(page_settings.get("seed", -1))
+                descriptor["seed"] = random.SystemRandom().randint(0, 2**32 - 1) if seed == -1 else seed
+                print(f"[MANGA:SEED] 페이지 시드 확정: slot={descriptor['slot']}, seed={descriptor['seed']}")
+            pairs = []
+            for panel in descriptor["panels"]:
+                panel["seed"] = descriptor["seed"]
+                key = (descriptor["slot"], panel["panel"])
+                pair = manga_children.get(key)
+                if key not in manga_images:
+                    pair = await _enqueue_child(panel, slot_index, total_count, context_value, prompt_format,
+                        defer_postprocess=False, queue_priority=queue_priority, llm_trace=llm_trace,
+                        start_correction=False)
+                    manga_children[key] = pair
+                else:
+                    print(f"[MANGA:QUEUE] 생성 완료 컷 보존: slot={key[0]}, panel={key[1]}")
+                pairs.append(pair)
+            print(f"[MANGA:QUEUE] 컷별 생성 등록: slot={descriptor['slot']}, panels={len(pairs)}")
+            child_descriptors[pairs[0][0]] = copy.deepcopy(descriptor)
+            return pairs[0]
         child_provider = illustration_provider_snapshot
         hybrid_prompt_formats = None
         if child_provider == "hybrid":
@@ -8111,17 +8244,24 @@ async def process_illustration_context_queue_item(item) -> dict:
             "illustration_context_index": slot_index,
             "illustration_prompt_format": child_prompt_format,
             "illustration_provider": child_provider,
-            "illustration_defer_postprocess": bool(defer_postprocess),
+            "illustration_defer_postprocess": bool(defer_postprocess)
+                and illust_toggles["illustration_output_mode"] not in ("manga", "manga_both"),
             "illustration_visual_states": _descriptor_visual_states(descriptor),
             "illustration_anonymous_partner_fragment": bool(
                 descriptor.get("anonymous_partner_fragment", False)
             ),
         }
-        if descriptor.get("kind") == "scene" and "call1_scene_state" in descriptor:
+        if descriptor.get("canvas"):
+            child_raw_body["illustration_canvas"] = list(descriptor["canvas"])
+        if descriptor.get("seed") is not None:
+            child_raw_body["illustration_seed"] = int(descriptor["seed"])
+        if descriptor.get("kind") == "scene" and ("call1_scene_state" in descriptor
+                or illust_toggles["illustration_output_mode"] in ("manga", "manga_both")):
             # New ordinary DETAIL already chose image tags; preserve them through
             # the renderer without restoring fixed appearance/wardrobe tags.
             child_raw_body["illustration_scene_detail_authoritative"] = True
-        multi_char_context = _multi_char_queue_context(descriptor, child_prompt_format)
+        multi_char_context = _multi_char_queue_context(
+            descriptor, child_prompt_format, illust_toggles, illustration_provider_snapshot)
         if multi_char_context:
             child_raw_body["illustration_multi_char"] = multi_char_context
         if queue_priority is None:
@@ -8137,7 +8277,8 @@ async def process_illustration_context_queue_item(item) -> dict:
                 child_params["hybrid_prompt_formats"] = hybrid_prompt_formats
             child_item = await queue_manager.add_item(
                 "illustration",
-                f"삽화 {slot_index}/{total_count} · slot {descriptor.get('slot')}",
+                f"삽화 {slot_index}/{total_count} · slot {descriptor.get('slot')}"
+                + (f" · 컷 {descriptor['panel']}" if descriptor.get("panel") else ""),
                 child_params,
                 priority=int(queue_priority),
             )
@@ -8153,6 +8294,10 @@ async def process_illustration_context_queue_item(item) -> dict:
         pair = (child_id, child_item)
         all_child_pairs.append(pair)
         child_descriptors[child_id] = copy.deepcopy(descriptor)
+        if correction_enabled and start_correction:
+            early_correction_tasks[child_id] = illustration_flow.create_task(
+                _collect_final_child(child_id, child_item, child_descriptors[child_id], finalize=False)
+            )
         print(
             f"[ILLUST_CONTEXT] 하위 이미지 분배: slot={descriptor.get('slot')}, "
             f"index={slot_index}/{total_count}, provider={child_provider}, "
@@ -8164,7 +8309,7 @@ async def process_illustration_context_queue_item(item) -> dict:
     # 하위 큐 완료를 기다리고 원본 또는 이미 완료된 최종 image bytes를 회수한다.
     async def _await_child(child_id, child_item, slot_label):
         try:
-            await child_item.completion_future
+            await asyncio.shield(child_item.completion_future)
             illustration_flow.merge([child_item])
             child_prompt = prompts.get(child_id, {})
             image_bytes = (
@@ -8178,6 +8323,11 @@ async def process_illustration_context_queue_item(item) -> dict:
                 )
                 return None, "생성 결과 비어 있음", False
             return image_bytes, "", False
+        except asyncio.CancelledError:
+            if child_item.completion_future.cancelled() or getattr(child_item, "status", None) == "cancelled":
+                print(f"[ILLUST_CONTEXT] 하위 이미지 완료 대기 취소: child={child_id}, slot={slot_label}")
+                return None, "취소됨", True
+            raise
         except Exception as e:
             if getattr(child_item, "status", None) == "cancelled" or "취소" in str(e):
                 print(
@@ -8189,7 +8339,72 @@ async def process_illustration_context_queue_item(item) -> dict:
             traceback.print_exc()
             return None, f"큐 실패 - {e}", False
 
-    async def _collect_final_child(child_id, child_item, descriptor):
+    async def _collect_final_child(child_id, child_item, descriptor, *, finalize=True):
+        if descriptor.get("panels"):
+            import base64
+            from PIL import Image, ImageDraw
+            import io
+            errors = [f"컷 {number}: DETAIL 출력 누락" for number in descriptor.get("missing_panels") or []]
+            cancelled = False
+            for panel in descriptor["panels"]:
+                key = (descriptor["slot"], panel["panel"])
+                if key in manga_images:
+                    continue
+                pair = manga_children.get(key)
+                if pair is None:
+                    errors.append(f"컷 {panel['panel']}: 생성 등록 없음")
+                    continue
+                picture, reason, stopped = await _await_child(pair[0], pair[1], f"{key[0]} · 컷 {key[1]}")
+                cancelled |= stopped
+                if picture:
+                    manga_images[key] = picture
+                else:
+                    errors.append(f"컷 {panel['panel']}: {reason}")
+            if errors:
+                print(f"[MANGA:COMPOSE] 완료 컷 보존, 미완료 컷 재시도: slot={descriptor['slot']}, errors={errors}")
+                return None, "; ".join(errors), cancelled
+            try:
+                page_size = tuple(int(value) for value in descriptor["canvas"])
+                page = Image.new("RGB", page_size, "white")
+                for panel in descriptor["panels"]:
+                    key = (descriptor["slot"], panel["panel"])
+                    picture = Image.open(io.BytesIO(manga_images[key])).convert("RGBA")
+                    picture = picture.resize(tuple(panel["canvas"]), Image.Resampling.LANCZOS)
+                    overlay = Image.open(io.BytesIO(base64.b64decode(panel["dialogue_overlay"]))).convert("RGBA")
+                    picture.alpha_composite(overlay)
+                    left, top = round(panel["x"] * page_size[0]), round(panel["y"] * page_size[1])
+                    size = (max(1, round(panel["width"] * page_size[0])), max(1, round(panel["height"] * page_size[1])))
+                    page.paste(picture.convert("RGB").resize(size, Image.Resampling.LANCZOS), (left, top))
+                    ImageDraw.Draw(page).rectangle((left, top, left + size[0] - 1, top + size[1] - 1), outline="black", width=2)
+                stream = io.BytesIO()
+                page.save(stream, format="PNG")
+                page_id = str(uuid.uuid4())
+                final_result = _build_llm_final_result(descriptor)
+                backup_name, picture = await save_backup(stream.getvalue(), page_id,
+                    str(final_result.get("raw_positive") or ""), "", bot_name=active_bot,
+                    gen_method="만화 페이지", provider=illustration_provider_snapshot,
+                    llm_trace=llm_trace, llm_final_result=final_result,
+                    generation_params={"width": page_size[0], "height": page_size[1], "seed": descriptor["seed"]})
+                descriptor["backup_name"] = backup_name
+                print(f"[MANGA:COMPOSE] 페이지 완성: slot={descriptor['slot']}, panels={len(descriptor['panels'])}, size={page_size}")
+                return picture, "", False
+            except Exception as exc:
+                print(f"[MANGA:COMPOSE] 페이지 합성 실패: slot={descriptor['slot']}, error={exc}")
+                traceback.print_exc()
+                return None, str(exc), False
+        early_task = early_correction_tasks.get(child_id) if finalize else None
+        if early_task is not None:
+            child_id, child_item, corrected_descriptor = await asyncio.shield(early_task)
+            illustration_flow.merge([early_task])
+            # CALL3 may have populated dialogue while this image was corrected.
+            # Merge only the edited prompt; retain the completed dialogue/state.
+            for key in ("camera", "scene", "supplement", "characters", "raw_positive", "raw_negative",
+                        "multi_char_layout", "multi_char_layout_raw_response", "multi_char_layout_error",
+                        "visual_correction"):
+                if key in corrected_descriptor:
+                    descriptor[key] = copy.deepcopy(corrected_descriptor[key])
+                elif key.startswith("multi_char_layout"):
+                    descriptor.pop(key, None)
         slot_label = descriptor.get("slot")
         image_bytes, fail_reason, cancelled = await _await_child(
             child_id,
@@ -8197,17 +8412,217 @@ async def process_illustration_context_queue_item(item) -> dict:
             slot_label,
         )
         if not image_bytes or cancelled:
+            if not finalize:
+                return child_id, child_item, descriptor
             return image_bytes, fail_reason, cancelled
         child_prompt = prompts.get(child_id, {})
         inspection_source = child_prompt.pop("_quality_inspection_source", None)
-        if inspection_enabled and not inspection_source:
+        if (inspection_enabled or correction_enabled) and not inspection_source:
             state = child_prompt.get("_deferred_finalize") or {}
             if state:
                 inspection_source = {
                     "image_bytes": image_bytes,
                     "positive": str(state.get("positive") or ""),
                     "negative": str(state.get("negative") or ""),
+                    "conversion_info": copy.deepcopy(state.get("conversion_info") or {}),
                 }
+
+        if correction_enabled and early_task is None and not illustration_flow.cancel_requested():
+            max_redraws = illust_toggles["visual_correction_max_redraws"]
+            candidates = [(child_id, child_item, image_bytes, inspection_source, copy.deepcopy(descriptor))]
+            # Only inspect while a NonPASS can still trigger another redraw.
+            for attempt in range(max_redraws):
+                if not inspection_source:
+                    print(f"[VISUAL_CORRECTION] 생성 원본 없음; 기존 이미지 보존: session={session_id}, slot={slot_label}")
+                    descriptor["visual_correction"] = {"error": "검사할 생성 원본이 없습니다", "redraws": attempt}
+                    break
+                try:
+                    illustration_flow.raise_if_cancel_requested()
+                    queued = await _enqueue_illustration_quality_inspection(
+                        scope=illustration_quality_inspection.CORRECTION_SCOPE,
+                        session_id=session_id, context=_quality_inspection_context(descriptor),
+                        entries=[{**inspection_source, "slot": int(slot_label), "prompt_id": child_id,
+                                  "backup_name": str(child_prompt.get("backup_name") or ""),
+                                  "descriptor": copy.deepcopy(descriptor)}])
+                    if queued is None:
+                        raise RuntimeError("비주얼 교정 큐 등록 실패")
+                    verdict = await queued.completion_future
+                    illustration_flow.absorb([queued])
+                    child_prompt["_llm_trace"] = list(dict.fromkeys([
+                        *(child_prompt.get("_llm_trace") or []), *(queued.params.get("llm_trace") or [])]))
+                    descriptor["visual_correction"] = {"pass": verdict["pass"], "reason": verdict["reason"], "redraws": attempt}
+                    if verdict["pass"]:
+                        break
+                    revised = verdict.get("revised_prompt")
+                    if not revised:
+                        print(f"[VISUAL_CORRECTION] WARNING: NonPASS 이미지 보존: slot={slot_label}, redraws={attempt}/{max_redraws}, revised={bool(revised)}, reason={verdict['reason']}")
+                        break
+                    # Reuse DETAIL parsing, prompt assembly and the actual image queue.
+                    # Apply sparse text edits to the existing prompt, retaining its cast and bounds.
+                    candidate = copy.deepcopy(descriptor)
+                    mask_inline = isinstance(candidate.get("multi_char_layout"), dict)
+                    editable = copy.deepcopy(candidate["multi_char_layout"] if mask_inline else {
+                        key: candidate.get(key, [] if key == "characters" else "")
+                        for key in ("camera", "scene", "supplement", "characters")})
+                    original_editable = copy.deepcopy(editable)
+                    text_fields = ("background_prompt", "composition_prompt") if mask_inline else ("camera", "scene", "supplement")
+                    member_key = "regions" if mask_inline else "characters"
+                    member_fields = ("character_prompt",) if mask_inline else ("positive", "position")
+                    edit_warnings = []
+                    for field in text_fields:
+                        if field not in revised:
+                            continue
+                        if isinstance(revised[field], str):
+                            editable[field] = revised[field]
+                        else:
+                            edit_warnings.append(f"unreadable {field} retained from original")
+                    members = revised.get(member_key, [])
+                    if isinstance(members, dict):
+                        members = [members]
+                    if not isinstance(members, list):
+                        edit_warnings.append(f"unreadable {member_key} retained from original")
+                        members = []
+                    for edit in members:
+                        if not isinstance(edit, dict):
+                            edit_warnings.append(f"unreadable {member_key} entry skipped")
+                            continue
+                        matches = [member for member in editable.get(member_key, [])
+                                   if member.get("name") == edit.get("name")]
+                        if len(matches) != 1:
+                            edit_warnings.append(f"unmapped {member_key} entry skipped: name={edit.get('name')!r}")
+                            continue
+                        member = matches[0]
+                        for field in member_fields:
+                            if field not in edit:
+                                continue
+                            if isinstance(edit[field], str):
+                                member[field] = edit[field]
+                            else:
+                                edit_warnings.append(f"unreadable {member_key}.{field} retained from original")
+                        if mask_inline and any(field in edit and edit[field] != member.get(field)
+                                               for field in ("x", "y", "width", "height")):
+                            edit_warnings.append(f"region bounds retained: name={member.get('name')!r}")
+                    if editable == original_editable:
+                        edit_warnings.append("no applicable text changes; existing image preserved")
+                    for warning in edit_warnings:
+                        print(f"[VISUAL_CORRECTION] WARNING: {warning}; slot={slot_label}, input={revised!r}")
+                    if edit_warnings:
+                        illustration_flow.llm_metadata(validation_warnings=[
+                            {"stage": "VISUAL_CORRECTION", "reason": warning, "input": revised}
+                            for warning in edit_warnings])
+                    if editable == original_editable:
+                        break
+                    parsed = illustration_scene_pipeline._parse_detail_scene(
+                        {**editable, "slot": int(slot_label)}, {"slot": int(slot_label)},
+                        mask_inline=mask_inline,
+                        single_char_mask_enabled=illust_toggles["single_char_mask_enabled"])
+                    for key in ("camera", "scene", "supplement", "characters"):
+                        candidate[key] = parsed[key]
+                    for key in ("multi_char_layout", "multi_char_layout_raw_response", "multi_char_layout_error"):
+                        candidate.pop(key, None)
+                        if key in parsed:
+                            candidate[key] = parsed[key]
+                    if _is_multi_char_descriptor(candidate, illust_toggles["prompt_format"]):
+                        await illustration_context_pipeline.calculate_multi_char_layouts(
+                            [candidate], illustration_context_pipeline.load_prompt_files().get("multi_char_mask", ""),
+                            stream_notify=stream_notify, canvas_sizes=_illustration_mask_canvas_sizes(active_bot),
+                            single_char_mask_enabled=illust_toggles["single_char_mask_enabled"],
+                            mask_inline="multi_char_layout" in candidate)
+                        if "multi_char_layout" not in candidate:
+                            raise RuntimeError("교정 프롬프트의 마스크를 준비하지 못했습니다")
+                    _, narrative = illustration_context_pipeline._latest_narrative(payload.get("chats") or [])
+                    candidate["raw_positive"], _ = illustration_context_pipeline.build_raw_prompt(
+                        candidate, illustration_context_pipeline.remove_slot_markers(narrative),
+                        illustration_context_pipeline.load_prompt_files(), illust_toggles)
+                    corrected_id, corrected_item = await _enqueue_child(
+                        candidate, attempt + 1, max_redraws, built.get("context") or _quality_inspection_context(),
+                        illust_toggles["prompt_format"], defer_postprocess=True,
+                        llm_trace=list(child_prompt.get("_llm_trace") or []), start_correction=False)
+                    binding = getattr(corrected_item, "_illustration_flow", None)
+                    if binding:
+                        illustration_flow.update(binding[0], binding[1],
+                            label=f"비주얼 교정 재생성 {attempt + 1} · slot {slot_label}",
+                            layout_group=f"visual_correction_{corrected_id}")
+                    corrected_image, correction_error, was_cancelled = await _await_child(corrected_id, corrected_item, slot_label)
+                    if not corrected_image or was_cancelled:
+                        _discard_deferred_illustration_prompt(corrected_id, correction_error or "교정 재생성 취소")
+                        raise RuntimeError(correction_error or "교정 이미지 생성 실패")
+                    child_id, child_item, image_bytes = corrected_id, corrected_item, corrected_image
+                    child_prompt = prompts[child_id]
+                    inspection_source = child_prompt.pop("_quality_inspection_source", None)
+                    descriptor.update(candidate)
+                    descriptor["visual_correction"]["redraws"] = attempt + 1
+                    candidates.append((child_id, child_item, image_bytes, inspection_source, copy.deepcopy(descriptor)))
+                except asyncio.CancelledError:
+                    print(f"[VISUAL_CORRECTION] 교정 취소; 생성된 이미지 보존: session={session_id}, slot={slot_label}")
+                    break
+                except Exception as exc:
+                    print(f"[VISUAL_CORRECTION] 교정 실패; 생성된 이미지 보존: session={session_id}, slot={slot_label}, attempt={attempt}, error={exc}")
+                    traceback.print_exc()
+                    descriptor.setdefault("visual_correction", {"redraws": attempt})["error"] = str(exc)
+                    break
+            else:
+                print(f"[VISUAL_CORRECTION] 재생성 한도 도달; 보존된 후보에서 결과 선택: session={session_id}, slot={slot_label}, redraws={max_redraws}/{max_redraws}")
+            if len(candidates) > 1:
+                correction_result = copy.deepcopy(descriptor.get("visual_correction") or {})
+                selection = {"selected_candidate": 0, "reason": ""}
+                selection_trace = list(child_prompt.get("_llm_trace") or [])
+                queued = None
+                try:
+                    illustration_flow.raise_if_cancel_requested()
+                    queued = await _enqueue_illustration_quality_inspection(
+                        scope=illustration_quality_inspection.SELECTION_SCOPE,
+                        session_id=session_id, context=_quality_inspection_context(candidates[0][4]),
+                        entries=[{**(source or {}), "image_bytes": (source or {}).get("image_bytes") or pixels,
+                                  "slot": int(slot_label), "prompt_id": prompt_id,
+                                  "backup_name": str(prompts[prompt_id].get("backup_name") or ""),
+                                  "descriptor": saved_descriptor}
+                                 for prompt_id, _, pixels, source, saved_descriptor in candidates])
+                    if queued is None:
+                        raise RuntimeError("비주얼 교정 결과 선택 큐 등록 실패")
+                    selection = await queued.completion_future
+                    illustration_flow.absorb([queued])
+                except asyncio.CancelledError:
+                    print(f"[VISUAL_SELECTION] 선택 취소; 원본 보존: session={session_id}, slot={slot_label}")
+                    selection["error"] = "결과 선택 취소; 원본 보존"
+                except Exception as exc:
+                    print(f"[VISUAL_SELECTION] 선택 실패; 원본 보존: session={session_id}, slot={slot_label}, candidates={len(candidates)}, error={exc}")
+                    traceback.print_exc()
+                    selection["error"] = str(exc)
+                finally:
+                    if queued is not None:
+                        selection_trace.extend(queued.params.get("llm_trace") or [])
+                selected_index = selection["selected_candidate"]
+                child_id, child_item, image_bytes, inspection_source, selected_descriptor = candidates[selected_index]
+                descriptor.clear()
+                descriptor.update(selected_descriptor)
+                descriptor["visual_correction"] = {
+                    **correction_result, **selection, "candidate_count": len(candidates),
+                    "selected_prompt_id": child_id}
+                child_prompt = prompts[child_id]
+                child_prompt["_llm_trace"] = list(dict.fromkeys([
+                    *(child_prompt.get("_llm_trace") or []), *selection_trace]))
+                child_prompt["_llm_final_result"] = _build_llm_final_result(descriptor)
+                for prompt_id, _, _, _, _ in candidates:
+                    if prompt_id != child_id:
+                        _discard_deferred_illustration_prompt(prompt_id, "비주얼 교정 결과 선택에서 제외")
+                print(f"[VISUAL_SELECTION] 결과 선택: session={session_id}, slot={slot_label}, candidate={selected_index}/{len(candidates)}, prompt={child_id}, reason={selection.get('reason', '')}")
+            else:
+                print(f"[VISUAL_SELECTION] 비교 후보 없음; 기존 이미지 사용: session={session_id}, slot={slot_label}")
+        elif correction_enabled and early_task is None:
+            print(f"[VISUAL_CORRECTION] 흐름 취소로 추가 교정 생략: session={session_id}, slot={slot_label}")
+
+        if not finalize:
+            # Keep raw pixels available until CALL3 joins; captions are composed
+            # exactly once by the later final collector.
+            if inspection_source:
+                child_prompt["_quality_inspection_source"] = inspection_source
+            return child_id, child_item, descriptor
+        if early_task is not None:
+            child_prompt["_llm_trace"] = list(dict.fromkeys([
+                *_child_llm_trace(llm_trace, descriptor), *(child_prompt.get("_llm_trace") or [])]))
+            child_prompt["_llm_final_result"] = _build_llm_final_result(descriptor)
+            child_descriptors[child_id] = copy.deepcopy(descriptor)
 
         async def remember_inspection_source():
             if not inspection_enabled:
@@ -8280,8 +8695,14 @@ async def process_illustration_context_queue_item(item) -> dict:
         successful_images = []
         failures = []
         for child_id, child_item in list(all_child_pairs):
+            if correction_enabled and child_id not in early_correction_tasks:
+                # Redraw children are recovered through their original collector.
+                continue
             status = str(getattr(child_item, "status", "") or "")
             descriptor = copy.deepcopy(child_descriptors.get(child_id) or {})
+            if descriptor.get("panel"):
+                print(f"[MANGA:CANCEL] 개별 컷은 페이지 수집 경로에서 회수: panel={descriptor['panel']}")
+                continue
             if status not in {"processing", "completed"}:
                 _discard_deferred_illustration_prompt(child_id, reason)
                 continue
@@ -8328,7 +8749,7 @@ async def process_illustration_context_queue_item(item) -> dict:
         successful_images.extend(original_asset_result.get("images") or [])
         failures.extend(original_asset_result.get("failures") or [])
         requested_total = (
-            max(len(raw_items), len(child_descriptors))
+            max(len(raw_items), len(early_correction_tasks) if correction_enabled else len(child_descriptors))
             + int(original_asset_result.get("requested_count") or 0)
         )
         if successful_images:
@@ -8345,13 +8766,21 @@ async def process_illustration_context_queue_item(item) -> dict:
                     f"session={session_id}, error={publish_error}"
                 )
                 traceback.print_exc()
-                illustration_context_pipeline.set_session_error(session_id, reason)
+                if raw_body.get("illustration_regenerate_session_id"):
+                    illustration_context_pipeline.set_session_regenerate_error(
+                        session_id, raw_body["illustration_regenerate_slot"], reason)
+                else:
+                    illustration_context_pipeline.set_session_error(session_id, reason)
                 if original_prompt_id in prompts:
                     prompts[original_prompt_id]["status"] = "completed"
                     prompts[original_prompt_id]["outputs"] = {"images": []}
                     prompts[original_prompt_id]["image_bytes"] = None
         else:
-            illustration_context_pipeline.set_session_error(session_id, reason)
+            if raw_body.get("illustration_regenerate_session_id"):
+                illustration_context_pipeline.set_session_regenerate_error(
+                    session_id, raw_body["illustration_regenerate_slot"], reason)
+            else:
+                illustration_context_pipeline.set_session_error(session_id, reason)
             if original_prompt_id in prompts:
                 prompts[original_prompt_id]["status"] = "completed"
                 prompts[original_prompt_id]["outputs"] = {"images": []}
@@ -8395,7 +8824,6 @@ async def process_illustration_context_queue_item(item) -> dict:
         character_names = ""
         visual_profile_catalog = ""
         effective_visual_profiles = {}
-        first_pass_single_v5 = False
         if payload.get("protocol") != "prompt_batch_v1":
             pre_character_started_at = time.perf_counter()
             pre_character_trace_id = str(session_id or original_prompt_id or "-")
@@ -8509,13 +8937,6 @@ async def process_illustration_context_queue_item(item) -> dict:
                 pre_character_trace_id,
                 lb_extra_request_cache,
             )
-            first_pass_single_v5 = _timed_pre_character_step(
-                "active_bot_uses_first_pass_single_v5",
-                active_bot_uses_first_pass_single_v5,
-                active_bot,
-                pre_character_trace_id,
-                lb_extra_request_cache,
-            )
             pre_character_total_ms = (
                 time.perf_counter() - pre_character_started_at
             ) * 1000.0
@@ -8539,7 +8960,6 @@ async def process_illustration_context_queue_item(item) -> dict:
                     progress=progress,
                     history_ids_sink=llm_trace,
                     extra_instruction=extra_instruction,
-                    first_pass_single_v5=first_pass_single_v5,
                     character_names=character_names,
                 )
             )
@@ -8565,6 +8985,10 @@ async def process_illustration_context_queue_item(item) -> dict:
                     stream_notify=stream_notify,
                     llm_trace=llm_trace,
                     profile_authority=profile_authority,
+                    resolved_character_names=(
+                        [entry["name"] for entry in profile_result.get("current_characters") or []]
+                        if payload.get("protocol") != "prompt_batch_v1" else None
+                    ),
                 )
             except asyncio.CancelledError:
                 print(
@@ -8887,7 +9311,6 @@ async def process_illustration_context_queue_item(item) -> dict:
                     profile_translation_namespace=active_bot,
                     pre_resolved_profile_output=profile_output,
                     pre_resolved_profile_result=profile_result,
-                    first_pass_single_v5=first_pass_single_v5,
                 )
                 illustration_flow.raise_if_cancel_requested()
             else:
@@ -8954,7 +9377,12 @@ async def process_illustration_context_queue_item(item) -> dict:
             early_descriptor_slots = final_slots
             for descriptor, pair in zip(raw_items, child_pairs):
                 if pair is not None and pair[0] in prompts:
-                    prompts[pair[0]]["_llm_final_result"] = _build_llm_final_result(descriptor)
+                    if descriptor.get("panels"):
+                        descriptor["seed"] = child_descriptors[pair[0]]["seed"]
+                        for panel in descriptor["panels"]:
+                            panel["seed"] = descriptor["seed"]
+                    else:
+                        prompts[pair[0]]["_llm_final_result"] = _build_llm_final_result(descriptor)
                     child_descriptors[pair[0]] = copy.deepcopy(descriptor)
 
             # Completed batches and Key Visual already queued their ready images.
@@ -9257,6 +9685,11 @@ async def process_illustration_context_queue_item(item) -> dict:
     except Exception as e:
         print(f"[ILLUST_CONTEXT] 세션 처리 실패: session={session_id}, error={e}")
         traceback.print_exc()
+        for task in early_correction_tasks.values():
+            if not task.done():
+                task.cancel()
+        if early_correction_tasks:
+            await asyncio.gather(*early_correction_tasks.values(), return_exceptions=True)
         if history_plan is not None and not history_finalize_attempted:
             history_finalize_attempted = True
             try:
@@ -9301,13 +9734,22 @@ async def process_illustration_context_queue_item(item) -> dict:
                         f"error={cleanup_error}"
                     )
                     traceback.print_exc()
-        illustration_context_pipeline.set_session_error(session_id, str(e))
+        if raw_body.get("illustration_regenerate_session_id"):
+            illustration_context_pipeline.set_session_regenerate_error(
+                session_id, raw_body["illustration_regenerate_slot"], str(e))
+        else:
+            illustration_context_pipeline.set_session_error(session_id, str(e))
         if original_prompt_id in prompts:
             prompts[original_prompt_id]["status"] = "completed"
             prompts[original_prompt_id]["outputs"] = {"images": []}
         await stream_notify({"type": "error", "call_name": "PIPELINE", "error": str(e)})
         raise
     finally:
+        for task in early_correction_tasks.values():
+            if not task.done():
+                task.cancel()
+        if early_correction_tasks:
+            await asyncio.gather(*early_correction_tasks.values(), return_exceptions=True)
         for child_id, _child_item in all_child_pairs:
             (prompts.get(child_id) or {}).pop("_quality_inspection_source", None)
         if original_asset_task is not None and not original_asset_task.done():
@@ -11712,6 +12154,14 @@ async def _enqueue_illustration_session_slot(
         operation_label,
         whole_session=whole_session,
     )
+    if descriptor.get("panels"):
+        session = illustration_context_pipeline.get_session(session_id) or {}
+        asyncio.create_task(queue_manager.add_item(
+            "illustration_context", f"만화 {operation_label} · slot {slot}",
+            {"prompt_id": prompt_id, "prompt_data": generated_prompt, "raw_body": generated_body,
+             "payload": {"protocol": "prompt_batch_v1", "session_id": session_id,
+                         "context": session.get("context", ""), "items": [descriptor]}}, priority=0))
+        return web.json_response({"prompt_id": prompt_id, "number": len(prompts), "node_errors": {}})
     backup_name = str(descriptor.get("backup_name") or "").strip()
     if backup_name and _backup_uses_hybrid_regeneration(backup_name):
         asyncio.create_task(process_illustration_remote_regenerate(
@@ -11729,6 +12179,13 @@ async def _enqueue_illustration_session_slot(
         return web.json_response(
             {"prompt_id": prompt_id, "number": len(prompts), "node_errors": {}}
         )
+    runtime_snapshot = _capture_illustration_runtime_snapshot()
+    prompts[prompt_id]["_illustration_runtime_snapshot"] = runtime_snapshot
+    illust_toggles = runtime_snapshot["illustration_context_toggles"]
+    multi_char_context = _multi_char_queue_context(
+        descriptor, illust_toggles["prompt_format"], illust_toggles, runtime_snapshot["provider"])
+    if multi_char_context:
+        generated_body["illustration_multi_char"] = multi_char_context
     asyncio.create_task(queue_manager.add_item(
         "illustration",
         f"삽화 {operation_label} · slot {slot}",
@@ -11836,62 +12293,9 @@ async def handle_prompt(request: web.Request) -> web.Response:
             )
             if reservation_response is not None:
                 return reservation_response
-            regenerated_prompt = copy.deepcopy(prompt_data)
-            if not set_prompt_by_title(regenerated_prompt, "긍정프롬프트", descriptor.get("raw_positive", "")):
-                return web.json_response({"error": "positive prompt node not found"}, status=400)
-            if not set_prompt_by_title(regenerated_prompt, "부정프롬프트", descriptor.get("raw_negative", "")):
-                return web.json_response({"error": "negative prompt node not found"}, status=400)
-            save_node = find_save_image_node(regenerated_prompt)
-            session = illustration_context_pipeline.get_session(session_id) or {}
-            prompts[prompt_id] = {
-                "status": "running", "prompt": regenerated_prompt,
-                "client_id": body.get("client_id", ""), "extra_data": body.get("extra_data", {}),
-                "outputs": {}, "filename": None, "save_node_id": save_node,
-                "image_bytes": None, "timestamp": time.time(),
-                "_llm_final_result": _build_llm_final_result(descriptor),
-            }
-            regenerate_body = {
-                "prompt": regenerated_prompt,
-                "client_id": body.get("client_id", ""),
-                "extra_data": body.get("extra_data", {}),
-                "illustration_context": session.get("context", ""),
-                "illustration_regenerate_session_id": session_id,
-                "illustration_regenerate_slot": slot,
-                "illustration_visual_states": _descriptor_visual_states(descriptor),
-                "illustration_anonymous_partner_fragment": bool(
-                    descriptor.get("anonymous_partner_fragment", False)
-                ),
-            }
-            if descriptor.get("kind") == "scene" and "call1_scene_state" in descriptor:
-                regenerate_body["illustration_scene_detail_authoritative"] = True
-            backup_name = str(descriptor.get("backup_name") or "").strip()
-            if backup_name and _backup_uses_hybrid_regeneration(backup_name):
-                asyncio.create_task(process_illustration_remote_regenerate(
-                    prompt_id,
-                    session_id,
-                    slot,
-                    backup_name,
-                    "재생성",
-                ))
-                print(
-                    f"[ILLUST_CONTEXT:REMOTE_REGEN] 하이브리드 슬롯 재생성 접수: "
-                    f"session={session_id}, slot={slot}, backup={backup_name}"
-                )
-                return web.json_response(
-                    {
-                        "prompt_id": prompt_id,
-                        "number": len(prompts),
-                        "node_errors": {},
-                    }
-                )
-            asyncio.create_task(queue_manager.add_item(
-                "illustration",
-                f"삽화 재생성 · slot {slot}",
-                {"prompt_id": prompt_id, "prompt_data": regenerated_prompt, "raw_body": regenerate_body},
-                priority=0,
-            ))
-            print(f"[ILLUST_CONTEXT] 슬롯 재생성 접수: session={session_id}, slot={slot}")
-            return web.json_response({"prompt_id": prompt_id, "number": len(prompts), "node_errors": {}})
+            return await _enqueue_illustration_session_slot(
+                body, prompt_id, prompt_data, session_id, slot,
+                attach_context=True, operation_label="재생성")
 
         result_request = illustration_context_pipeline.parse_result_request(incoming_positive)
         if result_request is not None:
@@ -13211,7 +13615,7 @@ def _read_backup_multi_char_context(backup_name: str, source_positive: str) -> d
     """
     try:
         payload = multi_char_mask.extract_multi_char_prompt_payload(source_positive)
-        if not isinstance(payload, dict) or payload.get("enable") is not True:
+        if not isinstance(payload, dict) or not isinstance(payload.get("enable"), bool):
             return None
 
         info_path = os.path.join(WORKFLOW_BACKUP_DIR, f"{backup_name}_info.json")
@@ -13249,6 +13653,12 @@ def _read_backup_multi_char_context(backup_name: str, source_positive: str) -> d
                 f"fingerprint={snapshot['mask_fingerprint'][:12]}"
             )
             return snapshot
+
+        if payload["enable"] is False:
+            print(
+                f"[BACKUP:MULTI_CHAR] 마스크 OFF, 보존된 배치 없음: backup={backup_name}"
+            )
+            return None
 
         print(
             f"[BACKUP:MULTI_CHAR] 저장 레이아웃 없음, 레거시 세션 복구 시도: "
@@ -13517,18 +13927,16 @@ def _v3_prompt_character_names(blocks: dict, multi_payload: object = None) -> li
             for name in str(blocks.get("CHAR_LIST") or "").split(",")
             if name.strip()
         ]
-    if len(names) not in (1, 2):
-        print(f"[LLM_EDIT:IDENTITY] 지원하지 않는 V3 캐릭터 슬롯 수: {names}")
-        raise ValueError(
-            f"편하게 수정의 캐릭터 교체는 1인 또는 2인 백업만 지원합니다: {len(names)}명"
-        )
+    if not names:
+        print(f"[LLM_EDIT:IDENTITY] V3 캐릭터 슬롯 없음: blocks={blocks}, multi={multi_payload}")
+        raise ValueError("백업에 교체할 캐릭터 슬롯이 없습니다")
     return names
 
 
 def _llm_edit_identity_capability(backup_name: str) -> dict:
     """백업 원본을 기준으로 편하게 수정의 캐릭터 교체 가능 여부를 판정한다.
 
-    1인은 V3 Comfy 백업이면 허용한다. 2인은 프롬프트의 MULTI_CHAR 제어 블록과
+    1인은 V3 Comfy 백업이면 허용한다. 다인은 프롬프트의 MULTI_CHAR 제어 블록과
     저장/복구된 고정 마스크 스냅샷이 모두 일치할 때만 허용한다.
     """
     result = {
@@ -13657,11 +14065,11 @@ def _llm_edit_identity_capability(backup_name: str) -> dict:
     result["requires_multi_char_snapshot"] = True
     if not isinstance(multi_payload, dict) or multi_payload.get("enable") is not True:
         result["reason"] = (
-            "이 2인 백업에는 고정 마스크 스냅샷이 없어 캐릭터를 교체할 수 없습니다. "
+            "이 백업에는 고정 마스크 스냅샷이 없어 캐릭터를 교체할 수 없습니다. "
             "장면·표정·복장 수정만 사용할 수 있습니다."
         )
         print(
-            f"[LLM_EDIT:CAPABILITY] 2인 고정 마스크 제어 블록 없음: "
+            f"[LLM_EDIT:CAPABILITY] 다인 고정 마스크 제어 블록 없음: "
             f"backup={backup_name}, characters={character_names}"
         )
         return result
@@ -13676,20 +14084,20 @@ def _llm_edit_identity_capability(backup_name: str) -> dict:
         )
     except Exception as exc:
         result["reason"] = (
-            "이 2인 백업의 고정 마스크 스냅샷을 검증하지 못해 캐릭터를 "
+            "이 백업의 고정 마스크 스냅샷을 검증하지 못해 캐릭터를 "
             "교체할 수 없습니다. 장면·표정·복장 수정만 사용할 수 있습니다."
         )
         print(
-            f"[LLM_EDIT:CAPABILITY] 2인 고정 마스크 스냅샷 검증 실패: "
+            f"[LLM_EDIT:CAPABILITY] 다인 고정 마스크 스냅샷 검증 실패: "
             f"backup={backup_name}, characters={character_names}, error={exc}"
         )
         traceback.print_exc()
         return result
 
     result["enabled"] = True
-    result["reason"] = "검증된 2인 고정 마스크 스냅샷을 사용해 캐릭터를 교체할 수 있습니다."
+    result["reason"] = "고정 마스크 스냅샷을 사용해 캐릭터를 교체할 수 있습니다."
     print(
-        f"[LLM_EDIT:CAPABILITY] 2인 캐릭터 교체 허용: "
+        f"[LLM_EDIT:CAPABILITY] 다인 캐릭터 교체 허용: "
         f"backup={backup_name}, characters={character_names}, "
         f"fingerprint={snapshot['mask_fingerprint'][:12]}"
     )
@@ -16536,15 +16944,10 @@ async def handle_api_postprocess_preview(request: web.Request) -> web.Response:
             "name_replace": body.get("name_replace") or {},
             "name_replace_enabled": bool(body.get("name_replace_enabled", True)),
             "strip_emotion": bool(body.get("strip_emotion", False)),
+            "emotion_extract_rules": body.get("emotion_extract_rules") or [],
             "prefix": body.get("prefix", "") or "",
             "suffix": body.get("suffix", "") or "",
             "face_enabled": bool(body.get("face_enabled", True)),
-            "face_crop_top": body.get("face_crop_top", 1.8),
-            "face_crop_bottom": body.get("face_crop_bottom", 1.0),
-            "face_conf": body.get("face_conf", 0.3),
-            "face_best_only": bool(body.get("face_best_only", False)),
-            "face_device": body.get("face_device", "auto"),
-            "face_cpu_threads": body.get("face_cpu_threads", 0),
             "multi_face_mode": body.get("multi_face_mode", "both") or "both",
             "theme": body.get("theme", "sky"),
             "theme_single": body.get("theme_single", body.get("theme", "sky")),
@@ -16724,7 +17127,10 @@ async def handle_api_postprocess_preview(request: web.Request) -> web.Response:
                 "preview_debug_candidates": bool(body.get("preview_debug_candidates", False)),
                 "preview_force_min_font_size": bool(body.get("preview_force_min_font_size", False)),
             }
-            composed = compose_bubble(base_bytes, speak, bubble_settings, bot_name)
+            composed = compose_bubble(
+                base_bytes, speak, bubble_settings, bot_name,
+                face_positions=body.get("face_positions") if has_real_base else None,
+            )
             return web.Response(body=composed, content_type="image/png")
         if mode == "subtitle":
             from modes.subtitle_render import compose_subtitle
@@ -16765,114 +17171,56 @@ async def handle_api_postprocess_preview(request: web.Request) -> web.Response:
 
 
 async def handle_api_postprocess_preview_face(request: web.Request) -> web.Response:
-    """POST /api/postprocess/preview_face
-
-    후처리 모달의 'YOLO 크롭 결과' 실시간 미리보기.
-    매칭된 캐릭터 이미지에서 face_detector.crop_face 로 크롭한 결과 PNG를 반환한다.
-    실제 합성(compose_postprocess)과 동일한 crop_face 단일 함수만 경유(CLAUDE.md: 동일 빌더).
-
-    요청: {bot_name, character, emotion, prefix, suffix, face_crop_top, face_crop_bottom, face_conf}
-    응답: image/png  (매칭/검출 실패 시 {"error": 사유} 와 status 400)
-    """
+    """대사 합성과 동일한 저장 FACE CROP을 PNG 미리보기로 반환한다."""
     try:
         body = await request.json()
         bot_name = body.get("bot_name", "") or app_config.get("bot_selected", "") or ""
-        character = body.get("character", "") or ""
-        emotion = body.get("emotion", "") or ""
-        prefix = body.get("prefix", "") or ""
-        suffix = body.get("suffix", "") or ""
-        emotion_extract_rules = body.get("emotion_extract_rules") or []
-        try:
-            face_crop_top = float(body.get("face_crop_top", 1.8) or 1.8)
-        except (TypeError, ValueError):
-            face_crop_top = 1.8
-        try:
-            face_crop_bottom = float(body.get("face_crop_bottom", 1.0) or 1.0)
-        except (TypeError, ValueError):
-            face_crop_bottom = 1.0
-        try:
-            face_conf = float(body.get("face_conf", 0.3) or 0.3)
-        except (TypeError, ValueError):
-            face_conf = 0.3
-        face_best_only = bool(body.get("face_best_only", False))
-        device = (body.get("device") or "auto").strip() or "auto"
-        try:
-            cpu_threads = int(body.get("cpu_threads", 0) or 0)
-        except (TypeError, ValueError):
-            print(
-                f"[POSTPROCESS_PREVIEW_FACE] cpu_threads 변환 실패"
-                f"({body.get('cpu_threads')!r}), 자동 사용"
-            )
-            cpu_threads = 0
+        character = str(body.get("character") or "").strip()
+        if not bot_name or not character:
+            print(f"[POSTPROCESS_PREVIEW_FACE] 봇/발화자 없음: bot={bot_name!r}, character={character!r}")
+            return web.json_response({"error": "봇과 발화자를 선택하세요."}, status=400)
 
-        # '최고 신뢰도 박스 하나만': 임계치를 0으로 강제 → 검출된 박스 중 신뢰도 최고를 항상 반환.
-        if face_best_only:
-            face_conf = 0.0
+        from modes.postprocess import _prepare_face_images
 
-        if not bot_name:
-            return web.json_response({"error": "봇이 선택되지 않았습니다."}, status=400)
-        if not character:
-            return web.json_response({"error": "대사에서 NAME을 찾을 수 없습니다."}, status=400)
-
-        from modes.postprocess import match_face_image_filename, load_face_image_bytes
-        from modes import face_detector
-
-        matched = match_face_image_filename(bot_name, character, emotion, prefix, suffix,
-                                            emotion_extract_rules=emotion_extract_rules)
-        if not matched:
-            return web.json_response(
-                {"error": f"매칭 이미지 없음 (bot={bot_name}, char={character}, token={character}{prefix}{emotion}{suffix!r})"},
-                status=400)
-        raw = load_face_image_bytes(bot_name, character, matched[0])
-        if not raw:
-            return web.json_response({"error": f"이미지 로드 실패: {matched[0]}"}, status=400)
-
-        try:
-            base = Image.open(BytesIO(raw))
-        except Exception as e:
-            return web.json_response({"error": f"이미지 열기 실패: {e}"}, status=400)
-
-        # target_size는 미리보기 표시용으로 충분히 큰 고정값. 합성 결과와 크롭 영역은 동일.
-        # 크롭 실행 시간(YOLO 추론+리사이즈)만 측정 — 매칭/로드/IO 제외.
-        _t0 = time.perf_counter()
-        crop, face_conf_val = face_detector.crop_face(
-            base, top_mult=face_crop_top, bottom_mult=face_crop_bottom,
-            target_size=256, conf_thres=face_conf, device=device,
-            return_conf=True, cpu_threads=cpu_threads)
-        _crop_ms = (time.perf_counter() - _t0) * 1000.0
-        print(f"[FACE_DETECTOR] 크롭 {os.path.basename(matched[0])}: {_crop_ms:.0f}ms conf={face_conf_val}")
+        faces = await asyncio.to_thread(
+            _prepare_face_images,
+            [{"speaker": character, "emotion": body.get("emotion") or ""}],
+            {
+                "face_enabled": True,
+                "strip_emotion": bool(body.get("strip_emotion", True)),
+                "prefix": body.get("prefix") or "",
+                "suffix": body.get("suffix") or "",
+                "emotion_extract_rules": body.get("emotion_extract_rules") or [],
+            },
+            bot_name, 256,
+        )
+        crop = faces.get(character.casefold())
         if crop is None:
-            # 미검출이라도 서버가 본 '이미지 내 최고 신뢰도'를 노출(임계치 튜닝 단서).
-            conf_tag = f" · 최고 신뢰도 {face_conf_val*100:.0f}%" if face_conf_val is not None else ""
-            err_headers = {"X-Face-Conf": f"{face_conf_val:.3f}"} if face_conf_val is not None else {}
+            print(f"[POSTPROCESS_PREVIEW_FACE] 사용 가능한 FACE CROP 없음: bot={bot_name}, character={character}")
             return web.json_response(
-                {"error": f"얼굴 검출 실패(CONF>{face_conf} 미달): {matched[0]}{conf_tag}",
-                 "max_conf": face_conf_val},
-                status=400, headers=err_headers)
-
+                {"error": "저장된 FACE CROP을 불러올 수 없습니다. 대사모드 FACE CROP을 추출하세요."},
+                status=400,
+            )
         buf = BytesIO()
         crop.save(buf, format="PNG")
-        return web.Response(
-            body=buf.getvalue(), content_type="image/png",
-            headers={"X-Crop-Ms": f"{_crop_ms:.0f}",
-                     "X-Face-Conf": f"{face_conf_val:.3f}"})
+        return web.Response(body=buf.getvalue(), content_type="image/png")
     except Exception as e:
-        tb = traceback.format_exc()
-        print(f"[ERROR] postprocess_preview_face 실패: {e}\n{tb}")
+        print(f"[ERROR] postprocess_preview_face 실패: {e}")
+        traceback.print_exc()
         return web.json_response({"error": str(e)}, status=500)
 
 
 async def handle_api_postprocess_face_devices(request: web.Request) -> web.Response:
     """GET /api/postprocess/face_devices
 
-    대사/말풍선 ONNX Runtime에 사용할 디바이스와 CPU 스레드 목록.
+    말풍선 ONNX Runtime에 사용할 디바이스와 CPU 스레드 목록.
     설치된 onnxruntime 패키지에 따라 CUDA/DirectML/CPU가 노출되며,
     스레드는 자동(0)과 현재 환경의 1..논리 프로세서 수를 반환한다.
     """
     try:
-        from modes import face_detector
-        devices = face_detector.list_devices()
-        thread_options = face_detector.list_thread_options()
+        from modes.onnx_execution import list_devices, list_cpu_thread_options
+        devices = list_devices()
+        thread_options = list_cpu_thread_options()
         return web.json_response({
             "devices": devices,
             "thread_options": thread_options,
@@ -17625,8 +17973,8 @@ async def handle_api_reschedule_with_modified_prompt(
                         src_multi_char,
                         identity_names,
                     )
-                elif len(identity_names) == 2:
-                    raise ValueError("2인 캐릭터 교체에 필요한 고정 마스크 스냅샷이 없습니다")
+                elif len(identity_names) > 1:
+                    raise ValueError("다인 캐릭터 교체에 필요한 고정 마스크 스냅샷이 없습니다")
                 print(
                     f"[RESCHEDULE_MOD:IDENTITY] 활성 봇/캐릭터 교체 검증 완료: "
                     f"backup={backup_name}, bot={src_bot_name!r}, "
@@ -18115,11 +18463,11 @@ async def handle_api_llm_edit_prompt(
                             prompt_path_txt = os.path.join(WORKFLOW_BACKUP_DIR, f"{backup_name}.txt")
                             prompt_path = prompt_path_json if os.path.isfile(prompt_path_json) else prompt_path_txt
                             if not os.path.isfile(prompt_path):
-                                raise ValueError("2인 백업의 원본 프롬프트 파일이 없습니다")
+                                raise ValueError("백업의 원본 프롬프트 파일이 없습니다")
                             source_positive, _ = _extract_prompts_from_backup(prompt_path)
                             source_snapshot = _read_backup_multi_char_context(backup_name, source_positive)
                         if source_snapshot is None:
-                            raise ValueError("2인 백업의 고정 마스크 스냅샷이 없습니다")
+                            raise ValueError("백업의 고정 마스크 스냅샷이 없습니다")
                         remapped_multi_char_snapshot = multi_char_mask.remap_multi_char_snapshot(
                             source_snapshot,
                             identity_names,
@@ -21485,7 +21833,7 @@ def _normalize_restore_manual_speak_text(
         return source
     if len(canonical_names) != 1:
         raise ValueError(
-            "2인 후처리 텍스트는 각 줄을 '캐릭터명: \"대사\"' 형식으로 입력해야 합니다"
+            f"{len(canonical_names)}인 후처리 텍스트는 각 줄을 '캐릭터명: \"대사\"' 형식으로 입력해야 합니다"
         )
 
     only_name = next(iter(canonical_names.values()))
@@ -21525,9 +21873,9 @@ async def _build_restore_manual_multi_char_context(result: dict) -> dict:
         if isinstance(character, dict)
         and str(character.get("name") or "").strip()
     ]
-    if len(characters) != 2:
+    if len(characters) not in (1, 2, 3):
         raise ValueError(
-            f"수동 그리기 Regional 마스크는 정확히 2인이 필요합니다: "
+            f"수동 그리기 Regional 마스크는 1~3인이 필요합니다: "
             f"actual={len(characters)}"
         )
     descriptor = {
@@ -21542,7 +21890,7 @@ async def _build_restore_manual_multi_char_context(result: dict) -> dict:
     layout_prompt = str(prompts_for_layout.get("multi_char_mask") or "").strip()
     if not layout_prompt:
         print("[RESTORE_MANUAL:MULTI_CHAR] multi_char_mask 프롬프트가 비어 있습니다")
-        raise RuntimeError("2인 Regional 마스크 프롬프트를 불러오지 못했습니다")
+        raise RuntimeError("다인 Regional 마스크 프롬프트를 불러오지 못했습니다")
 
     await illustration_context_pipeline.calculate_multi_char_layouts(
         [descriptor],
@@ -21654,10 +22002,10 @@ async def handle_api_restore_manual_draw(request: web.Request) -> web.Response:
                 raise ValueError("LLM 수동 그리기는 선택된 봇이 필요합니다")
             raw_count = body.get("character_count")
             if isinstance(raw_count, bool):
-                raise ValueError("character_count는 1 또는 2여야 합니다")
+                raise ValueError("character_count는 1, 2 또는 3이어야 합니다")
             character_count = int(raw_count)
-            if character_count not in (1, 2):
-                raise ValueError("character_count는 1 또는 2여야 합니다")
+            if character_count not in (1, 2, 3):
+                raise ValueError("character_count는 1, 2 또는 3이어야 합니다")
             raw_names = body.get("char_names")
             if not isinstance(raw_names, list):
                 raise ValueError("char_names는 배열이어야 합니다")
@@ -21814,7 +22162,7 @@ async def handle_api_restore_manual_draw(request: web.Request) -> web.Response:
             ) or []
             if (
                 prompt_file == RESTORE_WORKFLOW_PROMPT_LLM
-                and len(result_characters) == 2
+                and len(result_characters) in (1, 2, 3)
             ):
                 prompt_format = workflow_profiles.illustration_prompt_format(
                     illustration_workflow_type,
@@ -21829,6 +22177,10 @@ async def handle_api_restore_manual_draw(request: web.Request) -> web.Response:
                             manual_illust_toggles,
                             restore_provider,
                         )
+                        and (
+                            len(result_characters) != 1
+                            or bool(manual_illust_toggles.get("single_char_mask_enabled", True))
+                        )
                     )
                     if manual_multi_char_mask_active:
                         raw_body["illustration_multi_char"] = (
@@ -21836,19 +22188,20 @@ async def handle_api_restore_manual_draw(request: web.Request) -> web.Response:
                         )
                     else:
                         print(
-                            "[RESTORE_MANUAL:MULTI_CHAR] MULTI-CHAR-MASK 비활성: "
-                            "Regional 마스크 없이 일반 2인 프롬프트로 생성합니다. "
+                            "[RESTORE_MANUAL:MULTI_CHAR] 마스크 설정에 따라 영역 계산 생략: "
+                            f"Regional 마스크 없이 일반 {len(result_characters)}인 프롬프트로 생성합니다. "
                             f"setting={bool(manual_illust_toggles.get('multi_char_mask_enabled', True))}, "
+                            f"single_char_mask_enabled={bool(manual_illust_toggles.get('single_char_mask_enabled', True))}, "
                             f"provider={restore_provider!r}, prompt_format={prompt_format!r}"
                         )
                 elif restore_provider == "chansub":
                     print(
-                        "[RESTORE_MANUAL:MULTI_CHAR] 챈섭 2인 생성: "
+                        f"[RESTORE_MANUAL:MULTI_CHAR] 챈섭 {len(result_characters)}인 생성: "
                         "LoRA/Regional 마스크 없이 태그 프롬프트 경로 사용"
                     )
                 else:
                     raise RuntimeError(
-                        "현재 공급자/프롬프트 형식은 2인 수동 그리기를 지원하지 않습니다: "
+                        f"현재 공급자/프롬프트 형식은 {len(result_characters)}인 수동 그리기를 지원하지 않습니다: "
                         f"provider={restore_provider}, format={prompt_format}"
                     )
             if postprocess_test:
@@ -24884,9 +25237,10 @@ async def handle_api_asset_mode_tags_post(request: web.Request) -> web.Response:
         elif action == "update_character":
             result = asset_mode.update_character(
                 body.get("name", ""),
-                body.get("appearance", ""),
-                body.get("outfit", ""),
-                body.get("expression", ""),
+                body.get("appearance"),
+                body.get("outfit"),
+                body.get("expression"),
+                group=body.get("group"),
             )
         elif action == "add_appearance":
             result = asset_mode.add_appearance(body.get("name", ""))
@@ -29829,10 +30183,6 @@ app.router.add_get("/api/bot_mode/asset_character_rep_images", bot_mode.handle_g
 app.router.add_post("/api/bot_mode/data_patch", data_patcher.handle_data_patch)
 app.router.add_get("/api/bot_mode/check_patch_files", data_patcher.handle_check_patch_files)
 app.router.add_post("/api/bot_mode/run_utility", data_patcher.handle_run_utility)
-app.router.add_post("/api/bot_mode/program_embedding/preview", data_patcher.handle_program_embedding_preview)
-app.router.add_get("/api/bot_mode/program_embedding/preview_image/{preview_id}/{index}", data_patcher.handle_program_embedding_preview_image)
-app.router.add_post("/api/bot_mode/program_embedding/commit", data_patcher.handle_program_embedding_commit)
-app.router.add_post("/api/bot_mode/program_embedding/cancel", data_patcher.handle_program_embedding_cancel)
 app.router.add_post("/api/bot_mode/dialogue_face_crop", data_patcher.handle_dialogue_face_crop)
 app.router.add_get("/api/bot_mode/utility_settings", bot_mode.handle_get_utility_settings)
 app.router.add_post("/api/bot_mode/utility_settings", bot_mode.handle_save_utility_settings)
@@ -32095,10 +32445,16 @@ async def _start_next_bot_char_training(bot_name, project_name, characters_to_tr
     alpha = training_config.get("alpha", 16)
     # training_config의 lora_save_path 사용, 없으면 기본값 (SOYA_BOT_LORA/{bot}/Lora/{project}/{char})
     default_save_path = f"SOYA_BOT_LORA/{_safe_dirname_bot(bot_name)}/Lora/{_safe_dirname_bot(project_name)}/{_safe_dirname_bot(cn)}"
-    lora_save_path = training_config.get("lora_save_path", default_save_path)
-    # lora_save_path가 프로젝트 레벨이면 캐릭터명을 자동 추가
-    if not lora_save_path.rstrip("/").endswith(_safe_dirname_bot(cn)):
-        lora_save_path = lora_save_path.rstrip("/") + "/" + _safe_dirname_bot(cn)
+    lora_save_path = (training_config.get("lora_save_path") or default_save_path).replace("\\", "/").rstrip("/")
+    path_parts = lora_save_path.split("/")
+    safe_project = _safe_dirname_bot(project_name)
+    safe_character = _safe_dirname_bot(cn)
+    # 같은 이름이어도 프로젝트와 캐릭터는 각각 별도의 폴더다.
+    if path_parts[-1] != safe_character or (
+        safe_project == safe_character
+        and path_parts[-2:] != [safe_project, safe_character]
+    ):
+        lora_save_path += "/" + safe_character
     if visual_card_id:
         lora_save_path = (
             lora_save_path.rstrip("/")
@@ -33057,7 +33413,7 @@ async def handle_api_style_lora_detail(request):
         if not project:
             return web.json_response({"success": False, "error": "project 필수"}, status=400)
         from modes.style_lora_mode import get_project_detail
-        return web.json_response(get_project_detail(project))
+        return web.json_response(await asyncio.to_thread(get_project_detail, project))
     except Exception as e:
         print(f"[STYLE_LORA_API] detail 실패: {e}")
         traceback.print_exc()

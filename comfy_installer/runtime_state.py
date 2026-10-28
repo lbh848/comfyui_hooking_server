@@ -172,7 +172,7 @@ def _restore_comfy_database(
 def _git_value(path: Path, *arguments: str) -> str:
     try:
         completed = subprocess.run(
-            ["git", *arguments],
+            ["git", "-c", f"safe.directory={path.resolve().as_posix()}", *arguments],
             cwd=path,
             check=True,
             capture_output=True,
@@ -636,7 +636,10 @@ def create_runtime_transaction(
 def _checkout_exact(path: Path, ref: str, label: str) -> None:
     try:
         subprocess.run(
-            ["git", "checkout", "--detach", "--force", ref],
+            [
+                "git", "-c", f"safe.directory={path.resolve().as_posix()}",
+                "checkout", "--detach", "--force", ref,
+            ],
             cwd=path,
             check=True,
             capture_output=True,
@@ -1013,7 +1016,10 @@ def _restore_worktree_patch(
 ) -> None:
     try:
         completed = subprocess.run(
-            ["git", "apply", "--whitespace=nowarn", "-"],
+            [
+                "git", "-c", f"safe.directory={path.resolve().as_posix()}",
+                "apply", "--whitespace=nowarn", "-",
+            ],
             cwd=path,
             input=patch,
             check=True,

@@ -89,7 +89,10 @@ def _git_head_server_source(
         return None
 
     relative_path = source_path.relative_to(comfy_root).as_posix()
-    command = ["git", "show", f"HEAD:{relative_path}"]
+    command = [
+        "git", "-c", f"safe.directory={comfy_root.resolve().as_posix()}",
+        "show", f"HEAD:{relative_path}",
+    ]
     creationflags = 0
     if os.name == "nt":
         creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)

@@ -55,6 +55,12 @@ def run_command(
     workdir = Path(cwd).resolve()
     if not workdir.is_dir():
         raise CommandError(f"명령 작업 폴더가 없습니다: {workdir}")
+    if Path(command[0]).name.casefold() in {"git", "git.exe"}:
+        # Copied installations may retain another Windows user's ownership.
+        # Trust only this command's working directory, without writing Git config.
+        command = [
+            command[0], "-c", f"safe.directory={workdir.as_posix()}", *command[1:]
+        ]
     cancel = cancel_event or Event()
     safe_display = subprocess.list2cmdline(command)
     if log:

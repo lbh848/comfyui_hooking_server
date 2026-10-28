@@ -2526,6 +2526,7 @@ class ComfyInstallerService:
             node_requirements = install_node_dependencies(
                 comfy_root=self.comfy_root,
                 python=python,
+                gpu_profile=profile,
                 node_paths=node_paths,
                 compatibility_packages=list(
                     pack_manifest.python["compatibility_packages"]
@@ -2938,12 +2939,14 @@ class ComfyInstallerService:
             if (
                 source_changed
                 or python_changed
+                or profile_changed
                 or nodes_changed
                 or updated_node_names
             ):
                 node_requirements = install_node_dependencies(
                     comfy_root=self.comfy_root,
                     python=python,
+                    gpu_profile=profile,
                     node_paths=node_paths,
                     compatibility_packages=list(
                         new_manifest.python["compatibility_packages"]
@@ -3521,10 +3524,11 @@ class ComfyInstallerService:
 
             self._set_phase("node_dependencies")
             node_requirements: list[str] = []
-            if source_changed or python_changed or nodes_changed:
+            if source_changed or python_changed or profile_changed or nodes_changed:
                 node_requirements = install_node_dependencies(
                     comfy_root=self.comfy_root,
                     python=python,
+                    gpu_profile=profile,
                     node_paths=node_paths,
                     compatibility_packages=list(
                         new_manifest.python["compatibility_packages"]

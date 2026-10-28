@@ -33,6 +33,7 @@
         "minimum_driver_version": "580.00",
         "minimum_compute_capability": "8.0",
         "torch_cuda": "13.0",
+        "onnxruntime_package": "onnxruntime-gpu==1.28.0",
         "packages": [
           "torch==2.10.0+cu130",
           "torchvision==0.25.0+cu130",
@@ -52,6 +53,7 @@
         "minimum_driver_version": "570.65",
         "minimum_compute_capability": "8.0",
         "torch_cuda": "12.8",
+        "onnxruntime_package": "onnxruntime-gpu==1.26.0",
         "packages": [
           "torch==2.10.0+cu128",
           "torchvision==0.25.0+cu128",

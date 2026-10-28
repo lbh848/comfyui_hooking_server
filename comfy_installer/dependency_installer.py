@@ -3,16 +3,20 @@ from __future__ import annotations
 import json
 import os
 import platform
+import shutil
 import traceback
+import uuid
+from importlib.metadata import distributions
+from packaging.requirements import Requirement
 from packaging.tags import platform_tags
-from packaging.utils import InvalidWheelFilename, parse_wheel_filename
+from packaging.utils import InvalidWheelFilename, canonicalize_name, parse_wheel_filename
 from pathlib import Path
 from threading import Event
 from typing import Callable
 
 from .downloader import ProgressCallback, ResumableDownloader
 from .install_modes import INSTALL_MODE_NVIDIA_COMPATIBILITY
-from .operations import isolated_subprocess_env, run_command, uv_python_path
+from .operations import CommandCancelled, isolated_subprocess_env, run_command, uv_python_path
 from .python_runtime import (
     MANAGED_PYTHON_MARKER,
     ensure_managed_python,
@@ -383,79 +387,194 @@ def install_node_dependencies(
     compatibility_packages: list[str],
     cancel_event: Event,
     log: LogCallback | None,
+    gpu_profile: dict | None = None,
+    onnxruntime_only: bool = False,
 ) -> list[str]:
     installed_requirements: list[str] = []
     try:
-        skip_marker = comfy_root / "custom_nodes" / "skip_download_model"
-        skip_marker.touch(exist_ok=True)
-        for node_path in node_paths:
-            if cancel_event.is_set():
-                raise DependencyInstallError(
-                    "커스텀 노드 의존성 설치 중 중단 요청을 받았습니다."
+        if not onnxruntime_only:
+            skip_marker = comfy_root / "custom_nodes" / "skip_download_model"
+            skip_marker.touch(exist_ok=True)
+            for node_path in node_paths:
+                if cancel_event.is_set():
+                    raise DependencyInstallError(
+                        "커스텀 노드 의존성 설치 중 중단 요청을 받았습니다."
+                    )
+                requirements = node_path / "requirements.txt"
+                if requirements.is_file():
+                    if log:
+                        log(f"[Python] 노드 의존성 설치: {node_path.name}")
+                    _uv_pip(
+                        python=python,
+                        cwd=node_path,
+                        arguments=["install", "-r", str(requirements)],
+                        cancel_event=cancel_event,
+                        log=log,
+                    )
+                    installed_requirements.append(node_path.name)
+
+            for node_name in (
+                "comfyui-impact-pack",
+                "comfyui-impact-subpack",
+            ):
+                install_script = (
+                    comfy_root / "custom_nodes" / node_name / "install.py"
                 )
-            requirements = node_path / "requirements.txt"
-            if requirements.is_file():
+                if not install_script.is_file():
+                    raise DependencyInstallError(
+                        f"필수 노드 초기화 스크립트가 없습니다: {install_script}"
+                    )
                 if log:
-                    log(f"[Python] 노드 의존성 설치: {node_path.name}")
-                _uv_pip(
-                    python=python,
-                    cwd=node_path,
-                    arguments=["install", "-r", str(requirements)],
+                    log(
+                        f"[Python] {node_name} 초기화 "
+                        "(매니페스트 외 모델 자동 다운로드 차단)"
+                    )
+                run_command(
+                    [str(python), str(install_script)],
+                    cwd=install_script.parent,
                     cancel_event=cancel_event,
                     log=log,
+                    timeout=900,
+                    env=isolated_subprocess_env(
+                        {
+                            "COMFYUI_PATH": str(comfy_root),
+                            "COMFYUI_MODEL_PATH": str(comfy_root / "models"),
+                        }
+                    ),
                 )
-                installed_requirements.append(node_path.name)
 
-        for node_name in (
-            "comfyui-impact-pack",
-            "comfyui-impact-subpack",
-        ):
-            install_script = (
-                comfy_root / "custom_nodes" / node_name / "install.py"
-            )
-            if not install_script.is_file():
+            if not compatibility_packages:
+                print(
+                    "[COMFY_INSTALL][PYTHON] InsightFace/NumPy ABI 호환성 "
+                    "고정 패키지가 비어 있습니다."
+                )
                 raise DependencyInstallError(
-                    f"필수 노드 초기화 스크립트가 없습니다: {install_script}"
+                    "커스텀 노드 ABI 호환성 고정 패키지가 비어 있습니다."
                 )
             if log:
                 log(
-                    f"[Python] {node_name} 초기화 "
-                    "(매니페스트 외 모델 자동 다운로드 차단)"
+                    "[Python] InsightFace/NumPy/OpenCV ABI 호환성 고정: "
+                    + ", ".join(compatibility_packages)
                 )
-            run_command(
-                [str(python), str(install_script)],
-                cwd=install_script.parent,
+            _uv_pip(
+                python=python,
+                cwd=comfy_root,
+                arguments=["install", *compatibility_packages],
                 cancel_event=cancel_event,
                 log=log,
-                timeout=900,
-                env=isolated_subprocess_env(
-                    {
-                        "COMFYUI_PATH": str(comfy_root),
-                        "COMFYUI_MODEL_PATH": str(comfy_root / "models"),
-                    }
-                ),
             )
 
-        if not compatibility_packages:
-            print(
-                "[COMFY_INSTALL][PYTHON] InsightFace/NumPy ABI 호환성 "
-                "고정 패키지가 비어 있습니다."
+        if gpu_profile is not None:
+            # Nodes require the CPU distribution by name. Keep it intact and put
+            # the optional GPU wheel in its own directory inside this same venv;
+            # otherwise the two distributions overwrite each other's shared files.
+            site_lines = run_command(
+                [str(python), "-c", "import sysconfig; print(sysconfig.get_path('purelib'))"],
+                cwd=comfy_root,
+                cancel_event=cancel_event,
+                log=None,
+                timeout=60,
             )
-            raise DependencyInstallError(
-                "커스텀 노드 ABI 호환성 고정 패키지가 비어 있습니다."
-            )
-        if log:
-            log(
-                "[Python] InsightFace/NumPy/OpenCV ABI 호환성 고정: "
-                + ", ".join(compatibility_packages)
-            )
-        _uv_pip(
-            python=python,
-            cwd=comfy_root,
-            arguments=["install", *compatibility_packages],
-            cancel_event=cancel_event,
-            log=log,
-        )
+            site_packages = Path(site_lines[-1].strip())
+            gpu_root = comfy_root / ".venv" / "onnxruntime-gpu"
+            activation = site_packages / "comfy_onnxruntime_gpu.pth"
+            activation_text = "import os, sys; sys.path.insert(0, os.path.join(sys.prefix, 'onnxruntime-gpu'))\n"
+            gpu_package = str(gpu_profile.get("onnxruntime_package") or "").strip()
+            gpu_ready = False
+            if gpu_profile.get("kind") == "nvidia" and gpu_package and activation.is_file():
+                try:
+                    requirement = Requirement(gpu_package)
+                    gpu_ready = (
+                        activation.read_text(encoding="utf-8") == activation_text
+                        and (gpu_root / "onnxruntime" / "__init__.py").is_file()
+                        and any(
+                            canonicalize_name(dist.metadata["Name"]) == canonicalize_name(requirement.name)
+                            and dist.version in requirement.specifier
+                            for dist in distributions(path=[str(gpu_root)])
+                        )
+                    )
+                except Exception as exc:
+                    print(f"[COMFY_INSTALL][PYTHON] ONNX GPU 설치 기록 확인 실패, 보완 재시도: {exc}")
+                    traceback.print_exc()
+            if gpu_ready:
+                message = f"[Python] ONNX GPU 이미 준비됨, 재설치 생략: {gpu_package}"
+                print(message)
+                if log:
+                    log(message)
+                if onnxruntime_only:
+                    return installed_requirements
+            if activation.exists():
+                if not gpu_ready:
+                    backup_root = comfy_root / ".installer-state" / "backups" / "onnxruntime"
+                    backup_root.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(activation, backup_root / f"{uuid.uuid4().hex}.pth")
+                    activation.unlink()
+
+            if gpu_profile.get("kind") == "nvidia" and gpu_package:
+                try:
+                    if not gpu_ready:
+                        _uv_pip(
+                            python=python,
+                            cwd=comfy_root,
+                            arguments=[
+                                "install", "--target", str(gpu_root),
+                                "--no-deps", "--reinstall", gpu_package,
+                            ],
+                            cancel_event=cancel_event,
+                            log=log,
+                            timeout=180 if onnxruntime_only else 3600,
+                        )
+                    # Check in a child process before activation. Import/native
+                    # loader failures leave the original CPU runtime usable.
+                    probe_lines = run_command(
+                        [str(python), "-c", "\n".join((
+                            "import os,sys,torch",
+                            f"sys.path.insert(0, {str(gpu_root)!r})",
+                            "import onnxruntime",
+                            "print(onnxruntime.__version__, onnxruntime.get_available_providers(), flush=True)",
+                            "os._exit(0)",
+                        ))],
+                        cwd=comfy_root,
+                        cancel_event=cancel_event,
+                        log=log,
+                        timeout=120,
+                    )
+                    # Relative to sys.prefix so moved installations and runtime
+                    # transaction rollback continue using their own wheel.
+                    if not gpu_ready:
+                        activation.write_text(activation_text, encoding="utf-8")
+                    if not onnxruntime_only:
+                        _uv_pip(
+                            python=python,
+                            cwd=comfy_root,
+                            arguments=["check"],
+                            cancel_event=cancel_event,
+                            log=log,
+                            timeout=300,
+                        )
+                    message = f"[Python] ONNX GPU 준비 완료: {gpu_package}; probe={probe_lines[-1:]}"
+                    print(message)
+                    if log:
+                        log(message)
+                except CommandCancelled:
+                    raise
+                except Exception as exc:
+                    print(f"[COMFY_INSTALL][PYTHON] ONNX GPU 준비 실패, CPU 유지: package={gpu_package}, error={exc}")
+                    traceback.print_exc()
+                    if activation.exists():
+                        activation.unlink()
+                    if log:
+                        log(f"[Python] ONNX GPU를 준비하지 못해 CPU로 계속합니다: {exc}")
+                    if cancel_event.is_set():
+                        raise
+            else:
+                message = f"[Python] ONNX CPU 사용: profile={gpu_profile.get('id')}, GPU package={gpu_package or '미지정'}"
+                print(message)
+                if log:
+                    log(message)
+
+        if onnxruntime_only:
+            return installed_requirements
 
         _uv_pip(
             python=python,
@@ -519,6 +638,8 @@ def runtime_probe_script(
             "'numpy':numpy.__version__,",
             "'opencv':cv2.__version__,",
             "'onnxruntime':onnxruntime.__version__,",
+            "'onnxruntime_providers':onnxruntime.get_available_providers(),",
+            "'onnxruntime_path':onnxruntime.__file__,",
             "'insightface':insightface.__version__",
             "}",
             "if requires_triton:",

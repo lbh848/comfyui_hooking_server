@@ -45,6 +45,9 @@ DEFAULT_SETTINGS = {
 
 _IO_LOCK = threading.RLock()
 _SAFE_HISTORY_ID = re.compile(r"hist_[0-9a-f]{32}")
+# Keep only file metadata and bot ownership; CHAT and pipeline results stay on disk.
+_RECORD_BOT_INDEX: dict[str, tuple[tuple[int, int, int, int], str]] = {}
+_LAST_MATCHED_HISTORY: dict[tuple[str, str], str] = {}
 
 
 def _ensure_dirs() -> None:
@@ -215,19 +218,39 @@ def save_settings(value: dict) -> dict:
             raise
 
 
-def _iter_records_locked() -> list[dict]:
+def _iter_records_locked(bot_name: str = "") -> list[dict]:
     _ensure_dirs()
     records = []
+    next_index = {}
+    skipped_other_bots = 0
     try:
-        names = sorted(os.listdir(RECORDS_DIR))
+        with os.scandir(RECORDS_DIR) as entries:
+            files = sorted(entries, key=lambda entry: entry.name)
     except Exception as e:
         print(f"[ILLUST_HISTORY] 레코드 목록 읽기 실패: error={e}")
         traceback.print_exc()
         return []
-    for name in names:
+    for entry in files:
+        name = entry.name
         if not name.endswith(".json"):
             continue
-        record = _load_json(os.path.join(RECORDS_DIR, name))
+        path = os.path.abspath(entry.path)
+        try:
+            stat = entry.stat()
+        except OSError as e:
+            print(f"[ILLUST_HISTORY] 레코드 파일 정보 읽기 실패: path={path}, bot={bot_name!r}, error={e}")
+            traceback.print_exc()
+            continue
+        signature = (stat.st_mtime_ns, stat.st_size, stat.st_ctime_ns, stat.st_ino)
+        indexed = _RECORD_BOT_INDEX.get(path)
+        if indexed is not None and indexed[0] == signature:
+            record_bot = indexed[1]
+            if bot_name and record_bot and record_bot != bot_name:
+                next_index[path] = indexed
+                skipped_other_bots += 1
+                continue
+        # First access and externally changed/new files refresh their ownership.
+        record = _load_json(path)
         if not isinstance(record, dict):
             print(f"[ILLUST_HISTORY] 손상된 레코드 제외: name={name}")
             continue
@@ -235,7 +258,20 @@ def _iter_records_locked() -> list[dict]:
         if not _SAFE_HISTORY_ID.fullmatch(history_id):
             print(f"[ILLUST_HISTORY] history_id 형식 불일치 레코드 제외: name={name}")
             continue
+        record_bot = str((record.get("source") or {}).get("bot_name") or "")
+        next_index[path] = (signature, record_bot)
+        if bot_name and record_bot and record_bot != bot_name:
+            skipped_other_bots += 1
+            continue
         records.append(record)
+    # Drop deleted records and entries from a previous storage root.
+    _RECORD_BOT_INDEX.clear()
+    _RECORD_BOT_INDEX.update(next_index)
+    if skipped_other_bots:
+        print(
+            f"[ILLUST_HISTORY] 다른 봇 히스토리 탐색 제외: bot={bot_name!r}, "
+            f"excluded={skipped_other_bots}, candidates={len(records)}"
+        )
     return records
 
 
@@ -307,6 +343,8 @@ def _tail_alignment(
     saved: list[dict],
     incoming: list[dict],
     perf: dict | None = None,
+    *,
+    exact_only: bool = False,
 ) -> dict | None:
     """Find a contiguous incoming range that matches the end of ``saved``."""
     started_at = time.perf_counter()
@@ -324,11 +362,19 @@ def _tail_alignment(
             overlap_chars = 0
             exact_count = 0
             while saved_index >= 0 and incoming_index >= 0:
-                similarity = _message_similarity(
-                    saved[saved_index],
-                    incoming[incoming_index],
-                    perf,
-                )
+                if exact_only:
+                    left, right = saved[saved_index], incoming[incoming_index]
+                    similarity = float(
+                        str(left.get("role") or "user") == str(right.get("role") or "user")
+                        and (left.get("full_content_hash") or _content_hash(left.get("content", "")))
+                        == (right.get("full_content_hash") or _content_hash(right.get("content", "")))
+                    )
+                else:
+                    similarity = _message_similarity(
+                        saved[saved_index],
+                        incoming[incoming_index],
+                        perf,
+                    )
                 if similarity < 0.88:
                     break
                 similarities.append(similarity)
@@ -635,18 +681,63 @@ def prepare_history(
     lock_wait_started_at = time.perf_counter()
     with _IO_LOCK:
         perf["lock_wait_ms"] = (time.perf_counter() - lock_wait_started_at) * 1000.0
+        bot_name = str(bot_name or "")
+        recent_key = (os.path.abspath(RECORDS_DIR), bot_name)
+        recent_id = _LAST_MATCHED_HISTORY.get(recent_key) if bot_name else None
+        records = []
+        candidate = None
         records_started_at = time.perf_counter()
-        records = _iter_records_locked()
-        perf["records_load_ms"] = (time.perf_counter() - records_started_at) * 1000.0
-        candidate_started_at = time.perf_counter()
-        candidate = _select_candidate(
-            records,
-            str(bot_name or ""),
-            incoming_past,
-            current_hash,
-            perf,
-        )
-        perf["candidate_match_ms"] = (time.perf_counter() - candidate_started_at) * 1000.0
+        if recent_id:
+            recent = _load_json(_record_path(recent_id))
+            perf["records_load_ms"] = (time.perf_counter() - records_started_at) * 1000.0
+            if (isinstance(recent, dict) and recent.get("history_id") == recent_id
+                    and str((recent.get("source") or {}).get("bot_name") or "") in ("", bot_name)):
+                candidate_started_at = time.perf_counter()
+                candidate = _exact_candidate_for_record(
+                    recent, incoming_past, current_hash, _snapshot_hash(incoming_past),
+                )
+                if candidate is None:
+                    alignment = _tail_alignment(
+                        list(recent.get("messages") or []), incoming_past, perf, exact_only=True,
+                    )
+                    if alignment:
+                        candidate = {"record": recent, "operation": "append",
+                                     "alignment": alignment, "score": alignment["score"] + 500}
+                perf["candidate_match_ms"] = (time.perf_counter() - candidate_started_at) * 1000.0
+                # A recent match gets priority only for unchanged source messages.
+                # Edited/approximately matching text still uses the full search.
+                if candidate is not None:
+                    records = [recent]
+                    perf.update(eligible_records=1, exact_candidates=1, candidate_strategy="recent_exact")
+                else:
+                    candidate = None
+                    print(
+                        f"[ILLUST_HISTORY] 최근 히스토리 원문 일치 없음, 봇 전체 탐색: "
+                        f"bot={bot_name!r}, history={recent_id}"
+                    )
+            else:
+                print(
+                    f"[ILLUST_HISTORY] 최근 히스토리 없음 또는 소속 변경, 봇 전체 탐색: "
+                    f"bot={bot_name!r}, history={recent_id}"
+                )
+        else:
+            print(f"[ILLUST_HISTORY] 최근 히스토리 참조 없음, 봇 전체 탐색: bot={bot_name!r}")
+        if candidate is None:
+            records_started_at = time.perf_counter()
+            records = _iter_records_locked(bot_name)
+            perf["records_load_ms"] = float(perf.get("records_load_ms") or 0) + (
+                time.perf_counter() - records_started_at
+            ) * 1000.0
+            candidate_started_at = time.perf_counter()
+            candidate = _select_candidate(records, bot_name, incoming_past, current_hash, perf)
+            perf["candidate_match_ms"] = float(perf.get("candidate_match_ms") or 0) + (
+                time.perf_counter() - candidate_started_at
+            ) * 1000.0
+        if bot_name:
+            if candidate is not None:
+                _LAST_MATCHED_HISTORY[recent_key] = str(candidate["record"]["history_id"])
+            else:
+                _LAST_MATCHED_HISTORY.pop(recent_key, None)
         plan_started_at = time.perf_counter()
         now = time.time()
         if candidate is None:
@@ -927,6 +1018,9 @@ def finalize_history(plan: dict, result: dict | None = None, error: str = "") ->
         _backup_existing(path, f"{history_id}.json")
         try:
             _atomic_write_json(path, record)
+            saved_bot = str(record["source"].get("bot_name") or "")
+            if saved_bot:
+                _LAST_MATCHED_HISTORY[(os.path.abspath(RECORDS_DIR), saved_bot)] = history_id
             print(
                 f"[ILLUST_HISTORY] 원문 히스토리 갱신 완료: history={history_id}, "
                 f"operation={operation}, revision={record['revision']}, "

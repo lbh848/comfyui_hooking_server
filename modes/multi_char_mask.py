@@ -100,6 +100,16 @@ def validate_multi_char_layout(
             f"레이아웃 캐릭터 수가 다릅니다: expected={len(names)}, actual={len(raw_regions)}"
         )
 
+    panels = []
+    for index, panel in enumerate(layout.get("panels") or []):
+        bounds = {field: _finite_number(panel.get(field), field, f"panel {index + 1}")
+                  for field in ("x", "y", "width", "height")}
+        if (bounds["x"] < 0 or bounds["y"] < 0 or bounds["width"] <= 0 or bounds["height"] <= 0
+                or bounds["x"] + bounds["width"] > 1 + 1e-9
+                or bounds["y"] + bounds["height"] > 1 + 1e-9):
+            raise ValueError(f"컷 영역이 캔버스를 벗어났습니다: {panel!r}")
+        panels.append({"panel": panel.get("panel", index + 1), **bounds})
+
     seen = set()
     validated = []
     for source_index, raw in enumerate(raw_regions):
@@ -128,10 +138,34 @@ def validate_multi_char_layout(
             f"regions[{source_index}].negative",
             required=False,
         )
-        x = _finite_number(raw.get("x"), "x", raw_name)
-        y = _finite_number(raw.get("y"), "y", raw_name)
-        width = _finite_number(raw.get("width"), "width", raw_name)
-        height = _finite_number(raw.get("height"), "height", raw_name)
+        boxes = []
+        for box in raw.get("boxes") or []:
+            panel = next((value for value in panels if value["panel"] == box.get("panel")), None)
+            if panel is None:
+                raise ValueError(f"인물 영역의 컷 좌표가 없습니다: name={raw_name!r}, box={box!r}")
+            bx, by, bw, bh = (_finite_number(box.get(field), field, raw_name)
+                              for field in ("x", "y", "width", "height"))
+            left, top = max(bx, panel["x"]), max(by, panel["y"])
+            right = min(bx + bw, panel["x"] + panel["width"])
+            bottom = min(by + bh, panel["y"] + panel["height"])
+            if right <= left or bottom <= top:
+                raise ValueError(f"인물 영역이 해당 컷과 겹치지 않습니다: name={raw_name!r}, box={box!r}")
+            if (left, top, right, bottom) != (bx, by, bx + bw, by + bh):
+                print(f"[MULTI_CHAR:MASK] 인물 영역을 컷 안으로 제한: name={raw_name!r}, box={box!r}")
+            boxes.append({"panel": panel["panel"], "x": left, "y": top,
+                          "width": right - left, "height": bottom - top})
+        geometry = raw
+        if panels and not boxes:
+            raise ValueError(f"컷별 인물 영역이 없습니다: name={raw_name!r}, region={raw!r}")
+        if boxes:
+            left, top = min(box["x"] for box in boxes), min(box["y"] for box in boxes)
+            geometry = {"x": left, "y": top,
+                        "width": max(box["x"] + box["width"] for box in boxes) - left,
+                        "height": max(box["y"] + box["height"] for box in boxes) - top}
+        x = _finite_number(geometry.get("x"), "x", raw_name)
+        y = _finite_number(geometry.get("y"), "y", raw_name)
+        width = _finite_number(geometry.get("width"), "width", raw_name)
+        height = _finite_number(geometry.get("height"), "height", raw_name)
         if x < 0.0 or y < 0.0 or width <= 0.0 or height <= 0.0:
             raise ValueError(
                 f"{raw_name!r} 영역 좌표/크기가 범위를 벗어났습니다: "
@@ -151,6 +185,8 @@ def validate_multi_char_layout(
             "height": height,
             "_source_index": source_index,
         }
+        if boxes:
+            normalized_region["boxes"] = boxes
         if "positive" in raw or positive:
             normalized_region["positive"] = positive
         if "negative" in raw or negative:
@@ -167,22 +203,28 @@ def validate_multi_char_layout(
         missing_names = [normalized_to_original[key] for key in missing]
         raise ValueError(f"레이아웃에서 누락된 캐릭터가 있습니다: {missing_names!r}")
 
-    validated.sort(key=lambda region: (
-        region["x"] + region["width"] / 2.0,
-        region["_source_index"],
-    ))
+    if not panels:
+        validated.sort(key=lambda region: (
+            region["x"] + region["width"] / 2.0,
+            region["_source_index"],
+        ))
     regions = []
     for index, region in enumerate(validated):
         normalized = {key: value for key, value in region.items() if not key.startswith("_")}
         normalized["channel"] = MASK_CHANNELS[index]
         regions.append(normalized)
     normalized_layout = {
-        "mask_width": DEFAULT_MASK_SIZE,
-        "mask_height": DEFAULT_MASK_SIZE,
+        "mask_width": int(layout.get("mask_width") or DEFAULT_MASK_SIZE),
+        "mask_height": int(layout.get("mask_height") or DEFAULT_MASK_SIZE),
         "mask_render_version": int(layout.get("mask_render_version") or MASK_RENDER_VERSION),
         "character_order": [region["name"] for region in regions],
         "regions": regions,
     }
+    if panels:
+        normalized_layout["panels"] = panels
+    if layout.get("dialogue_mask"):
+        normalized_layout["dialogue_mask"] = layout["dialogue_mask"]
+        normalized_layout["dialogue"] = deepcopy(layout.get("dialogue") or [])
     if background_prompt or require_prompt_separation:
         normalized_layout["background_prompt"] = background_prompt
     if composition_prompt or require_prompt_separation:
@@ -211,8 +253,13 @@ def layout_fingerprint(layout: dict) -> str:
             "y": float(region.get("y")),
             "width": float(region.get("width")),
             "height": float(region.get("height")),
+            **({"boxes": region["boxes"]} if region.get("boxes") else {}),
         } for region in layout["regions"]],
     }
+    if layout.get("panels"):
+        canonical["panels"] = layout["panels"]
+    if layout.get("dialogue_mask"):
+        canonical["dialogue_mask"] = layout["dialogue_mask"]
     render_version = int(layout.get("mask_render_version") or MASK_RENDER_VERSION)
     if render_version >= 2:
         # Legacy snapshots keep their original geometry-only fingerprint.
@@ -272,6 +319,9 @@ def should_skip_solo_region_mask(layout: object, settings: dict | None = None) -
     """Skip a single region above the enabled user-selected area threshold."""
     regions = layout.get("regions") if isinstance(layout, dict) else None
     if not isinstance(regions, list) or len(regions) != 1:
+        return False
+    if layout.get("panels") or layout.get("dialogue_mask"):
+        print("[MULTI_CHAR:MASK] 만화의 컷별 인물 영역 유지")
         return False
     settings = settings or {}
     if not settings.get("single_char_mask_skip_enabled", True):
@@ -383,10 +433,16 @@ def normalize_multi_char_snapshot(context: object) -> dict | None:
                 "width": float(region.get("width")),
                 "height": float(region.get("height")),
                 "channel": str(region.get("channel") or ""),
+                **({"boxes": deepcopy(region["boxes"])} if region.get("boxes") else {}),
             }
             for region in normalized_layout["regions"]
         ],
     }
+    if normalized_layout.get("panels"):
+        mask_layout["panels"] = deepcopy(normalized_layout["panels"])
+    if normalized_layout.get("dialogue_mask"):
+        mask_layout["dialogue_mask"] = normalized_layout["dialogue_mask"]
+        mask_layout["dialogue"] = deepcopy(normalized_layout.get("dialogue") or [])
     fingerprint = layout_fingerprint(mask_layout)
     declared_fingerprint = str(context.get("mask_fingerprint") or "").strip()
     if declared_fingerprint and declared_fingerprint != fingerprint:
@@ -414,8 +470,10 @@ def validate_multi_char_prompt_context(positive: object, context: object) -> dic
     if snapshot is None:
         raise ValueError("활성화된 다중 캐릭터 마스크 스냅샷이 없습니다")
     payload = extract_multi_char_prompt_payload(positive)
-    if not isinstance(payload, dict) or payload.get("enable") is not True:
-        raise ValueError("프롬프트의 [MULTI_CHAR] 제어 블록이 활성화되어 있지 않습니다")
+    # The snapshot preserves editable geometry. The prompt independently
+    # chooses whether to apply it for this generation, including ON/OFF checks.
+    if not isinstance(payload, dict) or not isinstance(payload.get("enable"), bool):
+        raise ValueError("프롬프트의 [MULTI_CHAR] 제어 블록에 ON/OFF 설정이 없습니다")
 
     prompt_names = [
         str(name or "").strip()
@@ -685,6 +743,20 @@ def _overlap_midpoint_owners(coverage, boxes, pixel_boxes, original_union, rows,
 
 def render_region_mask(layout: dict, width: int | None = None, height: int | None = None) -> Image.Image:
     """Extend upward into background while preserving original body ownership."""
+    if isinstance(layout, dict) and layout.get("dialogue_mask"):
+        import base64
+        import io
+        try:
+            pixels = np.array(render_region_mask({key: value for key, value in layout.items()
+                                                  if key != "dialogue_mask"}, width, height))
+            mask = Image.open(io.BytesIO(base64.b64decode(layout["dialogue_mask"]))).convert("L")
+            mask = mask.resize((pixels.shape[1], pixels.shape[0]), Image.Resampling.NEAREST)
+            pixels[np.asarray(mask) > 0] = 0
+            return Image.fromarray(pixels)
+        except Exception as exc:
+            print(f"[MANGA:MASK] 대사 영역 제외 실패: size={width}x{height}, error={exc}")
+            traceback.print_exc()
+            raise
     regions = layout.get("regions") if isinstance(layout, dict) else None
     if not isinstance(regions, list) or not 1 <= len(regions) <= len(MASK_CHANNELS):
         raise ValueError("검증된 1~3개 regions가 필요합니다")
@@ -692,6 +764,35 @@ def render_region_mask(layout: dict, width: int | None = None, height: int | Non
     height = int(height or layout.get("mask_height") or DEFAULT_MASK_SIZE)
     if width < 1 or height < 1:
         raise ValueError(f"마스크 크기가 올바르지 않습니다: {width}x{height}")
+
+    if layout.get("panels"):
+        # Reuse the existing overlap ownership inside each cut, then merge the
+        # disjoint cut images into the identity's fixed RGB channel.
+        page = np.zeros((height, width, 3), dtype=np.uint8)
+        for panel in layout["panels"]:
+            panel_regions, owners = [], []
+            for index, region in enumerate(regions):
+                bounds = [box for box in region.get("boxes", []) if box["panel"] == panel["panel"]]
+                if not bounds:
+                    continue
+                left, top = min(box["x"] for box in bounds), min(box["y"] for box in bounds)
+                panel_regions.append({"name": region["name"], "x": left, "y": top,
+                    "width": max(box["x"] + box["width"] for box in bounds) - left,
+                    "height": max(box["y"] + box["height"] for box in bounds) - top})
+                owners.append(index)
+            if not panel_regions:
+                print(f"[MULTI_CHAR:MASK] 인물 없는 컷: panel={panel['panel']}")
+                continue
+            pixels = np.asarray(render_region_mask(
+                {"regions": panel_regions, "mask_render_version": MASK_RENDER_VERSION}, width, height))
+            left, top = max(0, math.ceil(panel["x"] * width)), max(0, math.ceil(panel["y"] * height))
+            right = min(width, math.floor((panel["x"] + panel["width"]) * width))
+            bottom = min(height, math.floor((panel["y"] + panel["height"]) * height))
+            for source, target in enumerate(owners):
+                page[top:bottom, left:right, target] = np.maximum(
+                    page[top:bottom, left:right, target], pixels[top:bottom, left:right, source])
+        print(f"[MULTI_CHAR:MASK] 컷별 RGB 마스크 생성: panels={len(layout['panels'])}, characters={len(regions)}")
+        return Image.fromarray(page)
 
     channels = [Image.new("L", (width, height), 0) for _ in MASK_CHANNELS]
     boxes = []

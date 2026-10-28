@@ -24,6 +24,9 @@ from comfy_installer.python_runtime import (
     repair_relocated_managed_venv,
 )
 from comfy_installer.execution_profile import cpu_launch_args, installed_cpu_runtime
+from comfy_installer.dependency_installer import install_node_dependencies
+from comfy_installer.manifest import load_install_manifest
+from comfy_installer.runtime_state import load_runtime_receipt
 
 
 VALID_VRAM_MODES = {"auto", "highvram", "normalvram", "lowvram", "novram"}
@@ -310,6 +313,7 @@ class ComfyRuntimeManager:
         self.main_path = self.comfy_root / "main.py"
         self._popen_factory = popen_factory
         self._manager_lock = threading.RLock()
+        self._onnxruntime_prepared = False
         self._states = {
             index: _RuntimeState(index) for index in COMFY_INSTANCE_IDS
         }
@@ -603,6 +607,51 @@ class ComfyRuntimeManager:
                 state.reset_for_start(
                     command=command, port=parsed_port, profile=normalized_profile
                 )
+
+            if not self._onnxruntime_prepared and "--cpu" not in command:
+                manifest_path = (
+                    self.project_root / "comfy_installer" / "resources" / "install_manifest.json"
+                )
+                try:
+                    # All managed instances share one venv. Prepare it before the
+                    # first launch, never while another instance is using its DLLs.
+                    another_running = any(
+                        item.process is not None and item.process.poll() is None
+                        for item in self._states.values()
+                    )
+                    if another_running:
+                        print("[COMFY_RUNTIME] ONNX 보완 생략: 다른 ComfyUI 인스턴스가 실행 중입니다.")
+                    elif manifest_path.is_file():
+                        receipt = load_runtime_receipt(self.comfy_root) or {}
+                        installed_profile = receipt.get("python", {}).get("profile_id")
+                        manifest = load_install_manifest(manifest_path)
+                        gpu_profile = next(
+                            (item for item in manifest.python["gpu_profiles"]
+                             if item.get("id") == installed_profile),
+                            None,
+                        )
+                        if gpu_profile and gpu_profile.get("kind") == "nvidia" and gpu_profile.get("onnxruntime_package"):
+                            self._onnxruntime_prepared = True
+                            state.append_log("[Python] 태깅 GPU 실행 환경을 확인합니다.\n")
+                            install_node_dependencies(
+                                comfy_root=self.comfy_root,
+                                python=self.python_path,
+                                node_paths=[],
+                                compatibility_packages=[],
+                                gpu_profile=gpu_profile,
+                                onnxruntime_only=True,
+                                cancel_event=threading.Event(),
+                                log=lambda message: state.append_log(message + "\n"),
+                            )
+                        else:
+                            print(f"[COMFY_RUNTIME] ONNX GPU 보완 생략: 설치 프로필에 GPU 패키지가 없습니다: {installed_profile}")
+                    else:
+                        print(f"[COMFY_RUNTIME] ONNX GPU 보완 생략: 설치 매니페스트 없음: {manifest_path}")
+                except Exception as exc:
+                    self._onnxruntime_prepared = True
+                    print(f"[COMFY_RUNTIME] ONNX GPU 보완 실패, 기존 CPU 실행 환경으로 시작합니다: {exc}")
+                    traceback.print_exc()
+                    state.append_log(f"[Python] GPU 준비 실패로 CPU를 사용합니다: {exc}\n")
 
             env = os.environ.copy()
             env["PYTHONUNBUFFERED"] = "1"

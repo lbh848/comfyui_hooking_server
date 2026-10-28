@@ -895,26 +895,10 @@ def match_face_image_filename(bot_name: str, character: str, emotion: str,
     return (best, "fuzzy", round(score, 3))
 
 
-def load_face_image_bytes(bot_name: str, character: str, filename: str):
-    """bot/<bot>/<character>/<filename> 이미지 bytes 로드. 실패 시 None."""
-    try:
-        path = os.path.join(BOT_DIR, bot_name, character, filename)
-        if not os.path.isfile(path):
-            print(f"[POSTPROCESS_FACE] 이미지 파일 없음: {path}")
-            return None
-        with open(path, "rb") as f:
-            return f.read()
-    except Exception as e:
-        print(f"[POSTPROCESS_FACE] 이미지 로드 실패({bot_name}/{character}/{filename}): {e}")
-        traceback.print_exc()
-        return None
-
-
 def load_saved_face_crop_bytes(bot_name: str, character: str, source_filename: str):
     """원본 파일명에 대응하는 저장 FACE CROP bytes를 반환한다.
 
-    저장 크롭이 없으면 정상적인 ONNX 폴백 경로이므로 None을 반환하되, 캐시 미스
-    사유를 로그에 남긴다.
+    저장 크롭이 없으면 None을 반환하고 사유를 로그에 남긴다.
     """
     try:
         from modes.bot_mode import dialogue_face_crop_path
@@ -922,7 +906,7 @@ def load_saved_face_crop_bytes(bot_name: str, character: str, source_filename: s
         path = dialogue_face_crop_path(bot_name, character, source_filename)
         if not os.path.isfile(path):
             print(
-                f"[POSTPROCESS_FACE] 저장 FACE CROP 없음, ONNX 폴백: "
+                f"[POSTPROCESS_FACE] 저장 FACE CROP 없음, 썸네일 생략: "
                 f"bot={bot_name}, character={character}, source={source_filename}, "
                 f"expected={path}"
             )
@@ -930,12 +914,12 @@ def load_saved_face_crop_bytes(bot_name: str, character: str, source_filename: s
         with open(path, "rb") as face_file:
             data = face_file.read()
         if not data:
-            print(f"[POSTPROCESS_FACE] 저장 FACE CROP이 비어 있음, ONNX 폴백: {path}")
+            print(f"[POSTPROCESS_FACE] 저장 FACE CROP이 비어 있음, 썸네일 생략: {path}")
             return None
         return data
     except Exception as e:
         print(
-            f"[POSTPROCESS_FACE] 저장 FACE CROP 로드 실패, ONNX 폴백: "
+            f"[POSTPROCESS_FACE] 저장 FACE CROP 로드 실패, 썸네일 생략: "
             f"bot={bot_name}, character={character}, source={source_filename}, error={e}"
         )
         traceback.print_exc()
@@ -945,7 +929,7 @@ def load_saved_face_crop_bytes(bot_name: str, character: str, source_filename: s
 def _center_crop_square(image, target_size: int):
     """비정사각형 이미지를 target_size 정사각형으로 center-crop(왜곡 없이).
 
-    저장 FACE CROP 정규화와 얼굴 검출 폴백에서 공용으로 사용한다. 원본 비율을
+    저장 FACE CROP의 원본 비율을
     유지해 짧은 변을 target_size로 확대한 뒤 긴 변만 중앙 기준으로 최소한 깎는다.
     실패 시 None을 반환하고 원인을 로그에 남긴다.
     """
@@ -1008,31 +992,10 @@ def _prepare_face_images(segments: list, settings: dict, bot_name: str,
         print("[POSTPROCESS] 얼굴 준비 스킵: 구조화된 발화자 없음")
         return {}
 
-    try:
-        face_crop_top = float(settings.get("face_crop_top", 1.8) or 1.8)
-    except (TypeError, ValueError):
-        print(f"[POSTPROCESS] face_crop_top 변환 실패({settings.get('face_crop_top')!r}), 1.8 사용")
-        face_crop_top = 1.8
-    try:
-        face_crop_bottom = float(settings.get("face_crop_bottom", 1.0) or 1.0)
-    except (TypeError, ValueError):
-        print(f"[POSTPROCESS] face_crop_bottom 변환 실패({settings.get('face_crop_bottom')!r}), 1.0 사용")
-        face_crop_bottom = 1.0
-    try:
-        face_conf = float(settings.get("face_conf", 0.3) or 0.3)
-    except (TypeError, ValueError):
-        print(f"[POSTPROCESS] face_conf 변환 실패({settings.get('face_conf')!r}), 0.3 사용")
-        face_conf = 0.3
-    if bool(settings.get("face_best_only", False)):
-        face_conf = 0.0
-
     prefix = settings.get("prefix", "") or ""
     suffix = settings.get("suffix", "") or ""
     strip_emotion = bool(settings.get("strip_emotion", False))
     emotion_extract_rules = settings.get("emotion_extract_rules") or []
-    from modes.onnx_execution import normalize_cpu_threads, normalize_device_key
-    face_device = normalize_device_key(settings.get("face_device", "auto"))
-    face_cpu_threads = normalize_cpu_threads(settings.get("face_cpu_threads", 0))
 
     targets = []
     seen_targets = set()
@@ -1071,7 +1034,7 @@ def _prepare_face_images(segments: list, settings: dict, bot_name: str,
                 )
                 if saved_face is None:
                     print(
-                        f"[POSTPROCESS_FACE] 저장 FACE CROP 최소 크롭 실패, ONNX 폴백: "
+                        f"[POSTPROCESS_FACE] 저장 FACE CROP 최소 크롭 실패, 썸네일 생략: "
                         f"bot={bot_name}, speaker={speaker}, source={matched[0]!r}, "
                         f"size={saved_source.size}"
                     )
@@ -1081,66 +1044,17 @@ def _prepare_face_images(segments: list, settings: dict, bot_name: str,
                     result[(speaker_key, emotion.casefold())] = saved_face
                     result.setdefault(speaker_key, saved_face)
                     print(
-                        f"[POSTPROCESS_FACE] 저장 FACE CROP 우선 사용(비율 유지 최소 크롭): "
+                        f"[POSTPROCESS_FACE] 저장 FACE CROP 사용(비율 유지 최소 크롭): "
                         f"bot={bot_name}, speaker={speaker}, source={matched[0]!r}, "
                         f"original_size={saved_source.size}, thumbnail_size={saved_face.size}"
                     )
                     continue
             except Exception as e:
                 print(
-                    f"[POSTPROCESS_FACE] 저장 FACE CROP 디코딩 실패, ONNX 폴백: "
+                    f"[POSTPROCESS_FACE] 저장 FACE CROP 디코딩 실패, 썸네일 생략: "
                     f"bot={bot_name}, speaker={speaker}, source={matched[0]!r}, error={e}"
                 )
                 traceback.print_exc()
-        raw = load_face_image_bytes(bot_name, speaker, matched[0])
-        if not raw:
-            print(
-                f"[POSTPROCESS] 얼굴 이미지 로드 실패: bot={bot_name}, "
-                f"speaker={speaker}, filename={matched[0]!r}"
-            )
-            continue
-        try:
-            from modes import face_detector
-            base = Image.open(io.BytesIO(raw))
-            face_img, _face_confidence, face_center = face_detector.crop_face(
-                base, top_mult=face_crop_top, bottom_mult=face_crop_bottom,
-                target_size=max(64, int(target_size)), conf_thres=face_conf,
-                device=face_device, cpu_threads=face_cpu_threads,
-                return_conf=True, return_center=True,
-            )
-            if face_img is None:
-                print(
-                    f"[POSTPROCESS] 얼굴 검출 실패 - center-crop 폴백: "
-                    f"bot={bot_name}, speaker={speaker}"
-                )
-                face_img = _center_crop_square(base, max(64, int(target_size)))
-                face_center = (0.5, 0.5)
-            if face_img is None:
-                print(
-                    f"[POSTPROCESS] 얼굴 폴백도 실패: bot={bot_name}, "
-                    f"speaker={speaker}, filename={matched[0]!r}"
-                )
-                continue
-            try:
-                face_img.info["postprocess_face_center"] = tuple(
-                    face_center or (0.5, 0.5)
-                )
-            except Exception as e:
-                print(
-                    f"[POSTPROCESS] 얼굴 중심 메타데이터 저장 실패: "
-                    f"bot={bot_name}, speaker={speaker}, error={e}"
-                )
-                traceback.print_exc()
-            speaker_key = speaker.casefold()
-            result[(speaker_key, emotion.casefold())] = face_img
-            # 다중/단일 모드는 해당 발화자의 첫 감정 이미지를 대표 썸네일로 사용.
-            result.setdefault(speaker_key, face_img)
-        except Exception as e:
-            print(
-                f"[POSTPROCESS] 얼굴 크롭 실패: bot={bot_name}, speaker={speaker}, "
-                f"filename={matched[0]!r}, error={e}"
-            )
-            traceback.print_exc()
     return result
 
 
@@ -2782,12 +2696,6 @@ def _default_vn() -> dict:
         "prefix": "",                  # 이미지 조회 토큰 prefix (봇별 1개)
         "suffix": "",                  # 이미지 조회 토큰 suffix (봇별 1개)
         "face_enabled": True,          # VN 좌측 얼굴 슬롯 표시
-        "face_crop_top": 1.8,          # 위쪽 크롭 계수. 1.0=검출박스 그대로, 클수록 위로 확장(데이터패치 노드와 동일 규칙)
-        "face_crop_bottom": 1.8,       # 아래쪽 크롭 계수. 1.0=검출박스 그대로, 클수록 아래로 확장
-        "face_conf": 0.3,              # YOLO 얼굴 검출 신뢰도 임계치
-        "face_best_only": True,       # True면 CONF 무시, 검출 박스 중 최고 신뢰도 강제 사용
-        "face_device": "auto",         # 자동 | cpu | cuda0 | dml0
-        "face_cpu_threads": 0,         # CPU intra-op 스레드. 0=ONNX Runtime 자동
         "multi_face_mode": "both",     # 2인+ 썸네일: both | first
         "theme": "classic",     # 구버전 호환용 1인 테마
         "theme_single": "classic",  # 1인 테마 팔레트
@@ -2886,13 +2794,8 @@ def _default_bubble() -> dict:
         "tail_max_length": 40.0,            # 꼬리 최대 길이(절대 픽셀, 0=제한 없음). px 단위로 직접 지정
         "organic_wobble": 0.1,           # 유기형 굴곡 강도(0.02~0.30). 짧은 대사 0.060, 긴 대사 0.045 권장
         "max_width_ratio": 0.45,          # 캔버스 폭 대비 말풍선 최대 폭 비율
-        "match_thres": 0.1,              # 코사인 유사도 매칭 임계치(이하 미배정)
-        "face_candidates_per_character": 8,  # 캐릭터당 확보할 YOLO 후보 수(전체 최대 64)
-        "appearance_weight": 0.4,         # CLIP 점수에 결합할 명도·채도 외형 보정 가중치
-        "assignment_ambiguity_margin": 0.01,  # 최적/차선 전역 배정의 최소 평균 점수 차이
         "onnx_device": "auto",         # 말풍선 ONNX 공용 장치
         "cpu_threads": 0,               # CPU intra-op 스레드. 0=ONNX Runtime 자동
-        "face_fallback": True,         # v9c 저신뢰 시 BGR/RGB ±20도 재검출, 미회복 시 v8m 보조 검출
         "speech_split": True,          # 대사(speech) 5줄 이상 → 텍스트는 그대로 두고 외곽선을 위/아래 두 타원 합집합(한 덩어리)으로. thought·box 제외
     }
 
@@ -2977,7 +2880,6 @@ def get_vn_settings(
     vn = _load_bot_vn(bot_name) if bot_name else _default_vn()
     if not force and not bool(vn.get("enabled", False)):
         return None
-    from modes.onnx_execution import normalize_cpu_threads, normalize_device_key
     return {
         "placement": vn.get("placement", "extend"),
         "height_mode": vn.get("height_mode", "ratio"),
@@ -2993,15 +2895,10 @@ def get_vn_settings(
         "name_replace": vn.get("name_replace") or {},
         "name_replace_enabled": bool(vn.get("name_replace_enabled", True)),
         "strip_emotion": bool(vn.get("strip_emotion", False)),
+        "emotion_extract_rules": vn.get("emotion_extract_rules") or [],
         "prefix": vn.get("prefix", "") or "",
         "suffix": vn.get("suffix", "") or "",
         "face_enabled": bool(vn.get("face_enabled", True)),
-        "face_crop_top": float(vn.get("face_crop_top", 1.8) or 1.8),
-        "face_crop_bottom": float(vn.get("face_crop_bottom", 1.0) or 1.0),
-        "face_conf": float(vn.get("face_conf", 0.3) or 0.3),
-        "face_best_only": bool(vn.get("face_best_only", False)),
-        "face_device": normalize_device_key(vn.get("face_device", "auto")),
-        "face_cpu_threads": normalize_cpu_threads(vn.get("face_cpu_threads", 0)),
         "multi_face_mode": str(vn.get("multi_face_mode", "both") or "both"),
         "theme": str(vn.get("theme", VN_THEME_DEFAULT) or VN_THEME_DEFAULT),
         "theme_single": str(
@@ -3033,18 +2930,6 @@ def get_bubble_settings(
     if not force and not bool(bb.get("enabled", False)):
         return None
     from modes.onnx_execution import normalize_cpu_threads, normalize_device_key
-    face_crop_top = 2.5
-    face_crop_bottom = 1.0
-    if bot_name:
-        try:
-            from modes.bot_mode import _load_patch_settings
-
-            patch = _load_patch_settings(bot_name) or {}
-            face_crop_top = patch.get("face_crop_top", face_crop_top)
-            face_crop_bottom = patch.get("face_crop_bottom", face_crop_bottom)
-        except Exception as e:
-            print(f"[POSTPROCESS] bubble FACE_CROP 설정 조회 실패({bot_name}): {e}")
-            traceback.print_exc()
     # 폰트 id → 경로 해석(번들 미설치 시 자동 다운로드). 렌더는 font_path 를 읽는다.
     font_id = str(bb.get("font_id", "") or "")
     font_path = str(bb.get("font_path", "") or "")
@@ -3095,29 +2980,9 @@ def get_bubble_settings(
             0.02, min(0.30, float(bb.get("organic_wobble", 0.055) or 0.055))
         ),
         "max_width_ratio": float(bb.get("max_width_ratio", 0.45) or 0.45),
-        "match_thres": float(
-            bb.get("match_thres", 0.55)
-            if bb.get("match_thres", 0.55) is not None else 0.55
-        ),
-        "face_candidates_per_character": max(
-            1, min(32, int(bb.get("face_candidates_per_character", 8) or 8))
-        ),
-        "appearance_weight": max(
-            0.0, min(2.0, float(bb.get("appearance_weight", 0.4) or 0.0))
-        ),
-        "assignment_ambiguity_margin": max(
-            0.0,
-            min(
-                0.2,
-                float(bb.get("assignment_ambiguity_margin", 0.01) or 0.0),
-            ),
-        ),
         "onnx_device": normalize_device_key(bb.get("onnx_device", "auto")),
         "cpu_threads": normalize_cpu_threads(bb.get("cpu_threads", 0)),
-        "face_fallback": bool(bb.get("face_fallback", False)),
         "speech_split": bool(bb.get("speech_split", True)),
-        "face_crop_top": max(1.0, min(10.0, float(face_crop_top))),
-        "face_crop_bottom": max(1.0, min(10.0, float(face_crop_bottom))),
     }
 
 

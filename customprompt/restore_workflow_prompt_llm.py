@@ -1,12 +1,12 @@
 """
 워크플로우 복원 프롬프트 - LLM 수동 그리기
 
-선택된 봇에서 사용자가 지정한 캐릭터 1명 또는 2명의 프로필 카드별
+선택된 봇에서 사용자가 지정한 캐릭터 1~3명의 프로필 카드별
 외모/복장 정보를 읽고, LLM으로 V3 RAW 섹션
 ([SPEAK]/[Name]/[SETUP]/[CHAR]/[SUPPLEMENT])을 만든다.
 
 공급자별 최종 처리는 server.py가 담당한다.
-  - 로컬 V3: 캐릭터 LoRA/캐시/얼굴 정보와 2인 Regional RGB 마스크를 적용한다.
+  - 로컬 V3: 캐릭터 LoRA/캐시/얼굴 정보와 2~3인 Regional RGB 마스크를 적용한다.
   - 챈섭: LoRA/마스크 없이 ChansubPromptBuilder가 평탄한 태그 프롬프트를 만든다.
 
 필수 함수:
@@ -111,8 +111,8 @@ def _resolve_characters(bot: dict, requested_names: list[str] | None) -> list[di
             f"{chosen.get('name')!r}"
         )
         return [chosen]
-    if len(names) not in (1, 2):
-        raise ValueError(f"캐릭터는 1명 또는 2명이어야 합니다: actual={len(names)}")
+    if len(names) not in (1, 2, 3):
+        raise ValueError(f"캐릭터는 1~3명이어야 합니다: actual={len(names)}")
     if len({name.casefold() for name in names}) != len(names):
         raise ValueError(f"같은 캐릭터를 중복 선택할 수 없습니다: {names}")
 
@@ -263,7 +263,7 @@ def _build_system_prompt(character_count: int, generate_speak: bool) -> str:
         "and copy every name exactly.\n"
         "3. Image prompt fields must be Danbooru-style English tags separated by commas. "
         "Do not write Korean prose in image prompt fields.\n"
-        "4. For two characters, give each a clear spatial position and visually coherent "
+        "4. For multiple characters, give each a clear spatial position and visually coherent "
         "interaction without merging their bodies.\n"
         f"5. {dialogue_rule}\n"
         "6. Dialogue type must be exactly speech or thought. Do not include quotation marks "
@@ -429,8 +429,8 @@ def _parse_scene_payload(
                 context["outfit_tags"],
             )
         position = str(raw_character.get("position") or "").strip()
-        if len(expected_names) == 2 and not position:
-            raise ValueError(f"2인 캐릭터 위치 정보가 비어 있습니다: {name!r}")
+        if len(expected_names) >= 2 and not position:
+            raise ValueError(f"{len(expected_names)}인 캐릭터 위치 정보가 비어 있습니다: {name!r}")
         characters.append({
             "name": name,
             "positive": tags,

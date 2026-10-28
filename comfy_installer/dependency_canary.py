@@ -346,6 +346,7 @@ def run_dependency_drift_canary(
             installed_requirements = candidate_api.install_node_dependencies(
                 comfy_root=comfy_root,
                 python=python,
+                gpu_profile=profile,
                 node_paths=node_paths,
                 compatibility_packages=list(
                     manifest.python["compatibility_packages"]

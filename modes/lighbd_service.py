@@ -447,6 +447,9 @@ def _log_manual_parallel_race(event: dict) -> None:
             "llm_slot": str(event.get("llm_slot") or attempt.get("llm_slot") or ""),
             "input": input_messages,
             "output": str(attempt.get("text") or ""),
+            **{key: attempt[key] for key in (
+                "reasoning_tokens", "reasoning_chars", "reasoning_text",
+            ) if key in attempt},
             "completion_tokens": int(attempt.get("completion_tokens") or 0),
             "prompt_tokens": int(attempt.get("prompt_tokens") or 0),
             "elapsed": round(float(attempt.get("elapsed") or 0.0), 3),

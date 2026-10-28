@@ -1302,6 +1302,8 @@ def generate(payload: dict) -> dict:
     return {
         "prompt_id": remote_result.get("prompt_id"),
         "outputs": outputs,
+        "face_positions": list(remote_result.get("face_positions") or []),
+        "mask_url": remote_result.get("mask_url") or "",
         "artifacts": artifacts,
         "video_artifacts": video_artifacts,
         "text_outputs": list(remote_result.get("text_outputs") or []),

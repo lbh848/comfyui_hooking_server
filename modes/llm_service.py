@@ -1545,6 +1545,19 @@ def _llm_provider_identity(slot: str, *, config: dict | None = None) -> str:
         return dict.get(source, f"{key}{suffix}") or default
 
     service = connection_value("llm_service", "openai")
+    if service == "vertex":
+        # Native Vertex bills the project in each slot's own service account;
+        # llm_url and model do not identify a separate provider allowance.
+        token = _llm_slot_ctx.set(_normalize_llm_slot(slot))
+        try:
+            project = _vertex_project_id()
+        finally:
+            _llm_slot_ctx.reset(token)
+        if not project:
+            return f"slot:{_normalize_llm_slot(slot)}"
+        return "provider:" + hashlib.sha256(
+            json.dumps(["vertex", project], ensure_ascii=False).encode("utf-8")
+        ).hexdigest()
     defaults = {
         "openai": "https://api.openai.com",
         "openrouter": "https://openrouter.ai/api",
@@ -1557,8 +1570,7 @@ def _llm_provider_identity(slot: str, *, config: dict | None = None) -> str:
     elif service in defaults:
         default_url = defaults[service]
     else:
-        # Native SDKs do not use llm_url as an OpenAI endpoint (Vertex uses a
-        # region, for example). Preserve their existing independent slot caps.
+        # Other native transports do not use the OpenAI endpoint contract.
         return f"slot:{_normalize_llm_slot(slot)}"
     credential = connection_value("llm_api_key")
     if not credential and service not in {"ollama", "lmstudio"}:
@@ -3609,14 +3621,20 @@ def _track_flow_llm(fn):
     @functools.wraps(fn)
     async def wrapped(*args, **kwargs):
         run = illustration_flow._run.get()
-        if run is None or run.get("kind") not in {"video", "illustration", "lora_feedback"} or illustration_flow._node.get() is not None:
+        existing_node_id = illustration_flow._node.get()
+        existing_node = (run or {}).get("nodes", {}).get(existing_node_id, {})
+        # Background vision jobs already own a queue node, but have no outer
+        # LLM observer. Attach attempts to that node instead of skipping them.
+        queued_review = existing_node.get("task_key") in illustration_flow.BACKGROUND_LLM_TYPES
+        if (run is None or run.get("kind") not in {"video", "illustration", "lora_feedback"}
+                or (existing_node_id is not None and not queued_review)):
             return await fn(*args, **kwargs)
         bound = signature.bind(*args, **kwargs)
         inputs = bound.arguments
         task_key = inputs["task_key"]
         context = inputs.get("execution_context")
-        label = context.call_name if context else task_key
-        node_id = illustration_flow.add_node(
+        label = existing_node.get("label") if queued_review else context.call_name if context else task_key
+        node_id = existing_node_id if queued_review else illustration_flow.add_node(
             run, label, dependencies=illustration_flow._frontier.get(), kind="llm",
             executor="llm", task_key=task_key,
             input=illustration_flow.serializable(inputs["messages"]),
@@ -3637,7 +3655,8 @@ def _track_flow_llm(fn):
             service = _base_config_get(f"llm_service{suffix}") or "openai" or ""
             illustration_flow.llm_attempt(event, model, service)
             illustration_flow.llm_metadata(
-                label=event.get("call_name") or label,
+                label=label if queued_review else event.get("call_name") or label,
+                call_name=event.get("call_name") or label,
                 execution_id=event.get("execution_id") or node_id,
             )
             if original_observer is not None:

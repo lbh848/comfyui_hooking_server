@@ -63,10 +63,10 @@ def has_rotation_api_key() -> bool:
     return bool(_rotation_api_key)
 
 
-def build_request_body(positive: str, negative: str, width: int, height: int) -> dict:
+def build_request_body(positive: str, negative: str, width: int, height: int, *, seed: int | None = None) -> dict:
     """PocketRisu NovelAI 공급자와 같은 txt2img 요청 본문을 만든다."""
-    seed = random.SystemRandom().randint(0, 2**32 - 1)
-    extra_noise_seed = random.SystemRandom().randint(0, 2**32 - 1)
+    extra_noise_seed = random.SystemRandom().randint(0, 2**32 - 1) if seed is None else int(seed)
+    seed = random.SystemRandom().randint(0, 2**32 - 1) if seed is None else int(seed)
     return {
         "input": positive,
         "model": CHANSUB_MODEL,
@@ -329,6 +329,7 @@ async def generate_image(
     quality_tag_start: int = 0,
     quality_tag_count: int = 0,
     strip_builtin_quality_tags: bool = True,
+    seed: int | None = None,
 ) -> tuple[bytes | None, str | dict]:
     if not _api_key:
         message = "챈섭 API 키가 설정되지 않았습니다."
@@ -388,7 +389,7 @@ async def generate_image(
             print(f"[CHANSUB] 생성 중단: {message}")
             return None, message
 
-    body = build_request_body(request_positive, negative, width, height)
+    body = build_request_body(request_positive, negative, width, height, seed=seed)
     try:
         retries = max(0, int(max_retries))
         retry_delay = max(0.0, float(retry_delay_sec))

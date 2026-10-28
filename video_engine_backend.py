@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import traceback
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -98,9 +99,11 @@ class VideoEngineService:
         *,
         get_config: Callable[[], dict[str, Any]],
         get_comfy_ports: Callable[[], list[tuple[int, int]]],
+        runtime_manager: VideoEngineRuntimeManager | None = None,
     ) -> None:
         self.get_config = get_config
         self.get_comfy_ports = get_comfy_ports
+        self.runtime_manager = runtime_manager
         self._last_connection_error = ""
 
     def port(self) -> int:
@@ -487,6 +490,39 @@ class VideoEngineService:
             )
 
     async def ensure_cold_for_comfy(self) -> dict[str, Any]:
+        port = self.port()
+        try:
+            managed_running = self.runtime_manager is not None and self.runtime_manager.is_running()
+            if not managed_running:
+                import psutil
+
+                # A refused loopback TCP connection takes ~2 seconds on Windows.
+                # Inspect the OS listener table instead, including external engines.
+                # Unprivileged Unix enumeration may silently omit other processes;
+                # keep the existing HTTP path when the snapshot may be incomplete.
+                if psutil.WINDOWS or (hasattr(os, "geteuid") and os.geteuid() == 0):
+                    connections = await asyncio.to_thread(psutil.net_connections, kind="tcp")
+                    listening = any(
+                        connection.status == psutil.CONN_LISTEN
+                        and connection.laddr
+                        and connection.laddr.port == port
+                        for connection in connections
+                    )
+                    if not listening and not (
+                        self.runtime_manager is not None and self.runtime_manager.is_running()
+                    ):
+                        print(f"[VIDEO_ENGINE] 실행 프로세스·수신 포트 없음, HTTP 내리기 확인 생략: port={port}")
+                        return {
+                            "reachable": False,
+                            "port": port,
+                            "status": "offline",
+                            "released": True,
+                        }
+                else:
+                    print(f"[VIDEO_ENGINE] 전체 포트 조회 권한을 보장할 수 없어 HTTP로 상태 확인: port={port}")
+        except Exception as exc:
+            print(f"[VIDEO_ENGINE] 로컬 실행 상태 판별 실패, HTTP로 상태 확인: port={port}, error={exc}")
+            traceback.print_exc()
         try:
             return await self._set_warmup(False, mode="i2v")
         except VideoEngineUnavailableError as exc:
@@ -636,6 +672,7 @@ def register_video_engine_routes(
     service = VideoEngineService(
         get_config=get_config,
         get_comfy_ports=get_comfy_ports,
+        runtime_manager=runtime_manager,
     )
 
     def require_authorized(request: web.Request) -> web.Response | None:

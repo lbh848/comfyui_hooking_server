@@ -971,12 +971,27 @@ class IllustPromptBuilder:
                     if strigger and strigger not in sdxl_triggers:
                         sdxl_triggers.append(strigger)
 
-                # LoRA 경로/강도/BASE는 STYLE_LORA_DATA로 분리
-                all_style_loras.append({
-                    "lora_path": slora_path,
-                    "str": sstrength,
-                    "BASE": sbase
-                })
+                # 같은 전역 스타일은 캐릭터 수와 무관하게 가장 높은 강도로 한 번 적용한다.
+                existing_style = next((
+                    item for item in all_style_loras
+                    if item["BASE"] == sbase
+                    and item["lora_path"].replace("\\", "/") == slora_path.replace("\\", "/")
+                ), None)
+                if existing_style is not None:
+                    previous_strength = existing_style["str"]
+                    existing_style["str"] = max(float(previous_strength), float(sstrength))
+                    print(
+                        f"[ILLUST_STYLE_LORA] 중복 전역 스타일 병합: char={char_name!r}, "
+                        f"path={slora_path!r}, base={sbase}, "
+                        f"strengths=({previous_strength}, {sstrength}), "
+                        f"applied={existing_style['str']}"
+                    )
+                else:
+                    all_style_loras.append({
+                        "lora_path": slora_path,
+                        "str": sstrength,
+                        "BASE": sbase
+                    })
 
         # ─── 아티스트 프리셋 태그 ───
         artist_presets = tags.get("artist_presets", {})
@@ -1350,6 +1365,8 @@ class IllustPromptBuilder:
                         multi_char_context.get("mask_render_version")
                         or (multi_char_context.get("layout") or {}).get("mask_render_version") or 1
                     ),
+                    **({"panels": multi_char_context.get("panels") or multi_char_context["layout"]["panels"]}
+                       if multi_char_context.get("panels") or (multi_char_context.get("layout") or {}).get("panels") else {}),
                     "shared_tag": {
                         "before_char": shared_before,
                         "after_char": shared_after,

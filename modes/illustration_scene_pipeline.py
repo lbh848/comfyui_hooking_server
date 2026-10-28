@@ -12,6 +12,7 @@ from copy import deepcopy
 from functools import partial
 import hashlib
 import json
+import math
 import re
 import traceback
 
@@ -36,7 +37,8 @@ def _fail(stage: str, reason: str, value=None, *, warning: bool = False) -> None
 
 
 def _json_response(text: str, stage: str, *, array_key: str | None = None) -> dict:
-    value = pipeline._json_object_from_text(text, array_key=array_key)
+    value = pipeline._json_object_from_text(
+        text, array_key=array_key, allow_partial=stage != "OUTFIT")
     if not isinstance(value, dict):
         _fail(stage, "JSON object 응답 없음", str(text or "")[:400])
     return value
@@ -200,6 +202,9 @@ def parse_state(text: str, names: list[str], slots: list[int], *,
                 fields=("outfit", "hair"), stage="OUTFIT", segment_slots=None) -> dict:
     """Read sparse string checkpoints; Python never interprets their meaning."""
     raw = _json_response(text, stage)
+    # A lost OUTFIT checkpoint corrupts every following inherited state. Let
+    # the existing routed validator retry the whole call before publishing it.
+    warning_only = stage != "OUTFIT"
     aspects = "/".join(fields)
     if not slots:
         _fail(stage, "상태표의 SLOT 목록 없음", slots)
@@ -208,22 +213,22 @@ def parse_state(text: str, names: list[str], slots: list[int], *,
     known_slots = {f"SLOT{slot}" for slot in slots}
     for slot, characters in raw.items():
         if slot not in known_slots or not isinstance(characters, dict):
-            _fail(stage, "상태를 배치할 SLOT/인물 객체 없음", {slot: characters}, warning=True)
+            _fail(stage, "상태를 배치할 SLOT/인물 객체 없음", {slot: characters}, warning=warning_only)
         if not isinstance(characters, dict):
             continue
         for name, state in characters.items():
             if name not in names or not isinstance(state, dict):
-                _fail(stage, "확정 인물/상태 객체와 다른 출력", {slot: {name: state}}, warning=True)
+                _fail(stage, "확정 인물/상태 객체와 다른 출력", {slot: {name: state}}, warning=warning_only)
             if not isinstance(state, dict):
                 continue
             for field, tags in state.items():
                 if field not in fields or not isinstance(tags, str):
-                    _fail(stage, f"{aspects} 필드/문자열과 다른 출력", {slot: {name: state}}, warning=True)
+                    _fail(stage, f"{aspects} 필드/문자열과 다른 출력", {slot: {name: state}}, warning=warning_only)
     first = raw.get(f"SLOT{slots[0]}", {})
     for name in names:
         state = first.get(name, {}) if isinstance(first, dict) else {}
         if not isinstance(state, dict) or not set(fields) <= state.keys():
-            _fail(stage, f"첫 SLOT의 {aspects} 초기값 누락", {"character": name, "first_slot": slots[0], "input": raw}, warning=True)
+            _fail(stage, f"첫 SLOT의 {aspects} 초기값 누락", {"character": name, "first_slot": slots[0], "input": raw}, warning=warning_only)
     return raw
 
 
@@ -300,7 +305,7 @@ def parse_plan(text: str, *, segments: dict, slot_map: dict[str, int],
                 _fail(stage, "원문 순서와 다른 anchor", scene, warning=True)
             if stage != "CALL2-SELECT" and not str(scene.get("scene_brief") or "").strip():
                 _fail(stage, "비어 있는 장면 brief", scene, warning=True)
-            if set(scene) - {"anchor_segment", "characters", "scene_brief"}:
+            if set(scene) - {"anchor_segment", "characters", "scene_brief", "canvas", "panels"}:
                 _fail(stage, "추가 장면 필드; 원문 유지", scene, warning=True)
             used_slots.add(slot)
             last_rank = rank
@@ -322,6 +327,19 @@ def slice_scene(plan: dict, *, slot_map: dict[str, int], profile_result: dict,
     scene = {"anchor_segment": anchor, "slot": int(slot_map[anchor]), "characters": []}
     if "scene_brief" in plan:
         scene["brief"] = plan["scene_brief"]
+    if plan.get("panels"):
+        from modes.bubble_render import compose_bubble
+        scene["canvas"] = deepcopy(plan.get("canvas") or [1728, 1728])
+        scene["panels"] = deepcopy(plan["panels"])
+        for panel in scene["panels"]:
+            ratio = (float(panel["width"]) * scene["canvas"][0]
+                     / (float(panel["height"]) * scene["canvas"][1]))
+            if not math.isfinite(ratio) or ratio <= 0:
+                _fail("MANGA-PLAN", "생성 가능한 컷 비율 없음", panel)
+            panel["canvas"] = [max(16, round(math.sqrt(746496 * ratio) / 16) * 16),
+                               max(16, round(math.sqrt(746496 / ratio) / 16) * 16)]
+            panel.update(compose_bubble(None, "", {}, "", planned_entries=panel.get("dialogue") or [],
+                                        canvas_size=panel["canvas"]))
     bases = {}
     for name in plan["characters"]:
         base = active_profile(name, anchor, profile_result, visual_profiles,
@@ -340,6 +358,77 @@ def slice_scene(plan: dict, *, slot_map: dict[str, int], profile_result: dict,
 
 def _parse_detail_scene(item: dict, scene: dict, *, mask_inline: bool = False,
                         single_char_mask_enabled: bool = True) -> dict:
+    if isinstance(item, dict) and item.get("panels") and (scene.get("panels") or "regions" not in item):
+        if item.get("slot") != scene["slot"]:
+            _fail("DETAIL-MANGA", "PLAN과 다른 페이지 slot", item)
+        if not scene.get("panels"):
+            # PLAN OFF: DETAIL owns the page/script as well as image text.
+            # Retain its page plan so missing-panel retries keep usable panels.
+            scene["canvas"] = deepcopy(item.get("canvas") or [1728, 1728])
+            scene["panels"] = [{key: deepcopy(value) for key, value in panel.items()
+                if key in {"panel", "anchor_segment", "x", "y", "width", "height", "canvas", "dialogue"}}
+                for panel in item["panels"]]
+        planned = {panel["panel"]: panel for panel in scene.get("panels") or []}
+        shared_characters = item.get("characters") or []
+        panels = []
+        for raw_panel in item["panels"]:
+            try:
+                panel_id = raw_panel["panel"]
+                if panel_id not in planned:
+                    _fail("DETAIL-MANGA", "대본·캔버스가 없는 컷", raw_panel)
+                plan = planned[panel_id]
+                if "dialogue_mask" not in plan:
+                    from modes.bubble_render import compose_bubble
+                    plan.update({key: deepcopy(value) for key, value in raw_panel.items()
+                        if key in {"anchor_segment", "x", "y", "width", "height", "canvas", "dialogue"}})
+                    if not plan.get("canvas"):
+                        ratio = float(plan["width"]) * scene["canvas"][0] / (float(plan["height"]) * scene["canvas"][1])
+                        if not math.isfinite(ratio) or ratio <= 0:
+                            _fail("DETAIL-MANGA", "생성 가능한 컷 비율 없음", plan)
+                        plan["canvas"] = [max(16, round(math.sqrt(746496 * ratio) / 16) * 16),
+                                          max(16, round(math.sqrt(746496 / ratio) / 16) * 16)]
+                    plan.update(compose_bubble(None, "", {}, "", planned_entries=plan.get("dialogue") or [],
+                                               canvas_size=plan["canvas"]))
+                panel_input = deepcopy(raw_panel)
+                panel_input["regions"] = []
+                for index, region in enumerate(raw_panel.get("regions") or []):
+                    if region is None:
+                        print(f"[DETAIL-MANGA] 해당 컷에 미등장한 공통 인물 영역 생략: "
+                              f"slot={item['slot']}, panel={panel_id}, character_index={index}")
+                        continue
+                    region = deepcopy(region)
+                    # Names remain readable in older responses. New responses
+                    # reference the slot's cast by array order without repeating it.
+                    shared = (next((character for character in shared_characters
+                                    if str(character.get("name") or "").strip().casefold()
+                                    == str(region["name"]).strip().casefold()), {})
+                              if region.get("name") else
+                              shared_characters[index] if index < len(shared_characters) else {})
+                    region["name"] = region.get("name") or shared.get("name", "")
+                    region["character_prompt"] = ", ".join(text for text in (
+                        pipeline.multi_char_mask._prompt_text(shared.get("positive"),
+                            "characters[].positive", required=False),
+                        pipeline.multi_char_mask._prompt_text(region.get("character_prompt"),
+                            "regions[].character_prompt", required=False)) if text)
+                    panel_input["regions"].append(region)
+                panel = _parse_detail_scene({**panel_input, "slot": item["slot"]}, scene,
+                    mask_inline=True, single_char_mask_enabled=single_char_mask_enabled)
+                panel.update({key: deepcopy(value) for key, value in planned[panel_id].items()
+                              if key in {"panel", "x", "y", "width", "height", "canvas", "scene_brief",
+                                         "anchor_segment", "dialogue", "dialogue_overlay", "dialogue_mask"}})
+                if panel.get("multi_char_layout"):
+                    panel["multi_char_layout"].update(mask_width=panel["canvas"][0], mask_height=panel["canvas"][1],
+                        dialogue_mask=panel["dialogue_mask"])
+                panels.append(panel)
+            except (KeyError, ValueError, TypeError) as exc:
+                print(f"[DETAIL-MANGA] 사용할 수 없는 컷만 제외: input={raw_panel!r}, error={exc}")
+                traceback.print_exc()
+        if not panels:
+            _fail("DETAIL-MANGA", "사용 가능한 컷 없음", item)
+        return {"kind": "scene", "slot": item["slot"], "canvas": deepcopy(scene.get("canvas")),
+                "panels": panels, "camera": "", "scene": str(scene.get("brief") or ""),
+                "supplement": "", "speak": "", "characters": [],
+                "missing_panels": [number for number in planned if number not in {p["panel"] for p in panels}]}
     if mask_inline:
         required = {"slot", "regions"}
         if not isinstance(item, dict) or not required <= set(item):
@@ -354,6 +443,14 @@ def _parse_detail_scene(item: dict, scene: dict, *, mask_inline: bool = False,
             item[key] = pipeline.multi_char_mask._prompt_text(item.get(key), key, required=False)
             if not item[key]:
                 _fail("CALL2-DETAIL", f"비어 있는 {key}; 제공된 프롬프트로 진행", item, warning=True)
+        if item.get("panels"):
+            panel_text = []
+            for index, panel in enumerate(item["panels"]):
+                panel_text.append(
+                    f"Panel {panel.get('panel', index + 1)} "
+                    f"bbox=({panel.get('x')}, {panel.get('y')}, {panel.get('width')}, {panel.get('height')}): "
+                    + pipeline.multi_char_mask._prompt_text(panel.get("scene"), "panels[].scene", required=False))
+            item["composition_prompt"] = "\n".join([item["composition_prompt"], *panel_text])
         # LLM negative control is disabled. Keep old responses usable without
         # forwarding their negative fields into character or regional prompts.
         for region in item["regions"]:
@@ -601,6 +698,12 @@ def descriptors_to_toon(descriptors: list[dict]) -> str:
     for descriptor in descriptors:
         raw = {key: deepcopy(descriptor.get(key)) for key in
                ("camera", "characters", "scene", "supplement")}
+        if descriptor.get("panels"):
+            raw = {"canvas": deepcopy(descriptor.get("canvas")), "panels": [
+                {key: deepcopy(value) for key, value in panel.items()
+                 if key in {"panel", "anchor_segment", "canvas", "x", "y", "width", "height",
+                            "camera", "scene", "characters", "supplement", "dialogue"}}
+                for panel in descriptor["panels"]]}
         if descriptor.get("kind") == "keyvis":
             data["keyvis"] = raw
         else:
@@ -619,12 +722,16 @@ async def build_from_context(
     enable_multi_char_layout: bool = False, history_plan: dict | None = None,
     visual_profiles: dict | None = None, profile_translation_namespace: str = "",
     pre_resolved_profile_output: str = "", pre_resolved_profile_result: dict | None = None,
-    first_pass_single_v5: bool = False,
 ) -> dict:
     """Build ordinary descriptors without semantic state/post-DETAIL rewriting."""
     p = pipeline
-    toggles = p.merged_toggles(toggles)
-    mask_inline = bool(enable_multi_char_layout and toggles.get("multi_char_mask_inline_enabled"))
+    toggles = p.merged_toggles(toggles, for_generation=True)
+    manga = toggles["illustration_output_mode"] in ("manga", "manga_both")
+    if manga:
+        # Runtime page semantics only; never save these over ordinary-mode settings.
+        toggles.update(key_visual=False, speak_enabled=False, supplement=True)
+        print(f"[ILLUST_CONTEXT:MANGA] 3~4컷 페이지 · PLANNER={'ON' if toggles['call2_plan_enabled'] else 'OFF'} · DETAIL-MANGA")
+    mask_inline = bool(manga or enable_multi_char_layout and toggles.get("multi_char_mask_inline_enabled"))
     keyvis_in_detail = bool(toggles.get("key_visual") and toggles.get("keyvis_in_detail_enabled"))
     prompts = p.load_prompt_files()
     trace: list[str] = []
@@ -644,7 +751,7 @@ async def build_from_context(
                 payload=payload, toggles=toggles, history_plan=history,
                 visual_profiles=visual_profiles, profile_translation_namespace=profile_translation_namespace,
                 stream_notify=stream_notify, progress=progress,
-                extra_instruction=extra_instruction, first_pass_single_v5=first_pass_single_v5,
+                extra_instruction=extra_instruction,
                 character_names=character_names or extra_names or ",".join(
                     item["name"] for item in (pre_resolved_profile_result or {}).get("current_characters") or []),
             )
@@ -690,7 +797,7 @@ async def build_from_context(
                 await progress(8, "time_place", "TIME & PLACE 시간·장소·조명 추적")
             messages = prompt_builders.time_place_messages(
                 prompts, names, prior_time_place, past_text, segmented,
-                slots=state_slots, slotted=slotted, segment_slots=segment_slots)
+                slots=state_slots, slotted=slotted, segment_slots=segment_slots, toggles=toggles)
             def parse(response):
                 return parse_state(response, names, state_slots,
                                    fields=("time", "place", "lighting"),
@@ -717,16 +824,24 @@ async def build_from_context(
         if not candidates:
             _fail("CALL2-SELECT", "CURRENT에 선택 가능한 slot 없음", {"segments": list(segments), "mapped": segment_slots})
         single_names = None
-        if first_pass_single_v5:
-            single_names, source = p.single_preset_subject_candidates(visual_profiles, names)
+        if toggles["character_limit"] == 1:
+            single_names, source = p.single_subject_candidates(visual_profiles, names)
             if not single_names:
                 print(f"[ILLUST_CONTEXT:CALL2-SELECT] SINGLE 주체 권위 없음, 등록 CURRENT 이름만 허용: names={names!r}, source={source!r}")
                 single_names = names
         lb_extra_system_prompt = str(extra_instruction or "").strip()
         protected = p.render_call2_prompt(prompts.get("call2_jailbreak", ""), toggles,
                                           include_server_limits=False)
-        role_context = prompt_builders.role_context(protected, lb_extra_system_prompt)
-        # PLAN receives the resolved profile timeline after the unified front call.
+        role_context = prompt_builders.role_context(
+            protected, lb_extra_system_prompt, genre=toggles.get("genre", ""),
+            genre_prompt=prompts.get("genre", ""))
+        explicit_policy = ""
+        if toggles.get("nsfw"):
+            explicit_policy = p.render_call2_prompt(
+                prompts.get("call2_explicit", ""), toggles, include_server_limits=False)
+        else:
+            print("[ILLUST_CONTEXT:DETAIL/KEYVIS] NSFW OFF: NSFW 및 물리 접촉 지침 제외")
+        # PLAN and manga DETAIL receive the resolved profile timeline.
         plan_profiles = []
         for name in names:
             profile_segments = {
@@ -812,17 +927,24 @@ async def build_from_context(
                 prior_time_place=prior_time_place if time_place_tracking is None else None,
                 registered_names=names)
             def parse_batch(response):
-                return parse_plan(
+                result = parse_plan(
                     response, segments=segments, slot_map=segment_slots,
                     candidates=candidates, names=names, toggles=toggles,
                     single_names=single_names, assigned_scenes=batch)
+                if manga:
+                    for page in result:
+                        if not page.get("panels"):
+                            _fail("MANGA-PLAN", "선렌더할 컷·대본 누락", page)
+                return result
             def validate_batch(response):
                 try:
                     parse_batch(response)
                     return True, ""
                 except ValueError as exc:
                     return False, str(exc)
-            call_name = "CALL2-PLAN" if total == 1 else f"CALL2-PLAN {index}/{total}"
+            call_name = "PLANNER-MANGA" if manga else "CALL2-PLAN"
+            if total != 1:
+                call_name += f" {index}/{total}"
             if attempt_kind == "duplicate":
                 call_name += " [느리다고? 다시해!]"
             try:
@@ -875,7 +997,7 @@ async def build_from_context(
             # DETAIL's tiny scene input is not used here.
             keyvis_system = p.render_call2_prompt("\n\n".join([
                 prompts.get("call2_jailbreak", ""), prompts.get("call2_job", ""),
-                prompts.get("call2_common", ""), prompts.get("call2_explicit", ""),
+                prompts.get("call2_common", ""), explicit_policy,
                 prompts.get("call2_keyvis", ""),
             ]), toggles, include_scene_count_limit=False, include_server_limits=False)
             keyvis_messages = prompt_builders.keyvis_context_messages(
@@ -885,7 +1007,7 @@ async def build_from_context(
                 prior_time_place=prior_time_place if time_place_tracking is None else None,
                 mask_inline=mask_inline and not keyvis_in_detail, mask_prompt=prompts.get("multi_char_mask", ""),
                 canvas_sizes=payload.get("canvas_sizes"), positive_note=str(toggles.get("positive_note") or ""),
-                toggles=toggles)
+                toggles=toggles, genre_prompt=prompts.get("genre", ""))
             if keyvis_in_detail:
                 keyvis_messages.append(prompt_builders.keyvis_task_message(
                     toggles["character_limit"], json.dumps(names, ensure_ascii=False), names,
@@ -949,32 +1071,30 @@ async def build_from_context(
         detail_jobs = [{"ready": asyncio.get_running_loop().create_future(), "weight": len(batch),
                         "completed": {}, "scene_workers": {}}
                        for batch in detail_batches]
-        # Preserve the existing explicit-scene policy on DETAIL, not just on
-        # Key Visual. The new DETAIL output contract below supersedes its old
-        # outfit_state field while retaining its camera/contact safeguards.
-        explicit_policy = p.render_call2_prompt(
-            prompts.get("call2_explicit", ""), toggles, include_server_limits=False,
-        )
         detail_system = prompt_join("\n\n", (part for part in
-                                  (role_context, explicit_policy, prompts["call2_detail"]) if part))
+                                  (role_context, explicit_policy,
+                                   prompts["manga_detail" if manga else "call2_detail"]) if part))
         async def expand_batch(job, batch_index, total, attempt_kind,
                                stream_observer, history_id, job_stream_notify):
             nonlocal keyvis_descriptor, keyvis_output
             batch = job["scenes"]
             state = detail_jobs[batch_index - 1]
             completed = state["completed"]
-            pending = [scene for scene in batch if scene["slot"] not in completed]
+            pending = [scene for scene in batch if scene["slot"] not in completed
+                       or completed[scene["slot"]].get("missing_panels")]
             owns_keyvis = keyvis_in_detail and batch_index == 1
             if not pending and (not owns_keyvis or -1 in completed):
                 print(f"[ILLUST_CONTEXT:CALL2-DETAIL] 모든 장면 스트림 확정, 중복 요청 생략: slots={list(completed)}")
                 return {"raw": "", "descriptors": [completed[scene["slot"]] for scene in batch]
                         + ([completed[-1]] if owns_keyvis else [])}
-            needs_source = not all(toggles[key] for key in
+            needs_source = manga or not all(toggles[key] for key in
                                    ("outfit_enabled", "time_place_enabled", "call2_plan_enabled"))
             messages = p._normalize_messages(prompt_builders.detail_messages(detail_system, pending,
                 [scene["slot"] for scene in pending],
                 past_text=past_text if needs_source else "",
                 segmented=segmented if needs_source else "", toggles=toggles, registered_names=names,
+                plan_profiles=plan_profiles, tracking=tracking, time_place=time_place_tracking,
+                segment_slots=segment_slots,
                 prior_status=prior_status if tracking is None else None,
                 prior_time_place=prior_time_place if time_place_tracking is None else None,
                 mask_inline=mask_inline, mask_prompt=prompts.get("multi_char_mask", ""),
@@ -1000,20 +1120,60 @@ async def build_from_context(
                     traceback.print_exc()
                     return False, str(exc)
                 for result in results:
-                    completed.setdefault(result["slot"], result)
-                pending = [scene for scene in batch if scene["slot"] not in completed]
+                    if manga:
+                        previous = completed.get(result["slot"], {})
+                        panels = {panel["panel"]: panel for panel in previous.get("panels") or []}
+                        for panel in result.get("panels") or []:
+                            panels.setdefault(panel["panel"], panel)
+                        assigned = next(scene for scene in batch if scene["slot"] == result["slot"])
+                        result["panels"] = [panels[panel["panel"]] for panel in assigned.get("panels") or []
+                                            if panel["panel"] in panels]
+                        result["missing_panels"] = [panel["panel"] for panel in assigned.get("panels") or []
+                                                    if panel["panel"] not in panels]
+                        completed[result["slot"]] = result
+                    else:
+                        completed.setdefault(result["slot"], result)
+                pending = [scene for scene in batch if scene["slot"] not in completed
+                           or completed[scene["slot"]].get("missing_panels")]
                 missing_keyvis = owns_keyvis and -1 not in completed
+                # Measure accumulated ordinary scenes against the original
+                # upstream batch, never the shrinking retry or extra images.
+                successful_count = len(batch) - len(pending)
+                retry_missing = bool(pending) if manga else successful_count * 4 < len(batch) * 3
                 if pending or missing_keyvis:
-                    _fail("CALL2-DETAIL", "일부 장면/대표 이미지 누락; 사용 가능한 결과로 계속",
+                    reason = ("완료 컷 보존; 누락 컷만 재시도" if manga else
+                              f"장면 성공 {successful_count}/{len(batch)}개: 75% 미만; 누락 장면만 재시도"
+                              if retry_missing else "일부 장면/대표 이미지 누락; 사용 가능한 결과로 계속")
+                    _fail("CALL2-DETAIL", reason,
                           {"missing_slots": [scene["slot"] for scene in pending],
                            "missing_keyvis": missing_keyvis, "keyvis_reason": keyvis_reason,
                            "output": response}, warning=True)
-                if not completed and pending:
-                    return False, "CALL2-DETAIL: 생성에 사용할 장면 없음"
+                if retry_missing:
+                    # Streaming already narrows this list as scenes arrive.
+                    # Also refresh it here for non-streaming responses and
+                    # scenes recovered only after the response has finished.
+                    retry_scenes = deepcopy(pending)
+                    if manga:
+                        for scene in retry_scenes:
+                            done = {panel["panel"] for panel in completed.get(scene["slot"], {}).get("panels") or []}
+                            scene["panels"] = [panel for panel in scene.get("panels") or [] if panel["panel"] not in done]
+                    messages[:] = p._normalize_messages(prompt_builders.detail_messages(
+                        detail_system, retry_scenes, [scene["slot"] for scene in pending],
+                        past_text=past_text if needs_source else "",
+                        segmented=segmented if needs_source else "",
+                        toggles=toggles, registered_names=names,
+                        plan_profiles=plan_profiles, tracking=tracking, time_place=time_place_tracking,
+                        segment_slots=segment_slots,
+                        prior_status=prior_status if tracking is None else None,
+                        prior_time_place=prior_time_place if time_place_tracking is None else None,
+                        mask_inline=mask_inline, mask_prompt=prompts.get("multi_char_mask", ""),
+                        canvas_sizes=payload.get("canvas_sizes"),
+                        keyvis_messages=keyvis_messages if missing_keyvis else None))
+                    return False, f"CALL2-DETAIL: {reason}"
                 validated["output"] = response
                 validated["results"] = list(completed.values())
                 return True, ""
-            call_name = "CALL2-DETAIL"
+            call_name = "DETAIL-MANGA" if manga else "CALL2-DETAIL"
             if attempt_kind == "duplicate":
                 call_name += f" {batch_index}/{total} [느리다고? 다시해!]"
             try:
@@ -1041,6 +1201,12 @@ async def build_from_context(
             batch = detail_jobs[batch_index - 1]["ready"].result()[0]["scenes"]
             streaming = messages is not None
             if streaming:
+                if manga:
+                    # A page is registered after its independent descriptors are
+                    # merged by validate_detail, including any missing-cut retry.
+                    if stream_observer:
+                        stream_observer(value)
+                    return
                 if stream_observer:
                     stream_observer(value)
                 event_type = str(value.get("type") or "")
@@ -1090,6 +1256,11 @@ async def build_from_context(
                 if "brief" in scene:
                     result["scene_brief"] = scene["brief"]
                 result["visual_base_snapshot"] = deepcopy(bases_by_slot[scene["slot"]])
+                for panel in result.get("panels") or []:
+                    at = panel.get("anchor_segment") or scene["anchor_segment"]
+                    panel["visual_base_snapshot"] = {character["name"]: active_profile(
+                        character["name"], at, profile_result, visual_profiles, segment_order)
+                        for character in panel.get("characters") or []}
                 # Preserve the selected slot's full tags as continuity metadata.
                 if tracking is not None:
                     result["call1_scene_state"] = deepcopy({ch["name"]: {
@@ -1114,11 +1285,13 @@ async def build_from_context(
                 pending = [scene for scene in batch if scene["slot"] not in state["completed"]]
                 messages[:] = p._normalize_messages(prompt_builders.detail_messages(detail_system, pending,
                     [scene["slot"] for scene in pending],
-                    past_text=past_text if not all(toggles[key] for key in
+                    past_text=past_text if manga or not all(toggles[key] for key in
                         ("outfit_enabled", "time_place_enabled", "call2_plan_enabled")) else "",
-                    segmented=segmented if not all(toggles[key] for key in
+                    segmented=segmented if manga or not all(toggles[key] for key in
                         ("outfit_enabled", "time_place_enabled", "call2_plan_enabled")) else "",
                     toggles=toggles, registered_names=names, prior_status=prior_status if tracking is None else None,
+                    plan_profiles=plan_profiles, tracking=tracking, time_place=time_place_tracking,
+                    segment_slots=segment_slots,
                     prior_time_place=prior_time_place if time_place_tracking is None else None,
                     mask_inline=mask_inline, mask_prompt=prompts.get("multi_char_mask", ""),
                     canvas_sizes=payload.get("canvas_sizes"),
@@ -1131,13 +1304,17 @@ async def build_from_context(
             try:
                 # Each scene depends on its own mask, including within one
                 # DETAIL batch. A slow sibling must not hold ready images.
+                targets = descriptor.get("panels") or [descriptor]
                 if enable_multi_char_layout:
-                    await p.calculate_multi_char_layouts([descriptor], prompts.get("multi_char_mask", ""),
+                    await p.calculate_multi_char_layouts(targets, prompts.get("multi_char_mask", ""),
                                                          stream_notify=stream_notify,
                                                          positive_note=str(toggles.get("positive_note") or ""),
                                                          canvas_sizes=payload.get("canvas_sizes"),
                                                          single_char_mask_enabled=bool(toggles.get("single_char_mask_enabled", True)),
                                                          **({"mask_inline": True} if mask_inline else {}))
+                for target in targets:
+                    if target is not descriptor:
+                        target["raw_positive"], target["raw_negative"] = p.build_raw_prompt(target, enhanced, prompts, toggles)
                 if on_call2_ready:
                     pos, neg = p.build_raw_prompt(descriptor, enhanced, prompts, toggles)
                     item = deepcopy(descriptor)
@@ -1212,7 +1389,8 @@ async def build_from_context(
                 return values
             return await p._run_parallel_pipeline_jobs(
                 [{"scenes": batch, "weight": len(batch)} for batch in plan_batches],
-                group_id="call2_plan", group_label="CALL2 장면 PLAN",
+                group_id="manga_plan" if manga else "call2_plan",
+                group_label="대사 및 컷신 계획자" if manga else "CALL2 장면 PLAN",
                 max_concurrency=plan_request_limit,
                 slow_retry_enabled=bool(toggles["call2_parallel_slow_retry_enabled"]),
                 slow_retry_remaining=int(toggles["call2_parallel_slow_retry_remaining"]),
@@ -1228,7 +1406,8 @@ async def build_from_context(
               f"max_concurrency={detail_request_limit}")
         workers = [illustration_flow.create_task(expand_plans()), illustration_flow.create_task(
             p._run_parallel_pipeline_jobs(
-                detail_jobs, group_id="call2_detail", group_label="DETAIL 장면 묘사",
+                detail_jobs, group_id="manga_detail" if manga else "call2_detail",
+                group_label="DETAIL-MANGA 페이지 묘사" if manga else "DETAIL 장면 묘사",
                 max_concurrency=detail_request_limit,
                 slow_retry_enabled=bool(toggles["call2_detail_parallel_slow_retry_enabled"]),
                 slow_retry_remaining=int(toggles["call2_detail_parallel_slow_retry_remaining"]),

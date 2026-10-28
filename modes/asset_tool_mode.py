@@ -521,9 +521,11 @@ class AssetToolMode:
         print(f"[ASSET_TOOL] text_output 스냅샷 ({slot_label}, 기존: {len(existing_snapshot)}개), 워크플로우 제출 시작")
 
         # 워크플로우 제출
+        # ComfyUI는 실행 오류를 제출 시 지정한 client_id에만 전송한다.
+        client_id = f"atool_{uuid.uuid4().hex}"
         ws_url = (
             f"ws://{REAL_COMFY_HOST}:{REAL_COMFY_PORT}/ws"
-            f"?clientId=atool_{uuid.uuid4().hex[:8]}"
+            f"?clientId={client_id}"
         )
         try:
             async with aiohttp.ClientSession() as ws_session:
@@ -531,18 +533,33 @@ class AssetToolMode:
                     real_prompt_id, submit_result = await submit_to_real_comfy(
                         workflow,
                         port=REAL_COMFY_PORT,
+                        client_id=client_id,
                     )
                     node_errors = submit_result.get("node_errors", {})
                     if node_errors:
                         print(f"[ASSET_TOOL] 워크플로우 node_errors ({slot_label}): {json.dumps(node_errors, ensure_ascii=False)}")
                     print(f"[ASSET_TOOL] 워크플로우 제출됨 ({slot_label}): prompt_id={real_prompt_id}")
                     total_steps = count_ksampler_total_steps(workflow)
+                    execution_error = {}
                     ws_result = await wait_for_real_comfy(real_ws, real_prompt_id,
                                                           progress_callback=progress_callback,
-                                                          total_steps=total_steps)
+                                                          total_steps=total_steps,
+                                                          error_holder=execution_error)
                     if ws_result is None:
-                        print(f"[ASSET_TOOL] 워크플로우 실행 실패 또는 타임아웃 ({slot_label})")
-                        return {"success": False, "error": f"워크플로우({slot_label}) 실행 실패 또는 타임아웃"}
+                        print(
+                            f"[ASSET_TOOL] 워크플로우 실행 실패 ({slot_label}): "
+                            f"prompt_id={real_prompt_id}, port={REAL_COMFY_PORT}, "
+                            f"detail={json.dumps(execution_error, ensure_ascii=False)}"
+                        )
+                        detail = execution_error.get("detail")
+                        error = execution_error.get("error") or "실행 실패 또는 타임아웃"
+                        if isinstance(detail, dict) and detail.get("exception_message"):
+                            error = (
+                                f"{detail.get('node_type', '?')} "
+                                f"(node {detail.get('node_id', '?')}): "
+                                f"{str(detail['exception_message']).strip()}"
+                            )
+                        return {"success": False, "error": f"워크플로우({slot_label}) {error}"}
                     print(f"[ASSET_TOOL] 워크플로우 실행 완료 ({slot_label})")
         except Exception as e:
             print(f"[ASSET_TOOL] 워크플로우 실행 예외 ({slot_label}): {type(e).__name__}: {e}")

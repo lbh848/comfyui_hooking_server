@@ -308,6 +308,7 @@ class ModalService:
             "updated_at": time.time(),
         }
         self._web_task: asyncio.Task | None = None
+        self._web_status_skip_state: tuple[str, str] | None = None
         self._web_start_cancel_event = threading.Event()
         self._web_state: dict[str, Any] = {
             "state": "stopped",
@@ -1694,7 +1695,9 @@ class ModalService:
     ) -> dict[str, Any]:
         settings = settings or ModalSettings.from_mapping(self.get_config())
         if not settings.enabled:
-            print("[MODAL] 웹 상태 조회 생략: Modal 사용 설정이 OFF입니다.")
+            if self._web_status_skip_state != ("disabled", ""):
+                print("[MODAL] 웹 상태 조회 생략: Modal 사용 설정이 OFF입니다.")
+                self._web_status_skip_state = ("disabled", "")
             return {
                 "available": False,
                 "state": "stopped",
@@ -1704,16 +1707,19 @@ class ModalService:
         if connected is None:
             connected = await self.account_connected(settings)
         if not connected:
-            print(
-                "[MODAL] 웹 상태 조회 생략: Modal 계정이 연결되지 않았습니다. "
-                f"profile={settings.profile}"
-            )
+            if self._web_status_skip_state != ("account_not_connected", settings.profile):
+                print(
+                    "[MODAL] 웹 상태 조회 생략: Modal 계정이 연결되지 않았습니다. "
+                    f"profile={settings.profile}"
+                )
+                self._web_status_skip_state = ("account_not_connected", settings.profile)
             return {
                 "available": False,
                 "state": "stopped",
                 "reason": "account_not_connected",
                 "message": "Modal 계정을 먼저 연결하세요.",
             }
+        self._web_status_skip_state = None
         if self._web_task and not self._web_task.done():
             return dict(self._web_state)
         try:
@@ -4685,6 +4691,8 @@ class ModalService:
                 "model_sync": result.get("model_sync") or {},
                 "lora_sync": result.get("lora_sync") or {},
                 "images": images,
+                "face_positions": list(result.get("face_positions") or []),
+                "mask_url": result.get("mask_url") or "",
                 "artifacts": stored_artifacts,
                 "deferred_artifacts": raw_artifacts if deferred_artifacts else [],
                 "video_artifacts": video_artifacts,
@@ -5166,6 +5174,8 @@ class ModalService:
             "lora_sync": result.get("lora_sync") or {},
             "content_type": first.get("content_type"),
             "captured_inputs": list(result.get("captured_inputs") or []),
+            "face_positions": list(result.get("face_positions") or []),
+            "mask_url": result.get("mask_url") or "",
         }
 
     def _load_video_delete_outbox(self) -> list[dict[str, Any]]:

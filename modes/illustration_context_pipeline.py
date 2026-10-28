@@ -62,12 +62,6 @@ MAX_ILLUSTRATION_SLOT_COUNT = 65
 MAX_EASY_EDIT_DIRECTION_LENGTH = 4000
 PROFILE_CONTEXT_TRANSLATE_TASK_KEY = "illustration_profile_context_translate"
 PROFILE_CONTEXT_TRANSLATE_CALL_NAME = "PROFILE-CONTEXT-TRANSLATE"
-_CHARACTER_IDENTITY_LORA_FIELDS = (
-    "loras",
-    "loras_solo",
-    "loras_group",
-    "face_loras",
-)
 _profile_context_translation_lock = asyncio.Lock()
 
 # 삽화 1회 생성(build_from_context) 동안 발생한 모든 LLM 호출의 history_id를
@@ -98,6 +92,7 @@ def _trace_append(history_id: str) -> None:
 PROMPT_FILES = {
     "call1_enhance": "enhance.txt",
     "time_place": "time_place.txt",
+    "genre": "genre.txt",
     "character_resolve": "character.txt",
     "profile_resolve": "profile.txt",
     "call2_jailbreak": "jailbreak.txt",
@@ -108,6 +103,9 @@ PROMPT_FILES = {
     "call2_select": "scene_select.txt",
     "call2_plan": "plan.txt",
     "call2_detail": "detail.txt",
+    "manga_select": "manga_select.txt",
+    "manga_plan": "manga_plan.txt",
+    "manga_detail": "manga_detail.txt",
     "call2_keyvis": "keyvisual.txt",
     "call2_fallback": "fallback.txt",
     # Combined TOON response format used by the ENQUEUE endpoint.
@@ -120,6 +118,8 @@ PROMPT_FILES = {
     # 끝에 추가로 주입한다(일반 작업에 노출 안 됨).
     "call3_manga_nsfw": "manga_nsfw.txt",
     "multi_char_mask": "multi_char_mask.txt",
+    "visual_correction": "visual_correction.txt",
+    "visual_selection": "visual_selection.txt",
 }
 
 # 삽화 출력 모드. UI의 단일 드롭박스 원천이며 merged_toggles가 아래 두 불린으로
@@ -127,7 +127,7 @@ PROMPT_FILES = {
 #   illustration    -> 일반 삽화(OUTFIT/CALL2/CALL3 + Comfy)만
 #   original_asset  -> 업로드 원본 에셋 선택만
 #   both            -> 일반 삽화 + 원본 에셋 병행
-ILLUSTRATION_OUTPUT_MODES = ("illustration", "original_asset", "both")
+ILLUSTRATION_OUTPUT_MODES = ("illustration", "original_asset", "both", "manga", "manga_both")
 _ILLUSTRATION_OUTPUT_MODE_SET = frozenset(ILLUSTRATION_OUTPUT_MODES)
 DEFAULT_ILLUSTRATION_OUTPUT_MODE = "illustration"
 
@@ -156,11 +156,14 @@ def _normalize_illustration_output_mode(
 
 DEFAULT_TOGGLES = {
     "illustration_output_mode": DEFAULT_ILLUSTRATION_OUTPUT_MODE,
+    "genre": "",
     "original_asset_count": 1,
     "original_asset_instruction": "",
     "outfit_enabled": True,
     "time_place_enabled": True,
     "call2_plan_enabled": True,
+    "visual_correction_enabled": False,
+    "visual_correction_max_redraws": 1,
     "call1_parallel_enabled": True,
     "call1_parallel_max_concurrency": 3,
     "call1_parallel_slow_retry_enabled": False,
@@ -217,6 +220,12 @@ DEFAULT_TOGGLES = {
     "context_history": True,
     "focus": "",
     "direction": "",
+    "manga_output_count_min": 15,
+    "manga_output_count_max": 17,
+    "manga_scene_mode": "manual",
+    "manga_character_limit": 3,
+    "manga_focus": "",
+    "manga_direction": "",
     "prompt_format": "v3",
     "positive_note": "",
     "negative_note": "",
@@ -385,12 +394,16 @@ def _load_session_metadata(session_id: str) -> dict | None:
         return None
 
 
-def merged_toggles(value: dict | None) -> dict:
+def merged_toggles(value: dict | None, *, for_generation: bool = False) -> dict:
     out = deepcopy(DEFAULT_TOGGLES)
     if isinstance(value, dict):
         for key in out:
             if key in value:
                 out[key] = value[key]
+        # Existing shared values seed manga settings only until separate values exist.
+        for key in ("output_count_min", "output_count_max", "scene_mode", "character_limit", "focus", "direction"):
+            if "manga_" + key not in value and key in value:
+                out["manga_" + key] = value[key]
         # Existing shared settings keep their effective DETAIL batch count until
         # an independent DETAIL value is saved. Never overwrite an explicit value.
         for suffix in ("enabled", "max_concurrency"):
@@ -437,8 +450,14 @@ def merged_toggles(value: dict | None) -> dict:
                 out["prompt_format"] = "v3"
     for key in ("outfit_enabled", "time_place_enabled", "call2_plan_enabled", "call2_parallel_enabled",
                 "call2_detail_parallel_enabled", "multi_char_mask_inline_enabled", "keyvis_in_detail_enabled",
-                "single_char_mask_skip_enabled"):
+                "single_char_mask_skip_enabled", "visual_correction_enabled"):
         out[key] = _bool(out[key])
+    try:
+        out["visual_correction_max_redraws"] = max(0, int(out["visual_correction_max_redraws"]))
+    except (TypeError, ValueError, OverflowError) as exc:
+        print(f"[VISUAL_CORRECTION] 재생성 횟수 해석 실패, 기본값 사용: value={out['visual_correction_max_redraws']!r}, error={exc}")
+        traceback.print_exc()
+        out["visual_correction_max_redraws"] = DEFAULT_TOGGLES["visual_correction_max_redraws"]
     try:
         area_percent = float(out["single_char_mask_skip_area_percent"])
         if not math.isfinite(area_percent):
@@ -592,8 +611,8 @@ def merged_toggles(value: dict | None) -> dict:
         legacy_booleans=(legacy_illust, legacy_asset),
     )
     out["illustration_output_mode"] = output_mode
-    out["illustration_enabled"] = output_mode in ("illustration", "both")
-    out["original_asset_enabled"] = output_mode in ("original_asset", "both")
+    out["illustration_enabled"] = output_mode in ("illustration", "both", "manga", "manga_both")
+    out["original_asset_enabled"] = output_mode in ("original_asset", "both", "manga_both")
     instruction = str(out.get("original_asset_instruction") or "")
     if len(instruction) > illustration_original_assets.MAX_ORIGINAL_ASSET_INSTRUCTION_CHARS:
         print(
@@ -605,6 +624,27 @@ def merged_toggles(value: dict | None) -> dict:
             :illustration_original_assets.MAX_ORIGINAL_ASSET_INSTRUCTION_CHARS
         ]
     out["original_asset_instruction"] = instruction
+    out["genre"] = str(out.get("genre") or "").strip()
+    for key, maximum in (("manga_output_count_min", 30), ("manga_output_count_max", 30), ("manga_character_limit", 3)):
+        try:
+            out[key] = max(1, min(maximum, int(out[key])))
+        except (TypeError, ValueError, OverflowError) as e:
+            print(f"[ILLUST_CONTEXT:MANGA] 설정값 보정 실패: key={key}, value={out[key]!r}, error={e}")
+            traceback.print_exc()
+            out[key] = DEFAULT_TOGGLES[key]
+    if out["manga_output_count_min"] > out["manga_output_count_max"]:
+        print(f"[ILLUST_CONTEXT:MANGA] 최소 페이지 수를 최대로 보정: min={out['manga_output_count_min']}, max={out['manga_output_count_max']}")
+        out["manga_output_count_min"] = out["manga_output_count_max"]
+    out["manga_scene_mode"] = "auto" if str(out["manga_scene_mode"]) == "auto" else "manual"
+    for key in ("manga_focus", "manga_direction"):
+        out[key] = str(out.get(key) or "")
+    # Saved/UI settings retain both sets. Runtime consumers use the active set
+    # through the existing selection fields without changing the stored values.
+    if for_generation and output_mode in ("manga", "manga_both"):
+        for key in ("output_count_min", "output_count_max", "scene_mode", "character_limit", "focus", "direction"):
+            out[key] = out["manga_" + key]
+        out["speak_enabled"] = False
+        out["visual_correction_enabled"] = False
     # 예전 UI에서 저장한 고정 배치 크기는 더 이상 사용하지 않는다. CALL2-PLAN이
     # 선택한 전체 장면 수를 최대 동시 요청 수에 맞춰 자동 분배한다.
     out.pop("call2_parallel_batch_size", None)
@@ -2088,31 +2128,16 @@ def _persona_identity_context(
     )
 
 
-def _has_configured_identity_lora(value) -> bool:
-    """Return whether one card-local identity-LoRA field has usable content."""
-    if isinstance(value, (list, tuple, set)):
-        return any(bool(item) for item in value)
-    if isinstance(value, dict):
-        return bool(value)
-    return bool(str(value or "").strip())
-
-
-def single_preset_subject_candidates(
+def single_subject_candidates(
     visual_profiles: dict[str, dict] | None,
     character_names: list[str] | None,
 ) -> tuple[list[str], str]:
-    """Derive Single V5 named-subject authority from registered render identity.
-
-    Character-LoRA ownership is authoritative when present. Tag/reference-only bots
-    remain usable through a non-persona roster fallback, then the complete CURRENT
-    roster. This is card metadata reasoning, never narrative keyword matching.
-    """
+    """Prefer registered bot characters over the user persona for one-person selection."""
     roster = list(dict.fromkeys(
         str(name or "").strip()
         for name in (character_names or [])
         if str(name or "").strip()
     ))
-    lora_owners: list[str] = []
     non_persona: list[str] = []
     for name in roster:
         character_profiles = _authority_values_for_name(
@@ -2123,43 +2148,12 @@ def single_preset_subject_candidates(
             continue
         if character_profiles.get("is_persona") is not True:
             non_persona.append(name)
-        owns_identity_lora = False
-        for profile_index, profile in enumerate(
-            character_profiles.get("profiles") or [],
-            start=1,
-        ):
-            if not isinstance(profile, dict):
-                print(
-                    "[ILLUST_CONTEXT:CALL2_PLAN] 캐릭터 카드 형식 오류로 LoRA 소유권 "
-                    f"판정에서 스킵: character={name!r}, profile_index={profile_index}, "
-                    f"type={type(profile).__name__}"
-                )
-                continue
-            overrides = profile.get("render_overrides") or {}
-            if not isinstance(overrides, dict):
-                print(
-                    "[ILLUST_CONTEXT:CALL2_PLAN] render_overrides 형식 오류로 LoRA 소유권 "
-                    f"판정에서 스킵: character={name!r}, profile_index={profile_index}, "
-                    f"type={type(overrides).__name__}"
-                )
-                continue
-            if any(
-                _has_configured_identity_lora(overrides.get(field))
-                for field in _CHARACTER_IDENTITY_LORA_FIELDS
-            ):
-                owns_identity_lora = True
-                break
-        if owns_identity_lora:
-            lora_owners.append(name)
-
-    if lora_owners:
-        return lora_owners, "configured_character_identity_lora"
     if non_persona:
-        return non_persona, "registered_non_persona_fallback"
+        return non_persona, "registered_bot_characters"
     if roster:
         return roster, "current_roster_fallback"
     print(
-        "[ILLUST_CONTEXT:CALL2_PLAN] Single V5 주체 권위 생성 실패: "
+        "[ILLUST_CONTEXT:CALL2_PLAN] 1인 선택 주인공 후보 없음: "
         "CURRENT canonical roster가 비어 있음"
     )
     return [], "unavailable"
@@ -2555,10 +2549,13 @@ def _segment_current_context(
     return "\n\n".join(rendered), segments
 
 
-def _json_object_from_text(text: str, *, array_key: str | None = None) -> dict | None:
+def _json_object_from_text(
+    text: str, *, array_key: str | None = None, allow_partial: bool = True,
+) -> dict | None:
     source = str(text or "").lstrip().rstrip(" \t")
-    candidates = [match.group(1).lstrip().rstrip(" \t") for match in re.finditer(
+    candidates = ([match.group(1).lstrip().rstrip(" \t") for match in re.finditer(
         r"```(?:[A-Za-z0-9_-]+)?\s*\n([\s\S]*?)```", source, re.I)]
+        if allow_partial else [])
     candidates.append(source)
     for candidate in candidates:
         # Remove enclosing syntax only; never edit tags or punctuation inside
@@ -2578,7 +2575,9 @@ def _json_object_from_text(text: str, *, array_key: str | None = None) -> dict |
             value = None
             # Decode a complete object surrounded by prose without joining it
             # to unrelated braces in that prose or repairing truncated JSON.
-            offsets = [0] if candidate.startswith(("{", "[")) else []
+            # A cumulative state response cannot discard trailing checkpoints.
+            # Other callers may still recover independent scenes from prose.
+            offsets = [0] if allow_partial and candidate.startswith(("{", "[")) else []
             for offset in offsets:
                 try:
                     found, _end = json.JSONDecoder().raw_decode(candidate, offset)
@@ -2601,7 +2600,7 @@ def _json_object_from_text(text: str, *, array_key: str | None = None) -> dict |
             # characters: []. Read its root before looking inside prose for
             # a JSON document; otherwise that nested array becomes the batch.
             if value is None or not isinstance(value, (dict, list)):
-                if not candidate.startswith(("{", "[")):
+                if allow_partial and not candidate.startswith(("{", "[")):
                     for opening in re.finditer(r"[\[{]", candidate):
                         try:
                             found, _end = json.JSONDecoder().raw_decode(candidate, opening.start())
@@ -6798,6 +6797,9 @@ def _build_character_history(extra_reference: str) -> str:
 # 삽화 CALL 이름 → 외부 LLM 분기 task_key. 기존 illustration_call2는 DETAIL과
 # ENQUEUE 경로에 유지하고 SELECT/PLAN/KEYVIS는 독립 분리한다.
 _CALL_TASK_KEYS = {
+    "MANGA-CHARACTER-RESOLVE": "illustration_character_resolve",
+    "PLANNER-MANGA": "illustration_call2_plan",
+    "DETAIL-MANGA": "illustration_call2",
     "ORIGINAL-ASSET": "illustration_original_asset",
     "ORIGINAL-ASSET-RECOVERY": "illustration_original_asset_recovery",
     "OUTFIT": "illustration_call1",
@@ -6827,6 +6829,9 @@ _CALL_LAYOUT_ORDER = {
 
 
 _CALL_QUEUE_SUBTASK_GROUPS = {
+    "MANGA-CHARACTER-RESOLVE": ("manga_select", "MANGA-CHARACTER-RESOLVE 사건 선택"),
+    "PLANNER-MANGA": ("manga_plan", "대사 및 컷신 계획자"),
+    "DETAIL-MANGA": ("manga_detail", "DETAIL-MANGA 페이지 묘사"),
     "ORIGINAL-ASSET": ("original_asset", "원본 에셋 선택"),
     "ORIGINAL-ASSET-RECOVERY": (
         "original_asset_recovery",
@@ -6876,6 +6881,8 @@ async def _call_pipeline_llm(
     """
     started = time.time()
     task_key = _CALL_TASK_KEYS.get(call_name)
+    if task_key is None and call_name.partition(" ")[0] in ("MANGA-CHARACTER-RESOLVE", "PLANNER-MANGA", "DETAIL-MANGA"):
+        task_key = _CALL_TASK_KEYS[call_name.partition(" ")[0]]
     if task_key is None and call_name.startswith(("OUTFIT ", "CALL1 ")):
         task_key = _CALL_TASK_KEYS["OUTFIT"]
     if task_key is None and call_name.startswith("CALL2-PLAN"):
@@ -6964,6 +6971,7 @@ async def _call_pipeline_llm(
         "pdf_pages_after",
         "reasoning_tokens",
         "reasoning_chars",
+        "reasoning_text",
         "http_status",
         "http_headers_elapsed",
         "http_request_sent_elapsed",
@@ -7110,7 +7118,7 @@ async def _call_pipeline_llm(
             "parent_execution_id": parent_execution_id,
         })
         base64_response_mode_token = None
-        if call_name.startswith("CALL2-DETAIL"):
+        if call_name.startswith(("CALL2-DETAIL", "DETAIL-MANGA")):
             # The validator retains healthy scenes and narrows this list before
             # the next routed attempt. Other callers keep immutable requests.
             call_kwargs["retry_messages"] = messages
@@ -8033,6 +8041,7 @@ async def _run_resolution_stage(
     stream_notify,
     history_ids_sink: list[str] | None = None,
     selection_messages: list[dict] | None = None,
+    call_name: str = "",
 ) -> tuple[str, dict]:
     """Run one separated CHARACTER or PROFILE resolution stage.
 
@@ -8040,7 +8049,7 @@ async def _run_resolution_stage(
     ``True`` is the optional profile-only stage and receives only characters already
     confirmed by the first stage.
     """
-    stage_call_name = (
+    stage_call_name = call_name or (
         "PROFILE-RESOLVE" if profile_inference_enabled else "CHARACTER-RESOLVE"
     )
     current_names = [str(name or "").strip() for name in candidate_names or []]
@@ -8201,7 +8210,6 @@ async def _run_character_resolution(
     history_ids_sink: list[str] | None = None,
     selection_messages: list[dict] | None = None,
     toggles: dict | None = None,
-    first_pass_single_v5: bool = False,
 ) -> tuple[str, dict]:
     """Resolve CURRENT participation and optional source-anchor selection together."""
     raw_output, parsed = await _run_resolution_stage(
@@ -8216,6 +8224,8 @@ async def _run_character_resolution(
         stream_notify=stream_notify,
         history_ids_sink=history_ids_sink,
         selection_messages=selection_messages,
+        call_name=("MANGA-CHARACTER-RESOLVE" if (toggles or {}).get("illustration_output_mode")
+                   in ("manga", "manga_both") else ""),
     )
     if selection_messages is None:
         return raw_output, parsed
@@ -8223,17 +8233,16 @@ async def _run_character_resolution(
     from modes import illustration_scene_pipeline as scenes
 
     names = [item["name"] for item in parsed.get("current_characters") or []]
-    single_names = single_preset_subject_candidates(visual_profiles, names)[0] if first_pass_single_v5 else None
     segment_slots, _catalog, reason = build_segment_slot_map(current_context, current_segments)
     if reason:
         print(f"[ILLUST_CONTEXT:CHARACTER_RESOLVE] 장면 앵커 매핑 실패: reason={reason}, segments={current_segments!r}")
         raise ValueError(f"CHARACTER-RESOLVE 장면 앵커 매핑 실패: {reason}")
     candidates = list(segment_slots.values())
-    toggles = merged_toggles(toggles)
+    toggles = merged_toggles(toggles, for_generation=True)
     selection = _json_object_from_text(raw_output) or {}
     parsed["scene_plan"] = scenes.parse_plan(raw_output, segments=current_segments,
         slot_map=segment_slots, candidates=candidates, names=names, toggles=toggles,
-        single_names=single_names, stage="CALL2-SELECT")
+        stage="CALL2-SELECT")
     parsed["character_output"] = json.dumps({**selection, "scene_plan": parsed["scene_plan"]}, ensure_ascii=False)
     return parsed["character_output"], parsed
 
@@ -8783,7 +8792,6 @@ async def resolve_profiles_before_generation(
     history_ids_sink: list[str] | None = None,
     stage_runner=None,
     extra_instruction: str = "",
-    first_pass_single_v5: bool = False,
     character_names: str = "",
 ) -> tuple[str, dict]:
     """Resolve CURRENT characters and every applicable multi-profile timeline."""
@@ -8793,7 +8801,7 @@ async def resolve_profiles_before_generation(
         if stage_runner is not None:
             return await stage_runner(operation, *args, **kwargs)
         return await operation(*args, **kwargs)
-    toggles = merged_toggles(toggles)
+    toggles = merged_toggles(toggles, for_generation=True)
     if not visual_profiles and character_names:
         visual_profiles = {name.strip(): {} for name in character_names.split(",") if name.strip()}
     candidate_names = [
@@ -8838,21 +8846,20 @@ async def resolve_profiles_before_generation(
         history_slice = ((history_plan or {}).get("call1_history") or []) if history_plan else chats[
             max(0, target_index - int(toggles["call1_context_turns"])):target_index]
         single_subjects = None
-        if first_pass_single_v5:
-            owners = [name for name in candidate_names if single_preset_subject_candidates(
-                visual_profiles, [name])[1] == "configured_character_identity_lora"]
+        if toggles["character_limit"] == 1:
             non_persona = [name for name in candidate_names
                           if (visual_profiles[name] or {}).get("is_persona") is not True]
             single_subjects = (
-                "First resolve CURRENT participants. Among those participants, prefer registered identity-LoRA owners: "
-                + json.dumps(owners, ensure_ascii=False)
-                + ". Only if none participate in CURRENT, use CURRENT members of the registered non-persona roster: "
+                "First resolve CURRENT participants. Among those participants, prefer registered illustration-bot "
+                "characters other than the user persona: "
                 + json.dumps(non_persona, ensure_ascii=False)
-                + ". Only if that is also empty, use the CURRENT roster. Choose exactly one named subject per image."
+                + ". Only if none participate in CURRENT, use the CURRENT roster. Choose exactly one named subject per image."
             )
         protected = render_call2_prompt(prompts.get("call2_jailbreak", ""), toggles, include_server_limits=False)
         selection = prompt_builders.selection_messages(
-            prompts, prompt_builders.role_context(protected, extra_instruction), candidate_names,
+            prompts, prompt_builders.role_context(
+                protected, extra_instruction, genre=toggles.get("genre", ""),
+                genre_prompt=prompts.get("genre", "")), candidate_names,
             single_subjects, render_plan_output_count_rule(toggles, len(segment_slots)), toggles,
             scenes.previous_statuses(candidate_names, history_plan), _history_messages_text(history_slice), "")
     character_output, character_result = await run_stage(_run_character_resolution,
@@ -8866,7 +8873,6 @@ async def resolve_profiles_before_generation(
         history_ids_sink=history_ids_sink,
         selection_messages=selection,
         toggles=toggles,
-        first_pass_single_v5=first_pass_single_v5,
     )
     previous_state = (history_plan or {}).get("state_before") or {}
     character_result = _mark_current_characters_with_tracked_history(
@@ -9052,12 +9058,18 @@ async def calculate_multi_char_layouts(
             if run is not None:
                 source_node = next((run["nodes"][key] for key in dependencies
                                     if key in run["nodes"]), {})
-                if str(source_node.get("label") or "").startswith("CALL2-DETAIL"):
+                if source_node.get("task_key") == "illustration_visual_correction":
+                    source_call = "VISUAL CORRECTION"
+                elif str(source_node.get("label") or "").startswith("DETAIL-MANGA"):
+                    source_call = "DETAIL-MANGA"
+                elif str(source_node.get("label") or "").startswith("CALL2-DETAIL"):
                     source_call = "CALL2-DETAIL"
                 node_id = illustration_flow.add_node(
-                    run, f"MULTI-CHAR-MASK slot={slot}", dependencies=dependencies,
+                    run, f"MULTI-CHAR-MASK slot={slot}" + (f" · 컷 {descriptor['panel']}" if descriptor.get("panel") else ""), dependencies=dependencies,
                     kind="stage", executor="process", status="processing", started_at=time.time(),
-                    task_key="illustration_multi_char_mask", layout_group="illustration_multi_char_mask",
+                    task_key="illustration_multi_char_mask",
+                    layout_group=(f"visual_correction_mask_{source_node.get('id')}"
+                                  if source_call == "VISUAL CORRECTION" else "illustration_multi_char_mask"),
                     illustration_slot=slot, mask_generation_mode="inline", source_call_name=source_call,
                     source_node_id=source_node.get("id"), model=source_node.get("model"),
                     service=source_node.get("service"),
@@ -9250,7 +9262,12 @@ def build_raw_prompt(descriptor: dict, narrative: str, prompts: dict, toggles: d
         positive = positive.replace(key, variable(value, label))
     if positive_note:
         positive = positive.rstrip() + "\n" + variable(positive_note, "추가 긍정 프롬프트")
-    negative = PromptText(negative_part.strip() if marker else "")
+    # Image negatives come from the selected presets and direct negative_note.
+    # The output template controls positive layout, not additional exclusions.
+    negative = PromptText("")
+    if marker and negative_part.strip():
+        print(f"[ILLUST_CONTEXT] 출력 템플릿 부정 자동 추가 생략: "
+              f"slot={descriptor.get('slot')}, value={negative_part.strip()!r}")
     if char_negative:
         print(f"[ILLUST_CONTEXT] LLM negative ignored (disabled): "
               f"slot={descriptor.get('slot')}, value={char_negative!r}")
@@ -9282,7 +9299,6 @@ async def build_from_context(
     profile_translation_namespace: str = "",
     pre_resolved_profile_output: str = "",
     pre_resolved_profile_result: dict | None = None,
-    first_pass_single_v5: bool = False,
 ) -> dict:
     # Ordinary scenes use the streaming PLAN -> DETAIL implementation exclusively.
     # TOON decoding remains shared with Key Visual and the ENQUEUE endpoint.
@@ -9300,5 +9316,4 @@ async def build_from_context(
         profile_translation_namespace=profile_translation_namespace,
         pre_resolved_profile_output=pre_resolved_profile_output,
         pre_resolved_profile_result=pre_resolved_profile_result,
-        first_pass_single_v5=first_pass_single_v5,
     )

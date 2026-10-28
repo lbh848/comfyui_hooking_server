@@ -16,6 +16,8 @@ import hashlib
 import json
 import os
 import shutil
+import tempfile
+import threading
 import time
 import traceback
 from aiohttp import web
@@ -28,6 +30,7 @@ ASSET_DATA_DIR = os.path.join(BASE_DIR, "asset_data")
 BACKUP_DIR = os.path.join(BASE_DIR, "backups")
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
+_PROMPT_FILE_LOCK = threading.Lock()
 
 # 프로젝트별 학습 설정 디폴트 (ANIMA/SDXL 각각 독립 보관)
 DEFAULT_PROFILE_SETTINGS = {
@@ -264,6 +267,23 @@ def get_project_detail(project_id: str) -> dict:
     if not project:
         print(f"[STYLE_LORA] 상세 조회 실패 - 없음: {project_id}")
         return {"success": False, "error": "존재하지 않는 프로젝트입니다"}
+    # Return one caption snapshot instead of one browser request per image.
+    # None means absent; omit read failures so the UI can retain its last value.
+    prompts = {}
+    missing_count = 0
+    for filename in project.get("images", []):
+        prompt_path = os.path.join(_project_dir(project_id), os.path.splitext(filename)[0] + "_prompt.json")
+        if not os.path.isfile(prompt_path):
+            prompts[filename] = None
+            missing_count += 1
+            continue
+        prompt_result = get_image_prompt(project_id, filename)
+        if prompt_result.get("success"):
+            prompts[filename] = prompt_result["data"]
+        else:
+            print(f"[STYLE_LORA] 상세 캡션 조회 실패, 이전 표시 유지: project={project_id}, filename={filename}, error={prompt_result.get('error')}")
+    if missing_count:
+        print(f"[STYLE_LORA] 상세 조회: 저장된 캡션 없음 project={project_id}, count={missing_count}")
     return {
         "success": True,
         "data": {
@@ -272,6 +292,7 @@ def get_project_detail(project_id: str) -> dict:
             "trigger": project.get("trigger", ""),
             "description": project.get("description", ""),
             "images": project.get("images", []),
+            "prompts": prompts,
             "image_count": len(project.get("images", [])),
             "test_images": project.get("test_images", []),
             "sessions": project.get("sessions", {}),
@@ -680,14 +701,32 @@ def save_image_prompt(project_id: str, filename: str, prompt_data: dict) -> dict
     project_id = _safe_dirname(project_id)
     base = os.path.splitext(filename)[0]
     prompt_path = os.path.join(_project_dir(project_id), f"{base}_prompt.json")
+    pending_path = None
     try:
-        with open(prompt_path, "w", encoding="utf-8") as f:
+        # Readers can run in another thread while tagging/refinement saves a caption.
+        # Publish only a complete JSON document, keeping the previous one on failure.
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=os.path.dirname(prompt_path),
+            prefix=".caption-", suffix=".tmp", delete=False,
+        ) as f:
+            pending_path = f.name
             json.dump(prompt_data, f, ensure_ascii=False, indent=2)
+        # Windows cannot replace a destination held open by a reader.
+        with _PROMPT_FILE_LOCK:
+            os.replace(pending_path, prompt_path)
+        pending_path = None
         return {"success": True}
     except Exception as e:
         print(f"[STYLE_LORA] 프롬프트 저장 실패: {prompt_path} - {e}")
         traceback.print_exc()
         return {"success": False, "error": str(e)}
+    finally:
+        if pending_path and os.path.isfile(pending_path):
+            try:
+                os.remove(pending_path)
+            except Exception as cleanup_error:
+                print(f"[STYLE_LORA] 캡션 임시 파일 정리 실패: {pending_path} - {cleanup_error}")
+                traceback.print_exc()
 
 
 def get_image_prompt(project_id: str, filename: str) -> dict:
@@ -697,10 +736,11 @@ def get_image_prompt(project_id: str, filename: str) -> dict:
     if not os.path.isfile(prompt_path):
         return {"success": False, "error": "프롬프트 없음"}
     try:
-        with open(prompt_path, "r", encoding="utf-8") as f:
+        with _PROMPT_FILE_LOCK, open(prompt_path, "r", encoding="utf-8") as f:
             return {"success": True, "data": json.load(f)}
     except Exception as e:
         print(f"[STYLE_LORA] 프롬프트 로드 실패: {prompt_path} - {e}")
+        traceback.print_exc()
         return {"success": False, "error": str(e)}
 
 

@@ -5,8 +5,7 @@ compose_bubble() 하나만이 말풍선 렌더의 단일 소스다. 미리보기
 (CLAUDE.md: 미리보기와 실제 전송은 동일한 빌더를 쓴다).
 
 파이프라인:
-  base 이미지 → parse_speak() → conf=0 얼굴 후보 확장 검출 + 비정상 박스 제거
-  → 캐릭터 임베딩 전역 최적 매칭
+  base 이미지 → parse_speak() → 생성 결과의 이름별 얼굴 좌표 연결
   → 레이아웃 ONNX가 글자 크기/줄바꿈/버블 종류·비율 결정
   → anime-seg ONNX가 foreground 보호 마스크 생성(페이지당 1회)
   → 위치 ONNX가 얼굴별 중심 후보 생성 → 배경에 놓이는 가장 가까운 후보 선택
@@ -416,49 +415,11 @@ def _resolve_organic_wobble(settings):
     return max(0.02, min(0.30, wobble))
 
 
-def _resolve_face_match_crop(settings, bot_name):
-    """말풍선 매칭에 사용할 FACE_CROP_TOP/BOTTOM을 반환한다.
-
-    백업 스냅샷에 값이 있으면 그것을 우선하고, 구형 스냅샷/미리보기에서는 봇의
-    데이터패치 설정을 읽는다. 설정 조회 실패 시 기존 기본값 2.5/1.0을 사용한다.
-    """
-    source = settings or {}
-    top = source.get("face_crop_top")
-    bottom = source.get("face_crop_bottom")
-    if top is None or bottom is None:
-        try:
-            from modes.bot_mode import _load_patch_settings
-
-            patch = _load_patch_settings(bot_name) if bot_name else {}
-            if top is None:
-                top = patch.get("face_crop_top", 2.5)
-            if bottom is None:
-                bottom = patch.get("face_crop_bottom", 1.0)
-            print(
-                f"[BUBBLE_RENDER] FACE_CROP 데이터패치 설정 사용: "
-                f"bot={bot_name}, top={top}, bottom={bottom}"
-            )
-        except Exception as e:
-            print(f"[BUBBLE_RENDER] FACE_CROP 설정 조회 실패: {e}")
-            traceback.print_exc()
-    try:
-        top = max(1.0, min(10.0, float(top if top is not None else 2.5)))
-    except (TypeError, ValueError):
-        print(f"[BUBBLE_RENDER] FACE_CROP_TOP 변환 실패({top!r}), 2.5 사용")
-        top = 2.5
-    try:
-        bottom = max(1.0, min(10.0, float(bottom if bottom is not None else 1.0)))
-    except (TypeError, ValueError):
-        print(f"[BUBBLE_RENDER] FACE_CROP_BOTTOM 변환 실패({bottom!r}), 1.0 사용")
-        bottom = 1.0
-    return top, bottom
-
-
 def _apply_unanchored_fallbacks(matched, faces):
     """신뢰할 얼굴이 없거나 개별 매칭에 실패한 세그먼트를 빈 공간에 남긴다.
 
-    얼굴 검출 전체가 저신뢰라면 임베딩 점수가 높아도 배경/신체 오검출일 수 있으므로
-    모든 배정을 폐기한다. 신뢰 가능한 얼굴이 하나라도 있으면 성공한 배정은 유지하고,
+    사용 가능한 얼굴이 없으면 모든 세그먼트를 무꼬리로 배치한다.
+    신뢰 가능한 얼굴이 하나라도 있으면 성공한 배정은 유지하고,
     미배정 세그먼트만 무꼬리 빈 공간 배치 대상으로 전환한다.
     """
     max_face_confidence = max(
@@ -469,7 +430,7 @@ def _apply_unanchored_fallbacks(matched, faces):
         print(
             f"[BUBBLE_RENDER] 신뢰 가능한 얼굴 후보 없음 → "
             f"전체 무꼬리 빈 공간 폴백 "
-            f"(최고 yolo_conf={max_face_confidence:.6f}, "
+            f"(최고 face_conf={max_face_confidence:.6f}, "
             f"기준={_FACE_CONFIDENCE_MIN:.3f})"
         )
         for item in matched:
@@ -526,115 +487,6 @@ def _is_single_speaker_thought(segments):
             for item in items
         )
     )
-
-
-def _face_detection_candidate_limit(speaker_count, per_character=8):
-    """캐릭터 매칭 전에 확보할 YOLO 얼굴 후보 수를 반환한다.
-
-    발화자 수만큼만 자르면 실제 얼굴이 낮은 YOLO 순위에 있을 때 오검출이 그 자리를
-    차지한다. 사용자 설정만큼 캐릭터별 후보 여유를 두되 전체 64개로 제한한다.
-    발화자가 64명보다 많으면 최소한 발화자 수만큼은 유지한다.
-    """
-    count = max(0, int(speaker_count or 0))
-    if count == 0:
-        return 0
-    try:
-        per_character = int(per_character)
-    except (TypeError, ValueError):
-        print(f"[BUBBLE_RENDER] 얼굴 후보 수 변환 실패({per_character!r}), 8 사용")
-        per_character = 8
-    per_character = max(1, min(32, per_character))
-    return max(count, min(64, count * per_character))
-
-
-def _filter_nested_face_candidates(faces, area_ratio=2.0, coverage_ratio=0.60):
-    """NMS 후 같은 얼굴의 중복 박스와 경계의 가는 오검출을 제거한다.
-
-    크기가 다른 동일 얼굴 박스는 작은 박스가 큰 박스 안에 들어가도 IoU가 NMS
-    기준보다 낮아 둘 다 남을 수 있다. 큰 박스가 작은 고신뢰 박스 면적의 일정
-    비율 이상을 덮고 면적은 충분히 크면, 큰 박스를 중복 후보로 본다.
-
-    거의 같은 크기의 박스는 면적비 조건을 만족하지 않을 수 있으므로 작은 쪽의
-    겹침률이 충분히 크면 동일 얼굴로 처리한다. 또한 얼굴형 대표 박스의 좌우
-    경계에 붙은 매우 낮은 신뢰도의 가는 박스는 머리카락·옷 영역 오검출로
-    간주한다. 독립된 옆얼굴을 보존하기 위해 이 규칙은 세로 위치가 크게 겹치고,
-    대표 박스보다 신뢰도가 10배 이상 낮을 때만 적용한다.
-    """
-    source = list(faces or [])
-    # 신뢰도 높은 대표 박스를 먼저 확정한다. 이후 후보가 대표 박스와 포함 관계이면
-    # 크기가 더 크든 작든 같은 얼굴의 낮은-conf 중복으로 제거한다.
-    ranked_indices = sorted(
-        range(len(source)),
-        key=lambda index: (-float(source[index].get("conf") or 0.0), index),
-    )
-    kept_indices = []
-    removed = []
-    for index in ranked_indices:
-        face = source[index]
-        x1, y1, x2, y2 = [float(v) for v in face["box"]]
-        area = max(1.0, (x2 - x1) * (y2 - y1))
-        duplicate = False
-        for kept_index in kept_indices:
-            other = source[kept_index]
-            ox1, oy1, ox2, oy2 = [float(v) for v in other["box"]]
-            other_area = max(1.0, (ox2 - ox1) * (oy2 - oy1))
-            other_aspect = (ox2 - ox1) / max(oy2 - oy1, 1e-9)
-            # 더 높은 conf 대표 박스가 얼굴형에 가까울 때만 포함 중복 제거를
-            # 적용한다. 머리카락 띠처럼 납작한 오검출이 실제 전체 얼굴 박스를
-            # 제거하는 것을 막는다.
-            if not 0.50 <= other_aspect <= 1.30:
-                continue
-            smaller_area = min(area, other_area)
-            larger_area = max(area, other_area)
-            intersection_w = max(0.0, min(x2, ox2) - max(x1, ox1))
-            intersection_h = max(0.0, min(y2, oy2) - max(y1, oy1))
-            intersection = intersection_w * intersection_h
-            covered_smaller = intersection / smaller_area
-            size_nested_duplicate = (
-                larger_area >= smaller_area * float(area_ratio)
-                and covered_smaller >= float(coverage_ratio)
-            )
-            similar_size_duplicate = (
-                covered_smaller >= float(coverage_ratio)
-                and larger_area < smaller_area * float(area_ratio)
-            )
-
-            width = max(1e-9, x2 - x1)
-            height = max(1e-9, y2 - y1)
-            other_width = max(1e-9, ox2 - ox1)
-            other_height = max(1e-9, oy2 - oy1)
-            aspect = width / height
-            vertical_coverage = intersection_h / min(height, other_height)
-            horizontal_gap = max(0.0, max(x1, ox1) - min(x2, ox2))
-            confidence = max(0.0, float(face.get("conf") or 0.0))
-            other_confidence = max(0.0, float(other.get("conf") or 0.0))
-            attached_low_confidence_sliver = (
-                aspect < 0.50
-                and confidence <= other_confidence * 0.10
-                and vertical_coverage >= 0.70
-                and horizontal_gap <= min(width, other_width) * 0.35
-            )
-            if (
-                size_nested_duplicate
-                or similar_size_duplicate
-                or attached_low_confidence_sliver
-            ):
-                duplicate = True
-                break
-        if duplicate:
-            removed.append(index)
-        else:
-            kept_indices.append(index)
-    kept_indices.sort()
-    removed.sort()
-    kept = [source[index] for index in kept_indices]
-    if removed:
-        print(
-            f"[BUBBLE_RENDER] 중복/경계 오검출 얼굴 후보 제거: indices={removed} "
-            f"(area_ratio>={float(area_ratio):.2f}, "
-            f"coverage>={float(coverage_ratio):.2f})"
-        )
-    return kept
 
 
 def _place_body(face_box, body_w, body_h, protected_boxes, canvas_w, canvas_h,
@@ -3586,15 +3438,80 @@ def _split_body_mask(size, rect, *, overlap=0.34, soften=0.06):
 
 
 # ─── 진입점 ─────────────────────────────────────────────────────────
-def compose_bubble(image_bytes, speak_text, settings, bot_name):
+def compose_bubble(image_bytes, speak_text, settings, bot_name, face_positions=None,
+                   *, planned_entries=None, canvas_size=None):
     """말풍선 합성. base 이미지 bytes + speak 텍스트 → PNG bytes.
 
     settings: _default_bubble() 형태.
+    face_positions: Comfy가 반환한 [{name, bbox: [x1, y1, x2, y2]}, ...].
+        좌표는 이미지 크기에 대한 비율이며, 없는 화자는 무꼬리로 배치한다.
     """
+    if planned_entries is not None:
+        # Manga lays out the actual script before image generation. Reuse the same font,
+        # measurement and text painters; line breaks belong to the script LLM.
+        import base64
+        from copy import deepcopy
+        try:
+            width, height = (int(value) for value in canvas_size)
+            overlay = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+            occupied = Image.new("L", (width, height), 0)
+            entries = deepcopy(planned_entries)
+            s = settings or {}
+            requested_font_size = int(s.get("font_size") or 30)
+            for index, entry in enumerate(entries):
+                entry["type"] = "normal"
+                entry.pop("tag", None)
+                text = str(entry.get("text") or "")
+                if not text.strip():
+                    print(f"[MANGA:SCRIPT] 빈 대사: index={index}, entry={entry!r}")
+                    entry.update(x=0, y=0, width=0, height=0)
+                    continue
+                x, y, fraction = (float(entry[key]) for key in ("x", "y", "width"))
+                if not all(math.isfinite(value) for value in (x, y, fraction)) or fraction <= 0:
+                    raise ValueError(f"대사 렌더 좌표를 사용할 수 없습니다: {entry!r}")
+                body_w = min(width - 8, max(12, round(fraction * width)))
+                lines = text.split("\n")
+                # The supplied line breaks are editorial decisions. Fit the font,
+                # not the wording, inside the ellipse's inscribed rectangle.
+                for font_size in range(max(1, requested_font_size), 0, -1):
+                    font = _load_font(s.get("font_path"), font_size, s.get("font_id"))
+                    spacing, padding = max(1, round(font_size * .18)), max(2, round(font_size * .35))
+                    text_w, text_h = _measure_text_lines(lines, font, spacing)
+                    body_h = math.ceil((text_h + padding * 2) * math.sqrt(2))
+                    if (text_w + padding * 2) * math.sqrt(2) <= body_w and body_h <= height - 8:
+                        break
+                else:
+                    raise ValueError(f"대사가 컷 안에 들어가지 않습니다: canvas={canvas_size}, entry={entry!r}")
+                if font_size != requested_font_size:
+                    print(f"[MANGA:SCRIPT] 줄바꿈 유지·글자 크기 맞춤: index={index}, "
+                          f"font={requested_font_size}->{font_size}, body={body_w}x{body_h}")
+                left = min(max(4, round(x * width)), width - body_w - 4)
+                top = min(max(4, round(y * height)), height - body_h - 4)
+                rect = (left, top, left + body_w, top + body_h)
+                layer = Image.new("RGBA", overlay.size, (0, 0, 0, 0))
+                _draw_layout_bubble(layer, rect, (left + body_w / 2, top + body_h), "ellipse",
+                    (255, 255, 255, 255), (0, 0, 0, 255), 2, 12, False, seed=index)
+                _draw_text_lines_in_rect(layer, lines, font, (0, 0, 0, 255), rect, spacing, font_size)
+                bounds = layer.getchannel("A").getbbox()
+                entry.update(x=bounds[0] / width, y=bounds[1] / height,
+                             width=(bounds[2] - bounds[0]) / width,
+                             height=(bounds[3] - bounds[1]) / height)
+                ImageDraw.Draw(occupied).rectangle(
+                    (bounds[0], bounds[1], bounds[2] - 1, bounds[3] - 1), fill=255)
+                overlay.alpha_composite(layer)
+            output = {"dialogue": entries}
+            for key, img in (("dialogue_overlay", overlay), ("dialogue_mask", occupied)):
+                stream = io.BytesIO()
+                img.save(stream, format="PNG")
+                output[key] = base64.b64encode(stream.getvalue()).decode("ascii")
+            print(f"[MANGA:SCRIPT] 대사 선렌더 완료: canvas={canvas_size}, entries={len(entries)}")
+            return output
+        except Exception as exc:
+            print(f"[MANGA:SCRIPT] 대사 선렌더 실패: canvas={canvas_size}, input={planned_entries!r}, error={exc}")
+            traceback.print_exc()
+            raise
     try:
         from modes.postprocess import parse_speak
-        from modes.face_detector import detect_faces
-        from modes.bubble_match import match_speakers_to_faces
         from modes.bubble_predictor import (
             evaluate_candidates,
             generate_grid_candidates,
@@ -3641,50 +3558,36 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
 
     speaker_count = _face_candidate_limit(segments)
     if speaker_count <= 0:
-        print("[BUBBLE_RENDER] SPEAK에서 고유 NAME을 찾지 못해 얼굴 검출/합성을 건너뜀")
+        print("[BUBBLE_RENDER] SPEAK에서 고유 NAME을 찾지 못해 합성을 건너뜀")
         return image_bytes
-    # conf 필터 대신 넓은 후보 풀을 확보한다. 명백히 비정상인 박스는 검출기에서
-    # 제거하고, 최종 NAME 수만큼은 캐릭터 임베딩 전역 매칭으로 고른다.
-    candidates_per_character = s.get("face_candidates_per_character", 8)
-    candidate_limit = _face_detection_candidate_limit(
-        speaker_count, candidates_per_character
-    )
-    print(
-        f"[BUBBLE_RENDER] 얼굴 후보 풀: speakers={speaker_count}, "
-        f"per_character={candidates_per_character}, total_limit={candidate_limit}"
-    )
-    face_fallback = bool(s.get("face_fallback", False))
-    faces = detect_faces(
-        base.convert("RGB"),
-        conf_thres=0.0,
-        max_faces=candidate_limit,
-        device=onnx_device,
-        cpu_threads=cpu_threads,
-        face_fallback=face_fallback,
-    )
-    # 여기서 YOLO confidence 기반으로 중복 박스를 미리 제거하지 않는다.
-    # 캐릭터 임베딩 매칭으로 한 쌍을 확정한 뒤 bubble_match가 CROP_TOP/BOTTOM
-    # 으로 확장한 매칭 박스와 겹치는 후보를 모두 폐기하고, 남은 캐릭터와 남은
-    # 확장 크롭으로 매칭을 다시 수행한다. RAW 박스는 최종 꼬리 좌표에만 쓴다.
-    for f in faces:
-        f["image"] = base.convert("RGB")  # 매칭용 동일 이미지
-
-    match_thres = float(s.get("match_thres", 0.55))
-    appearance_weight = float(s.get("appearance_weight", 0.4))
-    ambiguity_margin = float(s.get("assignment_ambiguity_margin", 0.01))
-    face_crop_top, face_crop_bottom = _resolve_face_match_crop(s, bot_name)
-    matched = match_speakers_to_faces(
-        segments,
-        faces,
-        bot_name,
-        match_thres=match_thres,
-        appearance_weight=appearance_weight,
-        ambiguity_margin=ambiguity_margin,
-        face_crop_top=face_crop_top,
-        face_crop_bottom=face_crop_bottom,
-        onnx_device=onnx_device,
-        cpu_threads=cpu_threads,
-    )
+    faces = []
+    named_boxes = {}
+    for position in face_positions or []:
+        try:
+            name = str(position["name"]).strip()
+            x1, y1, x2, y2 = (float(value) for value in position["bbox"])
+            if not name or not all(math.isfinite(value) for value in (x1, y1, x2, y2)):
+                print(f"[BUBBLE_RENDER] 사용 불가 얼굴 좌표: {position!r}")
+                continue
+            box = (max(0.0, x1) * canvas_w, max(0.0, y1) * canvas_h,
+                   min(1.0, x2) * canvas_w, min(1.0, y2) * canvas_h)
+            if box[2] <= box[0] or box[3] <= box[1]:
+                print(f"[BUBBLE_RENDER] 빈 얼굴 영역 생략: {position!r}, box={box}")
+                continue
+            named_boxes[name.casefold()] = box
+            faces.append({"box": box, "conf": 1.0})
+        except (KeyError, TypeError, ValueError, OverflowError) as exc:
+            print(f"[BUBBLE_RENDER] 얼굴 좌표 해석 실패: {position!r}, error={exc}")
+            traceback.print_exc()
+    print(f"[BUBBLE_RENDER] 생성 결과 얼굴 좌표 사용: bot={bot_name!r}, faces={len(faces)}")
+    if not faces:
+        print("[BUBBLE_RENDER] 전달된 얼굴 좌표 없음 → 무꼬리 빈 공간 배치")
+    matched = [
+        {"segment": segment,
+         "face_box": named_boxes.get(str(segment.get("speaker") or "").strip().casefold()),
+         "char_name": segment.get("speaker")}
+        for segment in segments
+    ]
     _apply_unanchored_fallbacks(matched, faces)
 
     # 대사/생각 투명도 분리. 구형 opacity 키는 폴백(기존 bot.json 깨짐 방지).
@@ -3760,10 +3663,10 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
     layout_font_scale = _resolve_layout_font_scale(s)
     min_font_size = _resolve_min_font_size(s)
     preview_force_min_font_size = bool(s.get("preview_force_min_font_size", False))
-    # 넓힌 후보 풀의 오검출이 말풍선 배치를 막지 않도록 최종 매칭된 얼굴만 보호한다.
+    # 발화하지 않는 캐릭터를 포함해 생성 결과에 기록된 모든 얼굴을 보호한다.
     matched_face_boxes = []
-    for match in matched:
-        matched_box = match.get("face_box")
+    for face in faces:
+        matched_box = face.get("box")
         if matched_box and matched_box not in matched_face_boxes:
             matched_face_boxes.append(matched_box)
     all_boxes = [
