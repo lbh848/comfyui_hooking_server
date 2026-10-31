@@ -48,3 +48,9 @@ Follow these guidelines when working in this repository.
 | [shadcn/ui Blocks - dashboard-01](https://ui.shadcn.com/blocks#dashboard-01) | Reference for an application layout with sidebar navigation and a main content area. | Reuse relevant layout patterns with the project's actual UI labels; include only sections needed by the feature. |
 | [Sidebar](https://ui.shadcn.com/docs/components/sidebar) | Reference for navigation that adapts to available screen space. | Keep navigation names consistent across desktop and mobile layouts. |
 | [Field](https://ui.shadcn.com/docs/components/field) | Reference for labeled settings, helper text, and validation messages. | Group related settings and adapt field arrangements to narrow screens. |
+
+## 6. Organize .work by Task
+
+- When storing files in `.work`, create a separate, descriptively named folder for each task, such as `.work/<task-name>/`.
+- Keep all `.work` files for a task inside that task's folder. Do not place files directly in `.work` or mix unrelated tasks in the same folder.
+- Reuse the existing task folder when continuing the same task; create a new folder for a new task.
