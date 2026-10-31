@@ -1,12 +1,535 @@
 {
-  "schema_version": 2,
   "comfy": {
-    "version": "0.31.0",
+    "ref": "62b3c94bd45154f6486c7abf1b9efcacee96ea69",
     "repository": "https://github.com/comfyanonymous/ComfyUI.git",
-    "ref": "62b3c94bd45154f6486c7abf1b9efcacee96ea69"
+    "version": "0.31.0"
   },
+  "custom_nodes": [
+    {
+      "name": "comfyui_controlnet_aux",
+      "sha256": "7da61afd7f0c3dfc251b79d71eb6b8841770d9aff2056044f5741e1033bb0827",
+      "size": 39778177,
+      "source_type": "archive",
+      "url": "https://cdn.comfy.org/fannovel16/comfyui_controlnet_aux/1.1.3/node.zip",
+      "version": "1.1.3"
+    },
+    {
+      "name": "comfyui_ipadapter_plus",
+      "sha256": "ba5a0bee431175f3389bdc25e28b5e9d4f44811f2f82236e849ec2ef962842a9",
+      "size": 283479,
+      "source_type": "archive",
+      "url": "https://cdn.comfy.org/matteo/comfyui_ipadapter_plus/2.0.0/node.tar.gz",
+      "version": "2.0.0"
+    },
+    {
+      "name": "comfyui-custom-scripts",
+      "sha256": "d01092bf97a983dd85dd3f7268893383ea036347c27005dedd9a758a953dc5fe",
+      "size": 162699,
+      "source_type": "archive",
+      "url": "https://cdn.comfy.org/pythongosssss/comfyui-custom-scripts/1.2.5/node.zip",
+      "version": "1.2.5"
+    },
+    {
+      "name": "ComfyUI-DCW",
+      "ref": "dd7ebc2148cfc1a8b2e22343ae5bd657f283f462",
+      "repository": "https://github.com/namemechan/ComfyUI-DCW.git",
+      "source_type": "git"
+    },
+    {
+      "name": "comfyui-easy-use",
+      "sha256": "2a80ae5517780aaed5e3a013f986a6f956970f9a3bad941f35a5615c135caeb7",
+      "size": 1920042,
+      "source_type": "archive",
+      "url": "https://cdn.comfy.org/yolain/comfyui-easy-use/1.3.6/node.zip",
+      "version": "1.3.6"
+    },
+    {
+      "name": "comfyui-impact-pack",
+      "sha256": "f907b19880b3847d3ada2f86949cc5b4bc72f9e7b0ba5fea8beaa6dad718d28e",
+      "size": 2641425,
+      "source_type": "archive",
+      "url": "https://cdn.comfy.org/drltdata/comfyui-impact-pack/8.28.2/node.zip",
+      "version": "8.28.2"
+    },
+    {
+      "name": "comfyui-impact-subpack",
+      "sha256": "c5ce17312ed348d4cd4a250ef2e158d330220f12ed278a861b0596a5714a14fa",
+      "size": 24730,
+      "source_type": "archive",
+      "url": "https://cdn.comfy.org/drltdata/comfyui-impact-subpack/1.3.5/node.zip",
+      "version": "1.3.5"
+    },
+    {
+      "name": "comfyui-instant-lora_v_soya",
+      "repository": "https://github.com/lbh848/comfyui-instant-lora_v_soya.git",
+      "source_type": "git",
+      "tracking_branch": "main"
+    },
+    {
+      "name": "comfyui-kjnodes",
+      "sha256": "5b1b354e52bc983833e84c0aa7531fc2e8a78cd5b22ab666351830e9124d88de",
+      "size": 24760279,
+      "source_type": "archive",
+      "url": "https://cdn.comfy.org/kijai/comfyui-kjnodes/1.3.2/node.zip",
+      "version": "1.3.2"
+    },
+    {
+      "existing_policy": "reuse_if_same_origin",
+      "name": "comfyui-lora-manager",
+      "ref": "0d8805cdee93d1a7347a813f4ec271ba6bcb55f5",
+      "repository": "https://github.com/willmiao/ComfyUI-Lora-Manager.git",
+      "source_type": "git"
+    },
+    {
+      "name": "comfyui-post-processing-nodes",
+      "sha256": "4d991094a378725e3b2ef6afa6cb491df2ae48efae4cbc2739c5681ba2f64203",
+      "size": 1931375,
+      "source_type": "archive",
+      "url": "https://cdn.comfy.org/ellangok/comfyui-post-processing-nodes/1.0.1/node.tar.gz",
+      "version": "1.0.1"
+    },
+    {
+      "name": "comfyui-spectrum-ksampler",
+      "ref": "c806917566ee1c149575cd90da9e4c2e543de019",
+      "repository": "https://github.com/sorryhyun/ComfyUI-Spectrum-KSampler.git",
+      "source_type": "git"
+    },
+    {
+      "name": "comfyui-soya-custom-nodes",
+      "repository": "https://github.com/lbh848/Comfyui-soya-custom-nodes.git",
+      "source_type": "git",
+      "tracking_branch": "main"
+    },
+    {
+      "name": "rgthree-comfy",
+      "ref": "8ff50e4521881eca1fe26aec9615fc9362474931",
+      "repository": "https://github.com/rgthree/rgthree-comfy.git",
+      "source_type": "git"
+    },
+    {
+      "name": "ComfyUI-MiniMaxH3-TeaCache",
+      "ref": "4cbb50d69c73a19a5d6ec42c5aec1989d5a04b6f",
+      "repository": "https://github.com/Icyoung/ComfyUI-MiniMaxH3-TeaCache.git",
+      "source_type": "git"
+    },
+    {
+      "name": "comfyui-workflow-to-api-converter-endpoint",
+      "repository": "https://github.com/lbh848/comfyui-workflow-to-api-converter-endpoint.git",
+      "source_type": "git",
+      "tracking_branch": "main"
+    },
+    {
+      "name": "ComfyUI-Anima-2.9B",
+      "ref": "26ad9eb0e165b2bf7fd1a7a0ed267b732eca223c",
+      "repository": "https://github.com/gazingstars123/ComfyUI-Anima-2.9B.git",
+      "source_type": "git"
+    },
+    {
+      "name": "ComfyUI-Anima-28to40-Lora-Stack",
+      "ref": "3eab7e594a87e195e471e381ebd8939a163056ce",
+      "repository": "https://github.com/hpoc766-afk/ComfyUI-Anima-28to40-Lora-Stack.git",
+      "source_type": "git"
+    },
+    {
+      "name": "Skimmed_CFG",
+      "ref": "d83005832ac42783adfd6f4ae96f6ef6406d1a74",
+      "repository": "https://github.com/Extraltodeus/Skimmed_CFG.git",
+      "source_type": "git"
+    }
+  ],
+  "models": [
+    {
+      "id": "anima-2.9b-preview-v1",
+      "license": "CircleStone Labs Non-Commercial License",
+      "relative_path": "models/diffusion_models/Anima-2.9B-preview-v1.safetensors",
+      "sha256": "0b3020d1b906155f7eb30667622723e87160632c8c7a5f1c93bdce685f2a346d",
+      "size": 5843204206,
+      "url": "https://huggingface.co/Gazingstars123/Anima-2.9B/resolve/fb00923d6a68424b731048d4c65da61eed1a6cc2/Anima-2.9B-preview-v1.safetensors"
+    },
+    {
+      "auth": "civitai",
+      "id": "illustrious-xl-v1",
+      "relative_path": "models/checkpoints/illustriousXL10_v10.safetensors",
+      "sha256": "735cf3fefcbdc4f7817f53247e38b836ffd27c7641af6d8daa21d245242cb4bd",
+      "size": 6938040736,
+      "url": "https://civitai.com/api/download/models/1389133"
+    },
+    {
+      "auth": "civitai",
+      "id": "illustrious-xl-v1-vae",
+      "relative_path": "models/vae/illustriousXLV10_v10.safetensors",
+      "sha256": "3cc3b7f04550109b453ff14dc0f91da4aed05f0b90bbc5bbb573c5eabf5161f0",
+      "size": 167333134,
+      "url": "https://civitai.com/api/download/models/1916060"
+    },
+    {
+      "auth": "civitai",
+      "id": "rin-anim8draw-v3.1",
+      "relative_path": "models/checkpoints/rinAnim8drawIllustrious_v31.safetensors",
+      "sha256": "7d744d7dc54fc11e7645c6f219748ba59ae4a31ec8a1f666fe88feea877f8078",
+      "size": 6938041594,
+      "url": "https://civitai.com/api/download/models/2622009"
+    },
+    {
+      "auth": "civitai",
+      "id": "rin-flanime-v3",
+      "relative_path": "models/checkpoints/rinFlanimeIllustrious_v30.safetensors",
+      "sha256": "50ea33bae7b499cee2fad3d04b4152270427f3ffab6776910b439bc4974c5ab3",
+      "size": 6938042346,
+      "url": "https://civitai.com/api/download/models/2710976"
+    },
+    {
+      "id": "anima-base-v1",
+      "license": "CircleStone Labs Non-Commercial License",
+      "relative_path": "models/diffusion_models/anima_baseV10.safetensors",
+      "sha256": "bd43b7cffe1ed1153d9c41e7beb2f18cb1273eafbaa3af3edd6a173dc90a006e",
+      "size": 4182218328,
+      "url": "https://huggingface.co/circlestone-labs/Anima/resolve/f7382c4bf9d7ffe4ceea593a0adbb470c56dd79b/split_files/diffusion_models/anima-base-v1.0.safetensors"
+    },
+    {
+      "id": "anima-aesthetic-v1.1",
+      "license": "CircleStone Labs Non-Commercial License",
+      "relative_path": "models/diffusion_models/anima_aestheticV11.safetensors",
+      "sha256": "3c1868387a3a1ff504bbb87c33678321965ead381fcf87afbd0264daa600c082",
+      "size": 4182230656,
+      "url": "https://huggingface.co/circlestone-labs/Anima/resolve/f7382c4bf9d7ffe4ceea593a0adbb470c56dd79b/split_files/diffusion_models/anima-aesthetic-v1.1.safetensors"
+    },
+    {
+      "id": "anima-text-encoder",
+      "license": "CircleStone Labs Non-Commercial License",
+      "relative_path": "models/text_encoders/qwen_3_06b_base.safetensors",
+      "sha256": "cd2a512003e2f9f3cd3c32a9c3573f820bb28c940f73c57b1ddaa983d9223eba",
+      "size": 1192135096,
+      "url": "https://huggingface.co/circlestone-labs/Anima/resolve/f7382c4bf9d7ffe4ceea593a0adbb470c56dd79b/split_files/text_encoders/qwen_3_06b_base.safetensors"
+    },
+    {
+      "id": "anima-vae",
+      "license": "CircleStone Labs Non-Commercial License",
+      "relative_path": "models/vae/qwen_image_vae.safetensors",
+      "sha256": "a70580f0213e67967ee9c95f05bb400e8fb08307e017a924bf3441223e023d1f",
+      "size": 253806246,
+      "url": "https://huggingface.co/circlestone-labs/Anima/resolve/f7382c4bf9d7ffe4ceea593a0adbb470c56dd79b/split_files/vae/qwen_image_vae.safetensors"
+    },
+    {
+      "auth": "civitai",
+      "id": "anima-yume-v0.2",
+      "relative_path": "models/diffusion_models/animayume_v02.safetensors",
+      "sha256": "81c5319674ba6f4e35284885215fd97ab9d5742f3d9c3f5f07e61b797f1b0231",
+      "size": 4182218328,
+      "url": "https://civitai.com/api/download/models/2753918"
+    },
+    {
+      "auth": "civitai",
+      "id": "fcomic-illustrious-v2",
+      "relative_path": "models/loras/FComic_1to1000_IL_V2.safetensors",
+      "sha256": "668c7242b2120947d3f8612614122d8168f4ab7d3df6ca52d2c065f09c98f642",
+      "size": 228468204,
+      "url": "https://civitai.com/api/download/models/2166652"
+    },
+    {
+      "auth": "civitai",
+      "id": "anima-turbo-lora-v0.2",
+      "relative_path": "models/loras/anima-turbo-lora-v0.2.safetensors",
+      "sha256": "1b55e40bdb1d0e5a78cb498f245fccfdaae97823265db957d2aabdcf4cd3caf1",
+      "size": 148902616,
+      "url": "https://civitai.com/api/download/models/2979642"
+    },
+    {
+      "auth": "civitai",
+      "id": "anima-quality-slider",
+      "relative_path": "models/loras/anima_base_slider_step800.safetensors",
+      "sha256": "4a0dc474d26f9ebbae8bf9315da0ae9488f6428f696e21fe8f9db7f970246c82",
+      "size": 55131384,
+      "url": "https://civitai.com/api/download/models/2945328"
+    },
+    {
+      "auth": "civitai",
+      "id": "anima-ci10ranko",
+      "relative_path": "models/loras/anima_ci10ranko_v1.1-epoch28.safetensors",
+      "sha256": "e9448087f414b514ca815b4a24e8f10bdbe02b7095d0eed0e19dbfa2379052f5",
+      "size": 275357376,
+      "url": "https://civitai.com/api/download/models/2972611"
+    },
+    {
+      "auth": "civitai",
+      "id": "anima-detail-tweaker",
+      "relative_path": "models/loras/anima_context_detailer_base10.safetensors",
+      "sha256": "aaaca6107e97bf98d03482464583a0d89fbf14acec8e01685682f11a02915d22",
+      "size": 91851400,
+      "url": "https://civitai.com/api/download/models/2945421"
+    },
+    {
+      "auth": "civitai",
+      "id": "anima-n4t4r4p1su",
+      "relative_path": "models/loras/anima_n4t4r4p1su_v1.0-epoch10.safetensors",
+      "sha256": "f1694a00b220fdb9a4e406be37ac59f25ef2d58f93684ec5629937cf5cde6f87",
+      "size": 183606592,
+      "url": "https://civitai.com/api/download/models/2975701"
+    },
+    {
+      "auth": "civitai",
+      "id": "rdbt-anima",
+      "relative_path": "models/loras/anima_preview_rdbt_finetuned_cfg_distilled_v0.12.safetensors",
+      "sha256": "d2da7239e65e11a7a5c35d8384055b9dfad53324526141e1189cc2cb92e4d6d9",
+      "size": 92628408,
+      "url": "https://civitai.com/api/download/models/2700939"
+    },
+    {
+      "auth": "civitai",
+      "id": "atomsphere-style",
+      "relative_path": "models/loras/atomsphere_style_v1.2-anima-e20.safetensors",
+      "sha256": "9726c61539ff365747b535715e95f45fc0df6321fdaf25cc3d5f4e829fcc3be9",
+      "size": 91929784,
+      "url": "https://civitai.com/api/download/models/3064694"
+    },
+    {
+      "auth": "civitai",
+      "id": "dmd2-speed-lora",
+      "relative_path": "models/loras/dmd2_sdxl_4step_lora.safetensors",
+      "sha256": "a374289e9446d7f14d2037c4b3770756b7b52c292142a691377c3c755010a1bb",
+      "size": 787359616,
+      "url": "https://civitai.com/api/download/models/1820705"
+    },
+    {
+      "auth": "civitai",
+      "id": "kieed-style",
+      "relative_path": "models/loras/kieed-anima-lokr-000018.safetensors",
+      "sha256": "5ce40595eff3cb21ade9427df19e5ef2c15f5e61ddbf341971a36824b8919115",
+      "size": 233044432,
+      "url": "https://civitai.com/api/download/models/2680198"
+    },
+    {
+      "auth": "civitai",
+      "id": "small-head-anima",
+      "relative_path": "models/loras/small_head_anima.safetensors",
+      "sha256": "c783d043848b9bd85db6545243b13e490070f0ea357b304d3c3fdca21e061917",
+      "size": 69557944,
+      "url": "https://civitai.com/api/download/models/2852579"
+    },
+    {
+      "auth": "civitai",
+      "id": "suujiniku-style",
+      "relative_path": "models/loras/suujiniku.safetensors",
+      "sha256": "85f5879c5da59ec40cd03d23236f6a8d40a786db8acaf11c354ac67eda4ce718",
+      "size": 228478868,
+      "url": "https://civitai.com/api/download/models/1798353"
+    },
+    {
+      "id": "clip-vision-bigg-ipadapter",
+      "relative_path": "models/clip_vision/CLIP-ViT-bigG-14-laion2B-39B-b160k.safetensors",
+      "sha256": "657723e09f46a7c3957df651601029f66b1748afb12b419816330f16ed45d64d",
+      "size": 3689912664,
+      "url": "https://huggingface.co/h94/IP-Adapter/resolve/018e402774aeeddd60609b4ecdb7e298259dc729/sdxl_models/image_encoder/model.safetensors"
+    },
+    {
+      "auth": "civitai",
+      "id": "noob-ipa-mark1",
+      "relative_path": "models/ipadapter/noobIPAMARK1_mark1.safetensors",
+      "sha256": "5cdb6a00be1b12579745b5bed0c7b83f0869073d8a864fa8cd50a9356601919a",
+      "size": 1405172056,
+      "url": "https://civitai.com/api/download/models/1121145"
+    },
+    {
+      "auth": "civitai",
+      "id": "illustrious-openpose-controlnet",
+      "relative_path": "models/controlnet/illustriousXL_v10_openpose.safetensors",
+      "sha256": "0d8bacf24534dc6f2716f5d0ffa6085571928776f8687565ef290a17d9f3615c",
+      "size": 2502140008,
+      "url": "https://civitai.com/api/download/models/1536174"
+    },
+    {
+      "auth": "civitai",
+      "id": "noobai-canny-controlnet",
+      "relative_path": "models/controlnet/noobaiXLControlnet_epsCanny.safetensors",
+      "sha256": "7cab92c629146b8bb4c7511d1dd4fec74e825022b932913c8bd5ced2694c7826",
+      "size": 5004167832,
+      "url": "https://civitai.com/api/download/models/1040650"
+    },
+    {
+      "id": "anima-lllite-inpainting-v2",
+      "relative_path": "models/controlnet/anima-lllite-inpainting-v2.safetensors",
+      "sha256": "5242e677d2be34ee70ca7c97c3b14ff5ee49838c03fc1e60ac4852a180db6ef5",
+      "size": 65772872,
+      "url": "https://huggingface.co/kohya-ss/Anima-LLLite/resolve/10bbc6686d3b094917e15b9737aaa52275202004/anima-lllite-inpainting-v2.safetensors"
+    },
+    {
+      "id": "anime-sharp-v4-upscaler",
+      "relative_path": "models/upscale_models/2x-AnimeSharpV4_Fast_RCAN_PU.safetensors",
+      "sha256": "b641c9eb10b43f26538177aa8f0fef8b9fc2a153afd1431d0a062a84c49ce6d0",
+      "size": 31359158,
+      "url": "https://huggingface.co/Kim2091/2x-AnimeSharpV4/resolve/1a9339b5c308ab3990f6233be2c1169a75772878/2x-AnimeSharpV4_Fast_RCAN_PU.safetensors"
+    },
+    {
+      "id": "clip-vit-l14",
+      "relative_path": "models/clip_vision/ViT-L14.bin",
+      "sha256": "f1a17cdbe0f36fec524f5cafb1c261ea3bbbc13e346e0f74fc9eb0460dedd0d3",
+      "size": 1710671599,
+      "url": "https://huggingface.co/licyk/controlnet_v1.1_annotator/resolve/7879a67f36c63eebeb683b7baaffeecef89c3935/clip_vision/clip_vitl.pth"
+    },
+    {
+      "id": "face-yolov8n",
+      "relative_path": "models/ultralytics/bbox/face_yolov8n.pt",
+      "sha256": "70b640f8f60b1cf0dcc72f30caf3da9495eb2fb6509da48c53374ad6806e6a9c",
+      "size": 6230011,
+      "url": "https://huggingface.co/Bingsu/adetailer/resolve/53cc19de382014514d9d4038601d261a7faa9b7b/face_yolov8n.pt"
+    },
+    {
+      "id": "face-yolov8m",
+      "relative_path": "models/ultralytics/bbox/face_yolov8m.pt",
+      "sha256": "717923c19b3f4bbf5250b728f1fa6b2cb72a33aed1d236ea9caf0e21ad943e5f",
+      "size": 52026019,
+      "url": "https://huggingface.co/Bingsu/adetailer/resolve/53cc19de382014514d9d4038601d261a7faa9b7b/face_yolov8m.pt"
+    },
+    {
+      "id": "hand-yolov8s",
+      "relative_path": "models/ultralytics/bbox/hand_yolov8s.pt",
+      "sha256": "70b540063fbc385736d8258970744a4afbc4cbf7932134bae3b24cdadeadec06",
+      "size": 22507643,
+      "url": "https://huggingface.co/Bingsu/adetailer/resolve/53cc19de382014514d9d4038601d261a7faa9b7b/hand_yolov8s.pt"
+    },
+    {
+      "id": "eye-segmentation-v2",
+      "relative_path": "models/soya_seg/eye_seg_v2.ckpt",
+      "sha256": "57bd5d5ea34bc7877c0134a84637a540e31d2dd316b097a91dc31c2be9dde279",
+      "size": 529353537,
+      "url": "https://huggingface.co/byung-hyun/eye_segmentation_model/resolve/eac8bbddb65447dfe07bbf09d79035c466d20849/eye_seg_v2.ckpt"
+    },
+    {
+      "id": "eyebrow-segmentation",
+      "relative_path": "models/soya_seg/eyebrow_seg.ckpt",
+      "sha256": "d1925aa36ccfced935051b22ad368abdfe55a5782188e74a8f9ac2826e5e7b5d",
+      "size": 529353537,
+      "url": "https://huggingface.co/byung-hyun/eye_segmentation_model/resolve/eac8bbddb65447dfe07bbf09d79035c466d20849/eyebrow_seg.ckpt"
+    },
+    {
+      "id": "qwen-image-edit-rapid-v19",
+      "relative_path": "models/checkpoints/v19/Qwen-Rapid-AIO-NSFW-v19.safetensors",
+      "sha256": "ba71575515709c9912560d1176b2386eaa49294fedc6ce57b9734aa57e91e5ac",
+      "size": 28431843583,
+      "url": "https://huggingface.co/Phr00t/Qwen-Image-Edit-Rapid-AIO/resolve/691024f438640508f8aa86414863fc15edfb8a84/v19/Qwen-Rapid-AIO-NSFW-v19.safetensors"
+    },
+    {
+      "id": "minimax-h3-int8-convrot",
+      "relative_path": "models/diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+      "sha256": "e889202c41dafb67b10d67b97f0d8541508036a6090af23425a5c2615d03c47a",
+      "size": 20970379616,
+      "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/014cd40f7e177756c6b2473c0d93b1c89a790dd2/diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors"
+    },
+    {
+      "id": "minimax-h3-ref2va-int8-convrot",
+      "relative_path": "models/diffusion_models/minimax_h3_ref2va_pruned_int8_convrot.safetensors",
+      "sha256": "9255f52b6677845ad238f20dfaafa94727053694127ab7f255c048f0f9365779",
+      "size": 20970379616,
+      "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/dc559027db79c174125df4d827db55cd11178860/diffusion_models/minimax_h3_ref2va_pruned_int8_convrot.safetensors"
+    },
+    {
+      "id": "minimax-h3-qwen3vl-nvfp4-awq",
+      "relative_path": "models/text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+      "sha256": "35a88d51044231fe332301d7a62aa81e3f2cba62febeb446e2c1e3e0ef76f2c6",
+      "size": 15687142551,
+      "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/014cd40f7e177756c6b2473c0d93b1c89a790dd2/text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"
+    },
+    {
+      "id": "minimax-h3-video-vae-fp16",
+      "relative_path": "models/vae/minimax_h3_video_vae_fp16.safetensors",
+      "sha256": "7c1f131492e7eddacaac9069a61b81bdd39de5cc96561e677c5eab1cdce5e522",
+      "size": 5207808496,
+      "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/014cd40f7e177756c6b2473c0d93b1c89a790dd2/vae/minimax_h3_video_vae_fp16.safetensors"
+    },
+    {
+      "id": "minimax-h3-audio-vae-fp32",
+      "relative_path": "models/vae/minimax_h3_audio_vae_fp32.safetensors",
+      "sha256": "8e505d95dd1561d47abd43d4238fd40d9bb1ae9e147ed0a4cba778d76ae4db48",
+      "size": 605254808,
+      "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/014cd40f7e177756c6b2473c0d93b1c89a790dd2/vae/minimax_h3_audio_vae_fp32.safetensors"
+    },
+    {
+      "id": "minimax-h3-lightx2v-turbo-8step-v1",
+      "relative_path": "models/loras/minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors",
+      "sha256": "2339acdf19bfe123f46b971ea35d367a84adb85de43627e1eceafa5a5b2b111e",
+      "size": 1956193000,
+      "url": "https://huggingface.co/lightx2v/Minimax-h3-Turbo/resolve/e6346777701aa2b64d42ed058cdd71ae00e7cd52/minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors"
+    },
+    {
+      "id": "minimax-h3-lightx2v-turbo-4step-768p-v1",
+      "relative_path": "models/loras/minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_resized_avg_rank_21_bf16.safetensors",
+      "sha256": "1b85da614014024a0c9507f12558917dcc69b6adb564e716324594f401723115",
+      "size": 298177224,
+      "url": "https://huggingface.co/drbaph/MiniMax-H3-Turbo-Lora-ComfyUI/resolve/781384e55ad67022bf7e3f14225574b9d1e92a46/minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_resized_avg_rank_21_bf16.safetensors"
+    },
+    {
+      "id": "minimax-h3-ref2v-lightx2v-turbo-4step-v0.1",
+      "relative_path": "models/loras/minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors",
+      "sha256": "5b9ab5ade15d0775676d01a907268a69a1468dc6033b3b0d3ded5502f3ebb84c",
+      "size": 1956193000,
+      "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/dc559027db79c174125df4d827db55cd11178860/loras/minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors"
+    },
+    {
+      "auth": "civitai",
+      "id": "anima-screenshot-v5-000009",
+      "relative_path": "models/loras/screenshot_v5-000009.safetensors",
+      "sha256": "d55729aee9f1e69004b1e8f494d896a009c4aeb4794837c1af1eea2dc6ea74ee",
+      "size": 84413176,
+      "url": "https://civitai.com/api/download/models/2903778?fileId=2781738"
+    },
+    {
+      "auth": "civitai",
+      "id": "anima-boldline-v13",
+      "relative_path": "models/loras/anima-boldline-v13.safetensors",
+      "sha256": "1e9dd389ae0bdf598dbb6b0149c7fedca7ccb72079dfa6481ec6d2c1fe7d7479",
+      "size": 59046920,
+      "url": "https://civitai.com/api/download/models/3021106?fileId=2899921"
+    },
+    {
+      "auth": "civitai",
+      "id": "blue-archive-style-b1",
+      "relative_path": "models/loras/BlueArchiveStyleB1.safetensors",
+      "sha256": "05eaec899cf03412dea811f9e7820e898056774f8e65fb24e64fed79d99875e7",
+      "size": 137731072,
+      "url": "https://civitai.com/api/download/models/2949191?fileId=2828479"
+    },
+    {
+      "auth": "civitai",
+      "id": "ix7-style",
+      "relative_path": "models/loras/@ix7.safetensors",
+      "sha256": "f7a889a81cd746b8c52a556589507e13799d12377944d726849cfb846f99629e",
+      "size": 91919200,
+      "url": "https://civitai.com/api/download/models/3119258?fileId=2999526"
+    },
+    {
+      "auth": "civitai",
+      "id": "flat0521-anima-lora",
+      "relative_path": "models/loras/flat0521_anima_lora_comfy.safetensors",
+      "sha256": "601b82181af58b98b49ee6b6eeb3b1c2417dc464aeb818a2c41d2685e0ed0727",
+      "size": 33237056,
+      "url": "https://civitai.com/api/download/models/2984489?fileId=2863978"
+    },
+    {
+      "auth": "civitai",
+      "id": "nova-anime-am-v4.0",
+      "relative_path": "models/diffusion_models/novaAnimeAM_v40.safetensors",
+      "sha256": "6235640723b9d126fa8f4317ee5405105815e9df30cd12ec7c4c2de331c476ad",
+      "size": 4182350184,
+      "url": "https://civitai.com/api/download/models/3201770?fileId=3083049"
+    },
+    {
+      "auth": "civitai",
+      "id": "anima-matsuda-hikari-v1.0",
+      "relative_path": "models/loras/matsuda_hikari.safetensors",
+      "sha256": "8c4d55121f5bddc3ce87ddc5f20d75b0168639dd929a3234fcf9a558d66f2bb6",
+      "size": 138663783,
+      "url": "https://civitai.com/api/download/models/3307880?fileId=3193024"
+    },
+    {
+      "id": "snapref-v1b",
+      "license": "CircleStone Labs Non-Commercial License",
+      "relative_path": "models/loras/snapref_v1b.safetensors",
+      "sha256": "a64f273a51c2f1db3e484507d8d4e74e1c98f74e2f4810cd1a86293a89599fc3",
+      "size": 910324208,
+      "url": "https://huggingface.co/0ppxnhximxr/snapref-v1b/resolve/41514c96d9e4f4f79cbf505a97009f7b66a28efa/snapref_v1b.safetensors"
+    }
+  ],
   "python": {
-    "version": "3.12.11",
     "compatibility_packages": [
       "numpy==1.26.4",
       "contourpy==1.3.3",
@@ -17,1887 +540,98 @@
       "opencv-python-headless==4.10.0.84",
       "opencv-contrib-python==4.10.0.84"
     ],
-    "preinstall_wheels": [
-      {
-        "id": "insightface-0.7.3-win-py312",
-        "url": "https://raw.githubusercontent.com/Gourieff/Assets/606558ed08f16b99a29ef30b0df0b4622164c524/Insightface/insightface-0.7.3-cp312-cp312-win_amd64.whl",
-        "filename": "insightface-0.7.3-cp312-cp312-win_amd64.whl",
-        "size": 872768,
-        "sha256": "4e58a504433ba5a500d48328689e7d6c69873165653ded7553ce804beb8723db"
-      }
-    ],
     "gpu_profiles": [
       {
         "id": "nvidia-cu130",
+        "index_url": "https://download.pytorch.org/whl/cu130",
         "kind": "nvidia",
-        "minimum_driver_version": "580.00",
         "minimum_compute_capability": "8.0",
-        "torch_cuda": "13.0",
+        "minimum_driver_version": "580.00",
         "onnxruntime_package": "onnxruntime-gpu==1.28.0",
         "packages": [
           "torch==2.10.0+cu130",
           "torchvision==0.25.0+cu130",
           "torchaudio==2.10.0+cu130"
         ],
-        "index_url": "https://download.pytorch.org/whl/cu130",
-        "triton_package": "triton-windows==3.6.0.post25",
         "sageattention": {
-          "url": "https://github.com/woct0rdho/SageAttention/releases/download/v2.2.0-windows.post4/sageattention-2.2.0%2Bcu130torch2.9.0andhigher.post4-cp39-abi3-win_amd64.whl",
+          "sha256": "f7261c53a1d46202059daff6b8feac5ee806274d47e3e7fb7abf8c5f6d410c92",
           "size": 12321863,
-          "sha256": "f7261c53a1d46202059daff6b8feac5ee806274d47e3e7fb7abf8c5f6d410c92"
-        }
+          "url": "https://github.com/woct0rdho/SageAttention/releases/download/v2.2.0-windows.post4/sageattention-2.2.0%2Bcu130torch2.9.0andhigher.post4-cp39-abi3-win_amd64.whl"
+        },
+        "torch_cuda": "13.0",
+        "triton_package": "triton-windows==3.6.0.post25"
       },
       {
         "id": "nvidia-cu128",
+        "index_url": "https://download.pytorch.org/whl/cu128",
         "kind": "nvidia",
-        "minimum_driver_version": "570.65",
         "minimum_compute_capability": "8.0",
-        "torch_cuda": "12.8",
+        "minimum_driver_version": "570.65",
         "onnxruntime_package": "onnxruntime-gpu==1.26.0",
         "packages": [
           "torch==2.10.0+cu128",
           "torchvision==0.25.0+cu128",
           "torchaudio==2.10.0+cu128"
         ],
-        "index_url": "https://download.pytorch.org/whl/cu128",
-        "triton_package": "triton-windows==3.6.0.post25",
         "sageattention": {
-          "url": "https://github.com/woct0rdho/SageAttention/releases/download/v2.2.0-windows.post4/sageattention-2.2.0%2Bcu128torch2.9.0andhigher.post4-cp39-abi3-win_amd64.whl",
+          "sha256": "b8b3134d00dfbdae5c10cc34cc8508891d9420adaa182502fa30a496428531ed",
           "size": 12252026,
-          "sha256": "b8b3134d00dfbdae5c10cc34cc8508891d9420adaa182502fa30a496428531ed"
-        }
+          "url": "https://github.com/woct0rdho/SageAttention/releases/download/v2.2.0-windows.post4/sageattention-2.2.0%2Bcu128torch2.9.0andhigher.post4-cp39-abi3-win_amd64.whl"
+        },
+        "torch_cuda": "12.8",
+        "triton_package": "triton-windows==3.6.0.post25"
       },
       {
         "id": "cpu",
+        "index_url": "https://download.pytorch.org/whl/cpu",
         "kind": "cpu",
         "packages": [
           "torch==2.10.0",
           "torchvision==0.25.0",
           "torchaudio==2.10.0"
-        ],
-        "index_url": "https://download.pytorch.org/whl/cpu"
+        ]
       }
-    ]
-  },
-  "custom_nodes": [
-    {
-      "name": "comfyui_controlnet_aux",
-      "source_type": "archive",
-      "version": "1.1.3",
-      "url": "https://cdn.comfy.org/fannovel16/comfyui_controlnet_aux/1.1.3/node.zip",
-      "size": 39778177,
-      "sha256": "7da61afd7f0c3dfc251b79d71eb6b8841770d9aff2056044f5741e1033bb0827"
-    },
-    {
-      "name": "comfyui_ipadapter_plus",
-      "source_type": "archive",
-      "version": "2.0.0",
-      "url": "https://cdn.comfy.org/matteo/comfyui_ipadapter_plus/2.0.0/node.tar.gz",
-      "size": 283479,
-      "sha256": "ba5a0bee431175f3389bdc25e28b5e9d4f44811f2f82236e849ec2ef962842a9"
-    },
-    {
-      "name": "comfyui-custom-scripts",
-      "source_type": "archive",
-      "version": "1.2.5",
-      "url": "https://cdn.comfy.org/pythongosssss/comfyui-custom-scripts/1.2.5/node.zip",
-      "size": 162699,
-      "sha256": "d01092bf97a983dd85dd3f7268893383ea036347c27005dedd9a758a953dc5fe"
-    },
-    {
-      "name": "ComfyUI-DCW",
-      "source_type": "git",
-      "repository": "https://github.com/namemechan/ComfyUI-DCW.git",
-      "ref": "dd7ebc2148cfc1a8b2e22343ae5bd657f283f462"
-    },
-    {
-      "name": "comfyui-easy-use",
-      "source_type": "archive",
-      "version": "1.3.6",
-      "url": "https://cdn.comfy.org/yolain/comfyui-easy-use/1.3.6/node.zip",
-      "size": 1920042,
-      "sha256": "2a80ae5517780aaed5e3a013f986a6f956970f9a3bad941f35a5615c135caeb7"
-    },
-    {
-      "name": "comfyui-impact-pack",
-      "source_type": "archive",
-      "version": "8.28.2",
-      "url": "https://cdn.comfy.org/drltdata/comfyui-impact-pack/8.28.2/node.zip",
-      "size": 2641425,
-      "sha256": "f907b19880b3847d3ada2f86949cc5b4bc72f9e7b0ba5fea8beaa6dad718d28e"
-    },
-    {
-      "name": "comfyui-impact-subpack",
-      "source_type": "archive",
-      "version": "1.3.5",
-      "url": "https://cdn.comfy.org/drltdata/comfyui-impact-subpack/1.3.5/node.zip",
-      "size": 24730,
-      "sha256": "c5ce17312ed348d4cd4a250ef2e158d330220f12ed278a861b0596a5714a14fa"
-    },
-    {
-      "name": "comfyui-instant-lora_v_soya",
-      "source_type": "git",
-      "repository": "https://github.com/lbh848/comfyui-instant-lora_v_soya.git",
-      "tracking_branch": "main"
-    },
-    {
-      "name": "comfyui-kjnodes",
-      "source_type": "archive",
-      "version": "1.3.2",
-      "url": "https://cdn.comfy.org/kijai/comfyui-kjnodes/1.3.2/node.zip",
-      "size": 24760279,
-      "sha256": "5b1b354e52bc983833e84c0aa7531fc2e8a78cd5b22ab666351830e9124d88de"
-    },
-    {
-      "name": "comfyui-lora-manager",
-      "source_type": "git",
-      "repository": "https://github.com/willmiao/ComfyUI-Lora-Manager.git",
-      "ref": "0d8805cdee93d1a7347a813f4ec271ba6bcb55f5",
-      "existing_policy": "reuse_if_same_origin"
-    },
-    {
-      "name": "comfyui-post-processing-nodes",
-      "source_type": "archive",
-      "version": "1.0.1",
-      "url": "https://cdn.comfy.org/ellangok/comfyui-post-processing-nodes/1.0.1/node.tar.gz",
-      "size": 1931375,
-      "sha256": "4d991094a378725e3b2ef6afa6cb491df2ae48efae4cbc2739c5681ba2f64203"
-    },
-    {
-      "name": "comfyui-spectrum-ksampler",
-      "source_type": "git",
-      "repository": "https://github.com/sorryhyun/ComfyUI-Spectrum-KSampler.git",
-      "ref": "c806917566ee1c149575cd90da9e4c2e543de019"
-    },
-    {
-      "name": "comfyui-soya-custom-nodes",
-      "source_type": "git",
-      "repository": "https://github.com/lbh848/Comfyui-soya-custom-nodes.git",
-      "tracking_branch": "main"
-    },
-    {
-      "name": "rgthree-comfy",
-      "source_type": "git",
-      "repository": "https://github.com/rgthree/rgthree-comfy.git",
-      "ref": "8ff50e4521881eca1fe26aec9615fc9362474931"
-    },
-    {
-      "name": "ComfyUI-MiniMaxH3-TeaCache",
-      "source_type": "git",
-      "repository": "https://github.com/Icyoung/ComfyUI-MiniMaxH3-TeaCache.git",
-      "ref": "4cbb50d69c73a19a5d6ec42c5aec1989d5a04b6f"
-    },
-    {
-      "name": "comfyui-workflow-to-api-converter-endpoint",
-      "source_type": "git",
-      "repository": "https://github.com/lbh848/comfyui-workflow-to-api-converter-endpoint.git",
-      "tracking_branch": "main"
-    },
-    {
-      "name": "ComfyUI-Anima-2.9B",
-      "source_type": "git",
-      "repository": "https://github.com/gazingstars123/ComfyUI-Anima-2.9B.git",
-      "ref": "26ad9eb0e165b2bf7fd1a7a0ed267b732eca223c"
-    },
-    {
-      "name": "ComfyUI-Anima-28to40-Lora-Stack",
-      "source_type": "git",
-      "repository": "https://github.com/hpoc766-afk/ComfyUI-Anima-28to40-Lora-Stack.git",
-      "ref": "3eab7e594a87e195e471e381ebd8939a163056ce"
-    },
-    {
-      "name": "Skimmed_CFG",
-      "source_type": "git",
-      "repository": "https://github.com/Extraltodeus/Skimmed_CFG.git",
-      "ref": "d83005832ac42783adfd6f4ae96f6ef6406d1a74"
-    }
-  ],
-  "models": [
-    {
-      "id": "anima-2.9b-preview-v1",
-      "url": "https://huggingface.co/Gazingstars123/Anima-2.9B/resolve/fb00923d6a68424b731048d4c65da61eed1a6cc2/Anima-2.9B-preview-v1.safetensors",
-      "relative_path": "models/diffusion_models/Anima-2.9B-preview-v1.safetensors",
-      "size": 5843204206,
-      "sha256": "0b3020d1b906155f7eb30667622723e87160632c8c7a5f1c93bdce685f2a346d",
-      "license": "CircleStone Labs Non-Commercial License"
-    },
-    {
-      "id": "illustrious-xl-v1",
-      "url": "https://civitai.com/api/download/models/1389133",
-      "auth": "civitai",
-      "relative_path": "models/checkpoints/illustriousXL10_v10.safetensors",
-      "size": 6938040736,
-      "sha256": "735cf3fefcbdc4f7817f53247e38b836ffd27c7641af6d8daa21d245242cb4bd"
-    },
-    {
-      "id": "illustrious-xl-v1-vae",
-      "url": "https://civitai.com/api/download/models/1916060",
-      "auth": "civitai",
-      "relative_path": "models/vae/illustriousXLV10_v10.safetensors",
-      "size": 167333134,
-      "sha256": "3cc3b7f04550109b453ff14dc0f91da4aed05f0b90bbc5bbb573c5eabf5161f0"
-    },
-    {
-      "id": "rin-anim8draw-v3.1",
-      "url": "https://civitai.com/api/download/models/2622009",
-      "auth": "civitai",
-      "relative_path": "models/checkpoints/rinAnim8drawIllustrious_v31.safetensors",
-      "size": 6938041594,
-      "sha256": "7d744d7dc54fc11e7645c6f219748ba59ae4a31ec8a1f666fe88feea877f8078"
-    },
-    {
-      "id": "rin-flanime-v3",
-      "url": "https://civitai.com/api/download/models/2710976",
-      "auth": "civitai",
-      "relative_path": "models/checkpoints/rinFlanimeIllustrious_v30.safetensors",
-      "size": 6938042346,
-      "sha256": "50ea33bae7b499cee2fad3d04b4152270427f3ffab6776910b439bc4974c5ab3"
-    },
-    {
-      "id": "anima-base-v1",
-      "url": "https://huggingface.co/circlestone-labs/Anima/resolve/f7382c4bf9d7ffe4ceea593a0adbb470c56dd79b/split_files/diffusion_models/anima-base-v1.0.safetensors",
-      "relative_path": "models/diffusion_models/anima_baseV10.safetensors",
-      "size": 4182218328,
-      "sha256": "bd43b7cffe1ed1153d9c41e7beb2f18cb1273eafbaa3af3edd6a173dc90a006e",
-      "license": "CircleStone Labs Non-Commercial License"
-    },
-    {
-      "id": "anima-aesthetic-v1.1",
-      "url": "https://huggingface.co/circlestone-labs/Anima/resolve/f7382c4bf9d7ffe4ceea593a0adbb470c56dd79b/split_files/diffusion_models/anima-aesthetic-v1.1.safetensors",
-      "relative_path": "models/diffusion_models/anima_aestheticV11.safetensors",
-      "size": 4182230656,
-      "sha256": "3c1868387a3a1ff504bbb87c33678321965ead381fcf87afbd0264daa600c082",
-      "license": "CircleStone Labs Non-Commercial License"
-    },
-    {
-      "id": "anima-text-encoder",
-      "url": "https://huggingface.co/circlestone-labs/Anima/resolve/f7382c4bf9d7ffe4ceea593a0adbb470c56dd79b/split_files/text_encoders/qwen_3_06b_base.safetensors",
-      "relative_path": "models/text_encoders/qwen_3_06b_base.safetensors",
-      "size": 1192135096,
-      "sha256": "cd2a512003e2f9f3cd3c32a9c3573f820bb28c940f73c57b1ddaa983d9223eba",
-      "license": "CircleStone Labs Non-Commercial License"
-    },
-    {
-      "id": "anima-vae",
-      "url": "https://huggingface.co/circlestone-labs/Anima/resolve/f7382c4bf9d7ffe4ceea593a0adbb470c56dd79b/split_files/vae/qwen_image_vae.safetensors",
-      "relative_path": "models/vae/qwen_image_vae.safetensors",
-      "size": 253806246,
-      "sha256": "a70580f0213e67967ee9c95f05bb400e8fb08307e017a924bf3441223e023d1f",
-      "license": "CircleStone Labs Non-Commercial License"
-    },
-    {
-      "id": "anima-yume-v0.2",
-      "url": "https://civitai.com/api/download/models/2753918",
-      "auth": "civitai",
-      "relative_path": "models/diffusion_models/animayume_v02.safetensors",
-      "size": 4182218328,
-      "sha256": "81c5319674ba6f4e35284885215fd97ab9d5742f3d9c3f5f07e61b797f1b0231"
-    },
-    {
-      "id": "fcomic-illustrious-v2",
-      "url": "https://civitai.com/api/download/models/2166652",
-      "auth": "civitai",
-      "relative_path": "models/loras/FComic_1to1000_IL_V2.safetensors",
-      "size": 228468204,
-      "sha256": "668c7242b2120947d3f8612614122d8168f4ab7d3df6ca52d2c065f09c98f642"
-    },
-    {
-      "id": "anima-turbo-lora-v0.2",
-      "url": "https://civitai.com/api/download/models/2979642",
-      "auth": "civitai",
-      "relative_path": "models/loras/anima-turbo-lora-v0.2.safetensors",
-      "size": 148902616,
-      "sha256": "1b55e40bdb1d0e5a78cb498f245fccfdaae97823265db957d2aabdcf4cd3caf1"
-    },
-    {
-      "id": "bsk-anima-camera-control-v1.0",
-      "url": "https://civitai.com/api/download/models/3174431?fileId=3054946",
-      "auth": "civitai",
-      "relative_path": "models/loras/SOYA_CHAR_LORA/SOYA_INSTANCE_LORA/anima/bsk-anima-camera-control/civitai-3174431/anima_bsk_camera_control_v1.0.safetensors",
-      "size": 284900204,
-      "sha256": "6d1f0c002abf3f7108d53fddba75bfb1f4936b948a300f667afa455ea8aefd81"
-    },
-    {
-      "id": "anima-quality-slider",
-      "url": "https://civitai.com/api/download/models/2945328",
-      "auth": "civitai",
-      "relative_path": "models/loras/anima_base_slider_step800.safetensors",
-      "size": 55131384,
-      "sha256": "4a0dc474d26f9ebbae8bf9315da0ae9488f6428f696e21fe8f9db7f970246c82"
-    },
-    {
-      "id": "anima-ci10ranko",
-      "url": "https://civitai.com/api/download/models/2972611",
-      "auth": "civitai",
-      "relative_path": "models/loras/anima_ci10ranko_v1.1-epoch28.safetensors",
-      "size": 275357376,
-      "sha256": "e9448087f414b514ca815b4a24e8f10bdbe02b7095d0eed0e19dbfa2379052f5"
-    },
-    {
-      "id": "anima-detail-tweaker",
-      "url": "https://civitai.com/api/download/models/2945421",
-      "auth": "civitai",
-      "relative_path": "models/loras/anima_context_detailer_base10.safetensors",
-      "size": 91851400,
-      "sha256": "aaaca6107e97bf98d03482464583a0d89fbf14acec8e01685682f11a02915d22"
-    },
-    {
-      "id": "anima-n4t4r4p1su",
-      "url": "https://civitai.com/api/download/models/2975701",
-      "auth": "civitai",
-      "relative_path": "models/loras/anima_n4t4r4p1su_v1.0-epoch10.safetensors",
-      "size": 183606592,
-      "sha256": "f1694a00b220fdb9a4e406be37ac59f25ef2d58f93684ec5629937cf5cde6f87"
-    },
-    {
-      "id": "rdbt-anima",
-      "url": "https://civitai.com/api/download/models/2700939",
-      "auth": "civitai",
-      "relative_path": "models/loras/anima_preview_rdbt_finetuned_cfg_distilled_v0.12.safetensors",
-      "size": 92628408,
-      "sha256": "d2da7239e65e11a7a5c35d8384055b9dfad53324526141e1189cc2cb92e4d6d9"
-    },
-    {
-      "id": "atomsphere-style",
-      "url": "https://civitai.com/api/download/models/3064694",
-      "auth": "civitai",
-      "relative_path": "models/loras/atomsphere_style_v1.2-anima-e20.safetensors",
-      "size": 91929784,
-      "sha256": "9726c61539ff365747b535715e95f45fc0df6321fdaf25cc3d5f4e829fcc3be9"
-    },
-    {
-      "id": "dmd2-speed-lora",
-      "url": "https://civitai.com/api/download/models/1820705",
-      "auth": "civitai",
-      "relative_path": "models/loras/dmd2_sdxl_4step_lora.safetensors",
-      "size": 787359616,
-      "sha256": "a374289e9446d7f14d2037c4b3770756b7b52c292142a691377c3c755010a1bb"
-    },
-    {
-      "id": "kieed-style",
-      "url": "https://civitai.com/api/download/models/2680198",
-      "auth": "civitai",
-      "relative_path": "models/loras/kieed-anima-lokr-000018.safetensors",
-      "size": 233044432,
-      "sha256": "5ce40595eff3cb21ade9427df19e5ef2c15f5e61ddbf341971a36824b8919115"
-    },
-    {
-      "id": "small-head-anima",
-      "url": "https://civitai.com/api/download/models/2852579",
-      "auth": "civitai",
-      "relative_path": "models/loras/small_head_anima.safetensors",
-      "size": 69557944,
-      "sha256": "c783d043848b9bd85db6545243b13e490070f0ea357b304d3c3fdca21e061917"
-    },
-    {
-      "id": "suujiniku-style",
-      "url": "https://civitai.com/api/download/models/1798353",
-      "auth": "civitai",
-      "relative_path": "models/loras/suujiniku.safetensors",
-      "size": 228478868,
-      "sha256": "85f5879c5da59ec40cd03d23236f6a8d40a786db8acaf11c354ac67eda4ce718"
-    },
-    {
-      "id": "anima-m4me-v1.2",
-      "url": "https://civitai.com/api/download/models/2955581",
-      "auth": "civitai",
-      "relative_path": "models/loras/anima_m4me_v1.2-epoch16.safetensors",
-      "size": 183606432,
-      "sha256": "235aa544a63643a38d12449250842592ec2d16a94a1497c90280ce37dd90c9fa"
-    },
-    {
-      "id": "clip-vision-bigg-ipadapter",
-      "url": "https://huggingface.co/h94/IP-Adapter/resolve/018e402774aeeddd60609b4ecdb7e298259dc729/sdxl_models/image_encoder/model.safetensors",
-      "relative_path": "models/clip_vision/CLIP-ViT-bigG-14-laion2B-39B-b160k.safetensors",
-      "size": 3689912664,
-      "sha256": "657723e09f46a7c3957df651601029f66b1748afb12b419816330f16ed45d64d"
-    },
-    {
-      "id": "noob-ipa-mark1",
-      "url": "https://civitai.com/api/download/models/1121145",
-      "auth": "civitai",
-      "relative_path": "models/ipadapter/noobIPAMARK1_mark1.safetensors",
-      "size": 1405172056,
-      "sha256": "5cdb6a00be1b12579745b5bed0c7b83f0869073d8a864fa8cd50a9356601919a"
-    },
-    {
-      "id": "illustrious-openpose-controlnet",
-      "url": "https://civitai.com/api/download/models/1536174",
-      "auth": "civitai",
-      "relative_path": "models/controlnet/illustriousXL_v10_openpose.safetensors",
-      "size": 2502140008,
-      "sha256": "0d8bacf24534dc6f2716f5d0ffa6085571928776f8687565ef290a17d9f3615c"
-    },
-    {
-      "id": "noobai-canny-controlnet",
-      "url": "https://civitai.com/api/download/models/1040650",
-      "auth": "civitai",
-      "relative_path": "models/controlnet/noobaiXLControlnet_epsCanny.safetensors",
-      "size": 5004167832,
-      "sha256": "7cab92c629146b8bb4c7511d1dd4fec74e825022b932913c8bd5ced2694c7826"
-    },
-    {
-      "id": "anima-lllite-inpainting-v2",
-      "url": "https://huggingface.co/kohya-ss/Anima-LLLite/resolve/10bbc6686d3b094917e15b9737aaa52275202004/anima-lllite-inpainting-v2.safetensors",
-      "relative_path": "models/controlnet/anima-lllite-inpainting-v2.safetensors",
-      "size": 65772872,
-      "sha256": "5242e677d2be34ee70ca7c97c3b14ff5ee49838c03fc1e60ac4852a180db6ef5"
-    },
-    {
-      "id": "anime-sharp-v4-upscaler",
-      "url": "https://huggingface.co/Kim2091/2x-AnimeSharpV4/resolve/1a9339b5c308ab3990f6233be2c1169a75772878/2x-AnimeSharpV4_Fast_RCAN_PU.safetensors",
-      "relative_path": "models/upscale_models/2x-AnimeSharpV4_Fast_RCAN_PU.safetensors",
-      "size": 31359158,
-      "sha256": "b641c9eb10b43f26538177aa8f0fef8b9fc2a153afd1431d0a062a84c49ce6d0"
-    },
-    {
-      "id": "clip-vit-l14",
-      "url": "https://huggingface.co/licyk/controlnet_v1.1_annotator/resolve/7879a67f36c63eebeb683b7baaffeecef89c3935/clip_vision/clip_vitl.pth",
-      "relative_path": "models/clip_vision/ViT-L14.bin",
-      "size": 1710671599,
-      "sha256": "f1a17cdbe0f36fec524f5cafb1c261ea3bbbc13e346e0f74fc9eb0460dedd0d3"
-    },
-    {
-      "id": "face-yolov8n",
-      "url": "https://huggingface.co/Bingsu/adetailer/resolve/53cc19de382014514d9d4038601d261a7faa9b7b/face_yolov8n.pt",
-      "relative_path": "models/ultralytics/bbox/face_yolov8n.pt",
-      "size": 6230011,
-      "sha256": "70b640f8f60b1cf0dcc72f30caf3da9495eb2fb6509da48c53374ad6806e6a9c"
-    },
-    {
-      "id": "face-yolov8m",
-      "url": "https://huggingface.co/Bingsu/adetailer/resolve/53cc19de382014514d9d4038601d261a7faa9b7b/face_yolov8m.pt",
-      "relative_path": "models/ultralytics/bbox/face_yolov8m.pt",
-      "size": 52026019,
-      "sha256": "717923c19b3f4bbf5250b728f1fa6b2cb72a33aed1d236ea9caf0e21ad943e5f"
-    },
-    {
-      "id": "hand-yolov8s",
-      "url": "https://huggingface.co/Bingsu/adetailer/resolve/53cc19de382014514d9d4038601d261a7faa9b7b/hand_yolov8s.pt",
-      "relative_path": "models/ultralytics/bbox/hand_yolov8s.pt",
-      "size": 22507643,
-      "sha256": "70b540063fbc385736d8258970744a4afbc4cbf7932134bae3b24cdadeadec06"
-    },
-    {
-      "id": "eye-segmentation-v2",
-      "url": "https://huggingface.co/byung-hyun/eye_segmentation_model/resolve/eac8bbddb65447dfe07bbf09d79035c466d20849/eye_seg_v2.ckpt",
-      "relative_path": "models/soya_seg/eye_seg_v2.ckpt",
-      "size": 529353537,
-      "sha256": "57bd5d5ea34bc7877c0134a84637a540e31d2dd316b097a91dc31c2be9dde279"
-    },
-    {
-      "id": "eyebrow-segmentation",
-      "url": "https://huggingface.co/byung-hyun/eye_segmentation_model/resolve/eac8bbddb65447dfe07bbf09d79035c466d20849/eyebrow_seg.ckpt",
-      "relative_path": "models/soya_seg/eyebrow_seg.ckpt",
-      "size": 529353537,
-      "sha256": "d1925aa36ccfced935051b22ad368abdfe55a5782188e74a8f9ac2826e5e7b5d"
-    },
-    {
-      "id": "qwen-image-edit-rapid-v19",
-      "url": "https://huggingface.co/Phr00t/Qwen-Image-Edit-Rapid-AIO/resolve/691024f438640508f8aa86414863fc15edfb8a84/v19/Qwen-Rapid-AIO-NSFW-v19.safetensors",
-      "relative_path": "models/checkpoints/v19/Qwen-Rapid-AIO-NSFW-v19.safetensors",
-      "size": 28431843583,
-      "sha256": "ba71575515709c9912560d1176b2386eaa49294fedc6ce57b9734aa57e91e5ac"
-    },
-    {
-      "id": "lazypos-embedding",
-      "url": "https://civitai.com/api/download/models/1833157",
-      "auth": "civitai",
-      "relative_path": "models/embeddings/lazypos.safetensors",
-      "size": 180376,
-      "sha256": "30866692653cb0063484dec240bc7971adc5767753b0cbbe072e2ddd7ff16b81"
-    },
-    {
-      "id": "minimax-h3-int8-convrot",
-      "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/014cd40f7e177756c6b2473c0d93b1c89a790dd2/diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors",
-      "relative_path": "models/diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors",
-      "size": 20970379616,
-      "sha256": "e889202c41dafb67b10d67b97f0d8541508036a6090af23425a5c2615d03c47a"
-    },
-    {
-      "id": "minimax-h3-ref2va-int8-convrot",
-      "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/dc559027db79c174125df4d827db55cd11178860/diffusion_models/minimax_h3_ref2va_pruned_int8_convrot.safetensors",
-      "relative_path": "models/diffusion_models/minimax_h3_ref2va_pruned_int8_convrot.safetensors",
-      "size": 20970379616,
-      "sha256": "9255f52b6677845ad238f20dfaafa94727053694127ab7f255c048f0f9365779"
-    },
-    {
-      "id": "minimax-h3-qwen3vl-nvfp4-awq",
-      "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/014cd40f7e177756c6b2473c0d93b1c89a790dd2/text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
-      "relative_path": "models/text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
-      "size": 15687142551,
-      "sha256": "35a88d51044231fe332301d7a62aa81e3f2cba62febeb446e2c1e3e0ef76f2c6"
-    },
-    {
-      "id": "minimax-h3-video-vae-fp16",
-      "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/014cd40f7e177756c6b2473c0d93b1c89a790dd2/vae/minimax_h3_video_vae_fp16.safetensors",
-      "relative_path": "models/vae/minimax_h3_video_vae_fp16.safetensors",
-      "size": 5207808496,
-      "sha256": "7c1f131492e7eddacaac9069a61b81bdd39de5cc96561e677c5eab1cdce5e522"
-    },
-    {
-      "id": "minimax-h3-audio-vae-fp32",
-      "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/014cd40f7e177756c6b2473c0d93b1c89a790dd2/vae/minimax_h3_audio_vae_fp32.safetensors",
-      "relative_path": "models/vae/minimax_h3_audio_vae_fp32.safetensors",
-      "size": 605254808,
-      "sha256": "8e505d95dd1561d47abd43d4238fd40d9bb1ae9e147ed0a4cba778d76ae4db48"
-    },
-    {
-      "id": "minimax-h3-lightx2v-turbo-8step-v1",
-      "url": "https://huggingface.co/lightx2v/Minimax-h3-Turbo/resolve/e6346777701aa2b64d42ed058cdd71ae00e7cd52/minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors",
-      "relative_path": "models/loras/minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors",
-      "size": 1956193000,
-      "sha256": "2339acdf19bfe123f46b971ea35d367a84adb85de43627e1eceafa5a5b2b111e"
-    },
-    {
-      "id": "minimax-h3-lightx2v-turbo-4step-768p-v1",
-      "url": "https://huggingface.co/drbaph/MiniMax-H3-Turbo-Lora-ComfyUI/resolve/781384e55ad67022bf7e3f14225574b9d1e92a46/minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_resized_avg_rank_21_bf16.safetensors",
-      "relative_path": "models/loras/minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_resized_avg_rank_21_bf16.safetensors",
-      "size": 298177224,
-      "sha256": "1b85da614014024a0c9507f12558917dcc69b6adb564e716324594f401723115"
-    },
-    {
-      "id": "minimax-h3-ref2v-lightx2v-turbo-4step-v0.1",
-      "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/dc559027db79c174125df4d827db55cd11178860/loras/minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors",
-      "relative_path": "models/loras/minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors",
-      "size": 1956193000,
-      "sha256": "5b9ab5ade15d0775676d01a907268a69a1468dc6033b3b0d3ded5502f3ebb84c"
-    },
-    {
-      "id": "anima-screenshot-v5-000009",
-      "url": "https://civitai.com/api/download/models/2903778?fileId=2781738",
-      "auth": "civitai",
-      "relative_path": "models/loras/screenshot_v5-000009.safetensors",
-      "size": 84413176,
-      "sha256": "d55729aee9f1e69004b1e8f494d896a009c4aeb4794837c1af1eea2dc6ea74ee"
-    },
-    {
-      "id": "anima-boldline-v13",
-      "url": "https://civitai.com/api/download/models/3021106?fileId=2899921",
-      "auth": "civitai",
-      "relative_path": "models/loras/anima-boldline-v13.safetensors",
-      "size": 59046920,
-      "sha256": "1e9dd389ae0bdf598dbb6b0149c7fedca7ccb72079dfa6481ec6d2c1fe7d7479"
-    },
-    {
-      "id": "blue-archive-style-b1",
-      "url": "https://civitai.com/api/download/models/2949191?fileId=2828479",
-      "auth": "civitai",
-      "relative_path": "models/loras/BlueArchiveStyleB1.safetensors",
-      "size": 137731072,
-      "sha256": "05eaec899cf03412dea811f9e7820e898056774f8e65fb24e64fed79d99875e7"
-    },
-    {
-      "id": "ix7-style",
-      "url": "https://civitai.com/api/download/models/3119258?fileId=2999526",
-      "auth": "civitai",
-      "relative_path": "models/loras/@ix7.safetensors",
-      "size": 91919200,
-      "sha256": "f7a889a81cd746b8c52a556589507e13799d12377944d726849cfb846f99629e"
-    },
-    {
-      "id": "flat0521-anima-lora",
-      "url": "https://civitai.com/api/download/models/2984489?fileId=2863978",
-      "auth": "civitai",
-      "relative_path": "models/loras/flat0521_anima_lora_comfy.safetensors",
-      "size": 33237056,
-      "sha256": "601b82181af58b98b49ee6b6eeb3b1c2417dc464aeb818a2c41d2685e0ed0727"
-    },
-    {
-      "id": "nova-anime-am-v4.0",
-      "url": "https://civitai.com/api/download/models/3201770?fileId=3083049",
-      "auth": "civitai",
-      "relative_path": "models/diffusion_models/novaAnimeAM_v40.safetensors",
-      "size": 4182350184,
-      "sha256": "6235640723b9d126fa8f4317ee5405105815e9df30cd12ec7c4c2de331c476ad"
-    },
-    {
-      "id": "anima-matsuda-hikari-v1.0",
-      "url": "https://civitai.com/api/download/models/3307880?fileId=3193024",
-      "auth": "civitai",
-      "relative_path": "models/loras/matsuda_hikari.safetensors",
-      "size": 138663783,
-      "sha256": "8c4d55121f5bddc3ce87ddc5f20d75b0168639dd929a3234fcf9a558d66f2bb6"
-    },
-    {
-      "id": "snapref-v1a",
-      "url": "https://huggingface.co/0ppxnhximxr/snapref-v1a/resolve/b06b901f8b8130acb58b2c446b84970267cd0a8c/snapref_v1a.safetensors",
-      "relative_path": "models/loras/snapref_v1a.safetensors",
-      "size": 381822008,
-      "sha256": "0b8c6897845bb721c46977eae034a95492aa39cf22342b345f7e0315f4bd81fd",
-      "license": "CircleStone Labs Non-Commercial License"
-    }
-  ],
-  "workflows": {
-    "release_dependencies": {
-      "v1": [
-        {
-          "id": "comfy_workflow_source_path",
-          "bindings": [
-            "comfy_workflow_source_path",
-            "illustration_workflow_source_paths.v3_anima"
-          ],
-          "model_ids": [
-            "anima-base-v1",
-            "anima-detail-tweaker",
-            "anima-text-encoder",
-            "anima-vae",
-            "atomsphere-style",
-            "clip-vit-l14",
-            "eye-segmentation-v2",
-            "eyebrow-segmentation",
-            "face-yolov8m",
-            "hand-yolov8s",
-            "small-head-anima"
-          ]
-        },
-        {
-          "id": "illustration_workflow_source_paths.v1",
-          "bindings": [
-            "illustration_workflow_source_paths.v1"
-          ],
-          "model_ids": [
-            "anima-text-encoder",
-            "anima-vae",
-            "anima-yume-v0.2",
-            "anime-sharp-v4-upscaler",
-            "dmd2-speed-lora",
-            "fcomic-illustrious-v2",
-            "kieed-style",
-            "rdbt-anima",
-            "rin-flanime-v3"
-          ]
-        },
-        {
-          "id": "illustration_workflow_source_paths.v3",
-          "bindings": [
-            "illustration_workflow_source_paths.v3"
-          ],
-          "model_ids": [
-            "anima-aesthetic-v1.1",
-            "anima-ci10ranko",
-            "anima-detail-tweaker",
-            "anima-n4t4r4p1su",
-            "anima-quality-slider",
-            "anima-text-encoder",
-            "anima-turbo-lora-v0.2",
-            "anima-vae",
-            "clip-vision-bigg-ipadapter",
-            "clip-vit-l14",
-            "dmd2-speed-lora",
-            "eye-segmentation-v2",
-            "eyebrow-segmentation",
-            "face-yolov8m",
-            "fcomic-illustrious-v2",
-            "hand-yolov8s",
-            "noob-ipa-mark1",
-            "rin-flanime-v3",
-            "small-head-anima"
-          ]
-        },
-        {
-          "id": "utility_workflow_source_path",
-          "bindings": [
-            "utility_workflow_source_path"
-          ],
-          "model_ids": [
-            "anime-sharp-v4-upscaler",
-            "clip-vision-bigg-ipadapter",
-            "clip-vit-l14",
-            "face-yolov8m",
-            "face-yolov8n",
-            "noob-ipa-mark1"
-          ]
-        },
-        {
-          "id": "asset_workflow_source_path",
-          "bindings": [
-            "asset_workflow_source_path"
-          ],
-          "model_ids": [
-            "clip-vision-bigg-ipadapter",
-            "eye-segmentation-v2",
-            "eyebrow-segmentation",
-            "face-yolov8m",
-            "face-yolov8n",
-            "hand-yolov8s",
-            "illustrious-openpose-controlnet",
-            "noob-ipa-mark1",
-            "noobai-canny-controlnet",
-            "rin-anim8draw-v3.1",
-            "suujiniku-style"
-          ]
-        },
-        {
-          "id": "anima_asset_workflow_source_path",
-          "bindings": [
-            "anima_asset_workflow_source_path"
-          ],
-          "model_ids": [
-            "anima-aesthetic-v1.1",
-            "anima-ci10ranko",
-            "anima-detail-tweaker",
-            "anima-n4t4r4p1su",
-            "anima-quality-slider",
-            "anima-text-encoder",
-            "anima-vae",
-            "clip-vision-bigg-ipadapter",
-            "clip-vit-l14",
-            "eye-segmentation-v2",
-            "eyebrow-segmentation",
-            "face-yolov8m",
-            "face-yolov8n",
-            "hand-yolov8s",
-            "kieed-style",
-            "noob-ipa-mark1",
-            "noobai-canny-controlnet",
-            "rin-anim8draw-v3.1",
-            "suujiniku-style"
-          ]
-        },
-        {
-          "id": "anima_only_asset_workflow_source_path",
-          "bindings": [
-            "anima_only_asset_workflow_source_path"
-          ],
-          "model_ids": [
-            "anima-aesthetic-v1.1",
-            "anima-detail-tweaker",
-            "anima-text-encoder",
-            "anima-vae",
-            "atomsphere-style",
-            "clip-vit-l14",
-            "eye-segmentation-v2",
-            "eyebrow-segmentation",
-            "face-yolov8m",
-            "hand-yolov8s",
-            "small-head-anima"
-          ]
-        },
-        {
-          "id": "qwen_edit_workflow_source_path",
-          "bindings": [
-            "qwen_edit_workflow_source_path"
-          ],
-          "model_ids": [
-            "qwen-image-edit-rapid-v19"
-          ]
-        },
-        {
-          "id": "anima_inpainting_workflow_source_path",
-          "bindings": [
-            "anima_inpainting_workflow_source_path"
-          ],
-          "model_ids": [
-            "anima-base-v1",
-            "anima-lllite-inpainting-v2",
-            "anima-text-encoder",
-            "anima-vae"
-          ]
-        },
-        {
-          "id": "tag_analysis_workflow_source_path",
-          "bindings": [
-            "tag_analysis_workflow_source_path"
-          ],
-          "model_ids": [
-            "face-yolov8n"
-          ]
-        },
-        {
-          "id": "asset_tag_analysis_workflow_source_path",
-          "bindings": [
-            "asset_tag_analysis_workflow_source_path"
-          ],
-          "model_ids": []
-        },
-        {
-          "id": "lora_training_workflow_source_paths.anima",
-          "bindings": [
-            "lora_training_workflow_source_paths.anima"
-          ],
-          "model_ids": [
-            "anima-base-v1",
-            "anima-text-encoder",
-            "anima-vae",
-            "anime-sharp-v4-upscaler"
-          ]
-        },
-        {
-          "id": "lora_training_workflow_source_paths.sdxl",
-          "bindings": [
-            "lora_training_workflow_source_paths.sdxl"
-          ],
-          "model_ids": [
-            "anime-sharp-v4-upscaler",
-            "illustrious-xl-v1",
-            "illustrious-xl-v1-vae",
-            "rin-flanime-v3"
-          ]
-        },
-        {
-          "id": "style_lora_training_workflow_source_paths.anima",
-          "bindings": [
-            "style_lora_training_workflow_source_paths.anima"
-          ],
-          "model_ids": [
-            "anima-base-v1",
-            "anima-text-encoder",
-            "anima-vae"
-          ]
-        },
-        {
-          "id": "style_lora_training_workflow_source_paths.sdxl",
-          "bindings": [
-            "style_lora_training_workflow_source_paths.sdxl"
-          ],
-          "model_ids": [
-            "illustrious-xl-v1",
-            "illustrious-xl-v1-vae",
-            "rin-flanime-v3"
-          ]
-        },
-        {
-          "id": "face_extract_workflow_source_path",
-          "bindings": [
-            "face_extract_workflow_source_path"
-          ],
-          "model_ids": [
-            "anime-sharp-v4-upscaler",
-            "face-yolov8m"
-          ]
-        },
-        {
-          "id": "debug_workflow_source_path",
-          "bindings": [
-            "debug_workflow_source_path"
-          ],
-          "model_ids": []
-        }
-      ],
-      "v2": [
-        {
-          "id": "comfy_workflow_source_path",
-          "bindings": [
-            "comfy_workflow_source_path",
-            "illustration_workflow_source_paths.v3_anima"
-          ],
-          "model_ids": [
-            "anima-base-v1",
-            "anima-detail-tweaker",
-            "anima-text-encoder",
-            "anima-vae",
-            "atomsphere-style",
-            "clip-vit-l14",
-            "eye-segmentation-v2",
-            "eyebrow-segmentation",
-            "face-yolov8m",
-            "hand-yolov8s",
-            "small-head-anima"
-          ]
-        },
-        {
-          "id": "illustration_workflow_source_paths.v1",
-          "bindings": [
-            "illustration_workflow_source_paths.v1"
-          ],
-          "model_ids": [
-            "anima-text-encoder",
-            "anima-vae",
-            "anima-yume-v0.2",
-            "anime-sharp-v4-upscaler",
-            "dmd2-speed-lora",
-            "fcomic-illustrious-v2",
-            "kieed-style",
-            "rdbt-anima",
-            "rin-flanime-v3"
-          ]
-        },
-        {
-          "id": "illustration_workflow_source_paths.v3",
-          "bindings": [
-            "illustration_workflow_source_paths.v3"
-          ],
-          "model_ids": [
-            "anima-aesthetic-v1.1",
-            "anima-ci10ranko",
-            "anima-detail-tweaker",
-            "anima-n4t4r4p1su",
-            "anima-quality-slider",
-            "anima-text-encoder",
-            "anima-turbo-lora-v0.2",
-            "anima-vae",
-            "clip-vision-bigg-ipadapter",
-            "clip-vit-l14",
-            "dmd2-speed-lora",
-            "eye-segmentation-v2",
-            "eyebrow-segmentation",
-            "face-yolov8m",
-            "fcomic-illustrious-v2",
-            "hand-yolov8s",
-            "noob-ipa-mark1",
-            "rin-flanime-v3",
-            "small-head-anima"
-          ]
-        },
-        {
-          "id": "utility_workflow_source_path",
-          "bindings": [
-            "utility_workflow_source_path"
-          ],
-          "model_ids": [
-            "anime-sharp-v4-upscaler",
-            "clip-vision-bigg-ipadapter",
-            "clip-vit-l14",
-            "face-yolov8m",
-            "face-yolov8n",
-            "noob-ipa-mark1"
-          ]
-        },
-        {
-          "id": "asset_workflow_source_path",
-          "bindings": [
-            "asset_workflow_source_path"
-          ],
-          "model_ids": [
-            "clip-vision-bigg-ipadapter",
-            "eye-segmentation-v2",
-            "eyebrow-segmentation",
-            "face-yolov8m",
-            "face-yolov8n",
-            "hand-yolov8s",
-            "illustrious-openpose-controlnet",
-            "noob-ipa-mark1",
-            "noobai-canny-controlnet",
-            "rin-anim8draw-v3.1",
-            "suujiniku-style"
-          ]
-        },
-        {
-          "id": "anima_asset_workflow_source_path",
-          "bindings": [
-            "anima_asset_workflow_source_path"
-          ],
-          "model_ids": [
-            "anima-aesthetic-v1.1",
-            "anima-ci10ranko",
-            "anima-detail-tweaker",
-            "anima-n4t4r4p1su",
-            "anima-quality-slider",
-            "anima-text-encoder",
-            "anima-vae",
-            "clip-vision-bigg-ipadapter",
-            "clip-vit-l14",
-            "eye-segmentation-v2",
-            "eyebrow-segmentation",
-            "face-yolov8m",
-            "face-yolov8n",
-            "hand-yolov8s",
-            "kieed-style",
-            "noob-ipa-mark1",
-            "noobai-canny-controlnet",
-            "rin-anim8draw-v3.1",
-            "suujiniku-style"
-          ]
-        },
-        {
-          "id": "anima_only_asset_workflow_source_path",
-          "bindings": [
-            "anima_only_asset_workflow_source_path"
-          ],
-          "model_ids": [
-            "anima-aesthetic-v1.1",
-            "anima-detail-tweaker",
-            "anima-text-encoder",
-            "anima-vae",
-            "atomsphere-style",
-            "clip-vit-l14",
-            "eye-segmentation-v2",
-            "eyebrow-segmentation",
-            "face-yolov8m",
-            "hand-yolov8s",
-            "small-head-anima"
-          ]
-        },
-        {
-          "id": "qwen_edit_workflow_source_path",
-          "bindings": [
-            "qwen_edit_workflow_source_path"
-          ],
-          "model_ids": [
-            "qwen-image-edit-rapid-v19"
-          ]
-        },
-        {
-          "id": "anima_inpainting_workflow_source_path",
-          "bindings": [
-            "anima_inpainting_workflow_source_path"
-          ],
-          "model_ids": [
-            "anima-base-v1",
-            "anima-lllite-inpainting-v2",
-            "anima-text-encoder",
-            "anima-vae"
-          ]
-        },
-        {
-          "id": "tag_analysis_workflow_source_path",
-          "bindings": [
-            "tag_analysis_workflow_source_path"
-          ],
-          "model_ids": [
-            "face-yolov8n"
-          ]
-        },
-        {
-          "id": "asset_tag_analysis_workflow_source_path",
-          "bindings": [
-            "asset_tag_analysis_workflow_source_path"
-          ],
-          "model_ids": []
-        },
-        {
-          "id": "lora_training_workflow_source_paths.anima",
-          "bindings": [
-            "lora_training_workflow_source_paths.anima"
-          ],
-          "model_ids": [
-            "anima-base-v1",
-            "anima-text-encoder",
-            "anima-vae",
-            "anime-sharp-v4-upscaler"
-          ]
-        },
-        {
-          "id": "lora_training_workflow_source_paths.sdxl",
-          "bindings": [
-            "lora_training_workflow_source_paths.sdxl"
-          ],
-          "model_ids": [
-            "anime-sharp-v4-upscaler",
-            "illustrious-xl-v1",
-            "illustrious-xl-v1-vae",
-            "rin-flanime-v3"
-          ]
-        },
-        {
-          "id": "style_lora_training_workflow_source_paths.anima",
-          "bindings": [
-            "style_lora_training_workflow_source_paths.anima"
-          ],
-          "model_ids": [
-            "anima-base-v1",
-            "anima-text-encoder",
-            "anima-vae"
-          ]
-        },
-        {
-          "id": "style_lora_training_workflow_source_paths.sdxl",
-          "bindings": [
-            "style_lora_training_workflow_source_paths.sdxl"
-          ],
-          "model_ids": [
-            "illustrious-xl-v1",
-            "illustrious-xl-v1-vae",
-            "rin-flanime-v3"
-          ]
-        },
-        {
-          "id": "face_extract_workflow_source_path",
-          "bindings": [
-            "face_extract_workflow_source_path"
-          ],
-          "model_ids": [
-            "anime-sharp-v4-upscaler",
-            "face-yolov8m"
-          ]
-        },
-        {
-          "id": "debug_workflow_source_path",
-          "bindings": [
-            "debug_workflow_source_path"
-          ],
-          "model_ids": []
-        },
-        {
-          "id": "video_workflow_source_paths.i2v",
-          "bindings": [
-            "video_workflow_source_paths.i2v"
-          ],
-          "model_ids": [
-            "minimax-h3-audio-vae-fp32",
-            "minimax-h3-int8-convrot",
-            "minimax-h3-lightx2v-turbo-8step-v1",
-            "minimax-h3-qwen3vl-nvfp4-awq",
-            "minimax-h3-video-vae-fp16"
-          ]
-        },
-        {
-          "id": "video_workflow_source_paths.first_last",
-          "bindings": [
-            "video_workflow_source_paths.first_last"
-          ],
-          "model_ids": [
-            "minimax-h3-audio-vae-fp32",
-            "minimax-h3-int8-convrot",
-            "minimax-h3-lightx2v-turbo-8step-v1",
-            "minimax-h3-qwen3vl-nvfp4-awq",
-            "minimax-h3-video-vae-fp16"
-          ]
-        },
-        {
-          "id": "video_workflow_source_paths.ref2v",
-          "bindings": [
-            "video_workflow_source_paths.ref2v"
-          ],
-          "model_ids": [
-            "minimax-h3-audio-vae-fp32",
-            "minimax-h3-qwen3vl-nvfp4-awq",
-            "minimax-h3-ref2va-int8-convrot",
-            "minimax-h3-video-vae-fp16"
-          ]
-        },
-        {
-          "id": "video_workflow_source_paths.i2v_fast",
-          "bindings": [
-            "video_workflow_source_paths.i2v_fast"
-          ],
-          "model_ids": [
-            "minimax-h3-audio-vae-fp32",
-            "minimax-h3-int8-convrot",
-            "minimax-h3-lightx2v-turbo-4step-768p-v1",
-            "minimax-h3-qwen3vl-nvfp4-awq",
-            "minimax-h3-video-vae-fp16"
-          ]
-        },
-        {
-          "id": "video_workflow_source_paths.first_last_fast",
-          "bindings": [
-            "video_workflow_source_paths.first_last_fast"
-          ],
-          "model_ids": [
-            "minimax-h3-audio-vae-fp32",
-            "minimax-h3-int8-convrot",
-            "minimax-h3-lightx2v-turbo-4step-768p-v1",
-            "minimax-h3-qwen3vl-nvfp4-awq",
-            "minimax-h3-video-vae-fp16"
-          ]
-        },
-        {
-          "id": "video_workflow_source_paths.ref2v_fast",
-          "bindings": [
-            "video_workflow_source_paths.ref2v_fast"
-          ],
-          "model_ids": [
-            "minimax-h3-audio-vae-fp32",
-            "minimax-h3-qwen3vl-nvfp4-awq",
-            "minimax-h3-ref2v-lightx2v-turbo-4step-v0.1",
-            "minimax-h3-ref2va-int8-convrot",
-            "minimax-h3-video-vae-fp16"
-          ]
-        }
-      ],
-      "v3": [
-        {
-          "id": "comfy_workflow_source_path",
-          "bindings": [
-            "comfy_workflow_source_path",
-            "illustration_workflow_source_paths.v3"
-          ],
-          "model_ids": [
-            "anima-aesthetic-v1.1",
-            "anima-ci10ranko",
-            "anima-detail-tweaker",
-            "anima-n4t4r4p1su",
-            "anima-quality-slider",
-            "anima-text-encoder",
-            "anima-turbo-lora-v0.2",
-            "anima-vae",
-            "clip-vision-bigg-ipadapter",
-            "clip-vit-l14",
-            "dmd2-speed-lora",
-            "eye-segmentation-v2",
-            "eyebrow-segmentation",
-            "face-yolov8m",
-            "fcomic-illustrious-v2",
-            "hand-yolov8s",
-            "noob-ipa-mark1",
-            "rin-flanime-v3",
-            "small-head-anima"
-          ]
-        },
-        {
-          "id": "illustration_workflow_source_paths.v1",
-          "bindings": [
-            "illustration_workflow_source_paths.v1"
-          ],
-          "model_ids": [
-            "anima-text-encoder",
-            "anima-vae",
-            "anima-yume-v0.2",
-            "anime-sharp-v4-upscaler",
-            "dmd2-speed-lora",
-            "fcomic-illustrious-v2",
-            "kieed-style",
-            "rdbt-anima",
-            "rin-flanime-v3"
-          ]
-        },
-        {
-          "id": "illustration_workflow_source_paths.v3_anima",
-          "bindings": [
-            "illustration_workflow_source_paths.v3_anima"
-          ],
-          "model_ids": [
-            "anima-base-v1",
-            "anima-detail-tweaker",
-            "anima-text-encoder",
-            "anima-vae",
-            "atomsphere-style",
-            "clip-vit-l14",
-            "eye-segmentation-v2",
-            "eyebrow-segmentation",
-            "face-yolov8m",
-            "hand-yolov8s",
-            "small-head-anima"
-          ]
-        },
-        {
-          "id": "utility_workflow_source_path",
-          "bindings": [
-            "utility_workflow_source_path"
-          ],
-          "model_ids": [
-            "anime-sharp-v4-upscaler",
-            "clip-vision-bigg-ipadapter",
-            "clip-vit-l14",
-            "face-yolov8m",
-            "face-yolov8n",
-            "noob-ipa-mark1"
-          ]
-        },
-        {
-          "id": "asset_workflow_source_path",
-          "bindings": [
-            "asset_workflow_source_path"
-          ],
-          "model_ids": [
-            "clip-vision-bigg-ipadapter",
-            "eye-segmentation-v2",
-            "eyebrow-segmentation",
-            "face-yolov8m",
-            "face-yolov8n",
-            "hand-yolov8s",
-            "illustrious-openpose-controlnet",
-            "noob-ipa-mark1",
-            "noobai-canny-controlnet",
-            "rin-anim8draw-v3.1",
-            "suujiniku-style"
-          ]
-        },
-        {
-          "id": "anima_asset_workflow_source_path",
-          "bindings": [
-            "anima_asset_workflow_source_path"
-          ],
-          "model_ids": [
-            "anima-aesthetic-v1.1",
-            "anima-ci10ranko",
-            "anima-detail-tweaker",
-            "anima-n4t4r4p1su",
-            "anima-quality-slider",
-            "anima-text-encoder",
-            "anima-vae",
-            "clip-vision-bigg-ipadapter",
-            "clip-vit-l14",
-            "eye-segmentation-v2",
-            "eyebrow-segmentation",
-            "face-yolov8m",
-            "face-yolov8n",
-            "hand-yolov8s",
-            "kieed-style",
-            "noob-ipa-mark1",
-            "noobai-canny-controlnet",
-            "rin-anim8draw-v3.1",
-            "suujiniku-style"
-          ]
-        },
-        {
-          "id": "anima_only_asset_workflow_source_path",
-          "bindings": [
-            "anima_only_asset_workflow_source_path"
-          ],
-          "model_ids": [
-            "anima-aesthetic-v1.1",
-            "anima-detail-tweaker",
-            "anima-text-encoder",
-            "anima-vae",
-            "atomsphere-style",
-            "clip-vit-l14",
-            "eye-segmentation-v2",
-            "eyebrow-segmentation",
-            "face-yolov8m",
-            "hand-yolov8s",
-            "small-head-anima"
-          ]
-        },
-        {
-          "id": "qwen_edit_workflow_source_path",
-          "bindings": [
-            "qwen_edit_workflow_source_path"
-          ],
-          "model_ids": [
-            "qwen-image-edit-rapid-v19"
-          ]
-        },
-        {
-          "id": "anima_inpainting_workflow_source_path",
-          "bindings": [
-            "anima_inpainting_workflow_source_path"
-          ],
-          "model_ids": [
-            "anima-base-v1",
-            "anima-lllite-inpainting-v2",
-            "anima-text-encoder",
-            "anima-vae"
-          ]
-        },
-        {
-          "id": "tag_analysis_workflow_source_path",
-          "bindings": [
-            "tag_analysis_workflow_source_path"
-          ],
-          "model_ids": [
-            "face-yolov8n"
-          ]
-        },
-        {
-          "id": "asset_tag_analysis_workflow_source_path",
-          "bindings": [
-            "asset_tag_analysis_workflow_source_path"
-          ],
-          "model_ids": []
-        },
-        {
-          "id": "lora_training_workflow_source_paths.anima",
-          "bindings": [
-            "lora_training_workflow_source_paths.anima"
-          ],
-          "model_ids": [
-            "anima-base-v1",
-            "anima-text-encoder",
-            "anima-vae",
-            "anime-sharp-v4-upscaler"
-          ]
-        },
-        {
-          "id": "lora_training_workflow_source_paths.sdxl",
-          "bindings": [
-            "lora_training_workflow_source_paths.sdxl"
-          ],
-          "model_ids": [
-            "anime-sharp-v4-upscaler",
-            "illustrious-xl-v1",
-            "illustrious-xl-v1-vae",
-            "rin-flanime-v3"
-          ]
-        },
-        {
-          "id": "style_lora_training_workflow_source_paths.anima",
-          "bindings": [
-            "style_lora_training_workflow_source_paths.anima"
-          ],
-          "model_ids": [
-            "anima-base-v1",
-            "anima-text-encoder",
-            "anima-vae"
-          ]
-        },
-        {
-          "id": "style_lora_training_workflow_source_paths.sdxl",
-          "bindings": [
-            "style_lora_training_workflow_source_paths.sdxl"
-          ],
-          "model_ids": [
-            "illustrious-xl-v1",
-            "illustrious-xl-v1-vae",
-            "rin-flanime-v3"
-          ]
-        },
-        {
-          "id": "face_extract_workflow_source_path",
-          "bindings": [
-            "face_extract_workflow_source_path"
-          ],
-          "model_ids": [
-            "anime-sharp-v4-upscaler",
-            "face-yolov8m"
-          ]
-        },
-        {
-          "id": "debug_workflow_source_path",
-          "bindings": [
-            "debug_workflow_source_path"
-          ],
-          "model_ids": []
-        },
-        {
-          "id": "video_workflow_source_paths.i2v",
-          "bindings": [
-            "video_workflow_source_paths.i2v"
-          ],
-          "model_ids": [
-            "minimax-h3-audio-vae-fp32",
-            "minimax-h3-int8-convrot",
-            "minimax-h3-lightx2v-turbo-8step-v1",
-            "minimax-h3-qwen3vl-nvfp4-awq",
-            "minimax-h3-video-vae-fp16"
-          ]
-        },
-        {
-          "id": "video_workflow_source_paths.first_last",
-          "bindings": [
-            "video_workflow_source_paths.first_last"
-          ],
-          "model_ids": [
-            "minimax-h3-audio-vae-fp32",
-            "minimax-h3-int8-convrot",
-            "minimax-h3-lightx2v-turbo-8step-v1",
-            "minimax-h3-qwen3vl-nvfp4-awq",
-            "minimax-h3-video-vae-fp16"
-          ]
-        },
-        {
-          "id": "video_workflow_source_paths.ref2v",
-          "bindings": [
-            "video_workflow_source_paths.ref2v"
-          ],
-          "model_ids": [
-            "minimax-h3-audio-vae-fp32",
-            "minimax-h3-qwen3vl-nvfp4-awq",
-            "minimax-h3-ref2va-int8-convrot",
-            "minimax-h3-video-vae-fp16"
-          ]
-        },
-        {
-          "id": "video_workflow_source_paths.i2v_fast",
-          "bindings": [
-            "video_workflow_source_paths.i2v_fast"
-          ],
-          "model_ids": [
-            "minimax-h3-audio-vae-fp32",
-            "minimax-h3-int8-convrot",
-            "minimax-h3-lightx2v-turbo-4step-768p-v1",
-            "minimax-h3-qwen3vl-nvfp4-awq",
-            "minimax-h3-video-vae-fp16"
-          ]
-        },
-        {
-          "id": "video_workflow_source_paths.first_last_fast",
-          "bindings": [
-            "video_workflow_source_paths.first_last_fast"
-          ],
-          "model_ids": [
-            "minimax-h3-audio-vae-fp32",
-            "minimax-h3-int8-convrot",
-            "minimax-h3-lightx2v-turbo-4step-768p-v1",
-            "minimax-h3-qwen3vl-nvfp4-awq",
-            "minimax-h3-video-vae-fp16"
-          ]
-        },
-        {
-          "id": "video_workflow_source_paths.ref2v_fast",
-          "bindings": [
-            "video_workflow_source_paths.ref2v_fast"
-          ],
-          "model_ids": [
-            "minimax-h3-audio-vae-fp32",
-            "minimax-h3-qwen3vl-nvfp4-awq",
-            "minimax-h3-ref2v-lightx2v-turbo-4step-v0.1",
-            "minimax-h3-ref2va-int8-convrot",
-            "minimax-h3-video-vae-fp16"
-          ]
-        }
-      ],
-      "v4": [
-        {
-          "id": "comfy_workflow_source_path",
-          "bindings": [
-            "comfy_workflow_source_path",
-            "illustration_workflow_source_paths.v3"
-          ],
-          "model_ids": [
-            "anima-2.9b-preview-v1",
-            "anima-aesthetic-v1.1",
-            "anima-ci10ranko",
-            "anima-detail-tweaker",
-            "anima-n4t4r4p1su",
-            "anima-quality-slider",
-            "anima-text-encoder",
-            "anima-turbo-lora-v0.2",
-            "anima-vae",
-            "clip-vision-bigg-ipadapter",
-            "clip-vit-l14",
-            "dmd2-speed-lora",
-            "eye-segmentation-v2",
-            "eyebrow-segmentation",
-            "face-yolov8m",
-            "fcomic-illustrious-v2",
-            "hand-yolov8s",
-            "noob-ipa-mark1",
-            "rin-flanime-v3",
-            "small-head-anima"
-          ]
-        },
-        {
-          "id": "illustration_workflow_source_paths.v1",
-          "bindings": [
-            "illustration_workflow_source_paths.v1"
-          ],
-          "model_ids": [
-            "anima-text-encoder",
-            "anima-vae",
-            "anima-yume-v0.2",
-            "anime-sharp-v4-upscaler",
-            "dmd2-speed-lora",
-            "fcomic-illustrious-v2",
-            "kieed-style",
-            "rdbt-anima",
-            "rin-flanime-v3"
-          ]
-        },
-        {
-          "id": "illustration_workflow_source_paths.v3_anima",
-          "bindings": [
-            "illustration_workflow_source_paths.v3_anima"
-          ],
-          "model_ids": [
-            "anima-2.9b-preview-v1",
-            "anima-base-v1",
-            "anima-detail-tweaker",
-            "anima-text-encoder",
-            "anima-vae",
-            "atomsphere-style",
-            "clip-vit-l14",
-            "eye-segmentation-v2",
-            "eyebrow-segmentation",
-            "face-yolov8m",
-            "hand-yolov8s",
-            "small-head-anima"
-          ]
-        },
-        {
-          "id": "utility_workflow_source_path",
-          "bindings": [
-            "utility_workflow_source_path"
-          ],
-          "model_ids": [
-            "anime-sharp-v4-upscaler",
-            "clip-vision-bigg-ipadapter",
-            "clip-vit-l14",
-            "face-yolov8m",
-            "face-yolov8n",
-            "noob-ipa-mark1"
-          ]
-        },
-        {
-          "id": "asset_workflow_source_path",
-          "bindings": [
-            "asset_workflow_source_path"
-          ],
-          "model_ids": [
-            "clip-vision-bigg-ipadapter",
-            "eye-segmentation-v2",
-            "eyebrow-segmentation",
-            "face-yolov8m",
-            "face-yolov8n",
-            "hand-yolov8s",
-            "illustrious-openpose-controlnet",
-            "noob-ipa-mark1",
-            "noobai-canny-controlnet",
-            "rin-anim8draw-v3.1",
-            "suujiniku-style"
-          ]
-        },
-        {
-          "id": "anima_asset_workflow_source_path",
-          "bindings": [
-            "anima_asset_workflow_source_path"
-          ],
-          "model_ids": [
-            "anima-2.9b-preview-v1",
-            "anima-aesthetic-v1.1",
-            "anima-ci10ranko",
-            "anima-detail-tweaker",
-            "anima-n4t4r4p1su",
-            "anima-quality-slider",
-            "anima-text-encoder",
-            "anima-vae",
-            "clip-vision-bigg-ipadapter",
-            "clip-vit-l14",
-            "eye-segmentation-v2",
-            "eyebrow-segmentation",
-            "face-yolov8m",
-            "face-yolov8n",
-            "hand-yolov8s",
-            "kieed-style",
-            "noob-ipa-mark1",
-            "noobai-canny-controlnet",
-            "rin-anim8draw-v3.1",
-            "suujiniku-style"
-          ]
-        },
-        {
-          "id": "anima_only_asset_workflow_source_path",
-          "bindings": [
-            "anima_only_asset_workflow_source_path"
-          ],
-          "model_ids": [
-            "anima-2.9b-preview-v1",
-            "anima-aesthetic-v1.1",
-            "anima-detail-tweaker",
-            "anima-text-encoder",
-            "anima-vae",
-            "atomsphere-style",
-            "clip-vit-l14",
-            "eye-segmentation-v2",
-            "eyebrow-segmentation",
-            "face-yolov8m",
-            "hand-yolov8s",
-            "small-head-anima"
-          ]
-        },
-        {
-          "id": "qwen_edit_workflow_source_path",
-          "bindings": [
-            "qwen_edit_workflow_source_path"
-          ],
-          "model_ids": [
-            "qwen-image-edit-rapid-v19"
-          ]
-        },
-        {
-          "id": "anima_inpainting_workflow_source_path",
-          "bindings": [
-            "anima_inpainting_workflow_source_path"
-          ],
-          "model_ids": [
-            "anima-base-v1",
-            "anima-lllite-inpainting-v2",
-            "anima-text-encoder",
-            "anima-vae"
-          ]
-        },
-        {
-          "id": "tag_analysis_workflow_source_path",
-          "bindings": [
-            "tag_analysis_workflow_source_path"
-          ],
-          "model_ids": [
-            "face-yolov8n"
-          ]
-        },
-        {
-          "id": "asset_tag_analysis_workflow_source_path",
-          "bindings": [
-            "asset_tag_analysis_workflow_source_path"
-          ],
-          "model_ids": []
-        },
-        {
-          "id": "lora_training_workflow_source_paths.anima",
-          "bindings": [
-            "lora_training_workflow_source_paths.anima"
-          ],
-          "model_ids": [
-            "anima-base-v1",
-            "anima-text-encoder",
-            "anima-vae",
-            "anime-sharp-v4-upscaler"
-          ]
-        },
-        {
-          "id": "lora_training_workflow_source_paths.sdxl",
-          "bindings": [
-            "lora_training_workflow_source_paths.sdxl"
-          ],
-          "model_ids": [
-            "anime-sharp-v4-upscaler",
-            "illustrious-xl-v1",
-            "illustrious-xl-v1-vae",
-            "rin-flanime-v3"
-          ]
-        },
-        {
-          "id": "style_lora_training_workflow_source_paths.anima",
-          "bindings": [
-            "style_lora_training_workflow_source_paths.anima"
-          ],
-          "model_ids": [
-            "anima-base-v1",
-            "anima-text-encoder",
-            "anima-vae"
-          ]
-        },
-        {
-          "id": "style_lora_training_workflow_source_paths.sdxl",
-          "bindings": [
-            "style_lora_training_workflow_source_paths.sdxl"
-          ],
-          "model_ids": [
-            "illustrious-xl-v1",
-            "illustrious-xl-v1-vae",
-            "rin-flanime-v3"
-          ]
-        },
-        {
-          "id": "face_extract_workflow_source_path",
-          "bindings": [
-            "face_extract_workflow_source_path"
-          ],
-          "model_ids": [
-            "anime-sharp-v4-upscaler",
-            "face-yolov8m"
-          ]
-        },
-        {
-          "id": "debug_workflow_source_path",
-          "bindings": [
-            "debug_workflow_source_path"
-          ],
-          "model_ids": []
-        },
-        {
-          "id": "video_workflow_source_paths.i2v",
-          "bindings": [
-            "video_workflow_source_paths.i2v"
-          ],
-          "model_ids": [
-            "minimax-h3-audio-vae-fp32",
-            "minimax-h3-int8-convrot",
-            "minimax-h3-lightx2v-turbo-8step-v1",
-            "minimax-h3-qwen3vl-nvfp4-awq",
-            "minimax-h3-video-vae-fp16"
-          ]
-        },
-        {
-          "id": "video_workflow_source_paths.first_last",
-          "bindings": [
-            "video_workflow_source_paths.first_last"
-          ],
-          "model_ids": [
-            "minimax-h3-audio-vae-fp32",
-            "minimax-h3-int8-convrot",
-            "minimax-h3-lightx2v-turbo-8step-v1",
-            "minimax-h3-qwen3vl-nvfp4-awq",
-            "minimax-h3-video-vae-fp16"
-          ]
-        },
-        {
-          "id": "video_workflow_source_paths.ref2v",
-          "bindings": [
-            "video_workflow_source_paths.ref2v"
-          ],
-          "model_ids": [
-            "minimax-h3-audio-vae-fp32",
-            "minimax-h3-qwen3vl-nvfp4-awq",
-            "minimax-h3-ref2va-int8-convrot",
-            "minimax-h3-video-vae-fp16"
-          ]
-        },
-        {
-          "id": "video_workflow_source_paths.i2v_fast",
-          "bindings": [
-            "video_workflow_source_paths.i2v_fast"
-          ],
-          "model_ids": [
-            "minimax-h3-audio-vae-fp32",
-            "minimax-h3-int8-convrot",
-            "minimax-h3-lightx2v-turbo-4step-768p-v1",
-            "minimax-h3-qwen3vl-nvfp4-awq",
-            "minimax-h3-video-vae-fp16"
-          ]
-        },
-        {
-          "id": "video_workflow_source_paths.first_last_fast",
-          "bindings": [
-            "video_workflow_source_paths.first_last_fast"
-          ],
-          "model_ids": [
-            "minimax-h3-audio-vae-fp32",
-            "minimax-h3-int8-convrot",
-            "minimax-h3-lightx2v-turbo-4step-768p-v1",
-            "minimax-h3-qwen3vl-nvfp4-awq",
-            "minimax-h3-video-vae-fp16"
-          ]
-        },
-        {
-          "id": "video_workflow_source_paths.ref2v_fast",
-          "bindings": [
-            "video_workflow_source_paths.ref2v_fast"
-          ],
-          "model_ids": [
-            "minimax-h3-audio-vae-fp32",
-            "minimax-h3-qwen3vl-nvfp4-awq",
-            "minimax-h3-ref2v-lightx2v-turbo-4step-v0.1",
-            "minimax-h3-ref2va-int8-convrot",
-            "minimax-h3-video-vae-fp16"
-          ]
-        }
-      ]
-    },
-    "required_bindings": [
-      "comfy_workflow_source_path",
-      "illustration_workflow_source_paths.v1",
-      "illustration_workflow_source_paths.v3",
-      "illustration_workflow_source_paths.v3_anima",
-      "utility_workflow_source_path",
-      "asset_workflow_source_path",
-      "anima_asset_workflow_source_path",
-      "anima_only_asset_workflow_source_path",
-      "qwen_edit_workflow_source_path",
-      "anima_inpainting_workflow_source_path",
-      "tag_analysis_workflow_source_path",
-      "asset_tag_analysis_workflow_source_path",
-      "lora_training_workflow_source_paths.anima",
-      "lora_training_workflow_source_paths.sdxl",
-      "style_lora_training_workflow_source_paths.anima",
-      "style_lora_training_workflow_source_paths.sdxl",
-      "face_extract_workflow_source_path",
-      "debug_workflow_source_path"
     ],
-    "optional_bindings": [
-      "video_workflow_source_paths.i2v",
-      "video_workflow_source_paths.first_last",
-      "video_workflow_source_paths.ref2v",
-      "video_workflow_source_paths.i2v_fast",
-      "video_workflow_source_paths.first_last_fast",
-      "video_workflow_source_paths.ref2v_fast"
+    "preinstall_wheels": [
+      {
+        "filename": "insightface-0.7.3-cp312-cp312-win_amd64.whl",
+        "id": "insightface-0.7.3-win-py312",
+        "sha256": "4e58a504433ba5a500d48328689e7d6c69873165653ded7553ce804beb8723db",
+        "size": 872768,
+        "url": "https://raw.githubusercontent.com/Gourieff/Assets/606558ed08f16b99a29ef30b0df0b4622164c524/Insightface/insightface-0.7.3-cp312-cp312-win_amd64.whl"
+      }
     ],
-    "excluded_filenames": [
-      "캐릭터복장추적_v1.json"
-    ]
+    "version": "3.12.11"
   },
+  "schema_version": 2,
   "validation_profiles": {
     "minimax_h3": {
-      "workflow_bindings": [
-        "video_workflow_source_paths.i2v",
-        "video_workflow_source_paths.first_last",
-        "video_workflow_source_paths.ref2v",
-        "video_workflow_source_paths.i2v_fast",
-        "video_workflow_source_paths.first_last_fast",
-        "video_workflow_source_paths.ref2v_fast"
-      ],
+      "defaults": {
+        "audio": false,
+        "fps": 24,
+        "height": 544,
+        "length": 124,
+        "lora_strength": 1,
+        "sampler": "res_multistep",
+        "scheduler": "simple",
+        "steps": 8,
+        "width": 960
+      },
+      "fast_defaults": {
+        "audio": false,
+        "fps": 24,
+        "height": 768,
+        "length": 124,
+        "lora_strength": 1,
+        "sampler": "res_multistep",
+        "scheduler": "simple",
+        "steps": 4,
+        "width": 1344
+      },
       "fast_workflow_bindings": [
         "video_workflow_source_paths.i2v_fast",
         "video_workflow_source_paths.first_last_fast",
         "video_workflow_source_paths.ref2v_fast"
-      ],
-      "ref_fast_workflow_bindings": [
-        "video_workflow_source_paths.ref2v_fast"
-      ],
-      "ref_workflow_bindings": [
-        "video_workflow_source_paths.ref2v"
       ],
       "model_ids": [
         "minimax-h3-audio-vae-fp32",
@@ -1909,53 +643,465 @@
         "minimax-h3-ref2va-int8-convrot",
         "minimax-h3-video-vae-fp16"
       ],
-      "defaults": {
-        "width": 960,
+      "ref_defaults": {
+        "audio": false,
+        "fps": 24,
         "height": 544,
         "length": 124,
-        "fps": 24,
-        "steps": 8,
+        "lora_strength": 1,
         "sampler": "res_multistep",
         "scheduler": "simple",
-        "lora_strength": 1,
-        "audio": false
-      },
-      "fast_defaults": {
-        "width": 1344,
-        "height": 768,
-        "length": 124,
-        "fps": 24,
-        "steps": 4,
-        "sampler": "res_multistep",
-        "scheduler": "simple",
-        "lora_strength": 1,
-        "audio": false
+        "steps": 20,
+        "teacache_end_step": -2,
+        "teacache_start_step": 2,
+        "teacache_threshold": 0.1,
+        "width": 960
       },
       "ref_fast_defaults": {
-        "width": 960,
-        "height": 544,
-        "length": 124,
-        "fps": 24,
-        "steps": 4,
-        "sampler": "res_multistep",
-        "scheduler": "simple",
-        "lora_strength": 1,
-        "audio": false
-      },
-      "ref_defaults": {
-        "width": 960,
-        "height": 544,
-        "length": 124,
-        "fps": 24,
-        "steps": 20,
-        "sampler": "res_multistep",
-        "scheduler": "simple",
-        "lora_strength": 1,
         "audio": false,
-        "teacache_threshold": 0.1,
-        "teacache_start_step": 2,
-        "teacache_end_step": -2
-      }
+        "fps": 24,
+        "height": 544,
+        "length": 124,
+        "lora_strength": 1,
+        "sampler": "res_multistep",
+        "scheduler": "simple",
+        "steps": 4,
+        "width": 960
+      },
+      "ref_fast_workflow_bindings": [
+        "video_workflow_source_paths.ref2v_fast"
+      ],
+      "ref_workflow_bindings": [
+        "video_workflow_source_paths.ref2v"
+      ],
+      "workflow_bindings": [
+        "video_workflow_source_paths.i2v",
+        "video_workflow_source_paths.first_last",
+        "video_workflow_source_paths.ref2v",
+        "video_workflow_source_paths.i2v_fast",
+        "video_workflow_source_paths.first_last_fast",
+        "video_workflow_source_paths.ref2v_fast"
+      ]
     }
+  },
+  "workflows": {
+    "excluded_filenames": [
+      "캐릭터복장추적_v1.json"
+    ],
+    "items": [
+      {
+        "bindings": [
+          "anima_asset_workflow_source_path"
+        ],
+        "id": "anima_asset_workflow_source_path",
+        "model_ids": [
+          "anima-aesthetic-v1.1",
+          "anima-ci10ranko",
+          "anima-detail-tweaker",
+          "anima-n4t4r4p1su",
+          "anima-quality-slider",
+          "anima-text-encoder",
+          "anima-vae",
+          "clip-vision-bigg-ipadapter",
+          "clip-vit-l14",
+          "eye-segmentation-v2",
+          "eyebrow-segmentation",
+          "face-yolov8m",
+          "face-yolov8n",
+          "hand-yolov8s",
+          "kieed-style",
+          "noob-ipa-mark1",
+          "noobai-canny-controlnet",
+          "rin-anim8draw-v3.1",
+          "snapref-v1b",
+          "suujiniku-style"
+        ]
+      },
+      {
+        "bindings": [
+          "anima_inpainting_workflow_source_path"
+        ],
+        "id": "anima_inpainting_workflow_source_path",
+        "model_ids": [
+          "anima-base-v1",
+          "anima-lllite-inpainting-v2",
+          "anima-text-encoder",
+          "anima-vae"
+        ]
+      },
+      {
+        "bindings": [
+          "anima_only_asset_workflow_source_path"
+        ],
+        "id": "anima_only_asset_workflow_source_path",
+        "model_ids": [
+          "anima-2.9b-preview-v1",
+          "anima-boldline-v13",
+          "anima-detail-tweaker",
+          "anima-screenshot-v5-000009",
+          "anima-text-encoder",
+          "anima-vae",
+          "atomsphere-style",
+          "blue-archive-style-b1",
+          "clip-vit-l14",
+          "eye-segmentation-v2",
+          "eyebrow-segmentation",
+          "face-yolov8m",
+          "hand-yolov8s",
+          "ix7-style",
+          "small-head-anima",
+          "snapref-v1b"
+        ]
+      },
+      {
+        "bindings": [
+          "asset_tag_analysis_workflow_source_path"
+        ],
+        "id": "asset_tag_analysis_workflow_source_path",
+        "model_ids": []
+      },
+      {
+        "bindings": [
+          "asset_workflow_source_path"
+        ],
+        "id": "asset_workflow_source_path",
+        "model_ids": [
+          "clip-vision-bigg-ipadapter",
+          "eye-segmentation-v2",
+          "eyebrow-segmentation",
+          "face-yolov8m",
+          "face-yolov8n",
+          "hand-yolov8s",
+          "illustrious-openpose-controlnet",
+          "noob-ipa-mark1",
+          "noobai-canny-controlnet",
+          "rin-anim8draw-v3.1",
+          "suujiniku-style"
+        ]
+      },
+      {
+        "bindings": [
+          "comfy_workflow_source_path",
+          "illustration_workflow_source_paths.v3_anima"
+        ],
+        "id": "comfy_workflow_source_path",
+        "model_ids": [
+          "anima-boldline-v13",
+          "anima-detail-tweaker",
+          "anima-screenshot-v5-000009",
+          "anima-text-encoder",
+          "anima-turbo-lora-v0.2",
+          "anima-vae",
+          "atomsphere-style",
+          "blue-archive-style-b1",
+          "clip-vit-l14",
+          "eye-segmentation-v2",
+          "eyebrow-segmentation",
+          "face-yolov8m",
+          "hand-yolov8s",
+          "ix7-style",
+          "nova-anime-am-v4.0",
+          "snapref-v1b"
+        ]
+      },
+      {
+        "bindings": [
+          "debug_workflow_source_path"
+        ],
+        "id": "debug_workflow_source_path",
+        "model_ids": []
+      },
+      {
+        "bindings": [
+          "face_extract_workflow_source_path"
+        ],
+        "id": "face_extract_workflow_source_path",
+        "model_ids": [
+          "anime-sharp-v4-upscaler",
+          "face-yolov8m"
+        ]
+      },
+      {
+        "bindings": [
+          "illustration_workflow_source_paths.v1"
+        ],
+        "id": "illustration_workflow_source_paths.v1",
+        "model_ids": [
+          "anima-text-encoder",
+          "anima-vae",
+          "anima-yume-v0.2",
+          "anime-sharp-v4-upscaler",
+          "dmd2-speed-lora",
+          "fcomic-illustrious-v2",
+          "kieed-style",
+          "rdbt-anima",
+          "rin-flanime-v3"
+        ]
+      },
+      {
+        "bindings": [
+          "illustration_workflow_source_paths.v3"
+        ],
+        "id": "illustration_workflow_source_paths.v3",
+        "model_ids": [
+          "anima-aesthetic-v1.1",
+          "anima-ci10ranko",
+          "anima-detail-tweaker",
+          "anima-n4t4r4p1su",
+          "anima-quality-slider",
+          "anima-screenshot-v5-000009",
+          "anima-text-encoder",
+          "anima-turbo-lora-v0.2",
+          "anima-vae",
+          "atomsphere-style",
+          "clip-vision-bigg-ipadapter",
+          "clip-vit-l14",
+          "dmd2-speed-lora",
+          "eye-segmentation-v2",
+          "eyebrow-segmentation",
+          "face-yolov8m",
+          "fcomic-illustrious-v2",
+          "flat0521-anima-lora",
+          "hand-yolov8s",
+          "noob-ipa-mark1",
+          "rin-flanime-v3",
+          "small-head-anima",
+          "snapref-v1b"
+        ]
+      },
+      {
+        "bindings": [
+          "lora_training_workflow_source_paths.anima"
+        ],
+        "id": "lora_training_workflow_source_paths.anima",
+        "model_ids": [
+          "anima-base-v1",
+          "anima-text-encoder",
+          "anima-vae",
+          "anime-sharp-v4-upscaler"
+        ]
+      },
+      {
+        "bindings": [
+          "lora_training_workflow_source_paths.sdxl"
+        ],
+        "id": "lora_training_workflow_source_paths.sdxl",
+        "model_ids": [
+          "anime-sharp-v4-upscaler",
+          "illustrious-xl-v1",
+          "illustrious-xl-v1-vae",
+          "rin-flanime-v3"
+        ]
+      },
+      {
+        "bindings": [
+          "qwen_edit_workflow_source_path"
+        ],
+        "id": "qwen_edit_workflow_source_path",
+        "model_ids": [
+          "qwen-image-edit-rapid-v19"
+        ]
+      },
+      {
+        "bindings": [
+          "style_lora_training_workflow_source_paths.anima"
+        ],
+        "id": "style_lora_training_workflow_source_paths.anima",
+        "model_ids": [
+          "anima-base-v1",
+          "anima-text-encoder",
+          "anima-vae"
+        ]
+      },
+      {
+        "bindings": [
+          "style_lora_training_workflow_source_paths.sdxl"
+        ],
+        "id": "style_lora_training_workflow_source_paths.sdxl",
+        "model_ids": [
+          "illustrious-xl-v1",
+          "illustrious-xl-v1-vae",
+          "rin-flanime-v3"
+        ]
+      },
+      {
+        "bindings": [
+          "tag_analysis_workflow_source_path"
+        ],
+        "id": "tag_analysis_workflow_source_path",
+        "model_ids": [
+          "face-yolov8n"
+        ]
+      },
+      {
+        "bindings": [
+          "utility_workflow_source_path"
+        ],
+        "id": "utility_workflow_source_path",
+        "model_ids": [
+          "anime-sharp-v4-upscaler",
+          "clip-vision-bigg-ipadapter",
+          "clip-vit-l14",
+          "face-yolov8m",
+          "face-yolov8n",
+          "noob-ipa-mark1"
+        ]
+      },
+      {
+        "bindings": [
+          "video_workflow_source_paths.first_last"
+        ],
+        "id": "video_workflow_source_paths.first_last",
+        "model_ids": [
+          "minimax-h3-audio-vae-fp32",
+          "minimax-h3-int8-convrot",
+          "minimax-h3-lightx2v-turbo-8step-v1",
+          "minimax-h3-qwen3vl-nvfp4-awq",
+          "minimax-h3-video-vae-fp16"
+        ]
+      },
+      {
+        "bindings": [
+          "video_workflow_source_paths.first_last_fast"
+        ],
+        "id": "video_workflow_source_paths.first_last_fast",
+        "model_ids": [
+          "minimax-h3-audio-vae-fp32",
+          "minimax-h3-int8-convrot",
+          "minimax-h3-lightx2v-turbo-4step-768p-v1",
+          "minimax-h3-lightx2v-turbo-8step-v1",
+          "minimax-h3-qwen3vl-nvfp4-awq",
+          "minimax-h3-video-vae-fp16"
+        ]
+      },
+      {
+        "bindings": [
+          "video_workflow_source_paths.i2v"
+        ],
+        "id": "video_workflow_source_paths.i2v",
+        "model_ids": [
+          "minimax-h3-audio-vae-fp32",
+          "minimax-h3-int8-convrot",
+          "minimax-h3-lightx2v-turbo-8step-v1",
+          "minimax-h3-qwen3vl-nvfp4-awq",
+          "minimax-h3-video-vae-fp16"
+        ]
+      },
+      {
+        "bindings": [
+          "video_workflow_source_paths.i2v_fast"
+        ],
+        "id": "video_workflow_source_paths.i2v_fast",
+        "model_ids": [
+          "minimax-h3-audio-vae-fp32",
+          "minimax-h3-int8-convrot",
+          "minimax-h3-lightx2v-turbo-4step-768p-v1",
+          "minimax-h3-lightx2v-turbo-8step-v1",
+          "minimax-h3-qwen3vl-nvfp4-awq",
+          "minimax-h3-video-vae-fp16"
+        ]
+      },
+      {
+        "bindings": [
+          "video_workflow_source_paths.ref2v"
+        ],
+        "id": "video_workflow_source_paths.ref2v",
+        "model_ids": [
+          "minimax-h3-audio-vae-fp32",
+          "minimax-h3-qwen3vl-nvfp4-awq",
+          "minimax-h3-ref2va-int8-convrot",
+          "minimax-h3-video-vae-fp16"
+        ]
+      },
+      {
+        "bindings": [
+          "video_workflow_source_paths.ref2v_fast"
+        ],
+        "id": "video_workflow_source_paths.ref2v_fast",
+        "model_ids": [
+          "minimax-h3-audio-vae-fp32",
+          "minimax-h3-qwen3vl-nvfp4-awq",
+          "minimax-h3-ref2v-lightx2v-turbo-4step-v0.1",
+          "minimax-h3-ref2va-int8-convrot",
+          "minimax-h3-video-vae-fp16"
+        ]
+      },
+      {
+        "bindings": [
+          "workflow_pack_extra_paths.illustration_anima_fast"
+        ],
+        "id": "workflow_pack_extra_paths.illustration_anima_fast",
+        "model_ids": [
+          "anima-boldline-v13",
+          "anima-detail-tweaker",
+          "anima-matsuda-hikari-v1.0",
+          "anima-text-encoder",
+          "anima-turbo-lora-v0.2",
+          "anima-vae",
+          "atomsphere-style",
+          "clip-vit-l14",
+          "eye-segmentation-v2",
+          "eyebrow-segmentation",
+          "face-yolov8m",
+          "hand-yolov8s",
+          "ix7-style",
+          "nova-anime-am-v4.0",
+          "snapref-v1b"
+        ]
+      },
+      {
+        "bindings": [
+          "workflow_pack_extra_paths.illustration_anima_fast_8gb"
+        ],
+        "id": "workflow_pack_extra_paths.illustration_anima_fast_8gb",
+        "model_ids": [
+          "anima-boldline-v13",
+          "anima-detail-tweaker",
+          "anima-matsuda-hikari-v1.0",
+          "anima-text-encoder",
+          "anima-turbo-lora-v0.2",
+          "anima-vae",
+          "atomsphere-style",
+          "clip-vit-l14",
+          "eye-segmentation-v2",
+          "eyebrow-segmentation",
+          "face-yolov8m",
+          "hand-yolov8s",
+          "ix7-style",
+          "nova-anime-am-v4.0",
+          "snapref-v1b"
+        ]
+      }
+    ],
+    "optional_bindings": [],
+    "release_version": "v6",
+    "required_bindings": [
+      "anima_asset_workflow_source_path",
+      "anima_inpainting_workflow_source_path",
+      "anima_only_asset_workflow_source_path",
+      "asset_tag_analysis_workflow_source_path",
+      "asset_workflow_source_path",
+      "comfy_workflow_source_path",
+      "debug_workflow_source_path",
+      "face_extract_workflow_source_path",
+      "illustration_workflow_source_paths.v1",
+      "illustration_workflow_source_paths.v3",
+      "illustration_workflow_source_paths.v3_anima",
+      "lora_training_workflow_source_paths.anima",
+      "lora_training_workflow_source_paths.sdxl",
+      "qwen_edit_workflow_source_path",
+      "style_lora_training_workflow_source_paths.anima",
+      "style_lora_training_workflow_source_paths.sdxl",
+      "tag_analysis_workflow_source_path",
+      "utility_workflow_source_path",
+      "video_workflow_source_paths.first_last",
+      "video_workflow_source_paths.first_last_fast",
+      "video_workflow_source_paths.i2v",
+      "video_workflow_source_paths.i2v_fast",
+      "video_workflow_source_paths.ref2v",
+      "video_workflow_source_paths.ref2v_fast",
+      "workflow_pack_extra_paths.illustration_anima_fast",
+      "workflow_pack_extra_paths.illustration_anima_fast_8gb"
+    ]
   }
 }
