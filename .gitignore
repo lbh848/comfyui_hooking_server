@@ -23,18 +23,18 @@ bot/
 instance_lora/
 current_mode_workflow/
 # 배포용 한국어 CSV와 라이선스 고지만 포함; 사용자 CSV와 RAG 캐시는 제외
-/auto_complete/*
-!/auto_complete/danbooru-tags-anima-kr-2026-10-05-v2.csv
-!/auto_complete/README.md
-!/auto_complete/LICENSE.danbooru-tags-kr.txt
-!/auto_complete/CC-BY-SA-4.0.txt
+/src/auto_complete/*
+!/src/auto_complete/danbooru-tags-anima-kr-2026-10-05-v2.csv
+!/src/auto_complete/README.md
+!/src/auto_complete/LICENSE.danbooru-tags-kr.txt
+!/src/auto_complete/CC-BY-SA-4.0.txt
 CLAUDE.md
 AGENTS.md
 # 에이전트 스킬 정의 (로컬 전용)
 .agents/
 
 # 테스트 코드 (로컬 전용, git 공유 대상 아님)
-tests/
+/src/tests-local/
 
 # Key files (보안상 git에 포함하지 않음)
 key/
@@ -47,14 +47,14 @@ config.json
 updater_config.json
 
 # Updater build artifacts
-updater_dev/build/
-updater_dev/dist/
-updater_dev/*.spec
+/src/updater_dev/build/
+/src/updater_dev/dist/
+/src/updater_dev/*.spec
 
 # Distribution patches (외부 드라이브 배포)
 chain_presets/
-customprompt/enhance_outfit_prompt_v4_storage/
-customprompt/test_program/
+/src/customprompt/enhance_outfit_prompt_v4_storage/
+/src/customprompt/test_program/
 patch_data.zip
 patch_chain_presets.zip
 
@@ -108,3 +108,15 @@ vast_ssh_key.pub
 /runtime/vast_lora_delete_outbox.json
 /runtime/vast_lora_delete_outbox.json.tmp
 /runtime/temp/
+
+# V6 installation layout: never commit user settings, data, or machine-specific shortcuts.
+/config/*
+!/config/.gitkeep
+/data/*
+!/data/.gitkeep
+/*.lnk
+/src/updater_config.json
+/src/config.json
+/src/vast_model_sources.json
+
+/src/dist/

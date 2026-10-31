@@ -41,16 +41,16 @@ jobs:
 
       - name: Build app bundle
         run: |
-          chmod +x packaging/macos/build_app.sh
-          packaging/macos/build_app.sh dist "${{ steps.version.outputs.value }}"
+          chmod +x src/packaging/macos/build_app.sh
+          src/packaging/macos/build_app.sh dist "${{ steps.version.outputs.value }}"
 
       - name: Verify the bundle is launchable
         run: |
           set -euo pipefail
           APP=dist/SoyaComfy.app
           test -x "$APP/Contents/MacOS/SoyaComfy"        || { echo "실행기에 실행 권한이 없습니다"; exit 1; }
-          test -x "$APP/Contents/Resources/app/run_en.sh" || { echo "run_en.sh 에 실행 권한이 없습니다"; exit 1; }
-          test -f "$APP/Contents/Resources/app/server.py" || { echo "페이로드에 server.py 가 없습니다"; exit 1; }
+          test -x "$APP/Contents/Resources/app/src/run_en.sh" || { echo "run_en.sh 에 실행 권한이 없습니다"; exit 1; }
+          test -f "$APP/Contents/Resources/app/src/server.py" || { echo "페이로드에 server.py 가 없습니다"; exit 1; }
           # 사용자 데이터나 작업 산출물이 섞여 들어가지 않았는지.
           for leaked in config.json key comfy logs models .git; do
             if [ -e "$APP/Contents/Resources/app/$leaked" ]; then

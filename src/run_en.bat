@@ -1,0 +1,155 @@
+@echo off
+setlocal
+set "SOYA_APP=%~1"
+if not defined SOYA_APP set "SOYA_APP=illustration"
+if not "%SOYA_APP%"=="illustration" if not "%SOYA_APP%"=="asset" if not "%SOYA_APP%"=="video" exit /b 1
+cd /d "%~dp0"
+set "UV_CACHE_DIR=%CD%\.tools\uv-cache"
+if not exist "%CD%\.tools\tmp" mkdir "%CD%\.tools\tmp"
+set "TEMP=%CD%\.tools\tmp"
+set "TMP=%CD%\.tools\tmp"
+chcp 65001 >nul 2>&1
+set "PYTHONUTF8=1"
+set "PYTHONIOENCODING=utf-8"
+
+:: Reject duplicate launches before setup or Python startup callbacks can run.
+powershell -NoProfile -Command "$client = [Net.Sockets.TcpClient]::new(); try { if ($client.ConnectAsync('127.0.0.1', 8189).Wait(300)) { exit 0 }; exit 1 } catch { exit 1 } finally { $client.Dispose() }"
+if not errorlevel 1 goto :already_running
+
+set "UV_VERSION=0.11.8"
+set "UV_TOOL_DIR=%CD%\.tools\uv-%UV_VERSION%"
+set "UV_EXE=%UV_TOOL_DIR%\uv.exe"
+
+echo [1/7] Checking project-local uv %UV_VERSION%...
+if not exist "%UV_EXE%" (
+    echo       Project-local uv not found. Installing pinned version...
+    set "UV_INSTALL_DIR=%UV_TOOL_DIR%"
+    set "UV_NO_MODIFY_PATH=1"
+    powershell -NoProfile -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/%UV_VERSION%/install.ps1 | iex"
+    if errorlevel 1 (
+        echo [ERROR] Failed to install project-local uv %UV_VERSION%.
+        echo         Check the network connection and PowerShell policy.
+        goto :end
+    )
+    if not exist "%UV_EXE%" (
+        echo [ERROR] uv installer completed but uv.exe is missing:
+        echo         %UV_EXE%
+        goto :end
+    )
+    echo       Project-local uv installed.
+) else (
+    echo       Project-local uv OK.
+)
+set "UV_INSTALL_DIR="
+set "UV_NO_MODIFY_PATH="
+set "PATH=%UV_TOOL_DIR%;%PATH%"
+
+echo [2/7] Checking system Git...
+call :ensure_git
+if errorlevel 1 goto :end
+
+:: Cleanup legacy venv (one-time)
+if exist "venv" (
+    echo       Cleaning up legacy venv folder...
+    rmdir /s /q "venv" 2>nul
+)
+
+:: Python 3.12 + packages
+echo [3/7] Setting up Python 3.12 environment...
+"%UV_EXE%" sync
+if errorlevel 1 (
+    echo [ERROR] Failed to set up environment. Check network connection.
+    goto :end
+)
+
+:: Windows GPU 가속: onnxruntime-directml 은 pyproject.toml 에 선언되어
+:: uv sync 로 함께 설치됨(DirectML = NVIDIA/AMD/Intel 공통 GPU, 없으면 자동 CPU 폴백).
+:: 별도 runtime 설치 분기는 의존성 충돌(onnxruntime vs -directml)을 유발해 제거.
+
+echo [4/7] Checking project-local video tools...
+"%UV_EXE%" run --no-sync python ensure_video_tools.py
+if errorlevel 1 (
+    echo [ERROR] Failed to prepare Real-ESRGAN or FFmpeg.
+    echo         Check the messages above and network connection.
+    goto :end
+)
+set "PATH=%CD%\.tools\ffmpeg\bin;%PATH%"
+
+echo [5/7] Checking model files...
+"%UV_EXE%" run --no-sync python ensure_models.py
+if errorlevel 1 (
+    echo [ERROR] Failed to prepare model files. Check the messages above and network connection.
+    goto :end
+)
+
+echo [6/7] Packages, models, and video tools ready.
+
+:: Create required folders
+echo [7/7] Creating folders...
+"%UV_EXE%" run --no-sync python app_paths.py
+if errorlevel 1 goto :end
+
+echo.
+echo ============================================
+echo   ComfyUI Proxy Server Start (port 8189)
+echo   Frontend: http://127.0.0.1:8189/
+echo ============================================
+echo.
+"%UV_EXE%" run --no-sync python launch.py %*
+if "%ERRORLEVEL%"=="2" goto :already_running
+
+:end
+pause
+endlocal
+goto :eof
+
+:already_running
+start "" "http://127.0.0.1:8189/?app=%SOYA_APP%"
+endlocal
+exit /b 0
+
+:ensure_git
+where git.exe >nul 2>&1
+if not errorlevel 1 (
+    for /f "delims=" %%G in ('git --version 2^>nul') do echo       %%G
+    exit /b 0
+)
+call :add_standard_git_to_path
+where git.exe >nul 2>&1
+if not errorlevel 1 (
+    for /f "delims=" %%G in ('git --version 2^>nul') do echo       %%G
+    exit /b 0
+)
+
+echo       Git not found. Installing Git for Windows with winget...
+where winget.exe >nul 2>&1
+if errorlevel 1 (
+    echo [ERROR] Git is missing and Windows Package Manager ^(winget^) is unavailable.
+    echo         Install or repair Microsoft App Installer, then run this manager again.
+    exit /b 1
+)
+
+winget install --id Git.Git --exact --source winget --silent --accept-package-agreements --accept-source-agreements
+if errorlevel 1 (
+    echo [ERROR] Git for Windows installation failed.
+    echo         Review the winget message above and run this manager again.
+    exit /b 1
+)
+
+:: winget updates the persistent PATH, but this batch needs Git immediately.
+call :add_standard_git_to_path
+
+where git.exe >nul 2>&1
+if errorlevel 1 (
+    echo [ERROR] Git was installed but git.exe was not found in a standard location.
+    echo         Restart Windows or add Git\cmd to PATH, then run this manager again.
+    exit /b 1
+)
+for /f "delims=" %%G in ('git --version 2^>nul') do echo       Installed %%G
+exit /b 0
+
+:add_standard_git_to_path
+if exist "%LOCALAPPDATA%\Programs\Git\cmd\git.exe" set "PATH=%LOCALAPPDATA%\Programs\Git\cmd;%PATH%"
+if exist "%ProgramFiles%\Git\cmd\git.exe" set "PATH=%ProgramFiles%\Git\cmd;%PATH%"
+if defined ProgramW6432 if exist "%ProgramW6432%\Git\cmd\git.exe" set "PATH=%ProgramW6432%\Git\cmd;%PATH%"
+exit /b 0
