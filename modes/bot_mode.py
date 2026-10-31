@@ -772,7 +772,6 @@ def get_bot_asset_output_instruction(
     return instruction
 
 
-VISUAL_GUIDE_MAX_TARGETS = 120
 VISUAL_GUIDE_TASK_KEY = "visual_profile_guide"
 VISUAL_APPEARANCE_TASK_KEY = "visual_profile_appearance_vision"
 VISUAL_GUIDE_QUEUE_TYPE = "visual_profile_guide"
@@ -801,9 +800,10 @@ Write one concise Korean natural-language description. Return strict JSON only:
     if output_language == "en":
         system_message = system_message.replace("Korean", "English")
     user_message = (
-        "이 이미지는 한 캐릭터 카드에 등록된 첫 번째 대표 이미지 한 장이다. "
-        "제공된 다른 텍스트 단서 없이 이미지 자체만 관찰해, 같은 캐릭터의 다른 "
-        "프로필과 외형으로 구별하는 데 도움이 되는 정보만 작성하라."
+        "This is the first representative image registered for one character card. "
+        "Observe the image itself without relying on other text clues. Describe only "
+        "visible appearance that helps distinguish this profile from other profiles "
+        "of the same character."
     )
     return [
         {"role": "system", "content": system_message},
@@ -1006,7 +1006,7 @@ Treat the declared default/base card as the routing answer whenever no registere
 
 For every target, infer which canonical character commands, forms, and source variants route to it. Representative filenames and visual tags are supporting evidence, while the source document is authoritative. A representative filename may identify one example belonging to the card, but it must not narrow the card to only that example when other source variants have no separate registered card. Include all exact source-grounded canonical command labels that route to the target as aliases.
 
-Write Korean natural-language selection guides that explain when the profile becomes true, when it remains true, and the important situations in which it must not be selected. Preserve distinctions such as normal/corrupted/overcome forms, profile-level outfit variants, and first-event-only special assets. Each card has one flat default-outfit reference and no nested outfit choice; that reference is a fallback example, not a rule that prevents scene-appropriate attire. Do not turn ordinary emotion or action suffixes into a persistent profile unless the target itself is demonstrably that profile.
+Write Korean natural-language selection guides and evidence. Keep this response language even when the source document or existing card text uses another language. Selection guides explain when the profile becomes true, when it remains true, and the important situations in which it must not be selected. Preserve distinctions such as normal/corrupted/overcome forms, profile-level outfit variants, and first-event-only special assets. Each card has one flat default-outfit reference and no nested outfit choice; that reference is a fallback example, not a rule that prevents scene-appropriate attire. Do not turn ordinary emotion or action suffixes into a persistent profile unless the target itself is demonstrably that profile.
 
 Before responding, compare the complete fixed card set as a whole. Check that the proposed guides are mutually understandable and collectively leave no source-supported persistent visual form without a routing answer. In particular, check completed transitions both into and out of every non-default form. When only some cards are requested for rewriting, make their guides compatible with the comparison-only peers rather than silently redefining those peers.
 
@@ -1022,19 +1022,21 @@ Return exactly one item for every target_key and no extra targets."""
         ).replace('"selection_guide":"Korean prose"', '"selection_guide":"English prose"')
 
     user_message = (
-        "아래는 이 봇이 실제 대화에 사용하는 이미지 출력 지침을 포함한 시스템 "
-        "프롬프트 원문이다. 제목이나 필드명이 고정되어 있다고 가정하지 말고 전체 "
-        "문맥을 보존해서 해석하라.\n\n"
+        "The following source document contains the image-output instructions used "
+        "by this bot in actual conversations. Interpret its full context without "
+        "assuming fixed headings or field names.\n\n"
         "===== SOURCE DOCUMENT START =====\n"
         f"{system_prompt}\n"
         "===== SOURCE DOCUMENT END =====\n\n"
-        "아래 대상은 프로그램에 실제 등록된 캐릭터 카드이다. 내부 ID는 결과를 다시 "
-        "연결하기 위한 기계 식별자일 뿐 의미를 추측하는 근거로 사용하지 마라.\n\n"
+        "The following character cards are registered in the application. Internal "
+        "IDs are machine identifiers for linking results back to cards; do not infer "
+        "their meaning from those IDs.\n\n"
         "===== COMPLETE FIXED REGISTERED CARD SET =====\n"
         + ("\n\n".join(routing_sections) or "(none)")
         + "\n===== END COMPLETE FIXED REGISTERED CARD SET =====\n\n"
-        "아래 TARGET 카드만 새 별칭과 선택 기준을 반환하라. 위의 comparison-only "
-        "카드는 선택 경계를 비교하기 위한 것이며 결과 항목으로 추가하지 마라.\n\n"
+        "Return new aliases and selection guides only for the TARGET cards below. "
+        "Use the comparison-only cards above to compare selection boundaries; "
+        "do not include them as result items.\n\n"
         + "\n\n".join(target_sections)
     )
     return [
@@ -4526,15 +4528,6 @@ class BotMode:
                     f"bot={bot_name!r}, value={requested_targets!r}"
                 )
                 return _json_error("자동 작성할 캐릭터 카드를 하나 이상 선택하세요.")
-            if len(requested_targets) > VISUAL_GUIDE_MAX_TARGETS:
-                print(
-                    f"[VISUAL_GUIDE:API] 생성 요청 대상 초과: bot={bot_name!r}, "
-                    f"count={len(requested_targets)}, max={VISUAL_GUIDE_MAX_TARGETS}"
-                )
-                return _json_error(
-                    f"한 번에 최대 {VISUAL_GUIDE_MAX_TARGETS}개 카드까지 생성할 수 있습니다."
-                )
-
             data = _load_bot_data()
             bot = next(
                 (item for item in data.get("bots", []) if item.get("name") == bot_name),
@@ -5722,14 +5715,6 @@ class BotMode:
                     f"bot={bot_name!r}, value={items!r}"
                 )
                 return _json_error("적용할 제안을 하나 이상 선택하세요.")
-            if len(items) > VISUAL_GUIDE_MAX_TARGETS:
-                print(
-                    f"[VISUAL_GUIDE:APPLY] 적용 항목 초과: bot={bot_name!r}, "
-                    f"count={len(items)}, max={VISUAL_GUIDE_MAX_TARGETS}"
-                )
-                return _json_error(
-                    f"한 번에 최대 {VISUAL_GUIDE_MAX_TARGETS}개 카드까지 적용할 수 있습니다."
-                )
             if not isinstance(overwrite, bool):
                 print(
                     f"[VISUAL_GUIDE:APPLY] overwrite 형식 오류: "
@@ -7235,6 +7220,10 @@ DEFAULT_ILLUST_SETTINGS = {
     "ed_activate": False,
     "face_id_activate": False,
     "face_id_str": 0.55,
+    "snapref_enabled": False,
+    "snapref_strength": 0.0,
+    "snapref_mode": "char",
+    "snapref_megapixels": 1.0,
     "seed": -1,
     "face_lora_upscale_size": "",
 }

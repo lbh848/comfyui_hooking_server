@@ -436,6 +436,12 @@ class CharacterMakerService:
             # pose·ipadapter(참조 이미지)는 CM 미지원 잠금으로 유지한다.
             "style_lora_enabled": False,
             "style_lora_list": [],
+            "snapref_enabled": False,
+            "snapref_images": [],
+            "snapref_dir": "",
+            "snapref_mode": "char",
+            "snapref_strength": 0.0,
+            "snapref_megapixels": 1.0,
             "face_lora_enabled": False,
             "face_lora_list": [],
             "face_lora_upscale_size": "",
@@ -1015,6 +1021,8 @@ class CharacterMakerService:
             "anima_quality_preset",
             "anima_artist_preset",
             "anima_negative_preset",
+            "snapref_dir",
+            "snapref_mode",
         )
         for key in string_fields:
             if key in raw:
@@ -1038,6 +1046,7 @@ class CharacterMakerService:
                 settings[key] = bool(raw.get(key))
         for key in (
             "style_lora_enabled",
+            "snapref_enabled",
             "face_lora_enabled",
             "hrf_sdxl",
             "hrf_anima",
@@ -1057,6 +1066,18 @@ class CharacterMakerService:
         for key in ("style_lora_list", "face_lora_list"):
             if key in raw:
                 settings[key] = _normalize_lora_list(raw.get(key))
+        if "snapref_images" in raw:
+            images = raw.get("snapref_images")
+            if isinstance(images, list):
+                settings["snapref_images"] = [
+                    copy.deepcopy(image) for image in images if isinstance(image, dict)
+                ][:1]
+            else:
+                print(
+                    "[CHARACTER_MAKER] Ref 이미지 설정 유지: "
+                    f"목록 형식이 아님, input={images!r}, "
+                    f"current={settings.get('snapref_images', [])!r}"
+                )
         for key in ("face_tags", "eye_tags", "face_lora_upscale_size"):
             if key in raw:
                 value = raw.get(key)
@@ -1071,14 +1092,22 @@ class CharacterMakerService:
             if not math.isfinite(hrf_size) or not 1.0 <= hrf_size <= 3.0:
                 raise CharacterMakerError("hrf_size는 1.0~3.0 사이여야 합니다.")
             settings["hrf_size"] = hrf_size
-        for key in ("face_crop_top", "face_crop_bottom"):
+        for key, low, high in (
+            ("face_crop_top", 0.0, 10.0),
+            ("face_crop_bottom", 0.0, 10.0),
+            ("snapref_strength", -3.0, 3.0),
+            ("snapref_megapixels", 0.25, 2.0),
+        ):
             if key in raw:
                 try:
                     value = float(raw.get(key))
                 except (TypeError, ValueError) as exc:
+                    print(f"[CHARACTER_MAKER] 생성 옵션 숫자 파싱 실패: key={key}, input={raw.get(key)!r}")
+                    traceback.print_exc()
                     raise CharacterMakerError(f"{key}는 숫자여야 합니다.") from exc
-                if not math.isfinite(value) or not 0.0 <= value <= 10.0:
-                    raise CharacterMakerError(f"{key}는 0.0~10.0 사이여야 합니다.")
+                if not math.isfinite(value) or not low <= value <= high:
+                    print(f"[CHARACTER_MAKER] 생성 옵션 범위 오류: key={key}, input={value!r}, range=({low}, {high})")
+                    raise CharacterMakerError(f"{key}는 {low}~{high} 사이여야 합니다.")
                 settings[key] = value
 
     def add_reference(

@@ -13820,6 +13820,20 @@
         .tip-box { display: none; position: absolute; top: 20px; left: 0; z-index: 220; width: 270px; padding: 8px 10px; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 6px; font-size: 0.7rem; line-height: 1.5; box-shadow: 0 2px 10px rgba(0,0,0,0.35); white-space: normal; }
         .tip-box b { font-weight: 600; }
         .tip-wrap:hover .tip-box { display: block; }
+        #rep-batch-images-overlay .tip-wrap:focus-within .tip-box { display: block; }
+        #rep-batch-body .rep-batch-card-header {
+            display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:8px 10px;
+            margin:-8px -8px;border-radius:8px;list-style:none;cursor:pointer;
+        }
+        #rep-batch-body details[open] > .rep-batch-card-header {
+            margin-bottom:10px;border-bottom:1px solid;border-radius:8px 8px 0 0;
+        }
+        #rep-batch-body .rep-batch-card-header::-webkit-details-marker { display:none; }
+        #rep-batch-body .rep-batch-card-arrow {
+            display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;
+            width:24px;height:24px;color:var(--text2);font-size:.9rem;
+        }
+        #rep-batch-body details[open] > summary > .rep-batch-card-arrow { transform:rotate(90deg); }
         /* 오른쪽 끝 배치 툴팁: left:0 전개가 뷰포트를 벗어나면 right:0로 좌측 전개 */
         .tip-box.tip-box--end { left: auto; right: 0; }
 
@@ -17728,6 +17742,35 @@
                                  <input type="number" id="illust-img-h" value="756" min="256" max="4096" step="8" onchange="saveIllustSettings()" style="width:58px; padding:2px 4px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.7rem; text-align:center;">
                              </div>
                              <fieldset id="illust-local-advanced-after" style="border:0; margin:0; padding:0; min-width:0;">
+                            <div id="illust-snapref-group" role="group" aria-labelledby="illust-snapref-title" data-illust-capability="anima" style="margin-top:8px; padding:8px; border:1px solid var(--border); border-radius:8px; background:rgba(100,150,255,0.04);">
+                              <div style="display:flex; align-items:center; gap:6px;">
+                                <span id="illust-snapref-title" style="flex:0 0 auto; margin-right:auto; font-size:0.72rem; font-weight:600;">대표 이미지 레퍼런스</span>
+                                <label class="toggle-switch" style="transform:scale(0.8);">
+                                    <input type="checkbox" id="illust-snapref-toggle" aria-label="대표 이미지를 레퍼런스로 사용" onchange="saveIllustSettings()">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                                <span id="illust-snapref-status" class="toggle-status off" style="font-size:0.7rem;">OFF</span>
+                              </div>
+                              <div id="illust-snapref-options" style="display:none; margin-top:8px; padding-top:8px; border-top:1px solid var(--border);">
+                                <div style="display:flex; align-items:center; gap:6px;">
+                                    <label for="illust-snapref-strength" class="illust-chip label-chip" style="flex:0 0 auto; white-space:nowrap;">강도</label>
+                                    <input type="range" id="illust-snapref-strength" min="-3" max="3" step="0.1" value="0" title="0은 기본 강도입니다. 높일수록 참조를 더 강하게 반영합니다." oninput="document.getElementById('illust-snapref-strength-val').textContent=this.value; saveIllustSettings()" style="flex:1; min-width:0;">
+                                    <span id="illust-snapref-strength-val" class="illust-chip value-chip">0</span>
+                                </div>
+                                <div style="display:flex; align-items:center; gap:6px; margin-top:4px;">
+                                    <label for="illust-snapref-mode" class="illust-chip label-chip" style="flex:0 0 auto; white-space:nowrap;">참조 범위</label>
+                                    <select id="illust-snapref-mode" onchange="saveIllustSettings()" style="flex:1; min-width:0; padding:3px 6px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.75rem;">
+                                        <option value="char">캐릭터 외형</option>
+                                        <option value="cs">외형 + 화풍</option>
+                                    </select>
+                                </div>
+                                <div style="display:flex; align-items:center; gap:6px; margin-top:4px;">
+                                    <label for="illust-snapref-megapixels" class="illust-chip label-chip" style="flex:0 0 auto; white-space:nowrap;">참조 해상도</label>
+                                    <input type="range" id="illust-snapref-megapixels" min="0.25" max="2" step="0.25" value="1" oninput="document.getElementById('illust-snapref-megapixels-val').textContent=this.value + ' MP'; saveIllustSettings()" style="flex:1; min-width:0;">
+                                    <span id="illust-snapref-megapixels-val" class="illust-chip value-chip">1 MP</span>
+                                </div>
+                              </div>
+                            </div>
                              <div data-illust-capability="ipadapter" style="display:flex; align-items:center; gap:6px; margin-top:6px;">
                                 <span class="illust-chip label-chip">FACE-IPAdapter</span>
                                 <label class="toggle-switch" style="transform:scale(0.8);">
@@ -18214,6 +18257,41 @@
                     </div>
                     </div>
 
+                    <div id="asset-snapref-wrapper" class="workflow-mode-control" data-workflow-availability="anima" style="background:rgba(0,188,212,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
+                        <div style="display:flex; align-items:center; gap:8px;">
+                            <label for="asset-snapref-toggle" class="section-title" style="margin-bottom:0;">Ref 이미지 <span class="workflow-mode-reason">ANIMA</span></label>
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="asset-snapref-toggle" onchange="onAssetRefToggle('snapref')">
+                                <span class="toggle-slider"></span>
+                            </label>
+                            <span id="asset-snapref-status" class="toggle-status off">OFF</span>
+                        </div>
+                        <div id="asset-snapref-section" style="display:none; margin-top:8px;">
+                            <div style="font-size:0.8rem; color:var(--text-secondary); margin-bottom:6px;">SnapRef로 참고할 이미지 한 장을 선택하세요.</div>
+                            <label style="display:flex; align-items:center; gap:6px; margin-bottom:6px; font-size:0.8rem;">참조 범위
+                                <select id="asset-snapref-mode" style="flex:1; min-width:0; padding:4px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:4px;">
+                                    <option value="char">캐릭터 외형</option><option value="cs">외형+그림체</option>
+                                </select>
+                            </label>
+                            <label style="display:flex; align-items:center; gap:6px; margin-bottom:6px; font-size:0.8rem;">강도
+                                <input type="range" id="asset-snapref-strength" min="-3" max="3" step="0.1" value="0" style="flex:1; min-width:0;" oninput="document.getElementById('asset-snapref-strength-val').textContent=this.value">
+                                <span id="asset-snapref-strength-val" style="min-width:30px; text-align:right;">0</span>
+                            </label>
+                            <label style="display:flex; align-items:center; gap:6px; margin-bottom:8px; font-size:0.8rem;">참조 해상도 (MP)
+                                <input type="range" id="asset-snapref-megapixels" min="0.25" max="2" step="0.25" value="1" style="flex:1; min-width:0;" oninput="document.getElementById('asset-snapref-megapixels-val').textContent=this.value">
+                                <span id="asset-snapref-megapixels-val" style="min-width:30px; text-align:right;">1</span>
+                            </label>
+                            <div style="display:flex; gap:4px;">
+                                <button type="button" onclick="document.getElementById('asset-snapref-file-input').click()" style="flex:1; font-size:0.75rem; padding:4px;">파일 업로드</button>
+                                <button type="button" onclick="openAssetRefGalleryPickerInternal('snapref')" style="flex:1; font-size:0.75rem; padding:4px;">에셋에서 선택</button>
+                            </div>
+                            <input type="file" id="asset-snapref-file-input" accept="image/*" style="display:none;" onchange="uploadAssetRefImage(this, 'snapref')">
+                            <div id="asset-snapref-preview" style="display:none; margin-top:6px;">
+                                <div id="asset-snapref-preview-grid" style="display:grid; grid-template-columns:minmax(0, 160px); gap:4px;"></div>
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- 포즈 섹션 -->
                     <div id="asset-pose-container" class="workflow-mode-control" data-workflow-availability="pose" style="background:rgba(0,188,212,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
                         <div style="display:flex; align-items:center; gap:8px;">
@@ -18680,6 +18758,18 @@
                                                         <div id="at-fill-lora-controls" style="display:none;"><button class="at-fill-secondary-btn" onclick="atOpenFillLoraPicker('lora')">＋ LoRA 추가</button><div class="at-fill-lora-list" id="at-fill-lora-list"></div></div>
                                                         <div class="batch-toggle-row"><label>Style LoRA</label><label class="toggle-switch"><input type="checkbox" id="at-fill-style-lora-enabled" onchange="atOnFillToggle('style_lora_enabled', this.checked)"><span class="toggle-slider"></span></label></div>
                                                         <div id="at-fill-style-lora-controls" style="display:none;"><button class="at-fill-secondary-btn" onclick="atOpenFillLoraPicker('style_lora')">＋ Style LoRA 추가</button><div class="at-fill-lora-list" id="at-fill-style-lora-list"></div></div>
+                                                        <div class="at-model-control" data-at-availability="anima">
+                                                            <div class="batch-toggle-row"><label>Ref 이미지 <span class="at-model-reason">ANIMA 전용</span></label><label class="toggle-switch"><input type="checkbox" id="at-fill-snapref-enabled" onchange="atOnFillToggle('snapref_enabled', this.checked)"><span class="toggle-slider"></span></label></div>
+                                                            <div id="at-fill-snapref-controls" style="display:none;">
+                                                                <label class="batch-field-label">강도 <input id="at-fill-snapref-strength" type="number" min="-3" max="3" step="0.1" value="0" style="width:65px;" onchange="atOnFillFloat('snapref_strength', this.value)"></label>
+                                                                <select id="at-fill-snapref-mode" class="at-fill-select" onchange="atOnFillText('snapref_mode', this.value)"><option value="char">캐릭터 외형</option><option value="cs">외형+그림체</option></select>
+                                                                <label class="batch-field-label">참조 해상도 (MP) <input id="at-fill-snapref-megapixels" type="number" min="0.25" max="2" step="0.25" value="1" style="width:65px;" onchange="atOnFillFloat('snapref_megapixels', this.value)"></label>
+                                                                <button class="batch-ref-upload-btn" onclick="document.getElementById('at-fill-snapref-file').click()">파일 업로드</button>
+                                                                <button type="button" onclick="atFillSlot.snapref_images=[]; atFillSlot.snapref_dir=''; document.getElementById('at-fill-snapref-preview').innerHTML=''; atUpdateFillPromptPreview(); _atSaveState();">이미지 지우기</button>
+                                                                <input type="file" id="at-fill-snapref-file" accept="image/*" hidden onchange="atUploadFillReferences(this, 'snapref')">
+                                                                <div class="at-ref-preview-strip" id="at-fill-snapref-preview"></div>
+                                                            </div>
+                                                        </div>
                                                         <div class="at-model-control" data-at-availability="anima">
                                                             <div class="batch-toggle-row"><label>Face LoRA <span class="at-model-reason">ANIMA 전용</span></label><label class="toggle-switch"><input type="checkbox" id="at-fill-face-lora-enabled" onchange="atOnFillToggle('face_lora_enabled', this.checked)"><span class="toggle-slider"></span></label></div>
                                                             <div id="at-fill-face-lora-controls" style="display:none;"><button class="at-fill-secondary-btn" onclick="atOpenFillLoraPicker('face_lora')">＋ Face LoRA 추가</button><div class="at-fill-lora-list" id="at-fill-face-lora-list"></div></div>
@@ -19312,6 +19402,21 @@
                                             <div id="cm-setting-style-lora-panel" class="cm-maker-lora-panel">
                                                 <button type="button" class="cm-maker-lora-add" onclick="cmOpenLoraPicker('style')">＋ Style LoRA 추가</button>
                                                 <div id="cm-setting-style-lora-list" class="cm-maker-lora-list"></div>
+                                            </div>
+                                            <div class="at-model-control" data-at-availability="anima" data-cm-snapref>
+                                                <div class="batch-toggle-row"><label for="cm-snapref-toggle">Ref 이미지 <span class="at-model-reason">ANIMA 에셋</span></label><label class="toggle-switch"><input type="checkbox" id="cm-snapref-toggle" data-cm-setting="snapref_enabled" onchange="onAssetRefToggle('cm-snapref'); cmSettingChanged()"><span class="toggle-slider"></span></label><span id="cm-snapref-status" class="toggle-status off">OFF</span></div>
+                                                <div id="cm-snapref-section" style="display:none; margin-top:6px;">
+                                                    <div style="font-size:0.72rem; color:var(--text-secondary); margin-bottom:6px;">이미지 한 장을 SnapRef로 참조합니다.</div>
+                                                    <div class="batch-field-group" style="margin-bottom:6px;"><label class="batch-field-label" for="cm-snapref-mode">참조 방식</label><select id="cm-snapref-mode" class="at-fill-select" data-cm-setting="snapref_mode" onchange="cmSettingChanged()"><option value="char">캐릭터 외형</option><option value="cs">외형+그림체</option></select></div>
+                                                    <div style="display:flex; align-items:center; gap:6px; margin-bottom:6px;"><label class="batch-field-label" for="cm-snapref-strength">강도</label><input type="range" id="cm-snapref-strength" data-cm-setting="snapref_strength" min="-3" max="3" step="0.1" value="0" style="flex:1; min-width:0;" oninput="document.getElementById('cm-snapref-strength-value').textContent=Number(this.value).toFixed(1)" onchange="cmSettingChanged()"><span id="cm-snapref-strength-value" style="font-size:0.7rem; min-width:26px;">0.0</span></div>
+                                                    <div class="batch-field-group" style="margin-bottom:6px;"><label class="batch-field-label" for="cm-snapref-megapixels">참조 해상도(MP)</label><input type="number" id="cm-snapref-megapixels" class="at-fill-select" data-cm-setting="snapref_megapixels" min="0.25" max="2" step="0.25" value="1" onchange="cmSettingChanged()"></div>
+                                                    <div style="display:flex; gap:4px;">
+                                                        <button type="button" onclick="document.getElementById('cm-snapref-file-input').click()" style="flex:1; font-size:0.75rem; padding:4px;">파일 업로드</button>
+                                                        <button type="button" onclick="openAssetRefGalleryPickerInternal('cm-snapref')" style="flex:1; font-size:0.75rem; padding:4px;">에셋에서 선택</button>
+                                                    </div>
+                                                    <input type="file" id="cm-snapref-file-input" accept="image/*" style="display:none;" onchange="uploadAssetRefImage(this, 'cm-snapref')">
+                                                    <div id="cm-snapref-preview" style="display:none; margin-top:6px;"><div id="cm-snapref-preview-grid" style="display:grid; grid-template-columns:minmax(0,160px); gap:4px;"></div></div>
+                                                </div>
                                             </div>
                                             <div class="at-model-control" data-at-availability="anima">
                                                 <div class="batch-toggle-row"><label>Face LoRA <span class="at-model-reason">ANIMA 전용</span></label><label class="toggle-switch"><input type="checkbox" id="cm-setting-face-lora-enabled" data-cm-setting="face_lora_enabled" onchange="cmLoraToggleChanged('face')"><span class="toggle-slider"></span></label></div>
@@ -31933,40 +32038,66 @@
                 return;
             }
 
-            if (reset) {
-                paginationState.offset = 0;
-                paginationState.hasMore = true;
-                backupsData = [];
-            }
-
             paginationState.isLoading = true;
+            const filter = paginationState.filter;
 
             try {
                 const params = new URLSearchParams({
-                    offset: paginationState.offset,
-                    limit: paginationState.limit,
-                    filter: paginationState.filter
+                    offset: reset ? 0 : paginationState.offset,
+                    // Background refreshes must retain every page already being browsed.
+                    limit: reset ? Math.max(paginationState.limit, paginationState.offset, backupsData.length) : paginationState.limit,
+                    filter
                 });
 
                 const data = await fetchJSON(`/api/backups?${params}`);
+                if (reset && backupsData.length > 0 && data.has_more && filter === paginationState.filter) {
+                    // Include the old trailing rows displaced by newly inserted/renamed entries.
+                    const knownNames = new Set(backupsData.map(backup => backup.name));
+                    const addedCount = Math.max(data.total - paginationState.total,
+                        data.backups.filter(backup => !knownNames.has(backup.name)).length);
+                    if (addedCount > 0) {
+                        params.set('offset', data.offset + data.limit);
+                        params.set('limit', addedCount);
+                        const tail = await fetchJSON(`/api/backups?${params}`);
+                        if (tail.total !== data.total) {
+                            console.info('[Backup] 갱신 중 목록 변경으로 다시 조회합니다:', data.total, tail.total);
+                            _pendingBackupReload = true;
+                            return;
+                        }
+                        data.backups.push(...tail.backups);
+                        data.limit += tail.limit;
+                        data.total = tail.total;
+                        data.has_more = tail.has_more;
+                    }
+                }
+                if (filter !== paginationState.filter) {
+                    console.info('[Backup] 필터 변경 전 목록 응답 생략:', filter);
+                    return;
+                }
 
                 if (reset) {
                     backupsData = data.backups;
                 } else {
-                    backupsData = backupsData.concat(data.backups);
+                    const knownNames = new Set(backupsData.map(backup => backup.name));
+                    backupsData = backupsData.concat(data.backups.filter(backup => !knownNames.has(backup.name)));
                 }
 
                 paginationState.total = data.total;
                 paginationState.offset = data.offset + data.limit;
                 paginationState.hasMore = data.has_more;
 
-                renderBackups(backupsData);
+                renderBackups(reset ? backupsData : data.backups, !reset);
                 updateStatsBar();
                 await loadConversionInfo();
                 await loadRescheduleStatus();
             } catch (e) {
-                document.getElementById('content').innerHTML =
-                    `<div class="empty-state"><h2>서버 연결 실패</h2><p>${escapeHtml(e.message)}</p></div>`;
+                console.error('[Backup] 목록 조회 실패:', {filter, reset, error: e});
+                if (backupsData.length === 0) {
+                    document.getElementById('content').innerHTML =
+                        `<div class="empty-state"><h2>서버 연결 실패</h2><p>${escapeHtml(e.message)}</p></div>`;
+                } else {
+                    showToast('백업 목록 갱신 실패: ' + e.message, 'error');
+                }
             } finally {
                 paginationState.isLoading = false;
                 if (_pendingBackupReload) {
@@ -32068,6 +32199,8 @@
             paginationState.hasMore = true;
             paginationState.total = 0;
             backupsData = [];
+            renderBackups([]);
+            window.scrollTo({top: 0, behavior: 'instant'});
             loadBackups(true);
         }
 
@@ -32106,15 +32239,44 @@
             `;
         }
 
-        function renderBackups(backups) {
+        function renderBackups(backups, append = false) {
             const content = document.getElementById('content');
             if (!backups || backups.length === 0) {
-                content.innerHTML = '<div class="empty-state"><h2>삽화 백업 없음</h2><p>이미지가 생성되면 여기에 표시됩니다</p></div>';
+                if (!append) {
+                    content.innerHTML = '<div class="empty-state"><h2>삽화 백업 없음</h2><p>이미지가 생성되면 여기에 표시됩니다</p></div>';
+                    promptDataMap.clear();
+                }
                 return;
             }
 
-            let html = '<div class="backup-grid">';
+            let grid = content.querySelector('.backup-grid');
+            if (!grid) {
+                grid = document.createElement('div');
+                grid.className = 'backup-grid';
+                content.replaceChildren(grid);
+            }
+            const existing = new Map(Array.from(grid.children, card => [card.dataset.name, card]));
+            const savedScroll = window.scrollY;
+            const anchor = !append && savedScroll > 0
+                ? Array.from(existing.values()).find(card => {
+                    const rect = card.getBoundingClientRect();
+                    return rect.bottom > 0 && rect.top < window.innerHeight;
+                }) : null;
+            const anchorTop = anchor?.getBoundingClientRect().top;
+            const retained = new Set();
+            let cursor = append ? null : grid.firstElementChild;
+            const template = document.createElement('template');
             for (const b of backups) {
+                retained.add(b.name);
+                const previous = existing.get(b.name);
+                const renderData = JSON.stringify(b);
+                if (previous?._backupRenderData === renderData) {
+                    if (!append) {
+                        if (previous !== cursor) grid.insertBefore(previous, cursor);
+                        cursor = previous.nextElementSibling;
+                    }
+                    continue;
+                }
                 const dateStr = formatDate(b.mtime);
                 const info = b.conversion_info || {};
                 const positive = b.positive || '';
@@ -32155,7 +32317,7 @@
 
                 const cardClass = 'backup-card';
 
-                html += `
+                const html = `
                 <div class="${cardClass}" data-name="${escapeAttr(b.name)}">
                     <div class="card-image-area">
                         ${badges}
@@ -32222,9 +32384,34 @@
                         <div class="chat-content" id="chat-${escapeAttr(b.name)}" style="display:none; margin-top:8px;"></div>
                     </div>
                 </div>`;
+                template.innerHTML = html;
+                const card = template.content.firstElementChild;
+                card._backupRenderData = renderData;
+                if (previous) {
+                    previous.replaceWith(card);
+                    if (cursor === previous) cursor = card;
+                }
+                if (!append || !previous) {
+                    if (card !== cursor) grid.insertBefore(card, cursor);
+                    if (!append) cursor = card.nextElementSibling;
+                }
+                if (previous?.querySelector('.prompt-preview.expanded')) togglePrompt(b.name);
+                if (previous?.querySelector('.enhanced-preview.expanded')) toggleEnhancedPrompt(b.name);
             }
-            html += '</div>';
-            content.innerHTML = html;
+            if (!append) {
+                for (const [name, card] of existing) {
+                    if (!retained.has(name)) {
+                        card.remove();
+                        promptDataMap.delete(name);
+                    }
+                }
+                const nextAnchor = anchor && Array.from(grid.children).find(card => card.dataset.name === anchor.dataset.name);
+                if (nextAnchor) {
+                    window.scrollBy({top: nextAnchor.getBoundingClientRect().top - anchorTop, behavior: 'instant'});
+                } else if (savedScroll > 0) {
+                    window.scrollTo({top: savedScroll, behavior: 'instant'});
+                }
+            }
         }
 
         function renderConversionInfoContent(info) {
@@ -45723,6 +45910,8 @@
                 // 라이트박스(이미지 확대)가 켜져 있으면 그것만 닫고 종료 — 배경 모달은 유지
                 const lb = document.getElementById('lightbox');
                 if (lb && lb.classList.contains('visible')) { closeLightbox(); return; }
+                const repImages = document.getElementById('rep-batch-images-overlay');
+                if (repImages) { repImages.querySelector('[data-role="close"]').click(); return; }
                 closePromptModal();
                 closeSettingsModal();
                 closeQueueModal();
@@ -45755,7 +45944,8 @@
 
         // ─── 무한 스크롤 ───
         window.addEventListener('scroll', () => {
-            if (paginationState.isLoading || !paginationState.hasMore) return;
+            if (!document.getElementById('tab-backup-content').classList.contains('active')
+                || paginationState.isLoading || !paginationState.hasMore) return;
             
             const scrollTop = window.scrollY;
             const windowHeight = window.innerHeight;
@@ -45765,7 +45955,7 @@
             if (scrollTop + windowHeight >= docHeight - 500) {
                 loadMore();
             }
-        });
+        }, {passive: true});
 
         // ─── 유틸 ───
         function escapeHtml(s) {
@@ -52057,6 +52247,8 @@
             natural_language: '',
             ref_enabled: false, ref_strength: 0.55, ref_images: [], ref_dir: '',
             style_ref_enabled: false, style_ref_strength: 0.55, style_ref_images: [], style_ref_dir: '',
+            snapref_enabled: false, snapref_images: [], snapref_dir: '',
+            snapref_strength: 0, snapref_mode: 'char', snapref_megapixels: 1,
             lora_enabled: false, lora_list: [], style_lora_enabled: false, style_lora_list: [],
             face_lora_enabled: false, face_lora_list: [], face_tags: '', eye_tags: '',
             face_crop_top: 2.5, face_crop_bottom: 1, face_lora_upscale_size: '',
@@ -52186,6 +52378,7 @@
                 'at-fill-style-ref-enabled': !!atFillSlot.style_ref_enabled,
                 'at-fill-lora-enabled': !!atFillSlot.lora_enabled,
                 'at-fill-style-lora-enabled': !!atFillSlot.style_lora_enabled,
+                'at-fill-snapref-enabled': !!atFillSlot.snapref_enabled,
                 'at-fill-face-lora-enabled': !!atFillSlot.face_lora_enabled,
                 'at-fill-pose-enabled': !!atFillSlot.pose_enabled,
                 'at-fill-hrf': !!atFillSlot.hrf_sdxl,
@@ -52207,6 +52400,8 @@
             const numericValues = {
                 'at-fill-ref-strength': atFillSlot.ref_strength,
                 'at-fill-style-ref-strength': atFillSlot.style_ref_strength,
+                'at-fill-snapref-strength': atFillSlot.snapref_strength ?? 0,
+                'at-fill-snapref-megapixels': atFillSlot.snapref_megapixels ?? 1,
                 'at-fill-hrf-size': atFillSlot.hrf_size,
                 'at-fill-img-w': atFillSlot.img_w,
                 'at-fill-img-h': atFillSlot.img_h,
@@ -52226,6 +52421,7 @@
             const conditionalControls = {
                 'at-fill-lora-controls': !!atFillSlot.lora_enabled,
                 'at-fill-style-lora-controls': !!atFillSlot.style_lora_enabled,
+                'at-fill-snapref-controls': !!atFillSlot.snapref_enabled,
                 'at-fill-face-lora-controls': !!atFillSlot.face_lora_enabled,
                 'at-fill-pose-controls': !!atFillSlot.pose_enabled,
             };
@@ -52233,7 +52429,13 @@
                 const element = document.getElementById(id);
                 if (element) element.style.display = visible ? 'block' : 'none';
             });
+            const snaprefPreview = document.getElementById('at-fill-snapref-preview');
+            if (snaprefPreview) {
+                snaprefPreview.innerHTML = (atFillSlot.snapref_images || []).slice(0, 1).map(image => `<img src="${escapeHtml(image.preview_url || '')}" alt="Ref 이미지">`).join('');
+                snaprefPreview.style.display = atFillSlot.snapref_images?.length ? 'grid' : 'none';
+            }
             const textValues = {
+                'at-fill-snapref-mode': atFillSlot.snapref_mode || 'char',
                 'at-fill-natural-language-text': atFillSlot.natural_language || '',
                 'at-fill-face-tags': atFillSlot.face_tags || '',
                 'at-fill-eye-tags': atFillSlot.eye_tags || '',
@@ -52389,6 +52591,14 @@
                 setBoolean('style_ref_enabled', 'style_ref_enabled', 'IPAdapter 사용 상태', capabilities.ipadapter);
                 setNumber('style_ref_strength', 'style_ref_strength', 'IPAdapter 강도', capabilities.ipadapter);
                 setString('style_ref_dir', 'style_ref_dir', 'IPAdapter 저장 폴더', capabilities.ipadapter);
+                setBoolean('snapref_enabled', 'snapref_enabled', 'Ref 이미지 사용 상태', capabilities.anima);
+                setString('snapref_dir', 'snapref_dir', 'Ref 이미지 저장 폴더', capabilities.anima);
+                setNumber('snapref_strength', 'snapref_strength', 'Ref 이미지 강도', capabilities.anima);
+                setString('snapref_mode', 'snapref_mode', 'Ref 이미지 모드', capabilities.anima);
+                setNumber('snapref_megapixels', 'snapref_megapixels', 'Ref 이미지 참조 해상도', capabilities.anima);
+                if (capabilities.anima && Array.isArray(settings.snapref_images)) {
+                    atFillSlot.snapref_images = settings.snapref_images.slice(0, 1).map(image => ({...image}));
+                }
                 setBoolean('lora_enabled', 'lora_enabled', 'LoRA 사용 상태');
                 setLoraList('lora_list', 'lora_list', 'LoRA 목록');
                 setBoolean('style_lora_enabled', 'style_lora_enabled', 'Style LoRA 사용 상태');
@@ -52740,6 +52950,7 @@
             if (field === 'style_ref_enabled') document.getElementById('at-fill-style-ref-controls').style.display = checked ? 'block' : 'none';
             if (field === 'lora_enabled') document.getElementById('at-fill-lora-controls').style.display = checked ? 'block' : 'none';
             if (field === 'style_lora_enabled') document.getElementById('at-fill-style-lora-controls').style.display = checked ? 'block' : 'none';
+            if (field === 'snapref_enabled') document.getElementById('at-fill-snapref-controls').style.display = checked ? 'block' : 'none';
             if (field === 'face_lora_enabled') document.getElementById('at-fill-face-lora-controls').style.display = checked ? 'block' : 'none';
             if (field === 'pose_enabled') document.getElementById('at-fill-pose-controls').style.display = checked ? 'block' : 'none';
             if (field === 'hrf_sdxl' || field === 'hrf_anima') atUpdateFillHiresAvailability();
@@ -53006,13 +53217,25 @@
                     name: image.name,
                     local_path: image.local_path,
                     orig_filename: image.orig_filename,
-                    preview_url: URL.createObjectURL(input.files[index] || new Blob()),
+                    preview_url: result.asset_info
+                        ? `/api/asset_mode/characters/${encodeURIComponent(result.asset_info.character)}/outfits/${encodeURIComponent(result.asset_info.outfit)}/expressions/${encodeURIComponent(result.asset_info.expression)}/images/${encodeURIComponent(image.name)}`
+                        : URL.createObjectURL(input.files[index] || new Blob()),
                 }));
                 const isStyle = type === 'style';
-                atFillSlot[isStyle ? 'style_ref_images' : 'ref_images'] = refs;
-                const preview = document.getElementById(isStyle ? 'at-fill-style-ref-preview' : 'at-fill-ref-preview');
+                const prefix = isStyle ? 'style_ref' : type === 'snapref' ? 'snapref' : 'ref';
+                atFillSlot[`${prefix}_images`] = refs;
+                const preview = document.getElementById(`at-fill-${isStyle ? 'style-ref' : prefix}-preview`);
                 preview.innerHTML = refs.map(ref => `<img src="${ref.preview_url}" alt="참조 이미지">`).join('');
                 preview.style.display = refs.length ? 'grid' : 'none';
+                if (type === 'snapref') {
+                    const hashResponse = await fetchJSON('/api/asset_mode/compute_ref_hash', {
+                        method: 'POST', headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({filenames: refs.map(image => image.local_path || image.name)}),
+                    });
+                    atFillSlot.snapref_dir = hashResponse?.hash ? 'soya_snapref/' + hashResponse.hash : '';
+                    atUpdateFillPromptPreview();
+                    _atSaveState();
+                }
                 showToast(`${refs.length}장 참조 이미지 업로드 완료`, 'success');
             } catch (e) {
                 console.error(`[AUTOMATCH] ${type} 참조 이미지 업로드 실패:`, e);
@@ -53204,6 +53427,7 @@
                 ...atFillSlot,
                 ref_images: (atFillSlot.ref_images || []).map(image => ({ ...image })),
                 style_ref_images: (atFillSlot.style_ref_images || []).map(image => ({ ...image })),
+                snapref_images: (atFillSlot.snapref_images || []).slice(0, 1).map(image => ({ ...image })),
                 lora_list: (atFillSlot.lora_list || []).map(item => ({ ...item })),
                 style_lora_list: (atFillSlot.style_lora_list || []).map(item => ({ ...item })),
                 face_lora_list: (atFillSlot.face_lora_list || []).map(item => ({ ...item })),
@@ -53266,6 +53490,12 @@
                         style_ref_enabled: slot.style_ref_enabled,
                         style_ref_strength: slot.style_ref_strength,
                         style_ref_images: (slot.style_ref_images || []).map(image => ({ filename: image.name, local_path: image.local_path })),
+                        snapref_enabled: getAssetWorkflowCapabilities(slot.asset_workflow_type).anima && !!slot.snapref_enabled,
+                        snapref_images: slot.snapref_enabled ? (slot.snapref_images || []).slice(0, 1).map(image => ({ filename: image.name, local_path: image.local_path })) : [],
+                        snapref_dir: slot.snapref_dir || '',
+                        snapref_strength: slot.snapref_strength ?? 0,
+                        snapref_mode: slot.snapref_mode || 'char',
+                        snapref_megapixels: slot.snapref_megapixels ?? 1,
                         positive_prompt: promptData.positive,
                         negative_prompt: promptData.negative,
                     };
@@ -59296,6 +59526,14 @@
                 style_lora_list: Array.isArray(fallback.style_lora_list)
                     ? fallback.style_lora_list.map(item => ({...item}))
                     : [],
+                snapref_enabled: boolValue('cm-snapref-toggle', 'snapref_enabled'),
+                snapref_images: Array.isArray(fallback.snapref_images)
+                    ? fallback.snapref_images.slice(0, 1).map(item => ({...item}))
+                    : [],
+                snapref_dir: fallback.snapref_dir || '',
+                snapref_mode: stringValue('cm-snapref-mode', 'snapref_mode') || 'char',
+                snapref_strength: floatValue('cm-snapref-strength', 'snapref_strength', 0),
+                snapref_megapixels: floatValue('cm-snapref-megapixels', 'snapref_megapixels', 1),
                 face_lora_enabled: boolValue('cm-setting-face-lora-enabled', 'face_lora_enabled'),
                 face_lora_list: Array.isArray(fallback.face_lora_list)
                     ? fallback.face_lora_list.map(item => ({...item}))
@@ -59352,6 +59590,9 @@
                 'cm-setting-face-upscale': settings.face_lora_upscale_size ?? '',
                 'cm-setting-face-tags': settings.face_tags || '',
                 'cm-setting-eye-tags': settings.eye_tags || '',
+                'cm-snapref-mode': settings.snapref_mode || 'char',
+                'cm-snapref-strength': settings.snapref_strength ?? 0,
+                'cm-snapref-megapixels': settings.snapref_megapixels ?? 1,
             };
             Object.entries(values).forEach(([id, value]) => {
                 const element = document.getElementById(id);
@@ -59372,6 +59613,7 @@
                 'cm-setting-rag': settings.rag_enabled,
                 'cm-setting-lora-enabled': settings.lora_enabled,
                 'cm-setting-style-lora-enabled': settings.style_lora_enabled,
+                'cm-snapref-toggle': settings.snapref_enabled,
                 'cm-setting-face-lora-enabled': settings.face_lora_enabled,
                 'cm-setting-hrf-sdxl': settings.hrf_sdxl,
                 'cm-setting-hrf-anima': settings.hrf_anima,
@@ -59390,6 +59632,12 @@
             });
             cmRenderSeedControl();
             cmRenderAllLoraSettings();
+            document.getElementById('cm-snapref-section').style.display = settings.snapref_enabled ? 'block' : 'none';
+            const snaprefStatus = document.getElementById('cm-snapref-status');
+            snaprefStatus.textContent = settings.snapref_enabled ? 'ON' : 'OFF';
+            snaprefStatus.className = 'toggle-status ' + (settings.snapref_enabled ? 'on' : 'off');
+            document.getElementById('cm-snapref-strength-value').textContent = Number(settings.snapref_strength ?? 0).toFixed(1);
+            renderAssetRefPreview('cm-snapref', false);
             cmApplySettingsAvailability();
             cmRenderEditablePresetControls();
         }
@@ -59794,7 +60042,8 @@
                 const loraAvailable = !container.closest('[data-cm-lora-controls]')
                     || !illustrationMode
                     || capabilities.lora;
-                const available = modelAvailable && advancedAvailable && loraAvailable;
+                const available = modelAvailable && advancedAvailable && loraAvailable
+                    && (!container.hasAttribute('data-cm-snapref') || !illustrationMode);
                 container.classList.toggle('is-unavailable', !available);
                 if (container.classList.contains('cm-unsupported')) return; // 미지원은 항상 잠금
                 container.querySelectorAll('input, select, button').forEach(control => {
@@ -60494,6 +60743,12 @@
                 lora_enabled: !!settings.lora_enabled,
                 style_lora_list: (settings.style_lora_list || []).map(item => ({...item})),
                 style_lora_enabled: !!settings.style_lora_enabled,
+                snapref_enabled: !!settings.snapref_enabled,
+                snapref_images: (settings.snapref_images || []).map(item => ({...item})),
+                snapref_dir: settings.snapref_dir || '',
+                snapref_mode: settings.snapref_mode || 'char',
+                snapref_strength: settings.snapref_strength ?? 0,
+                snapref_megapixels: settings.snapref_megapixels ?? 1,
                 face_lora_list: (settings.face_lora_list || []).map(item => ({...item})),
                 face_lora_enabled: !!settings.face_lora_enabled,
                 face_lora_upscale_size: settings.face_lora_upscale_size ?? '',
@@ -70733,11 +70988,6 @@
                 showToast('자동 작성할 캐릭터 카드를 선택하세요.', 'error');
                 return;
             }
-            if (selected.length > 120) {
-                console.error('[VISUAL_GUIDE] 한 번에 생성할 카드 수 초과', {count:selected.length, max:120});
-                showToast('한 번에 최대 120개 카드까지 생성할 수 있습니다.', 'error');
-                return;
-            }
             state.busy = true;
             state.queueItemId = '';
             state.cancelRequested = false;
@@ -77685,10 +77935,10 @@
                     <div id="alr-step2" style="display:none; flex-direction:column; flex:1; min-height:0;">
                         <div style="display:flex; gap:9px; margin-bottom:9px; flex-wrap:wrap;">
                             <div style="background:rgba(13,71,161,.12); border:1px solid rgba(59,130,246,.35); border-radius:8px; padding:7px 11px; min-width:145px;"><div style="font-size:.67rem; color:var(--text2);">세팅 대상</div><div id="alr-selected-profile-label" style="font-size:.82rem; font-weight:800;"></div></div>
-                            <div style="background:var(--surface2); border:1px solid var(--border); border-radius:8px; padding:7px 11px;"><div style="font-size:.67rem; color:var(--text2); margin-bottom:3px;">기존 설정 처리</div><label style="font-size:.76rem; margin-right:9px;"><input type="radio" name="alr-conflict" value="add" checked onchange="_alrSetConflict(this.value)"> 기존에 추가</label><label style="font-size:.76rem;"><input type="radio" name="alr-conflict" value="overwrite" onchange="_alrSetConflict(this.value)"> ${isStyle ? '선택한 스타일로 교체' : '매칭된 LoRA로 교체'}</label>${isStyle ? '<label style="font-size:.76rem; margin-left:9px;"><input type="radio" name="alr-conflict" value="clear" onchange="_alrSetConflict(this.value)"> 스타일 모두 제거</label>' : ''}</div>
+                            <div style="background:var(--surface2); border:1px solid var(--border); border-radius:8px; padding:7px 11px;"><div style="font-size:.67rem; color:var(--text2); margin-bottom:3px;">기존 설정 처리</div><label style="font-size:.76rem; margin-right:9px;"><input type="radio" name="alr-conflict" value="add" checked onchange="_alrSetConflict(this.value)"> 기존에 추가</label><label style="font-size:.76rem;"><input type="radio" name="alr-conflict" value="overwrite" onchange="_alrSetConflict(this.value)"> ${isStyle ? '선택한 스타일로 교체' : '매칭된 LoRA로 교체'}</label><label style="font-size:.76rem; margin-left:9px;"><input type="radio" name="alr-conflict" value="clear" onchange="_alrSetConflict(this.value)"> ${isStyle ? '스타일 모두 제거' : 'LoRA 해제'}</label></div>
                             <div id="alr-strength-control" style="background:var(--surface2); border:1px solid var(--border); border-radius:8px; padding:7px 11px; min-width:175px;"><div style="font-size:.67rem; color:var(--text2); margin-bottom:3px;">적용 강도: <b id="alr-strength-val" style="color:var(--text);">0.50</b></div><input type="range" min="0" max="1" step="0.05" value="0.5" oninput="_alrSetStrength(this.value)" style="width:100%;"></div>
                         </div>
-                        <div style="display:${isStyle ? 'none' : 'flex'}; gap:0; margin-bottom:7px; border:1px solid var(--border); border-radius:8px; overflow:hidden;">
+                        <div id="alr-source-tabs" style="display:${isStyle ? 'none' : 'flex'}; gap:0; margin-bottom:7px; border:1px solid var(--border); border-radius:8px; overflow:hidden;">
                             <button onclick="switchAutoLoraTab('instance')" id="alr-tab-instance" style="flex:1; padding:8px; border:none; background:var(--surface2); color:var(--text); cursor:pointer; font-size:.8rem; font-weight:700;">인스턴스 LoRA 자동 매칭</button>
                             <button onclick="switchAutoLoraTab('bot')" id="alr-tab-bot" style="flex:1; padding:8px; border:none; background:var(--surface2); color:var(--text); cursor:pointer; font-size:.8rem; font-weight:700;">현재 봇 학습 프로젝트</button>
                         </div>
@@ -77948,8 +78198,7 @@
         function _alrSetConflict(value) {
             if (!_botAutoLoraState) return;
             _botAutoLoraState.conflict = value;
-            if (_botAutoLoraState.profile === 'style') _renderAutoLoraTab();
-            else _alrUpdateSourceSummary();
+            _renderAutoLoraTab();
         }
         function _alrSetStrength(value) {
             if (!_botAutoLoraState) return;
@@ -77978,15 +78227,20 @@
             const c = document.getElementById('alr-tab-content');
             if (!c || !_botAutoLoraState) return;
             const targets = _alrCheckedTargets();
-            if (_botAutoLoraState.profile === 'style') {
-                const clearStyle = _botAutoLoraState.conflict === 'clear';
-                const strengthControl = document.getElementById('alr-strength-control');
-                if (strengthControl) strengthControl.style.display = clearStyle ? 'none' : '';
-                if (clearStyle) {
-                    c.innerHTML = `<div style="font-size:.78rem; line-height:1.7; padding:12px;">선택한 ${targets.length}개 프로필 카드의 스타일 LoRA를 모두 제거합니다.<br>다음 단계에서 카드별 제거 목록을 확인하세요.</div>`;
-                    _alrUpdateSourceSummary();
-                    return;
-                }
+            const clearLoras = _botAutoLoraState.conflict === 'clear';
+            const isStyle = _botAutoLoraState.profile === 'style';
+            const strengthControl = document.getElementById('alr-strength-control');
+            if (strengthControl) strengthControl.style.display = clearLoras ? 'none' : '';
+            const sourceTabs = document.getElementById('alr-source-tabs');
+            if (sourceTabs) sourceTabs.style.display = clearLoras || isStyle ? 'none' : 'flex';
+            const sourceFilter = document.getElementById('alr-source-filter');
+            if (sourceFilter) sourceFilter.style.display = clearLoras || isStyle ? 'none' : 'inline-block';
+            if (clearLoras) {
+                c.innerHTML = `<div style="font-size:.78rem; line-height:1.7; padding:12px;">선택한 ${targets.length}개 프로필 카드의 ${_alrProfileLabel(_botAutoLoraState.profile)}를 모두 해제합니다.<br>다음 단계에서 카드별 해제 목록을 확인하세요.</div>`;
+                _alrUpdateSourceSummary();
+                return;
+            }
+            if (isStyle) {
                 c.innerHTML = `<div style="font-size:.75rem; color:var(--text2); margin-bottom:10px;">선택한 ${targets.length}개 프로필 카드에 아래 LoRA를 같은 강도로 적용합니다.</div>
                     <button id="alr-style-pick-btn" onclick="openBotCharStyleLoraPicker('', -1, loras => { _botAutoLoraState.styleLoras.push(...loras); _renderAutoLoraTab(); })" style="padding:8px 14px; border:1px dashed var(--accent); border-radius:7px; background:var(--surface2); color:var(--text); cursor:pointer;">+ 스타일 / 인스턴스 LoRA 선택</button>
                     <div style="display:flex; flex-direction:column; gap:7px; margin-top:12px;">${_botAutoLoraState.styleLoras.map((lora, index) => `<div style="display:flex; align-items:center; gap:10px; padding:9px; border:1px solid var(--border); border-radius:7px; background:var(--surface2);">${lora.preview_url ? `<img src="${escAttr(lora.preview_url)}" loading="lazy" style="width:64px; height:64px; object-fit:contain; border-radius:5px;">` : ''}<div style="flex:1; min-width:0;"><b style="font-size:.78rem;">${escHtml(_alrLoraDisplayName(lora))}</b><div style="font-size:.68rem; color:var(--text2);">${lora.source === 'instance' ? '인스턴스' : '스타일'} · ${escHtml(lora.BASE || 'anima')} · ${escHtml(lora.trigger || '트리거 없음')}</div></div><button onclick="_botAutoLoraState.styleLoras.splice(${index}, 1); _renderAutoLoraTab()" style="border:1px solid var(--border); border-radius:5px; background:var(--surface); color:var(--error); padding:5px 8px; cursor:pointer;">제거</button></div>`).join('') || '<div style="font-size:.75rem; color:var(--text2); padding:16px 0;">일괄 적용할 LoRA를 선택하세요.</div>'}</div>`;
@@ -78086,9 +78340,9 @@
             const el = document.getElementById('alr-source-summary');
             if (!el || !_botAutoLoraState) return;
             const targets = _alrCheckedTargets();
-            if (_botAutoLoraState.profile === 'style' && _botAutoLoraState.conflict === 'clear') {
-                const removed = targets.reduce((sum, target) => sum + _alrTargetLoras(target, 'style').length, 0);
-                el.textContent = `대상 ${targets.length}개 카드 · 제거할 스타일 LoRA ${removed}개`;
+            if (_botAutoLoraState.conflict === 'clear') {
+                const removed = targets.reduce((sum, target) => sum + _alrTargetLoras(target, _botAutoLoraState.profile).length, 0);
+                el.textContent = `대상 ${targets.length}개 카드 · 해제할 ${_alrProfileLabel(_botAutoLoraState.profile)} ${removed}개`;
                 return;
             }
             let matched = 0;
@@ -78124,8 +78378,8 @@
                     c.innerHTML = '<div style="color:var(--error);">인스턴스 로라 로드 실패: ' + escapeHtml(e.message) + '</div>'; return;
                 }
             }
-            if (_botAutoLoraState.tab !== 'instance') {
-                console.warn('[BOT_AUTO_LORA] 인스턴스 로드 완료 후 탭이 변경되어 렌더링 건너뜀');
+            if (_botAutoLoraState.tab !== 'instance' || _botAutoLoraState.conflict === 'clear') {
+                console.warn('[BOT_AUTO_LORA] 인스턴스 로드 완료 후 탭 또는 적용 방식이 변경되어 목록 렌더링 건너뜀');
                 _renderAutoLoraTab();
                 return;
             }
@@ -78166,8 +78420,8 @@
                     c.innerHTML = header + '<div style="color:var(--error);">프로젝트 로드 실패: ' + escapeHtml(e.message) + '</div>'; return;
                 }
             }
-            if (_botAutoLoraState.tab !== 'bot') {
-                console.warn('[BOT_AUTO_LORA] 봇 프로젝트 로드 완료 후 탭이 변경되어 렌더링 건너뜀');
+            if (_botAutoLoraState.tab !== 'bot' || _botAutoLoraState.conflict === 'clear') {
+                console.warn('[BOT_AUTO_LORA] 봇 프로젝트 로드 완료 후 탭 또는 적용 방식이 변경되어 목록 렌더링 건너뜀');
                 _renderAutoLoraTab();
                 return;
             }
@@ -78242,12 +78496,12 @@
         function _alrBuildTargetPlan(target) {
             const profile = _botAutoLoraState.profile;
             const current = _alrCloneLoras(_alrTargetLoras(target, profile));
-            if (profile === 'style' && _botAutoLoraState.conflict === 'clear') {
+            if (_botAutoLoraState.conflict === 'clear') {
                 return {
                     target, profile, current, after: [],
                     availableCandidates: [], selectedCandidates: [],
                     added: 0, removed: current.length, duplicates: 0,
-                    canApply: current.length > 0, reason: '제거할 스타일 LoRA 없음',
+                    canApply: current.length > 0, reason: `해제할 ${_alrProfileLabel(profile)} 없음`,
                 };
             }
             const availableCandidates = _alrCandidates(target);
@@ -78293,12 +78547,12 @@
         function _alrGoStep3() {
             if (!_botAutoLoraState) return;
             const status = document.getElementById('alr-exec-status');
-            if (_botAutoLoraState.tab === 'instance' && !_botAutoLoraState.instanceLoaded) {
+            if (_botAutoLoraState.conflict !== 'clear' && _botAutoLoraState.tab === 'instance' && !_botAutoLoraState.instanceLoaded) {
                 console.error('[BOT_AUTO_LORA] 변경 검토 불가: 인스턴스 목록 로드 미완료');
                 if (status) { status.style.color = 'var(--error)'; status.textContent = '인스턴스 LoRA 목록이 아직 로드되지 않았습니다.'; }
                 return;
             }
-            if (_botAutoLoraState.tab === 'bot' && (!_botAutoLoraState.botSelectedProject || !_botAutoLoraState.botProjectData)) {
+            if (_botAutoLoraState.conflict !== 'clear' && _botAutoLoraState.tab === 'bot' && (!_botAutoLoraState.botSelectedProject || !_botAutoLoraState.botProjectData)) {
                 console.error('[BOT_AUTO_LORA] 변경 검토 불가: 봇 학습 프로젝트 미선택');
                 if (status) { status.style.color = 'var(--error)'; status.textContent = '사용할 봇 학습 프로젝트를 먼저 선택하세요.'; }
                 return;
@@ -78337,8 +78591,9 @@
             const actionable = plans.filter(plan => plan.canApply);
             const added = actionable.reduce((sum, plan) => sum + plan.added, 0);
             const removed = actionable.reduce((sum, plan) => sum + plan.removed, 0);
-            const clearStyle = _botAutoLoraState.profile === 'style' && _botAutoLoraState.conflict === 'clear';
-            const sourceLabel = clearStyle ? '스타일 모두 제거' : _botAutoLoraState.profile === 'style' ? '선택한 스타일 / 인스턴스 LoRA' : _botAutoLoraState.tab === 'bot' ? `봇 프로젝트 · ${_botAutoLoraState.botSelectedProject}` : '인스턴스 LoRA';
+            const clearLoras = _botAutoLoraState.conflict === 'clear';
+            const clearLabel = _botAutoLoraState.profile === 'style' ? '스타일 모두 제거' : 'LoRA 해제';
+            const sourceLabel = clearLoras ? clearLabel : _botAutoLoraState.profile === 'style' ? '선택한 스타일 / 인스턴스 LoRA' : _botAutoLoraState.tab === 'bot' ? `봇 프로젝트 · ${_botAutoLoraState.botSelectedProject}` : '인스턴스 LoRA';
             const summary = document.getElementById('alr-review-summary');
             if (summary) summary.innerHTML = `<div style="display:flex;gap:7px;flex-wrap:wrap;align-items:center;padding:9px 11px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);font-size:.73rem;"><b>${escHtml(_alrProfileLabel(_botAutoLoraState.profile))}</b><span style="color:var(--text2);">${escHtml(sourceLabel)}</span><span style="margin-left:auto;">변경 <b style="color:#22c55e;">${actionable.length}</b> · 건너뜀 <b style="color:${plans.length - actionable.length ? '#f59e0b' : 'var(--text2)'};">${plans.length - actionable.length}</b> · 추가 ${added}${removed ? ` · 제거 ${removed}` : ''}</span></div>`;
             const list = document.getElementById('alr-review-list');
@@ -78346,7 +78601,7 @@
                 const target = plan.target;
                 const result = _botAutoLoraState.executionResults[target.key];
                 const badgeText = plan.canApply
-                    ? (clearStyle ? `스타일 ${plan.removed}개 제거` : _botAutoLoraState.conflict === 'overwrite' ? `교체 · ${plan.removed}개 제거 / ${plan.added}개 추가` : `${plan.added}개 추가`)
+                    ? (clearLoras ? (_botAutoLoraState.profile === 'style' ? `스타일 ${plan.removed}개 제거` : `LoRA ${plan.removed}개 해제`) : _botAutoLoraState.conflict === 'overwrite' ? `교체 · ${plan.removed}개 제거 / ${plan.added}개 추가` : `${plan.added}개 추가`)
                     : `건너뜀 · ${plan.reason}`;
                 const badgeColor = plan.canApply ? '#22c55e' : '#f59e0b';
                 let resultHtml = '';
@@ -78361,7 +78616,7 @@
                 executeButton.disabled = actionable.length === 0 || _botAutoLoraState.executing || _botAutoLoraState.completed;
                 executeButton.style.opacity = executeButton.disabled ? '.45' : '1';
                 executeButton.style.cursor = executeButton.disabled ? 'not-allowed' : 'pointer';
-                executeButton.textContent = _botAutoLoraState.executing ? '세팅 저장 중…' : clearStyle ? '확인 후 스타일 모두 제거' : _botAutoLoraState.profile === 'style' ? '확인 후 스타일 일괄 세팅' : '확인 후 자동 세팅 실행';
+                executeButton.textContent = _botAutoLoraState.executing ? '세팅 저장 중…' : clearLoras ? `확인 후 ${clearLabel}` : _botAutoLoraState.profile === 'style' ? '확인 후 스타일 일괄 세팅' : '확인 후 자동 세팅 실행';
             }
             const backButton = document.getElementById('alr-review-back-btn');
             if (backButton) backButton.disabled = _botAutoLoraState.executing;
@@ -78369,7 +78624,7 @@
             if (closeButton) closeButton.style.display = _botAutoLoraState.completed ? 'inline-block' : 'none';
             const status = document.getElementById('alr-review-status');
             if (status && !_botAutoLoraState.executing && !_botAutoLoraState.completed) {
-                status.textContent = actionable.length ? (clearStyle ? '선택한 카드의 스타일 LoRA를 모두 제거합니다.' : _botAutoLoraState.profile === 'style' ? '선택한 카드의 스타일 LoRA 설정에 적용합니다.' : '매칭 후보가 없는 카드는 기존 설정을 유지하고 건너뜁니다.') : '실행 가능한 변경이 없습니다.';
+                status.textContent = actionable.length ? (clearLoras ? `선택한 카드의 ${_alrProfileLabel(_botAutoLoraState.profile)}를 모두 해제합니다.` : _botAutoLoraState.profile === 'style' ? '선택한 카드의 스타일 LoRA 설정에 적용합니다.' : '매칭 후보가 없는 카드는 기존 설정을 유지하고 건너뜁니다.') : '실행 가능한 변경이 없습니다.';
                 status.style.color = actionable.length ? 'var(--text2)' : '#f59e0b';
             }
         }
@@ -80168,7 +80423,66 @@
             await Promise.all(Array.from({length: n}, () => worker()));
         }
 
-        function _repBatchBuildOverlay() {
+        function _repBatchBuildOverlay(rowIndex = null, profileIndex = null) {
+            if (rowIndex !== null) {
+                const row = _repBatchRowData[rowIndex];
+                const profile = row?.profiles?.[profileIndex];
+                if (!profile) {
+                    console.error('[BOT] 대표 일괄 전체 이미지 열기 실패:', {rowIndex, profileIndex});
+                    showToast('전체 이미지를 표시할 프로필을 찾지 못했습니다.', 'error');
+                    return;
+                }
+                const previousOverlay = document.getElementById('rep-batch-images-overlay');
+                const sameCharacter = previousOverlay?.dataset.rowIdx === String(rowIndex);
+                const previousQuery = sameCharacter ? previousOverlay.querySelector('#rep-batch-images-search').value : null;
+                const previousScroll = sameCharacter ? previousOverlay.querySelector('#rep-batch-images-body').scrollTop : 0;
+                previousOverlay?.remove();
+                const overlay = document.createElement('div');
+                overlay.id = 'rep-batch-images-overlay';
+                overlay.dataset.rowIdx = rowIndex;
+                overlay.dataset.profileIdx = profileIndex;
+                overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:280;display:flex;align-items:center;justify-content:center;';
+                overlay.innerHTML =
+                    '<div role="dialog" aria-modal="true" aria-labelledby="rep-batch-images-title" style="background:var(--surface);border-radius:12px;padding:16px;width:95%;max-width:1100px;max-height:88vh;box-sizing:border-box;display:flex;flex-direction:column;overflow:hidden;">' +
+                        '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-shrink:0;">' +
+                            '<h3 id="rep-batch-images-title" style="margin:0;min-width:0;flex:1;font-size:1rem;overflow-wrap:anywhere;">전체 이미지 · ' + escHtml(row.charName) + ' / ' + escHtml(profile.profileLabel) + ' <span style="font-size:.75rem;color:var(--text2);">(' + row.baseOrder.length + '장)</span></h3>' +
+                            '<button type="button" data-role="close" aria-label="전체 이미지 닫기" style="flex-shrink:0;background:none;border:none;color:var(--text);font-size:1.3rem;cursor:pointer;padding:4px 8px;">✕</button>' +
+                        '</div>' +
+                        '<div style="display:flex;align-items:flex-start;gap:8px;margin-bottom:10px;flex-shrink:0;min-width:0;">' +
+                            '<button id="rep-batch-images-add" type="button" onclick="_repBatchAddDraftProfile(' + rowIndex + ')" style="flex-shrink:0;padding:7px 10px;border:1px dashed var(--accent);border-radius:6px;background:transparent;color:var(--accent);cursor:pointer;font-size:.75rem;">＋ 카드 추가</button>' +
+                            '<div id="rep-batch-images-profiles" role="group" aria-label="대표 이미지를 지정할 카드" style="display:flex;flex:1;flex-wrap:wrap;align-content:flex-start;min-width:0;gap:6px;max-height:30vh;overflow-y:auto;overflow-x:hidden;padding:1px 2px 3px;"></div>' +
+                        '</div>' +
+                        '<div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:12px;flex-shrink:0;font-size:.75rem;color:var(--text2);">' +
+                            '<label for="rep-batch-images-search">우선 표시할 단어</label>' +
+                            '<input id="rep-batch-images-search" type="search" autocomplete="off" placeholder="예: 교복|미소" oninput="_repBatchRenderRow(' + rowIndex + ',' + profileIndex + ');document.getElementById(\'rep-batch-images-body\').scrollTop=0" style="flex:1;min-width:120px;max-width:320px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--text);font-size:.75rem;">' +
+                            '<span class="tip-wrap" style="margin-left:0;flex-shrink:0;">' +
+                                '<button id="rep-batch-images-search-help" type="button" class="tip-q" aria-label="우선 표시할 단어 도움말" aria-describedby="rep-batch-images-search-tip" style="padding:0;">?</button>' +
+                                '<span id="rep-batch-images-search-tip" class="tip-box tip-box--end" role="tooltip">단어를 <b>|</b>로 구분하면 하나라도 파일명에 포함된 이미지를 먼저 표시합니다.<br>예: <b>교복|미소</b></span>' +
+                            '</span>' +
+                            '<span id="rep-batch-images-match-count" aria-live="polite"></span>' +
+                        '</div>' +
+                        '<div id="rep-batch-images-body" style="min-height:0;overflow-y:auto;"></div>' +
+                        '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:12px;flex-shrink:0;">' +
+                            '<span style="font-size:.7rem;color:var(--text2);">선택한 내용은 ‘일괄 설정 적용’으로 저장합니다.</span>' +
+                            '<button type="button" data-role="close" style="flex-shrink:0;padding:7px 14px;border:0;border-radius:6px;background:var(--accent);color:#fff;cursor:pointer;font-size:.8rem;">선택 완료</button>' +
+                        '</div>' +
+                    '</div>';
+                const opener = document.activeElement;
+                overlay.querySelectorAll('[data-role="close"]').forEach(button => button.onclick = () => {
+                    overlay.remove();
+                    const currentOpener = document.querySelector('#rep-batch-body [data-row-idx="' + rowIndex + '"] [data-role="rep-batch-all"]');
+                    (currentOpener || opener)?.focus();
+                });
+                const priorityInput = overlay.querySelector('#rep-batch-images-search');
+                priorityInput.value = previousQuery ?? (profile.useOwnSearch
+                    ? String(profile.ownSearch || '') : (document.getElementById('rep-batch-search')?.value || ''));
+                document.body.appendChild(overlay);
+                _repBatchRenderRow(rowIndex, profileIndex);
+                overlay.querySelector('#rep-batch-images-body').scrollTop = previousScroll;
+                if (sameCharacter) overlay.querySelector('[data-role="rep-batch-profile"][aria-pressed="true"]')?.focus();
+                else priorityInput.focus();
+                return;
+            }
             const overlay = document.createElement('div');
             overlay.id = 'rep-batch-overlay';
             overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:270; display:flex; align-items:center; justify-content:center;';
@@ -80206,11 +80520,12 @@
             _repBatchUpdateApplyBtn();
         }
 
-        function _repBatchRenderRow(i) {
+        function _repBatchRenderRow(i, allProfileIndex = null) {
             const row = _repBatchRowData[i];
             if (!row) return;
+            const showAll = allProfileIndex !== null;
             const palette = _repBatchCharacterPalette(row.charName);
-            const body = document.getElementById('rep-batch-body');
+            const body = document.getElementById(showAll ? 'rep-batch-images-body' : 'rep-batch-body');
             if (!body) return;
             let rowEl = body.querySelector('[data-row-idx="' + i + '"]');
             if (!rowEl) {
@@ -80231,15 +80546,36 @@
             const searchEl = document.getElementById('rep-batch-search');
             const commonSearch = (searchEl ? searchEl.value : '').trim().toLowerCase();
             const mode = _repBatchMode();
+            const representatives = showAll ? row.profiles.map(profile => {
+                if (profile.removePending) return '';
+                if (mode === 'protect' && profile.rep0 && !profile.manualTarget) return profile.rep0;
+                const search = profile.useOwnSearch ? String(profile.ownSearch || '').trim().toLowerCase() : commonSearch;
+                return _repBatchResolvedTarget(row, profile, search);
+            }) : [];
             const removePendingCount = row.profiles.filter(profile => profile.removePending).length;
             const activeProfileCount = row.profiles.length - removePendingCount;
             const canAdd = activeProfileCount < VISUAL_CARD_LIMIT;
             const canDeleteCharacter = row.profiles.length > 0 && row.profiles.every(profile => !profile.rep0 && !profile.isNew);
             const profilesHtml = row.profiles.map((profile, profileIndex) => {
+                if (showAll && profileIndex !== allProfileIndex) return '';
                 const profileRemoved = !profile.isNew && !!profile.removePending;
                 const search = profile.useOwnSearch
                     ? String(profile.ownSearch || '').trim().toLowerCase() : commonSearch;
-                const display = hasImages ? _repBatchComputeDisplay(row, profile, search) : [];
+                const display = hasImages ? _repBatchComputeDisplay(row, profile, showAll ? '' : search, showAll ? row.baseOrder.length : 10) : [];
+                if (showAll) {
+                    const priorityWords = (document.getElementById('rep-batch-images-search')?.value || '')
+                        .toLowerCase().split('|').map(word => word.trim()).filter(Boolean);
+                    if (priorityWords.length) {
+                        display.sort((left, right) =>
+                            Number(priorityWords.some(word => String(right.filename || '').toLowerCase().includes(word)))
+                            - Number(priorityWords.some(word => String(left.filename || '').toLowerCase().includes(word)))
+                        );
+                    }
+                    const count = document.getElementById('rep-batch-images-match-count');
+                    if (count) count.textContent = priorityWords.length
+                        ? '일치 ' + display.filter(img => priorityWords.some(word => String(img.filename || '').toLowerCase().includes(word))).length + '장 / 전체 ' + display.length + '장'
+                        : '전체 ' + display.length + '장';
+                }
                 const matchedCount = search
                     ? row.baseOrder.filter(im => (im.filename || '').toLowerCase().includes(search)).length : 0;
                 profile._target = profileRemoved ? '' : _repBatchResolvedTarget(row, profile, search);
@@ -80290,41 +80626,78 @@
                             : 'border:1px solid var(--border);');
                     const candidateBadge = isCandidate
                         ? '<div style="position:absolute;top:3px;left:3px;background:#3b82f6;color:#fff;font-size:0.55rem;font-weight:700;padding:1px 5px;border-radius:4px;">설정 예정</div>' : '';
+                    const otherRepresentatives = showAll ? row.profiles.map((other, otherIndex) => {
+                        if (otherIndex === profileIndex || other.removePending) return '';
+                        const saved = img.filename === other.rep0;
+                        if (!saved && img.filename !== representatives[otherIndex]) return '';
+                        return '<span data-role="rep-batch-other-representative" data-profile-idx="' + otherIndex + '" title="' + escAttr(other.profileLabel) + '" style="font-size:.62rem;color:' + (saved ? '#22c55e' : '#3b82f6') + ';">[' + (otherIndex + 1) + '] ' + (saved ? '대표' : '지정 예정') + '</span>';
+                    }).join('') : '';
                     const buttonLabel = isManualTarget ? '✓ 지정 예정' : '대표로 지정';
                     const buttonStyle = isManualTarget
                         ? 'border:1px solid #3b82f6;background:#3b82f6;color:#fff;cursor:default;'
                         : 'border:1px solid #3b82f6;background:var(--surface2);color:#3b82f6;cursor:pointer;';
                     const manualButton = profileRemoved ? '' :
-                        '<button data-role="rep-batch-manual" data-selected="' + (isManualTarget ? 'true' : 'false') + '" aria-pressed="' + (isManualTarget ? 'true' : 'false') + '" onclick="_repBatchSelectManualTarget(' + i + ',' + profileIndex + ',\'' + escAttr(img.filename) + '\')" title="이 이미지를 대표 후보로 직접 선택" style="width:100%;margin-top:3px;padding:3px 1px;border-radius:4px;font-size:0.57rem;font-weight:700;' + buttonStyle + '">' + buttonLabel + '</button>';
-                    return '<div style="flex:0 0 auto;width:70px;">' +
+                        '<button data-role="rep-batch-manual" data-selected="' + (isManualTarget ? 'true' : 'false') + '" aria-pressed="' + (isManualTarget ? 'true' : 'false') + '" onclick="_repBatchSelectManualTarget(' + i + ',' + profileIndex + ',\'' + escAttr(img.filename) + '\')" title="이 이미지를 대표 후보로 직접 선택" style="width:100%;margin-top:3px;padding:' + (showAll ? '6px 2px' : '3px 1px') + ';border-radius:4px;font-size:' + (showAll ? '.72rem' : '.57rem') + ';font-weight:700;' + buttonStyle + '">' + buttonLabel + '</button>';
+                    return '<div style="flex:0 0 auto;min-width:0;width:' + (showAll ? '100%' : '70px') + ';">' +
                         '<div style="position:relative;cursor:zoom-in;" onclick="openLightbox(\'' + escAttr(img.url) + '\')">' +
                             '<img src="' + escAttr(img.url) + '" loading="lazy" style="width:100%;aspect-ratio:700/1024;object-fit:contain;display:block;border-radius:6px;background:var(--surface);' + borderStyle + '" onerror="this.style.opacity=0.2">' +
                             (isRep0 ? '<div style="position:absolute;top:3px;left:3px;background:#22c55e;color:#000;font-size:0.55rem;font-weight:700;padding:1px 5px;border-radius:4px;">대표</div>' : '') +
                             candidateBadge +
                         '</div>' +
-                        '<div style="font-size:0.52rem;color:var(--text3);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="' + escAttr(img.filename) + '">' + escHtml(img.filename) + '</div>' +
+                        '<div style="font-size:' + (showAll ? '.7rem' : '.52rem') + ';color:var(--text3);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="' + escAttr(img.filename) + '">' + escHtml(img.filename) + '</div>' +
+                        (otherRepresentatives ? '<div style="display:flex;flex-wrap:wrap;gap:2px 6px;margin-top:3px;">' + otherRepresentatives + '</div>' : '') +
                         manualButton +
                     '</div>';
                 }).join('');
                 const thumbsContent = thumbs || '<span style="font-size:0.68rem;color:var(--text2);padding:8px 2px;">대표로 지정할 이미지가 없습니다.</span>';
+                if (showAll) {
+                    return '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:12px;">' + thumbsContent + '</div>';
+                }
                 return '<div data-profile-idx="' + profileIndex + '" data-remove-pending="' + (profileRemoved ? 'true' : 'false') + '" style="border:1px solid ' + (profileRemoved ? 'rgba(239,68,68,.4)' : 'var(--border)') + ';border-radius:7px;padding:7px;background:var(--surface);opacity:' + (profileRemoved ? '.62' : '1') + ';">' +
                     '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:6px;">' + profileTitle + badge + protectNote + targetHint + newProfileNote + ownSearchControl + removeControl +
                         '<span style="margin-left:auto;font-size:0.64rem;color:var(--text2);">' + matchInfo + '</span></div>' +
                     '<div style="display:flex;gap:6px;overflow-x:auto;padding-bottom:4px;">' + thumbsContent + '</div></div>';
             }).join('');
+            if (showAll) {
+                rowEl.innerHTML = profilesHtml;
+                const cards = document.getElementById('rep-batch-images-profiles');
+                cards.innerHTML = row.profiles.map((profile, profileIndex) => {
+                    const active = profileIndex === allProfileIndex;
+                    const representative = row.baseOrder.find(img => img.filename === (profile.removePending ? (profile.manualTarget || profile.rep0) : representatives[profileIndex]));
+                    const status = profile.removePending ? '삭제 예정' : (representative && representative.filename !== profile.rep0 ? '지정 예정' : (profile.rep0 ? '대표' : '새 카드'));
+                    const removeLabel = profile.removePending ? '제거 취소' : '카드 제거';
+                    return '<div style="display:flex;align-items:center;flex:0 1 180px;min-width:0;max-width:100%;gap:2px;opacity:' + (profile.removePending ? '.65' : '1') + ';">' +
+                        '<button type="button" data-role="rep-batch-profile" data-profile-idx="' + profileIndex + '" aria-pressed="' + active + '" title="' + escAttr(profile.profileLabel) + '" onclick="_repBatchBuildOverlay(' + i + ',' + profileIndex + ')" style="display:flex;align-items:center;gap:6px;flex:1;min-width:0;padding:5px 6px;border:1px solid ' + (active ? 'var(--accent)' : 'var(--border)') + ';border-radius:6px;background:' + (active ? 'var(--accent)' : 'var(--surface2)') + ';color:' + (active ? '#fff' : 'var(--text)') + ';cursor:pointer;font-size:.75rem;text-align:left;">' +
+                            (representative ? '<img data-role="rep-batch-profile-representative" src="' + escAttr(representative.url) + '" alt="" style="width:32px;height:44px;flex-shrink:0;object-fit:contain;border-radius:3px;background:var(--surface);" onerror="this.style.opacity=0.2">' : '<span style="width:32px;height:44px;flex-shrink:0;display:grid;place-items:center;background:var(--surface);border-radius:3px;color:var(--text2);">—</span>') +
+                            '<span style="min-width:0;"><span style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">[' + (profileIndex + 1) + '] ' + escHtml(profile.profileLabel) + '</span><span style="display:block;margin-top:3px;font-size:.62rem;opacity:.8;">' + status + '</span></span></button>' +
+                        ((profile.isNew || profileIndex > 0)
+                            ? '<button type="button" data-role="rep-batch-remove-profile" aria-label="' + (profileIndex + 1) + '번 ' + removeLabel + '" title="' + removeLabel + '" onclick="' + (profile.isNew ? '_repBatchRemoveDraftProfile' : '_repBatchToggleRemoveProfile') + '(' + i + ',' + profileIndex + ')" style="flex-shrink:0;padding:5px;border:0;background:transparent;color:#ef4444;cursor:pointer;font-size:.9rem;">' + (profile.removePending ? '↶' : '×') + '</button>' : '') +
+                        '</div>';
+                }).join('');
+                cards.querySelector('[aria-pressed="true"]')?.parentElement.scrollIntoView({block:'nearest', inline:'nearest'});
+                const addButton = document.getElementById('rep-batch-images-add');
+                addButton.disabled = !canAdd;
+                addButton.style.opacity = canAdd ? '1' : '.45';
+                addButton.style.cursor = canAdd ? 'pointer' : 'not-allowed';
+                return;
+            }
+            const cardsExpanded = rowEl.querySelector('[data-role="rep-batch-cards"]')?.open !== false;
             rowEl.innerHTML =
-                '<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;margin:-8px -8px 10px;background:' + palette.header + ';border-bottom:1px solid ' + palette.border + ';border-radius:8px 8px 0 0;">' +
+                '<details data-role="rep-batch-cards"' + (cardsExpanded ? ' open' : '') + '>' +
+                '<summary class="rep-batch-card-header" title="카드 접기·펼치기" aria-label="' + escAttr(row.charName) + ' 카드 접기·펼치기" style="background:' + palette.header + ';border-color:' + palette.border + ';">' +
+                    '<span class="rep-batch-card-arrow" aria-hidden="true">▸</span>' +
                     '<span style="font-weight:800;font-size:1.02rem;letter-spacing:.01em;">' + escHtml(row.charName) + '</span>' +
                     '<span style="font-size:0.64rem;color:var(--text2);">프로필 ' + activeProfileCount + '/' + VISUAL_CARD_LIMIT + (removePendingCount ? ' · 삭제 예정 ' + removePendingCount : '') + '</span>' +
                     '<button onclick="_repBatchAddDraftProfile(' + i + ')" ' + (canAdd ? '' : 'disabled') + ' style="border:1px dashed var(--accent);border-radius:5px;background:transparent;color:var(--accent);padding:3px 8px;cursor:' + (canAdd ? 'pointer' : 'not-allowed') + ';font-size:0.68rem;opacity:' + (canAdd ? '1' : '.45') + ';">＋ 프로필 추가</button>' +
+                    (hasImages ? '<button type="button" data-role="rep-batch-all" onclick="_repBatchBuildOverlay(' + i + ',0)" style="border:1px solid var(--accent);border-radius:5px;background:transparent;color:var(--accent);padding:3px 8px;cursor:pointer;font-size:.68rem;">전체 이미지 보기</button>' : '') +
                     (canDeleteCharacter ? '<button onclick="deleteRepBatchChar(\'' + escAttr(row.charName) + '\')" title="이 캐릭터 삭제" style="margin-left:auto;background:var(--error);color:#fff;border:none;padding:2px 8px;border-radius:999px;cursor:pointer;font-size:0.62rem;">🗑 캐릭터 삭제</button>' : '') +
-                '</div>' +
-                '<div style="display:flex;flex-direction:column;gap:7px;">' + profilesHtml + '</div>';
+                '</summary>' +
+                '<div style="display:flex;flex-direction:column;gap:7px;">' + profilesHtml + '</div></details>';
             _repBatchUpdateApplyBtn();
         }
 
         // 표시 순서 계산. 핵심 불변량: rep0(메인 대표)이 존재하면 항상 맨 앞.
-        function _repBatchComputeDisplay(row, profile, search) {
+        function _repBatchComputeDisplay(row, profile, search, limit = 10) {
             const all = row.baseOrder.slice();
             let ordered;
             if (profile.rep0) {
@@ -80336,7 +80709,7 @@
             }
             if (search) {
                 const matched = ordered.filter(im => (im.filename || '').toLowerCase().includes(search));
-                if (matched.length === 0) return _repBatchCapTen(ordered, row, profile); // 일치 없으면 원래 순서 유지
+                if (matched.length === 0) return _repBatchCapTen(ordered, row, profile, limit); // 일치 없으면 원래 순서 유지
                 const matchedSet = new Set(matched.map(im => im.filename));
                 const unmatched = ordered.filter(im => !matchedSet.has(im.filename));
                 let result;
@@ -80348,19 +80721,19 @@
                 } else {
                     result = matched.concat(unmatched);
                 }
-                return _repBatchCapTen(result, row, profile);
+                return _repBatchCapTen(result, row, profile, limit);
             }
-            return _repBatchCapTen(ordered, row, profile);
+            return _repBatchCapTen(ordered, row, profile, limit);
         }
 
-        // 최대 10개. rep0이 컷에서 빠지면 강제로 맨 앞 삽입 (맨 앞 대표 보장).
-        function _repBatchCapTen(arr, row, profile) {
+        // 기본 최대 10개, 전체 이미지 창은 전체 개수. 대표와 수동 후보를 맨 앞에 유지한다.
+        function _repBatchCapTen(arr, row, profile, limit = 10) {
             const forcedNames = [profile.rep0, profile.manualTarget].filter(Boolean);
             const forced = forcedNames
                 .map(filename => row.baseOrder.find(im => im.filename === filename))
                 .filter((image, index, values) => image && values.findIndex(item => item?.filename === image.filename) === index);
             const forcedSet = new Set(forced.map(image => image.filename));
-            return forced.concat(arr.filter(image => !forcedSet.has(image.filename))).slice(0, 10);
+            return forced.concat(arr.filter(image => !forcedSet.has(image.filename))).slice(0, limit);
         }
 
         function _repBatchAddDraftProfile(rowIndex) {
@@ -80384,14 +80757,29 @@
                 _target: ''
             });
             _repBatchRenderRow(rowIndex);
+            const gallery = document.getElementById('rep-batch-images-overlay');
+            if (gallery && Number(gallery.dataset.rowIdx) === rowIndex) {
+                _repBatchBuildOverlay(rowIndex, row.profiles.length - 1);
+            }
         }
 
         function _repBatchRemoveDraftProfile(rowIndex, profileIndex) {
             const row = _repBatchRowData[rowIndex];
             const profile = row?.profiles?.[profileIndex];
             if (!profile?.isNew) return;
+            const gallery = document.getElementById('rep-batch-images-overlay');
+            const activeProfile = gallery && Number(gallery.dataset.rowIdx) === rowIndex
+                ? row.profiles[Number(gallery.dataset.profileIdx)] : null;
             row.profiles.splice(profileIndex, 1);
             _repBatchRenderRow(rowIndex);
+            if (activeProfile) {
+                let nextIndex = row.profiles.indexOf(activeProfile);
+                if (nextIndex < 0) {
+                    nextIndex = Math.min(profileIndex, row.profiles.length - 1);
+                    while (nextIndex > 0 && row.profiles[nextIndex].removePending) nextIndex--;
+                }
+                _repBatchBuildOverlay(rowIndex, nextIndex);
+            }
         }
 
         function _repBatchToggleRemoveProfile(rowIndex, profileIndex) {
@@ -80408,6 +80796,10 @@
             }
             profile.removePending = !profile.removePending;
             _repBatchRenderRow(rowIndex);
+            const gallery = document.getElementById('rep-batch-images-overlay');
+            if (gallery && Number(gallery.dataset.rowIdx) === rowIndex) {
+                _repBatchRenderRow(rowIndex, Number(gallery.dataset.profileIdx));
+            }
         }
 
         function _repBatchSetDraftLabel(rowIndex, profileIndex, value) {
@@ -80441,6 +80833,10 @@
             }
             profile.manualTarget = normalized;
             _repBatchRenderRow(rowIndex);
+            const gallery = document.getElementById('rep-batch-images-overlay');
+            if (gallery && Number(gallery.dataset.rowIdx) === rowIndex) {
+                _repBatchRenderRow(rowIndex, Number(gallery.dataset.profileIdx));
+            }
         }
 
         function filterRepBatchByName(query) {
@@ -80624,6 +81020,7 @@
         }
 
         function closeRepBatchModal() {
+            document.getElementById('rep-batch-images-overlay')?.remove();
             const ov = document.getElementById('rep-batch-overlay');
             if (ov) ov.remove();
             document.body.style.overflow = window._repBatchPrevOverflow || '';
@@ -81518,6 +81915,10 @@
                 img_w: parseInt(document.getElementById('illust-img-w').value) || 756,
                 img_h: parseInt(document.getElementById('illust-img-h').value) || 756,
                 face_id_activate: document.getElementById('illust-face-id-toggle').checked,
+                snapref_enabled: document.getElementById('illust-snapref-toggle').checked,
+                snapref_strength: Number(document.getElementById('illust-snapref-strength').value ?? 0),
+                snapref_mode: document.getElementById('illust-snapref-mode').value ?? 'char',
+                snapref_megapixels: Number(document.getElementById('illust-snapref-megapixels').value ?? 1),
                 face_id_str: parseFloat(document.getElementById('illust-face-id-str').value) || 0.55,
                 anima_fd_activate: document.getElementById('illust-anima-fd-toggle').checked,
                 anima_hd_activate: document.getElementById('illust-anima-hd-toggle').checked,
@@ -81560,6 +81961,12 @@
                     document.getElementById('illust-img-w').value = s.img_w || 756;
                     document.getElementById('illust-img-h').value = s.img_h || 756;
                     document.getElementById('illust-face-id-toggle').checked = s.face_id_activate || false;
+                    document.getElementById('illust-snapref-toggle').checked = s.snapref_enabled || false;
+                    document.getElementById('illust-snapref-strength').value = s.snapref_strength ?? 0;
+                    document.getElementById('illust-snapref-strength-val').textContent = s.snapref_strength ?? 0;
+                    document.getElementById('illust-snapref-mode').value = s.snapref_mode ?? 'char';
+                    document.getElementById('illust-snapref-megapixels').value = s.snapref_megapixels ?? 1;
+                    document.getElementById('illust-snapref-megapixels-val').textContent = (s.snapref_megapixels ?? 1) + ' MP';
                     document.getElementById('illust-face-id-str').value = s.face_id_str || 0.55;
                     document.getElementById('illust-face-id-str-val').textContent = s.face_id_str || 0.55;
                     document.getElementById('illust-fd-toggle').checked = s.fd_activate || false;
@@ -81648,6 +82055,10 @@
                 img_w: parseInt(document.getElementById('illust-img-w').value) || 756,
                 img_h: parseInt(document.getElementById('illust-img-h').value) || 756,
                 face_id_activate: document.getElementById('illust-face-id-toggle').checked,
+                snapref_enabled: document.getElementById('illust-snapref-toggle').checked,
+                snapref_strength: Number(document.getElementById('illust-snapref-strength').value ?? 0),
+                snapref_mode: document.getElementById('illust-snapref-mode').value ?? 'char',
+                snapref_megapixels: Number(document.getElementById('illust-snapref-megapixels').value ?? 1),
                 face_id_str: parseFloat(document.getElementById('illust-face-id-str').value) || 0.55,
                 anima_fd_activate: document.getElementById('illust-anima-fd-toggle').checked,
                 anima_hd_activate: document.getElementById('illust-anima-hd-toggle').checked,
@@ -81669,6 +82080,11 @@
         }
 
         function updateIllustToggles() {
+            const snaprefOn = document.getElementById('illust-snapref-toggle').checked;
+            document.getElementById('illust-snapref-options').style.display = snaprefOn ? 'block' : 'none';
+            document.getElementById('illust-snapref-status').textContent = snaprefOn ? 'ON' : 'OFF';
+            document.getElementById('illust-snapref-status').className = snaprefOn ? 'toggle-status on' : 'toggle-status off';
+
             const hrfOn = document.getElementById('illust-hrf-toggle').checked;
             document.getElementById('illust-hrf-status').textContent = hrfOn ? 'ON' : 'OFF';
             document.getElementById('illust-hrf-status').className = hrfOn ? 'toggle-status on' : 'toggle-status off';
@@ -87786,7 +88202,7 @@
 
         async function loadAssetData() {
             const isFirstLoad = !assetTags;
-            showAssetView('loading');
+            if (isFirstLoad) showAssetView('loading');
             try {
                 const resp = await fetch('/api/asset_mode/tags');
                 assetTags = await resp.json();
@@ -87883,8 +88299,8 @@
 
             // 보존된 선택값이 유효하면 태그도 다시 렌더
             if (prevApp && assetTags.appearances?.[prevApp]) onAssetAppearanceChange();
-            if (prevOutfit && assetTags.outfits?.[prevOutfit]) onAssetOutfitChange();
-            if (prevExpr && assetTags.expressions?.[prevExpr]) onAssetExpressionChange();
+            if (prevOutfit && assetTags.outfits?.[prevOutfit]) onAssetOutfitChange(true);
+            if (prevExpr && assetTags.expressions?.[prevExpr]) onAssetExpressionChange(true);
 
             if (!prevApp || !assetTags.appearances?.[prevApp]) document.getElementById('asset-appearance-tags').innerHTML = '';
             if (!prevOutfit || !assetTags.outfits?.[prevOutfit]) document.getElementById('asset-outfit-tags').innerHTML = '';
@@ -87934,7 +88350,6 @@
             // 사이드바 스크롤 위치 복원
             if (sidebar) {
                 sidebar.scrollTop = savedScroll;
-                requestAnimationFrame(() => { sidebar.scrollTop = savedScroll; });
             }
         }
 
@@ -88510,6 +88925,12 @@
 
         // 컨트롤 블럭 타이틀 색상 맵
         const BLOCK_COLORS = {
+            'SNAPREF': '#80deea',
+            'SNAPREF_ENABLED': '#80deea',
+            'SNAPREF_STRENGTH': '#80deea',
+            'SNAPREF_MODE': '#80deea',
+            'SNAPREF_MEGAPIXELS': '#80deea',
+            'SNAPREF_DIR': '#80deea',
             'ANIMA_QUALITY': '#ff9800',
             'ANIMA_ARTIST': '#e91e63',
             'ANIMA': '#00e5ff',
@@ -88610,6 +89031,11 @@
                 ref_enabled: capabilities.ipadapter && (document.getElementById('asset-ref-toggle')?.checked || false),
                 ref_strength: parseFloat(document.getElementById('asset-ref-strength')?.value) || 0.55,
                 ref_dir: document.getElementById('asset-ref-folder-hash-text')?.textContent || '',
+                snapref_enabled: hasAnima && (document.getElementById('asset-snapref-toggle')?.checked || false),
+                snapref_strength: Number(document.getElementById('asset-snapref-strength')?.value ?? 0),
+                snapref_mode: document.getElementById('asset-snapref-mode')?.value || 'char',
+                snapref_megapixels: Number(document.getElementById('asset-snapref-megapixels')?.value ?? 1),
+                snapref_dir: assetSnapRefDir,
                 style_ref_enabled: capabilities.ipadapter && (document.getElementById('asset-style-ref-toggle')?.checked || false),
                 style_ref_strength: parseFloat(document.getElementById('asset-style-ref-strength')?.value) || 0.55,
                 style_ref_dir: document.getElementById('asset-style-ref-folder-hash-text')?.textContent || '',
@@ -88665,6 +89091,12 @@
                 ref_enabled: document.getElementById('asset-ref-toggle')?.checked || false,
                 ref_strength: parseFloat(document.getElementById('asset-ref-strength')?.value) || 0.55,
                 ref_dir: document.getElementById('asset-ref-folder-hash-text')?.textContent || '',
+                snapref_enabled: document.getElementById('asset-snapref-toggle')?.checked || false,
+                snapref_strength: Number(document.getElementById('asset-snapref-strength')?.value ?? 0),
+                snapref_mode: document.getElementById('asset-snapref-mode')?.value || 'char',
+                snapref_megapixels: Number(document.getElementById('asset-snapref-megapixels')?.value ?? 1),
+                snapref_images: assetSnapRefImages.map(image => ({...image})),
+                snapref_dir: assetSnapRefDir,
                 style_ref_enabled: document.getElementById('asset-style-ref-toggle')?.checked || false,
                 style_ref_strength: parseFloat(document.getElementById('asset-style-ref-strength')?.value) || 0.55,
                 style_ref_dir: document.getElementById('asset-style-ref-folder-hash-text')?.textContent || '',
@@ -88787,6 +89219,16 @@
                 if (refToggle) { refToggle.checked = s.ref_enabled || false; refToggle.dispatchEvent(new Event('change')); }
                 const refStrength = document.getElementById('asset-ref-strength');
                 if (refStrength) { refStrength.value = s.ref_strength || 0.55; refStrength.dispatchEvent(new Event('input')); }
+                assetSnapRefImages = (s.snapref_images || []).slice(0, 1).map(image => ({...image}));
+                assetSnapRefDir = s.snapref_dir || '';
+                const snaprefToggle = document.getElementById('asset-snapref-toggle');
+                if (snaprefToggle) { snaprefToggle.checked = s.snapref_enabled || false; onAssetRefToggle('snapref'); }
+                document.getElementById('asset-snapref-mode').value = s.snapref_mode || 'char';
+                document.getElementById('asset-snapref-strength').value = s.snapref_strength ?? 0;
+                document.getElementById('asset-snapref-strength-val').textContent = s.snapref_strength ?? 0;
+                document.getElementById('asset-snapref-megapixels').value = s.snapref_megapixels ?? 1;
+                document.getElementById('asset-snapref-megapixels-val').textContent = s.snapref_megapixels ?? 1;
+                renderAssetRefPreview('snapref');
                 const styleToggle = document.getElementById('asset-style-ref-toggle');
                 if (styleToggle) { styleToggle.checked = s.style_ref_enabled || false; styleToggle.dispatchEvent(new Event('change')); }
                 const styleStrength = document.getElementById('asset-style-ref-strength');
@@ -89539,7 +89981,36 @@
 
         // ─── FACE-IPAdapter (Face ID) ─────────────────────────────
 
-        async function updateRefFolderHash() {
+        async function updateRefFolderHash(mode = 'ref') {
+            if (mode === 'snapref' || mode === 'cm-snapref') {
+                const isCM = mode === 'cm-snapref';
+                const images = isCM ? (cmSession?.settings?.snapref_images || []) : assetSnapRefImages;
+                const filenames = images.map(img => img.local_path || img.name);
+                let dir = '';
+                if (filenames.length) {
+                    try {
+                        const resp = await fetch('/api/asset_mode/compute_ref_hash', {
+                            method: 'POST', headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({filenames}),
+                        });
+                        const data = await resp.json();
+                        if (!resp.ok || !data.hash) throw new Error(data.error || '참조 이미지 경로 계산 실패');
+                        dir = 'soya_snapref/' + data.hash;
+                    } catch (e) {
+                        console.error('[ASSET] SnapRef 경로 계산 실패:', e);
+                        showToast('Ref 이미지 준비 실패: ' + e.message, 'error');
+                    }
+                }
+                const currentImages = isCM ? (cmSession?.settings?.snapref_images || []) : assetSnapRefImages;
+                if (JSON.stringify(currentImages.map(img => img.local_path || img.name)) !== JSON.stringify(filenames)) return;
+                if (isCM) {
+                    if (cmSession?.settings && cmSession.settings.snapref_dir !== dir) {
+                        cmSession.settings.snapref_dir = dir;
+                        cmQueueSync();
+                    }
+                } else assetSnapRefDir = dir;
+                return;
+            }
             const el = document.getElementById('asset-ref-folder-hash');
             const txt = document.getElementById('asset-ref-folder-hash-text');
             if (!assetRefImages.length) { el.style.display = 'none'; return; }
@@ -89561,24 +90032,32 @@
         }
 
         let assetRefImages = [];  // [{name, local_path, orig_filename, preview_url}]
+        let assetSnapRefImages = [];
+        let assetSnapRefDir = '';
 
-        function onAssetRefToggle() {
-            const on = document.getElementById('asset-ref-toggle').checked;
-            document.getElementById('asset-ref-section').style.display = on ? 'block' : 'none';
-            const status = document.getElementById('asset-ref-status');
+        function onAssetRefToggle(mode = 'ref') {
+            const isSnapref = mode === 'snapref' || mode === 'cm-snapref';
+            const prefix = mode === 'cm-snapref' ? 'cm-snapref' : (isSnapref ? 'asset-snapref' : 'asset-ref');
+            const on = document.getElementById(prefix + '-toggle').checked;
+            document.getElementById(prefix + '-section').style.display = on ? 'block' : 'none';
+            const status = document.getElementById(prefix + '-status');
             status.textContent = on ? 'ON' : 'OFF';
             status.className = 'toggle-status ' + (on ? 'on' : 'off');
-            if (!on) {
+            if (!on && !isSnapref) {
                 assetRefImages = [];
                 document.getElementById('asset-ref-folder-hash-text').textContent = '';
                 document.getElementById('asset-ref-preview').style.display = 'none';
             }
         }
 
-        async function uploadAssetRefImage(input) {
+        async function uploadAssetRefImage(input, mode = 'ref') {
             if (!input.files || !input.files.length) return;
+            const isCM = mode === 'cm-snapref';
+            const isSnapref = mode === 'snapref' || isCM;
+            const label = isSnapref ? 'Ref' : 'FACE-IPAdapter';
+            const files = isSnapref ? Array.from(input.files).slice(0, 1) : Array.from(input.files);
             const formData = new FormData();
-            for (const file of input.files) {
+            for (const file of files) {
                 formData.append('image', file);
             }
             try {
@@ -89587,49 +90066,71 @@
                 if (result.success) {
                     const images = result.images || [];
                     const enc = encodeURIComponent;
-                    assetRefImages = images.map((img, i) => {
+                    const uploadedImages = images.map((img, i) => {
                         let preview_url = '';
                         if (result.asset_info) {
                             const ai = result.asset_info;
                             preview_url = `/api/asset_mode/characters/${enc(ai.character)}/outfits/${enc(ai.outfit)}/expressions/${enc(ai.expression)}/images/${enc(img.name)}`;
                         } else {
-                            preview_url = URL.createObjectURL(input.files[i] || new Blob());
+                            preview_url = URL.createObjectURL(files[i] || new Blob());
                         }
                         return { name: img.name, local_path: img.local_path, orig_filename: img.orig_filename, preview_url };
                     });
-                    renderAssetRefPreview();
-                    showToast(`${images.length}장 FACE-IPAdapter 이미지 업로드 완료`, 'success');
+                    if (isCM) {
+                        cmSession.settings.snapref_images = uploadedImages;
+                        cmSession.settings.snapref_dir = '';
+                        cmQueueSync();
+                    } else if (isSnapref) {
+                        assetSnapRefImages = uploadedImages;
+                        assetSnapRefDir = '';
+                    } else assetRefImages = uploadedImages;
+                    renderAssetRefPreview(mode);
+                    showToast(`${images.length}장 ${label} 이미지 업로드 완료`, 'success');
                 } else {
+                    console.error('[ASSET] 참조 이미지 업로드 실패:', mode, result.error);
                     showToast(result.error || '업로드 실패', 'error');
                 }
             } catch (e) {
+                console.error('[ASSET] 참조 이미지 업로드 실패:', mode, e);
                 showToast('업로드 실패: ' + e.message, 'error');
             }
             input.value = '';
         }
 
-        function renderAssetRefPreview() {
-            const preview = document.getElementById('asset-ref-preview');
-            const grid = document.getElementById('asset-ref-preview-grid');
-            if (!assetRefImages.length) { preview.style.display = 'none'; return; }
+        function renderAssetRefPreview(mode = 'ref', updateHash = true) {
+            const isCM = mode === 'cm-snapref';
+            const isSnapref = mode === 'snapref' || isCM;
+            const prefix = isCM ? 'cm-snapref' : (isSnapref ? 'asset-snapref' : 'asset-ref');
+            const images = isCM ? (cmSession?.settings?.snapref_images || []) : (isSnapref ? assetSnapRefImages : assetRefImages);
+            const preview = document.getElementById(prefix + '-preview');
+            const grid = document.getElementById(prefix + '-preview-grid');
+            if (updateHash) updateRefFolderHash(mode);
+            if (!images.length) { preview.style.display = 'none'; grid.innerHTML = ''; return; }
             preview.style.display = 'block';
-            grid.innerHTML = assetRefImages.map((img, i) =>
+            grid.innerHTML = images.map((img, i) =>
                 `<div style="position:relative;">
-                    <img src="${escapeHtml(img.preview_url)}" style="width:100%; aspect-ratio:1; object-fit:cover; border-radius:4px; border:1px solid var(--border); display:block;">
-                    <button onclick="removeAssetRefImage(${i})" style="position:absolute; top:2px; right:2px; background:rgba(0,0,0,0.6); color:#fff; border:none; border-radius:50%; width:18px; height:18px; font-size:0.65rem; cursor:pointer; display:flex; align-items:center; justify-content:center; line-height:1;">x</button>
+                    <img src="${escapeHtml(img.preview_url || '')}" alt="참조 이미지" style="width:100%; aspect-ratio:1; object-fit:${isSnapref ? 'contain' : 'cover'}; border-radius:4px; border:1px solid var(--border); display:block;">
+                    <button type="button" aria-label="참조 이미지 제거" onclick="removeAssetRefImage(${i}, '${mode}')" style="position:absolute; top:2px; right:2px; background:rgba(0,0,0,0.6); color:#fff; border:none; border-radius:50%; width:18px; height:18px; font-size:0.65rem; cursor:pointer; display:flex; align-items:center; justify-content:center; line-height:1;">x</button>
                 </div>`
             ).join('');
-            updateRefFolderHash();
         }
 
-        function removeAssetRefImage(idx) {
-            assetRefImages.splice(idx, 1);
-            renderAssetRefPreview();
+        function removeAssetRefImage(idx, mode = 'ref') {
+            const images = mode === 'cm-snapref' ? (cmSession?.settings?.snapref_images || []) : (mode === 'snapref' ? assetSnapRefImages : assetRefImages);
+            const removed = images.splice(idx, 1);
+            removed.forEach(img => { if (img.preview_url?.startsWith('blob:')) URL.revokeObjectURL(img.preview_url); });
+            if (mode === 'cm-snapref') { cmSession.settings.snapref_dir = ''; cmQueueSync(); }
+            else if (mode === 'snapref') assetSnapRefDir = '';
+            renderAssetRefPreview(mode);
         }
 
-        function clearAssetRefImage() {
-            assetRefImages = [];
-            renderAssetRefPreview();
+        function clearAssetRefImage(mode = 'ref') {
+            const images = mode === 'cm-snapref' ? (cmSession?.settings?.snapref_images || []) : (mode === 'snapref' ? assetSnapRefImages : assetRefImages);
+            images.forEach(img => { if (img.preview_url?.startsWith('blob:')) URL.revokeObjectURL(img.preview_url); });
+            images.splice(0);
+            if (mode === 'cm-snapref') { cmSession.settings.snapref_dir = ''; cmQueueSync(); }
+            else if (mode === 'snapref') assetSnapRefDir = '';
+            renderAssetRefPreview(mode);
         }
 
         // ─── IPAdapter ──────────────────────────────────────
@@ -91037,7 +91538,7 @@
         }
 
         let assetRefPickerSelected = [];  // [{filename, imgUrl, char, outfit, expr}]
-        let assetRefPickerTargetType = 'ref';  // 'ref' or 'style'
+        let assetRefPickerTargetType = 'ref';  // ref, style, snapref, cm-snapref
 
         function openAssetRefGalleryPicker() {
             assetRefPickerTargetType = 'ref';
@@ -91045,14 +91546,15 @@
         }
 
         function openAssetRefGalleryPickerInternal(mode) {
-            if (mode === 'style') {
-                assetRefPickerTargetType = 'style';
-            }
+            assetRefPickerTargetType = mode || 'ref';
             // 기존 선택된 이미지를 모달에 미리 반영
-            const currentImages = assetRefPickerTargetType === 'style' ? assetStyleRefImages : assetRefImages;
+            const currentImages = assetRefPickerTargetType === 'cm-snapref' ? (cmSession?.settings?.snapref_images || [])
+                : assetRefPickerTargetType === 'snapref' ? assetSnapRefImages
+                : assetRefPickerTargetType === 'style' ? assetStyleRefImages : assetRefImages;
             assetRefPickerSelected = currentImages.map(img => ({
                 filename: img.name,
                 imgUrl: img.preview_url,
+                local_path: img.local_path || '',
                 char: '', outfit: '', expr: ''
             }));
             const preselectedCount = assetRefPickerSelected.length;
@@ -91201,6 +91703,7 @@
                     card.dataset.outfit = outfit;
                     card.dataset.expr = expr;
                     card.dataset.localPath = img.local_path || '';
+                    card.dataset.representative = img.is_representative ? 'true' : 'false';
 
                     // Check if already selected
                     const isSelected = assetRefPickerSelected.some(s => s.imgUrl === imgUrl);
@@ -91219,6 +91722,13 @@
                             if (check) check.remove();
                         } else {
                             // Select
+                            if (assetRefPickerTargetType === 'snapref' || assetRefPickerTargetType === 'cm-snapref') {
+                                assetRefPickerSelected = [];
+                                grid.querySelectorAll('[data-img-url]').forEach(item => {
+                                    item.style.borderColor = item.dataset.representative === 'true' ? 'var(--accent)' : 'var(--border)';
+                                    item.querySelector('.check-mark')?.remove();
+                                });
+                            }
                             assetRefPickerSelected.push({ filename: img.filename, imgUrl, char, outfit, expr, local_path: img.local_path || '' });
                             card.style.borderColor = 'var(--success)';
                             const check = document.createElement('span');
@@ -91248,7 +91758,19 @@
                 orig_filename: sel.filename,
                 preview_url: sel.imgUrl,
             }));
-            if (assetRefPickerTargetType === 'style') {
+            if (assetRefPickerTargetType === 'snapref' || assetRefPickerTargetType === 'cm-snapref') {
+                if (assetRefPickerTargetType === 'cm-snapref') {
+                    cmSession.settings.snapref_images = refImages.slice(0, 1);
+                    cmSession.settings.snapref_dir = '';
+                    cmQueueSync();
+                } else {
+                    assetSnapRefImages = refImages.slice(0, 1);
+                    assetSnapRefDir = '';
+                }
+                renderAssetRefPreview(assetRefPickerTargetType);
+                document.getElementById('asset-ref-picker-overlay').remove();
+                showToast('Ref 이미지 선택 완료', 'success');
+            } else if (assetRefPickerTargetType === 'style') {
                 assetStyleRefImages = refImages;
                 renderAssetStyleRefPreview();
                 document.getElementById('asset-ref-picker-overlay').remove();
@@ -92252,6 +92774,13 @@
             if (s.ref_strength !== undefined) slot.ref_strength = s.ref_strength;
             slot.style_ref_enabled = s.style_ref_enabled || false;
             if (s.style_ref_strength !== undefined) slot.style_ref_strength = s.style_ref_strength;
+            slot.snapref_enabled = !!s.snapref_enabled;
+            slot.snapref_images = (s.snapref_images || []).slice(0, 1).map(image => ({...image}));
+            slot.snapref_preview_url = slot.snapref_images.map(image => image.preview_url || '').join('|');
+            slot.snapref_dir = s.snapref_dir || '';
+            slot.snapref_strength = s.snapref_strength ?? 0;
+            slot.snapref_mode = s.snapref_mode || 'char';
+            slot.snapref_megapixels = s.snapref_megapixels ?? 1;
             slot.lora_enabled = s.lora_enabled || false;
             if (s.lora_list) slot.lora_list = s.lora_list.map(l => ({...l}));
             slot.pose_enabled = s.pose_enabled || false;
@@ -96318,6 +96847,8 @@
         }
 
         function renderCharacterFolders(updateBreadcrumb = true) {
+            const main = document.getElementById('asset-main');
+            const savedScroll = assetNavLevel === 0 && main ? main.scrollTop : 0;
             assetNavLevel = 0;
             assetNavCharacter = '';
             assetNavOutfit = '';
@@ -96356,6 +96887,7 @@
             }
 
             showAssetView('folder');
+            if (main) main.scrollTop = savedScroll;
         }
 
         function createFolderCard(name) {
@@ -96443,12 +96975,24 @@
         }
 
         async function renderCharacterGallery(charName) {
-            const savedScroll = _assetScrollCache[1];
-            showAssetView('loading');
+            if (assetNavLevel !== 1 || assetNavCharacter !== charName) {
+                console.log('[ASSET] 이동한 갤러리의 갱신을 건너뜁니다:', charName);
+                return;
+            }
+            const requestId = renderCharacterGallery.requestId = (renderCharacterGallery.requestId || 0) + 1;
+            const main = document.getElementById('asset-main');
+            const grid = document.getElementById('asset-gallery-grid');
+            const sameView = grid.dataset.character === charName && grid.style.display === 'grid';
+            // Keep the current scroll range available while a refresh is pending.
+            if (!sameView) showAssetView('loading');
             try {
                 const enc = encodeURIComponent;
                 const resp = await fetch(`/api/asset_mode/characters/${enc(charName)}/gallery`);
                 const data = await resp.json();
+                if (requestId !== renderCharacterGallery.requestId || assetNavLevel !== 1 || assetNavCharacter !== charName) {
+                    console.log('[ASSET] 이전 갤러리 요청 응답을 건너뜁니다:', charName, requestId);
+                    return;
+                }
                 const items = data.gallery || [];
                 const outfitGroups = data.outfit_groups || {};
 
@@ -96460,7 +97004,7 @@
                     return;
                 }
 
-                const grid = document.getElementById('asset-gallery-grid');
+                const savedScroll = sameView && main ? main.scrollTop : 0;
                 grid.innerHTML = '';
 
                 // 아이템 키 맵
@@ -96633,22 +97177,11 @@
                     grid.appendChild(createGalleryCard(it, false));
                 });
 
+                grid.dataset.character = charName;
                 showAssetView('gallery');
                 applyAssetGalleryControls('asset');
-                if (savedScroll !== undefined) {
-                    const main = document.getElementById('asset-main');
-                    if (!main) {
-                        console.error('[ASSET] LV1 스크롤 복원 실패: asset-main 요소가 없습니다.');
-                        return;
-                    }
-                    requestAnimationFrame(() => {
-                        if (!main.isConnected) {
-                            console.error('[ASSET] LV1 스크롤 복원 실패: asset-main 요소가 DOM에서 분리되었습니다.');
-                            return;
-                        }
-                        main.scrollTop = savedScroll;
-                    });
-                }
+                if (main) main.scrollTop = savedScroll;
+                else console.error('[ASSET] LV1 스크롤 복원 실패: asset-main 요소가 없습니다.');
             } catch (e) {
                 console.error('[ASSET] 갤러리 로드 실패:', e);
             }
@@ -96750,6 +97283,8 @@
         async function navigateAssetBreadcrumb(level) {
             if (level === 0) renderCharacterFolders();
             else if (level === 1) {
+                const charName = assetNavCharacter;
+                const savedScroll = assetNavLevel === 2 ? _assetScrollCache[1] : undefined;
                 assetNavLevel = 1;
                 assetNavOutfit = '';
                 assetNavExpression = '';
@@ -96760,7 +97295,14 @@
                     delete _assetScrollCache['sidebar_1'];
                 }
                 updateAssetBreadcrumb();
-                await renderCharacterGallery(assetNavCharacter);
+                const grid = document.getElementById('asset-gallery-grid');
+                if (savedScroll !== undefined && grid.dataset.character === charName) {
+                    showAssetView('gallery');
+                    const main = document.getElementById('asset-main');
+                    if (main) main.scrollTop = savedScroll;
+                    else console.error('[ASSET] LV1 복귀 스크롤 복원 실패: asset-main 요소가 없습니다.');
+                }
+                await renderCharacterGallery(charName);
             }
         }
 
@@ -97388,6 +97930,7 @@
             const capabilities = getAssetWorkflowCapabilities();
             const refEnabled = capabilities.ipadapter && document.getElementById('asset-ref-toggle').checked;
             const styleRefEnabled = capabilities.ipadapter && document.getElementById('asset-style-ref-toggle').checked;
+            const snaprefEnabled = capabilities.anima && document.getElementById('asset-snapref-toggle').checked;
 
             const requestBody = {
                 character: char,
@@ -97397,6 +97940,11 @@
                 asset_workflow_type: capabilities.type,
                 face_id_enabled: refEnabled,
                 reference_images: refEnabled ? assetRefImages.map(img => ({filename: img.name, local_path: img.local_path})) : [],
+                snapref_enabled: snaprefEnabled,
+                snapref_strength: Number(document.getElementById('asset-snapref-strength')?.value ?? 0),
+                snapref_mode: document.getElementById('asset-snapref-mode')?.value || 'char',
+                snapref_megapixels: Number(document.getElementById('asset-snapref-megapixels')?.value ?? 1),
+                snapref_images: snaprefEnabled ? assetSnapRefImages.map(img => ({filename: img.name, local_path: img.local_path})) : [],
                 style_ref_enabled: styleRefEnabled,
                 style_ref_images: styleRefEnabled ? assetStyleRefImages.map(img => ({filename: img.name, local_path: img.local_path})) : [],
                 positive_prompt: promptData.positive,
@@ -97454,8 +98002,8 @@
         function stopAssetGeneration() { stopAssetQueue(); }
 
         async function loadAssetImages() {
+            const requestId = loadAssetImages.requestId = (loadAssetImages.requestId || 0) + 1;
             const main = document.getElementById('asset-main');
-            const savedScroll = main ? main.scrollTop : 0;
             if (!main) {
                 console.error('[ASSET] LV2 스크롤 저장 실패: asset-main 요소가 없습니다.');
             }
@@ -97475,9 +98023,18 @@
             try {
                 const enc = encodeURIComponent;
                 const url = `/api/asset_mode/characters/${enc(char)}/outfits/${enc(outfit)}/expressions/${enc(expr)}/images`;
-                showAssetView('loading');
+                const grid = document.getElementById('asset-image-grid');
+                const sameView = grid.dataset.url === url && grid.style.display === 'grid';
+                if (!sameView) showAssetView('loading');
                 const resp = await fetch(url);
                 const data = await resp.json();
+                if (requestId !== loadAssetImages.requestId || assetNavLevel !== 2
+                    || char !== (assetNavCharacter || document.getElementById('asset-character-select').value)
+                    || outfit !== (assetNavOutfit || getAssetSelectValue('asset-outfit-select'))
+                    || expr !== (assetNavExpression || getAssetSelectValue('asset-expression-select'))) {
+                    console.log('[ASSET] 이전 이미지 요청 응답을 건너뜁니다:', url, requestId);
+                    return;
+                }
                 const images = data.images || [];
 
                 if (images.length === 0) {
@@ -97487,8 +98044,7 @@
                     return;
                 }
 
-                const grid = document.getElementById('asset-image-grid');
-                showAssetView('grid');
+                const savedScroll = sameView && main ? main.scrollTop : 0;
                 grid.innerHTML = '';
 
                 images.forEach(img => {
@@ -97598,15 +98154,9 @@
                     grid.appendChild(card);
                 });
 
-                if (main && savedScroll > 0) {
-                    requestAnimationFrame(() => {
-                        if (!main.isConnected) {
-                            console.error('[ASSET] LV2 스크롤 복원 실패: asset-main 요소가 DOM에서 분리되었습니다.');
-                            return;
-                        }
-                        main.scrollTop = savedScroll;
-                    });
-                }
+                grid.dataset.url = url;
+                showAssetView('grid');
+                if (main) main.scrollTop = savedScroll;
             } catch (e) {
                 console.error('[ASSET] 이미지 로드 실패:', e);
             }
@@ -100217,6 +100767,13 @@
                 style_ref_strength: 0.55,
                 style_ref_images: [],
                 style_ref_preview_url: '',
+                snapref_enabled: false,
+                snapref_images: [],
+                snapref_preview_url: '',
+                snapref_dir: '',
+                snapref_strength: 0,
+                snapref_mode: 'char',
+                snapref_megapixels: 1,
                 lora_enabled: false,
                 lora_list: [],
                 pose_enabled: false,
@@ -100253,6 +100810,7 @@
                 natural_language: '',
             };
             const slot = { ...defaults, ...(data || {}) };
+            slot.snapref_images = (slot.snapref_images || []).slice(0, 1).map(image => ({...image}));
             slot._id = ++batchSlotIdCounter;
             batchChains.push(slot);
             renderBatchChain();
@@ -100440,6 +100998,39 @@
                         <button onclick="openBulkStyleLoraPicker()" style="font-size:0.75rem; padding:4px 10px; border:1px dashed var(--border); background:var(--surface2); color:var(--text-secondary); border-radius:4px; cursor:pointer; width:100%;">+ Style LoRA 추가</button>
                     </div>
 
+                    <section class="batch-bulk-section workflow-mode-control" data-workflow-availability="anima">
+                        <div class="batch-bulk-section-title">Ref 이미지 <span class="workflow-mode-reason">ANIMA 전용</span></div>
+                        <div class="batch-bulk-control-row">
+                            <label class="batch-bulk-control-label">사용 상태</label>
+                            <select id="bulk-snapref-action" class="batch-select" style="width:auto; min-width:120px;">
+                                <option value="">변경 안함</option><option value="on">모두 ON</option><option value="off">모두 OFF</option>
+                            </select>
+                        </div>
+                        <div class="batch-bulk-control-row" style="flex-wrap:wrap;">
+                            <label class="batch-bulk-control-label">SnapRef 이미지</label>
+                            <button id="bulk-snapref-upload-btn" type="button">파일 선택</button>
+                            <button id="bulk-snapref-gallery-btn" type="button">에셋에서 선택</button>
+                            <button type="button" onclick="window._bulkSnaprefImages=[]; document.getElementById('bulk-snapref-file-name').textContent='이미지 비우기'; document.getElementById('bulk-snapref-preview').style.display='none';">이미지 비우기</button>
+                            <span id="bulk-snapref-file-name" style="font-size:0.7rem; color:var(--text-secondary);">변경 안함</span>
+                            <input type="file" id="bulk-snapref-file" accept="image/*" style="display:none;">
+                        </div>
+                        <div id="bulk-snapref-preview" style="display:none; margin-bottom:6px;">
+                            <div id="bulk-snapref-preview-grid" style="display:grid; grid-template-columns:100px; gap:4px;"></div>
+                        </div>
+                        <div class="batch-bulk-control-row">
+                            <label><input type="checkbox" id="bulk-snapref-strength-check"> 강도 적용</label>
+                            <input type="number" id="bulk-snapref-strength" min="-3" max="3" step="0.1" value="0" style="width:70px;">
+                        </div>
+                        <div class="batch-bulk-control-row">
+                            <label><input type="checkbox" id="bulk-snapref-mode-check"> 모드 적용</label>
+                            <select id="bulk-snapref-mode" class="batch-select" style="width:auto;"><option value="char">캐릭터 외형</option><option value="cs">외형+그림체</option></select>
+                        </div>
+                        <div class="batch-bulk-control-row">
+                            <label><input type="checkbox" id="bulk-snapref-megapixels-check"> 참조 해상도 적용 (MP)</label>
+                            <input type="number" id="bulk-snapref-megapixels" min="0.25" max="2" step="0.25" value="1" style="width:70px;">
+                        </div>
+                    </section>
+
                     <div class="batch-bulk-section workflow-mode-control" data-workflow-availability="anima">
                         <div class="batch-bulk-section-title">Face LoRA <span class="workflow-mode-reason">ANIMA 전용</span></div>
                         <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
@@ -100626,9 +101217,11 @@
                 document.getElementById('bulk-ref-strength-val').textContent = this.value;
             });
 
-            // FACE-IPAdapter 파일 업로드
-            const bulkRefFile = document.getElementById('bulk-ref-file');
-            document.getElementById('bulk-ref-upload-btn').addEventListener('click', () => bulkRefFile.click());
+            // FACE-IPAdapter / SnapRef 일괄 이미지 선택
+            for (const mode of ['ref', 'snapref']) {
+            const imagesKey = mode === 'snapref' ? '_bulkSnaprefImages' : '_bulkRefImages';
+            const bulkRefFile = document.getElementById(`bulk-${mode}-file`);
+            document.getElementById(`bulk-${mode}-upload-btn`).addEventListener('click', () => bulkRefFile.click());
             bulkRefFile.addEventListener('change', async function() {
                 if (!this.files || !this.files.length) return;
                 const formData = new FormData();
@@ -100641,7 +101234,7 @@
                     if (result.success) {
                         const images = result.images || [];
                         const enc = encodeURIComponent;
-                        window._bulkRefImages = images.map((img, i) => {
+                        window[imagesKey] = images.map((img, i) => {
                             let preview_url = '';
                             if (result.asset_info) {
                                 const ai = result.asset_info;
@@ -100651,10 +101244,10 @@
                             }
                             return { name: img.name, local_path: img.local_path, orig_filename: img.orig_filename, preview_url };
                         });
-                        window._bulkRefPreviewUrls = window._bulkRefImages.map(img => img.preview_url);
-                        document.getElementById('bulk-ref-file-name').textContent = `${images.length}장 선택`;
-                        document.getElementById('bulk-ref-preview').style.display = 'block';
-                        document.getElementById('bulk-ref-preview-grid').innerHTML = window._bulkRefImages.map(img =>
+                        if (mode === 'ref') window._bulkRefPreviewUrls = window[imagesKey].map(img => img.preview_url);
+                        document.getElementById(`bulk-${mode}-file-name`).textContent = `${images.length}장 선택`;
+                        document.getElementById(`bulk-${mode}-preview`).style.display = 'block';
+                        document.getElementById(`bulk-${mode}-preview-grid`).innerHTML = window[imagesKey].map(img =>
                             `<img src="${escapeHtml(img.preview_url)}" style="width:100%; aspect-ratio:1; object-fit:cover; border-radius:4px; border:1px solid var(--border);">`
                         ).join('');
                     } else {
@@ -100663,13 +101256,14 @@
                 } catch (e) { showToast('업로드 실패: ' + e.message, 'error'); }
                 this.value = '';
             });
-            window._bulkRefImages = null;
-            window._bulkRefPreviewUrls = null;
+            window[imagesKey] = null;
+            if (mode === 'ref') window._bulkRefPreviewUrls = null;
 
             // 에셋에서 FACE-IPAdapter 선택
-            document.getElementById('bulk-ref-gallery-btn').addEventListener('click', () => {
-                openBulkRefGalleryPicker();
+            document.getElementById(`bulk-${mode}-gallery-btn`).addEventListener('click', () => {
+                openBulkRefGalleryPicker(mode);
             });
+            }
 
             // ─── IPAdapter 일괄 설정 이벤트 ──
             document.getElementById('bulk-style-ref-strength').addEventListener('input', function() {
@@ -100917,6 +101511,19 @@
                 setBulkNumber('bulk-ref-strength', s.ref_strength, 'FACE-IPAdapter 강도', 'bulk-ref-strength-check', capabilities.ipadapter);
                 setBulkAction('bulk-style-ref-action', s.style_ref_enabled, 'IPAdapter 사용 상태', capabilities.ipadapter);
                 setBulkNumber('bulk-style-ref-strength', s.style_ref_strength, 'IPAdapter 강도', 'bulk-style-ref-strength-check', capabilities.ipadapter);
+                setBulkAction('bulk-snapref-action', s.snapref_enabled, 'Ref 이미지 사용 상태', capabilities.anima);
+                setBulkNumber('bulk-snapref-strength', s.snapref_strength, 'Ref 이미지 강도', 'bulk-snapref-strength-check', capabilities.anima);
+                setBulkNumber('bulk-snapref-megapixels', s.snapref_megapixels, 'Ref 이미지 참조 해상도', 'bulk-snapref-megapixels-check', capabilities.anima);
+                if (capabilities.anima && s.snapref_mode !== undefined) {
+                    document.getElementById('bulk-snapref-mode').value = s.snapref_mode;
+                    document.getElementById('bulk-snapref-mode-check').checked = true;
+                }
+                if (capabilities.anima && Array.isArray(s.snapref_images)) {
+                    window._bulkSnaprefImages = s.snapref_images.slice(0, 1).map(image => ({...image}));
+                    document.getElementById('bulk-snapref-file-name').textContent = window._bulkSnaprefImages.length ? '1장 선택' : '이미지 비우기';
+                    document.getElementById('bulk-snapref-preview').style.display = window._bulkSnaprefImages.length ? 'block' : 'none';
+                    document.getElementById('bulk-snapref-preview-grid').innerHTML = window._bulkSnaprefImages.map(image => `<img src="${escapeHtml(image.preview_url || '')}" alt="Ref 이미지" style="width:100%; aspect-ratio:1; object-fit:contain;">`).join('');
+                }
 
                 setBulkAction('bulk-lora-action', s.lora_enabled, 'LoRA 사용 상태');
                 const cachedLoras = cloneLoraList('lora_list', 'LoRA 목록');
@@ -100998,7 +101605,7 @@
         function openBulkRefGalleryPicker(mode) {
             bulkRefPickerMode = mode || 'ref';
             bulkRefPickerSelected = [];
-            const title = bulkRefPickerMode === 'style' ? '에셋에서 IPAdapter 선택' : '에셋에서 FACE-IPAdapter 선택';
+            const title = bulkRefPickerMode === 'snapref' ? '에셋에서 Ref 이미지 선택' : bulkRefPickerMode === 'style' ? '에셋에서 IPAdapter 선택' : '에셋에서 FACE-IPAdapter 선택';
             const overlay = document.createElement('div');
             overlay.id = 'bulk-ref-picker-overlay';
             overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:330; display:flex; align-items:center; justify-content:center;';
@@ -101086,6 +101693,13 @@
                             const check = card.querySelector('.check-mark');
                             if (check) check.remove();
                         } else {
+                            if (bulkRefPickerMode === 'snapref') {
+                                bulkRefPickerSelected = [];
+                                grid.querySelectorAll('.check-mark').forEach(mark => {
+                                    mark.parentElement.style.borderColor = 'var(--border)';
+                                    mark.remove();
+                                });
+                            }
                             bulkRefPickerSelected.push({ filename: item.representative, imgUrl: thumbUrl, char, outfit: item.outfit, expr: item.expression });
                             card.style.borderColor = 'var(--success)';
                             const check = document.createElement('span');
@@ -101124,7 +101738,14 @@
                         let preview_url = bulkRefPickerSelected[i].imgUrl;
                         return { name: img.name, local_path: img.local_path, orig_filename: img.orig_filename, preview_url };
                     });
-                    if (isStyle) {
+                    if (bulkRefPickerMode === 'snapref') {
+                        window._bulkSnaprefImages = mapped.slice(0, 1);
+                        document.getElementById('bulk-snapref-file-name').textContent = '1장 선택';
+                        document.getElementById('bulk-snapref-preview').style.display = 'block';
+                        document.getElementById('bulk-snapref-preview-grid').innerHTML = mapped.slice(0, 1).map(img =>
+                            `<img src="${escapeHtml(img.preview_url)}" alt="Ref 이미지" style="width:100%; aspect-ratio:1; object-fit:contain; border-radius:4px;">`
+                        ).join('');
+                    } else if (isStyle) {
                         window._bulkStyleRefImages = mapped;
                         document.getElementById('bulk-style-ref-file-name').textContent = `${images.length}장 선택`;
                         document.getElementById('bulk-style-ref-preview').style.display = 'block';
@@ -101141,7 +101762,7 @@
                         ).join('');
                     }
                     document.getElementById('bulk-ref-picker-overlay').remove();
-                    const label = isStyle ? 'IPAdapter' : 'FACE-IPAdapter';
+                    const label = bulkRefPickerMode === 'snapref' ? 'Ref' : isStyle ? 'IPAdapter' : 'FACE-IPAdapter';
                     showToast(`${images.length}장 ${label} 이미지 선택 완료`, 'success');
                 } else {
                     showToast(uploadResult.error || '업로드 실패', 'error');
@@ -101312,6 +101933,7 @@
             const refStrengthCheck = document.getElementById('bulk-ref-strength-check').checked;
             const refStrength = parseFloat(document.getElementById('bulk-ref-strength').value);
             const styleRefAction = document.getElementById('bulk-style-ref-action').value;
+            const snaprefAction = document.getElementById('bulk-snapref-action').value;
             const styleRefStrengthCheck = document.getElementById('bulk-style-ref-strength-check').checked;
             const styleRefStrength = parseFloat(document.getElementById('bulk-style-ref-strength').value);
             const hrfSdxlAction = document.getElementById('bulk-hrf-sdxl-action')?.value || '';
@@ -101365,6 +101987,18 @@
                     slot.ref_enabled = true;
                 }
                 if (styleRefAction === 'on') slot.style_ref_enabled = true;
+                if (getAssetWorkflowCapabilities(slot.asset_workflow_type).anima) {
+                    if (snaprefAction === 'on') slot.snapref_enabled = true;
+                    if (snaprefAction === 'off') slot.snapref_enabled = false;
+                    if (document.getElementById('bulk-snapref-strength-check').checked) slot.snapref_strength = Number(document.getElementById('bulk-snapref-strength').value);
+                    if (document.getElementById('bulk-snapref-mode-check').checked) slot.snapref_mode = document.getElementById('bulk-snapref-mode').value;
+                    if (document.getElementById('bulk-snapref-megapixels-check').checked) slot.snapref_megapixels = Number(document.getElementById('bulk-snapref-megapixels').value);
+                    if (Array.isArray(window._bulkSnaprefImages)) {
+                        slot.snapref_images = window._bulkSnaprefImages.slice(0, 1).map(image => ({...image}));
+                        slot.snapref_preview_url = slot.snapref_images.map(image => image.preview_url || '').join('|');
+                        slot.snapref_dir = '';
+                    }
+                }
                 if (styleRefAction === 'off') { slot.style_ref_enabled = false; slot.style_ref_images = []; slot.style_ref_preview_url = ''; slot.style_ref_dir = ''; }
                 if (styleRefStrengthCheck) slot.style_ref_strength = styleRefStrength;
                 if (window._bulkStyleRefImages && window._bulkStyleRefImages.length) {
@@ -101429,7 +102063,7 @@
 
         function duplicateBatchSlot(idx) {
             const src = batchChains[idx];
-            const copy = { ...src, _id: ++batchSlotIdCounter };
+            const copy = { ...src, snapref_images: (src.snapref_images || []).map(image => ({...image})), _id: ++batchSlotIdCounter };
             batchChains.splice(idx + 1, 0, copy);
             renderBatchChain();
             requestAnimationFrame(() => {
@@ -101476,6 +102110,9 @@
                 }
                 if (batchChains[idx]?.style_ref_images?.length) {
                     updateBatchStyleRefFolderHash(idx);
+                }
+                if (batchChains[idx]?.snapref_images?.length) {
+                    renderBatchRefPreview(idx, 'snapref');
                 }
             });
 
@@ -101715,6 +102352,26 @@
                     </div>
                 </div>
                 </div>
+                <div class="workflow-mode-control" data-workflow-availability="anima">
+                    <div class="batch-toggle-row">
+                        <label>Ref 이미지 <span class="workflow-mode-reason">ANIMA 전용</span></label>
+                        <label class="toggle-switch"><input type="checkbox" data-field="snapref_enabled" ${slot.snapref_enabled ? 'checked' : ''}><span class="toggle-slider"></span></label>
+                    </div>
+                    <div class="batch-snapref-section" style="display:${slot.snapref_enabled ? 'block' : 'none'}; margin-bottom:8px;">
+                        <div style="display:flex; align-items:center; gap:6px; margin-bottom:4px;"><label style="font-size:0.7rem;">강도</label><input type="number" data-field="snapref_strength" min="-3" max="3" step="0.1" value="${slot.snapref_strength ?? 0}" style="width:65px;"></div>
+                        <select class="batch-select" style="width:100%; margin-bottom:4px;" onchange="batchChains[${idx}].snapref_mode=this.value; updateBatchPreview(this.closest('.batch-slot'), ${idx})"><option value="char" ${(slot.snapref_mode || 'char') === 'char' ? 'selected' : ''}>캐릭터 외형</option><option value="cs" ${slot.snapref_mode === 'cs' ? 'selected' : ''}>외형+그림체</option></select>
+                        <div style="display:flex; align-items:center; gap:6px; margin-bottom:4px;"><label style="font-size:0.7rem;">참조 해상도 (MP)</label><input type="number" data-field="snapref_megapixels" min="0.25" max="2" step="0.25" value="${slot.snapref_megapixels ?? 1}" style="width:65px;"></div>
+                        <div style="display:flex; gap:4px; margin-bottom:4px;">
+                            <button type="button" class="batch-snapref-upload-btn" style="flex:1; font-size:0.7rem;">파일 업로드</button>
+                            <button type="button" class="batch-snapref-gallery-btn" style="flex:1; font-size:0.7rem;">에셋에서 선택</button>
+                            <input type="file" class="batch-snapref-file-input" accept="image/*" style="display:none;">
+                        </div>
+                        <div class="batch-snapref-preview" style="display:none;">
+                            <div class="batch-snapref-preview-grid" style="display:grid; grid-template-columns:minmax(0, 100px); gap:4px;"></div>
+                            <button type="button" class="batch-snapref-clear-btn" style="font-size:0.7rem; margin-top:4px;">이미지 지우기</button>
+                        </div>
+                    </div>
+                </div>
                 </section>
 
                 <section class="batch-slot-section">
@@ -101952,6 +102609,9 @@
                     if (cb.dataset.field === 'style_lora_enabled') {
                         slotEl.querySelector('.batch-style-lora-section').style.display = cb.checked ? 'block' : 'none';
                     }
+                    if (cb.dataset.field === 'snapref_enabled') {
+                        slotEl.querySelector('.batch-snapref-section').style.display = cb.checked ? 'block' : 'none';
+                    }
                     updateBatchPreview(slotEl, idx);
                 });
             });
@@ -101976,6 +102636,8 @@
                 inp.addEventListener('change', () => {
                     if (inp.dataset.field === 'face_lora_upscale_size') {
                         batchChains[idx][inp.dataset.field] = inp.value.trim();
+                    } else if (inp.dataset.field === 'snapref_strength' || inp.dataset.field === 'snapref_megapixels') {
+                        batchChains[idx][inp.dataset.field] = Number(inp.value);
                     } else {
                         batchChains[idx][inp.dataset.field] = parseInt(inp.value) || (inp.dataset.field === 'img_w' ? 700 : 1024);
                     }
@@ -101997,9 +102659,10 @@
                 });
             });
 
-            // FACE-IPAdapter 파일 업로드
-            const fileInput = slotEl.querySelector('.batch-ref-file-input');
-            const uploadBtn = slotEl.querySelector('.batch-ref-upload-btn');
+            // FACE-IPAdapter와 SnapRef는 업로드 경로를 공유하고 선택 상태는 분리한다.
+            for (const mode of ['ref', 'snapref']) {
+            const fileInput = slotEl.querySelector(`.batch-${mode}-file-input`);
+            const uploadBtn = slotEl.querySelector(`.batch-${mode}-upload-btn`);
             uploadBtn.addEventListener('click', () => fileInput.click());
             fileInput.addEventListener('change', async function() {
                 if (!this.files || !this.files.length) return;
@@ -102023,10 +102686,10 @@
                             }
                             return { name: img.name, local_path: img.local_path, orig_filename: img.orig_filename, preview_url };
                         });
-                        batchChains[idx].ref_images = refImages.map(img => ({name: img.name, local_path: img.local_path, orig_filename: img.orig_filename}));
-                        batchChains[idx].ref_preview_url = refImages.map(img => img.preview_url).join('|');
-                        renderBatchRefPreview(idx);
-                        showToast(`${images.length}장 FACE-IPAdapter 이미지 업로드 완료`, 'success');
+                        batchChains[idx][`${mode}_images`] = refImages.map(img => ({...img}));
+                        batchChains[idx][`${mode}_preview_url`] = refImages.map(img => img.preview_url).join('|');
+                        renderBatchRefPreview(idx, mode);
+                        showToast(`${images.length}장 ${mode === 'snapref' ? 'Ref' : 'FACE-IPAdapter'} 이미지 업로드 완료`, 'success');
                         updateBatchPreview(slotEl, idx);
                     } else {
                         showToast(result.error || '업로드 실패', 'error');
@@ -102038,17 +102701,19 @@
             });
 
             // 에셋에서 FACE-IPAdapter 선택
-            slotEl.querySelector('.batch-ref-gallery-btn').addEventListener('click', () => {
-                openBatchRefGalleryPicker(idx);
+            slotEl.querySelector(`.batch-${mode}-gallery-btn`).addEventListener('click', () => {
+                openBatchRefGalleryPicker(idx, mode);
             });
 
             // FACE-IPAdapter 미리보기 삭제
-            slotEl.querySelector('.batch-ref-clear-btn').addEventListener('click', () => {
-                batchChains[idx].ref_images = [];
-                batchChains[idx].ref_preview_url = '';
-                renderBatchRefPreview(idx);
+            slotEl.querySelector(`.batch-${mode}-clear-btn`).addEventListener('click', () => {
+                batchChains[idx][`${mode}_images`] = [];
+                batchChains[idx][`${mode}_preview_url`] = '';
+                batchChains[idx][`${mode}_dir`] = '';
+                renderBatchRefPreview(idx, mode);
                 updateBatchPreview(slotEl, idx);
             });
+            }
 
             // IPAdapter 파일 업로드
             const styleFileInput = slotEl.querySelector('.batch-style-ref-file-input');
@@ -102809,46 +103474,48 @@
         }
 
         // ─── 배치 슬롯 FACE-IPAdapter 프리뷰/해시 공통 함수 ─────
-        function renderBatchRefPreview(slotIdx) {
+        function renderBatchRefPreview(slotIdx, mode = 'ref') {
             const slot = batchChains[slotIdx];
             const slotEl = document.querySelectorAll('.batch-slot')[slotIdx];
             if (!slotEl) return;
-            const preview = slotEl.querySelector('.batch-ref-preview');
-            const previewGrid = slotEl.querySelector('.batch-ref-preview-grid');
-            const urls = slot.ref_preview_url ? slot.ref_preview_url.split('|').filter(Boolean) : [];
+            const preview = slotEl.querySelector(`.batch-${mode}-preview`);
+            const previewGrid = slotEl.querySelector(`.batch-${mode}-preview-grid`);
+            const urls = (slot[`${mode}_preview_url`] || (mode === 'snapref' ? slot.snapref_images?.[0]?.preview_url : '') || '').split('|').filter(Boolean);
             if (!urls.length) {
                 preview.style.display = 'none';
-                const hashEl = slotEl.querySelector('.batch-ref-folder-hash');
+                slot[`${mode}_dir`] = '';
+                const hashEl = slotEl.querySelector(`.batch-${mode}-folder-hash`);
                 if (hashEl) hashEl.style.display = 'none';
                 return;
             }
             preview.style.display = 'block';
             previewGrid.innerHTML = urls.map((url, imgIdx) =>
-                `<div style="position:relative;"><img src="${escapeHtml(url)}" style="width:100%; aspect-ratio:1; object-fit:cover; border-radius:4px; border:1px solid var(--border); display:block;"><button onclick="removeBatchRefImage(${slotIdx}, ${imgIdx})" style="position:absolute; top:1px; right:1px; background:rgba(0,0,0,0.6); color:#fff; border:none; border-radius:50%; width:16px; height:16px; font-size:0.6rem; cursor:pointer; display:flex; align-items:center; justify-content:center; line-height:1;">x</button></div>`
+                `<div style="position:relative;"><img src="${escapeHtml(url)}" style="width:100%; aspect-ratio:1; object-fit:contain; border-radius:4px; border:1px solid var(--border); display:block;"><button onclick="removeBatchRefImage(${slotIdx}, ${imgIdx}, '${mode}')" style="position:absolute; top:1px; right:1px; background:rgba(0,0,0,0.6); color:#fff; border:none; border-radius:50%; width:16px; height:16px; font-size:0.6rem; cursor:pointer; display:flex; align-items:center; justify-content:center; line-height:1;">x</button></div>`
             ).join('');
-            updateBatchRefFolderHash(slotIdx);
+            updateBatchRefFolderHash(slotIdx, mode);
         }
 
-        function removeBatchRefImage(slotIdx, imgIdx) {
+        function removeBatchRefImage(slotIdx, imgIdx, mode = 'ref') {
             const slot = batchChains[slotIdx];
-            const urls = slot.ref_preview_url ? slot.ref_preview_url.split('|').filter(Boolean) : [];
+            const urls = (slot[`${mode}_preview_url`] || '').split('|').filter(Boolean);
             urls.splice(imgIdx, 1);
-            slot.ref_images.splice(imgIdx, 1);
-            slot.ref_preview_url = urls.join('|');
-            renderBatchRefPreview(slotIdx);
+            slot[`${mode}_images`].splice(imgIdx, 1);
+            slot[`${mode}_preview_url`] = urls.join('|');
+            renderBatchRefPreview(slotIdx, mode);
             const slotEl = document.querySelectorAll('.batch-slot')[slotIdx];
             if (slotEl) updateBatchPreview(slotEl, slotIdx);
         }
 
-        async function updateBatchRefFolderHash(slotIdx) {
+        async function updateBatchRefFolderHash(slotIdx, mode = 'ref') {
             const slot = batchChains[slotIdx];
             const slotEl = document.querySelectorAll('.batch-slot')[slotIdx];
-            if (!slotEl || !slot.ref_images || !slot.ref_images.length) {
-                const hashEl = slotEl?.querySelector('.batch-ref-folder-hash');
+            if (!slotEl || !slot[`${mode}_images`]?.length) {
+                slot[`${mode}_dir`] = '';
+                const hashEl = slotEl?.querySelector(`.batch-${mode}-folder-hash`);
                 if (hashEl) hashEl.style.display = 'none';
                 return;
             }
-            const filenames = slot.ref_images.map(img => img.name);
+            const filenames = slot[`${mode}_images`].map(img => mode === 'snapref' ? (img.local_path || img.name) : img.name);
             try {
                 const resp = await fetch('/api/asset_mode/compute_ref_hash', {
                     method: 'POST',
@@ -102857,6 +103524,15 @@
                 });
                 const data = await resp.json();
                 if (data.hash) {
+                    if (mode === 'snapref') {
+                        if (JSON.stringify(filenames) !== JSON.stringify((slot.snapref_images || []).map(img => img.local_path || img.name))) {
+                            console.info('[BATCH] Ref 이미지 선택이 변경되어 이전 해시 결과를 건너뜁니다.', slotIdx);
+                            return;
+                        }
+                        slot.snapref_dir = 'soya_snapref/' + data.hash;
+                        updateBatchPreview(slotEl, slotIdx);
+                        return;
+                    }
                     const hashEl = slotEl.querySelector('.batch-ref-folder-hash');
                     const hashText = slotEl.querySelector('.batch-ref-folder-hash-text');
                     if (hashEl && hashText) {
@@ -102939,11 +103615,11 @@
         let batchRefPickerTarget = -1;
         let batchRefPickerTargetType = 'ref';  // 'ref' or 'style'
         let batchRefPickerSelected = [];
-        function openBatchRefGalleryPicker(slotIdx) {
+        function openBatchRefGalleryPicker(slotIdx, mode = 'ref') {
             batchRefPickerTarget = slotIdx;
-            batchRefPickerTargetType = 'ref';
+            batchRefPickerTargetType = mode;
             // 기존 선택된 이미지를 모달에 미리 반영
-            const existingUrls = batchChains[slotIdx].ref_preview_url ? batchChains[slotIdx].ref_preview_url.split('|').filter(Boolean) : [];
+            const existingUrls = (batchChains[slotIdx][`${mode}_preview_url`] || '').split('|').filter(Boolean);
             openBatchRefPickerModal(existingUrls);
         }
 
@@ -102960,6 +103636,12 @@
                 imgUrl: url,
                 char: '', outfit: '', expr: ''
             }));
+            if (batchRefPickerTargetType === 'snapref') {
+                batchRefPickerSelected = (batchChains[batchRefPickerTarget].snapref_images || []).slice(0, 1).map((image, index) => ({
+                    filename: image.name, local_path: image.local_path || '', imgUrl: image.preview_url || existingUrls[index] || '',
+                    char: '', outfit: '', expr: '',
+                }));
+            }
             const preselectedCount = batchRefPickerSelected.length;
             const overlay = document.createElement('div');
             overlay.id = 'batch-ref-picker-overlay';
@@ -102967,7 +103649,7 @@
             overlay.innerHTML = `
                 <div style="background:var(--surface); border-radius:12px; padding:20px; max-width:700px; width:90%; max-height:80vh; display:flex; flex-direction:column; overflow:hidden;">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; flex-shrink:0;">
-                        <h3 style="margin:0;">에셋에서 FACE-IPAdapter 선택</h3>
+                        <h3 style="margin:0;">에셋에서 ${batchRefPickerTargetType === 'snapref' ? 'Ref 이미지' : batchRefPickerTargetType === 'style' ? 'IPAdapter' : 'FACE-IPAdapter'} 선택</h3>
                         <div style="display:flex; align-items:center; gap:8px;">
                             <span id="batch-ref-picker-count" style="font-size:0.8rem; color:var(--accent);">${preselectedCount}장 선택</span>
                             <button id="batch-ref-picker-confirm-btn" onclick="confirmBatchRefPickerSelection()" style="background:var(--accent); color:#fff; border:none; padding:4px 12px; border-radius:4px; cursor:pointer; font-size:0.8rem; ${preselectedCount > 0 ? 'display:inline-block;' : 'display:none;'}">선택 완료</button>
@@ -103055,6 +103737,13 @@
                             const check = card.querySelector('.check-mark');
                             if (check) check.remove();
                         } else {
+                            if (batchRefPickerTargetType === 'snapref') {
+                                batchRefPickerSelected = [];
+                                grid.querySelectorAll('.check-mark').forEach(mark => {
+                                    mark.parentElement.style.borderColor = 'var(--border)';
+                                    mark.remove();
+                                });
+                            }
                             batchRefPickerSelected.push({ filename: item.representative, imgUrl: thumbUrl, char, outfit: item.outfit, expr: item.expression, local_path: item.local_path || '' });
                             card.style.borderColor = 'var(--success)';
                             const check = document.createElement('span');
@@ -103083,7 +103772,14 @@
             }));
             const target = batchRefPickerTarget;
             const slotEl = document.querySelectorAll('.batch-slot')[target];
-            if (batchRefPickerTargetType === 'style') {
+            if (batchRefPickerTargetType === 'snapref') {
+                batchChains[target].snapref_images = refImages.slice(0, 1).map(image => ({...image}));
+                batchChains[target].snapref_preview_url = refImages.slice(0, 1).map(image => image.preview_url).join('|');
+                renderBatchRefPreview(target, 'snapref');
+                if (slotEl) updateBatchPreview(slotEl, target);
+                document.getElementById('batch-ref-picker-overlay').remove();
+                showToast('Ref 이미지 선택 완료', 'success');
+            } else if (batchRefPickerTargetType === 'style') {
                 batchChains[target].style_ref_images = refImages.map(img => ({name: img.name, local_path: img.local_path, orig_filename: img.orig_filename}));
                 batchChains[target].style_ref_preview_url = refImages.map(img => img.preview_url).join('|');
                 if (slotEl) {
@@ -103215,6 +103911,13 @@
             }
 
             let positiveFull = positiveTags;
+            if (capabilities.anima) {
+                positiveFull += '\n[SNAPREF]\n' + JSON.stringify({
+                    enabled: !!slot.snapref_enabled, strength: slot.snapref_strength ?? 0,
+                    mode: slot.snapref_mode || 'char', megapixels: slot.snapref_megapixels ?? 1,
+                    dir: slot.snapref_enabled ? (slot.snapref_dir || '') : '',
+                });
+            }
             positiveFull += `\n[FACE_ID_ACTIVATE]\n${capabilities.ipadapter && slot.ref_enabled ? 'true' : 'false'}`;
             positiveFull += `\n[FACE_ID_STR]\n${slot.ref_strength || 0.55}`;
             positiveFull += `\n[FACE_ID_DIR]\n${slot.ref_dir || 'soya_char_ref/fallback'}`;
@@ -103380,6 +104083,13 @@
                         reference_images: (slot.ref_images || []).map(img => ({filename: img.name, local_path: img.local_path})),
                         style_ref_enabled: slot.style_ref_enabled,
                         style_ref_images: (slot.style_ref_images || []).map(img => ({filename: img.name, local_path: img.local_path})),
+                        snapref_enabled: getAssetWorkflowCapabilities(promptSlot.asset_workflow_type).anima && !!slot.snapref_enabled,
+                        snapref_images: getAssetWorkflowCapabilities(promptSlot.asset_workflow_type).anima && slot.snapref_enabled
+                            ? (slot.snapref_images || []).slice(0, 1).map(img => ({filename: img.name, local_path: img.local_path})) : [],
+                        snapref_dir: slot.snapref_dir || '',
+                        snapref_strength: slot.snapref_strength ?? 0,
+                        snapref_mode: slot.snapref_mode || 'char',
+                        snapref_megapixels: slot.snapref_megapixels ?? 1,
                         positive_prompt: promptData.positive,
                         negative_prompt: promptData.negative,
                     };
@@ -103759,7 +104469,7 @@
             // 이미지/LoRA는 비어 있으니 수동으로 다시 지정해야 함.
 
             // 4) 체인 슬롯 직렬화
-            const chains = batchChains.map(c => {
+            const chains = await Promise.all(batchChains.map(async c => {
                 const o = {
                     character: c.character || '', appearance: c.appearance || '', outfit: c.outfit || '',
                     expression: c.expression || '', composition_preset: c.composition_preset || '',
@@ -103768,6 +104478,10 @@
                     anima_negative_preset: c.anima_negative_preset || '',
                     ref_enabled: !!c.ref_enabled, ref_strength: c.ref_strength || 0.55,
                     style_ref_enabled: !!c.style_ref_enabled, style_ref_strength: c.style_ref_strength || 0.55,
+                    snapref_enabled: !!c.snapref_enabled,
+                    snapref_strength: c.snapref_strength ?? 0,
+                    snapref_mode: c.snapref_mode || 'char',
+                    snapref_megapixels: c.snapref_megapixels ?? 1,
                     pose_enabled: !!c.pose_enabled, pose_id: c.pose_id || '',
                     hrf_sdxl: !!c.hrf_sdxl, hrf_anima: !!c.hrf_anima,
                     sdxl_fd_enabled: !!c.sdxl_fd_enabled, sdxl_hd_enabled: !!c.sdxl_hd_enabled, sdxl_ed_enabled: !!c.sdxl_ed_enabled,
@@ -103779,8 +104493,26 @@
                     face_lora_upscale_size: c.face_lora_upscale_size || '',
                     seed: c.seed ?? -1,
                 };
+                const referenceUrl = c.snapref_images?.[0]?.preview_url || c.snapref_preview_url || '';
+                if (referenceUrl) {
+                    try {
+                        const response = await fetch(referenceUrl);
+                        if (!response.ok) throw new Error(`Ref 이미지 조회 실패 (${response.status})`);
+                        const blob = await response.blob();
+                        o.snapref_image_data = await new Promise((resolve, reject) => {
+                            const reader = new FileReader();
+                            reader.onload = () => resolve(reader.result);
+                            reader.onerror = () => reject(reader.error || new Error('Ref 이미지 읽기 실패'));
+                            reader.readAsDataURL(blob);
+                        });
+                    } catch (error) {
+                        console.error('[EXPORT] Ref 이미지 내보내기 실패:', {character: c.character, error});
+                        showToast('Ref 이미지 내보내기 실패: ' + error.message, 'error');
+                        throw error;
+                    }
+                }
                 return o;
-            });
+            }));
 
             const payload = {
                 version: 1,
@@ -104070,10 +104802,13 @@
 
             // ── FACE-IPAdapter 이미지 업로드 ──
             for (const chainSlot of data.chains) {
+                for (const mode of ['ref', 'snapref']) {
                 // 다중 이미지 데이터 (ref_image_datas 배열) 처리
-                const dataUrls = chainSlot.ref_image_datas?.length
-                    ? chainSlot.ref_image_datas
-                    : (chainSlot.ref_image_data && chainSlot.ref_image_data.startsWith('data:') ? [chainSlot.ref_image_data] : []);
+                const dataUrls = mode === 'snapref'
+                    ? (chainSlot.snapref_image_data?.startsWith('data:') ? [chainSlot.snapref_image_data] : [])
+                    : chainSlot.ref_image_datas?.length
+                        ? chainSlot.ref_image_datas
+                        : (chainSlot.ref_image_data && chainSlot.ref_image_data.startsWith('data:') ? [chainSlot.ref_image_data] : []);
                 if (dataUrls.length) {
                     try {
                         const formData = new FormData();
@@ -104086,19 +104821,27 @@
                         const uploadResult = await uploadResp.json();
                         if (uploadResult.success) {
                             const images = uploadResult.images || [];
-                            chainSlot.ref_image = uploadResult.name;
-                            chainSlot.ref_images = images.map(img => ({name: img.name, local_path: img.local_path, orig_filename: img.orig_filename}));
+                            if (mode === 'ref') chainSlot.ref_image = uploadResult.name;
+                            chainSlot[`${mode}_images`] = images.map(img => ({name: img.name, local_path: img.local_path, orig_filename: img.orig_filename}));
                             if (uploadResult.asset_info) {
                                 const enc = encodeURIComponent;
                                 const ai = uploadResult.asset_info;
-                                chainSlot.ref_preview_url = images.map(img =>
+                                chainSlot[`${mode}_preview_url`] = images.map(img =>
                                     `/api/asset_mode/characters/${enc(ai.character)}/outfits/${enc(ai.outfit)}/expressions/${enc(ai.expression)}/images/${enc(img.name)}`
                                 ).join('|');
                             } else {
-                                chainSlot.ref_preview_url = dataUrls.join('|');
+                                chainSlot[`${mode}_preview_url`] = dataUrls.join('|');
                             }
+                            if (mode === 'snapref' && chainSlot.snapref_images[0]) chainSlot.snapref_images[0].preview_url = chainSlot.snapref_preview_url;
+                        } else {
+                            throw new Error(uploadResult.error || '참조 이미지 업로드 실패');
                         }
-                    } catch (e) { console.warn('[IMPORT] FACE-IPAdapter 업로드 실패:', e); }
+                    } catch (e) {
+                        console.error('[IMPORT] 참조 이미지 업로드 실패:', {mode, error: e});
+                        showToast('참조 이미지 가져오기 실패: ' + e.message, 'error');
+                        if (mode === 'snapref') throw e;
+                    }
+                }
                 }
             }
 
@@ -104130,6 +104873,13 @@
                 style_ref_strength: c.style_ref_strength || 0.55,
                 style_ref_images: c.style_ref_images || [],
                 style_ref_preview_url: c.style_ref_preview_url || '',
+                snapref_enabled: !!c.snapref_enabled,
+                snapref_images: (c.snapref_images || []).slice(0, 1).map(image => ({...image})),
+                snapref_preview_url: c.snapref_preview_url || c.snapref_images?.[0]?.preview_url || '',
+                snapref_dir: '',
+                snapref_strength: c.snapref_strength ?? 0,
+                snapref_mode: c.snapref_mode || 'char',
+                snapref_megapixels: c.snapref_megapixels ?? 1,
                 pose_enabled: !!c.pose_enabled,
                 pose_id: poseIdMap[c.pose_id] || c.pose_id || '',
                 hrf_sdxl: !!c.hrf_sdxl, hrf_anima: !!c.hrf_anima,

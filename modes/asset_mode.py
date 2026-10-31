@@ -1105,6 +1105,11 @@ class AssetMode:
         asset_workflow_type: str = workflow_profiles.ASSET_ILXL,
         anima_lora_trigger_words: str = "",
         sdxl_lora_trigger_words: str = "",
+        snapref_enabled: bool = False,
+        snapref_dir: str = "",
+        snapref_strength: float = 0.0,
+        snapref_mode: str = "char",
+        snapref_megapixels: float = 1.0,
     ) -> tuple[str, str]:
         asset_workflow_type = workflow_profiles.normalize_asset_workflow_type(
             asset_workflow_type
@@ -1231,6 +1236,14 @@ class AssetMode:
 
             positive = ", ".join(positive_parts)
 
+        if is_anima:
+            positive += "\n[SNAPREF]\n" + json.dumps({
+                "enabled": bool(snapref_enabled), "strength": snapref_strength,
+                "mode": snapref_mode, "megapixels": snapref_megapixels,
+                "dir": snapref_dir if snapref_enabled else "",
+            }, ensure_ascii=False)
+        elif snapref_enabled:
+            print(f"[ASSET] {asset_workflow_type}에서 지원하지 않는 Ref 이미지 옵션 무시")
         ipadapter_enabled = capabilities["ipadapter"]
         if not ipadapter_enabled and (face_id_enabled or style_ref_enabled):
             print(
@@ -1983,6 +1996,11 @@ class AssetMode:
         diagnostic_session_key: str = "",
         diagnostic_run_key: str = "",
         diagnostic_capture_workflow: bool = False,
+        snapref_enabled: bool = False,
+        snapref_dir: str = "",
+        snapref_strength: float = 0.0,
+        snapref_mode: str = "char",
+        snapref_megapixels: float = 1.0,
     ) -> dict:
         async with self._lock:
             self._is_generating = True
@@ -2009,6 +2027,11 @@ class AssetMode:
                     diagnostic_session_key,
                     diagnostic_run_key,
                     diagnostic_capture_workflow,
+                    snapref_enabled,
+                    snapref_dir,
+                    snapref_strength,
+                    snapref_mode,
+                    snapref_megapixels,
                 )
             finally:
                 self._is_generating = False
@@ -2060,6 +2083,11 @@ class AssetMode:
         diagnostic_session_key: str = "",
         diagnostic_run_key: str = "",
         diagnostic_capture_workflow: bool = False,
+        snapref_enabled: bool = False,
+        snapref_dir: str = "",
+        snapref_strength: float = 0.0,
+        snapref_mode: str = "char",
+        snapref_megapixels: float = 1.0,
     ) -> dict:
         if storage_group not in ("", "automatch_defaults", "character_maker"):
             error_msg = f"지원하지 않는 에셋 저장 분류: {storage_group}"
@@ -2157,9 +2185,40 @@ class AssetMode:
                     sdxl_lora_trigger_words=sdxl_lora_trigger_words,
                     style_lora_activate=style_lora_activate,
                     style_lora_data=style_lora_data,
+                    snapref_enabled=snapref_enabled,
+                    snapref_dir=snapref_dir,
+                    snapref_strength=snapref_strength,
+                    snapref_mode=snapref_mode,
+                    snapref_megapixels=snapref_megapixels,
                 )
             if not positive:
                 return {"success": False, "error": "프롬프트가 비어있음"}
+
+            # 큐에서 준비한 실제 참조 경로를 미리보기 프롬프트에도 반영한다.
+            # FACE_ID_DIR는 IPAdapter 전용으로 보존한다.
+            effective_snapref = bool(snapref_enabled and workflow_profiles.asset_capabilities(asset_workflow_type)["anima"])
+            if snapref_enabled and not effective_snapref:
+                print(f"[ASSET] {asset_workflow_type}에서 지원하지 않는 Ref 이미지 옵션 무시")
+            if effective_snapref and not snapref_dir:
+                print(f"[ASSET] Ref 이미지 생성 실패: 참조 경로 없음, character={character!r}")
+                return {"success": False, "error": "Ref 이미지를 선택해 주세요."}
+            if effective_snapref or "[SNAPREF]" in positive or "[SNAPREF_ENABLED]" in positive:
+                from modes.llm_prompt_edit import parse_blocks, _replace_or_insert_block
+
+                blocks = parse_blocks(positive)
+                positive = re.sub(r'(?m)^\[SNAPREF_(?:ENABLED|DIR|STRENGTH|MODE|MEGAPIXELS)\][ \t]*\r?\n[^\r\n]*(?:\r?\n)?', '', positive).lstrip()
+                if workflow_profiles.asset_capabilities(asset_workflow_type)["anima"]:
+                    reference_settings = json.loads(blocks["SNAPREF"]) if "SNAPREF" in blocks else {
+                        "strength": float(blocks.get("SNAPREF_STRENGTH", snapref_strength)),
+                        "mode": blocks.get("SNAPREF_MODE", snapref_mode),
+                        "megapixels": float(blocks.get("SNAPREF_MEGAPIXELS", snapref_megapixels)),
+                    }
+                    reference_settings.update(enabled=effective_snapref, dir=snapref_dir if effective_snapref else "")
+                    positive = _replace_or_insert_block(
+                        positive, "SNAPREF", json.dumps(reference_settings, ensure_ascii=False),
+                    )
+                else:
+                    positive = re.sub(r'(?m)^\[SNAPREF\][ \t]*\r?\n[^\r\n]*(?:\r?\n)?', '', positive).lstrip()
 
             # seed=-1이면 매 생성마다 랜덤값으로 치환
             def _replace_seed(m):

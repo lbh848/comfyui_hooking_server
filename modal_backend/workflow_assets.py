@@ -8,8 +8,9 @@ import traceback
 from typing import Any, Iterable, Mapping
 
 
-_LORA_INPUT_FIELDS = {"lora_name", "lora"}
+_LORA_INPUT_FIELDS = {"lora_name", "lora", "snapref_model"}
 _IMAGE_INPUT_FIELDS = {"image"}
+_SOYA_FIRST_SAMPLER_CLASS = "SoyaFirstSampler_mdsoya"
 _SOYA_PROMPT_PARSER_CLASS = "SoyaPromptParser_mdsoya"
 _SOYA_ASSET_PROMPT_PARSER_CLASS = "SoyaAssetV2PromptParser_mdsoya"
 _SOYA_PROMPT_PARSER_CLASSES = frozenset(
@@ -110,6 +111,14 @@ def _workflow_string_values(value: Any) -> Iterable[str]:
             yield stripped
         return
     if isinstance(value, Mapping):
+        inputs = value.get("inputs")
+        if (value.get("class_type") == _SOYA_FIRST_SAMPLER_CLASS
+                and isinstance(inputs, Mapping) and "snapref_model" in inputs):
+            # This weight is collected through _workflow_paths, which resolves
+            # the connected SNAPREF block before deciding whether it is used.
+            value = {**value, "inputs": {
+                key: child for key, child in inputs.items() if key != "snapref_model"
+            }}
         for child in value.values():
             yield from _workflow_string_values(child)
         return
@@ -140,7 +149,8 @@ def resolve_workflow_model_files(
                 f"type={type(workflow).__name__}"
             )
             raise ValueError("Modal 모델 동기화에 사용할 워크플로우가 비어 있습니다.")
-        for raw_value in _workflow_string_values(workflow):
+        for raw_value in (*_workflow_string_values(workflow),
+                          *_workflow_paths(workflow, {"snapref_model"})):
             normalized = raw_value.replace("\\", "/").casefold()
             for entry in lookup.get(normalized, []):
                 selected[str(entry["source_path"])] = dict(entry)
@@ -197,6 +207,19 @@ def _workflow_paths(workflow: Mapping[str, Any], field_names: set[str]) -> list[
                 normalized_field.startswith(f"{name}_") for name in field_names
             ):
                 continue
+            if normalized_field == "snapref_model":
+                enabled = inputs.get("snapref_enabled", False)
+                try:
+                    for text in _soya_parser_section_texts(workflow, inputs.get("SNAPREF", ""), "SNAPREF"):
+                        if text.strip():
+                            enabled = json.loads(text).get("enabled", enabled)
+                except (TypeError, ValueError, AttributeError) as exc:
+                    print(f"[MODAL_SYNC] SnapRef 설정 해석 실패: inputs={inputs!r}, error={exc}")
+                    traceback.print_exc()
+                    raise
+                if node.get("class_type") != _SOYA_FIRST_SAMPLER_CLASS or not enabled:
+                    print("[MODAL_SYNC] 활성 SnapRef 입력이 아니어서 참조 가중치 동기화 생략")
+                    continue
             if isinstance(value, str) and value.strip():
                 result.append(value.strip().replace("\\", "/"))
     return list(dict.fromkeys(result))
@@ -277,6 +300,18 @@ def _parse_soya_prompt_sections(text: str) -> dict[str, str]:
             current_lines.append(line)
     if current_key is not None:
         parsed[current_key] = "\n".join(current_lines).strip()
+    if "SNAPREF" not in parsed and "SNAPREF_ENABLED" in parsed:
+        try:
+            controls = {"enabled": parsed["SNAPREF_ENABLED"].strip().lower() == "true"}
+            for key, convert in (("strength", float), ("mode", str), ("megapixels", float), ("dir", str)):
+                legacy_key = "SNAPREF_" + key.upper()
+                if legacy_key in parsed:
+                    controls[key] = convert(parsed[legacy_key].strip())
+            parsed["SNAPREF"] = json.dumps(controls, ensure_ascii=False)
+        except (TypeError, ValueError) as exc:
+            print(f"[MODAL_SYNC] 기존 SnapRef 설정 해석 실패: controls={parsed!r}, error={exc}")
+            traceback.print_exc()
+            raise
     return parsed
 
 
@@ -589,7 +624,54 @@ def resolve_input_files(
         return []
     input_root = Path(input_root_raw).resolve()
     result: list[dict[str, str]] = []
-    for name in _workflow_paths(workflow, _IMAGE_INPUT_FIELDS):
+    image_names = _workflow_paths(workflow, _IMAGE_INPUT_FIELDS)
+    for node_id, node in workflow.items():
+        if not isinstance(node, Mapping) or node.get("class_type") != _SOYA_FIRST_SAMPLER_CLASS:
+            continue
+        inputs = node.get("inputs") or {}
+        try:
+            enabled = inputs.get("snapref_enabled", False)
+            reference_dirs = _soya_parser_section_texts(workflow, inputs.get("FACE_ID_DIR", ""), "FACE_ID_DIR")
+            for text in _soya_parser_section_texts(workflow, inputs.get("SNAPREF", ""), "SNAPREF"):
+                if text.strip():
+                    reference_settings = json.loads(text)
+                    enabled = reference_settings.get("enabled", enabled)
+                    if "dir" in reference_settings:
+                        reference_dirs = [reference_settings["dir"]]
+            if not enabled:
+                print(f"[MODAL_SYNC] SnapRef 비활성화: 대표 이미지 동기화 생략, node={node_id}")
+                continue
+            for text in reference_dirs:
+                raw = str(text).strip()
+                if raw.startswith("{"):
+                    paths = [entry.get("ipa_path", "")
+                             for payload in _parse_json_stream(raw, f"SnapRef node={node_id}")
+                             for entry in payload.get("list", [])]
+                else:
+                    paths = [raw]
+                for raw_path in paths:
+                    if not raw_path:
+                        print(f"[MODAL_SYNC] SnapRef 대표 이미지 경로 없음: node={node_id}")
+                        continue
+                    relative = _safe_relative(str(raw_path).replace("\\", "/"), "SnapRef 참조 이미지")
+                    relative_dir = relative.parent if relative.suffix else relative
+                    directory = input_root.joinpath(*relative_dir.parts).resolve()
+                    if directory == input_root or input_root not in directory.parents:
+                        raise ValueError(f"ComfyUI input 밖의 SnapRef 참조는 전송할 수 없습니다: {raw_path!r}")
+                    if not directory.is_dir():
+                        print(f"[MODAL_SYNC] SnapRef 대표 이미지 폴더 없음: {directory}")
+                        continue
+                    references = sorted(path for path in directory.iterdir()
+                        if path.is_file() and path.stem.casefold() == "representation"
+                        and path.suffix.casefold() in {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff"})
+                    if not references:
+                        print(f"[MODAL_SYNC] SnapRef 대표 이미지 없음: {directory}")
+                    image_names.extend(path.relative_to(input_root).as_posix() for path in references)
+        except Exception as exc:
+            print(f"[MODAL_SYNC] SnapRef 입력 해석 실패: node={node_id}, error={exc}")
+            traceback.print_exc()
+            raise
+    for name in dict.fromkeys(image_names):
         relative = _safe_relative(name, "입력 이미지")
         candidate = input_root.joinpath(*relative.parts).resolve()
         if input_root != candidate and input_root not in candidate.parents:

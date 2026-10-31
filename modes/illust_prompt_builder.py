@@ -1174,6 +1174,7 @@ class IllustPromptBuilder:
         sdxl_parts = sdxl_trigger_clean + sdxl_artist_parts + sdxl_quality_parts + sdxl_content_core
 
         # ─── 긍정 프롬프트 조합 ───
+        # Keep every existing section boundary intact for regex-based workflows.
         positive = "[ANIMA_QUALITY]\n" + ", ".join(anima_quality_parts)
         # ANIMA_ARTIST: 아티스트 프리셋 태그만 별도 블럭으로 출력
         positive += "\n[ANIMA_ARTIST]\n" + ", ".join(anima_artist_parts)
@@ -1383,6 +1384,12 @@ class IllustPromptBuilder:
                 )
         positive += "\n[MULTI_CHAR]"
         positive += "\n" + json.dumps(multi_payload, ensure_ascii=False)
+        positive += "\n[SNAPREF]\n" + json.dumps({
+            "enabled": bool(settings.get("snapref_enabled", False)),
+            "strength": settings.get("snapref_strength", 0.0),
+            "mode": settings.get("snapref_mode", "char"),
+            "megapixels": settings.get("snapref_megapixels", 1.0),
+        }, ensure_ascii=False)
 
         # HRF
         hrf_activate = settings.get("hrf_activate", False)

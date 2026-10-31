@@ -2622,11 +2622,12 @@ def split_prompt_chat(text: str) -> tuple[str, str]:
     return text, ""
 
 
-def build_prompt(positive: str, negative: str) -> dict:
-    """현재 API 워크플로우에 긍정/부정 프롬프트를 주입한다."""
-    if current_api_workflow is None:
+def build_prompt(positive: str, negative: str, workflow_api: dict = None) -> dict:
+    """API 워크플로우의 긍정·부정 프롬프트만 채운다."""
+    source_workflow = current_api_workflow if workflow_api is None else workflow_api
+    if source_workflow is None:
         raise RuntimeError("API 워크플로우가 로드되지 않았습니다")
-    wf = copy.deepcopy(current_api_workflow)
+    wf = copy.deepcopy(source_workflow)
     for nid, ninfo in wf.items():
         if not isinstance(ninfo, dict):
             continue
@@ -2637,6 +2638,7 @@ def build_prompt(positive: str, negative: str) -> dict:
         elif title == "부정프롬프트":
             ninfo["inputs"]["value"] = negative
             log_to_file("proxy.log", f"부정프롬프트 주입 (node {nid}): {negative[:100]}...")
+
     return wf
 
 
@@ -4114,18 +4116,22 @@ def _compute_ref_folder_hash(filenames: list) -> str:
     return hashlib.md5(combined.encode()).hexdigest()[:12]
 
 
-def _prepare_ref_folder(reference_images: list, comfy_input_dir: str) -> str:
-    """FACE-IPAdapter 이미지들을 comfy_input_dir/soya_char_ref/<hash>/ 폴더에 복사하고 subfolder 경로 반환."""
-    filenames = [img["filename"] for img in reference_images]
+def _prepare_ref_folder(reference_images: list, comfy_input_dir: str, *, snapref: bool = False) -> str:
+    """참조 이미지를 input 하위에 복사하고 subfolder 경로를 반환한다."""
+    filenames = [str(img.get("local_path") or img["filename"]) if snapref else img["filename"] for img in reference_images]
     folder_hash = _compute_ref_folder_hash(filenames)
-    ref_dir = os.path.join(comfy_input_dir, "soya_char_ref", folder_hash)
+    ref_root = "soya_snapref" if snapref else "soya_char_ref"
+    ref_dir = os.path.join(comfy_input_dir, ref_root, folder_hash)
     os.makedirs(ref_dir, exist_ok=True)
     for img in reference_images:
-        dst = os.path.join(ref_dir, os.path.basename(img["local_path"]))
-        if not os.path.isfile(dst) or os.path.getmtime(img["local_path"]) > os.path.getmtime(dst):
+        filename = os.path.basename(img["local_path"])
+        if snapref:
+            filename = "representation" + os.path.splitext(filename)[1]
+        dst = os.path.join(ref_dir, filename)
+        if snapref or not os.path.isfile(dst) or os.path.getmtime(img["local_path"]) > os.path.getmtime(dst):
             shutil.copy2(img["local_path"], dst)
     print(f"[ASSET] ref folder prepared: {ref_dir} ({len(reference_images)} images)")
-    return f"soya_char_ref/{folder_hash}"
+    return f"{ref_root}/{folder_hash}"
 
 
 def _prepare_style_ref_folder(style_ref_images: list, comfy_input_dir: str) -> str:
@@ -4157,16 +4163,7 @@ async def handle_api_compute_ref_hash(request: web.Request) -> web.Response:
 
 def build_prompt_with_workflow(workflow_api: dict, positive: str, negative: str) -> dict:
     """임의의 워크플로우 dict에 프롬프트를 주입한다."""
-    wf = copy.deepcopy(workflow_api)
-    for nid, ninfo in wf.items():
-        if not isinstance(ninfo, dict):
-            continue
-        title = ninfo.get("_meta", {}).get("title", "")
-        if title == "긍정프롬프트":
-            ninfo["inputs"]["value"] = positive
-        elif title == "부정프롬프트":
-            ninfo["inputs"]["value"] = negative
-    return wf
+    return build_prompt(positive, negative, workflow_api=workflow_api)
 
 
 def _extract_stable_model_reuse_traces(real_outputs: Any) -> list[dict[str, Any]]:
@@ -25609,6 +25606,26 @@ async def handle_api_asset_mode_trace_stream(request: web.Request) -> web.Stream
 async def handle_api_asset_mode_generate(request: web.Request) -> web.Response:
     try:
         body = await request.json()
+        asset_profile = workflow_profiles.normalize_asset_workflow_type(
+            body.get("asset_workflow_type") or app_config.get("asset_workflow_type", workflow_profiles.ASSET_ILXL)
+        )
+        snapref_enabled = bool(body.get("snapref_enabled", False) and workflow_profiles.asset_capabilities(asset_profile)["anima"])
+        snapref_subfolder = ""
+        if body.get("snapref_enabled", False) and not snapref_enabled:
+            print(f"[ASSET] Ref 이미지 미지원 프로필: {asset_profile}; 참조 적용 생략")
+        if snapref_enabled:
+            snapref_images = body.get("snapref_images") or []
+            valid_images = [img for img in snapref_images if img.get("local_path") and os.path.isfile(img["local_path"])]
+            if not valid_images:
+                print(f"[ASSET] Ref 이미지 준비 실패: images={snapref_images!r}")
+                return web.json_response({"success": False, "error": "Ref 이미지 파일을 찾을 수 없습니다. 이미지를 다시 선택해 주세요."}, status=400)
+            comfy_input_dir = load_config().get("comfy_input_dir", "")
+            if not comfy_input_dir or not os.path.isdir(comfy_input_dir):
+                print(f"[ASSET] Ref 이미지 input 경로 오류: path={comfy_input_dir!r}")
+                return web.json_response({"success": False, "error": "Ref 이미지를 저장할 ComfyUI input 폴더를 확인해 주세요."}, status=400)
+            if len(valid_images) > 1:
+                print(f"[ASSET] Ref 이미지 첫 번째 1장 사용: count={len(valid_images)}")
+            snapref_subfolder = _prepare_ref_folder(valid_images[:1], comfy_input_dir, snapref=True)
         reference_images = body.get("reference_images", [])
         reference_subfolder = ""
         if body.get("face_id_enabled", False) and reference_images:
@@ -25653,6 +25670,11 @@ async def handle_api_asset_mode_generate(request: web.Request) -> web.Response:
             style_ref_enabled=body.get("style_ref_enabled", False),
             style_ref_strength=float(body.get("style_ref_strength", 0.55)),
             style_ref_subfolder=style_ref_subfolder,
+            snapref_enabled=snapref_enabled,
+            snapref_dir=snapref_subfolder,
+            snapref_strength=float(body.get("snapref_strength", 0.0)),
+            snapref_mode=body.get("snapref_mode", "char"),
+            snapref_megapixels=float(body.get("snapref_megapixels", 1.0)),
             lora_activate=body.get("lora_activate", False),
             lora_data=body.get("lora_data", ""),
             pose_enabled=body.get("pose_enabled", False),
@@ -29570,6 +29592,19 @@ async def handle_api_character_maker_generate(request: web.Request) -> web.Respo
                 "outfit": "character-maker-temporary",
                 "expression": "character-maker-temporary",
                 "face_id_enabled": False,
+                "snapref_enabled": bool(settings.get("snapref_enabled", False)),
+                "snapref_images": [
+                    {
+                        "filename": image.get("name") or image.get("filename", ""),
+                        "local_path": image.get("local_path", ""),
+                    }
+                    for image in settings.get("snapref_images", [])
+                    if isinstance(image, dict)
+                ],
+                "snapref_dir": settings.get("snapref_dir", ""),
+                "snapref_mode": settings.get("snapref_mode", "char"),
+                "snapref_strength": settings.get("snapref_strength", 0.0),
+                "snapref_megapixels": settings.get("snapref_megapixels", 1.0),
                 "asset_workflow_type": settings.get("asset_workflow_type"),
                 "positive_prompt": positive,
                 "negative_prompt": negative,

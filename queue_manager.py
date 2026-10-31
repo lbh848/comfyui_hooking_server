@@ -4158,11 +4158,31 @@ class QueueManager:
         if presets and self.asset_mode:
             _load_presets(self.asset_mode, presets)
 
-        # 참조 이미지 준비 (face_id, style_ref)
+        # 참조 이미지 준비 (face_id, style_ref, snapref)
         reference_subfolder = ""
         style_ref_subfolder = ""
+        snapref_subfolder = ""
         config = self.get_config()
         comfy_input_dir = config.get("comfy_input_dir", "")
+        import workflow_profiles
+        asset_profile = workflow_profiles.normalize_asset_workflow_type(
+            body.get("asset_workflow_type") or config.get("asset_workflow_type", "ilxl")
+        )
+        snapref_enabled = bool(body.get("snapref_enabled", False) and workflow_profiles.asset_capabilities(asset_profile)["anima"])
+        if body.get("snapref_enabled", False) and not snapref_enabled:
+            print(f"[QUEUE:ASSET] Ref 이미지 미지원 프로필: {asset_profile}; 참조 적용 생략")
+        if snapref_enabled:
+            snapref_images = body.get("snapref_images") or []
+            valid_images = [img for img in snapref_images if img.get("local_path") and os.path.isfile(img["local_path"])]
+            if not valid_images:
+                print(f"[QUEUE:ASSET] Ref 이미지 준비 실패: item={item.id}, images={snapref_images!r}")
+                raise ValueError("Ref 이미지 파일을 찾을 수 없습니다. 이미지를 다시 선택해 주세요.")
+            if not comfy_input_dir or not os.path.isdir(comfy_input_dir):
+                print(f"[QUEUE:ASSET] Ref 이미지 input 경로 오류: item={item.id}, path={comfy_input_dir!r}")
+                raise ValueError("Ref 이미지를 저장할 ComfyUI input 폴더를 확인해 주세요.")
+            if len(valid_images) > 1:
+                print(f"[QUEUE:ASSET] Ref 이미지 첫 번째 1장 사용: item={item.id}, count={len(valid_images)}")
+            snapref_subfolder = self.prepare_ref_folder(valid_images[:1], comfy_input_dir, snapref=True)
 
         if body.get("face_id_enabled", False) and body.get("reference_images", []):
             if comfy_input_dir and os.path.isdir(comfy_input_dir):
@@ -4179,7 +4199,7 @@ class QueueManager:
                     style_ref_subfolder = self.prepare_style_ref_folder(valid_images, comfy_input_dir)
 
         modal_input_paths = []
-        for subfolder in (reference_subfolder, style_ref_subfolder):
+        for subfolder in (reference_subfolder, style_ref_subfolder, snapref_subfolder):
             if not subfolder:
                 continue
             candidate = os.path.join(comfy_input_dir, subfolder)
@@ -4236,6 +4256,11 @@ class QueueManager:
             storage_group=body.get("storage_group", ""),
             storage_session=body.get("storage_session", ""),
             modal_input_paths=modal_input_paths,
+            snapref_enabled=snapref_enabled,
+            snapref_dir=snapref_subfolder,
+            snapref_strength=float(body.get("snapref_strength", 0.0)),
+            snapref_mode=body.get("snapref_mode", "char"),
+            snapref_megapixels=float(body.get("snapref_megapixels", 1.0)),
             diagnostic_dcw_cwm_smc_enabled=(
                 body.get("diagnostic_dcw_cwm_smc_enabled")
                 if isinstance(body.get("diagnostic_dcw_cwm_smc_enabled"), bool)

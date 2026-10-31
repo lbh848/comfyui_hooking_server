@@ -618,6 +618,14 @@
       "relative_path": "models/loras/matsuda_hikari.safetensors",
       "size": 138663783,
       "sha256": "8c4d55121f5bddc3ce87ddc5f20d75b0168639dd929a3234fcf9a558d66f2bb6"
+    },
+    {
+      "id": "snapref-v1a",
+      "url": "https://huggingface.co/0ppxnhximxr/snapref-v1a/resolve/b06b901f8b8130acb58b2c446b84970267cd0a8c/snapref_v1a.safetensors",
+      "relative_path": "models/loras/snapref_v1a.safetensors",
+      "size": 381822008,
+      "sha256": "0b8c6897845bb721c46977eae034a95492aa39cf22342b345f7e0315f4bd81fd",
+      "license": "CircleStone Labs Non-Commercial License"
     }
   ],
   "workflows": {
