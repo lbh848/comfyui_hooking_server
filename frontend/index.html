@@ -33509,6 +33509,12 @@
                         </span>
                     </button>`;
             }).join('');
+            if (videoReferencePickerState.tab === 'asset' && videoReferencePickerState.assetLevel === 'characters'
+                && !videoReferencePickerState.loading && videoReferencePickerState.items.length) {
+                grid.insertAdjacentHTML('afterbegin', _loraPickerSearchHtml('video-asset-picker-search', '캐릭터 검색', true));
+                _loraPickerBindSearch('video-asset-picker-search', '#video-reference-picker-grid [data-character]',
+                    element => element.dataset.character, videoReferencePickerState);
+            }
             empty.style.display = videoReferencePickerState.items.length ? 'none' : 'grid';
             if (!videoReferencePickerState.items.length) {
                 empty.textContent = videoReferencePickerState.loading
@@ -51849,7 +51855,7 @@
         let epRefPickerState = { level: 'characters', char: '', target: 'sidebar' };
 
         function epRefPickerGoBack() {
-            epRefPickerState = { level: 'characters', char: '', target: epRefPickerState.target };
+            epRefPickerState = { ...epRefPickerState, level: 'characters', char: '', target: epRefPickerState.target };
             loadEpRefPickerCharacters();
         }
 
@@ -51861,21 +51867,25 @@
             try {
                 const resp = await fetch('/api/asset_mode/characters');
                 const data = await resp.json();
+                if (!grid.isConnected) { console.info('[ASSET_PICKER] Closed character list response ignored'); return; }
                 const chars = data.characters || [];
-                grid.innerHTML = '';
+                grid.innerHTML = _loraPickerSearchHtml('ep-ref-picker-search', '캐릭터 검색', true);
                 if (chars.length === 0) { grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--text-secondary);">캐릭터가 없습니다</div>'; return; }
                 chars.forEach(ch => {
                     const card = document.createElement('div');
+                    card.dataset.character = ch;
                     card.style.cssText = 'cursor:pointer; border-radius:8px; border:2px solid var(--border); padding:16px 8px; text-align:center; transition:border-color 0.2s, background 0.2s;';
                     card.innerHTML = `<div style="font-size:1.2rem; margin-bottom:4px;">📁</div><div style="font-size:0.85rem; word-break:break-all;">${escapeHtml(ch)}</div>`;
                     card.onmouseenter = () => { card.style.borderColor = 'var(--accent)'; card.style.background = 'var(--surface2)'; };
                     card.onmouseleave = () => { card.style.borderColor = 'var(--border)'; card.style.background = 'transparent'; };
                     card.onclick = () => {
-                        epRefPickerState = { level: 'gallery', char: ch, target: epRefPickerState.target };
+                        epRefPickerState = { ...epRefPickerState, level: 'gallery', char: ch, target: epRefPickerState.target };
                         loadEpRefPickerGallery(ch);
                     };
                     grid.appendChild(card);
                 });
+                await _loraPickerBindSearch('ep-ref-picker-search', '#ep-ref-picker-grid [data-character]',
+                    element => element.dataset.character, epRefPickerState);
             } catch (e) { grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--error);">로드 실패</div>'; }
         }
 
@@ -51944,7 +51954,7 @@
         let epRefSlotPickerState = { level: 'characters', char: '', slotIdx: -1 };
 
         function epRefSlotPickerGoBack() {
-            epRefSlotPickerState = { level: 'characters', char: '', slotIdx: epRefSlotPickerState.slotIdx };
+            epRefSlotPickerState = { ...epRefSlotPickerState, level: 'characters', char: '', slotIdx: epRefSlotPickerState.slotIdx };
             loadEpRefSlotPickerCharacters(epRefSlotPickerState.slotIdx);
         }
 
@@ -51956,21 +51966,25 @@
             try {
                 const resp = await fetch('/api/asset_mode/characters');
                 const data = await resp.json();
+                if (!grid.isConnected) { console.info('[ASSET_PICKER] Closed character list response ignored'); return; }
                 const chars = data.characters || [];
-                grid.innerHTML = '';
+                grid.innerHTML = _loraPickerSearchHtml('ep-ref-slot-picker-search', '캐릭터 검색', true);
                 if (chars.length === 0) { grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--text-secondary);">캐릭터가 없습니다</div>'; return; }
                 chars.forEach(ch => {
                     const card = document.createElement('div');
+                    card.dataset.character = ch;
                     card.style.cssText = 'cursor:pointer; border-radius:8px; border:2px solid var(--border); padding:16px 8px; text-align:center; transition:border-color 0.2s, background 0.2s;';
                     card.innerHTML = `<div style="font-size:1.2rem; margin-bottom:4px;">📁</div><div style="font-size:0.85rem; word-break:break-all;">${escapeHtml(ch)}</div>`;
                     card.onmouseenter = () => { card.style.borderColor = 'var(--accent)'; card.style.background = 'var(--surface2)'; };
                     card.onmouseleave = () => { card.style.borderColor = 'var(--border)'; card.style.background = 'transparent'; };
                     card.onclick = () => {
-                        epRefSlotPickerState = { level: 'gallery', char: ch, slotIdx: idx };
+                        epRefSlotPickerState = { ...epRefSlotPickerState, level: 'gallery', char: ch, slotIdx: idx };
                         loadEpRefSlotPickerGallery(ch, idx);
                     };
                     grid.appendChild(card);
                 });
+                await _loraPickerBindSearch('ep-ref-slot-picker-search', '#ep-ref-slot-picker-grid [data-character]',
+                    element => element.dataset.character, epRefSlotPickerState);
             } catch (e) { grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--error);">로드 실패</div>'; }
         }
 
@@ -58200,9 +58214,13 @@
             loadLoraPickerCharacters();
         }
 
-        function _loraPickerSearchHtml(id, placeholder) {
-            return '<div style="margin-bottom:10px;">'
-                + '<input type="text" id="' + id + '" placeholder="' + placeholder + '" autocomplete="off" '
+        function _loraPickerSearchHtml(id, placeholder, characterFilter = false) {
+            return '<div style="grid-column:1/-1; margin-bottom:10px; min-width:0;">'
+                + (characterFilter ? '<select id="' + id + '-group" aria-label="캐릭터 그룹 필터" disabled '
+                    + 'style="width:100%; margin-bottom:6px; padding:7px 10px; border:1px solid var(--border); '
+                    + 'border-radius:6px; background:var(--surface2); color:var(--text);">'
+                    + '<option value="">그룹 불러오는 중…</option></select>' : '')
+                + '<input type="search" id="' + id + '" placeholder="' + placeholder + '" aria-label="' + placeholder + '" autocomplete="off" '
                 + 'style="width:100%; padding:7px 10px; border:1px solid var(--border); border-radius:6px; '
                 + 'background:var(--surface2); color:var(--text); font-size:0.85rem; box-sizing:border-box;">'
                 + '<div id="' + id + '-empty" style="display:none; text-align:center; padding:20px; '
@@ -58287,37 +58305,75 @@
                 .replace(/[\s\-_/\\.,()\[\]|]+/g, '');
         }
 
-        function _loraPickerBindSearch(inputId, itemSelector, textOf) {
+        async function _loraPickerBindSearch(inputId, itemSelector, textOf, state = null) {
             const input = document.getElementById(inputId);
             if (!input) {
                 console.error('[LORA] 피커 검색 입력칸 없음:', inputId);
                 return;
             }
             const emptyElement = document.getElementById(inputId + '-empty');
+            const groupSelect = document.getElementById(inputId + '-group');
+            const items = Array.from(document.querySelectorAll(itemSelector));
+            const displays = new Map(items.map(element => [element, element.style.display]));
+            let characters = null;
+            if (state) input.value = state.searchQuery || '';
             const apply = function() {
+                if (state) state.searchQuery = input.value;
                 const raw = input.value.trim();
                 const tokens = raw ? raw.split(/\s+/).map(_loraPickerNorm).filter(Boolean) : [];
+                const groupFilter = characters && groupSelect ? groupSelect.value : '';
                 let shown = 0;
-                document.querySelectorAll(itemSelector).forEach(function(element) {
-                    const haystack = _loraPickerNorm(textOf(element));
-                    const matches = tokens.length === 0 || tokens.every(function(token) {
+                items.forEach(function(element) {
+                    const name = textOf(element);
+                    const group = characters?.[name]?.group || '';
+                    const matchesGroup = !groupFilter || (groupFilter === 'ungrouped' && !group)
+                        || groupFilter === `group:${group}`;
+                    const haystack = _loraPickerNorm(name);
+                    const matches = matchesGroup && (tokens.length === 0 || tokens.every(function(token) {
                         return haystack.includes(token);
-                    });
-                    element.style.display = matches ? '' : 'none';
+                    }));
+                    element.style.display = matches ? displays.get(element) : 'none';
                     if (matches) shown++;
                 });
                 if (emptyElement) {
-                    emptyElement.style.display = tokens.length && shown === 0 ? 'block' : 'none';
+                    emptyElement.style.display = (tokens.length || groupFilter) && shown === 0 ? 'block' : 'none';
                 }
             };
             input.addEventListener('input', apply);
             input.addEventListener('compositionupdate', apply);
             input.addEventListener('compositionend', apply);
+            apply();
             try {
                 input.focus({ preventScroll: true });
             } catch (error) {
                 console.warn('[LORA] preventScroll 포커스 미지원, 기본 포커스 사용:', error);
                 input.focus();
+            }
+            if (groupSelect && state) {
+                try {
+                    const tags = await fetchJSON('/api/asset_mode/tags');
+                    if (!input.isConnected) {
+                        console.info('[ASSET_PICKER] 닫힌 캐릭터 검색창의 그룹 응답 생략:', inputId);
+                        return;
+                    }
+                    characters = tags.characters || {};
+                    const groups = [...new Set(items.map(element => characters[textOf(element)]?.group || '')
+                        .filter(Boolean))].sort((left, right) => left.localeCompare(right));
+                    groupSelect.replaceChildren(new Option('전체 그룹', ''), new Option('미지정', 'ungrouped'));
+                    groups.forEach(group => groupSelect.add(new Option(group, `group:${group}`)));
+                    groupSelect.value = state.groupFilter || '';
+                    if (groupSelect.selectedIndex < 0) groupSelect.value = '';
+                    state.groupFilter = groupSelect.value;
+                    groupSelect.disabled = false;
+                    groupSelect.onchange = () => {
+                        state.groupFilter = groupSelect.value;
+                        apply();
+                    };
+                    apply();
+                } catch (error) {
+                    console.error('[ASSET_PICKER] 캐릭터 그룹 로드 실패:', inputId, error);
+                    groupSelect.replaceChildren(new Option('그룹 로드 실패', ''));
+                }
             }
         }
 
@@ -58354,7 +58410,7 @@
                 }
                 const countInfo = state.selected.size > 0 ? ' (현재 ' + state.selected.size + '장 선택됨)' : '';
                 let html = '<div style="margin-bottom:8px; font-size:0.85rem; color:var(--text-secondary);">에셋을 탐색할 캐릭터를 선택하세요' + countInfo + '</div>';
-                html += _loraPickerSearchHtml('lora-picker-char-search', '캐릭터 검색...');
+                html += _loraPickerSearchHtml('lora-picker-char-search', '캐릭터 검색', true);
                 html += '<div id="lora-picker-char-grid" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(120px, 1fr)); gap:10px;">';
                 resp.characters.forEach(function(name) {
                     const border = name === state.pickerCharacter ? 'border-color:var(--accent);' : '';
@@ -58368,7 +58424,8 @@
                 _loraPickerBindSearch(
                     'lora-picker-char-search',
                     '#lora-picker-char-grid .asset-folder-card',
-                    function(element) { return element.getAttribute('data-name') || ''; }
+                    function(element) { return element.getAttribute('data-name') || ''; },
+                    state
                 );
                 loraPickerUpdateCount();
                 _loraPickerRestoreScroll('characters');
@@ -79464,10 +79521,13 @@
                     list.innerHTML = '<div style="color:var(--text2); text-align:center; padding:20px;">대표 이미지가 있는 에셋 캐릭터가 없습니다.</div>';
                     return;
                 }
+                list.insertAdjacentHTML('afterbegin', _loraPickerSearchHtml('bot-asset-char-search', '캐릭터 검색', true));
                 chars.forEach(ch => {
                     window._assetCharData[ch.name] = { ...ch, loaded: false };
                     list.appendChild(_renderChar(ch, existingChars));
                 });
+                await _loraPickerBindSearch('bot-asset-char-search', '#bot-asset-char-list [data-char-name]',
+                    element => element.dataset.charName, {});
             } catch (e) {
                 console.error('[BOT] 에셋 캐릭터 로드 오류:', e);
                 showToast('에셋 캐릭터 목록 로드 실패: ' + (e.message || e), 'error');
@@ -79540,6 +79600,10 @@
         function botAssetCharToggleAll(on) {
             document.querySelectorAll('.asset-char-check').forEach(cb => {
                 if (cb.disabled) return;
+                if (on && cb.closest('label').style.display === 'none') {
+                    console.debug('[ASSET_PICKER] 그룹·검색에서 숨겨진 캐릭터 선택 생략:', cb.value);
+                    return;
+                }
                 cb.checked = on;
                 if (on) _ensureCharRepImages(cb.value, cb.closest('label'));
             });
@@ -87900,6 +87964,7 @@
             window._botAssetSelectedChar = '';
             window._botAssetSelectedOutfit = '';
             window._botAssetData = null;
+            window._botAssetSearchState = {};
 
             let modal = document.getElementById('bot-asset-import-modal');
             if (!modal) {
@@ -87949,18 +88014,21 @@
 
             const body = document.getElementById('bot-asset-import-body');
             const chars = (window._botAssetData || {}).characters || [];
-            body.innerHTML = '';
+            body.innerHTML = _loraPickerSearchHtml('bot-asset-import-search', '캐릭터 검색', true);
             const grid = document.createElement('div');
             grid.style.cssText = 'display:grid; grid-template-columns:repeat(auto-fill, minmax(140px, 1fr)); gap:10px;';
             for (const c of chars) {
                 const card = document.createElement('div');
                 card.className = 'asset-folder-card';
+                card.dataset.character = c;
                 card.innerHTML = `<div class="folder-icon">👤</div><div class="folder-name">${escHtml(c)}</div>`;
                 card.style.cursor = 'pointer';
                 card.onclick = () => renderAssetImportLV1(c);
                 grid.appendChild(card);
             }
             body.appendChild(grid);
+            _loraPickerBindSearch('bot-asset-import-search', '#bot-asset-import-body [data-character]',
+                element => element.dataset.character, window._botAssetSearchState);
         }
 
         async function renderAssetImportLV1(charName) {
@@ -91609,14 +91677,16 @@
             try {
                 const resp = await fetch('/api/asset_mode/characters');
                 const data = await resp.json();
+                if (!grid.isConnected) { console.info('[ASSET_PICKER] Closed character list response ignored'); return; }
                 const characters = data.characters || [];
-                grid.innerHTML = '';
+                grid.innerHTML = _loraPickerSearchHtml('asset-ref-picker-search', '캐릭터 검색', true);
                 if (characters.length === 0) {
                     grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--text2);">캐릭터가 없습니다</div>';
                     return;
                 }
                 for (const char of characters) {
                     const card = document.createElement('div');
+                    card.dataset.character = char;
                     card.style.cssText = 'cursor:pointer; border-radius:8px; border:2px solid var(--border); padding:16px 8px; text-align:center; transition:border-color 0.2s, background 0.2s;';
                     card.innerHTML = `<div style="font-size:1.2rem; margin-bottom:4px;">📁</div><div style="font-size:0.85rem; word-break:break-all;">${escapeHtml(char)}</div>`;
                     card.onmouseenter = () => { card.style.borderColor = 'var(--accent)'; card.style.background = 'var(--surface2)'; };
@@ -91627,6 +91697,8 @@
                     };
                     grid.appendChild(card);
                 }
+                await _loraPickerBindSearch('asset-ref-picker-search', '#asset-ref-picker-grid [data-character]',
+                    element => element.dataset.character, assetRefPickerState);
             } catch (e) {
                 grid.innerHTML = `<div style="grid-column:1/-1; text-align:center; color:var(--error);">로드 실패: ${e.message}</div>`;
             }
@@ -101632,7 +101704,7 @@
         let bulkRefPickerState = { level: 'characters', char: '' };
 
         function bulkRefPickerGoBack() {
-            bulkRefPickerState = { level: 'characters', char: '' };
+            bulkRefPickerState = { ...bulkRefPickerState, level: 'characters', char: '' };
             loadBulkRefPickerCharacters();
         }
 
@@ -101644,21 +101716,25 @@
             try {
                 const resp = await fetch('/api/asset_mode/characters');
                 const data = await resp.json();
+                if (!grid.isConnected) { console.info('[ASSET_PICKER] Closed character list response ignored'); return; }
                 const chars = data.characters || [];
-                grid.innerHTML = '';
+                grid.innerHTML = _loraPickerSearchHtml('bulk-ref-picker-search', '캐릭터 검색', true);
                 if (chars.length === 0) { grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--text-secondary);">캐릭터가 없습니다</div>'; return; }
                 chars.forEach(ch => {
                     const card = document.createElement('div');
+                    card.dataset.character = ch;
                     card.style.cssText = 'cursor:pointer; border-radius:8px; border:2px solid var(--border); padding:16px 8px; text-align:center; transition:border-color 0.2s, background 0.2s;';
                     card.innerHTML = `<div style="font-size:1.2rem; margin-bottom:4px;">📁</div><div style="font-size:0.85rem; word-break:break-all;">${escapeHtml(ch)}</div>`;
                     card.onmouseenter = () => { card.style.borderColor = 'var(--accent)'; card.style.background = 'var(--surface2)'; };
                     card.onmouseleave = () => { card.style.borderColor = 'var(--border)'; card.style.background = 'transparent'; };
                     card.onclick = () => {
-                        bulkRefPickerState = { level: 'gallery', char: ch };
+                        bulkRefPickerState = { ...bulkRefPickerState, level: 'gallery', char: ch };
                         loadBulkRefPickerGallery(ch);
                     };
                     grid.appendChild(card);
                 });
+                await _loraPickerBindSearch('bulk-ref-picker-search', '#bulk-ref-picker-grid [data-character]',
+                    element => element.dataset.character, bulkRefPickerState);
             } catch (e) { grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--error);">로드 실패</div>'; }
         }
 
@@ -103669,7 +103745,7 @@
         let batchRefPickerState = { level: 'characters', char: '' };
 
         function batchRefPickerGoBack() {
-            batchRefPickerState = { level: 'characters', char: '' };
+            batchRefPickerState = { ...batchRefPickerState, level: 'characters', char: '' };
             loadBatchRefPickerCharacters();
         }
 
@@ -103681,21 +103757,25 @@
             try {
                 const resp = await fetch('/api/asset_mode/characters');
                 const data = await resp.json();
+                if (!grid.isConnected) { console.info('[ASSET_PICKER] Closed character list response ignored'); return; }
                 const chars = data.characters || [];
-                grid.innerHTML = '';
+                grid.innerHTML = _loraPickerSearchHtml('batch-ref-picker-search', '캐릭터 검색', true);
                 if (chars.length === 0) { grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--text-secondary);">캐릭터가 없습니다</div>'; return; }
                 chars.forEach(ch => {
                     const card = document.createElement('div');
+                    card.dataset.character = ch;
                     card.style.cssText = 'cursor:pointer; border-radius:8px; border:2px solid var(--border); padding:16px 8px; text-align:center; transition:border-color 0.2s, background 0.2s;';
                     card.innerHTML = `<div style="font-size:1.2rem; margin-bottom:4px;">📁</div><div style="font-size:0.85rem; word-break:break-all;">${escapeHtml(ch)}</div>`;
                     card.onmouseenter = () => { card.style.borderColor = 'var(--accent)'; card.style.background = 'var(--surface2)'; };
                     card.onmouseleave = () => { card.style.borderColor = 'var(--border)'; card.style.background = 'transparent'; };
                     card.onclick = () => {
-                        batchRefPickerState = { level: 'gallery', char: ch };
+                        batchRefPickerState = { ...batchRefPickerState, level: 'gallery', char: ch };
                         loadBatchRefPickerGallery(ch);
                     };
                     grid.appendChild(card);
                 });
+                await _loraPickerBindSearch('batch-ref-picker-search', '#batch-ref-picker-grid [data-character]',
+                    element => element.dataset.character, batchRefPickerState);
             } catch (e) { grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--error);">로드 실패</div>'; }
         }
 
