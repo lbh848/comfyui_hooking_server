@@ -475,7 +475,7 @@ class FrontendAuthController:
                     text="Frontend could not be loaded.",
                     status=500,
                 )
-            return web.Response(
+            response = web.Response(
                 body=index_body,
                 content_type="text/html",
                 charset="utf-8",
@@ -484,6 +484,8 @@ class FrontendAuthController:
                     "Accept-Ranges": "none",
                 },
             )
+            self._set_session_cookie(request, response, self.manager.create_session())
+            return response
 
         print(
             f"[FRONTEND_AUTH] 프런트엔드 로그인 필요: "
@@ -505,7 +507,7 @@ class FrontendAuthController:
         authenticated = self.manager.verify_session(
             request.cookies.get(SESSION_COOKIE_NAME)
         )
-        return self._no_store(
+        response = self._no_store(
             web.json_response(
                 {
                     "success": state != "error",
@@ -516,6 +518,9 @@ class FrontendAuthController:
                 status=503 if state == "error" else 200,
             )
         )
+        if authenticated:
+            self._set_session_cookie(request, response, self.manager.create_session())
+        return response
 
     async def handle_setup(self, request: web.Request) -> web.Response:
         client_id = self._client_id(request)

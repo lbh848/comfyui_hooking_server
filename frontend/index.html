@@ -17622,6 +17622,10 @@
                             <button id="btn-bot-llm-batch" onclick="botLlmBatchAnalyze()" style="width:100%; background:#7C3AED; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">선택 캐릭터 일괄 정제</button>
                             <div id="bot-llm-batch-status" style="font-size:0.7rem; color:var(--text2); margin-top:4px; display:none;"></div>
                         </div>
+                        <div style="background:rgba(76,175,80,0.08); border-radius:8px; padding:10px; margin-top:8px;">
+                            <div class="section-title">얼굴 태그 필터링</div>
+                            <button id="btn-bot-face-tag-filter" onclick="openTagFilterModal('face')" style="width:100%; background:#2E7D32; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">선택 캐릭터 얼굴 태그 필터링 적용</button>
+                        </div>
                             </div>
                         </div>
                         <div style="background:rgba(13,71,161,0.08); border-radius:8px; padding:10px; margin-top:8px;">
@@ -23569,6 +23573,20 @@
             </div>
         </div>
     </div>
+
+    <dialog id="frontend-reauth-dialog" aria-labelledby="frontend-reauth-title" style="position:fixed; inset:0; margin:auto; width:min(400px, calc(100vw - 32px)); height:fit-content; max-height:calc(100dvh - 32px); overflow:auto; box-sizing:border-box; padding:24px; border:1px solid var(--border); border-radius:12px; background:var(--surface); color:var(--text);">
+        <form id="frontend-reauth-form">
+            <h3 id="frontend-reauth-title" style="margin:0 0 10px;">대시보드 로그인</h3>
+            <p style="font-size:.85rem; color:var(--text2);">설정 내용을 유지한 채 다시 로그인합니다.</p>
+            <label for="frontend-reauth-password" style="display:block; margin-bottom:6px;">비밀번호</label>
+            <input id="frontend-reauth-password" type="password" autocomplete="current-password" required style="width:100%; box-sizing:border-box; padding:10px; border:1px solid var(--border); border-radius:6px; background:var(--surface2); color:var(--text);">
+            <p id="frontend-reauth-error" role="alert" style="color:#ff6b6b; font-size:.8rem; overflow-wrap:anywhere;"></p>
+            <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:18px;">
+                <button type="button" class="btn-small" onclick="document.getElementById('frontend-reauth-dialog').close()">취소</button>
+                <button type="submit" id="frontend-reauth-submit" class="btn-small">로그인</button>
+            </div>
+        </form>
+    </dialog>
 
     <!-- 설정 모달 -->
     <div class="modal settings-modal" id="settings-modal">
@@ -31086,6 +31104,17 @@
         document.addEventListener('DOMContentLoaded', initializeVastWorkerUi);
         document.addEventListener('DOMContentLoaded', _renderLlmLogLock);
 
+        // 열린 탭을 사용하는 동안 유효한 세션을 갱신한다. 만료된 세션의
+        // 재인증은 보호된 API를 실제로 사용할 때 fetchJSON에서 처리한다.
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden) fetchJSON('/api/frontend-auth/status')
+                .catch(error => console.error('[FRONTEND_AUTH] 세션 갱신 실패:', error));
+        });
+        setInterval(() => {
+            if (!document.hidden) fetchJSON('/api/frontend-auth/status')
+                .catch(error => console.error('[FRONTEND_AUTH] 세션 갱신 실패:', error));
+        }, 15 * 60 * 1000);
+
         function loadCurrentConfig(forceRefresh = false) {
             if (!forceRefresh && currentConfigLoadPromise) {
                 return currentConfigLoadPromise;
@@ -31950,7 +31979,71 @@
 
         // ─── API 호출 ───
         async function fetchJSON(url, options) {
-            const resp = await fetch(url, options);
+            let resp = await fetch(url, options);
+            if (resp.status === 401 && resp.headers.get('content-type')?.includes('application/json')) {
+                const failure = await resp.clone().json();
+                if (failure.error === 'authentication_required') {
+                    if (!fetchJSON.authPromise) {
+                        fetchJSON.authPromise = (async () => {
+                            // 다른 요청 또는 탭에서 이미 재인증했다면 창을 다시 띄우지 않는다.
+                            const statusResponse = await fetch('/api/frontend-auth/status', {cache: 'no-store'});
+                            const status = await statusResponse.json();
+                            if (!statusResponse.ok) throw new Error(status.error || '로그인 상태 확인 실패');
+                            if (status.authenticated) return;
+                            const dialog = document.getElementById('frontend-reauth-dialog');
+                            const form = document.getElementById('frontend-reauth-form');
+                            const password = document.getElementById('frontend-reauth-password');
+                            const errorEl = document.getElementById('frontend-reauth-error');
+                            const submit = document.getElementById('frontend-reauth-submit');
+                            await new Promise((resolve, reject) => {
+                                errorEl.textContent = '';
+                                password.value = '';
+                                submit.disabled = false;
+                                dialog.oncancel = event => event.preventDefault();
+                                dialog.onclose = () => {
+                                    if (dialog.open) return;
+                                    password.value = '';
+                                    form.onsubmit = null;
+                                    reject(new Error('로그인이 취소되었습니다. 다시 로그인한 뒤 재시도해 주세요.'));
+                                };
+                                form.onsubmit = async event => {
+                                    event.preventDefault();
+                                    if (submit.disabled) return;
+                                    const attempt = form.onsubmit;
+                                    submit.disabled = true;
+                                    errorEl.textContent = '';
+                                    try {
+                                        const loginResponse = await fetch('/api/frontend-auth/login', {
+                                            method: 'POST',
+                                            headers: {'Content-Type': 'application/json'},
+                                            body: JSON.stringify({password: password.value}),
+                                        });
+                                        if (form.onsubmit !== attempt) return;
+                                        password.value = '';
+                                        const login = await loginResponse.json();
+                                        if (!loginResponse.ok || !login.success) throw new Error(login.error || `HTTP ${loginResponse.status}`);
+                                        if (form.onsubmit !== attempt || !dialog.open) return;
+                                        resolve();
+                                        dialog.close();
+                                    } catch (error) {
+                                        console.error('[FRONTEND_AUTH] 재로그인 실패:', error);
+                                        if (form.onsubmit !== attempt) return;
+                                        errorEl.textContent = error.message;
+                                        password.focus({preventScroll: true});
+                                    } finally {
+                                        if (form.onsubmit === attempt) submit.disabled = false;
+                                    }
+                                };
+                                dialog.showModal();
+                                password.focus({preventScroll: true});
+                            });
+                        })().finally(() => { fetchJSON.authPromise = null; });
+                    }
+                    await fetchJSON.authPromise;
+                    // 401은 서버가 처리 전에 거부한 요청이므로 인증 후 한 번만 재전송한다.
+                    resp = await fetch(url, options);
+                }
+            }
             if (!resp.ok) {
                 // 응답 본문의 진짜 에러 사유까지 노출 (CLAUDE.md: 조용한 실패 금지)
                 let detail = '';
@@ -31964,7 +32057,7 @@
                     }
                 } catch (_) { /* 본문 읽기 실패는 무시 */ }
                 if (resp.status === 401) {
-                    detail = '로그인이 만료되었거나 필요합니다. 새로고침 후 다시 로그인해 주세요.';
+                    detail = '로그인 인증을 확인하지 못했습니다. 다시 로그인한 뒤 재시도해 주세요.';
                 }
                 const method = (options && options.method) || 'GET';
                 const msg = `HTTP ${resp.status}${detail ? ' - ' + detail : ''}`;
@@ -43058,7 +43151,7 @@
         async function modalRefreshStatus(showResult = false) {
             const account = document.getElementById('modal-account-status');
             try {
-                const data = await fetchJSON('/api/modal/status');
+                const data = await fetchJSON('/api/modal/status' + (showResult ? '?refresh=1' : ''));
                 modalApplyStatus(data, showResult);
             } catch (error) {
                 console.error('[MODAL] 상태 조회 실패:', error);
@@ -49871,12 +49964,17 @@
 
         // ─── LLM API 키 별도 저장 (key/llm_keys.json) ───
         async function loadLlmKeys() {
+            const inputs = LLM_SLOTS.map(slot => document.getElementById(`setting-llm-api-key${llmSlotSuffix(slot)}`));
+            const before = inputs.map(input => input?.value);
             try {
                 const data = await fetchJSON('/api/llm/keys');
-                for (const slot of LLM_SLOTS) {
+                for (const [index, slot] of LLM_SLOTS.entries()) {
                     const suffix = llmSlotSuffix(slot);
-                    const el = document.getElementById(`setting-llm-api-key${suffix}`);
-                    if (el) el.value = data[`llm_api_key${suffix}`] || '';
+                    const el = inputs[index];
+                    if (el) {
+                        if (el.value === before[index]) el.value = data[`llm_api_key${suffix}`] || '';
+                        el._keyLoaded = true;
+                    }
                 }
             } catch (e) {
                 console.error('load LLM keys:', e);
@@ -49885,12 +49983,17 @@
         }
 
         async function saveLlmKeys() {
-            const payload = {};
-            for (const slot of LLM_SLOTS) {
-                const suffix = llmSlotSuffix(slot);
-                payload[`llm_api_key${suffix}`] = (document.getElementById(`setting-llm-api-key${suffix}`) || {}).value || '';
-            }
             try {
+                const inputs = LLM_SLOTS.map(slot => document.getElementById(`setting-llm-api-key${llmSlotSuffix(slot)}`));
+                // 조회하지 못한 빈 입력은 삭제 의도가 아니다. 저장된 키를 먼저 가져와 보존한다.
+                const existing = inputs.some(input => !input?._keyLoaded && !input?.value)
+                    ? await fetchJSON('/api/llm/keys') : {};
+                const payload = {};
+                for (const [index, slot] of LLM_SLOTS.entries()) {
+                    const key = `llm_api_key${llmSlotSuffix(slot)}`;
+                    const input = inputs[index];
+                    payload[key] = input?._keyLoaded || input?.value ? input.value : existing[key] || '';
+                }
                 await fetchJSON('/api/llm/keys', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -49915,14 +50018,16 @@
         }
 
         async function loadChansubKey() {
+            const inputs = ['setting-chansub-api-key', 'setting-chansub-rotation-api-key'].map(id => document.getElementById(id));
+            const before = inputs.map(input => input?.value);
             try {
-                const resp = await fetch('/api/chansub/key');
-                const data = await resp.json();
-                if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
-                const el = document.getElementById('setting-chansub-api-key');
-                if (el) el.value = data.api_key || '';
-                const rotationEl = document.getElementById('setting-chansub-rotation-api-key');
-                if (rotationEl) rotationEl.value = data.rotation_api_key || '';
+                const data = await fetchJSON('/api/chansub/key');
+                if (data.error) throw new Error(data.error);
+                inputs.forEach((input, index) => {
+                    if (!input) return;
+                    if (input.value === before[index]) input.value = data[index ? 'rotation_api_key' : 'api_key'] || '';
+                    input._keyLoaded = true;
+                });
             } catch (e) {
                 console.error('[CHANSUB_KEY] load failed:', e);
                 showToast('챈섭 API 키 로드 실패: ' + e.message, 'error');
@@ -49930,10 +50035,13 @@
         }
 
         async function saveChansubKey() {
-            const apiKey = (document.getElementById('setting-chansub-api-key') || {}).value || '';
-            const rotationApiKey = (document.getElementById('setting-chansub-rotation-api-key') || {}).value || '';
             try {
-                const resp = await fetch('/api/chansub/key', {
+                const inputs = ['setting-chansub-api-key', 'setting-chansub-rotation-api-key'].map(id => document.getElementById(id));
+                const existing = inputs.some(input => !input?._keyLoaded && !input?.value)
+                    ? await fetchJSON('/api/chansub/key') : {};
+                const apiKey = inputs[0]?._keyLoaded || inputs[0]?.value ? inputs[0].value : existing.api_key || '';
+                const rotationApiKey = inputs[1]?._keyLoaded || inputs[1]?.value ? inputs[1].value : existing.rotation_api_key || '';
+                const data = await fetchJSON('/api/chansub/key', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -49941,8 +50049,7 @@
                         rotation_api_key: rotationApiKey,
                     }),
                 });
-                const data = await resp.json();
-                if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
+                if (data.error) throw new Error(data.error);
             } catch (e) {
                 console.error('[CHANSUB_KEY] save failed:', e);
                 throw e;
@@ -49952,9 +50059,8 @@
         async function deleteChansubKey() {
             if (!confirm('저장된 챈섭 API 키를 삭제하시겠습니까?')) return;
             try {
-                const resp = await fetch('/api/chansub/key', { method: 'DELETE' });
-                const data = await resp.json();
-                if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
+                const data = await fetchJSON('/api/chansub/key', { method: 'DELETE' });
+                if (data.error) throw new Error(data.error);
                 document.getElementById('setting-chansub-api-key').value = '';
                 document.getElementById('setting-chansub-rotation-api-key').value = '';
                 showToast('챈섭 API 키를 삭제했습니다.', 'success');
@@ -49978,11 +50084,14 @@
         async function loadVastKey() {
             const el = document.getElementById('setting-vast-api-key');
             const statusEl = document.getElementById('setting-vast-key-status');
+            const before = el?.value;
             try {
-                const resp = await fetch('/api/vast/key');
-                const data = await resp.json();
-                if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
-                if (el) el.value = data.api_key || '';
+                const data = await fetchJSON('/api/vast/key');
+                if (data.error) throw new Error(data.error);
+                if (el) {
+                    if (el.value === before) el.value = data.api_key || '';
+                    el._keyLoaded = true;
+                }
                 if (statusEl) statusEl.textContent = data.set ? '저장됨' : '미설정';
             } catch (e) {
                 console.error('[VAST_KEY] load failed:', e);
@@ -49994,15 +50103,15 @@
         async function saveVastKey() {
             const el = document.getElementById('setting-vast-api-key');
             const statusEl = document.getElementById('setting-vast-key-status');
-            const apiKey = (el || {}).value || '';
             try {
-                const resp = await fetch('/api/vast/key', {
+                const existing = !el?._keyLoaded && !el?.value ? await fetchJSON('/api/vast/key') : {};
+                const apiKey = el?._keyLoaded || el?.value ? el.value : existing.api_key || '';
+                const data = await fetchJSON('/api/vast/key', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ api_key: apiKey }),
                 });
-                const data = await resp.json();
-                if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
+                if (data.error) throw new Error(data.error);
                 if (statusEl) statusEl.textContent = data.set ? '저장됨' : '미설정';
                 showToast(data.set ? 'Vast API 키를 저장했습니다.' : 'Vast API 키를 비웠습니다.', 'success');
                 void refreshVastStatus(true);
@@ -50018,9 +50127,8 @@
             const el = document.getElementById('setting-vast-api-key');
             const statusEl = document.getElementById('setting-vast-key-status');
             try {
-                const resp = await fetch('/api/vast/key', { method: 'DELETE' });
-                const data = await resp.json();
-                if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
+                const data = await fetchJSON('/api/vast/key', { method: 'DELETE' });
+                if (data.error) throw new Error(data.error);
                 if (el) el.value = '';
                 if (statusEl) statusEl.textContent = '미설정';
                 showToast('Vast API 키를 삭제했습니다.', 'success');
@@ -50206,10 +50314,12 @@
         async function loadVertexKeyStatus(slot) {
             const statusEl = document.getElementById(`vertex-key${llmSlotSuffix(slot)}-status`);
             if (!statusEl) return;
+            const request = Symbol();
+            statusEl._keyStatusRequest = request;
             try {
-                const resp = await fetch(`/api/llm/vertex_key?slot=llm${slot}`);
-                const data = await resp.json();
-                if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
+                const data = await fetchJSON(`/api/llm/vertex_key?slot=llm${slot}`);
+                if (statusEl._keyStatusRequest !== request) return;
+                if (data.error) throw new Error(data.error);
                 if (data.exists) {
                     statusEl.textContent = `✓ 저장됨: project=${data.project_id || '(알 수 없음)'} email=${data.client_email || ''}`;
                     statusEl.style.color = '#5cd5a0';
@@ -50219,6 +50329,7 @@
                 }
             } catch (e) {
                 console.error(`[LLM${slot}] Vertex 키 조회 실패:`, e);
+                if (statusEl._keyStatusRequest !== request) return;
                 statusEl.textContent = `키 조회 실패: ${e.message}`;
                 statusEl.style.color = '#ff6b6b';
             }
@@ -50250,19 +50361,18 @@
                 return;
             }
             try {
-                const resp = await fetch(`/api/llm/vertex_key?slot=llm${slot}`, {
+                const data = await fetchJSON(`/api/llm/vertex_key?slot=llm${slot}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ json: text }),
                 });
-                const data = await resp.json();
-                if (resp.ok) {
+                if (!data.error) {
                     textarea.value = '';
                     await loadVertexKeyStatus(slot);
                     showToast(`LLM${slot} Vertex 키 저장 완료`, 'success');
                 } else {
-                    console.error(`[LLM${slot}] Vertex 키 저장 실패:`, data.error || resp.status);
-                    alert('저장 실패: ' + (data.error || resp.status));
+                    console.error(`[LLM${slot}] Vertex 키 저장 실패:`, data.error);
+                    alert('저장 실패: ' + data.error);
                 }
             } catch (e) {
                 console.error(`[LLM${slot}] Vertex 키 저장 실패:`, e);
@@ -50273,9 +50383,8 @@
         async function deleteVertexKey(slot) {
             if (!confirm(`LLM${slot}의 Vertex 키를 삭제하시겠습니까?`)) return;
             try {
-                const resp = await fetch(`/api/llm/vertex_key?slot=llm${slot}`, { method: 'DELETE' });
-                const data = await resp.json();
-                if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+                const data = await fetchJSON(`/api/llm/vertex_key?slot=llm${slot}`, { method: 'DELETE' });
+                if (data.error) throw new Error(data.error);
                 document.getElementById(`setting-vertex-key-json${llmSlotSuffix(slot)}`).value = '';
                 await loadVertexKeyStatus(slot);
                 showToast(`LLM${slot} Vertex 키 삭제 완료`, 'success');
@@ -81397,7 +81506,7 @@
         }
 
         // ─── 태그 필터링 모달 ─────────────────────────────────
-        async function openTagFilterModal() {
+        async function openTagFilterModal(target = 'representative') {
             if (!botCurrentBot) { showToast('봇을 먼저 선택하세요', 'error'); return; }
 
             let modal = document.getElementById('tag-filter-modal');
@@ -81407,11 +81516,13 @@
                 document.body.appendChild(modal);
             }
             modal.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.7); z-index:270; display:flex; align-items:center; justify-content:center;';
+            modal.dataset.botName = botCurrentBot;
+            const faceOnly = target === 'face';
 
             // 기본 구조: 탭 2개
             modal.innerHTML = `<div style="background:var(--surface); border-radius:12px; width:92vw; max-width:900px; max-height:85vh; display:flex; flex-direction:column; overflow:hidden;">
                 <div style="padding:16px 20px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center;">
-                    <h3 style="margin:0;">태그 필터링 적용</h3>
+                    <h3 style="margin:0;">${faceOnly ? '얼굴 태그 필터링 적용' : '태그 필터링 적용'}</h3>
                     <button onclick="document.getElementById('tag-filter-modal').style.display='none'" style="background:none; border:none; color:var(--text); font-size:1.2rem; cursor:pointer;">&times;</button>
                 </div>
                 <div style="display:flex; border-bottom:1px solid var(--border);">
@@ -81448,13 +81559,13 @@
 
             // 탭 1: 캐릭터/이미지 목록 로드
             try {
-                const resp = await fetch(`/api/bot_mode/rep_preview?bot=${encodeURIComponent(botCurrentBot)}`);
+                const resp = await fetch(`/api/bot_mode/${faceOnly ? 'utility_preview' : 'rep_preview'}?bot=${encodeURIComponent(modal.dataset.botName)}`);
                 const data = await resp.json();
-                if (data.error) { showToast(data.error, 'error'); modal.style.display = 'none'; return; }
+                if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
                 const images = data.images || [];
                 const tab0 = document.getElementById('tf-tab-0');
                 if (images.length === 0) {
-                    tab0.innerHTML = '<div style="color:var(--text2); text-align:center; padding:20px;">대표 이미지가 없습니다.</div>';
+                    tab0.innerHTML = `<div style="color:var(--text2); text-align:center; padding:20px;">${faceOnly ? '얼굴' : '대표'} 이미지가 없습니다.</div>`;
                 } else {
                     tab0.innerHTML = `
                         <div style="font-size:0.75rem; color:var(--text2); margin-bottom:4px; display:flex; gap:8px; align-items:center;">
@@ -81465,10 +81576,10 @@
                         images.map((img, i) => {
                             const preview = img.prompt ? escHtml(img.prompt.substring(0, 80)) + (img.prompt.length > 80 ? '...' : '') : '<span style="color:var(--text2);">프롬프트 없음</span>';
                             return `<label style="display:flex; align-items:center; gap:10px; padding:8px; border-radius:6px; cursor:pointer; border:1px solid var(--border); background:var(--surface2);">
-                                <input type="checkbox" checked class="tf-check" data-character="${escAttr(img.character)}" data-filename="${escAttr(img.filename)}" style="width:18px; height:18px; cursor:pointer;">
+                                <input type="checkbox" checked class="tf-check" data-character="${escAttr(img.character)}" data-filename="${escAttr(img.filename)}" data-visual-card-id="${escAttr(img.visual_card_id || '')}" style="width:18px; height:18px; cursor:pointer;">
                                 <img src="${img.url}" loading="lazy" style="width:60px; height:60px; object-fit:cover; border-radius:4px; flex-shrink:0;">
                                 <div style="flex:1; min-width:0;">
-                                    <div style="font-size:0.8rem; font-weight:600;">${escHtml(img.character)} / ${escHtml(img.filename)}</div>
+                                    <div style="font-size:0.8rem; font-weight:600;">${escHtml(_botVisualTargetLabel(img))} / ${escHtml(img.filename)}</div>
                                     <div style="font-size:0.7rem; color:var(--text2); margin-top:2px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${preview}</div>
                                 </div>
                             </label>`;
@@ -81476,7 +81587,7 @@
                 }
             } catch (e) {
                 console.error('[TF] 이미지 로드 오류:', e);
-                showToast('이미지 목록 로드 실패', 'error');
+                showToast('이미지 목록 로드 실패: ' + e.message, 'error');
             }
 
             // 프로필 로드
@@ -81745,7 +81856,7 @@
                 const resp = await fetch('/api/bot_mode/tag_filter_preview', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ bot: botCurrentBot, items, steps })
+                    body: JSON.stringify({ bot: document.getElementById('tag-filter-modal').dataset.botName, items, steps })
                 });
                 const data = await resp.json();
                 if (data.error) { showToast(data.error, 'error'); return; }
@@ -81759,6 +81870,11 @@
                 let html = '<table style="width:100%; border-collapse:collapse; font-size:0.78rem;">';
                 html += '<tr style="border-bottom:1px solid var(--border);"><th style="text-align:left; padding:4px 6px;">원본</th><th style="text-align:left; padding:4px 6px;">필터링</th></tr>';
                 preview.forEach(p => {
+                    if (p.error) {
+                        console.error('[TF] 이미지 미리보기 실패:', p);
+                        html += `<tr><td colspan="2" style="padding:4px 6px;color:var(--error);">${escHtml(p.character)} / ${escHtml(p.filename)}: ${escHtml(p.error)}</td></tr>`;
+                        return;
+                    }
                     const origTags = p.original.split(',').map(t => t.trim()).filter(Boolean);
                     const filtTags = p.filtered.split(',').map(t => t.trim()).filter(Boolean);
                     const removed = origTags.filter(t => !filtTags.includes(t));
@@ -81773,33 +81889,62 @@
                 html += '</table>';
                 container.innerHTML = html;
             } catch (e) {
+                console.error('[TF] 미리보기 오류:', e);
                 showToast('미리보기 오류: ' + e.message, 'error');
             }
         }
 
         function _tfGetSelectedItems() {
             const checks = document.querySelectorAll('.tf-check:checked');
-            return [...checks].map(c => ({ character: c.dataset.character, filename: c.dataset.filename }));
+            return [...checks].map(c => ({ character: c.dataset.character, filename: c.dataset.filename, visual_card_id: c.dataset.visualCardId || '' }));
         }
 
-        async function tfApply() {
-            const items = _tfGetSelectedItems();
-            if (items.length === 0) { showToast('캐릭터 탭에서 이미지를 먼저 선택하세요', 'warning'); return; }
-            const steps = tfReadStepsFromUI();
-            if (steps.length === 0) { showToast('필터 규칙을 추가하세요', 'warning'); return; }
-            if (!confirm(`${items.length}개 이미지에 필터링 규칙을 적용하시겠습니까?`)) return;
+        async function tfApply(run = null) {
             try {
-                const resp = await fetch('/api/bot_mode/tag_filter_apply', {
+                const botName = run?.botName || document.getElementById('tag-filter-modal').dataset.botName;
+                const steps = run ? run.faceFilterSteps || [] : tfReadStepsFromUI();
+                if (!steps.length) {
+                    console.info('[TF] 필터 규칙이 없어 적용을 건너뜁니다.', {botName});
+                    if (run) return {skipped: true, detail: '필터 규칙이 없어 건너뜀'};
+                    showToast('필터 규칙을 추가하세요', 'warning');
+                    return;
+                }
+                let items;
+                if (run) {
+                    const data = await _botOneClickJson(`/api/bot_mode/utility_preview?bot=${encodeURIComponent(botName)}`);
+                    if (run.stopRequested) return {cancelled: true, detail: '얼굴 태그 필터링 전 안전 중단됨'};
+                    items = (data.images || []).filter(image => run.charNames.includes(image.character)).map(image => ({
+                        character: image.character, filename: image.filename, visual_card_id: image.visual_card_id,
+                    }));
+                } else {
+                    items = _tfGetSelectedItems();
+                }
+                if (!items.length) {
+                    console.info('[TF] 필터링할 이미지가 없습니다.', {botName});
+                    if (run) return {skipped: true, detail: '필터링할 얼굴 이미지가 없어 건너뜀'};
+                    showToast('캐릭터 탭에서 이미지를 먼저 선택하세요', 'warning');
+                    return;
+                }
+                if (!run && !confirm(`${items.length}개 이미지에 필터링 규칙을 적용하시겠습니까?`)) return;
+                const data = await _botOneClickJson('/api/bot_mode/tag_filter_apply', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ bot: botCurrentBot, items, steps })
+                    body: JSON.stringify({ bot: botName, items, steps })
                 });
-                const data = await resp.json();
-                if (data.error) { showToast(data.error, 'error'); return; }
-                showToast(`${data.success_count}개 적용 완료${data.fail_count > 0 ? ` (${data.fail_count}개 실패)` : ''}`, 'success');
+                if (data.fail_count) console.error('[TF] 일부 이미지 필터링 실패:', data.failed);
+                const detail = `${data.success_count}개 적용 완료${data.fail_count > 0 ? ` (${data.fail_count}개 실패)` : ''}`;
+                if (run) return {
+                    warning: data.fail_count > 0, detail,
+                    issues: (data.failed || []).map(item => _botOneClickIssue(
+                        item.character, item.error, item.filename,
+                    )),
+                };
+                showToast(detail + (data.fail_count ? ': ' + (data.failed || []).map(item => item.error).join(' · ') : ''), data.fail_count ? 'warning' : 'success');
                 document.getElementById('tag-filter-modal').style.display = 'none';
-                renderBotCharacters();
+                if (botCurrentBot === botName) renderBotCharacters();
             } catch (e) {
+                console.error('[TF] 적용 오류:', e);
+                if (run) throw e;
                 showToast('적용 오류: ' + e.message, 'error');
             }
         }
@@ -85212,6 +85357,7 @@
             ['dialogue_face_crop', '대사모드 FACE CROP'],
             ['face_batch', '얼굴 이미지 일괄 작업'],
             ['llm_refine', 'LLM 얼굴/눈 태그 정제'],
+            ['face_filter', '얼굴 태그 필터링'],
         ];
         const BOT_ONE_CLICK_STAGE_DESCRIPTIONS = {
             tag_analysis: '대표 이미지의 태그를 분석합니다.',
@@ -85219,7 +85365,8 @@
             data_patch: '캐릭터 데이터를 보정하고 FACE 이미지를 생성합니다.',
             dialogue_face_crop: '대사모드용 FACE CROP 이미지를 ComfyUI로 추출합니다.',
             face_batch: 'FACE 이미지의 태그 분석과 부정 프롬프트 적용을 진행합니다.',
-            llm_refine: 'LLM으로 얼굴과 눈 관련 태그를 마지막으로 정제합니다.',
+            llm_refine: 'LLM으로 얼굴과 눈 관련 태그를 정제합니다.',
+            face_filter: '선택한 필터 규칙을 얼굴 이미지 태그에 적용합니다.',
         };
         const BOT_ONE_CLICK_WIZARD_STEPS = ['캐릭터 선택', '기능 선택', '세부 설정', '최종 확인'];
         let _botOneClickRun = null;
@@ -85343,6 +85490,7 @@
 
             let patchSettings = {face_crop_top: 1.0, face_crop_bottom: 1.0, emb_target: '대표만'};
             let presets = {};
+            let filterProfiles = {profiles: {}, active_profile: ''};
             try {
                 const [patchResult, tagsResult] = await Promise.all([
                     _botOneClickJson(`/api/bot_mode/patch_settings?bot=${encodeURIComponent(botName)}`),
@@ -85355,6 +85503,12 @@
                 console.error('[BOT_ONE_CLICK] 설정 자료 로드 실패:', e);
                 showToast('일부 설정을 불러오지 못해 기본값으로 표시합니다.', 'warning');
                 if (assetTags?.negative_presets) presets = assetTags.negative_presets;
+            }
+            try {
+                filterProfiles = await _botOneClickJson('/api/bot_mode/tag_filter_profiles');
+            } catch (e) {
+                console.error('[BOT_ONE_CLICK] 태그 필터 프로필 로드 실패:', e);
+                showToast('태그 필터 프로필 로드 실패: ' + e.message, 'warning');
             }
             if (!document.body.contains(modal)) return;
 
@@ -85439,6 +85593,13 @@
                         <div id="bot-one-click-stage-list" style="display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:7px;">${stageCards}</div>
                     </section>
                     <section class="bot-one-click-wizard-page" data-step="2" style="display:none; flex-direction:column; gap:11px; min-width:0; max-width:720px; margin:0 auto;">
+                        <div id="bot-one-click-face-filter-settings" style="padding:11px; border:1px solid rgba(76,175,80,0.32); border-radius:8px; background:rgba(76,175,80,0.07);">
+                            <label for="bot-one-click-face-filter-profile" style="display:block; font-size:0.84rem; font-weight:700; margin-bottom:8px;">얼굴 태그 필터 프로필</label>
+                            <select id="bot-one-click-face-filter-profile" style="width:100%; padding:7px 8px; border:1px solid var(--border); border-radius:5px; background:var(--surface2); color:var(--text); font-size:0.77rem;">
+                                ${Object.keys(filterProfiles.profiles || {}).map(name => `<option value="${escAttr(name)}" ${name === filterProfiles.active_profile ? 'selected' : ''}>${escHtml(name)} (${filterProfiles.profiles[name].length}단계)</option>`).join('') || '<option value="">저장된 프로필 없음</option>'}
+                            </select>
+                            <div style="font-size:0.65rem; color:var(--text2); margin-top:6px;">얼굴 태그 필터링에서 저장한 규칙을 사용합니다. 규칙이 비어 있으면 건너뜁니다.</div>
+                        </div>
                         <div id="bot-one-click-negative-settings" style="padding:11px; border:1px solid rgba(156,39,176,0.32); border-radius:8px; background:rgba(156,39,176,0.07);">
                             <div style="font-size:0.84rem; font-weight:700; margin-bottom:8px;">부정 태그 설정</div>
                             <label style="display:block; font-size:0.7rem; color:var(--text2); margin-bottom:4px;">프리셋</label>
@@ -85475,7 +85636,7 @@
                 </div>
             </div>`;
             modal.dataset.embTarget = patchSettings.emb_target || '대표만';
-            _botOneClickWizard = {step: 0, botName};
+            _botOneClickWizard = {step: 0, botName, filterProfiles: filterProfiles.profiles || {}};
             updateBotOneClickSelectionUi();
             updateBotOneClickStageSelectionUi();
         }
@@ -85572,9 +85733,11 @@
             const negative = document.getElementById('bot-one-click-negative-settings');
             const crop = document.getElementById('bot-one-click-crop-settings');
             const empty = document.getElementById('bot-one-click-no-settings');
+            const faceFilter = document.getElementById('bot-one-click-face-filter-settings');
+            if (faceFilter) faceFilter.style.display = enabledStages.face_filter ? 'block' : 'none';
             if (negative) negative.style.display = needsNegative ? 'block' : 'none';
             if (crop) crop.style.display = needsCrop ? 'block' : 'none';
-            if (empty) empty.style.display = !needsNegative && !needsCrop ? 'block' : 'none';
+            if (empty) empty.style.display = !needsNegative && !needsCrop && !enabledStages.face_filter ? 'block' : 'none';
         }
 
         function _botOneClickWizardError(message) {
@@ -85623,6 +85786,11 @@
             const needsNegative = _botOneClickUsesAnyStage(enabledStages, ['negative', 'face_batch']);
             const needsCrop = _botOneClickUsesAnyStage(enabledStages, ['data_patch', 'dialogue_face_crop']);
             const settingRows = [];
+            if (enabledStages.face_filter) {
+                const profile = document.getElementById('bot-one-click-face-filter-profile')?.value || '';
+                const steps = _botOneClickWizard?.filterProfiles?.[profile] || [];
+                settingRows.push(`얼굴 태그 필터: ${escHtml(profile || '없음')} · ${steps.length ? `${steps.length}단계` : '규칙 없음 · 건너뜀'}`);
+            }
             if (needsNegative) {
                 const tags = (document.getElementById('bot-one-click-negative-tags')?.value || '').split(',').map(tag => tag.trim()).filter(Boolean);
                 settingRows.push(`부정 태그 ${tags.length}개`);
@@ -86045,6 +86213,7 @@
                 charNames,
                 visualTargets,
                 enabledStages,
+                faceFilterSteps: JSON.parse(JSON.stringify(_botOneClickWizard?.filterProfiles?.[document.getElementById('bot-one-click-face-filter-profile')?.value] || [])),
                 negativeTags,
                 cropTop,
                 cropBottom,
@@ -86100,7 +86269,7 @@
             _botOneClickUpdateStage(key, 'running', '준비 중...');
             try {
                 const result = await task();
-                _botOneClickUpdateStage(key, result?.cancelled ? 'cancelled' : (result?.warning ? 'warning' : 'completed'), result?.detail || (result?.cancelled ? '안전 중단됨' : '완료'), result?.issues || []);
+                _botOneClickUpdateStage(key, result?.cancelled ? 'cancelled' : (result?.skipped ? 'skipped' : (result?.warning ? 'warning' : 'completed')), result?.detail || (result?.cancelled ? '안전 중단됨' : '완료'), result?.issues || []);
             } catch (e) {
                 console.error(`[BOT_ONE_CLICK:${key}] 실패:`, e);
                 if (run.stopRequested) {
@@ -86123,6 +86292,7 @@
             await runSelectedStage('dialogue_face_crop', () => _runBotOneClickDialogueFaceCrop(run));
             await runSelectedStage('face_batch', () => _runBotOneClickFaceBatch(run));
             await runSelectedStage('llm_refine', () => _runBotOneClickLlmRefine(run));
+            await runSelectedStage('face_filter', () => tfApply(run));
             if (run.stopRequested) {
                 run.stages.forEach(stage => {
                     if (stage.status !== 'pending') return;

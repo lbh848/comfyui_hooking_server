@@ -3667,28 +3667,41 @@ class BotMode:
         items = body.get("items", [])
         steps = body.get("steps", [])
         if not bot_name:
+            print("[BOT_MODE] 태그 필터 미리보기 실패: 봇 이름 없음")
             return _json_error("봇 이름이 필요합니다.")
         preview = []
         for item in items:
             char_name = item.get("character", "")
             filename = item.get("filename", "")
-            base = os.path.splitext(filename)[0]
-            char_dir = os.path.join(BOT_DIR, bot_name, char_name)
-            prompt_path = os.path.join(char_dir, f"{base}_prompt.json")
-            original = ""
-            if os.path.isfile(prompt_path):
-                try:
+            visual_card_id = item.get("visual_card_id", "")
+            try:
+                base = os.path.splitext(filename)[0]
+                char_dir = (
+                    bot_visual_artifact_dir(bot_name, char_name, visual_card_id)
+                    if filename == "_face_image.webp" and visual_card_id
+                    else os.path.join(BOT_DIR, bot_name, char_name)
+                )
+                prompt_path = os.path.join(char_dir, f"{base}_prompt.json")
+                original = ""
+                if os.path.isfile(prompt_path):
                     with open(prompt_path, "r", encoding="utf-8") as f:
                         original = json.load(f).get("prompt", "")
-                except Exception:
-                    pass
-            filtered = _apply_tag_filter_steps(original, steps) if original else ""
-            preview.append({
-                "character": char_name,
-                "filename": filename,
-                "original": original,
-                "filtered": filtered,
-            })
+                else:
+                    print(f"[BOT_MODE] 태그 필터 미리보기: 저장된 프롬프트 없음: {prompt_path}")
+                filtered = _apply_tag_filter_steps(original, steps) if original else ""
+                preview.append({
+                    "character": char_name, "filename": filename,
+                    "visual_card_id": visual_card_id,
+                    "original": original, "filtered": filtered,
+                })
+            except Exception as e:
+                print(f"[BOT_MODE] 태그 필터 미리보기 실패: {item} - {e}")
+                traceback.print_exc()
+                preview.append({
+                    "character": char_name, "filename": filename,
+                    "visual_card_id": visual_card_id,
+                    "original": "", "filtered": "", "error": str(e),
+                })
         return _json_ok({"preview": preview})
 
     async def handle_tag_filter_apply(self, request):
@@ -3698,15 +3711,22 @@ class BotMode:
         items = body.get("items", [])
         steps = body.get("steps", [])
         if not bot_name:
+            print("[BOT_MODE] 태그 필터 적용 실패: 봇 이름 없음")
             return _json_error("봇 이름이 필요합니다.")
         success_count = 0
         fail_count = 0
+        failed = []
         for item in items:
             try:
                 char_name = item.get("character", "")
                 filename = item.get("filename", "")
+                visual_card_id = item.get("visual_card_id", "")
                 base = os.path.splitext(filename)[0]
-                char_dir = os.path.join(BOT_DIR, bot_name, char_name)
+                char_dir = (
+                    bot_visual_artifact_dir(bot_name, char_name, visual_card_id)
+                    if filename == "_face_image.webp" and visual_card_id
+                    else os.path.join(BOT_DIR, bot_name, char_name)
+                )
                 prompt_path = os.path.join(char_dir, f"{base}_prompt.json")
                 existing = {}
                 if os.path.isfile(prompt_path):
@@ -3721,10 +3741,13 @@ class BotMode:
             except Exception as e:
                 fail_count += 1
                 print(f"[BOT_MODE] 태그 필터 적용 실패: {item} - {e}")
+                traceback.print_exc()
+                failed.append({**item, "error": str(e)})
         return _json_ok({
             "total": len(items),
             "success_count": success_count,
             "fail_count": fail_count,
+            "failed": failed,
         })
 
     async def handle_batch_set_negative(self, request):

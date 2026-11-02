@@ -22597,7 +22597,12 @@ async def log_middleware(request, handler):
         ):
             print(
                 f"[FRONTEND_AUTH] 키 API 로그인 필요: "
-                f"method={request.method} path={request.path!r} peer={request.remote!r}"
+                f"method={request.method} path={request.path!r} peer={request.remote!r} "
+                f"session_cookie={'present' if request.cookies.get(SESSION_COOKIE_NAME) else 'missing'} "
+                f"auth_state={frontend_auth_manager.state} host={request.host!r} "
+                f"scheme={request.scheme} forwarded_proto={request.headers.get('X-Forwarded-Proto', '')!r} "
+                f"origin={request.headers.get('Origin', '')!r} "
+                f"fetch_site={request.headers.get('Sec-Fetch-Site', '')!r}"
             )
             response = web.json_response(
                 {"success": False, "error": "authentication_required",

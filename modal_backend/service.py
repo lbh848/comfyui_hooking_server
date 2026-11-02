@@ -1036,7 +1036,8 @@ class ModalService:
                 )
             if code != 0:
                 print(
-                    f"[MODAL] 계정 상태 확인 실패: profile={settings.profile}, exit_code={code}"
+                    f"[MODAL] 계정 상태 확인 실패: profile={settings.profile}, "
+                    f"exit_code={code}, error={_stderr.strip()[-2000:] or _stdout.strip()[-2000:] or '(명령 출력 없음)'}"
                 )
             return code == 0
         except Exception as exc:
@@ -1044,12 +1045,12 @@ class ModalService:
             traceback.print_exc()
             return False
 
-    async def account_connected(self, settings: ModalSettings) -> bool:
-        """동시에 들어온 계정 확인 요청은 하나의 ``modal token info``를 공유한다."""
+    async def account_connected(self, settings: ModalSettings, *, refresh: bool = False) -> bool:
+        """프로필별 확인 결과를 유지하고 명시적 새로고침 시 다시 확인한다."""
 
         profile = settings.profile
         task = self._account_check_tasks.get(profile)
-        if task is None or task.done():
+        if task is None or task.cancelled() or (refresh and task.done()):
             task = asyncio.create_task(self._account_connected_once(settings))
             self._account_check_tasks[profile] = task
 
@@ -1058,13 +1059,17 @@ class ModalService:
                 *,
                 key: str = profile,
             ) -> None:
-                if self._account_check_tasks.get(key) is completed:
-                    self._account_check_tasks.pop(key, None)
                 if completed.cancelled():
+                    if self._account_check_tasks.get(key) is completed:
+                        self._account_check_tasks.pop(key, None)
                     return
                 try:
-                    completed.exception()
+                    error = completed.exception()
+                    if error is not None:
+                        raise error
                 except Exception as exc:
+                    if self._account_check_tasks.get(key) is completed:
+                        self._account_check_tasks.pop(key, None)
                     print(
                         "[MODAL] 계정 확인 백그라운드 작업 상태 회수 실패: "
                         f"error={type(exc).__name__}: {exc}"
@@ -1238,12 +1243,11 @@ class ModalService:
             traceback.print_exc()
             raise
 
-    async def status(self, *, include_runtime: bool = False) -> dict[str, Any]:
+    async def status(self, *, include_runtime: bool = False, refresh_account: bool = False) -> dict[str, Any]:
         settings = ModalSettings.from_mapping(self.get_config())
-        # 토큰(연결) 존재 여부는 modal_enabled와 무관하게 항상 조회한다.
-        # 기능이 꺼져 있어도 "방금 인증한 토큰이 등록됐는지" 확인할 수 있어야 한다.
+        # 기능이 꺼져 있어도 계정 상태는 표시하되 자동 조회에서는 확인 결과를 재사용한다.
         connection_checked = True
-        connected = await self.account_connected(settings)
+        connected = await self.account_connected(settings, refresh=refresh_account)
         pending_deletes, pending_video_deletes = await asyncio.gather(
             asyncio.to_thread(self._delete_outbox_count),
             asyncio.to_thread(self._video_delete_outbox_count),
@@ -2380,6 +2384,8 @@ class ModalService:
                 }
                 return
             print(f"[MODAL] 브라우저 계정 연결 완료: profile={profile}")
+            # 이전의 미연결 결과와 인증 도중 시작된 확인 요청을 재사용하지 않는다.
+            self._account_check_tasks.pop(profile, None)
             self._auth_state = {
                 "state": "completed",
                 "message": "Modal 계정 연결이 완료되었습니다.",

@@ -18,8 +18,9 @@ def register_modal_routes(
     async def status(request: web.Request) -> web.Response:
         try:
             include_runtime = request.query.get("runtime", "").strip() in {"1", "true"}
+            refresh_account = request.query.get("refresh", "").strip() in {"1", "true"}
             return web.json_response(
-                await service.status(include_runtime=include_runtime)
+                await service.status(include_runtime=include_runtime, refresh_account=refresh_account)
             )
         except Exception as exc:
             print(f"[MODAL_API] 상태 조회 실패: {type(exc).__name__}: {exc}")
