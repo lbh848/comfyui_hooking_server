@@ -1,6 +1,10 @@
 @echo off
-setlocal
-cd /d %~dp0
+setlocal DisableDelayedExpansion
+cd /d "%~dp0"
+if errorlevel 1 (
+    echo [ERROR] Failed to open project folder: "%~dp0"
+    goto :end
+)
 set "UV_CACHE_DIR=%CD%\.tools\uv-cache"
 if not exist "%CD%\.tools\tmp" mkdir "%CD%\.tools\tmp"
 set "TEMP=%CD%\.tools\tmp"
@@ -30,7 +34,7 @@ if not exist "%UV_EXE%" (
     )
     if not exist "%UV_EXE%" (
         echo [ERROR] uv installer completed but uv.exe is missing:
-        echo         %UV_EXE%
+        echo         "%UV_EXE%"
         goto :end
     )
     echo       Project-local uv installed.
