@@ -70159,7 +70159,7 @@
                 return;
             }
             _visualCardSlots[charName] = index;
-            renderBotCharacters();
+            return renderBotCharacters(charName);
         }
 
         function _newVisualCardId(state) {
@@ -71290,10 +71290,20 @@
             }
         }
 
-        async function renderBotCharacters() {
+        async function renderBotCharacters(characterName = '') {
             const grid = document.getElementById('bot-character-grid');
-            _visualCardMetadataResizeObserver.disconnect();
-            grid.innerHTML = '';
+            // A slot change must keep the list mounted: clearing it collapses the scroll range.
+            const currentCard = characterName
+                ? [...grid.children].find(card => card.dataset.characterName === characterName)
+                : null;
+            if (characterName && !currentCard) {
+                console.error('[VISUAL_CARD] 갱신할 캐릭터 영역이 없습니다.', {characterName});
+                return;
+            }
+            if (!currentCard) {
+                _visualCardMetadataResizeObserver.disconnect();
+                grid.innerHTML = '';
+            }
             const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
             const countEl = document.getElementById('bot-char-count');
             if (!bot || !bot.characters || bot.characters.length === 0) {
@@ -71308,14 +71318,17 @@
                 updateBotCharSelect();
                 return;
             }
-            if (countEl) countEl.textContent = `(${bot.characters.length}개)`;
-            updateBotBreadcrumb();
-            updateBotCharSelect();
-            await _ensureVisualCardStates(bot);
+            if (!currentCard) {
+                if (countEl) countEl.textContent = `(${bot.characters.length}개)`;
+                updateBotBreadcrumb();
+                updateBotCharSelect();
+            }
+            if (!currentCard) await _ensureVisualCardStates(bot);
             const cardHydrationTasks = [];
 
             for (let charIdx = 0; charIdx < bot.characters.length; charIdx++) {
                 const rootChar = bot.characters[charIdx];
+                if (currentCard && rootChar.name !== characterName) continue;
                 const char = _visualCardResolved(rootChar) || rootChar;
                 const activeProfile = _visualCardProfile(char.name);
                 const repCount = (char.rep_images || []).length;
@@ -71408,7 +71421,19 @@
                         <div id="char-style-lora-list-${charIdx}" class="lora-cards-row" style="margin-top:8px;"></div>
                     </div>
                 `;
-                grid.appendChild(card);
+                if (currentCard) {
+                    const hadFocus = currentCard.contains(document.activeElement);
+                    currentCard.querySelectorAll('.visual-card-metadata-grid').forEach(group => {
+                        _visualCardMetadataResizeObserver.unobserve(group);
+                    });
+                    card.style.display = currentCard.style.display;
+                    currentCard.replaceWith(card);
+                    if (hadFocus) {
+                        card.querySelector(`button[title="캐릭터 카드 ${(_visualCardSlots[char.name] || 0) + 1}"]`)?.focus({preventScroll: true});
+                    }
+                } else {
+                    grid.appendChild(card);
+                }
 
                 // 비동기로 대표 이미지+프롬프트 로드
                 cardHydrationTasks.push((async (cardEl, charName, activeVisualCardId) => {
@@ -71513,17 +71538,22 @@
                     renderBotCharStyleLoraList(charIdx, char.name, charStyleLoras);
                 }
             }
-            showBotView('chars');
-            grid.querySelectorAll('.visual-card-metadata-grid').forEach(resizeVisualCardMetadataGroup);
-            grid.querySelectorAll('.visual-card-metadata-grid').forEach(group => {
+            if (!currentCard) showBotView('chars');
+            const metadataGroups = characterName
+                ? [...grid.children].find(card => card.dataset.characterName === characterName).querySelectorAll('.visual-card-metadata-grid')
+                : grid.querySelectorAll('.visual-card-metadata-grid');
+            metadataGroups.forEach(resizeVisualCardMetadataGroup);
+            metadataGroups.forEach(group => {
                 _visualCardMetadataResizeObserver.observe(group);
             });
-            const searchEmpty = document.createElement('div');
-            searchEmpty.id = 'bot-character-search-empty';
-            searchEmpty.className = 'character-search-empty';
-            searchEmpty.textContent = '검색 결과가 없습니다.';
-            grid.appendChild(searchEmpty);
-            filterBotCharacters(_botCharacterSearchQuery);
+            if (!currentCard) {
+                const searchEmpty = document.createElement('div');
+                searchEmpty.id = 'bot-character-search-empty';
+                searchEmpty.className = 'character-search-empty';
+                searchEmpty.textContent = '검색 결과가 없습니다.';
+                grid.appendChild(searchEmpty);
+                filterBotCharacters(_botCharacterSearchQuery);
+            }
             checkPatchFiles();
             await Promise.allSettled(cardHydrationTasks);
         }
