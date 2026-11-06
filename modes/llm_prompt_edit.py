@@ -561,6 +561,13 @@ def validate_character_selection(bot: object, character_names: object) -> list[s
     if not isinstance(bot, dict):
         raise ValueError("활성 봇 데이터가 올바르지 않습니다")
     requested = [str(name or "").strip() for name in (character_names or [])]
+    # Old image backups may retain an unmatched quote from a generated name.
+    # Clean before duplicate/membership checks so all identity metadata is
+    # rebuilt with the same canonical names by the existing edit pipeline.
+    normalized = [name.strip('\"“”').strip() for name in requested]
+    if normalized != requested:
+        print(f"[LLM_EDIT:IDENTITY] 백업 캐릭터 이름 인용부호 정리: {requested!r} -> {normalized!r}")
+    requested = normalized
     if not requested or any(not name for name in requested):
         print(f"[LLM_EDIT:IDENTITY] 캐릭터 선택 누락: {requested}")
         raise ValueError("각 슬롯의 캐릭터를 선택해주세요")

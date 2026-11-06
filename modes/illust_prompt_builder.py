@@ -244,7 +244,7 @@ class IllustPromptBuilder:
             return char_section
 
         # 1. Name에서 후보 이름 추출 (쉼표 분리)
-        raw_names = [n.strip() for n in name_section.split(",") if n.strip()]
+        raw_names = [n.strip().strip('\"“”').strip() for n in name_section.split(",") if n.strip()]
         if not raw_names:
             return char_section
 
@@ -675,7 +675,7 @@ class IllustPromptBuilder:
         }
         detected = []
         for raw in raw_names:
-            raw_key = raw.casefold()
+            raw_key = raw.strip('\"“”').strip().casefold()
             match = canonical_by_key.get(raw_key) or alias_map.get(raw_key)
             if match and match not in detected:
                 detected.append(match)

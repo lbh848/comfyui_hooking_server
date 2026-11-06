@@ -5701,6 +5701,10 @@ def _descriptor(raw: dict, kind: str, fallback_slot: int) -> dict:
     for ch in raw.get("characters") or []:
         if not isinstance(ch, dict):
             continue
+        original_name = str(ch.get("name") or "")
+        name = original_name.strip().strip('\"“”').strip()
+        if name != original_name:
+            print(f"[ILLUST_CONTEXT:CALL2] 캐릭터 이름 인용부호 정리: {original_name!r} -> {name!r}")
         if ch.get("negative"):
             print(f"[ILLUST_CONTEXT:CALL2] LLM negative ignored (disabled): "
                   f"kind={kind}, name={ch.get('name')!r}, value={ch['negative']!r}")
@@ -5715,7 +5719,7 @@ def _descriptor(raw: dict, kind: str, fallback_slot: int) -> dict:
         chars.append({
             "positive": str(ch.get("positive") or "").strip(),
             "negative": "",  # LLM negative control disabled; keep descriptor compatibility.
-            "name": str(ch.get("name") or "").strip(),
+            "name": name,
             "position": str(ch.get("position") or "").strip(),
             "authority_exceptions": [
                 str(value).strip()
@@ -8958,6 +8962,11 @@ def _parse_multi_char_layout_response(
         raise ValueError(f"마스크 레이아웃 JSON 파싱 실패: {exc}") from exc
     if isinstance(value, dict) and isinstance(value.get("regions"), list):
         for raw_region in value["regions"]:
+            if isinstance(raw_region, dict) and isinstance(raw_region.get("name"), str):
+                original_name = raw_region["name"]
+                raw_region["name"] = original_name.strip().strip('\"“”').strip()
+                if raw_region["name"] != original_name:
+                    print(f"[ILLUST_CONTEXT:MULTI_CHAR] 캐릭터 이름 인용부호 정리: {original_name!r} -> {raw_region['name']!r}")
             if isinstance(raw_region, dict) and "outfit_state" in raw_region:
                 print(f"[ILLUST_CONTEXT:MULTI_CHAR] 모델의 outfit_state 무시: character={raw_region.get('name')!r}")
                 raw_region.pop("outfit_state")

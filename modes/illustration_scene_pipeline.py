@@ -358,6 +358,23 @@ def slice_scene(plan: dict, *, slot_map: dict[str, int], profile_result: dict,
 
 def _parse_detail_scene(item: dict, scene: dict, *, mask_inline: bool = False,
                         single_char_mask_enabled: bool = True) -> dict:
+    # Registered character names cannot contain double quotes. Normalize only
+    # identity fields, including shared manga cast and nested panel regions;
+    # quoted dialogue and image-prompt text must retain their original content.
+    raw_response = json.dumps(item, ensure_ascii=False) if mask_inline else ""
+    item = deepcopy(item)
+    pending = [item]
+    while pending:
+        value = pending.pop()
+        if isinstance(value, dict):
+            if isinstance(value.get("name"), str):
+                original_name = value["name"]
+                value["name"] = original_name.strip().strip('\"“”').strip()
+                if value["name"] != original_name:
+                    print(f"[ILLUST_CONTEXT:DETAIL] 캐릭터 이름 인용부호 정리: {original_name!r} -> {value['name']!r}")
+            pending.extend(value.values())
+        elif isinstance(value, list):
+            pending.extend(value)
     if isinstance(item, dict) and item.get("panels") and (scene.get("panels") or "regions" not in item):
         if item.get("slot") != scene["slot"]:
             _fail("DETAIL-MANGA", "PLAN과 다른 페이지 slot", item)
@@ -437,8 +454,6 @@ def _parse_detail_scene(item: dict, scene: dict, *, mask_inline: bool = False,
             _fail("CALL2-DETAIL", "PLAN과 다른 slot", {"expected": scene["slot"], "actual": item["slot"]})
         if not isinstance(item["regions"], list):
             _fail("CALL2-DETAIL", "background_prompt/composition_prompt/regions 형식 오류", item)
-        raw_response = json.dumps(item, ensure_ascii=False)
-        item = deepcopy(item)
         for key in ("background_prompt", "composition_prompt"):
             item[key] = pipeline.multi_char_mask._prompt_text(item.get(key), key, required=False)
             if not item[key]:
@@ -498,7 +513,6 @@ def _parse_detail_scene(item: dict, scene: dict, *, mask_inline: bool = False,
     required = {"slot"}
     if not isinstance(item, dict) or not required <= set(item):
         _fail("CALL2-DETAIL", "필수 장면 데이터 누락", item)
-    item = deepcopy(item)
     extras = set(item) - required - {"camera", "characters", "scene", "supplement"}
     if extras:
         print(f"[ILLUST_CONTEXT:CALL2-DETAIL] 소비하지 않는 장면 필드 제외: slot={item['slot']}, fields={extras}")
@@ -559,6 +573,12 @@ def _parse_detail_scene(item: dict, scene: dict, *, mask_inline: bool = False,
             if not isinstance(character[field], str):
                 _fail("CALL2-DETAIL", f"문자열이 아닌 캐릭터 {field} index={index}", character, warning=True)
                 character[field] = "" if character[field] is None else json.dumps(character[field], ensure_ascii=False)
+        # The compatibility parser above can recover names from JSON strings
+        # or object keys after the initial identity normalization.
+        original_name = character["name"]
+        character["name"] = original_name.strip().strip('\"“”').strip()
+        if character["name"] != original_name:
+            print(f"[ILLUST_CONTEXT:DETAIL] 캐릭터 이름 인용부호 정리: {original_name!r} -> {character['name']!r}")
         usable_characters.append(character)
     characters = [{key: character[key] for key in ("name", "positive", "negative", "position")}
                   for character in usable_characters]
