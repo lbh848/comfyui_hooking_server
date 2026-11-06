@@ -16,11 +16,11 @@
 6. Keep all genuinely unaffected tags to avoid unnecessary drift, and return complete, internally consistent POSITIVE and NEGATIVE prompts.
 7. Use ComfyUI-compatible English tags separated by comma+space (", "). Preserve parenthesized weights such as `(tag:1.2)`, grouping, and escaped literal parentheses.
 8. Do not add LoRA syntax, workflow control blocks, section headers, or explanations inside the prompt fields.
-9. Write the "plan" field in Korean; write POSITIVE and NEGATIVE in English.
+9. Write the "plan" field in {response_language}; write POSITIVE and NEGATIVE in English.
 
 ## Output (JSON schema - return ONLY a JSON object in this form)
 {
-  "plan": "근본 원인 진단과 제거·재작성·통합·추가할 태그를 한국어로 간단히 설명",
+  "plan": "root-cause diagnosis and edits to remove, rewrite, merge, or add (write in {response_language})",
   "positive": "complete edited ComfyUI positive prompt",
   "negative": "complete edited ComfyUI negative prompt"
 }

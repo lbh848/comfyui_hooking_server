@@ -292,9 +292,30 @@ def _lora_dir(character: str) -> str:
     return os.path.join(ASSET_DIR, _safe_dirname(character), "Lora")
 
 
-def _lora_entry_dir(character: str, entry_name: str) -> str:
-    """캐릭터의 특정 LoRA 항목 폴더 경로 반환"""
-    return os.path.join(_lora_dir(character), _safe_dirname(entry_name))
+def _lora_entry_dir(
+    character: str, entry_name: str, root: str | None = None,
+    *, session: str = "", legacy: bool = False,
+) -> str:
+    """에셋/학습 결과의 공통 경로. 기존 결과는 원래 이름의 세션도 찾는다."""
+    base = ASSET_DIR if root is None else root
+    canonical = os.path.join(base, _safe_dirname(character), "Lora", _safe_dirname(entry_name))
+    if not legacy and not session:
+        return canonical
+
+    # 원래 이름은 실제 단일 폴더명일 때만 호환 조회에 사용한다.
+    original = canonical
+    if all(value not in ("", ".", "..") and not any(c in value for c in "/\\:")
+           for value in (character, entry_name)):
+        original = os.path.join(base, character, "Lora", entry_name)
+    elif legacy:
+        print(f"[LORA_TRAINED] 기존 경로 조회 생략: character={character!r}, entry={entry_name!r}, 단일 폴더명이 아님")
+    if legacy:
+        return original
+    canonical_session = os.path.join(canonical, session)
+    original_session = os.path.join(original, session)
+    if not os.path.isdir(canonical_session) and os.path.isdir(original_session):
+        return original_session
+    return canonical_session
 
 
 def _training_dir(character: str, entry: str = "") -> str:
@@ -355,9 +376,23 @@ def list_trained_sessions(lora_load_path: str, character: str, entry: str) -> li
         print("[LORA_TRAINED] lora_load_path 미설정")
         return []
     # 구조: lora_load_path/<character>/Lora/<entry>/
-    entry_dir = os.path.join(lora_load_path, _safe_dirname(character), "Lora", _safe_dirname(entry))
-    if not os.path.isdir(entry_dir):
-        print(f"[LORA_TRAINED] 엔트리 폴더 없음: {entry_dir}")
+    entry_dirs = dict.fromkeys((
+        _lora_entry_dir(character, entry, lora_load_path),
+        _lora_entry_dir(character, entry, lora_load_path, legacy=True),
+    ))
+    session_paths = {}
+    for entry_dir in entry_dirs:
+        if not os.path.isdir(entry_dir):
+            print(f"[LORA_TRAINED] 엔트리 폴더 없음: {entry_dir}")
+            continue
+        for name in os.listdir(entry_dir):
+            path = os.path.join(entry_dir, name)
+            if os.path.isdir(path):
+                if name in session_paths:
+                    print(f"[LORA_TRAINED] 중복 세션은 표준 경로 우선: {path}")
+                else:
+                    session_paths[name] = path
+    if not session_paths:
         return []
 
     # 세션별 대표 로라 조회
@@ -366,10 +401,7 @@ def list_trained_sessions(lora_load_path: str, character: str, entry: str) -> li
     session_reps = (manage_entry or {}).get("session_representatives", {})
 
     sessions = []
-    for name in sorted(os.listdir(entry_dir), reverse=True):
-        path = os.path.join(entry_dir, name)
-        if not os.path.isdir(path):
-            continue
+    for name, path in sorted(session_paths.items(), reverse=True):
         step_count = sum(1 for f in os.listdir(path) if f.endswith('.safetensors'))
         has_final = any('-step' not in f for f in os.listdir(path) if f.endswith('.safetensors'))
 
@@ -398,7 +430,7 @@ def list_trained_steps(lora_load_path: str, character: str, entry: str, session:
     if not lora_load_path:
         print("[LORA_TRAINED] lora_load_path 미설정")
         return []
-    session_dir = os.path.join(lora_load_path, _safe_dirname(character), "Lora", _safe_dirname(entry), session)
+    session_dir = _lora_entry_dir(character, entry, lora_load_path, session=session)
     if not os.path.isdir(session_dir):
         print(f"[LORA_TRAINED] 세션 폴더 없음: {session_dir}")
         return []
@@ -435,7 +467,7 @@ def read_toml_file(lora_load_path: str, character: str, entry: str, session: str
     if not lora_load_path:
         print("[LORA_TRAINED] lora_load_path 미설정")
         return {"success": False, "error": "lora_load_path 미설정"}
-    session_dir = os.path.join(lora_load_path, _safe_dirname(character), "Lora", _safe_dirname(entry), session)
+    session_dir = _lora_entry_dir(character, entry, lora_load_path, session=session)
     toml_path = os.path.join(session_dir, step_name + ".toml")
     if not os.path.isfile(toml_path):
         print(f"[LORA_TRAINED] TOML 파일 없음: {toml_path}")
@@ -455,7 +487,7 @@ def delete_trained_step(lora_load_path: str, character: str, entry: str, session
     if not lora_load_path:
         print("[LORA_TRAINED] lora_load_path 미설정")
         return {"success": False, "error": "lora_load_path 미설정"}
-    session_dir = os.path.join(lora_load_path, _safe_dirname(character), "Lora", _safe_dirname(entry), session)
+    session_dir = _lora_entry_dir(character, entry, lora_load_path, session=session)
     if not os.path.isdir(session_dir):
         print(f"[LORA_TRAINED] 세션 폴더 없음: {session_dir}")
         return {"success": False, "error": "세션 폴더 없음"}
@@ -517,7 +549,7 @@ def delete_trained_session(lora_load_path: str, character: str, entry: str, sess
     if not lora_load_path:
         print("[LORA_TRAINED] lora_load_path 미설정")
         return {"success": False, "error": "lora_load_path 미설정"}
-    session_dir = os.path.join(lora_load_path, _safe_dirname(character), "Lora", _safe_dirname(entry), session)
+    session_dir = _lora_entry_dir(character, entry, lora_load_path, session=session)
     if not os.path.isdir(session_dir):
         print(f"[LORA_TRAINED] 세션 폴더 없음: {session_dir}")
         return {"success": False, "error": "세션 폴더 없음"}
@@ -541,7 +573,7 @@ def delete_non_rep_steps_in_session(lora_load_path: str, character: str, entry: 
     if not lora_load_path:
         print("[LORA_TRAINED] lora_load_path 미설정")
         return {"success": False, "error": "lora_load_path 미설정"}
-    session_dir = os.path.join(lora_load_path, _safe_dirname(character), "Lora", _safe_dirname(entry), session)
+    session_dir = _lora_entry_dir(character, entry, lora_load_path, session=session)
     if not os.path.isdir(session_dir):
         print(f"[LORA_TRAINED] 세션 폴더 없음: {session_dir}")
         return {"success": False, "error": "세션 폴더 없음"}
@@ -613,7 +645,7 @@ def get_trained_preview_path(lora_load_path: str, character: str, entry: str, se
     """학습된 LoRA 프리뷰 이미지 경로 반환"""
     if not lora_load_path:
         return ""
-    path = os.path.join(lora_load_path, _safe_dirname(character), "Lora", _safe_dirname(entry), session, filename)
+    path = os.path.join(_lora_entry_dir(character, entry, lora_load_path, session=session), filename)
     if os.path.isfile(path):
         return path
     return ""
@@ -1366,13 +1398,19 @@ def list_lora_entries(character: str = "") -> list:
         if character and char_name != character:
             continue
         for name, info in char_entries.items():
+            training_config = dict(info.get("training_config", {}))
+            saved_path = (training_config.get("lora_save_path") or "").replace("\\", "/").rstrip("/")
+            # 이전 UI가 저장한 표시명 기반 기본값도 실행 시 공통 경로로 해석한다.
+            # 별도로 지정된 사용자 경로와 디스크의 설정 파일은 유지한다.
+            if not saved_path or saved_path == f"{char_name}/Lora/{name}":
+                training_config["lora_save_path"] = _lora_entry_dir(char_name, name, "").replace("\\", "/")
             entries.append({
                 "name": name,
                 "trigger": info.get("trigger", ""),
                 "description": info.get("description", ""),
                 "character": char_name,
                 "representative": info.get("representative", ""),
-                "training_config": info.get("training_config", {}),
+                "training_config": training_config,
             })
     return entries
 
@@ -1395,33 +1433,16 @@ def list_lora_for_picker(lora_load_path: str = "") -> list:
             }
             # 학습된 safetensors 파일 목록
             if lora_load_path:
-                entry_dir = os.path.join(lora_load_path, _safe_dirname(char_name), "Lora", _safe_dirname(name))
-                if os.path.isdir(entry_dir):
-                    for session_name in sorted(os.listdir(entry_dir)):
-                        session_dir = os.path.join(entry_dir, session_name)
-                        if not os.path.isdir(session_dir):
-                            continue
-                        for fname in sorted(os.listdir(session_dir)):
-                            if fname.endswith('.json'):
-                                json_path = os.path.join(session_dir, fname)
-                                try:
-                                    with open(json_path, 'r', encoding='utf-8') as f:
-                                        jdata = json.load(f)
-                                    safetensors = jdata.get('lora_file', '')
-                                    if safetensors:
-                                        relative_path = os.path.join(
-                                            _safe_dirname(char_name), "Lora",
-                                            _safe_dirname(name), session_name, safetensors
-                                        )
-                                        previews = jdata.get('previews', [])
-                                        entry["lora_files"].append({
-                                            "path": relative_path,
-                                            "session": session_name,
-                                            "safetensors": safetensors,
-                                            "previews": previews,
-                                        })
-                                except Exception as e:
-                                    print(f"[LORA_PICKER] JSON 읽기 실패: {json_path} - {e}")
+                for session_info in reversed(list_trained_sessions(lora_load_path, char_name, name)):
+                    session_name = session_info["name"]
+                    session_dir = _lora_entry_dir(char_name, name, lora_load_path, session=session_name)
+                    for step in list_trained_steps(lora_load_path, char_name, name, session_name):
+                        entry["lora_files"].append({
+                            "path": os.path.relpath(os.path.join(session_dir, step["safetensors"]), lora_load_path),
+                            "session": session_name,
+                            "safetensors": step["safetensors"],
+                            "previews": step["previews"],
+                        })
             # 수동 업로드된 safetensors도 포함
             manual_dir = os.path.join(ASSET_DIR, _safe_dirname(char_name), "Lora", _safe_dirname(name))
             if os.path.isdir(manual_dir):
@@ -1617,16 +1638,19 @@ def remove_lora_entry(name: str, character: str, lora_load_path: str = "") -> di
 
     # lora_load_path 항목 폴더도 삭제
     if lora_load_path:
-        load_entry_dir = os.path.join(lora_load_path, _safe_dirname(character), "Lora", _safe_dirname(name))
-        if os.path.isdir(load_entry_dir):
-            try:
-                shutil.rmtree(load_entry_dir)
-                print(f"[LORA_MANAGE] 로드 경로 폴더 삭제: {load_entry_dir}")
-            except Exception as e:
-                print(f"[LORA_MANAGE] 로드 경로 폴더 삭제 실패: {load_entry_dir} - {e}")
-                traceback.print_exc()
-                return {"success": False, "error": f"LoRA 파일 삭제 실패: {e}. 일부 파일은 이미 삭제되었을 수 있습니다. 원인을 해결한 뒤 다시 시도하세요."}
-            _cleanup_empty_dirs(os.path.dirname(load_entry_dir))
+        for load_entry_dir in dict.fromkeys((
+            _lora_entry_dir(character, name, lora_load_path),
+            _lora_entry_dir(character, name, lora_load_path, legacy=True),
+        )):
+            if os.path.isdir(load_entry_dir):
+                try:
+                    shutil.rmtree(load_entry_dir)
+                    print(f"[LORA_MANAGE] 로드 경로 폴더 삭제: {load_entry_dir}")
+                except Exception as e:
+                    print(f"[LORA_MANAGE] 로드 경로 폴더 삭제 실패: {load_entry_dir} - {e}")
+                    traceback.print_exc()
+                    return {"success": False, "error": f"LoRA 파일 삭제 실패: {e}. 일부 파일은 이미 삭제되었을 수 있습니다. 원인을 해결한 뒤 다시 시도하세요."}
+                _cleanup_empty_dirs(os.path.dirname(load_entry_dir))
 
     del data["loras"][character][name]
     # 캐릭터 하위가 비었으면 캐릭터 키도 삭제
@@ -1798,7 +1822,7 @@ def scan_untracked_loras(lora_load_path: str) -> dict:
         # 단, 에셋 시스템에도 존재해야 추적으로 인정
         matched_char = None
         for tracked_char in tracked:
-            if _safe_dirname(tracked_char) == char_dir_name:
+            if char_dir_name in (_safe_dirname(tracked_char), tracked_char):
                 if asset_chars and tracked_char not in asset_chars:
                     # lora_manage에는 있지만 에셋에서 삭제된 캐릭터 → 비추적
                     print(f"[LORA_UNTRACKED] 에셋에 없는 캐릭터: {tracked_char}")
@@ -1843,7 +1867,7 @@ def scan_untracked_loras(lora_load_path: str) -> dict:
                 continue
             # 이 엔트리 디렉토리가 tracked 엔트리와 매칭되는지 확인
             is_tracked = any(
-                _safe_dirname(e_name) == entry_dir_name
+                entry_dir_name in (_safe_dirname(e_name), e_name)
                 for e_name in tracked_entries
             )
             if not is_tracked:
@@ -1870,7 +1894,7 @@ def scan_untracked_loras(lora_load_path: str) -> dict:
     for tracked_char, entries in tracked.items():
         safe_char = _safe_dirname(tracked_char)
         # 에셋에 없는 캐릭터 or 디스크에 없는 캐릭터 → 비추적
-        if (asset_chars and tracked_char not in asset_chars) or safe_char not in disk_dirs:
+        if (asset_chars and tracked_char not in asset_chars) or not {safe_char, tracked_char}.intersection(disk_dirs):
             if not any(u["type"] == "character" and u["display"] == safe_char for u in untracked):
                 # 캐릭터 전체가 비추적
                 char_path = os.path.join(lora_load_path, safe_char) if os.path.isdir(lora_load_path) else safe_char

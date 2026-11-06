@@ -20916,6 +20916,14 @@
                             <label>수정 방향</label>
                             <textarea id="llm-edit-direction-input" rows="5" placeholder="예: 밤 분위기로 바꾸고 두 캐릭터가 서로 마주 보며 웃게 해줘" style="width:100%; resize:vertical;"></textarea>
                         </div>
+                        <div style="display:flex; align-items:center; gap:8px; margin-top:12px; flex-wrap:wrap;">
+                            <label for="llm-edit-response-language" style="font-size:0.8rem;">답변 언어</label>
+                            <select id="llm-edit-response-language" onchange="_saveLlmEditTemplate(this.value)" style="width:auto; padding:5px 9px;">
+                                <option value="en">영어</option>
+                                <option value="ko">한국어</option>
+                            </select>
+                            <span style="font-size:0.7rem; color:var(--text-secondary);">자동 저장 · 플러그인 수정에도 적용</span>
+                        </div>
                         <label style="display:flex; align-items:center; gap:8px; margin-top:12px; font-size:0.8rem; cursor:pointer;">
                             <input id="llm-edit-allow-mask-edit" type="checkbox" checked onchange="localStorage.setItem('llmEditAllowMaskEdit', String(this.checked))">
                             마스크 영역 편집 허용
@@ -37754,6 +37762,8 @@
                 visualProfileIds: {},
             };
             llmEditModalState = openingState;
+            const responseLanguage = document.getElementById('llm-edit-response-language');
+            responseLanguage.disabled = true;
             const maskToggle = document.getElementById('llm-edit-allow-mask-edit');
             let hasMask = false;
             try {
@@ -37801,6 +37811,19 @@
                 renderIllustrationAutoFeedbackJob(illustrationAutoFeedbackState.job);
             } else {
                 resetIllustrationAutoFeedbackUi();
+            }
+
+            try {
+                const result = await fetchJSON('/api/llm_edit_prompt_template');
+                if (!result.success) throw new Error(result.error || '답변 언어를 불러오지 못했습니다.');
+                if (llmEditModalState !== openingState) return;
+                responseLanguage.value = result.data.response_language || 'en';
+                responseLanguage.dataset.savedValue = responseLanguage.value;
+                responseLanguage.disabled = false;
+            } catch (error) {
+                console.error('[EASY_EDIT] 답변 언어 로드 실패:', error);
+                showToast('답변 언어 로드 실패: ' + error.message, 'error');
+                return;
             }
 
             if (fmt === 'v3') {
@@ -38176,6 +38199,10 @@
                 return;
             }
             if (!currentModalBackupName || llmEditInFlight) return;
+            if (document.getElementById('llm-edit-response-language').disabled) {
+                showToast('답변 언어를 불러오거나 저장하는 중입니다. 잠시 후 다시 시도해주세요.', 'info');
+                return;
+            }
             const sourceBackupName = currentModalBackupName;
             const directionInput = document.getElementById('llm-edit-direction-input');
             const direction = String(directionInput?.value || '').trim();
@@ -38290,6 +38317,10 @@
         async function llmEditPrompt() {
             if (!currentModalBackupName) return;
             if (llmEditInFlight) return;
+            if (document.getElementById('llm-edit-response-language').disabled) {
+                showToast('답변 언어를 불러오거나 저장하는 중입니다. 잠시 후 다시 시도해주세요.', 'info');
+                return;
+            }
             const positive = document.getElementById('modal-positive').value;
             const negative = document.getElementById('modal-negative').value;
             const direction = (document.getElementById('llm-edit-direction-input').value || '').trim();
@@ -38527,32 +38558,44 @@
             showToast('글로벌을 커스텀으로 복사했습니다 (저장 필요)', 'info');
         }
 
-        async function _saveLlmEditTemplate() {
-            _llmTplSyncCurrent();
-            const st = window._llmTplState;
-            const useCustom = document.getElementById('llm-tpl-use').checked;
-            const templates = {
-                system: st.customs.system || '',
-                system_chansub: st.customs.system_chansub || '',
-                user_v3: st.customs.user_v3 || '',
-                user_v1: st.customs.user_v1 || '',
-                user_chansub: st.customs.user_chansub || '',
-            };
+        async function _saveLlmEditTemplate(responseLanguage) {
+            const languageSelect = document.getElementById('llm-edit-response-language');
+            let body;
+            if (responseLanguage !== undefined) {
+                languageSelect.disabled = true;
+                body = { response_language: responseLanguage };
+            } else {
+                _llmTplSyncCurrent();
+                body = {
+                    use_custom: document.getElementById('llm-tpl-use').checked,
+                    templates: { ...window._llmTplState.customs },
+                };
+            }
             try {
                 const resp = await fetch('/api/llm_edit_prompt_template', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ use_custom: useCustom, templates })
+                    body: JSON.stringify(body)
                 });
                 const result = await resp.json();
-                if (!result.success) {
-                    alert('보조 프롬프트 저장 실패: ' + (result.error || '알 수 없는 오류'));
-                    return;
+                if (!resp.ok || !result.success) throw new Error(result.error || '알 수 없는 오류');
+                if (responseLanguage !== undefined) {
+                    languageSelect.dataset.savedValue = responseLanguage;
+                    showToast('답변 언어 저장 완료', 'success');
+                } else {
+                    showToast('보조 프롬프트 저장 완료', 'success');
+                    document.getElementById('llm-edit-template-overlay').remove();
                 }
-                showToast('보조 프롬프트 저장 완료', 'success');
-                document.getElementById('llm-edit-template-overlay').remove();
             } catch (e) {
-                alert('보조 프롬프트 저장 실패: ' + e.message);
+                console.error('[EASY_EDIT] 설정 저장 실패:', { body, error: e });
+                if (responseLanguage !== undefined) {
+                    languageSelect.value = languageSelect.dataset.savedValue || 'en';
+                    showToast('답변 언어 저장 실패: ' + e.message, 'error');
+                } else {
+                    alert('보조 프롬프트 저장 실패: ' + e.message);
+                }
+            } finally {
+                if (responseLanguage !== undefined) languageSelect.disabled = false;
             }
         }
 
@@ -57330,9 +57373,8 @@
                             saveAfterSelect.value = cfg.save_after;
                         }
                     }
-                    // lora_save_path 자동 생성 (SOYA_CHAR_LORA 접두사 제외: 워크플로우가 base_path와 조합하므로)
-                    const savedPath = cfg.lora_save_path || '';
-                    document.getElementById('lora-cfg-save-path').textContent = savedPath || (loraCurrentCharacter + '/Lora/' + loraCurrentEntry);
+                    // 실제 학습 큐와 같은 서버 경로 해석 결과를 표시한다.
+                    document.getElementById('lora-cfg-save-path').textContent = cfg.lora_save_path || '';
                 }
             } catch (e) { console.error('[LORA] 학습 설정 로드 실패:', e); }
         }
@@ -57352,7 +57394,7 @@
                 resolution: parseInt(document.getElementById('lora-cfg-resolution').value) || 1024,
                 dim: parseInt(document.getElementById('lora-cfg-dim').value) || 32,
                 alpha: parseInt(document.getElementById('lora-cfg-alpha').value) || 16,
-                lora_save_path: document.getElementById('lora-cfg-save-path').textContent.trim() || (loraCurrentCharacter + '/Lora/' + loraCurrentEntry),
+                lora_save_path: document.getElementById('lora-cfg-save-path').textContent.trim(),
             };
             try {
                 const resp = await fetchJSON('/api/lora/manage/update', {
@@ -57401,7 +57443,7 @@
             const folderName = document.getElementById('lora-cfg-folder').textContent.trim();
             const genW = parseInt(document.getElementById('lora-cfg-genw').value) || 1024;
             const genH = parseInt(document.getElementById('lora-cfg-genh').value) || 1024;
-            const loraSavePath = document.getElementById('lora-cfg-save-path').textContent.trim() || (loraCurrentCharacter + '/Lora/' + loraCurrentEntry);
+            const loraSavePath = document.getElementById('lora-cfg-save-path').textContent.trim();
             const upscale = document.getElementById('lora-cfg-upscale').checked;
             const resolution = parseInt(document.getElementById('lora-cfg-resolution').value) || 1024;
             const saveAfter = parseInt(document.getElementById('lora-cfg-save-after').value) || 0;

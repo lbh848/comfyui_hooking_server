@@ -121,7 +121,7 @@ DEFAULT_USER_V3_TEMPLATE = (
     "appearance, or relative position (for example, \"the girl with blue hair\" or \"the girl on "
     "the left\"). Unusual framing and vantage points may be described directly, such as being "
     "viewed through, reflected in, or framed behind something.\n"
-    "13. Write the \"plan\" field first in Korean, then write all scene_* fields in English by "
+    "13. Write the \"plan\" field first in {response_language}, then write all scene_* fields in English by "
     "executing every edit decision in that plan. Before returning, compare the completed scene_* "
     "fields with the plan: every claimed removal, rewrite, merge, or addition must be visibly carried "
     "out, and no affected stale description may remain. If a current detail remains in the final scene, "
@@ -129,7 +129,7 @@ DEFAULT_USER_V3_TEMPLATE = (
     "## Output (JSON schema - return ONLY a JSON object in this form)\n"
     "{\n"
     '  "plan": "concrete root-cause diagnosis and binding edit plan that the following scene_* '
-    'fields execute (write in Korean)",\n'
+    'fields execute (write in {response_language})",\n'
     '  "scene_setup": "background/location/lighting/weather/mood tags, comma+space separated",\n'
     '  "scene_char": "character appearance/pose/expression/outfit tags, comma+space separated",\n'
     '  "scene_supplement": "concise objective natural-language visual description for ANIMA-only '
@@ -163,10 +163,10 @@ DEFAULT_USER_V1_TEMPLATE = (
     "7. Keep original tags for any part that does not need changing, but remove or rewrite every "
     "tag that conflicts with the desired result. Return one complete, internally consistent scene.\n"
     "8. Keep using English danbooru-style tags separated by comma+space (\", \").\n"
-    "9. Write the \"plan\" field in Korean; write scene_* tags in English.\n\n"
+    "9. Write the \"plan\" field in {response_language}; write scene_* tags in English.\n\n"
     "## Output (JSON schema - return ONLY a JSON object in this form)\n"
     "{\n"
-    '  "plan": "root-cause diagnosis and the tags/details to remove, rewrite, merge, or add (write in Korean)",\n'
+    '  "plan": "root-cause diagnosis and the tags/details to remove, rewrite, merge, or add (write in {response_language})",\n'
     '  "scene_setup": "background/location/lighting/weather/mood tags, comma+space separated",\n'
     '  "scene_char": "character appearance/pose/expression/outfit tags, comma+space separated",\n'
     '  "scene_supplement": "extra auxiliary tags, or empty string \\"\\"\n"'
@@ -192,7 +192,7 @@ DEFAULT_USER_CHANSUB_TEMPLATE = (
     "5. Preserve unaffected character identity, artist/style, and quality tags, but remove or rewrite "
     "details that conflict with the desired result. Return complete, internally consistent prompts.\n"
     "6. Preserve ComfyUI prompt syntax and never add LoRA syntax or workflow control blocks.\n"
-    "7. Return only JSON with Korean plan and English positive/negative fields."
+    "7. Return only JSON with plan in {response_language} and English positive/negative fields."
 )
 
 # builtin 텍스트 로드 캐시 — 경로별 mtime 기반
@@ -277,31 +277,39 @@ def _read_text_file(path: str) -> str:
 
 
 def _load_llm_edit_custom() -> tuple:
-    """3종 custom 텍스트 + use_custom 플래그 로드.
+    """커스텀 템플릿, 사용 여부, 답변 언어를 로드한다.
 
-    반환: (customs, use_custom)
+    반환: (customs, use_custom, response_language)
       customs = {"system": str, "user_v3": str, "user_v1": str} (파일 없으면 '')
       use_custom = bool (메타 없으면 False)
+      response_language = en / ko (메타 없으면 en)
     """
     customs = {slot: _read_text_file(meta["custom_file"]) for slot, meta in SLOTS.items()}
 
     use_custom = False
+    response_language = "en"
     if os.path.isfile(LLM_EDIT_META_FILE):
         try:
             with open(LLM_EDIT_META_FILE, "r", encoding="utf-8") as f:
                 meta = json.load(f)
                 use_custom = bool(meta.get("use_custom", False))
+                response_language = meta.get("response_language", "en")
         except Exception as e:
             print(f"[LLM_EDIT] meta 로드 실패: {e}")
             traceback.print_exc()
 
-    return customs, use_custom
+    if response_language not in ("en", "ko"):
+        print(f"[LLM_EDIT] 알 수 없는 답변 언어: {response_language!r}; 기본값 en 사용")
+        response_language = "en"
+    return customs, use_custom, response_language
 
 
-def _save_llm_edit_custom(customs: dict, use_custom: bool) -> None:
-    """3종 custom 텍스트 + use_custom 저장. 기존 파일은 .bak 로 백업.
+def _save_llm_edit_custom(
+    customs: dict, use_custom: bool | None, response_language: str | None = None,
+) -> None:
+    """전달된 커스텀 템플릿과 설정을 저장하고 기존 파일을 백업한다.
 
-    customs 는 SLOTS의 5개 슬롯 문자열을 담는다. 누락 슬롯은 '' 취급.
+    customs에 없는 슬롯과 None인 설정은 기존 값을 보존한다.
     """
     os.makedirs(ASSET_DATA_DIR, exist_ok=True)
     requirements_dir = os.path.join(BASE_DIR, "backups")
@@ -340,8 +348,11 @@ def _save_llm_edit_custom(customs: dict, use_custom: bool) -> None:
             traceback.print_exc()
             raise
 
+    meta = {}
     if os.path.isfile(LLM_EDIT_META_FILE):
         try:
+            with open(LLM_EDIT_META_FILE, "r", encoding="utf-8") as f:
+                meta = json.load(f)
             _backup_required(LLM_EDIT_META_FILE, "meta")
             shutil.copy2(LLM_EDIT_META_FILE, LLM_EDIT_META_FILE + ".bak")
         except Exception as e:
@@ -350,8 +361,12 @@ def _save_llm_edit_custom(customs: dict, use_custom: bool) -> None:
             raise
 
     try:
+        if use_custom is not None:
+            meta["use_custom"] = bool(use_custom)
+        if response_language is not None:
+            meta["response_language"] = response_language
         with open(LLM_EDIT_META_FILE, "w", encoding="utf-8") as f:
-            json.dump({"use_custom": bool(use_custom)}, f, ensure_ascii=False, indent=2)
+            json.dump(meta, f, ensure_ascii=False, indent=2)
     except Exception as e:
         print(f"[LLM_EDIT] meta 저장 실패: {e}")
         traceback.print_exc()
@@ -364,15 +379,23 @@ def _effective_text(slot: str, custom_text: str = None, use_custom: bool = None)
     규칙: use_custom 이 켜져 있고 해당 슬롯 custom 텍스트가 비어있지 않으면 custom,
     아니면 builtin. custom_text/use_custom 이 None 이면 디스크에서 로드한다.
     """
+    customs, uc, response_language = _load_llm_edit_custom()
     if use_custom is None or custom_text is None:
-        customs, uc = _load_llm_edit_custom()
         if use_custom is None:
             use_custom = uc
         if custom_text is None:
             custom_text = customs.get(slot, "")
-    if use_custom and custom_text.strip():
-        return custom_text
-    return SLOTS[slot]["builtin"]()
+    text = custom_text if use_custom and custom_text.strip() else SLOTS[slot]["builtin"]()
+    language = {"en": "English", "ko": "Korean"}[response_language]
+    text = text.replace("{response_language}", language)
+    if slot in ("system", "system_chansub"):
+        text += (
+            f"\n\n## Response language\nWrite the plan and explanatory response text in {language}. "
+            "This selected response language takes precedence over language instructions in the "
+            "editing templates and source input. Keep image-prompt fields and tags in English "
+            "and preserve exact names and identifiers."
+        )
+    return text
 
 
 def get_effective_system_prompt() -> str:
@@ -891,7 +914,7 @@ def _multi_char_edit_contract(payload: object, mask_layout: dict | None = None) 
             "\"y\": 0.1, \"width\": 0.3, \"height\": 0.8}. Return complete coordinates, "
             "including unchanged regions. Keep scene_char in the given character order even "
             "if their spatial positions change; the server will align region channels and prompts. "
-            "Write the actual layout changes in the Korean plan and keep them consistent with scene_*."
+            "Describe the actual layout changes in plan using the selected response language, consistent with scene_*."
         )
     return contract
 

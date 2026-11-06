@@ -19,11 +19,11 @@
 6. Preserve the character's core identity (the character/series name tag at the start of scene_char, e.g. "shifty \(nikke\)"); focus changes on scene/mood/pose/outfit.
 7. Keep original tags for any part that does not need changing, but remove or rewrite every tag that conflicts with the desired result. Return one complete, internally consistent scene.
 8. Keep using English danbooru-style tags separated by comma+space (", ").
-9. Write the "plan" field in Korean; write scene_* tags in English.
+9. Write the "plan" field in {response_language}; write scene_* tags in English.
 
 ## Output (JSON schema - return ONLY a JSON object in this form)
 {
-  "plan": "root-cause diagnosis and the tags/details to remove, rewrite, merge, or add (write in Korean)",
+  "plan": "root-cause diagnosis and the tags/details to remove, rewrite, merge, or add (write in {response_language})",
   "scene_setup": "background/location/lighting/weather/mood tags, comma+space separated",
   "scene_char": "character appearance/pose/expression/outfit tags, comma+space separated",
   "scene_supplement": "extra auxiliary tags, or empty string \"\""

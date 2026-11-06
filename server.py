@@ -20462,10 +20462,11 @@ async def handle_api_get_llm_edit_template(request: web.Request) -> web.Response
 
     반환 data:
       use_custom: bool (단일 글로벌 스위치)
+      response_language: en / ko (기본값 en)
       templates: { system / system_chansub / user_v3 / user_v1 / user_chansub: {builtin, custom} }
     """
     try:
-        customs, use_custom = llm_prompt_edit._load_llm_edit_custom()
+        customs, use_custom, response_language = llm_prompt_edit._load_llm_edit_custom()
         templates = {}
         for slot, meta in llm_prompt_edit.SLOTS.items():
             templates[slot] = {
@@ -20476,6 +20477,7 @@ async def handle_api_get_llm_edit_template(request: web.Request) -> web.Response
             "success": True,
             "data": {
                 "use_custom": use_custom,
+                "response_language": response_language,
                 "templates": templates,
             },
         })
@@ -20490,20 +20492,23 @@ async def handle_api_set_llm_edit_template(request: web.Request) -> web.Response
 
     요청: {
         use_custom: bool,
+        response_language: "en" | "ko",
         templates: { system: str, user_v3: str, user_v1: str }  # 각 custom 텍스트
       }
-    누락 슬롯은 '' 로 저장(해당 슬롯 builtin 폴백).
+    생략한 설정은 보존한다. templates를 보냈을 때만 누락 슬롯을 ''로 저장한다.
     """
     try:
         body = await request.json()
-        use_custom = bool(body.get("use_custom", False))
+        use_custom = bool(body["use_custom"]) if "use_custom" in body else None
         raw = body.get("templates", {}) or {}
         customs = {}
-        for slot in llm_prompt_edit.SLOTS:
-            customs[slot] = (raw.get(slot, "") or "")
-        llm_prompt_edit._save_llm_edit_custom(customs, use_custom)
+        if "templates" in body:
+            for slot in llm_prompt_edit.SLOTS:
+                customs[slot] = (raw.get(slot, "") or "")
+        response_language = body.get("response_language")
+        llm_prompt_edit._save_llm_edit_custom(customs, use_custom, response_language)
         lens = {s: len(t) for s, t in customs.items()}
-        print(f"[LLM_EDIT] template 저장: use_custom={use_custom} lens={lens}")
+        print(f"[LLM_EDIT] template 저장: use_custom={use_custom} response_language={response_language} lens={lens}")
         return web.json_response({"success": True})
     except Exception as e:
         print(f"[LLM_EDIT] template 저장 실패: {e}")
@@ -30952,7 +30957,7 @@ async def handle_api_lora_training_prompt(request):
 
 app.router.add_get("/api/lora/training_images", handle_api_lora_training_list)
 app.router.add_post("/api/lora/training_images/add", handle_api_lora_training_add)
-app.router.add_get("/api/lora/training_image/{character}/{entry}/{filename}", handle_api_lora_training_image)
+app.router.add_get("/api/lora/training_image/{character:[^/]+}/{entry:[^/]+}/{filename}", handle_api_lora_training_image)
 app.router.add_post("/api/lora/training_images/delete", handle_api_lora_training_delete)
 app.router.add_post("/api/lora/training_images/representative", handle_api_lora_training_representative)
 app.router.add_post("/api/lora/training_images/prompt", handle_api_lora_training_prompt)
@@ -31063,7 +31068,7 @@ async def handle_api_lora_test_prompt(request):
 
 app.router.add_get("/api/lora/test_images", handle_api_lora_test_list)
 app.router.add_post("/api/lora/test_images/add", handle_api_lora_test_add)
-app.router.add_get("/api/lora/test_image/{character}/{entry}/{filename}", handle_api_lora_test_image)
+app.router.add_get("/api/lora/test_image/{character:[^/]+}/{entry:[^/]+}/{filename}", handle_api_lora_test_image)
 app.router.add_post("/api/lora/test_images/delete", handle_api_lora_test_delete)
 app.router.add_post("/api/lora/test_images/representative", handle_api_lora_test_representative)
 app.router.add_post("/api/lora/test_images/prompt", handle_api_lora_test_prompt)
@@ -31125,13 +31130,17 @@ async def handle_api_lora_manage_delete(request):
             return web.json_response({"success": False, "error": "캐릭터 누락"}, status=400)
         config = load_config()
         lora_load_path = config.get("lora_load_path", "")
-        from modes.lora_mode import _safe_dirname, remove_lora_entry
+        from modes.lora_mode import _lora_entry_dir, remove_lora_entry
         result = remove_lora_entry(name, character, lora_load_path)
         if result.get("success"):
             try:
-                await modal_service.enqueue_lora_delete(
-                    f"SOYA_CHAR_LORA/{_safe_dirname(character)}/Lora/{_safe_dirname(name)}"
-                )
+                for relative_path in dict.fromkeys((
+                    _lora_entry_dir(character, name, ""),
+                    _lora_entry_dir(character, name, "", legacy=True),
+                )):
+                    await modal_service.enqueue_lora_delete(
+                        "SOYA_CHAR_LORA/" + relative_path.replace("\\", "/")
+                    )
             except Exception as sync_error:
                 print(
                     f"[MODAL_SYNC] 에셋 LoRA 원격 삭제 예약 실패: "
@@ -31269,7 +31278,7 @@ async def handle_api_lora_entry_image(request):
         return web.Response(text="Error", status=500)
 
 
-app.router.add_get("/api/lora/entry_image/{character}/{entry}/{filename}", handle_api_lora_entry_image)
+app.router.add_get("/api/lora/entry_image/{character:[^/]+}/{entry:[^/]+}/{filename}", handle_api_lora_entry_image)
 
 
 async def handle_api_lora_training_export(request):
@@ -31556,7 +31565,7 @@ async def handle_api_lora_trained_delete(request):
 app.router.add_get("/api/lora/trained/sessions", handle_api_lora_trained_sessions)
 app.router.add_get("/api/lora/trained/steps", handle_api_lora_trained_steps)
 app.router.add_get("/api/lora/trained/toml", handle_api_lora_trained_toml)
-app.router.add_get("/api/lora/trained/preview/{character}/{entry}/{session}/{filename}", handle_api_lora_trained_preview)
+app.router.add_get("/api/lora/trained/preview/{character:[^/]+}/{entry:[^/]+}/{session}/{filename}", handle_api_lora_trained_preview)
 app.router.add_post("/api/lora/trained/delete", handle_api_lora_trained_delete)
 
 

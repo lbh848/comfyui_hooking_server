@@ -4394,9 +4394,8 @@ class QueueManager:
         if not comfy_input_dir or not os.path.isdir(comfy_input_dir):
             raise ValueError("Comfy Input 폴더가 유효하지 않습니다")
 
-        from modes.lora_mode import export_training_images, list_training_images, _get_entry, _load_lora_manage
-        data = _load_lora_manage()
-        entry_info = _get_entry(data, character, entry) or {}
+        from modes.lora_mode import export_training_images, list_training_images, list_lora_entries, _lora_entry_dir
+        entry_info = next((info for info in list_lora_entries(character) if info["name"] == entry), {})
         training_config = entry_info.get("training_config", {})
         trigger = entry_info.get("trigger", "")
 
@@ -4412,7 +4411,7 @@ class QueueManager:
         )
         gen_w = training_config.get("gen_w", 1024)
         gen_h = training_config.get("gen_h", 1024)
-        lora_save_path = training_config.get("lora_save_path", f"{character}/Lora/{entry}")
+        lora_save_path = training_config.get("lora_save_path") or _lora_entry_dir(character, entry, "").replace("\\", "/")
         upscale = training_config.get("upscale", False)
         resolution = training_config.get("resolution", 1024)
         save_after = training_config.get("save_after", 0)
